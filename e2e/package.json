@@ -1,0 +1,36 @@
+{
+  "name": "@trikey/e2e",
+  "version": "0.1.0",
+  "description": "End-to-end tests against real Bitcoin infrastructure: a regtest bitcoind and Electrs in Docker, the real guardian service in-process, the real wallet.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test:unit": "vitest run test/unit",
+    "test:dry": "TRIKEY_E2E=fake vitest run",
+    "test:e2e": "TRIKEY_E2E=1 vitest run",
+    "stack": "tsx scripts/stack.ts",
+    "stack:up": "tsx scripts/stack.ts up",
+    "stack:down": "tsx scripts/stack.ts down",
+    "stack:logs": "tsx scripts/stack.ts logs"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "@scure/base": "^2.4.0",
+    "@scure/bip32": "^2.4.0",
+    "@scure/bip39": "^2.4.0",
+    "@scure/btc-signer": "^2.4.1",
+    "@trikey/core": "*",
+    "@trikey/guardian": "*",
+    "@trikey/protocol": "*",
+    "@trikey/recovery-key": "*",
+    "@trikey/silent-payments": "*",
+    "@trikey/wallet": "*",
+    "nostr-tools": "^2.23.0"
+  },
+  "devDependencies": {
+    "yaml": "^2.8.0"
+  }
+}
