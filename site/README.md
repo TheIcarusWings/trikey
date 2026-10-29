@@ -7,12 +7,11 @@ to other sites (a strict `Content-Security-Policy` meta tag enforces this).
 | Path | What it is |
 |---|---|
 | `index.html`, `style.css` | The landing page |
-| `404.html` | Not-found page (GitHub Pages serves it automatically) |
+| `404.html` | Not-found page (Vercel serves it automatically) |
 | `img/` | Phone screenshots, rendered from `design/screens` (light and dark WebP) |
 | `fonts/` | Geist and Geist Mono (latin, variable `woff2`) with their OFL license texts |
 | `favicon.svg` | The logo |
-| `CNAME` | Custom domain for GitHub Pages: `trikey.app` |
-| `.nojekyll` | Turns off Jekyll, so dot-directories are served as they are |
+| `vercel.json` | Response headers: `application/json` for the Apple file, HSTS and other security headers |
 | `.well-known/apple-app-site-association` | iOS: passkeys for `app.trikey.wallet` (needs a Team ID) |
 | `.well-known/assetlinks.json` | Android: passkeys for `app.trikey.wallet` (needs a signing fingerprint) |
 | `.well-known/security.txt` | RFC 9116 contact, points to the repo's private security advisories |
@@ -29,52 +28,35 @@ Then open the address it prints.
 
 ## Deployment
 
-`.github/workflows/pages.yml` deploys `site/` with GitHub Pages. It runs on
-pushes to `main` that change `site/**` or the workflow itself, and by hand
-from the Actions tab (`workflow_dispatch`).
+The site is hosted on **Vercel**, deployed from this GitHub repository:
 
-Before uploading, the workflow checks that:
+- every push to `main` that changes `site/` deploys to production at `https://trikey.app`;
+- pull requests get a preview deployment.
 
-- both `.well-known` JSON files parse;
-- `index.html` has no `src` or `href` pointing at an `http(s)://` address other
-  than `github.com` and `trikey.app`.
+`site/` has no build step. Vercel serves it as static files and applies the headers in `vercel.json`.
 
-Then it uploads `site/` (with hidden files included, because `.well-known` and
-`.nojekyll` start with a dot) and deploys it to the `github-pages` environment.
+Before Vercel deploys, `.github/workflows/site.yml` runs these checks on pushes and pull requests that touch `site/`:
+
+- both `.well-known` JSON files and `vercel.json` must parse;
+- `index.html` must not have any `src` or `href` pointing at an `http(s)://` address other than `github.com` and `trikey.app`.
 
 ## One-time setup (repository owner)
 
-1. **Pages source.** In the repository, go to Settings, then Pages, and set
-   Source to **GitHub Actions**.
-2. **Custom domain.** In the same page, set the custom domain to `trikey.app`.
-   The `CNAME` file in `site/` records it. Once the certificate is issued, tick
-   **Enforce HTTPS**.
-3. **DNS at the registrar**, for the apex domain `trikey.app`:
+1. **Vercel project.** Import the GitHub repo into Vercel and set **Root Directory** to `site`. Pick no framework preset, and leave the build command and output directory empty. The Vercel GitHub app needs access to the repository.
+2. **Domains.** In the project's Settings, then Domains:
+   - add `trikey.app`;
+   - add `www.trikey.app`, set to redirect to `trikey.app`.
+3. **DNS at the registrar.** Delete any records that point elsewhere (for example GitHub Pages' `185.199.x.x` and `2606:50c0:...` addresses), then add:
 
    | Type | Name | Value |
    |---|---|---|
-   | A | `@` | `185.199.108.153` |
-   | A | `@` | `185.199.109.153` |
-   | A | `@` | `185.199.110.153` |
-   | A | `@` | `185.199.111.153` |
-   | AAAA | `@` | `2606:50c0:8000::153` |
-   | AAAA | `@` | `2606:50c0:8001::153` |
-   | AAAA | `@` | `2606:50c0:8002::153` |
-   | AAAA | `@` | `2606:50c0:8003::153` |
+   | A | `@` | `76.76.21.21` |
+   | CNAME | `www` | `cname.vercel-dns.com` |
 
-   Optionally add `www` as a CNAME to `theicaruswings.github.io`. GitHub then
-   redirects `www.trikey.app` to the apex.
-4. **Verify the domain.** In the GitHub account's settings (Settings, Pages,
-   Add a domain), verify `trikey.app` by adding the TXT record GitHub shows. This
-   stops anyone else from claiming the domain on GitHub Pages if the repo's
-   Pages setup is ever removed.
-5. **First deploy.** Run the "Pages" workflow from the Actions tab, or push a
-   change under `site/` to `main`.
+   Vercel's Domains page shows the exact values for the project. If it lists different ones, use those.
+4. **HTTPS.** Vercel issues the certificate on its own once DNS resolves.
 
-`.app` is on the browsers' HSTS preload list, so every browser insists on HTTPS
-for `trikey.app`. Until GitHub has issued the certificate (this can take up to an
-hour or so after DNS resolves, sometimes longer) the site simply won't load.
-That is expected, not a misconfiguration.
+`.app` is on the browsers' HSTS preload list, so every browser insists on HTTPS for `trikey.app`. Until the certificate exists, the site simply won't load. That's expected, not a misconfiguration.
 
 ## Fill in the passkey files
 
@@ -112,16 +94,9 @@ string per key to the `sha256_cert_fingerprints` array:
   `https://digitalassetlinks.googleapis.com/v1/statements:list?source.web.site=https://trikey.app&relation=delegate_permission/common.get_login_creds`.
   It should list your package and fingerprint.
 
-Both files must be served over HTTPS with no redirect. Pages serves the apex
-domain directly, so that holds for `https://trikey.app/.well-known/...`.
+Both files must be served over HTTPS with no redirect. The apex domain serves them directly; only `www` redirects.
 
-> **Known caveat: content type.** GitHub Pages serves the extensionless
-> `apple-app-site-association` file as `application/octet-stream`, not
-> `application/json`, and there is no way to set headers on Pages. Apple's CDN
-> generally accepts it, because it parses the body. If passkeys fail on iOS with
-> `bad-configuration`, check this first: if the CDN URL above returns nothing,
-> the host will have to serve the file with the right type (a small proxy or
-> a different static host).
+`vercel.json` serves the extensionless `apple-app-site-association` file as `application/json`, which is the content type Apple expects.
 
 ## Housekeeping
 
