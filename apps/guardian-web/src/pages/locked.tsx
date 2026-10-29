@@ -62,7 +62,9 @@ export function LockedPage() {
   const cause =
     status?.lockedAt && status.lockReason === 'manual'
       ? `You locked this guardian at ${clock(status.lockedAt)}, so key 3 is encrypted until you unlock it.`
-      : status?.lockedAt
+      : status?.lockedAt && status.lockReason === 'remote'
+        ? `Your phone locked this guardian at ${clock(status.lockedAt)}. If you did not ask for this, check the box before unlocking it.`
+        : status?.lockedAt
         ? `This box restarted at ${clock(status.lockedAt)}, so key 3 is encrypted until you unlock it.`
         : 'Key 3 is encrypted until you unlock it.';
 

@@ -14,6 +14,8 @@ import { HostPage } from '@/pages/host';
 import { LockedPage } from '@/pages/locked';
 import { PairPage } from '@/pages/pair';
 import { RecoveryPage } from '@/pages/recovery';
+import { RecoverPhonePage } from '@/pages/recover-phone';
+import { ResetPage } from '@/pages/reset';
 import { RulesPage } from '@/pages/rules';
 
 type Phase = 'setup' | 'locked' | 'ready';
@@ -92,6 +94,8 @@ export function App() {
                 <Route path="/rules" element={<RulesPage />} />
                 <Route path="/recovery" element={<RecoveryPage />} />
                 <Route path="/pair" element={<PairPage />} />
+                <Route path="/recover-phone" element={<RecoverPhonePage />} />
+                <Route path="/reset" element={<ResetPage />} />
                 <Route path="/host" element={<HostPage />} />
                 <Route path="*" element={<NotFound />} />
               </Route>

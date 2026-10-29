@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Clock } from 'lucide-react';
+import { Clock, KeyRound } from 'lucide-react';
 import { api, ApiError } from '@/api';
 import { useGuardian } from '@/components/guardian-provider';
 import { ResultBadge } from '@/components/result-badge';
@@ -54,6 +54,7 @@ export function DashboardPage() {
   const pct = dailySpend.limitSats > 0 ? Math.min(100, Math.round((dailySpend.usedSats / dailySpend.limitSats) * 100)) : 0;
   const connected = relays.filter((r) => r.connected).length;
   const phones = wallets.reduce((n, w) => n + w.phonesPaired, 0);
+  const retired = status.retiredWallets?.length ?? 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -86,6 +87,19 @@ export function DashboardPage() {
         </Alert>
       )}
 
+      {status.hardwareConfirmRequired && (
+        <Alert variant="warning" className="max-w-none">
+          <KeyRound aria-hidden="true" />
+          <div className="flex flex-col gap-1">
+            <AlertTitle>Confirm your hardware wallet in the Trikey app</AlertTitle>
+            <AlertDescription>
+              This guardian now protects your recovered wallet. Phone payments within the limit work; raising the limit and other
+              changes that need the hardware wallet wait until it signs for the new wallet.
+            </AlertDescription>
+          </div>
+        </Alert>
+      )}
+
       <section aria-label="Status" className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4">
         <Stat
           label="Phone-only today"
@@ -110,6 +124,7 @@ export function DashboardPage() {
         <Stat label="Wallets" value={wallets.length}>
           <Sub>
             {phones} {phones === 1 ? 'phone' : 'phones'} paired
+            {retired > 0 && ` · ${retired} retired`}
           </Sub>
         </Stat>
         <Stat label="Relays" value={`${connected} of ${relays.length}`}>
@@ -167,6 +182,26 @@ export function DashboardPage() {
           </Table>
         )}
       </Card>
+
+      <section aria-labelledby="box-heading" className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-4">
+        <h2 id="box-heading" className="sr-only">
+          This box
+        </h2>
+        <Card className="gap-2 px-5 py-4">
+          <span className="text-sm leading-5 font-semibold">Lost your phone and its backup?</span>
+          <Sub>A new phone can recover the wallet with your hardware wallet and this guardian's recovery code.</Sub>
+          <Link to="/recover-phone" className="text-sm underline underline-offset-3 hover:text-muted-foreground">
+            Show the recovery code
+          </Link>
+        </Card>
+        <Card className="gap-2 px-5 py-4">
+          <span className="text-sm leading-5 font-semibold">Reset this guardian</span>
+          <Sub>Forget the wallet and create a new key 3, for example before pairing a different wallet.</Sub>
+          <Link to="/reset" className="text-sm text-bad underline underline-offset-3 hover:text-muted-foreground">
+            Reset guardian
+          </Link>
+        </Card>
+      </section>
     </div>
   );
 }
