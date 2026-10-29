@@ -4,3 +4,8 @@ export * from './fees.js';
 export * from './keys.js';
 export * from './kit.js';
 export * from './kit-print.js';
+export * from './script-verify.js';
+export * from './spending.js';
+export * from './refills.js';
+export * from './chain-state.js';
+export * from './scheduler.js';
