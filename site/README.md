@@ -10,6 +10,7 @@ a plain stack of cards and reads the same.
 | Path | What it is |
 |---|---|
 | `index.html`, `style.css` | The landing page |
+| `media/films/` | The launch films for the web: "Nobody in the middle" in the hero and the three "If a key goes missing" episodes in the key picker. 720p H.264 with the voiceover, captions burned in, a poster and a WebVTT file each (about 12 MB in all). Nothing loads until someone presses play |
 | `js/story.js` | Scroll scenes: sticky stages, shot timing, video scrubbing. Progressive enhancement only |
 | `404.html` | Not-found page (Vercel serves it automatically) |
 | `img/` | Phone screenshots, rendered from `design/screens` (light and dark WebP) |
