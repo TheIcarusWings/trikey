@@ -9,18 +9,20 @@
     "./policy": "./src/policy/index.ts"
   },
   "scripts": {
+    "start": "node --import tsx src/main.ts",
     "test": "vitest run",
     "typecheck": "tsc -p ."
   },
   "dependencies": {
+    "@noble/ciphers": "^2.1.1",
     "@noble/curves": "^2.4.0",
     "@noble/hashes": "^2.4.0",
     "@scure/base": "^2.4.0",
     "@scure/bip32": "^2.4.0",
+    "@scure/bip39": "^2.4.0",
     "@scure/btc-signer": "^2.4.1",
-    "@trikey/core": "*"
-  },
-  "devDependencies": {
-    "@trikey/protocol": "*"
+    "@trikey/core": "*",
+    "@trikey/protocol": "*",
+    "nostr-tools": "^2.23.0"
   }
 }

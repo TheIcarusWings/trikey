@@ -1,8 +1,8 @@
 /**
  * The guardian's policy engine is the source of truth for what the hardware wallet signs and for the
  * policy hash. These tests run the engine's own functions next to the protocol's and require identical
- * output. (`@trikey/guardian` is a devDependency of this package for this file only; no source file in
- * `src/` imports it, so the phone-side library does not pull in the engine.)
+ * output. They live here rather than in `@trikey/protocol` so the protocol package does not depend on
+ * the guardian (the guardian depends on the protocol at runtime).
  */
 import { hex } from '@scure/base';
 import {
@@ -18,7 +18,7 @@ import {
   signMessage,
   type HardwareAction as EngineAction,
   type Rules,
-} from '@trikey/guardian/policy';
+} from '../src/policy/index.js';
 import { describe, expect, it } from 'vitest';
 import {
   HardwareApproval,
@@ -32,8 +32,18 @@ import {
   policyHash,
   type HardwareAction,
   type Policy as PolicyType,
-} from '../src/index.js';
-import { CONTACT_A, CONTACT_B, WALLET_ID, policy } from './helpers.js';
+} from '@trikey/protocol';
+
+// The same fixtures as packages/protocol/test/helpers.ts (the fixed hash below depends on them).
+const CONTACT_A = 'a1'.repeat(32);
+const CONTACT_B = '0b'.repeat(32);
+const WALLET_ID = '0123456789abcdef';
+const policy: PolicyType = {
+  dailyLimitSats: 500_000,
+  recoveryDelayDays: 7,
+  alertContacts: [CONTACT_B, CONTACT_A],
+  sweepFeeCapSats: 50_000,
+};
 
 const contacts = (n: number) => Array.from({ length: n }, (_, i) => (i + 16).toString(16).padStart(64, '0'));
 

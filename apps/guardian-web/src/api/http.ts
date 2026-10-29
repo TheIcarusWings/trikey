@@ -19,15 +19,20 @@ interface ErrorBody {
  * Talks to the guardian's own HTTP API. Endpoints are documented in API.md.
  * Request bodies are JSON only; the passphrase goes out in one POST and is
  * not logged, cached or kept anywhere by this module.
+ *
+ * Every POST and DELETE carries a JSON body (`{}` when there is nothing to
+ * send): the guardian refuses state-changing requests without
+ * `Content-Type: application/json`, which keeps cross-site requests out.
  */
 export function createHttpApi(base = ''): GuardianApi {
   async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const sent = body === undefined && method !== 'GET' ? {} : body;
     let response: Response;
     try {
       response = await fetch(`${base}/api${path}`, {
         method,
-        headers: body === undefined ? { Accept: 'application/json' } : { Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        headers: sent === undefined ? { Accept: 'application/json' } : { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: sent === undefined ? undefined : JSON.stringify(sent),
         credentials: 'same-origin',
         cache: 'no-store',
       });
@@ -76,7 +81,6 @@ export function createHttpApi(base = ''): GuardianApi {
       const res = await request<{ recovery: RecoveryInProgress | null }>('GET', '/recovery');
       return res.recovery;
     },
-    cancelRecovery: (id) => request<void>('POST', `/recovery/${encodeURIComponent(id)}/cancel`),
 
     startPairing: () => request<PairingSession>('POST', '/pairing'),
     getPairingSession: (id) => request<PairingSession>('GET', `/pairing/${encodeURIComponent(id)}`),

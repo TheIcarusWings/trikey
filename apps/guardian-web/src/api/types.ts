@@ -26,6 +26,8 @@ export interface ChainStatus {
   progress?: number;
   /** What the guardian reads chain data from, e.g. "Bitcoin Node + Electrs". */
   source: string;
+  /** Height of the latest block, when known. */
+  height?: number;
 }
 
 export interface WalletSummary {
@@ -53,7 +55,20 @@ export interface GuardianStatus {
   dailySpend: DailySpend;
   /** True while a Delay & Notify recovery is running. Details: getRecovery(). */
   recoveryInProgress: boolean;
+  /**
+   * Whether phone-only payments work: paused while a recovery runs, after a
+   * contested cancel (until the hardware wallet resumes them), and for good
+   * once a recovery swept the wallet. Absent before a phone is paired.
+   */
+  phoneSpending?: PhoneSpending;
+  /** bitcoin, testnet, signet or regtest. */
+  network?: string;
+  /** The guardian's nostr identity (shown in the pairing QR). Set once setup is complete. */
+  npub?: string;
+  version?: string;
 }
+
+export type PhoneSpending = 'enabled' | 'paused_recovery' | 'paused_contested' | 'retired';
 
 // --- first run ----------------------------------------------------------
 
@@ -127,8 +142,8 @@ export interface Rules {
   recoveryDelayDays: RecoveryDelayDays;
   /** Everyone who gets daily recovery alerts and can cancel. */
   contacts: AlertContact[];
-  /** A recovery can't spend more than this share of the wallet on fees. */
-  recoveryFeeCapPercent: number;
+  /** A recovery sweep can't pay more than this in fees (sats). The guardian enforces an absolute cap. */
+  sweepFeeCapSats: number;
   /** Phone + hardware don't need the guardian; shown for information. */
   hardwarePayments: 'any-amount';
 }
@@ -145,6 +160,8 @@ export interface RecoveryAlertRecipient {
 
 export interface RecoveryInProgress {
   id: string;
+  /** `pending` while the delay runs, `ready` once it is over and the guardian may complete it. */
+  state: 'pending' | 'ready';
   startedAt: ISODate;
   /** When the guardian co-signs and broadcasts the sweep, unless cancelled. */
   endsAt: ISODate;
@@ -152,12 +169,16 @@ export interface RecoveryInProgress {
   lostKey: RecoveryKeyLost;
   /** The surviving key that signed the sweep. */
   survivingKey: { device: string; signatureValid: boolean };
-  /** Where the sweep sends the funds. */
+  /** Where the sweep sends the funds (the address of its output). */
   destination: string;
+  /** Id of the new wallet the sweep pays to. */
+  destinationWalletId: string;
   sweepSats: number;
   feeSats: number;
   feeCapSats: number;
   alertsSent: RecoveryAlertRecipient[];
+  /** Set when the delay is over but the guardian can't complete yet (locked, chain behind, coins missing from the sweep...). */
+  waitingFor?: string;
 }
 
 // --- pairing ------------------------------------------------------------

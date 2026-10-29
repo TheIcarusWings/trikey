@@ -95,12 +95,14 @@ function demoRecovery(): RecoveryInProgress {
   const startedAt = endsAt - 7 * DAY;
   const sent = [startedAt, startedAt + DAY].filter((t) => t <= Date.now()).map((t) => new Date(t).toISOString());
   return {
-    id: 'rec_01',
+    id: '1-3f2a9c41d07e',
+    state: 'pending',
     startedAt: new Date(startedAt).toISOString(),
     endsAt: new Date(endsAt).toISOString(),
     lostKey: 'phone',
     survivingKey: { device: 'Ledger', signatureValid: true },
     destination: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh',
+    destinationWalletId: '9c1d40e2b7a35f68',
     sweepSats: 4_208_800,
     feeSats: 1_200,
     feeCapSats: 42_088,
@@ -124,7 +126,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       ? []
       : [{ id: 'ph_1', name: 'Pixel 8', pairedAt: localAt(9, '16:44') }];
   let activity: ActivityEntry[] = setupDone ? demoActivity() : [];
-  let recovery: RecoveryInProgress | null = scenario === 'recovery' ? demoRecovery() : null;
+  const recovery: RecoveryInProgress | null = scenario === 'recovery' ? demoRecovery() : null;
   let pairing: PairingSession | null = null;
   let relayUrls = RELAYS.map((r) => r.url);
   const syncing = scenario === 'syncing';
@@ -139,7 +141,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       { id: 'c_maria', name: 'Maria', kind: 'contact' },
       { id: 'c_tom', name: 'Tom', kind: 'contact' },
     ],
-    recoveryFeeCapPercent: 1,
+    sweepFeeCapSats: 20_000,
     hardwarePayments: 'any-amount',
   };
 
@@ -242,13 +244,6 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
     async getRecovery() {
       await wait();
       return clone(recovery);
-    },
-
-    async cancelRecovery(id) {
-      await wait(300);
-      if (!recovery || recovery.id !== id) throw new ApiError('not_found', 'No such recovery.', 404);
-      recovery = null;
-      pushActivity({ kind: 'recovery', event: 'Recovery cancelled', signedBy: 'Guardian', sats: null, result: 'ok' });
     },
 
     async startPairing() {

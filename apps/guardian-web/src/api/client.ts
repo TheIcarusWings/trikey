@@ -18,6 +18,11 @@ export type ApiErrorCode =
   | 'bad_passphrase'
   | 'rate_limited'
   | 'locked'
+  | 'setup_required'
+  | 'already_setup'
+  | 'already_paired'
+  | 'not_available'
+  | 'forbidden'
   | 'not_found'
   | 'invalid'
   | 'network'
@@ -57,9 +62,13 @@ export interface GuardianApi {
   listActivity(query?: ActivityQuery): Promise<ActivityEntry[]>;
   getRules(): Promise<Rules>;
 
-  /** Null when no recovery is running. */
+  /**
+   * Null when no recovery is running. Read-only: a recovery is cancelled from
+   * the Trikey app, by an alert contact replying to the alert DM, or with the
+   * hardware wallet. The guardian's policy engine records who cancelled, and
+   * the box's web UI is none of those parties.
+   */
   getRecovery(): Promise<RecoveryInProgress | null>;
-  cancelRecovery(id: string): Promise<void>;
 
   /** Creates a fresh one-time pairing session and invalidates the previous one. */
   startPairing(): Promise<PairingSession>;
