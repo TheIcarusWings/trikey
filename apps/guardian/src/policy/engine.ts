@@ -35,6 +35,7 @@ import {
   approvalMessage,
   bip137Authorizer,
   pairingMessage,
+  proofId,
   recoveryAccessMessage,
 } from './authorizer.js';
 import { ChainTime, ChainTimeSource, Clock, DAY, HOUR, systemClock } from './clock.js';
@@ -600,7 +601,13 @@ export class PolicyEngine {
   /** Moves the active wallet to the retired list. Returns how many live access grants that revoked. */
   private retireActive(draft: GuardianState, now: number, retirement: RetiredWallet['retirement']): number {
     const w = draft.active!;
-    const revoked = liveGrants(w, now).length;
+    const live = liveGrants(w, now);
+    const revoked = live.length;
+    // Their signatures stay refused until they expire (a version-1 text names no wallet).
+    draft.revokedAccess = [
+      ...(draft.revokedAccess ?? []).filter((r) => r.until > now),
+      ...live.flatMap((g) => (g.sig ? [{ sig: g.sig, until: g.until }] : [])),
+    ].slice(-64);
     draft.retired.push({ registration: w.registration, rules: w.rules, retiredAt: now, retirement });
     draft.active = undefined;
     return revoked;
@@ -958,7 +965,7 @@ export class PolicyEngine {
   }): Promise<Result<{ until: number; renewed: boolean }>> {
     // Anyone may ask once a wallet is paired, so a refusal is decided on the current state without
     // touching the disk (no state write, no log entry per stranger's attempt); only a grant is saved.
-    const check = (s: GuardianState, now: number): Refusal | { walletId: string; phone: string; until: number } => {
+    const check = (s: GuardianState, now: number): Refusal | { walletId: string; phone: string; until: number; sig?: string } => {
       const w = s.active;
       if (!w) return { reason: 'not_registered' };
       const reg = w.registration;
@@ -970,14 +977,22 @@ export class PolicyEngine {
       const maxExpiresAt = Math.floor((now + MAX_APPROVAL_TTL_MS) / 1000);
       if (expiresAt > maxExpiresAt) return { reason: 'approval_expiry_too_far', expiresAt, maxExpiresAt };
       const phone = String(req.phonePubkey).toLowerCase();
-      let message: string;
-      try {
-        message = recoveryAccessMessage({ guardianPubkey: String(req.guardianPubkey).toLowerCase(), phonePubkey: phone, expiresAt });
-      } catch {
-        return { reason: 'approval_invalid_signature' };
-      }
-      if (typeof signature !== 'string' || !authorizer.verify(message, signature, reg.hardwareAuth)) return { reason: 'approval_invalid_signature' };
-      return { walletId: reg.walletId, phone, until: expiresAt * 1000 };
+      if (typeof signature !== 'string') return { reason: 'approval_invalid_signature' };
+      // Version 2 names this wallet; version 1 names none (older phones, or a recovery code without the id).
+      const verifies = (walletId?: string) => {
+        try {
+          const message = recoveryAccessMessage({ guardianPubkey: String(req.guardianPubkey).toLowerCase(), phonePubkey: phone, expiresAt, walletId });
+          return authorizer.verify(message, signature, reg.hardwareAuth!);
+        } catch {
+          return false;
+        }
+      };
+      const v2 = verifies(reg.walletId);
+      if (!v2 && !verifies(undefined)) return { reason: 'approval_invalid_signature' };
+      const sig = proofId(signature);
+      // A version-1 signature whose grant a rotation or retirement revoked does not get it back here.
+      if (!v2 && sig && (s.revokedAccess ?? []).some((r) => r.sig === sig && r.until > now)) return { reason: 'approval_revoked' };
+      return { walletId: reg.walletId, phone, until: expiresAt * 1000, ...(sig ? { sig } : {}) };
     };
     const first = check(this.state, this.clock.now());
     if ('reason' in first) return refused(first);
@@ -989,7 +1004,10 @@ export class PolicyEngine {
       const w = draft.active!;
       const live = liveGrants(w, now);
       const renewed = live.some((g) => g.pubkey === again.phone);
-      w.accessGrants = [...live.filter((g) => g.pubkey !== again.phone), { pubkey: again.phone, until: again.until, grantedAt: now }].slice(-MAX_ACCESS_GRANTS);
+      w.accessGrants = [
+        ...live.filter((g) => g.pubkey !== again.phone),
+        { pubkey: again.phone, until: again.until, grantedAt: now, ...(again.sig ? { sig: again.sig } : {}) },
+      ].slice(-MAX_ACCESS_GRANTS);
       this.log(draft, now, { type: 'recovery_access_granted', phone: again.phone, until: again.until });
       return { ok: true as const, until: again.until, renewed };
     });

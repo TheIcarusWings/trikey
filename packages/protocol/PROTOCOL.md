@@ -135,7 +135,7 @@ The guardian never parses text from the phone. It rebuilds the text from the req
 | `resume-phone` | `Trikey resume-phone v1 wallet=<walletId> seq=<n> expires=<ISO>` |
 | `retire-wallet` | `Trikey retire-wallet v1 wallet=<walletId> seq=<n> expires=<ISO>` |
 | pairing proof | `Trikey pair v1 wallet=<walletId> guardian=<cosignerAccountPubkey hex>` |
-| recovery access | `Trikey recovery-access v1 guardian=<guardian nostr pubkey hex> phone=<new phone's nostr pubkey hex> expires=<ISO>` (no wallet id and no sequence: see "Recovery access") |
+| recovery access | `Trikey recovery-access v2 wallet=<walletId> guardian=<guardian nostr pubkey hex> phone=<new phone's nostr pubkey hex> expires=<ISO>` when the phone knows the wallet id (from the recovery code, or when renewing), else `Trikey recovery-access v1 guardian=... phone=... expires=<ISO>` (no wallet id and no sequence: see "Recovery access") |
 
 Example: `Trikey resume-phone v1 wallet=0123456789abcdef seq=4 expires=2030-03-17T17:46:40Z`. `walletId` is the `walletId` of the `pair` result (the engine's descriptor fingerprint); `expires` is `expiresAt` as `YYYY-MM-DDTHH:MM:SSZ`.
 
@@ -260,8 +260,8 @@ BIP 352 silent payments (DESIGN.md, "Silent payments"). The vault's `wsh(sortedm
 
 "Lost phone, no backup": the user has a new phone, the hardware wallet and the guardian. The new phone has a fresh nostr key that the guardian does not know, and it knows neither the descriptor nor the guardian's key, only the guardian's `npub` and relays (the web UI's "Recover on a new phone" code, section 6). `recovery.access` lets the hardware wallet vouch for it:
 
-1. The phone asks the device for the authorization key (the same path the wallet used at pairing; it is derived the same way on every phone, see the guardian README) and has it BIP 137-sign `recoveryAccessMessage({ guardianPubkey, phonePubkey, expiresAt })`, with `expiresAt` at most 24 h ahead.
-2. **`recovery.access`** from any sender, once a wallet is paired. The guardian rebuilds the text with *its own* nostr key and the *sender's* key, so the signature is no use to another phone or against another guardian, and verifies it against the paired `hardwareAuth`. Wrong signature `1202`, expired `1203`, too far ahead `1206`. It does not consume a hardware sequence number.
+1. The phone asks the device for the authorization key (the same path the wallet used at pairing; it is derived the same way on every phone, see the guardian README) and has it BIP 137-sign `recoveryAccessMessage({ guardianPubkey, phonePubkey, expiresAt, walletId? })`, with `expiresAt` at most 24 h ahead. With `walletId` (the recovery code carries it since the 2026-10 security review; a phone renewing its access knows it) the text is version 2 and binds the wallet too; without it, version 1.
+2. **`recovery.access`** from any sender, once a wallet is paired. The guardian rebuilds the text with *its own* nostr key and the *sender's* key, so the signature is no use to another phone or against another guardian, and verifies it against the paired `hardwareAuth`. Wrong signature `1202`, expired `1203`, too far ahead `1206`. It does not consume a hardware sequence number. Both versions are accepted; a version-1 signature whose grant a wallet rotation or retirement revoked is refused until it expires (`1202`, `data.reason: "approval_revoked"`), whatever its encoding, so the next wallet does not honour it. BIP 137 signatures with a high S are refused (signers only make low-S ones).
 3. The sender may then, until `accessExpiresAt` (durably, across guardian restarts), call `guardian.status`, `wallet.sync`, `tx.get`, `fees.estimate`, `recovery.start`, `recovery.status`, `recovery.cancel` (only with a hardware approval) and `recovery.access` again. Not `sign`, `policy.*`, `tx.broadcast`, `phone.resume` or `guardian.unlock`. The result gives the phone everything it needs to sweep: the descriptor, the wallet id, the guardian's key and the rules (for the sweep fee cap).
 
 Anyone holding the hardware wallet can thus start a recovery from any phone, which is the design: a recovery is announced to the paired phone and every alert contact, and any of them can cancel it (DESIGN.md, threat model). The web UI's activity log shows every access grant. While its access lasts, a phone with recovery access also gets the protocol alerts (best effort; it is not one of the recovery's recorded recipients), and it can poll `recovery.status`.
@@ -414,10 +414,10 @@ The phone scans it, derives its key, and sends `pair.prepare` and then `pair` (s
 For a new phone without the old one or its backup, the guardian's web UI shows a second, permanent QR code with only where to find the guardian:
 
 ```
-trikey://recover?v=1&npub=<npub1...>&relay=<url>[&relay=<url>...]&net=<bitcoin|testnet|signet|regtest>[&label=<text>]
+trikey://recover?v=1&npub=<npub1...>&relay=<url>[&relay=<url>...]&net=<bitcoin|testnet|signet|regtest>[&label=<text>][&wallet=<walletId>]
 ```
 
-It carries **no secret and no expiry**: the npub and relays are not secret, and what admits the phone is the hardware wallet's `recovery.access` signature (section 3, "Recovery access"), not this code. `relay` and `label` follow the pairing rules; `net` tells the phone which network to create its wallet on. A decoder MUST refuse a recovery code that carries a `secret`, and the two codes are never interchangeable (`decodeRecoveryUri` refuses a pairing code and vice versa; `decodeTrikeyUri` tells them apart).
+It carries **no secret and no expiry**: the npub and relays are not secret, and what admits the phone is the hardware wallet's `recovery.access` signature (section 3, "Recovery access"), not this code. `relay` and `label` follow the pairing rules; `net` tells the phone which network to create its wallet on. A decoder MUST refuse a recovery code that carries a `secret`, and the two codes are never interchangeable (`decodeRecoveryUri` refuses a pairing code and vice versa; `decodeTrikeyUri` tells them apart). `wallet` (optional; older guardians omit it) is the wallet id the guardian guards, for the version-2 `recovery.access` text.
 
 ## 7. Compatibility notes
 

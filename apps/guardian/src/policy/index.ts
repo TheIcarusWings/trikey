@@ -30,6 +30,7 @@ export {
   bip137Authorizer,
   approvalMessage,
   pairingMessage,
+  proofId,
   recoveryAccessMessage,
   MAX_MESSAGE_LENGTH,
 } from './authorizer.js';

@@ -91,6 +91,8 @@ export interface AccessGrant {
   /** ms */
   until: number;
   grantedAt: number;
+  /** `proofId` of the hardware signature that granted it (absent for grants from before it was recorded). */
+  sig?: string;
 }
 
 /** A hardware approval as delivered by the phone. The guardian rebuilds the signed text itself. */
@@ -207,6 +209,8 @@ export type Refusal =
   | { reason: 'hardware_approval_required'; detail: string }
   | { reason: 'unsupported_approval'; kind: string }
   | { reason: 'approval_invalid_signature' }
+  /** A `recovery.access` signature whose grant a wallet rotation or retirement revoked. */
+  | { reason: 'approval_revoked' }
   | { reason: 'approval_stale_sequence'; sequence: number; lastSequence: number }
   | { reason: 'approval_sequence_too_far'; sequence: number; lastSequence: number }
   | { reason: 'approval_expired'; expiresAt: number }
@@ -353,6 +357,12 @@ export interface GuardianState {
    * past plus `MAX_CLOCK_AHEAD_OF_CHAIN_MS` (the engine refuses to co-sign beyond that).
    */
   timeFloor?: number;
+  /**
+   * Hardware signatures (`proofId`) of `recovery.access` grants a rotation or retirement revoked, kept
+   * until they expire: a version-1 text names no wallet, so the same signature would otherwise get the
+   * grant back on the next wallet.
+   */
+  revokedAccess?: { sig: string; until: number }[];
 }
 
 /** The single-wallet format written by guardians before wallet rotation. */

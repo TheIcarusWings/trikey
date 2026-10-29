@@ -1779,7 +1779,7 @@ export class TrikeyWallet {
    * Reads a guardian's "Recover on a new phone" code (`trikey://recover?...`, shown in its web
    * UI), for `recoverWithHardware`. It holds no secret: the hardware wallet is what lets the phone in.
    */
-  static parseRecoveryCode(uri: string, network?: NetworkName): { npub: string; relays: string[]; network: RecoveryPayload['network']; label?: string } {
+  static parseRecoveryCode(uri: string, network?: NetworkName): { npub: string; relays: string[]; network: RecoveryPayload['network']; label?: string; walletId?: string } {
     let code: RecoveryPayload;
     try {
       code = decodeRecoveryUri(uri);
@@ -1787,7 +1787,7 @@ export class TrikeyWallet {
       throw new WalletError('pairing_uri_invalid', `Not a Trikey recovery code: ${(e as Error).message}`, { cause: e });
     }
     if (network && code.network !== network) throw new WalletError('network_mismatch', `This guardian runs on ${code.network}, not ${network}.`);
-    return { npub: npubEncode(code.guardianPubkey), relays: code.relays, network: code.network, ...(code.label ? { label: code.label } : {}) };
+    return { npub: npubEncode(code.guardianPubkey), relays: code.relays, network: code.network, ...(code.label ? { label: code.label } : {}), ...(code.walletId ? { walletId: code.walletId } : {}) };
   }
 
   // ===========================================================================
@@ -1901,7 +1901,7 @@ export class TrikeyWallet {
    *
    * `guardian` is the guardian's npub (or hex pubkey) and relays, from its web UI.
    */
-  async recoverWithHardware(opts: { guardian: { npub: string; relays: string[] } | string; hardwareKind?: HardwareKind }): Promise<Recovery> {
+  async recoverWithHardware(opts: { guardian: { npub: string; relays: string[]; walletId?: string } | string; hardwareKind?: HardwareKind }): Promise<Recovery> {
     // A scanned recovery code (`trikey://recover?...`) or the npub and relays.
     const guardian = typeof opts.guardian === 'string' ? TrikeyWallet.parseRecoveryCode(opts.guardian, this.network.name) : opts.guardian;
     const started = this.s.recovery?.role === 'initiator' && (this.s.recovery.recovery?.state === 'pending' || this.s.recovery.recovery?.state === 'ready');
@@ -1924,7 +1924,8 @@ export class TrikeyWallet {
       this.hwSession = hw;
       const rec = await this.readHardware(hw);
       const expiresAt = this.nowSec() + ACCESS_TTL_SEC;
-      const text = recoveryAccessMessage({ guardianPubkey, phonePubkey: this.s.nostrPubkey, expiresAt });
+      // Bound to the wallet when the guardian's code names it (recovery-access v2), else v1.
+      const text = recoveryAccessMessage({ guardianPubkey, phonePubkey: this.s.nostrPubkey, expiresAt, ...(guardian.walletId ? { walletId: guardian.walletId } : {}) });
       const signature = await this.signWithAuthKey(hw, rec, text, 'recovery-access');
       let access: Result<'recovery.access'>;
       try {
@@ -1990,7 +1991,7 @@ export class TrikeyWallet {
     if (this.s.stage !== 'recovering' || !this.s.guardian) throw new WalletError('wrong_state', 'Only a recovering phone has recovery access.');
     const guardianPubkey = this.s.guardian.pubkey;
     const expiresAt = this.nowSec() + ACCESS_TTL_SEC;
-    const text = recoveryAccessMessage({ guardianPubkey, phonePubkey: this.s.nostrPubkey, expiresAt });
+    const text = recoveryAccessMessage({ guardianPubkey, phonePubkey: this.s.nostrPubkey, expiresAt, ...(this.s.wallet?.walletId ? { walletId: this.s.wallet.walletId } : {}) });
     const signature = await this.withHardware((hw, rec) => this.signWithAuthKey(hw, rec, text, 'recovery-access'));
     const access = await this.call('recovery.access', { approval: { kind: 'bip137', expiresAt, signature } });
     if (access.walletId !== this.s.wallet?.walletId) throw new WalletError('guardian_mismatch', 'The guardian holds another wallet now.');

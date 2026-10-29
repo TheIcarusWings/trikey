@@ -84,12 +84,23 @@ export function pairingMessage(walletId: string, cosignerAccountPubkey: string):
  * replayed to another guardian) and the new phone's (so nobody else can use it).
  *
  * `Trikey recovery-access v1 guardian=<hex> phone=<hex> expires=<ISO 8601 UTC>`
+ *
+ * When the phone knows the wallet id (the guardian's recovery code carries it, `RecoveryPayload.walletId`,
+ * or the phone is renewing its access), it signs version 2, bound to that wallet as well, so the
+ * signature is worth nothing once the guardian guards another wallet:
+ *
+ * `Trikey recovery-access v2 wallet=<walletId> guardian=<hex> phone=<hex> expires=<ISO 8601 UTC>`
+ *
+ * Guardians accept both; a version-1 signature whose grant a wallet rotation or retirement revoked is
+ * refused from then on (security review 2026-10).
  */
-export function recoveryAccessMessage(ctx: { guardianPubkey: string; phonePubkey: string; expiresAt: number }): string {
+export function recoveryAccessMessage(ctx: { guardianPubkey: string; phonePubkey: string; expiresAt: number; walletId?: string }): string {
   if (!/^[0-9a-f]{64}$/.test(ctx.guardianPubkey) || !/^[0-9a-f]{64}$/.test(ctx.phonePubkey)) throw new Error('invalid nostr pubkey');
   if (!Number.isSafeInteger(ctx.expiresAt) || ctx.expiresAt < 0) throw new Error('expiresAt must be unix seconds');
+  if (ctx.walletId !== undefined && !/^[0-9a-f]{16}$/.test(ctx.walletId)) throw new Error('invalid wallet id');
   return line([
-    'Trikey recovery-access v1',
+    ctx.walletId !== undefined ? 'Trikey recovery-access v2' : 'Trikey recovery-access v1',
+    ...(ctx.walletId !== undefined ? [`wallet=${ctx.walletId}`] : []),
     `guardian=${ctx.guardianPubkey}`,
     `phone=${ctx.phonePubkey}`,
     `expires=${isoSeconds(ctx.expiresAt)}`,

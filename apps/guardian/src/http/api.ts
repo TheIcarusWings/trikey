@@ -243,7 +243,8 @@ export function buildRoutes(g: Guardian): Route[] {
         if (!reg || !g.identity) throw new HttpError(404, 'not_found', 'Pair a wallet first: the recovery code is for the wallet this guardian protects.');
         const relays = g.service.get().relays;
         const body: RecoveryCode = {
-          uri: encodeRecoveryUri({ guardianPubkey: g.identity.pubkey, relays, network: g.config.network, label: 'Trikey Guardian' }),
+          // With the wallet id, the new phone signs the access text bound to this wallet (recovery.access v2).
+          uri: encodeRecoveryUri({ guardianPubkey: g.identity.pubkey, relays, network: g.config.network, label: 'Trikey Guardian', walletId: reg.walletId }),
           npub: g.identity.npub,
           relays: [...relays],
           network: g.config.network,
