@@ -174,6 +174,8 @@ export type ReplaceStep = 'pair' | 'sign' | 'broadcast' | 'retire' | 'switch';
 
 /** A history entry with what only this phone knows about it (from its send log). */
 export interface WalletHistoryEntry extends HistoryEntry {
+  /** When this phone sent it (ms). */
+  sentAt?: number;
   /** Where a payment from this phone went. */
   recipient?: string;
   /** What was paid, without the fee (payments from this phone). */
@@ -1163,6 +1165,7 @@ export class TrikeyWallet {
     const c = this.s.chain;
     const log = new Map(this.s.sendLog.map((e) => [e.txid, e]));
     const meta = (e: SendLogEntry) => ({
+      sentAt: e.at,
       recipient: e.recipient,
       amountSats: e.amountSats,
       ...(e.label ? { label: e.label } : {}),
@@ -1216,6 +1219,20 @@ export class TrikeyWallet {
     await this.update((s) => {
       for (const e of s.sendLog) if (e.txid === txid) text ? (e.label = text) : delete e.label;
     });
+  }
+
+  /**
+   * Adds payments recorded elsewhere (an app's own older log) to the send log. Entries already there win; nothing is
+   * checked against the chain, so these only label history the guardian lists.
+   */
+  async importSendLog(entries: SendLogEntry[]): Promise<number> {
+    const have = new Set(this.s.sendLog.map((e) => e.txid));
+    const fresh = entries.filter((e) => /^[0-9a-f]{64}$/.test(e.txid) && !have.has(e.txid));
+    if (!fresh.length) return 0;
+    await this.update((s) => {
+      s.sendLog = [...s.sendLog, ...fresh].sort((a, b) => a.at - b.at).slice(-MAX_SEND_LOG);
+    });
+    return fresh.length;
   }
 
   private async logSend(entry: SendLogEntry): Promise<void> {
