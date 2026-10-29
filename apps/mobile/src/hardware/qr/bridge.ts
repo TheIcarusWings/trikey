@@ -16,6 +16,8 @@ export interface QrShowRequest {
   instructions: string;
   /** The QR frames to cycle through, in order. One frame means a still QR. */
   frames: string[];
+  /** Text to show under the QR in monospace, for the user to read and compare (an address). */
+  detail?: string;
   /** Label of the button that moves on ("Scan the signed transaction"). */
   continueLabel: string;
 }
@@ -164,8 +166,15 @@ export class QrBridge {
       this.settle(() => a.resolve(step.value));
       return {};
     }
-    a.state = { progress: step.progress ?? a.state.progress, hint: step.hint };
-    this.changed();
+    const next = { progress: step.progress ?? a.state.progress, hint: step.hint };
+    const prev = a.state;
+    // The camera reports the same QR many times a second: only wake the UI when something it shows has changed.
+    const unchanged = prev.hint === next.hint && prev.progress?.received === next.progress?.received && prev.progress?.total === next.progress?.total;
+    a.state = next;
+    if (!unchanged) this.changed();
     return a.state;
   }
 }
+
+/** The bridge used when none is passed in: the QR providers use it, and `QrBridgeHost` mounts on it by default. */
+export const defaultQrBridge = new QrBridge();

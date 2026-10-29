@@ -6,6 +6,7 @@
 import * as btc from '@scure/btc-signer';
 import { base64 } from '@scure/base';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { parsePsbt, sighashAll } from '@trikey/core';
 import { HardwareError } from '../errors';
 
@@ -145,4 +146,70 @@ export function assertDeviceSignedAll(psbt: Uint8Array, fingerprint: string): vo
     const has = tx.getInput(e.index).partialSig?.some(([pub]) => bytesEqual(pub, e.pubkey));
     if (!has) throw new HardwareError('invalid-response', `The device did not sign input ${e.index}.`);
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Signatures that come back inside a PSBT or a transaction (air-gapped devices).
+
+function verifyDer(sigDer: Uint8Array, msg: Uint8Array, pubkey: Uint8Array): boolean {
+  try {
+    return secp256k1.verify(sigDer, msg, pubkey, { prehash: false, format: 'der', lowS: true });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The signatures in a P2WSH multisig witness stack (`[ "", sig, sig, witnessScript ]`). The stack does not say which key
+ * made which signature, so each one is matched to a key of the input script by verifying it. Items that are not a valid
+ * signature of this input (the empty dummy, the script itself) are skipped.
+ */
+export function signaturesFromWitness(tx: Tx, inputIndex: number, stack: readonly Uint8Array[]): PartialSignature[] {
+  const input = tx.getInput(inputIndex);
+  if (!input.witnessScript || !input.witnessUtxo) return [];
+  const keys = multisigPubkeys(input.witnessScript);
+  if (!keys) return [];
+  const msg = sighashAll(tx, inputIndex, input.witnessScript, input.witnessUtxo.amount);
+  const out: PartialSignature[] = [];
+  for (const item of stack) {
+    if (item.length < 9 || item[item.length - 1] !== btc.SigHash.ALL) continue;
+    const key = keys.find((k) => verifyDer(item.slice(0, -1), msg, k));
+    if (key) out.push({ inputIndex, pubkey: key, signature: item });
+  }
+  return out;
+}
+
+/**
+ * Every signature a device handed back in `returned` (a PSBT): partial signatures, and the signatures inside a finalized
+ * input if the device finalized. The returned PSBT must be for the same transaction as `original`; the signatures are
+ * checked against `original`'s own script and amounts, never against what the returned PSBT claims.
+ */
+export function signaturesFromSignedPsbt(original: Uint8Array, returned: Uint8Array): PartialSignature[] {
+  assertSameTransaction(original, returned);
+  const orig = parsePsbtBytes(original);
+  const ret = parsePsbtBytes(returned, 'signed PSBT');
+  const out: PartialSignature[] = [];
+  for (let i = 0; i < ret.inputsLength; i++) {
+    const input = ret.getInput(i);
+    for (const [pubkey, signature] of input.partialSig ?? []) out.push({ inputIndex: i, pubkey, signature });
+    if (input.finalScriptWitness?.length) out.push(...signaturesFromWitness(orig, i, input.finalScriptWitness));
+  }
+  return out;
+}
+
+/** The signatures in a fully signed raw transaction (what a device sends when it has completed the threshold). */
+export function signaturesFromRawTransaction(original: Uint8Array, rawTx: Uint8Array): PartialSignature[] {
+  const orig = parsePsbtBytes(original);
+  let decoded: ReturnType<typeof btc.RawTx.decode>;
+  try {
+    decoded = btc.RawTx.decode(rawTx);
+  } catch (e) {
+    throw new HardwareError('invalid-response', 'The signed transaction could not be parsed.', { detail: e });
+  }
+  const unsigned = btc.RawTx.encode({ ...decoded, segwitFlag: false, witnesses: undefined });
+  const txid = Array.from(sha256(sha256(unsigned)).reverse(), (b) => b.toString(16).padStart(2, '0')).join('');
+  if (txid !== orig.id) throw new HardwareError('invalid-response', 'The signed transaction is not the one we sent.');
+  const out: PartialSignature[] = [];
+  decoded.witnesses?.forEach((stack, i) => out.push(...signaturesFromWitness(orig, i, stack)));
+  return out;
 }
