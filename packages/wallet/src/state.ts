@@ -193,6 +193,44 @@ export const SilentPaymentsRecord = z.object({
   /** Highest block scanned so far (birthHeight - 1 before the first scan). */
   scannedHeight: z.number().int().min(-1),
   coins: z.array(SilentPaymentCoin).default([]),
+  /**
+   * Receiving is on: the guardian (or a local scanner) looks for payments. Off after `disableSilentPayments`; the keys
+   * and the coins already found stay, so what was received can still be moved into the vault.
+   */
+  receiving: z.boolean().default(true),
+  /** What the guardian was last told (so the phone knows when to tell it again), and by which guardian and wallet. */
+  registration: z
+    .object({
+      walletId: z.string(),
+      /** The guardian's nostr pubkey. */
+      guardian: Hex32,
+      /** `singlekey.register` went through with the helper account: the guardian co-signs payments that spend the helper coin. */
+      helper: z.boolean(),
+      /** Identifies the coins registered with `singlekey.register`. */
+      coins: z.string(),
+      /** `sp.register` went through: the guardian holds the scan key. */
+      sp: z.boolean(),
+      /** The labels `sp.register` carried (m >= 1; the change label 0 is implied). */
+      labels: z.array(z.number().int().min(1)).default([]),
+    })
+    .optional(),
+  /** What the last contact with a scanner showed: for the status line, and for deciding whom to ask. */
+  scanner: z
+    .object({
+      source: z.enum(['guardian', 'local']),
+      /** `needs_node_rpc`: the guardian answered 1700. `unsupported`: a guardian that does not know the silent payment methods. */
+      state: z.enum(['pending', 'ok', 'scanning', 'needs_node_rpc', 'unreachable', 'unsupported', 'error']),
+      /** What the guardian itself last said, kept next to a scan the phone's own scanner did because the guardian could not. */
+      guardian: z.object({ state: z.enum(['pending', 'ok', 'scanning', 'needs_node_rpc', 'unreachable', 'unsupported', 'error']), message: z.string().optional() }).optional(),
+      /** ms */
+      checkedAt: z.number(),
+      /** The last block the scanner had scanned when it answered. */
+      tipHeight: z.number().int().min(0).optional(),
+      /** ms: when the newest payment was found. */
+      lastMatchAt: z.number().optional(),
+      message: z.string().optional(),
+    })
+    .optional(),
 });
 export type SilentPaymentsRecord = z.infer<typeof SilentPaymentsRecord>;
 

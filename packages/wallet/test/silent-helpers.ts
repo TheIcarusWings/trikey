@@ -6,7 +6,10 @@
 import * as btc from '@scure/btc-signer';
 import { hex } from '@scure/base';
 import { sha256 } from '@noble/hashes/sha2.js';
-import type { FakeElectrum } from '@trikey/guardian/testing';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { TX_OPTS } from '@trikey/core';
+import type { FakeElectrum, GuardianRig } from '@trikey/guardian/testing';
+import { createOutputs } from '@trikey/silent-payments';
 import type { BlockSource, FeeEstimates, ScanBlock, ScriptUtxo, SingleKeyChainSource } from '../src/index.js';
 
 const scriptHash = (scriptHex: string) => hex.encode(sha256(hex.decode(scriptHex)).reverse());
@@ -103,4 +106,26 @@ export function mirrorOutputs(to: FakeElectrum, txHex: string, height = 0): void
     const o = tx.getOutput(i);
     to.addUtxo(o.script!, { txid: tx.id, vout: i, value: Number(o.amount), height }, txHex);
   }
+}
+
+let payerSeed = 1;
+/**
+ * Somebody else pays silent payment addresses: a fresh confirmed P2WPKH coin (funded "from nowhere") spent to one
+ * taproot output of 30,000 sats per recipient, into the rig's mempool (the next `mine` puts it in a block).
+ */
+export function externalPayment(rig: GuardianRig, recipients: string[]): { txid: string; txHex: string } {
+  const key = sha256(new TextEncoder().encode(`outside payer ${payerSeed++}`));
+  const script = btc.p2wpkh(secp256k1.getPublicKey(key, true)).script;
+  const coin = rig.fund(script, 200_000n);
+  const out = createOutputs({ inputs: [{ txid: coin.txid, vout: 0, prevoutScript: script, privateKey: key }], recipients, network: 'regtest' });
+  const tx = new btc.Transaction(TX_OPTS);
+  tx.addInput({ txid: coin.txid, index: 0, witnessUtxo: { script, amount: 200_000n } });
+  for (const o of out.outputs) tx.addOutput({ script: o.script, amount: 30_000n });
+  tx.addOutput({ script, amount: 200_000n - 30_000n * BigInt(out.outputs.length) - 2_000n });
+  tx.signIdx(key, 0);
+  tx.finalize();
+  const txHex = hex.encode(tx.extract());
+  const err = rig.electrs.applyTransaction(txHex);
+  if (err) throw new Error(`the fake mempool refused the outside payment: ${err}`);
+  return { txid: tx.id, txHex };
 }
