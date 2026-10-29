@@ -34,6 +34,8 @@ import {
   finalizePsbt,
   getNetwork,
   parsePsbt,
+  SEQUENCE_RBF,
+  encodeRelativeBlocks,
   type KeyExpression,
   type Network,
   type NetworkName,
@@ -61,7 +63,6 @@ import {
   type UnsignedRefill,
   type VaultCoin,
 } from './refills.js';
-import { SEQUENCE_RBF, encodeRelativeBlocks } from './sequence.js';
 import { refillStates, summarizeChain, type ChainSummary, type ChainView, type RefillState } from './chain-state.js';
 import { decide, type Decision } from './scheduler.js';
 import { SPENDING_INTERNAL, SPENDING_RECEIVE, SpendingAccount, buildCpfpChild, buildSpendingPayment, finalizeSpending, signSpendingPsbt, type SpendingCoin } from './spending.js';

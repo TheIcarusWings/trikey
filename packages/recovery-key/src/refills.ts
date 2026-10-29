@@ -26,10 +26,9 @@
  */
 import * as btc from '@scure/btc-signer';
 import { hex } from '@scure/base';
-import { CHANGE, ROLES, TX_OPTS, type MultisigWallet, type Role } from '@trikey/core';
+import { CHANGE, LOCKTIME_THRESHOLD, ROLES, SEQUENCE_RBF, TX_OPTS, encodeRelativeBlocks, type MultisigWallet, type Role } from '@trikey/core';
 import { equalBytes } from '@scure/btc-signer/utils.js';
 import { DUST_SATS, feeForRate, refillVsize } from './fees.js';
-import { LOCKTIME_THRESHOLD, SEQUENCE_RBF, encodeRelativeBlocks } from './sequence.js';
 import { ScriptError, decodeRawTx, txidOf, verifyP2wshMultisig, vsizeOf } from './script-verify.js';
 import { SPENDING_INTERNAL, type SpendingAccount } from './spending.js';
 import { RecoveryKeyError } from './errors.js';

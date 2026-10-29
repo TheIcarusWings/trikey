@@ -13,7 +13,7 @@
  * into a `ChainView`.
  */
 import { decodeRawTx, vsizeOf } from './script-verify.js';
-import { absoluteLockHeight, relativeLockHeight } from './sequence.js';
+import { absoluteLockHeight, relativeLockHeight } from '@trikey/core';
 import type { RefillChainRecord, StoredRefill } from './refills.js';
 
 export type RefillStatus =

@@ -15,6 +15,7 @@ import {
   delegatedScripts,
 } from './wallet.js';
 import { findTweak } from './tweak.js';
+import { SEQUENCE_RBF } from './timelock.js';
 
 export interface Utxo {
   txid: string;
@@ -31,8 +32,6 @@ export interface Recipient {
   amount: bigint;
 }
 
-/** Signals RBF (BIP125). */
-const SEQUENCE_RBF = 0xfffffffd;
 const DUST = 546n;
 
 // vbytes: 2-of-3 P2WSH input ≈ 41 non-witness + 254/4 witness.

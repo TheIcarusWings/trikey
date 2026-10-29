@@ -11,9 +11,8 @@ import * as btc from '@scure/btc-signer';
 import { HDKey } from '@scure/bip32';
 import { hex } from '@scure/base';
 import { mnemonicToSeedSync } from '@scure/bip39';
-import { TX_OPTS, type KeyExpression, type Network } from '@trikey/core';
+import { SEQUENCE_RBF, TX_OPTS, type KeyExpression, type Network } from '@trikey/core';
 import { DUST_SATS, P2WPKH_SCRIPT_LEN, cpfpChildFee, estimateVsize, feeForRate, rateOf } from './fees.js';
-import { SEQUENCE_RBF } from './sequence.js';
 import { RecoveryKeyError } from './errors.js';
 
 export const SPENDING_RECEIVE = 0;

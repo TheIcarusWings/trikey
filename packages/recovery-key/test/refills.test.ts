@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import * as btc from '@scure/btc-signer';
 import { hex } from '@scure/base';
-import { CHANGE, SoftwareSigner, TX_OPTS, type MultisigWallet } from '@trikey/core';
+import { CHANGE, SEQUENCE_RBF, SoftwareSigner, TX_OPTS, type MultisigWallet } from '@trikey/core';
 import {
   DEFAULT_PERIOD_BLOCKS,
   REFILL_CHANGE_VOUT,
@@ -16,7 +16,6 @@ import {
   type VaultCoin,
 } from '../src/refills.js';
 import { SpendingAccount, SPENDING_INTERNAL } from '../src/spending.js';
-import { SEQUENCE_RBF } from '../src/sequence.js';
 import { refillVsize, cpfpChildFee, cpfpChildVsize } from '../src/fees.js';
 import { decodeRawTx, vsizeOf } from '../src/script-verify.js';
 import { refillStates, summarizeChain, type ChainView, type TxSeen } from '../src/chain-state.js';
