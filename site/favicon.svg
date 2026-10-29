@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 80" width="88" height="80">
+  <style>
+    .ink { fill: #09090b; }
+    .line { fill: none; stroke: #09090b; }
+    .top { fill: #ea580c; }
+    @media (prefers-color-scheme: dark) {
+      .ink { fill: #fafafa; }
+      .line { stroke: #fafafa; }
+      .top { fill: #fb923c; }
+    }
+  </style>
+  <path class="line" d="M44 14 L16 62 L72 62 Z" stroke-width="6" stroke-linejoin="round"/>
+  <circle class="top" cx="44" cy="14" r="12"/>
+  <circle class="ink" cx="16" cy="62" r="12"/>
+  <circle class="ink" cx="72" cy="62" r="12"/>
+</svg>

@@ -1,0 +1,65 @@
+name: Pages
+
+# Deploys site/ to GitHub Pages (https://trikey.app).
+# One-time repository and DNS setup is described in site/README.md.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate the site
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The domain verification files must be valid JSON.
+          for f in site/.well-known/apple-app-site-association site/.well-known/assetlinks.json; do
+            node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$f"
+            echo "valid JSON: $f"
+          done
+
+          # The page must load nothing from other sites. Links to github.com
+          # and to trikey.app itself are the only absolute URLs allowed in
+          # src and href attributes.
+          bad=$(grep -oE '(src|href)="https?://[^"]*"' site/index.html \
+            | grep -vE '="https?://(www\.)?(github\.com|trikey\.app)(/|")' || true)
+          if [ -n "$bad" ]; then
+            echo "::error file=site/index.html::Disallowed external URL in src/href:"
+            echo "$bad"
+            exit 1
+          fi
+          echo "no external references in site/index.html"
+
+      - uses: actions/configure-pages@v5
+
+      # Hidden files are excluded by default since v4. The site needs
+      # .well-known/ (and .nojekyll), so include them explicitly.
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+          include-hidden-files: true
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
