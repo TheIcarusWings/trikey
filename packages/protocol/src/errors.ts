@@ -57,6 +57,8 @@ export const ErrorCode = {
   BroadcastRejected: 1601,
   /** `tx.broadcast` of a transaction that spends none of the wallet's coins (the guardian is not an open relay). */
   ForeignTransaction: 1602,
+  /** `tx.get` of a transaction larger than a message can carry (try `witness: false`). */
+  TxTooLarge: 1603,
 } as const;
 
 export type ErrorCodeName = keyof typeof ErrorCode;
@@ -93,6 +95,7 @@ export const ErrorMessage: Record<ErrorCodeValue, string> = {
   [ErrorCode.TxNotFound]: 'Transaction not found',
   [ErrorCode.BroadcastRejected]: 'The node rejected the transaction',
   [ErrorCode.ForeignTransaction]: 'The transaction spends none of the wallet\'s coins',
+  [ErrorCode.TxTooLarge]: 'The transaction is too large to send',
 };
 
 /** An error that crosses the wire: thrown by handlers, and by the client for error responses. */

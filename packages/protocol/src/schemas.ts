@@ -396,7 +396,14 @@ export const WalletSyncResult = z.object({
   gapLimit: z.int().min(1).max(1000),
 });
 
-export const TxGetParams = z.strictObject({ txid: Hex32 });
+export const TxGetParams = z.strictObject({
+  txid: Hex32,
+  /**
+   * `false`: the transaction without its witness data (the legacy serialization). It has the same txid and
+   * is all a PSBT's `nonWitnessUtxo` needs, at a fraction of the size. Default `true`.
+   */
+  witness: z.boolean().optional(),
+});
 export const TxGetResult = z.object({ txHex: RawTxHex });
 
 export const TxBroadcastParams = z.strictObject({

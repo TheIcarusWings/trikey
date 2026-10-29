@@ -81,7 +81,7 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `guardian.unlock` | `{kind:"passphrase", passphrase}` or `{kind:"hardware", secret: hex}` | `unlocked: boolean` |
 | `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time`, `dailyLimit?: { limitSats, usedSats, availableSats }` |
 | `wallet.sync` | `historyLimit?` (1-500, default 100) | `tipHeight`, `tipHash`, `utxos`, `utxosTruncated`, `balance: { confirmedSats, unconfirmedSats }`, `history`, `historyTruncated`, `nextReceiveIndex`, `nextChangeIndex`, `gapLimit` (see "Chain data") |
-| `tx.get` | `txid: Hex32` | `txHex` |
+| `tx.get` | `txid: Hex32`, `witness?: boolean` (default `true`) | `txHex` |
 | `tx.broadcast` | `txHex` | `txid` |
 | `fees.estimate` | `targets?` (1-8 block targets, 1-1008; default `[1, 3, 6, 144]`) | `estimates: [{ target, satPerVb \| null }]`, `minRelaySatPerVb` |
 | `recovery.access` | `approval: { kind: "bip137", expiresAt, signature }` | `descriptor`, `walletId`, `network`, `guardianKey`, `hardwareAuth`, `policy`, `nextHardwareSequence`, `phoneSpending`, `activeRecoveryId`, `accessExpiresAt` (see "Recovery access") |
@@ -177,7 +177,7 @@ The guardian already has the wallet's descriptor and the user's own Electrs, so 
   * `utxos`: `{ txid, vout, valueSats, height, confirmations, chain, index }`, every unspent output, confirmed ones first by value, at most 500 (`utxosTruncated` says there are more; `balance` always counts all of them). `chain`/`index` are the derivation steps below the account keys, which the phone needs to build the PSBT input.
   * `history`: `{ txid, height, confirmations, time?, netSats, feeSats? }`, newest first (unconfirmed, then by height), at most `historyLimit` (`historyTruncated`). `netSats` is what the transaction did to the wallet's balance: received minus spent, fee included, negative for payments. `feeSats` is present when every input belongs to the wallet (otherwise the guardian does not know all input amounts). `time` is the block's timestamp.
   * `nextReceiveIndex` / `nextChangeIndex`: the first index with no history on each chain. The phone receives at `nextReceiveIndex` and sends change to `nextChangeIndex`.
-* **`tx.get`** returns a raw transaction (for PSBT `nonWitnessUtxo`) after checking it hashes to `txid`, so a confused Electrs cannot hand the phone a different transaction. Unknown: `1600 TxNotFound`. At most 150,000 hex characters.
+* **`tx.get`** returns a raw transaction (for PSBT `nonWitnessUtxo`) after checking it hashes to `txid`, so a confused Electrs cannot hand the phone a different transaction. With `witness: false` it is the serialization without witness data: same txid, all `nonWitnessUtxo` needs, and much smaller. Unknown: `1600 TxNotFound`. At most 150,000 hex characters, else `1603 TxTooLarge`.
 * **`tx.broadcast`** relays a fully signed raw transaction, but **only one that spends at least one output paying one of the wallet's addresses** (within the scanned range), so the guardian is not an open relay. Otherwise `1602 ForeignTransaction`. A transaction that does not parse is `-32602`; one the node refuses (double spend, too low a fee, bad signature) is `1601 BroadcastRejected` with the node's reason in `message` and `data.reason`. The result is the txid the guardian computed.
 * **`fees.estimate`** asks the node (`blockchain.estimatefee`) per target and converts BTC/kvB to sat/vB; `satPerVb` is `null` where the node has no estimate (usual on regtest and signet, and right after a restart). `minRelaySatPerVb` is the node's relay fee floor.
 * Electrs unreachable or not synced: `1501 Unavailable`; try again later.
@@ -192,7 +192,7 @@ The phone keeps its own "spent today" estimate for showing the remaining limit a
 2. **`recovery.access`** from any sender, once a wallet is paired. The guardian rebuilds the text with *its own* nostr key and the *sender's* key, so the signature is no use to another phone or against another guardian, and verifies it against the paired `hardwareAuth`. Wrong signature `1202`, expired `1203`, too far ahead `1206`. It does not consume a hardware sequence number.
 3. The sender may then, until `accessExpiresAt` (durably, across guardian restarts), call `guardian.status`, `wallet.sync`, `tx.get`, `fees.estimate`, `recovery.start`, `recovery.status`, `recovery.cancel` (only with a hardware approval) and `recovery.access` again. Not `sign`, `policy.*`, `tx.broadcast`, `phone.resume` or `guardian.unlock`. The result gives the phone everything it needs to sweep: the descriptor, the wallet id, the guardian's key and the rules (for the sweep fee cap).
 
-Anyone holding the hardware wallet can thus start a recovery from any phone, which is the design: a recovery is announced to the paired phone and every alert contact, and any of them can cancel it (DESIGN.md, threat model). The web UI's activity log shows every access grant. A phone with recovery access does not receive alerts; it polls `recovery.status`.
+Anyone holding the hardware wallet can thus start a recovery from any phone, which is the design: a recovery is announced to the paired phone and every alert contact, and any of them can cancel it (DESIGN.md, threat model). The web UI's activity log shows every access grant. While its access lasts, a phone with recovery access also gets the protocol alerts (best effort; it is not one of the recovery's recorded recipients), and it can poll `recovery.status`.
 
 ### Alerts
 
@@ -244,6 +244,7 @@ Existing codes never change meaning; new ones are only added. `data` is optional
 | 1600 | TxNotFound | `tx.get` of a transaction Electrs does not know |
 | 1601 | BroadcastRejected | the node refused the transaction; its reason is in `message` and `data.reason` |
 | 1602 | ForeignTransaction | `tx.broadcast` of a transaction that spends none of the wallet's coins |
+| 1603 | TxTooLarge | `tx.get` of a transaction longer than 150,000 hex characters (`witness: false` may fit) |
 
 ### Engine refusals to error codes
 

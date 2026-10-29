@@ -175,6 +175,7 @@ describe('chain methods', () => {
 
   it('tx.get and tx.broadcast carry lowercase raw transaction hex of bounded size', () => {
     expect(ok('tx.get', { txid: 'AB'.repeat(32) })).toBe(false);
+    expect(ok('tx.get', { txid: 'ab'.repeat(32), witness: false })).toBe(true);
     expect(res('tx.get', { txHex: RAW_TX })).toBe(true);
     expect(ok('tx.broadcast', { txHex: RAW_TX.toUpperCase() })).toBe(false);
     expect(ok('tx.broadcast', { txHex: RAW_TX.slice(1) })).toBe(false); // odd length
@@ -335,6 +336,7 @@ describe('error codes', () => {
     expect(ErrorCode.TxNotFound).toBe(1600);
     expect(ErrorCode.BroadcastRejected).toBe(1601);
     expect(ErrorCode.ForeignTransaction).toBe(1602);
+    expect(ErrorCode.TxTooLarge).toBe(1603);
   });
 
   it('RpcError serialises to a wire error object', () => {
