@@ -277,12 +277,14 @@ Someone who runs a guardian can host one for a person they know.
 
 - `packages/core/`: descriptors (BIP380 checksum, BIP389 multipath), BIP48 wallets, PSBT build, sign, analyze and finalize, software signer. `tweak.ts` holds the BIP 89 tweak math, kept for family hosting.
 - `packages/protocol/`: the nostr RPC (schemas, gift-wrap transport with per-peer NIP-44 conversation key caching, replay guard, client and server, pairing and recovery URIs, NIP-06 phone identity, an in-memory relay for tests). Spec in `PROTOCOL.md`.
-- `packages/wallet/`: the phone's side (key 2, pairing, payments, rules, recovery, backup), platform-agnostic; the app supplies storage and hardware adapters. It has client calls for remote lock, retiring a wallet and reading the recovery code; confirming the hardware wallet after a rotation is not wired yet.
+- `packages/wallet/`: the phone's side (key 2, pairing, payments, rules, recovery, backup), platform-agnostic; the app supplies storage and hardware adapters. It finishes a recovery (switching to the adopted wallet after checking it, then `confirmHardware()`), replaces the guardian (pair the new one, sweep, retire the old wallet, sweep stray coins later), locks the guardian remotely, parses every Trikey QR (`parseScannedCode`), and keeps a send log that travels in the backup. Chain data comes from the guardian.
 - `apps/guardian/`: the guardian. `src/policy/` is the policy engine (spend checks, daily limit, rule changes with BIP137 approvals, Delay & Notify, wallet rotation with one active wallet plus retired ones, state format version 2 with migration from version 1). Around it: key storage (Argon2id, m=64 MiB, t=3, then XChaCha20-Poly1305), lock/unlock (also from the phone), reset, the nostr RPC server and NIP-17 alert DMs behind one shared inbox, an Electrum client (sweep completeness, broadcast, chain time) and the HTTP API for the web UI. Entry point `src/main.ts`.
 - `apps/guardian-web/`: the guardian's web UI, including the recovery code and the reset. Its API is in `API.md`.
-- `apps/mobile/`: the React Native app. Every screen is built, on sample data; wallet, hardware and backup wiring are next.
+- `packages/recovery-key/`: Recovery Key mode (no home server): the printed Recovery Kit, the chain of BIP 68 timelocked refills and its scheduler, the single-key spending balance with CPFP, an Esplora client, and recovery with any two keys.
+- `apps/mobile/`: the React Native app (Expo). Demo, regtest-simulator and real modes; guardian mode runs on `@trikey/wallet` with Ledger, Trezor and QR adapters, secure key storage and a recovery-code backup file. Recovery Key mode screens are still demo-only.
 - `packaging/`: Docker image, Umbrel community app store entry, Start9 package skeleton.
-- `tools/consensus-verify/`: Rust tool that checks transactions against libbitcoinconsensus (Bitcoin Core's script verifier). It builds; tests don't use it yet.
+- `site/`: trikey.app, hosted on Vercel, including the passkey association files.
+- `tools/consensus-verify/`: Rust tool that checks transactions against libbitcoinconsensus (Bitcoin Core's script verifier). CI builds it, and the core and Recovery Key tests run every transaction shape through it.
 - `design/`: the screen designs. `docs/`: earlier design pages (key 3 options, the refill design).
 
 ## MVP build order
