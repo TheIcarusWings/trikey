@@ -1,5 +1,56 @@
-// Trikey site: scroll-driven film scenes.
+// Trikey site: film players and scroll-driven film scenes. No network
+// requests beyond the page's own files, no storage.
 //
+// Films: a quiet play button over the poster instead of the browser's
+// controls until someone presses play, and only one film plays at a time.
+// Without this script the videos keep their native controls.
+(function () {
+  'use strict';
+
+  function init() {
+    var films = Array.prototype.slice.call(document.querySelectorAll('video.film'));
+    films.forEach(function (video) {
+      var frame = video.parentNode;
+      var label = frame.querySelector('.film-label');
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'film-play';
+      button.textContent = label ? label.textContent : 'Play the film';
+      if (label) label.hidden = true;
+      video.controls = false;
+      frame.appendChild(button);
+      button.addEventListener('click', function () {
+        video.controls = true;
+        video.play();
+      });
+      video.addEventListener('play', function () {
+        frame.classList.add('playing');
+        films.forEach(function (other) {
+          if (other !== video) other.pause();
+        });
+      });
+      video.addEventListener('ended', function () {
+        frame.classList.remove('playing');
+        video.controls = false;
+      });
+    });
+    // Choosing another key hides the current episode: stop its film too.
+    Array.prototype.forEach.call(document.querySelectorAll('.lose-choices input'), function (input) {
+      input.addEventListener('change', function () {
+        films.forEach(function (video) {
+          if (video.closest('.episode')) video.pause();
+        });
+      });
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+
 // Each [data-pin] section becomes a tall scroll track with a sticky stage.
 // As the track scrolls past, the section gets --p (0..1), every element with
 // data-from/data-to inside it gets the class "on" while --p is in its range,
@@ -7,7 +58,7 @@
 // the progress of its shot instead of playing.
 //
 // Without this script, or with reduced motion, nothing here runs and the
-// scenes stay a plain stack of cards. No network requests, no storage.
+// scenes stay a plain stack of cards.
 (function () {
   'use strict';
 
