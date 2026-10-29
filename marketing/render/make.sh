@@ -45,7 +45,7 @@ for slot in "${!FILM[@]}"; do
   done
 done
 
-[ -d build/vo ] && render/audio/prep-vo.sh >/dev/null
+[ -d build/vo ] && python3 render/audio/prep_vo.py >/dev/null
 
 for v in ${@:-v1 v1b v2 v3 f1 e1 e2 e3}; do
   id=${PAGE[$v]}
