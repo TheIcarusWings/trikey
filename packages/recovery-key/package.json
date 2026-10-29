@@ -1,0 +1,28 @@
+{
+  "name": "@trikey/recovery-key",
+  "version": "0.1.0",
+  "description": "Recovery Key mode: a 2-of-3 vault with an offline Recovery Key, a phone spending balance fed by pre-signed, BIP 68-timelocked refills, and recovery with any two keys. No home server.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts",
+    "./testing/server": "./src/testing/esplora-server.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "@scure/base": "^2.4.0",
+    "@scure/bip32": "^2.4.0",
+    "@scure/bip39": "^2.4.0",
+    "@scure/btc-signer": "^2.4.1",
+    "@trikey/core": "*",
+    "@trikey/wallet": "*",
+    "qr": "0.7.2"
+  }
+}
