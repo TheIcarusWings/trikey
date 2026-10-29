@@ -574,7 +574,7 @@ class Service implements RealWalletService {
         break;
       case 'alert':
         if (e.alert.type === 'guardian_locked') {
-          addEvent(this.log, { kind: 'guardian-locked', host: hostFromLabel(this.w?.state.guardian?.label), at: e.at * 1000 });
+          addEvent(this.log, { kind: 'guardian-locked', host: hostFromLabel(this.w?.state.guardian?.label), at: e.atMs });
           void this.saveLogNow();
           // Ask the guardian itself: the wallet ignores a "locked" alert that is not newer than its last status check.
           void this.w?.refreshStatus().catch(() => undefined);

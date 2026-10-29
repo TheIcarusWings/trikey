@@ -50,6 +50,7 @@ import {
   type Alert,
   type HardwareAction,
   type HardwareApproval,
+  type HistoryEntry,
   type MethodName,
   type Params,
   type PairingPayload,
@@ -72,7 +73,7 @@ import {
   type SlotInput,
 } from './backup.js';
 import { verifyMessage } from './bip137.js';
-import { GuardianChainSource, type ChainSnapshot, type ChainSource, type FeeEstimates, type GuardianRpc } from './chain.js';
+import { GuardianChainSource, txidOfRaw, type ChainSnapshot, type ChainSource, type FeeEstimates, type GuardianRpc } from './chain.js';
 import { WalletError, asWalletError, refusalFromError, type GuardianRefusal } from './errors.js';
 import {
   authKeyPath,
@@ -85,6 +86,8 @@ import {
   newMnemonic,
 } from './keys.js';
 import type { CloudBackupStore, HardwareKind, HardwareProvider, HardwareSigner, HardwareWalletPolicy, KeyValueStore, PasskeyPrf, SecureKeyStore } from './platform.js';
+import { TxCache } from './txcache.js';
+import { parseScannedCode, type ScannedCode } from './scan.js';
 import {
   FEE_TARGETS,
   LIMIT_WINDOW_MS,
@@ -100,10 +103,14 @@ import {
 } from './send.js';
 import {
   StateStore,
+  type GuardianRecord,
   type GuardianStatusCache,
   type HardwareRecord,
   type PendingRequest,
   type RecoveryRecord,
+  type ReplaceRecord,
+  type RetiredWallet,
+  type SendLogEntry,
   type WalletState,
 } from './state.js';
 
@@ -136,15 +143,85 @@ export interface WalletDeps {
   storageKey?: string;
   /** How many history entries a sync asks for (default 100). */
   historyLimit?: number;
+  /**
+   * Chain data and broadcasting for a wallet no guardian serves: the old wallet after "Replace guardian" when the old
+   * box is gone or has retired it (stray coins), e.g. the user's own Electrum or Esplora server. Default: none, and
+   * the wallet uses what it kept from the last sync.
+   */
+  standaloneChain?: (wallet: { descriptor: string; walletId: string; network: NetworkName }) => ChainSource | undefined;
+  /** How long to wait for an old guardian before calling it unreachable (ms, default the smaller of 10 s and `rpcTimeoutMs`). */
+  probeTimeoutMs?: number;
 }
 
 export type WalletEvent =
   | { type: 'state' }
-  | { type: 'alert'; alert: Alert; id: string; at: number }
+  /**
+   * A guardian alert. `alert.at` is the protocol's unix seconds (the guardian's clock); `atMs` is the same moment in
+   * milliseconds, the unit of every local time in this package (`Clock.now()`, `checkedAt`, `syncedAt`, the send log).
+   */
+  | { type: 'alert'; alert: Alert; id: string; atMs: number }
   /** The hardware wallet is about to be asked to sign this exact text: show it, so the user can compare it with the device screen. */
-  | { type: 'hardware_prompt'; purpose: 'pairing' | 'approval' | 'recovery-access' | 'payment' | 'recovery-sweep'; text: string }
+  | { type: 'hardware_prompt'; purpose: 'pairing' | 'approval' | 'recovery-access' | 'payment' | 'recovery-sweep' | 'register'; text: string }
   /** A request left over from before the app restarted was settled (or given up). */
-  | { type: 'pending_settled'; method: string; ok: boolean; refusal?: GuardianRefusal };
+  | { type: 'pending_settled'; method: string; ok: boolean; refusal?: GuardianRefusal }
+  /** A step of a long operation ("Replace guardian"), for a progress line. */
+  | { type: 'progress'; operation: 'replace-guardian' | 'stray-coins'; step: ReplaceStep }
+  /** The phone now holds another wallet: the guardian adopted a recovery's destination, or "Replace guardian" finished. */
+  | { type: 'wallet_switched'; walletId: string; previousWalletId: string; reason: 'recovery' | 'replace-guardian'; hardwareConfirmRequired: boolean };
+
+/** The steps of "Replace guardian", in order. */
+export type ReplaceStep = 'pair' | 'sign' | 'broadcast' | 'retire' | 'switch';
+
+/** A history entry with what only this phone knows about it (from its send log). */
+export interface WalletHistoryEntry extends HistoryEntry {
+  /** Where a payment from this phone went. */
+  recipient?: string;
+  /** What was paid, without the fee (payments from this phone). */
+  amountSats?: number;
+  label?: string;
+  /** The key that signed next to the phone's. */
+  signedBy?: 'guardian' | 'hardware';
+  purpose?: 'payment' | 'sweep';
+  /** Sent by this phone and not in the guardian's history yet. */
+  local?: true;
+}
+
+/** What "Replace guardian" will do, for the person to confirm (`previewReplaceGuardian`). */
+export interface ReplacePlan {
+  newGuardian: GuardianPreview;
+  oldWalletId: string;
+  newWalletId: string;
+  /** The old guardian answered just now. If not, the person must confirm it is gone (`oldGuardianReachable: false`). */
+  oldGuardianReachable: boolean;
+  balanceSats: number;
+  coins: number;
+  /** The sweep's fee at today's rate, roughly. */
+  estimatedFeeSats: number;
+  /** In plain words, in order. */
+  steps: { step: ReplaceStep; text: string }[];
+}
+
+export type ReplaceOutcome =
+  | {
+      status: 'done';
+      walletId: string;
+      previousWalletId: string;
+      sweepTxid?: string;
+      movedSats: number;
+      feeSats: number;
+      /** The old guardian retired the old wallet (false: it was offline; `retireOldWallet()` later). */
+      oldWalletRetired: boolean;
+    }
+  | {
+      /** Signed, but no node took it yet (the old guardian is offline and nothing else can broadcast). Call `replaceGuardian()` again later. */
+      status: 'awaiting_broadcast';
+      walletId: string;
+      previousWalletId: string;
+      sweepTxid: string;
+      txHex: string;
+      movedSats: number;
+      feeSats: number;
+    };
 
 export interface HardwareSummary {
   kind: HardwareKind;
@@ -172,14 +249,19 @@ export interface PairOutcome {
 }
 
 export interface WalletSnapshot {
+  walletId?: string;
   balance: { confirmedSats: number; unconfirmedSats: number; totalSats: number };
   tipHeight: number;
+  /** ms */
   syncedAt: number;
-  history: ChainSnapshot['history'];
+  /** The guardian's history with this phone's send log merged in (newest first). */
+  history: WalletHistoryEntry[];
   utxos: ChainSnapshot['utxos'];
   guardian?: GuardianStatusCache;
   /** The phone's estimate of the guardian's 24 h count, and the limit. */
   dailyLimit?: { limitSats: number; spentEstimateSats: number; remainingSats: number };
+  /** After a recovery moved the wallet: the hardware wallet must register it and confirm its key (`confirmHardware`). */
+  hardwareConfirmRequired: boolean;
 }
 
 export type SendResult =
@@ -223,7 +305,9 @@ const ALERT_COALESCE_MS = 100;
 const ACCESS_TTL_SEC = 12 * 3600;
 /** A request left from before a restart is re-sent within this window of being sent (the guardian's request TTL is 1 h). */
 const PENDING_RESEND_MS = 50 * 60_000;
-const STATE_CHANGING = new Set<MethodName>(['policy.update', 'recovery.start', 'recovery.cancel', 'phone.resume']);
+const STATE_CHANGING = new Set<MethodName>(['policy.update', 'recovery.start', 'recovery.cancel', 'phone.resume', 'hardware.confirm']);
+const MAX_SEND_LOG = 500;
+const policyNameOf = (walletId: string) => `Trikey ${walletId.slice(0, 4)}`;
 
 const sameKey = (a: KeyExpression, b: KeyExpression) => a.fingerprint === b.fingerprint && a.xpub === b.xpub && a.originPath === b.originPath;
 
@@ -258,6 +342,10 @@ interface PairingSession {
   guardianKey: Result<'pair.prepare'>['guardianKey'];
   guardianVersion: string;
   wallet: MultisigWallet;
+  /** `onboard`: the first guardian; `replace`: the new guardian of "Replace guardian". */
+  purpose: 'onboard' | 'replace';
+  /** The code it came from ("Replace guardian" checks it is the one being run). */
+  uri?: string;
 }
 
 export class TrikeyWallet {
@@ -273,6 +361,12 @@ export class TrikeyWallet {
   private chainSource?: ChainSource;
   private fees?: FeeEstimates;
   private saving: Promise<void> = Promise.resolve();
+  private readonly txs: TxCache;
+  /** `multisig()` parses the descriptor once per descriptor. */
+  private walletCache?: { descriptor: string; wallet: MultisigWallet };
+  /** The new guardian's connection while "Replace guardian" runs. */
+  private replaceRpc?: { rpc: GuardianRpc; pool: RelayPool };
+  private adopting?: Promise<boolean>;
 
   private constructor(
     private readonly deps: WalletDeps,
@@ -283,6 +377,7 @@ export class TrikeyWallet {
     this.clock = deps.clock ?? systemClock;
     this.store = store;
     this.s = state;
+    this.txs = new TxCache(deps.store, `${store.key}.txs`);
   }
 
   // ===========================================================================
@@ -322,6 +417,8 @@ export class TrikeyWallet {
       spends: [],
       contactNames: {},
       seenAlerts: [],
+      sendLog: [],
+      retiredWallets: [],
     };
     await store.save(state);
     return new TrikeyWallet(deps, state, store);
@@ -402,6 +499,9 @@ export class TrikeyWallet {
     this.pairing?.rpc.close();
     this.pairing?.pool.close();
     this.pairing = undefined;
+    this.replaceRpc?.rpc.close();
+    this.replaceRpc?.pool.close();
+    this.replaceRpc = undefined;
     const hw = this.hwSession;
     this.hwSession = undefined;
     await hw?.close().catch(() => {});
@@ -413,6 +513,7 @@ export class TrikeyWallet {
     await this.deps.secureStore.remove(this.s.secrets.key2);
     await this.deps.secureStore.remove(this.s.secrets.nostr);
     await this.store.clear();
+    await this.txs.clear();
   }
 
   // ===========================================================================
@@ -442,7 +543,11 @@ export class TrikeyWallet {
     return k;
   }
 
-  private async connect(peer: string, relays: string[]): Promise<{ rpc: GuardianRpc; pool: RelayPool }> {
+  /**
+   * A client for the guardian `peer`. Its alerts drive the wallet (`onAlert`), except on `routeAlerts: false`
+   * connections to an old guardian, whose alerts are about a wallet the phone has left.
+   */
+  private async connect(peer: string, relays: string[], how: { routeAlerts?: boolean } = {}): Promise<{ rpc: GuardianRpc; pool: RelayPool }> {
     const pool = this.deps.relayPool();
     const secretKey = await this.nostrSecret();
     const opts: RpcClientOptions = {
@@ -456,7 +561,7 @@ export class TrikeyWallet {
     };
     const rpc = this.deps.createRpc ? this.deps.createRpc(opts) : new RpcClient(opts);
     // The client keeps the key for as long as it runs; it is not zeroed here.
-    rpc.onAlert((alert, meta) => void this.onAlert(alert, meta));
+    if (how.routeAlerts !== false) rpc.onAlert((alert, meta) => void this.onAlert(alert, meta));
     await rpc.start();
     return { rpc, pool };
   }
@@ -596,6 +701,13 @@ export class TrikeyWallet {
         const st = await this.call('guardian.status', {});
         return st.phoneSpending === 'enabled' ? { phoneSpending: 'enabled' } : undefined;
       }
+      case 'hardware.confirm': {
+        const st = await this.call('guardian.status', {});
+        const params = p.params as Params<'hardware.confirm'>;
+        return st.walletId && st.hardwareConfirmRequired === false
+          ? { walletId: st.walletId, hardwareAuth: params.hardwareAuth, nextHardwareSequence: st.nextHardwareSequence }
+          : undefined;
+      }
       default:
         return undefined;
     }
@@ -611,6 +723,8 @@ export class TrikeyWallet {
   private async applyResult(method: MethodName, result: any): Promise<void> {
     if (method === 'policy.update') await this.storeRules(result as Result<'policy.update'>);
     else if (method === 'recovery.start' || method === 'recovery.cancel') await this.storeRecovery((result as Result<'recovery.start'>).recovery);
+    else if (method === 'hardware.confirm' && (result as Result<'hardware.confirm'>).walletId === this.s.wallet?.walletId)
+      await this.update((s) => void (s.hardwareConfirm = undefined));
     if (method !== 'policy.update') await this.refreshStatus().catch(() => undefined);
   }
 
@@ -679,11 +793,11 @@ export class TrikeyWallet {
     return sig;
   }
 
-  /** Signs PSBT inputs on the device and checks every input gained a valid hardware signature. */
-  private async hardwareSignPsbt(hw: HardwareSigner, rec: HardwareRecord, psbt: Uint8Array, wallet: MultisigWallet, descriptor: string): Promise<Uint8Array> {
+  /** Signs PSBT inputs on the device (for the wallet as `policy` registered it) and checks every input gained a valid hardware signature. */
+  private async hardwareSignPsbt(hw: HardwareSigner, psbt: Uint8Array, wallet: MultisigWallet, policy: HardwareWalletPolicy): Promise<Uint8Array> {
     let out: Uint8Array;
     try {
-      out = base64.decode(await hw.signPsbt(base64.encode(psbt), this.devicePolicy(rec, descriptor)));
+      out = base64.decode(await hw.signPsbt(base64.encode(psbt), policy));
     } catch (e) {
       if (e instanceof WalletError) throw e;
       throw new WalletError('hardware_invalid_response', `The hardware wallet did not sign: ${(e as Error).message}`, { cause: e });
@@ -718,6 +832,28 @@ export class TrikeyWallet {
     if (this.s.stage !== 'new') throw new WalletError('wrong_state', 'This wallet is already paired.');
     const hwRec = this.s.hardware;
     if (!hwRec) throw new WalletError('wrong_state', 'Connect the hardware wallet first.');
+    const session = await this.openGuardianSession(pairingUri, hwRec, 'onboard');
+    return this.previewOf(session);
+  }
+
+  private previewOf(session: PairingSession): GuardianPreview {
+    const { payload, wallet } = session;
+    return {
+      guardianNpub: npubEncode(payload.guardianPubkey),
+      label: payload.label,
+      relays: payload.relays,
+      guardianVersion: session.guardianVersion,
+      walletId: wallet.fingerprint(),
+      descriptor: wallet.descriptor(),
+      expiresAt: payload.expiresAt,
+    };
+  }
+
+  /**
+   * Decodes a pairing code, connects to that guardian, fetches its key (`pair.prepare`) and builds the wallet of key 2,
+   * the hardware wallet `hwRec` and that key. Kept as `this.pairing` until `pair` (or replaced by another scan).
+   */
+  private async openGuardianSession(pairingUri: string, hwRec: HardwareRecord, purpose: PairingSession['purpose']): Promise<PairingSession> {
     let payload: PairingPayload;
     try {
       payload = decodePairingUri(pairingUri, this.nowSec());
@@ -750,21 +886,41 @@ export class TrikeyWallet {
       const acct = wallet.accountPubkeys();
       if (new Set([hex.encode(acct.app), hex.encode(acct.hardware), hex.encode(acct.cosigner)]).size !== 3)
         throw new WalletError('guardian_mismatch', 'The three keys of the wallet must be different.');
-      this.pairing = { payload, rpc, pool, guardianKey: prep.guardianKey, guardianVersion: prep.guardianVersion, wallet };
-      return {
-        guardianNpub: npubEncode(payload.guardianPubkey),
-        label: payload.label,
-        relays: payload.relays,
-        guardianVersion: prep.guardianVersion,
-        walletId: wallet.fingerprint(),
-        descriptor: wallet.descriptor(),
-        expiresAt: payload.expiresAt,
-      };
+      const session: PairingSession = { payload, rpc, pool, guardianKey: prep.guardianKey, guardianVersion: prep.guardianVersion, wallet, purpose };
+      this.pairing = session;
+      return session;
     } catch (e) {
       rpc.close();
       pool.close();
       throw e;
     }
+  }
+
+  /** `pair` at the session's guardian with the hardware wallet's pairing proof; checks it registered exactly this wallet. */
+  private async registerAtGuardian(session: PairingSession, opts: { rules: Policy; deviceName: string; proof: string; replacesWalletId?: string }): Promise<Result<'pair'>> {
+    const hwRec = this.s.hardware!;
+    const walletId = session.wallet.fingerprint();
+    const descriptor = session.wallet.descriptor();
+    let res: Result<'pair'>;
+    try {
+      res = await session.rpc.call('pair', {
+        pairingSecret: session.payload.secret,
+        deviceName: opts.deviceName,
+        network: this.network.name,
+        phoneKey: this.s.key2,
+        descriptor,
+        phoneNostrPubkey: this.s.nostrPubkey,
+        hardwareAuth: hwRec.auth,
+        hardwareAuthProof: opts.proof,
+        rules: opts.rules,
+        ...(opts.replacesWalletId ? { replacesWalletId: opts.replacesWalletId } : {}),
+      });
+    } catch (e) {
+      throw asWalletError(e, 'pairing');
+    }
+    if (res.walletId !== walletId || res.descriptor !== descriptor || res.guardianKey.xpub !== session.guardianKey.xpub)
+      throw new WalletError('guardian_mismatch', 'The guardian registered a different wallet than the phone built.');
+    return res;
   }
 
   /**
@@ -775,7 +931,7 @@ export class TrikeyWallet {
   async pair(opts: { rules: Policy; deviceName?: string; verifyAddress?: boolean }): Promise<PairOutcome> {
     const session = this.pairing;
     const hwRec = this.s.hardware;
-    if (this.s.stage !== 'new' || !session || !hwRec) throw new WalletError('wrong_state', 'Scan the guardian pairing code first.');
+    if (this.s.stage !== 'new' || !session || session.purpose !== 'onboard' || !hwRec) throw new WalletError('wrong_state', 'Scan the guardian pairing code first.');
     let rules: Policy;
     try {
       rules = normalizePolicy(opts.rules);
@@ -787,7 +943,7 @@ export class TrikeyWallet {
     const descriptor = wallet.descriptor();
     const deviceName = opts.deviceName ?? this.s.deviceName;
     const cosignerPub = hex.encode(wallet.accountPubkeys().cosigner);
-    const policyName = `Trikey ${walletId.slice(0, 4)}`;
+    const policyName = policyNameOf(walletId);
 
     const { proof, hmac } = await this.withHardware(async (hw, rec) => {
       const proof = await this.signWithAuthKey(hw, rec, pairingMessage(walletId, cosignerPub), 'pairing');
@@ -795,24 +951,7 @@ export class TrikeyWallet {
       return { proof, hmac: reg.hmac };
     }, hwRec);
 
-    let res: Result<'pair'>;
-    try {
-      res = await session.rpc.call('pair', {
-        pairingSecret: session.payload.secret,
-        deviceName,
-        network: this.network.name,
-        phoneKey: this.s.key2,
-        descriptor,
-        phoneNostrPubkey: this.s.nostrPubkey,
-        hardwareAuth: hwRec.auth,
-        hardwareAuthProof: proof,
-        rules,
-      });
-    } catch (e) {
-      throw asWalletError(e, 'pairing');
-    }
-    if (res.walletId !== walletId || res.descriptor !== descriptor || res.guardianKey.xpub !== session.guardianKey.xpub)
-      throw new WalletError('guardian_mismatch', 'The guardian registered a different wallet than the phone built.');
+    const res = await this.registerAtGuardian(session, { rules, deviceName, proof });
 
     // Paired: from here on the guardian has the wallet, so persist before anything else can fail.
     this.rpc = session.rpc;
@@ -859,11 +998,16 @@ export class TrikeyWallet {
   // ===========================================================================
   // The wallet, sync, receive
 
-  /** The 2-of-3 wallet (keys app, hardware, guardian). */
+  /** The 2-of-3 wallet (keys app, hardware, guardian). Parsed once per descriptor. */
   multisig(): MultisigWallet {
     const w = this.s.wallet;
     if (!w) throw new WalletError('wrong_state', 'The wallet is not paired yet.');
-    return MultisigWallet.fromDescriptor(w.descriptor, this.network);
+    return this.walletOf(w.descriptor);
+  }
+
+  private walletOf(descriptor: string): MultisigWallet {
+    if (this.walletCache?.descriptor !== descriptor) this.walletCache = { descriptor, wallet: MultisigWallet.fromDescriptor(descriptor, this.network) };
+    return this.walletCache.wallet;
   }
 
   private requirePaired(): void {
@@ -873,6 +1017,7 @@ export class TrikeyWallet {
   private async storeStatus(st: Result<'guardian.status'>): Promise<GuardianStatusCache> {
     const cache: GuardianStatusCache = {
       checkedAt: this.now(),
+      guardianTime: st.time,
       state: st.state,
       paired: st.paired,
       phoneSpending: st.phoneSpending,
@@ -880,6 +1025,8 @@ export class TrikeyWallet {
       nextHardwareSequence: st.nextHardwareSequence,
       dailyLimit: st.dailyLimit,
       skewSec: st.time - this.nowSec(),
+      ...(st.walletId ? { walletId: st.walletId } : {}),
+      ...(st.hardwareConfirmRequired !== undefined ? { hardwareConfirmRequired: st.hardwareConfirmRequired } : {}),
     };
     await this.update((s) => {
       s.guardianStatus = cache;
@@ -888,29 +1035,151 @@ export class TrikeyWallet {
     return cache;
   }
 
-  /** Reads `guardian.status` (locked or not, phone payments, recovery, the daily limit count). */
+  /** Reads `guardian.status` (locked or not, phone payments, recovery, the daily limit count). Follows an adopted recovery. */
   async refreshStatus(): Promise<GuardianStatusCache> {
-    return this.storeStatus(await this.call('guardian.status', {}));
+    const st = await this.call('guardian.status', {});
+    await this.storeStatus(st);
+    await this.followGuardianWallet(st.walletId);
+    return this.s.guardianStatus!;
+  }
+
+  /**
+   * The guardian names the wallet it guards. If that is the destination of a recovery this phone started, the guardian
+   * adopted it: switch to it (`adoptRecovered`). Returns true if the phone switched.
+   */
+  private async followGuardianWallet(walletId: string | undefined): Promise<boolean> {
+    if (!walletId || walletId === this.s.wallet?.walletId) return false;
+    const dest = this.s.recovery?.destination;
+    if (this.s.recovery?.role !== 'initiator' || dest?.walletId !== walletId) return false;
+    // One switch at a time: an alert and a sync can both notice it.
+    this.adopting ??= this.adoptRecovered(walletId).finally(() => (this.adopting = undefined));
+    return this.adopting;
+  }
+
+  /**
+   * Finishes a recovery: the guardian adopted its destination, so the phone switches from the swept wallet (or from
+   * "recovering") to it. Nothing is taken on trust: the destination is the wallet this phone built (its id, its keys:
+   * this phone's key 2, the surviving or new hardware wallet, the same guardian key), and the guardian's own record of
+   * the recovery must say it completed into exactly that wallet. The hardware wallet still has to register the new
+   * wallet and prove its key for it (`confirmHardware`); until then the snapshot says `hardwareConfirmRequired`.
+   */
+  private async adoptRecovered(walletId: string): Promise<boolean> {
+    const rec = this.s.recovery!;
+    const dest = rec.destination!;
+    const g = this.s.guardian;
+    const hw = dest.hardware ?? this.s.hardware;
+    if (!g || !hw) return false;
+    let w: MultisigWallet;
+    try {
+      w = MultisigWallet.fromDescriptor(dest.descriptor, this.network);
+    } catch (e) {
+      throw new WalletError('internal', 'The recovery destination saved on this phone is not a valid descriptor.', { cause: e });
+    }
+    if (w.fingerprint() !== walletId) throw new WalletError('guardian_mismatch', 'The guardian guards a wallet with the id of the recovery destination but not its keys.');
+    if (!sameKey(w.keys.app, keyExpressionOf(this.s.key2))) throw new WalletError('internal', "The recovery destination does not hold this phone's key.");
+    if (!sameKey(w.keys.hardware, keyExpressionOf(hw.account))) throw new WalletError('internal', "The recovery destination does not hold the hardware wallet's key.");
+    if (!sameKey(w.keys.cosigner, keyExpressionOf(g.key))) throw new WalletError('guardian_mismatch', "The recovery destination does not hold this guardian's key.");
+    const recoveryId = rec.recovery?.recoveryId;
+    const st = await this.call('recovery.status', recoveryId ? { recoveryId } : {});
+    const r = st.recovery;
+    if (!r || r.state !== 'completed' || r.destinationWalletId !== walletId) return false; // not (yet) what the guardian says happened
+    const previousWalletId = this.s.wallet?.walletId ?? '';
+    const now = this.now();
+    await this.update((s) => {
+      s.stage = 'paired';
+      s.wallet = { descriptor: dest.descriptor, walletId, pairedAt: now };
+      // The device knows the old wallet only: it registers the new one in `confirmHardware`.
+      s.hardware = { ...hw, policyName: policyNameOf(walletId), registrationHmac: undefined, addressVerified: false };
+      s.hardwareConfirm = { walletId, since: now };
+      s.recovery = { ...s.recovery!, recovery: r, updatedAt: now };
+      s.chain = undefined;
+      s.spends = [];
+      s.pending = undefined;
+      s.retiredByGuardian = undefined;
+    });
+    await this.txs.keepOnly(new Set());
+    this.emit({ type: 'wallet_switched', walletId, previousWalletId, reason: 'recovery', hardwareConfirmRequired: true });
+    return true;
   }
 
   /** Chain data, guardian status and fee estimates, from the guardian. Works while the guardian is locked. */
   async sync(): Promise<WalletSnapshot> {
     if (this.s.stage === 'new') throw new WalletError('wrong_state', 'The wallet is not paired yet.');
     await this.client();
-    const [snap, status, fees] = await Promise.all([
-      this.chain.sync({ historyLimit: this.deps.historyLimit }),
-      this.call('guardian.status', {}),
-      this.chain.estimateFees(FEE_TARGETS).catch(() => undefined),
-    ]);
+    const snapP = this.chain.sync({ historyLimit: this.deps.historyLimit });
+    snapP.catch(() => undefined); // awaited below; a failed status must not leave it unhandled
+    const [status, fees] = await Promise.all([this.call('guardian.status', {}), this.chain.estimateFees(FEE_TARGETS).catch(() => undefined)]);
     if (fees) this.fees = fees;
     await this.storeStatus(status);
+    // `wallet.sync` describes the wallet the guardian guards now: after an adoption that is the new one.
+    const switched = await this.followGuardianWallet(status.walletId);
+    let snap = await snapP;
+    if (switched) snap = await this.chain.sync({ historyLimit: this.deps.historyLimit });
+    else if (status.walletId && status.walletId !== this.s.wallet?.walletId)
+      throw new WalletError('guardian_mismatch', `The guardian now guards another wallet (${status.walletId}).`);
     const now = this.now();
     await this.update((s) => {
       s.chain = { ...snap, syncedAt: now };
       s.spends = s.spends.filter((x) => x.at > now - LIMIT_WINDOW_MS);
     });
+    await this.prefetchPrevTxs(snap.utxos).catch(() => undefined);
     await this.trackRecovery(status.activeRecoveryId).catch(() => undefined);
     return this.snapshot()!;
+  }
+
+  /**
+   * Keeps every coin's previous transaction on the phone (`TxCache`): payments need fewer round trips, and a sweep can
+   * still be signed when no guardian answers any more.
+   */
+  private async prefetchPrevTxs(utxos: { txid: string }[], source: ChainSource = this.chain): Promise<void> {
+    const want = [...new Set(utxos.map((u) => u.txid))];
+    const missing: string[] = [];
+    for (const t of want) if (!(await this.txs.has(t))) missing.push(t);
+    const got = await Promise.all(missing.map(async (txid) => ({ txid, txHex: await source.getTransaction(txid).catch(() => '') })));
+    await this.txs.put(got.filter((g) => g.txHex));
+    await this.txs.keepOnly(new Set(want));
+  }
+
+  /** Each input's previous transaction: from the cache when it is there (checked), else from `source` (and cached). */
+  private async prevTxs(txids: string[], source: ChainSource | undefined): Promise<string[]> {
+    const out: string[] = [];
+    const fetched: { txid: string; txHex: string }[] = [];
+    for (const txid of txids) {
+      let txHex = await this.txs.get(txid);
+      if (!txHex) {
+        if (!source) throw new WalletError('no_chain_data', 'Trikey does not have the previous transactions of these coins, and nothing can send them right now.');
+        txHex = await source.getTransaction(txid);
+        if (txidOfRaw(txHex) !== txid) throw new WalletError('guardian_mismatch', `The chain source returned a transaction that is not ${txid}.`);
+        fetched.push({ txid, txHex });
+      }
+      out.push(txHex);
+    }
+    await this.txs.put(fetched).catch(() => undefined);
+    return out;
+  }
+
+  /** The guardian's history with this phone's send log merged in, plus payments it sent that the guardian has not listed yet. */
+  private history(): WalletHistoryEntry[] {
+    const c = this.s.chain;
+    const log = new Map(this.s.sendLog.map((e) => [e.txid, e]));
+    const meta = (e: SendLogEntry) => ({
+      recipient: e.recipient,
+      amountSats: e.amountSats,
+      ...(e.label ? { label: e.label } : {}),
+      signedBy: e.signedBy,
+      ...(e.purpose ? { purpose: e.purpose } : {}),
+    });
+    const listed = new Set<string>();
+    const out: WalletHistoryEntry[] = (c?.history ?? []).map((h) => {
+      listed.add(h.txid);
+      const e = log.get(h.txid);
+      return e ? { ...h, ...meta(e), ...(h.feeSats === undefined ? { feeSats: e.feeSats } : {}) } : { ...h };
+    });
+    const recent = this.now() - LIMIT_WINDOW_MS;
+    const unlisted = this.s.sendLog
+      .filter((e) => !listed.has(e.txid) && e.at > recent && e.at > (c?.syncedAt ?? 0) - 10 * 60_000)
+      .map((e): WalletHistoryEntry => ({ txid: e.txid, height: 0, confirmations: 0, netSats: -(e.amountSats + e.feeSats), feeSats: e.feeSats, ...meta(e), local: true }));
+    return [...unlisted.reverse(), ...out];
   }
 
   /** The last synced view of the wallet, or undefined before the first sync. */
@@ -920,14 +1189,39 @@ export class TrikeyWallet {
     const limit = this.s.guardianStatus?.dailyLimit?.limitSats ?? this.s.rules?.policy.dailyLimitSats;
     const spent = spentTodayEstimate(this.s, this.now());
     return {
+      ...(this.s.wallet ? { walletId: this.s.wallet.walletId } : {}),
       balance: { ...c.balance, totalSats: c.balance.confirmedSats + c.balance.unconfirmedSats },
       tipHeight: c.tipHeight,
       syncedAt: c.syncedAt,
-      history: c.history,
+      history: this.history(),
       utxos: c.utxos,
       guardian: this.s.guardianStatus,
       dailyLimit: limit === undefined ? undefined : { limitSats: limit, spentEstimateSats: spent, remainingSats: Math.max(0, limit - spent) },
+      hardwareConfirmRequired: this.hardwareConfirmRequired,
     };
+  }
+
+  /** After a recovery moved the wallet: the hardware wallet must register it and confirm its key (`confirmHardware`). */
+  get hardwareConfirmRequired(): boolean {
+    const s = this.s;
+    if (s.stage !== 'paired' || !s.wallet) return false;
+    const gs = s.guardianStatus;
+    return s.hardwareConfirm?.walletId === s.wallet.walletId || (!!gs?.hardwareConfirmRequired && (!gs.walletId || gs.walletId === s.wallet.walletId));
+  }
+
+  /** Sets (or with an empty `label`, clears) the note on a payment in the send log. */
+  async setLabel(txid: string, label: string): Promise<void> {
+    const text = label.trim().slice(0, 200);
+    if (!this.s.sendLog.some((e) => e.txid === txid)) throw new WalletError('wrong_state', 'Only payments sent from this phone can carry a note.');
+    await this.update((s) => {
+      for (const e of s.sendLog) if (e.txid === txid) text ? (e.label = text) : delete e.label;
+    });
+  }
+
+  private async logSend(entry: SendLogEntry): Promise<void> {
+    await this.update((s) => {
+      s.sendLog = [...s.sendLog.filter((e) => e.txid !== entry.txid), entry].slice(-MAX_SEND_LOG);
+    });
   }
 
   /**
@@ -993,7 +1287,7 @@ export class TrikeyWallet {
   /** Builds the PSBT for `quote` with each input's previous transaction (from `tx.get`, checked). */
   private async buildPayment(quote: SendQuote) {
     const wallet = this.multisig();
-    const prevs = await Promise.all(quote.inputs.map((u) => this.chain.getTransaction(u.txid)));
+    const prevs = await this.prevTxs(quote.inputs.map((u) => u.txid), this.chain);
     const utxos = quote.inputs.map((u, i) => toCoreUtxo(u, prevs[i]));
     const plan = selfCheck(() =>
       buildSpend({
@@ -1060,12 +1354,13 @@ export class TrikeyWallet {
       }
     }
     if (!final) {
+      if (this.s.hardwareConfirm) throw new WalletError('hardware_unconfirmed', 'Confirm the new wallet on your hardware wallet first, then it can approve payments.');
       this.emit({
         type: 'hardware_prompt',
         purpose: 'payment',
         text: `Send ${quote.request.amountSats} sats to ${quote.request.address}, fee ${quote.feeSats} sats`,
       });
-      final = await this.withHardware((hw, rec) => this.hardwareSignPsbt(hw, rec, signed, wallet, this.s.wallet!.descriptor));
+      final = await this.withHardware((hw, rec) => this.hardwareSignPsbt(hw, signed, wallet, this.devicePolicy(rec)));
     }
 
     const { txHex, txid } = finalizePsbt(final);
@@ -1076,6 +1371,16 @@ export class TrikeyWallet {
       if (!refusal) throw e;
       return { ok: false, refusal, signedTx: { txid, txHex } };
     }
+    const label = quote.request.label?.trim().slice(0, 200);
+    await this.logSend({
+      txid,
+      at: this.now(),
+      recipient: quote.request.address,
+      amountSats: quote.request.amountSats,
+      feeSats: quote.feeSats,
+      ...(label ? { label } : {}),
+      signedBy: signedBy === 'phone+guardian' ? 'guardian' : 'hardware',
+    });
     await this.sync().catch(() => undefined);
     return {
       ok: true,
@@ -1117,6 +1422,9 @@ export class TrikeyWallet {
   private async storeRules(r: { policy: Policy; policyHash: string; nextHardwareSequence: number }): Promise<RulesView> {
     await this.update((s) => {
       s.rules = { policy: r.policy, policyHash: r.policyHash, nextHardwareSequence: r.nextHardwareSequence, fetchedAt: this.now() };
+      // The cached guardian count carries the limit too, and quotes prefer it: it must not keep the old one.
+      const dl = s.guardianStatus?.dailyLimit;
+      if (dl) s.guardianStatus!.dailyLimit = { ...dl, limitSats: r.policy.dailyLimitSats, availableSats: Math.max(0, r.policy.dailyLimitSats - dl.usedSats) };
     });
     return { policy: r.policy, policyHash: r.policyHash, nextHardwareSequence: r.nextHardwareSequence };
   }
@@ -1134,10 +1442,10 @@ export class TrikeyWallet {
   }
 
   /** A hardware approval of `action`: the exact text the guardian will rebuild, signed on the device. */
-  private async approve(action: HardwareAction): Promise<HardwareApproval> {
-    const walletId = this.s.wallet?.walletId;
+  private async approve(action: HardwareAction, opts: { walletId?: string; sequence?: number } = {}): Promise<HardwareApproval> {
+    const walletId = opts.walletId ?? this.s.wallet?.walletId;
     if (!walletId) throw new WalletError('wrong_state', 'The wallet is not paired yet.');
-    const sequence = await this.nextSequence();
+    const sequence = opts.sequence ?? (await this.nextSequence());
     const expiresAt = this.nowSec() + APPROVAL_TTL_SEC;
     const text = approvalMessage(action, { walletId, sequence, expiresAt });
     const signature = await this.withHardware((hw, rec) => this.signWithAuthKey(hw, rec, text, 'approval'));
@@ -1173,17 +1481,23 @@ export class TrikeyWallet {
       const got = await this.call('policy.get', {});
       return got.policyHash === policyHash(policy) ? got : undefined;
     };
+    let out: RulesView & { approvedBy: 'phone' | 'hardware' } | undefined;
     if (phoneMayApply(current.policy, policy)) {
       try {
         const r = await this.callChanging('policy.update', { policy }, { verify });
-        return { ...(await this.storeRules(r)), approvedBy: 'phone' };
+        out = { ...(await this.storeRules(r)), approvedBy: 'phone' };
       } catch (e) {
         // The guardian decides: if it wants the hardware wallet after all, ask it.
         if (!(e instanceof WalletError && e.refusal?.kind === 'approval_required')) throw e;
       }
     }
-    const r = await this.withApproval({ action: 'policy', policy }, (approval) => this.callChanging('policy.update', { policy, approval }, { verify }));
-    return { ...(await this.storeRules(r)), approvedBy: 'hardware' };
+    if (!out) {
+      const r = await this.withApproval({ action: 'policy', policy }, (approval) => this.callChanging('policy.update', { policy, approval }, { verify }));
+      out = { ...(await this.storeRules(r)), approvedBy: 'hardware' };
+    }
+    // The guardian's own count is the truth for the limit: re-read it (best effort).
+    await this.refreshStatus().catch(() => undefined);
+    return out;
   }
 
   async setDailyLimit(sats: number) {
@@ -1455,7 +1769,7 @@ export class TrikeyWallet {
       if (!sameKey(old.keys.cosigner, keyExpressionOf(access.guardianKey))) throw new WalletError('guardian_mismatch', 'The guardian key is not the one in the descriptor.');
 
       // The device must know the old wallet to sign its inputs.
-      const policyName = `Trikey ${access.walletId.slice(0, 4)}`;
+      const policyName = policyNameOf(access.walletId);
       const reg = await hw.registerWallet({ name: policyName, descriptor: access.descriptor });
       const hwRec: HardwareRecord = { ...rec, policyName, registrationHmac: reg.hmac, addressVerified: false };
       this.rpc = rpc;
@@ -1475,7 +1789,7 @@ export class TrikeyWallet {
       const destination = new MultisigWallet(this.network, { app: keyExpressionOf(this.s.key2), hardware: old.keys.hardware, cosigner: old.keys.cosigner });
       const sweep = await this.buildSweepPsbt(destination, access.policy.sweepFeeCapSats);
       this.emit({ type: 'hardware_prompt', purpose: 'recovery-sweep', text: `Move every coin of the wallet to the new wallet ${destination.fingerprint()}` });
-      const signed = await this.hardwareSignPsbt(hw, hwRec, sweep, old, access.descriptor);
+      const signed = await this.hardwareSignPsbt(hw, sweep, old, this.devicePolicy(hwRec, access.descriptor));
       const a = analyzePsbt(signed, old.accountPubkeys(), this.network);
       if (a.inputs.some((i) => i.signedBy.length !== 1 || i.signedBy[0] !== 'hardware'))
         throw new WalletError('hardware_invalid_response', 'The sweep must carry the hardware wallet\'s signature alone.');
@@ -1542,14 +1856,29 @@ export class TrikeyWallet {
   private async onAlert(alert: Alert, meta: { id: string; at: number }): Promise<void> {
     if (this.s.seenAlerts.includes(meta.id)) return;
     await this.update((s) => void (s.seenAlerts = [...s.seenAlerts, meta.id].slice(-MAX_SEEN_ALERTS)));
-    this.emit({ type: 'alert', alert, id: meta.id, at: meta.at });
-    if (alert.type === 'guardian_locked') {
-      const gs = this.s.guardianStatus;
-      // An old "locked" alert must not override a newer status.
-      if (gs && meta.at * 1000 > gs.checkedAt) await this.update((s) => void (s.guardianStatus = { ...gs, state: 'locked', checkedAt: this.now() }));
-      return;
+    this.emit({ type: 'alert', alert, id: meta.id, atMs: alert.at * 1000 });
+    switch (alert.type) {
+      case 'guardian_locked': {
+        // An old "locked" alert (relays replay a week of them) must not override a newer status. Both times are the
+        // guardian's own clock in whole seconds: the alert's `at`, and `time` in the last status. The same second
+        // counts as newer (the lock may have come after the check), and the guardian is asked right after anyway.
+        const gs = this.s.guardianStatus;
+        const seenAt = gs ? (gs.guardianTime ?? Math.floor(gs.checkedAt / 1000) + (gs.skewSec ?? 0)) : undefined;
+        if (gs && seenAt !== undefined && alert.at >= seenAt) await this.update((s) => void (s.guardianStatus = { ...s.guardianStatus!, state: 'locked' }));
+        break;
+      }
+      case 'wallet_retired': {
+        // Expected during "Replace guardian" (this phone asked for it); otherwise the guardian stopped guarding this wallet.
+        if (alert.walletId === this.s.wallet?.walletId && !this.s.replacing)
+          await this.update((s) => {
+            s.retiredByGuardian = { walletId: alert.walletId, reason: alert.reason, ...(alert.successorWalletId ? { successorWalletId: alert.successorWalletId } : {}), at: alert.at * 1000 };
+            if (s.guardianStatus) s.guardianStatus = { ...s.guardianStatus, phoneSpending: 'retired' };
+          });
+        return; // the guardian no longer answers for it: nothing to re-read
+      }
+      default:
+        if ('recoveryId' in alert) this.alertRecoveryId = alert.recoveryId;
     }
-    if ('recoveryId' in alert) this.alertRecoveryId = alert.recoveryId;
     this.refreshAfterAlerts();
   }
 
@@ -1581,15 +1910,527 @@ export class TrikeyWallet {
   }
 
   // ===========================================================================
+  // Finishing a recovery
+
+  /**
+   * After a recovery the guardian adopted (the snapshot says `hardwareConfirmRequired`): the hardware wallet registers
+   * the new wallet, shows its first address (it must match), and signs a fresh pairing proof over the new wallet id,
+   * which goes to the guardian as `hardware.confirm`. Until then the guardian refuses every hardware approval
+   * (loosening a rule, a hardware cancel, `phone.resume`, retiring), and the phone cannot have the device sign or
+   * receive. For a lost hardware wallet this is the NEW device, recorded when the recovery started.
+   */
+  async confirmHardware(): Promise<{ walletId: string; addressVerified: true }> {
+    this.requirePaired();
+    if (!this.hardwareConfirmRequired) throw new WalletError('wrong_state', 'The hardware wallet has nothing to confirm.');
+    const w = this.s.wallet!;
+    const wallet = this.multisig();
+    const cosignerPub = hex.encode(wallet.accountPubkeys().cosigner);
+    const name = policyNameOf(w.walletId);
+    const { proof, hmac } = await this.withHardware(async (hw, rec) => {
+      const reg = await hw.registerWallet({ name, descriptor: w.descriptor });
+      const first = wallet.derive(0, 0).address;
+      const shown = await hw.displayAddress({ name, descriptor: w.descriptor, ...(reg.hmac ? { registration: { hmac: reg.hmac } } : {}) }, 0, 0);
+      if (shown !== first)
+        throw new WalletError('address_mismatch', `The hardware wallet shows ${shown}, but the wallet computed ${first}. Do not receive funds until this is resolved.`);
+      const proof = await this.signWithAuthKey(hw, rec, pairingMessage(w.walletId, cosignerPub), 'pairing');
+      return { proof, hmac: reg.hmac };
+    });
+    // The device knows the wallet now, whatever the guardian answers next.
+    await this.update((s) => void (s.hardware = { ...s.hardware!, policyName: name, registrationHmac: hmac, addressVerified: true }));
+    const hardwareAuth = this.s.hardware!.auth;
+    const params = { hardwareAuth, hardwareAuthProof: proof };
+    const res = await this.callChanging('hardware.confirm', params, {
+      verify: () => this.verifyApplied({ id: '', method: 'hardware.confirm', params, sentAt: 0 }),
+    });
+    if (res.walletId !== w.walletId || res.hardwareAuth.pubkey !== hardwareAuth.pubkey)
+      throw new WalletError('guardian_mismatch', 'The guardian confirmed another wallet or key than this phone sent.');
+    await this.update((s) => {
+      s.hardwareConfirm = undefined;
+      if (s.guardianStatus) s.guardianStatus = { ...s.guardianStatus, hardwareConfirmRequired: false };
+      if (s.rules) s.rules.nextHardwareSequence = Math.max(s.rules.nextHardwareSequence, res.nextHardwareSequence);
+    });
+    await this.refreshStatus().catch(() => undefined);
+    return { walletId: w.walletId, addressVerified: true };
+  }
+
+  // ===========================================================================
+  // Scanning
+
+  /** What a camera or paste field read (`parseScannedCode`), checked against this wallet's network. */
+  parseScannedCode(text: string): ScannedCode {
+    return parseScannedCode(text, { network: this.network.name, now: this.nowSec() });
+  }
+
+  // ===========================================================================
+  // Replace guardian
+
+  private emitStep(step: ReplaceStep, operation: 'replace-guardian' | 'stray-coins' = 'replace-guardian'): void {
+    this.emit({ type: 'progress', operation, step });
+  }
+
+  /** `guardian.status` with a short timeout; undefined if the guardian does not answer. */
+  private async probeGuardian(rpc?: GuardianRpc): Promise<Result<'guardian.status'> | undefined> {
+    const timeoutMs = this.deps.probeTimeoutMs ?? Math.min(10_000, this.deps.rpcTimeoutMs ?? 30_000);
+    try {
+      return await (rpc ?? (await this.client())).call('guardian.status', {}, { timeoutMs });
+    } catch (e) {
+      const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
+      if (refusal?.kind === 'unreachable') return undefined;
+      throw asWalletError(e, 'guardian.status');
+    }
+  }
+
+  private standaloneFor(w: { descriptor: string; walletId: string }): ChainSource | undefined {
+    return this.deps.standaloneChain?.({ descriptor: w.descriptor, walletId: w.walletId, network: this.network.name });
+  }
+
+  /** Connects the wallet's hardware wallet once for a run of device steps (`withHardware` reuses it), then disconnects. */
+  private async holdingHardware<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.hwSession) return fn();
+    const rec = this.s.hardware;
+    if (!rec) throw new WalletError('wrong_state', 'No hardware wallet is set up.');
+    const hw = await this.hardwareProvider().connect({ kind: rec.kind });
+    if (hw.info.fingerprint !== rec.fingerprint) {
+      await hw.close().catch(() => {});
+      throw new WalletError('hardware_mismatch', `Connect the wallet's hardware wallet (fingerprint ${rec.fingerprint}), not ${hw.info.fingerprint}.`);
+    }
+    this.hwSession = hw;
+    try {
+      return await fn();
+    } finally {
+      if (this.hwSession === hw) this.hwSession = undefined;
+      await hw.close().catch(() => {});
+    }
+  }
+
+  /**
+   * "Replace guardian", step 1: reads the new guardian's pairing code, fetches its key (`pair.prepare`), builds the new
+   * wallet (this phone's key 2, the same hardware wallet, the NEW guardian's key: a new descriptor and wallet id), and
+   * checks whether the old guardian still answers. Changes nothing; `replaceGuardian` does it.
+   */
+  async previewReplaceGuardian(newGuardianUri: string): Promise<ReplacePlan> {
+    this.requirePaired();
+    if (this.s.replacing)
+      throw new WalletError('replace_in_progress', `The move to your new guardian${this.s.replacing.guardian.label ? ` (${this.s.replacing.guardian.label})` : ''} has started. Finish it first.`);
+    if (this.hardwareConfirmRequired) throw new WalletError('hardware_unconfirmed', 'Confirm the recovered wallet on your hardware wallet first.');
+    const hwRec = this.s.hardware!;
+    const session = await this.openGuardianSession(newGuardianUri, hwRec, 'replace');
+    session.uri = newGuardianUri.trim();
+    const old = this.multisig();
+    if (sameKey(session.wallet.keys.cosigner, old.keys.cosigner)) {
+      this.dropPairing();
+      throw new WalletError('guardian_mismatch', 'That is the guardian this wallet already has.');
+    }
+    const st = await this.probeGuardian();
+    if (st) {
+      await this.storeStatus(st);
+      if (st.activeRecoveryId) {
+        this.dropPairing();
+        throw new WalletError('guardian_refused', 'A recovery is running on this wallet. Cancel it or let it finish before you replace the guardian.', {
+          refusal: { kind: 'recovery_in_progress', recoveryId: st.activeRecoveryId, message: 'A recovery is running.' },
+        });
+      }
+      await this.sync().catch(() => undefined);
+    }
+    const utxos = this.s.chain?.utxos ?? [];
+    const balanceSats = utxos.reduce((a, u) => a + u.valueSats, 0);
+    const estimatedFeeSats = utxos.length ? Math.ceil(estimateVsize(utxos.length, [session.wallet.derive(0, 0).script]) * pickFeeRate(this.fees, 'normal')) : 0;
+    const name = session.payload.label ? `the new guardian (${session.payload.label})` : 'the new guardian';
+    const reachable = !!st;
+    const steps: ReplacePlan['steps'] = [
+      { step: 'pair', text: `Pair ${name} with a new wallet of this phone, your hardware wallet and the new guardian's key.` },
+      {
+        step: 'sign',
+        text: utxos.length
+          ? `Approve on your hardware wallet: register the new wallet, check its first address, and sign the move of all ${utxos.length === 1 ? 'your money (1 coin)' : `your money (${utxos.length} coins)`}.`
+          : 'Approve on your hardware wallet: register the new wallet and check its first address. There is no money to move.',
+      },
+      {
+        step: 'broadcast',
+        text: reachable ? 'Send the move to the Bitcoin network through your old guardian.' : 'Send the move to the Bitcoin network. Your old guardian is offline, so this may have to wait until something can send it.',
+      },
+      {
+        step: 'retire',
+        text: reachable
+          ? 'Retire the old wallet on the old guardian, so it co-signs nothing for it any more (one more approval on the hardware wallet).'
+          : "Skip retiring the old wallet on the old guardian, since it can't be reached. Its key alone can't move anything.",
+      },
+      { step: 'switch', text: 'Switch this phone to the new wallet and guardian. The old wallet stays watched for coins sent to it later.' },
+    ];
+    return {
+      newGuardian: this.previewOf(session),
+      oldWalletId: old.fingerprint(),
+      newWalletId: session.wallet.fingerprint(),
+      oldGuardianReachable: reachable,
+      balanceSats,
+      coins: utxos.length,
+      estimatedFeeSats,
+      steps,
+    };
+  }
+
+  private dropPairing(): void {
+    this.pairing?.rpc.close();
+    this.pairing?.pool.close();
+    this.pairing = undefined;
+  }
+
+  /** The person changed their mind before anything was signed: forget the new guardian's pairing. */
+  async abandonReplaceGuardian(): Promise<void> {
+    if (this.s.replacing?.phase === 'signed') throw new WalletError('replace_in_progress', 'The move is already signed; it has to be finished.');
+    this.dropPairing();
+    this.replaceRpc?.rpc.close();
+    this.replaceRpc?.pool.close();
+    this.replaceRpc = undefined;
+    if (this.s.replacing) await this.update((s) => void (s.replacing = undefined));
+  }
+
+  /**
+   * "Replace guardian": moves the wallet to the new guardian scanned with `previewReplaceGuardian` (or pass
+   * `newGuardianUri`), with the phone and the hardware wallet:
+   *
+   * 1. pair: the hardware wallet registers the new wallet and confirms its first address, signs the pairing proof,
+   *    and the new guardian registers the new wallet (`pair` with `replacesWalletId`) with the current rules;
+   * 2. sign: a sweep of every coin of the old wallet to the new one, signed by key 2 and the hardware wallet;
+   * 3. broadcast: through the old guardian (the only node that relays a spend of the old wallet's coins), or the
+   *    `standaloneChain` node, or the new guardian if it relays sweeps into its wallet;
+   * 4. retire: once a node accepted the sweep, `wallet.retire` at the old guardian with a hardware approval, if it
+   *    answers. Not before: a retired wallet's phone gets no answers there, so the sweep could no longer be sent;
+   * 5. switch: the phone moves to the new wallet and guardian; the old wallet is kept (`sweepStrayCoins`).
+   *
+   * If the old guardian does not answer, this throws `old_guardian_unreachable` unless the person confirmed it is gone
+   * (`oldGuardianReachable: false`); the sweep is then built from what the phone kept from its last sync. If nothing can
+   * send it, the result is `awaiting_broadcast`: the signed sweep is kept, and calling `replaceGuardian()` again later
+   * (the old guardian back, or a node configured) finishes. Every step is persisted, so a crash resumes too.
+   */
+  async replaceGuardian(opts: { newGuardianUri?: string; oldGuardianReachable?: false } = {}): Promise<ReplaceOutcome> {
+    this.requirePaired();
+    return this.holdingHardwareIf(async () => {
+      if (!this.s.replacing) {
+        if (opts.newGuardianUri && this.pairing?.uri !== opts.newGuardianUri.trim()) await this.previewReplaceGuardian(opts.newGuardianUri);
+        const session = this.pairing;
+        if (!session || session.purpose !== 'replace') throw new WalletError('wrong_state', "Scan the new guardian's pairing code first.");
+        const reachable = !!(await this.probeGuardian());
+        if (!reachable && opts.oldGuardianReachable !== false)
+          throw new WalletError('old_guardian_unreachable', "Your old guardian isn't answering. If it is gone for good, confirm, and the move goes ahead without it.", {
+            refusal: { kind: 'unreachable', message: 'The old guardian did not answer.' },
+          });
+        await this.pairForReplace(session, !reachable);
+      }
+      return this.continueReplace();
+    });
+  }
+
+  /** Holds the hardware wallet for the run while it has to pair and sign (a later retire connects it on its own). */
+  private holdingHardwareIf<T>(fn: () => Promise<T>): Promise<T> {
+    const signing = !this.s.replacing || this.s.replacing.phase === 'paired';
+    return signing && this.deps.hardware ? this.holdingHardware(fn) : fn();
+  }
+
+  private async pairForReplace(session: PairingSession, oldOffline: boolean): Promise<void> {
+    const wallet = session.wallet;
+    const walletId = wallet.fingerprint();
+    const descriptor = wallet.descriptor();
+    const cosignerPub = hex.encode(wallet.accountPubkeys().cosigner);
+    const name = policyNameOf(walletId);
+    const rules = normalizePolicy(this.s.rules!.policy);
+    this.emitStep('pair');
+    const { proof, hmac } = await this.withHardware(async (hw, rec) => {
+      const reg = await hw.registerWallet({ name, descriptor });
+      // Before any money moves: the device must derive the address the sweep will pay.
+      const first = wallet.derive(0, 0).address;
+      const shown = await hw.displayAddress({ name, descriptor, ...(reg.hmac ? { registration: { hmac: reg.hmac } } : {}) }, 0, 0);
+      if (shown !== first) throw new WalletError('address_mismatch', `The hardware wallet shows ${shown}, but the new wallet's first address is ${first}. Nothing was moved.`);
+      const proof = await this.signWithAuthKey(hw, rec, pairingMessage(walletId, cosignerPub), 'pairing');
+      return { proof, hmac: reg.hmac };
+    });
+    const res = await this.registerAtGuardian(session, { rules, deviceName: this.s.deviceName, proof, replacesWalletId: this.s.wallet!.walletId });
+    // The new guardian holds the new wallet: persist before anything else can fail.
+    this.replaceRpc = { rpc: session.rpc, pool: session.pool };
+    this.pairing = undefined;
+    await this.update((s) => {
+      s.replacing = {
+        startedAt: this.now(),
+        phase: 'paired',
+        guardian: { pubkey: session.payload.guardianPubkey, relays: session.payload.relays, ...(session.payload.label ? { label: session.payload.label } : {}), key: session.guardianKey, version: res.guardianVersion },
+        wallet: { descriptor, walletId },
+        devicePolicy: { name, ...(hmac ? { registrationHmac: hmac } : {}) },
+        rules: { policy: rules, policyHash: policyHash(rules), nextHardwareSequence: 1 },
+        oldGuardianOffline: oldOffline,
+      };
+    });
+  }
+
+  /** The new guardian's connection (reconnects after an app restart). */
+  private async replacementRpc(r: ReplaceRecord): Promise<GuardianRpc> {
+    if (!this.replaceRpc) this.replaceRpc = await this.connect(r.guardian.pubkey, r.guardian.relays);
+    return this.replaceRpc.rpc;
+  }
+
+  private async continueReplace(): Promise<ReplaceOutcome> {
+    const old = this.s.wallet!;
+    const oldWallet = this.multisig();
+    const reachable = !!(await this.probeGuardian());
+    let r = this.s.replacing!;
+    const newWallet = MultisigWallet.fromDescriptor(r.wallet.descriptor, this.network);
+
+    if (r.phase === 'paired') {
+      this.emitStep('sign');
+      const standalone = this.standaloneFor(old);
+      const source: ChainSource | undefined = reachable ? this.chain : standalone;
+      let utxos = this.s.chain?.utxos ?? [];
+      let truncated = this.s.chain?.utxosTruncated ?? false;
+      let fees = this.fees;
+      if (reachable) {
+        const snap = await this.sync();
+        utxos = snap.utxos;
+        truncated = this.s.chain!.utxosTruncated;
+      } else if (standalone) {
+        const snap = await standalone.sync();
+        utxos = snap.utxos;
+        truncated = snap.utxosTruncated;
+        fees = (await standalone.estimateFees([3, 6]).catch(() => undefined)) ?? fees;
+      }
+      if (truncated) throw new WalletError('utxos_truncated', 'The wallet has more coins than one move can list.');
+      if (!utxos.length) return this.finishReplace(r, reachable, undefined);
+      if (!fees?.estimates.some((e) => e.satPerVb !== null) && this.network.name === 'bitcoin')
+        throw new WalletError('no_fee_estimate', 'There is no fee estimate right now; try again in a moment.');
+      const prevs = await this.prevTxs(utxos.map((u) => u.txid), source);
+      const coins = utxos.map((u, i) => toCoreUtxo({ txid: u.txid, vout: u.vout, valueSats: u.valueSats, chain: u.chain, index: u.index }, prevs[i]));
+      const plan = selfCheck(() => buildSweep({ from: oldWallet, utxos: coins, destination: newWallet, destinationIndex: 0, feeRate: pickFeeRate(fees, 'normal') }));
+      selfCheck(() => analyzePsbt(plan.psbt, oldWallet.accountPubkeys(), this.network, { requireNonWitnessUtxo: true, outputsAcct: newWallet.accountPubkeys() }));
+      const total = coins.reduce((a, u) => a + u.value, 0n);
+      const amountSats = Number(total - plan.fee);
+      const appSigned = await this.withKey2('Approve the move to your new guardian', async (m) => new SoftwareSigner('app', m).signPsbt(plan.psbt, this.network));
+      this.emit({ type: 'hardware_prompt', purpose: 'payment', text: `Move ${amountSats} sats to your new wallet ${newWallet.fingerprint()}, fee ${plan.fee} sats` });
+      const signed = await this.withHardware((hw, rec) => this.hardwareSignPsbt(hw, appSigned, oldWallet, this.devicePolicy(rec)));
+      const { txHex, txid } = finalizePsbt(signed);
+      await this.update((s) => void (s.replacing = { ...s.replacing!, phase: 'signed', sweep: { txid, txHex, amountSats, feeSats: Number(plan.fee) } }));
+      await this.logSend({
+        txid,
+        at: this.now(),
+        recipient: newWallet.derive(0, 0).address,
+        amountSats,
+        feeSats: Number(plan.fee),
+        label: 'Moved to your new guardian',
+        signedBy: 'hardware',
+        purpose: 'sweep',
+      });
+      r = this.s.replacing!;
+    }
+
+    const sweep = r.sweep!;
+    this.emitStep('broadcast');
+    if (!(await this.sendSweep(r, sweep.txHex, sweep.txid, reachable)))
+      return { status: 'awaiting_broadcast', walletId: r.wallet.walletId, previousWalletId: old.walletId, sweepTxid: sweep.txid, txHex: sweep.txHex, movedSats: sweep.amountSats, feeSats: sweep.feeSats };
+    return this.finishReplace(r, reachable, sweep);
+  }
+
+  /** Has a node taken the sweep? Tries every way the phone has to reach one. */
+  private async sendSweep(r: ReplaceRecord, txHex: string, txid: string, oldReachable: boolean): Promise<boolean> {
+    const old = this.s.wallet!;
+    const tries: { known: () => Promise<unknown>; send: () => Promise<unknown> }[] = [];
+    if (oldReachable) tries.push({ known: () => this.chain.getTransaction(txid), send: () => this.chain.broadcast(txHex) });
+    const standalone = this.standaloneFor(old);
+    if (standalone) tries.push({ known: () => standalone.getTransaction(txid), send: () => standalone.broadcast(txHex) });
+    // The reference guardian relays only spends of its own wallet's coins, so this one answers 1602 for now.
+    const fresh = new GuardianChainSource(() => this.replaceRpc!.rpc);
+    tries.push({ known: async () => (await this.replacementRpc(r), fresh.getTransaction(txid)), send: async () => (await this.replacementRpc(r), fresh.broadcast(txHex)) });
+    for (const t of tries) {
+      try {
+        await t.known();
+        return true; // already in a mempool or a block
+      } catch {
+        /* not known there */
+      }
+      try {
+        await t.send();
+        return true;
+      } catch (e) {
+        const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
+        if (refusal?.kind === 'broadcast_rejected' && /already|known|duplicate/i.test(`${refusal.reason ?? ''} ${refusal.message}`)) return true;
+      }
+    }
+    return false;
+  }
+
+  private async finishReplace(r: ReplaceRecord, oldReachable: boolean, sweep: ReplaceRecord['sweep']): Promise<ReplaceOutcome> {
+    const old = this.s.wallet!;
+    let retired = false;
+    if (oldReachable) {
+      this.emitStep('retire');
+      try {
+        await this.retireWallet();
+        retired = true;
+      } catch {
+        // The money has moved: a retire that failed now can be done later (`retireOldWallet`).
+      }
+    }
+    this.emitStep('switch');
+    const now = this.now();
+    const entry: RetiredWallet = {
+      walletId: old.walletId,
+      descriptor: old.descriptor,
+      guardian: this.s.guardian!,
+      retiredAt: now,
+      retiredOnGuardian: retired,
+      devicePolicy: { name: this.s.hardware!.policyName ?? 'Trikey', ...(this.s.hardware!.registrationHmac ? { registrationHmac: this.s.hardware!.registrationHmac } : {}) },
+      successorWalletId: r.wallet.walletId,
+      ...(sweep ? { sweepTxid: sweep.txid } : {}),
+    };
+    await this.update((s) => {
+      s.retiredWallets = [...s.retiredWallets.filter((w) => w.walletId !== entry.walletId), entry];
+      s.guardian = r.guardian;
+      s.wallet = { ...r.wallet, pairedAt: now };
+      s.hardware = { ...s.hardware!, policyName: r.devicePolicy.name, registrationHmac: r.devicePolicy.registrationHmac, addressVerified: true };
+      s.rules = { ...r.rules, fetchedAt: now };
+      s.chain = undefined;
+      s.guardianStatus = undefined;
+      s.spends = [];
+      s.recovery = undefined;
+      s.pending = undefined;
+      s.replacing = undefined;
+      s.retiredByGuardian = undefined;
+      s.hardwareConfirm = undefined;
+    });
+    // From here on the new guardian is the guardian.
+    this.rpc?.close();
+    this.pool?.close();
+    this.rpc = this.replaceRpc?.rpc;
+    this.pool = this.replaceRpc?.pool;
+    this.replaceRpc = undefined;
+    this.emit({ type: 'wallet_switched', walletId: r.wallet.walletId, previousWalletId: old.walletId, reason: 'replace-guardian', hardwareConfirmRequired: false });
+    await this.sync().catch(() => undefined);
+    return {
+      status: 'done',
+      walletId: r.wallet.walletId,
+      previousWalletId: old.walletId,
+      ...(sweep ? { sweepTxid: sweep.txid } : {}),
+      movedSats: sweep?.amountSats ?? 0,
+      feeSats: sweep?.feeSats ?? 0,
+      oldWalletRetired: retired,
+    };
+  }
+
+  /** Old wallets left behind by "Replace guardian" (kept for stray coins). */
+  get retiredWallets(): readonly RetiredWallet[] {
+    return this.s.retiredWallets;
+  }
+
+  /** A chain source for an old wallet: its old guardian while that still knows it, else the `standaloneChain` node. */
+  private async sourceForRetired(w: RetiredWallet): Promise<{ source: ChainSource; close: () => void; viaGuardian: boolean }> {
+    if (!w.retiredOnGuardian) {
+      const conn = await this.connect(w.guardian.pubkey, w.guardian.relays, { routeAlerts: false });
+      const st = await this.probeGuardian(conn.rpc).catch(() => undefined);
+      if (st && (!st.walletId || st.walletId === w.walletId))
+        return { source: new GuardianChainSource(() => conn.rpc), close: () => (conn.rpc.close(), conn.pool.close()), viaGuardian: true };
+      conn.rpc.close();
+      conn.pool.close();
+    }
+    const standalone = this.standaloneFor(w);
+    if (standalone) return { source: standalone, close: () => {}, viaGuardian: false };
+    throw new WalletError(
+      'no_chain_source',
+      w.retiredOnGuardian
+        ? 'Your old guardian no longer serves the old wallet, and this phone has no other node to read it from.'
+        : "Your old guardian isn't answering, and this phone has no other node to read the old wallet from.",
+    );
+  }
+
+  /**
+   * Coins sent to an old wallet after "Replace guardian": the phone and the hardware wallet sweep them into the
+   * current wallet. The old wallet is read through its old guardian while it still knows it, or the `standaloneChain`
+   * node. Returns what moved per old wallet.
+   */
+  async sweepStrayCoins(opts: { walletId?: string } = {}): Promise<{ walletId: string; txid?: string; sweptSats: number; feeSats: number }[]> {
+    this.requirePaired();
+    const list = this.s.retiredWallets.filter((w) => !opts.walletId || w.walletId === opts.walletId);
+    if (!list.length) throw new WalletError('wrong_state', 'There is no old wallet to sweep.');
+    const current = this.multisig();
+    const out: { walletId: string; txid?: string; sweptSats: number; feeSats: number }[] = [];
+    for (const w of list) {
+      this.emitStep('sign', 'stray-coins');
+      const { source, close } = await this.sourceForRetired(w);
+      try {
+        const snap = await source.sync();
+        if (!snap.utxos.length) {
+          out.push({ walletId: w.walletId, sweptSats: 0, feeSats: 0 });
+          continue;
+        }
+        const from = MultisigWallet.fromDescriptor(w.descriptor, this.network);
+        const fees = (await source.estimateFees([3, 6]).catch(() => undefined)) ?? this.fees;
+        if (!fees?.estimates.some((e) => e.satPerVb !== null) && this.network.name === 'bitcoin') throw new WalletError('no_fee_estimate', 'There is no fee estimate right now.');
+        const prevs = await Promise.all(
+          snap.utxos.map(async (u) => {
+            const txHex = await source.getTransaction(u.txid);
+            if (txidOfRaw(txHex) !== u.txid) throw new WalletError('guardian_mismatch', `The chain source returned a transaction that is not ${u.txid}.`);
+            return txHex;
+          }),
+        );
+        const coins = snap.utxos.map((u, i) => toCoreUtxo({ txid: u.txid, vout: u.vout, valueSats: u.valueSats, chain: u.chain, index: u.index }, prevs[i]));
+        const index = this.s.chain?.nextReceiveIndex ?? 0;
+        const plan = selfCheck(() => buildSweep({ from, utxos: coins, destination: current, destinationIndex: index, feeRate: pickFeeRate(fees, 'normal') }));
+        selfCheck(() => analyzePsbt(plan.psbt, from.accountPubkeys(), this.network, { requireNonWitnessUtxo: true, outputsAcct: current.accountPubkeys() }));
+        const amountSats = Number(coins.reduce((a, u) => a + u.value, 0n) - plan.fee);
+        const appSigned = await this.withKey2('Approve moving coins from your old wallet', async (m) => new SoftwareSigner('app', m).signPsbt(plan.psbt, this.network));
+        this.emit({ type: 'hardware_prompt', purpose: 'payment', text: `Move ${amountSats} sats from your old wallet ${w.walletId}, fee ${plan.fee} sats` });
+        const policy: HardwareWalletPolicy = { name: w.devicePolicy.name, descriptor: w.descriptor, ...(w.devicePolicy.registrationHmac ? { registration: { hmac: w.devicePolicy.registrationHmac } } : {}) };
+        const signed = await this.withHardware((hw) => this.hardwareSignPsbt(hw, appSigned, from, policy));
+        const { txHex, txid } = finalizePsbt(signed);
+        this.emitStep('broadcast', 'stray-coins');
+        await source.broadcast(txHex);
+        await this.logSend({ txid, at: this.now(), recipient: current.derive(0, index).address, amountSats, feeSats: Number(plan.fee), label: 'Coins from your old wallet', signedBy: 'hardware', purpose: 'sweep' });
+        out.push({ walletId: w.walletId, txid, sweptSats: amountSats, feeSats: Number(plan.fee) });
+      } finally {
+        close();
+      }
+    }
+    await this.sync().catch(() => undefined);
+    return out;
+  }
+
+  /**
+   * Retires an old wallet on its old guardian after the fact (it was offline during "Replace guardian" and is back),
+   * with a hardware approval: from then on that box co-signs nothing for it.
+   */
+  async retireOldWallet(walletId?: string): Promise<{ walletId: string; retiredAt: number }> {
+    const w = this.s.retiredWallets.find((x) => !x.retiredOnGuardian && (!walletId || x.walletId === walletId));
+    if (!w) throw new WalletError('wrong_state', 'No old wallet is waiting to be retired on its old guardian.');
+    const conn = await this.connect(w.guardian.pubkey, w.guardian.relays, { routeAlerts: false });
+    try {
+      const st = await this.probeGuardian(conn.rpc);
+      if (!st) throw new WalletError('guardian_refused', "Your old guardian isn't answering.", { refusal: { kind: 'unreachable', message: 'The old guardian did not answer.' } });
+      if (st.walletId && st.walletId !== w.walletId) {
+        await this.update((s) => void (s.retiredWallets = s.retiredWallets.map((x) => (x.walletId === w.walletId ? { ...x, retiredOnGuardian: true } : x))));
+        throw new WalletError('guardian_mismatch', 'Your old guardian guards another wallet now: the old one is no longer there.');
+      }
+      const call = async (approval: HardwareApproval) => {
+        try {
+          return await conn.rpc.call('wallet.retire', { approval });
+        } catch (e) {
+          throw asWalletError(e, 'wallet.retire');
+        }
+      };
+      const res = await call(await this.approve({ action: 'retire-wallet' }, { walletId: w.walletId, sequence: st.nextHardwareSequence }));
+      if (res.walletId !== w.walletId) throw new WalletError('guardian_mismatch', 'The guardian retired another wallet.');
+      await this.update((s) => void (s.retiredWallets = s.retiredWallets.map((x) => (x.walletId === w.walletId ? { ...x, retiredOnGuardian: true } : x))));
+      return res;
+    } finally {
+      conn.rpc.close();
+      conn.pool.close();
+    }
+  }
+
+  // ===========================================================================
   // Backup
 
   /**
-   * Writes an encrypted backup of key 2 and the wallet to the user's cloud,
-   * unlocked by a passkey (PRF) and/or a recovery code. Returns the recovery
-   * code (show it once; it is not stored). Replaces this phone's previous backup.
+   * Writes an encrypted backup of key 2 and the wallet to the user's cloud (`cloud`, default the one in the wallet's
+   * deps), unlocked by a passkey (PRF) and/or a recovery code. Returns the recovery code (show it once; it is not
+   * stored). Replaces this phone's previous backup in that store.
    */
-  async createBackup(opts: { passkey?: boolean; recoveryCode?: boolean } = { passkey: true }): Promise<{ name: string; recoveryCode?: string }> {
-    const cloud = this.deps.cloud;
+  async createBackup(opts: { passkey?: boolean; recoveryCode?: boolean; cloud?: CloudBackupStore } = { passkey: true }): Promise<{ name: string; recoveryCode?: string }> {
+    const cloud = opts.cloud ?? this.deps.cloud;
     if (!cloud || !(await cloud.isAvailable())) throw new WalletError('backup_unavailable', 'No cloud storage is available for the backup.');
     if (!opts.passkey && !opts.recoveryCode) throw new WalletError('backup_unavailable', 'Choose a passkey, a recovery code or both.');
     const slots: SlotInput[] = [];
@@ -1623,6 +2464,8 @@ export class TrikeyWallet {
         ...(s.rules ? { rules: s.rules.policy, nextHardwareSequence: s.rules.nextHardwareSequence } : {}),
         contactNames: s.contactNames,
         ...(s.recovery?.destination ? { recoveryDestination: { descriptor: s.recovery.destination.descriptor, walletId: s.recovery.destination.walletId } } : {}),
+        ...(s.sendLog.length ? { sendLog: s.sendLog.slice(-MAX_SEND_LOG) } : {}),
+        ...(s.retiredWallets.length ? { retiredWallets: s.retiredWallets } : {}),
       };
       return sealBackup(payload, slots, { now: this.now() });
     });
@@ -1632,8 +2475,8 @@ export class TrikeyWallet {
     const back = await cloud.read(sealed.name);
     if (!back || back.length !== sealed.bytes.length || back.some((b, i) => b !== sealed.bytes[i]))
       throw new WalletError('backup_unavailable', 'The backup did not read back intact from the cloud.');
-    const previous = this.s.backup?.name;
-    if (previous && previous !== sealed.name) await cloud.remove(previous).catch(() => {});
+    const previous = this.s.backup;
+    if (previous && previous.name !== sealed.name && previous.provider === cloud.provider) await cloud.remove(previous.name).catch(() => {});
     await this.update((s) => {
       s.backup = {
         name: sealed.name,
@@ -1646,19 +2489,25 @@ export class TrikeyWallet {
     return { name: sealed.name, ...(recoveryCode ? { recoveryCode } : {}) };
   }
 
-  /** The newest Trikey backup in the cloud for this network, without opening it. */
-  static async findBackup(deps: WalletDeps): Promise<{ name: string; createdAt: number; slots: ('passkey-prf' | 'recovery-code')[] } | undefined> {
-    const cloud = deps.cloud;
+  /**
+   * The newest Trikey backup in `cloud` (default the deps' store), without opening it. Only backups for the deps'
+   * network, unless `anyNetwork` (the header says which network a backup is for).
+   */
+  static async findBackup(
+    deps: WalletDeps,
+    opts: { cloud?: CloudBackupStore; anyNetwork?: boolean } = {},
+  ): Promise<{ name: string; createdAt: number; slots: ('passkey-prf' | 'recovery-code')[]; network: NetworkName } | undefined> {
+    const cloud = opts.cloud ?? deps.cloud;
     if (!cloud || !(await cloud.isAvailable())) return undefined;
-    let best: { name: string; createdAt: number; slots: ('passkey-prf' | 'recovery-code')[] } | undefined;
+    let best: { name: string; createdAt: number; slots: ('passkey-prf' | 'recovery-code')[]; network: NetworkName } | undefined;
     for (const name of await cloud.list()) {
       if (!name.startsWith(BACKUP_FILE_PREFIX) || !name.endsWith(BACKUP_FILE_SUFFIX)) continue;
       const bytes = await cloud.read(name);
       if (!bytes) continue;
       try {
         const { header } = parseBackup(bytes);
-        if (header.network !== deps.network) continue;
-        if (!best || header.createdAt > best.createdAt) best = { name, createdAt: header.createdAt, slots: header.slots.map((s) => s.type) };
+        if (!opts.anyNetwork && header.network !== deps.network) continue;
+        if (!best || header.createdAt > best.createdAt) best = { name, createdAt: header.createdAt, slots: header.slots.map((s) => s.type), network: header.network };
       } catch {
         /* not ours or damaged: skip */
       }
@@ -1667,20 +2516,35 @@ export class TrikeyWallet {
   }
 
   /**
-   * A new phone from the cloud backup: opens it with the (synced) passkey or
-   * the recovery code, checks it, stores key 2, and reconnects to the guardian.
-   * The nostr identity comes from the seed, so the guardian already knows this
+   * A new phone from the cloud backup: opens it with the (synced) passkey or the recovery code, checks it, stores
+   * key 2, and reconnects to the guardian. The nostr identity comes from the seed, so the guardian already knows this
    * phone; no new pairing is needed.
+   *
+   * `cloud` is the store to read (default the deps' store). The network is the backup's own (its header): a backup
+   * for another network than `deps.network` is refused with `network_mismatch` (and `backupNetwork`), unless
+   * `switchNetwork` is given; it returns the deps to restore with on that network (its storage key, typically).
    */
-  static async restoreFromBackup(deps: WalletDeps, unlock: { passkey: true } | { recoveryCode: string }, opts: { name?: string } = {}): Promise<TrikeyWallet> {
-    const store = new StateStore(deps.store, deps.storageKey);
-    if (await store.load()) throw new WalletError('wallet_exists', 'This phone already has a Trikey wallet.');
-    const cloud = deps.cloud;
+  static async restoreFromBackup(
+    deps: WalletDeps,
+    unlock: { passkey: true } | { recoveryCode: string },
+    opts: { name?: string; cloud?: CloudBackupStore; switchNetwork?: (network: NetworkName) => WalletDeps } = {},
+  ): Promise<TrikeyWallet> {
+    const cloud = opts.cloud ?? deps.cloud;
     if (!cloud || !(await cloud.isAvailable())) throw new WalletError('backup_unavailable', 'No cloud storage is available.');
-    const name = opts.name ?? (await TrikeyWallet.findBackup(deps))?.name;
+    const name =
+      opts.name ?? (await TrikeyWallet.findBackup(deps, { cloud }))?.name ?? (await TrikeyWallet.findBackup(deps, { cloud, anyNetwork: true }))?.name;
     if (!name) throw new WalletError('backup_not_found', 'No Trikey backup was found in the cloud.');
     const bytes = await cloud.read(name);
     if (!bytes) throw new WalletError('backup_not_found', `The backup ${name} is gone.`);
+    const { header } = parseBackup(bytes);
+    if (header.network !== deps.network) {
+      if (!opts.switchNetwork)
+        throw new WalletError('network_mismatch', `The backup is for ${header.network}, but this phone is set to ${deps.network}.`, { backupNetwork: header.network });
+      deps = opts.switchNetwork(header.network);
+      if (deps.network !== header.network) throw new WalletError('network_mismatch', `switchNetwork returned deps for ${deps.network}, not ${header.network}.`);
+    }
+    const store = new StateStore(deps.store, deps.storageKey);
+    if (await store.load()) throw new WalletError('wallet_exists', 'This phone already has a Trikey wallet.');
 
     let opened: Awaited<ReturnType<typeof openBackup>>;
     if ('recoveryCode' in unlock) opened = await openBackup(bytes, { recoveryCode: unlock.recoveryCode });
@@ -1691,7 +2555,7 @@ export class TrikeyWallet {
     }
     const p = opened.payload;
     const network = getNetwork(deps.network);
-    if (p.network !== network.name) throw new WalletError('network_mismatch', `The backup is for ${p.network}.`);
+    if (p.network !== network.name) throw new WalletError('network_mismatch', `The backup is for ${p.network}.`, { backupNetwork: p.network });
     let key2;
     try {
       key2 = deriveKey2(p.mnemonic, network);
@@ -1745,6 +2609,8 @@ export class TrikeyWallet {
       s.contactNames = p.contactNames ?? {};
       s.backup = { name, provider, createdAt: header.createdAt * 1000, slots: header.slots.map((x) => x.type) };
       if (p.recoveryDestination) s.recovery = { role: 'initiator', destination: p.recoveryDestination, updatedAt: this.now() };
+      s.sendLog = p.sendLog ?? [];
+      s.retiredWallets = p.retiredWallets ?? [];
     });
     if (p.wallet && recovering) {
       // Recovery access may have expired: following the recovery is best effort (renewRecoveryAccess() restores it).
