@@ -267,6 +267,8 @@ export function buildHandlers(g: Guardian): Handlers {
         throw new RpcError(ErrorCode.RateLimited, 'Too many unlock attempts; wait and try again.', { retryAfterSeconds: r.retryAfterSeconds });
       if (r.code === 'bad_passphrase')
         throw new RpcError(ErrorCode.UnlockFailed, 'Wrong passphrase.', r.retryAfterSeconds ? { retryAfterSeconds: r.retryAfterSeconds } : undefined);
+      // The phone may not unlock right now (too many failures in a row, or a recovery it did not start): the web UI can.
+      if (r.code === 'phone_unlock_disabled' || r.code === 'recovery_pending') throw new RpcError(ErrorCode.UnlockFailed, r.message, { reason: r.code });
       throw new RpcError(ErrorCode.Unavailable, 'message' in r ? r.message : undefined);
     },
 
