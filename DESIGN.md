@@ -86,12 +86,17 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
 3. **Daily limit.** The guardian counts `Σinputs − Σchange` (the fee included) over a rolling 24 hours, keyed by outpoint:
    - a replayed transaction is never counted twice;
    - an RBF replacement counts as the larger of the old and new amounts.
-4. **Changing the rules needs the hardware wallet.** That covers raising the limit, changing the delay, and adding or removing alert contacts. Lowering the limit can come from the phone alone.
+4. **Loosening the rules needs the hardware wallet.** That covers raising the limit, shortening the delay, changing the sweep fee cap, and adding or removing alert contacts. The phone alone can only tighten: lower the limit or lengthen the delay.
+   - **How the hardware wallet approves:** a BIP137 `signmessage` signature from a single-sig key recorded at pairing. Ledger, Trezor and Coldcard all support it. The signed text is one line that shows the new values in clear, so the user checks them on the device screen:
+     `Trikey policy v1 wallet=<id> seq=<n> limit=<sats> delay=<d>d feecap=<sats> contacts=<k> hash=<policyHash> expires=<ISO8601Z>`
+   - The guardian rebuilds this text from the request and never trusts text from the phone. The sequence number must increase (by at most 1000), and an approval is valid for at most 24 hours.
+   - The wallet id in the text stops an approval from being replayed against another wallet that uses the same hardware key.
+   - No rule changes are accepted while a recovery is running.
 5. **Delay & Notify (7, 14 or 30 days, as in Bitkey):**
    1. A recovery starts with a sweep signed by the surviving key, going to a new wallet that keeps that key.
    2. Starting it pauses phone-only payments.
    3. The guardian then sends daily nostr DM alerts to every registered device and contact.
-   4. Any of them can cancel.
+   4. Any of them can cancel. If the cancel comes from someone other than the holder of the key that started the recovery (a "contested" cancel), phone-only payments stay paused until the hardware wallet signs a `resume-phone` approval.
    5. After the delay, the guardian co-signs the sweep and broadcasts it.
 6. **Sweep fee cap.** Recoveries can't burn funds through fees.
 
@@ -100,7 +105,7 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
 - **Identity:**
   - The phone's nostr key is derived from the key 2 seed (NIP-06 path).
   - The guardian has its own key, shown in the pairing QR together with its relays.
-- **Messages:** JSON-RPC rumors inside NIP-59 gift wraps, encrypted with NIP-44 to the guardian's pubkey.
+- **Messages:** JSON-RPC rumors (kind 21420, in the ephemeral range) inside NIP-59 gift wraps (kind 1059), encrypted with NIP-44 to the guardian's pubkey. The full wire format is in [`packages/protocol/PROTOCOL.md`](packages/protocol/PROTOCOL.md).
 - **Methods:**
 
   | Method | Purpose |
@@ -146,6 +151,7 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
 - **Remote compromise of the home server** gives up one key of three. That's the same exposure as Bitkey's server being breached.
 - **Malicious relays** can drop messages but can't read or forge them.
 - **Contested recovery** (a thief cancels a genuine recovery): phone-only spending stays paused, so the thief can't drain either. Same as Bitkey.
+- **The guardian's clock:** the recovery delay trusts the box's system clock, so a clock pushed forward would shorten it. To do: check time against the local node's block times.
 
 ## Recovery Key mode (no home server)
 
@@ -169,10 +175,7 @@ Someone who runs a guardian can host one for a person they know.
 
 ## Open questions
 
-1. **How the hardware wallet authorizes rule changes and unlocks.** Candidates:
-   - sign a message at a dedicated single-sig path recorded during pairing;
-   - sign a non-broadcastable PSBT that commits to the policy hash;
-   - for unlocking, Trezor's CipherKeyValue (SLIP-11). Ledger has no symmetric-key API.
+1. **How the hardware wallet unlocks the guardian.** Rule changes now use BIP137 message signatures (see rule 4); which signing paths each device allows still has to be tested on real hardware. Unlocking with the hardware wallet is still open: Trezor has CipherKeyValue (SLIP-11), Ledger has no symmetric-key API. Until then, unlocking uses the passphrase.
 2. **Notifications when the phone app is asleep.**
    - Nostr DMs reach the user's regular nostr app (zero infrastructure).
    - Real push on iOS needs Apple's push service, called with credentials only the app's publisher holds. That means running a stateless "empty ping" bridge, which conflicts with "we run nothing".
@@ -182,10 +185,13 @@ Someone who runs a guardian can host one for a person they know.
 
 ## Repository state
 
-- `packages/core/`: descriptors (BIP380 checksum, BIP389 multipath), BIP48 wallets, PSBT build, sign, analyze and finalize, software signer. Tests in `packages/core/test/`.
-- `packages/core/src/tweak.ts`: BIP 89 tweak math, kept for family hosting.
+- `packages/core/`: descriptors (BIP380 checksum, BIP389 multipath), BIP48 wallets, PSBT build, sign, analyze and finalize, software signer. `tweak.ts` holds the BIP 89 tweak math, kept for family hosting.
+- `packages/protocol/`: the nostr RPC (schemas, gift-wrap transport, replay guard, client and server, pairing URI, NIP-06 phone identity, an in-memory relay for tests). Spec in `PROTOCOL.md`.
+- `apps/guardian/`: the guardian's policy engine (spend checks, daily limit, rule changes with BIP137 approvals, Delay & Notify). The service around it (nostr, Electrs, HTTP API, key storage) is next.
+- `apps/guardian-web/`: the guardian's web UI, running on sample data until the service exists. Its API is in `API.md`.
+- `apps/mobile/`: the React Native app (in progress).
 - `tools/consensus-verify/`: Rust tool that checks transactions against libbitcoinconsensus (Bitcoin Core's script verifier). It builds; tests don't use it yet.
-- `docs/`: earlier design pages (key 3 options, the refill design).
+- `design/`: the screen designs. `docs/`: earlier design pages (key 3 options, the refill design).
 
 ## MVP build order
 
