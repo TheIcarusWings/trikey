@@ -5,7 +5,7 @@ import * as btc from '@scure/btc-signer';
 import { addChecksum, descriptorChecksum, parseSortedMultiDescriptor } from '../src/descriptor.js';
 import { tweakFromPath, tweakPrivateKey } from '../src/tweak.js';
 import { MultisigWallet, RECEIVE } from '../src/wallet.js';
-import { analyzePsbt, buildSpend, finalizePsbt } from '../src/psbt.js';
+import { PsbtError, analyzePsbt, buildSpend, finalizePsbt } from '../src/psbt.js';
 import { appSigner, fund, hwSigner, makeWallet, network } from './helpers.js';
 
 describe('descriptor checksum', () => {
@@ -84,5 +84,47 @@ describe('spend PSBT', () => {
     const tampered = btc.Transaction.fromPSBT(plan.psbt, { proprietary: 'ignore' });
     tampered.updateInput(0, { partialSig: [[pub, bad]] });
     expect(() => analyzePsbt(tampered.toPSBT(), wallet.accountPubkeys(), network)).toThrow(/invalid app signature/);
+  });
+});
+
+describe('PsbtError codes', () => {
+  const codeOf = (f: () => unknown) => {
+    try {
+      f();
+    } catch (e) {
+      expect(e).toBeInstanceOf(PsbtError);
+      return { code: (e as PsbtError).code, input: (e as PsbtError).input };
+    }
+    throw new Error('expected a PsbtError');
+  };
+
+  it('reports foreign inputs, missing nonWitnessUtxo and bad signatures by code', async () => {
+    const { wallet } = await makeWallet();
+    const otherCosigner = HDKey.fromMasterSeed(new Uint8Array(32).fill(9)).derive("m/48'/1'/0'/2'").publicKey!;
+    const { wallet: other } = await makeWallet(otherCosigner);
+    const u = fund(wallet, RECEIVE, 0, 50_000n);
+    const dest = btc.p2wpkh(new Uint8Array(33).fill(2), network.btc).address!;
+    const plan = buildSpend({ wallet, utxos: [u], recipients: [{ address: dest, amount: 10_000n }], feeRate: 1, changeIndex: 0 });
+    expect(codeOf(() => analyzePsbt(plan.psbt, other.accountPubkeys(), network))).toEqual({ code: 'missing_tweaks', input: 0 });
+
+    const noPrev = buildSpend({
+      wallet,
+      utxos: [{ ...u, prevTxHex: undefined }],
+      recipients: [{ address: dest, amount: 10_000n }],
+      feeRate: 1,
+      changeIndex: 0,
+    });
+    expect(codeOf(() => analyzePsbt(noPrev.psbt, wallet.accountPubkeys(), network, { requireNonWitnessUtxo: true }))).toEqual({
+      code: 'missing_non_witness_utxo',
+      input: 0,
+    });
+
+    const signed = btc.Transaction.fromPSBT(await appSigner().signPsbt(plan.psbt, network), { proprietary: 'ignore' });
+    const [pub, sig] = signed.getInput(0).partialSig![0];
+    const bad = sig.slice();
+    bad[10] ^= 1;
+    const tampered = btc.Transaction.fromPSBT(plan.psbt, { proprietary: 'ignore' });
+    tampered.updateInput(0, { partialSig: [[pub, bad]] });
+    expect(codeOf(() => analyzePsbt(tampered.toPSBT(), wallet.accountPubkeys(), network)).code).toBe('invalid_signature');
   });
 });

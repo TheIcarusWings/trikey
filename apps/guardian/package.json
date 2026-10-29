@@ -1,0 +1,26 @@
+{
+  "name": "@trikey/guardian",
+  "version": "0.1.0",
+  "description": "Trikey Guardian: the key-3 cosigner that enforces the daily limit and Delay & Notify recovery",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./policy": "./src/policy/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "@scure/base": "^2.4.0",
+    "@scure/bip32": "^2.4.0",
+    "@scure/btc-signer": "^2.4.1",
+    "@trikey/core": "*"
+  },
+  "devDependencies": {
+    "@trikey/protocol": "*"
+  }
+}

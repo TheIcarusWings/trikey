@@ -145,6 +145,33 @@ export function finalizePsbt(psbt: Uint8Array): { txHex: string; txid: string } 
 // ---------------------------------------------------------------------------
 // Analysis: what the cosigner (or a careful app) sees in a PSBT.
 
+export type PsbtErrorCode =
+  | 'missing_outpoint'
+  | 'duplicate_outpoint'
+  | 'missing_witness_utxo'
+  | 'bad_sighash_type'
+  | 'non_witness_utxo_mismatch'
+  | 'missing_non_witness_utxo'
+  | 'missing_tweaks'
+  | 'foreign_input'
+  | 'unknown_signer'
+  | 'invalid_signature'
+  | 'incomplete_output'
+  | 'outputs_exceed_inputs';
+
+/** Thrown by `analyzePsbt` so callers (the guardian) can map failures to typed reasons. */
+export class PsbtError extends Error {
+  constructor(
+    readonly code: PsbtErrorCode,
+    message: string,
+    /** Index of the offending input, when the failure is about one input. */
+    readonly input?: number,
+  ) {
+    super(message);
+    this.name = 'PsbtError';
+  }
+}
+
 export interface AnalyzedInput {
   index: number;
   outpoint: string;
@@ -216,36 +243,36 @@ export function analyzePsbt(
   let totalIn = 0n;
   for (let i = 0; i < tx.inputsLength; i++) {
     const inp = tx.getInput(i);
-    if (!inp.txid || inp.index === undefined) throw new Error(`input ${i}: missing outpoint`);
+    if (!inp.txid || inp.index === undefined) throw new PsbtError('missing_outpoint', `input ${i}: missing outpoint`, i);
     const outpoint = `${hex.encode(inp.txid)}:${inp.index}`;
-    if (seen.has(outpoint)) throw new Error(`input ${i}: duplicate outpoint`);
+    if (seen.has(outpoint)) throw new PsbtError('duplicate_outpoint', `input ${i}: duplicate outpoint`, i);
     seen.add(outpoint);
-    if (!inp.witnessUtxo) throw new Error(`input ${i}: missing witnessUtxo`);
+    if (!inp.witnessUtxo) throw new PsbtError('missing_witness_utxo', `input ${i}: missing witnessUtxo`, i);
     if (inp.sighashType !== undefined && inp.sighashType !== btc.SigHash.ALL)
-      throw new Error(`input ${i}: only SIGHASH_ALL is allowed`);
+      throw new PsbtError('bad_sighash_type', `input ${i}: only SIGHASH_ALL is allowed`, i);
     if (inp.nonWitnessUtxo) {
       // Pin the claimed amount to the real previous output (defeats the segwit v0 fee attack).
       const prev = inp.nonWitnessUtxo;
       const raw = btc.RawTx.encode({ ...prev, segwitFlag: false, witnesses: undefined });
       const prevTxid = hex.encode(sha256(sha256(raw)).reverse());
-      if (prevTxid !== hex.encode(inp.txid)) throw new Error(`input ${i}: nonWitnessUtxo does not match txid`);
+      if (prevTxid !== hex.encode(inp.txid)) throw new PsbtError('non_witness_utxo_mismatch', `input ${i}: nonWitnessUtxo does not match txid`, i);
       const out = prev.outputs[inp.index];
       if (!out || out.amount !== inp.witnessUtxo.amount || compareBytes(out.script, inp.witnessUtxo.script) !== 0)
-        throw new Error(`input ${i}: witnessUtxo does not match nonWitnessUtxo`);
+        throw new PsbtError('non_witness_utxo_mismatch', `input ${i}: witnessUtxo does not match nonWitnessUtxo`, i);
     } else if (opts.requireNonWitnessUtxo) {
-      throw new Error(`input ${i}: missing nonWitnessUtxo`);
+      throw new PsbtError('missing_non_witness_utxo', `input ${i}: missing nonWitnessUtxo`, i);
     }
     const tweaks = readTweaks(inp.proprietary, acct);
-    if (!tweaks) throw new Error(`input ${i}: missing delegation tweaks`);
+    if (!tweaks) throw new PsbtError('missing_tweaks', `input ${i}: missing delegation tweaks`, i);
     const d = delegatedScripts(acct, tweaks, network);
-    if (compareBytes(d.script, inp.witnessUtxo.script) !== 0) throw new Error(`input ${i}: does not belong to wallet`);
+    if (compareBytes(d.script, inp.witnessUtxo.script) !== 0) throw new PsbtError('foreign_input', `input ${i}: does not belong to wallet`, i);
 
     const msg = sighashAll(tx, i, d.witnessScript, inp.witnessUtxo.amount);
     const signedBy: Role[] = [];
     for (const [pub, sig] of inp.partialSig ?? []) {
       const role = ROLES.find((r) => compareBytes(d.pubkeys[r], pub) === 0);
-      if (!role) throw new Error(`input ${i}: signature from unknown key`);
-      if (!verifyEcdsa(sig, msg, pub)) throw new Error(`input ${i}: invalid ${role} signature`);
+      if (!role) throw new PsbtError('unknown_signer', `input ${i}: signature from unknown key`, i);
+      if (!verifyEcdsa(sig, msg, pub)) throw new PsbtError('invalid_signature', `input ${i}: invalid ${role} signature`, i);
       signedBy.push(role);
     }
     totalIn += inp.witnessUtxo.amount;
@@ -258,7 +285,7 @@ export function analyzePsbt(
   let externalOut = 0n;
   for (let i = 0; i < tx.outputsLength; i++) {
     const o = tx.getOutput(i);
-    if (!o.script || o.amount === undefined) throw new Error(`output ${i}: incomplete`);
+    if (!o.script || o.amount === undefined) throw new PsbtError('incomplete_output', `output ${i}: incomplete`);
     const tweaks = readTweaks(o.proprietary, outAcct);
     const isSelf = !!tweaks && compareBytes(delegatedScripts(outAcct, tweaks, network).script, o.script) === 0;
     if (isSelf) selfOut += o.amount;
@@ -266,6 +293,6 @@ export function analyzePsbt(
     outputs.push({ index: i, amount: o.amount, script: o.script, isSelf });
   }
   const fee = totalIn - selfOut - externalOut;
-  if (fee < 0n) throw new Error('outputs exceed inputs');
+  if (fee < 0n) throw new PsbtError('outputs_exceed_inputs', 'outputs exceed inputs');
   return { txid: tx.id, inputs, outputs, totalIn, selfOut, externalOut, fee, outflow: externalOut + fee };
 }
