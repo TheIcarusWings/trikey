@@ -20,7 +20,7 @@ import {
   type Handlers,
   type Message,
 } from '../src/index.js';
-import { fakePsbt, keyOrigin, keypair, policy, sleep, waitFor } from './helpers.js';
+import { WALLET_ID, approval, fakePsbt, keyOrigin, keypair, pairParams, policy, recovery, sleep, waitFor } from './helpers.js';
 
 const phone = keypair();
 const guardian = keypair();
@@ -57,7 +57,8 @@ async function setup(
       return {
         state: 'unlocked',
         paired: true,
-        policySequence: 1,
+        nextHardwareSequence: 1,
+        phoneSpending: 'enabled',
         activeRecoveryId: null,
         version: '0.1.0',
         time: Math.floor(Date.now() / 1000),
@@ -69,13 +70,18 @@ async function setup(
     },
     'policy.get': () => {
       count('policy.get');
-      return { policy, sequence: 1, policyHash: policyHash(policy) };
+      return { policy, nextHardwareSequence: 1, policyHash: policyHash(policy) };
+    },
+    'pair.prepare': (params) => {
+      count('pair.prepare');
+      if (params.pairingSecret !== 'S'.repeat(43)) throw new RpcError(ErrorCode.PairingRejected);
+      return { guardianKey: keyOrigin, guardianVersion: '0.1.0' };
     },
     pair: (params, ctx) => {
       count('pair');
       if (params.pairingSecret !== 'S'.repeat(43)) throw new RpcError(ErrorCode.PairingRejected);
       server.addPeer(ctx.sender);
-      return { guardianKey: keyOrigin, guardianVersion: '0.1.0' };
+      return { guardianKey: keyOrigin, descriptor: params.descriptor, walletId: WALLET_ID, guardianVersion: '0.1.0' };
     },
     ...handlerOverrides,
   };
@@ -190,12 +196,37 @@ describe('RpcClient <-> RpcServer through two dev relays', () => {
     expect(rig.serverDrops.some((d) => d.reason === 'unauthorized')).toBe(true);
     expect(rig.calls['guardian.status']).toBeUndefined();
 
-    const params = { deviceName: 'Pixel', network: 'bitcoin' as const, phoneKey: keyOrigin };
+    const params = { ...pairParams };
+    // Step 1: the guardian key (needed to build the descriptor and the pairing proof), before the secret is used up.
+    await expect(rig.client.call('pair.prepare', { pairingSecret: 'W'.repeat(43), network: 'bitcoin' })).rejects.toMatchObject({ code: ErrorCode.PairingRejected });
+    const prep = await rig.client.call('pair.prepare', { pairingSecret: 'S'.repeat(43), network: 'bitcoin' });
+    expect(prep.guardianKey.fingerprint).toBe('deadbeef');
     await expect(rig.client.call('pair', { ...params, pairingSecret: 'W'.repeat(43) })).rejects.toMatchObject({ code: ErrorCode.PairingRejected });
     const ok = await rig.client.call('pair', { ...params, pairingSecret: 'S'.repeat(43) });
     expect(ok.guardianKey.fingerprint).toBe('deadbeef');
 
     expect((await rig.client.call('guardian.status', {})).paired).toBe(true);
+  });
+
+  it('carries hardware approvals through recovery.cancel and phone.resume', async () => {
+    await teardown(rig);
+    const seen: unknown[] = [];
+    rig = await setup({
+      'recovery.cancel': (params) => {
+        seen.push(params);
+        return { recovery: { ...recovery, state: 'cancelled', cancelledBy: params.approval ? 'hardware' : 'app', cancelledAt: recovery.startedAt + 1 }, contested: true };
+      },
+      'phone.resume': (params) => {
+        seen.push(params);
+        return { phoneSpending: 'enabled' };
+      },
+    });
+    const cancelled = await rig.client.call('recovery.cancel', { recoveryId: recovery.recoveryId, approval });
+    expect(cancelled).toMatchObject({ contested: true, recovery: { state: 'cancelled', cancelledBy: 'hardware' } });
+    await expect(rig.client.call('phone.resume', { approval: { ...approval, sequence: approval.sequence + 1 } })).resolves.toEqual({ phoneSpending: 'enabled' });
+    expect(seen).toEqual([{ recoveryId: recovery.recoveryId, approval }, { approval: { ...approval, sequence: approval.sequence + 1 } }]);
+    // a stale-format approval (with the old `address` member) never leaves the phone
+    await expect(rig.client.call('phone.resume', { approval: { ...approval, address: 'bc1q' } as never })).rejects.toThrow();
   });
 
   it('survives one relay silently dropping everything', async () => {
@@ -262,7 +293,7 @@ describe('RpcClient <-> RpcServer through two dev relays', () => {
     rig = await setup({
       'guardian.status': async () => {
         await gate;
-        return { state: 'unlocked', paired: true, policySequence: 1, activeRecoveryId: null, version: 'real', time: 1_800_000_000 };
+        return { state: 'unlocked', paired: true, nextHardwareSequence: 1, phoneSpending: 'enabled', activeRecoveryId: null, version: 'real', time: 1_800_000_000 };
       },
     });
 
@@ -272,7 +303,7 @@ describe('RpcClient <-> RpcServer through two dev relays', () => {
     const mallory = keypair();
     const forged: Message = {
       id,
-      result: { state: 'locked', paired: false, policySequence: 0, activeRecoveryId: null, version: 'forged', time: 1_800_000_000 },
+      result: { state: 'locked', paired: false, nextHardwareSequence: 1, phoneSpending: 'enabled', activeRecoveryId: null, version: 'forged', time: 1_800_000_000 },
     };
     await publishRaw(rig, forged, { from: mallory, to: phone.pubkey });
     await waitFor(() => rig.clientDrops.some((d) => d.reason === 'wrong_peer'));
@@ -318,7 +349,7 @@ describe('RpcClient <-> RpcServer through two dev relays', () => {
     const id = generateMessageId();
     const pending = rig.client.call('guardian.status', {}, { id });
     await pending;
-    const res: Message = { id, result: { state: 'locked', paired: false, policySequence: 0, activeRecoveryId: null, version: 'x', time: 1 } };
+    const res: Message = { id, result: { state: 'locked', paired: false, nextHardwareSequence: 1, phoneSpending: 'enabled', activeRecoveryId: null, version: 'x', time: 1 } };
     await publishRaw(rig, res, { from: guardian, to: phone.pubkey });
     await waitFor(() => rig.clientDrops.some((d) => d.reason === 'replay'));
   });
@@ -369,7 +400,14 @@ describe('RpcClient <-> RpcServer through two dev relays', () => {
     const got: Alert[] = [];
     rig.client.onAlert((a) => got.push(a));
     const now = Math.floor(Date.now() / 1000);
-    const alert: Alert = { type: 'recovery_started', recoveryId: 'rec-12345678', executeAfter: now + 7 * 86400, at: now };
+    const alert: Alert = {
+      type: 'recovery_started',
+      recoveryId: 'rec-12345678',
+      readyAt: now + 7 * 86400,
+      survivingRole: 'app',
+      amountSats: 1_000_000,
+      at: now,
+    };
     const outcomes = await rig.server.notify(phone.pubkey, alert);
     expect(outcomes.some((o) => o.ok)).toBe(true);
     await waitFor(() => got.length === 1);

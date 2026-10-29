@@ -28,6 +28,14 @@ export const ErrorCode = {
   ApprovalInvalid: 1202,
   ApprovalExpired: 1203,
   StaleSequence: 1204,
+  /** The approval's sequence is more than 1000 ahead of the guardian's. */
+  SequenceTooFar: 1205,
+  /** The approval's expiry is more than 24 h ahead of the guardian's clock. */
+  ApprovalExpiryTooFar: 1206,
+  /** Phone-only payments are paused (a contested cancel, or the wallet was swept). */
+  PhoneSpendingPaused: 1207,
+  /** `phone.resume` while phone payments are not paused by a contested cancel. */
+  NothingToResume: 1208,
 
   // 13xx: recovery
   RecoveryNotFound: 1300,
@@ -62,7 +70,11 @@ export const ErrorMessage: Record<ErrorCodeValue, string> = {
   [ErrorCode.ApprovalRequired]: 'Hardware approval required',
   [ErrorCode.ApprovalInvalid]: 'Hardware approval is invalid',
   [ErrorCode.ApprovalExpired]: 'Hardware approval has expired',
-  [ErrorCode.StaleSequence]: 'Stale policy sequence number',
+  [ErrorCode.StaleSequence]: 'Stale hardware approval sequence number',
+  [ErrorCode.SequenceTooFar]: 'Hardware approval sequence number is too far ahead',
+  [ErrorCode.ApprovalExpiryTooFar]: 'Hardware approval expires too far ahead',
+  [ErrorCode.PhoneSpendingPaused]: 'Phone payments are paused',
+  [ErrorCode.NothingToResume]: 'Nothing to resume',
   [ErrorCode.RecoveryNotFound]: 'Recovery not found',
   [ErrorCode.RecoveryAlreadyActive]: 'A recovery is already active',
   [ErrorCode.RecoveryNotActive]: 'Recovery is not active',

@@ -20,7 +20,49 @@ export const XPUB =
 
 export const keyOrigin = { fingerprint: 'deadbeef', path: "m/48'/0'/0'/2'", xpub: XPUB };
 
-export const policy: Policy = { dailyLimitSats: 500_000, recoveryDelayDays: 7 };
+export const CONTACT_A = 'a1'.repeat(32);
+export const CONTACT_B = '0b'.repeat(32);
+
+export const policy: Policy = {
+  dailyLimitSats: 500_000,
+  recoveryDelayDays: 7,
+  alertContacts: [CONTACT_B, CONTACT_A],
+  sweepFeeCapSats: 50_000,
+};
+
+export const WALLET_ID = '0123456789abcdef';
+
+/** A well-formed BIP 137 signature (header byte 31, filler body): the protocol layer only checks the shape. */
+export const fakeSignature = Buffer.from([31, ...new Uint8Array(64).fill(7)]).toString('base64');
+
+export const approval = { kind: 'bip137' as const, sequence: 3, expiresAt: 1_900_000_000, signature: fakeSignature };
+
+export const hardwareAuth = { pubkey: `02${'ab'.repeat(32)}`, path: "m/48'/0'/0'/2'/0/0" };
+
+export const pairParams = {
+  pairingSecret: 'A'.repeat(43),
+  deviceName: 'Pixel',
+  network: 'bitcoin' as const,
+  phoneKey: keyOrigin,
+  descriptor: 'wsh(sortedmulti(2,A,B,C))',
+  phoneNostrPubkey: 'cd'.repeat(32),
+  hardwareAuth,
+  hardwareAuthProof: fakeSignature,
+  rules: policy,
+};
+
+export const recovery = {
+  recoveryId: '1-0123456789ab',
+  state: 'pending' as const,
+  survivingRole: 'hardware' as const,
+  startedAt: 1_800_000_000,
+  readyAt: 1_800_000_000 + 7 * 86_400,
+  delayDays: 7 as const,
+  sweepTxid: 'ef'.repeat(32),
+  destinationWalletId: 'fedcba9876543210',
+  amountSats: 1_000_000,
+  feeSats: 2_000,
+};
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

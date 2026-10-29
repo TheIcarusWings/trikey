@@ -1,6 +1,7 @@
 export * from './errors.js';
 export * from './schemas.js';
 export * from './policy.js';
+export * from './approval.js';
 export * from './envelope.js';
 export * from './transport.js';
 export * from './pool.js';

@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
-import type { Policy } from './schemas.js';
+import { Policy as PolicySchema, type Policy } from './schemas.js';
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 
@@ -36,19 +36,29 @@ function canonicalize(value: unknown): Json {
   }
 }
 
-/** sha256 of the canonical JSON of a policy, as lowercase hex. */
-export function policyHash(policy: Policy): string {
-  return bytesToHex(sha256(utf8ToBytes(canonicalJson(policy))));
+/**
+ * The policy in the form that gets hashed (and that the guardian stores): contacts lowercased,
+ * deduplicated and sorted. Validates against `Policy`, so unknown members, a delay other than 7/14/30
+ * days, a non-positive fee cap or more than 20 contacts throw rather than being hashed.
+ */
+export function normalizePolicy(policy: Policy): Policy {
+  const contacts = Array.isArray(policy?.alertContacts)
+    ? [...new Set(policy.alertContacts.map((c) => (typeof c === 'string' ? c.toLowerCase() : c)))].sort()
+    : policy?.alertContacts;
+  const p = PolicySchema.parse({ ...policy, alertContacts: contacts });
+  return {
+    alertContacts: p.alertContacts,
+    dailyLimitSats: p.dailyLimitSats,
+    recoveryDelayDays: p.recoveryDelayDays,
+    sweepFeeCapSats: p.sweepFeeCapSats,
+  };
 }
 
 /**
- * The text the hardware wallet signs (BIP 137 "sign message") to approve a policy change:
- *
- *     trikey-policy-v1:<policyHash>:<sequence>:<expiresAt>
- *
- * Binding the sequence number and expiry stops an old approval being replayed to roll the
- * policy back, or being used after the user has walked away.
+ * sha256 of the canonical JSON of the normalized policy, lowercase hex. Identical to the guardian
+ * engine's `policyHash(rules)`: the canonical JSON is `{alertContacts, dailyLimitSats,
+ * recoveryDelayDays, sweepFeeCapSats}` with sorted keys and sorted, lowercase contacts.
  */
-export function policyApprovalMessage(policy: Policy, sequence: number, expiresAt: number): string {
-  return `trikey-policy-v1:${policyHash(policy)}:${sequence}:${expiresAt}`;
+export function policyHash(policy: Policy): string {
+  return bytesToHex(sha256(utf8ToBytes(canonicalJson(normalizePolicy(policy)))));
 }
