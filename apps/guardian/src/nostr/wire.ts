@@ -13,6 +13,12 @@ import { rulesToPolicyJson, type CancelledBy, type RecoveryRecord, type Recovery
 
 export const toSeconds = (ms: number) => Math.floor(ms / 1000);
 
+/**
+ * `at` (unix seconds, kept for compatibility) and `atMs` (unix milliseconds) of a moment on the
+ * guardian's clock, for every alert and `guardian.status`. `at === floor(atMs / 1000)` always.
+ */
+export const stampOf = (ms: number): { at: number; atMs: number } => ({ at: toSeconds(ms), atMs: Math.floor(ms) });
+
 export function rulesFromPolicy(p: Policy): Rules {
   return {
     dailyLimitSats: BigInt(p.dailyLimitSats),

@@ -15,6 +15,7 @@ import { encodePairingUri } from '@trikey/protocol';
 import { DevRelay } from '@trikey/protocol/dev/relay';
 import type { GuardianConfig } from '../../src/config.js';
 import { Guardian } from '../../src/guardian.js';
+import type { RateLimitOptions } from '../../src/rate-limit.js';
 import { createLogger } from '../../src/log.js';
 import { ManualClock } from '../../src/policy/index.js';
 import { FakeElectrum } from './fake-electrum.js';
@@ -32,6 +33,8 @@ export interface GuardianRigOptions {
   applyBroadcasts?: boolean;
   /** Also serve the web UI's HTTP API on a random local port (see `api`). Default false. */
   http?: boolean;
+  /** `tx.broadcast` calls allowed per phone per window (default: the guardian's, 20 per 10 minutes). */
+  broadcastLimit?: RateLimitOptions;
 }
 
 export interface FundedOutput {
@@ -105,6 +108,7 @@ export class GuardianRig {
       tickIntervalMs: 0,
       electrum: { minBackoffMs: 20, maxBackoffMs: 100 },
       discoverDmRelays: false,
+      broadcastLimit: this.opts.broadcastLimit,
     });
     await this.guardian.start(this.opts.http ? { port: 0, host: '127.0.0.1' } : false);
     await this.guardian.chain.electrum!.waitReady(3000);

@@ -50,7 +50,8 @@ import { UnlockThrottle, type ThrottleOptions } from './unlock-throttle.js';
 import { DirectMessages } from './nostr/dm.js';
 import { Inbox } from './nostr/inbox.js';
 import { buildHandlers } from './nostr/handlers.js';
-import { toSeconds } from './nostr/wire.js';
+import { stampOf, toSeconds } from './nostr/wire.js';
+import { DEFAULT_BROADCAST_LIMIT, SlidingWindowLimiter, type RateLimitOptions } from './rate-limit.js';
 import { Alerter } from './alerts.js';
 import { RecoveryRunner } from './recovery-runner.js';
 import { onContactDm } from './dm-cancel.js';
@@ -79,6 +80,8 @@ export interface GuardianOptions {
   store?: StateStore;
   /** Look up alert contacts' NIP-17 DM relays (kind 10050). Default true. */
   discoverDmRelays?: boolean;
+  /** `tx.broadcast` calls allowed per paired phone per window. Default 20 per 10 minutes. */
+  broadcastLimit?: RateLimitOptions;
 }
 
 export type UnlockOutcome =
@@ -132,6 +135,8 @@ export class Guardian {
   readonly pairing = new PairingSessions();
   readonly alerts: Alerter;
   readonly recovery: RecoveryRunner;
+  /** Per paired phone: each `tx.broadcast` may scan wallets on Electrs. */
+  readonly broadcastLimiter: SlidingWindowLimiter;
 
   engine!: PolicyEngine;
   store!: ObservedStore;
@@ -178,6 +183,7 @@ export class Guardian {
     this.chain = new ChainService({ electrum, rpc, log: this.log });
     this.alerts = new Alerter(this);
     this.recovery = new RecoveryRunner(this);
+    this.broadcastLimiter = new SlidingWindowLimiter(opts.broadcastLimit ?? DEFAULT_BROADCAST_LIMIT);
   }
 
   private path(name: keyof typeof FILES): string {
@@ -232,6 +238,11 @@ export class Guardian {
     return toSeconds(this.clock.now());
   }
 
+  /** `at` (seconds) and `atMs` (milliseconds) for an alert or a status answer raised now. */
+  stampNow(): { at: number; atMs: number } {
+    return stampOf(this.clock.now());
+  }
+
   /** Engine state as last saved (read-only). */
   get records(): readonly RecoveryRecord[] {
     return this.store.state?.recoveries ?? [];
@@ -273,7 +284,7 @@ export class Guardian {
     this.chain.onTip(() => void this.tick());
     if (this.setupComplete) {
       await this.startNostr();
-      await this.notifyPhone({ type: 'guardian_locked', reason: 'restart', at: this.nowSec() });
+      await this.notifyPhone({ type: 'guardian_locked', reason: 'restart', ...this.stampNow() });
     }
     await this.logEvent({ type: 'started' });
     const every = this.opts.tickIntervalMs ?? 30_000;
@@ -433,6 +444,8 @@ export class Guardian {
    * destination; this side swaps the paired phone and tells it.
    */
   async rotateAfterSweep(recoveryId: string): Promise<void> {
+    // The phone paired to the wallet this retires; the engine forgets it as soon as the wallet rotates.
+    const previousPhone = this.engine.registration()?.appNostrPubkey;
     const res = await this.engine.rotateAfterSweep(recoveryId);
     if (!res.ok) {
       this.log.error('wallet.rotation_refused', { recoveryId, reason: res.refusal.reason });
@@ -453,11 +466,26 @@ export class Guardian {
         previousWalletId: res.retiredWalletId,
         recoveryId,
         hardwareConfirmRequired: !adopted.hardwareAuthConfirmed,
-        at: this.nowSec(),
+        ...this.stampNow(),
         message: `The guardian now protects your recovered wallet ${adopted.walletId}. Confirm your hardware wallet in the app before changing rules.`,
       });
     } else {
       this.log.warn('wallet.retired_after_recovery', { recoveryId, walletId: res.retiredWalletId, detail: res.detail });
+    }
+    // The phone that was paired to the swept wallet and is not the new wallet's phone (a lost phone's
+    // successor, or no successor at all) is told the wallet is gone from here, and stops being a peer.
+    if (previousPhone && previousPhone !== adopted?.appNostrPubkey) {
+      this.rpc?.removePeer(previousPhone);
+      await this.notifyPeer(previousPhone, {
+        type: 'wallet_retired',
+        walletId: res.retiredWalletId,
+        reason: 'recovered',
+        ...(adopted ? { successorWalletId: adopted.walletId } : {}),
+        ...this.stampNow(),
+        message: adopted
+          ? `Wallet ${res.retiredWalletId} was swept by a recovery and retired on this guardian. It now guards wallet ${adopted.walletId} for another phone.`
+          : `Wallet ${res.retiredWalletId} was swept by a recovery and retired on this guardian.`,
+      });
     }
   }
 
@@ -469,7 +497,7 @@ export class Guardian {
       d.phones = [];
     });
     this.log.info('wallet.retired', { walletId });
-    await this.notifyPeer(phone, { type: 'wallet_retired', walletId, reason: 'retired', at: this.nowSec() });
+    await this.notifyPeer(phone, { type: 'wallet_retired', walletId, reason: 'retired', ...this.stampNow() });
   }
 
   /** Background work: time-based engine transitions, completing a ready recovery, broadcasts, alerts. Coalesces overlapping calls. */
@@ -617,7 +645,7 @@ export class Guardian {
       this.log.info('guardian.locked', { reason });
       await this.logEvent({ type: 'locked', reason });
     });
-    if (locked) await this.notifyPhone({ type: 'guardian_locked', reason, at: this.nowSec() });
+    if (locked) await this.notifyPhone({ type: 'guardian_locked', reason, ...this.stampNow() });
   }
 
   /**
@@ -672,7 +700,7 @@ export class Guardian {
 
           // Tell the paired phone while it is still a peer.
           const reg = this.engine.registration();
-          if (reg) await this.notifyPhone({ type: 'wallet_retired', walletId: reg.walletId, reason: 'reset', at: this.nowSec() });
+          if (reg) await this.notifyPhone({ type: 'wallet_retired', walletId: reg.walletId, reason: 'reset', ...this.stampNow() });
 
           const seed = generateSeed();
           let next: KeystoreFile;

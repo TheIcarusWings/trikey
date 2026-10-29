@@ -28,7 +28,7 @@ import {
 import { ElectrumError } from '../chain/electrum.js';
 import type { Guardian } from '../guardian.js';
 import { errorText } from '../log.js';
-import { policyHash, type CancelActor, type RecoveryRecord } from '../policy/index.js';
+import { policyHash, type CancelActor, type RecoveryRecord, type WatchedWallet } from '../policy/index.js';
 import { policyToWire, recoveryToWire, refusalError, rulesFromPolicy } from './wire.js';
 
 const normPath = (p: string) => p.replace(/^m\//, '').replace(/'/g, 'h');
@@ -58,13 +58,74 @@ function runningRecovery(g: Guardian, id: string): RecoveryRecord {
   throw new RpcError(known ? ErrorCode.RecoveryNotActive : ErrorCode.RecoveryNotFound);
 }
 
-/** The paired wallet, for the chain methods (parsed once per descriptor; the chain service caches by wallet object). */
-let walletCache: { descriptor: string; wallet: MultisigWallet } | undefined;
+/**
+ * Wallets parsed once per descriptor: the chain service caches derived scripts by wallet object, so
+ * the same object must come back for the same wallet (the paired one and the watched one).
+ */
+const walletCache = new Map<string, MultisigWallet>();
+function walletOf(w: { descriptor: string; network: Parameters<typeof getNetwork>[0] }): MultisigWallet {
+  const key = `${w.network}:${w.descriptor}`;
+  let wallet = walletCache.get(key);
+  if (!wallet) {
+    if (walletCache.size >= 8) walletCache.clear();
+    wallet = MultisigWallet.fromDescriptor(w.descriptor, getNetwork(w.network));
+    walletCache.set(key, wallet);
+  }
+  return wallet;
+}
+
+/** The paired wallet, for the chain methods. */
 function pairedWallet(g: Guardian): MultisigWallet {
   const reg = g.engine.registration();
   if (!reg) throw refusalError({ reason: 'not_registered' });
-  if (walletCache?.descriptor !== reg.descriptor) walletCache = { descriptor: reg.descriptor, wallet: MultisigWallet.fromDescriptor(reg.descriptor, getNetwork(reg.network)) };
-  return walletCache.wallet;
+  return walletOf(reg);
+}
+
+/**
+ * The wallet `wallet.sync` reads: the paired one by default (or by its id); the watched one (the wallet
+ * the paired wallet replaced) as `replaced` or by its id; anything else is 1005.
+ */
+function syncTarget(g: Guardian, which: string | undefined): { wallet: MultisigWallet; walletId: string } {
+  const paired = pairedWallet(g);
+  const reg = g.engine.registration()!;
+  if (which === undefined || which === reg.walletId) return { wallet: paired, walletId: reg.walletId };
+  const watched = g.engine.watchedWallet();
+  if (watched && (which === 'replaced' || which === watched.walletId)) return { wallet: walletOf(watched), walletId: watched.walletId };
+  throw new RpcError(ErrorCode.WalletNotWatched, which === 'replaced' ? 'This guardian watches no replaced wallet.' : `This guardian does not watch wallet ${which}.`);
+}
+
+/**
+ * Why `tx.broadcast` may not relay a transaction that spends none of the paired wallet's coins, or
+ * `undefined` when it is a sweep of the watched (replaced) wallet into the paired wallet. The rules
+ * (chain.ts, `checkReplacementSweep`): watched wallet known and named by the current pairing's
+ * `replacesWalletId`; every input a coin of it; every output an address of the paired wallet; the fee
+ * within the sweep fee cap.
+ */
+async function replacementRefusal(g: Guardian, paired: MultisigWallet, txHex: string): Promise<{ code: number; message: string; reason: string; data?: Record<string, unknown> } | undefined> {
+  const reg = g.engine.registration()!;
+  const watched: WatchedWallet | undefined = g.engine.watchedWallet();
+  if (!watched || reg.origin.kind !== 'paired' || reg.origin.replacesWalletId !== watched.walletId)
+    return { code: ErrorCode.ForeignTransaction, reason: 'spends_no_wallet_coin', message: 'The transaction spends none of the wallet\'s coins.' };
+  const check = await g.chain.checkReplacementSweep(walletOf(watched), paired, txHex);
+  if (!check.ok) {
+    const message = {
+      too_many_inputs: 'A sweep of the replaced wallet may have at most 500 inputs.',
+      too_many_outputs: 'A sweep of the replaced wallet may have at most 10 outputs.',
+      input_not_from_replaced_wallet: 'The transaction spends none of the wallet\'s coins, and not only coins of the replaced wallet.',
+      output_not_to_wallet: 'Every output of a sweep of the replaced wallet must pay this wallet.',
+      outputs_exceed_inputs: 'The transaction pays out more than it spends.',
+    }[check.reason];
+    return { code: ErrorCode.ForeignTransaction, reason: check.reason, message };
+  }
+  const cap = g.engine.status().rules?.sweepFeeCapSats;
+  if (cap !== undefined && check.feeSats > cap)
+    return {
+      code: ErrorCode.PolicyViolation,
+      reason: 'sweep_fee_exceeds_cap',
+      message: `The sweep fee (${check.feeSats} sats) is over the fee cap (${cap} sats).`,
+      data: { fee: Number(check.feeSats), cap: Number(cap) },
+    };
+  return undefined;
 }
 
 /** Chain failures as protocol errors: unknown tx 1600, node refusal 1601, no chain data 1501. */
@@ -101,6 +162,7 @@ const STATE_CHANGING: MethodName[] = [
   'phone.resume',
   'hardware.confirm',
   'wallet.retire',
+  'wallet.unwatch',
 ];
 /** How long a request id is remembered: the protocol's longest request TTL (1 h) plus clock skew. */
 const REMEMBER_MS = (3600 + 120) * 1000;
@@ -132,6 +194,7 @@ export function buildHandlers(g: Guardian): Handlers {
   const handlers: Handlers = {
     'guardian.status': () => {
       const s = g.engine.status();
+      const stamp = g.stampNow(); // `time` and `atMs` from one reading of the clock
       return {
         state: g.locked ? 'locked' : 'unlocked',
         paired: s.registered,
@@ -139,7 +202,9 @@ export function buildHandlers(g: Guardian): Handlers {
         phoneSpending: s.phoneSpending,
         activeRecoveryId: s.recoveryStatus !== 'none' && s.recovery ? s.recovery.id : null,
         version: g.version,
-        time: g.nowSec(),
+        time: stamp.at,
+        atMs: stamp.atMs,
+        ...(g.engine.watchedWallet() ? { watchedWalletId: g.engine.watchedWallet()!.walletId } : {}),
         ...(s.walletId ? { walletId: s.walletId, hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
         ...(s.dailyLimit
           ? {
@@ -216,6 +281,7 @@ export function buildHandlers(g: Guardian): Handlers {
           hardwareAuthProof: params.hardwareAuthProof,
           appNostrPubkey: ctx.sender,
           replacesWalletId: params.replacesWalletId,
+          replacesDescriptor: params.replacesDescriptor,
         });
         if (!res.ok) {
           g.pairing.fail(session.id, now);
@@ -294,9 +360,10 @@ export function buildHandlers(g: Guardian): Handlers {
 
     'wallet.sync': (params) =>
       chainCall(g, 'wallet.sync', async () => {
-        const wallet = pairedWallet(g);
+        const { wallet, walletId } = syncTarget(g, params.wallet);
         const r = await g.chain.walletSync(wallet, { historyLimit: params.historyLimit ?? DEFAULT_SYNC_HISTORY, maxUtxos: MAX_SYNC_UTXOS });
         return {
+          walletId,
           tipHeight: r.tipHeight,
           tipHash: r.tipHash,
           utxos: r.utxos.map((u) => ({
@@ -334,20 +401,39 @@ export function buildHandlers(g: Guardian): Handlers {
         return { txHex };
       }),
 
-    'tx.broadcast': (params) =>
+    'tx.broadcast': (params, ctx) =>
       chainCall(g, 'tx.broadcast', async () => {
         const wallet = pairedWallet(g);
+        // Each call may scan wallets on Electrs: per paired phone, at most so many per window.
+        const turn = g.broadcastLimiter.take(ctx.sender, g.clock.now());
+        if (!turn.ok) {
+          g.log.warn('tx.broadcast_rate_limited');
+          throw new RpcError(ErrorCode.RateLimited, 'Too many broadcasts; wait and try again.', { retryAfterSeconds: Math.ceil(turn.retryAfterMs / 1000) });
+        }
         const txid = txidOf(params.txHex);
-        // Not an open relay: only transactions that spend this wallet's coins.
+        // Not an open relay: only a spend of this wallet's coins, or a sweep of the watched (replaced) wallet into this one.
+        let via = 'wallet';
         if (!(await g.chain.spendsWalletCoin(wallet, params.txHex))) {
-          g.log.warn('tx.broadcast_refused', { reason: 'spends no wallet coin' });
-          throw new RpcError(ErrorCode.ForeignTransaction);
+          const refusal = await replacementRefusal(g, wallet, params.txHex);
+          if (refusal) {
+            g.log.warn('tx.broadcast_refused', { reason: refusal.reason });
+            throw new RpcError(refusal.code, refusal.message, { reason: refusal.reason, ...refusal.data });
+          }
+          via = 'replaced_wallet_sweep';
         }
         const r = await g.chain.broadcast(params.txHex);
         if (r.txid !== txid) g.log.warn('tx.broadcast_txid_mismatch', { txid, reported: r.txid });
-        g.log.info('tx.broadcast', { txid, via: r.via });
+        g.log.info('tx.broadcast', { txid, via: r.via, spends: via });
         return { txid };
       }),
+
+    // Only the paired phone (Guardian.authorize). No approval: it only takes capability away.
+    'wallet.unwatch': async (params) => {
+      const res = await g.engine.unwatch(params.walletId);
+      if (!res.ok) throw refusalError(res.refusal);
+      if (res.unwatched) g.log.info('wallet.unwatched', { walletId: res.walletId });
+      return { unwatched: res.unwatched, ...(res.walletId ? { walletId: res.walletId } : {}) };
+    },
 
     'fees.estimate': (params) =>
       chainCall(g, 'fees.estimate', async () => {

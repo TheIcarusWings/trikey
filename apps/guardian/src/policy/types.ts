@@ -30,6 +30,22 @@ export type WalletOrigin =
   /** Adopted after a recovery swept `fromWalletId` to it (wallet rotation). */
   | { kind: 'recovery'; recoveryId: string; fromWalletId: string };
 
+/**
+ * A wallet the guardian only WATCHES: the one the active wallet replaced ("Replace guardian"). The
+ * guardian holds its descriptor so it can serve its coins and history and relay a signed sweep of them
+ * into the active wallet. It never co-signs for it: key 3 is not in it (or is another guardian's key),
+ * and nothing here starts a recovery or accepts a hardware approval for it. It belongs to the active
+ * wallet and goes with it (rotation, retirement, reset).
+ */
+export interface WatchedWallet {
+  /** `MultisigWallet.fingerprint()` of `descriptor`; equals the active registration's `replacesWalletId`. */
+  walletId: string;
+  network: NetworkName;
+  descriptor: string;
+  /** ms */
+  since: number;
+}
+
 export interface Registration {
   /** `MultisigWallet.fingerprint()` of the descriptor. Bound into every hardware approval. */
   walletId: string;
@@ -189,7 +205,8 @@ export type Result<T> = ({ ok: true } & T) | { ok: false; refusal: Refusal };
 // Activity log (what the web UI shows)
 
 export type ActivityEvent =
-  | { type: 'registered'; walletId: string; replacesWalletId?: string }
+  | { type: 'registered'; walletId: string; replacesWalletId?: string; watching?: boolean }
+  | { type: 'wallet_unwatched'; walletId: string }
   | { type: 'cosign_signed'; txid: string; outflow: bigint; usedAfter: bigint; replay: boolean }
   | { type: 'cosign_refused'; txid?: string; refusal: Refusal }
   | { type: 'rules_changed'; by: 'app' | 'hardware'; sequence?: number; from: Rules; to: Rules }
@@ -238,6 +255,8 @@ export interface GuardedWallet {
   phoneSpending: PhoneSpending;
   /** `recovery.access` grants for this wallet. Revoked when it rotates or retires. */
   accessGrants: AccessGrant[];
+  /** The wallet this one replaced, watch-only, if the phone sent its descriptor at pairing. Dropped by `unwatch`. */
+  watched?: WatchedWallet;
 }
 
 export type Retirement =
