@@ -1,0 +1,30 @@
+version: "3.7"
+
+services:
+
+  app_proxy:
+    environment:
+      # Umbrel names the container <app-id>_<service>_1.
+      APP_HOST: trikey-guardian_server_1
+      APP_PORT: 3000
+
+  server:
+    image: ghcr.io/theicaruswings/trikey-guardian:0.1.0
+    init: true
+    restart: on-failure
+    volumes:
+      - ${APP_DATA_DIR}/data:/data
+    environment:
+      PORT: 3000
+      TRIKEY_DATA_DIR: /data
+      # Electrs (dependency "electrs")
+      ELECTRUM_HOST: ${APP_ELECTRS_NODE_IP}
+      ELECTRUM_PORT: ${APP_ELECTRS_NODE_PORT}
+      # Bitcoin Core (dependency "bitcoin")
+      BITCOIN_RPC_HOST: ${APP_BITCOIN_NODE_IP}
+      BITCOIN_RPC_PORT: ${APP_BITCOIN_RPC_PORT}
+      BITCOIN_RPC_USER: ${APP_BITCOIN_RPC_USER}
+      BITCOIN_RPC_PASS: ${APP_BITCOIN_RPC_PASS}
+      # TODO(verify): the value Umbrel exports for APP_BITCOIN_NETWORK. The guardian expects
+      # bitcoin|testnet|signet|regtest. Map it if Umbrel uses other names.
+      BITCOIN_NETWORK: ${APP_BITCOIN_NETWORK}
