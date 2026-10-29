@@ -7,6 +7,7 @@ import { Screen } from '@/components/screen';
 import { Card } from '@/components/ui/card';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
+import { useWallet, useWalletService } from '@/data';
 import { IS_IOS, pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -32,6 +33,8 @@ function KeyExplainer({ icon, title, children, tinted }: { icon: LucideIcon; tit
 
 export default function HowItWorks() {
   const router = useRouter();
+  const wallet = useWalletService();
+  const { backing } = useWallet();
   return (
     <Screen
       title="Three keys, all yours"
@@ -42,12 +45,24 @@ export default function HowItWorks() {
             You'll need a hardware wallet and an Umbrel or Start9 with Trikey Guardian installed.{' '}
             <Text
               role="link"
-              onPress={() => router.push('/rk/create')}
+              onPress={() => {
+                // "No home server?" is the other way to make a wallet: it picks Recovery Key mode for this phone.
+                wallet.setMode('recoveryKey');
+                // The demo goes straight to the Recovery Key screens, as the designs do; a real wallet connects key 1 first.
+                router.push(backing === 'demo' ? '/rk/create' : { pathname: '/connect-hardware', params: { flow: 'rk' } });
+              }}
               className={cn('text-foreground font-medium underline underline-offset-[3px]', pick('text-[13px]', 'text-xs'))}>
               No home server?
             </Text>
           </Text>
-          <AppButton title="Continue" size="hero" onPress={() => router.push('/connect-hardware')} />
+          <AppButton
+            title="Continue"
+            size="hero"
+            onPress={() => {
+              wallet.setMode('guardian');
+              router.push('/connect-hardware');
+            }}
+          />
         </>
       }>
       <View className={pick('gap-5', 'gap-6')}>

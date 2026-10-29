@@ -45,7 +45,7 @@ export function mapRkError(e: unknown): WalletServiceError {
       case 'amount_too_small':
         return make('invalid_input', "That's too small to send. The smallest payment is 546 sats.");
       case 'insufficient_funds':
-        return make('insufficient_funds', /refill/i.test(e.message) ? e.message : "There isn't enough bitcoin for that and the network fee.");
+        return make('insufficient_funds', /refill|confirmed coins/i.test(e.message) ? e.message : "There isn't enough bitcoin for that and the network fee.");
       case 'state_tampered':
         return make('refused', `${e.message}`);
       case 'fee_too_high':

@@ -24,7 +24,7 @@ export default function SendReview() {
   const sending = useRef(false);
 
   // Re-quoted when the speed or what the plan depends on changes (the daily limit may have moved).
-  const { outcome } = useQuote({ address, amountSats: Number(amount), speed });
+  const { outcome } = useQuote({ address, amountSats: Number(amount), speed }, 0, { exact: true });
   const quote = outcome.ok ? outcome.quote : null;
   const hardware = quote?.plan.signer === 'hardware';
 
@@ -73,8 +73,8 @@ export default function SendReview() {
           <Text className="shrink text-right font-mono text-[15px] leading-5">{shorten(address)}</Text>
         </View>
         <InfoRow label="Amount" value={`${formatSats(quote.request.amountSats)} sats`} tabular />
-        <InfoRow label="Network fee" value={`${formatSats(quote.feeSats)} sats`} tabular />
-        <InfoRow label="Total" value={`${formatSats(quote.totalSats)} sats`} strong tabular />
+        <InfoRow label="Network fee" value={`${quote.estimate ? 'about ' : ''}${formatSats(quote.feeSats)} sats`} tabular />
+        <InfoRow label="Total" value={`${quote.estimate ? 'about ' : ''}${formatSats(quote.totalSats)} sats`} strong tabular />
       </Panel>
       <View className="gap-2">
         <Text className="text-sm font-medium leading-5">Speed</Text>

@@ -24,6 +24,11 @@ import {
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
+/** Esplora's API lives at <site>/api; the site shows the transaction. Only for a server that has a public site. */
+function explorerOf(serverUrl: string): string | undefined {
+  return /^https:\/\//.test(serverUrl) && /\/api$/.test(serverUrl) ? serverUrl.replace(/\/api$/, '') : undefined;
+}
+
 const SIGNERS: Record<TxSigners, string> = {
   'phone+guardian': 'This phone + guardian',
   'phone+hardware': 'This phone + hardware wallet',
@@ -44,10 +49,11 @@ export default function TransactionDetail() {
   if (!item || item.type !== 'payment') return <Redirect href="/activity" />;
   const { tx } = item;
 
-  const sent = tx.kind === 'sent';
+  const sent = tx.kind === 'sent' || tx.kind === 'speed_up';
   const when = `${formatDay(tx.at, now) === 'Today' ? 'Today' : formatDay(tx.at, now)}, ${formatTime(tx.at, pick('12h', '24h') as '12h' | '24h')}`;
-  const heading = tx.kind === 'refill' ? `Refill ${tx.refillIndex ?? ''}`.trim() : sent ? 'Sent' : 'Received';
-  const explorer = state.guardian.explorerUrl;
+  const heading = tx.kind === 'refill' ? `Refill ${tx.refillIndex ?? ''}`.trim() : tx.kind === 'speed_up' ? 'Speed up' : sent ? 'Sent' : 'Received';
+  // Guardian mode: the explorer on the guardian's box. Recovery Key mode: the chain server's own site, when it has one.
+  const explorer = state.mode === 'recoveryKey' ? explorerOf(state.recoveryKey.server.url) : state.guardian.explorerUrl;
 
   const copy = async () => {
     await Clipboard.setStringAsync(tx.txid);
@@ -63,7 +69,7 @@ export default function TransactionDetail() {
       backLabel="Home"
       footer={
         <AppButton
-          title="Open in your node's explorer"
+          title={state.mode === 'recoveryKey' ? 'Open in the block explorer' : "Open in your node's explorer"}
           variant="outline"
           disabled={!explorer}
           onPress={() => explorer && Linking.openURL(`${explorer}/tx/${tx.txid}`)}
@@ -82,6 +88,7 @@ export default function TransactionDetail() {
         {tx.address ? <InfoRow label={sent ? 'To' : 'From'} value={shorten(tx.address)} mono /> : null}
         {tx.feeSats !== undefined ? <InfoRow label="Network fee" value={`${formatSats(tx.feeSats)} sats`} tabular /> : null}
         {tx.signedBy ? <InfoRow label="Signed by" value={SIGNERS[tx.signedBy]} /> : null}
+        {tx.fromVault ? <InfoRow label="Paid from" value="The vault" /> : null}
       </Panel>
       <View className="gap-1.5">
         <Text className="text-sm font-medium leading-5">Transaction ID</Text>

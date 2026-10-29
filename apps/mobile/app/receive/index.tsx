@@ -1,5 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, Share, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
@@ -16,7 +16,13 @@ import { cn } from '@/lib/utils';
 export default function Receive() {
   const router = useRouter();
   const wallet = useWalletService();
-  const { receiveAddress, hardware } = useWallet();
+  const state = useWallet();
+  const { hardware } = state;
+  // Recovery Key mode has two kinds of receiving address: the phone's spending balance, and the vault ("Add to vault").
+  const rkMode = state.mode === 'recoveryKey';
+  const params = useLocalSearchParams<{ to?: string }>();
+  const toVault = rkMode && params.to === 'vault';
+  const receiveAddress = toVault ? (wallet.rk?.vaultAddress() ?? '') : state.receiveAddress;
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -50,19 +56,30 @@ export default function Receive() {
 
   return (
     <Screen
-      title="Receive"
+      title={toVault ? 'Add to vault' : 'Receive'}
       backLabel="Home"
       footer={
+        rkMode && !toVault ? (
+          <Card className="gap-2 px-4 py-3.5">
+            <Text className={pick('text-[15px] leading-[21px]', 'text-sm leading-5')}>
+              This address fills your spending balance, which this phone spends alone. For savings, add to the vault instead.
+            </Text>
+            <Pressable role="link" onPress={() => router.replace({ pathname: '/receive', params: { to: 'vault' } })} hitSlop={{ top: 8, bottom: 8 }} accessibilityLabel="Add to vault">
+              <Text className={cn('text-primary', pick('text-[15px] font-semibold leading-[21px]', 'text-sm font-medium leading-5'))}>Add to vault</Text>
+            </Pressable>
+          </Card>
+        ) : (
         <Card className="gap-2 px-4 py-3.5">
           <Text className={pick('text-[15px] leading-[21px]', 'text-sm leading-5')}>
             For larger amounts, check that your {hardware.brand} shows the same address.
           </Text>
-          <Pressable role="link" onPress={() => router.push('/receive/verify')} hitSlop={{ top: 8, bottom: 8 }} accessibilityLabel={`Verify on ${hardware.brand}`}>
+          <Pressable role="link" onPress={() => router.push(toVault ? { pathname: '/receive/verify', params: { to: 'vault' } } : '/receive/verify')} hitSlop={{ top: 8, bottom: 8 }} accessibilityLabel={`Verify on ${hardware.brand}`}>
             <Text className={cn('text-primary', pick('text-[15px] font-semibold leading-[21px]', 'text-sm font-medium leading-5'))}>
               Verify on {hardware.brand}
             </Text>
           </Pressable>
         </Card>
+        )
       }>
       {receiveAddress ? (
         <View className="mt-1 items-center gap-4">
@@ -73,7 +90,7 @@ export default function Receive() {
         </View>
       ) : (
         <Notice tone="warn" title="No address to show">
-          Your {hardware.brand} hasn't confirmed this wallet's addresses yet, so Trikey won't show one. Finish setting up the wallet first.
+          {rkMode ? "Finish setting up the wallet first: the vault and the spending balance get their addresses when your Recovery Key is saved." : `Your ${hardware.brand} hasn't confirmed this wallet's addresses yet, so Trikey won't show one. Finish setting up the wallet first.`}
         </Notice>
       )}
       <View className="flex-row gap-3">

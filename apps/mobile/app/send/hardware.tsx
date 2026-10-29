@@ -40,7 +40,9 @@ function explain(reason: HardwareReason, amount: number, state: WalletState): st
     case 'phone-spending-paused':
       return `Phone-only payments are paused after a recovery was cancelled by someone else, so your hardware wallet signs this one. ${sats} goes out as soon as you approve.`;
     case 'requested':
-      return `You chose to approve this one on your hardware wallet. ${sats} goes out as soon as you approve.`;
+      return state.mode === 'recoveryKey'
+        ? `This payment comes from your vault, so your hardware wallet signs it with this phone. ${sats} goes out as soon as you approve.`
+        : `You chose to approve this one on your hardware wallet. ${sats} goes out as soon as you approve.`;
   }
 }
 
@@ -55,6 +57,8 @@ export default function SendHardware() {
   const state = useWallet();
   const { address = '', amount = '0', speed = 'normal', signer } = useLocalSearchParams<{ address?: string; amount?: string; speed?: string; signer?: string }>();
   const [attempt, setAttempt] = useState(0);
+  // A payment that comes with a warning (it ends the refills) waits for the person to say they read it.
+  const [acknowledged, setAcknowledged] = useState(false);
   const { busy, run, message, error } = useAction();
   const feeSpeed: FeeSpeed = speed === 'slow' || speed === 'fast' ? speed : 'normal';
 
@@ -84,14 +88,14 @@ export default function SendHardware() {
     };
   }, []);
   useEffect(() => {
-    if (!quote || startedFor.current === attempt) return;
+    if (!quote || startedFor.current === attempt || (quote.warning && !acknowledged)) return;
     startedFor.current = attempt;
     void run(wallet.sendPayment(quote)).then((r) => {
       if (r.ok && alive.current) router.replace({ pathname: '/send/done', params: { id: r.value.id, speed: feeSpeed } });
     });
     // The quote is fixed for this screen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attempt]);
+  }, [attempt, acknowledged]);
 
   if (!quote) {
     return (
@@ -113,7 +117,9 @@ export default function SendHardware() {
       footer={
         <>
           <ActionNotice message={message} error={error} />
-          {busy ? (
+          {quote.warning && !acknowledged ? (
+            <AppButton title={`I understand, ask my ${brand}`} onPress={() => setAcknowledged(true)} />
+          ) : busy ? (
             <View className="flex-row items-center justify-center gap-2.5" accessibilityLiveRegion="polite">
               <View className="bg-warn size-2 rounded-full" />
               <Text className="text-muted-foreground text-sm leading-5">Waiting for your {brand}{'…'}</Text>
@@ -134,6 +140,11 @@ export default function SendHardware() {
       <Notice icon={TriangleAlert} iconClass="text-warn" tone="warn-outline">
         {explain(reason, quote.request.amountSats, state)}
       </Notice>
+      {quote.warning ? (
+        <Notice icon={TriangleAlert} iconClass="text-destructive" tone="warn-outline" title="This ends your refills">
+          {quote.warning}
+        </Notice>
+      ) : null}
       <DeviceMock
         width={220}
         height={140}

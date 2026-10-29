@@ -12,7 +12,7 @@
  * runs: a phone has one wallet of one kind per mode and network.
  */
 import { Platform } from 'react-native';
-import type { HardwareKind, KeyValueStore } from '@trikey/wallet';
+import type { HardwareKind, HardwareProvider, KeyValueStore } from '@trikey/wallet';
 import { createHardwareProviders } from '@/hardware';
 import { getPlatform, type TrikeyPlatform } from '@/platform';
 import { pickBackupFile, shareBackupFile } from '@/platform/backup-files';
@@ -20,7 +20,7 @@ import { createMemoryKeyValueStore } from '@/platform/memory';
 import { UI } from '@/lib/platform';
 import { createMockWalletService } from './mock';
 import type { WalletService } from './service';
-import type { AppMode } from './types';
+import type { AppMode, NetworkName } from './types';
 
 export const MODE_KEY = 'trikey.app.mode';
 const SIM_DEVICE_KEY = 'trikey.sim.device.v1';
@@ -71,6 +71,25 @@ function simControl() {
     async fund(address: string, sats: number, serverUrl: string) {
       await post(`${serverUrl}/dev/fund?address=${encodeURIComponent(address)}&sats=${Math.floor(sats)}`);
     },
+  };
+}
+
+/**
+ * One set of hardware providers per network for both kinds of wallet: a phone has one Bluetooth stack, one camera and one
+ * Trezor link, and only the kind in use ever asks them for anything. The Ledger's "what the device wants now" hints go to
+ * both kinds' prompt sheets (the one that is not waiting ignores them).
+ */
+function sharedHardware() {
+  const cache = new Map<NetworkName, HardwareProvider[]>();
+  const hints = new Set<(interaction: string) => void>();
+  return (network: NetworkName, hooks: { onLedgerInteraction: (interaction: string) => void }): HardwareProvider[] => {
+    hints.add(hooks.onLedgerInteraction);
+    let providers = cache.get(network);
+    if (!providers) {
+      providers = createHardwareProviders({ network, ledger: { onInteraction: (i) => hints.forEach((h) => h(i)) } });
+      cache.set(network, providers);
+    }
+    return providers;
   };
 }
 
@@ -148,11 +167,12 @@ export async function bootWallet(mode: AppMode, platform: TrikeyPlatform = getPl
     return createRoutedWalletService({ mode, kv, guardian, recoveryKey, initial });
   }
 
+  const hardware = sharedHardware();
   const deviceName = Platform.OS === 'ios' ? 'iPhone' : Platform.OS === 'android' ? 'Android phone' : 'Trikey phone';
   const guardian = await createRealWalletService({
     mode: 'real',
     platform: { os, isSecure: platform.isSecure, secureKeys: platform.secureKeys, kv: platform.kv, cloudBackups: platform.cloudBackups, passkeys: platform.passkeys },
-    hardware: (network, hooks) => createHardwareProviders({ network, ledger: { onInteraction: hooks.onLedgerInteraction } }),
+    hardware,
     deviceName,
     shareBackupFile,
     pickBackupFile,
@@ -160,7 +180,7 @@ export async function bootWallet(mode: AppMode, platform: TrikeyPlatform = getPl
   const recoveryKey = await createRkWalletService({
     mode: 'real',
     platform: { os, isSecure: platform.isSecure, secureKeys: platform.secureKeys, kv: platform.kv },
-    hardware: (network, hooks) => createHardwareProviders({ network, ledger: { onInteraction: hooks.onLedgerInteraction } }),
+    hardware,
     // The refill scheduler also runs from a background task once a wallet exists (see ./rk-background).
     onWalletChange: (has) => void import('./rk-background').then((m) => m.syncBackgroundTask(has)).catch(() => undefined),
   });

@@ -328,8 +328,16 @@ class Service implements RkWalletService {
     return this.doc.server ?? (this.deps.defaultServer ?? defaultServerUrl)(this.network);
   }
 
+  /**
+   * `fetch`, called as a plain function. The client keeps it as a property and calls it as a method, which a browser's
+   * `fetch` refuses ("Illegal invocation"); phones and Node do not mind.
+   */
+  private fetchFn(): FetchLike {
+    return this.deps.fetch ?? ((url, init) => (globalThis.fetch as unknown as FetchLike)(url, init));
+  }
+
   private esplora(): EsploraClient {
-    return new EsploraClient({ baseUrl: this.serverUrl(), ...(this.deps.fetch ? { fetch: this.deps.fetch } : {}) });
+    return new EsploraClient({ baseUrl: this.serverUrl(), fetch: this.fetchFn() });
   }
 
   private walletDeps(): RecoveryKeyDeps {
@@ -832,7 +840,10 @@ class Service implements RkWalletService {
     const free = Math.max(0, h.vault.confirmedSats - reserved);
     if (totalSats <= free) return undefined;
     const left = h.refills.left;
-    return `This is more than the ${free.toLocaleString('en-US')} sats in your vault that your refills do not need, so it uses their coin. The ${left} refill${left === 1 ? '' : 's'} still to come would stop working. You would approve a new batch with your hardware wallet afterwards.`;
+    const still = `The ${left} refill${left === 1 ? '' : 's'} still to come would stop working, and you would approve a new batch with your hardware wallet afterwards.`;
+    return free === 0
+      ? `Your refills use every coin in the vault, so any payment from it uses the coin they are waiting on. ${still}`
+      : `This is more than the ${free.toLocaleString('en-US')} sats in your vault that your refills do not need, so it uses their coin. ${still}`;
   }
 
   async refineQuote(quote: SendQuote): Promise<QuoteOutcome> {
@@ -1095,6 +1106,8 @@ class Service implements RkWalletService {
             const w = self.requireReady();
             const r = await self.inBatch(opts, (o) => w.approveRefills(o));
             await self.resync();
+            // The first refill is available today: let the scheduler send it now, not at the next minute.
+            void self.sync();
             const done: RefillApproval = { from: r.from, to: r.to };
             return done;
           }),
@@ -1262,7 +1275,7 @@ class Service implements RkWalletService {
     } catch (e) {
       return { ok: false, message: e instanceof Error ? e.message : String(e) };
     }
-    const fetchFn = this.deps.fetch ?? (globalThis.fetch as unknown as FetchLike);
+    const fetchFn = this.fetchFn();
     const client = new EsploraClient({ baseUrl: base, fetch: fetchFn, timeoutMs: 10_000 });
     let height: number;
     try {

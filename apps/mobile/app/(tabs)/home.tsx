@@ -6,8 +6,8 @@ import {
   LimitCard,
   RecoveryBanner,
   SendReceiveButtons,
-  VaultCard,
 } from '@/components/home';
+import { RecoveryKeyNotices, VaultCard } from '@/components/home-rk';
 import { Footnote } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { useWallet, useWalletService } from '@/data';
@@ -27,11 +27,17 @@ export default function HomeScreen() {
   if (state.mode === 'recoveryKey') {
     return (
       <Screen tab untitled title="Trikey" androidTitleWeight="normal" gap={20} onRefresh={refresh}>
-        <RecoveryBanner />
+        <RecoveryKeyNotices />
         <BalanceHeader
           label="Spending balance"
           sats={state.recoveryKey.spendingSats}
-          caption={pick('Spend with Face ID, no Ledger needed', 'Spend with your fingerprint, no Ledger needed')}
+          caption={
+            state.backing !== 'demo' && !state.synced
+              ? state.syncing
+                ? 'Reading the chain…'
+                : 'Not synced yet. Pull down to refresh.'
+              : pick(`Spend with Face ID, no ${state.hardware.brand} needed`, `Spend with your fingerprint, no ${state.hardware.brand} needed`)
+          }
         />
         <SendReceiveButtons />
         <VaultCard />

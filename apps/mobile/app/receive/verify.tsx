@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
@@ -25,7 +25,13 @@ function deviceLines(address: string): string[] {
 export default function ReceiveVerify() {
   const router = useRouter();
   const wallet = useWalletService();
-  const { receiveAddress, hardware } = useWallet();
+  const state = useWallet();
+  const { hardware } = state;
+  // Recovery Key mode checks the vault's address (the spending balance's belongs to the phone alone).
+  const params = useLocalSearchParams<{ to?: string }>();
+  const toVault = state.mode === 'recoveryKey' && params.to === 'vault';
+  // The address on screen is the one the device is asked about, even after the wallet moves on to the next one.
+  const [receiveAddress] = useState(() => (toVault ? (wallet.rk?.vaultAddress() ?? '') : state.receiveAddress));
   const [mismatch, setMismatch] = useState(false);
   const [verified, setVerified] = useState(false);
   const { busy, run, message, error } = useAction();
@@ -38,7 +44,7 @@ export default function ReceiveVerify() {
 
   useEffect(() => {
     let off = false;
-    void run(wallet.receiveAddress({ verifyOnDevice: true })).then((r) => {
+    void run(toVault ? wallet.rk!.verifyVaultAddress() : wallet.receiveAddress({ verifyOnDevice: true })).then((r) => {
       if (!off && r.ok) setVerified(r.value.verifiedOnDevice);
     });
     return () => {

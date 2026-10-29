@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
@@ -60,7 +60,7 @@ function limitPill(outcome: QuoteOutcome, state: ReturnType<typeof useWallet>, a
     case 'phone-spending-paused':
       return { text: `Phone payments paused · needs your ${brand}`, dot: 'warn' };
     case 'requested':
-      return { text: `You chose your ${brand}`, dot: 'warn' };
+      return { text: state.mode === 'recoveryKey' ? `From the vault · needs your ${brand}` : `You chose your ${brand}`, dot: 'warn' };
   }
 }
 
@@ -73,13 +73,15 @@ export default function SendAmount() {
   const [digits, setDigits] = useState('');
   const [btcView, setBtcView] = useState(false);
   const [scanning, setScanning] = useState(false);
+  // Recovery Key mode, "Pay from vault": the hardware wallet signs this one, whatever the spending balance holds.
+  const fromVault = useLocalSearchParams<{ vault?: string }>().vault === '1';
 
   const amountSats = digits ? Number(digits) : 0;
   const addressOk = looksLikeBitcoinAddress(address);
   const addressBad = address.trim().length > 0 && !addressOk;
   const tooMuch = amountSats > state.balanceSats;
   // Planning a payment is real work: quote once the form has been still for a moment, not on every digit.
-  const { outcome, pending } = useQuote({ address: address.trim(), amountSats, speed: 'normal' }, state.backing === 'demo' ? 0 : 250);
+  const { outcome, pending } = useQuote({ address: address.trim(), amountSats, speed: 'normal', ...(fromVault ? { signer: 'hardware' as const } : {}) }, state.backing === 'demo' ? 0 : 250);
   const pill = limitPill(outcome, state, amountSats);
   const canReview = addressOk && amountSats > 0 && !tooMuch && outcome.ok && !pending;
   const addressRejected = !outcome.ok && outcome.problem === 'invalid_address' && address.trim().length > 0 && addressOk;
@@ -89,7 +91,7 @@ export default function SendAmount() {
 
   const review = () => {
     if (!outcome.ok) return;
-    const params = { address: address.trim(), amount: String(amountSats) };
+    const params = { address: address.trim(), amount: String(amountSats), ...(fromVault ? { signer: 'hardware' } : {}) };
     if (outcome.quote.plan.signer === 'hardware') router.push({ pathname: '/send/hardware', params });
     else router.push({ pathname: '/send/review', params });
   };
@@ -100,7 +102,7 @@ export default function SendAmount() {
 
   return (
     <Screen
-      title="Send"
+      title={fromVault ? 'Pay from vault' : 'Send'}
       backLabel="Home"
       gap={16}
       footer={
