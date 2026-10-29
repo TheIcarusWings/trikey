@@ -41,7 +41,7 @@ describe('docker-compose.yml', () => {
 
   it('runs bitcoind on regtest with txindex and with relay policy enforced, credentials from the environment', () => {
     const cmd = compose.services['bitcoind']!.command!;
-    for (const flag of ['-regtest=1', '-server=1', '-txindex=1', '-acceptnonstdtxn=0']) expect(cmd).toContain(flag);
+    for (const flag of ['-regtest=1', '-server=1', '-txindex=1', '-rest=1', '-acceptnonstdtxn=0']) expect(cmd).toContain(flag);
     expect(cmd.find((a) => a.startsWith('-rpcuser='))).toMatch(/^-rpcuser=\$\{E2E_RPC_USER:-[a-z]+\}$/);
     expect(cmd.find((a) => a.startsWith('-rpcpassword='))).toMatch(/^-rpcpassword=\$\{E2E_RPC_PASS:-[a-z-]*regtest[a-z-]*\}$/);
   });

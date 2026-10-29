@@ -25,6 +25,7 @@ services:
       - -regtest=1
       - -server=1
       - -txindex=1
+      - -rest=1 # Electrs 0.12 reads blocks through the REST interface
       - -printtoconsole=1
       - -rpcuser=${E2E_RPC_USER:-trikey}
       - -rpcpassword=${E2E_RPC_PASS:-trikey-regtest-only}
