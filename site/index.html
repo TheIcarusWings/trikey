@@ -26,6 +26,7 @@
     <nav class="site-nav" aria-label="Site">
       <a class="nav-wide" href="#idea">How it works</a>
       <a class="nav-wide" href="#missing">If a key goes missing</a>
+      <a class="nav-wide" href="#faq">Questions</a>
       <a href="https://github.com/TheIcarusWings/trikey">GitHub</a>
     </nav>
   </header>
@@ -38,7 +39,7 @@
     <div class="wrap">
       <div class="hero-copy">
         <p class="status"><span class="status-dot" aria-hidden="true"></span>Coming soon · pre-alpha, not audited</p>
-        <h1 id="hero-h"><span>Your keys.</span> <span>Your server.</span> <span>Your bitcoin.</span></h1>
+        <h1 id="hero-h"><span><svg class="h-mark" viewBox="0 0 88 80" aria-hidden="true" focusable="false"><path d="M44 14 L16 62 L72 62 Z" pathLength="1"/><circle cx="16" cy="62" r="12"/><circle cx="72" cy="62" r="12"/><circle class="top" cx="44" cy="14" r="12"/></svg>Your keys.</span> <span>Your server.</span> <span>Your bitcoin.</span></h1>
         <p class="lead">Trikey is a 2-of-3 bitcoin wallet that feels like Bitkey, with no company holding a key. Your phone, your hardware wallet and your own home server: any two move your money.</p>
         <div class="actions">
           <a class="btn" href="https://github.com/TheIcarusWings/trikey">Follow on GitHub</a>
@@ -55,6 +56,7 @@
        stacked cards otherwise. -->
   <section id="choice" class="pin" data-pin="4.5" aria-labelledby="choice-h">
     <div class="pin-stage">
+      <div class="chapter" aria-hidden="true"><span>I · The old choice</span><i></i></div>
       <div class="shot shot-wide" data-from="0" data-to="0.3">
         <div class="frame frame-dark">
           <img class="media" src="media/scrub-tower.webp" width="1280" height="720" alt="A tall glass office tower at night, every window lit.">
@@ -85,6 +87,7 @@
   <!-- II. The idea -->
   <section id="idea" class="pin" data-pin="6" aria-labelledby="idea-h">
     <div class="pin-stage">
+      <div class="chapter" aria-hidden="true"><span>II · Three keys</span><i></i></div>
       <div class="shot shot-text" data-from="0" data-to="0.2">
         <div class="frame frame-dark frame-black">
           <div class="overlay overlay-center">
@@ -154,6 +157,7 @@
   <section id="feel" class="pin" data-pin="3.5" aria-labelledby="feel-h">
     <h2 id="feel-h" class="visually-hidden">How it feels</h2>
     <div class="pin-stage">
+      <div class="chapter" aria-hidden="true"><span>III · How it feels</span><i></i></div>
       <div class="shot shot-phone" data-from="0" data-to="0.4">
         <div class="frame frame-dark">
           <img class="media" src="media/cafe.webp" width="1600" height="900" loading="lazy" alt="">
@@ -207,13 +211,16 @@
       </div>
 
       <div class="lose-picker">
-        <svg class="tri" viewBox="0 0 320 250" aria-hidden="true" focusable="false">
+        <svg class="tri" viewBox="-60 -20 440 290" aria-hidden="true" focusable="false">
           <path class="e e-left" d="M160 40 L50 210"/>
           <path class="e e-right" d="M160 40 L270 210"/>
           <path class="e e-bottom" d="M50 210 L270 210"/>
           <circle class="n n-guardian" cx="160" cy="40" r="22"/>
           <circle class="n n-phone" cx="50" cy="210" r="22"/>
           <circle class="n n-hardware" cx="270" cy="210" r="22"/>
+          <text class="t t-guardian" x="160" y="4">Home server</text>
+          <text class="t t-phone" x="50" y="252">Phone</text>
+          <text class="t t-hardware" x="270" y="252">Hardware wallet</text>
         </svg>
         <fieldset class="lose-choices">
           <legend class="visually-hidden">Which key goes missing?</legend>
@@ -302,6 +309,7 @@
   <section id="stands" class="pin" data-pin="3" aria-labelledby="stands-h">
     <h2 id="stands-h" class="visually-hidden">What it stands for</h2>
     <div class="pin-stage">
+      <div class="chapter" aria-hidden="true"><span>IV · What it stands for</span><i></i></div>
       <div class="shot shot-creed" data-from="0" data-to="1">
         <div class="frame frame-dark">
           <img class="media" src="media/loop-bridge.webp" width="1280" height="720" loading="lazy" alt="">
@@ -316,40 +324,193 @@
     </div>
   </section>
 
-  <section class="act act-surface" aria-label="Principles">
+  <!-- Under the hood -->
+  <section id="hood" class="act act-surface" aria-labelledby="hood-h">
     <div class="wrap">
-      <dl class="bento">
-        <div class="tile">
-          <dt>Your own home server</dt>
-          <dd>The guardian runs on your Umbrel or Start9 and reads the chain from your own node. No public servers.</dd>
+      <div class="section-head">
+        <p class="eyebrow">Under the hood</p>
+        <h2 id="hood-h">Nobody in the middle. Not even us.</h2>
+        <p class="aside">Your phone and your guardian never talk directly, and never through a server of ours. They pass encrypted notes through nostr relays, and both only ever dial out.</p>
+      </div>
+      <figure class="blueprint">
+        <svg class="bp bp-wide" viewBox="0 0 1000 400" role="img" aria-labelledby="bp-t">
+          <title id="bp-t">Your phone and your guardian each connect out to nostr relays, which pass end-to-end encrypted messages between them. The hardware wallet connects to the phone. The guardian reads the chain from your own Bitcoin node.</title>
+          <path class="bp-link" d="M190 170 H430"/>
+          <path class="bp-link" d="M810 170 H570"/>
+          <path class="bp-arrow" d="M418 162 L432 170 L418 178"/>
+          <path class="bp-arrow" d="M582 162 L568 170 L582 178"/>
+          <path class="bp-dash" d="M135 252 V300"/>
+          <path class="bp-dash" d="M870 230 V290"/>
+          <rect class="bp-dev" x="95" y="70" width="80" height="160" rx="16"/>
+          <rect class="bp-dev" x="100" y="300" width="70" height="48" rx="10"/>
+          <circle class="bp-relay" cx="470" cy="170" r="12"/><circle class="bp-relay" cx="500" cy="145" r="12"/><circle class="bp-relay" cx="530" cy="170" r="12"/>
+          <rect class="bp-dev" x="815" y="110" width="110" height="110" rx="14"/>
+          <circle class="bp-led" cx="870" cy="190" r="4"/>
+          <rect class="bp-box" x="800" y="290" width="140" height="48" rx="10"/>
+          <text class="bp-k" x="135" y="50">Key 2 · your phone</text>
+          <text class="bp-k" x="135" y="372">Key 1 · hardware wallet</text>
+          <text class="bp-s" x="145" y="282" text-anchor="start">Bluetooth or QR</text>
+          <text class="bp-k" x="500" y="110">nostr relays</text>
+          <text class="bp-s" x="500" y="220">see only ciphertext</text>
+          <text class="bp-s" x="310" y="155">outbound only</text>
+          <text class="bp-s" x="690" y="155">outbound only</text>
+          <text class="bp-k" x="870" y="90">Key 3 · Trikey Guardian</text>
+          <text class="bp-s" x="870" y="320">your Bitcoin node</text>
+          <text class="bp-s" x="870" y="372">on your Umbrel or Start9</text>
+        </svg>
+        <svg class="bp bp-tall" viewBox="0 0 360 620" role="img" aria-labelledby="bp-t2">
+          <title id="bp-t2">Your phone and your guardian each connect out to nostr relays, which pass end-to-end encrypted messages between them. The hardware wallet connects to the phone. The guardian reads the chain from your own Bitcoin node.</title>
+          <path class="bp-link" d="M150 170 V270"/>
+          <path class="bp-link" d="M150 430 V340"/>
+          <path class="bp-arrow" d="M142 258 L150 272 L158 258"/>
+          <path class="bp-arrow" d="M142 352 L150 338 L158 352"/>
+          <path class="bp-dash" d="M190 110 H240"/>
+          <path class="bp-dash" d="M190 490 H240"/>
+          <rect class="bp-dev" x="115" y="40" width="70" height="130" rx="14"/>
+          <rect class="bp-dev" x="240" y="88" width="60" height="44" rx="9"/>
+          <circle class="bp-relay" cx="125" cy="305" r="11"/><circle class="bp-relay" cx="150" cy="285" r="11"/><circle class="bp-relay" cx="175" cy="305" r="11"/>
+          <rect class="bp-dev" x="105" y="440" width="90" height="90" rx="12"/>
+          <circle class="bp-led" cx="150" cy="505" r="4"/>
+          <rect class="bp-box" x="240" y="468" width="96" height="44" rx="9"/>
+          <text class="bp-k" x="150" y="25">Key 2 · your phone</text>
+          <text class="bp-s" x="270" y="152">Key 1 · hardware</text>
+          <text class="bp-k" x="220" y="312" text-anchor="start">nostr relays</text>
+          <text class="bp-s" x="220" y="332" text-anchor="start">see only ciphertext</text>
+          <text class="bp-s" x="166" y="225" text-anchor="start">outbound only</text>
+          <text class="bp-s" x="166" y="390" text-anchor="start">outbound only</text>
+          <text class="bp-k" x="150" y="560">Key 3 · Trikey Guardian</text>
+          <text class="bp-s" x="150" y="582">on your Umbrel or Start9</text>
+          <text class="bp-s" x="288" y="532">your node</text>
+        </svg>
+      </figure>
+      <dl class="pillars">
+        <div>
+          <dt><span class="mono">01</span> Your own node</dt>
+          <dd>The guardian reads the chain from the Bitcoin node and Electrs on your own box. No public servers.</dd>
         </div>
-        <div class="tile">
-          <dt>Outbound only</dt>
-          <dd>Phone and guardian talk over end-to-end encrypted nostr relays. Nothing opens a port on your home network, and relays see only ciphertext.</dd>
+        <div>
+          <dt><span class="mono">02</span> Outbound only</dt>
+          <dd>Nothing opens a port on your home network. Relays see only ciphertext: they can drop a message, but not read or forge one.</dd>
         </div>
-        <div class="tile">
-          <dt>No home server?</dt>
-          <dd>Recovery Key mode keeps key 3 offline, on a printed Recovery Kit or a second hardware wallet, and gives the phone a small spending balance with timelocked refills.</dd>
+        <div>
+          <dt><span class="mono">03</span> Recover anywhere</dt>
+          <dd>A plain <code>wsh(sortedmulti(2,…))</code> descriptor on standard paths. Any multisig wallet can move your coins with two of your keys.</dd>
         </div>
-        <div class="tile">
-          <dt>Open source</dt>
+        <div>
+          <dt><span class="mono">04</span> Open source</dt>
           <dd>MIT licensed. The wallet, the guardian, the design and the threat model are all public.</dd>
         </div>
       </dl>
     </div>
   </section>
 
+  <!-- Setup -->
+  <section id="setup" class="act" aria-labelledby="setup-h">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Setup, once it ships</p>
+        <h2 id="setup-h">Set it up once. Then just use your phone.</h2>
+      </div>
+      <ol class="steps">
+        <li class="step">
+          <picture>
+            <source srcset="img/phone-onb-hardware-dark.webp" media="(prefers-color-scheme: dark)">
+            <img class="phone" src="img/phone-onb-hardware.webp" width="520" height="1125" loading="lazy" alt="Onboarding step 1 of 4, Connect your hardware wallet: Ledger or Trezor over Bluetooth, or scan a QR code for Coldcard Q, Keystone, Passport, Jade and SeedSigner.">
+          </picture>
+          <p class="mono step-n">01</p>
+          <h3>Connect your hardware wallet</h3>
+          <p>Trikey reads its public key only. Your seed words never leave it.</p>
+        </li>
+        <li class="step">
+          <picture>
+            <source srcset="img/phone-onb-guardian-dark.webp" media="(prefers-color-scheme: dark)">
+            <img class="phone" src="img/phone-onb-guardian.webp" width="520" height="1125" loading="lazy" alt="Onboarding step 2 of 4, Pair your guardian: open Trikey Guardian on your Umbrel or Start9, choose Pair a phone and point the camera at the code.">
+          </picture>
+          <p class="mono step-n">02</p>
+          <h3>Pair your guardian</h3>
+          <p>Open Trikey Guardian on your Umbrel or Start9 and scan its code. No port forwarding, no shared Wi-Fi.</p>
+        </li>
+        <li class="step">
+          <picture>
+            <source srcset="img/phone-onb-limit-dark.webp" media="(prefers-color-scheme: dark)">
+            <img class="phone" src="img/phone-onb-limit.webp" width="520" height="1125" loading="lazy" alt="Onboarding step 3 of 4, Set your daily limit.">
+          </picture>
+          <p class="mono step-n">03</p>
+          <h3>Set your daily limit</h3>
+          <p>Payments under it need only your phone. Raising it later needs your hardware wallet.</p>
+        </li>
+        <li class="step">
+          <picture>
+            <source srcset="img/phone-onb-backup-dark.webp" media="(prefers-color-scheme: dark)">
+            <img class="phone" src="img/phone-onb-backup.webp" width="520" height="1125" loading="lazy" alt="Onboarding step 4 of 4, Back up this phone: pick iCloud Drive, Google Drive, Dropbox or another app. The backup is encrypted on the phone and a passkey unlocks it.">
+          </picture>
+          <p class="mono step-n">04</p>
+          <h3>Back up this phone</h3>
+          <p>Encrypted on the phone, unlocked by a passkey, kept in the cloud you choose.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- Questions -->
+  <section id="faq" class="act act-surface" aria-labelledby="faq-h">
+    <div class="wrap faq">
+      <div class="section-head">
+        <p class="eyebrow">Questions</p>
+        <h2 id="faq-h">Straight answers.</h2>
+        <p class="aside">More in the <a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md">design and threat model</a>.</p>
+      </div>
+      <div class="qa">
+        <details open>
+          <summary>Is Trikey ready to use?</summary>
+          <p>No. It's pre-alpha and hasn't been audited, so don't use it with real funds. It runs on testnet, signet and regtest while it's built, and there's no release to download yet. An independent security review is planned before mainnet.</p>
+        </details>
+        <details>
+          <summary>Does anyone at Trikey hold one of my keys?</summary>
+          <p>No. All three keys are yours. Nobody runs a server, a guardian or a cosigner for you: the guardian is an app on your own home server.</p>
+        </details>
+        <details>
+          <summary>What if Trikey goes away?</summary>
+          <p>Your wallet is a plain <code>wsh(sortedmulti(2,…))</code> descriptor on standard BIP 48 paths, and your phone's backup holds it. Any multisig-capable wallet can recover your coins with two of your keys, no Trikey needed.</p>
+        </details>
+        <details>
+          <summary>Do I need a home server?</summary>
+          <p>No. Recovery Key mode keeps key 3 offline, on a printed Recovery Kit or a second hardware wallet, and gives the phone a small spending balance refilled by timelocked, pre-signed refills. Recovery then takes any two keys, with no waiting period.</p>
+        </details>
+        <details>
+          <summary>Which hardware wallets work?</summary>
+          <p>Ledger and Trezor over Bluetooth, and QR devices such as Coldcard, Keystone, Passport, Jade and SeedSigner.</p>
+        </details>
+        <details>
+          <summary>Can the nostr relays see my wallet?</summary>
+          <p>No. Every message is end-to-end encrypted to the other side. A relay can drop messages, but it can't read or forge them. You can use several relays, or run your own.</p>
+        </details>
+        <details>
+          <summary>What if someone hacks my home server?</summary>
+          <p>They get one key of three: the same exposure as a company's cosigning server being breached. They still need a second key to move anything, and the guardian only co-signs phone payments under your limit.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
   <!-- Status and follow -->
   <section id="follow" class="act" aria-labelledby="follow-h">
-    <div class="wrap follow">
-      <svg class="logo logo-big" width="88" height="80" viewBox="0 0 88 80" aria-hidden="true" focusable="false"><path class="line" d="M44 14 L16 62 L72 62 Z" stroke-width="6" stroke-linejoin="round"/><circle class="top" cx="44" cy="14" r="12"/><circle class="ink" cx="16" cy="62" r="12"/><circle class="ink" cx="72" cy="62" r="12"/></svg>
-      <h2 id="follow-h">Coming soon. Built in public.</h2>
-      <p class="notice"><strong>Pre-alpha and not audited. Don't use it with real funds.</strong> There's no release yet, so there's nothing to download. It runs on testnet, signet and regtest while it's built. An independent security review is planned before mainnet. Know the trade-offs too: a remote compromise of your home server gives up one key of three, and phone-only payments wait while the guardian is offline.</p>
-      <div class="actions">
-        <a class="btn" href="https://github.com/TheIcarusWings/trikey">Follow on GitHub</a>
-        <a class="btn btn-quiet" href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md">Read the design and threat model</a>
+    <div class="wrap">
+      <div class="frame frame-dark frame-end">
+        <img class="media" src="media/window.webp" width="1600" height="900" loading="lazy" alt="A lit apartment window at night, a small grey box glowing on a shelf inside.">
+        <div class="overlay overlay-center">
+          <svg class="logo-form logo-end" viewBox="0 0 88 80" aria-hidden="true" focusable="false"><path d="M44 14 L16 62 L72 62 Z" pathLength="1"/><circle cx="16" cy="62" r="12"/><circle cx="72" cy="62" r="12"/><circle cx="44" cy="14" r="12"/><circle class="top" cx="44" cy="14" r="12"/></svg>
+          <h2 id="follow-h" class="beat beat-hero">Coming soon. Built in public.</h2>
+          <div class="actions">
+            <a class="btn btn-light" href="https://github.com/TheIcarusWings/trikey">Follow on GitHub</a>
+            <a class="btn btn-ghost" href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md">Read the design</a>
+          </div>
+        </div>
       </div>
-      <p class="aside">Notes on nostr are coming soon.</p>
+      <div class="follow">
+        <p class="notice"><strong>Pre-alpha and not audited. Don't use it with real funds.</strong> There's no release yet, so there's nothing to download. It runs on testnet, signet and regtest while it's built. An independent security review is planned before mainnet. Know the trade-offs too: a remote compromise of your home server gives up one key of three, and phone-only payments wait while the guardian is offline.</p>
+        <p class="aside">Notes on nostr are coming soon.</p>
+      </div>
     </div>
   </section>
 </main>
