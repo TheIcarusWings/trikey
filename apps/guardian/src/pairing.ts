@@ -30,6 +30,11 @@ export interface PairingSession {
   status: PairingStatus;
   failures: number;
   claimedBy?: string;
+  /**
+   * The phone's key 3 contribution from its last `pair.prepare` (hex), if it sent one: `pair` then registers
+   * the key 3 derived from it (keystore.ts, `trikey/key3/v1`). Memory only, like the session.
+   */
+  key3Entropy?: string;
 }
 
 export type SecretCheck = { ok: true; session: PairingSession } | { ok: false; reason: 'no_session' | 'expired' | 'used' | 'wrong_secret' | 'claimed' };

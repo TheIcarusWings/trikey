@@ -37,10 +37,21 @@ const normPath = (p: string) => p.replace(/^m\//, '').replace(/'/g, 'h');
 const hexToBytes = (h: string) => hex.decode(h);
 const bytesToHex = (b: Uint8Array) => hex.encode(b);
 
-function guardianKey(g: Guardian): KeyOrigin {
+/** The guardian's own key (no wallet yet). */
+function ownKey(g: Guardian): KeyOrigin {
   const pub = g.keystore!.public;
   return { fingerprint: pub.fingerprint, path: pub.path, xpub: pub.xpub };
 }
+
+/** Key 3 of the paired wallet, as its descriptor holds it (a mixed key 3 is not the guardian's own key). */
+function guardianKey(g: Guardian): KeyOrigin {
+  const reg = g.engine.registration();
+  if (!reg) return ownKey(g);
+  const k = walletOf(reg).keys.cosigner;
+  return { fingerprint: k.fingerprint, path: `m/${k.originPath.replace(/h/g, "'")}`, xpub: k.xpub };
+}
+
+const originOf = (pub: { fingerprint: string; path: string; xpub: string }): KeyOrigin => ({ fingerprint: pub.fingerprint, path: pub.path, xpub: pub.xpub });
 
 function requireUnlocked(g: Guardian): void {
   if (g.locked) throw new RpcError(ErrorCode.GuardianLocked);
@@ -245,6 +256,7 @@ export function buildHandlers(g: Guardian): Handlers {
         atMs: stamp.atMs,
         ...(g.engine.watchedWallet() ? { watchedWalletId: g.engine.watchedWallet()!.walletId } : {}),
         ...(s.walletId ? { walletId: s.walletId, hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
+        ...(s.registered ? { key3Mixed: !!g.engine.registration()?.key3Mix } : {}),
         ...(s.dailyLimit
           ? {
               dailyLimit: {
@@ -283,7 +295,12 @@ export function buildHandlers(g: Guardian): Handlers {
       if (g.engine.registration()) throw new RpcError(ErrorCode.AlreadyPaired);
       if (params.network !== g.config.network)
         throw new RpcError(ErrorCode.InvalidParams, `This guardian runs on ${g.config.network}, not ${params.network}.`);
-      return { guardianKey: guardianKey(g), guardianVersion: g.version };
+      // The phone's contribution to key 3, if any: `pair` registers the key derived from the last one sent.
+      const session = check.session;
+      session.key3Entropy = params.entropy;
+      const key = g.key3ForPairing({ entropy: params.entropy, pairingId: session.id, phonePubkey: ctx.sender });
+      key.signer.wipe();
+      return { guardianKey: originOf(key.pub), guardianVersion: g.version, key3Mixed: !!key.mix };
     },
 
     pair: (params, ctx) =>
@@ -311,34 +328,48 @@ export function buildHandlers(g: Guardian): Handlers {
         const app = wallet.keys.app;
         if (app.xpub !== params.phoneKey.xpub || app.fingerprint !== params.phoneKey.fingerprint || app.originPath !== normPath(params.phoneKey.path))
           return reject('phoneKey is not the first key of the descriptor.');
-        const res = await g.engine.register({
-          network: params.network,
-          descriptor: params.descriptor,
-          cosignerAccountPubkey: g.keystore!.public.accountPubkey,
-          rules: rulesFromPolicy(params.rules),
-          hardwareAuth: { kind: 'bip137', pubkey: params.hardwareAuth.pubkey, path: params.hardwareAuth.path },
-          hardwareAuthProof: params.hardwareAuthProof,
-          appNostrPubkey: ctx.sender,
-          replacesWalletId: params.replacesWalletId,
-          replacesDescriptor: params.replacesDescriptor,
-        });
+        // This wallet's key 3: from the phone's `pair.prepare` contribution when it sent one (it must then be
+        // the key in the descriptor), else the guardian's own key.
+        const key = g.key3ForPairing({ entropy: session.key3Entropy, pairingId: session.id, phonePubkey: ctx.sender });
+        let res: Awaited<ReturnType<typeof g.engine.register>>;
+        try {
+          res = await g.engine.register({
+            network: params.network,
+            descriptor: params.descriptor,
+            cosignerAccountPubkey: key.pub.accountPubkey,
+            rules: rulesFromPolicy(params.rules),
+            hardwareAuth: { kind: 'bip137', pubkey: params.hardwareAuth.pubkey, path: params.hardwareAuth.path },
+            hardwareAuthProof: params.hardwareAuthProof,
+            appNostrPubkey: ctx.sender,
+            replacesWalletId: params.replacesWalletId,
+            replacesDescriptor: params.replacesDescriptor,
+            ...(key.mix ? { key3Mix: key.mix } : {}),
+            signer: key.signer,
+          });
+        } catch (e) {
+          key.signer.wipe();
+          throw e;
+        }
         if (!res.ok) {
+          key.signer.wipe();
           g.pairing.fail(session.id, now);
           await g.logEvent({ type: 'pair_refused', detail: res.refusal.reason });
           throw refusalError(res.refusal);
         }
+        g.adoptPairedSigner(key.signer);
         g.pairing.complete(session.id);
         g.rpc?.addPeer(ctx.sender);
         await g.service.update((d) => {
           d.phones = [{ pubkey: ctx.sender, name: params.deviceName, pairedAt: now }];
         });
         await g.logEvent({ type: 'paired', name: params.deviceName });
-        g.log.info('guardian.paired', { walletId: res.walletId });
+        g.log.info('guardian.paired', { walletId: res.walletId, key3Mixed: !!key.mix });
         return {
-          guardianKey: guardianKey(g),
+          guardianKey: originOf(key.pub),
           descriptor: g.engine.registration()!.descriptor,
           walletId: res.walletId,
           guardianVersion: g.version,
+          key3Mixed: !!key.mix,
         };
       }),
 

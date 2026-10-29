@@ -49,7 +49,7 @@ All files in `TRIKEY_DATA_DIR` are mode 0600 and written atomically.
 
 | File | Holds |
 |---|---|
-| `keystore.json` | Key 3: a BIP39 seed encrypted with XChaCha20-Poly1305 under Argon2id(passphrase), m = 64 MiB, t = 3, p = 1. Never overwritten, except by the web UI's reset, which replaces key 3 on purpose. There is no backup, by design. |
+| `keystore.json` | The setup seed key 3 comes from: a BIP39 seed encrypted with XChaCha20-Poly1305 under Argon2id(passphrase), m = 64 MiB, t = 3, p = 1. A wallet paired with the phone's contribution (`pair.prepare` `entropy`) gets key 3 from this seed and that contribution (`trikey/key3/v1`, `src/keystore.ts`); the contribution is kept with the registration in `guardian-state.json`. Never overwritten, except by the web UI's reset, which replaces key 3 on purpose. There is no backup, by design. |
 | `nostr-identity.json` | The guardian's nostr key, **unencrypted** so a locked guardian can still answer the phone and send alerts (trade-off in `src/identity.ts`). |
 | `guardian-state.json` | The policy engine, format version 2: the active wallet (registration, rules, limit accounting, recovery access grants), retired wallets, recoveries, activity. A version-1 file (one wallet) is migrated when it is loaded and written back as version 2. |
 | `service.json` | Relays, the paired phone's name, co-signed sweeps and their broadcast state, the service log, recently handled request ids. (Recovery access grants used to live here; they are moved into the engine on start.) |
@@ -131,10 +131,11 @@ After every start the guardian is locked: key 3 is decrypted only by an unlock
 
 ```
 src/
-  main.ts             entry point: config, start, SIGTERM
+  main.ts             entry point: pins the random source, config, start, SIGTERM
+  pin-random.ts       pins node:crypto's webcrypto.getRandomValues for secureRandomBytes
   config.ts           environment
   guardian.ts         the service: lifecycle, setup, lock/unlock, nostr authorization, tick
-  keystore.ts         key 3 at rest (Argon2id + XChaCha20-Poly1305), KeystoreSigner
+  keystore.ts         key 3 at rest (Argon2id + XChaCha20-Poly1305), the trikey/key3/v1 mix, KeystoreSigner
   unlock-throttle.ts  persistent unlock rate limit
   rate-limit.ts       per-phone sliding-window limit for tx.broadcast
   identity.ts         the guardian's nostr key

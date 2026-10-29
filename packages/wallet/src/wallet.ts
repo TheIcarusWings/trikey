@@ -289,8 +289,13 @@ export interface HardwareSummary {
   xpub: string;
 }
 
+/** What pairing results say when key 3 was made with this phone's contribution (`key3Mixed`). */
+export const KEY3_MIXED_NOTE = "Your guardian's key was made with randomness from both this phone and your guardian.";
+
 export interface GuardianPreview {
   guardianNpub: string;
+  /** The guardian made key 3 with this phone's contribution too (`pair.prepare` `entropy`). False: an older guardian. */
+  key3Mixed: boolean;
   label?: string;
   relays: string[];
   guardianVersion: string;
@@ -305,6 +310,10 @@ export interface PairOutcome {
   descriptor: string;
   firstAddress: string;
   addressVerified: boolean;
+  /** Key 3 was made from the guardian's seed and this phone's contribution (see `key3Note`). */
+  key3Mixed: boolean;
+  /** `KEY3_MIXED_NOTE` when `key3Mixed`, for the app to show. */
+  key3Note?: string;
 }
 
 export interface WalletSnapshot {
@@ -449,6 +458,8 @@ interface PairingSession {
   pool: RelayPool;
   guardianKey: Result<'pair.prepare'>['guardianKey'];
   guardianVersion: string;
+  /** The guardian answered `key3Mixed: true` to this phone's `entropy`. */
+  key3Mixed: boolean;
   wallet: MultisigWallet;
   /** `onboard`: the first guardian; `replace`: the new guardian of "Replace guardian". */
   purpose: 'onboard' | 'replace';
@@ -952,7 +963,11 @@ export class TrikeyWallet {
     }
   }
 
-  /** Step 2: read the guardian's pairing QR and fetch its key (`pair.prepare`). Builds the descriptor. */
+  /**
+   * Step 2: read the guardian's pairing QR and fetch its key (`pair.prepare`). Builds the descriptor.
+   * The phone sends a fresh 32-byte contribution to key 3 (`entropy`, from `secureRandomBytes`); see
+   * `openGuardianSession`.
+   */
   async scanGuardian(pairingUri: string): Promise<GuardianPreview> {
     if (this.s.stage !== 'new') throw new WalletError('wrong_state', 'This wallet is already paired.');
     const hwRec = this.s.hardware;
@@ -965,6 +980,7 @@ export class TrikeyWallet {
     const { payload, wallet } = session;
     return {
       guardianNpub: npubEncode(payload.guardianPubkey),
+      key3Mixed: session.key3Mixed,
       label: payload.label,
       relays: payload.relays,
       guardianVersion: session.guardianVersion,
@@ -977,6 +993,13 @@ export class TrikeyWallet {
   /**
    * Decodes a pairing code, connects to that guardian, fetches its key (`pair.prepare`) and builds the wallet of key 2,
    * the hardware wallet `hwRec` and that key. Kept as `this.pairing` until `pair` (or replaced by another scan).
+   *
+   * Key 3 contribution: `pair.prepare` carries `entropy`, 32 fresh bytes from `secureRandomBytes`. The
+   * guardian derives this wallet's key 3 from its own seed and these bytes (HMAC-SHA512,
+   * apps/guardian/src/keystore.ts), so a weak generator on the guardian alone does not make a guessable key 3. The bytes are not secret on their own: without the guardian's seed
+   * they say nothing about key 3, and the phone never learns key 3. The phone always sends it: a guardian from
+   * before this parameter drops the request as malformed (its schema is strict), so pairing needs a guardian
+   * that knows it. A guardian that takes it but does not answer `key3Mixed: true` is reported as not mixed.
    */
   private async openGuardianSession(pairingUri: string, hwRec: HardwareRecord, purpose: PairingSession['purpose']): Promise<PairingSession> {
     let payload: PairingPayload;
@@ -989,14 +1012,23 @@ export class TrikeyWallet {
     this.pairing?.rpc.close();
     this.pairing?.pool.close();
     this.pairing = undefined;
+    let contribution: Uint8Array;
+    try {
+      contribution = secureRandomBytes(32);
+    } catch (e) {
+      throw asRandomSourceError(e);
+    }
+    const entropy = hex.encode(contribution);
+    contribution.fill(0);
     const { rpc, pool } = await this.connect(payload.guardianPubkey, payload.relays);
     try {
       let prep: Result<'pair.prepare'>;
       try {
-        prep = await rpc.call('pair.prepare', { pairingSecret: payload.secret, network: this.network.name });
+        prep = await rpc.call('pair.prepare', { pairingSecret: payload.secret, network: this.network.name, entropy });
       } catch (e) {
         throw asWalletError(e, 'pairing');
       }
+      const key3Mixed = prep.key3Mixed === true;
       const expectedPath = bip48Path(this.network);
       if (prep.guardianKey.path.replace(/h/g, "'") !== expectedPath)
         throw new WalletError('guardian_mismatch', `The guardian's key is at ${prep.guardianKey.path}, expected ${expectedPath}.`);
@@ -1011,7 +1043,7 @@ export class TrikeyWallet {
       const acct = wallet.accountPubkeys();
       if (new Set([hex.encode(acct.app), hex.encode(acct.hardware), hex.encode(acct.cosigner)]).size !== 3)
         throw new WalletError('guardian_mismatch', 'The three keys of the wallet must be different.');
-      const session: PairingSession = { payload, rpc, pool, guardianKey: prep.guardianKey, guardianVersion: prep.guardianVersion, wallet, purpose };
+      const session: PairingSession = { payload, rpc, pool, guardianKey: prep.guardianKey, guardianVersion: prep.guardianVersion, key3Mixed, wallet, purpose };
       this.pairing = session;
       return session;
     } catch (e) {
@@ -1092,6 +1124,7 @@ export class TrikeyWallet {
         label: session.payload.label,
         key: session.guardianKey,
         version: res.guardianVersion,
+        ...(session.key3Mixed ? { key3Mixed: true } : {}),
       };
       s.wallet = { descriptor, walletId, pairedAt: this.now() };
       s.hardware = { ...hwRec, policyName, registrationHmac: hmac };
@@ -1111,7 +1144,7 @@ export class TrikeyWallet {
     this.hwSession = undefined;
     await hw?.close().catch(() => {});
     await this.sync().catch(() => undefined);
-    return { walletId, descriptor, firstAddress, addressVerified };
+    return { walletId, descriptor, firstAddress, addressVerified, key3Mixed: session.key3Mixed, ...(session.key3Mixed ? { key3Note: KEY3_MIXED_NOTE } : {}) };
   }
 
   /** Onboarding in one call: connect the hardware wallet, scan the guardian code, pair. */
@@ -2953,7 +2986,7 @@ export class TrikeyWallet {
       s.replacing = {
         startedAt: this.now(),
         phase: 'paired',
-        guardian: { pubkey: session.payload.guardianPubkey, relays: session.payload.relays, ...(session.payload.label ? { label: session.payload.label } : {}), key: session.guardianKey, version: res.guardianVersion },
+        guardian: { pubkey: session.payload.guardianPubkey, relays: session.payload.relays, ...(session.payload.label ? { label: session.payload.label } : {}), key: session.guardianKey, version: res.guardianVersion, ...(session.key3Mixed ? { key3Mixed: true } : {}) },
         wallet: { descriptor, walletId },
         devicePolicy: { name, ...(hmac ? { registrationHmac: hmac } : {}) },
         rules: { policy: rules, policyHash: policyHash(rules), nextHardwareSequence: 1 },

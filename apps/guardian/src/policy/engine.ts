@@ -65,8 +65,15 @@ import {
   SurvivingRole,
   WatchedWallet,
   emptyState,
+  type Key3Mix,
 } from './types.js';
 import { MAX_SINGLE_KEY_COINS, helperAccount, helperAccountPath, isP2TR, isP2WPKH, parseHelperXpub, samePath } from '../singlekey.js';
+
+/** Shape check of a `Key3Mix` (the derivation itself lives in keystore.ts, outside the engine). */
+function isKey3MixRecord(m: unknown): m is Key3Mix {
+  const r = m as Key3Mix;
+  return !!r && typeof r === 'object' && r.version === 1 && /^[0-9a-f]{64}$/.test(String(r.entropy)) && /^([0-9a-f]{2}){12,256}$/.test(String(r.context));
+}
 
 /** A hardware approval may be valid for at most this long from the moment the guardian checks it. */
 export const MAX_APPROVAL_TTL_MS = 24 * HOUR;
@@ -105,6 +112,14 @@ export interface RegisterInput {
    * hardware) with this wallet; the engine then keeps it as a watched-only wallet (`WatchedWallet`).
    */
   replacesDescriptor?: string;
+  /** Kept with the registration: how this wallet's key 3 was derived (`trikey/key3/v1`). */
+  key3Mix?: Key3Mix;
+  /**
+   * Key 3 of THIS wallet, when it is not the signer installed now (a mixed key 3 is new at every pairing).
+   * Its pubkey must be `cosignerAccountPubkey`. If the engine is unlocked, it becomes the engine's signer
+   * once the registration is saved; the caller keeps and later wipes it either way.
+   */
+  signer?: CosignerSigner;
 }
 
 export type RuleChangeAuth = { authenticatedBy: 'app' } | { authenticatedBy: 'hardware'; approval: HardwareApproval };
@@ -237,6 +252,8 @@ export class PolicyEngine {
   private readonly authorizers: Map<string, HardwareAuthorizer>;
   private readonly maxActivity: number;
   private signer?: CosignerSigner;
+  /** Set by `register` with its own key 3; installed by `mutate` after the save. */
+  private nextSigner?: CosignerSigner;
 
   private constructor(
     private readonly store: StateStore,
@@ -353,15 +370,22 @@ export class PolicyEngine {
 
   private async mutate<T>(fn: (draft: GuardianState, now: number) => Promise<T> | T): Promise<T> {
     return this.mutex.run(async () => {
-      const draft = cloneState(this.state);
-      const now = this.clock.now();
-      this.refresh(draft, now);
-      const out = await fn(draft, now);
-      if (draft.active) draft.active.spends = pruneSpends(draft.active.spends, now);
-      if (draft.activity.length > this.maxActivity) draft.activity = draft.activity.slice(-this.maxActivity);
-      await this.store.save(draft);
-      this.state = draft;
-      return out;
+      this.nextSigner = undefined;
+      try {
+        const draft = cloneState(this.state);
+        const now = this.clock.now();
+        this.refresh(draft, now);
+        const out = await fn(draft, now);
+        if (draft.active) draft.active.spends = pruneSpends(draft.active.spends, now);
+        if (draft.activity.length > this.maxActivity) draft.activity = draft.activity.slice(-this.maxActivity);
+        await this.store.save(draft);
+        this.state = draft;
+        // A registration that brings its own key 3 swaps it in with the state, never before the save.
+        if (this.nextSigner && this.signer) this.signer = this.nextSigner;
+        return out;
+      } finally {
+        this.nextSigner = undefined;
+      }
     });
   }
 
@@ -464,7 +488,10 @@ export class PolicyEngine {
       const cosignerHex = String(input.cosignerAccountPubkey).toLowerCase();
       if (hex.encode(acct.cosigner) !== cosignerHex) return bad('the descriptor does not hold the guardian key in the cosigner slot');
       if (new Set(ROLES.map((r) => hex.encode(acct[r]))).size !== 3) return bad('the three keys must be distinct');
-      if (this.signer && hex.encode(this.signer.accountPubkey) !== cosignerHex) return bad('the unlocked guardian key differs from cosignerAccountPubkey');
+      if (input.signer) {
+        if (hex.encode(input.signer.accountPubkey) !== cosignerHex) return bad('the given key 3 differs from cosignerAccountPubkey');
+      } else if (this.signer && hex.encode(this.signer.accountPubkey) !== cosignerHex) return bad('the unlocked guardian key differs from cosignerAccountPubkey');
+      if (input.key3Mix !== undefined && !isKey3MixRecord(input.key3Mix)) return bad('invalid key3Mix');
       const appNostr = String(input.appNostrPubkey).toLowerCase();
       if (!isNostrPubkey(appNostr)) return bad('appNostrPubkey must be 32-byte hex');
       let rules: Rules;
@@ -513,6 +540,7 @@ export class PolicyEngine {
           appNostrPubkey: appNostr,
           registeredAt: now,
           origin: { kind: 'paired', ...(replaces ? { replacesWalletId: replaces } : {}) },
+          ...(input.key3Mix ? { key3Mix: { version: 1 as const, entropy: input.key3Mix.entropy, context: input.key3Mix.context } } : {}),
         },
         rules,
         spends: [],
@@ -521,6 +549,8 @@ export class PolicyEngine {
         ...(watched ? { watched } : {}),
       };
       this.log(draft, now, { type: 'registered', walletId, ...(replaces ? { replacesWalletId: replaces } : {}), ...(watched ? { watching: true } : {}) });
+      // Installed with the saved state (see `mutate`), and only while unlocked.
+      if (input.signer) this.nextSigner = input.signer;
       return { ok: true as const, walletId };
     });
   }
@@ -1037,6 +1067,8 @@ export class PolicyEngine {
             appNostrPubkey: phone,
             registeredAt: now,
             origin: { kind: 'recovery', recoveryId: rec.id, fromWalletId: old.walletId },
+            // Same key 3, so the same way to derive it.
+            ...(old.key3Mix ? { key3Mix: { ...old.key3Mix } } : {}),
           };
         }
       } catch (e) {

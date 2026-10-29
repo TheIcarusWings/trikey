@@ -2,10 +2,30 @@
  * Key 3 at rest.
  *
  * Setup creates a fresh BIP39 seed (256 bits of entropy from `secureRandomBytes`,
- * i.e. the checked `getrandom(2)` behind Node's webcrypto). The cosigner key is
- * the BIP48 P2WSH account key of that seed, `m/48'/<coin>'/0'/2'`. There is no
+ * i.e. the checked `getrandom(2)` behind Node's webcrypto). The guardian's own key
+ * is the BIP48 P2WSH account key of that seed, `m/48'/<coin>'/0'/2'`. There is no
  * backup of key 3, by design (DESIGN.md: if the box dies, phone + hardware sweep
  * to a new wallet), so the mnemonic is never shown or stored.
+ *
+ * Key 3 from both sides (`trikey/key3/v1`). When the phone sends a contribution
+ * `c` (32 random bytes) at pairing, the wallet's key 3 is not the guardian's own
+ * key but the same BIP48 account of a seed derived from both:
+ *
+ *     seed3 = HMAC-SHA512(key = guardianSeed (the 64-byte BIP39 seed),
+ *                         data = "trikey/key3/v1" || walletContext || c)
+ *     walletContext = u32be(len) || utf8(network)
+ *                  || u32be(len) || utf8(pairing session id)
+ *                  || u32be(32)  || the phone's nostr pubkey (32 bytes)
+ *     key 3 = BIP32 master of seed3, then m/48'/<coin>'/0'/2'
+ *
+ * The context binds the network and the pairing, so the same `c` sent again (to a
+ * new pairing, or on another network) gives another key. `c` and the context are
+ * stored, unencrypted, with the wallet's registration (they are not secret: without
+ * the guardian's seed they say nothing about key 3) and key 3 is derived again at
+ * every unlock. The phone never learns key 3: it only ever sees the account xpub.
+ * This protects against a weak random generator on the guardian (a guessable seed
+ * alone no longer gives key 3), not against a dishonest guardian, which could ignore
+ * `c`; that cannot be proven without revealing key 3.
  *
  * The 64-byte BIP39 seed is encrypted with XChaCha20-Poly1305 under a key from
  * Argon2id(passphrase, random 16-byte salt). The file also carries, in clear,
@@ -37,6 +57,8 @@ import { readFile } from 'node:fs/promises';
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { argon2idAsync } from '@noble/hashes/argon2.js';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha512 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { base64, hex } from '@scure/base';
 import { HDKey } from '@scure/bip32';
@@ -45,7 +67,7 @@ import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { bip48Path, getNetwork, tweakPrivateKey, type NetworkName } from '@trikey/core';
 import { secureRandomBytes } from '@trikey/core/random';
 import { writeFileAtomic } from './files.js';
-import type { CosignerSigner } from './policy/index.js';
+import type { CosignerSigner, Key3Mix } from './policy/index.js';
 
 export interface KdfParams {
   /** Iterations. */
@@ -184,6 +206,94 @@ export function cosignerFromSeed(seed: Uint8Array, network: NetworkName): { sign
   }
 }
 
+// -----------------------------------------------------------------------------
+// Key 3 from both sides (see the file comment)
+
+export const KEY3_MIX_FORMAT = 'trikey/key3/v1';
+const KEY3_TAG = utf8ToBytes(KEY3_MIX_FORMAT);
+
+/** What the registration keeps to derive a wallet's key 3 again (policy/types.ts): not secret on its own. */
+export type { Key3Mix };
+
+function u32be(n: number): Uint8Array {
+  return Uint8Array.of((n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff);
+}
+
+function concat(parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
+}
+
+/** `walletContext` of `trikey/key3/v1`: the network, the pairing session and the phone's nostr key, each length-prefixed. */
+export function key3Context(i: { network: NetworkName; pairingId: string; phonePubkey: string }): Uint8Array {
+  getNetwork(i.network);
+  if (!/^[0-9a-f]{64}$/.test(i.phonePubkey)) throw new Error('phonePubkey must be 32-byte hex');
+  if (!/^[0-9a-f]{8,64}$/.test(i.pairingId)) throw new Error('pairingId must be hex');
+  const net = utf8ToBytes(i.network);
+  const id = utf8ToBytes(i.pairingId);
+  const phone = hex.decode(i.phonePubkey);
+  return concat([u32be(net.length), net, u32be(id.length), id, u32be(phone.length), phone]);
+}
+
+/** The `Key3Mix` record of a contribution `c` (hex) in `context`. */
+export function key3Mix(entropy: string, context: Uint8Array): Key3Mix {
+  if (!/^[0-9a-f]{64}$/.test(entropy)) throw new Error('the key 3 contribution must be 32-byte hex');
+  return { version: 1, entropy, context: hex.encode(context) };
+}
+
+export function isKey3Mix(v: unknown): v is Key3Mix {
+  const m = v as Key3Mix;
+  return !!m && typeof m === 'object' && m.version === 1 && typeof m.entropy === 'string' && /^[0-9a-f]{64}$/.test(m.entropy) && typeof m.context === 'string' && /^([0-9a-f]{2}){12,256}$/.test(m.context);
+}
+
+/** `seed3` = HMAC-SHA512(guardianSeed, "trikey/key3/v1" || walletContext || c). 64 bytes; the caller zeroes it. */
+export function mixedKey3Seed(guardianSeed: Uint8Array, mix: Key3Mix): Uint8Array {
+  if (guardianSeed.length !== 64) throw new Error('the guardian seed must be 64 bytes');
+  if (!isKey3Mix(mix)) throw new Error('invalid key 3 mix record');
+  const data = concat([KEY3_TAG, hex.decode(mix.context), hex.decode(mix.entropy)]);
+  return hmac(sha512, guardianSeed, data);
+}
+
+/**
+ * The guardian's setup seed while unlocked: what every wallet's key 3 is derived from. Kept in memory
+ * only between unlock and lock (like the signer), so a new pairing can derive its key 3. `wipe()` zeroes it.
+ */
+export class GuardianSeed {
+  #seed: Uint8Array | undefined;
+
+  /** Copies `seed` (64 bytes); the caller still zeroes its own copy. */
+  constructor(seed: Uint8Array) {
+    if (seed.length !== 64) throw new Error('seed must be 64 bytes');
+    this.#seed = seed.slice();
+  }
+
+  get wiped(): boolean {
+    return this.#seed === undefined;
+  }
+
+  /** Key 3 for a wallet: the guardian's own key without `mix`, else the `trikey/key3/v1` key. */
+  key3(network: NetworkName, mix?: Key3Mix): { signer: KeystoreSigner; pub: CosignerPublic } {
+    if (!this.#seed) throw new Error('the guardian is locked');
+    if (!mix) return cosignerFromSeed(this.#seed, network);
+    const seed3 = mixedKey3Seed(this.#seed, mix);
+    try {
+      return cosignerFromSeed(seed3, network);
+    } finally {
+      seed3.fill(0);
+    }
+  }
+
+  wipe(): void {
+    this.#seed?.fill(0);
+    this.#seed = undefined;
+  }
+}
+
 function checkKdf(k: KdfParams): void {
   for (const name of ['t', 'm', 'p'] as const) {
     const v = k[name];
@@ -313,7 +423,24 @@ export async function replaceKeystore(path: string, file: KeystoreFile): Promise
   await writeFileAtomic(path, `${JSON.stringify(file, null, 2)}\n`, { overwrite: true });
 }
 
-/** Unlocks: decrypts the seed, derives key 3, zeroes the seed. */
+/**
+ * Unlocks and keeps the seed: decrypts it, checks it gives the guardian key on file, and returns it as a
+ * `GuardianSeed` (the decrypted buffer is zeroed). Key 3 of a mixed wallet is derived from it.
+ */
+export async function unlockKeystoreSeed(file: KeystoreFile, passphrase: string): Promise<GuardianSeed> {
+  const seed = await openKeystore(file, passphrase);
+  try {
+    const { signer, pub } = cosignerFromSeed(seed, file.public.network);
+    signer.wipe();
+    if (pub.accountPubkey !== file.public.accountPubkey || pub.xpub !== file.public.xpub)
+      throw new KeystoreFormatError('decrypted key does not match the stored public key');
+    return new GuardianSeed(seed);
+  } finally {
+    seed.fill(0);
+  }
+}
+
+/** Unlocks: decrypts the seed, derives the guardian's own key, zeroes the seed. */
 export async function unlockKeystore(file: KeystoreFile, passphrase: string): Promise<KeystoreSigner> {
   const seed = await openKeystore(file, passphrase);
   try {

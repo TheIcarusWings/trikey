@@ -19,6 +19,7 @@ import { npubEncode } from 'nostr-tools/nip19';
 import {
   BACKUP_FILE_PREFIX,
   BACKUP_FILE_SUFFIX,
+  KEY3_MIXED_NOTE,
   TrikeyWallet,
   WalletError,
   parseBackup,
@@ -408,6 +409,7 @@ class Service implements RealWalletService {
       relays,
       chainData: 'your-node',
       npub,
+      ...(g?.key3Mixed ? { key3Note: KEY3_MIXED_NOTE } : {}),
     };
   }
 
