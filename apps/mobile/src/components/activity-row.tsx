@@ -100,7 +100,7 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
     case 'delay-changed':
       return {
         title: `Recovery wait set to ${event.days} days`,
-        subtitle: `${when} · approved on ${event.days >= 14 ? 'this phone' : ctx.hardwareBrand}`,
+        subtitle: `${when} · approved on ${(event.approvedOn ?? (event.days >= 14 ? 'phone' : 'hardware')) === 'phone' ? 'this phone' : ctx.hardwareBrand}`,
         subtitleTone: 'muted',
         icon: Shield,
         iconTone: 'fill',

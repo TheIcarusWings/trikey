@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { Pressable, View } from 'react-native';
+import { ActionNotice } from '@/components/action-notice';
 import { ChevronRight, Cloud, FileText, HardwareWallet, Smartphone } from '@/components/icons';
 import { Body } from '@/components/panels';
 import { Screen } from '@/components/screen';
@@ -9,7 +10,7 @@ import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { useWallet, useWalletService, type LostKey } from '@/data';
 import { IS_IOS, pick } from '@/lib/platform';
-import { useBusy } from '@/lib/use-busy';
+import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
 
 function Option({
@@ -39,47 +40,69 @@ function Option({
   );
 }
 
-/** "What happened?": which two keys can still be put together. */
+/**
+ * "What happened?": which two keys can still be put together.
+ * On a phone that is already set up only the lost hardware wallet makes sense; on a new phone the others do.
+ */
 export default function RecoverChoose() {
   const router = useRouter();
   const wallet = useWalletService();
-  const { recoveryDelayDays } = useWallet();
-  const [busy, run] = useBusy();
+  const { recoveryDelayDays, onboarded, backing } = useWallet();
+  const { busy, run, message, error } = useAction();
+  const demo = backing === 'demo';
 
+  // The demo starts the recovery straight away, as the designs do; the real wallet first needs the guardian's address and a device.
   const startRecovery = async (lostKey: LostKey) => {
-    await run(wallet.startRecovery(lostKey));
-    router.push('/recover/waiting');
+    if (!demo) {
+      router.push(lostKey === 'phone' ? '/recover/guardian' : '/recover/new-hardware');
+      return;
+    }
+    const r = await run(wallet.startRecovery(lostKey));
+    if (r.ok) router.push('/recover/waiting');
   };
 
   return (
     <Screen title="What happened?" androidTitleBelow backLabel="Back">
-      <Body>Any two of your three keys can get your money back. Pick what you still have.</Body>
-      <Option
-        icon={Cloud}
-        title="New phone, backup still there"
-        description="Restore from your cloud backup. Takes a minute."
-        onPress={() => router.push('/recover/backup')}
-      />
-      <Option
-        icon={Smartphone}
-        title="Lost my phone and the backup"
-        description={`Use your hardware wallet and guardian. Takes ${recoveryDelayDays} days, with alerts.`}
-        disabled={busy}
-        onPress={() => startRecovery('phone')}
-      />
-      <Option
-        icon={HardwareWallet}
-        title="Lost my hardware wallet"
-        description={`Restore its seed words on a new device right away, or use this phone and the guardian (${recoveryDelayDays} days).`}
-        disabled={busy}
-        onPress={() => startRecovery('hardware')}
-      />
-      <Option
-        icon={FileText}
-        title="I have a Recovery Kit"
-        description="No home server? Scan your kit and use the device you still have. No waiting."
-        onPress={() => router.push('/recover/kit')}
-      />
+      <Body>
+        {onboarded
+          ? 'Your phone is fine, but your hardware wallet is gone. This phone and the guardian can move your money to a new one.'
+          : 'Any two of your three keys can get your money back. Pick what you still have.'}
+      </Body>
+      {onboarded ? null : (
+        <>
+          <Option
+            icon={Cloud}
+            title="New phone, backup still there"
+            description="Restore from your backup. Takes a minute."
+            onPress={() => router.push('/recover/backup')}
+          />
+          <Option
+            icon={Smartphone}
+            title="Lost my phone and the backup"
+            description={`Use your hardware wallet and guardian. Takes ${recoveryDelayDays} days, with alerts.`}
+            disabled={busy}
+            onPress={() => startRecovery('phone')}
+          />
+        </>
+      )}
+      {onboarded || demo ? (
+        <Option
+          icon={HardwareWallet}
+          title="Lost my hardware wallet"
+          description={`Restore its seed words on a new device right away, or use this phone and the guardian (${recoveryDelayDays} days).`}
+          disabled={busy}
+          onPress={() => startRecovery('hardware')}
+        />
+      ) : null}
+      {onboarded ? null : (
+        <Option
+          icon={FileText}
+          title="I have a Recovery Kit"
+          description="No home server? Scan your kit and use the device you still have. No waiting."
+          onPress={() => router.push('/recover/kit')}
+        />
+      )}
+      <ActionNotice message={message} error={error} />
     </Screen>
   );
 }

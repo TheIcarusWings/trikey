@@ -11,7 +11,7 @@ import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
 const CONFIRMS: Record<FeeSpeed, string> = {
-  slow: 'Usually confirms within a day.',
+  slow: 'Usually confirms within an hour or two.',
   normal: 'Usually confirms in about 30 minutes.',
   fast: 'Usually confirms in about 10 minutes.',
 };

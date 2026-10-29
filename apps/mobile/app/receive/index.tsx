@@ -8,17 +8,23 @@ import { Card } from '@/components/ui/card';
 import { AddressQr } from '@/components/qr';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
-import { groupAddress, useWallet } from '@/data';
+import { groupAddress, useWallet, useWalletService } from '@/data';
+import { Notice } from '@/components/panels';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
 export default function Receive() {
   const router = useRouter();
+  const wallet = useWalletService();
   const { receiveAddress, hardware } = useWallet();
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => () => clearTimeout(timer.current), []);
+  // The next unused address comes from the last sync: look again when the screen opens.
+  useEffect(() => {
+    void wallet.sync();
+  }, [wallet]);
 
   const copy = async () => {
     await Clipboard.setStringAsync(receiveAddress);
@@ -58,12 +64,18 @@ export default function Receive() {
           </Pressable>
         </Card>
       }>
-      <View className="mt-1 items-center gap-4">
-        <AddressQr address={receiveAddress} />
-        <Text className="text-foreground px-3 text-center font-mono text-[15px] leading-6" selectable>
-          {groupAddress(receiveAddress)}
-        </Text>
-      </View>
+      {receiveAddress ? (
+        <View className="mt-1 items-center gap-4">
+          <AddressQr address={receiveAddress} />
+          <Text className="text-foreground px-3 text-center font-mono text-[15px] leading-6" selectable>
+            {groupAddress(receiveAddress)}
+          </Text>
+        </View>
+      ) : (
+        <Notice tone="warn" title="No address to show">
+          Your {hardware.brand} hasn't confirmed this wallet's addresses yet, so Trikey won't show one. Finish setting up the wallet first.
+        </Notice>
+      )}
       <View className="flex-row gap-3">
         <AppButton
           title={copied ? 'Copied' : 'Copy'}
@@ -71,9 +83,10 @@ export default function Receive() {
           variant={variant}
           className="flex-1 self-auto"
           onPress={copy}
+          disabled={!receiveAddress}
           accessibilityLabel={copied ? 'Address copied' : 'Copy address'}
         />
-        <AppButton title="Share" variant={variant} className="flex-1 self-auto" onPress={share} accessibilityLabel="Share address" />
+        <AppButton title="Share" variant={variant} className="flex-1 self-auto" onPress={share} disabled={!receiveAddress} accessibilityLabel="Share address" />
       </View>
     </Screen>
   );

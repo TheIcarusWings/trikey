@@ -7,7 +7,7 @@ import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { formatSats, useWallet } from '@/data';
-import { hostLabel } from '@/lib/labels';
+import { guardianBox } from '@/lib/labels';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -51,7 +51,7 @@ export default function RecoverDone() {
         <Panel>
           <InfoRow plainLabel label="Hardware wallet" value={hardware.model} tone="muted" />
           <InfoRow plainLabel label="This phone" value="New key" tone="good" />
-          <InfoRow plainLabel label="Guardian" value={`New key · ${hostLabel(guardian.host)}`} tone="good" />
+          <InfoRow plainLabel label="Guardian" value={`New key · ${guardianBox(guardian)}`} tone="good" />
         </Panel>
       </View>
     </Screen>

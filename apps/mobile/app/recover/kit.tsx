@@ -1,5 +1,6 @@
 import { useRouter } from 'expo-router';
 import { View } from 'react-native';
+import { ActionNotice, ComingLater } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { QrCode, TriangleAlert } from '@/components/icons';
 import { Body, Notice, Panel } from '@/components/panels';
@@ -7,7 +8,7 @@ import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import { formatSats, useWallet, useWalletService } from '@/data';
 import { pick } from '@/lib/platform';
-import { useBusy } from '@/lib/use-busy';
+import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
 
 function RecoveryStep({ n, active, title, detail }: { n: number; active?: boolean; title: string; detail: string }) {
@@ -32,13 +33,13 @@ function RecoveryStep({ n, active, title, detail }: { n: number; active?: boolea
 export default function RecoverWithKit() {
   const router = useRouter();
   const wallet = useWalletService();
-  const { hardware, balanceSats } = useWallet();
-  const [busy, run] = useBusy();
+  const { hardware, balanceSats, capabilities } = useWallet();
+  const { busy, run, message, error } = useAction();
 
   const scan = async () => {
     // The camera hands the kit's QR contents over; the mock needs nothing.
-    const { movedSats } = await run(wallet.recoverWithKit());
-    router.replace({ pathname: '/recover/done', params: { moved: String(movedSats) } });
+    const r = await run(wallet.recoverWithKit());
+    if (r.ok) router.replace({ pathname: '/recover/done', params: { moved: String(r.value.movedSats) } });
   };
 
   return (
@@ -46,7 +47,13 @@ export default function RecoverWithKit() {
       title="Recover with your Recovery Kit"
       androidTitle="Recover with your kit"
       backLabel="Back"
-      footer={<AppButton title="Scan Recovery Kit" icon={QrCode} busy={busy} onPress={scan} />}>
+      footer={
+        <>
+          <ActionNotice message={message} error={error} />
+          <AppButton title="Scan Recovery Kit" icon={QrCode} busy={busy} disabled={!capabilities.recoveryKey} onPress={scan} />
+        </>
+      }>
+      {capabilities.recoveryKey ? null : <ComingLater>Recovery Kits belong to Recovery Key mode, which has no wallet code behind it yet.</ComingLater>}
       <Body>
         Your kit plus the device you still have make two of three keys. Your money moves to a fresh wallet right away, with no waiting.
       </Body>

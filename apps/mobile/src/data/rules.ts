@@ -91,7 +91,7 @@ export function buildRefillSchedule(amountSats: Sats, from: Date, count = 8): Re
 
 /** Loose check, enough for the form. Real code decodes the bech32 checksum. */
 export function looksLikeBitcoinAddress(value: string): boolean {
-  return /^(bc1|tb1)[a-z0-9]{20,90}$/i.test(value.trim()) || /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(value.trim());
+  return /^(bc1|tb1|bcrt1)[a-z0-9]{20,90}$/i.test(value.trim()) || /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(value.trim());
 }
 
 export function looksLikeNpub(value: string): boolean {

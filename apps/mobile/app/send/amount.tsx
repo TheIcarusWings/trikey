@@ -16,8 +16,9 @@ import {
   remainingToday,
   useWallet,
   useWalletService,
-  type SendQuote,
+  type QuoteOutcome,
 } from '@/data';
+import { QrScanner } from '@/hardware/ui';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -27,10 +28,17 @@ const DEMO_ADDRESS = 'bc1q9d4xe8w2m5ka3hq7l0pz6vtrc2yn7kmr';
 const MAX_DIGITS = 10;
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'] as const;
 
-/** One sentence under the amount: which keys this payment will need. */
-function limitPill(quote: SendQuote, state: ReturnType<typeof useWallet>): { text: string; dot: 'good' | 'warn' } {
+/** One sentence under the amount: which keys this payment will need, or what is missing. */
+function limitPill(outcome: QuoteOutcome, state: ReturnType<typeof useWallet>, amountSats: number): { text: string; dot: 'good' | 'warn' } {
   const brand = state.hardware.brand;
-  const plan = quote.plan;
+  if (!outcome.ok) {
+    if (outcome.problem === 'insufficient_funds') return { text: "That's more than your balance", dot: 'warn' };
+    if (outcome.problem === 'amount_too_small' && amountSats === 0) return { text: 'Enter an amount', dot: 'warn' };
+    if (outcome.problem === 'invalid_address') return { text: 'Enter a bitcoin address', dot: 'warn' };
+    if (outcome.problem === 'not_synced') return { text: 'Waiting for your wallet to sync', dot: 'warn' };
+    return { text: outcome.message, dot: 'warn' };
+  }
+  const plan = outcome.quote.plan;
   if (plan.signer === 'phone+guardian') {
     return { text: `Within today's limit · ${formatSats(remainingToday(state))} left`, dot: 'good' };
   }
@@ -48,7 +56,17 @@ function limitPill(quote: SendQuote, state: ReturnType<typeof useWallet>): { tex
       return { text: `Guardian offline · needs your ${brand}`, dot: 'warn' };
     case 'recovery-pending':
       return { text: `Recovery in progress · needs your ${brand}`, dot: 'warn' };
+    case 'phone-spending-paused':
+      return { text: `Phone payments paused · needs your ${brand}`, dot: 'warn' };
+    case 'requested':
+      return { text: `You chose your ${brand}`, dot: 'warn' };
   }
+}
+
+/** What a scanned QR holds: a plain address, or a BIP 21 URI (the address is before the question mark). */
+function addressFromScan(data: string): string {
+  const t = data.trim();
+  return t.replace(/^bitcoin:/i, '').split('?')[0] ?? t;
 }
 
 export default function SendAmount() {
@@ -58,27 +76,29 @@ export default function SendAmount() {
   const [address, setAddress] = useState('');
   const [digits, setDigits] = useState('');
   const [btcView, setBtcView] = useState(false);
+  const [scanning, setScanning] = useState(false);
 
   const amountSats = digits ? Number(digits) : 0;
   const addressOk = looksLikeBitcoinAddress(address);
   const addressBad = address.trim().length > 0 && !addressOk;
   const tooMuch = amountSats > state.balanceSats;
-  const canReview = addressOk && amountSats > 0 && !tooMuch;
-
-  const quote = useMemo(
+  const outcome = useMemo(
     () => wallet.quoteSend({ address: address.trim(), amountSats, speed: 'normal' }),
     // The quote depends on the wallet state (limit used, guardian status), not just the form.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [wallet, state, address, amountSats]
   );
-  const pill = limitPill(quote, state);
+  const pill = limitPill(outcome, state, amountSats);
+  const canReview = addressOk && amountSats > 0 && !tooMuch && outcome.ok;
+  const addressRejected = !outcome.ok && outcome.problem === 'invalid_address' && address.trim().length > 0 && addressOk;
 
   const press = (digit: string) => setDigits((d) => (d.length >= MAX_DIGITS ? d : d === '' && digit === '0' ? '' : d + digit));
   const erase = () => setDigits((d) => d.slice(0, -1));
 
   const review = () => {
+    if (!outcome.ok) return;
     const params = { address: address.trim(), amount: String(amountSats) };
-    if (quote.plan.signer === 'hardware') router.push({ pathname: '/send/hardware', params });
+    if (outcome.quote.plan.signer === 'hardware') router.push({ pathname: '/send/hardware', params });
     else router.push({ pathname: '/send/review', params });
   };
 
@@ -115,12 +135,29 @@ export default function SendAmount() {
           <Pressable
             role="button"
             accessibilityLabel="Scan a QR code"
-            onPress={() => setAddress(DEMO_ADDRESS)}
+            onPress={() => (state.backing === 'demo' ? setAddress(DEMO_ADDRESS) : setScanning((v) => !v))}
             className={cn('border-border items-center justify-center rounded-[10px] border active:bg-accent', pick('size-11', 'size-12'))}>
             <Icon as={QrCode} size={20} className="text-foreground" strokeWidth={2} />
           </Pressable>
         </View>
-        {addressBad ? <Text className="text-destructive text-[13px] leading-[18px]">That doesn't look like a bitcoin address.</Text> : null}
+        {addressBad || addressRejected ? (
+          <Text className="text-destructive text-[13px] leading-[18px]">That doesn't look like a bitcoin address{addressRejected ? ' on this network' : ''}.</Text>
+        ) : null}
+        {scanning ? (
+          <View className="mt-2 gap-2">
+            <QrScanner
+              size={220}
+              onFrame={(data) => {
+                const a = addressFromScan(data);
+                if (looksLikeBitcoinAddress(a)) {
+                  setAddress(a);
+                  setScanning(false);
+                }
+              }}
+            />
+            <AppButton title="Close camera" variant="ghost" onPress={() => setScanning(false)} />
+          </View>
+        ) : null}
       </View>
 
       <View className={cn('items-center gap-2', pick('py-3', 'py-4'))} accessible accessibilityLabel={`Amount: ${primary} ${btcView ? 'bitcoin' : 'sats'}`}>

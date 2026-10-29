@@ -9,7 +9,7 @@ import {
 } from '@/components/home';
 import { Footnote } from '@/components/panels';
 import { Screen } from '@/components/screen';
-import { useWallet } from '@/data';
+import { useWallet, useWalletService } from '@/data';
 import { pick } from '@/lib/platform';
 
 /**
@@ -20,10 +20,12 @@ import { pick } from '@/lib/platform';
  */
 export default function HomeScreen() {
   const state = useWallet();
+  const wallet = useWalletService();
+  const refresh = () => wallet.sync();
 
   if (state.mode === 'recoveryKey') {
     return (
-      <Screen tab untitled title="Trikey" androidTitleWeight="normal" gap={20}>
+      <Screen tab untitled title="Trikey" androidTitleWeight="normal" gap={20} onRefresh={refresh}>
         <RecoveryBanner />
         <BalanceHeader
           label="Spending balance"
@@ -40,7 +42,7 @@ export default function HomeScreen() {
   const down = state.guardian.status !== 'online';
   if (down) {
     return (
-      <Screen tab untitled title="Trikey" androidTitleWeight="normal" gap={20}>
+      <Screen tab untitled title="Trikey" androidTitleWeight="normal" gap={20} onRefresh={refresh}>
         <RecoveryBanner />
         <BalanceHeader label="Balance" sats={state.balanceSats} />
         <GuardianDownNotice />
@@ -53,7 +55,7 @@ export default function HomeScreen() {
   }
 
   return (
-    <Screen tab untitled title="Trikey" androidTitleWeight="normal" gap={20}>
+    <Screen tab untitled title="Trikey" androidTitleWeight="normal" gap={20} onRefresh={refresh}>
       <RecoveryBanner />
       <BalanceHeader label="Balance" sats={state.balanceSats} />
       <SendReceiveButtons />

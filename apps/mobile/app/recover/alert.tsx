@@ -1,5 +1,6 @@
 import { Redirect, useRouter } from 'expo-router';
 import { View } from 'react-native';
+import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { TriangleAlert } from '@/components/icons';
 import { InfoRow, Panel } from '@/components/panels';
@@ -8,7 +9,7 @@ import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { formatDateTime24, useWallet, useWalletService } from '@/data';
 import { pick } from '@/lib/platform';
-import { useBusy } from '@/lib/use-busy';
+import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
 
 /** What a guardian alert opens: someone, maybe not the owner, started a recovery. */
@@ -16,12 +17,13 @@ export default function RecoverAlert() {
   const router = useRouter();
   const wallet = useWalletService();
   const { recovery, hardware } = useWallet();
-  const [busy, run] = useBusy();
+  const { busy, run, message, error } = useAction();
 
   if (!recovery) return <Redirect href="/home" />;
 
   const cancel = async () => {
-    await run(wallet.cancelRecovery());
+    const r = await run(wallet.cancelRecovery());
+    if (!r.ok) return;
     router.dismissAll();
     router.replace('/home');
   };
@@ -38,6 +40,7 @@ export default function RecoverAlert() {
       gap={20}
       footer={
         <>
+          <ActionNotice message={message} error={error} />
           <AppButton title="Cancel recovery" variant="destructive" busy={busy} onPress={cancel} />
           <AppButton title="This was me" variant="outline" disabled={busy} onPress={itWasMe} />
         </>
@@ -52,7 +55,7 @@ export default function RecoverAlert() {
         Someone started a recovery
       </Text>
       <Text className={pick('text-base leading-[23px]', 'text-base leading-6')}>
-        A new phone asked your guardian to move your money, using your {hardware.brand}. If that wasn't you, cancel now.
+        {recovery.lostKey === 'phone' ? `A new phone asked your guardian to move your money, using your ${hardware.brand}.` : "Someone asked your guardian to move your money, using this phone's key."} If that wasn't you, cancel now.
       </Text>
       <Panel>
         <InfoRow label="Started" value={formatDateTime24(recovery.startedAt)} />
