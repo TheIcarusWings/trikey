@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { AppButton } from '@/components/app-button';
 import { ListGroup, SectionLabel, SettingsRow } from '@/components/panels';
 import { Screen } from '@/components/screen';
+import { SelfTestRow } from '@/components/self-test-row';
 import { Segmented } from '@/components/segmented';
 import { Switch } from '@/components/ui/switch';
 import { Text } from '@/components/ui/text';
@@ -139,6 +140,7 @@ function DeveloperSection() {
           </View>
         )}
       </ListGroup>
+      <SelfTestRow />
       <View className={IS_IOS ? 'gap-3' : 'gap-3 pb-2'}>
         {rk ? null : (
           <AppButton
