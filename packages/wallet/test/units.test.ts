@@ -135,11 +135,29 @@ describe('recovery codes', () => {
 
   it('catch typos before running the KDF', () => {
     const code = generateRecoveryCode();
-    const i = 2;
-    const typo = code.slice(0, i) + (code[i] === '7' ? '8' : '7') + code.slice(i + 1);
-    expect(() => normalizeRecoveryCode(typo)).toThrow(/typo/);
     expect(() => normalizeRecoveryCode(code.slice(0, -1))).toThrow(/25/);
     expect(() => normalizeRecoveryCode(code.replace(/.$/, 'U'))).toThrow();
+  });
+
+  it('catch every single-character typo and nearly every swap of neighbours', () => {
+    const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+    for (let round = 0; round < 20; round++) {
+      const chars = generateRecoveryCode().replace(/-/g, '');
+      for (let i = 0; i < chars.length; i++) {
+        for (const c of alphabet) {
+          if (c === chars[i]) continue;
+          const typo = chars.slice(0, i) + c + chars.slice(i + 1);
+          expect(() => normalizeRecoveryCode(typo), `${chars} position ${i} as ${c}`).toThrow(/typo/);
+        }
+      }
+      for (let i = 0; i < chars.length - 1; i++) {
+        const a = chars[i]!;
+        const b = chars[i + 1]!;
+        if (a === b || (a === '0' && b === 'Z') || (a === 'Z' && b === '0')) continue;
+        const swapped = chars.slice(0, i) + b + a + chars.slice(i + 2);
+        expect(() => normalizeRecoveryCode(swapped), `${chars} swap at ${i}`).toThrow(/typo/);
+      }
+    }
   });
 });
 

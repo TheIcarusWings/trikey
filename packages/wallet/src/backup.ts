@@ -132,8 +132,20 @@ export type SlotInput =
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const CODE_DATA_CHARS = 24;
 
+/**
+ * Luhn mod 32 check character. Unlike a hash, it catches every single-character
+ * typo and every swap of two neighbouring characters except 0↔Z (the only pair
+ * Luhn mod N can't tell apart), so a typo is reported before Argon2 runs.
+ */
 function checkChar(data: string): string {
-  return CROCKFORD[sha256(utf8ToBytes(`trikey-recovery-code:${data}`))[0]! >> 3]!;
+  let factor = 2;
+  let sum = 0;
+  for (let i = data.length - 1; i >= 0; i--) {
+    const addend = factor * CROCKFORD.indexOf(data[i]!);
+    sum += Math.floor(addend / 32) + (addend % 32);
+    factor = factor === 2 ? 1 : 2;
+  }
+  return CROCKFORD[(32 - (sum % 32)) % 32]!;
 }
 
 /** A fresh recovery code: 120 random bits, `XXXXX-XXXXX-XXXXX-XXXXX-XXXXX` (the last character is a check). */
