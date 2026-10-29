@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import * as btc from '@scure/btc-signer';
 import { hex } from '@scure/base';
-import { CHANGE, SoftwareSigner, TX_OPTS, type MultisigWallet } from '@trikey/core';
+import { CHANGE, SEQUENCE_RBF, SoftwareSigner, TX_OPTS, type MultisigWallet } from '@trikey/core';
 import {
   DEFAULT_PERIOD_BLOCKS,
   REFILL_CHANGE_VOUT,
@@ -16,7 +16,6 @@ import {
   type VaultCoin,
 } from '../src/refills.js';
 import { SpendingAccount, SPENDING_INTERNAL } from '../src/spending.js';
-import { SEQUENCE_RBF } from '../src/sequence.js';
 import { refillVsize, cpfpChildFee, cpfpChildVsize } from '../src/fees.js';
 import { decodeRawTx, vsizeOf } from '../src/script-verify.js';
 import { refillStates, summarizeChain, type ChainView, type TxSeen } from '../src/chain-state.js';
@@ -24,7 +23,7 @@ import { decide } from '../src/scheduler.js';
 import { deriveKey2, mnemonicFromEntropy } from '../src/keys.js';
 import { MNEMONICS, RK_ENTROPY, fixtureKeys, network, rejects } from './helpers.js';
 import { fundVault, signRefills } from './chain-helpers.js';
-import { consensusVerifier, consensusVerify } from './support/consensus.js';
+import { consensusAvailable, verifyConsensus } from '@trikey/core/testing';
 
 const AMOUNT = 200_000n;
 
@@ -127,11 +126,11 @@ describe('building the chain', () => {
   });
 
   it('passes libbitcoinconsensus for every signed refill', async (ctx) => {
-    if (!consensusVerifier) ctx.skip();
+    if (!consensusAvailable()) ctx.skip();
     const { signed, coins, vault } = await chainFixture();
     signed.forEach((r, k) => {
       const prevouts = k === 0 ? coins.map((c) => ({ script: vault.derive(c.chain, c.index).script, amount: c.value })) : [{ script: vault.derive(CHANGE, signed[k - 1]!.changeIndex).script, amount: BigInt(signed[k - 1]!.changeValueSats) }];
-      const res = consensusVerify(r.txHex, prevouts);
+      const res = verifyConsensus(r.txHex, prevouts);
       expect(res.ok, res.output).toBe(true);
     });
   });

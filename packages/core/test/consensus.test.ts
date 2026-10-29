@@ -177,6 +177,38 @@ describeConsensus('consensus: transactions we produce', () => {
       }
     });
 
+    it('custom nSequence and nLockTime: signed and accepted by Bitcoin Core', async () => {
+      const spend = buildSpend({
+        wallet,
+        utxos: [fund(wallet, RECEIVE, 0, 200_000n), fund(wallet, CHANGE, 2, 90_000n)],
+        recipients: [{ address: dest, amount: 250_000n }],
+        feeRate: 3,
+        changeIndex: 3,
+        sequence: [1008, 2016],
+        lockTime: 1500,
+      });
+      const sweep = buildSweep({
+        from: wallet,
+        utxos: [fund(wallet, RECEIVE, 2, 90_000n), fund(wallet, CHANGE, 1, 60_000n)],
+        destination: wallet,
+        destinationIndex: 0,
+        feeRate: 2,
+        sequence: 0xfffffffe,
+        lockTime: 800_000,
+      });
+      for (const pair of PAIRS) {
+        const s = check(await signWith(ctx, pair, spend.psbt));
+        assertConsensusValid(s.result);
+        expect(sequencesOf(s.txHex)).toEqual([1008, 2016]);
+        expect(btc.RawTx.decode(hex.decode(s.txHex)).lockTime).toBe(1500);
+
+        const w = check(await signWith(ctx, pair, sweep.psbt));
+        assertConsensusValid(w.result);
+        expect(sequencesOf(w.txHex)).toEqual([0xfffffffe, 0xfffffffe]);
+        expect(btc.RawTx.decode(hex.decode(w.txHex)).lockTime).toBe(800_000);
+      }
+    });
+
     it('a payment with change: two recipients plus a change output', async () => {
       const second = btc.p2wpkh(secp256k1.getPublicKey(new Uint8Array(32).fill(4), true), network.btc).address!;
       const plan = buildSpend({

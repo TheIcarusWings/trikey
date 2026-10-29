@@ -18,9 +18,8 @@
 import * as btc from '@scure/btc-signer';
 import { hex } from '@scure/base';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { NETWORKS, type Network } from '@trikey/core';
+import { LOCKTIME_THRESHOLD, NETWORKS, SEQUENCE_DISABLE_FLAG, SEQUENCE_FINAL, SEQUENCE_TYPE_FLAG, SEQUENCE_VALUE_MASK, type Network } from '@trikey/core';
 import { decodeRawTx, decodeOut, txidOf, verifyInput, vsizeOf, type RawTx } from '../script-verify.js';
-import { SEQUENCE_DISABLE_FLAG, SEQUENCE_FINAL, SEQUENCE_TYPE_FLAG, SEQUENCE_VALUE_MASK, LOCKTIME_THRESHOLD } from '../sequence.js';
 
 export class SimRejection extends Error {
   constructor(

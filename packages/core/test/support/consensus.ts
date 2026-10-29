@@ -102,6 +102,19 @@ export function describeConsensus(name: string, fn: () => void): void {
   }
 }
 
+/**
+ * For a test that needs the verifier but can carry on without it: returns false
+ * when the verifier is missing, so the caller can skip that part. Throws instead
+ * in CI (and when TRIKEY_CONSENSUS_VERIFY names a missing file), so a missing
+ * verifier fails the test rather than passing quietly.
+ */
+export function consensusAvailable(): boolean {
+  if (verifierAvailable()) return true;
+  if (process.env.TRIKEY_CONSENSUS_VERIFY) throw new Error(`TRIKEY_CONSENSUS_VERIFY points to a missing file: ${verifierPath()}`);
+  if (isCI()) throw new Error(`consensus-verify not found at ${verifierPath()}; ${BUILD_HINT}`);
+  return false;
+}
+
 const toHex = (b: Uint8Array | string) => (typeof b === 'string' ? b : hex.encode(b));
 
 /**

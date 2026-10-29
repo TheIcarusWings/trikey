@@ -26,10 +26,9 @@
  */
 import * as btc from '@scure/btc-signer';
 import { hex } from '@scure/base';
-import { CHANGE, ROLES, TX_OPTS, type MultisigWallet, type Role } from '@trikey/core';
+import { CHANGE, LOCKTIME_THRESHOLD, ROLES, SEQUENCE_RBF, TX_OPTS, encodeRelativeBlocks, type MultisigWallet, type Role } from '@trikey/core';
 import { equalBytes } from '@scure/btc-signer/utils.js';
 import { DUST_SATS, feeForRate, refillVsize } from './fees.js';
-import { LOCKTIME_THRESHOLD, SEQUENCE_RBF, encodeRelativeBlocks } from './sequence.js';
 import { ScriptError, decodeRawTx, txidOf, verifyP2wshMultisig, vsizeOf } from './script-verify.js';
 import { SPENDING_INTERNAL, type SpendingAccount } from './spending.js';
 import { RecoveryKeyError } from './errors.js';
@@ -159,6 +158,11 @@ export function maxRefills(total: bigint, amount: bigint, feeRate: number, first
  * Builds `params.count` unsigned refills from `head`. `spendIndices` and
  * `changeIndices` are the spending-internal and vault-change address indices
  * reserved for them, one each per refill.
+ *
+ * TODO: core's buildSpend and buildSweep now take `sequence` and `lockTime`
+ * (packages/core/src/psbt.ts). This builder is not a drop-in swap for them: it
+ * chains each refill's change into the next, sets the fee itself and takes its
+ * own change indices.
  */
 export function buildRefillChain(opts: {
   vault: MultisigWallet;

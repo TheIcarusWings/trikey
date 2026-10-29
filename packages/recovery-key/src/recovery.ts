@@ -16,9 +16,8 @@
  */
 import * as btc from '@scure/btc-signer';
 import { hex } from '@scure/base';
-import { TX_OPTS, analyzePsbt, combinePsbts, parsePsbt, type MultisigWallet, type Role } from '@trikey/core';
+import { SEQUENCE_RBF, TX_OPTS, analyzePsbt, combinePsbts, parsePsbt, type MultisigWallet, type Role } from '@trikey/core';
 import { DUST_SATS, estimateVsize, feeForRate } from './fees.js';
-import { SEQUENCE_RBF } from './sequence.js';
 import type { EsploraClient, ScanResult } from './esplora.js';
 import { scanAccount } from './esplora.js';
 import type { VaultCoin } from './refills.js';
