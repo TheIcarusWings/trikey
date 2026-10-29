@@ -737,6 +737,45 @@ code,
   transition: transform 0.9s cubic-bezier(0.2, 0.7, 0.2, 1), opacity 0.9s ease;
 }
 
+/* Chapter marker and progress line for each pinned scene (scroll story only). */
+
+.chapter {
+  display: none;
+}
+
+.story .chapter {
+  position: absolute;
+  z-index: 5;
+  top: calc(clamp(0.5rem, 1.2vw, 1rem) + clamp(1rem, 3vw, 1.75rem));
+  left: calc(clamp(0.5rem, 1.2vw, 1rem) + clamp(1.25rem, 5vw, 4rem));
+  right: calc(clamp(0.5rem, 1.2vw, 1rem) + clamp(1.25rem, 5vw, 4rem));
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  color: #d4d4d8;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.story .chapter i {
+  position: relative;
+  flex: 1;
+  height: 1px;
+  background: rgb(250 250 250 / 0.2);
+}
+
+.story .chapter i::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #fafafa;
+  transform: scaleX(var(--p, 0));
+  transform-origin: left;
+}
+
 /* The three keys */
 
 .keys {
@@ -806,6 +845,15 @@ code,
   fill: var(--brand);
 }
 
+.tri .t {
+  fill: var(--muted);
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 600;
+  text-anchor: middle;
+  transition: opacity 0.5s ease;
+}
+
 .lose-choices {
   display: flex;
   flex-wrap: wrap;
@@ -872,6 +920,13 @@ code,
   .lose:has(#lose-guardian:checked) .n-guardian {
     opacity: 0.15;
     transform: scale(0.7);
+  }
+
+  .lose:has(#lose-phone:checked) .t-phone,
+  .lose:has(#lose-hardware:checked) .t-hardware,
+  .lose:has(#lose-guardian:checked) .t-guardian {
+    opacity: 0.35;
+    text-decoration: line-through;
   }
 
   .lose:has(#lose-phone:checked) .e-right,
