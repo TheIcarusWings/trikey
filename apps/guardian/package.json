@@ -19,5 +19,8 @@
     "@scure/bip32": "^2.4.0",
     "@scure/btc-signer": "^2.4.1",
     "@trikey/core": "*"
+  },
+  "devDependencies": {
+    "@trikey/protocol": "*"
   }
 }
