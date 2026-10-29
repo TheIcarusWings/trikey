@@ -9,7 +9,7 @@ import { mnemonicFromEntropy } from '../src/keys.js';
 import { estimateVsize, feeForRate } from '../src/fees.js';
 import { MNEMONICS, RK_ENTROPY, device, externalAddress, fixtureKeys, network, rejects } from './helpers.js';
 import { fundVault } from './chain-helpers.js';
-import { consensusVerifier, consensusVerify } from './support/consensus.js';
+import { consensusAvailable, verifyConsensus } from '@trikey/core/testing';
 
 const dest = btc.OutScript.encode(btc.Address(network.btc).decode(externalAddress(21)));
 
@@ -44,8 +44,8 @@ describe('recovery sweeps', () => {
       expect(raw.outputs).toHaveLength(1);
       expect(vsizeOf(raw)).toBeLessThanOrEqual(plan.vsize);
       coins.coins.forEach((c, i) => verifyInput(raw, i, vault.derive(c.chain, c.index).script, c.value));
-      if (consensusVerifier) {
-        const r = consensusVerify(txHex, coins.coins.map((c) => ({ script: vault.derive(c.chain, c.index).script, amount: c.value })));
+      if (consensusAvailable()) {
+        const r = verifyConsensus(txHex, coins.coins.map((c) => ({ script: vault.derive(c.chain, c.index).script, amount: c.value })));
         expect(r.ok, r.output).toBe(true);
       }
     }

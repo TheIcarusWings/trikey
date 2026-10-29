@@ -15,7 +15,7 @@ import { decodeRawTx, vsizeOf } from '../src/script-verify.js';
 import { verifyRefillChain } from '../src/refills.js';
 import type { PrintableKit } from '../src/kit-print.js';
 import { MNEMONICS, externalAddress, rejects } from './helpers.js';
-import { consensusVerifier, consensusVerify } from './support/consensus.js';
+import { consensusAvailable, verifyConsensus } from '@trikey/core/testing';
 
 const PERIOD = 1008;
 const servers: FakeEsplora[] = [];
@@ -146,14 +146,14 @@ describe('create a vault and approve 8 refills', () => {
   });
 
   it('passes libbitcoinconsensus for every refill of the batch', async (ctx) => {
-    if (!consensusVerifier) ctx.skip();
+    if (!consensusAvailable()) ctx.skip();
     const w = await world();
     const { wallet } = await createAndApprove(w);
     const vault = wallet.vault();
     const refills = wallet.state.chain!.refills;
     refills.forEach((r, k) => {
       const prevouts = r.inputs.map((i) => ({ script: vault.derive(i.chain, i.index).script, amount: i.valueSats }));
-      const res = consensusVerify(r.txHex, prevouts);
+      const res = verifyConsensus(r.txHex, prevouts);
       expect(res.ok, `refill ${k + 1}: ${res.output}`).toBe(true);
     });
   });
@@ -392,10 +392,10 @@ describe('recovery', () => {
     const t = await wallet.runScheduler({ broadcast: false });
     expect(t.decisions).toContainEqual(expect.objectContaining({ kind: 'invalidated', byThisPhone: false, spentBy: res.txid }));
     expect(w.events.some((e) => e.type === 'foreign_vault_spend')).toBe(true);
-    if (consensusVerifier) {
+    if (consensusAvailable()) {
       const tx = w.chain.getTx(res.txid)!;
       const prevouts = tx.json.vin.map((v) => ({ script: v.prevout!.scriptpubkey, amount: v.prevout!.value }));
-      const c = consensusVerify(tx.hex, prevouts);
+      const c = verifyConsensus(tx.hex, prevouts);
       expect(c.ok, c.output).toBe(true);
     }
   });

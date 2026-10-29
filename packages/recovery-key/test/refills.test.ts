@@ -23,7 +23,7 @@ import { decide } from '../src/scheduler.js';
 import { deriveKey2, mnemonicFromEntropy } from '../src/keys.js';
 import { MNEMONICS, RK_ENTROPY, fixtureKeys, network, rejects } from './helpers.js';
 import { fundVault, signRefills } from './chain-helpers.js';
-import { consensusVerifier, consensusVerify } from './support/consensus.js';
+import { consensusAvailable, verifyConsensus } from '@trikey/core/testing';
 
 const AMOUNT = 200_000n;
 
@@ -126,11 +126,11 @@ describe('building the chain', () => {
   });
 
   it('passes libbitcoinconsensus for every signed refill', async (ctx) => {
-    if (!consensusVerifier) ctx.skip();
+    if (!consensusAvailable()) ctx.skip();
     const { signed, coins, vault } = await chainFixture();
     signed.forEach((r, k) => {
       const prevouts = k === 0 ? coins.map((c) => ({ script: vault.derive(c.chain, c.index).script, amount: c.value })) : [{ script: vault.derive(CHANGE, signed[k - 1]!.changeIndex).script, amount: BigInt(signed[k - 1]!.changeValueSats) }];
-      const res = consensusVerify(r.txHex, prevouts);
+      const res = verifyConsensus(r.txHex, prevouts);
       expect(res.ok, res.output).toBe(true);
     });
   });

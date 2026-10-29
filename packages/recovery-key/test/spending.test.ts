@@ -9,7 +9,7 @@ import { cpfpChildVsize, feeForRate, packageRate } from '../src/fees.js';
 import { decodeRawTx, verifyInput } from '../src/script-verify.js';
 import { deriveKey2 } from '../src/keys.js';
 import { MNEMONICS, externalAddress, network, rejects } from './helpers.js';
-import { consensusVerifier, consensusVerify } from './support/consensus.js';
+import { consensusAvailable, verifyConsensus } from '@trikey/core/testing';
 
 const account = new SpendingAccount(network, deriveKey2(MNEMONICS.phone, network).spending);
 let n = 0;
@@ -31,12 +31,12 @@ function checkSigned(txHex: string, coins: SpendingCoin[]) {
     const c = coins.find((x) => x.txid === hex.encode(inp.txid) && x.vout === inp.index)!;
     verifyInput(raw, i, account.derive(c.chain, c.index).script, c.value);
   });
-  if (consensusVerifier) {
+  if (consensusAvailable()) {
     const prevouts = raw.inputs.map((inp) => {
       const c = coins.find((x) => x.txid === hex.encode(inp.txid))!;
       return { script: account.derive(c.chain, c.index).script, amount: c.value };
     });
-    const r = consensusVerify(txHex, prevouts);
+    const r = verifyConsensus(txHex, prevouts);
     expect(r.ok, r.output).toBe(true);
   }
 }
