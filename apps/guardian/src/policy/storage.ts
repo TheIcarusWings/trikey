@@ -1,7 +1,7 @@
 import { open, readFile, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { GuardianState } from './types.js';
+import { GuardianState, GuardianStateV1 } from './types.js';
 
 /** Where the engine keeps its state. `save` must be durable before it resolves. */
 export interface StateStore {
@@ -16,6 +16,40 @@ export function serializeState(state: GuardianState): string {
   return JSON.stringify(state, (_k, v) => (typeof v === 'bigint' ? { [BIGINT_TAG]: v.toString() } : v), 2);
 }
 
+/**
+ * Version 1 (one wallet at the top level) to version 2 (one active wallet plus retired ones).
+ * The v1 wallet becomes the active wallet, paired, with its hardware key confirmed (its pairing
+ * proof was checked at registration); recoveries are tagged with it. A v1 recovery recorded no
+ * initiator: one the phone started (`survivingRole: 'app'`) gets the paired phone, the others
+ * none (see `PolicyEngine.rotateAfterSweep`). A v1 wallet a recovery already swept stays active
+ * and swept until the service rotates it after the sweep's broadcast.
+ */
+export function migrateState(v1: GuardianStateV1): GuardianState {
+  const reg = v1.registration;
+  return {
+    version: 2,
+    active:
+      reg && v1.rules
+        ? {
+            registration: { ...reg, hardwareAuthConfirmed: true, origin: { kind: 'paired' } },
+            rules: v1.rules,
+            spends: v1.spends ?? [],
+            phoneSpending: v1.phoneSpending ?? { state: 'enabled' },
+            accessGrants: [],
+          }
+        : undefined,
+    retired: [],
+    hardwareSequence: v1.hardwareSequence ?? 0,
+    recoveries: (v1.recoveries ?? []).map((r) => ({
+      ...r,
+      walletId: r.walletId ?? reg?.walletId ?? '',
+      ...(r.survivingRole === 'app' && reg ? { initiator: reg.appNostrPubkey } : {}),
+    })),
+    activity: v1.activity ?? [],
+    nextActivityId: v1.nextActivityId ?? 1,
+  };
+}
+
 export function deserializeState(text: string): GuardianState {
   const state = JSON.parse(text, (_k, v) => {
     if (v && typeof v === 'object' && !Array.isArray(v)) {
@@ -24,8 +58,9 @@ export function deserializeState(text: string): GuardianState {
         return BigInt(v[BIGINT_TAG]);
     }
     return v;
-  }) as GuardianState;
-  if (!state || state.version !== 1) throw new Error('unsupported guardian state version');
+  }) as GuardianState | GuardianStateV1;
+  if (state && state.version === 1) return migrateState(state);
+  if (!state || state.version !== 2 || !Array.isArray(state.retired) || !Array.isArray(state.recoveries)) throw new Error('unsupported guardian state version');
   return state;
 }
 

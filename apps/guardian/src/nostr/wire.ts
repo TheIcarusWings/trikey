@@ -84,8 +84,11 @@ const CODES: Record<RefusalReason, number> = {
   missing_non_witness_utxo: ErrorCode.PsbtInvalid,
   non_witness_utxo_mismatch: ErrorCode.PsbtInvalid,
   invalid_signature: ErrorCode.PsbtInvalid,
-  // Internal to the service (markAlertSent); never sent to a peer in practice.
+  wallet_retired: ErrorCode.WalletRetired,
+  hardware_auth_unconfirmed: ErrorCode.HardwareAuthUnconfirmed,
+  // Internal to the service (markAlertSent, rotateAfterSweep); never sent to a peer in practice.
   unknown_alert: ErrorCode.InternalError,
+  not_adoptable: ErrorCode.InternalError,
 };
 
 export function refusalCode(r: Refusal): number {
@@ -172,6 +175,12 @@ export function refusalText(r: Refusal): string {
       return `Invalid signature${r.input !== undefined ? ` on input ${r.input}` : ''}`;
     case 'unknown_alert':
       return 'Unknown alert';
+    case 'wallet_retired':
+      return `Wallet ${r.walletId} was retired on this guardian; it co-signs nothing for it`;
+    case 'hardware_auth_unconfirmed':
+      return 'Confirm the hardware wallet for the new wallet first (a fresh pairing signature)';
+    case 'not_adoptable':
+      return `Wallet rotation refused: ${r.detail}`;
   }
 }
 

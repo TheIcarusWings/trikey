@@ -11,7 +11,8 @@ root for the why, `packages/protocol/PROTOCOL.md` for the wire protocol and
 The guardian has no user authentication of its own. Its HTTP port must only be
 reachable through the platform's authenticating proxy (Umbrel's `app_proxy`,
 Start9's interface). Anyone who can reach the port directly can lock the guardian,
-create pairing codes and read its activity log, and a DNS-rebinding page in the
+create pairing codes and read its activity log (resetting it also needs the
+unlock passphrase), and a DNS-rebinding page in the
 user's browser would pass its same-origin checks. Do not publish the port on the
 LAN or the internet.
 
@@ -48,10 +49,10 @@ All files in `TRIKEY_DATA_DIR` are mode 0600 and written atomically.
 
 | File | Holds |
 |---|---|
-| `keystore.json` | Key 3: a BIP39 seed encrypted with XChaCha20-Poly1305 under Argon2id(passphrase), m = 64 MiB, t = 3, p = 1. Never overwritten. There is no backup, by design. |
+| `keystore.json` | Key 3: a BIP39 seed encrypted with XChaCha20-Poly1305 under Argon2id(passphrase), m = 64 MiB, t = 3, p = 1. Never overwritten, except by the web UI's reset, which replaces key 3 on purpose. There is no backup, by design. |
 | `nostr-identity.json` | The guardian's nostr key, **unencrypted** so a locked guardian can still answer the phone and send alerts (trade-off in `src/identity.ts`). |
-| `guardian-state.json` | The policy engine: registration, rules, limit accounting, recoveries, activity. |
-| `service.json` | Relays, the paired phone's name, co-signed sweeps and their broadcast state, the service log, recently handled request ids. |
+| `guardian-state.json` | The policy engine, format version 2: the active wallet (registration, rules, limit accounting, recovery access grants), retired wallets, recoveries, activity. A version-1 file (one wallet) is migrated when it is loaded and written back as version 2. |
+| `service.json` | Relays, the paired phone's name, co-signed sweeps and their broadcast state, the service log, recently handled request ids. (Recovery access grants used to live here; they are moved into the engine on start.) |
 | `unlock-throttle.json` | Failed unlock attempts (exponential backoff after 3, up to 1 hour). |
 
 After every start the guardian is locked: key 3 is decrypted only by an unlock
@@ -87,6 +88,21 @@ After every start the guardian is locked: key 3 is decrypted only by an unlock
 - **After a restart** a state-changing request the guardian handled before
   can come back as `1501`: re-read the state and send a new request if the
   change is not there.
+- **After a recovery the guardian guards the new wallet** (PROTOCOL.md,
+  "Wallet rotation"), once the sweep is broadcast: the phone that sent
+  `recovery.start` is now the paired phone and gets a `wallet_adopted`
+  alert; `guardian.status` carries the new `walletId`. Before any hardware
+  approval the phone must send `hardware.confirm` with the authorization
+  key and a fresh pairing proof over the new wallet id (until then `1209`).
+  The old wallet is retired: everything for it is refused (`1004`).
+- **Replace guardian**: `wallet.retire` with a `retire-wallet` approval on
+  the old guardian (if it still runs), then pair the new guardian as usual
+  with a new descriptor (`replacesWalletId` names the old one).
+- **Remote lock**: `guardian.lock` from the paired phone, answered
+  `{ state: "locked" }`, alert `guardian_locked` with reason `remote`.
+- **Recovery code**: the web UI's "Recover on a new phone" QR code is
+  `trikey://recover?v=1&npub=...&relay=...&net=...` (`decodeRecoveryUri`),
+  no secret; it gives a new phone the npub and relays for `recovery.access`.
 
 ## Layout
 
@@ -104,7 +120,7 @@ src/
   recovery-runner.ts  completing a recovery: chain time, UTXO coverage, broadcast
   service-state.ts    service.json
   observed-store.ts   read-only view of the engine's saved state
-  nostr/              RPC handlers, wire conversions, NIP-17 DMs
+  nostr/              RPC handlers, wire conversions, NIP-17 DMs, the shared inbox (each wrap opened once)
   chain/              Electrum client, headers, Bitcoin Core RPC, ChainService
   http/               HTTP server (headers, origin checks, static), API routes
   policy/             the policy engine (pure decisions, no I/O)

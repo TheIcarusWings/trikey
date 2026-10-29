@@ -40,6 +40,7 @@ import {
   RpcTimeoutError,
   approvalMessage,
   decodePairingUri,
+  decodeRecoveryUri,
   generateMessageId,
   normalizePolicy,
   normalizeRelayUrl,
@@ -53,6 +54,7 @@ import {
   type Params,
   type PairingPayload,
   type Policy,
+  type RecoveryPayload,
   type Recovery,
   type RelayPool,
   type Result,
@@ -1245,6 +1247,58 @@ export class TrikeyWallet {
     return { ok: true };
   }
 
+  /**
+   * Locks the guardian from this phone (`guardian.lock`): key 3 leaves its memory until someone
+   * unlocks it with the passphrase (`unlockGuardian`, or the box's web UI). For when the box may
+   * have been tampered with. Always allowed for the paired phone; needs no hardware wallet.
+   */
+  async lockGuardian(): Promise<void> {
+    if (!this.s.guardian) throw new WalletError('wrong_state', 'No guardian is paired.');
+    this.requirePaired();
+    await this.callChanging(
+      'guardian.lock',
+      {},
+      {
+        persist: false,
+        verify: async () => ((await this.call('guardian.status', {})).state === 'locked' ? { state: 'locked' as const } : undefined),
+      },
+    );
+    await this.refreshStatus().catch(() => undefined);
+  }
+
+  /**
+   * "Replace guardian", the old guardian's side: retires this wallet on the paired guardian
+   * (`wallet.retire`), approved on the hardware wallet (or with `approval`, a `retire-wallet`
+   * approval signed beforehand). The guardian then co-signs nothing for this wallet and stops
+   * answering this phone; move the funds with the phone and the hardware wallet to a wallet with
+   * the new guardian. Refused while a recovery runs.
+   */
+  async retireWallet(opts: { approval?: HardwareApproval } = {}): Promise<{ walletId: string; retiredAt: number }> {
+    this.requirePaired();
+    // After a restart the guardian no longer answers a retired wallet's phone, so there is nothing to re-read.
+    const verify = async () => undefined;
+    const res = opts.approval
+      ? await this.callChanging('wallet.retire', { approval: opts.approval }, { verify })
+      : await this.withApproval({ action: 'retire-wallet' }, (approval) => this.callChanging('wallet.retire', { approval }, { verify }));
+    if (res.walletId !== this.s.wallet?.walletId) throw new WalletError('guardian_mismatch', 'The guardian retired another wallet.');
+    return res;
+  }
+
+  /**
+   * Reads a guardian's "Recover on a new phone" code (`trikey://recover?...`, shown in its web
+   * UI), for `recoverWithHardware`. It holds no secret: the hardware wallet is what lets the phone in.
+   */
+  static parseRecoveryCode(uri: string, network?: NetworkName): { npub: string; relays: string[]; network: RecoveryPayload['network']; label?: string } {
+    let code: RecoveryPayload;
+    try {
+      code = decodeRecoveryUri(uri);
+    } catch (e) {
+      throw new WalletError('pairing_uri_invalid', `Not a Trikey recovery code: ${(e as Error).message}`, { cause: e });
+    }
+    if (network && code.network !== network) throw new WalletError('network_mismatch', `This guardian runs on ${code.network}, not ${network}.`);
+    return { npub: npubEncode(code.guardianPubkey), relays: code.relays, network: code.network, ...(code.label ? { label: code.label } : {}) };
+  }
+
   // ===========================================================================
   // Recovery
 
@@ -1356,15 +1410,17 @@ export class TrikeyWallet {
    *
    * `guardian` is the guardian's npub (or hex pubkey) and relays, from its web UI.
    */
-  async recoverWithHardware(opts: { guardian: { npub: string; relays: string[] }; hardwareKind?: HardwareKind }): Promise<Recovery> {
+  async recoverWithHardware(opts: { guardian: { npub: string; relays: string[] } | string; hardwareKind?: HardwareKind }): Promise<Recovery> {
+    // A scanned recovery code (`trikey://recover?...`) or the npub and relays.
+    const guardian = typeof opts.guardian === 'string' ? TrikeyWallet.parseRecoveryCode(opts.guardian, this.network.name) : opts.guardian;
     const started = this.s.recovery?.role === 'initiator' && (this.s.recovery.recovery?.state === 'pending' || this.s.recovery.recovery?.state === 'ready');
     if (this.s.stage === 'paired' || (this.s.stage === 'recovering' && started))
       throw new WalletError('wrong_state', 'Recover from a phone that is not set up yet.');
     let guardianPubkey: string;
     let relays: string[];
     try {
-      guardianPubkey = nostrHex(opts.guardian.npub);
-      relays = [...new Set(opts.guardian.relays.map((r) => normalizeRelayUrl(r)))];
+      guardianPubkey = nostrHex(guardian.npub);
+      relays = [...new Set(guardian.relays.map((r) => normalizeRelayUrl(r)))];
       if (relays.length < 1 || relays.length > 8) throw new Error('give 1 to 8 relays');
     } catch (e) {
       throw new WalletError('pairing_uri_invalid', `Invalid guardian address: ${(e as Error).message}`, { cause: e });
@@ -1493,7 +1549,7 @@ export class TrikeyWallet {
       if (gs && meta.at * 1000 > gs.checkedAt) await this.update((s) => void (s.guardianStatus = { ...gs, state: 'locked', checkedAt: this.now() }));
       return;
     }
-    this.alertRecoveryId = alert.recoveryId;
+    if ('recoveryId' in alert) this.alertRecoveryId = alert.recoveryId;
     this.refreshAfterAlerts();
   }
 

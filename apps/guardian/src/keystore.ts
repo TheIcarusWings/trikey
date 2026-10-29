@@ -302,6 +302,15 @@ export async function writeKeystore(path: string, file: KeystoreFile): Promise<v
   await writeFileAtomic(path, `${JSON.stringify(file, null, 2)}\n`, { overwrite: false });
 }
 
+/**
+ * Replaces key 3 on disk (atomically). Only the web UI's reset does this, deliberately destroying the
+ * old key 3: there is no backup of it, by design. Everything else uses `writeKeystore`, which never
+ * overwrites.
+ */
+export async function replaceKeystore(path: string, file: KeystoreFile): Promise<void> {
+  await writeFileAtomic(path, `${JSON.stringify(file, null, 2)}\n`, { overwrite: true });
+}
+
 /** Unlocks: decrypts the seed, derives key 3, zeroes the seed. */
 export async function unlockKeystore(file: KeystoreFile, passphrase: string): Promise<KeystoreSigner> {
   const seed = await openKeystore(file, passphrase);

@@ -34,17 +34,19 @@ describe('JsonFileStore', () => {
     const path = join(dir, 'state.json');
     const store = new JsonFileStore(path);
     expect(await store.load()).toBeUndefined();
-    const s: GuardianState = { ...emptyState(), spends: [{ txid: 'aa', at: 1, outflow: 2n ** 60n, shares: [{ outpoint: 'aa:0', share: 5n }] }] };
+    const s: GuardianState = { ...emptyState(), activity: [{ id: 1, at: 1, type: 'cosign_signed', txid: 'aa', outflow: 2n ** 60n, usedAfter: 5n, replay: false }] };
     await store.save(s);
     await store.save({ ...s, hardwareSequence: 3 });
     const back = await store.load();
     expect(back).toEqual({ ...s, hardwareSequence: 3 });
     expect(await readdir(dir)).toEqual(['state.json']); // no temp files left behind
-    expect(JSON.parse(await readFile(path, 'utf8')).spends[0].outflow).toEqual({ $bigint: (2n ** 60n).toString() });
+    expect(JSON.parse(await readFile(path, 'utf8')).activity[0].outflow).toEqual({ $bigint: (2n ** 60n).toString() });
   });
 
   it('refuses corrupt or unknown-version files instead of starting empty', async () => {
     const path = join(dir, 'state.json');
+    await writeFile(path, '{"version": 3}');
+    await expect(new JsonFileStore(path).load()).rejects.toThrow(/version/);
     await writeFile(path, '{"version": 2}');
     await expect(new JsonFileStore(path).load()).rejects.toThrow(/version/);
     await writeFile(path, '{not json');

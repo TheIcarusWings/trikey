@@ -34,6 +34,7 @@ import {
   cosignerFromSeed,
   generateSeed,
   readKeystore,
+  replaceKeystore,
   sealKeystore,
   unlockKeystore,
   writeKeystore,
@@ -47,6 +48,7 @@ import { JsonFileStore, PolicyEngine, systemClock, type Clock, type RecoveryReco
 import { ServiceState, type ServiceEvent } from './service-state.js';
 import { UnlockThrottle, type ThrottleOptions } from './unlock-throttle.js';
 import { DirectMessages } from './nostr/dm.js';
+import { Inbox } from './nostr/inbox.js';
 import { buildHandlers } from './nostr/handlers.js';
 import { toSeconds } from './nostr/wire.js';
 import { Alerter } from './alerts.js';
@@ -86,6 +88,11 @@ export type UnlockOutcome =
 
 export type SetupOutcome = { ok: true } | { ok: false; code: 'invalid' | 'already_setup'; message: string };
 
+export type ResetOutcome =
+  | { ok: true; forgotten: string[] }
+  | { ok: false; code: 'bad_passphrase' | 'rate_limited'; retryAfterSeconds?: number }
+  | { ok: false; code: 'setup_required' | 'invalid' | 'recovery_pending' | 'sweep_pending'; message: string };
+
 export class ConfigError extends Error {
   constructor(message: string) {
     super(message);
@@ -108,8 +115,8 @@ export const RECOVERY_PEER_METHODS: ReadonlySet<MethodName> = new Set<MethodName
   'recovery.status',
   'recovery.cancel',
 ]);
-/** At most this many phones hold recovery access at once (the newest win). */
-const MAX_RECOVERY_PEERS = 8;
+/** What the web UI's reset must be confirmed with, typed exactly. */
+export const RESET_CONFIRMATION = 'RESET GUARDIAN';
 
 /** The running (pending or ready) recovery in the engine's state, if any. */
 export function activeRecovery(recoveries: readonly RecoveryRecord[] | undefined): RecoveryRecord | undefined {
@@ -134,10 +141,11 @@ export class Guardian {
   identity?: GuardianIdentity;
   rpc?: RpcServer;
   dm?: DirectMessages;
+  inbox?: Inbox;
 
   /** When and why the guardian last locked (undefined while unlocked). */
   lockedAt?: number = undefined;
-  lockReason?: 'restart' | 'manual' = undefined;
+  lockReason?: 'restart' | 'manual' | 'remote' = undefined;
 
   private signer?: KeystoreSigner;
   private simplePool?: SimplePool;
@@ -195,6 +203,14 @@ export class Guardian {
     if (reg && reg.network !== net) throw new ConfigError(`the paired wallet is on ${reg.network}, but BITCOIN_NETWORK is ${net}`);
     if (reg && g.keystore && reg.cosignerAccountPubkey !== g.keystore.public.accountPubkey)
       throw new ConfigError('the paired wallet does not use this guardian key');
+    // Recovery access grants moved from service.json into the engine (per wallet, so a rotation revokes them).
+    const legacy = g.service.get().recoveryPeers;
+    if (legacy.length) {
+      await g.engine.importAccessGrants(legacy);
+      await g.service.update((d) => {
+        d.recoveryPeers = [];
+      });
+    }
     g.lockedAt = g.clock.now();
     g.lockReason = 'restart';
     return g;
@@ -278,6 +294,8 @@ export class Guardian {
     this.stopped = true;
     clearInterval(this.timer);
     await this.ticking?.catch(() => {});
+    this.inbox?.close();
+    await this.inbox?.drain();
     this.rpc?.close();
     this.dm?.close();
     this.pool?.close();
@@ -313,6 +331,7 @@ export class Guardian {
       secretKey: this.identity.secretKey,
       handlers: buildHandlers(this),
       authorize: (sender, method) => this.authorize(sender, method),
+      listen: false, // the inbox below opens every wrap once and hands RPC rumors over
       now: () => this.nowSec(),
       onDrop: (d) => {
         if (d.reason !== 'decrypt_failed' && d.reason !== 'bad_rumor') this.log.debug('rpc.dropped', { reason: d.reason });
@@ -329,9 +348,21 @@ export class Guardian {
       log: this.log,
       discoverRelays: this.opts.discoverDmRelays,
       onMessage: (dm) => onContactDm(this, dm),
+      listen: false,
     });
-    await this.rpc.start();
-    this.dm.start();
+    const rpc = this.rpc;
+    const dm = this.dm;
+    this.inbox = new Inbox({
+      pool: this.pool,
+      relays,
+      secretKey: this.identity.secretKey,
+      pubkey: this.identity.pubkey,
+      now: () => this.nowSec(),
+      onRpc: (opened) => rpc.handleOpened(opened),
+      onDm: (opened) => dm.handleOpened(opened),
+      log: this.log,
+    });
+    await this.inbox.start();
     this.log.info('nostr.listening', { npub: this.identity.npub, relays: relays.length });
   }
 
@@ -355,25 +386,14 @@ export class Guardian {
     return false;
   }
 
-  /** Phones holding an unexpired `recovery.access` grant. */
+  /** Phones holding an unexpired `recovery.access` grant for the active wallet. */
   recoveryPeers(): string[] {
-    const now = this.clock.now();
-    return this.service.get().recoveryPeers.filter((p) => p.until > now).map((p) => p.pubkey);
+    return this.engine.recoveryPeers();
   }
 
-  /** True while `pubkey` holds an unexpired `recovery.access` grant. */
+  /** True while `pubkey` holds an unexpired `recovery.access` grant for the active wallet. */
   hasRecoveryAccess(pubkey: string): boolean {
-    const now = this.clock.now();
-    return this.service.get().recoveryPeers.some((p) => p.pubkey === pubkey && p.until > now);
-  }
-
-  /** Records a `recovery.access` grant (durably, so it survives a restart). */
-  async grantRecoveryAccess(pubkey: string, untilMs: number): Promise<void> {
-    const now = this.clock.now();
-    await this.service.update((d) => {
-      d.recoveryPeers = [...d.recoveryPeers.filter((p) => p.until > now && p.pubkey !== pubkey), { pubkey, until: untilMs }].slice(-MAX_RECOVERY_PEERS);
-    });
-    await this.logEvent({ type: 'recovery_access', phone: pubkey, until: untilMs });
+    return this.engine.hasRecoveryAccess(pubkey);
   }
 
   isAlertContact(pubkey: string): boolean {
@@ -391,14 +411,65 @@ export class Guardian {
   /** Sends a protocol alert to the paired phone. Returns true if at least one relay took it. */
   async notifyPhone(alert: Alert): Promise<boolean> {
     const reg = this.engine.registration();
-    if (!reg || !this.rpc) return false;
+    if (!reg) return false;
+    return this.notifyPeer(reg.appNostrPubkey, alert);
+  }
+
+  /** Sends a protocol alert to a phone (paired now, or the phone of a wallet that was just retired). */
+  async notifyPeer(pubkey: string, alert: Alert): Promise<boolean> {
+    if (!this.rpc) return false;
     try {
-      const outcomes = await this.rpc.notify(reg.appNostrPubkey, alert);
+      const outcomes = await this.rpc.notify(pubkey, alert);
       return outcomes.some((o) => o.ok);
     } catch (e) {
       this.log.warn('alert.phone_failed', { type: alert.type, error: errorText(e) });
       return false;
     }
+  }
+
+  /**
+   * Wallet rotation once a completed recovery's sweep has been accepted by a node (recovery-runner.ts
+   * calls this after the broadcast). The engine retires the swept wallet and, when it can, adopts the
+   * destination; this side swaps the paired phone and tells it.
+   */
+  async rotateAfterSweep(recoveryId: string): Promise<void> {
+    const res = await this.engine.rotateAfterSweep(recoveryId);
+    if (!res.ok) {
+      this.log.error('wallet.rotation_refused', { recoveryId, reason: res.refusal.reason });
+      return;
+    }
+    const now = this.clock.now();
+    const adopted = res.adopted;
+    await this.service.update((d) => {
+      const kept = adopted ? d.phones.find((p) => p.pubkey === adopted.appNostrPubkey) : undefined;
+      d.phones = adopted ? [kept ?? { pubkey: adopted.appNostrPubkey, name: 'Phone (recovered wallet)', pairedAt: now }] : [];
+    });
+    if (adopted) {
+      this.rpc?.addPeer(adopted.appNostrPubkey);
+      this.log.info('wallet.adopted', { recoveryId, from: res.retiredWalletId, to: adopted.walletId, revokedGrants: res.revokedGrants });
+      await this.notifyPeer(adopted.appNostrPubkey, {
+        type: 'wallet_adopted',
+        walletId: adopted.walletId,
+        previousWalletId: res.retiredWalletId,
+        recoveryId,
+        hardwareConfirmRequired: !adopted.hardwareAuthConfirmed,
+        at: this.nowSec(),
+        message: `The guardian now protects your recovered wallet ${adopted.walletId}. Confirm your hardware wallet in the app before changing rules.`,
+      });
+    } else {
+      this.log.warn('wallet.retired_after_recovery', { recoveryId, walletId: res.retiredWalletId, detail: res.detail });
+    }
+  }
+
+  /** After `wallet.retire`: the retired wallet's phone is no longer a peer; tell it (best effort). */
+  async afterRetire(walletId: string, phone: string): Promise<void> {
+    this.rpc?.removePeer(phone);
+    this.pairing.invalidate();
+    await this.service.update((d) => {
+      d.phones = [];
+    });
+    this.log.info('wallet.retired', { walletId });
+    await this.notifyPeer(phone, { type: 'wallet_retired', walletId, reason: 'retired', at: this.nowSec() });
   }
 
   /** Background work: time-based engine transitions, completing a ready recovery, broadcasts, alerts. Coalesces overlapping calls. */
@@ -529,17 +600,118 @@ export class Guardian {
     });
   }
 
-  /** Drops key 3 from memory. */
-  async lock(): Promise<void> {
+  /**
+   * Drops key 3 from memory: `manual` from the web UI, `remote` when the paired phone asks
+   * (`guardian.lock`, e.g. the user fears the box was tampered with). Always allowed: it only
+   * reduces what the guardian can do. Already locked: nothing happens, no alert.
+   */
+  async lock(reason: 'manual' | 'remote' = 'manual'): Promise<void> {
+    let locked = false;
     await this.unlockMutex.run(async () => {
       if (this.locked) return;
       this.dropSigner();
       this.pairing.invalidate();
       this.lockedAt = this.clock.now();
-      this.lockReason = 'manual';
-      this.log.info('guardian.locked', { reason: 'manual' });
-      await this.logEvent({ type: 'locked', reason: 'manual' });
+      this.lockReason = reason;
+      locked = true;
+      this.log.info('guardian.locked', { reason });
+      await this.logEvent({ type: 'locked', reason });
     });
-    await this.notifyPhone({ type: 'guardian_locked', reason: 'manual', at: this.nowSec() });
+    if (locked) await this.notifyPhone({ type: 'guardian_locked', reason, at: this.nowSec() });
+  }
+
+  /**
+   * The web UI's "reset guardian": forget every wallet and create a NEW key 3, keeping the nostr
+   * identity, the relays and the unlock passphrase. Needs the passphrase again (rate limited like an
+   * unlock) and `confirm` typed exactly as `RESET_CONFIRMATION`. Refused while a recovery is
+   * pending or ready, and while a co-signed sweep still waits to be broadcast (its signature would
+   * be lost with key 3).
+   *
+   * Why key 3 is rotated rather than kept (DESIGN.md, threat model): with the old key 3 and no
+   * wallet state, anyone holding the web UI, the passphrase and a stolen hardware wallet could
+   * re-pair the user's own wallet with a phone of their choosing and no alert contacts, then run a
+   * recovery whose alerts only they receive. A new key 3 cannot co-sign the old wallet at all.
+   * The old wallet stays spendable with the phone and the hardware wallet (2 of 3).
+   *
+   * Order on disk: the engine state and service state are wiped first, the keystore replaced last,
+   * so a crash in between leaves a guardian with no wallet and the old key 3, and another reset
+   * finishes the job (never a wallet paired to a key the keystore does not hold).
+   */
+  reset(input: { passphrase?: unknown; confirm?: unknown }): Promise<ResetOutcome> {
+    return this.unlockMutex.run(() =>
+      this.recoveryMutex.run(() =>
+        this.pairMutex.run(async (): Promise<ResetOutcome> => {
+          const file = this.keystore;
+          if (!file) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
+          if (input.confirm !== RESET_CONFIRMATION) return { ok: false, code: 'invalid', message: `Type ${RESET_CONFIRMATION} to confirm.` };
+          const passphrase = input.passphrase;
+          if (typeof passphrase !== 'string' || passphrase.length === 0 || passphrase.length > 4 * MAX_PASSPHRASE_LENGTH)
+            return { ok: false, code: 'invalid', message: 'Enter the unlock passphrase.' };
+          const refuse = async (code: 'recovery_pending' | 'sweep_pending', message: string): Promise<ResetOutcome> => {
+            await this.logEvent({ type: 'reset_refused', detail: message });
+            return { ok: false, code, message };
+          };
+          const running = this.activeRecord();
+          if (running) return refuse('recovery_pending', `Recovery ${running.id} is running. It must be cancelled or completed before the guardian can be reset.`);
+          const unsent = this.service.get().sweeps.find((s) => s.broadcastAt === undefined);
+          if (unsent) return refuse('sweep_pending', `The sweep of recovery ${unsent.recoveryId} has not been broadcast yet. Wait until it is.`);
+
+          const verdict = this.throttle.check();
+          if (!verdict.ok) return { ok: false, code: 'rate_limited', retryAfterSeconds: Math.ceil(verdict.retryAfterMs / 1000) };
+          await this.throttle.begin();
+          try {
+            (await unlockKeystore(file, passphrase)).wipe();
+          } catch (e) {
+            if (!(e instanceof BadPassphraseError)) throw e;
+            this.log.warn('guardian.reset_bad_passphrase', { failures: this.throttle.failures });
+            await this.logEvent({ type: 'unlock_failed', via: 'web' });
+            const next = this.throttle.check();
+            return { ok: false, code: 'bad_passphrase', retryAfterSeconds: next.ok ? undefined : Math.ceil(next.retryAfterMs / 1000) };
+          }
+          await this.throttle.succeeded();
+
+          // Tell the paired phone while it is still a peer.
+          const reg = this.engine.registration();
+          if (reg) await this.notifyPhone({ type: 'wallet_retired', walletId: reg.walletId, reason: 'reset', at: this.nowSec() });
+
+          const seed = generateSeed();
+          let next: KeystoreFile;
+          let signer: KeystoreSigner;
+          try {
+            const derived = cosignerFromSeed(seed, this.config.network);
+            signer = derived.signer;
+            next = await sealKeystore(seed, passphrase, derived.pub, this.config.kdf, new Date(this.clock.now()));
+          } finally {
+            seed.fill(0);
+          }
+          let forgotten: string[];
+          try {
+            const res = await this.engine.reset();
+            if (!res.ok) {
+              signer.wipe();
+              return refuse('recovery_pending', 'A recovery is running.');
+            }
+            forgotten = res.forgotten;
+            this.dropSigner();
+            await this.service.update((d) => {
+              d.phones = [];
+              d.sweeps = [];
+              d.recoveryPeers = [];
+            });
+            await replaceKeystore(this.path('keystore'), next);
+          } catch (e) {
+            signer.wipe();
+            throw e;
+          }
+          this.keystore = next;
+          this.pairing.invalidate();
+          this.installSigner(signer);
+          this.recovery.wait = undefined;
+          await this.logEvent({ type: 'reset' });
+          this.log.warn('guardian.reset', { forgottenWallets: forgotten.length });
+          return { ok: true, forgotten };
+        }),
+      ),
+    );
   }
 }

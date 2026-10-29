@@ -30,6 +30,8 @@ export interface GuardianRigOptions {
   blocks?: number;
   /** Treat broadcasts as a mempool (default true). */
   applyBroadcasts?: boolean;
+  /** Also serve the web UI's HTTP API on a random local port (see `api`). Default false. */
+  http?: boolean;
 }
 
 export interface FundedOutput {
@@ -104,8 +106,21 @@ export class GuardianRig {
       electrum: { minBackoffMs: 20, maxBackoffMs: 100 },
       discoverDmRelays: false,
     });
-    await this.guardian.start(false);
+    await this.guardian.start(this.opts.http ? { port: 0, host: '127.0.0.1' } : false);
     await this.guardian.chain.electrum!.waitReady(3000);
+  }
+
+  /** Calls the web UI's API (`http: true` only), as the browser would: same-origin JSON. */
+  async api(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<{ status: number; body: any }> {
+    const addr = this.guardian.httpAddress;
+    if (!addr) throw new Error('start the rig with http: true');
+    const res = await fetch(`http://127.0.0.1:${addr.port}/api${path}`, {
+      method,
+      headers: method === 'GET' ? {} : { 'content-type': 'application/json' },
+      body: method === 'GET' ? undefined : JSON.stringify(body ?? {}),
+    });
+    const text = await res.text();
+    return { status: res.status, body: text ? JSON.parse(text) : undefined };
   }
 
   /** A fresh one-time pairing URI, as the web UI's QR code would show it. */

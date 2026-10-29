@@ -12,7 +12,6 @@ import {
   MAX_SYNC_UTXOS,
   MAX_TX_HEX_LENGTH,
   RpcError,
-  recoveryAccessMessage,
   type HandlerContext,
   type Handlers,
   type KeyOrigin,
@@ -29,7 +28,7 @@ import {
 import { ElectrumError } from '../chain/electrum.js';
 import type { Guardian } from '../guardian.js';
 import { errorText } from '../log.js';
-import { MAX_APPROVAL_TTL_MS, bip137Authorizer, policyHash, type CancelActor, type RecoveryRecord } from '../policy/index.js';
+import { policyHash, type CancelActor, type RecoveryRecord } from '../policy/index.js';
 import { policyToWire, recoveryToWire, refusalError, rulesFromPolicy } from './wire.js';
 
 const normPath = (p: string) => p.replace(/^m\//, '').replace(/'/g, 'h');
@@ -92,7 +91,17 @@ async function chainCall<T>(g: Guardian, method: string, fn: () => Promise<T>): 
  * Methods whose replay would matter. `sign` is left out: re-signing the same
  * transaction is a no-op for the limit (the engine counts it once).
  */
-const STATE_CHANGING: MethodName[] = ['guardian.unlock', 'pair', 'policy.update', 'recovery.start', 'recovery.cancel', 'phone.resume'];
+const STATE_CHANGING: MethodName[] = [
+  'guardian.unlock',
+  'guardian.lock',
+  'pair',
+  'policy.update',
+  'recovery.start',
+  'recovery.cancel',
+  'phone.resume',
+  'hardware.confirm',
+  'wallet.retire',
+];
 /** How long a request id is remembered: the protocol's longest request TTL (1 h) plus clock skew. */
 const REMEMBER_MS = (3600 + 120) * 1000;
 
@@ -131,6 +140,7 @@ export function buildHandlers(g: Guardian): Handlers {
         activeRecoveryId: s.recoveryStatus !== 'none' && s.recovery ? s.recovery.id : null,
         version: g.version,
         time: g.nowSec(),
+        ...(s.walletId ? { walletId: s.walletId, hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
         ...(s.dailyLimit
           ? {
               dailyLimit: {
@@ -153,6 +163,12 @@ export function buildHandlers(g: Guardian): Handlers {
       if (r.code === 'bad_passphrase')
         throw new RpcError(ErrorCode.UnlockFailed, 'Wrong passphrase.', r.retryAfterSeconds ? { retryAfterSeconds: r.retryAfterSeconds } : undefined);
       throw new RpcError(ErrorCode.Unavailable, 'message' in r ? r.message : undefined);
+    },
+
+    // Only the paired phone gets here (Guardian.authorize). Always allowed: it only takes capability away.
+    'guardian.lock': async () => {
+      await g.lock('remote');
+      return { state: 'locked' as const };
     },
 
     'pair.prepare': (params, ctx) => {
@@ -199,6 +215,7 @@ export function buildHandlers(g: Guardian): Handlers {
           hardwareAuth: { kind: 'bip137', pubkey: params.hardwareAuth.pubkey, path: params.hardwareAuth.path },
           hardwareAuthProof: params.hardwareAuthProof,
           appNostrPubkey: ctx.sender,
+          replacesWalletId: params.replacesWalletId,
         });
         if (!res.ok) {
           g.pairing.fail(session.id, now);
@@ -245,9 +262,10 @@ export function buildHandlers(g: Guardian): Handlers {
       };
     },
 
-    'recovery.start': (params) =>
+    'recovery.start': (params, ctx) =>
       g.recoveryMutex.run(async () => {
-        const res = await g.engine.startRecovery({ psbt: base64.decode(params.sweepPsbt), destinationDescriptor: params.newDescriptor });
+        // The sender becomes the new wallet's paired phone if the guardian adopts it after the sweep.
+        const res = await g.engine.startRecovery({ psbt: base64.decode(params.sweepPsbt), destinationDescriptor: params.newDescriptor, initiator: ctx.sender });
         if (!res.ok) throw refusalError(res.refusal);
         g.log.info('recovery.started', { recoveryId: res.recovery.id, survivingRole: res.recovery.survivingRole });
         void g.alerts.run();
@@ -340,33 +358,51 @@ export function buildHandlers(g: Guardian): Handlers {
     // -- a new phone without the old one or its backup -------------------------
 
     'recovery.access': async (params, ctx) => {
-      const reg = g.engine.registration();
-      if (!reg || !g.identity) throw refusalError({ reason: 'not_registered' });
-      const now = g.clock.now();
-      const { expiresAt, signature } = params.approval;
-      if (expiresAt * 1000 <= now) throw new RpcError(ErrorCode.ApprovalExpired);
-      if (expiresAt * 1000 > now + MAX_APPROVAL_TTL_MS) throw new RpcError(ErrorCode.ApprovalExpiryTooFar);
-      const message = recoveryAccessMessage({ guardianPubkey: g.identity.pubkey, phonePubkey: ctx.sender, expiresAt });
-      if (!bip137Authorizer.verify(message, signature, reg.hardwareAuth)) {
-        g.log.warn('recovery.access_refused', { reason: 'signature' });
-        throw new RpcError(ErrorCode.ApprovalInvalid);
+      if (!g.engine.registration() || !g.identity) throw refusalError({ reason: 'not_registered' });
+      const known = g.hasRecoveryAccess(ctx.sender);
+      // The engine rebuilds the text with this guardian's key and the sender's, and checks it against the hardware key.
+      const res = await g.engine.grantRecoveryAccess({ phonePubkey: ctx.sender, guardianPubkey: g.identity.pubkey, approval: params.approval });
+      if (!res.ok) {
+        g.log.warn('recovery.access_refused', { reason: res.refusal.reason });
+        throw refusalError(res.refusal);
       }
-      if (!g.hasRecoveryAccess(ctx.sender) && ctx.sender !== reg.appNostrPubkey) g.log.warn('recovery.access_granted', { until: expiresAt });
-      await g.grantRecoveryAccess(ctx.sender, expiresAt * 1000);
+      const reg = g.engine.registration()!;
+      if (!known && ctx.sender !== reg.appNostrPubkey) g.log.warn('recovery.access_granted', { until: params.approval.expiresAt });
       const s = g.engine.status();
       return {
         descriptor: reg.descriptor,
         walletId: reg.walletId,
         network: reg.network,
         guardianKey: guardianKey(g),
-        hardwareAuth: { pubkey: reg.hardwareAuth.pubkey, path: reg.hardwareAuth.path },
+        hardwareAuth: { pubkey: reg.hardwareAuth!.pubkey, path: reg.hardwareAuth!.path },
         policy: policyToWire(s.rules!),
         nextHardwareSequence: s.nextHardwareSequence,
         phoneSpending: s.phoneSpending,
         activeRecoveryId: s.recoveryStatus !== 'none' && s.recovery ? s.recovery.id : null,
-        accessExpiresAt: expiresAt,
+        accessExpiresAt: Math.floor(res.until / 1000),
       };
     },
+
+    // -- wallet rotation and "Replace guardian" ---------------------------------
+
+    'hardware.confirm': async (params) => {
+      const res = await g.engine.confirmHardwareAuth({
+        hardwareAuth: { kind: 'bip137', pubkey: params.hardwareAuth.pubkey, path: params.hardwareAuth.path },
+        proof: params.hardwareAuthProof,
+      });
+      if (!res.ok) throw refusalError(res.refusal);
+      if (res.changed) g.log.info('hardware.confirmed', { walletId: res.registration.walletId });
+      const key = res.registration.hardwareAuth!;
+      return { walletId: res.registration.walletId, hardwareAuth: { pubkey: key.pubkey, path: key.path }, nextHardwareSequence: g.engine.status().nextHardwareSequence };
+    },
+
+    'wallet.retire': (params, ctx) =>
+      g.recoveryMutex.run(async () => {
+        const res = await g.engine.retireWallet(params.approval);
+        if (!res.ok) throw refusalError(res.refusal);
+        await g.afterRetire(res.walletId, ctx.sender);
+        return { walletId: res.walletId, retiredAt: Math.floor(res.retiredAt / 1000) };
+      }),
 
     'phone.resume': async (params) => {
       const res = await g.engine.resumePhoneSpending(params.approval);

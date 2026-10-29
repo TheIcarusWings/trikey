@@ -13,6 +13,7 @@ import {
   bip137Authorizer,
   pairingMessage as enginePairingMessage,
   policyHash as enginePolicyHash,
+  recoveryAccessMessage as engineRecoveryAccessMessage,
   recoverMessageSigner,
   rulesToPolicyJson,
   signMessage,
@@ -30,6 +31,7 @@ import {
   normalizePolicy,
   pairingMessage,
   policyHash,
+  recoveryAccessMessage,
   type HardwareAction,
   type Policy as PolicyType,
 } from '@trikey/protocol';
@@ -115,6 +117,7 @@ describe('protocol vs guardian engine: hardware approval texts', () => {
     [{ action: 'cancel-recovery', recoveryId: '12-abcdefabcdef' }, { action: 'cancel-recovery', recoveryId: '12-abcdefabcdef' }],
     [{ action: 'cancel-recovery', recoveryId: 'rec-12345678' }, { action: 'cancel-recovery', recoveryId: 'rec-12345678' }],
     [{ action: 'resume-phone' }, { action: 'resume-phone' }],
+    [{ action: 'retire-wallet' }, { action: 'retire-wallet' }],
   ];
 
   it('approvalMessage is character for character the engine text', () => {
@@ -127,7 +130,15 @@ describe('protocol vs guardian engine: hardware approval texts', () => {
         }
       }
     }
-    expect(n).toBe(policies.length * ctxs.length * 4);
+    expect(n).toBe(policies.length * ctxs.length * 5);
+  });
+
+  it('recoveryAccessMessage matches the engine text', () => {
+    for (const expiresAt of [0, 1_900_000_000, 4_102_444_800]) {
+      const ctx = { guardianPubkey: 'aa'.repeat(32), phonePubkey: '0b'.repeat(32), expiresAt };
+      expect(recoveryAccessMessage(ctx)).toBe(engineRecoveryAccessMessage(ctx));
+    }
+    expect(() => engineRecoveryAccessMessage({ guardianPubkey: 'AA'.repeat(32), phonePubkey: '0b'.repeat(32), expiresAt: 1 })).toThrow();
   });
 
   it('pairingMessage matches the engine text', () => {
@@ -153,7 +164,7 @@ describe('protocol vs guardian engine: hardware approval texts', () => {
   it('a signature over the protocol text is a valid HardwareApproval the engine authorizer accepts', () => {
     const priv = new Uint8Array(32).fill(5);
     const ctx = { walletId: WALLET_ID, sequence: 7, expiresAt: 1_900_000_000 };
-    const mine: HardwareAction[] = [{ action: 'policy', policy }, { action: 'cancel-recovery', recoveryId: '1-0123456789ab' }, { action: 'resume-phone' }];
+    const mine: HardwareAction[] = [{ action: 'policy', policy }, { action: 'cancel-recovery', recoveryId: '1-0123456789ab' }, { action: 'resume-phone' }, { action: 'retire-wallet' }];
     for (const action of mine) {
       const text = approvalMessage(action, ctx);
       const approval = { kind: 'bip137', sequence: ctx.sequence, expiresAt: ctx.expiresAt, signature: signMessage(text, priv) };

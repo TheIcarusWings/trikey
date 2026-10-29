@@ -29,7 +29,7 @@ Start9's interface), never exposed beyond it.
 
   Codes: `bad_passphrase` (401), `rate_limited` (429, with `retryAfterSeconds` and a
   `Retry-After` header), `locked` (409), `setup_required` (409), `already_setup` (409),
-  `already_paired` (409), `not_found` (404), `invalid` (400, 413 or 415), `forbidden`
+  `already_paired` (409), `recovery_pending` (409), `sweep_pending` (409), `not_found` (404), `invalid` (400, 413 or 415), `forbidden`
   (403, a cross-origin request), `not_available` (501), `internal` (500). The UI
   reacts to the first few and shows any other code as a generic failure using `message`.
 - Every response sends `Cache-Control: no-store` (API) and security headers: a CSP
@@ -41,7 +41,7 @@ Start9's interface), never exposed beyond it.
   `Sec-Fetch-Site: same-origin` when the browser sends it, else `Origin` against
   `Host` / `X-Forwarded-Host` (`403 forbidden`). Bodies are limited to 16 KiB.
 - The UI is a single-page app with client-side routes (`/`, `/setup`, `/locked`,
-  `/activity`, `/rules`, `/recovery`, `/pair`, `/host`). The guardian serves
+  `/activity`, `/rules`, `/recovery`, `/pair`, `/recover-phone`, `/reset`, `/host`). The guardian serves
   `index.html` for every non-`/api` path that is not a file in `dist/` (a missing
   file under `/assets/` is a `404`).
 - A strict CSP works: the app has no inline scripts and loads all fonts and scripts
@@ -53,7 +53,7 @@ Start9's interface), never exposed beyond it.
 | Guardian state | Allowed |
 |---|---|
 | Setup not complete | `GET /status`, `GET /setup/preflight`, `POST /setup` |
-| Locked | `GET /status`, `POST /unlock` |
+| Locked | `GET /status`, `POST /unlock`, `POST /reset` |
 | Unlocked | everything |
 
 Anything else answers `409 locked` (or `409 setup_required` before setup;
@@ -68,11 +68,26 @@ every start of its process.
 
 | Method and path | Request | Response | Notes |
 |---|---|---|---|
-| `GET /api/status` | none | `GuardianStatus` | Always available. `setupComplete`, `state` (`locked` or `unlocked`), `lockedAt` and `lockReason` (`restart` or `manual`) while locked, `relays[]` (with live connection state), `chain` (`synced` once Electrs answers, `syncing` with `progress` when Bitcoin Core RPC reports initial block download, else `unavailable`; `height`), `wallets[]` (zero or one: the engine holds one wallet), `dailySpend`, `recoveryInProgress`, and `phoneSpending`, `network`, `npub`, `version`. |
+| `GET /api/status` | none | `GuardianStatus` | Always available. `setupComplete`, `state` (`locked` or `unlocked`), `lockedAt` and `lockReason` (`restart`, `manual` from this UI, or `remote` from the paired phone's `guardian.lock`) while locked, `relays[]` (with live connection state), `chain` (`synced` once Electrs answers, `syncing` with `progress` when Bitcoin Core RPC reports initial block download, else `unavailable`; `height`), `wallets[]` (zero or one: the engine guards one active wallet), `retiredWallets[]` (wallets it guarded before, read-only history: `reason` `recovered` with the `successorId` it guards now, or `retired`), `hardwareConfirmRequired` (after the guardian took over a recovered wallet, until the phone confirms the hardware wallet), `dailySpend`, `recoveryInProgress`, and `phoneSpending`, `network`, `npub`, `version`. |
 | `GET /api/setup/preflight` | none | `SetupPreflight` | First run only. `electrs` is `found` when Electrs answers; `node` is `found` when Bitcoin Core RPC answers (or, without RPC settings, when Electrs does). The relay choices to offer. |
 | `POST /api/setup` | `{ passphrase, relays: string[] }` | `GuardianStatus` | First run only. Creates key 3 (a fresh BIP39 seed; the BIP48 account key), encrypts it under an Argon2id key from the passphrase, connects the chosen relays. The guardian ends up unlocked. `400 invalid` if `relays` is empty, has more than 8 entries or a URL that is not `wss://` (or `ws://` on a local host), or the passphrase has fewer than 12 characters. There is no backup of key 3, by design. |
 | `POST /api/unlock` | `{ passphrase }` | `GuardianStatus` | `401 bad_passphrase` on a wrong passphrase (with `retryAfterSeconds` once the next try has to wait). Rate limited with exponential backoff after 3 failures (`429 rate_limited`); the count survives restarts and is shared with the phone's `guardian.unlock`. Unlocking takes a few seconds on a Raspberry Pi (Argon2id). |
 | `POST /api/lock` | `{}` | `GuardianStatus` | Drops key 3 from memory and invalidates a pairing code in progress. The phone gets a `guardian_locked` alert. |
+| `POST /api/reset` | `{ passphrase, confirm }` | `GuardianStatus` | "Reset guardian", see below. Works locked or unlocked and ends unlocked. |
+
+**Reset guardian.** Forgets every wallet (active and retired), its rules, recoveries and
+limit records, and **creates a new key 3**; the old key 3 is destroyed (the keystore file is
+replaced, the one exception to "never overwritten"). The nostr identity, the relays, the unlock
+passphrase and the service log stay. `confirm` must be exactly `RESET GUARDIAN`
+(`RESET_CONFIRMATION` in `src/api/types.ts`), else `400 invalid`; the passphrase is checked like
+an unlock and shares its rate limit (`401 bad_passphrase`, `429 rate_limited`). Refused with
+`409 recovery_pending` while a recovery is pending or ready (it would make a running recovery
+disappear), and with `409 sweep_pending` while a co-signed sweep has not been broadcast yet (its
+signature would be lost with key 3). The paired phone gets a `wallet_retired` alert (reason
+`reset`) first. Why a new key 3 rather than keeping it: with the old key and no wallet state,
+anyone holding this UI, the passphrase and a stolen hardware wallet could pair the user's own
+wallet again with a phone of their choosing and no alert contacts, and run a recovery only they
+hear about. A wallet that used the old key 3 stays spendable with its phone and hardware wallet.
 
 **Passphrase handling.** The UI sends the passphrase in exactly one request body.
 It is held in component state only while the form is open, cleared as soon as the
@@ -104,11 +119,17 @@ wallet (a signed `cancel-recovery` approval). The box's web UI is none of these.
 (An earlier draft had `POST /api/recovery/:id/cancel` "re-enabling phone-only
 payments", which the engine cannot do safely.)
 
+### Recovery code
+
+| Method and path | Response | Notes |
+|---|---|---|
+| `GET /api/recovery-code` | `RecoveryCode` | Unlocked only. The permanent "Recover on a new phone" code for a phone that has neither the old phone nor its backup: `uri` (`trikey://recover?v=1&npub=…&relay=…&net=…`, PROTOCOL.md section 6) is what the QR code encodes. It carries **no secret** and does not expire (the hardware wallet's `recovery.access` signature is what lets a phone in), so the page offers to print it. `404 not_found` while no wallet is paired. |
+
 ### Pairing
 
 | Method and path | Response | Notes |
 |---|---|---|
-| `POST /api/pairing` | `PairingSession` (`201`) | Unlocked only. Creates a one-time session and invalidates any earlier one. `uri` is what the QR code encodes (`trikey://pair?v=1&npub=…&relay=…&secret=…&exp=…`, PROTOCOL.md section 6): the guardian's nostr pubkey, its relays and a one-time secret. The secret expires after 5 minutes, allows 5 wrong attempts and is burned by a successful `pair`. `409 already_paired` once a wallet is registered: the first phone to pair wins. |
+| `POST /api/pairing` | `PairingSession` (`201`) | Unlocked only. Creates a one-time session and invalidates any earlier one. `uri` is what the QR code encodes (`trikey://pair?v=1&npub=…&relay=…&secret=…&exp=…`, PROTOCOL.md section 6): the guardian's nostr pubkey, its relays and a one-time secret. The secret expires after 5 minutes, allows 5 wrong attempts and is burned by a successful `pair`. `409 already_paired` while a wallet is active: the first phone to pair wins. Once that wallet is retired (`wallet.retire`, or a recovery to another guardian) or after a reset, pairing is open again; a retired wallet itself can never be paired again. |
 | `GET /api/pairing/:id` | `PairingSession` | The UI polls this every 2 s while `status` is `waiting`. `status` moves to `paired` when a phone completes the `pair` method, or `expired` after `expiresAt` (or too many wrong attempts, or a lock). `404 not_found` for anything but the latest session. |
 | `GET /api/phones` | `{ "phones": PairedPhone[] }` | Phones paired to this guardian (zero or one). `name` is the `deviceName` the phone sent. |
 
@@ -146,6 +167,6 @@ The mock keeps state in memory (a reload starts over). Pick the starting state w
 | `/?mock=unpaired` | Set up, no phone paired yet |
 | `/?mock=syncing` | Unlocked, node still syncing, one relay down |
 
-In the mock any unlock passphrase works except the literal `wrong`. In dev, run
+In the mock any unlock passphrase works except the literal `wrong` (also for the reset). In dev, run
 `trikeyMock.completePairing()` in the browser console to pretend a phone scanned
 the current pairing code.

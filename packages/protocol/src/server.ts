@@ -21,7 +21,7 @@ import {
   type Response,
   type Result,
 } from './schemas.js';
-import { SUBSCRIPTION_LOOKBACK_SEC, unwrapMessage, wrapMessage } from './transport.js';
+import { SUBSCRIPTION_LOOKBACK_SEC, openGiftWrap, readRumor, wrapMessage, type OpenedWrap } from './transport.js';
 
 export interface HandlerContext {
   /** Hex pubkey of the (verified) sender. */
@@ -57,6 +57,12 @@ export interface RpcServerOptions {
   /** Called when a handler throws something that is not an `RpcError`, or returns an invalid result. */
   onError?: (error: unknown, info: { sender?: string; id?: string; method?: MethodName }) => void;
   now?: () => number;
+  /**
+   * Subscribe to the relays itself (default true). With `false`, the owner subscribes, opens each wrap
+   * once (`openGiftWrap`) and passes the RPC ones to `handleOpened`; the guardian does this so a wrap
+   * is decrypted once even though RPC and NIP-17 DMs arrive on the same subscription.
+   */
+  listen?: boolean;
 }
 
 /** Guardian side: receives requests from paired phones, dispatches to handlers, replies. */
@@ -102,6 +108,7 @@ export class RpcServer {
   /** Subscribe to wraps addressed to us. Idempotent; resolves once the relays reply with EOSE (or after 3 s). */
   start(): Promise<void> {
     if (this.closed) return Promise.reject(new Error('server closed'));
+    if (this.o.listen === false) return Promise.resolve();
     this.starting ??= new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, 3000);
       this.sub = this.o.pool.subscribe(
@@ -145,15 +152,33 @@ export class RpcServer {
 
   private async handleWrap(wrap: NostrEvent): Promise<void> {
     if (this.closed || this.seenWraps.seen(wrap.id)) return;
+    let opened: OpenedWrap;
+    try {
+      opened = openGiftWrap(wrap, { recipientSecretKey: this.o.secretKey });
+    } catch (e) {
+      if (e instanceof EnvelopeError) this.drop({ reason: e.reason, wrapId: wrap.id, sender: e.sender, messageId: e.messageId, detail: e.message });
+      else this.drop({ reason: 'decrypt_failed', wrapId: wrap.id, detail: String(e) });
+      return;
+    }
+    await this.handleOpened(opened);
+  }
+
+  /**
+   * Handles a wrap the owner already opened (see `listen`). The owner de-duplicates wraps by id; the
+   * replay guard still applies per (sender, message id).
+   */
+  async handleOpened(opened: OpenedWrap): Promise<void> {
+    if (this.closed) return;
+    const wrapId = opened.wrapId;
     let incoming;
     try {
-      incoming = unwrapMessage(wrap, { recipientSecretKey: this.o.secretKey, now: this.now(), limits: this.limits });
+      incoming = readRumor(opened, { now: this.now(), limits: this.limits });
     } catch (e) {
       if (!(e instanceof EnvelopeError)) {
-        this.drop({ reason: 'decrypt_failed', wrapId: wrap.id, detail: String(e) });
+        this.drop({ reason: 'bad_rumor', wrapId, sender: opened.sender, detail: String(e) });
         return;
       }
-      this.drop({ reason: e.reason, wrapId: wrap.id, sender: e.sender, messageId: e.messageId, detail: e.message });
+      this.drop({ reason: e.reason, wrapId, sender: e.sender, messageId: e.messageId, detail: e.message });
       // A paired phone that sent something malformed deserves to know.
       if (e.reason === 'bad_payload' && e.sender && e.messageId && e.errorCode !== undefined && this.peers.has(e.sender)) {
         if (!this.guard.has(e.sender, e.messageId, this.now())) {
@@ -165,13 +190,13 @@ export class RpcServer {
 
     const { message, meta, sender } = incoming;
     if (!isRequest(message)) {
-      this.drop({ reason: 'unexpected_direction', wrapId: wrap.id, sender, messageId: meta.id });
+      this.drop({ reason: 'unexpected_direction', wrapId, sender, messageId: meta.id });
       return;
     }
 
     // Authorize before the replay guard remembers anything, so strangers cannot fill the cache.
     if (!(await this.isAuthorized(sender, message.method))) {
-      this.drop({ reason: 'unauthorized', wrapId: wrap.id, sender, messageId: meta.id });
+      this.drop({ reason: 'unauthorized', wrapId, sender, messageId: meta.id });
       return;
     }
 
@@ -179,16 +204,16 @@ export class RpcServer {
     if (verdict === 'duplicate') {
       // A retry (or a replay): never run the handler again; resend the earlier answer if we have one.
       const cached = this.responses.get(`${sender}:${meta.id}`);
-      this.drop({ reason: 'replay', wrapId: wrap.id, sender, messageId: meta.id, detail: cached ? 'resent cached response' : 'in flight' });
+      this.drop({ reason: 'replay', wrapId, sender, messageId: meta.id, detail: cached ? 'resent cached response' : 'in flight' });
       if (cached) await this.reply(sender, cached);
       return;
     }
     if (verdict !== 'ok') {
-      this.drop({ reason: verdict, wrapId: wrap.id, sender, messageId: meta.id });
+      this.drop({ reason: verdict, wrapId, sender, messageId: meta.id });
       return;
     }
 
-    const ctx: HandlerContext = { sender, id: message.id, wrapId: wrap.id, createdAt: meta.createdAt };
+    const ctx: HandlerContext = { sender, id: message.id, wrapId, createdAt: meta.createdAt };
     const response = await this.dispatch(message, ctx);
     this.remember(`${sender}:${message.id}`, response);
     await this.reply(sender, response);

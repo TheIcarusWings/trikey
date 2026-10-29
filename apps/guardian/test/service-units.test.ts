@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { ErrorCode } from '@trikey/protocol';
+import * as nip17 from 'nostr-tools/nip17';
+import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
+import { ErrorCode, wrapMessage, type NostrEvent, type OpenedWrap, type RelayPool } from '@trikey/protocol';
+import { Inbox } from '../src/nostr/inbox.js';
 import { loadConfig, parseNetwork } from '../src/config.js';
 import { parseCancel } from '../src/dm-cancel.js';
 import { PAIRING_MAX_FAILURES, PAIRING_TTL_MS, PairingSessions } from '../src/pairing.js';
@@ -138,5 +141,34 @@ describe('logger', () => {
     const log = createLogger({ write: (l) => lines.push(l), now: () => new Date(0) });
     log.info('test.event', { passphrase: 'hunter2', secretKey: 'abc', pubkey: 'ok', appNostrPubkey: 'ok2', note: 'two\nlines' });
     expect(lines).toEqual(['1970-01-01T00:00:00.000Z INFO test.event passphrase=[redacted] secretKey=[redacted] pubkey=ok appNostrPubkey=ok2 note="two lines"']);
+  });
+});
+
+describe('the shared inbox', () => {
+  it('opens each gift wrap once and routes RPC rumors and NIP-17 DMs to their handlers', async () => {
+    const guardianKey = generateSecretKey();
+    const guardianPub = getPublicKey(guardianKey);
+    const phone = generateSecretKey();
+    let deliver: ((e: NostrEvent) => void) | undefined;
+    const pool = {
+      subscribe: (_relays: string[], _filter: unknown, h: { onevent: (e: NostrEvent) => void; oneose?: () => void }) => {
+        deliver = h.onevent;
+        h.oneose?.();
+        return { close: () => {} };
+      },
+      publish: async () => [],
+      close: () => {},
+    } as unknown as RelayPool;
+    const rpc: OpenedWrap[] = [];
+    const dms: OpenedWrap[] = [];
+    const inbox = new Inbox({ pool, relays: ['wss://relay.invalid'], secretKey: guardianKey, pubkey: guardianPub, now: () => Math.floor(Date.now() / 1000), onRpc: (o) => void rpc.push(o), onDm: (o) => void dms.push(o) });
+    await inbox.start();
+    const req = wrapMessage({ id: 'a'.repeat(16), method: 'guardian.status', params: {} }, { senderSecretKey: phone, recipient: guardianPub }).wrap;
+    const dm = nip17.wrapEvent(phone, { publicKey: guardianPub }, 'CANCEL 1-0123456789ab');
+    for (const e of [req, dm, req, dm, { ...req, content: 'garbage' }]) deliver!(e);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(inbox.opened).toBe(2); // duplicates from other relays are not decrypted again; garbage never opens
+    expect(rpc.map((o) => o.sender)).toEqual([getPublicKey(phone)]);
+    expect(dms.map((o) => o.rumor.content)).toEqual(['CANCEL 1-0123456789ab']);
   });
 });

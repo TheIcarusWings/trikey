@@ -10,10 +10,12 @@ export {
   type GuardianStatus,
   type PhoneSpendingStatus,
   type CosignResult,
+  type RotationResult,
+  MAX_ACCESS_GRANTS,
 } from './engine.js';
 export * from './types.js';
 export { type Clock, systemClock, ManualClock, SECOND, HOUR, DAY } from './clock.js';
-export { type StateStore, MemoryStore, JsonFileStore, serializeState, deserializeState } from './storage.js';
+export { type StateStore, MemoryStore, JsonFileStore, serializeState, deserializeState, migrateState } from './storage.js';
 export { type CosignerSigner, SoftwareCosignerSigner } from './signer.js';
 export {
   type HardwareAuthorizer,
@@ -22,6 +24,7 @@ export {
   bip137Authorizer,
   approvalMessage,
   pairingMessage,
+  recoveryAccessMessage,
   MAX_MESSAGE_LENGTH,
 } from './authorizer.js';
 export {

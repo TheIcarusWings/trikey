@@ -135,11 +135,51 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
 | Everyday payment | phone + guardian | Within the limit, Face ID only |
 | Big payment, raise the limit | phone + hardware | The guardian isn't involved |
 | New phone, backup available | none | Restore key 2 with the passkey, no waiting |
-| Lost phone, no backup | hardware + guardian | Delay & Notify, then a sweep to a new wallet |
-| Lost hardware wallet | none, or phone + guardian | Restore the seed words, or use Delay & Notify |
+| Lost phone, no backup | hardware + guardian | The new phone scans the guardian's recovery code, the hardware wallet lets it in, Delay & Notify, a sweep to a new wallet, and the guardian then guards that wallet |
+| Lost hardware wallet | none, or phone + guardian | Restore the seed words, or use Delay & Notify (the guardian then guards the new wallet) |
 | Someone fakes a recovery | any device or contact | Tap Cancel on the alert |
 | Guardian offline or locked | phone + hardware | Phone-only payments wait until it's back |
-| Guardian dies or is stolen | phone + hardware | "Replace guardian": sweep to a new wallet |
+| Box may have been tampered with | phone | Lock the guardian from the phone; unlock with the passphrase once checked |
+| Guardian dies or is stolen | phone + hardware | "Replace guardian": sweep to a new wallet with a new guardian |
+| Guardian replaced, old box still running | phone + hardware | Also retire the wallet on the old box; it then co-signs nothing for it |
+
+**Wallet rotation.** The guardian guards one active wallet and keeps the ones it guarded before as
+retired, read-only history: it co-signs nothing for them, starts no recovery of them and never pairs
+them again. After a recovery whose destination keeps the guardian's key (the wallet package builds it
+that way), the guardian adopts the destination; a destination with another guardian's key just
+retires the old wallet:
+
+- **When:** once a node has accepted the sweep (broadcast, or already known to Electrs), not when the
+  guardian co-signs it and not when it confirms. Before the broadcast the swept wallet stays in place,
+  so a sweep no node will relay can still be replaced by a new recovery. Waiting for confirmations
+  would add nothing: once the sweep is co-signed, key 3 refuses everything for the old wallet, so only
+  the user (surviving key plus the lost one) could make a conflicting spend, while the recovered user
+  would be left without co-signing (or CPFP through the guardian) for hours.
+- **What carries over:** the rules and the hardware approval counter. The limit window starts empty
+  (phone payments were paused for the whole delay). Recovery access grants of the old wallet are
+  revoked.
+- **The paired phone** becomes the phone that sent `recovery.start`: the surviving phone, or the new
+  phone the hardware wallet let in with `recovery.access`.
+- **The hardware authorization key** carries over when the hardware wallet survived, or is derived at
+  the same path below the new hardware xpub when it was replaced. It must prove itself again with a
+  fresh BIP137 pairing proof over the new wallet id (`hardware.confirm`) before any hardware approval
+  (loosening rules, hardware cancel, resume, retire) is accepted again.
+
+**Replace guardian.** The phone and the hardware wallet sweep to a wallet with the new guardian's key
+(no guardian needed). If the old box still runs, the phone retires the wallet there (`wallet.retire`,
+with a hardware approval, refused during a recovery); pairing is then open again on that box. A fresh
+guardian pairs a phone that already has a wallet like any other: same key 2 and hardware key, a new
+key 3, so a new descriptor and wallet id.
+
+**Reset guardian** (web UI): forgets every wallet and creates a **new key 3**, keeping the nostr
+identity, relays and passphrase. It needs the passphrase again and a typed confirmation, and is
+refused while a recovery is pending or ready, or while a co-signed sweep waits to be broadcast. Key 3
+is rotated rather than kept so that a reset can never be used to re-pair the user's wallet with a
+different phone (see the threat model).
+
+**Recovery code.** Besides the one-time pairing code, the web UI shows a permanent "Recover on a new
+phone" code (`trikey://recover?...`): the guardian's npub, relays and network, no secret. It can be
+printed and kept with the hardware wallet.
 
 ## Threat model
 
@@ -151,6 +191,12 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
 - **Remote compromise of the home server** gives up one key of three. That's the same exposure as Bitkey's server being breached.
 - **Malicious relays** can drop messages but can't read or forge them.
 - **Contested recovery** (a thief cancels a genuine recovery): phone-only spending stays paused, so the thief can't drain either. Same as Bitkey.
+- **After a recovery the guardian trusts its outcome:** the phone that started it becomes the new wallet's paired phone. That is what the Delay & Notify period protects; a thief who gets that far already holds the new wallet's keys. The hardware wallet must re-prove its authorization key for the new wallet before it can loosen anything, and the old wallet's recovery access grants are revoked.
+- **Retired wallets are dead to the guardian:** no co-signing, no recovery, no re-pairing of the same descriptor. Coins sent to a retired wallet's address later can only move with two of its own keys.
+- **Retiring needs the phone and the hardware wallet together** (the paired phone's nostr key plus a `retire-wallet` approval) and is refused during a recovery, so a hardware-held thief cannot end the guardian's protection in the middle of its own recovery.
+- **Reset rotates key 3.** With the old key 3 and no wallet state, anyone holding the web UI, the passphrase and a stolen hardware wallet could pair the user's own wallet again with their own phone and no alert contacts, then run a recovery nobody else hears about. A new key 3 cannot co-sign the old wallet at all (its funds stay with the phone and the hardware wallet), so a reset can only lose the guardian's help, never the user's money to a thief. Reset is refused while a recovery runs or a sweep awaits broadcast.
+- **Remote lock** is allowed for the paired phone at any time and for nobody else; it only removes capability. A thief with the phone can lock the guardian (a nuisance: unlock needs the passphrase), but could not have done more with it than the daily limit anyway.
+- **The recovery code holds no secret.** The guardian's npub and relays are visible on the relays anyway; what lets a new phone in is the hardware wallet's `recovery.access` signature, bound to that phone's nostr key.
 - **The guardian's clock:** a recovery only completes once both the system clock and the chain's median time past have passed the end of the delay, so a clock pushed forward alone can't shorten it.
 - **The web UI has no login of its own.** It relies on the platform's app proxy (Umbrel's `app_proxy`, Start9's interfaces) to authenticate, so the guardian's port must never be exposed beyond it.
 - **The guardian's nostr key is stored unencrypted** (mode 0600), so a locked guardian can still answer the phone and receive an unlock. It can't sign transactions.
@@ -193,9 +239,10 @@ Someone who runs a guardian can host one for a person they know.
 ## Repository state
 
 - `packages/core/`: descriptors (BIP380 checksum, BIP389 multipath), BIP48 wallets, PSBT build, sign, analyze and finalize, software signer. `tweak.ts` holds the BIP 89 tweak math, kept for family hosting.
-- `packages/protocol/`: the nostr RPC (schemas, gift-wrap transport, replay guard, client and server, pairing URI, NIP-06 phone identity, an in-memory relay for tests). Spec in `PROTOCOL.md`.
-- `apps/guardian/`: the guardian. `src/policy/` is the policy engine (spend checks, daily limit, rule changes with BIP137 approvals, Delay & Notify). Around it: key storage (Argon2id, m=64 MiB, t=3, then XChaCha20-Poly1305), lock/unlock, the nostr RPC server, NIP-17 alert DMs to contacts, an Electrum client (sweep completeness, broadcast, chain time) and the HTTP API for the web UI. Entry point `src/main.ts`.
-- `apps/guardian-web/`: the guardian's web UI. Its API is in `API.md`.
+- `packages/protocol/`: the nostr RPC (schemas, gift-wrap transport with per-peer NIP-44 conversation key caching, replay guard, client and server, pairing and recovery URIs, NIP-06 phone identity, an in-memory relay for tests). Spec in `PROTOCOL.md`.
+- `packages/wallet/`: the phone's side (key 2, pairing, payments, rules, recovery, backup), platform-agnostic; the app supplies storage and hardware adapters. It has client calls for remote lock, retiring a wallet and reading the recovery code; confirming the hardware wallet after a rotation is not wired yet.
+- `apps/guardian/`: the guardian. `src/policy/` is the policy engine (spend checks, daily limit, rule changes with BIP137 approvals, Delay & Notify, wallet rotation with one active wallet plus retired ones, state format version 2 with migration from version 1). Around it: key storage (Argon2id, m=64 MiB, t=3, then XChaCha20-Poly1305), lock/unlock (also from the phone), reset, the nostr RPC server and NIP-17 alert DMs behind one shared inbox, an Electrum client (sweep completeness, broadcast, chain time) and the HTTP API for the web UI. Entry point `src/main.ts`.
+- `apps/guardian-web/`: the guardian's web UI, including the recovery code and the reset. Its API is in `API.md`.
 - `apps/mobile/`: the React Native app. Every screen is built, on sample data; wallet, hardware and backup wiring are next.
 - `packaging/`: Docker image, Umbrel community app store entry, Start9 package skeleton.
 - `tools/consensus-verify/`: Rust tool that checks transactions against libbitcoinconsensus (Bitcoin Core's script verifier). It builds; tests don't use it yet.

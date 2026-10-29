@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   PairingUriError,
   decodePairingUri,
+  decodeRecoveryUri,
+  decodeTrikeyUri,
   encodePairingUri,
+  encodeRecoveryUri,
   generatePairingSecret,
   normalizeRelayUrl,
 } from '../src/index.js';
@@ -71,5 +74,39 @@ describe('pairing URI', () => {
     expect(() => normalizeRelayUrl('https://relay.example.com')).toThrow(/ws\(s\)/);
     expect(() => normalizeRelayUrl('wss://user:pw@relay.example.com')).toThrow(/credentials/);
     expect(() => normalizeRelayUrl('not a url')).toThrow(PairingUriError);
+  });
+});
+
+describe('recovery URI ("Recover on a new phone")', () => {
+  const rec = { guardianPubkey: pubkey, relays: ['wss://relay.example.com', 'ws://umbrel.local:4848'], network: 'signet' as const };
+
+  it('round-trips, without a secret or an expiry', () => {
+    const uri = encodeRecoveryUri({ ...rec, label: 'Umbrel at home' });
+    expect(uri.startsWith('trikey://recover?v=1&npub=npub1')).toBe(true);
+    expect(uri).not.toContain('secret');
+    expect(uri).not.toContain('exp=');
+    expect(decodeRecoveryUri(uri)).toEqual({ ...rec, label: 'Umbrel at home' });
+    expect(decodeRecoveryUri(uri.replace('trikey://', 'trikey:'))).toEqual({ ...rec, label: 'Umbrel at home' });
+  });
+
+  it('is distinct from the pairing URI in both directions', () => {
+    const pairing = encodePairingUri(payload(), NOW);
+    expect(() => decodeRecoveryUri(pairing)).toThrow(/pairing code/);
+    expect(() => decodePairingUri(encodeRecoveryUri(rec), NOW)).toThrow(PairingUriError);
+    expect(decodeTrikeyUri(pairing, NOW).kind).toBe('pair');
+    expect(decodeTrikeyUri(encodeRecoveryUri(rec)).kind).toBe('recover');
+    expect(() => decodeTrikeyUri('trikey://invite?v=1')).toThrow(PairingUriError);
+  });
+
+  it('rejects a secret, a bad network, version or npub, and bad relays', () => {
+    const good = encodeRecoveryUri(rec);
+    expect(() => decodeRecoveryUri(`${good}&secret=${generatePairingSecret()}`)).toThrow(/no secret/);
+    expect(() => decodeRecoveryUri(good.replace('net=signet', 'net=liquid'))).toThrow(/network/);
+    expect(() => decodeRecoveryUri(good.replace('&net=signet', ''))).toThrow(/network/);
+    expect(() => decodeRecoveryUri(good.replace('v=1', 'v=2'))).toThrow(/version/);
+    expect(() => decodeRecoveryUri(good.replace(/npub=npub1[a-z0-9]+/, 'npub=npub1garbage'))).toThrow(/npub/);
+    expect(() => decodeRecoveryUri(good.replace(/&relay=[^&]+/g, ''))).toThrow(/relays/);
+    expect(() => encodeRecoveryUri({ ...rec, relays: ['ws://relay.example.com'] })).toThrow(/insecure/);
+    expect(() => encodeRecoveryUri({ ...rec, network: 'mainnet' as never })).toThrow(/network/);
   });
 });

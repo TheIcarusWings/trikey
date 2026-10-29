@@ -1,5 +1,6 @@
 import * as nip44 from 'nostr-tools/nip44';
-import { createRumor, createSeal } from 'nostr-tools/nip59';
+import * as nip17 from 'nostr-tools/nip17';
+import { createRumor, createSeal, unwrapEvent } from 'nostr-tools/nip59';
 import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
 import { describe, expect, it } from 'vitest';
 import {
@@ -10,7 +11,9 @@ import {
   buildRumorTemplate,
   checkFreshness,
   generateMessageId,
+  openGiftWrap,
   psbtHash,
+  readRumor,
   unwrapMessage,
   wrapMessage,
   type Message,
@@ -247,5 +250,30 @@ describe('freshness and replay', () => {
     expect(guard.size).toBeLessThanOrEqual(50);
     // The most recent ids are still remembered.
     expect(guard.admit(meta(200), NOW + 2)).toBe('duplicate');
+  });
+});
+
+describe('openGiftWrap', () => {
+  it('stays NIP-59 compatible both ways: nostr-tools opens our wraps, and we open its NIP-17 DMs', () => {
+    const msg = statusReq();
+    const { wrap } = wrapToGuardian(msg);
+    const rumor = unwrapEvent(wrap, guardian.secretKey);
+    expect(rumor).toMatchObject({ kind: TRIKEY_RPC_KIND, pubkey: phone.pubkey });
+    expect(JSON.parse(rumor.content)).toEqual(msg);
+
+    const dm = nip17.wrapEvent(phone.secretKey, { publicKey: guardian.pubkey }, 'CANCEL 1-0123456789ab');
+    const opened = openGiftWrap(dm, { recipientSecretKey: guardian.secretKey });
+    expect(opened).toMatchObject({ sender: phone.pubkey, recipient: guardian.pubkey, wrapId: dm.id, rumor: { kind: 14, content: 'CANCEL 1-0123456789ab' } });
+    // A DM is not an RPC message.
+    expect(reason(() => readRumor(opened, { now: Math.floor(Date.now() / 1000) }))).toBe('bad_rumor');
+  });
+
+  it('opens once, then reads: the same checks as unwrapMessage', () => {
+    const msg = statusReq();
+    const { wrap } = wrapToGuardian(msg);
+    const opened = openGiftWrap(wrap, { recipientSecretKey: guardian.secretKey, conversationKeys: null });
+    expect(reason(() => readRumor(opened, { expectedPeer: guardian.pubkey, now: NOW }))).toBe('wrong_peer');
+    expect(readRumor(opened, { expectedPeer: phone.pubkey, now: NOW }).message).toEqual(msg);
+    expect(reason(() => openGiftWrap(wrap, { recipientSecretKey: phone.secretKey }))).toBe('bad_wrap');
   });
 });

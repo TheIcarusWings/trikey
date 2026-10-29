@@ -17,6 +17,12 @@
  * Then it stores the co-signed sweep, broadcasts it through Electrs (Bitcoin
  * Core as a fallback), records the txid, and retries the broadcast on later
  * ticks until it goes through.
+ *
+ * Once a node has accepted the sweep, the guardian rotates wallets
+ * (`Guardian.rotateAfterSweep`): the swept wallet is retired and the
+ * destination adopted when it keeps this guardian's key. This also runs on
+ * every tick for a broadcast sweep whose rotation did not happen yet (a crash
+ * between the two, or a state migrated from before wallet rotation).
  */
 import * as btc from '@scure/btc-signer';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
@@ -81,6 +87,20 @@ export class RecoveryRunner {
     }
     await this.recreateMissingSweeps();
     await this.broadcastPending();
+    await this.rotateBroadcast();
+  }
+
+  /** Completed recoveries of the active wallet whose sweep a node accepted: rotate (once). */
+  private async rotateBroadcast(): Promise<void> {
+    const g = this.g;
+    const active = g.engine.registration()?.walletId;
+    if (!active) return;
+    for (const rec of g.records) {
+      if (rec.status !== 'completed' || rec.rotatedAt !== undefined || rec.walletId !== active) continue;
+      if (g.service.sweep(rec.id)?.broadcastAt === undefined) continue;
+      await g.recoveryMutex.run(() => g.rotateAfterSweep(rec.id));
+      return; // the active wallet changed; anything else waits for the next tick
+    }
   }
 
   private async block(rec: RecoveryRecord, reason: WaitReason, detail: string): Promise<void> {
@@ -184,11 +204,13 @@ export class RecoveryRunner {
    */
   private async recreateMissingSweeps(): Promise<void> {
     const g = this.g;
-    const reg = g.engine.registration();
     const signer = g.unlockedSigner;
-    if (!reg || !signer) return;
+    if (!signer) return;
     for (const rec of g.records) {
       if (rec.status !== 'completed' || g.service.sweep(rec.id)) continue;
+      // The swept wallet: the active one, or a retired one after the rotation.
+      const reg = g.engine.walletById(rec.walletId);
+      if (!reg) continue;
       try {
         const net = getNetwork(reg.network);
         const wallet = MultisigWallet.fromDescriptor(reg.descriptor, net);

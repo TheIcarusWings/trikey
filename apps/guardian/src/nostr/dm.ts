@@ -7,13 +7,23 @@
  * (their kind-10050 list, looked up on our relays; only `wss://` entries are
  * used, so a contact's list cannot point the guardian at hosts on the LAN).
  *
- * Receiving: every gift wrap addressed to the guardian is opened; kind-14
- * rumors are handed to `onMessage` with the verified author. The RPC server
- * opens the same wraps for kind-21420 rumors and ignores these, and vice versa.
+ * Receiving: kind-14 rumors are handed to `onMessage` with the verified author.
+ * In the guardian the shared `Inbox` opens every wrap once and passes the DMs
+ * to `handleOpened` (`listen: false`); standalone, this subscribes itself.
  */
-import { RecentSet, normalizeRelayUrl, SUBSCRIPTION_LOOKBACK_SEC, type RelayPool, type PublishOutcome, type Subscription, type NostrEvent } from '@trikey/protocol';
+import {
+  RecentSet,
+  normalizeRelayUrl,
+  openGiftWrap,
+  SUBSCRIPTION_LOOKBACK_SEC,
+  type OpenedWrap,
+  type RelayPool,
+  type PublishOutcome,
+  type Subscription,
+  type NostrEvent,
+} from '@trikey/protocol';
 import * as nip17 from 'nostr-tools/nip17';
-import { getEventHash, verifyEvent } from 'nostr-tools/pure';
+import { verifyEvent } from 'nostr-tools/pure';
 import { errorText, silentLogger, type Logger } from '../log.js';
 import type { GuardianIdentity } from '../identity.js';
 
@@ -42,6 +52,8 @@ export interface DirectMessagesOptions {
   log?: Logger;
   /** Look up recipients' kind-10050 DM relays. Default true. */
   discoverRelays?: boolean;
+  /** Subscribe to gift wraps itself (default true). `false`: the owner feeds `handleOpened`. */
+  listen?: boolean;
 }
 
 export class DirectMessages {
@@ -59,7 +71,7 @@ export class DirectMessages {
   }
 
   start(): void {
-    if (this.sub) return;
+    if (this.sub || this.o.listen === false) return;
     this.sub = this.o.pool.subscribe(
       this.o.relays,
       { kinds: [1059], '#p': [this.o.identity.pubkey], since: this.now() - SUBSCRIPTION_LOOKBACK_SEC },
@@ -74,33 +86,23 @@ export class DirectMessages {
 
   private onWrap(wrap: NostrEvent): void {
     if (!wrap || typeof wrap.id !== 'string' || this.seen.seen(wrap.id)) return;
-    const clean: NostrEvent = {
-      id: wrap.id,
-      pubkey: wrap.pubkey,
-      created_at: wrap.created_at,
-      kind: wrap.kind,
-      tags: wrap.tags,
-      content: wrap.content,
-      sig: wrap.sig,
-    };
-    if (clean.kind !== 1059 || typeof clean.content !== 'string' || clean.content.length > 100_000) return;
-    if (!verifyEvent(clean)) return;
-    let rumor: ReturnType<typeof nip17.unwrapEvent>;
+    let opened: OpenedWrap;
     try {
-      rumor = nip17.unwrapEvent(clean, this.o.identity.secretKey);
+      opened = openGiftWrap(wrap, { recipientSecretKey: this.o.identity.secretKey });
     } catch {
       return; // not for us, or not a valid seal
     }
+    this.handleOpened(opened);
+  }
+
+  /** A gift wrap already opened (and its rumor id checked) by `openGiftWrap`. Ignores anything but a kind-14 DM to us. */
+  handleOpened(opened: OpenedWrap): void {
+    const rumor = opened.rumor;
     if (rumor.kind !== DM_KIND) return; // RPC traffic (kind 21420) is the RpcServer's
-    try {
-      if (getEventHash(rumor) !== rumor.id) return;
-    } catch {
-      return;
-    }
-    if (!Array.isArray(rumor.tags) || !rumor.tags.some((t) => t[0] === 'p' && t[1] === this.o.identity.pubkey)) return;
-    if (typeof rumor.content !== 'string' || rumor.content.length > MAX_CONTENT) return;
+    if (!rumor.tags.some((t) => t[0] === 'p' && t[1] === this.o.identity.pubkey)) return;
+    if (rumor.content.length > MAX_CONTENT) return;
     void Promise.resolve(
-      this.o.onMessage({ sender: rumor.pubkey, content: rumor.content, createdAt: rumor.created_at, rumorId: rumor.id }),
+      this.o.onMessage({ sender: opened.sender, content: rumor.content, createdAt: rumor.created_at, rumorId: rumor.id }),
     ).catch((e: unknown) => this.log.error('dm.handler_failed', { error: errorText(e) }));
   }
 

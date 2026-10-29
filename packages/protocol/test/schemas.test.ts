@@ -62,6 +62,9 @@ describe('request schemas', () => {
     'tx.broadcast': { txHex: RAW_TX },
     'fees.estimate': { targets: [1, 6] },
     'recovery.access': { approval: accessApproval },
+    'guardian.lock': {},
+    'wallet.retire': { approval },
+    'hardware.confirm': { hardwareAuth, hardwareAuthProof: pairParams.hardwareAuthProof },
   };
 
   it('has a sample for every method', () => {
@@ -127,6 +130,25 @@ describe('methods', () => {
     expect(ok('policy.update', { policy })).toBe(true);
     expect(ok('policy.update', { policy: { ...policy, perTxLimitSats: 1000 } })).toBe(false);
     expect(ok('policy.update', { policy: { ...policy, allowlist: ['bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq'] } })).toBe(false);
+  });
+
+  it('pair may name the wallet it replaces (moving a wallet to a new guardian)', () => {
+    expect(ok('pair', { ...pairParams, replacesWalletId: WALLET_ID })).toBe(true);
+    expect(ok('pair', { ...pairParams, replacesWalletId: 'not-a-wallet-id' })).toBe(false);
+  });
+
+  it('guardian.lock takes nothing; wallet.retire requires a hardware approval; hardware.confirm a key and its proof', () => {
+    expect(ok('guardian.lock', {})).toBe(true);
+    expect(ok('guardian.lock', { reason: 'stolen' })).toBe(false);
+    expect(methods['guardian.lock'].result.safeParse({ state: 'locked' }).success).toBe(true);
+    expect(methods['guardian.lock'].result.safeParse({ state: 'unlocked' }).success).toBe(false);
+    expect(ok('wallet.retire', { approval })).toBe(true);
+    expect(ok('wallet.retire', {})).toBe(false);
+    expect(ok('wallet.retire', { approval: { ...approval, sequence: 0 } })).toBe(false);
+    expect(methods['wallet.retire'].result.safeParse({ walletId: WALLET_ID, retiredAt: 1_900_000_000 }).success).toBe(true);
+    expect(ok('hardware.confirm', { hardwareAuth })).toBe(false);
+    expect(ok('hardware.confirm', { hardwareAuth: { ...hardwareAuth, pubkey: 'ab'.repeat(32) }, hardwareAuthProof: pairParams.hardwareAuthProof })).toBe(false);
+    expect(methods['hardware.confirm'].result.safeParse({ walletId: WALLET_ID, hardwareAuth, nextHardwareSequence: 3 }).success).toBe(true);
   });
 
   it('results carry the engine-shaped recovery and the contested flag', () => {
@@ -301,12 +323,18 @@ describe('responses and alerts', () => {
       { type: 'recovery_cancelled', recoveryId: 'rec-1', cancelledBy: 'hardware', contested: true, at },
       { type: 'recovery_completed', recoveryId: 'rec-1', txid: 'ab'.repeat(32), at },
       { type: 'guardian_locked', reason: 'restart', at },
+      { type: 'guardian_locked', reason: 'remote', at },
+      { type: 'wallet_adopted', walletId: WALLET_ID, previousWalletId: 'fedcba9876543210', recoveryId: 'rec-1', hardwareConfirmRequired: true, at },
+      { type: 'wallet_retired', walletId: WALLET_ID, reason: 'recovered', successorWalletId: 'fedcba9876543210', at },
+      { type: 'wallet_retired', walletId: WALLET_ID, reason: 'reset', at },
     ];
     for (const a of alerts) {
       expect(Alert.safeParse(a).success, a.type).toBe(true);
       expect(NotificationSchema.safeParse({ id, method: 'alert', params: a }).success).toBe(true);
     }
     expect(Alert.safeParse({ type: 'something_else', at }).success).toBe(false);
+    expect(Alert.safeParse({ type: 'guardian_locked', reason: 'bored', at }).success).toBe(false);
+    expect(Alert.safeParse({ type: 'wallet_retired', walletId: WALLET_ID, reason: 'stolen', at }).success).toBe(false);
     expect(Alert.safeParse({ type: 'daily_reminder', ...info, daysLeft: 6, at }).success).toBe(false); // renamed to recovery_reminder
   });
 
@@ -337,6 +365,8 @@ describe('error codes', () => {
     expect(ErrorCode.BroadcastRejected).toBe(1601);
     expect(ErrorCode.ForeignTransaction).toBe(1602);
     expect(ErrorCode.TxTooLarge).toBe(1603);
+    expect(ErrorCode.WalletRetired).toBe(1004);
+    expect(ErrorCode.HardwareAuthUnconfirmed).toBe(1209);
   });
 
   it('RpcError serialises to a wire error object', () => {
@@ -398,6 +428,7 @@ describe('approval messages', () => {
       `Trikey cancel-recovery v1 wallet=${WALLET_ID} seq=4 recovery=12-abcdefabcdef expires=2030-03-17T17:46:40Z`,
     );
     expect(approvalMessage({ action: 'resume-phone' }, ctx)).toBe(`Trikey resume-phone v1 wallet=${WALLET_ID} seq=4 expires=2030-03-17T17:46:40Z`);
+    expect(approvalMessage({ action: 'retire-wallet' }, ctx)).toBe(`Trikey retire-wallet v1 wallet=${WALLET_ID} seq=4 expires=2030-03-17T17:46:40Z`);
   });
 
   it('formats the recovery access text, bound to both nostr keys', () => {

@@ -23,6 +23,10 @@ export type GuardianRefusal = { message: string } & (
   | { kind: 'sequence_too_far' }
   | { kind: 'approval_expiry_too_far' }
   | { kind: 'nothing_to_resume' }
+  /** The guardian retired this wallet (after a recovery, or `wallet.retire`): it co-signs nothing for it. */
+  | { kind: 'wallet_retired'; walletId?: string }
+  /** The guardian took over a recovered wallet and waits for the hardware wallet to confirm it (`hardware.confirm`). */
+  | { kind: 'hardware_confirm_required' }
   | { kind: 'recovery_not_found' }
   | { kind: 'recovery_not_active' }
   /** Another engine rule (`reason` is the engine's refusal reason, e.g. `sweep_fee_exceeds_cap`). */
@@ -88,6 +92,10 @@ export function refusalFromError(e: unknown): GuardianRefusal | undefined {
       return { kind: 'approval_expiry_too_far', message };
     case ErrorCode.NothingToResume:
       return { kind: 'nothing_to_resume', message };
+    case ErrorCode.WalletRetired:
+      return { kind: 'wallet_retired', walletId: str(data['walletId']), message };
+    case ErrorCode.HardwareAuthUnconfirmed:
+      return { kind: 'hardware_confirm_required', message };
     case ErrorCode.RecoveryNotFound:
       return { kind: 'recovery_not_found', message };
     case ErrorCode.RecoveryNotActive:

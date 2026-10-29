@@ -51,7 +51,7 @@ describe('registration', () => {
   it('registers once and exposes the wallet id and rules', async () => {
     const ctx = await setup();
     expect(ctx.engine.status()).toMatchObject({ registered: true, walletId: ctx.walletId, network: 'regtest', phoneSpending: 'enabled' });
-    expect(ctx.engine.registration()!.hardwareAuth.path).toBe(AUTH_PATH);
+    expect(ctx.engine.registration()!.hardwareAuth!.path).toBe(AUTH_PATH);
     expect(await ctx.engine.register(await input())).toMatchObject({ ok: false, refusal: { reason: 'already_registered' } });
   });
 

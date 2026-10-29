@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Clock, LayoutGrid, List, Menu, QrCode, Shield, UserPlus, X } from 'lucide-react';
+import { Clock, LayoutGrid, List, Menu, QrCode, Shield, Smartphone, UserPlus, X } from 'lucide-react';
 import { usingMockApi } from '@/api';
 import { useGuardian } from '@/components/guardian-provider';
 import { Logo } from '@/components/logo';
@@ -23,6 +23,7 @@ function useNavItems(): NavItem[] {
     { to: '/activity', label: 'Activity', Icon: List },
     { to: '/rules', label: 'Rules', Icon: Shield },
     { to: '/pair', label: 'Pair a phone', Icon: QrCode },
+    { to: '/recover-phone', label: 'Recover on a new phone', Icon: Smartphone },
     { to: '/host', label: 'Host for someone', Icon: UserPlus },
   );
   return items;

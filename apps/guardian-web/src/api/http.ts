@@ -6,6 +6,7 @@ import type {
   HostingOverview,
   PairedPhone,
   PairingSession,
+  RecoveryCode,
   RecoveryInProgress,
   Rules,
   SetupPreflight,
@@ -81,6 +82,9 @@ export function createHttpApi(base = ''): GuardianApi {
       const res = await request<{ recovery: RecoveryInProgress | null }>('GET', '/recovery');
       return res.recovery;
     },
+
+    getRecoveryCode: () => request<RecoveryCode>('GET', '/recovery-code'),
+    resetGuardian: (input) => request<GuardianStatus>('POST', '/reset', input),
 
     startPairing: () => request<PairingSession>('POST', '/pairing'),
     getPairingSession: (id) => request<PairingSession>('GET', `/pairing/${encodeURIComponent(id)}`),
