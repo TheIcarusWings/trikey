@@ -10,6 +10,7 @@ import {
   DEFAULT_SYNC_HISTORY,
   ErrorCode,
   MAX_SYNC_UTXOS,
+  MAX_TX_HEX_LENGTH,
   RpcError,
   recoveryAccessMessage,
   type HandlerContext,
@@ -58,11 +59,13 @@ function runningRecovery(g: Guardian, id: string): RecoveryRecord {
   throw new RpcError(known ? ErrorCode.RecoveryNotActive : ErrorCode.RecoveryNotFound);
 }
 
-/** The paired wallet, for the chain methods. */
+/** The paired wallet, for the chain methods (parsed once per descriptor; the chain service caches by wallet object). */
+let walletCache: { descriptor: string; wallet: MultisigWallet } | undefined;
 function pairedWallet(g: Guardian): MultisigWallet {
   const reg = g.engine.registration();
   if (!reg) throw refusalError({ reason: 'not_registered' });
-  return MultisigWallet.fromDescriptor(reg.descriptor, getNetwork(reg.network));
+  if (walletCache?.descriptor !== reg.descriptor) walletCache = { descriptor: reg.descriptor, wallet: MultisigWallet.fromDescriptor(reg.descriptor, getNetwork(reg.network)) };
+  return walletCache.wallet;
 }
 
 /** Chain failures as protocol errors: unknown tx 1600, node refusal 1601, no chain data 1501. */
@@ -307,7 +310,10 @@ export function buildHandlers(g: Guardian): Handlers {
     'tx.get': (params) =>
       chainCall(g, 'tx.get', async () => {
         pairedWallet(g);
-        return { txHex: await g.chain.getTransaction(params.txid) };
+        const txHex = await g.chain.getTransaction(params.txid, { witness: params.witness });
+        if (txHex.length > MAX_TX_HEX_LENGTH)
+          throw new RpcError(ErrorCode.TxTooLarge, params.witness === false ? undefined : 'The transaction is too large to send; ask for it without witness data.');
+        return { txHex };
       }),
 
     'tx.broadcast': (params) =>

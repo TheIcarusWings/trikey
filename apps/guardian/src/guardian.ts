@@ -355,6 +355,12 @@ export class Guardian {
     return false;
   }
 
+  /** Phones holding an unexpired `recovery.access` grant. */
+  recoveryPeers(): string[] {
+    const now = this.clock.now();
+    return this.service.get().recoveryPeers.filter((p) => p.until > now).map((p) => p.pubkey);
+  }
+
   /** True while `pubkey` holds an unexpired `recovery.access` grant. */
   hasRecoveryAccess(pubkey: string): boolean {
     const now = this.clock.now();

@@ -134,6 +134,11 @@ describe('chain methods, end to end', { timeout: 30_000 }, () => {
     const { txHex, txid } = finalizePsbt(signed);
     expect(await phone.call('tx.broadcast', { txHex })).toEqual({ txid });
     expect(rig.electrs.broadcasts).toContain(txHex);
+    // Without witness data: the same txid, much shorter.
+    const stripped = (await phone.call('tx.get', { txid, witness: false })).txHex;
+    expect(stripped.length).toBeLessThan(txHex.length);
+    expect(btc.Transaction.fromRaw(hex.decode(stripped), { allowUnknownInputs: true }).id).toBe(txid);
+    expect((await phone.call('tx.get', { txid })).txHex).toBe(txHex);
 
     const s = await phone.call('wallet.sync', {});
     expect(s.nextChangeIndex).toBe(1);

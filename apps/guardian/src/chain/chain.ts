@@ -151,11 +151,15 @@ export function parseRawTx(txHex: string): { inputs: { txid: string; vout: numbe
   };
 }
 
+/** The serialization without witness data (same txid; what `nonWitnessUtxo` needs). */
+export function stripWitness(txHex: string): string {
+  const raw = decodeRawTx(txHex);
+  return hex.encode(btc.RawTx.encode({ ...raw, segwitFlag: false, witnesses: undefined }));
+}
+
 /** The txid of a raw transaction (hash of the serialization without witnesses). */
 export function txidOf(txHex: string): string {
-  const raw = decodeRawTx(txHex);
-  const stripped = btc.RawTx.encode({ ...raw, segwitFlag: false, witnesses: undefined });
-  return hex.encode(sha256(sha256(stripped)).reverse());
+  return hex.encode(sha256(sha256(hex.decode(stripWitness(txHex)))).reverse());
 }
 
 interface ElectrumUnspent {
@@ -323,7 +327,12 @@ export class ChainService {
    * confused or lying server cannot hand the phone a different previous
    * transaction. Throws `TxNotFoundError` if Electrs does not know it.
    */
-  async getTransaction(txid: string): Promise<string> {
+  async getTransaction(txid: string, opts: { witness?: boolean } = {}): Promise<string> {
+    const full = await this.fullTransaction(txid);
+    return opts.witness === false ? stripWitness(full) : full;
+  }
+
+  private async fullTransaction(txid: string): Promise<string> {
     const id = txid.toLowerCase();
     const cached = this.txCache.get(id);
     if (cached) return cached;
@@ -331,7 +340,9 @@ export class ChainService {
     try {
       raw = await this.client().request('blockchain.transaction.get', [id]);
     } catch (e) {
-      if (e instanceof ElectrumError) throw new TxNotFoundError(id);
+      // Only "no such transaction" means not found; any other server error is the server's trouble.
+      if (e instanceof ElectrumError && /no such|not found|unknown transaction|missing/i.test(e.message)) throw new TxNotFoundError(id);
+      if (e instanceof ElectrumError) throw new ChainUnavailableError(`Electrs could not serve ${id}: ${e.message}`);
       throw e;
     }
     if (typeof raw !== 'string' || !/^(?:[0-9a-fA-F]{2})+$/.test(raw)) throw new ChainUnavailableError('Electrs returned a malformed transaction');
@@ -365,7 +376,8 @@ export class ChainService {
     const tip = await this.tip();
     const scan = await this.scanWallet(wallet);
     const utxos = await this.unspentOf(scan);
-    const confirmations = (height: number) => (height > 0 && height <= tip.height ? tip.height - height + 1 : 0);
+    // A coin at a height past our (slightly stale) tip is confirmed all the same.
+    const confirmations = (height: number) => (height > 0 ? Math.max(1, tip.height - height + 1) : 0);
 
     let confirmedSats = 0n;
     let unconfirmedSats = 0n;
@@ -390,8 +402,16 @@ export class ChainService {
     const scripts = this.walletScripts(wallet, scan);
     const isOurs = (script: Uint8Array) => scripts.has(hex.encode(script));
 
+    // Fetch every needed transaction concurrently (in batches), then compute from the cache.
+    const selected = ordered.slice(0, limit);
+    await this.prefetch(selected.map(([txid]) => txid));
+    const prevIds = new Set<string>();
+    for (const [txid] of selected) for (const inp of parseRawTx(await this.getTransaction(txid)).inputs) if (heights.has(inp.txid)) prevIds.add(inp.txid);
+    await this.prefetch([...prevIds]);
+    await Promise.all([...new Set(selected.map(([, h]) => h).filter((h) => h > 0))].map((h) => this.blockTime(h)));
+
     const history: WalletHistoryEntry[] = [];
-    for (const [txid, height] of ordered.slice(0, limit)) {
+    for (const [txid, height] of selected) {
       const tx = parseRawTx(await this.getTransaction(txid));
       let received = 0n;
       let totalOut = 0n;
@@ -434,6 +454,10 @@ export class ChainService {
       nextChangeIndex: scan.chains[1].nextIndex,
       gapLimit: scan.gapLimit,
     };
+  }
+
+  private async prefetch(txids: string[], batch = 16): Promise<void> {
+    for (let i = 0; i < txids.length; i += batch) await Promise.all(txids.slice(i, i + batch).map((t) => this.fullTransaction(t)));
   }
 
   /**

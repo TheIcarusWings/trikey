@@ -159,6 +159,9 @@ export class Alerter {
     return this.running;
   }
 
+  /** `${alertId}:${pubkey}` already sent to a phone with recovery access (not tracked by the engine). */
+  private readonly sentToPeers = new Set<string>();
+
   private async once(): Promise<void> {
     const g = this.g;
     const due = g.engine.dueAlerts();
@@ -166,6 +169,16 @@ export class Alerter {
     const phone = g.engine.registration()?.appNostrPubkey;
     for (const a of due) {
       const rec = g.records.find((r) => r.id === a.recoveryId);
+      // A phone recovering the wallet with the hardware wallet (recovery.access) gets the protocol alert too, best effort.
+      for (const peer of g.recoveryPeers()) {
+        const key = `${a.id}:${peer}`;
+        if (peer === phone || this.sentToPeers.has(key)) continue;
+        try {
+          if ((await g.rpc.notify(peer, alertToWire(g, a, rec))).some((o) => o.ok)) this.sentToPeers.add(key);
+        } catch (e) {
+          g.log.warn('alert.peer_failed', { alertId: a.id, error: errorText(e) });
+        }
+      }
       const delivered: string[] = [];
       for (const to of a.recipients) {
         try {
