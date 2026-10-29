@@ -116,6 +116,8 @@ export interface RealServiceDeps {
   yieldToUi?: () => Promise<void>;
   /** Facts for Settings > Developer. */
   info?: () => string[];
+  /** More Settings > Developer tools (the simulator's device swap). */
+  devTools?: Pick<NonNullable<WalletService['dev']>, 'useNewSimulatedDevice'>;
 }
 
 export interface RealWalletService extends WalletService {
@@ -215,6 +217,7 @@ class Service implements RealWalletService {
         await self.forgetWallet();
       },
       info: () => [...(deps.info?.() ?? []), ...(self.w ? [`Wallet id ${self.w.state.wallet?.walletId ?? 'not paired yet'}`] : [])],
+      ...deps.devTools,
     };
   }
 

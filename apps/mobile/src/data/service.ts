@@ -166,6 +166,8 @@ export interface WalletService {
     simulateRecoveryFromElsewhere?(): void;
     /** The demo's recovery ends now: the guardian takes the new wallet over. */
     finishRecovery?(): void;
+    /** Simulator: swaps the simulated hardware wallet for a new one (to try "Lost my hardware wallet"). Returns its fingerprint. */
+    useNewSimulatedDevice?(): string;
     restartOnboarding?(): void;
     /** Removes the wallet's keys and data from this phone (this mode and network only). */
     forgetWallet?(): Promise<void>;

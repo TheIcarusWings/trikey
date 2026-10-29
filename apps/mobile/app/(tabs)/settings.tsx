@@ -211,6 +211,7 @@ function DeveloperSection() {
             }}
           />
         ) : null}
+        {dev?.useNewSimulatedDevice && !rk ? <NewDeviceButton onSwap={dev.useNewSimulatedDevice} /> : null}
         {dev?.restartOnboarding ? (
           <AppButton
             title="Replay onboarding"
@@ -254,5 +255,20 @@ function DeveloperSection() {
         ) : null}
       </View>
     </>
+  );
+}
+
+/** Simulator: a new simulated hardware wallet, so "Lost my hardware wallet" has a replacement to connect. */
+function NewDeviceButton({ onSwap }: { onSwap: () => string }) {
+  const [fingerprint, setFingerprint] = useState<string | null>(null);
+  return (
+    <View className="gap-2">
+      <AppButton title="Use a new simulated hardware wallet" variant="outline" onPress={() => setFingerprint(onSwap())} />
+      {fingerprint ? (
+        <Text className="text-muted-foreground text-[13px] leading-[18px]">
+          The next hardware wallet the app connects is a new one ({fingerprint}). The old one is "lost".
+        </Text>
+      ) : null}
+    </View>
   );
 }

@@ -29,6 +29,19 @@ It prints the relay URLs, the passphrase, and a pairing code, then takes command
 everything when it stops, so remove the simulated wallet in the app (Developer) after restarting it. Its relays
 listen on `127.0.0.1` only: for a phone, an Android emulator, or a real chain, use the full setup below.
 
+For the recovery and replacement flows:
+
+| Command | What it is for |
+|---|---|
+| `pairing 2` | A second guardian on the same chain (started on first use): paste its code in Settings, Guardian, Replace guardian. |
+| `recovery-code [2]` | The guardian's "Recover on a new phone" code, for the lost-phone path on a new phone. |
+| `offline` / `online` | Stop the first guardian (its relays and the chain keep running), or start it again: Replace guardian with the old box gone. |
+| `skip <days>` | Move the guardians' clock ahead and mine past it, so a recovery's wait ends. Move the app's clock by the same amount first (a browser test can; a phone cannot), or the guardian's messages look like they come from the future and are dropped. |
+| `status [2]`, `log [2] [n]` | What the guardian holds now, and its last log lines. |
+
+In the app, Settings, Developer, "Use a new simulated hardware wallet" swaps in a fresh simulated device, so "Lost
+my hardware wallet" has a replacement to connect.
+
 The rest of this page is that full setup, with a real bitcoind and Electrs.
 
 ## 0. What the phone must be able to reach
