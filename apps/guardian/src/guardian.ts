@@ -276,7 +276,12 @@ export class Guardian {
   }
 
   private async startNostr(): Promise<void> {
-    if (this.rpc || !this.identity) return;
+    if (this.rpc) return;
+    if (!this.identity) {
+      // Not re-created on purpose: a new key would silently cut the paired phone off.
+      this.log.error('nostr.identity_missing', { file: FILES.identity });
+      return;
+    }
     const relays = this.service.get().relays;
     if (!relays.length) {
       this.log.error('nostr.no_relays');
