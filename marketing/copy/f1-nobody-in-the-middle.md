@@ -2,7 +2,7 @@
 
 Files: `trikey-f1-nobody-in-the-middle-{916,11,169}.mp4` (music) and `-vo.mp4` (voiceover + music).
 Best on X: 16:9 (it's over 45 s, so pin it or post as the main launch video). Best on nostr: 9:16 or 1:1.
-The 9:16 cut is currently a centre crop of the 1080p footage, so it is softer than the others.
+The 9:16 cut uses native vertical footage animated from each shot's first frame, so it matches the 16:9 cut.
 
 ## X post
 

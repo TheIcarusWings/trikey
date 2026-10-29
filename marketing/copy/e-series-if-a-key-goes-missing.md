@@ -1,7 +1,8 @@
 # Series · "If a key goes missing"
 
 Three short films, one per key. Each file comes in 9:16, 1:1 and 16:9, with a music-only and a `-vo`
-cut. The 9:16 cuts are centre crops of the 1080p footage, so they are softer than the others.
+cut. The 9:16 cuts use native vertical footage (Kling image-to-video from each shot's first frame), so they
+match the 16:9 cut shot for shot.
 Post them as a thread on X (one per day works too), and as three notes on nostr.
 
 | Episode | File stem | Length |

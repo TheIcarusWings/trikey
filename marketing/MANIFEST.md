@@ -5,30 +5,30 @@ All are H.264 High + AAC 48 kHz, 30 fps, captions burned in.
 
 | File | Ratio | Length | Size | Audio | SHA-256 (first 16) |
 |---|---|---|---|---|---|
-| `trikey-e1-phone-11-vo.mp4` | 1:1 | 39.5 s | 8.6 MB | voiceover + music | `839b989bfb66b684` |
-| `trikey-e1-phone-11.mp4` | 1:1 | 39.5 s | 8.6 MB | music only | `721f2e78edb241d8` |
-| `trikey-e1-phone-169-vo.mp4` | 16:9 | 39.5 s | 13.9 MB | voiceover + music | `f8a70cdec1070c09` |
-| `trikey-e1-phone-169.mp4` | 16:9 | 39.5 s | 13.9 MB | music only | `8a40e33d88329921` |
-| `trikey-e1-phone-916-vo.mp4` | 9:16 | 39.5 s | 14.0 MB | voiceover + music | `4b61cd3788bdd56f` |
-| `trikey-e1-phone-916.mp4` | 9:16 | 39.5 s | 14.0 MB | music only | `fac7d72a3ec01f11` |
+| `trikey-e1-phone-11-vo.mp4` | 1:1 | 39.5 s | 8.6 MB | voiceover + music | `c772fb3561efb066` |
+| `trikey-e1-phone-11.mp4` | 1:1 | 39.5 s | 8.6 MB | music only | `397a063487fa3af5` |
+| `trikey-e1-phone-169-vo.mp4` | 16:9 | 39.5 s | 13.9 MB | voiceover + music | `49ad97e2c3985157` |
+| `trikey-e1-phone-169.mp4` | 16:9 | 39.5 s | 13.9 MB | music only | `d83e64a0bd5aa531` |
+| `trikey-e1-phone-916-vo.mp4` | 9:16 | 39.5 s | 13.4 MB | voiceover + music | `813f3f8c403d7f8c` |
+| `trikey-e1-phone-916.mp4` | 9:16 | 39.5 s | 13.4 MB | music only | `df31c7372957b705` |
 | `trikey-e2-hardware-wallet-11-vo.mp4` | 1:1 | 35.0 s | 9.4 MB | voiceover + music | `c95969d041da7c2b` |
 | `trikey-e2-hardware-wallet-11.mp4` | 1:1 | 35.0 s | 9.4 MB | music only | `bf875a8c5d39d65d` |
 | `trikey-e2-hardware-wallet-169-vo.mp4` | 16:9 | 35.0 s | 15.1 MB | voiceover + music | `70b74b48dafdeb77` |
 | `trikey-e2-hardware-wallet-169.mp4` | 16:9 | 35.0 s | 15.1 MB | music only | `fbcbe2b96c9a714b` |
-| `trikey-e2-hardware-wallet-916-vo.mp4` | 9:16 | 35.0 s | 15.8 MB | voiceover + music | `17bcb62769e10cf1` |
-| `trikey-e2-hardware-wallet-916.mp4` | 9:16 | 35.0 s | 15.8 MB | music only | `61565cd82a1000bb` |
+| `trikey-e2-hardware-wallet-916-vo.mp4` | 9:16 | 35.0 s | 14.9 MB | voiceover + music | `b26ded759b12242c` |
+| `trikey-e2-hardware-wallet-916.mp4` | 9:16 | 35.0 s | 14.9 MB | music only | `c8c2e90dcc5c9283` |
 | `trikey-e3-home-server-11-vo.mp4` | 1:1 | 31.0 s | 8.1 MB | voiceover + music | `35f24d1a58bd4b01` |
 | `trikey-e3-home-server-11.mp4` | 1:1 | 31.0 s | 8.1 MB | music only | `c92b249d2020bde4` |
 | `trikey-e3-home-server-169-vo.mp4` | 16:9 | 31.0 s | 13.1 MB | voiceover + music | `d903baa4490b94b8` |
 | `trikey-e3-home-server-169.mp4` | 16:9 | 31.0 s | 13.1 MB | music only | `3a7a07619b23181f` |
-| `trikey-e3-home-server-916-vo.mp4` | 9:16 | 31.0 s | 13.3 MB | voiceover + music | `fd4455ffda3ed22a` |
-| `trikey-e3-home-server-916.mp4` | 9:16 | 31.0 s | 13.3 MB | music only | `d46acdd285d29f5e` |
-| `trikey-f1-nobody-in-the-middle-11-vo.mp4` | 1:1 | 73.6 s | 19.9 MB | voiceover + music | `395a006721a10ec4` |
-| `trikey-f1-nobody-in-the-middle-11.mp4` | 1:1 | 73.6 s | 19.9 MB | music only | `6deab89a8fac5df1` |
-| `trikey-f1-nobody-in-the-middle-169-vo.mp4` | 16:9 | 73.6 s | 32.1 MB | voiceover + music | `82e0e49612037dc6` |
-| `trikey-f1-nobody-in-the-middle-169.mp4` | 16:9 | 73.6 s | 32.1 MB | music only | `3a1297439395c6bb` |
-| `trikey-f1-nobody-in-the-middle-916-vo.mp4` | 9:16 | 73.6 s | 32.6 MB | voiceover + music | `927ce6842fa744d2` |
-| `trikey-f1-nobody-in-the-middle-916.mp4` | 9:16 | 73.6 s | 32.6 MB | music only | `2e409809576207ef` |
+| `trikey-e3-home-server-916-vo.mp4` | 9:16 | 31.0 s | 12.8 MB | voiceover + music | `12f54d29d776e3aa` |
+| `trikey-e3-home-server-916.mp4` | 9:16 | 31.0 s | 12.8 MB | music only | `7f126f543c04e671` |
+| `trikey-f1-nobody-in-the-middle-11-vo.mp4` | 1:1 | 73.6 s | 19.9 MB | voiceover + music | `7eba5ebd2d85ec20` |
+| `trikey-f1-nobody-in-the-middle-11.mp4` | 1:1 | 73.6 s | 19.9 MB | music only | `da1daea67a1b4ddc` |
+| `trikey-f1-nobody-in-the-middle-169-vo.mp4` | 16:9 | 73.6 s | 32.1 MB | voiceover + music | `4cf23126fe7b0da2` |
+| `trikey-f1-nobody-in-the-middle-169.mp4` | 16:9 | 73.6 s | 32.1 MB | music only | `8346cccff186412c` |
+| `trikey-f1-nobody-in-the-middle-916-vo.mp4` | 9:16 | 73.6 s | 32.0 MB | voiceover + music | `8eb018f0b170486c` |
+| `trikey-f1-nobody-in-the-middle-916.mp4` | 9:16 | 73.6 s | 32.0 MB | music only | `059ee3cc2e830120` |
 | `trikey-v1-three-keys-11-vo.mp4` | 1:1 | 35.4 s | 1.6 MB | voiceover + music | `1b97d9578aa8493c` |
 | `trikey-v1-three-keys-11.mp4` | 1:1 | 35.4 s | 1.6 MB | music only | `6f26cea8a4370f9c` |
 | `trikey-v1-three-keys-169-vo.mp4` | 16:9 | 35.4 s | 1.8 MB | voiceover + music | `b21604ee702fef67` |
