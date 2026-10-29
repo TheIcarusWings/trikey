@@ -2,6 +2,7 @@ import * as btc from '@scure/btc-signer';
 import { hex } from '@scure/base';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
+import { ripemd160 } from '@noble/hashes/legacy.js';
 import { Network } from './network.js';
 import {
   AccountPubkeys,
@@ -202,7 +203,15 @@ export type PsbtErrorCode =
   | 'unknown_signer'
   | 'invalid_signature'
   | 'incomplete_output'
-  | 'outputs_exceed_inputs';
+  | 'outputs_exceed_inputs'
+  /** With `helperInput`: a single-key input that is not finalized (no `finalScriptWitness`). */
+  | 'helper_not_finalized'
+  /** With `helperInput`: its final witness is not `<signature> <compressed pubkey of the script>`, or it has a scriptSig. */
+  | 'helper_invalid_witness'
+  /** With `helperInput`: its signature does not verify, or is not SIGHASH_ALL. */
+  | 'helper_invalid_signature'
+  /** With `helperInput`: more than one single-key input. */
+  | 'too_many_helper_inputs';
 
 /** Thrown by `analyzePsbt` so callers (the guardian) can map failures to typed reasons. */
 export class PsbtError extends Error {
@@ -236,8 +245,33 @@ export interface AnalyzedOutput {
   isSelf: boolean;
 }
 
+/**
+ * The one extra input `analyzePsbt` accepts with `helperInput`: a P2WPKH spend that is already
+ * finalized, with a valid SIGHASH_ALL signature by the key its script commits to, and a
+ * `nonWitnessUtxo` that matches its txid (so its amount is the real one). In Trikey it is the phone's
+ * helper coin, the only input of a silent payment that BIP 352 counts.
+ */
+export interface AnalyzedHelperInput {
+  index: number;
+  outpoint: string;
+  amount: bigint;
+  /** The P2WPKH scriptPubKey it spends. */
+  script: Uint8Array;
+  /** The compressed public key from its witness. */
+  pubkey: Uint8Array;
+}
+
+/** What `helperInput` as a function gets to decide on (before the input's signature is checked). */
+export interface HelperInputCandidate {
+  index: number;
+  outpoint: string;
+  amount: bigint;
+  script: Uint8Array;
+}
+
 export interface PsbtAnalysis {
   txid: string;
+  /** The inputs of the analyzed key set (the vault). A helper input is never among them. */
   inputs: AnalyzedInput[];
   outputs: AnalyzedOutput[];
   totalIn: bigint;
@@ -246,6 +280,8 @@ export interface PsbtAnalysis {
   fee: bigint;
   /** Value leaving the key set, fee included. This is what spend limits count. */
   outflow: bigint;
+  /** With `helperInput`, when the PSBT has one: the helper input, kept out of `inputs`. */
+  helper?: AnalyzedHelperInput;
 }
 
 function readTweaks(proprietary: [Uint8Array, Uint8Array][] | undefined, acct: AccountPubkeys): Tweaks | undefined {
@@ -280,12 +316,24 @@ export function analyzePsbt(
   psbt: Uint8Array,
   acct: AccountPubkeys,
   network: Network,
-  opts: { outputsAcct?: AccountPubkeys; requireNonWitnessUtxo?: boolean } = {},
+  opts: {
+    outputsAcct?: AccountPubkeys;
+    requireNonWitnessUtxo?: boolean;
+    /**
+     * Accept AT MOST ONE input that is not the key set's: a finalized P2WPKH spend (see
+     * `AnalyzedHelperInput`). Off by default, which refuses it like any foreign input. A function
+     * narrows which such inputs are acceptable (e.g. only scripts of a registered account); an input
+     * it refuses is a `foreign_input`. The helper input is left out of `inputs`, so callers that count
+     * or add signatures per input never see it, and is reported as `helper`.
+     */
+    helperInput?: boolean | ((candidate: HelperInputCandidate) => boolean);
+  } = {},
 ): PsbtAnalysis {
   const tx = parsePsbt(psbt);
   const inputs: AnalyzedInput[] = [];
   const seen = new Set<string>();
   let totalIn = 0n;
+  let helper: AnalyzedHelperInput | undefined;
   for (let i = 0; i < tx.inputsLength; i++) {
     const inp = tx.getInput(i);
     if (!inp.txid || inp.index === undefined) throw new PsbtError('missing_outpoint', `input ${i}: missing outpoint`, i);
@@ -308,9 +356,21 @@ export function analyzePsbt(
       throw new PsbtError('missing_non_witness_utxo', `input ${i}: missing nonWitnessUtxo`, i);
     }
     const tweaks = readTweaks(inp.proprietary, acct);
-    if (!tweaks) throw new PsbtError('missing_tweaks', `input ${i}: missing delegation tweaks`, i);
-    const d = delegatedScripts(acct, tweaks, network);
-    if (compareBytes(d.script, inp.witnessUtxo.script) !== 0) throw new PsbtError('foreign_input', `input ${i}: does not belong to wallet`, i);
+    const d = tweaks && delegatedScripts(acct, tweaks, network);
+    if (!tweaks || !d || compareBytes(d.script, inp.witnessUtxo.script) !== 0) {
+      const notOurs = tweaks
+        ? new PsbtError('foreign_input', `input ${i}: does not belong to wallet`, i)
+        : new PsbtError('missing_tweaks', `input ${i}: missing delegation tweaks`, i);
+      if (!opts.helperInput || !isP2wpkh(inp.witnessUtxo.script)) throw notOurs;
+      const candidate: HelperInputCandidate = { index: i, outpoint, amount: inp.witnessUtxo.amount, script: inp.witnessUtxo.script };
+      if (typeof opts.helperInput === 'function' && !opts.helperInput(candidate)) throw notOurs;
+      if (!inp.nonWitnessUtxo) throw new PsbtError('missing_non_witness_utxo', `input ${i}: a helper input needs its nonWitnessUtxo`, i);
+      const h = checkHelperInput(tx, i, inp, candidate);
+      if (helper) throw new PsbtError('too_many_helper_inputs', `input ${i}: at most one helper input (input ${helper.index} is one)`, i);
+      helper = h;
+      totalIn += h.amount;
+      continue;
+    }
 
     const msg = sighashAll(tx, i, d.witnessScript, inp.witnessUtxo.amount);
     const signedBy: Role[] = [];
@@ -339,5 +399,34 @@ export function analyzePsbt(
   }
   const fee = totalIn - selfOut - externalOut;
   if (fee < 0n) throw new PsbtError('outputs_exceed_inputs', 'outputs exceed inputs');
-  return { txid: tx.id, inputs, outputs, totalIn, selfOut, externalOut, fee, outflow: externalOut + fee };
+  return { txid: tx.id, inputs, outputs, totalIn, selfOut, externalOut, fee, outflow: externalOut + fee, ...(helper ? { helper } : {}) };
+}
+
+const isP2wpkh = (s: Uint8Array) => s.length === 22 && s[0] === 0x00 && s[1] === 0x14;
+const hash160 = (b: Uint8Array) => ripemd160(sha256(b));
+
+/**
+ * A finalized P2WPKH input: no scriptSig, the witness `<sig> <pubkey>` with a compressed pubkey whose
+ * HASH160 is the script's program, and the signature a valid low-S DER signature under SIGHASH_ALL
+ * over the BIP 143 digest of THIS transaction (so the helper's owner committed to every input and
+ * output, and nothing can change after the guardian signs).
+ */
+function checkHelperInput(
+  tx: btc.Transaction,
+  i: number,
+  inp: ReturnType<btc.Transaction['getInput']>,
+  c: HelperInputCandidate,
+): AnalyzedHelperInput {
+  const witness = inp.finalScriptWitness;
+  if (!witness?.length) throw new PsbtError('helper_not_finalized', `input ${i}: the helper input must be signed and finalized`, i);
+  if (inp.finalScriptSig?.length) throw new PsbtError('helper_invalid_witness', `input ${i}: a P2WPKH spend has an empty scriptSig`, i);
+  const [sig, pubkey] = witness;
+  if (witness.length !== 2 || !sig || !pubkey || pubkey.length !== 33 || (pubkey[0] !== 2 && pubkey[0] !== 3))
+    throw new PsbtError('helper_invalid_witness', `input ${i}: the helper witness must be <signature> <compressed pubkey>`, i);
+  const program = c.script.slice(2);
+  if (compareBytes(hash160(pubkey), program) !== 0) throw new PsbtError('helper_invalid_witness', `input ${i}: the helper witness key is not the script's key`, i);
+  const scriptCode = btc.OutScript.encode({ type: 'pkh', hash: program });
+  const msg = tx.preimageWitnessV0(i, scriptCode, btc.SigHash.ALL, c.amount);
+  if (!verifyEcdsa(sig, msg, pubkey)) throw new PsbtError('helper_invalid_signature', `input ${i}: the helper signature is invalid or not SIGHASH_ALL`, i);
+  return { index: i, outpoint: c.outpoint, amount: c.amount, script: c.script, pubkey };
 }
