@@ -26,6 +26,32 @@ npm test
 
 [DESIGN.md](DESIGN.md) explains how it all fits together.
 
+## Consensus checks
+
+Our own code analyses the transactions it signs, so a bug shared by the signer
+and the checker would go unnoticed. The `packages/core` tests therefore also run
+every signed transaction through Bitcoin Core's script interpreter
+(`tools/consensus-verify`, built on libbitcoinconsensus).
+
+Build the verifier once (needs Rust and a C++ compiler):
+
+```sh
+npm run build:verifier
+```
+
+The tests find it at `tools/consensus-verify/target/release/consensus-verify`, or
+at the path in `TRIKEY_CONSENSUS_VERIFY`. Without it, the consensus tests are
+skipped locally with a message saying so. In CI (`CI` set) they fail instead, and
+the CI `test` job builds the verifier first.
+
+**A new transaction shape needs a consensus test.** If you add or change a way
+of building or signing transactions (a new sweep, a timelocked refill, another
+signer), add a case to `packages/core/test/consensus.test.ts` using the helper in
+`packages/core/test/support/consensus.ts` (importable from other packages as
+`@trikey/core/testing`), and a negative case that must fail. The verifier checks
+scripts and signatures only; rules about a whole transaction (duplicate inputs,
+values, BIP 68 maturity) need their own tests.
+
 ## Rules
 
 - **Never commit secrets.** No seeds, private keys, xprvs, API keys, signing

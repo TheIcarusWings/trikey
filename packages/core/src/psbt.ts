@@ -47,6 +47,16 @@ export function estimateVsize(inputs: number, outputScripts: Uint8Array[]): numb
   return VB_TX_OVERHEAD + inputs * VB_P2WSH_MULTISIG_INPUT + outputScripts.reduce((s, o) => s + outputVbytes(o), 0);
 }
 
+/** A coin listed twice would be counted twice and make a transaction with duplicate inputs. */
+function assertDistinctUtxos(utxos: Utxo[]) {
+  const seen = new Set<string>();
+  for (const u of utxos) {
+    const outpoint = `${u.txid}:${u.vout}`;
+    if (seen.has(outpoint)) throw new Error(`duplicate utxo: ${outpoint}`);
+    seen.add(outpoint);
+  }
+}
+
 function addWalletInput(tx: btc.Transaction, wallet: MultisigWallet, u: Utxo) {
   const d = wallet.derive(u.chain, u.index);
   tx.addInput({
@@ -76,6 +86,8 @@ export function buildSpend(opts: {
   changeIndex: number;
 }): SpendPlan {
   const { wallet, recipients, feeRate } = opts;
+  assertDistinctUtxos(opts.utxos);
+  for (const r of recipients) if (r.amount <= 0n) throw new Error(`recipient amount must be positive, got ${r.amount}`);
   const net = wallet.network.btc;
   const recipientScripts = recipients.map((r) => btc.OutScript.encode(btc.Address(net).decode(r.address)));
   const target = recipients.reduce((s, r) => s + r.amount, 0n);
@@ -119,6 +131,7 @@ export function buildSweep(opts: {
   feeRate: number;
 }): SpendPlan {
   if (!opts.utxos.length) throw new Error('nothing to sweep');
+  assertDistinctUtxos(opts.utxos);
   const dest = opts.destination.derive(0, opts.destinationIndex);
   const total = opts.utxos.reduce((s, u) => s + u.value, 0n);
   const fee = BigInt(Math.ceil(estimateVsize(opts.utxos.length, [dest.script]) * opts.feeRate));
