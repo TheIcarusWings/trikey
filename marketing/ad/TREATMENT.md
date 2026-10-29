@@ -95,7 +95,7 @@ The product story in four acts: the old choice, the idea, how it feels, what it 
 | **III** | **How it feels** | | |
 | 10 | Café: phone turned over, a thumb taps → insert `Send-Review` | **Everyday payments: just your phone and Face ID.** | 5 s |
 | 11 | Desk: the hardware wallet's button pressed, laptop glow → insert `Send-Hardware` | **Big ones: confirm on your hardware wallet.** | 4 s |
-| 12 | Quick cuts: phone left on a train, a server unplugged, a drawer found empty | **Lose one? The other two have you.** | 5 s |
+| 12 | Quick cuts: phone left on a train, a server unplugged, a drawer found empty | **Lose one? You still have the other two.** | 5 s |
 | 13 | Insert `Recover-Alert`; a friend's phone buzzes | **Anything suspicious, you and the people you trust hear about it. Daily.** | 4 s |
 | **IV** | **What it stands for** | | |
 | 14 | Blue hour, the protagonist walks across a bridge, city lights on | **No company holds a key.** | 4 s |

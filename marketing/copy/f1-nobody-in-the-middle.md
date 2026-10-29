@@ -26,7 +26,7 @@ We're building a third way. Trikey is a 2-of-3 wallet where every key is yours:
 🔐 your hardware wallet, for big payments and changing the rules
 🏠 a guardian on your own Umbrel or Start9, co-signing everyday payments under a daily limit
 
-Any two move your money. Lose one and the other two have you. Anything suspicious, you and the people you trust get an alert every day and can stop it.
+Any two move your money. Lose one and you still have the other two. Anything suspicious, you and the people you trust get an alert every day and can stop it.
 
 No company holds a key. No server but yours. Phone and guardian talk over end-to-end encrypted nostr relays, outbound only.
 
@@ -40,7 +40,7 @@ Code: https://github.com/TheIcarusWings/trikey
 ## Alt text
 
 ```
-A short film with white captions. Night: a glass office tower full of lit windows, "For years, holding bitcoin meant a choice." An empty corporate lobby: "Hand your keys to a company…" A handwritten seed backup, a numbered list of words, under a desk lamp: "…or carry the whole weight alone." The card blows off the desk: "One key. One mistake. Gone." Three soft lights appear on black: "What if you held three keys?" A hand picks up a phone from a bedside table, "One in your pocket"; a drawer opens on a small black hardware wallet, "One in a drawer"; a small grey box glows on a bookshelf, "One on a shelf at home." The lights join into the Trikey triangle: "Any two move your money." A hand taps a phone in a café, with the app's payment screen: "Everyday payments: just your phone and Face ID." A thumb presses the hardware wallet: "Big ones: confirm on your hardware wallet." Quick cuts of a phone left on a train, a server unplugged and an empty drawer: "Lose one? The other two have you." A phone buzzes on a café table, with the app's recovery alert: "Anything suspicious, you and the people you trust hear about it. Daily." At blue hour a person in a green coat walks across a bridge, "No company holds a key"; a lit window with the grey box inside, "No server but yours"; a lone figure facing the city skyline, "No one to ask permission." End card on light grey: Trikey logo, "Your keys. Your server. Your bitcoin.", "Coming soon, pre-alpha, not audited", "Open source (MIT)", trikey.app and github.com/TheIcarusWings/trikey.
+A short film with white captions. Night: a glass office tower full of lit windows, "For years, holding bitcoin meant a choice." An empty corporate lobby: "Hand your keys to a company…" A handwritten seed backup, a numbered list of words, under a desk lamp: "…or carry the whole weight alone." The card blows off the desk: "One key. One mistake. Gone." Three soft lights appear on black: "What if you held three keys?" A hand picks up a phone from a bedside table, "One in your pocket"; a drawer opens on a small black hardware wallet, "One in a drawer"; a small grey box glows on a bookshelf, "One on a shelf at home." The lights join into the Trikey triangle: "Any two move your money." A hand taps a phone in a café, with the app's payment screen: "Everyday payments: just your phone and Face ID." A thumb presses the hardware wallet: "Big ones: confirm on your hardware wallet." Quick cuts of a phone left on a train, a server unplugged and an empty drawer: "Lose one? You still have the other two." A phone buzzes on a café table, with the app's recovery alert: "Anything suspicious, you and the people you trust hear about it. Daily." At blue hour a person in a green coat walks across a bridge, "No company holds a key"; a lit window with the grey box inside, "No server but yours"; a lone figure facing the city skyline, "No one to ask permission." End card on light grey: Trikey logo, "Your keys. Your server. Your bitcoin.", "Coming soon, pre-alpha, not audited", "Open source (MIT)", trikey.app and github.com/TheIcarusWings/trikey.
 ```
 
 ## Voiceover script (the -vo cut)
@@ -58,7 +58,7 @@ A short film with white captions. Night: a glass office tower full of lit window
 | 0:28 | Any two move your money. |
 | 0:31 | Everyday payments? Just your phone, and Face ID. |
 | 0:37 | Big ones? Confirm on your hardware wallet. |
-| 0:41 | Lose one? The other two have you. |
+| 0:41 | Lose one? You still have the other two. |
 | 0:46 | Anything suspicious, you and the people you trust hear about it. Every day. |
 | 0:53 | No company holds a key. |
 | 0:57 | No server but yours. |
