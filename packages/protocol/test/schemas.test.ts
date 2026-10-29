@@ -26,6 +26,9 @@ import {
   recoveryAccessMessage,
   MAX_SYNC_UTXOS,
   MAX_TX_HEX_LENGTH,
+  MAX_SINGLE_KEY_COINS,
+  MAX_SP_MATCHES,
+  SP_REORG_DEPTH,
 } from '../src/index.js';
 import {
   CONTACT_A,
@@ -43,6 +46,11 @@ import {
 } from './helpers.js';
 
 const id = generateMessageId();
+
+/** Throwaway values: a tpub-shaped key origin, a taproot script, BIP 352 keys of fixed test bytes. */
+const helperKey = { ...keyOrigin, path: "m/84'/1'/1'" };
+const TAPROOT_SCRIPT = `5120${'ab'.repeat(32)}`;
+const spRegister = { scanPrivateKey: '11'.repeat(32), spendPublicKey: `02${'22'.repeat(32)}`, labels: [0, 1, 7], birthHeight: 800_000 };
 
 describe('request schemas', () => {
   const samples: Record<string, unknown> = {
@@ -66,6 +74,10 @@ describe('request schemas', () => {
     'guardian.lock': {},
     'wallet.retire': { approval },
     'hardware.confirm': { hardwareAuth, hardwareAuthProof: pairParams.hardwareAuthProof },
+    'singlekey.register': { helper: helperKey, coins: [{ txid: 'cd'.repeat(32), vout: 1, script: TAPROOT_SCRIPT }] },
+    'sp.register': spRegister,
+    'sp.unregister': {},
+    'sp.scan': { fromHeight: 800_000 },
   };
 
   it('has a sample for every method', () => {
@@ -282,6 +294,65 @@ describe('chain methods', () => {
   });
 });
 
+describe('silent payments', () => {
+  it('singlekey.register takes the helper account key and/or single-key coins, at least one', () => {
+    const P = methods['singlekey.register'].params;
+    expect(P.safeParse({ helper: helperKey }).success).toBe(true);
+    expect(P.safeParse({ coins: [] }).success).toBe(true);
+    expect(P.safeParse({ coins: [{ txid: 'cd'.repeat(32), vout: 0, script: `0014${'ab'.repeat(20)}` }] }).success).toBe(true);
+    expect(P.safeParse({}).success).toBe(false);
+    // Only single-key P2TR or P2WPKH scripts, lowercase; no multisig (P2WSH) script.
+    expect(P.safeParse({ coins: [{ txid: 'cd'.repeat(32), vout: 0, script: `0020${'ab'.repeat(32)}` }] }).success).toBe(false);
+    expect(P.safeParse({ coins: [{ txid: 'cd'.repeat(32), vout: 0, script: TAPROOT_SCRIPT.toUpperCase() }] }).success).toBe(false);
+    expect(P.safeParse({ coins: Array.from({ length: MAX_SINGLE_KEY_COINS + 1 }, (_, i) => ({ txid: 'cd'.repeat(32), vout: i, script: TAPROOT_SCRIPT })) }).success).toBe(false);
+    expect(P.safeParse({ helper: helperKey, extra: 1 }).success).toBe(false);
+    expect(methods['singlekey.register'].result.safeParse({ helper: true, coins: 1 }).success).toBe(true);
+  });
+
+  it('sp.register carries the scan private key, B_spend, labels with 0, and the birth height', () => {
+    const P = methods['sp.register'].params;
+    expect(P.safeParse(spRegister).success).toBe(true);
+    expect(P.safeParse({ ...spRegister, labels: [1, 2] }).success).toBe(false); // no change label
+    expect(P.safeParse({ ...spRegister, labels: [0, 1, 1] }).success).toBe(false);
+    expect(P.safeParse({ ...spRegister, labels: [0, 2 ** 32] }).success).toBe(false);
+    expect(P.safeParse({ ...spRegister, spendPublicKey: `04${'ab'.repeat(32)}` }).success).toBe(false);
+    expect(P.safeParse({ ...spRegister, scanPrivateKey: 'AB'.repeat(32) }).success).toBe(false);
+    // A spend private key has no place here: the schema is strict.
+    expect(P.safeParse({ ...spRegister, spendPrivateKey: 'ab'.repeat(32) }).success).toBe(false);
+    expect(methods['sp.register'].result.safeParse({ registered: true, birthHeight: 100, scannedHeight: 99, tipHeight: 120 }).success).toBe(true);
+    expect(methods['sp.unregister'].result.safeParse({ unregistered: false }).success).toBe(true);
+  });
+
+  it('sp.scan returns the scanned tip and matches with their tweaks', () => {
+    expect(methods['sp.scan'].params.safeParse({}).success).toBe(true);
+    const match = { txid: 'ab'.repeat(32), vout: 0, valueSats: 30_000, outputKey: 'cd'.repeat(32), tweak: 'ef'.repeat(32), height: 120 };
+    const R = methods['sp.scan'].result;
+    expect(R.safeParse({ tipHeight: 125, birthHeight: 100, scanning: false, matches: [match, { ...match, vout: 1, label: 1 }], matchesTruncated: false }).success).toBe(true);
+    expect(R.safeParse({ tipHeight: 125, birthHeight: 100, scanning: false, matches: [{ ...match, tweak: 'zz' }], matchesTruncated: false }).success).toBe(false);
+    expect(SP_REORG_DEPTH).toBe(6);
+    expect(MAX_SP_MATCHES).toBeGreaterThan(0);
+  });
+
+  it('wallet.sync may read the helper, with single-key coins by script; vault results still parse without them', () => {
+    expect(methods['wallet.sync'].params.safeParse({ wallet: 'helper' }).success).toBe(true);
+    expect(methods['wallet.sync'].params.safeParse({ wallet: 'single' }).success).toBe(false);
+    const base = { tipHeight: 120, tipHash: 'ab'.repeat(32), utxos: [], utxosTruncated: false, balance: { confirmedSats: 0, unconfirmedSats: 0 }, history: [], historyTruncated: false, nextReceiveIndex: 0, nextChangeIndex: 0, gapLimit: 20 };
+    expect(methods['wallet.sync'].result.safeParse(base).success).toBe(true);
+    const coin = { script: TAPROOT_SCRIPT, txid: 'ab'.repeat(32), vout: 2, valueSats: 1000, height: 0, confirmations: 0 };
+    expect(methods['wallet.sync'].result.safeParse({ ...base, coins: [coin] }).success).toBe(true);
+    expect(methods['wallet.sync'].result.safeParse({ ...base, coins: [{ ...coin, script: '51' }] }).success).toBe(false);
+  });
+
+  it('the sp_received alert names the coin, not its tweak', () => {
+    const at = 1_800_000_000;
+    const a = { type: 'sp_received', txid: 'ab'.repeat(32), vout: 0, valueSats: 30_000, height: 120, at, atMs: at * 1000 + 5 };
+    expect(Alert.safeParse(a).success).toBe(true);
+    expect(Alert.safeParse({ ...a, label: 3 }).success).toBe(true);
+    expect(Alert.safeParse({ ...a, valueSats: -1 }).success).toBe(false);
+    expect(NotificationSchema.safeParse({ id, method: 'alert', params: a }).success).toBe(true);
+  });
+});
+
 describe('guardian.status atMs', () => {
   const res = (result: unknown) => methods['guardian.status'].result.safeParse(result).success;
   const status = { state: 'unlocked', paired: true, nextHardwareSequence: 1, phoneSpending: 'enabled', activeRecoveryId: null, version: '0.1.0', time: 1_800_000_000 };
@@ -449,6 +520,9 @@ describe('error codes', () => {
     expect(ErrorCode.WalletRetired).toBe(1004);
     expect(ErrorCode.WalletNotWatched).toBe(1005);
     expect(ErrorCode.HardwareAuthUnconfirmed).toBe(1209);
+    expect(ErrorCode.NodeRpcRequired).toBe(1700);
+    expect(ErrorCode.SilentPaymentsNotRegistered).toBe(1701);
+    expect(new RpcError(ErrorCode.NodeRpcRequired).message).toMatch(/BITCOIN_RPC_HOST/);
   });
 
   it('RpcError serialises to a wire error object', () => {

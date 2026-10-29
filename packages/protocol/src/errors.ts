@@ -65,12 +65,22 @@ export const ErrorCode = {
   /** The node refused to relay the transaction; `message` carries its reason. */
   BroadcastRejected: 1601,
   /**
-   * `tx.broadcast` of a transaction that is neither a spend of the paired wallet's coins nor a sweep of the
-   * watched wallet's coins into the paired wallet (the guardian is not an open relay). `data.reason` says which rule failed.
+   * `tx.broadcast` of a transaction that is neither a spend of the paired wallet's coins, nor a sweep of the
+   * watched wallet's coins into the paired wallet, nor a sweep of the phone's registered single-key coins
+   * (silent payments, the helper coin) into it (the guardian is not an open relay). `data.reason` says which rule failed.
    */
   ForeignTransaction: 1602,
   /** `tx.get` of a transaction larger than a message can carry (try `witness: false`). */
   TxTooLarge: 1603,
+
+  // 17xx: silent payments
+  /**
+   * `sp.*` on a guardian that has no RPC access to the user's Bitcoin node (`BITCOIN_RPC_HOST`, `_PORT`,
+   * `_USER`, `_PASS`): scanning reads blocks with their prevouts (`getblock <hash> 3`), which Electrs cannot serve.
+   */
+  NodeRpcRequired: 1700,
+  /** `sp.scan` before `sp.register` (or after `sp.unregister`). */
+  SilentPaymentsNotRegistered: 1701,
 } as const;
 
 export type ErrorCodeName = keyof typeof ErrorCode;
@@ -109,8 +119,10 @@ export const ErrorMessage: Record<ErrorCodeValue, string> = {
   [ErrorCode.Unavailable]: 'Temporarily unavailable',
   [ErrorCode.TxNotFound]: 'Transaction not found',
   [ErrorCode.BroadcastRejected]: 'The node rejected the transaction',
-  [ErrorCode.ForeignTransaction]: 'The transaction is not a spend of this wallet\'s coins or a sweep of the replaced wallet into it',
+  [ErrorCode.ForeignTransaction]: 'The transaction is not a spend of this wallet\'s coins, or a sweep into it of the replaced wallet or of the phone\'s single-key coins',
   [ErrorCode.TxTooLarge]: 'The transaction is too large to send',
+  [ErrorCode.NodeRpcRequired]: "Silent payments need your node's RPC (BITCOIN_RPC_HOST, BITCOIN_RPC_PORT, BITCOIN_RPC_USER, BITCOIN_RPC_PASS)",
+  [ErrorCode.SilentPaymentsNotRegistered]: 'No silent payment address is registered with this guardian',
 };
 
 /** An error that crosses the wire: thrown by handlers, and by the client for error responses. */
