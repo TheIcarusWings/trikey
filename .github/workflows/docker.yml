@@ -3,6 +3,16 @@ name: Docker
 # Tags v* and manual runs build and push the guardian image (amd64 + arm64, since
 # Umbrel runs on Raspberry Pi). Pull requests build only. Pushes use GITHUB_TOKEN;
 # no other secrets are needed.
+#
+# The image is built to be reproducible: see packaging/VERIFY.md, and
+# .github/workflows/reproducible.yml, which builds it twice and compares the digests.
+# The two workflows must build the same way, so keep these in step with that file:
+#   - the pinned BuildKit (driver-opts below),
+#   - SOURCE_DATE_EPOCH and VERSION as build args,
+#   - rewrite-timestamp=true on the exporter,
+#   - no provenance or SBOM attestations (they record the build, and so differ per build),
+#   - no `org.opencontainers.image.created` label (docker/metadata-action would add the
+#     current time), which is why only `tags` is taken from the metadata step.
 
 on:
   push:
@@ -24,9 +34,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Build parameters
+        id: params
+        run: |
+          echo "sde=$(git log -1 --format=%ct)" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          # BuildKit v0.34.1, by digest (moby/buildkit on Docker Hub, 2026-10-29).
+          driver-opts: image=moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
@@ -36,7 +60,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Image tags and labels
+      - name: Image tags
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -49,13 +73,35 @@ jobs:
             type=sha
 
       - name: Build (and push, except on pull requests)
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: packaging/docker/Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            SOURCE_DATE_EPOCH=${{ steps.params.outputs.sde }}
+            VERSION=${{ steps.params.outputs.version }}
+          provenance: false
+          sbom: false
+          outputs: type=image,push=${{ github.event_name != 'pull_request' }},rewrite-timestamp=true,oci-mediatypes=true,compression=gzip
+          # A release is built from nothing, so a stale or poisoned cache cannot reach it.
+          no-cache: ${{ github.ref_type == 'tag' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Digest
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "### Published image"
+            echo
+            echo '```'
+            echo "${IMAGE}@${DIGEST}"
+            echo '```'
+            echo
+            echo "Rebuild it from this commit and compare: see packaging/VERIFY.md."
+          } >> "$GITHUB_STEP_SUMMARY"

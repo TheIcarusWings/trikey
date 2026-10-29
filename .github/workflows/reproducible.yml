@@ -1,0 +1,185 @@
+name: Reproducible image
+
+# Builds the guardian image twice, on two separate BuildKit builders with no cache, from the
+# same commit and the same SOURCE_DATE_EPOCH, for linux/amd64 and linux/arm64 (arm64 under
+# QEMU), and fails if the two images differ. Same inputs must give the same bytes: that is
+# what lets anyone rebuild a release and compare it with the image on GHCR (packaging/VERIFY.md).
+#
+# What is compared: the OCI image index, and for each platform the manifest digest (which
+# covers every layer) and the config digest (which covers the uncompressed layers, the
+# environment, the entrypoint and the `created` time). packaging/docker/oci-digests.sh prints them.
+#
+# This workflow must build exactly the way docker.yml publishes: same Dockerfile and build
+# args, same BuildKit, rewrite-timestamp=true, no attestations. Keep the two in step.
+
+on:
+  pull_request:
+    paths:
+      - 'packaging/**'
+      - 'apps/guardian/**'
+      - 'apps/guardian-web/**'
+      - 'packages/**'
+      - 'package-lock.json'
+      # Also part of the build input or of how it is built.
+      - 'package.json'
+      - '.dockerignore'
+      - '.github/workflows/reproducible.yml'
+      - '.github/workflows/docker.yml'
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reproducible-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # BuildKit v0.34.1, by digest (moby/buildkit on Docker Hub, 2026-10-29). Same as docker.yml.
+  BUILDKIT_IMAGE: moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
+  EXPORT_OPTS: rewrite-timestamp=true,oci-mediatypes=true,compression=gzip
+
+jobs:
+  build-twice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build parameters
+        id: params
+        run: |
+          echo "sde=$(git log -1 --format=%ct)" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-qemu-action@v3
+
+      # Build 1: its own builder container, its own empty cache.
+      - name: Builder A
+        id: builder-a
+        uses: docker/setup-buildx-action@v3
+        with:
+          name: repro-a
+          driver: docker-container
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+
+      - name: Build A
+        uses: docker/build-push-action@v6
+        with:
+          builder: ${{ steps.builder-a.outputs.name }}
+          context: .
+          file: packaging/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          no-cache: true
+          pull: true
+          provenance: false
+          sbom: false
+          build-args: |
+            SOURCE_DATE_EPOCH=${{ steps.params.outputs.sde }}
+            VERSION=${{ steps.params.outputs.version }}
+          outputs: type=oci,dest=${{ runner.temp }}/image-a.tar,${{ env.EXPORT_OPTS }}
+
+      # Build 2: a second, separate builder container with nothing in common with the first.
+      - name: Builder B
+        id: builder-b
+        uses: docker/setup-buildx-action@v3
+        with:
+          name: repro-b
+          driver: docker-container
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+
+      - name: Build B
+        uses: docker/build-push-action@v6
+        with:
+          builder: ${{ steps.builder-b.outputs.name }}
+          context: .
+          file: packaging/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          no-cache: true
+          pull: true
+          provenance: false
+          sbom: false
+          build-args: |
+            SOURCE_DATE_EPOCH=${{ steps.params.outputs.sde }}
+            VERSION=${{ steps.params.outputs.version }}
+          outputs: type=oci,dest=${{ runner.temp }}/image-b.tar,${{ env.EXPORT_OPTS }}
+
+      - name: Compare digests
+        id: compare
+        run: |
+          bash packaging/docker/oci-digests.sh "${RUNNER_TEMP}/image-a.tar" > "${RUNNER_TEMP}/digests-a.txt"
+          bash packaging/docker/oci-digests.sh "${RUNNER_TEMP}/image-b.tar" > "${RUNNER_TEMP}/digests-b.txt"
+          echo "Build A:"; cat "${RUNNER_TEMP}/digests-a.txt"
+          echo "Build B:"; cat "${RUNNER_TEMP}/digests-b.txt"
+          # Every platform must be present, so an empty comparison cannot pass.
+          for platform in linux/amd64 linux/arm64; do
+            grep -q "^platform ${platform} " "${RUNNER_TEMP}/digests-a.txt" || { echo "::error::no ${platform} image in build A"; exit 1; }
+          done
+          if diff -u "${RUNNER_TEMP}/digests-a.txt" "${RUNNER_TEMP}/digests-b.txt"; then
+            echo "The two builds are identical."
+          else
+            echo "::error::The two builds of the same commit differ, so the image is not reproducible. Download the image-tarballs artifact and compare them with diffoci or skopeo."
+            exit 1
+          fi
+
+      - name: Job summary
+        if: always() && steps.compare.outcome != 'skipped'
+        env:
+          OUTCOME: ${{ steps.compare.outcome }}
+          REF_TYPE: ${{ github.ref_type }}
+          VERSION: ${{ steps.params.outputs.version }}
+          SDE: ${{ steps.params.outputs.sde }}
+        run: |
+          {
+            if [ "${OUTCOME}" = "success" ]; then
+              echo "### Two independent builds are identical"
+            else
+              echo "### The two builds differ"
+            fi
+            echo
+            echo "Commit \`${GITHUB_SHA}\`, SOURCE_DATE_EPOCH \`${SDE}\`, version \`${VERSION}\`."
+            echo
+            echo "Build A"
+            echo '```'
+            cat "${RUNNER_TEMP}/digests-a.txt"
+            echo '```'
+            echo "Build B"
+            echo '```'
+            cat "${RUNNER_TEMP}/digests-b.txt"
+            echo '```'
+            if [ "${OUTCOME}" = "success" ] && [ "${REF_TYPE}" = "tag" ]; then
+              INDEX=$(awk '$1 == "index" { print $2 }' "${RUNNER_TEMP}/digests-a.txt")
+              echo "### Release digest"
+              echo
+              echo "The image index digest of ${GITHUB_REF_NAME}, which the image on GHCR must have:"
+              echo
+              echo '```'
+              echo "ghcr.io/theicaruswings/trikey-guardian@${INDEX}"
+              echo '```'
+              echo
+              echo "Compare it with:"
+              echo
+              echo '```'
+              echo "docker buildx imagetools inspect ghcr.io/theicaruswings/trikey-guardian:${VERSION}"
+              echo '```'
+              echo
+              echo "Steps for rebuilding it yourself: packaging/VERIFY.md."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the images when they differ
+        if: failure() && steps.compare.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-tarballs
+          path: |
+            ${{ runner.temp }}/image-a.tar
+            ${{ runner.temp }}/image-b.tar
+          retention-days: 3
+          compression-level: 0

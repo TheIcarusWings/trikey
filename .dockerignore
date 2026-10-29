@@ -16,9 +16,12 @@ tools/consensus-verify/target
 .idea
 **/.DS_Store
 
-# Not needed to build the guardian image
+# Not needed to build the guardian image. Keeping them out also keeps the build
+# input (and so the image) from changing when only these files change.
 design
 docs
+site
+tools
 apps/mobile
 packaging/umbrel
 packaging/start9
