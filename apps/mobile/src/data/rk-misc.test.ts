@@ -8,6 +8,7 @@ import { DevicePromptStore, withDevicePrompts } from './device';
 import { WalletServiceError } from './errors';
 import { createMockWalletService } from './mock';
 import { checkKitProof, wordMatches } from './kit-proof';
+import { nextRefillHint, nextRefillText } from './rk-format';
 import { kindPrefKey, createRoutedWalletService, pickInitialKind } from './routed';
 import { isPrivateHost, parseServerUrl } from './rk-server';
 import type { WalletService } from './service';
@@ -194,6 +195,28 @@ describe('routing between a guardian wallet and a Recovery Key wallet', () => {
     await routed.close();
     expect(guardian.calls).toContain('close');
     expect(recoveryKey.calls).toContain('close');
+  });
+});
+
+describe('where the next refill stands, in words', () => {
+  const now = new Date('2026-10-29T15:20:00Z');
+  const at = (ms: number) => new Date(now.getTime() + ms).toISOString();
+  const DAY = 86_400_000;
+
+  it('says ready, arriving, how long it waits, and what it waits for', () => {
+    expect(nextRefillText({ index: 1, amountSats: 200_000, status: 'ready' }, now)).toBe('+200,000 ready');
+    expect(nextRefillText({ index: 1, amountSats: 200_000, status: 'arriving' }, now)).toBe('+200,000 arriving');
+    expect(nextRefillText({ index: 4, amountSats: 200_000, status: 'waiting', etaAt: at(3 * DAY - 3_600_000) }, now)).toBe('+200,000 in 3 days');
+    expect(nextRefillText({ index: 4, amountSats: 200_000, status: 'waiting', etaAt: at(5 * 3_600_000 + 20 * 60_000) }, now)).toBe('+200,000 in 5 h 20 min');
+    expect(nextRefillText({ index: 4, amountSats: 200_000, status: 'pending', inBlocks: 1008 }, now)).toBe('+200,000 after refill 3 confirms');
+    expect(nextRefillText({ index: 1, amountSats: 100_000, status: 'pending' }, now)).toBe('+100,000 after the last transaction confirms');
+  });
+
+  it('explains each state under it', () => {
+    expect(nextRefillHint({ index: 2, amountSats: 1, status: 'ready' })).toMatch(/sends it when the spending balance runs low/);
+    expect(nextRefillHint({ index: 2, amountSats: 1, status: 'waiting' })).toMatch(/None can arrive early/);
+    expect(nextRefillHint({ index: 2, amountSats: 1, status: 'arriving' })).toMatch(/waiting for the network/);
+    expect(nextRefillHint({ index: 2, amountSats: 1, status: 'pending' })).toMatch(/Refill 2 waits/);
   });
 });
 

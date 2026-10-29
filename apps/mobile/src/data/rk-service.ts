@@ -271,6 +271,8 @@ class Service implements RkWalletService {
     else {
       const saved = (await kv.get(networkPrefKey(this.mode)).catch(() => null)) as NetworkName | null;
       this.network = found ?? (saved && SELECTABLE_NETWORKS.includes(saved) ? saved : (this.deps.network ?? 'testnet'));
+      // Whatever was asked for, mainnet is not an option while the project is pre-alpha (and the app never sets allowMainnet).
+      if (!SELECTABLE_NETWORKS.includes(this.network)) this.network = 'testnet';
     }
 
     await this.buildHardware();
@@ -1059,8 +1061,10 @@ class Service implements RkWalletService {
         return self.exclusive(() =>
           self.guarded(async () => {
             const w = self.requireWallet();
-            // A QR-only device shows the address on its own screen through the scanner: the check is skipped here.
-            const verifyAddress = w.state.hardware?.kind !== 'qr';
+            // A QR-only device (the ones whose own screens guide the person: QR, Coldcard, Jade) cannot show an address on
+            // request: the check is skipped here, and the vault's first deposit address can be compared later (Add to vault).
+            const qrOnly = self.deps.silentKinds ?? ['qr', 'coldcard', 'jade'];
+            const verifyAddress = !qrOnly.includes(w.state.hardware?.kind as WalletHardwareKind);
             self.setProgress('Setting up your vault: approve on your hardware wallet');
             try {
               const v = await w.confirmKitSaved(proof, { verifyAddress });

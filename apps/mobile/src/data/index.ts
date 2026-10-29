@@ -4,6 +4,7 @@ export * from './format';
 export * from './errors';
 export * from './hardware-options';
 export { parseGuardianAddress, GuardianAddressError } from './guardian-address';
+export { nextRefillHint, nextRefillText } from './rk-format';
 export { parseServerUrl, serverHost, defaultServerUrl, SERVER_PRIVACY_NOTE, isPrivateHost } from './rk-server';
 export type { WalletService, ReceiveAddress } from './service';
 export type { RecoveryKeyActions } from './rk-actions';

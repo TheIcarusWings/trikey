@@ -7,7 +7,9 @@ import { describe, expect, it } from 'vitest';
 import { EsploraClient, RecoveryKeyWallet } from '@trikey/recovery-key';
 import { simFetch } from '@trikey/recovery-key/testing';
 import { WalletServiceError } from './errors';
-import { PERIOD, closeServicesAfterAll, externalAddress, failure, setUp, wordsProof, world } from './rk-test-support';
+import { MemoryKeyValueStore, MemorySecureKeyStore, SoftwareHardwareSigner } from '@trikey/wallet/testing';
+import { createRkWalletService } from './rk-service';
+import { HARDWARE, PERIOD, closeServicesAfterAll, externalAddress, failure, setUp, wordsProof, world } from './rk-test-support';
 
 closeServicesAfterAll();
 
@@ -103,11 +105,44 @@ describe('creating the wallet (RK-Create)', () => {
     expect(svc.getState().recoveryKey).toMatchObject({ stage: 'ready', savedKey: 'hardware' });
   });
 
+  it('does not ask a QR-only device to show the first address (it cannot on request)', async () => {
+    const w = world();
+    const qr = new SoftwareHardwareSigner({ mnemonic: HARDWARE, network: 'regtest', kind: 'qr', model: 'Signing device' });
+    w.provider.device = qr;
+    const { svc } = await w.phone();
+    await svc.connectHardware('qr');
+    const kit = await svc.rk!.makeKit();
+    await svc.rk!.confirmKit(wordsProof(kit));
+    expect(qr.calls.map((c) => c.op)).not.toContain('displayAddress');
+    expect(svc.getState()).toMatchObject({ onboarded: true, addressVerified: false });
+    // The deposit address can still be compared on the device later.
+    expect(await svc.rk!.verifyVaultAddress()).toMatchObject({ verifiedOnDevice: true });
+  });
+
   it('never leaves the test networks', async () => {
     const w = world();
     const { svc } = await w.phone();
     expect(() => svc.setNetwork('bitcoin')).toThrow(WalletServiceError);
     expect(svc.getState().network).toBe('regtest');
+    // Asked to start on mainnet, a real-mode service starts on testnet instead.
+    const real = await createRkWalletService({ mode: 'real', platform: { os: 'ios', isSecure: true, secureKeys: new MemorySecureKeyStore(), kv: new MemoryKeyValueStore() }, hardware: () => [], network: 'bitcoin', syncIntervalMs: 0 });
+    expect(real.getState().network).toBe('testnet');
+    await real.close();
+  });
+
+  it('keeps each mode and network to itself', async () => {
+    const w = world();
+    const { p } = await setUp(w, 1_000_000n, { approve: false });
+    expect(p.svc.getState().onboarded).toBe(true);
+    // The same storage, another app mode: nothing there.
+    const real = await w.phone({ secure: p.secure, kv: p.kv, mode: 'real' });
+    expect(real.svc.getState()).toMatchObject({ onboarded: false, backing: 'real', recoveryKey: { stage: 'new' } });
+    // The wallet lives under its own mode and network.
+    expect([...p.kv.data.keys()].filter((k) => k.startsWith('trikey.rk.')).sort()).toEqual(['trikey.rk.simulator.regtest', 'trikey.rk.simulator.regtest.app']);
+    // Another network of the same mode starts empty too.
+    const signet = await createRkWalletService({ mode: 'real', platform: { os: 'ios', isSecure: true, secureKeys: p.secure, kv: p.kv }, hardware: () => [], network: 'signet', syncIntervalMs: 0 });
+    expect(signet.getState()).toMatchObject({ network: 'signet', onboarded: false });
+    await signet.close();
   });
 });
 
