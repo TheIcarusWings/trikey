@@ -20,7 +20,8 @@ const OPTIONS: { value: Exclude<RecoveryKeyKind, 'nfc'>; title: string; descript
     description: 'One sheet of paper with a QR code. Nothing to charge or update.',
     badge: 'Recommended',
   },
-  { value: 'hardware', title: 'A second hardware wallet', description: 'Any Trezor, Ledger, Coldcard or BitBox you keep elsewhere.' },
+  // Its key is made by the device, not by this phone (which already made key 2): see DESIGN.md, "Entropy".
+  { value: 'hardware', title: 'A second hardware wallet', description: 'Any Trezor, Ledger, Coldcard or BitBox you keep elsewhere. The strongest choice: its key is not made on this phone.' },
 ];
 
 /** Without a home server key 3 is an offline Recovery Key. This is where it is chosen. */
