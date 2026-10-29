@@ -151,7 +151,14 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
 - **Remote compromise of the home server** gives up one key of three. That's the same exposure as Bitkey's server being breached.
 - **Malicious relays** can drop messages but can't read or forge them.
 - **Contested recovery** (a thief cancels a genuine recovery): phone-only spending stays paused, so the thief can't drain either. Same as Bitkey.
-- **The guardian's clock:** the recovery delay trusts the box's system clock, so a clock pushed forward would shorten it. To do: check time against the local node's block times.
+- **The guardian's clock:** a recovery only completes once both the system clock and the chain's median time past have passed the end of the delay, so a clock pushed forward alone can't shorten it.
+- **The web UI has no login of its own.** It relies on the platform's app proxy (Umbrel's `app_proxy`, Start9's interfaces) to authenticate, so the guardian's port must never be exposed beyond it.
+- **The guardian's nostr key is stored unencrypted** (mode 0600), so a locked guardian can still answer the phone and receive an unlock. It can't sign transactions.
+- **Electrs and the node are trusted** for chain data; headers are checked to link up but not for proof of work.
+- **Nuisances, not thefts:**
+  - Anyone who knows a wallet address can send a coin after a recovery starts. That blocks completion, because the sweep must spend every coin, until the user starts the recovery again.
+  - Anyone who sees the guardian's npub on a relay can burn a 5-minute pairing code with wrong attempts.
+  - Anyone with web access can delay unlocks through the rate limit.
 
 ## Recovery Key mode (no home server)
 
@@ -187,9 +194,10 @@ Someone who runs a guardian can host one for a person they know.
 
 - `packages/core/`: descriptors (BIP380 checksum, BIP389 multipath), BIP48 wallets, PSBT build, sign, analyze and finalize, software signer. `tweak.ts` holds the BIP 89 tweak math, kept for family hosting.
 - `packages/protocol/`: the nostr RPC (schemas, gift-wrap transport, replay guard, client and server, pairing URI, NIP-06 phone identity, an in-memory relay for tests). Spec in `PROTOCOL.md`.
-- `apps/guardian/`: the guardian's policy engine (spend checks, daily limit, rule changes with BIP137 approvals, Delay & Notify). The service around it (nostr, Electrs, HTTP API, key storage) is next.
-- `apps/guardian-web/`: the guardian's web UI, running on sample data until the service exists. Its API is in `API.md`.
-- `apps/mobile/`: the React Native app (in progress).
+- `apps/guardian/`: the guardian. `src/policy/` is the policy engine (spend checks, daily limit, rule changes with BIP137 approvals, Delay & Notify). Around it: key storage (Argon2id, m=64 MiB, t=3, then XChaCha20-Poly1305), lock/unlock, the nostr RPC server, NIP-17 alert DMs to contacts, an Electrum client (sweep completeness, broadcast, chain time) and the HTTP API for the web UI. Entry point `src/main.ts`.
+- `apps/guardian-web/`: the guardian's web UI. Its API is in `API.md`.
+- `apps/mobile/`: the React Native app. Every screen is built, on sample data; wallet, hardware and backup wiring are next.
+- `packaging/`: Docker image, Umbrel community app store entry, Start9 package skeleton.
 - `tools/consensus-verify/`: Rust tool that checks transactions against libbitcoinconsensus (Bitcoin Core's script verifier). It builds; tests don't use it yet.
 - `design/`: the screen designs. `docs/`: earlier design pages (key 3 options, the refill design).
 

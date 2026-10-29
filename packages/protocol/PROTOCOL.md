@@ -161,6 +161,8 @@ A `Recovery` object (the engine's `RecoveryView`, with times in seconds):
 * **`phone.resume`** needs an approval of `resume-phone` and only works when phone payments are paused by a contested cancel and no recovery is running.
 * **`recovery.status`**: the engine marks a recovery `completed` when it co-signs the sweep, not when the sweep confirms. `psbt` is that co-signed sweep; broadcasting it is up to the phone or the guardian service.
 
+**Cancelling from a regular nostr app.** Alert contacts also get each recovery alert as a NIP-17 private DM (kind 14 rumor in a NIP-59 gift wrap), so they can read it in Damus, Amethyst or Primal. A contact cancels by replying to that DM with `CANCEL <recoveryId>` (case-insensitive, nothing else on the line); the guardian treats it like `recovery.cancel` from that contact. Alert contacts may call `recovery.cancel` and nothing else.
+
 ### Alerts
 
 `params` is `{ type, at, message? , ...}` (`at` in unix seconds) with `type` one of the engine's alert kinds (`AlertKind`), plus `guardian_locked`, which the service raises itself:
@@ -257,6 +259,8 @@ Also drop a wrap *event id* seen before (the same event arrives from several rel
 ### Retries and idempotency
 
 If no response arrives, the phone MAY re-send the same request: same `id`, same rumor `created_at` and `expiration`, in a new gift wrap. The guardian runs a request's handler **at most once** per `(sender, id)`. On a duplicate it re-sends the response it computed the first time (it keeps recent responses), or does nothing if the handler is still running. A response is matched to its call by `id`; responses with an unknown `id` are ignored.
+
+For state-changing methods (`guardian.unlock`, `pair`, `policy.update`, `recovery.start`, `recovery.cancel`, `phone.resume`) the guardian remembers handled ids **across restarts**. A retry of a request it handled before restarting gets `1501 Unavailable` instead of running again, because its cached response was lost. The phone should then check the state (`guardian.status`, `recovery.status`, `policy.get`) and, if needed, send a new request with a new `id`.
 
 ## 5. Relays
 
