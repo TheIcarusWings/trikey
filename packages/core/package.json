@@ -7,7 +7,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./testing": "./test/support/consensus.ts"
+    "./random": "./src/random.ts",
+    "./testing": "./test/support/consensus.ts",
+    "./testing/random": "./test/support/random.ts"
   },
   "scripts": {
     "test": "vitest run",

@@ -17,7 +17,8 @@
  * compromised, use "Replace guardian" (sweep to a new wallet with a new guardian).
  */
 import { hex } from '@scure/base';
-import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
+import { getPublicKey } from 'nostr-tools/pure';
+import { randomSecretKey } from '@trikey/core/random';
 import { npubEncode } from 'nostr-tools/nip19';
 import { readJsonFile, writeFileAtomic } from './files.js';
 
@@ -51,7 +52,8 @@ export async function loadIdentity(path: string): Promise<GuardianIdentity | und
 export async function loadOrCreateIdentity(path: string): Promise<GuardianIdentity> {
   const existing = await loadIdentity(path);
   if (existing) return existing;
-  const secretKey = generateSecretKey();
+  // 32 bytes from the checked OS generator, used only if a valid secp256k1 scalar.
+  const secretKey = randomSecretKey();
   const file: IdentityFile = { version: 1, secretKey: hex.encode(secretKey), createdAt: new Date().toISOString() };
   try {
     await writeFileAtomic(path, `${JSON.stringify(file)}\n`, { overwrite: false });

@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { pinRandomSource, type GetRandomValues } from '@trikey/core/random';
 import { runCryptoSelfTest, summarize } from '../self-test';
+
+// The app pins its source in polyfills.ts; here Node's own stands in for expo-crypto.
+beforeAll(() => {
+  pinRandomSource(globalThis.crypto.getRandomValues as unknown as GetRandomValues, { name: 'node:crypto webcrypto', target: globalThis.crypto });
+});
 
 // Runs the same self-test the Developer section runs on a phone, here on Node. It checks that
 // the @trikey/core and @trikey/protocol imports resolve from the app and that the pinned test

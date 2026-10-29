@@ -72,8 +72,8 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 
 | Method | Params | Result |
 |---|---|---|
-| `pair.prepare` | `pairingSecret`, `network` | `guardianKey: KeyOrigin`, `guardianVersion` |
-| `pair` | `pairingSecret`, `deviceName` (1-64), `network` (`bitcoin`\|`testnet`\|`signet`\|`regtest`), `phoneKey: KeyOrigin`, `descriptor`, `phoneNostrPubkey: Hex32`, `hardwareAuth: { pubkey, path }`, `hardwareAuthProof`, `rules: Policy`, `replacesWalletId?: WalletId`, `replacesDescriptor?` (needs `replacesWalletId`; see "Replacing the guardian") | `guardianKey: KeyOrigin`, `descriptor`, `walletId`, `guardianVersion` |
+| `pair.prepare` | `pairingSecret`, `network`, `entropy?: Hex32` (the phone's contribution to key 3, see "Key 3 from both sides") | `guardianKey: KeyOrigin`, `guardianVersion`, `key3Mixed?: boolean` |
+| `pair` | `pairingSecret`, `deviceName` (1-64), `network` (`bitcoin`\|`testnet`\|`signet`\|`regtest`), `phoneKey: KeyOrigin`, `descriptor`, `phoneNostrPubkey: Hex32`, `hardwareAuth: { pubkey, path }`, `hardwareAuthProof`, `rules: Policy`, `replacesWalletId?: WalletId`, `replacesDescriptor?` (needs `replacesWalletId`; see "Replacing the guardian") | `guardianKey: KeyOrigin`, `descriptor`, `walletId`, `guardianVersion`, `key3Mixed?: boolean` |
 | `sign` | `psbt`, `memo?` | `psbt` (with the guardian's partial signatures) |
 | `policy.get` | `{}` | `policy`, `nextHardwareSequence`, `policyHash` |
 | `policy.update` | `policy`, `approval?` | `policy`, `nextHardwareSequence`, `policyHash` |
@@ -82,7 +82,7 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `recovery.status` | `recoveryId?` (default: the active one) | `recovery` (or `null`), `psbt?` (the signed sweep, once the guardian has co-signed it) |
 | `phone.resume` | `approval` | `phoneSpending: "enabled"` |
 | `guardian.unlock` | `{kind:"passphrase", passphrase}` or `{kind:"hardware", secret: hex}` | `unlocked: boolean` |
-| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time`, `atMs?` (the guardian's clock in milliseconds when it answered, see "Time"), `dailyLimit?: { limitSats, usedSats, availableSats }`, `walletId?`, `hardwareConfirmRequired?`, `watchedWalletId?` (the replaced wallet the guardian watches, if any) |
+| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time`, `atMs?` (the guardian's clock in milliseconds when it answered, see "Time"), `dailyLimit?: { limitSats, usedSats, availableSats }`, `walletId?`, `hardwareConfirmRequired?`, `watchedWalletId?` (the replaced wallet the guardian watches, if any), `key3Mixed?` (while paired: key 3 was made with the phone's `entropy`) |
 | `guardian.lock` | `{}` | `state: "locked"` (see "Locking from the phone") |
 | `wallet.sync` | `historyLimit?` (1-500, default 100), `wallet?` (`"replaced"`, `"helper"` or a `WalletId`; default the paired wallet) | `walletId?`, `tipHeight`, `tipHash`, `utxos`, `utxosTruncated`, `balance: { confirmedSats, unconfirmedSats }`, `history`, `historyTruncated`, `nextReceiveIndex`, `nextChangeIndex`, `gapLimit`, `coins?` (`"helper"` only) (see "Chain data", "Silent payments") |
 | `tx.get` | `txid: Hex32`, `witness?: boolean` (default `true`) | `txHex` |
@@ -153,7 +153,7 @@ After a wallet rotation every approval is refused with `1209 HardwareAuthUnconfi
 
 Pairing is two requests, both allowed from an unpaired sender:
 
-1. **`pair.prepare`** `{ pairingSecret, network }` returns the guardian's key (key 3). The phone needs it first: the pairing proof signs the wallet id and the guardian's account pubkey, and the wallet id is the fingerprint of the full descriptor, which contains that key. It does not use up the secret.
+1. **`pair.prepare`** `{ pairingSecret, network, entropy? }` returns the guardian's key (key 3). The phone needs it first: the pairing proof signs the wallet id and the guardian's account pubkey, and the wallet id is the fingerprint of the full descriptor, which contains that key. It does not use up the secret. With `entropy` the key is made from the guardian's seed and the phone's bytes (next section) and the answer says `key3Mixed: true`. The phone may send `pair.prepare` more than once; the last one of the pairing session decides the key that `pair` registers.
 2. The phone builds `wsh(sortedmulti(2, <phone>, <hardware>, <guardian>))` (keys in that order), computes `walletId` and the guardian's raw account pubkey (the public key inside `guardianKey.xpub`), has the hardware wallet BIP 137-sign `pairingMessage(walletId, cosignerAccountPubkey)` with a single-sig key it will use for all later approvals, and sends **`pair`**:
    * `descriptor`, `phoneKey`, `network`: the wallet;
    * `phoneNostrPubkey`: the phone's nostr key, which MUST equal the authenticated sender; it receives alerts and may cancel recoveries;
@@ -163,6 +163,28 @@ Pairing is two requests, both allowed from an unpaired sender:
    * `replacesWalletId?` / `replacesDescriptor?`: only when this wallet replaces another one (see "Replacing the guardian").
 
    The guardian checks the descriptor, that the three keys are distinct and that the guardian key sits in its slot, the rules, the key (and, when the path lies under the hardware xpub, that it derives from it) and the proof. It then registers the wallet and burns the secret.
+
+### Key 3 from both sides
+
+So that a weak random generator on the guardian alone cannot make a guessable key 3, the phone contributes to it. Format **`trikey/key3/v1`**:
+
+* **`entropy`** on `pair.prepare`: `c`, 32 fresh random bytes from the phone's checked generator, lowercase hex. The app always sends it. It is not secret: without the guardian's seed it says nothing about key 3.
+* The guardian derives the wallet's key 3 as
+
+  ```
+  seed3 = HMAC-SHA512(key  = the guardian's 64-byte BIP 39 setup seed,
+                      data = "trikey/key3/v1" || walletContext || c)
+  walletContext = u32be(len) || utf8(network)
+               || u32be(len) || utf8(pairing session id)
+               || u32be(32)  || the phone's nostr pubkey (the request's sender)
+  key 3 = BIP 32 master of seed3, account m/48'/<coin>'/0'/2'
+  ```
+
+  The context binds the network, this pairing session and this phone, so the same `c` sent again (to a new pairing, by another phone, on another network) gives another key.
+* A guardian that knows `entropy` MUST use it and answers `key3Mixed: true` on `pair.prepare`, on `pair` and (while that wallet is paired) on `guardian.status`. Without `entropy` it uses its own key (the account of its setup seed), as before, and answers `key3Mixed: false`.
+* The guardian keeps `c` and `walletContext` with the wallet's registration and derives key 3 again at every unlock. A wallet rotation (the guardian adopting a recovery's destination wallet) keeps the same key 3, and so the same record; a reset makes a new setup seed; a new pairing gets a new `c`.
+* The phone never learns key 3: it sees only the account xpub. What this protects against is a weak generator on the guardian, not a dishonest guardian: one could ignore `c`, and that cannot be proven without revealing key 3.
+* Compatibility: a guardian from before this member has a strict `pair.prepare` schema and drops a request that carries `entropy` as malformed (it answers no unpaired sender), so the phone needs a guardian of this version or later to pair. Phones from before this member send no `entropy` and get the old behaviour.
 
 ### Recovery
 
@@ -190,7 +212,7 @@ A `Recovery` object (the engine's `RecoveryView`, with times in seconds):
 A recovery sweeps the wallet to a new wallet that keeps the surviving key. When that new wallet also keeps **this guardian's key**, the guardian becomes its guardian; otherwise it just retires the old wallet. The guardian holds **one active wallet** and any number of **retired** ones (read-only history: it co-signs nothing for them, starts no recovery of them, and answers `1004 WalletRetired` when a request spends from one).
 
 1. **When.** Not when the guardian co-signs the sweep, but once a node has **accepted the sweep** (the broadcast went through, or Electrs already knows the transaction). Confirmation is not awaited: after completion key 3 refuses everything for the swept wallet, so nobody but the user (the surviving key plus the lost one) could make a conflicting spend, and waiting for blocks would leave the recovered user without a guardian (no co-signing, no CPFP through the guardian) for no added safety.
-2. **What carries over.** The rules (limit, delay, fee cap, contacts) and the hardware sequence counter. The 24 h limit window starts empty: phone payments were paused for the whole delay (at least 7 days), so nothing spent from the old wallet is still inside it.
+2. **What carries over.** The rules (limit, delay, fee cap, contacts) and the hardware sequence counter. Key 3 is the same, and so is how it is derived (`key3Mixed` stays as it was). The 24 h limit window starts empty: phone payments were paused for the whole delay (at least 7 days), so nothing spent from the old wallet is still inside it.
 3. **The paired phone** becomes the phone that sent `recovery.start` (the surviving phone, or the new phone that got in with `recovery.access`). It gets a `wallet_adopted` alert, and `guardian.status` shows the new `walletId`. The phone that was paired to the swept wallet, if it is a different one, gets a `wallet_retired` alert with `reason: "recovered"` and `successorWalletId` (and is no longer a peer); with no adopted wallet it gets the alert without a successor.
 4. **The hardware authorization key** is re-established for the new wallet's hardware key: when the hardware wallet survived, the same key; when it was replaced, the key at the same path relative to the new hardware xpub (when the old key's path lies below the hardware account by non-hardened steps; otherwise the guardian knows no key until the phone sends one). Either way it is **unconfirmed**, and every hardware approval (policy loosening, hardware cancel, `phone.resume`, `wallet.retire`) is refused with `1209` until **`hardware.confirm`**: the paired phone sends `hardwareAuth` and a fresh BIP 137 `hardwareAuthProof` over `pairingMessage(newWalletId, cosignerAccountPubkey)`, exactly as at pairing. The key must be the expected one (and, below the hardware xpub, derive from it). Co-signing within the limit and tightening the rules work meanwhile. Sending `hardware.confirm` again for a confirmed wallet with the same key and a valid proof is a no-op.
 5. **Recovery access** grants (`recovery.access`) belonged to the old wallet and are revoked.

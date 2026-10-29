@@ -7,8 +7,9 @@
  * fsync the directory) and created with mode 0600.
  */
 import { chmod, link, mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises';
-import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
+import { secureRandomBytes } from '@trikey/core/random';
+import { hex } from '@scure/base';
 
 export class FileExistsError extends Error {
   constructor(readonly path: string) {
@@ -24,7 +25,7 @@ export class FileExistsError extends Error {
  */
 export async function writeFileAtomic(path: string, data: string | Uint8Array, opts: { overwrite?: boolean } = {}): Promise<void> {
   const dir = dirname(path);
-  const tmp = join(dir, `.${basename(path)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
+  const tmp = join(dir, `.${basename(path)}.${process.pid}.${hex.encode(secureRandomBytes(6))}.tmp`);
   const fh = await open(tmp, 'wx', 0o600);
   try {
     await fh.writeFile(data);

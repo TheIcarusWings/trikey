@@ -112,6 +112,11 @@ export interface Guardian {
   npub: string;
   /** Block explorer on the same box (Umbrel's Mempool app), shared when pairing. */
   explorerUrl?: string;
+  /**
+   * Set when the guardian said it made key 3 from its own seed and this phone's randomness (`key3Mixed`):
+   * the sentence to show, "Your guardian's key was made with randomness from both this phone and your guardian."
+   */
+  key3Note?: string;
 }
 
 /** The three recovery waiting periods Bitkey-style Delay & Notify offers. */

@@ -2,7 +2,7 @@ import { useRouter } from 'expo-router';
 import { View } from 'react-native';
 import { AppButton } from '@/components/app-button';
 import { Check } from '@/components/icons';
-import { ListGroup, SummaryRow } from '@/components/panels';
+import { Footnote, ListGroup, SummaryRow } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
@@ -50,6 +50,7 @@ export default function AllSet() {
         <SummaryRow label="Daily limit" value={`${formatSats(dailyLimit.limitSats)} sats`} tabular />
         <SummaryRow label="Recovery wait" value={`${recoveryDelayDays} days`} />
       </ListGroup>
+      {guardian.key3Note ? <Footnote className="text-center">{guardian.key3Note}</Footnote> : null}
     </Screen>
   );
 }

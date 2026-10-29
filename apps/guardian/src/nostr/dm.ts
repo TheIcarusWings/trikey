@@ -15,6 +15,7 @@ import {
   RecentSet,
   normalizeRelayUrl,
   openGiftWrap,
+  wrapDirectMessage,
   SUBSCRIPTION_LOOKBACK_SEC,
   type OpenedWrap,
   type RelayPool,
@@ -22,7 +23,6 @@ import {
   type Subscription,
   type NostrEvent,
 } from '@trikey/protocol';
-import * as nip17 from 'nostr-tools/nip17';
 import { verifyEvent } from 'nostr-tools/pure';
 import { errorText, silentLogger, type Logger } from '../log.js';
 import type { GuardianIdentity } from '../identity.js';
@@ -109,7 +109,8 @@ export class DirectMessages {
   /** Sends a NIP-17 DM. Resolves with the per-relay outcomes; `some(o => o.ok)` means delivered to at least one relay. */
   async send(recipient: string, text: string): Promise<PublishOutcome[]> {
     const relays = await this.relaysFor(recipient);
-    const wrap = nip17.wrapEvent(this.o.identity.secretKey, { publicKey: recipient }, text);
+    // NIP-17 as nostr-tools builds it, with the wrap key, nonces and back-dating from the checked source.
+    const wrap = wrapDirectMessage(text, { senderSecretKey: this.o.identity.secretKey, recipient });
     return this.o.pool.publish(relays, wrap);
   }
 

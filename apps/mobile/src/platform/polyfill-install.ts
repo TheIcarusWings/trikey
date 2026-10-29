@@ -76,6 +76,24 @@ export function installPolyfills(g: Target, deps: { getRandomValues: RandomFill 
   return installed;
 }
 
+/** What `pinAppRandomSource` calls: `pinRandomSource` from `@trikey/core/random` (tests pass a fake). */
+type Pin = (fn: RandomFill, opts: { name: string; target?: unknown }) => unknown;
+
+/**
+ * Pins the app's random source right after `installPolyfills`: the `crypto.getRandomValues` now on `g`,
+ * named after where it came from. On iOS and Android that is the function `installPolyfills` installed,
+ * backed by `expo-crypto` (`ExpoCrypto.getRandomValues`: `SecRandomCopyBytes` on iOS, `SecureRandom` on
+ * Android); on the web it is the browser's own. Returns the name it pinned.
+ */
+export function pinAppRandomSource(g: Target, installed: string[], pin: Pin): string {
+  const c = g.crypto;
+  const fn = c?.getRandomValues;
+  if (typeof fn !== 'function') throw new Error('crypto.getRandomValues is missing after the polyfills; refusing to start');
+  const name = installed.includes('crypto.getRandomValues') ? 'expo-crypto (ExpoCrypto.getRandomValues)' : 'built-in crypto.getRandomValues';
+  pin(fn, { name, target: c });
+  return name;
+}
+
 /**
  * `readable-stream` (behind `stream-browserify`, which the hardware wallet libraries pull in) reads
  * `process.version.slice(0, 5)` while its module loads, unless `process.browser` is set. React Native and Metro's web

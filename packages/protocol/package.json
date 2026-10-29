@@ -19,6 +19,7 @@
     "@scure/base": "^2.4.0",
     "@scure/bip32": "^2.4.0",
     "@scure/bip39": "^2.4.0",
+    "@trikey/core": "*",
     "nostr-tools": "^2.23.0",
     "ws": "^8.18.0",
     "zod": "^4.0.0"

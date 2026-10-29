@@ -19,7 +19,7 @@ import { mnemonicToSeedSync } from '@scure/bip39';
 import { base64, hex } from '@scure/base';
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { bytesToHex, concatBytes, randomBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+import { bytesToHex, concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { MultisigWallet, ROLES, SoftwareSigner, getNetwork, parseSortedMultiDescriptor, type Network, type NetworkName } from '@trikey/core';
 import { analyzeMixedPsbt } from '../silent.js';
 import { signMessage } from '../bip137.js';
@@ -35,6 +35,7 @@ import type {
   PasskeyPrf,
   SecureKeyStore,
 } from '../platform.js';
+import { secureRandomBytes } from '@trikey/core/random';
 
 function refuseMainnet(network: NetworkName): Network {
   if (network === 'bitcoin') throw new Error('software hardware wallets are for tests and regtest only; refusing network "bitcoin"');
@@ -265,8 +266,8 @@ export class MemoryPasskeyPrf implements PasskeyPrf {
 
   async create(opts: { userName: string; salt: Uint8Array }): Promise<{ credentialId: string; prfOutput: Uint8Array }> {
     if (!this.supported) throw new Error('passkeys are not supported');
-    const credentialId = base64.encode(randomBytes(16));
-    const secret = randomBytes(32);
+    const credentialId = base64.encode(secureRandomBytes(16));
+    const secret = secureRandomBytes(32);
     this.credentials.set(credentialId, { userName: opts.userName, secret });
     return { credentialId, prfOutput: this.eval(secret, opts.salt) };
   }

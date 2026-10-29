@@ -33,15 +33,19 @@ import { ensureDataDir, Mutex } from './files.js';
 import { loadOrCreateIdentity, loadIdentity, type GuardianIdentity } from './identity.js';
 import {
   BadPassphraseError,
+  GuardianSeed,
   MAX_PASSPHRASE_LENGTH,
   checkPassphrase,
-  cosignerFromSeed,
   generateSeed,
+  key3Context,
+  key3Mix,
   readKeystore,
   replaceKeystore,
   sealKeystore,
-  unlockKeystore,
+  unlockKeystoreSeed,
   writeKeystore,
+  type CosignerPublic,
+  type Key3Mix,
   type KeystoreFile,
   type KeystoreSigner,
 } from './keystore.js';
@@ -160,6 +164,8 @@ export class Guardian {
   lockReason?: 'restart' | 'manual' | 'remote' = undefined;
 
   private signer?: KeystoreSigner;
+  /** The setup seed while unlocked: every wallet's key 3 is derived from it (keystore.ts). Wiped on lock. */
+  private seed?: GuardianSeed;
   private simplePool?: SimplePool;
   private pool?: SimplePoolRelayPool;
   private http?: Server;
@@ -223,7 +229,8 @@ export class Guardian {
       throw new ConfigError(`key 3 was created for ${g.keystore.public.network}, but BITCOIN_NETWORK is ${net}`);
     const reg = g.engine.registration();
     if (reg && reg.network !== net) throw new ConfigError(`the paired wallet is on ${reg.network}, but BITCOIN_NETWORK is ${net}`);
-    if (reg && g.keystore && reg.cosignerAccountPubkey !== g.keystore.public.accountPubkey)
+    // A key 3 mixed with the phone's contribution can only be checked once unlocked (`unlock` does).
+    if (reg && g.keystore && !reg.key3Mix && reg.cosignerAccountPubkey !== g.keystore.public.accountPubkey)
       throw new ConfigError('the paired wallet does not use this guardian key');
     // Recovery access grants moved from service.json into the engine (per wallet, so a rotation revokes them).
     const legacy = g.service.get().recoveryPeers;
@@ -569,10 +576,14 @@ export class Guardian {
       const seed = generateSeed();
       let file: KeystoreFile;
       let signer: KeystoreSigner;
+      const held = new GuardianSeed(seed);
       try {
-        const derived = cosignerFromSeed(seed, this.config.network);
+        const derived = held.key3(this.config.network);
         signer = derived.signer;
         file = await sealKeystore(seed, passphrase, derived.pub, this.config.kdf, new Date(this.clock.now()));
+      } catch (e) {
+        held.wipe();
+        throw e;
       } finally {
         seed.fill(0);
       }
@@ -585,10 +596,11 @@ export class Guardian {
         await writeKeystore(this.path('keystore'), file);
       } catch (e) {
         signer.wipe();
+        held.wipe();
         throw e;
       }
       this.keystore = file;
-      this.installSigner(signer);
+      this.installSigner(signer, held);
       await this.throttle.succeeded();
       await this.logEvent({ type: 'setup' });
       this.log.info('guardian.setup_complete', { network: this.config.network, relays: relays.length });
@@ -597,13 +609,16 @@ export class Guardian {
     });
   }
 
-  private installSigner(signer: KeystoreSigner): void {
+  private installSigner(signer: KeystoreSigner, seed: GuardianSeed): void {
     try {
       this.engine.setSigner(signer);
     } catch (e) {
       signer.wipe();
+      seed.wipe();
       throw e;
     }
+    this.seed?.wipe();
+    this.seed = seed;
     this.signer = signer;
     this.lockedAt = undefined;
     this.lockReason = undefined;
@@ -613,6 +628,36 @@ export class Guardian {
     this.engine.setSigner(undefined);
     this.signer?.wipe();
     this.signer = undefined;
+    this.seed?.wipe();
+    this.seed = undefined;
+  }
+
+  /**
+   * Key 3 for a new pairing (`pair.prepare` and `pair`): with the phone's contribution `entropy`, the
+   * `trikey/key3/v1` key bound to this network, this pairing session and this phone; without, the guardian's
+   * own key, as before. Needs the guardian unlocked. The caller wipes `signer`.
+   */
+  key3ForPairing(input: { entropy?: string; pairingId: string; phonePubkey: string }): { signer: KeystoreSigner; pub: CosignerPublic; mix?: Key3Mix } {
+    const seed = this.seed;
+    if (!seed || seed.wiped || this.locked) throw new Error('the guardian is locked');
+    const network = this.config.network;
+    const mix = input.entropy === undefined ? undefined : key3Mix(input.entropy, key3Context({ network, pairingId: input.pairingId, phonePubkey: input.phonePubkey }));
+    const { signer, pub } = seed.key3(network, mix);
+    return { signer, pub, ...(mix ? { mix } : {}) };
+  }
+
+  /**
+   * After `engine.register` with the new wallet's own key 3: that key is the signer from now on (the engine
+   * installed it with the saved registration, if it was still unlocked). Wipes whichever key is not kept.
+   */
+  adoptPairedSigner(signer: KeystoreSigner): void {
+    if (this.engine.locked) {
+      signer.wipe();
+      return;
+    }
+    const old = this.signer;
+    this.signer = signer;
+    if (old && old !== signer) old.wipe();
   }
 
   /** Signs with key 3 outside the engine; only for re-creating a sweep the engine already completed (see recovery-runner.ts). */
@@ -631,9 +676,9 @@ export class Guardian {
       const verdict = this.throttle.check();
       if (!verdict.ok) return { ok: false, code: 'rate_limited', retryAfterSeconds: Math.ceil(verdict.retryAfterMs / 1000) };
       await this.throttle.begin();
-      let signer: KeystoreSigner;
+      let seed: GuardianSeed;
       try {
-        signer = await unlockKeystore(file, passphrase);
+        seed = await unlockKeystoreSeed(file, passphrase);
       } catch (e) {
         if (!(e instanceof BadPassphraseError)) throw e;
         this.log.warn('guardian.unlock_failed', { via, failures: this.throttle.failures });
@@ -641,7 +686,15 @@ export class Guardian {
         const next = this.throttle.check();
         return { ok: false, code: 'bad_passphrase', retryAfterSeconds: next.ok ? undefined : Math.ceil(next.retryAfterMs / 1000) };
       }
-      this.installSigner(signer);
+      // The paired wallet's key 3: derived again from the seed and, if the phone contributed, its bytes.
+      let signer: KeystoreSigner;
+      try {
+        signer = seed.key3(file.public.network, this.engine.registration()?.key3Mix).signer;
+      } catch (e) {
+        seed.wipe();
+        throw e;
+      }
+      this.installSigner(signer, seed);
       await this.throttle.succeeded();
       this.log.info('guardian.unlocked', { via });
       await this.logEvent({ type: 'unlocked', via });
@@ -710,7 +763,7 @@ export class Guardian {
           if (!verdict.ok) return { ok: false, code: 'rate_limited', retryAfterSeconds: Math.ceil(verdict.retryAfterMs / 1000) };
           await this.throttle.begin();
           try {
-            (await unlockKeystore(file, passphrase)).wipe();
+            (await unlockKeystoreSeed(file, passphrase)).wipe();
           } catch (e) {
             if (!(e instanceof BadPassphraseError)) throw e;
             this.log.warn('guardian.reset_bad_passphrase', { failures: this.throttle.failures });
@@ -727,10 +780,14 @@ export class Guardian {
           const seed = generateSeed();
           let next: KeystoreFile;
           let signer: KeystoreSigner;
+          const held = new GuardianSeed(seed);
           try {
-            const derived = cosignerFromSeed(seed, this.config.network);
+            const derived = held.key3(this.config.network);
             signer = derived.signer;
             next = await sealKeystore(seed, passphrase, derived.pub, this.config.kdf, new Date(this.clock.now()));
+          } catch (e) {
+            held.wipe();
+            throw e;
           } finally {
             seed.fill(0);
           }
@@ -739,6 +796,7 @@ export class Guardian {
             const res = await this.engine.reset();
             if (!res.ok) {
               signer.wipe();
+              held.wipe();
               return refuse('recovery_pending', 'A recovery is running.');
             }
             forgotten = res.forgotten;
@@ -752,11 +810,12 @@ export class Guardian {
             await replaceKeystore(this.path('keystore'), next);
           } catch (e) {
             signer.wipe();
+            held.wipe();
             throw e;
           }
           this.keystore = next;
           this.pairing.invalidate();
-          this.installSigner(signer);
+          this.installSigner(signer, held);
           this.recovery.wait = undefined;
           await this.logEvent({ type: 'reset' });
           this.log.warn('guardian.reset', { forgottenWallets: forgotten.length });

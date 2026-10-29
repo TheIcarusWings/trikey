@@ -158,7 +158,10 @@ Notes on the choices:
   control; see [docs/passkeys.md](docs/passkeys.md).
 - **Polyfills.** `index.ts` (the entry) loads `src/platform/polyfills.ts` first. It installs
   `crypto.getRandomValues` (backed by `expo-crypto`, the OS random generator), `crypto.randomUUID`, and
-  `TextEncoder`/`TextDecoder` if Hermes lacks them. `WebSocket` (nostr-tools) comes from React Native.
+  `TextEncoder`/`TextDecoder` if Hermes lacks them, then pins that `getRandomValues` as the one source of every key
+  and secret (`secureRandomBytes` in `@trikey/core/random` refuses to run if it is replaced later). The Ledger kit's
+  `react-native-get-random-values` finds it already installed and installs nothing; `src/hardware/common/random.native.ts`
+  checks that. `WebSocket` (nostr-tools) comes from React Native. See DESIGN.md, "Entropy".
 - **Metro.** `metro.config.js` resolves `./file.js` imports to `./file.ts`, because the workspace
   packages are TypeScript sources written that way.
 

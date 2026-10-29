@@ -9,6 +9,7 @@
  * - `WalletError`: everything else the wallet refuses to do itself (wrong
  *   device, address mismatch, bad backup, ...), with a stable `code`.
  */
+import { RandomSourceError } from '@trikey/core/random';
 import { ErrorCode, InvalidResponseError, PublishError, RpcError, RpcTimeoutError } from '@trikey/protocol';
 
 export type GuardianRefusal = { message: string } & (
@@ -207,6 +208,11 @@ export type WalletErrorCode =
   | 'silent_payments_unavailable'
   /** A silent payment label that cannot be used (0 is the change label and is never handed out). */
   | 'invalid_label'
+  /**
+   * The phone's random generator failed a check (`RandomSourceError`: missing, replaced, stuck or repeating).
+   * No key or secret was made from it; do not retry on this phone until the cause is known.
+   */
+  | 'random_source_failed'
   | 'internal';
 
 export class WalletError extends Error {
@@ -244,6 +250,13 @@ export function asWalletError(e: unknown, what: string): unknown {
   if (e instanceof WalletError) return e;
   const refusal = refusalFromError(e);
   if (refusal) return new WalletError('guardian_refused', `${what}: ${refusal.message}`, { refusal, cause: e });
+  return e;
+}
+
+/** `RandomSourceError` from key or secret generation as a typed wallet error; anything else unchanged. */
+export function asRandomSourceError(e: unknown): unknown {
+  if (e instanceof RandomSourceError)
+    return new WalletError('random_source_failed', `This phone's random number generator failed a safety check (${e.code}), so no key was made. ${e.message}`, { cause: e });
   return e;
 }
 
