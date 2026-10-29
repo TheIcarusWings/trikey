@@ -3,12 +3,14 @@
  * use published BIP 39 test mnemonics, phones generate fresh keys. Regtest only.
  */
 import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { NETWORKS } from '@trikey/core';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { MultisigWallet, NETWORKS } from '@trikey/core';
 import { SimplePoolRelayPool, type Filter, type NostrEvent, type PublishOutcome, type RelayPool, type SubscriptionHandlers } from '@trikey/protocol';
-import type { WalletDeps } from '../src/index.js';
+import type { ChainSnapshot, ChainSource, FeeEstimates, WalletDeps } from '../src/index.js';
 import { MemoryCloudBackupStore, MemoryKeyValueStore, MemoryPasskeyPrf, MemorySecureKeyStore } from '../src/testing/index.js';
-import type { ManualClock } from '@trikey/guardian/testing';
+import type { FakeElectrum, ManualClock } from '@trikey/guardian/testing';
 
 export const network = NETWORKS.regtest;
 
@@ -73,6 +75,7 @@ export function phone(opts: {
   passkey: MemoryPasskeyPrf;
   pool?: () => RelayPool;
   rpcTimeoutMs?: number;
+  standaloneChain?: WalletDeps['standaloneChain'];
 }): Phone {
   const secure = new MemorySecureKeyStore();
   const kv = new MemoryKeyValueStore();
@@ -97,6 +100,95 @@ export function phone(opts: {
       rpcTimeoutMs: opts.rpcTimeoutMs ?? 5000,
       rpcRetryIntervalMs: 0, // relays here never drop; retries would only add traffic
       recoveryCodeKdf: { m: 64, t: 1, p: 1 }, // cheap Argon2 for tests only
+      ...(opts.standaloneChain ? { standaloneChain: opts.standaloneChain } : {}),
     },
   };
+}
+
+/**
+ * "The user's own node" for a wallet no guardian serves (`WalletDeps.standaloneChain`), read straight from the rig's
+ * fake Electrs: unspent outputs by script with a gap limit, raw transactions, and broadcasts into its mempool.
+ */
+export class FakeNodeChain implements ChainSource {
+  readonly kind = 'test-node';
+  readonly broadcasts: string[] = [];
+
+  constructor(
+    private readonly electrs: FakeElectrum,
+    private readonly wallet: MultisigWallet,
+  ) {}
+
+  static for(electrs: FakeElectrum, seen?: FakeNodeChain[]): NonNullable<WalletDeps['standaloneChain']> {
+    return (w) => {
+      const c = new FakeNodeChain(electrs, MultisigWallet.fromDescriptor(w.descriptor, NETWORKS[w.network]));
+      seen?.push(c);
+      return c;
+    };
+  }
+
+  private static scriptHash(script: Uint8Array): string {
+    return hex.encode(sha256(script).reverse());
+  }
+
+  async sync(): Promise<ChainSnapshot> {
+    const tip = this.electrs.height;
+    const utxos: ChainSnapshot['utxos'] = [];
+    const next: number[] = [];
+    for (const chain of [0, 1] as const) {
+      let gap = 0;
+      let first = -1;
+      for (let index = 0; gap < 20; index++) {
+        const sh = FakeNodeChain.scriptHash(this.wallet.derive(chain, index).script);
+        if (!(this.electrs.history.get(sh) ?? []).length) {
+          gap++;
+          if (first < 0) first = index;
+          continue;
+        }
+        gap = 0;
+        first = -1;
+        for (const u of this.electrs.unspent.get(sh) ?? [])
+          utxos.push({ txid: u.txid, vout: u.vout, valueSats: u.value, height: Math.max(0, u.height), confirmations: u.height > 0 ? tip - u.height + 1 : 0, chain, index });
+      }
+      next.push(first);
+    }
+    const confirmed = utxos.filter((u) => u.confirmations > 0).reduce((a, u) => a + u.valueSats, 0);
+    const total = utxos.reduce((a, u) => a + u.valueSats, 0);
+    return {
+      tipHeight: tip,
+      tipHash: '00'.repeat(32),
+      utxos,
+      utxosTruncated: false,
+      balance: { confirmedSats: confirmed, unconfirmedSats: total - confirmed },
+      history: [],
+      historyTruncated: false,
+      nextReceiveIndex: next[0]!,
+      nextChangeIndex: next[1]!,
+      gapLimit: 20,
+    };
+  }
+
+  async getTransaction(txid: string): Promise<string> {
+    const raw = this.electrs.txs.get(txid);
+    if (!raw) throw new Error(`unknown transaction ${txid}`);
+    const tx = btc.RawTx.decode(hex.decode(raw));
+    return hex.encode(btc.RawTx.encode({ ...tx, segwitFlag: false, witnesses: undefined }));
+  }
+
+  async broadcast(txHex: string): Promise<string> {
+    const err = this.electrs.applyTransaction(txHex);
+    if (err) throw new Error(`the node refused it: ${err}`);
+    this.electrs.broadcasts.push(txHex);
+    this.broadcasts.push(txHex);
+    return btc.Transaction.fromRaw(hex.decode(txHex), { allowUnknownOutputs: true }).id;
+  }
+
+  async estimateFees(): Promise<FeeEstimates> {
+    return {
+      estimates: [
+        { target: 3, satPerVb: 3 },
+        { target: 6, satPerVb: 2 },
+      ],
+      minRelaySatPerVb: 1,
+    };
+  }
 }
