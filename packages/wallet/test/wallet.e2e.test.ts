@@ -14,7 +14,7 @@ import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { npubEncode } from 'nostr-tools/nip19';
 import { generateSecretKey } from 'nostr-tools/pure';
 import { MultisigWallet, analyzePsbt, parseSortedMultiDescriptor } from '@trikey/core';
-import { RpcClient, RpcTimeoutError, SimplePoolRelayPool, approvalMessage, policyHash, type Alert, type Policy } from '@trikey/protocol';
+import { RpcClient, RpcTimeoutError, SimplePoolRelayPool, approvalMessage, encodeRecoveryUri, policyHash, type Alert, type Policy } from '@trikey/protocol';
 import { GuardianRig } from '@trikey/guardian/testing';
 import {
   BACKUP_FILE_PREFIX,
@@ -469,5 +469,32 @@ describe('@trikey/wallet end to end', { timeout: 60_000 }, () => {
 
   it('refuses mainnet in the software hardware wallet', () => {
     expect(() => new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware, network: 'bitcoin' })).toThrow(/regtest only/);
+  });
+
+  it('reads the guardian\'s recovery code for a new phone', () => {
+    const uri = encodeRecoveryUri({ guardianPubkey: rig.pubkey, relays: rig.relayUrls, network: 'regtest', label: 'Test Guardian' });
+    expect(TrikeyWallet.parseRecoveryCode(uri, 'regtest')).toEqual({ npub: npubEncode(rig.pubkey), relays: rig.relayUrls, network: 'regtest', label: 'Test Guardian' });
+    expect(() => TrikeyWallet.parseRecoveryCode(uri, 'bitcoin')).toThrow(expect.objectContaining({ code: 'network_mismatch' }));
+    expect(() => TrikeyWallet.parseRecoveryCode(rig.pairingUri())).toThrow(expect.objectContaining({ code: 'pairing_uri_invalid' }));
+  });
+
+  it('locks the guardian from the phone, then unlocks it with the passphrase', async () => {
+    await A.lockGuardian();
+    expect(rig.guardian.locked).toBe(true);
+    expect(A.state.guardianStatus?.state).toBe('locked');
+    await waitFor(() => alertsA().find((a) => a.type === 'guardian_locked' && a.reason === 'remote'), 'remote lock alert');
+    await A.lockGuardian(); // already locked: fine
+    expect(await A.unlockGuardian(rig.passphrase)).toEqual({ ok: true });
+    expect(rig.guardian.locked).toBe(false);
+  });
+
+  it('retires the wallet on the guardian with a hardware approval ("Replace guardian")', async () => {
+    const walletId = A.state.wallet!.walletId;
+    const res = await A.retireWallet();
+    expect(res).toEqual({ walletId, retiredAt: rig.nowSec() });
+    expect(prompts().at(-1)).toMatch(new RegExp(`^Trikey retire-wallet v1 wallet=${walletId} seq=\\d+ expires=`));
+    expect(rig.guardian.engine.registration()).toBeUndefined();
+    expect(rig.guardian.engine.retiredWallets().map((r) => r.registration.walletId)).toContain(walletId);
+    await waitFor(() => alertsA().find((a) => a.type === 'wallet_retired' && a.walletId === walletId), 'retired alert');
   });
 });
