@@ -278,6 +278,8 @@ code,
   max-width: 17rem;
   height: auto;
   aspect-ratio: 390 / 844;
+  /* The renders are square; clip them to the phone frame's 44px corners. */
+  border-radius: 11.3% / 5.2%;
   filter: var(--shadow);
 }
 
