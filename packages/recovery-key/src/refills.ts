@@ -158,6 +158,11 @@ export function maxRefills(total: bigint, amount: bigint, feeRate: number, first
  * Builds `params.count` unsigned refills from `head`. `spendIndices` and
  * `changeIndices` are the spending-internal and vault-change address indices
  * reserved for them, one each per refill.
+ *
+ * TODO: core's buildSpend and buildSweep now take `sequence` and `lockTime`
+ * (packages/core/src/psbt.ts). This builder is not a drop-in swap for them: it
+ * chains each refill's change into the next, sets the fee itself and takes its
+ * own change indices.
  */
 export function buildRefillChain(opts: {
   vault: MultisigWallet;

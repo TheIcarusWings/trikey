@@ -56,12 +56,37 @@ function assertDistinctUtxos(utxos: Utxo[]) {
   }
 }
 
-function addWalletInput(tx: btc.Transaction, wallet: MultisigWallet, u: Utxo) {
+/** Optional nSequence and nLockTime. The defaults (SEQUENCE_RBF, 0) are what the builders always used. */
+export interface TimelockOpts {
+  /**
+   * nSequence: one value for every input, or one per entry of `utxos` in the same order.
+   * For buildSpend, entries for coins that are not selected are ignored.
+   */
+  sequence?: number | number[];
+  /** nLockTime: a block height below 500,000,000, else a Unix time. */
+  lockTime?: number;
+}
+
+function u32(name: string, v: number): number {
+  if (!Number.isInteger(v) || v < 0 || v > 0xffffffff) throw new RangeError(`${name} must be an unsigned 32-bit integer, got ${v}`);
+  return v;
+}
+
+/** One nSequence per entry of `utxos`. */
+function sequencesFor(utxos: Utxo[], sequence: number | number[] | undefined): number[] {
+  if (Array.isArray(sequence)) {
+    if (sequence.length !== utxos.length) throw new Error(`sequence: expected one value per utxo (${utxos.length}), got ${sequence.length}`);
+    return sequence.map((s) => u32('sequence', s));
+  }
+  return utxos.map(() => u32('sequence', sequence ?? SEQUENCE_RBF));
+}
+
+function addWalletInput(tx: btc.Transaction, wallet: MultisigWallet, u: Utxo, sequence: number) {
   const d = wallet.derive(u.chain, u.index);
   tx.addInput({
     txid: u.txid,
     index: u.vout,
-    sequence: SEQUENCE_RBF,
+    sequence,
     witnessUtxo: { script: d.script, amount: u.value },
     ...(u.prevTxHex ? { nonWitnessUtxo: hex.decode(u.prevTxHex) } : {}),
     sighashType: btc.SigHash.ALL,
@@ -77,15 +102,19 @@ export interface SpendPlan {
 }
 
 /** Largest-first coin selection with an optional change output back to the wallet. */
-export function buildSpend(opts: {
-  wallet: MultisigWallet;
-  utxos: Utxo[];
-  recipients: Recipient[];
-  feeRate: number; // sat/vB
-  changeIndex: number;
-}): SpendPlan {
+export function buildSpend(
+  opts: {
+    wallet: MultisigWallet;
+    utxos: Utxo[];
+    recipients: Recipient[];
+    feeRate: number; // sat/vB
+    changeIndex: number;
+  } & TimelockOpts,
+): SpendPlan {
   const { wallet, recipients, feeRate } = opts;
   assertDistinctUtxos(opts.utxos);
+  const sequences = sequencesFor(opts.utxos, opts.sequence);
+  const lockTime = u32('lockTime', opts.lockTime ?? 0);
   for (const r of recipients) if (r.amount <= 0n) throw new Error(`recipient amount must be positive, got ${r.amount}`);
   const net = wallet.network.btc;
   const recipientScripts = recipients.map((r) => btc.OutScript.encode(btc.Address(net).decode(r.address)));
@@ -108,8 +137,8 @@ export function buildSpend(opts: {
   const changeAmount = total - target - feeWithChange;
   const withChange = changeAmount >= DUST;
 
-  const tx = new btc.Transaction(TX_OPTS);
-  for (const u of chosen) addWalletInput(tx, wallet, u);
+  const tx = new btc.Transaction({ ...TX_OPTS, lockTime });
+  for (const u of chosen) addWalletInput(tx, wallet, u, sequences[opts.utxos.indexOf(u)]!);
   recipients.forEach((r, i) => tx.addOutput({ script: recipientScripts[i], amount: r.amount }));
   if (withChange) tx.addOutput({ script: changeAddr.script, amount: changeAmount, ...wallet.psbtFields(changeAddr) });
 
@@ -122,21 +151,25 @@ export function buildSpend(opts: {
 }
 
 /** Sends every given UTXO to one address of `destination` (used by recovery). */
-export function buildSweep(opts: {
-  from: MultisigWallet;
-  utxos: Utxo[];
-  destination: MultisigWallet;
-  destinationIndex: number;
-  feeRate: number;
-}): SpendPlan {
+export function buildSweep(
+  opts: {
+    from: MultisigWallet;
+    utxos: Utxo[];
+    destination: MultisigWallet;
+    destinationIndex: number;
+    feeRate: number;
+  } & TimelockOpts,
+): SpendPlan {
   if (!opts.utxos.length) throw new Error('nothing to sweep');
   assertDistinctUtxos(opts.utxos);
+  const sequences = sequencesFor(opts.utxos, opts.sequence);
+  const lockTime = u32('lockTime', opts.lockTime ?? 0);
   const dest = opts.destination.derive(0, opts.destinationIndex);
   const total = opts.utxos.reduce((s, u) => s + u.value, 0n);
   const fee = BigInt(Math.ceil(estimateVsize(opts.utxos.length, [dest.script]) * opts.feeRate));
   if (total - fee < DUST) throw new Error('sweep amount is below dust after fees');
-  const tx = new btc.Transaction(TX_OPTS);
-  for (const u of opts.utxos) addWalletInput(tx, opts.from, u);
+  const tx = new btc.Transaction({ ...TX_OPTS, lockTime });
+  opts.utxos.forEach((u, i) => addWalletInput(tx, opts.from, u, sequences[i]!));
   tx.addOutput({ script: dest.script, amount: total - fee, ...opts.destination.psbtFields(dest) });
   return { psbt: tx.toPSBT(), fee, inputs: opts.utxos };
 }
