@@ -123,6 +123,19 @@ export class ChainService {
     return this.tipCache;
   }
 
+  /** Derived output scripts are pure functions of the descriptor; derivation is the slow part of a scan. */
+  private readonly scripts = new Map<string, Uint8Array>();
+  private script(wallet: MultisigWallet, chain: 0 | 1, index: number): Uint8Array {
+    const key = `${wallet.fingerprint()}/${chain}/${index}`;
+    let s = this.scripts.get(key);
+    if (!s) {
+      s = wallet.derive(chain, index).script;
+      if (this.scripts.size > 20_000) this.scripts.clear();
+      this.scripts.set(key, s);
+    }
+    return s;
+  }
+
   private async history(script: Uint8Array): Promise<unknown[]> {
     const r = await this.client().request<unknown[]>('blockchain.scripthash.get_history', [scriptHash(script)]);
     return Array.isArray(r) ? r : [];
@@ -143,7 +156,7 @@ export class ChainService {
       let next = 0;
       const used: { index: number; script: Uint8Array }[] = [];
       for (;;) {
-        const batch = Array.from({ length: gap }, (_, k) => next + k).map((index) => ({ index, script: wallet.derive(chain, index).script }));
+        const batch = Array.from({ length: gap }, (_, k) => next + k).map((index) => ({ index, script: this.script(wallet, chain, index) }));
         const histories = await Promise.all(batch.map((b) => this.history(b.script)));
         histories.forEach((h, k) => {
           if (h.length > 0) {

@@ -97,6 +97,7 @@ export class ElectrumClient {
   private readonly headerListeners = new Set<(h: HeaderNotification) => void>();
   private readonly statusListeners = new Set<(connected: boolean) => void>();
   private readyWaiters: (() => void)[] = [];
+  private warnedUnreachable = false;
 
   /** The latest block header the server announced. */
   tip?: HeaderNotification;
@@ -216,6 +217,10 @@ export class ElectrumClient {
       this.setReady(false);
       this.failAll(new ElectrumUnavailableError('connection to Electrum closed'));
       if (was) this.o.log.warn('electrum.disconnected', { host: this.o.host, port: this.o.port });
+      else if (!this.warnedUnreachable) {
+        this.warnedUnreachable = true;
+        this.o.log.warn('electrum.unreachable', { host: this.o.host, port: this.o.port });
+      }
       this.scheduleReconnect();
     });
   }
@@ -228,6 +233,7 @@ export class ElectrumClient {
       if (this.socket !== socket) return;
       this.setTip(tip);
       this.backoffMs = this.o.minBackoffMs;
+      this.warnedUnreachable = false;
       this.setReady(true);
       this.o.log.info('electrum.connected', { host: this.o.host, port: this.o.port, server: version?.[0], height: tip?.height });
       if (this.o.pingIntervalMs > 0) {
