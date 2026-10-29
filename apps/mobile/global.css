@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Theme tokens: shadcn/ui zinc neutrals as HSL channels, the same palette as the
+ * `light` and `dark` blocks in design/screens/*.dc.html. The hex values are mirrored
+ * in src/theme/tokens.ts for the few places that need a literal color (navigation
+ * theme, SVG, status bar). Keep the two in step.
+ */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.92%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.92%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.92%;
+    --primary: 240 5.88% 10%;
+    --primary-foreground: 0 0% 98.04%;
+    --secondary: 240 4.76% 95.88%;
+    --secondary-foreground: 240 10% 3.92%;
+    --muted: 240 4.76% 95.88%;
+    --muted-foreground: 240 3.83% 46.08%;
+    --accent: 240 4.76% 95.88%;
+    --accent-foreground: 240 5.88% 10%;
+    --destructive: 0 72.22% 50.59%;
+    --destructive-foreground: 0 0% 100%;
+    --destructive-soft: 0 85.71% 97.25%;
+    --border: 240 5.88% 90%;
+    --input: 240 5.88% 90%;
+    --ring: 240 5.03% 64.9%;
+    --radius: 0.625rem;
+
+    --ground: 240 4.76% 95.88%;
+    --seg: 240 4.76% 95.88%;
+    --seg-selected: 0 0% 100%;
+    --chevron: 240 5.03% 64.9%;
+    --good: 142.43 71.81% 29.22%;
+    --good-soft: 138.46 76.47% 96.67%;
+    --warn: 25.96 90.48% 37.06%;
+    --warn-soft: 48 100% 96.08%;
+    --device: 240 5.88% 10%;
+    --device-screen: 0 0% 100%;
+    --device-ink: 240 10% 3.92%;
+    --brand: 20.54 90.24% 48.24%;
+  }
+
+  .dark:root {
+    --background: 240 10% 3.92%;
+    --foreground: 0 0% 98.04%;
+    --card: 240 10% 3.92%;
+    --card-foreground: 0 0% 98.04%;
+    --popover: 240 10% 3.92%;
+    --popover-foreground: 0 0% 98.04%;
+    --primary: 0 0% 98.04%;
+    --primary-foreground: 240 5.88% 10%;
+    --secondary: 240 3.7% 15.88%;
+    --secondary-foreground: 0 0% 98.04%;
+    --muted: 240 3.7% 15.88%;
+    --muted-foreground: 240 5.03% 64.9%;
+    --accent: 240 3.7% 15.88%;
+    --accent-foreground: 0 0% 98.04%;
+    --destructive: 0 90.6% 70.78%;
+    --destructive-foreground: 240 10% 3.92%;
+    --destructive-soft: 0 74.68% 15.49%;
+    --border: 240 3.7% 15.88%;
+    --input: 240 3.7% 15.88%;
+    --ring: 240 3.83% 46.08%;
+
+    --ground: 240 5.88% 10%;
+    --seg: 240 3.7% 15.88%;
+    --seg-selected: 240 10% 3.92%;
+    --chevron: 240 3.83% 46.08%;
+    --good: 141.89 69.16% 58.04%;
+    --good-soft: 144.88 80.39% 10%;
+    --warn: 43.26 96.41% 56.27%;
+    --warn-soft: 26 83.33% 14.12%;
+    --device: 240 5.26% 26.08%;
+    --device-screen: 240 5.88% 90%;
+    --device-ink: 240 10% 3.92%;
+    --brand: 27.02 95.98% 60.98%;
+  }
+}
+
+@layer base {
+  /* Each Geist weight is its own family (see plugins/geist-font-plugin.js), so stop
+     browsers from faking a bold on top of them. */
+  html {
+    font-synthesis: none;
+  }
+}
