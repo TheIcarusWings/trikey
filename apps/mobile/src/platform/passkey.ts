@@ -1,4 +1,5 @@
 import type { PasskeyPrf } from '@trikey/wallet';
+import { secureRandomBytes } from '@trikey/core/random';
 import { base64ToBytes, bytesToBase64Url } from './bytes';
 import { PasskeyError, passkeyError } from './errors';
 import { nativeModules, type NativeModuleLoaders } from './native-modules';
@@ -58,10 +59,12 @@ export function mapPasskeyError(err: unknown): PasskeyError {
   }
 }
 
-function randomBytes(n: number): Uint8Array {
-  const c = (globalThis as { crypto?: { getRandomValues?: <T extends Uint8Array>(a: T) => T } }).crypto;
-  if (!c?.getRandomValues) throw passkeyError('failed', { detail: 'crypto.getRandomValues is missing' });
-  return c.getRandomValues(new Uint8Array(n));
+function challengeBytes(n: number): Uint8Array {
+  try {
+    return secureRandomBytes(n);
+  } catch (e) {
+    throw passkeyError('failed', { detail: e instanceof Error ? e.message : String(e) });
+  }
 }
 
 function decodePrf(value: unknown): Uint8Array | null {
@@ -132,9 +135,9 @@ export function createPasskeyPrf(opts: {
       let created: CreateResult;
       try {
         created = await Passkey.create({
-          challenge: bytesToBase64Url(randomBytes(32)),
+          challenge: bytesToBase64Url(challengeBytes(32)),
           rp: { id: rpId, name: rpName },
-          user: { id: bytesToBase64Url(randomBytes(16)), name: userName, displayName: userName },
+          user: { id: bytesToBase64Url(challengeBytes(16)), name: userName, displayName: userName },
           pubKeyCredParams: [
             { type: 'public-key', alg: -7 }, // ES256
             { type: 'public-key', alg: -257 }, // RS256, for providers that need it
@@ -164,7 +167,7 @@ export function createPasskeyPrf(opts: {
       let result: Awaited<ReturnType<PasskeyModule['Passkey']['get']>>;
       try {
         result = await Passkey.get({
-          challenge: bytesToBase64Url(randomBytes(32)),
+          challenge: bytesToBase64Url(challengeBytes(32)),
           rpId,
           allowCredentials: credentialId ? [{ type: 'public-key', id: credentialId }] : [],
           userVerification: 'required',

@@ -207,6 +207,7 @@ export function createDemoState(platform: 'ios' | 'android' = 'ios'): WalletStat
       chainData: 'your-node',
       npub: 'npub1g4rd8k3w0c6ylv5n2xr9ts7ahe3j4fp8u2xw3mq5ca6vhz9fd3n8',
       explorerUrl: 'http://umbrel.local:3006',
+      key3Note: "Your guardian's key was made with randomness from both this phone and your guardian.",
     },
     recoveryDelayDays: 7,
     dailyLimit: { limitSats: 200_000, usedSats: 20_000, cosignedCount: 1 },

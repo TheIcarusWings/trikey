@@ -95,9 +95,9 @@ const toKey = (k: { fingerprint: string; path: string; xpub: string }): KeyExpre
 const rawPub = (xpub: string) => hex.encode(HDKey.fromExtendedKey(xpub, network.bip32).publicKey!);
 
 /** Pairs `phone` with a wallet of (app mnemonic, hardware mnemonic, the rig's key 3). */
-async function pair(rig: GuardianRig, phone: Phone, opts: { app?: string; hardware?: string; replacesWalletId?: string; dailyLimitSats?: number } = {}) {
+async function pair(rig: GuardianRig, phone: Phone, opts: { app?: string; hardware?: string; replacesWalletId?: string; dailyLimitSats?: number; entropy?: string } = {}) {
   const p = decodePairingUri(rig.pairingUri(), rig.nowSec());
-  const prep = await phone.rpc.call('pair.prepare', { pairingSecret: p.secret, network: 'regtest' });
+  const prep = await phone.rpc.call('pair.prepare', { pairingSecret: p.secret, network: 'regtest', ...(opts.entropy ? { entropy: opts.entropy } : {}) });
   const wallet = new MultisigWallet(network, {
     app: await appSigner(opts.app).getKey(network),
     hardware: await hwSigner(opts.hardware).getKey(network),
@@ -190,7 +190,9 @@ describe('lost phone, no backup: recovery ends with the new phone co-signing fro
   beforeAll(async () => {
     rig = await startRig();
     oldPhone = phoneOn(rig);
-    ({ wallet: old, walletId: oldId } = await pair(rig, oldPhone));
+    // Key 3 made from the guardian's seed and the phone's contribution: a rotation must keep it.
+    ({ wallet: old, walletId: oldId } = await pair(rig, oldPhone, { entropy: 'c3'.repeat(32) }));
+    expect(rig.guardian.engine.registration()!.key3Mix?.entropy).toBe('c3'.repeat(32));
   }, 30_000);
 
   it('shows a recovery code with only the npub, relays and network', async () => {
@@ -252,6 +254,12 @@ describe('lost phone, no backup: recovery ends with the new phone co-signing fro
     });
     // The rules carried over.
     expect((await newPhone.rpc.call('policy.get', {})).policy).toMatchObject({ dailyLimitSats: 100_000, recoveryDelayDays: 7, sweepFeeCapSats: 20_000 });
+    // So did key 3, and with it the record it is derived from (not the guardian's own key).
+    const reg = rig.guardian.engine.registration()!;
+    expect(reg.cosignerAccountPubkey).toBe(cosignerPub);
+    expect(reg.cosignerAccountPubkey).not.toBe(rig.guardian.keystore!.public.accountPubkey);
+    expect(reg.key3Mix).toEqual(rig.guardian.store.state!.retired[0]!.registration.key3Mix);
+    expect((await newPhone.rpc.call('guardian.status', {})).key3Mixed).toBe(true);
 
     const web = (await rig.api('GET', '/status')).body;
     expect(web.wallets).toEqual([{ id: dest.fingerprint(), name: 'Main', phonesPaired: 1 }]);
@@ -322,7 +330,9 @@ describe('lost phone, no backup: recovery ends with the new phone co-signing fro
   it('keeps all of it across a restart', async () => {
     await rig.restart();
     await rig.unlock();
-    expect(await newPhone.rpc.call('guardian.status', {})).toMatchObject({ walletId: dest.fingerprint(), hardwareConfirmRequired: false });
+    // The unlock derived the adopted wallet's (mixed) key 3 again.
+    expect(hex.encode(rig.guardian.unlockedSigner!.accountPubkey)).toBe(cosignerPub);
+    expect(await newPhone.rpc.call('guardian.status', {})).toMatchObject({ walletId: dest.fingerprint(), hardwareConfirmRequired: false, key3Mixed: true });
     expect((await rig.api('GET', '/status')).body.retiredWallets).toHaveLength(1);
     await expect(oldPhone.rpc.call('guardian.status', {}, { timeoutMs: 400 })).rejects.toBeInstanceOf(RpcTimeoutError);
   });

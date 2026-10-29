@@ -29,6 +29,7 @@ Visual walkthrough (private canvas): https://claude.ai/artifact/NV7SCZja8ik9LAvu
 | First client | React Native mobile app | Ledger Bluetooth and Trezor Connect have JS SDKs |
 | UI kit | shadcn/ui: react-native-reusables + NativeWind in the app, shadcn/ui + Tailwind in the guardian web UI. Zinc neutrals, Geist type, light and dark themes. | One set of tokens and components across the phone and the home server |
 | Transport | Nostr: NIP-44 encryption inside NIP-59 gift wraps | Outbound-only connections, no accounts, relays see ciphertext |
+| Entropy | Every key from one checked function on the OS CSPRNG; key 3 mixes in the phone's randomness; no dice | See "Entropy": guards catch gross failures, the key-3 mix and 2-of-3 cover subtle ones |
 | Later | Guardian for family (invite-only hosting) | See the end of this document |
 
 Options considered and dropped, with research in the earlier pages under `docs/`:
@@ -215,6 +216,72 @@ printed and kept with the hardware wallet.
   - Anyone who knows a wallet address can send a coin after a recovery starts. That blocks completion, because the sweep must spend every coin, until the user starts the recovery again.
   - Anyone who sees the guardian's npub on a relay can burn a 5-minute pairing code with wrong attempts.
   - Anyone with web access can delay unlocks through the rate limit.
+
+## Entropy
+
+Guessable keys would lose money silently, so where each key's randomness comes from is spelled out here.
+
+**Where every key comes from.** Every key and secret Trikey makes is drawn through one function, `secureRandomBytes` ([`packages/core/src/random.ts`](packages/core/src/random.ts)). It reads the platform's own CSPRNG (`crypto.getRandomValues`, filled by the operating system) and checks it on every call.
+
+| Key or secret | Where | Source |
+|---|---|---|
+| Key 2, guardian mode (24 words) | `packages/wallet` `newMnemonic` | 32 bytes from `secureRandomBytes`, then `entropyToMnemonic`. On the phone that is `expo-crypto`: `SecRandomCopyBytes` on iOS, `SecureRandom` on Android. |
+| Key 2, Recovery Key mode (24 words) | `packages/recovery-key` `newPhoneMnemonic` | Same. |
+| Recovery Kit key (12 words) | `packages/recovery-key` `newRecoveryKeyEntropy` | 16 bytes from `secureRandomBytes` on the same phone. |
+| Key 3, guardian mode | `apps/guardian` `generateSeed`, then `trikey/key3/v1` | 32 bytes from `secureRandomBytes` (Node's webcrypto, Linux `getrandom`) at setup, mixed with the phone's contribution at pairing (below). |
+| Key 1, the hardware wallet | The device | The device's own generator, outside Trikey's control. Trikey only ever sees its xpub. |
+| Guardian nostr key, NIP-59 wrap keys | `identity.ts`, `transport.ts` | `randomSecretKey`: 32 bytes from `secureRandomBytes`, drawn again only if they are not a valid secp256k1 scalar. |
+| Backup data key, nonces, salts, recovery code, passkey PRF salt | `packages/wallet/src/backup.ts`, `wallet.ts` | `secureRandomBytes`. |
+| Pairing secret, message ids, pairing session id | `packages/protocol/src/pairing.ts`, `envelope.ts`, `apps/guardian/src/pairing.ts` | `secureRandomBytes`. |
+| Guardian keystore salt and nonce, silent-payment key encryption | `apps/guardian/src/keystore.ts`, `silent/service.ts` | `secureRandomBytes`. |
+| NIP-44 nonces and NIP-59 back-dating (RPC and the guardian's NIP-17 alert DMs) | `packages/protocol/src/transport.ts` | `secureRandomBytes` and `secureRandomInt`, no longer `Math.random` or nostr-tools' own generator. Back-dating hides when a message was sent, so it should not come from a predictable generator. |
+
+`Math.random` is left in one place: the Electrum reconnect jitter, which is timing only. A lint-style test ([`packages/core/test/randomness-lint.test.ts`](packages/core/test/randomness-lint.test.ts)) fails CI on `Math.random(`, `generateMnemonic(`, `generateSecretKey(` or a raw `randomBytes` import anywhere else in the shipped sources.
+
+**The guards.** `secureRandomBytes(n)` refuses to answer, with a typed `RandomSourceError`, when:
+
+- `n` is not an integer from 1 to 65,536;
+- there is no `crypto.getRandomValues`;
+- `crypto.getRandomValues` is no longer the function pinned at start-up (`pinRandomSource`);
+- the output is one byte value repeated (a zero-filled buffer, a stuck source);
+- the leading 32 bytes of a draw equal the previous draw's (a continuous test; every call draws at least 32 bytes so the check always has a full block).
+
+It never retries silently and never falls back to anything weaker. A source caught stuck, repeating or replaced stays refused until the process restarts. The wallets turn the error into `random_source_failed` before anything is stored.
+
+**What the guards cannot do.** The OS generator's output is already conditioned, so it looks uniformly random whether it was seeded well or not. A generator seeded from 32 known bytes passes every statistical test, and no test on its output can prove it unpredictable. These checks catch gross failures only: a broken or missing polyfill, a buffer that was never filled, a stuck source, a source swapped out after start-up. The defences against a subtly weak generator are the key-3 mix and the 2-of-3 structure below.
+
+**Source pinning.**
+
+- **The phone.** The app's first import (`apps/mobile/src/platform/polyfills.ts`) installs `crypto.getRandomValues` backed by `expo-crypto` and pins it; on the web it pins the browser's own.
+- **The Ledger kit's polyfill.** The Ledger Device Management Kit needs `crypto.getRandomValues` (through `uuid`), and `react-native-get-random-values` used to provide it. That package installs its function only when none exists. It never runs first, so it installs nothing, and the Ledger kit and key generation share the one pinned function. `random.native.ts` checks this right after importing it (`assertRandomSourcePinned`). If load order ever changed and that package's function won, the app fails right there: its implementation calls the same native `ExpoCrypto.getRandomValues`, but falls back to `Math.random` under Chrome's remote debugger.
+- **The guardian.** `main.ts` first imports `pin-random.ts`, which pins `node:crypto`'s `webcrypto.getRandomValues`.
+
+Pinning catches accidents, not code already running inside the process, which could do anything anyway. The app's crypto self-test (Settings, Developer) also checks that the source is pinned.
+
+**Key 3 from both sides (`trikey/key3/v1`).** At pairing the phone sends `c`, 32 fresh bytes from its own `secureRandomBytes`, in `pair.prepare` (`entropy`). The guardian makes the wallet's key 3 from its setup seed and `c`:
+
+```
+seed3 = HMAC-SHA512(key = guardian setup seed (64-byte BIP 39 seed), data = "trikey/key3/v1" || walletContext || c)
+walletContext = u32be(len) || network || u32be(len) || pairing session id || u32be(32) || phone nostr pubkey
+key 3 = BIP 32 master of seed3, account m/48'/<coin>'/0'/2'
+```
+
+- **The context** binds the network, the pairing session and the phone, so the same `c` sent again gives a different key.
+- **Storage.** The guardian stores `c` and the context with the registration. They are not secret: without the seed they say nothing about key 3. It derives key 3 again at every unlock, and keeps the setup seed in memory only while unlocked.
+- **Lifecycle.** A wallet rotation keeps the same key 3 and the same record. A reset makes a new seed. A new pairing gets a new `c`.
+- **The phone never learns key 3,** only its xpub. It shows "Your guardian's key was made with randomness from both this phone and your guardian" when the guardian answers `key3Mixed: true`.
+- **What this is for.** It protects against a weak generator on the guardian: a guessable setup seed alone no longer gives key 3. It does not protect against a dishonest guardian, which could ignore `c`, and that cannot be proven without revealing key 3.
+- **Compatibility.** A guardian without `entropy` support refuses such a request (its schema is strict), so the app needs a guardian of this version or later. A guardian receiving no `entropy` keeps its own key, as before.
+- Vectors are in `apps/guardian/test/key3-mix.e2e.test.ts`, checked against node:crypto's HMAC.
+
+**User-supplied entropy (dice) was considered and not built.** The idea: optional dice rolls mixed into key 2 and the Recovery Kit, plus a "check this on another computer" step that recomputes the words from the phone's random part and the dice. It was dropped for two reasons.
+
+- **The check exports seed-equivalent material.** Showing the OS contribution so the user can recompute the key moves the key off the phone, in a form the phone cannot protect: screenshots, an online second computer, phishing ("paste your hex here to verify").
+- **It adds little for a hot phone key.** Dice only help against an honest but broken generator, which the guards above target. Against a malicious phone they help nothing: that phone holds key 2 in the clear anyway.
+
+**The risk this leaves in Recovery Key mode.** Key 2 and a paper Recovery Kit both come from the same phone's generator. A subtle failure the guards cannot see, such as a badly seeded but working CSPRNG, would weaken two of the three keys at once. With two weak keys, the hardware wallet no longer protects the money. Guardian mode does not have this problem: key 3 mixes in a second machine's generator. The mitigation is the existing option to use a **second hardware wallet as the Recovery Key**, whose key comes from that device's own generator. The RK-Create screen now calls it "the strongest choice: its key is not made on this phone". The paper kit stays the simple default.
+
+**What 2-of-3 gives.** A weak key alone cannot move money. One key with poor entropy, whether the phone's, the guardian's or the hardware wallet's, still needs a second key to spend. The hardware wallet's key comes from the device's own generator, outside Trikey's control, which is one more reason the three keys should not share a source.
 
 ## Recovery Key mode (no home server)
 

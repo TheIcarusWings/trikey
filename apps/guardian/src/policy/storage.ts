@@ -1,7 +1,8 @@
 import { open, readFile, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { randomBytes } from 'node:crypto';
 import { GuardianState, GuardianStateV1 } from './types.js';
+import { hex } from '@scure/base';
+import { secureRandomBytes } from '@trikey/core/random';
 
 /** Where the engine keeps its state. `save` must be durable before it resolves. */
 export interface StateStore {
@@ -100,7 +101,7 @@ export class JsonFileStore implements StateStore {
 
   async save(state: GuardianState): Promise<void> {
     const dir = dirname(this.path);
-    const tmp = join(dir, `.${basename(this.path)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
+    const tmp = join(dir, `.${basename(this.path)}.${process.pid}.${hex.encode(secureRandomBytes(6))}.tmp`);
     const fh = await open(tmp, 'wx', 0o600);
     try {
       await fh.writeFile(serializeState(state), 'utf8');

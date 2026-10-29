@@ -41,6 +41,11 @@ export const GuardianRecord = z.object({
   /** Key 3 with origin, from `pair.prepare` (or `recovery.access`). */
   key: KeyOrigin,
   version: z.string().optional(),
+  /**
+   * The guardian said it made this wallet's key 3 from its own seed and this phone's contribution
+   * (`pair.prepare` `entropy`, answered with `key3Mixed: true`). Absent: an older guardian, or unknown.
+   */
+  key3Mixed: z.boolean().optional(),
 });
 export type GuardianRecord = z.infer<typeof GuardianRecord>;
 

@@ -20,7 +20,6 @@ import { base64, hex } from '@scure/base';
 import * as btc from '@scure/btc-signer';
 import { HDKey } from '@scure/bip32';
 import { mnemonicToSeedSync } from '@scure/bip39';
-import { randomBytes } from '@noble/hashes/utils.js';
 import {
   CHANGE,
   MultisigWallet,
@@ -42,7 +41,7 @@ import {
   type Role,
 } from '@trikey/core';
 import type { HardwareKind, HardwareProvider, HardwareSigner, HardwareWalletPolicy, KeyValueStore, SecureKeyStore } from '@trikey/wallet';
-import { RecoveryKeyError, type RecoveryKeyErrorCode } from './errors.js';
+import { RecoveryKeyError, asRandomSourceError, type RecoveryKeyErrorCode } from './errors.js';
 import { DUST_SATS, chooseRefillFeeRate, defaultRefillFeePolicy, estimateFor, refillVsize, type FeeRates } from './fees.js';
 import { BIP39_WORDLIST, deriveKey2, entropyFromMnemonic, keyFromDevice, mnemonicFromEntropy, newPhoneMnemonic, newRecoveryKeyEntropy, recoveryKeyFromEntropy, vaultAccountOf } from './keys.js';
 import { decodeKit, encodeKitBytes, formatFingerprint, kitMnemonic, kitRecoveryKeyExpression, kitVault, tokenizeWords, wipeKit, type RecoveryKit } from './kit.js';
@@ -70,6 +69,7 @@ import { scanAccount, type EsploraClient, type ScanResult } from './esplora.js';
 import { DEFAULT_SWEEP_FEE_CAP_SATS, buildVaultSweep, gatherVaultCoins, signVaultTx, type VaultSigner } from './recovery.js';
 import { decodeRawTx, vsizeOf } from './script-verify.js';
 import { StateStore, type HardwareRecord, type RkAlert, type RkConfig, type RkState } from './state.js';
+import { secureRandomBytes } from '@trikey/core/random';
 
 export interface Clock {
   now(): number;
@@ -235,7 +235,7 @@ function wordMatches(typed: string, word: string): boolean {
 
 function randomPositions(n: number, of: number): number[] {
   const picked = new Set<number>();
-  const r = randomBytes(32);
+  const r = secureRandomBytes(32);
   let i = 0;
   while (picked.size < n) picked.add((r[i++ % 32]! + i) % of + 1);
   return [...picked].sort((a, b) => a - b);
@@ -308,14 +308,19 @@ export class RecoveryKeyWallet {
   // ===========================================================================
   // Creating and opening
 
-  /** Creates key 2 (fresh, or `mnemonic` to import one) and a new wallet with no vault yet. */
+  /** Creates key 2 (fresh from `secureRandomBytes`, or `mnemonic` to import one) and a new wallet with no vault yet. */
   static async create(deps: RecoveryKeyDeps, opts: { mnemonic?: string } = {}): Promise<RecoveryKeyWallet> {
     const network = refuseMainnet(deps);
     const store = new StateStore(deps.store, deps.secureStore, deps.storageKey);
     if (await store.exists()) throw new RecoveryKeyError('wallet_exists', 'This phone already has a Recovery Key wallet.');
-    const mnemonic = opts.mnemonic ?? newPhoneMnemonic();
+    let mnemonic: string;
+    try {
+      mnemonic = opts.mnemonic ?? newPhoneMnemonic();
+    } catch (e) {
+      throw asRandomSourceError(e);
+    }
     const pub = deriveKey2(mnemonic, network);
-    const key2Id = `${store.key}.key2.${hex.encode(randomBytes(8))}`;
+    const key2Id = `${store.key}.key2.${hex.encode(secureRandomBytes(8))}`;
     const entropy = entropyFromMnemonic(mnemonic);
     try {
       await deps.secureStore.save(key2Id, entropy, { requireBiometrics: true });
@@ -390,6 +395,10 @@ export class RecoveryKeyWallet {
     const hw = this.hwSession;
     this.hwSession = undefined;
     await hw?.close().catch(() => {});
+    this.dropPendingKit();
+  }
+
+  private dropPendingKit(): void {
     if (this.pendingKit) wipeKit(this.pendingKit.kit);
     this.pendingKit = undefined;
   }
@@ -495,15 +504,24 @@ export class RecoveryKeyWallet {
    * Step 2 (paper kit): makes key 3 in memory and renders the Recovery Kit.
    * Key 3 exists only in this object and on the printout until
    * `confirmKitSaved`, which wipes it. Calling again makes a new key 3.
+   *
+   * Key 3 is 16 bytes from `secureRandomBytes`: the same phone generator as key 2 (see DESIGN.md, "Entropy";
+   * `useHardwareRecoveryKey` avoids that).
    */
   async createRecoveryKit(opts: KitPrintOptions = {}): Promise<PrintableKit> {
     if (this.s.stage !== 'hardware' || !this.s.hardware) throw new RecoveryKeyError('wrong_state', 'Connect the hardware wallet first.');
     const creationHeight = await this.deps.esplora.tipHeight();
-    if (this.pendingKit) wipeKit(this.pendingKit.kit);
+    let entropy: Uint8Array;
+    try {
+      entropy = newRecoveryKeyEntropy();
+    } catch (e) {
+      throw asRandomSourceError(e);
+    }
+    this.dropPendingKit();
     const kit: RecoveryKit = {
       network: this.network.name,
       creationHeight,
-      recoveryKey: { kind: 'seed', entropy: newRecoveryKeyEntropy(), account: 0 },
+      recoveryKey: { kind: 'seed', entropy, account: 0 },
       phone: this.s.key2.vault,
       hardware: this.s.hardware.key,
     };
@@ -527,6 +545,7 @@ export class RecoveryKeyWallet {
       if (hw.info.fingerprint === this.s.key2.vault.fingerprint) throw new RecoveryKeyError('hardware_mismatch', 'That device holds the phone key.');
       const key = await readDeviceKey(hw, this.network, 0);
       const kit: RecoveryKit = { network: this.network.name, creationHeight, recoveryKey: { kind: 'xpub', key }, phone: this.s.key2.vault, hardware: this.s.hardware.key };
+      this.dropPendingKit();
       this.pendingKit = { kit, positions: [], device: { kind: hw.info.kind, model: hw.info.model, fingerprint: hw.info.fingerprint } };
       return renderKit(kit, { hardwareName: hardwareName(this.s.hardware.kind), ...opts });
     } finally {
@@ -583,8 +602,7 @@ export class RecoveryKeyWallet {
     const kind = p.kit.recoveryKey.kind;
     const device = p.device;
     const creationHeight = p.kit.creationHeight;
-    wipeKit(p.kit);
-    this.pendingKit = undefined;
+    this.dropPendingKit();
     await this.update((s) => {
       s.recoveryKey = { kind: kind === 'seed' ? 'kit' : 'hardware', key: rk, savedAt: this.clock.now(), ...(device ? { device } : {}) };
       s.vault = { descriptor, fingerprint: vault.fingerprint(), creationHeight };
@@ -855,11 +873,11 @@ export class RecoveryKeyWallet {
     });
     const stored = await this.signRefills(unsigned, hw);
     const now = this.clock.now();
-    const batch = { id: hex.encode(randomBytes(8)), createdAt: now, createdHeight: sy.tip, from: plan.startPosition, to: plan.startPosition + count - 1, feeRate: plan.rate.satPerVb };
+    const batch = { id: hex.encode(secureRandomBytes(8)), createdAt: now, createdHeight: sy.tip, from: plan.startPosition, to: plan.startPosition + count - 1, feeRate: plan.rate.satPerVb };
     const record: RefillChainRecord =
       plan.mode === 'extend'
         ? { ...this.s.chain!, refills: [...this.s.chain!.refills, ...stored], batches: [...this.s.chain!.batches, batch] }
-        : { id: hex.encode(randomBytes(8)), descriptor: vault.descriptor(), amountSats: Number(plan.amount), periodBlocks: plan.period, refills: stored, batches: [batch] };
+        : { id: hex.encode(secureRandomBytes(8)), descriptor: vault.descriptor(), amountSats: Number(plan.amount), periodBlocks: plan.period, refills: stored, batches: [batch] };
     verifyRefillChain(record, { vault, spending: this.spendingAccount() });
     await this.update((s) => {
       s.chain = record;

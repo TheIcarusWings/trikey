@@ -18,6 +18,7 @@ import { RpcClient, RpcTimeoutError, SimplePoolRelayPool, approvalMessage, encod
 import { GuardianRig } from '@trikey/guardian/testing';
 import {
   BACKUP_FILE_PREFIX,
+  KEY3_MIXED_NOTE,
   TrikeyWallet,
   WalletError,
   generateRecoveryCode,
@@ -91,9 +92,16 @@ describe('@trikey/wallet end to end', { timeout: 60_000 }, () => {
     expect(hw).toMatchObject({ kind: 'ledger', fingerprint: device.info.fingerprint });
     const preview = await A.scanGuardian(rig.pairingUri());
     expect(preview.label).toBe('Test Guardian');
+    expect(preview.key3Mixed).toBe(true);
     const out = await A.pair({ rules: RULES });
     walletId = out.walletId;
     expect(out).toMatchObject({ walletId: preview.walletId, descriptor: preview.descriptor, addressVerified: true });
+    // The phone sent its contribution to key 3; the guardian mixed it in and said so.
+    expect(out).toMatchObject({ key3Mixed: true, key3Note: KEY3_MIXED_NOTE });
+    expect(KEY3_MIXED_NOTE).toBe("Your guardian's key was made with randomness from both this phone and your guardian.");
+    expect(A.state.guardian!.key3Mixed).toBe(true);
+    expect(rig.guardian.engine.registration()!.key3Mix?.entropy).toMatch(/^[0-9a-f]{64}$/);
+    expect(A.state.guardian!.key.xpub).not.toBe(rig.guardian.keystore!.public.xpub);
 
     // Keys in the descriptor: phone, hardware, guardian; the guardian registered exactly that.
     const keys = parseSortedMultiDescriptor(out.descriptor);

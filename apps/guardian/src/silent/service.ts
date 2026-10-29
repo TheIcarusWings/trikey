@@ -27,7 +27,7 @@
 import { join } from 'node:path';
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { randomBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { hex } from '@scure/base';
 import type { Alert } from '@trikey/protocol';
 import type { BitcoinRpc } from '../chain/bitcoind.js';
@@ -35,6 +35,7 @@ import { Mutex, readJsonFile, writeFileAtomic } from '../files.js';
 import { errorText, silentLogger, type Logger } from '../log.js';
 import type { Clock } from '../policy/index.js';
 import { SilentPaymentBlockScanner, type BlockScanStats } from './scan.js';
+import { secureRandomBytes } from '@trikey/core/random';
 
 export const SP_FILES = { state: 'silent-payments.json', key: 'silent-payments-key.json' } as const;
 /** Blocks re-checked on every run, and repeated below `fromHeight` in `sp.scan` answers. */
@@ -190,7 +191,7 @@ export class SilentPaymentService {
       return this.fileKey;
     }
     if (!create) return undefined;
-    const key = randomBytes(32);
+    const key = secureRandomBytes(32);
     await writeFileAtomic(this.path('key'), `${JSON.stringify({ version: 1, key: hex.encode(key), createdAt: new Date(this.opts.clock.now()).toISOString() })}\n`, { overwrite: false });
     this.fileKey = key;
     return key;
@@ -246,7 +247,7 @@ export class SilentPaymentService {
           same = false;
         }
       }
-      const nonce = randomBytes(24);
+      const nonce = secureRandomBytes(24);
       const reg: Registration = {
         phone: input.phone,
         spendPublicKey,

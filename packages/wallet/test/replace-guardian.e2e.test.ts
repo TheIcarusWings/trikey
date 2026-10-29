@@ -103,7 +103,10 @@ describe('replace guardian, the old guardian online', { timeout: 90_000 }, () =>
     // The same guardian again is no "replacement".
     await A.abandonReplaceGuardian();
     expect((await walletError(A.previewReplaceGuardian(R1.pairingUri()))).code).toBe('guardian_refused'); // R1 is paired: its code is refused
-    await A.previewReplaceGuardian(R2.pairingUri());
+    // Each `pair.prepare` sends a fresh key 3 contribution, so a second preview names a new key 3 and wallet.
+    const again = await A.previewReplaceGuardian(R2.pairingUri());
+    expect(again.newWalletId).not.toBe(newId);
+    newId = again.newWalletId;
   });
 
   it('pairs the new guardian with a new wallet, sweeps every coin through the old guardian, retires the old wallet there, and switches', async () => {

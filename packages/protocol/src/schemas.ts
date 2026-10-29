@@ -191,11 +191,20 @@ export const HardwareAuthKey = z.strictObject({
 export const PairPrepareParams = z.strictObject({
   pairingSecret: PairingSecret,
   network: Network,
+  /**
+   * The phone's contribution to key 3: 32 fresh random bytes, hex (PROTOCOL.md, "Key 3 from both sides").
+   * A guardian that knows this member MUST derive the wallet's key 3 from its own seed and these bytes
+   * (`trikey/key3/v1`) and answer `key3Mixed: true`; the last `pair.prepare` of a pairing session counts.
+   * Absent: the guardian's own key, as before. Not secret on its own.
+   */
+  entropy: Hex32.optional(),
 });
 export const PairPrepareResult = z.object({
   /** The guardian's key (key 3) for the 2-of-3 wallet, on `network`. */
   guardianKey: KeyOrigin,
   guardianVersion: z.string().max(32),
+  /** True when `guardianKey` was derived with the request's `entropy`. Absent or false: the guardian's own key. */
+  key3Mixed: z.boolean().optional(),
 });
 
 /** Step 2 of pairing: registers the wallet, the hardware authorization key and the initial rules. */
@@ -237,6 +246,8 @@ export const PairParams = z.strictObject({
 export const PairResult = z.object({
   /** The guardian's key (key 3) for the 2-of-3 wallet. */
   guardianKey: KeyOrigin,
+  /** True when the registered key 3 was derived with the phone's `pair.prepare` `entropy`. */
+  key3Mixed: z.boolean().optional(),
   /** The registered descriptor, normalized by the guardian. */
   descriptor: Descriptor,
   /** Identifies the wallet in every hardware approval (`approvalMessage`'s `walletId`). */
@@ -389,6 +400,11 @@ export const GuardianStatusResult = z
     walletId: WalletId.optional(),
     /** True after such a rotation until `hardware.confirm`: hardware approvals are refused (1209) until then. */
     hardwareConfirmRequired: z.boolean().optional(),
+    /**
+     * While paired: whether the wallet's key 3 was derived with the phone's `pair.prepare` `entropy`
+     * (kept across a wallet rotation, which keeps key 3). Absent from guardians before this member.
+     */
+    key3Mixed: z.boolean().optional(),
     /**
      * The wallet this guardian watches (watch-only) because the paired wallet replaced it (`pair` with
      * `replacesDescriptor`); absent when it watches none. While present, `tx.broadcast` also relays a signed

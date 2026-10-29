@@ -10,13 +10,16 @@
  *   printed on the Recovery Kit (its BIP 48 account goes into the vault), or a
  *   second hardware wallet, of which only the xpub is needed.
  *
- * Randomness comes from `crypto.getRandomValues` (through `@noble/hashes`).
+ * Randomness comes from `secureRandomBytes` (packages/core/src/random.ts: the
+ * OS generator, checked on every call). Key 2 and a paper Recovery Key both
+ * come from this phone's generator; DESIGN.md ("Entropy") says what that means
+ * and why a second hardware wallet as the Recovery Key avoids it.
  */
 import { HDKey } from '@scure/bip32';
 import { entropyToMnemonic, mnemonicToEntropy, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
-import { randomBytes } from '@noble/hashes/utils.js';
 import { bip48Path, keyExpressionFromMaster, type KeyExpression, type Network } from '@trikey/core';
+import { secureRandomBytes } from '@trikey/core/random';
 
 export { wordlist as BIP39_WORDLIST };
 
@@ -29,9 +32,9 @@ export const isValidMnemonic = (m: string) => validateMnemonic(m, wordlist);
 export const mnemonicFromEntropy = (e: Uint8Array) => entropyToMnemonic(e, wordlist);
 export const entropyFromMnemonic = (m: string) => mnemonicToEntropy(m, wordlist);
 
-/** A fresh 24-word key 2. */
+/** A fresh 24-word key 2: 32 bytes from `secureRandomBytes`. */
 export function newPhoneMnemonic(): string {
-  const e = randomBytes(32);
+  const e = secureRandomBytes(32);
   try {
     return mnemonicFromEntropy(e);
   } finally {
@@ -39,9 +42,9 @@ export function newPhoneMnemonic(): string {
   }
 }
 
-/** 16 bytes of fresh entropy: a 12-word Recovery Key. The caller wipes it. */
+/** 16 bytes of fresh entropy from `secureRandomBytes`: a 12-word Recovery Key. The caller wipes it. */
 export function newRecoveryKeyEntropy(): Uint8Array {
-  return randomBytes(16);
+  return secureRandomBytes(16);
 }
 
 function masterOf(mnemonic: string, network: Network): HDKey {

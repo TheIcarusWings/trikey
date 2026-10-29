@@ -13,7 +13,7 @@
  */
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { randomBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { hex } from '@scure/base';
 import { equalBytes } from '@scure/btc-signer/utils.js';
 import type { KeyExpression, NetworkName } from '@trikey/core';
@@ -21,6 +21,7 @@ import type { HardwareKind, KeyValueStore, SecureKeyStore } from '@trikey/wallet
 import type { RefillFeePolicy } from './fees.js';
 import type { RefillChainRecord } from './refills.js';
 import { RecoveryKeyError } from './errors.js';
+import { secureRandomBytes } from '@trikey/core/random';
 
 export interface RkConfig {
   /** Sats per refill (default 200,000). */
@@ -134,8 +135,8 @@ export class StateStore {
 
   /** Creates the MAC key for a new wallet. */
   async init(): Promise<void> {
-    this.macKeyId = `${this.key}.mac.${hex.encode(randomBytes(8))}`;
-    this.macKey = randomBytes(32);
+    this.macKeyId = `${this.key}.mac.${hex.encode(secureRandomBytes(8))}`;
+    this.macKey = secureRandomBytes(32);
     await this.secure.save(this.macKeyId, this.macKey, { requireBiometrics: false });
   }
 

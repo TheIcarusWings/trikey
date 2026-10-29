@@ -4,7 +4,6 @@ import { GiftWrap, Seal } from 'nostr-tools/kinds';
 import * as nip44 from 'nostr-tools/nip44';
 import {
   finalizeEvent,
-  generateSecretKey,
   getEventHash,
   getPublicKey,
   verifyEvent,
@@ -23,6 +22,7 @@ import {
   type RumorMeta,
 } from './envelope.js';
 import type { Message } from './schemas.js';
+import { randomSecretKey, secureRandomBytes, secureRandomInt } from '@trikey/core/random';
 
 export { GiftWrap as GIFT_WRAP_KIND, Seal as SEAL_KIND } from 'nostr-tools/kinds';
 
@@ -133,7 +133,16 @@ export interface WrappedMessage {
   expiration: number;
 }
 
-const backdated = (now: number) => Math.round(now - Math.random() * WRAP_BACKDATE_SEC);
+/**
+ * NIP-59 back-dating: a uniform whole number of seconds from 0 to `WRAP_BACKDATE_SEC`, from the checked
+ * OS generator. It is a privacy measure (relays should not learn when a message was sent), so it comes
+ * from `secureRandomInt` rather than `Math.random`, whose state an observer of enough timestamps could
+ * recover.
+ */
+const backdated = (now: number) => Math.round(now) - secureRandomInt(WRAP_BACKDATE_SEC + 1);
+
+/** NIP-44 nonces from the checked source too (nostr-tools would draw its own). */
+const nonce = () => secureRandomBytes(32);
 
 /**
  * Wrap a message as rumor (kind 21420) -> seal (kind 13) -> gift wrap (kind 1059), NIP-44
@@ -149,19 +158,20 @@ export function wrapMessage(message: Message, opts: WrapOptions): WrappedMessage
   const seal = finalizeEvent(
     {
       kind: Seal,
-      content: nip44.encrypt(JSON.stringify(rumor), keys.get(opts.senderSecretKey, opts.recipient)),
+      content: nip44.encrypt(JSON.stringify(rumor), keys.get(opts.senderSecretKey, opts.recipient), nonce()),
       created_at: backdated(now),
       tags: [],
     },
     opts.senderSecretKey,
   );
 
-  const wrapKey = generateSecretKey();
+  // A throwaway key per wrap: a valid secp256k1 scalar from the checked source.
+  const wrapKey = randomSecretKey();
   const expiration = Number(template.tags.find((t) => t[0] === TAG_EXPIRATION)![1]);
   const wrap = finalizeEvent(
     {
       kind: GiftWrap,
-      content: nip44.encrypt(JSON.stringify(seal), nip44.getConversationKey(wrapKey, opts.recipient)),
+      content: nip44.encrypt(JSON.stringify(seal), nip44.getConversationKey(wrapKey, opts.recipient), nonce()),
       created_at: backdated(now),
       tags: [
         ['p', opts.recipient],
@@ -170,7 +180,53 @@ export function wrapMessage(message: Message, opts: WrapOptions): WrappedMessage
     },
     wrapKey,
   );
+  wrapKey.fill(0);
   return { wrap, rumorId: rumor.id, createdAt: template.created_at, expiration };
+}
+
+/** NIP-17 private direct message (kind 14 rumor). */
+export const DIRECT_MESSAGE_KIND = 14;
+
+/**
+ * A NIP-17 private direct message to `recipient`: kind-14 rumor -> seal -> gift wrap, exactly as
+ * `nostr-tools/nip17` `wrapEvent(sk, { publicKey }, text)` builds it (Damus, Amethyst and Primal read
+ * it), but with the throwaway key, the NIP-44 nonces and the back-dating from the checked source
+ * instead of nostr-tools' own `generateSecretKey` and `Math.random`.
+ */
+export function wrapDirectMessage(text: string, opts: { senderSecretKey: Uint8Array; recipient: string; now?: number }): NostrEvent {
+  const now = opts.now ?? nowSeconds();
+  const rumor: Rumor = {
+    created_at: now,
+    kind: DIRECT_MESSAGE_KIND,
+    tags: [['p', opts.recipient]],
+    content: text,
+    pubkey: getPublicKey(opts.senderSecretKey),
+    id: '',
+  };
+  rumor.id = getEventHash(rumor);
+  const seal = finalizeEvent(
+    {
+      kind: Seal,
+      content: nip44.encrypt(JSON.stringify(rumor), nip44.getConversationKey(opts.senderSecretKey, opts.recipient), nonce()),
+      created_at: backdated(now),
+      tags: [],
+    },
+    opts.senderSecretKey,
+  );
+  const wrapKey = randomSecretKey();
+  try {
+    return finalizeEvent(
+      {
+        kind: GiftWrap,
+        content: nip44.encrypt(JSON.stringify(seal), nip44.getConversationKey(wrapKey, opts.recipient), nonce()),
+        created_at: backdated(now),
+        tags: [['p', opts.recipient]],
+      },
+      wrapKey,
+    );
+  } finally {
+    wrapKey.fill(0);
+  }
 }
 
 /* -------------------------------------------------------------------------- */

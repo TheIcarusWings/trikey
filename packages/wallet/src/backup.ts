@@ -26,13 +26,14 @@
 import { argon2idAsync } from '@noble/hashes/argon2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { bytesToHex, concatBytes, randomBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+import { bytesToHex, concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { base64, utf8 } from '@scure/base';
 import { z } from 'zod';
 import { Network, Policy } from '@trikey/protocol';
 import { WalletError } from './errors.js';
 import { GuardianRecord, HardwareRecord, RetiredWallet, SendLogEntry } from './state.js';
+import { secureRandomBytes } from '@trikey/core/random';
 
 export const BACKUP_MAGIC = utf8ToBytes('TKBK');
 export const BACKUP_VERSION = 1;
@@ -161,7 +162,7 @@ function checkChar(data: string): string {
 
 /** A fresh recovery code: 120 random bits, `XXXXX-XXXXX-XXXXX-XXXXX-XXXXX` (the last character is a check). */
 export function generateRecoveryCode(): string {
-  const bytes = randomBytes(15);
+  const bytes = secureRandomBytes(15);
   let bits = 0;
   let acc = 0;
   let data = '';
@@ -228,15 +229,15 @@ export interface SealedBackup {
 export async function sealBackup(payload: BackupPayload, slots: SlotInput[], opts: { now: number }): Promise<SealedBackup> {
   if (!slots.length) throw new WalletError('backup_unavailable', 'A backup needs at least one way to open it.');
   const p = BackupPayload.parse(payload);
-  const id = bytesToHex(randomBytes(16));
-  const dataKey = randomBytes(32);
-  const nonce = randomBytes(24);
+  const id = bytesToHex(secureRandomBytes(16));
+  const dataKey = secureRandomBytes(32);
+  const nonce = secureRandomBytes(24);
   try {
     const sealedSlots: BackupSlot[] = [];
     for (const s of slots) {
-      const slotNonce = randomBytes(24);
+      const slotNonce = secureRandomBytes(24);
       if (s.type === 'passkey-prf') {
-        const hkdfSalt = randomBytes(32);
+        const hkdfSalt = secureRandomBytes(32);
         const kek = passkeyKek(s.prfOutput, hkdfSalt);
         const wrapped = xchacha20poly1305(kek, slotNonce, slotAad(id, s.type)).encrypt(dataKey);
         kek.fill(0);
@@ -250,7 +251,7 @@ export async function sealBackup(payload: BackupPayload, slots: SlotInput[], opt
         });
       } else {
         const kdf = s.kdf ?? DEFAULT_RECOVERY_CODE_KDF;
-        const salt = randomBytes(16);
+        const salt = secureRandomBytes(16);
         const kek = await codeKek(s.code, salt, kdf);
         const wrapped = xchacha20poly1305(kek, slotNonce, slotAad(id, s.type)).encrypt(dataKey);
         kek.fill(0);

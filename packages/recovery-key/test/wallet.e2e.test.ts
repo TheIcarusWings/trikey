@@ -15,6 +15,7 @@ import { decodeRawTx, vsizeOf } from '../src/script-verify.js';
 import { verifyRefillChain } from '../src/refills.js';
 import type { PrintableKit } from '../src/kit-print.js';
 import { MNEMONICS, externalAddress, rejects } from './helpers.js';
+import { entropyFromMnemonic } from '../src/keys.js';
 import { consensusAvailable, verifyConsensus } from '@trikey/core/testing';
 
 const PERIOD = 1008;
@@ -75,7 +76,11 @@ describe('create a vault and approve 8 refills', () => {
     expect(s.recoveryKey!.kind).toBe('kit');
     // Key 3 is gone: nothing the phone stores holds the kit's words or QR.
     const stored = [...w.p1.store.data.values()].join('\n');
-    for (const word of new Set(kit.recoveryWords)) expect(stored).not.toMatch(new RegExp(`\\b${word}\\b`));
+    // Words the state itself uses (keys like "vault", values like "kit") can be kit words by chance (2048-word
+    // list), so look for the words in order: no two consecutive kit words appear anywhere.
+    const plain = stored.replace(/[^a-z]+/g, ' ');
+    for (let i = 1; i < kit.recoveryWords.length; i++) expect(plain).not.toContain(` ${kit.recoveryWords[i - 1]} ${kit.recoveryWords[i]} `);
+    expect(stored).not.toContain(hex.encode(entropyFromMnemonic(kit.recoveryWords.slice(0, 12).join(' '))));
     expect(stored).not.toContain(kit.qrText.slice(11, 60));
     expect(w.p1.secureStore.items.size).toBe(2); // key 2 (biometric) and the state MAC key
     expect([...w.p1.secureStore.items.values()].filter((i) => i.requireBiometrics)).toHaveLength(1);

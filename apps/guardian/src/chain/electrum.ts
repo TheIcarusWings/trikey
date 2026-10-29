@@ -251,6 +251,9 @@ export class ElectrumClient {
 
   private scheduleReconnect(): void {
     if (this.stopped) return;
+    // Math.random on purpose: reconnect jitter only spreads retries over time; nothing secret or
+    // privacy-relevant depends on it. Keys and secrets use secureRandomBytes (the randomness lint in
+    // packages/core/test allows Math.random in this file only).
     const jitter = Math.floor(Math.random() * (this.backoffMs / 4));
     const delay = this.backoffMs + jitter;
     this.backoffMs = Math.min(this.o.maxBackoffMs, this.backoffMs * 2);

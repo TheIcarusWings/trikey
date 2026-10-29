@@ -82,6 +82,21 @@ export interface Registration {
   appNostrPubkey: string;
   registeredAt: number;
   origin: WalletOrigin;
+  /**
+   * Set when key 3 of this wallet was derived from the guardian's seed and the phone's pairing contribution
+   * (`trikey/key3/v1`, keystore.ts): what is needed to derive it again at unlock. Absent: the guardian's own
+   * key (pairings without `entropy`, and wallets from before). A rotation keeps it with the key.
+   */
+  key3Mix?: Key3Mix;
+}
+
+/** The phone's key 3 contribution and its context (`trikey/key3/v1`, apps/guardian/src/keystore.ts). Not secret. */
+export interface Key3Mix {
+  version: 1;
+  /** The phone's contribution `c`, 32 bytes hex. */
+  entropy: string;
+  /** `walletContext`, hex. */
+  context: string;
 }
 
 /** A phone the hardware wallet let in with `recovery.access` (lost phone, no backup). */

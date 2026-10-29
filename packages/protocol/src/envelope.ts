@@ -1,5 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
-import { bytesToHex, randomBytes } from '@noble/hashes/utils.js';
+import { bytesToHex } from '@noble/hashes/utils.js';
+import { secureRandomBytes } from '@trikey/core/random';
 import { ErrorCode } from './errors.js';
 import {
   MessageId,
@@ -98,7 +99,7 @@ export function nowSeconds(): number {
 
 /** A fresh message id: 128 random bits, hex. */
 export function generateMessageId(): string {
-  return bytesToHex(randomBytes(16));
+  return bytesToHex(secureRandomBytes(16));
 }
 
 /** sha256 of the decoded PSBT bytes, lowercase hex. */
