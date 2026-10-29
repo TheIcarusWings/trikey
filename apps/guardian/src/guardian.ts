@@ -47,6 +47,7 @@ import { JsonFileStore, PolicyEngine, systemClock, type Clock, type RecoveryReco
 import { ServiceState, type ServiceEvent } from './service-state.js';
 import { UnlockThrottle, type ThrottleOptions } from './unlock-throttle.js';
 import { DirectMessages } from './nostr/dm.js';
+import { Inbox } from './nostr/inbox.js';
 import { buildHandlers } from './nostr/handlers.js';
 import { toSeconds } from './nostr/wire.js';
 import { Alerter } from './alerts.js';
@@ -134,6 +135,7 @@ export class Guardian {
   identity?: GuardianIdentity;
   rpc?: RpcServer;
   dm?: DirectMessages;
+  inbox?: Inbox;
 
   /** When and why the guardian last locked (undefined while unlocked). */
   lockedAt?: number = undefined;
@@ -278,6 +280,7 @@ export class Guardian {
     this.stopped = true;
     clearInterval(this.timer);
     await this.ticking?.catch(() => {});
+    this.inbox?.close();
     this.rpc?.close();
     this.dm?.close();
     this.pool?.close();
@@ -313,6 +316,7 @@ export class Guardian {
       secretKey: this.identity.secretKey,
       handlers: buildHandlers(this),
       authorize: (sender, method) => this.authorize(sender, method),
+      listen: false, // the inbox below opens every wrap once and hands RPC rumors over
       now: () => this.nowSec(),
       onDrop: (d) => {
         if (d.reason !== 'decrypt_failed' && d.reason !== 'bad_rumor') this.log.debug('rpc.dropped', { reason: d.reason });
@@ -329,9 +333,21 @@ export class Guardian {
       log: this.log,
       discoverRelays: this.opts.discoverDmRelays,
       onMessage: (dm) => onContactDm(this, dm),
+      listen: false,
     });
-    await this.rpc.start();
-    this.dm.start();
+    const rpc = this.rpc;
+    const dm = this.dm;
+    this.inbox = new Inbox({
+      pool: this.pool,
+      relays,
+      secretKey: this.identity.secretKey,
+      pubkey: this.identity.pubkey,
+      now: () => this.nowSec(),
+      onRpc: (opened) => rpc.handleOpened(opened),
+      onDm: (opened) => dm.handleOpened(opened),
+      log: this.log,
+    });
+    await this.inbox.start();
     this.log.info('nostr.listening', { npub: this.identity.npub, relays: relays.length });
   }
 
