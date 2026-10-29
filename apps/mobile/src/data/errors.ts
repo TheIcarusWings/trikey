@@ -33,6 +33,10 @@ export type ServiceErrorKind =
   | 'backup_wrong_secret'
   | 'backup_invalid'
   | 'wallet_exists'
+  /** A backup or code for another network than the phone's (`network` says which). */
+  | 'network_mismatch'
+  /** The hardware wallet has to confirm the recovered wallet first. */
+  | 'hardware_unconfirmed'
   | 'invalid_input'
   | 'wrong_state'
   | 'internal';
@@ -42,13 +46,20 @@ export class WalletServiceError extends Error {
   /** The payment (or change) could go on with the hardware wallet instead. */
   readonly suggestsHardware: boolean;
   readonly retryAfterSeconds?: number;
+  /** `network_mismatch`: the other network. */
+  readonly network?: string;
 
-  constructor(kind: ServiceErrorKind, message: string, opts: { suggestsHardware?: boolean; retryAfterSeconds?: number; cause?: unknown } = {}) {
+  constructor(
+    kind: ServiceErrorKind,
+    message: string,
+    opts: { suggestsHardware?: boolean; retryAfterSeconds?: number; network?: string; cause?: unknown } = {},
+  ) {
     super(message, opts.cause === undefined ? undefined : { cause: opts.cause });
     this.name = 'WalletServiceError';
     this.kind = kind;
     this.suggestsHardware = opts.suggestsHardware ?? false;
     this.retryAfterSeconds = opts.retryAfterSeconds;
+    if (opts.network) this.network = opts.network;
   }
 }
 

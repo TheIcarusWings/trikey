@@ -83,11 +83,51 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
       };
     case 'guardian-locked':
       return {
-        title: 'Guardian locked',
+        title: event.byPhone ? 'Guardian locked from this phone' : 'Guardian locked',
         subtitle: `${hostLabel(event.host)} · ${when}`,
         subtitleTone: 'muted',
         icon: Lock,
         iconTone: 'warn',
+      };
+    case 'wallet-retired':
+      return {
+        title: event.reason === 'recovered' ? 'Wallet moved by a recovery' : event.reason === 'reset' ? 'Guardian was reset' : 'Old wallet retired on the guardian',
+        subtitle: `${when} · the guardian co-signs nothing for it any more`,
+        subtitleTone: 'warn',
+        icon: Shield,
+        iconTone: 'warn',
+      };
+    case 'guardian-replaced':
+      return {
+        title: 'Moved to a new guardian',
+        subtitle: `${when} · ${formatSats(event.movedSats)} sats to the new wallet on ${hostLabel(event.host)}`,
+        subtitleTone: 'muted',
+        icon: Shield,
+        iconTone: 'good',
+      };
+    case 'recovery-finished':
+      return {
+        title: 'Recovery finished',
+        subtitle: `${when} · ${formatSats(event.movedSats)} sats in the new wallet`,
+        subtitleTone: 'muted',
+        icon: Shield,
+        iconTone: 'good',
+      };
+    case 'hardware-confirmed':
+      return {
+        title: `${ctx.hardwareBrand} confirmed the new wallet`,
+        subtitle: when,
+        subtitleTone: 'muted',
+        icon: Shield,
+        iconTone: 'fill',
+      };
+    case 'stray-coins-moved':
+      return {
+        title: 'Coins moved from your old wallet',
+        subtitle: `${when} · ${formatSats(event.movedSats)} sats`,
+        subtitleTone: 'muted',
+        icon: Shield,
+        iconTone: 'fill',
       };
     case 'limit-changed':
       return {

@@ -1,20 +1,23 @@
 /**
- * What the app itself knows about a wallet that the guardian's history does not say: who signed a payment and where it
- * went, when the phone first saw an unconfirmed one, which rule changes were made and how, and which recoveries the
- * person has already looked at. Kept in the (non-secret) `KeyValueStore`, next to the wallet's own state.
+ * What the app itself knows about a wallet that the wallet does not keep: when the phone first saw an unconfirmed
+ * transaction, which rule changes and guardian events happened and how, and which recoveries the person has already
+ * looked at. Kept in the (non-secret) `KeyValueStore`, next to the wallet's own state.
+ *
+ * Who signed a payment, where it went and its note are the wallet's own send log (`snapshot().history`), which the
+ * backup carries too. An older app kept them here (`sends`); `takeLegacySends` hands those to the wallet once.
  */
-import type { HistoryEntry } from '@trikey/protocol';
-import type { KeyValueStore } from '@trikey/wallet';
-import type { ActivityItem, GuardianHost, IsoDate, Sats, SecurityEvent, Transaction, TxSigners } from './types';
+import type { KeyValueStore, SendLogEntry, WalletHistoryEntry } from '@trikey/wallet';
+import type { ActivityItem, GuardianHost, IsoDate, SecurityEvent, Transaction, TxSigners } from './types';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 type StoredEvent = DistributiveOmit<SecurityEvent, 'at'> & { at: number };
 
-export interface SendRecord {
+/** A payment as the app used to record it (before the wallet kept a send log). */
+interface LegacySend {
   txid: string;
   address: string;
-  amountSats: Sats;
-  feeSats: Sats;
+  amountSats: number;
+  feeSats: number;
   signedBy: TxSigners;
   /** ms */
   at: number;
@@ -22,20 +25,19 @@ export interface SendRecord {
 
 export interface AppLog {
   v: 1;
-  /** Payments this phone made, by txid. */
-  sends: Record<string, SendRecord>;
   /** Rule changes and guardian alerts, newest first. `at` in ms. */
   events: StoredEvent[];
   /** First time an unconfirmed transaction was seen (ms), by txid. */
   seen: Record<string, number>;
   /** Recovery ids the person has seen the alert for. */
   acknowledged: string[];
+  /** Payments an older app version recorded here; moved into the wallet's send log on open. */
+  sends?: Record<string, LegacySend>;
 }
 
 const MAX_EVENTS = 100;
-const MAX_SENDS = 200;
 
-export const emptyLog = (): AppLog => ({ v: 1, sends: {}, events: [], seen: {}, acknowledged: [] });
+export const emptyLog = (): AppLog => ({ v: 1, events: [], seen: {}, acknowledged: [] });
 
 export async function loadLog(kv: KeyValueStore, key: string): Promise<AppLog> {
   try {
@@ -57,10 +59,20 @@ export async function saveLog(kv: KeyValueStore, key: string, log: AppLog): Prom
   }
 }
 
-export function addSend(log: AppLog, rec: SendRecord): void {
-  log.sends[rec.txid] = rec;
-  const keys = Object.keys(log.sends);
-  if (keys.length > MAX_SENDS) for (const k of keys.sort((a, b) => log.sends[a]!.at - log.sends[b]!.at).slice(0, keys.length - MAX_SENDS)) delete log.sends[k];
+/** The older app's payment records, as the wallet's send log wants them (and removes them from `log`). */
+export function takeLegacySends(log: AppLog): SendLogEntry[] {
+  const out = Object.values(log.sends ?? {}).map(
+    (r): SendLogEntry => ({
+      txid: r.txid,
+      at: r.at,
+      recipient: r.address,
+      amountSats: r.amountSats,
+      feeSats: r.feeSats,
+      signedBy: r.signedBy === 'phone+guardian' ? 'guardian' : 'hardware',
+    }),
+  );
+  delete log.sends;
+  return out;
 }
 
 let counter = 0;
@@ -72,45 +84,26 @@ export function addEvent(log: AppLog, event: DistributiveOmit<SecurityEvent, 'id
 const iso = (ms: number): IsoDate => new Date(ms).toISOString();
 
 /**
- * The guardian's history as the Activity list: payments (with what the app knows about them), payments the phone
- * just made that the guardian has not listed yet, and the security events.
+ * The wallet's history (the guardian's, with the wallet's send log merged in: recipient, signer, payments the
+ * guardian has not listed yet) as the Activity list, plus the security events.
  */
-export function buildActivity(history: HistoryEntry[], log: AppLog, nowMs: number): ActivityItem[] {
+export function buildActivity(history: WalletHistoryEntry[], log: AppLog, nowMs: number): ActivityItem[] {
   const items: ActivityItem[] = [];
-  const listed = new Set<string>();
   for (const h of history) {
-    listed.add(h.txid);
-    const sendInfo = log.sends[h.txid];
     const confirmed = h.confirmations > 0;
-    const at = confirmed && h.time ? h.time * 1000 : (sendInfo?.at ?? log.seen[h.txid] ?? nowMs);
+    const at = confirmed && h.time ? h.time * 1000 : (h.sentAt ?? log.seen[h.txid] ?? nowMs);
     const sent = h.netSats < 0;
     const fee = h.feeSats;
-    const amountSats = sent ? Math.max(0, -h.netSats - (fee ?? 0)) : h.netSats;
     const tx: Transaction = {
       id: h.txid,
       kind: sent ? 'sent' : 'received',
-      amountSats: sendInfo && sent ? sendInfo.amountSats : amountSats,
-      ...(sent ? { feeSats: fee ?? sendInfo?.feeSats } : {}),
+      amountSats: sent ? (h.amountSats ?? Math.max(0, -h.netSats - (fee ?? 0))) : h.netSats,
+      ...(sent ? { feeSats: fee } : {}),
       status: confirmed ? 'confirmed' : 'pending',
       at: iso(at),
-      ...(sendInfo ? { address: sendInfo.address, signedBy: sendInfo.signedBy } : {}),
+      ...(sent && h.recipient ? { address: h.recipient } : {}),
+      ...(sent && h.signedBy ? { signedBy: h.signedBy === 'guardian' ? ('phone+guardian' as const) : ('phone+hardware' as const) } : {}),
       txid: h.txid,
-    };
-    items.push({ type: 'payment', at: tx.at, tx });
-  }
-  // Sent a moment ago and not in the guardian's list yet.
-  for (const rec of Object.values(log.sends)) {
-    if (listed.has(rec.txid) || nowMs - rec.at > 3_600_000) continue;
-    const tx: Transaction = {
-      id: rec.txid,
-      kind: 'sent',
-      amountSats: rec.amountSats,
-      feeSats: rec.feeSats,
-      status: 'pending',
-      at: iso(rec.at),
-      address: rec.address,
-      txid: rec.txid,
-      signedBy: rec.signedBy,
     };
     items.push({ type: 'payment', at: tx.at, tx });
   }

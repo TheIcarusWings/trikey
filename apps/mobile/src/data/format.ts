@@ -110,3 +110,8 @@ export function formatInDays(days: number): string {
 export function daysBetween(from: Date, to: Date): number {
   return Math.max(0, Math.ceil((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000)));
 }
+
+const NETWORK_LABEL: Record<string, string> = { bitcoin: 'mainnet', testnet: 'testnet', signet: 'signet', regtest: 'regtest' };
+
+/** "signet", "mainnet": a network as people say it. */
+export const networkLabel = (network: string): string => NETWORK_LABEL[network] ?? network;

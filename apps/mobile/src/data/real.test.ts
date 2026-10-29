@@ -9,7 +9,8 @@ import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { npubEncode } from 'nostr-tools/nip19';
 import { NETWORKS } from '@trikey/core';
-import { GuardianRig } from '@trikey/guardian/testing';
+import { encodeRecoveryUri } from '@trikey/protocol';
+import { GuardianRig, ManualClock } from '@trikey/guardian/testing';
 import {
   MemoryCloudBackupStore,
   MemoryKeyValueStore,
@@ -65,17 +66,29 @@ interface Phone {
   shared: { name: string; bytes: Uint8Array }[];
 }
 
-async function phone(opts: { secure?: MemorySecureKeyStore; kv?: MemoryKeyValueStore; picked?: { name: string; bytes: Uint8Array } } = {}): Promise<Phone> {
+async function phone(
+  opts: {
+    secure?: MemorySecureKeyStore;
+    kv?: MemoryKeyValueStore;
+    picked?: { name: string; bytes: Uint8Array };
+    clock?: { now(): number };
+    hardware?: SoftwareHardwareProvider;
+    mode?: 'simulator' | 'real';
+    network?: 'testnet' | 'signet' | 'regtest';
+    rpcTimeoutMs?: number;
+  } = {},
+): Promise<Phone> {
   const secure = opts.secure ?? new MemorySecureKeyStore();
   const kv = opts.kv ?? new MemoryKeyValueStore();
   const prompts: DevicePrompt[] = [];
   const shared: Phone['shared'] = [];
   const svc = await createRealWalletService({
-    mode: 'simulator',
+    mode: opts.mode ?? 'simulator',
+    ...(opts.network ? { network: opts.network } : {}),
     platform: { os: 'ios', isSecure: true, secureKeys: secure, kv, cloudBackups: [cloud], passkeys: passkey },
-    hardware: () => [provider],
-    clock: rig.clock,
-    rpcTimeoutMs: 5000,
+    hardware: () => [opts.hardware ?? provider],
+    clock: opts.clock ?? rig.clock,
+    rpcTimeoutMs: opts.rpcTimeoutMs ?? 5000,
     rpcRetryIntervalMs: 0,
     syncIntervalMs: 0,
     yieldToUi: async () => {},
@@ -109,7 +122,8 @@ describe('the real wallet service', { timeout: 60_000 }, () => {
     A = await phone();
     const s0 = A.svc.getState();
     expect(s0).toMatchObject({ backing: 'simulator', network: 'regtest', onboarded: false, recovering: false, synced: false, balanceSats: 0 });
-    expect(s0.capabilities).toEqual({ lockGuardian: false, replaceGuardian: false, recoveryKey: false });
+    expect(s0.capabilities).toEqual({ lockGuardian: true, replaceGuardian: true, recoveryKey: false });
+    expect(s0).toMatchObject({ hardwareConfirmRequired: false, replace: { plan: null, step: null, pending: null }, oldWallets: [], walletRetired: null });
     expect(await A.svc.getHardwareOptions()).toEqual([expect.objectContaining({ kind: 'simulated', available: true })]);
 
     const seen: (string | null)[] = [];
@@ -376,9 +390,7 @@ describe('the real wallet service', { timeout: 60_000 }, () => {
   });
 
   it('says "not available yet" for what has no wallet code behind it, and never pretends', async () => {
-    expect(await failure(A.svc.lockGuardian())).toMatchObject({ kind: 'not_available', message: expect.stringMatching(/isn't available yet/) });
-    expect(await failure(A.svc.replaceGuardian('trikey://pair?x'))).toMatchObject({ kind: 'not_available' });
-    expect(await failure(A.svc.recoverWithKit())).toMatchObject({ kind: 'not_available' });
+    expect(await failure(A.svc.recoverWithKit())).toMatchObject({ kind: 'not_available', message: expect.stringMatching(/isn't available yet/) });
     expect(await failure(A.svc.approveRefills(100_000))).toMatchObject({ kind: 'not_available' });
   });
 
@@ -412,5 +424,199 @@ describe('the real wallet service', { timeout: 60_000 }, () => {
     real.setNetwork('signet');
     expect(real.getState().network).toBe('signet');
     expect(A.svc.getState().onboarded).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Recovery that finishes, "Replace guardian", remote lock, scanning, and backups for another network.
+
+const HOUR = 3_600_000;
+
+/** `n` guardians on one fake Bitcoin network (they share the first rig's Electrs), on one clock. */
+async function guardians(n: number): Promise<{ rigs: GuardianRig[]; stop: () => Promise<void> }> {
+  const clock = new ManualClock(Date.now());
+  const rigs = await Promise.all(Array.from({ length: n }, () => GuardianRig.start({ clock })));
+  const orphans = [];
+  for (const r of rigs.slice(1)) {
+    orphans.push(r.electrs);
+    r.electrs = rigs[0]!.electrs;
+    await r.restart();
+    await r.unlock();
+  }
+  for (const o of orphans) await o.stop();
+  return { rigs, stop: async () => void (await Promise.all(rigs.map((r) => r.stop()))) };
+}
+
+const eventKinds = (p: Phone) => p.svc.getState().activity.flatMap((i) => (i.type === 'security' ? [i.event.kind] : []));
+
+describe('the real wallet service: finishing a recovery, replacing the guardian, locking it', { timeout: 120_000 }, () => {
+  let stopAll: (() => Promise<void>) | undefined;
+  let R1: GuardianRig;
+  let R2: GuardianRig;
+  let R3: GuardianRig;
+  let R4: GuardianRig;
+  const dev = new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware, network: 'regtest', kind: 'ledger' });
+  const hw = new SoftwareHardwareProvider(dev);
+  let P: Phone;
+
+  beforeAll(async () => {
+    const g = await guardians(4);
+    stopAll = g.stop;
+    [R1, R2, R3, R4] = g.rigs as [GuardianRig, GuardianRig, GuardianRig, GuardianRig];
+  }, 60_000);
+  afterAll(async () => {
+    for (const s of opened) await s.close();
+    await stopAll?.();
+  });
+
+  async function onboarded(r: GuardianRig, device = hw, rpcTimeoutMs?: number): Promise<Phone> {
+    const p = await phone({ clock: r.clock, hardware: device, ...(rpcTimeoutMs ? { rpcTimeoutMs } : {}) });
+    await p.svc.connectHardware('simulated');
+    await p.svc.pairGuardian(r.pairingUri());
+    await p.svc.setUpRules(100_000, 7);
+    return p;
+  }
+
+  it('reads every kind of code through the wallet, checked against the network', async () => {
+    const p = await phone({ clock: R1.clock, hardware: hw });
+    const recover = encodeRecoveryUri({ guardianPubkey: R1.pubkey, relays: R1.relayUrls, network: 'regtest', label: 'Umbrel' });
+    expect(p.svc.readCode(recover)).toMatchObject({ kind: 'recovery', guardian: { npub: npubEncode(R1.pubkey), relays: R1.relayUrls }, label: 'Umbrel' });
+    expect(p.svc.readCode(encodeRecoveryUri({ guardianPubkey: R1.pubkey, relays: R1.relayUrls, network: 'signet' }))).toMatchObject({
+      kind: 'unknown',
+      reason: expect.stringMatching(/signet/),
+    });
+    expect(p.svc.readCode(R1.pairingUri())).toMatchObject({ kind: 'pairing', guardianNpub: npubEncode(R1.pubkey) });
+    const addr = externalAddress(4);
+    expect(p.svc.readCode(`bitcoin:${addr.toUpperCase()}?amount=0.0002`)).toEqual({ kind: 'address', address: addr, network: 'regtest', amountSats: 20_000 });
+    expect(p.svc.readCode(btc.p2wpkh(secp256k1.getPublicKey(new Uint8Array(32).fill(4), true), NETWORKS.testnet.btc).address!)).toMatchObject({ kind: 'unknown' });
+    expect(p.svc.readCode(npubEncode(R1.pubkey))).toMatchObject({ kind: 'contact' });
+    expect(p.svc.readCode('hello')).toMatchObject({ kind: 'unknown' });
+  });
+
+  it('lost phone: the recovery QR on a new phone, the wait, then a normal Home once the guardian takes the new wallet over; the hardware wallet confirms it', async () => {
+    const old = await onboarded(R1);
+    R1.fund(old.svc.wallet!.multisig().derive(0, 0).script, 300_000n);
+    await old.svc.sync();
+
+    P = await phone({ clock: R1.clock, hardware: hw });
+    const code = P.svc.readCode(encodeRecoveryUri({ guardianPubkey: R1.pubkey, relays: R1.relayUrls, network: 'regtest' }));
+    if (code.kind !== 'recovery') throw new Error('not a recovery code');
+    const started = await P.svc.startRecovery('phone', { guardian: code.guardian, hardwareKind: 'simulated' });
+    expect(P.svc.getState()).toMatchObject({ recovering: true, onboarded: false, recovery: { id: started.id } });
+
+    // The delay passes; the guardian co-signs, broadcasts and takes the new wallet over.
+    R1.clock.set(new Date(started.completesAt).getTime() + 2 * HOUR);
+    await R1.mine(11);
+    await R1.guardian.tick();
+    await waitFor(() => P.svc.getState().recoveryOutcome === 'finished' || undefined, 'the switch to the new wallet', 15_000);
+    const s = P.svc.getState();
+    expect(s).toMatchObject({ recovering: false, onboarded: true, recovery: null, hardwareConfirmRequired: true, finishedRecovery: { lostKey: 'phone' } });
+    expect(s.finishedRecovery!.movedSats).toBeGreaterThan(290_000);
+    await waitFor(() => P.svc.getState().balanceSats === s.finishedRecovery!.movedSats || undefined, 'the new wallet synced');
+    expect(eventKinds(P)).toContain('recovery-finished');
+    expect(s.receiveAddress).toBe(''); // until the hardware wallet has seen the new wallet
+
+    await P.svc.confirmHardware();
+    expect(P.svc.getState()).toMatchObject({ hardwareConfirmRequired: false, addressVerified: true });
+    expect(P.svc.getState().receiveAddress).toBe(P.svc.wallet!.multisig().derive(0, P.svc.wallet!.state.chain!.nextReceiveIndex).address);
+    expect(eventKinds(P)).toContain('hardware-confirmed');
+    expect(P.prompts.some((p) => /Trikey pair v1 wallet=/.test(p.detail ?? ''))).toBe(true);
+
+    const q = P.svc.quoteSend({ address: externalAddress(), amountSats: 20_000, speed: 'normal' });
+    if (!q.ok) throw new Error(q.message);
+    expect(q.quote.plan).toEqual({ signer: 'phone+guardian' });
+    const tx = await P.svc.sendPayment(q.quote);
+    expect(P.svc.getState().activity.find((i) => i.type === 'payment' && i.tx.id === tx.id)).toMatchObject({
+      tx: { kind: 'sent', signedBy: 'phone+guardian', address: externalAddress() },
+    });
+    await old.svc.close();
+  });
+
+  it('locks the guardian from the phone, shows it, and unlocks it with the passphrase', async () => {
+    await P.svc.lockGuardian();
+    expect(R1.guardian.locked).toBe(true);
+    expect(P.svc.getState().guardian.status).toBe('locked');
+    await waitFor(() => P.svc.getState().activity.find((i) => i.type === 'security' && i.event.kind === 'guardian-locked' && i.event.byPhone), 'the lock in the activity');
+    await P.svc.unlockGuardian(R1.passphrase);
+    expect(P.svc.getState().guardian.status).toBe('online');
+    expect(R1.guardian.locked).toBe(false);
+  });
+
+  it('a backup for another network: refused, then restored after the person agrees to switch', async () => {
+    await P.svc.createBackup('file');
+    const code = P.svc.recoveryCode()!;
+    const N = await phone({ clock: R1.clock, hardware: hw, mode: 'real', network: 'testnet' });
+    expect(await N.svc.findBackup()).toMatchObject({ network: 'regtest' });
+    const refused = await failure(N.svc.restoreFromBackup({ recoveryCode: code }));
+    expect(refused).toMatchObject({ kind: 'network_mismatch', network: 'regtest', message: expect.stringMatching(/regtest/) });
+    expect(N.svc.getState()).toMatchObject({ onboarded: false, network: 'testnet' });
+    R1.clock.advance(6 * 60_000); // past the relays' memory of P's last requests
+    await N.svc.restoreFromBackup({ recoveryCode: code }, undefined, { switchNetwork: true });
+    expect(N.svc.getState()).toMatchObject({ onboarded: true, network: 'regtest' });
+    expect(N.svc.wallet!.state.wallet!.walletId).toBe(P.svc.wallet!.state.wallet!.walletId);
+    // The send log came along in the backup.
+    await waitFor(() => N.svc.getState().synced || undefined, 'the restored phone syncs');
+    expect(N.svc.getState().activity.some((i) => i.type === 'payment' && i.tx.signedBy === 'phone+guardian' && i.tx.address === externalAddress())).toBe(true);
+    await N.svc.close();
+  });
+
+  it('replace guardian: scan, see the plan, run it with progress, and land on the new guardian; the old one says the wallet is retired', async () => {
+    const Q = await onboarded(R2);
+    R2.fund(Q.svc.wallet!.multisig().derive(0, 0).script, 150_000n);
+    R2.fund(Q.svc.wallet!.multisig().derive(0, 1).script, 50_000n);
+    await Q.svc.sync();
+    const oldId = Q.svc.wallet!.state.wallet!.walletId;
+
+    expect(await failure(Q.svc.previewReplaceGuardian('not a code'))).toMatchObject({ kind: 'pairing_invalid' });
+    const plan = await Q.svc.previewReplaceGuardian(R3.pairingUri());
+    expect(plan).toMatchObject({ oldGuardianReachable: true, movingSats: 200_000, coins: 2, newGuardian: { label: 'Test Guardian' } });
+    expect(plan.steps.map((s) => s.step)).toEqual(['pair', 'sign', 'broadcast', 'retire', 'switch']);
+    expect(Q.svc.getState().replace.plan).toEqual(plan);
+
+    const seen: string[] = [];
+    Q.svc.subscribe(() => {
+      const st = Q.svc.getState().replace.step;
+      if (st && seen.at(-1) !== st) seen.push(st);
+    });
+    const out = await Q.svc.replaceGuardian();
+    expect(out).toMatchObject({ status: 'done', oldWalletRetired: true });
+    expect(seen).toEqual(['pair', 'sign', 'broadcast', 'retire', 'switch']);
+    const s = Q.svc.getState();
+    expect(s).toMatchObject({ replace: { plan: null, step: null, pending: null }, oldWallets: [{ id: oldId, retiredOnGuardian: true }], progress: null, onboarded: true });
+    expect(s.guardian.npub).toBe(npubEncode(R3.pubkey));
+    expect(s.walletRetired).toBeNull(); // the alert was about the old wallet, not this one
+    expect(eventKinds(Q)).toContain('guardian-replaced');
+    await waitFor(() => eventKinds(Q).includes('wallet-retired') || undefined, "the old guardian's wallet_retired alert");
+    await waitFor(() => Q.svc.getState().balanceSats === (out.status === 'done' ? out.movedSats : -1) || undefined, 'the new wallet synced');
+    expect(Q.svc.quoteSend({ address: externalAddress(), amountSats: 10_000, speed: 'normal' })).toMatchObject({ ok: true, quote: { plan: { signer: 'phone+guardian' } } });
+    // The old wallet stays listed; its stray coins need something that can read it.
+    expect(await failure(Q.svc.sweepOldWallets())).toMatchObject({ kind: 'refused', message: expect.stringMatching(/no longer serves/) });
+    await Q.svc.close();
+  });
+
+  it('replace guardian with the old one offline: the person confirms it is gone, the signed move waits, and goes out when the box is back', async () => {
+    const dev2 = new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware2, network: 'regtest', kind: 'trezor' });
+    const Z = await onboarded(R4, new SoftwareHardwareProvider(dev2), 1500);
+    R4.fund(Z.svc.wallet!.multisig().derive(0, 0).script, 80_000n);
+    await Z.svc.sync();
+    await R4.guardian.stop(); // the box goes away
+
+    // R2 retired Q's wallet in the last test, so it pairs again.
+    const plan = await Z.svc.previewReplaceGuardian(R2.pairingUri());
+    expect(plan).toMatchObject({ oldGuardianReachable: false, movingSats: 80_000 });
+    expect(await failure(Z.svc.replaceGuardian())).toMatchObject({ kind: 'guardian_unreachable' });
+    expect(R2.guardian.engine.registration()).toBeUndefined();
+
+    const waiting = await Z.svc.replaceGuardian({ oldGuardianGone: true });
+    expect(waiting).toMatchObject({ status: 'waiting', movedSats: expect.any(Number) });
+    expect(Z.svc.getState().replace.pending).toEqual({ guardianLabel: 'Test Guardian', signed: true, oldGuardianOffline: true });
+    expect(Z.svc.getState().guardian.npub).toBe(npubEncode(R4.pubkey)); // not switched yet
+
+    await R4.restart(); // back, locked; chain data and retiring work all the same
+    const done = await Z.svc.replaceGuardian();
+    expect(done).toMatchObject({ status: 'done', oldWalletRetired: true });
+    expect(Z.svc.getState()).toMatchObject({ replace: { pending: null }, oldWallets: [{ retiredOnGuardian: true }] });
+    expect(Z.svc.getState().guardian.npub).toBe(npubEncode(R2.pubkey));
+    await Z.svc.close();
   });
 });

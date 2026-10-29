@@ -1,3 +1,4 @@
+import { parseScannedCode } from '@trikey/wallet/scan';
 import { WalletServiceError } from './errors';
 import { SIMULATED_OPTION, hardwareOptionTable, type UiOs } from './hardware-options';
 import { buildRefillSchedule, limitChangeNeedsHardware, quoteSend as quoteSendRule } from './rules';
@@ -20,7 +21,10 @@ import type {
   RecoveryKeyKind,
   RecoveryKeyState,
   Refill,
+  ReplaceGuardianPlan,
+  ReplaceStep,
   Sats,
+  ScannedCode,
   SecurityEvent,
   SendQuote,
   ThemePreference,
@@ -205,8 +209,16 @@ export function createDemoState(platform: 'ios' | 'android' = 'ios'): WalletStat
 
     recovery: null,
     recoveryKey: recoveryKeyState(),
+
+    hardwareConfirmRequired: false,
+    replace: { plan: null, step: null, pending: null },
+    oldWallets: [],
+    walletRetired: null,
+    finishedRecovery: null,
   };
 }
+
+const NEW_GUARDIAN_NPUB = 'npub1n3wg8k4w0c6ylv5n2xr9ts7ahe3j4fp8u2xw3mq5ca6vhz9fd3qx2';
 
 function wait(ms: number): Promise<void> {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
@@ -358,11 +370,89 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
       update((s) => ({ guardian: { ...s.guardian, status: 'online', lastSeenAt: NOW.toISOString() } }));
     },
     async lockGuardian() {
+      await wait(networkDelay);
       update((s) => ({ guardian: { ...s.guardian, status: 'locked' } }));
+      addSecurityEvent({ id: nextId('ev'), kind: 'guardian-locked', host: state.guardian.host, byPhone: true, at: NOW.toISOString() });
     },
-    async replaceGuardian(_pairingCode: string) {
+    async previewReplaceGuardian(code: string): Promise<ReplaceGuardianPlan> {
+      await wait(networkDelay);
+      const scanned = service.readCode(code);
+      if (scanned.kind !== 'pairing') throw new WalletServiceError('pairing_invalid', scanned.kind === 'unknown' ? scanned.reason : "That isn't a guardian's pairing code.");
+      const reachable = state.guardian.status !== 'offline';
+      const plan: ReplaceGuardianPlan = {
+        newGuardian: { label: 'Start9', host: 'start9', npub: NEW_GUARDIAN_NPUB },
+        oldGuardianReachable: reachable,
+        movingSats: state.balanceSats,
+        coins: 3,
+        feeSats: 1_200,
+        steps: [
+          { step: 'pair', text: "Pair the new guardian (Start9) with a new wallet of this phone, your hardware wallet and the new guardian's key." },
+          { step: 'sign', text: 'Approve on your hardware wallet: register the new wallet, check its first address, and sign the move of all your money (3 coins).' },
+          {
+            step: 'broadcast',
+            text: reachable ? 'Send the move to the Bitcoin network through your old guardian.' : 'Send the move to the Bitcoin network. Your old guardian is offline, so this may have to wait until something can send it.',
+          },
+          {
+            step: 'retire',
+            text: reachable
+              ? 'Retire the old wallet on the old guardian, so it co-signs nothing for it any more (one more approval on the hardware wallet).'
+              : "Skip retiring the old wallet on the old guardian, since it can't be reached. Its key alone can't move anything.",
+          },
+          { step: 'switch', text: 'Switch this phone to the new wallet and guardian. The old wallet stays watched for coins sent to it later.' },
+        ],
+      };
+      update((s) => ({ replace: { ...s.replace, plan } }));
+      return plan;
+    },
+    async replaceGuardian(opts = {}) {
+      const plan = state.replace.plan;
+      if (!plan) throw new WalletServiceError('wrong_state', "Scan the new guardian's pairing code first.");
+      if (!plan.oldGuardianReachable && !opts.oldGuardianGone)
+        throw new WalletServiceError('guardian_unreachable', "Your old guardian isn't answering. If it is gone for good, confirm that, and the move goes ahead without it.");
+      const texts: Record<ReplaceStep, string> = {
+        pair: 'Pairing the new guardian: approve on your hardware wallet',
+        sign: 'Signing the move: approve on your hardware wallet',
+        broadcast: 'Sending the move to the network',
+        retire: 'Retiring the old wallet on the old guardian: approve on your hardware wallet',
+        switch: 'Switching to the new wallet',
+      };
+      for (const step of ['pair', 'sign', 'broadcast', 'retire', 'switch'] as ReplaceStep[]) {
+        if (step === 'retire' && !plan.oldGuardianReachable) continue;
+        update((s) => ({ progress: texts[step], replace: { ...s.replace, step } }));
+        await wait(step === 'broadcast' || step === 'switch' ? networkDelay : deviceDelay);
+      }
+      const movedSats = state.balanceSats - plan.feeSats;
+      update((s) => ({
+        progress: null,
+        replace: { plan: null, step: null, pending: null },
+        guardian: { ...s.guardian, host: 'start9', label: 'Start9', npub: NEW_GUARDIAN_NPUB, status: 'online', lastSeenAt: NOW.toISOString() },
+        balanceSats: movedSats,
+        dailyLimit: { ...s.dailyLimit, usedSats: 0, cosignedCount: 0 },
+        oldWallets: [...s.oldWallets, { id: 'demo-old-wallet', host: s.guardian.host, retiredOnGuardian: plan.oldGuardianReachable }],
+      }));
+      addSecurityEvent({ id: nextId('ev'), kind: 'guardian-replaced', host: 'start9', movedSats, at: NOW.toISOString() });
+      return { status: 'done' as const, movedSats, oldWalletRetired: plan.oldGuardianReachable };
+    },
+    async cancelReplaceGuardian() {
+      update((s) => ({ replace: { ...s.replace, plan: null } }));
+    },
+    async sweepOldWallets() {
+      await wait(networkDelay);
+      return { movedSats: 0 };
+    },
+    async retireOldWallet() {
       await wait(deviceDelay);
-      update((s) => ({ guardian: { ...s.guardian, status: 'online', lastSeenAt: NOW.toISOString() } }));
+      update((s) => ({ oldWallets: s.oldWallets.map((w) => ({ ...w, retiredOnGuardian: true })) }));
+    },
+    async confirmHardware() {
+      await wait(deviceDelay);
+      update({ hardwareConfirmRequired: false, addressVerified: true });
+      addSecurityEvent({ id: nextId('ev'), kind: 'hardware-confirmed', at: NOW.toISOString() });
+    },
+    readCode(text: string): ScannedCode {
+      // The demo camera "scans" a placeholder pairing code.
+      if (text === 'demo-pairing-code') return { kind: 'pairing', uri: text, guardianNpub: NEW_GUARDIAN_NPUB, relays: ['wss://relay.damus.io'], label: 'Start9', expiresAt: NOW.getTime() / 1000 + 300 };
+      return parseScannedCode(text, { now: Math.floor(NOW.getTime() / 1000) });
     },
 
     // -- rules --------------------------------------------------------
@@ -479,6 +569,24 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
         if (status === 'locked') {
           addSecurityEvent({ id: nextId('ev'), kind: 'guardian-locked', host: state.guardian.host, at: NOW.toISOString() });
         }
+      },
+      finishRecovery() {
+        // The guardian co-signs the move and takes the new wallet over: the phone switches to it, and the hardware wallet confirms it once.
+        const r = state.recovery;
+        if (!r) return;
+        update((s) => ({
+          recovery: null,
+          recoveryOutcome: 'finished',
+          finishedRecovery: { lostKey: r.lostKey, movedSats: r.movingSats - 1_200 },
+          recovering: false,
+          onboarded: true,
+          hardwareConfirmRequired: true,
+          addressVerified: false,
+          phoneSpending: 'enabled',
+          balanceSats: r.movingSats - 1_200,
+          dailyLimit: { ...s.dailyLimit, usedSats: 0, cosignedCount: 0 },
+        }));
+        addSecurityEvent({ id: nextId('ev'), kind: 'recovery-finished', movedSats: r.movingSats - 1_200, at: NOW.toISOString() });
       },
       simulateRecoveryFromElsewhere() {
         update((s) => ({

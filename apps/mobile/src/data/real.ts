@@ -2,9 +2,12 @@
  * The `WalletService` on the real wallet (`@trikey/wallet`).
  *
  * One `RealWalletService` per app run and mode. It owns at most one `TrikeyWallet` (created when onboarding connects
- * the hardware wallet, or opened from the phone's storage), projects the wallet's state, the guardian's status and the
- * app's own log into the UI's `WalletState`, and turns the wallet's errors and the guardian's refusals into
- * `WalletServiceError`s the screens can show.
+ * the hardware wallet, or opened from the phone's storage), projects the wallet's state (its history with its send
+ * log), the guardian's status and the app's own event log into the UI's `WalletState`, and turns the wallet's errors
+ * and the guardian's refusals into `WalletServiceError`s the screens can show.
+ *
+ * The backup store is chosen per call (the person picks where the backup goes, or where to look for one): the wallet
+ * takes the `CloudBackupStore` for each backup and restore.
  *
  * No React and no React Native in here: everything platform-specific (secure storage, hardware providers, the cloud,
  * the share sheet) comes in through `RealServiceDeps`, so the same code runs in the app and in Node's tests.
@@ -26,13 +29,16 @@ import {
   type KeyValueStore,
   type PasskeyPrf,
   type SecureKeyStore,
+  type ReplacePlan,
+  type ReplaceStep,
   type SendQuote as WalletQuote,
   type WalletDeps,
   type WalletEvent,
   type WalletSnapshot,
 } from '@trikey/wallet';
+import { parseScannedCode } from '@trikey/wallet/scan';
 import { SimplePoolRelayPool, type Policy, type RelayPool } from '@trikey/protocol';
-import { addEvent, addSend, buildActivity, emptyLog, hostFromLabel, loadLog, saveLog, type AppLog } from './app-log';
+import { addEvent, buildActivity, emptyLog, hostFromLabel, loadLog, saveLog, takeLegacySends, type AppLog } from './app-log';
 import { DevicePromptStore, compositeProvider, ledgerHint, withDevicePrompts } from './device';
 import { WalletServiceError, notAvailableYet } from './errors';
 import { SIMULATED_OPTION, hardwareBrandOf, hardwareOptionTable, type UiOs } from './hardware-options';
@@ -59,8 +65,11 @@ import {
   type RecoveryDelayDays,
   type RecoveryInProgress,
   type RecoveryKeyKind,
+  type ReplaceGuardianPlan,
+  type ReplaceGuardianResult,
   type RestoreUnlock,
   type Sats,
+  type ScannedCode,
   type SendQuote,
   type SendRequest,
   type ThemePreference,
@@ -145,45 +154,14 @@ function describeProblem(e: WalletError): { problem: QuoteProblem; message: stri
   }
 }
 
-/** The cloud store the wallet writes to and reads from: whichever provider the person picked. */
-class SwitchableCloud implements CloudBackupStore {
-  private current?: CloudBackupStore;
-  constructor(private readonly stores: CloudBackupStore[]) {}
-
-  get provider(): CloudBackupStore['provider'] {
-    return (this.current ?? this.stores[0])?.provider ?? 'file';
-  }
-
-  /** Points the wallet at `store`. */
-  select(store: CloudBackupStore): void {
-    this.current = store;
-  }
-
-  storeFor(provider: CloudBackupStore['provider']): CloudBackupStore | undefined {
-    return this.stores.find((s) => s.provider === provider);
-  }
-
-  private target(): CloudBackupStore {
-    const s = this.current ?? this.stores[0];
-    if (!s) throw new WalletServiceError('backup_unavailable', 'This phone has nowhere to keep a backup.');
-    return s;
-  }
-  isAvailable() {
-    return this.target().isAvailable();
-  }
-  write(name: string, data: Uint8Array) {
-    return this.target().write(name, data);
-  }
-  read(name: string) {
-    return this.target().read(name);
-  }
-  list() {
-    return this.target().list();
-  }
-  remove(name: string) {
-    return this.target().remove(name);
-  }
-}
+/** What each step of "Replace guardian" looks like on the progress line. */
+const REPLACE_PROGRESS: Record<ReplaceStep, string> = {
+  pair: 'Pairing the new guardian: approve on your hardware wallet',
+  sign: 'Signing the move: approve on your hardware wallet',
+  broadcast: 'Sending the move to the network',
+  retire: 'Retiring the old wallet on the old guardian: approve on your hardware wallet',
+  switch: 'Switching to the new wallet',
+};
 
 const providerLabel: Record<string, { label: string; detail?: string }> = {
   icloud: { label: 'iCloud Drive' },
@@ -204,7 +182,6 @@ class Service implements RealWalletService {
   private network: NetworkName;
   private state!: WalletState;
   private readonly listeners = new Set<() => void>();
-  private readonly cloud: SwitchableCloud;
   private hw?: HardwareProvider;
   private rawProviders: HardwareProvider[] = [];
   private log: AppLog = emptyLog();
@@ -224,12 +201,13 @@ class Service implements RealWalletService {
   private addressCache?: { key: string; address: string };
   private keyKind: RecoveryKeyKind = 'paper';
   private readonly clock: { now(): number };
+  private replacePlan: ReplaceGuardianPlan | null = null;
+  private replaceStep: ReplaceStep | null = null;
 
   constructor(private readonly deps: RealServiceDeps) {
     this.clock = deps.clock ?? { now: () => Date.now() };
     this.clockTickMs = deps.clockTickMs ?? 30_000;
     this.network = deps.network ?? 'testnet';
-    this.cloud = new SwitchableCloud(deps.platform.cloudBackups);
     this.prompts.subscribe(() => this.refresh());
     const self = this;
     this.dev = {
@@ -314,7 +292,6 @@ class Service implements RealWalletService {
       store: this.deps.platform.kv,
       relayPool: this.deps.relayPool ?? (() => new SimplePoolRelayPool()),
       hardware: this.hw,
-      cloud: this.cloud,
       passkey: this.deps.platform.passkeys,
       clock: this.deps.clock,
       storageKey: this.storageKey,
@@ -329,6 +306,9 @@ class Service implements RealWalletService {
     this.w = w;
     this.unsubWallet = w.on((e) => this.onEvent(e));
     this.addressCache = undefined;
+    // An older app kept who-paid-whom in its own log: the wallet's send log has it now.
+    const legacy = takeLegacySends(this.log);
+    if (legacy.length) void w.importSendLog(legacy).then(() => saveLog(this.deps.platform.kv, this.logKey, this.log)).catch(() => undefined);
     this.refresh();
   }
 
@@ -446,7 +426,9 @@ class Service implements RealWalletService {
     const rec = this.w?.state.recovery;
     const r = rec?.recovery;
     if (!rec || !r) return { recovery: null, outcome: null };
-    if (r.state === 'cancelled' || r.state === 'completed') return { recovery: null, outcome: r.state };
+    if (r.state === 'cancelled') return { recovery: null, outcome: 'cancelled' };
+    // Completed: the guardian co-signed the move. Finished: it took the new wallet over and this phone switched to it.
+    if (r.state === 'completed') return { recovery: null, outcome: rec.destination && this.w?.state.wallet?.walletId === rec.destination.walletId ? 'finished' : 'completed' };
     const initiator = rec.role === 'initiator';
     const names = (this.w?.alertContacts() ?? []).map((c) => c.name ?? c.npub.slice(0, 12));
     return {
@@ -480,7 +462,7 @@ class Service implements RealWalletService {
     return {
       backing: this.mode,
       network: this.network,
-      capabilities: { lockGuardian: false, replaceGuardian: false, recoveryKey: false },
+      capabilities: { lockGuardian: true, replaceGuardian: true, recoveryKey: false },
       progress: this.progress,
       devicePrompt: this.prompts.getSnapshot(),
       syncing: this.syncing,
@@ -518,6 +500,20 @@ class Service implements RealWalletService {
         refillsTotal: 0,
         activity: [],
       },
+      hardwareConfirmRequired: this.w?.hardwareConfirmRequired ?? false,
+      replace: {
+        plan: this.replacePlan,
+        step: this.replaceStep,
+        pending: s?.replacing
+          ? { ...(s.replacing.guardian.label ? { guardianLabel: s.replacing.guardian.label } : {}), signed: s.replacing.phase === 'signed', oldGuardianOffline: s.replacing.oldGuardianOffline }
+          : null,
+      },
+      oldWallets: (s?.retiredWallets ?? []).map((o) => ({ id: o.walletId, host: hostFromLabel(o.guardian.label), retiredOnGuardian: o.retiredOnGuardian })),
+      walletRetired: s?.retiredByGuardian && s.retiredByGuardian.walletId === s.wallet?.walletId ? { reason: s.retiredByGuardian.reason } : null,
+      finishedRecovery:
+        outcome === 'finished' && s?.recovery?.recovery
+          ? { lostKey: s.recovery.recovery.survivingRole === 'app' ? 'hardware' : 'phone', movedSats: s.recovery.recovery.amountSats }
+          : null,
     };
   }
 
@@ -572,14 +568,33 @@ class Service implements RealWalletService {
       case 'hardware_prompt':
         if (e.purpose === 'payment' || e.purpose === 'recovery-sweep') this.prompts.pendingDetail = e.text;
         break;
-      case 'alert':
-        if (e.alert.type === 'guardian_locked') {
-          addEvent(this.log, { kind: 'guardian-locked', host: hostFromLabel(this.w?.state.guardian?.label), at: e.atMs });
+      case 'progress':
+        if (e.operation === 'replace-guardian') {
+          this.replaceStep = e.step;
+          this.setProgress(REPLACE_PROGRESS[e.step]);
+        }
+        break;
+      case 'wallet_switched':
+        this.addressCache = undefined;
+        if (e.reason === 'recovery') {
+          const moved = this.w?.state.recovery?.recovery?.amountSats ?? 0;
+          addEvent(this.log, { kind: 'recovery-finished', movedSats: moved, at: this.clock.now() });
           void this.saveLogNow();
-          // Ask the guardian itself: the wallet ignores a "locked" alert that is not newer than its last status check.
-          void this.w?.refreshStatus().catch(() => undefined);
+          // The new wallet's coins, from the guardian that now guards it.
+          void this.sync();
         } else this.refresh();
         break;
+      case 'alert': {
+        const a = e.alert;
+        if (a.type === 'guardian_locked') {
+          addEvent(this.log, { kind: 'guardian-locked', host: hostFromLabel(this.w?.state.guardian?.label), ...(a.reason === 'remote' ? { byPhone: true } : {}), at: e.atMs });
+          void this.saveLogNow();
+        } else if (a.type === 'wallet_retired') {
+          addEvent(this.log, { kind: 'wallet-retired', reason: a.reason, at: e.atMs });
+          void this.saveLogNow();
+        } else this.refresh();
+        break;
+      }
     }
   }
 
@@ -607,8 +622,9 @@ class Service implements RealWalletService {
     this.syncing = true;
     this.refresh();
     try {
-      if (w.stage === 'recovering') await w.recoveryStatus();
-      else {
+      // A recovering phone follows its recovery; the guardian's status says when it took the new wallet over.
+      if (w.stage === 'recovering') await w.refreshStatus().then(() => w.recoveryStatus());
+      if (w.stage === 'paired') {
         const snap = await w.sync();
         const now = this.clock.now();
         let changed = false;
@@ -720,8 +736,12 @@ class Service implements RealWalletService {
     return { providers, passkey };
   }
 
+  private storeOf(provider: CloudBackupStore['provider']): CloudBackupStore | undefined {
+    return this.deps.platform.cloudBackups.find((s) => s.provider === provider);
+  }
+
   private storeFor(provider: CloudProvider): CloudBackupStore {
-    const store = this.cloud.storeFor(provider === 'icloud' || provider === 'google-drive' ? provider : 'file');
+    const store = this.storeOf(provider === 'icloud' || provider === 'google-drive' ? provider : 'file');
     if (!store) throw new WalletServiceError('backup_unavailable', "That place isn't available on this phone.");
     return store;
   }
@@ -732,12 +752,11 @@ class Service implements RealWalletService {
         const w = this.requireWallet();
         const store = this.storeFor(provider);
         if (!(await store.isAvailable().catch(() => false))) throw new WalletServiceError('backup_unavailable', "That place isn't available on this phone right now.");
-        this.cloud.select(store);
         const passkey = await this.deps.platform.passkeys.isSupported().catch(() => false);
         this.setProgress('Encrypting your backup');
         try {
           await this.yieldToUi(); // paint the progress before the key stretching starts
-          const r = await w.createBackup({ passkey, recoveryCode: true });
+          const r = await w.createBackup({ passkey, recoveryCode: true, cloud: store });
           this.recoveryCodeValue = r.recoveryCode ?? null;
         } finally {
           this.setProgress(null);
@@ -760,7 +779,7 @@ class Service implements RealWalletService {
       const b = this.requireWallet().state.backup;
       if (!b) throw new WalletServiceError('wrong_state', 'Make a backup first.');
       if (!this.deps.shareBackupFile) throw notAvailableYet('Saving the backup file');
-      const store = this.cloud.storeFor(b.provider as CloudBackupStore['provider']) ?? this.cloud.storeFor('file');
+      const store = this.storeOf(b.provider as CloudBackupStore['provider']) ?? this.storeOf('file');
       const bytes = await store?.read(b.name);
       if (!bytes) throw new WalletServiceError('backup_not_found', "The backup file isn't on this phone any more. Make a new backup.");
       await this.deps.shareBackupFile(b.name, bytes);
@@ -846,10 +865,10 @@ class Service implements RealWalletService {
           if (res.signedTx) throw refusalToError(res.refusal.kind === 'broadcast_rejected' ? res.refusal : { kind: 'broadcast_rejected', reason: res.refusal.message, message: res.refusal.message });
           throw refusalToError(res.refusal);
         }
+        // The wallet's send log keeps where it went and who signed (Activity reads it from the wallet's history).
         const at = this.clock.now();
         const signedBy = res.signedBy;
-        addSend(this.log, { txid: res.txid, address: quote.request.address, amountSats: res.amountSats, feeSats: res.feeSats, signedBy, at });
-        await this.saveLogNow();
+        this.refresh();
         return {
           id: res.txid,
           kind: 'sent' as const,
@@ -888,12 +907,127 @@ class Service implements RealWalletService {
     });
   }
 
-  async lockGuardian(): Promise<void> {
-    throw notAvailableYet('Locking the guardian from the phone', "Lock it from the guardian's own web page for now.");
+  lockGuardian(): Promise<void> {
+    return this.exclusive(() =>
+      this.guarded(async () => {
+        this.setProgress('Locking your guardian');
+        try {
+          await this.requireWallet().lockGuardian();
+        } finally {
+          this.setProgress(null);
+        }
+      }),
+    );
   }
 
-  async replaceGuardian(_pairingCode: string): Promise<void> {
-    throw notAvailableYet('Replacing the guardian', 'Your money stays where it is.');
+  private planView(p: ReplacePlan): ReplaceGuardianPlan {
+    return {
+      newGuardian: { ...(p.newGuardian.label ? { label: p.newGuardian.label } : {}), host: hostFromLabel(p.newGuardian.label), npub: p.newGuardian.guardianNpub },
+      oldGuardianReachable: p.oldGuardianReachable,
+      movingSats: p.balanceSats,
+      coins: p.coins,
+      feeSats: p.estimatedFeeSats,
+      steps: p.steps,
+    };
+  }
+
+  previewReplaceGuardian(pairingCode: string): Promise<ReplaceGuardianPlan> {
+    return this.exclusive(() =>
+      this.guarded(async () => {
+        const w = this.requireWallet();
+        const code = this.readCode(pairingCode);
+        if (code.kind !== 'pairing') throw new WalletServiceError('pairing_invalid', code.kind === 'unknown' ? code.reason : "That isn't a guardian's pairing code.");
+        this.setProgress('Reaching your new guardian');
+        try {
+          this.replacePlan = this.planView(await w.previewReplaceGuardian(code.uri));
+        } finally {
+          this.setProgress(null);
+        }
+        return this.replacePlan;
+      }),
+    );
+  }
+
+  replaceGuardian(opts: { oldGuardianGone?: boolean } = {}): Promise<ReplaceGuardianResult> {
+    return this.exclusive(() =>
+      this.guarded(async () => {
+        const w = this.requireWallet();
+        if (!this.replacePlan && !w.state.replacing) throw new WalletServiceError('wrong_state', "Scan the new guardian's pairing code first.");
+        const host = hostFromLabel(w.state.replacing?.guardian.label ?? this.replacePlan?.newGuardian.label);
+        try {
+          const out = await w.replaceGuardian(opts.oldGuardianGone ? { oldGuardianReachable: false } : {});
+          if (out.status === 'awaiting_broadcast') return { status: 'waiting' as const, movedSats: out.movedSats };
+          this.replacePlan = null;
+          this.reachable = true;
+          addEvent(this.log, { kind: 'guardian-replaced', host, movedSats: out.movedSats, at: this.clock.now() });
+          await this.saveLogNow();
+          return { status: 'done' as const, movedSats: out.movedSats, oldWalletRetired: out.oldWalletRetired };
+        } finally {
+          this.replaceStep = null;
+          this.setProgress(null);
+        }
+      }),
+    );
+  }
+
+  cancelReplaceGuardian(): Promise<void> {
+    return this.guarded(async () => {
+      await this.w?.abandonReplaceGuardian();
+      this.replacePlan = null;
+      this.refresh();
+    });
+  }
+
+  sweepOldWallets(): Promise<{ movedSats: Sats }> {
+    return this.exclusive(() =>
+      this.guarded(async () => {
+        this.setProgress('Looking for coins in your old wallet');
+        try {
+          const res = await this.requireWallet().sweepStrayCoins();
+          const movedSats = res.reduce((a, r) => a + r.sweptSats, 0);
+          if (movedSats > 0) {
+            addEvent(this.log, { kind: 'stray-coins-moved', movedSats, at: this.clock.now() });
+            await this.saveLogNow();
+          }
+          return { movedSats };
+        } finally {
+          this.setProgress(null);
+        }
+      }),
+    );
+  }
+
+  retireOldWallet(): Promise<void> {
+    return this.exclusive(() =>
+      this.guarded(async () => {
+        this.setProgress('Retiring the old wallet: approve on your hardware wallet');
+        try {
+          await this.requireWallet().retireOldWallet();
+        } finally {
+          this.setProgress(null);
+        }
+      }),
+    );
+  }
+
+  confirmHardware(): Promise<void> {
+    return this.exclusive(() =>
+      this.guarded(async () => {
+        this.setProgress(`Confirming the wallet on your ${this.hardwareView().brand}`);
+        try {
+          await this.requireWallet().confirmHardware();
+          this.addressCache = undefined;
+          addEvent(this.log, { kind: 'hardware-confirmed', at: this.clock.now() });
+          await this.saveLogNow();
+        } finally {
+          this.setProgress(null);
+        }
+      }),
+    );
+  }
+
+  readCode(text: string): ScannedCode {
+    return parseScannedCode(text, { network: this.network, now: Math.floor(this.clock.now() / 1000) });
   }
 
   // ===========================================================================
@@ -951,22 +1085,29 @@ class Service implements RealWalletService {
   // ===========================================================================
   // Recovery
 
-  private async locate(provider?: CloudProvider): Promise<{ store: CloudBackupStore; found: NonNullable<Awaited<ReturnType<typeof TrikeyWallet.findBackup>>> } | undefined> {
+  private async locate(
+    provider?: CloudProvider,
+  ): Promise<{ store: CloudBackupStore; found: NonNullable<Awaited<ReturnType<typeof TrikeyWallet.findBackup>>> } | undefined> {
     const stores = provider ? [this.storeFor(provider)] : this.deps.platform.cloudBackups;
-    let best: { store: CloudBackupStore; found: NonNullable<Awaited<ReturnType<typeof TrikeyWallet.findBackup>>> } | undefined;
+    type Hit = { store: CloudBackupStore; found: NonNullable<Awaited<ReturnType<typeof TrikeyWallet.findBackup>>> };
+    let best: Hit | undefined;
+    // The newest backup for this phone's network wins; one for another network only if there is none.
+    const sameNet = (h: Hit) => (h.found.network === this.network ? 1 : 0);
+    const better = (a: Hit, b: Hit | undefined) => !b || sameNet(a) > sameNet(b) || (sameNet(a) === sameNet(b) && a.found.createdAt > b.found.createdAt);
     for (const store of stores) {
       if (!(await store.isAvailable().catch(() => false))) continue;
-      const found = await TrikeyWallet.findBackup({ ...this.walletDeps(), cloud: store }).catch(() => undefined);
-      if (found && (!best || found.createdAt > best.found.createdAt)) best = { store, found };
+      const found = await TrikeyWallet.findBackup(this.walletDeps(), { cloud: store, anyNetwork: true }).catch(() => undefined);
+      if (found && better({ store, found }, best)) best = { store, found };
     }
     return best;
   }
 
-  private foundView(store: CloudBackupStore, f: { createdAt: number; slots: ('passkey-prf' | 'recovery-code')[] }): FoundBackup {
+  private foundView(store: CloudBackupStore, f: { createdAt: number; slots: ('passkey-prf' | 'recovery-code')[]; network?: NetworkName }): FoundBackup {
     return {
       provider: store.provider === 'icloud' || store.provider === 'google-drive' ? store.provider : 'file',
       createdAt: this.iso(f.createdAt * 1000),
       unlockedBy: f.slots.map((s) => (s === 'passkey-prf' ? 'passkey' : 'recovery-code')),
+      ...(f.network ? { network: f.network } : {}),
     };
   }
 
@@ -983,27 +1124,37 @@ class Service implements RealWalletService {
       const picked = await this.deps.pickBackupFile();
       if (!picked) return null;
       const { header } = parseBackup(picked.bytes);
-      if (header.network !== this.network) throw new WalletServiceError('backup_invalid', `That backup is for ${header.network}, but this phone is set to ${this.network}. Change the network on the first screen.`);
-      const file = this.cloud.storeFor('file');
+      const file = this.storeOf('file');
       if (!file) throw notAvailableYet('Opening a backup file');
       const name = `${BACKUP_FILE_PREFIX}${header.id}${BACKUP_FILE_SUFFIX}`;
       await file.write(name, picked.bytes);
-      return this.foundView(file, { createdAt: header.createdAt, slots: header.slots.map((s) => s.type) });
+      return this.foundView(file, { createdAt: header.createdAt, slots: header.slots.map((s) => s.type), network: header.network });
     });
   }
 
-  restoreFromBackup(unlock?: RestoreUnlock, provider?: CloudProvider): Promise<void> {
+  /** Points the phone at another network before anything exists on it (a backup for that network). */
+  private async switchNetworkTo(network: NetworkName): Promise<void> {
+    if (this.mode === 'simulator' && network !== 'regtest') throw new WalletServiceError('network_mismatch', 'The simulator works on regtest only.', { network });
+    if (!SELECTABLE_NETWORKS.includes(network)) throw new WalletServiceError('network_mismatch', "That backup is for mainnet, which isn't available yet.", { network });
+    this.network = network;
+    await this.deps.platform.kv.set(networkPrefKey(this.mode), network).catch(() => {});
+    await this.buildHardware();
+    await this.loadLogFor();
+  }
+
+  restoreFromBackup(unlock?: RestoreUnlock, provider?: CloudProvider, opts: { switchNetwork?: boolean } = {}): Promise<void> {
     return this.exclusive(() =>
       this.guarded(async () => {
         if (!unlock) throw new WalletServiceError('invalid_input', 'Choose how to unlock the backup.');
         if (this.w) throw new WalletServiceError('wallet_exists', 'This phone already has a Trikey wallet.');
         const hit = await this.locate(provider);
         if (!hit) throw new WalletServiceError('backup_not_found', `No Trikey backup for ${this.network} was found.`);
-        this.cloud.select(hit.store);
+        // The backup says which network it is for. Another one than the phone's only when the person said so.
+        if (opts.switchNetwork && hit.found.network !== this.network) await this.switchNetworkTo(hit.found.network);
         this.setProgress('Unlocking your backup');
         try {
           await this.yieldToUi();
-          const w = await TrikeyWallet.restoreFromBackup(this.walletDeps(), unlock, { name: hit.found.name });
+          const w = await TrikeyWallet.restoreFromBackup(this.walletDeps(), unlock, { name: hit.found.name, cloud: hit.store });
           this.log = emptyLog();
           this.attach(w);
         } finally {
