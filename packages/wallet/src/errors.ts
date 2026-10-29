@@ -180,6 +180,15 @@ export type WalletErrorCode =
   | 'no_chain_source'
   /** "Replace guardian" already moved part of the way; finish it (`replaceGuardian()`) first. */
   | 'replace_in_progress'
+  /**
+   * Paying a silent payment address needs the helper coin (the vault's multisig inputs cannot make one): there is
+   * none, or it is too small for its share of the fee. The message says how to fund it.
+   */
+  | 'silent_payment_needs_helper'
+  /** Silent payments need something this phone does not have: a chain source for its single-key coins, or a scanner. */
+  | 'silent_payments_unavailable'
+  /** A silent payment label that cannot be used (0 is the change label and is never handed out). */
+  | 'invalid_label'
   | 'internal';
 
 export class WalletError extends Error {

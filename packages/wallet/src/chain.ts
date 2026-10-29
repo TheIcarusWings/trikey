@@ -41,6 +41,38 @@ export interface ChainSource {
   estimateFees(targets?: number[]): Promise<FeeEstimates>;
 }
 
+/** An unspent output found by its script. */
+export interface ScriptUtxo {
+  /** scriptPubKey, hex. */
+  script: string;
+  txid: string;
+  vout: number;
+  valueSats: number;
+  /** 0 while unconfirmed. */
+  height: number;
+  confirmations: number;
+}
+
+/**
+ * Chain data by output script, for the phone's own single-key coins: the helper coin (P2WPKH) and received silent
+ * payments (P2TR). The guardian's `wallet.sync` serves only the vault and its `tx.broadcast` only relays spends of
+ * vault coins, so these come from here: today the user's own Electrum/Esplora server (or a test double); later
+ * the guardian, once its protocol serves scripts (DESIGN.md, "Silent payments").
+ */
+export interface SingleKeyChainSource {
+  readonly kind: string;
+  tipHeight(): Promise<number>;
+  /** Unspent outputs paying any of `scripts` (hex scriptPubKeys), mempool included. */
+  unspent(scripts: string[]): Promise<ScriptUtxo[]>;
+  /** The scripts among `scripts` that ever received a coin (for the helper's address gap). */
+  used(scripts: string[]): Promise<string[]>;
+  /** Raw transaction hex (witness data may be left out); the wallet checks it hashes to `txid`. */
+  getTransaction(txid: string): Promise<string>;
+  /** Broadcasts a fully signed transaction; resolves with its txid. */
+  broadcast(txHex: string): Promise<string>;
+  estimateFees?(targets?: number[]): Promise<FeeEstimates>;
+}
+
 /** The subset of `RpcClient` the wallet uses (tests and other transports can stand in). */
 export interface GuardianRpc {
   readonly publicKey: string;
