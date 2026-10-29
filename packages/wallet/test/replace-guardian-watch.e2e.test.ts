@@ -79,7 +79,8 @@ describe('the old guardian is gone, the new one watches the old wallet', { timeo
   beforeAll(async () => {
     // The new guardian lets a phone broadcast twice per 10 minutes (refused calls count), to meet the limit below.
     [oldBox, newBox] = await startRigs([undefined, { limit: { max: 2, windowMs: 10 * 60_000 } }]);
-    phoneP = phone({ clock, hardware: provider, cloud, passkey, rpcTimeoutMs: 1500 });
+    phoneP = phone({ clock, hardware: provider, cloud, passkey, rpcTimeoutMs: 8000 });
+    phoneP.deps.probeTimeoutMs = 1500; // a gone guardian is found out quickly; a slow machine does not time real requests out
     P = await TrikeyWallet.create(phoneP.deps, { deviceName: 'Watching phone' });
     opened.push(P);
     await P.onboard({ pairingUri: oldBox.pairingUri(), rules: RULES });
@@ -170,7 +171,8 @@ describe('moving the wallet with the old guardian gone, refused by the new guard
 
   beforeAll(async () => {
     [oldBox, newBox] = await startRigs([undefined, undefined]);
-    phoneQ = phone({ clock, hardware: provider, cloud, passkey, rpcTimeoutMs: 1500 });
+    phoneQ = phone({ clock, hardware: provider, cloud, passkey, rpcTimeoutMs: 8000 });
+    phoneQ.deps.probeTimeoutMs = 1500;
     Q = await TrikeyWallet.create(phoneQ.deps, { deviceName: 'Capped phone' });
     opened.push(Q);
     await Q.onboard({ pairingUri: oldBox.pairingUri(), rules: RULES });

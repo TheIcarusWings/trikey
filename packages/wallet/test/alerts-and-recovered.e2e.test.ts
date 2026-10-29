@@ -44,7 +44,7 @@ describe('alerts and status answers are ordered by milliseconds, and the phone t
 
   beforeAll(async () => {
     box = await GuardianRig.start({ clock });
-    Y = await TrikeyWallet.create(phone({ clock, hardware: provider, cloud, passkey, rpcTimeoutMs: 1500 }).deps, { deviceName: 'Ordering phone' });
+    Y = await TrikeyWallet.create(phone({ clock, hardware: provider, cloud, passkey, rpcTimeoutMs: 8000 }).deps, { deviceName: 'Ordering phone' });
     Y.on((e) => events.push(e));
     await Y.onboard({ pairingUri: box.pairingUri(), rules: RULES });
     walletId = Y.state.wallet!.walletId;

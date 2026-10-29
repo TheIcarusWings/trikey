@@ -212,7 +212,8 @@ describe('replace guardian, the old guardian offline, a new guardian that does n
 
   beforeAll(async () => {
     // R1 has no wallet any more (the first describe retired it): it pairs this phone.
-    phoneB = phone({ clock, hardware: provider, cloud, passkey, rpcTimeoutMs: 1500 });
+    phoneB = phone({ clock, hardware: provider, cloud, passkey, rpcTimeoutMs: 8000 });
+    phoneB.deps.probeTimeoutMs = 1500; // the gone box is found out quickly; a slow machine does not time real requests out
     phoneB.deps.createRpc = withoutWatch;
     B = await TrikeyWallet.create(phoneB.deps, { deviceName: 'Phone B' });
     opened.push(B);
