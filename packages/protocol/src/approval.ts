@@ -16,7 +16,8 @@ export const MAX_APPROVAL_MESSAGE_LENGTH = 240;
 export type HardwareAction =
   | { action: 'policy'; policy: Policy }
   | { action: 'cancel-recovery'; recoveryId: string }
-  | { action: 'resume-phone' };
+  | { action: 'resume-phone' }
+  | { action: 'retire-wallet' };
 
 export interface ApprovalContext {
   /** From the `pair` result. */
@@ -63,6 +64,8 @@ export function approvalMessage(action: HardwareAction, ctx: ApprovalContext): s
       return line(['Trikey cancel-recovery v1', ...head, `recovery=${action.recoveryId}`, tail]);
     case 'resume-phone':
       return line(['Trikey resume-phone v1', ...head, tail]);
+    case 'retire-wallet':
+      return line(['Trikey retire-wallet v1', ...head, tail]);
   }
 }
 

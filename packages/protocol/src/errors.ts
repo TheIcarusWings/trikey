@@ -17,6 +17,8 @@ export const ErrorCode = {
   Unauthorized: 1001,
   PairingRejected: 1002,
   AlreadyPaired: 1003,
+  /** The wallet was retired on this guardian (replaced after a recovery, or by `wallet.retire`): nothing is signed for it again. */
+  WalletRetired: 1004,
 
   // 11xx: guardian state
   GuardianLocked: 1100,
@@ -36,6 +38,11 @@ export const ErrorCode = {
   PhoneSpendingPaused: 1207,
   /** `phone.resume` while phone payments are not paused by a contested cancel. */
   NothingToResume: 1208,
+  /**
+   * The wallet came to this guardian through a rotation (a recovery's destination wallet) and its hardware
+   * authorization key has no pairing proof for this wallet id yet: send `hardware.confirm` first.
+   */
+  HardwareAuthUnconfirmed: 1209,
 
   // 13xx: recovery
   RecoveryNotFound: 1300,
@@ -74,6 +81,7 @@ export const ErrorMessage: Record<ErrorCodeValue, string> = {
   [ErrorCode.Unauthorized]: 'Unauthorized',
   [ErrorCode.PairingRejected]: 'Pairing rejected',
   [ErrorCode.AlreadyPaired]: 'Already paired',
+  [ErrorCode.WalletRetired]: 'This wallet was retired on this guardian',
   [ErrorCode.GuardianLocked]: 'Guardian is locked',
   [ErrorCode.UnlockFailed]: 'Unlock failed',
   [ErrorCode.PolicyViolation]: 'Request violates the policy',
@@ -85,6 +93,7 @@ export const ErrorMessage: Record<ErrorCodeValue, string> = {
   [ErrorCode.ApprovalExpiryTooFar]: 'Hardware approval expires too far ahead',
   [ErrorCode.PhoneSpendingPaused]: 'Phone payments are paused',
   [ErrorCode.NothingToResume]: 'Nothing to resume',
+  [ErrorCode.HardwareAuthUnconfirmed]: 'Confirm the hardware wallet for this wallet first',
   [ErrorCode.RecoveryNotFound]: 'Recovery not found',
   [ErrorCode.RecoveryAlreadyActive]: 'A recovery is already active',
   [ErrorCode.RecoveryNotActive]: 'Recovery is not active',

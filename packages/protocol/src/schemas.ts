@@ -200,6 +200,11 @@ export const PairParams = z.strictObject({
   hardwareAuthProof: Bip137Signature,
   /** The initial rules. */
   rules: Policy,
+  /**
+   * The wallet this one replaces, when the phone moves an existing wallet to this guardian ("Replace
+   * guardian": the old one died or was retired). Informational: the guardian records it in its log.
+   */
+  replacesWalletId: WalletId.optional(),
 });
 
 export const PairResult = z.object({
@@ -294,6 +299,36 @@ export const GuardianUnlockParams = z.discriminatedUnion('kind', [
 ]);
 export const GuardianUnlockResult = z.object({ unlocked: z.boolean() });
 
+/** Locks the guardian from the phone: key 3 leaves the guardian's memory until an unlock. Always allowed for the paired phone. */
+export const GuardianLockParams = z.strictObject({});
+export const GuardianLockResult = z.object({ state: z.literal('locked') });
+
+/**
+ * Retires the paired wallet on this guardian ("Replace guardian" from the old guardian's side): from then on it
+ * co-signs nothing for it, and pairing is open for a new wallet. Needs a hardware approval of
+ * `{ action: 'retire-wallet' }` and no running recovery.
+ */
+export const WalletRetireParams = z.strictObject({ approval: HardwareApproval });
+export const WalletRetireResult = z.object({
+  walletId: WalletId,
+  retiredAt: UnixSeconds,
+});
+
+/**
+ * After a wallet rotation (the guardian adopted a recovery's destination wallet), the hardware authorization
+ * key must prove itself again for the new wallet id before any hardware approval is accepted: a fresh
+ * BIP 137 signature over `pairingMessage(walletId, cosignerAccountPubkey)`, as at pairing.
+ */
+export const HardwareConfirmParams = z.strictObject({
+  hardwareAuth: HardwareAuthKey,
+  hardwareAuthProof: Bip137Signature,
+});
+export const HardwareConfirmResult = z.object({
+  walletId: WalletId,
+  hardwareAuth: HardwareAuthKey,
+  nextHardwareSequence: z.int().min(1),
+});
+
 export const GuardianStatusParams = z.strictObject({});
 export const GuardianStatusResult = z.object({
   state: z.enum(['locked', 'unlocked']),
@@ -316,6 +351,10 @@ export const GuardianStatusResult = z.object({
       availableSats: Sats,
     })
     .optional(),
+  /** The wallet the guardian guards now. It changes when the guardian adopts a recovery's destination wallet. */
+  walletId: WalletId.optional(),
+  /** True after such a rotation until `hardware.confirm`: hardware approvals are refused (1209) until then. */
+  hardwareConfirmRequired: z.boolean().optional(),
 });
 
 /* -------------------------------------------------------------------------- */
@@ -477,6 +516,9 @@ export const methods = {
   'tx.broadcast': { params: TxBroadcastParams, result: TxBroadcastResult },
   'fees.estimate': { params: FeesEstimateParams, result: FeesEstimateResult },
   'recovery.access': { params: RecoveryAccessParams, result: RecoveryAccessResult },
+  'guardian.lock': { params: GuardianLockParams, result: GuardianLockResult },
+  'wallet.retire': { params: WalletRetireParams, result: WalletRetireResult },
+  'hardware.confirm': { params: HardwareConfirmParams, result: HardwareConfirmResult },
 } as const;
 
 export type MethodName = keyof typeof methods;
@@ -504,7 +546,8 @@ const recoveryAlert = {
 
 /**
  * Alert types mirror the engine's `AlertKind` (`recovery_started`, `recovery_reminder`, `recovery_ready`,
- * `recovery_cancelled`, `recovery_completed`), plus `guardian_locked`, which the service raises itself.
+ * `recovery_cancelled`, `recovery_completed`), plus what the service raises itself: `guardian_locked`,
+ * `wallet_adopted` and `wallet_retired`.
  */
 export const Alert = z.discriminatedUnion('type', [
   z.object({ ...alertBase, type: z.literal('recovery_started'), ...recoveryAlert }),
@@ -533,7 +576,28 @@ export const Alert = z.discriminatedUnion('type', [
   z.object({
     ...alertBase,
     type: z.literal('guardian_locked'),
-    reason: z.enum(['restart', 'manual', 'tamper']).optional(),
+    /** `manual`: from the box's web UI; `remote`: by the paired phone (`guardian.lock`). */
+    reason: z.enum(['restart', 'manual', 'remote', 'tamper']).optional(),
+  }),
+  z.object({
+    ...alertBase,
+    /** The guardian now guards a recovery's destination wallet, and this phone is its paired phone. */
+    type: z.literal('wallet_adopted'),
+    walletId: WalletId,
+    /** The wallet the recovery swept, now retired. */
+    previousWalletId: WalletId,
+    recoveryId: RecoveryId,
+    /** Hardware approvals wait for `hardware.confirm` (a fresh pairing proof for `walletId`). */
+    hardwareConfirmRequired: z.boolean(),
+  }),
+  z.object({
+    ...alertBase,
+    /** The wallet is retired on this guardian: nothing is co-signed for it any more. */
+    type: z.literal('wallet_retired'),
+    walletId: WalletId,
+    /** `retired`: `wallet.retire`; `recovered`: swept by a recovery; `reset`: the guardian was reset from its web UI. */
+    reason: z.enum(['retired', 'recovered', 'reset']),
+    successorWalletId: WalletId.optional(),
   }),
 ]);
 
@@ -565,6 +629,9 @@ export const RequestSchema = z.discriminatedUnion('method', [
   requestOf('tx.broadcast', TxBroadcastParams),
   requestOf('fees.estimate', FeesEstimateParams),
   requestOf('recovery.access', RecoveryAccessParams),
+  requestOf('guardian.lock', GuardianLockParams),
+  requestOf('wallet.retire', WalletRetireParams),
+  requestOf('hardware.confirm', HardwareConfirmParams),
 ]);
 export type Request = z.infer<typeof RequestSchema>;
 

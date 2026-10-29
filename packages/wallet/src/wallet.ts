@@ -1493,7 +1493,7 @@ export class TrikeyWallet {
       if (gs && meta.at * 1000 > gs.checkedAt) await this.update((s) => void (s.guardianStatus = { ...gs, state: 'locked', checkedAt: this.now() }));
       return;
     }
-    this.alertRecoveryId = alert.recoveryId;
+    if ('recoveryId' in alert) this.alertRecoveryId = alert.recoveryId;
     this.refreshAfterAlerts();
   }
 
