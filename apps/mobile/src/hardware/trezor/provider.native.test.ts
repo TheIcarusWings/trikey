@@ -62,7 +62,7 @@ describe('TrezorProvider (native glue)', () => {
     const settings = h.connect.init.mock.calls[0]![0];
     expect(settings.manifest).toEqual(TREZOR_MANIFEST_DEFAULTS);
     expect(settings.manifest.appUrl).toBe('https://github.com/TheIcarusWings/trikey');
-    expect(settings.manifest.email).toMatch(/REPLACE-ME/);
+    expect(settings.manifest.email).toBe('dev@trikey.app');
     expect(settings.deeplinkCallbackUrl).toBe('trikey://trezor-callback');
     settings.deeplinkOpen('https://connect.trezor.io/10/deeplink/1/?method=getPublicKey');
     await Promise.resolve();

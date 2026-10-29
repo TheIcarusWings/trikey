@@ -1,13 +1,9 @@
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 
 // Expo reads app.json first and passes it in as `config`; this file adds what depends on the
-// environment: the publisher's iCloud container, passkey domain and app identifiers. Nothing
-// here is a real account: every value is either read from the environment or a placeholder
-// that fails loudly when it reaches Apple's or Google's tooling. See "Publishing your own build"
-// in README.md.
-
-/** Placeholder container id. Replace it (TRIKEY_ICLOUD_CONTAINER) with `iCloud.<your bundle id>`. */
-const PLACEHOLDER_ICLOUD_CONTAINER = 'iCloud.com.example.replace-me.trikey';
+// environment: the publisher's iCloud container, passkey domain and app identifiers. The defaults
+// are the Trikey project's own (bundle id app.trikey.wallet); a fork sets its own through the
+// environment. See "Publishing your own build" in README.md.
 
 /**
  * Same rule as `passkeyRpId` in src/platform/config.ts (duplicated: Expo's config loader does not
@@ -50,7 +46,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     plugins.push([
       'react-native-cloud-storage',
       {
-        iCloudContainerIdentifier: env('TRIKEY_ICLOUD_CONTAINER') ?? PLACEHOLDER_ICLOUD_CONTAINER,
+        iCloudContainerIdentifier: env('TRIKEY_ICLOUD_CONTAINER') ?? `iCloud.${iosBundleId}`,
         iCloudContainerEnvironment: env('TRIKEY_ICLOUD_ENVIRONMENT') === 'Development' ? 'Development' : 'Production',
       },
     ]);

@@ -2,12 +2,12 @@ import type { NetworkName } from '@trikey/core';
 import type { QrBridge } from './qr/bridge';
 import type { QrFormat } from './qr/types';
 
-/** Where Trikey says it comes from when it asks Trezor Suite Lite for something. Replace before release. */
+/** Where Trikey says it comes from when it asks Trezor Suite Lite for something. A fork should use its own contact. */
 export const TREZOR_MANIFEST_DEFAULTS = {
   appName: 'Trikey',
   appUrl: 'https://github.com/TheIcarusWings/trikey',
-  /** PLACEHOLDER: Trezor Connect wants a contact email in the manifest. Put the project's real address here before release. */
-  email: 'REPLACE-ME@example.invalid',
+  /** Trezor Connect wants a developer contact, used by SatoshiLabs for deprecations and incidents. */
+  email: 'dev@trikey.app',
 } as const;
 
 export interface LedgerDeviceChoice {

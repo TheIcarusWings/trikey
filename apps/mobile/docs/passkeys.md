@@ -13,7 +13,7 @@ device. But passkeys still belong to a **relying party ID** (RP ID), which must 
 
 | | |
 |---|---|
-| A domain | For example `wallet.example.org`. Bare host name, no `https://`, no path. This is the RP ID. |
+| A domain | `trikey.app` for the Trikey project's own builds; a fork uses its own. Bare host name, no `https://`, no path. This is the RP ID. |
 | HTTPS on that domain | Valid certificate, **no redirects** on the two files below. |
 | `apple-app-site-association` | iOS: lists your app under `webcredentials`. |
 | `assetlinks.json` | Android: lists your app and its signing-key fingerprint. |
@@ -88,7 +88,7 @@ should return your statement.
 ## 3. Build with the domain
 
 ```sh
-EXPO_PUBLIC_PASSKEY_RP_ID=wallet.example.org npx expo prebuild   # or set it in .env / your EAS secrets
+EXPO_PUBLIC_PASSKEY_RP_ID=trikey.app npx expo prebuild   # or set it in .env / your EAS secrets
 ```
 
 Then in a development build, `platform.passkeys.isSupported()` is `true` on a capable phone.

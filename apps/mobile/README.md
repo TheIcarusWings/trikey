@@ -83,14 +83,14 @@ variables in your build service (for example EAS secrets).
 
 | Variable | What it is | If unset |
 |---|---|---|
-| `TRIKEY_IOS_BUNDLE_ID` | Your iOS bundle identifier | `org.trikey.app` from `app.json` (the Trikey project's own, you cannot sign it) |
-| `TRIKEY_ANDROID_PACKAGE` | Your Android package name | `org.trikey.app` from `app.json` |
+| `TRIKEY_IOS_BUNDLE_ID` | Your iOS bundle identifier | `app.trikey.wallet` from `app.json` (the Trikey project's own, you cannot sign it) |
+| `TRIKEY_ANDROID_PACKAGE` | Your Android package name | `app.trikey.wallet` from `app.json` |
 | `TRIKEY_APPLE_TEAM_ID` | Your Apple Team ID | Xcode asks |
-| `TRIKEY_ICLOUD_CONTAINER` | `iCloud.<your bundle id>` | placeholder `iCloud.com.example.replace-me.trikey`, which will not build |
+| `TRIKEY_ICLOUD_CONTAINER` | `iCloud.<your bundle id>` | `iCloud.<bundle id>` |
 | `TRIKEY_ICLOUD_ENVIRONMENT` | `Development` or `Production` | `Production` |
 | `TRIKEY_DISABLE_ICLOUD` | `1` builds without iCloud | iCloud on |
 | `EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID` | Google OAuth client ID (Android backup) | Google Drive backup unavailable |
-| `EXPO_PUBLIC_PASSKEY_RP_ID` | Passkey domain, e.g. `wallet.example.org` | Passkeys unsupported |
+| `EXPO_PUBLIC_PASSKEY_RP_ID` | Passkey domain: `trikey.app` for the project's builds, your own domain for a fork | Passkeys unsupported |
 
 `EXPO_PUBLIC_` values are compiled into the app. They are identifiers, not secrets.
 
