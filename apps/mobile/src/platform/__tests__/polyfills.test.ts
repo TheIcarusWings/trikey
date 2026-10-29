@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { installPolyfills, installProcessShim, runtimeReport } from '../polyfill-install';
+import { installPolyfills, installProcessShim, pinAppRandomSource, runtimeReport } from '../polyfill-install';
 import { Utf8TextDecoder, Utf8TextEncoder } from '../utf8';
 
 const fill = <T extends ArrayBufferView>(a: T): T => {
@@ -47,6 +47,29 @@ describe('installPolyfills', () => {
     const g: Record<string, any> = {};
     installPolyfills(g, { getRandomValues: fill });
     expect(Object.keys(g)).toEqual([]);
+  });
+});
+
+describe('pinAppRandomSource', () => {
+  it('pins the expo-crypto function the polyfill installed, with its crypto object as `this`', () => {
+    const g: Record<string, any> = {};
+    const installed = installPolyfills(g, { getRandomValues: fill });
+    const pins: { fn: unknown; name: string; target?: unknown }[] = [];
+    const name = pinAppRandomSource(g, installed, (fn, opts) => pins.push({ fn, ...opts }));
+    expect(name).toBe('expo-crypto (ExpoCrypto.getRandomValues)');
+    expect(pins).toEqual([{ fn: g.crypto.getRandomValues, name, target: g.crypto }]);
+  });
+
+  it('pins the built-in function on the web, where nothing was installed', () => {
+    const g: Record<string, any> = { crypto: { getRandomValues: fill }, TextEncoder: class {}, TextDecoder: class {} };
+    const installed = installPolyfills(g, { getRandomValues: () => { throw new Error('not used'); } });
+    let pinned: unknown;
+    expect(pinAppRandomSource(g, installed, (fn) => (pinned = fn))).toBe('built-in crypto.getRandomValues');
+    expect(pinned).toBe(fill);
+  });
+
+  it('refuses to start without a getRandomValues', () => {
+    expect(() => pinAppRandomSource({ crypto: {} }, [], () => undefined)).toThrow(/missing/);
   });
 });
 

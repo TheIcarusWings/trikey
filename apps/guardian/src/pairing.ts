@@ -10,8 +10,10 @@
  *
  * Only the latest session exists: creating one invalidates the previous one.
  */
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { generatePairingSecret } from '@trikey/protocol';
+import { secureRandomBytes } from '@trikey/core/random';
+import { hex } from '@scure/base';
 
 export const PAIRING_TTL_MS = 5 * 60_000;
 export const PAIRING_MAX_FAILURES = 5;
@@ -39,7 +41,7 @@ export class PairingSessions {
 
   create(now: number): PairingSession {
     this.current = {
-      id: randomBytes(12).toString('hex'),
+      id: hex.encode(secureRandomBytes(12)),
       secret: generatePairingSecret(),
       createdAt: now,
       expiresAt: now + PAIRING_TTL_MS,

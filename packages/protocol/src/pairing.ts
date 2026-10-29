@@ -1,5 +1,5 @@
 import { base64url } from '@scure/base';
-import { randomBytes } from '@noble/hashes/utils.js';
+import { secureRandomBytes } from '@trikey/core/random';
 import { decode as nip19Decode, npubEncode } from 'nostr-tools/nip19';
 import { nowSeconds } from './envelope.js';
 
@@ -31,7 +31,7 @@ export class PairingUriError extends Error {
 
 /** A fresh pairing secret: 32 random bytes, base64url (43 chars). */
 export function generatePairingSecret(): string {
-  return base64url.encode(randomBytes(32)).replace(/=+$/, '');
+  return base64url.encode(secureRandomBytes(32)).replace(/=+$/, '');
 }
 
 const SECRET_RE = /^[A-Za-z0-9_-]{22,128}$/;

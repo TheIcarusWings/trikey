@@ -3,6 +3,7 @@
  * to a message. Anything the wallet refuses to do itself is a
  * `RecoveryKeyError`; chain-server refusals carry the server's reason.
  */
+import { RandomSourceError } from '@trikey/core/random';
 
 export type RecoveryKeyErrorCode =
   /** The wallet is not in the state this call needs. */
@@ -49,6 +50,8 @@ export type RecoveryKeyErrorCode =
   /** A refill is in the mempool; wait for it to confirm before building a new batch. */
   | 'refill_in_flight'
   | 'nothing_to_bump'
+  /** The phone's random generator failed a check (`RandomSourceError`). No key was made from it. */
+  | 'random_source_failed'
   | 'internal';
 
 export class RecoveryKeyError extends Error {
@@ -61,6 +64,16 @@ export class RecoveryKeyError extends Error {
     this.code = code;
     this.detail = opts.detail;
   }
+}
+
+/** `RandomSourceError` from key generation as a `RecoveryKeyError`; anything else unchanged. */
+export function asRandomSourceError(e: unknown): unknown {
+  if (e instanceof RandomSourceError)
+    return new RecoveryKeyError('random_source_failed', `This phone's random number generator failed a safety check (${e.code}), so no key was made. ${e.message}`, {
+      cause: e,
+      detail: { reason: e.code },
+    });
+  return e;
 }
 
 export function fail(code: RecoveryKeyErrorCode, message: string, detail?: Record<string, unknown>): never {

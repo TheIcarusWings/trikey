@@ -9,14 +9,24 @@
  * phone needs to talk to the guardian and to read alerts in the background.
  */
 import { HDKey } from '@scure/bip32';
-import { entropyToMnemonic, generateMnemonic, mnemonicToEntropy, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
+import { entropyToMnemonic, mnemonicToEntropy, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { bip48Path, keyExpressionFromMaster, type KeyExpression, type Network } from '@trikey/core';
+import { secureRandomBytes } from '@trikey/core/random';
 import { identityFromSeed, type KeyOrigin, type NostrIdentity } from '@trikey/protocol';
 
-/** A fresh 24-word BIP 39 mnemonic (256 bits from `crypto.getRandomValues`). */
+/**
+ * A fresh 24-word BIP 39 mnemonic: 32 bytes from `secureRandomBytes` (the OS generator, checked on every
+ * call; packages/core/src/random.ts), then `entropyToMnemonic`. Throws `RandomSourceError` if the source
+ * fails a check; it never falls back to anything else.
+ */
 export function newMnemonic(): string {
-  return generateMnemonic(wordlist, 256);
+  const entropy = secureRandomBytes(32);
+  try {
+    return entropyToMnemonic(entropy, wordlist);
+  } finally {
+    entropy.fill(0);
+  }
 }
 
 export function isValidMnemonic(mnemonic: string): boolean {

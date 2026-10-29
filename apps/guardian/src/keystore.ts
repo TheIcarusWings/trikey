@@ -1,7 +1,8 @@
 /**
  * Key 3 at rest.
  *
- * Setup creates a fresh BIP39 seed (256 bits of entropy). The cosigner key is
+ * Setup creates a fresh BIP39 seed (256 bits of entropy from `secureRandomBytes`,
+ * i.e. the checked `getrandom(2)` behind Node's webcrypto). The cosigner key is
  * the BIP48 P2WSH account key of that seed, `m/48'/<coin>'/0'/2'`. There is no
  * backup of key 3, by design (DESIGN.md: if the box dies, phone + hardware sweep
  * to a new wallet), so the mnemonic is never shown or stored.
@@ -36,12 +37,13 @@ import { readFile } from 'node:fs/promises';
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { argon2idAsync } from '@noble/hashes/argon2.js';
-import { randomBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { base64, hex } from '@scure/base';
 import { HDKey } from '@scure/bip32';
 import { entropyToMnemonic, mnemonicToSeedSync } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { bip48Path, getNetwork, tweakPrivateKey, type NetworkName } from '@trikey/core';
+import { secureRandomBytes } from '@trikey/core/random';
 import { writeFileAtomic } from './files.js';
 import type { CosignerSigner } from './policy/index.js';
 
@@ -114,9 +116,9 @@ export function checkPassphrase(passphrase: unknown): string | undefined {
   return undefined;
 }
 
-/** A fresh BIP39 seed (24 words of entropy, no BIP39 passphrase). The caller zeroes it. */
+/** A fresh BIP39 seed (24 words of entropy from `secureRandomBytes`, no BIP39 passphrase). The caller zeroes it. */
 export function generateSeed(): Uint8Array {
-  const entropy = randomBytes(32);
+  const entropy = secureRandomBytes(32);
   try {
     // The mnemonic only exists as an intermediate string; it is never shown or stored.
     return mnemonicToSeedSync(entropyToMnemonic(entropy, wordlist));
@@ -227,8 +229,8 @@ async function deriveKey(passphrase: string, salt: Uint8Array, kdf: KdfParams): 
 export async function sealKeystore(seed: Uint8Array, passphrase: string, pub: CosignerPublic, kdf: KdfParams = DEFAULT_KDF, now = new Date()): Promise<KeystoreFile> {
   checkKdf(kdf);
   if (seed.length !== 64) throw new Error('seed must be 64 bytes');
-  const salt = randomBytes(16);
-  const nonce = randomBytes(24);
+  const salt = secureRandomBytes(16);
+  const nonce = secureRandomBytes(24);
   const header: Omit<KeystoreFile, 'ciphertext'> = {
     format: 'trikey-keystore',
     version: 1,

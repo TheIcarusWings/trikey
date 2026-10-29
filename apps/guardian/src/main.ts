@@ -6,6 +6,8 @@
  * Electrs, and shuts down cleanly on SIGTERM / SIGINT. The guardian always
  * starts locked. One log line per event on stdout; no secrets, no bodies.
  */
+// First: pin the random source before any module can draw from or replace it.
+import './pin-random.js';
 import { loadConfig } from './config.js';
 import { Guardian } from './guardian.js';
 import { createLogger, errorText } from './log.js';

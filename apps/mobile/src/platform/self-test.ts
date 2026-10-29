@@ -56,11 +56,14 @@ export async function runCryptoSelfTest(): Promise<SelfTestReport> {
   );
 
   steps.push(
-    await runStep('Random bytes', () => {
-      const a = crypto.getRandomValues(new Uint8Array(32));
-      const b = crypto.getRandomValues(new Uint8Array(32));
-      expect(a.some((x) => x !== 0), 'all zero');
+    await runStep('Random bytes', async () => {
+      const { randomSourceInfo, secureRandomBytes } = await import('@trikey/core/random');
+      // secureRandomBytes checks the source on every call (stuck, repeated, replaced) and throws if it fails.
+      const a = secureRandomBytes(32);
+      const b = secureRandomBytes(32);
       expect(a.join() !== b.join(), 'two draws were identical');
+      const info = randomSourceInfo();
+      expect(info.pinned && info.pinnedBy === 'explicit', `the random source is not pinned (${info.name ?? 'none'})`);
     }),
   );
 
@@ -100,16 +103,17 @@ export async function runCryptoSelfTest(): Promise<SelfTestReport> {
   steps.push(
     await runStep('NIP-44 encrypt and decrypt', async () => {
       const nip44 = await import('nostr-tools/nip44');
-      const { generateSecretKey, getPublicKey } = await import('nostr-tools/pure');
-      const alice = generateSecretKey();
-      const bob = generateSecretKey();
+      const { getPublicKey } = await import('nostr-tools/pure');
+      const { randomSecretKey } = await import('@trikey/core/random');
+      const alice = randomSecretKey();
+      const bob = randomSecretKey();
       const plaintext = 'sign this ₿ 🔑';
       const sealed = nip44.encrypt(plaintext, nip44.getConversationKey(alice, getPublicKey(bob)));
       expect(sealed !== plaintext, 'not encrypted');
       expect(nip44.decrypt(sealed, nip44.getConversationKey(bob, getPublicKey(alice))) === plaintext, 'decrypt mismatch');
       let rejected = false;
       try {
-        nip44.decrypt(sealed, nip44.getConversationKey(generateSecretKey(), getPublicKey(alice)));
+        nip44.decrypt(sealed, nip44.getConversationKey(randomSecretKey(), getPublicKey(alice)));
       } catch {
         rejected = true;
       }
@@ -120,9 +124,10 @@ export async function runCryptoSelfTest(): Promise<SelfTestReport> {
   steps.push(
     await runStep('Gift wrap (NIP-59) through the protocol', async () => {
       const { wrapMessage, unwrapMessage, generateMessageId } = await import('@trikey/protocol');
-      const { generateSecretKey, getPublicKey } = await import('nostr-tools/pure');
-      const phone = generateSecretKey();
-      const guardian = generateSecretKey();
+      const { getPublicKey } = await import('nostr-tools/pure');
+      const { randomSecretKey } = await import('@trikey/core/random');
+      const phone = randomSecretKey();
+      const guardian = randomSecretKey();
       const id = generateMessageId();
       const { wrap } = wrapMessage(
         { id, method: 'guardian.status', params: {} },

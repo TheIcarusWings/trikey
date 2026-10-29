@@ -14,7 +14,6 @@
 import { HDKey } from '@scure/bip32';
 import { mnemonicToSeedSync } from '@scure/bip39';
 import { base64, hex } from '@scure/base';
-import { randomBytes } from '@noble/hashes/utils.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import * as btc from '@scure/btc-signer';
 import { deriveSilentPaymentKeys, looksLikeSilentPaymentAddress, spendingPrivateKey } from '@trikey/silent-payments';
@@ -79,7 +78,7 @@ import {
 } from './backup.js';
 import { verifyMessage } from './bip137.js';
 import { GuardianChainSource, alertTimeMs, txidOfRaw, type ChainSnapshot, type ChainSource, type FeeEstimates, type GuardianRpc, type SingleKeyChainSource } from './chain.js';
-import { WalletError, asWalletError, isWalletNotWatched, refusalFromError, sweepBroadcastError, type GuardianRefusal } from './errors.js';
+import { WalletError, asRandomSourceError, asWalletError, isWalletNotWatched, refusalFromError, sweepBroadcastError, type GuardianRefusal } from './errors.js';
 import {
   authKeyPath,
   childPubkey,
@@ -145,6 +144,7 @@ import {
   type SilentPaymentCoin,
   type WalletState,
 } from './state.js';
+import { secureRandomBytes } from '@trikey/core/random';
 
 export interface Clock {
   /** Milliseconds since the Unix epoch. */
@@ -497,15 +497,23 @@ export class TrikeyWallet {
   /**
    * Creates key 2 (a fresh 24-word mnemonic, or `mnemonic` to import one) and
    * a new, unpaired wallet. Refuses if the store already holds a wallet.
+   *
+   * A fresh key 2 comes from `secureRandomBytes` (the checked OS generator). A generator that fails a
+   * check throws `WalletError('random_source_failed')` before anything is stored.
    */
   static async create(deps: WalletDeps, opts: { deviceName?: string; mnemonic?: string } = {}): Promise<TrikeyWallet> {
     const store = new StateStore(deps.store, deps.storageKey);
     if (await store.load()) throw new WalletError('wallet_exists', 'This phone already has a Trikey wallet.');
     const network = getNetwork(deps.network);
-    const mnemonic = opts.mnemonic ?? newMnemonic();
+    let mnemonic: string;
+    try {
+      mnemonic = opts.mnemonic ?? newMnemonic();
+    } catch (e) {
+      throw asRandomSourceError(e);
+    }
     const pub = deriveKey2(mnemonic, network);
     const clock = deps.clock ?? systemClock;
-    const tag = hex.encode(randomBytes(8));
+    const tag = hex.encode(secureRandomBytes(8));
     const secrets = { key2: `trikey.key2.${tag}`, nostr: `trikey.nostr.${tag}` };
     const entropy = entropyFromMnemonic(mnemonic);
     try {
@@ -2176,7 +2184,7 @@ export class TrikeyWallet {
       const { account, origin } = helperAccount(master, this.network);
       const keys = deriveSilentPaymentKeys(master, { coinType: this.network.coinType, account: SILENT_PAYMENT_ACCOUNT });
       keys.spendPrivateKey.fill(0);
-      const tag = hex.encode(randomBytes(8));
+      const tag = hex.encode(secureRandomBytes(8));
       const ids = { helper: this.s.secrets.helper ?? `trikey.helper.${tag}`, spScan: this.s.secrets.spScan ?? `trikey.spscan.${tag}` };
       const helperSecret = new Uint8Array(64);
       helperSecret.set(account.chainCode!, 0);
@@ -3319,7 +3327,7 @@ export class TrikeyWallet {
     if (opts.passkey) {
       const pk = this.deps.passkey;
       if (!pk || !(await pk.isSupported())) throw new WalletError('passkey_unavailable', 'Passkeys with PRF are not available on this phone.');
-      const prfSalt = randomBytes(32);
+      const prfSalt = secureRandomBytes(32);
       const r = credentialId
         ? await pk.get({ credentialId, salt: prfSalt })
         : await pk.create({ userName: `Trikey wallet ${this.s.wallet?.walletId.slice(0, 8) ?? this.s.nostrPubkey.slice(0, 8)}`, salt: prfSalt });
