@@ -42,7 +42,7 @@ The rumor `content` is the JSON message (section 3), at most 200,000 characters.
 
 ## 3. Messages (JSON, no `jsonrpc` field)
 
-All objects are strict (unknown members are rejected), except `policy` objects, which keep unknown members.
+Envelopes, request `params` and `policy`/`approval` objects are strict: an unknown member is rejected, never dropped silently (a rule or field the guardian would ignore must not look accepted). Result objects (`result`, `recovery`) are lenient: a phone ignores members it does not know, so the guardian may add result members.
 
 ```jsonc
 // request  (phone -> guardian)
@@ -59,45 +59,122 @@ All objects are strict (unknown members are rejected), except `policy` objects, 
 * Direction is fixed: the guardian only accepts requests, the phone only accepts responses and alerts. Anything else is dropped.
 * PSBTs are base64 strings (BIP 174, must start with `psbt\xff`), at most 100,000 characters.
 
+### Time
+
+**Every timestamp on the wire is unix time in seconds** (nostr's unit): `startedAt`, `readyAt`, `cancelledAt`, `completedAt`, alert `at`, `time`, and a hardware approval's `expiresAt`. The guardian's policy engine counts **milliseconds** internally (its clock, `startedAt`, `readyAt`, ...), so the guardian service converts with `Math.floor(ms / 1000)` whenever it puts an engine value in a message. The engine's hardware-approval `expiresAt` is already in seconds and passes through unchanged. A millisecond value is rejected by the schemas (above year 2100), which catches a missed conversion. Delays are in days (`delayDays`, `recoveryDelayDays`).
+
 ### Methods
 
-`Hex32` = 64 lowercase hex chars. `UnixSeconds` = integer. `KeyOrigin` = `{ fingerprint: 8 hex, path: "m/48'/0'/0'/2'", xpub: string }`.
+`Hex32` = 64 lowercase hex chars. `Sats` = integer 0..2,100,000,000,000,000 (exact as a JSON number). `UnixSeconds` = integer. `KeyOrigin` = `{ fingerprint: 8 hex, path: "m/48'/0'/0'/2'", xpub: string }`. `WalletId` = 16 lowercase hex chars (the engine's `MultisigWallet.fingerprint()`). `RecoveryId` = `[0-9a-z-]{1,40}`. `HardwareApproval`, `Policy` and `Recovery` are defined below.
 
 | Method | Params | Result |
 |---|---|---|
-| `pair` | `pairingSecret`, `deviceName` (1-64), `network` (`bitcoin`\|`testnet`\|`signet`\|`regtest`), `phoneKey: KeyOrigin`, `descriptor?` | `guardianKey: KeyOrigin`, `descriptor?`, `guardianVersion` |
+| `pair.prepare` | `pairingSecret`, `network` | `guardianKey: KeyOrigin`, `guardianVersion` |
+| `pair` | `pairingSecret`, `deviceName` (1-64), `network` (`bitcoin`\|`testnet`\|`signet`\|`regtest`), `phoneKey: KeyOrigin`, `descriptor`, `phoneNostrPubkey: Hex32`, `hardwareAuth: { pubkey, path }`, `hardwareAuthProof`, `rules: Policy` | `guardianKey: KeyOrigin`, `descriptor`, `walletId`, `guardianVersion` |
 | `sign` | `psbt`, `memo?` | `psbt` (with the guardian's partial signatures) |
-| `policy.get` | `{}` | `policy`, `sequence`, `policyHash` |
-| `policy.update` | `policy`, `approval?` | `policy`, `sequence`, `policyHash` |
+| `policy.get` | `{}` | `policy`, `nextHardwareSequence`, `policyHash` |
+| `policy.update` | `policy`, `approval?` | `policy`, `nextHardwareSequence`, `policyHash` |
 | `recovery.start` | `sweepPsbt`, `newDescriptor` | `recovery` |
-| `recovery.cancel` | `recoveryId` | `recovery` |
-| `recovery.status` | `recoveryId?` (default: the active one) | `recovery` (or `null`), `psbt?` (the signed sweep, once `ready`) |
+| `recovery.cancel` | `recoveryId`, `approval?` | `recovery`, `contested: boolean` |
+| `recovery.status` | `recoveryId?` (default: the active one) | `recovery` (or `null`), `psbt?` (the signed sweep, once the guardian has co-signed it) |
+| `phone.resume` | `approval` | `phoneSpending: "enabled"` |
 | `guardian.unlock` | `{kind:"passphrase", passphrase}` or `{kind:"hardware", secret: hex}` | `unlocked: boolean` |
-| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `policySequence`, `activeRecoveryId`, `version`, `time` |
+| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time` |
 
-**Policy** (`dailyLimitSats`, `recoveryDelayDays`, `perTxLimitSats?`, `allowlist?`; unknown members preserved). `policyHash` = hex SHA-256 of the *canonical JSON* of the policy: object keys sorted by UTF-16 code unit, no whitespace, `undefined` members dropped, finite numbers only.
+**Policy** is exactly the four rules the guardian's policy engine enforces, and nothing else:
 
-**Hardware approval** for `policy.update`: `{ signature, address, sequence, expiresAt }`. `signature` is a BIP 137 signature (base64, 65 bytes, header 27-42) by the hardware wallet's pairing-time single-sig address over the ASCII text
+| Member | Rule |
+|---|---|
+| `dailyLimitSats` | most the phone + guardian may spend in any rolling 24 h (`Sats`; 0 means never) |
+| `recoveryDelayDays` | Delay & Notify period: **7, 14 or 30** |
+| `alertContacts` | up to 20 nostr pubkeys (`Hex32`, lowercase) that receive recovery alerts and may cancel a recovery |
+| `sweepFeeCapSats` | highest absolute fee a recovery sweep may pay (`Sats`, at least 1) |
+
+The schema is **strict**: any other member (the old `perTxLimitSats` and `allowlist` included) is a validation error, not preserved or ignored, so the protocol never carries a rule the guardian does not enforce. `policyHash` = hex SHA-256 of the canonical JSON (keys sorted by UTF-16 code unit, no whitespace) of the *normalized* policy: `alertContacts` lowercased, deduplicated and sorted, and exactly the four members:
 
 ```
-trikey-policy-v1:<policyHash>:<sequence>:<expiresAt>
+{"alertContacts":["<hex>",...],"dailyLimitSats":100000,"recoveryDelayDays":14,"sweepFeeCapSats":20000}
 ```
 
-`sequence` must be greater than the guardian's current one and `expiresAt` in the future. (The guardian decides which changes need an approval; tightening may not.)
+This is byte for byte the engine's `policyHash(rules)` (a test compares them). The guardian stores and returns the normalized policy.
 
-**Recovery** object: `{ recoveryId, state: pending|ready|cancelled|completed, startedAt, executeAfter, newDescriptor, sweepPsbtHash, completedAt?, cancelledAt? }`.
+**Which changes need the hardware wallet.** The phone alone may only *tighten*: lower `dailyLimitSats` and/or raise `recoveryDelayDays`, nothing else changing. Raising the limit, shortening the delay, changing the fee cap (a lower cap could block a genuine recovery, so it is not a safe direction) or the contacts needs `approval`. Without it the guardian answers `ApprovalRequired`. While a recovery is running, hardware-approved policy changes are refused (`RecoveryAlreadyActive`).
+
+### Hardware approvals
+
+A `HardwareApproval` is `{ kind: "bip137", sequence, expiresAt, signature }`:
+
+* `signature`: BIP 137 signature (base64, 65 bytes, header 27-42) by the single-sig authorization key recorded at pairing (`hardwareAuth`), over the text from `approvalMessage(action, { walletId, sequence, expiresAt })` below.
+* `sequence`: one counter shared by **all** approvals (policy changes, `cancel-recovery`, `resume-phone`). It must be greater than the highest sequence the guardian has accepted, and at most 1000 greater. `nextHardwareSequence` in `guardian.status` / `policy.get` is the smallest acceptable value. A rejected approval does not consume its sequence.
+* `expiresAt`: unix **seconds**, in the future and at most 24 hours after the guardian checks it.
+* There is no `address` member: the guardian verifies against the public key, not an address.
+
+The guardian never parses text from the phone. It rebuilds the text from the request and its own state and verifies the signature over that, so the phone must display the same text to the user and ask the device to sign it. `approvalMessage` and `pairingMessage` in `@trikey/protocol` reproduce the engine's functions exactly. The texts are one line of printable ASCII, at most 240 characters:
+
+| Action | Text |
+|---|---|
+| `policy` | `Trikey policy v1 wallet=<walletId> seq=<n> limit=<sats> delay=<days>d feecap=<sats> contacts=<count> hash=<policyHash> expires=<ISO 8601 UTC, seconds>` (of the *new* policy) |
+| `cancel-recovery` | `Trikey cancel-recovery v1 wallet=<walletId> seq=<n> recovery=<recoveryId> expires=<ISO>` |
+| `resume-phone` | `Trikey resume-phone v1 wallet=<walletId> seq=<n> expires=<ISO>` |
+| pairing proof | `Trikey pair v1 wallet=<walletId> guardian=<cosignerAccountPubkey hex>` |
+
+Example: `Trikey resume-phone v1 wallet=0123456789abcdef seq=4 expires=2030-03-17T17:46:40Z`. `walletId` is the `walletId` of the `pair` result (the engine's descriptor fingerprint); `expires` is `expiresAt` as `YYYY-MM-DDTHH:MM:SSZ`.
+
+**Where approvals go**
+
+| Action | Request |
+|---|---|
+| change the policy beyond tightening | `policy.update` with `approval` |
+| cancel a recovery as the hardware wallet | `recovery.cancel` with `approval` (the hardware wallet has no nostr identity, so the request itself may come from any authorized peer) |
+| resume phone payments after a contested cancel | `phone.resume` with `approval` |
+
+### Pairing
+
+Pairing is two requests, both allowed from an unpaired sender:
+
+1. **`pair.prepare`** `{ pairingSecret, network }` returns the guardian's key (key 3). The phone needs it first: the pairing proof signs the wallet id and the guardian's account pubkey, and the wallet id is the fingerprint of the full descriptor, which contains that key. It does not use up the secret.
+2. The phone builds `wsh(sortedmulti(2, <phone>, <hardware>, <guardian>))` (keys in that order), computes `walletId` and the guardian's raw account pubkey (the public key inside `guardianKey.xpub`), has the hardware wallet BIP 137-sign `pairingMessage(walletId, cosignerAccountPubkey)` with a single-sig key it will use for all later approvals, and sends **`pair`**:
+   * `descriptor`, `phoneKey`, `network`: the wallet;
+   * `phoneNostrPubkey`: the phone's nostr key, which MUST equal the authenticated sender; it receives alerts and may cancel recoveries;
+   * `hardwareAuth: { pubkey, path }`: the compressed pubkey (33 bytes hex) of the authorization key and the path the device signs with;
+   * `hardwareAuthProof`: the BIP 137 signature (base64) over the pairing text;
+   * `rules`: the initial policy.
+
+   The guardian checks the descriptor, that the three keys are distinct and that the guardian key sits in its slot, the rules, the key (and, when the path lies under the hardware xpub, that it derives from it) and the proof. It then registers the wallet and burns the secret.
+
+### Recovery
+
+A `Recovery` object (the engine's `RecoveryView`, with times in seconds):
+
+| Member | |
+|---|---|
+| `recoveryId` | `RecoveryId` |
+| `state` | `pending` \| `ready` \| `cancelled` \| `completed` |
+| `survivingRole` | `app` \| `hardware`: the key that signed the sweep |
+| `startedAt`, `readyAt` | when it started, and when the delay ends and the guardian may co-sign |
+| `delayDays` | 7, 14 or 30, snapshotted at start (later policy changes do not affect a running recovery) |
+| `sweepTxid`, `destinationWalletId`, `amountSats`, `feeSats` | what the sweep does |
+| `cancelledAt?`, `cancelledBy?`, `completedAt?` | `cancelledBy` is `app` \| `contact` \| `hardware` |
+
+* **`recovery.start`**: the sweep PSBT must be signed on every input by **one** surviving key, either the phone's or the hardware wallet's. The guardian reads which from the signatures. `newDescriptor` must keep the surviving key and drop the other user key. The fee must not exceed `sweepFeeCapSats`. Alerts go to the paired phone and every alert contact.
+* **`recovery.cancel`** may be sent by the paired phone or an alert contact (the guardian authenticates the sender's nostr key; it must let contacts through its peer check for this method) without `approval`, or with an `approval` of `cancel-recovery` for the hardware wallet. `contested` is true unless the canceller holds the key that started the recovery (the phone cancelling a phone-started recovery, or the hardware wallet cancelling a hardware-started one); a contested cancel pauses phone payments (`phoneSpending: paused_contested`) until `phone.resume`.
+* **`phone.resume`** needs an approval of `resume-phone` and only works when phone payments are paused by a contested cancel and no recovery is running.
+* **`recovery.status`**: the engine marks a recovery `completed` when it co-signs the sweep, not when the sweep confirms. `psbt` is that co-signed sweep; broadcasting it is up to the phone or the guardian service.
 
 ### Alerts
 
-`params` is `{ type, at, message? , ...}` with `type` one of:
+`params` is `{ type, at, message? , ...}` (`at` in unix seconds) with `type` one of the engine's alert kinds (`AlertKind`), plus `guardian_locked`, which the service raises itself:
 
 | `type` | extra members |
 |---|---|
-| `recovery_started` | `recoveryId`, `executeAfter` |
-| `daily_reminder` | `recoveryId`, `executeAfter`, `daysRemaining` |
-| `recovery_cancelled` | `recoveryId`, `cancelledBy?` (`phone`\|`hardware`\|`guardian`\|`contact`) |
+| `recovery_started` | `recoveryId`, `readyAt`, `survivingRole`, `amountSats` |
+| `recovery_reminder` | the same, plus `daysLeft` (whole days until `readyAt`). Sent every 24 h; after downtime only the latest one |
+| `recovery_ready` | `recoveryId`, `readyAt`, `survivingRole`, `amountSats` (the delay has elapsed) |
+| `recovery_cancelled` | `recoveryId`, `cancelledBy` (`app`\|`contact`\|`hardware`), `contested?` |
 | `recovery_completed` | `recoveryId`, `txid?` |
 | `guardian_locked` | `reason?` (`restart`\|`manual`\|`tamper`) |
+
+Names match the engine (`daily_reminder` was renamed `recovery_reminder`; `daysRemaining` is now `daysLeft`, `executeAfter` is `readyAt`). The engine's `DueAlert` carries `dueAt` and `readyAt` in milliseconds; the service converts both to seconds (`at` and `readyAt`). `daysLeft` is already in days. The engine's due-alert record does not hold `cancelledBy`, the cancel's `contested` flag or the txid; the service reads them from the recovery record (`status().recovery`) when it builds those alerts.
 
 ### Error codes
 
@@ -119,7 +196,11 @@ Existing codes never change meaning; new ones are only added. `data` is optional
 | 1201 | ApprovalRequired | the change needs hardware approval |
 | 1202 | ApprovalInvalid | bad signature or message mismatch |
 | 1203 | ApprovalExpired | |
-| 1204 | StaleSequence | |
+| 1204 | StaleSequence | approval sequence not above the guardian's |
+| 1205 | SequenceTooFar | approval sequence more than 1000 ahead |
+| 1206 | ApprovalExpiryTooFar | approval expires more than 24 h ahead |
+| 1207 | PhoneSpendingPaused | phone payments are paused (contested cancel, or the wallet was swept) |
+| 1208 | NothingToResume | `phone.resume` while nothing is paused |
 | 1300 | RecoveryNotFound | |
 | 1301 | RecoveryAlreadyActive | |
 | 1302 | RecoveryNotActive | |
@@ -127,6 +208,29 @@ Existing codes never change meaning; new ones are only added. `data` is optional
 | 1401 | PsbtRejected | |
 | 1500 | RateLimited | |
 | 1501 | Unavailable | try again later |
+
+### Engine refusals to error codes
+
+The guardian service maps the engine's `Refusal.reason` to an error code and puts the refusal (without secrets) in `data`:
+
+| Engine refusal | Code |
+|---|---|
+| `guardian_locked` | 1100 |
+| `not_registered`, `not_authorized` | 1001 |
+| `already_registered` | 1003 |
+| `invalid_registration`, `invalid_rules` | -32602 (InvalidParams) |
+| `over_daily_limit`, `not_signed_by_app`, `signature_count`, `hardware_signed_outside_recovery`, `sweep_fee_exceeds_cap`, `delay_not_elapsed`, `recovery_signers`, `invalid_destination`, `destination_drops_surviving_key`, `destination_keeps_lost_key`, `sweep_not_to_destination` | 1200 |
+| `hardware_approval_required` | 1201 |
+| `approval_invalid_signature`, `unsupported_approval` | 1202 |
+| `approval_expired` | 1203 |
+| `approval_stale_sequence` | 1204 |
+| `approval_sequence_too_far` | 1205 |
+| `approval_expiry_too_far` | 1206 |
+| `phone_spending_paused` | 1207 |
+| `nothing_to_resume` | 1208 |
+| `no_recovery` | 1302 (1300 when a specific `recoveryId` is unknown) |
+| `recovery_in_progress` | 1301 |
+| `invalid_psbt`, `foreign_input`, `missing_non_witness_utxo`, `non_witness_utxo_mismatch`, `invalid_signature` | 1400 |
 
 ## 4. Validation, expiry and replay
 
@@ -180,9 +284,10 @@ trikey://pair?v=1&npub=<npub1...>&relay=<url>&relay=<url>&secret=<base64url>&exp
 
 `trikey:pair?...` (no `//`) is accepted too. Total length at most 2000 characters.
 
-The phone scans it, derives its key, and sends `pair` to the guardian's `npub` on those relays. The guardian accepts a `pair` from an unknown pubkey only if `pairingSecret` matches the live, unused secret (constant-time comparison; one attempt budget per code is advisable), then adds the sender to its peers and burns the secret. `pair` carries the phone's key origin (key 2 of the 2-of-3) and optionally a descriptor proposal; the result carries the guardian's key origin (key 3).
+The phone scans it, derives its key, and sends `pair.prepare` and then `pair` (see "Pairing" in section 3) to the guardian's `npub` on those relays. The guardian accepts these two methods from an unknown pubkey only if `pairingSecret` matches the live, unused secret (constant-time comparison; one attempt budget per code is advisable); `pair` then adds the sender to its peers and burns the secret.
 
 ## 7. Compatibility notes
 
 * Add new methods or optional result members freely; never change the meaning of an existing error code or field. A breaking envelope change bumps the `trikey` tag value.
-* The `policy.update` approval text (`trikey-policy-v1:...`) is the current candidate for the hardware wallet authorization (see DESIGN.md, open question 1). If the project settles on a PSBT-based approval instead, it will be a new `approval` variant, not a change to this one.
+* Hardware approvals are an `approval` object with a `kind`. Only `bip137` exists. If the project settles on a PSBT-based approval (see DESIGN.md, open question 1), it will be a new `kind`, not a change to `bip137`.
+* The policy is deliberately closed: a new rule means a new engine rule first, then a new `Policy` member and a new `policyHash` input (which changes every hash, so it needs a protocol version bump).
