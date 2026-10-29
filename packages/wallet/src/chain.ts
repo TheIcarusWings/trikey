@@ -141,3 +141,11 @@ export class GuardianChainSource implements ChainSource {
     return this.call('fees.estimate', targets ? { targets } : {});
   }
 }
+
+/**
+ * When an alert happened, in unix milliseconds on the guardian's clock: its `atMs`, or `at` (seconds) times 1000 from a
+ * guardian that predates `atMs`.
+ */
+export function alertTimeMs(a: { at: number; atMs?: number }): number {
+  return a.atMs ?? a.at * 1000;
+}

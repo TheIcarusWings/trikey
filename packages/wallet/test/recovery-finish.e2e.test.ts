@@ -10,7 +10,7 @@ import { encodeRecoveryUri, type Alert, type Policy } from '@trikey/protocol';
 import { GuardianRig } from '@trikey/guardian/testing';
 import { TrikeyWallet, WalletError, parseScannedCode, type WalletEvent } from '../src/index.js';
 import { MemoryCloudBackupStore, MemoryPasskeyPrf, SoftwareHardwareProvider, SoftwareHardwareSigner } from '../src/testing/index.js';
-import { MNEMONICS, externalAddress, phone, waitFor } from './helpers.js';
+import { MNEMONICS, externalAddress, phone, waitFor, type Phone } from './helpers.js';
 
 const RULES: Policy = { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [], sweepFeeCapSats: 20_000 };
 const HOUR = 3_600_000;
@@ -46,6 +46,7 @@ describe('lost phone: a new phone with the recovery QR and the hardware wallet',
   const provider = new SoftwareHardwareProvider(device);
   const cloud = new MemoryCloudBackupStore();
   const passkey = new MemoryPasskeyPrf();
+  let phoneOld: Phone;
   let A: TrikeyWallet;
   let B: TrikeyWallet;
   const eventsA: WalletEvent[] = [];
@@ -55,7 +56,8 @@ describe('lost phone: a new phone with the recovery QR and the hardware wallet',
   beforeAll(async () => {
     rig = await GuardianRig.start();
     rigs.push(rig);
-    A = await TrikeyWallet.create(phone({ clock: rig.clock, hardware: provider, cloud, passkey }).deps, { deviceName: 'Old phone' });
+    phoneOld = phone({ clock: rig.clock, hardware: provider, cloud, passkey });
+    A = await TrikeyWallet.create(phoneOld.deps, { deviceName: 'Old phone' });
     opened.push(A);
     A.on((e) => eventsA.push(e));
     await A.onboard({ pairingUri: rig.pairingUri(), rules: RULES });
@@ -131,10 +133,41 @@ describe('lost phone: a new phone with the recovery QR and the hardware wallet',
     expect(await B.receiveAddress({ verifyOnDevice: true })).toMatchObject({ verifiedOnDevice: true });
   });
 
-  it('the old phone heard of the recovery and can no longer reach the guardian for the old wallet', async () => {
+  it('the old phone is told the wallet was recovered on another phone: a clear state, the new wallet named, history still readable, no more co-signing', async () => {
     await waitFor(() => eventsA.find((e) => e.type === 'alert' && e.alert.type === 'recovery_completed'), 'recovery_completed to the old phone');
-    const e = await walletError(A.sync());
-    expect(e.refusal?.kind).toBe('unreachable');
+    const retired = await waitFor(
+      () => eventsA.find((e): e is Extract<WalletEvent, { type: 'alert' }> => e.type === 'alert' && e.alert.type === 'wallet_retired'),
+      'wallet_retired to the old phone',
+    );
+    const newId = B.state.wallet!.walletId;
+    expect(retired.alert).toMatchObject({ type: 'wallet_retired', walletId: oldId, reason: 'recovered', successorWalletId: newId });
+    expect(A.recoveredElsewhere).toBe(true);
+    expect(A.walletRetired).toMatchObject({ walletId: oldId, reason: 'recovered', recoveredElsewhere: true, successorWalletId: newId, at: retired.atMs });
+    expect(A.walletRetired!.message).toMatch(/^This wallet was recovered on another phone/);
+    expect(A.state.guardianStatus?.phoneSpending).toBe('retired');
+
+    // History stays readable (from what the phone kept), and nothing asks the guardian, which no longer answers this phone.
+    const snap = await A.sync();
+    expect(snap).toMatchObject({ walletId: oldId, walletRetired: { reason: 'recovered', successorWalletId: newId } });
+    expect(snap.history.length).toBeGreaterThan(0);
+    expect(A.snapshot()!.balance.totalSats).toBe(420_000);
+    expect((await A.refreshStatus()).phoneSpending).toBe('retired');
+    // No co-sign attempts, receiving or rule changes.
+    for (const attempt of [
+      () => A.send({ address: externalAddress(), amountSats: 5_000 }),
+      () => Promise.resolve().then(() => A.quoteSend({ address: externalAddress(), amountSats: 5_000 })),
+      () => A.receiveAddress(),
+      () => A.setDailyLimit(10_000),
+      () => A.lockGuardian(),
+    ])
+      expect((await walletError(attempt())).code).toBe('wallet_recovered_elsewhere');
+    // Still so after a restart of the app: it does not even reconnect.
+    await A.close();
+    const reopened = (await TrikeyWallet.open(phoneOld.deps))!;
+    opened.push(reopened);
+    await reopened.start();
+    expect(reopened.recoveredElsewhere).toBe(true);
+    expect((await reopened.sync()).history.length).toBeGreaterThan(0);
   });
 });
 

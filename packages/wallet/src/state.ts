@@ -64,6 +64,8 @@ export const GuardianStatusCache = z.object({
   checkedAt: z.number(),
   /** The guardian's own time in that answer: unix seconds, the guardian's clock (what its alerts' `at` is measured in). */
   guardianTime: z.number().optional(),
+  /** The same moment in unix milliseconds (`guardian.status.atMs`): orders the answer against alerts within one second. Absent from older guardians. */
+  guardianTimeMs: z.number().optional(),
   state: z.enum(['locked', 'unlocked']),
   paired: z.boolean(),
   phoneSpending: PhoneSpendingState,

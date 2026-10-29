@@ -78,7 +78,7 @@ import {
   type SlotInput,
 } from './backup.js';
 import { verifyMessage } from './bip137.js';
-import { GuardianChainSource, txidOfRaw, type ChainSnapshot, type ChainSource, type FeeEstimates, type GuardianRpc, type SingleKeyChainSource } from './chain.js';
+import { GuardianChainSource, alertTimeMs, txidOfRaw, type ChainSnapshot, type ChainSource, type FeeEstimates, type GuardianRpc, type SingleKeyChainSource } from './chain.js';
 import { WalletError, asWalletError, isWalletNotWatched, refusalFromError, sweepBroadcastError, type GuardianRefusal } from './errors.js';
 import {
   authKeyPath,
@@ -209,7 +209,8 @@ export type WalletEvent =
   | { type: 'state' }
   /**
    * A guardian alert. `alert.at` is the protocol's unix seconds (the guardian's clock); `atMs` is the same moment in
-   * milliseconds, the unit of every local time in this package (`Clock.now()`, `checkedAt`, `syncedAt`, the send log).
+   * milliseconds, the unit of every local time in this package (`Clock.now()`, `checkedAt`, `syncedAt`, the send log):
+   * the alert's own `atMs` when the guardian sends one, else `alert.at * 1000`.
    */
   | { type: 'alert'; alert: Alert; id: string; atMs: number }
   /** The hardware wallet is about to be asked to sign this exact text: show it, so the user can compare it with the device screen. */
@@ -318,6 +319,8 @@ export interface WalletSnapshot {
   guardian?: GuardianStatusCache;
   /** The old wallet the guardian watches ("Replace guardian"; `guardian.status.watchedWalletId`): `sweepStrayCoins()` reads it, `stopWatchingOldWallet()` ends it. */
   watchedWalletId?: string;
+  /** The guardian stopped guarding this wallet (`wallet_retired`); for `recovered` see `WalletRetiredView.recoveredElsewhere`. History stays readable. */
+  walletRetired?: WalletRetiredView;
   /** The phone's estimate of the guardian's 24 h count, and the limit. */
   dailyLimit?: { limitSats: number; spentEstimateSats: number; remainingSats: number };
   /** After a recovery moved the wallet: the hardware wallet must register it and confirm its key (`confirmHardware`). */
@@ -332,6 +335,20 @@ export interface WalletSnapshot {
     scannedHeight: number;
     birthHeight: number;
   };
+}
+
+/** The guardian told this phone it no longer guards its wallet (`wallet_retired`). */
+export interface WalletRetiredView {
+  walletId: string;
+  reason: 'retired' | 'recovered' | 'reset';
+  /** `recovered`: the wallet the recovery moved the money to, when the guardian named one. */
+  successorWalletId?: string;
+  /** When it happened (ms). */
+  at: number;
+  /** `reason` is `recovered`: the wallet was recovered on another phone. This phone co-signs nothing and asks the guardian nothing any more. */
+  recoveredElsewhere: boolean;
+  /** For the person, in plain words. */
+  message: string;
 }
 
 /** What `sweepSilentPayments` did with one received coin. */
@@ -385,6 +402,20 @@ const PENDING_RESEND_MS = 50 * 60_000;
 const STATE_CHANGING = new Set<MethodName>(['policy.update', 'recovery.start', 'recovery.cancel', 'phone.resume', 'hardware.confirm']);
 const MAX_SEND_LOG = 500;
 const policyNameOf = (walletId: string) => `Trikey ${walletId.slice(0, 4)}`;
+
+/** `wallet_retired` in words for the person. */
+function retiredMessage(r: { reason: 'retired' | 'recovered' | 'reset'; successorWalletId?: string }): string {
+  switch (r.reason) {
+    case 'recovered':
+      return r.successorWalletId
+        ? `This wallet was recovered on another phone. Your money moved to the new wallet ${r.successorWalletId}; open it there. This phone keeps the history of this wallet, but it can't spend or receive any more.`
+        : "This wallet was recovered on another phone. This phone keeps the history of this wallet, but it can't spend or receive any more.";
+    case 'retired':
+      return 'The guardian retired this wallet, so it co-signs nothing for it any more.';
+    case 'reset':
+      return 'The guardian was reset and no longer knows this wallet.';
+  }
+}
 
 const sameKey = (a: KeyExpression, b: KeyExpression) => a.fingerprint === b.fingerprint && a.xpub === b.xpub && a.originPath === b.originPath;
 
@@ -565,6 +596,7 @@ export class TrikeyWallet {
    */
   async start(): Promise<void> {
     if (!this.s.guardian) return;
+    if (this.recoveredElsewhere) return; // the guardian no longer answers this phone; there is nothing to settle or watch
     await this.client();
     await this.resumePending();
   }
@@ -652,6 +684,7 @@ export class TrikeyWallet {
 
   /** The guardian client for the paired (or recovering) wallet. */
   private async client(): Promise<GuardianRpc> {
+    this.requireNotRecoveredElsewhere();
     if (this.rpc) return this.rpc;
     const g = this.s.guardian;
     if (!g) throw new WalletError('wrong_state', 'No guardian is paired.');
@@ -1097,12 +1130,42 @@ export class TrikeyWallet {
 
   private requirePaired(): void {
     if (this.s.stage !== 'paired') throw new WalletError('wrong_state', this.s.stage === 'new' ? 'The wallet is not paired yet.' : 'This phone is recovering the wallet.');
+    this.requireNotRecoveredElsewhere();
+  }
+
+  /**
+   * The guardian said a recovery on another phone took this wallet over (`wallet_retired`, `recovered`): it dropped this
+   * phone as a peer, so asking it anything would only time out, and the wallet's coins are gone. What the phone kept
+   * (history, balance at the time, rules) stays readable; nothing that asks the guardian, co-signs or receives works.
+   */
+  get recoveredElsewhere(): boolean {
+    const r = this.s.retiredByGuardian;
+    return this.s.stage === 'paired' && !!r && r.reason === 'recovered' && r.walletId === this.s.wallet?.walletId;
+  }
+
+  private requireNotRecoveredElsewhere(): void {
+    if (this.recoveredElsewhere) throw new WalletError('wallet_recovered_elsewhere', retiredMessage(this.s.retiredByGuardian!));
+  }
+
+  /** The guardian's `wallet_retired` for this phone's current wallet, in words; undefined while it still guards it. */
+  get walletRetired(): WalletRetiredView | undefined {
+    const r = this.s.retiredByGuardian;
+    if (!r || r.walletId !== this.s.wallet?.walletId) return undefined;
+    return {
+      walletId: r.walletId,
+      reason: r.reason,
+      ...(r.successorWalletId ? { successorWalletId: r.successorWalletId } : {}),
+      at: r.at,
+      recoveredElsewhere: r.reason === 'recovered',
+      message: retiredMessage(r),
+    };
   }
 
   private async storeStatus(st: Result<'guardian.status'>): Promise<GuardianStatusCache> {
     const cache: GuardianStatusCache = {
       checkedAt: this.now(),
       guardianTime: st.time,
+      ...(st.atMs !== undefined ? { guardianTimeMs: st.atMs } : {}),
       state: st.state,
       paired: st.paired,
       phoneSpending: st.phoneSpending,
@@ -1123,6 +1186,7 @@ export class TrikeyWallet {
 
   /** Reads `guardian.status` (locked or not, phone payments, recovery, the daily limit count). Follows an adopted recovery. */
   async refreshStatus(): Promise<GuardianStatusCache> {
+    if (this.recoveredElsewhere && this.s.guardianStatus) return this.s.guardianStatus; // the guardian does not answer this phone any more
     const st = await this.call('guardian.status', {});
     await this.storeStatus(st);
     await this.followGuardianWallet(st.walletId);
@@ -1191,6 +1255,11 @@ export class TrikeyWallet {
   /** Chain data, guardian status and fee estimates, from the guardian. Works while the guardian is locked. */
   async sync(): Promise<WalletSnapshot> {
     if (this.s.stage === 'new') throw new WalletError('wrong_state', 'The wallet is not paired yet.');
+    // Recovered on another phone: the guardian answers nothing for this wallet. Keep the history the phone has readable.
+    if (this.recoveredElsewhere) {
+      const kept = this.snapshot();
+      if (kept) return kept;
+    }
     await this.client();
     const snapP = this.chain.sync({ historyLimit: this.deps.historyLimit });
     snapP.catch(() => undefined); // awaited below; a failed status must not leave it unhandled
@@ -1286,6 +1355,7 @@ export class TrikeyWallet {
       utxos: c.utxos,
       guardian: this.s.guardianStatus,
       ...(this.s.guardianStatus?.watchedWalletId ? { watchedWalletId: this.s.guardianStatus.watchedWalletId } : {}),
+      ...(this.walletRetired ? { walletRetired: this.walletRetired } : {}),
       dailyLimit: limit === undefined ? undefined : { limitSats: limit, spentEstimateSats: spent, remainingSats: Math.max(0, limit - spent) },
       hardwareConfirmRequired: this.hardwareConfirmRequired,
       ...this.singleKeySnapshot(),
@@ -1963,30 +2033,51 @@ export class TrikeyWallet {
   private async onAlert(alert: Alert, meta: { id: string; at: number }): Promise<void> {
     if (this.s.seenAlerts.includes(meta.id)) return;
     await this.update((s) => void (s.seenAlerts = [...s.seenAlerts, meta.id].slice(-MAX_SEEN_ALERTS)));
-    this.emit({ type: 'alert', alert, id: meta.id, atMs: alert.at * 1000 });
+    const alertMs = alertTimeMs(alert);
+    this.emit({ type: 'alert', alert, id: meta.id, atMs: alertMs });
     switch (alert.type) {
       case 'guardian_locked': {
-        // An old "locked" alert (relays replay a week of them) must not override a newer status. Both times are the
-        // guardian's own clock in whole seconds: the alert's `at`, and `time` in the last status. The same second
-        // counts as newer (the lock may have come after the check), and the guardian is asked right after anyway.
+        // An old "locked" alert (relays replay a week of them) must not override a newer status. With milliseconds on
+        // both (`alert.atMs`, `guardian.status.atMs`: the same clock) the later one wins even within one second. A
+        // guardian that predates them gives whole seconds (the alert's `at`, and `time` in the last status): the same
+        // second then counts as newer (the lock may have come after the check). The guardian is asked right after anyway.
         const gs = this.s.guardianStatus;
-        const seenAt = gs ? (gs.guardianTime ?? Math.floor(gs.checkedAt / 1000) + (gs.skewSec ?? 0)) : undefined;
-        if (gs && seenAt !== undefined && alert.at >= seenAt) await this.update((s) => void (s.guardianStatus = { ...s.guardianStatus!, state: 'locked' }));
+        let newer = false;
+        if (gs) {
+          if (alert.atMs !== undefined && gs.guardianTimeMs !== undefined) newer = alert.atMs >= gs.guardianTimeMs;
+          else newer = alert.at >= (gs.guardianTime ?? Math.floor(gs.checkedAt / 1000) + (gs.skewSec ?? 0));
+        }
+        if (gs && newer) await this.update((s) => void (s.guardianStatus = { ...s.guardianStatus!, state: 'locked' }));
         break;
       }
       case 'wallet_retired': {
-        // Expected during "Replace guardian" (this phone asked for it); otherwise the guardian stopped guarding this wallet.
-        if (alert.walletId === this.s.wallet?.walletId && !this.s.replacing)
+        // `retired` is expected during "Replace guardian" (this phone asked for it); otherwise the guardian stopped
+        // guarding this wallet. `recovered` is the phone that lost a recovery: the wallet was swept and another phone
+        // was adopted (or none), so this phone is no longer a peer.
+        const mine = alert.walletId === this.s.wallet?.walletId;
+        if (mine && !(this.s.replacing && alert.reason === 'retired')) {
           await this.update((s) => {
-            s.retiredByGuardian = { walletId: alert.walletId, reason: alert.reason, ...(alert.successorWalletId ? { successorWalletId: alert.successorWalletId } : {}), at: alert.at * 1000 };
+            s.retiredByGuardian = { walletId: alert.walletId, reason: alert.reason, ...(alert.successorWalletId ? { successorWalletId: alert.successorWalletId } : {}), at: alertMs };
             if (s.guardianStatus) s.guardianStatus = { ...s.guardianStatus, phoneSpending: 'retired' };
+            if (alert.reason === 'recovered') s.pending = undefined; // nothing will answer it
           });
+          if (alert.reason === 'recovered') this.stopTalkingToGuardian();
+        }
         return; // the guardian no longer answers for it: nothing to re-read
       }
       default:
         if ('recoveryId' in alert) this.alertRecoveryId = alert.recoveryId;
     }
     this.refreshAfterAlerts();
+  }
+
+  /** Closes the connection to the guardian; `client()` refuses to open another while the wallet is recovered elsewhere. */
+  private stopTalkingToGuardian(): void {
+    this.rpc?.close();
+    this.pool?.close();
+    this.rpc = undefined;
+    this.pool = undefined;
+    this.chainSource = undefined;
   }
 
   private alertRefresh?: Promise<void>;

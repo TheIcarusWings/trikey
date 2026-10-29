@@ -196,6 +196,8 @@ export type WalletErrorCode =
   | 'sweep_refused'
   /** The guardian limits how often this phone may broadcast (`1500`); try again in `retryAfterSeconds`. The signed move is kept. */
   | 'rate_limited'
+  /** The guardian said a recovery on another phone took this wallet over (`wallet_retired`, `recovered`). Read-only here from now on. */
+  | 'wallet_recovered_elsewhere'
   /**
    * Paying a silent payment address needs the helper coin (the vault's multisig inputs cannot make one): there is
    * none, or it is too small for its share of the fee. The message says how to fund it.

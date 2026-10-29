@@ -42,14 +42,15 @@ afterAll(async () => {
 });
 
 describe('fixes', { timeout: 60_000 }, () => {
-  it('does not drop a "guardian locked" alert sent in the same second as the last status check (seconds vs milliseconds)', async () => {
+  it('does not drop a "guardian locked" alert sent in the same second as the last status check', async () => {
     rig.clock.advance(1_234); // not on a whole second, like any real clock
     await A.refreshStatus();
     expect(A.state.guardianStatus?.state).toBe('unlocked');
     await rig.lock();
     const alert = await waitFor(() => events.find((e): e is Extract<WalletEvent, { type: 'alert' }> => e.type === 'alert' && e.alert.type === 'guardian_locked'), 'the alert');
-    // The event's time is in milliseconds, the alert's own `at` in seconds (the protocol's unit).
-    expect(alert.atMs).toBe(alert.alert.at * 1000);
+    // The event's time is in milliseconds: the guardian's own `atMs` (the alert's `at` is the same moment in seconds).
+    expect(alert.alert.atMs).toBe(rig.clock.now());
+    expect(alert.atMs).toBe(alert.alert.atMs);
     expect(alert.alert.at).toBe(Math.floor(rig.clock.now() / 1000));
     await waitFor(() => A.state.guardianStatus?.state === 'locked', 'the cached status to say locked', 3000);
     await rig.unlock();
