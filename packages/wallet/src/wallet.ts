@@ -79,7 +79,7 @@ import {
 } from './backup.js';
 import { verifyMessage } from './bip137.js';
 import { GuardianChainSource, txidOfRaw, type ChainSnapshot, type ChainSource, type FeeEstimates, type GuardianRpc, type SingleKeyChainSource } from './chain.js';
-import { WalletError, asWalletError, refusalFromError, type GuardianRefusal } from './errors.js';
+import { WalletError, asWalletError, isWalletNotWatched, refusalFromError, sweepBroadcastError, type GuardianRefusal } from './errors.js';
 import {
   authKeyPath,
   childPubkey,
@@ -176,9 +176,10 @@ export interface WalletDeps {
   /** How many history entries a sync asks for (default 100). */
   historyLimit?: number;
   /**
-   * Chain data and broadcasting for a wallet no guardian serves: the old wallet after "Replace guardian" when the old
-   * box is gone or has retired it (stray coins), e.g. the user's own Electrum or Esplora server. Default: none, and
-   * the wallet uses what it kept from the last sync.
+   * An optional fallback for the old wallet after "Replace guardian": chain data and broadcasting from the user's own
+   * Electrum or Esplora server, used only when the new guardian does not watch the old wallet (an older guardian, or
+   * `stopWatchingOldWallet()`). Normally the new guardian lists the old wallet's coins (`wallet.sync` with
+   * `wallet: "replaced"`) and relays the sweep, so none is needed. Default: none.
    */
   standaloneChain?: (wallet: { descriptor: string; walletId: string; network: NetworkName }) => ChainSource | undefined;
   /** How long to wait for an old guardian before calling it unreachable (ms, default the smaller of 10 s and `rpcTimeoutMs`). */
@@ -276,6 +277,8 @@ export type ReplaceOutcome =
       txHex: string;
       movedSats: number;
       feeSats: number;
+      /** Why the new guardian did not take it, when it answered (an older guardian that does not watch the old wallet: `1602`). */
+      refusal?: GuardianRefusal;
     };
 
 export interface HardwareSummary {
@@ -313,6 +316,8 @@ export interface WalletSnapshot {
   history: WalletHistoryEntry[];
   utxos: ChainSnapshot['utxos'];
   guardian?: GuardianStatusCache;
+  /** The old wallet the guardian watches ("Replace guardian"; `guardian.status.watchedWalletId`): `sweepStrayCoins()` reads it, `stopWatchingOldWallet()` ends it. */
+  watchedWalletId?: string;
   /** The phone's estimate of the guardian's 24 h count, and the limit. */
   dailyLimit?: { limitSats: number; spentEstimateSats: number; remainingSats: number };
   /** After a recovery moved the wallet: the hardware wallet must register it and confirm its key (`confirmHardware`). */
@@ -976,7 +981,7 @@ export class TrikeyWallet {
   }
 
   /** `pair` at the session's guardian with the hardware wallet's pairing proof; checks it registered exactly this wallet. */
-  private async registerAtGuardian(session: PairingSession, opts: { rules: Policy; deviceName: string; proof: string; replacesWalletId?: string }): Promise<Result<'pair'>> {
+  private async registerAtGuardian(session: PairingSession, opts: { rules: Policy; deviceName: string; proof: string; replaces?: { walletId: string; descriptor: string } }): Promise<Result<'pair'>> {
     const hwRec = this.s.hardware!;
     const walletId = session.wallet.fingerprint();
     const descriptor = session.wallet.descriptor();
@@ -992,7 +997,8 @@ export class TrikeyWallet {
         hardwareAuth: hwRec.auth,
         hardwareAuthProof: opts.proof,
         rules: opts.rules,
-        ...(opts.replacesWalletId ? { replacesWalletId: opts.replacesWalletId } : {}),
+        // The old wallet's descriptor lets the new guardian watch it: it lists its coins and relays the sweep.
+        ...(opts.replaces ? { replacesWalletId: opts.replaces.walletId, replacesDescriptor: opts.replaces.descriptor } : {}),
       });
     } catch (e) {
       throw asWalletError(e, 'pairing');
@@ -1106,6 +1112,7 @@ export class TrikeyWallet {
       skewSec: st.time - this.nowSec(),
       ...(st.walletId ? { walletId: st.walletId } : {}),
       ...(st.hardwareConfirmRequired !== undefined ? { hardwareConfirmRequired: st.hardwareConfirmRequired } : {}),
+      ...(st.watchedWalletId ? { watchedWalletId: st.watchedWalletId } : {}),
     };
     await this.update((s) => {
       s.guardianStatus = cache;
@@ -1278,6 +1285,7 @@ export class TrikeyWallet {
       history: this.history(),
       utxos: c.utxos,
       guardian: this.s.guardianStatus,
+      ...(this.s.guardianStatus?.watchedWalletId ? { watchedWalletId: this.s.guardianStatus.watchedWalletId } : {}),
       dailyLimit: limit === undefined ? undefined : { limitSats: limit, spentEstimateSats: spent, remainingSats: Math.max(0, limit - spent) },
       hardwareConfirmRequired: this.hardwareConfirmRequired,
       ...this.singleKeySnapshot(),
@@ -2735,7 +2743,7 @@ export class TrikeyWallet {
       },
       {
         step: 'broadcast',
-        text: reachable ? 'Send the move to the Bitcoin network through your old guardian.' : 'Send the move to the Bitcoin network. Your old guardian is offline, so this may have to wait until something can send it.',
+        text: reachable ? 'Send the move to the Bitcoin network through your old guardian.' : 'Send the move to the Bitcoin network through your new guardian, which watches your old wallet for this, since your old guardian is offline. If it cannot, the move waits until something can send it.',
       },
       {
         step: 'retire',
@@ -2778,18 +2786,24 @@ export class TrikeyWallet {
    * `newGuardianUri`), with the phone and the hardware wallet:
    *
    * 1. pair: the hardware wallet registers the new wallet and confirms its first address, signs the pairing proof,
-   *    and the new guardian registers the new wallet (`pair` with `replacesWalletId`) with the current rules;
-   * 2. sign: a sweep of every coin of the old wallet to the new one, signed by key 2 and the hardware wallet;
-   * 3. broadcast: through the old guardian (the only node that relays a spend of the old wallet's coins), or the
-   *    `standaloneChain` node, or the new guardian if it relays sweeps into its wallet;
+   *    and the new guardian registers the new wallet (`pair` with `replacesWalletId` and the old wallet's
+   *    `replacesDescriptor`, so it watches the old wallet) with the current rules;
+   * 2. sign: a sweep of every coin of the old wallet to the new one, signed by key 2 and the hardware wallet. The
+   *    coins come from the old guardian while it answers, else from the NEW guardian (`wallet.sync` with
+   *    `wallet: "replaced"`, previous transactions by `tx.get`); the `standaloneChain` node and what the phone kept
+   *    from its last sync are fallbacks for a guardian that does not watch the old wallet;
+   * 3. broadcast: through the old guardian while it answers, else through the new guardian, which relays a sweep of
+   *    the old wallet into the new one (`tx.broadcast`). If it refuses for good, this throws a typed error
+   *    (`sweep_fee_exceeds_cap`, `sweep_refused`, `rate_limited`) and keeps the signed sweep: call again later;
    * 4. retire: once a node accepted the sweep, `wallet.retire` at the old guardian with a hardware approval, if it
    *    answers. Not before: a retired wallet's phone gets no answers there, so the sweep could no longer be sent;
    * 5. switch: the phone moves to the new wallet and guardian; the old wallet is kept (`sweepStrayCoins`).
    *
    * If the old guardian does not answer, this throws `old_guardian_unreachable` unless the person confirmed it is gone
-   * (`oldGuardianReachable: false`); the sweep is then built from what the phone kept from its last sync. If nothing can
-   * send it, the result is `awaiting_broadcast`: the signed sweep is kept, and calling `replaceGuardian()` again later
-   * (the old guardian back, or a node configured) finishes. Every step is persisted, so a crash resumes too.
+   * (`oldGuardianReachable: false`); the new guardian then lists the old wallet's coins. If nothing can send the
+   * sweep (the new guardian does not answer or does not watch the old wallet), the result is `awaiting_broadcast`: the
+   * signed sweep is kept, and calling `replaceGuardian()` again later (the new guardian back, the old one back, or a
+   * node configured) finishes. Every step is persisted, so a crash resumes too.
    */
   async replaceGuardian(opts: { newGuardianUri?: string; oldGuardianReachable?: false } = {}): Promise<ReplaceOutcome> {
     this.requirePaired();
@@ -2832,7 +2846,7 @@ export class TrikeyWallet {
       const proof = await this.signWithAuthKey(hw, rec, pairingMessage(walletId, cosignerPub), 'pairing');
       return { proof, hmac: reg.hmac };
     });
-    const res = await this.registerAtGuardian(session, { rules, deviceName: this.s.deviceName, proof, replacesWalletId: this.s.wallet!.walletId });
+    const res = await this.registerAtGuardian(session, { rules, deviceName: this.s.deviceName, proof, replaces: { walletId: this.s.wallet!.walletId, descriptor: this.s.wallet!.descriptor } });
     // The new guardian holds the new wallet: persist before anything else can fail.
     this.replaceRpc = { rpc: session.rpc, pool: session.pool };
     this.pairing = undefined;
@@ -2865,7 +2879,7 @@ export class TrikeyWallet {
     if (r.phase === 'paired') {
       this.emitStep('sign');
       const standalone = this.standaloneFor(old);
-      const source: ChainSource | undefined = reachable ? this.chain : standalone;
+      let source: ChainSource | undefined = reachable ? this.chain : standalone;
       let utxos = this.s.chain?.utxos ?? [];
       let truncated = this.s.chain?.utxosTruncated ?? false;
       let fees = this.fees;
@@ -2873,11 +2887,20 @@ export class TrikeyWallet {
         const snap = await this.sync();
         utxos = snap.utxos;
         truncated = this.s.chain!.utxosTruncated;
-      } else if (standalone) {
-        const snap = await standalone.sync();
-        utxos = snap.utxos;
-        truncated = snap.utxosTruncated;
-        fees = (await standalone.estimateFees([3, 6]).catch(() => undefined)) ?? fees;
+      } else {
+        // The old guardian is gone: the new one watches the old wallet and lists its coins (never a stale snapshot while it answers).
+        const listed = await this.listOldWalletViaNewGuardian(r, old.walletId);
+        if (listed) {
+          source = listed.source;
+          utxos = listed.snap.utxos;
+          truncated = listed.snap.utxosTruncated;
+          fees = listed.fees ?? fees;
+        } else if (standalone) {
+          const snap = await standalone.sync();
+          utxos = snap.utxos;
+          truncated = snap.utxosTruncated;
+          fees = (await standalone.estimateFees([3, 6]).catch(() => undefined)) ?? fees;
+        }
       }
       if (truncated) throw new WalletError('utxos_truncated', 'The wallet has more coins than one move can list.');
       if (!utxos.length) return this.finishReplace(r, reachable, undefined);
@@ -2909,37 +2932,74 @@ export class TrikeyWallet {
 
     const sweep = r.sweep!;
     this.emitStep('broadcast');
-    if (!(await this.sendSweep(r, sweep.txHex, sweep.txid, reachable)))
-      return { status: 'awaiting_broadcast', walletId: r.wallet.walletId, previousWalletId: old.walletId, sweepTxid: sweep.txid, txHex: sweep.txHex, movedSats: sweep.amountSats, feeSats: sweep.feeSats };
+    const sent = await this.sendSweep(r, sweep.txHex, sweep.txid, reachable);
+    if (!sent.sent)
+      return {
+        status: 'awaiting_broadcast',
+        walletId: r.wallet.walletId,
+        previousWalletId: old.walletId,
+        sweepTxid: sweep.txid,
+        txHex: sweep.txHex,
+        movedSats: sweep.amountSats,
+        feeSats: sweep.feeSats,
+        ...(sent.refusal ? { refusal: sent.refusal } : {}),
+      };
     return this.finishReplace(r, reachable, sweep);
   }
 
-  /** Has a node taken the sweep? Tries every way the phone has to reach one. */
-  private async sendSweep(r: ReplaceRecord, txHex: string, txid: string, oldReachable: boolean): Promise<boolean> {
+  /**
+   * The old wallet's coins from the NEW guardian, which watches it since `pair` (`wallet.sync` with `wallet: "replaced"`),
+   * with its fee estimates; the source also serves the coins' previous transactions (`tx.get`). Undefined when the new
+   * guardian cannot say (it does not watch the wallet: `1005` or an older guardian, it is down, or it answers for a
+   * different wallet): the caller falls back to a node or to what the phone kept.
+   */
+  private async listOldWalletViaNewGuardian(r: ReplaceRecord, oldWalletId: string): Promise<{ source: GuardianChainSource; snap: ChainSnapshot; fees?: FeeEstimates } | undefined> {
+    try {
+      const rpc = await this.replacementRpc(r);
+      const source = new GuardianChainSource(() => rpc, { wallet: 'replaced' });
+      const snap = await source.sync();
+      if (snap.walletId !== oldWalletId) return undefined; // an older guardian ignoring `wallet` would describe the new wallet
+      return { source, snap, fees: await source.estimateFees([3, 6]).catch(() => undefined) };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Has a node taken the sweep? Tries every way the phone has to reach one: the old guardian while it answers, the NEW
+   * guardian (it relays a sweep of the watched old wallet into the new one), then the `standaloneChain` node.
+   * A definitive refusal of a guardian (over the sweep fee cap, a rule of the allowance, rate limiting) is thrown as a
+   * typed `WalletError` unless another route took the sweep; the signed sweep is kept either way.
+   */
+  private async sendSweep(r: ReplaceRecord, txHex: string, txid: string, oldReachable: boolean): Promise<{ sent: true } | { sent: false; refusal?: GuardianRefusal }> {
     const old = this.s.wallet!;
-    const tries: { known: () => Promise<unknown>; send: () => Promise<unknown> }[] = [];
-    if (oldReachable) tries.push({ known: () => this.chain.getTransaction(txid), send: () => this.chain.broadcast(txHex) });
-    const standalone = this.standaloneFor(old);
-    if (standalone) tries.push({ known: () => standalone.getTransaction(txid), send: () => standalone.broadcast(txHex) });
-    // The reference guardian relays only spends of its own wallet's coins, so this one answers 1602 for now.
+    const tries: { guardian: boolean; known: () => Promise<unknown>; send: () => Promise<unknown> }[] = [];
+    if (oldReachable) tries.push({ guardian: true, known: () => this.chain.getTransaction(txid), send: () => this.chain.broadcast(txHex) });
     const fresh = new GuardianChainSource(() => this.replaceRpc!.rpc);
-    tries.push({ known: async () => (await this.replacementRpc(r), fresh.getTransaction(txid)), send: async () => (await this.replacementRpc(r), fresh.broadcast(txHex)) });
+    tries.push({ guardian: true, known: async () => (await this.replacementRpc(r), fresh.getTransaction(txid)), send: async () => (await this.replacementRpc(r), fresh.broadcast(txHex)) });
+    const standalone = this.standaloneFor(old);
+    if (standalone) tries.push({ guardian: false, known: () => standalone.getTransaction(txid), send: () => standalone.broadcast(txHex) });
+    let typed: WalletError | undefined;
+    let refusal: GuardianRefusal | undefined;
     for (const t of tries) {
       try {
         await t.known();
-        return true; // already in a mempool or a block
+        return { sent: true }; // already in a mempool or a block
       } catch {
         /* not known there */
       }
       try {
         await t.send();
-        return true;
+        return { sent: true };
       } catch (e) {
-        const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
-        if (refusal?.kind === 'broadcast_rejected' && /already|known|duplicate/i.test(`${refusal.reason ?? ''} ${refusal.message}`)) return true;
+        const rf = e instanceof WalletError ? e.refusal : refusalFromError(e);
+        if (rf?.kind === 'broadcast_rejected' && /already|known|duplicate/i.test(`${rf.reason ?? ''} ${rf.message}`)) return { sent: true };
+        if (t.guardian) typed ??= sweepBroadcastError(e);
+        refusal ??= rf;
       }
     }
-    return false;
+    if (typed) throw typed;
+    return { sent: false, ...(refusal ? { refusal } : {}) };
   }
 
   private async finishReplace(r: ReplaceRecord, oldReachable: boolean, sweep: ReplaceRecord['sweep']): Promise<ReplaceOutcome> {
@@ -3005,30 +3065,49 @@ export class TrikeyWallet {
     return this.s.retiredWallets;
   }
 
-  /** A chain source for an old wallet: its old guardian while that still knows it, else the `standaloneChain` node. */
-  private async sourceForRetired(w: RetiredWallet): Promise<{ source: ChainSource; close: () => void; viaGuardian: boolean }> {
+  /**
+   * A chain source for an old wallet. First the CURRENT guardian, which watches the wallet this one replaced
+   * (`wallet.sync` with `wallet: "replaced"`, `tx.get`, and a sweep into the current wallet through `tx.broadcast`);
+   * else its old guardian while that still knows it; else the `standaloneChain` node.
+   */
+  private async sourceForRetired(w: RetiredWallet): Promise<{ source: ChainSource; snap?: ChainSnapshot; close: () => void; via: 'current-guardian' | 'old-guardian' | 'node' }> {
+    let watchError: unknown;
+    if (this.s.guardian) {
+      try {
+        const rpc = await this.client();
+        const source = new GuardianChainSource(() => rpc, { wallet: 'replaced' });
+        const snap = await source.sync();
+        if (snap.walletId === w.walletId) return { source, snap, close: () => {}, via: 'current-guardian' };
+        // The guardian watches another wallet, or an older one ignored `wallet`: not this one.
+      } catch (e) {
+        if (!isWalletNotWatched(e)) watchError = e;
+      }
+    }
     if (!w.retiredOnGuardian) {
       const conn = await this.connect(w.guardian.pubkey, w.guardian.relays, { routeAlerts: false });
       const st = await this.probeGuardian(conn.rpc).catch(() => undefined);
       if (st && (!st.walletId || st.walletId === w.walletId))
-        return { source: new GuardianChainSource(() => conn.rpc), close: () => (conn.rpc.close(), conn.pool.close()), viaGuardian: true };
+        return { source: new GuardianChainSource(() => conn.rpc), close: () => (conn.rpc.close(), conn.pool.close()), via: 'old-guardian' };
       conn.rpc.close();
       conn.pool.close();
     }
     const standalone = this.standaloneFor(w);
-    if (standalone) return { source: standalone, close: () => {}, viaGuardian: false };
+    if (standalone) return { source: standalone, close: () => {}, via: 'node' };
+    if (watchError) throw watchError; // the guardian that watches it could not answer just now: say so, not "no source"
     throw new WalletError(
       'no_chain_source',
       w.retiredOnGuardian
-        ? 'Your old guardian no longer serves the old wallet, and this phone has no other node to read it from.'
+        ? 'No guardian watches your old wallet any more, and this phone has no other node to read it from.'
         : "Your old guardian isn't answering, and this phone has no other node to read the old wallet from.",
     );
   }
 
   /**
    * Coins sent to an old wallet after "Replace guardian": the phone and the hardware wallet sweep them into the
-   * current wallet. The old wallet is read through its old guardian while it still knows it, or the `standaloneChain`
-   * node. Returns what moved per old wallet.
+   * current wallet. The current guardian lists them and relays the sweep (it watches the old wallet until
+   * `stopWatchingOldWallet()`); without that the old wallet is read through its old guardian while it still knows it,
+   * or the `standaloneChain` node. Returns what moved per old wallet. A guardian's definitive refusal of the sweep
+   * throws a typed error (`sweep_fee_exceeds_cap`, `sweep_refused`, `rate_limited`); nothing was sent then.
    */
   async sweepStrayCoins(opts: { walletId?: string } = {}): Promise<{ walletId: string; txid?: string; sweptSats: number; feeSats: number }[]> {
     this.requirePaired();
@@ -3038,9 +3117,9 @@ export class TrikeyWallet {
     const out: { walletId: string; txid?: string; sweptSats: number; feeSats: number }[] = [];
     for (const w of list) {
       this.emitStep('sign', 'stray-coins');
-      const { source, close } = await this.sourceForRetired(w);
+      const { source, snap: listed, close, via } = await this.sourceForRetired(w);
       try {
-        const snap = await source.sync();
+        const snap = listed ?? (await source.sync());
         if (!snap.utxos.length) {
           out.push({ walletId: w.walletId, sweptSats: 0, feeSats: 0 });
           continue;
@@ -3066,7 +3145,11 @@ export class TrikeyWallet {
         const signed = await this.withHardware((hw) => this.hardwareSignPsbt(hw, appSigned, from, policy));
         const { txHex, txid } = finalizePsbt(signed);
         this.emitStep('broadcast', 'stray-coins');
-        await source.broadcast(txHex);
+        try {
+          await source.broadcast(txHex);
+        } catch (e) {
+          throw (via !== 'node' ? sweepBroadcastError(e) : undefined) ?? e;
+        }
         await this.logSend({ txid, at: this.now(), recipient: current.derive(0, index).address, amountSats, feeSats: Number(plan.fee), label: 'Coins from your old wallet', signedBy: 'hardware', purpose: 'sweep' });
         out.push({ walletId: w.walletId, txid, sweptSats: amountSats, feeSats: Number(plan.fee) });
       } finally {
@@ -3075,6 +3158,25 @@ export class TrikeyWallet {
     }
     await this.sync().catch(() => undefined);
     return out;
+  }
+
+  /**
+   * Ends the new guardian's watch over the wallet this one replaced (`wallet.unwatch`), once the person confirms the old
+   * wallet is empty and has no more use: the guardian then stops listing its coins and relaying sweeps of them, and
+   * `sweepStrayCoins()` falls back to the old guardian or a node. Nothing watched is not an error (`unwatched: false`),
+   * so asking twice is harmless. `walletId` names the wallet to drop (default whichever is watched).
+   */
+  async stopWatchingOldWallet(opts: { walletId?: string } = {}): Promise<{ unwatched: boolean; walletId?: string }> {
+    this.requirePaired();
+    let res: Result<'wallet.unwatch'>;
+    try {
+      res = await this.call('wallet.unwatch', opts.walletId ? { walletId: opts.walletId } : {});
+    } catch (e) {
+      if (!isWalletNotWatched(e)) throw e;
+      res = { unwatched: false };
+    }
+    await this.refreshStatus().catch(() => undefined);
+    return { unwatched: res.unwatched, ...(res.walletId ? { walletId: res.walletId } : {}) };
   }
 
   /**

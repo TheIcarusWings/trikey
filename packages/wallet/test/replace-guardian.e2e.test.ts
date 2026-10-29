@@ -4,16 +4,22 @@
  * BIP 39 test mnemonics only.
  *
  * - The old guardian online: pair the new one, sweep through the old one, retire the wallet there, switch.
- * - The old guardian offline: the person confirms; the sweep is signed from what the phone kept and waits; the
- *   person's own node sends it; the box comes back and the old wallet's stray coins move and it is retired there.
+ * - The old guardian online, stray coins: the new guardian watches the old wallet (`replacesDescriptor`), so the phone
+ *   lists and sweeps them through it with no node of its own; `standaloneChain` is only a fallback after the watch ends.
+ * - The old guardian offline and a new guardian that does NOT watch the old wallet (an older guardian, simulated by
+ *   dropping `replacesDescriptor`): the sweep is signed from what the phone kept and waits; the person's own node sends
+ *   it; the box comes back and the old wallet's stray coins move and it is retired there.
+ *
+ * The watching guardian with the old box gone, fee cap, rate limits, `wallet.unwatch`, alert ordering and the phone that
+ * lost a recovery are in `replace-guardian-watch.e2e.test.ts`.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as btc from '@scure/btc-signer';
 import { hex } from '@scure/base';
 import { MultisigWallet } from '@trikey/core';
-import type { Policy } from '@trikey/protocol';
+import { RpcClient, type Policy, type RpcClientOptions } from '@trikey/protocol';
 import { GuardianRig, ManualClock, type FakeElectrum } from '@trikey/guardian/testing';
-import { TrikeyWallet, WalletError, type WalletEvent } from '../src/index.js';
+import { TrikeyWallet, WalletError, type GuardianRpc, type WalletEvent } from '../src/index.js';
 import { MemoryCloudBackupStore, MemoryPasskeyPrf, SoftwareHardwareProvider, SoftwareHardwareSigner } from '../src/testing/index.js';
 import { FakeNodeChain, MNEMONICS, externalAddress, phone, type Phone } from './helpers.js';
 
@@ -144,26 +150,58 @@ describe('replace guardian, the old guardian online', { timeout: 90_000 }, () =>
     expect((await A.receiveAddress({ verifyOnDevice: true })).verifiedOnDevice).toBe(true);
   });
 
-  it('stray coins sent to the old wallet: unreadable once the old guardian retired it, swept through the person\'s own node', async () => {
+  it("stray coins sent to the old wallet are found through the new guardian, which watches it, and swept with no node of the person's own", async () => {
     R1.fund(old.derive(0, 7).script, 40_000n);
+    // The new guardian says it watches the old wallet; the phone shows it.
+    await A.refreshStatus();
+    expect(A.state.guardianStatus?.watchedWalletId).toBe(oldId);
+    expect(A.snapshot()!.watchedWalletId).toBe(oldId);
+    expect(R2.guardian.engine.registration()).toMatchObject({ origin: { replacesWalletId: oldId } });
+    const before = (await A.sync()).balance.totalSats;
+    const sent = net.broadcasts.length;
+    const res = await A.sweepStrayCoins();
+    expect(res).toEqual([{ walletId: oldId, txid: expect.stringMatching(/^[0-9a-f]{64}$/), sweptSats: expect.any(Number), feeSats: expect.any(Number) }]);
+    expect(res[0]!.sweptSats + res[0]!.feeSats).toBe(40_000);
+    expect(net.broadcasts.length).toBe(sent + 1); // through the new guardian
+    expect(A.snapshot()!.balance.totalSats).toBe(before + res[0]!.sweptSats);
+    // Nothing left: a second sweep moves nothing.
+    expect(await A.sweepStrayCoins()).toEqual([{ walletId: oldId, sweptSats: 0, feeSats: 0 }]);
+  });
+
+  it("once the watch ends, a stray coin is out of the new guardian's reach and only a node of the person's own can move it", async () => {
+    expect(await A.stopWatchingOldWallet()).toEqual({ unwatched: true, walletId: oldId });
+    expect(A.state.guardianStatus?.watchedWalletId).toBeUndefined();
+    expect(A.snapshot()!.watchedWalletId).toBeUndefined();
+    expect(await A.stopWatchingOldWallet()).toEqual({ unwatched: false }); // harmless twice
+    R1.fund(old.derive(0, 8).script, 25_000n);
     expect((await walletError(A.sweepStrayCoins())).code).toBe('no_chain_source');
     await A.close();
     const nodes: FakeNodeChain[] = [];
     A = (await TrikeyWallet.open({ ...phoneA.deps, standaloneChain: FakeNodeChain.for(net, nodes) }))!;
     opened.push(A);
     await A.start();
-    const before = (await A.sync()).balance.totalSats;
     const res = await A.sweepStrayCoins();
-    expect(res).toEqual([{ walletId: oldId, txid: expect.stringMatching(/^[0-9a-f]{64}$/), sweptSats: expect.any(Number), feeSats: expect.any(Number) }]);
-    expect(res[0]!.sweptSats + res[0]!.feeSats).toBe(40_000);
+    expect(res[0]!.sweptSats + res[0]!.feeSats).toBe(25_000);
     expect(nodes.some((n) => n.broadcasts.length === 1)).toBe(true);
-    expect(A.snapshot()!.balance.totalSats).toBe(before + res[0]!.sweptSats);
-    // Nothing left: a second sweep moves nothing.
-    expect(await A.sweepStrayCoins()).toEqual([{ walletId: oldId, sweptSats: 0, feeSats: 0 }]);
   });
 });
 
-describe('replace guardian, the old guardian offline', { timeout: 120_000 }, () => {
+/** A client that behaves like one for a guardian without the watch: `pair` leaves out `replacesDescriptor` (the earlier protocol). */
+const withoutWatch = (opts: RpcClientOptions): GuardianRpc => {
+  const rpc = new RpcClient(opts);
+  const call = rpc.call.bind(rpc) as GuardianRpc['call'];
+  return Object.assign(rpc, {
+    call: ((method: string, params: Record<string, unknown>, o?: object) => {
+      if (method === 'pair') {
+        const { replacesDescriptor: _dropped, ...rest } = params;
+        return call(method as 'pair', rest as never, o);
+      }
+      return call(method as 'pair', params as never, o);
+    }) as GuardianRpc['call'],
+  }) as unknown as GuardianRpc;
+};
+
+describe('replace guardian, the old guardian offline, a new guardian that does not watch the old wallet', { timeout: 120_000 }, () => {
   const device = new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware2, network: 'regtest', kind: 'trezor' });
   const provider = new SoftwareHardwareProvider(device);
   let phoneB: Phone;
@@ -175,6 +213,7 @@ describe('replace guardian, the old guardian offline', { timeout: 120_000 }, () 
   beforeAll(async () => {
     // R1 has no wallet any more (the first describe retired it): it pairs this phone.
     phoneB = phone({ clock, hardware: provider, cloud, passkey, rpcTimeoutMs: 1500 });
+    phoneB.deps.createRpc = withoutWatch;
     B = await TrikeyWallet.create(phoneB.deps, { deviceName: 'Phone B' });
     opened.push(B);
     await B.onboard({ pairingUri: R1.pairingUri(), rules: RULES });
@@ -203,8 +242,9 @@ describe('replace guardian, the old guardian offline', { timeout: 120_000 }, () 
     expect(inputsOf(out.txHex)).toBe(2);
     expect(out.movedSats + out.feeSats).toBe(210_000);
     expect(R3.guardian.engine.registration()?.walletId).toBe(newId);
+    expect(out.refusal).toMatchObject({ kind: 'foreign_transaction' }); // the new guardian relays only its own wallet's coins here
     expect(B.state).toMatchObject({ wallet: { walletId: oldId }, replacing: { phase: 'signed', oldGuardianOffline: true, sweep: { txid: out.sweepTxid } } });
-    expect(net.broadcasts).not.toContain(out.txHex); // the new guardian relays only its own wallet's coins
+    expect(net.broadcasts).not.toContain(out.txHex);
     // While it waits, nothing else starts.
     expect((await walletError(B.previewReplaceGuardian(R2.pairingUri()))).code).toBe('replace_in_progress');
     expect((await walletError(B.abandonReplaceGuardian())).code).toBe('replace_in_progress');

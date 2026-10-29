@@ -76,6 +76,8 @@ export const GuardianStatusCache = z.object({
   walletId: z.string().optional(),
   /** After a wallet rotation: the guardian refuses hardware approvals until `hardware.confirm`. */
   hardwareConfirmRequired: z.boolean().optional(),
+  /** The replaced wallet this guardian watches ("Replace guardian"): its coins can be read and swept through the guardian. */
+  watchedWalletId: z.string().optional(),
 });
 export type GuardianStatusCache = z.infer<typeof GuardianStatusCache>;
 
