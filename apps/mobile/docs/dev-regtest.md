@@ -38,6 +38,12 @@ For the recovery and replacement flows:
 | `offline` / `online` | Stop the first guardian (its relays and the chain keep running), or start it again: Replace guardian with the old box gone. |
 | `skip <days>` | Move the guardians' clock ahead and mine past it, so a recovery's wait ends. Move the app's clock by the same amount first (a browser test can; a phone cannot), or the guardian's messages look like they come from the future and are dropped. |
 | `status [2]`, `log [2] [n]` | What the guardian holds now, and its last log lines. |
+| `pay-sp <tsp1...> [sats]` | Somebody else pays a silent payment address (Receive, "Silent payment"): mine a block and the guardian finds it, alerts the app, and Home offers "Move into your vault". |
+
+Silent payments: the rig gives the guardian a fake Bitcoin Core RPC (what Umbrel and Start9 provide), so it can scan blocks
+for them. Start it with `-- --no-rpc` (`npm run dev-rig -w @trikey/mobile -- --no-rpc`) to see the other state: the guardian
+answers 1700 and Settings, Silent payments says receiving is paused. To try sending one, put some sats into the helper coin
+first (`fund <the helper address from Settings, Silent payments> 30000`), then paste any `tsp1…` address on the Send screen.
 
 In the app, Settings, Developer, "Use a new simulated hardware wallet" swaps in a fresh simulated device, so "Lost
 my hardware wallet" has a replacement to connect.

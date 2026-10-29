@@ -51,7 +51,21 @@ export default function TransactionDetail() {
 
   const sent = tx.kind === 'sent' || tx.kind === 'speed_up';
   const when = `${formatDay(tx.at, now) === 'Today' ? 'Today' : formatDay(tx.at, now)}, ${formatTime(tx.at, pick('12h', '24h') as '12h' | '24h')}`;
-  const heading = tx.kind === 'refill' ? `Refill ${tx.refillIndex ?? ''}`.trim() : tx.kind === 'speed_up' ? 'Speed up' : sent ? 'Sent' : 'Received';
+  const silentIn = tx.kind === 'silent_received';
+  const silentMove = tx.kind === 'silent_sweep';
+  const heading = silentIn
+    ? 'Silent payment received'
+    : silentMove
+      ? 'Moved into your vault'
+      : tx.kind === 'refill'
+        ? `Refill ${tx.refillIndex ?? ''}`.trim()
+        : tx.kind === 'speed_up'
+          ? 'Speed up'
+          : sent
+            ? tx.silentOutputAddress
+              ? 'Sent as a silent payment'
+              : 'Sent'
+            : 'Received';
   // Guardian mode: the explorer on the guardian's box. Recovery Key mode: the chain server's own site, when it has one.
   const explorer = state.mode === 'recoveryKey' ? explorerOf(state.recoveryKey.server.url) : state.guardian.explorerUrl;
 
@@ -78,14 +92,18 @@ export default function TransactionDetail() {
       <View className="items-start gap-2">
         <Text className={cn('text-muted-foreground', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{heading}</Text>
         <Text className="text-[40px] font-semibold leading-12 tracking-[-1.2px] tabular-nums">
-          {sent ? MINUS : '+'}
+          {sent ? MINUS : silentMove ? '' : '+'}
           {formatAmount(tx.amountSats, state.unit)} <Text className="text-muted-foreground text-xl">{unitLabel(state.unit)}</Text>
         </Text>
         {tx.status === 'confirmed' ? <Pill tone="good" strong>Confirmed</Pill> : <Pill dot="warn">Waiting to confirm</Pill>}
       </View>
       <Panel>
         <InfoRow label="Date" value={when} />
-        {tx.address ? <InfoRow label={sent ? 'To' : 'From'} value={shorten(tx.address)} mono /> : null}
+        {tx.address ? <InfoRow label={sent ? 'To' : 'From'} value={shorten(tx.address, tx.silentOutputAddress ? 12 : 8)} mono /> : null}
+        {tx.silentOutputAddress ? <InfoRow label="Paid to" value={shorten(tx.silentOutputAddress, 10)} mono /> : null}
+        {silentIn ? <InfoRow label="Address" value={tx.silentLabel !== undefined ? `Silent payment, label ${tx.silentLabel}` : 'Silent payment address'} /> : null}
+        {silentIn ? <InfoRow label="Where it is" value={state.silentPayments.coins.some((c) => c.txid === tx.txid) ? 'Waiting on this phone' : 'Moved into your vault'} /> : null}
+        {silentMove ? <InfoRow label="From" value="Your silent payments" /> : null}
         {tx.feeSats !== undefined ? <InfoRow label="Network fee" value={`${formatSats(tx.feeSats)} sats`} tabular /> : null}
         {tx.signedBy ? <InfoRow label="Signed by" value={SIGNERS[tx.signedBy]} /> : null}
         {tx.fromVault ? <InfoRow label="Paid from" value="The vault" /> : null}

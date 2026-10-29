@@ -163,24 +163,42 @@ describe('silent payments end to end', { timeout: 60_000 }, () => {
     expect(e.message).toMatch(/too small for its share of the fee/);
   });
 
-  it('today\'s guardian refuses the helper input, so co-signing a silent payment is off by default', async () => {
-    // A phone that asks the guardian anyway (the option for once the guardian accepts helper inputs).
-    await A.close();
-    const A2 = track((await TrikeyWallet.open({ ...phoneA.deps, silentPaymentsViaGuardian: true }))!);
-    await A2.start();
-    await A2.sync();
-    const q = A2.quoteSend({ address: tsp, amountSats: 10_000 });
+  it('the guardian co-signs a payment that spends the helper coin within the limit, and counts only what leaves the vault', async () => {
+    // Enabling silent payments registered the helper account with the guardian (`singlekey.register`).
+    expect(A.state.silentPayments!.registration).toMatchObject({ helper: true });
+    expect(A.snapshot()!.silentPayments!.helperViaGuardian).toBe(true);
+    const used = rigA.guardian.engine.status().dailyLimit!.used;
+    const q = A.quoteSend({ address: tsp, amountSats: 10_000 });
     expect(q.plan).toEqual({ signer: 'phone+guardian' });
-    const res = await A2.send(q);
-    expect(res).toMatchObject({ ok: false, refusal: { kind: 'psbt_rejected', reason: 'foreign_input' } });
-    // Over the limit, it goes straight to the hardware wallet, which signs: the helper input reaches it finalized.
-    const big = A2.quoteSend({ address: tsp, amountSats: 150_000 });
+    const calls = deviceA.calls.filter((c) => c.op === 'signPsbt').length;
+    const res = await A.send(q);
+    expect(res).toMatchObject({ ok: true, signedBy: 'phone+guardian' });
+    expect(deviceA.calls.filter((c) => c.op === 'signPsbt').length).toBe(calls);
+    if (!res.ok) return;
+    // The limit counted the vault's outflow (amount + the vault's share of the fee), not the helper coin's value.
+    expect(BigInt(q.totalSats)).toBe(rigA.guardian.engine.status().dailyLimit!.used - used);
+    made.push({ name: 'co-signed silent payment', txHex: res.txHex, spent: spentBy(res.txHex), taproot: false });
+    await rigA.mine(1);
+    await A.sync();
+  });
+
+  it('over the limit the hardware wallet signs, and the helper input reaches it finalized', async () => {
+    const big = A.quoteSend({ address: tsp, amountSats: 150_000 });
     expect(big.plan).toEqual({ signer: 'phone+hardware', reason: 'over-limit' });
-    const sent = await A2.send(big);
+    const sent = await A.send(big);
     expect(sent).toMatchObject({ ok: true, signedBy: 'phone+hardware', hardwareReason: 'over-limit' });
     expect(deviceA.calls.filter((c) => c.op === 'signPsbt').at(-1)).toMatchObject({ externalInputs: 1 });
     if (sent.ok) made.push({ name: 'over-limit silent payment', txHex: sent.txHex, spent: spentBy(sent.txHex), taproot: false });
     await rigA.mine(1);
+    await A.sync();
+  });
+
+  it('a phone told not to use the guardian for them (silentPaymentsViaGuardian: false) sends every silent payment to the hardware wallet', async () => {
+    await A.close();
+    const A2 = track((await TrikeyWallet.open({ ...phoneA.deps, silentPaymentsViaGuardian: false }))!);
+    await A2.start();
+    await A2.sync();
+    expect(A2.quoteSend({ address: tsp, amountSats: 5_000 }).plan).toEqual({ signer: 'phone+hardware', reason: 'requested' });
     await A2.close();
     A = track((await TrikeyWallet.open(phoneA.deps))!, eventsA);
     await A.start();
@@ -190,7 +208,7 @@ describe('silent payments end to end', { timeout: 60_000 }, () => {
   it('pays the tsp1 address through the hardware wallet: the helper is the only eligible input, the vault pays the amount', async () => {
     const snap = A.snapshot()!;
     const helperBefore = snap.helper!.confirmedSats;
-    const q = A.quoteSend({ address: tsp, amountSats: 30_000, label: 'For B' });
+    const q = A.quoteSend({ address: tsp, amountSats: 30_000, label: 'For B', signer: 'hardware' });
     expect(q.plan).toEqual({ signer: 'phone+hardware', reason: 'requested' });
     const sp = q.silentPayment!;
     expect(sp.address).toBe(tsp);
@@ -262,9 +280,9 @@ describe('silent payments end to end', { timeout: 60_000 }, () => {
   it("the receiver's local scanner finds every payment and checks each key", async () => {
     const { found, scannedHeight } = await B.scanSilentPayments();
     expect(scannedHeight).toBe(rigA.electrs.height);
-    expect(found.map((c) => c.valueSats).sort((a, b) => a - b)).toEqual([1_500, 25_000, 30_000, 150_000]);
+    expect(found.map((c) => c.valueSats).sort((a, b) => a - b)).toEqual([1_500, 10_000, 25_000, 30_000, 150_000]);
     expect(found.find((c) => c.valueSats === 25_000)!.label).toBe(1);
-    expect(found.filter((c) => c.label === undefined)).toHaveLength(3);
+    expect(found.filter((c) => c.label === undefined)).toHaveLength(4);
     const receiver = await B.silentPaymentReceiver();
     for (const c of found) {
       expect(receiver.verify(c)).toBe(true);
@@ -273,7 +291,7 @@ describe('silent payments end to end', { timeout: 60_000 }, () => {
       d.fill(0);
     }
     const snap = B.snapshot()!;
-    expect(snap.silentPayments!.balance).toEqual({ confirmedSats: 206_500, unconfirmedSats: 0, totalSats: 206_500 });
+    expect(snap.silentPayments!.balance).toEqual({ confirmedSats: 216_500, unconfirmedSats: 0, totalSats: 216_500 });
     expect(snap.balance.totalSats).toBe(0); // the vault is apart
     // Scanning again finds nothing new.
     expect((await B.scanSilentPayments()).found).toEqual([]);
@@ -283,9 +301,9 @@ describe('silent payments end to end', { timeout: 60_000 }, () => {
     await B.sync();
     const out = await B.sweepSilentPayments();
     const swept = out.filter((o) => o.status === 'swept');
-    expect(swept).toHaveLength(3);
+    expect(swept).toHaveLength(4);
     expect(out.find((o) => o.valueSats === 1_500)).toMatchObject({ status: 'waiting', reason: 'dust' });
-    expect(new Set(swept.map((o) => o.status === 'swept' && o.address)).size).toBe(3);
+    expect(new Set(swept.map((o) => o.status === 'swept' && o.address)).size).toBe(4);
     for (const o of swept) {
       if (o.status !== 'swept') continue;
       const raw = chainB.broadcasts.find((t) => btc.Transaction.fromRaw(hex.decode(t), { allowUnknownOutputs: true }).id === o.sweepTxid)!;
@@ -300,9 +318,9 @@ describe('silent payments end to end', { timeout: 60_000 }, () => {
     rigB.electrs.confirmMempool();
     const snap = await B.sync();
     expect(snap.balance.totalSats).toBe(swept.reduce((a, o) => a + (o.status === 'swept' ? o.amountSats : 0), 0));
-    expect(snap.utxos).toHaveLength(3);
+    expect(snap.utxos).toHaveLength(4);
     expect(snap.silentPayments!.coins.map((c) => c.valueSats)).toEqual([1_500]);
-    expect(B.state.silentPayments!.coins.filter((c) => c.status === 'swept')).toHaveLength(3);
+    expect(B.state.silentPayments!.coins.filter((c) => c.status === 'swept')).toHaveLength(4);
     // Nothing left to sweep but the dust.
     expect((await B.sweepSilentPayments()).map((o) => o.status)).toEqual(['waiting']);
   });
@@ -323,7 +341,7 @@ describe('silent payments end to end', { timeout: 60_000 }, () => {
       expect(await R.silentPaymentAddress()).toBe(address);
       expect(await R.silentPaymentAddress({ label: 1 })).toBe(tspLabeled);
       const { found } = await R.scanSilentPayments();
-      expect(found).toHaveLength(4);
+      expect(found).toHaveLength(5);
       await R.sync();
       // Only the dust coin is still unspent.
       expect(R.snapshot()!.silentPayments!.coins.map((c) => [c.valueSats, c.status])).toEqual([[1_500, 'unspent']]);

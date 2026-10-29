@@ -22,6 +22,16 @@ const THEME_LABEL: Record<ThemePreference, string> = {
   dark: 'Dark',
 };
 
+/** The one-word state of silent payments for the Settings list. */
+function silentPaymentsSummary(state: ReturnType<typeof useWallet>): { text: string; dot?: 'good' | 'warn' | 'bad' } {
+  const sp = state.silentPayments;
+  if (state.mode === 'recoveryKey' || sp.support === 'send_only') return { text: 'Send only' };
+  if (!sp.setUp || !sp.receiving) return { text: 'Off' };
+  if (sp.scan.state === 'needs_node_rpc' && sp.scan.source !== 'local') return { text: 'Receiving paused', dot: 'bad' };
+  if (sp.scan.state === 'unreachable' || sp.scan.state === 'error' || sp.scan.state === 'unsupported') return { text: 'Not scanning', dot: 'bad' };
+  return { text: 'On', dot: 'good' };
+}
+
 const KEY_LABEL: Record<RecoveryKeyKind, string> = {
   paper: 'Printed kit',
   nfc: 'NFC card',
@@ -38,6 +48,7 @@ export default function SettingsScreen() {
   const guardianDot = guardian.status === 'online' ? 'good' : guardian.status === 'locked' ? 'warn' : 'bad';
   const refillsLeft = state.recoveryKey.refillsLeft;
   const box = guardianBox(guardian);
+  const silentValue = silentPaymentsSummary(state);
 
   return (
     <Screen tab title="Settings" gap={pick(12, 0)}>
@@ -107,6 +118,17 @@ export default function SettingsScreen() {
           />
         </ListGroup>
       )}
+
+      <SectionLabel>Silent payments</SectionLabel>
+      <ListGroup>
+        <SettingsRow
+          title="Silent payments"
+          value={silentValue.text}
+          dot={silentValue.dot}
+          onPress={() => router.push('/settings/silent-payments')}
+          accessibilityHint="Your reusable address, scanning and the helper coin"
+        />
+      </ListGroup>
 
       {rk ? (
         <>
@@ -197,6 +219,40 @@ function DeveloperSection() {
               accessibilityLabel="Recovery Key mode"
             />
           </View>
+        ) : null}
+        {dev?.setNodeRpc && !rk ? (
+          <>
+            <View className="min-h-16 flex-row items-center justify-between gap-4 px-4">
+              <View className="flex-1">
+                <Text nativeID="node-rpc-label" className="text-base leading-6">
+                  Guardian has its node's RPC
+                </Text>
+                <Text className="text-muted-foreground text-sm leading-5">Off: receiving silent payments pauses, as when a guardian answers 1700.</Text>
+              </View>
+              <Switch
+                checked={state.silentPayments.scan.state !== 'needs_node_rpc'}
+                onCheckedChange={(on) => dev.setNodeRpc!(on)}
+                aria-labelledby="node-rpc-label"
+                accessibilityLabel="Guardian has its node's RPC"
+              />
+            </View>
+            {dev.setHelperFunded ? (
+              <View className="min-h-16 flex-row items-center justify-between gap-4 px-4">
+                <View className="flex-1">
+                  <Text nativeID="helper-funded-label" className="text-base leading-6">
+                    Helper coin funded
+                  </Text>
+                  <Text className="text-muted-foreground text-sm leading-5">Off: a silent payment asks to fund the helper first.</Text>
+                </View>
+                <Switch
+                  checked={state.silentPayments.helper.funded}
+                  onCheckedChange={(on) => dev.setHelperFunded!(on)}
+                  aria-labelledby="helper-funded-label"
+                  accessibilityLabel="Helper coin funded"
+                />
+              </View>
+            ) : null}
+          </>
         ) : null}
         {dev?.setGuardianStatus && !rk ? (
           <View className="gap-2 px-4 py-3">

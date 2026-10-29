@@ -1,9 +1,11 @@
 import { parseScannedCode } from '@trikey/wallet/scan';
-import { WalletServiceError } from './errors';
+import { NODE_RPC_TEXT, WalletServiceError } from './errors';
 import { SIMULATED_OPTION, hardwareOptionTable, type UiOs } from './hardware-options';
 import { buildRefillSchedule, limitChangeNeedsHardware, quoteSend as quoteSendRule } from './rules';
 import { emptyRecoveryKeyState } from './rk-empty';
 import { DEMO_FINGERPRINT, createMockRecoveryKey } from './rk-mock';
+import { looksLikeSilentPaymentAddress } from './sp-empty';
+import { DEMO_HELPER_FEE, DEMO_TAPROOT_OUTPUT, createMockSilentPayments, demoSilentActivity, demoSilentPayments, type MockSilentControl } from './sp-mock';
 import type { WalletService } from './service';
 import type {
   ActivityItem,
@@ -14,6 +16,8 @@ import type {
   Guardian,
   GuardianStatus,
   FoundBackup,
+  QuoteOutcome,
+  SendRequest,
   HardwareKind,
   HardwareWallet,
   LostKey,
@@ -99,6 +103,7 @@ function guardianActivity(): ActivityItem[] {
       signedBy: 'phone+guardian',
     }),
     security({ id: 'ev-1', kind: 'guardian-restarted', host: 'umbrel', at: '2026-10-29T03:12:00' }),
+    ...demoSilentActivity().filter((i) => i.at > '2026-10-28'),
     pay({
       id: 'tx-2',
       kind: 'received',
@@ -107,6 +112,7 @@ function guardianActivity(): ActivityItem[] {
       at: '2026-10-27T18:30:00',
       txid: txid('b91e03d77a5c'),
     }),
+    ...demoSilentActivity().filter((i) => i.at <= '2026-10-28' && i.at > '2026-10-22'),
     security({
       id: 'ev-2',
       kind: 'limit-changed',
@@ -225,6 +231,7 @@ export function createDemoState(platform: 'ios' | 'android' = 'ios'): WalletStat
     oldWallets: [],
     walletRetired: null,
     finishedRecovery: null,
+    silentPayments: demoSilentPayments(),
   };
 }
 
@@ -241,6 +248,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
 
   let state = createDemoState(platform);
   let counter = 100;
+  const silentControl: MockSilentControl = { nodeRpc: true };
   const listeners = new Set<() => void>();
 
   function update(change: Partial<WalletState> | ((s: WalletState) => Partial<WalletState>)) {
@@ -267,6 +275,24 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
   function nextId(prefix: string): string {
     counter += 1;
     return `${prefix}-${counter}`;
+  }
+
+  /** A payment's quote. To a silent payment address the helper coin pays its share of the fee, and the vault cannot make one. */
+  function quoteSendMock(request: SendRequest): QuoteOutcome {
+    const base = quoteSendRule(state, request);
+    if (!looksLikeSilentPaymentAddress(request.address) || !base.ok) return base;
+    const q = base.quote;
+    if (state.mode === 'recoveryKey') {
+      if (q.plan.signer === 'hardware')
+        return { ok: false, problem: 'other', message: "A silent payment can't come from the vault. Pay it from your spending balance." };
+      return { ok: true, quote: { ...q, silentPayment: {} } };
+    }
+    if (!state.silentPayments.helper.funded)
+      return { ok: false, problem: 'needs_helper', message: 'Paying a silent payment address needs the helper coin: a small coin of this phone that you fund first.' };
+    return {
+      ok: true,
+      quote: { ...q, feeSats: q.feeSats + DEMO_HELPER_FEE, silentPayment: { outputAddress: DEMO_TAPROOT_OUTPUT, helperFeeSats: DEMO_HELPER_FEE } },
+    };
   }
 
   const service: WalletService = {
@@ -330,7 +356,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     },
 
     // -- sending ------------------------------------------------------
-    quoteSend: (request) => quoteSendRule(state, request),
+    quoteSend: (request) => quoteSendMock(request),
     async receiveAddress(opts) {
       if (opts?.verifyOnDevice) await wait(deviceDelay);
       return { address: state.receiveAddress, verifiedOnDevice: !!opts?.verifyOnDevice };
@@ -341,6 +367,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
       const { request, plan, feeSats, totalSats } = quote;
       const signedBy =
         plan.signer === 'hardware' ? 'phone+hardware' : plan.signer === 'phone' ? 'phone' : 'phone+guardian';
+      const silent = looksLikeSilentPaymentAddress(request.address);
       const tx: Transaction = {
         id: nextId('tx'),
         kind: 'sent',
@@ -351,7 +378,9 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
         address: request.address,
         txid: txid((counter * 7919).toString(16).padStart(12, '0')),
         signedBy,
+        ...(silent ? { silentOutputAddress: DEMO_TAPROOT_OUTPUT } : {}),
       };
+      if (silent && state.mode === 'guardian') update((s) => ({ silentPayments: { ...s.silentPayments, helper: { ...s.silentPayments.helper, sats: Math.max(0, s.silentPayments.helper.sats - DEMO_HELPER_FEE) } } }));
       addActivity({ type: 'payment', at: tx.at, tx });
       if (state.mode === 'recoveryKey') {
         update((s) =>
@@ -556,6 +585,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
       update((s) => ({ recoveryKey: { ...s.recoveryKey, keyKind } }));
     },
     rk: createMockRecoveryKey({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }),
+    silentPayments: createMockSilentPayments({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }, silentControl, nextId),
 
     // -- preferences --------------------------------------------------
     setUnit: (unit: AmountUnit) => update({ unit }),
@@ -616,6 +646,24 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
       },
       restartOnboarding() {
         update({ onboarded: false, recovery: null });
+      },
+      /** The demo's guardian has (or has not) its node's RPC: without it receiving silent payments is paused (1700). */
+      setNodeRpc(available: boolean) {
+        silentControl.nodeRpc = available;
+        update((s) => ({
+          silentPayments: s.silentPayments.receiving
+            ? {
+                ...s.silentPayments,
+                scan: available
+                  ? { state: 'ok', source: 'guardian', scannedHeight: 4_812_203, tipHeight: 4_812_203, checkedAt: NOW.toISOString(), ...(s.silentPayments.scan.lastMatchAt ? { lastMatchAt: s.silentPayments.scan.lastMatchAt } : {}) }
+                  : { state: 'needs_node_rpc', source: 'guardian', scannedHeight: s.silentPayments.scan.scannedHeight, checkedAt: NOW.toISOString(), message: NODE_RPC_TEXT },
+              }
+            : s.silentPayments,
+        }));
+      },
+      /** The demo's helper coin: funded, or not yet (to look at the "Fund the helper" screens). */
+      setHelperFunded(funded: boolean) {
+        update((s) => ({ silentPayments: { ...s.silentPayments, helper: { ...s.silentPayments.helper, sats: funded ? 24_320 : 0, funded } } }));
       },
     },
   };

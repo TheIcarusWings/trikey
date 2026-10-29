@@ -48,6 +48,10 @@ export type GuardianRefusal = { message: string } & (
   | { kind: 'broadcast_rejected'; reason?: string }
   /** `tx.broadcast` of a transaction the guardian does not relay; `reason` names the rule that failed (PROTOCOL.md, "Chain data"). */
   | { kind: 'foreign_transaction'; reason?: string }
+  /** 1700: the guardian has no RPC access to the user's node (`BITCOIN_RPC_HOST` and friends), which silent payment scanning needs. */
+  | { kind: 'node_rpc_required' }
+  /** 1701: `sp.scan` before `sp.register` (or after `sp.unregister`): register again. */
+  | { kind: 'silent_payments_not_registered' }
   /** No answer: the guardian is offline, or no relay took the request. */
   | { kind: 'unreachable' }
   | { kind: 'other'; code: number }
@@ -128,6 +132,10 @@ export function refusalFromError(e: unknown): GuardianRefusal | undefined {
       return { kind: 'broadcast_rejected', reason: str(data['reason']), message };
     case ErrorCode.ForeignTransaction:
       return { kind: 'foreign_transaction', reason, message };
+    case ErrorCode.NodeRpcRequired:
+      return { kind: 'node_rpc_required', message };
+    case ErrorCode.SilentPaymentsNotRegistered:
+      return { kind: 'silent_payments_not_registered', message };
     default:
       return { kind: 'other', code: e.code, message };
   }
@@ -213,6 +221,10 @@ export type WalletErrorCode =
    * No key or secret was made from it; do not retry on this phone until the cause is known.
    */
   | 'random_source_failed'
+  /** The guardian cannot scan for silent payments without the RPC of the user's node (`1700`); the message names the settings. */
+  | 'node_rpc_required'
+  /** Silent payments are turned off on this phone: turn them on first (`enableSilentPayments`). */
+  | 'silent_payments_off'
   | 'internal';
 
 export class WalletError extends Error {

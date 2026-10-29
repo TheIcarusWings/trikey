@@ -13,6 +13,7 @@ import {
   formatBtc,
   formatSats,
   looksLikeBitcoinAddress,
+  looksLikeSilentPaymentAddress,
   remainingToday,
   useWallet,
   useWalletService,
@@ -37,6 +38,7 @@ function limitPill(outcome: QuoteOutcome, state: ReturnType<typeof useWallet>, a
     if (outcome.problem === 'amount_too_small' && amountSats === 0) return { text: 'Enter an amount', dot: 'warn' };
     if (outcome.problem === 'invalid_address') return { text: 'Enter a bitcoin address', dot: 'warn' };
     if (outcome.problem === 'not_synced') return { text: 'Waiting for your wallet to sync', dot: 'warn' };
+    if (outcome.problem === 'needs_helper') return { text: 'Needs your helper coin first', dot: 'warn' };
     return { text: outcome.message, dot: 'warn' };
   }
   const plan = outcome.quote.plan;
@@ -83,14 +85,20 @@ export default function SendAmount() {
   // Planning a payment is real work: quote once the form has been still for a moment, not on every digit.
   const { outcome, pending } = useQuote({ address: address.trim(), amountSats, speed: 'normal', ...(fromVault ? { signer: 'hardware' as const } : {}) }, state.backing === 'demo' ? 0 : 250);
   const pill = limitPill(outcome, state, amountSats);
-  const canReview = addressOk && amountSats > 0 && !tooMuch && outcome.ok && !pending;
+  const needsHelper = !outcome.ok && outcome.problem === 'needs_helper';
+  const silent = looksLikeSilentPaymentAddress(address);
+  const canReview = addressOk && amountSats > 0 && !tooMuch && (outcome.ok || needsHelper) && !pending;
   const addressRejected = !outcome.ok && outcome.problem === 'invalid_address' && address.trim().length > 0 && addressOk;
 
   const press = (digit: string) => setDigits((d) => (d.length >= MAX_DIGITS ? d : d === '' && digit === '0' ? '' : d + digit));
   const erase = () => setDigits((d) => d.slice(0, -1));
 
   const review = () => {
-    if (!outcome.ok) return;
+    // A silent payment needs the helper coin: one screen says so and leads to funding it.
+    if (!outcome.ok) {
+      if (needsHelper) router.push({ pathname: '/send/helper', params: { address: address.trim(), amount: String(amountSats), why: outcome.message } });
+      return;
+    }
     const params = { address: address.trim(), amount: String(amountSats), ...(fromVault ? { signer: 'hardware' } : {}) };
     if (outcome.quote.plan.signer === 'hardware') router.push({ pathname: '/send/hardware', params });
     else router.push({ pathname: '/send/review', params });
@@ -107,7 +115,7 @@ export default function SendAmount() {
       gap={16}
       footer={
         <AppButton
-          title={tooMuch ? 'Not enough bitcoin' : 'Review'}
+          title={tooMuch ? 'Not enough bitcoin' : needsHelper ? 'Continue' : 'Review'}
           disabled={!canReview}
           onPress={review}
         />
@@ -118,7 +126,7 @@ export default function SendAmount() {
           <Input
             aria-labelledby="send-to"
             accessibilityLabel="Bitcoin address"
-            placeholder="Bitcoin address"
+            placeholder="Bitcoin or silent payment address"
             value={address}
             onChangeText={setAddress}
             autoCapitalize="none"
@@ -137,6 +145,7 @@ export default function SendAmount() {
         {addressBad || addressRejected ? (
           <Text className="text-destructive text-[13px] leading-[18px]">That doesn't look like a bitcoin address{addressRejected ? ' on this network' : ''}.</Text>
         ) : null}
+        {silent && !addressBad ? <Text className="text-muted-foreground text-[13px] leading-[18px]">Silent payment address: a small helper coin of this phone pays part of the fee.</Text> : null}
         {scanning ? (
           <View className="mt-2 gap-2">
             <QrScanner
@@ -149,7 +158,7 @@ export default function SendAmount() {
                   if (code.amountSats) setDigits(String(code.amountSats).slice(0, MAX_DIGITS));
                   setScanProblem(null);
                   setScanning(false);
-                } else setScanProblem(code.kind === 'unknown' ? code.reason : "That code isn't a bitcoin address.");
+                } else setScanProblem(code.kind === 'unknown' ? code.reason : "That code isn't a bitcoin or silent payment address.");
               }}
             />
             {scanProblem ? <Text className="text-destructive text-[13px] leading-[18px]">{scanProblem}</Text> : null}

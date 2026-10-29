@@ -57,9 +57,9 @@ export interface ScriptUtxo {
 
 /**
  * Chain data by output script, for the phone's own single-key coins: the helper coin (P2WPKH) and received silent
- * payments (P2TR). The guardian's `wallet.sync` serves only the vault and its `tx.broadcast` only relays spends of
- * vault coins, so these come from here: today the user's own Electrum/Esplora server (or a test double); later
- * the guardian, once its protocol serves scripts (DESIGN.md, "Silent payments").
+ * payments (P2TR). In guardian mode the guardian serves them (`GuardianSingleKeyChain`: `wallet.sync` with
+ * `wallet: "helper"`, `tx.get`, and `tx.broadcast` for a sweep into the vault); a phone with its own Electrum or
+ * Esplora server, or a test double, can pass another (DESIGN.md, "Silent payments").
  */
 export interface SingleKeyChainSource {
   readonly kind: string;
@@ -73,6 +73,8 @@ export interface SingleKeyChainSource {
   /** Broadcasts a fully signed transaction; resolves with its txid. */
   broadcast(txHex: string): Promise<string>;
   estimateFees?(targets?: number[]): Promise<FeeEstimates>;
+  /** Forget anything cached: the next lookup asks the server again. The wallet calls it at the start of a sync. */
+  refresh?(): void;
 }
 
 /** The subset of `RpcClient` the wallet uses (tests and other transports can stand in). */

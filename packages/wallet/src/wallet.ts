@@ -14,6 +14,7 @@
 import { HDKey } from '@scure/bip32';
 import { mnemonicToSeedSync } from '@scure/bip39';
 import { base64, hex } from '@scure/base';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import * as btc from '@scure/btc-signer';
 import { deriveSilentPaymentKeys, looksLikeSilentPaymentAddress, spendingPrivateKey } from '@trikey/silent-payments';
@@ -38,6 +39,7 @@ import {
 } from '@trikey/core';
 import {
   ErrorCode,
+  MAX_SINGLE_KEY_COINS,
   PairingUriError,
   RpcClient,
   RpcError,
@@ -90,6 +92,7 @@ import {
   newMnemonic,
 } from './keys.js';
 import type { CloudBackupStore, HardwareKind, HardwareProvider, HardwareSigner, HardwareWalletPolicy, KeyValueStore, PasskeyPrf, SecureKeyStore } from './platform.js';
+import { GuardianSilentPaymentScanner, GuardianSingleKeyChain } from './guardian-sp.js';
 import { TxCache } from './txcache.js';
 import { parseScannedCode, type ScannedCode } from './scan.js';
 import {
@@ -186,19 +189,23 @@ export interface WalletDeps {
   probeTimeoutMs?: number;
   /**
    * Chain data and broadcasting for the phone's single-key coins: the helper coin that pays for silent payments,
-   * and received silent payments. The guardian does not serve these yet (see `SingleKeyChainSource`). Without it the
-   * helper's balance stays unknown and received coins cannot be checked or swept.
+   * and received silent payments. Default: the guardian (`GuardianSingleKeyChain`: `wallet.sync` with
+   * `wallet: "helper"`, `tx.get`, and `tx.broadcast` for the sweep into the vault), so the phone talks to no public
+   * server. Pass another for a phone with its own Electrum or Esplora server, or a test double.
    */
   singleKeyChain?: SingleKeyChainSource;
   /**
-   * Builds what finds received silent payments, given the scan keys (the scan private key, B_spend, the labels):
-   * later the guardian over nostr; `LocalSilentPaymentScanner` for tests or a phone that reads the user's own node.
+   * A scanner that runs on this phone (or against the user's own node), given the scan keys (the scan private key,
+   * B_spend, the labels): `LocalSilentPaymentScanner`, or a test double. It is the **fallback**: the guardian scans
+   * by default (`sp.register`, then `sp.scan`), and this is asked only when the guardian cannot (no node RPC, `1700`;
+   * not answering; a guardian without silent payment support).
    */
   silentPaymentScanner?: (keys: SilentPaymentScanKeys) => SilentPaymentScanner;
   /**
-   * Ask the guardian to co-sign silent payments within the daily limit. Off by default: today's guardian refuses any
-   * input that is not the vault's (the helper coin is not), so silent payments go to the hardware wallet. Turn it on
-   * once the guardian accepts a helper input (DESIGN.md, "Silent payments").
+   * Ask the guardian to co-sign silent payments within the daily limit. Default: on once the guardian has accepted the
+   * phone's helper account (`singlekey.register`, done by `enableSilentPayments`). `false` sends every silent payment
+   * to the hardware wallet; `true` asks the guardian even before the helper is registered (it then refuses the helper
+   * input as `foreign_input`).
    */
   silentPaymentsViaGuardian?: boolean;
   /** A received silent payment waits while it would bring less than this into the vault after the fee (default 1,000 sats). */
@@ -220,7 +227,12 @@ export type WalletEvent =
   /** A step of a long operation ("Replace guardian"), for a progress line. */
   | { type: 'progress'; operation: 'replace-guardian' | 'stray-coins'; step: ReplaceStep }
   /** The phone now holds another wallet: the guardian adopted a recovery's destination, or "Replace guardian" finished. */
-  | { type: 'wallet_switched'; walletId: string; previousWalletId: string; reason: 'recovery' | 'replace-guardian'; hardwareConfirmRequired: boolean };
+  | { type: 'wallet_switched'; walletId: string; previousWalletId: string; reason: 'recovery' | 'replace-guardian'; hardwareConfirmRequired: boolean }
+  /**
+   * A scan found silent payments (checked against the spend key). They wait in the phone's silent payments balance;
+   * `sweepSilentPayments` moves them into the vault (the wallet never does that by itself: it needs the biometric prompt).
+   */
+  | { type: 'silent_payments_found'; coins: SilentPaymentCoin[] };
 
 /** The steps of "Replace guardian", in order. */
 export type ReplaceStep = 'pair' | 'sign' | 'broadcast' | 'retire' | 'switch';
@@ -241,6 +253,8 @@ export interface WalletHistoryEntry extends HistoryEntry {
   local?: true;
   /** A payment to a silent payment address (`recipient` is the `sp1…` address): the taproot output it made. */
   silentPayment?: { outputKey: string; outputAddress: string };
+  /** This transaction moved a received silent payment into the vault (the coin's outpoint). */
+  silentSweep?: { fromTxid: string; fromVout: number };
 }
 
 /** What "Replace guardian" will do, for the person to confirm (`previewReplaceGuardian`). */
@@ -341,9 +355,40 @@ export interface WalletSnapshot {
     balance: { confirmedSats: number; unconfirmedSats: number; totalSats: number };
     /** Coins not yet swept (and sweeps not yet seen as done). */
     coins: SilentPaymentCoin[];
+    /** Every payment found, newest first (at most 100), swept or not: for the activity list. */
+    received: SilentPaymentCoin[];
     scannedHeight: number;
     birthHeight: number;
+    /** Receiving is on. Off after `disableSilentPayments`: nothing scans, the coins already found can still be moved. */
+    receiving: boolean;
+    /** Labels handed out (m >= 1). */
+    labels: number[];
+    /** Who scans, and what they last said (the status line of the Silent payments page). */
+    scan: SilentPaymentScanStatus;
+    /** The guardian co-signs payments that spend the helper coin (the helper account is registered with it). */
+    helperViaGuardian: boolean;
   };
+}
+
+/** The state of the silent payment scan for a status line. */
+export type ScannerState = 'pending' | 'ok' | 'scanning' | 'needs_node_rpc' | 'unreachable' | 'unsupported' | 'error';
+
+export interface SilentPaymentScanStatus {
+  /** `off`: receiving is turned off. `needs_node_rpc`: the guardian has no RPC access to the node (`1700`). */
+  state: 'off' | ScannerState;
+  /** Whose scanner answered last: the guardian's, or the one on this phone (the fallback). */
+  source: 'guardian' | 'local' | 'none';
+  /** The last block scanned (the phone's own count). */
+  scannedHeight: number;
+  /** What the guardian itself last said, when `source` is the phone's own scanner (the fallback) because the guardian could not. */
+  guardian?: { state: ScannerState; message?: string };
+  /** The scanner's tip when it last answered. */
+  tipHeight?: number;
+  /** ms */
+  checkedAt?: number;
+  /** ms: when the newest payment was found. */
+  lastMatchAt?: number;
+  message?: string;
 }
 
 /** The guardian told this phone it no longer guards its wallet (`wallet_retired`). */
@@ -358,6 +403,17 @@ export interface WalletRetiredView {
   recoveredElsewhere: boolean;
   /** For the person, in plain words. */
   message: string;
+}
+
+/** What `sweepSilentPayments` would do now (`previewSilentSweep`). */
+export interface SilentSweepPreview {
+  /** sat/vB */
+  feeRate: number;
+  coins: { txid: string; vout: number; valueSats: number; label?: number; feeSats: number; netSats: number; /** Too small after the fee: it waits for a cheaper one. */ waiting: boolean }[];
+  /** How many a sweep would move now (at most `MAX_SWEEPS_PER_CALL`). */
+  ready: number;
+  totalFeeSats: number;
+  totalNetSats: number;
 }
 
 /** What `sweepSilentPayments` did with one received coin. */
@@ -401,6 +457,9 @@ export interface AlertContact {
 }
 
 const APPROVAL_TTL_SEC = 30 * 60;
+/** `singlekey.register` and `sp.register` answer at once (scanning runs behind): a guardian that takes longer is not answering. */
+const REGISTRATION_TIMEOUT_MS = 10_000;
+const SCAN_TIMEOUT_MS = 20_000;
 /** `send` re-syncs first if the last sync is older than this. */
 const STALE_CHAIN_MS = 60_000;
 const MAX_SEEN_ALERTS = 200;
@@ -489,6 +548,12 @@ export class TrikeyWallet {
   /** The helper account's private key and the silent payment scan key, loaded without biometrics (see `secrets`). */
   private helperKey?: HDKey;
   private spScanKey?: Uint8Array;
+  /** The guardian-backed chain source for the phone's single-key coins (used unless `deps.singleKeyChain` is given). */
+  private defaultSingleKey?: GuardianSingleKeyChain;
+  /** Registrations with the guardian run one at a time. */
+  private registering: Promise<unknown> = Promise.resolve();
+  private scanRun?: Promise<{ found: SilentPaymentCoin[]; scannedHeight: number }>;
+  private scanQueued?: Promise<{ found: SilentPaymentCoin[]; scannedHeight: number }>;
 
   private constructor(
     private readonly deps: WalletDeps,
@@ -1320,8 +1385,22 @@ export class TrikeyWallet {
     });
     await this.prefetchPrevTxs(snap.utxos).catch(() => undefined);
     await this.trackRecovery(status.activeRecoveryId).catch(() => undefined);
-    await this.syncSingleKey().catch(() => undefined);
+    await this.syncSilentPayments();
     return this.snapshot()!;
+  }
+
+  /**
+   * The silent payment part of a sync: the registration is kept current (a new guardian, a label added offline, a
+   * guardian that was reset), the helper's coins and the received coins are read, and while the guardian scans, its
+   * matches are picked up (an alert would have said so too, but alerts can be missed).
+   */
+  private async syncSilentPayments(): Promise<void> {
+    if (!this.s.helper && !this.s.silentPayments) return;
+    await this.registerSilentPayments().catch(() => undefined);
+    await this.syncSingleKey().catch(() => undefined);
+    const sp = this.s.silentPayments;
+    if (sp?.receiving && sp.registration?.sp && (sp.scanner?.state === 'ok' || sp.scanner?.state === 'scanning' || sp.scanner?.state === 'pending') && sp.scanner.source === 'guardian')
+      await this.scanSilentPayments().catch(() => undefined);
   }
 
   /**
@@ -1359,6 +1438,7 @@ export class TrikeyWallet {
   private history(): WalletHistoryEntry[] {
     const c = this.s.chain;
     const log = new Map(this.s.sendLog.map((e) => [e.txid, e]));
+    const sweeps = new Map((this.s.silentPayments?.coins ?? []).flatMap((c) => (c.sweepTxid ? [[c.sweepTxid, c] as const] : [])));
     const meta = (e: SendLogEntry) => ({
       sentAt: e.at,
       recipient: e.recipient,
@@ -1372,7 +1452,9 @@ export class TrikeyWallet {
     const out: WalletHistoryEntry[] = (c?.history ?? []).map((h) => {
       listed.add(h.txid);
       const e = log.get(h.txid);
-      return e ? { ...h, ...meta(e), ...(h.feeSats === undefined ? { feeSats: e.feeSats } : {}) } : { ...h };
+      const sweep = sweeps.get(h.txid);
+      const tagged = sweep ? { silentSweep: { fromTxid: sweep.txid, fromVout: sweep.vout } } : {};
+      return e ? { ...h, ...meta(e), ...tagged, ...(h.feeSats === undefined ? { feeSats: e.feeSats } : {}) } : { ...h, ...tagged };
     });
     const recent = this.now() - LIMIT_WINDOW_MS;
     const unlisted = this.s.sendLog
@@ -1807,6 +1889,7 @@ export class TrikeyWallet {
    */
   async retireWallet(opts: { approval?: HardwareApproval } = {}): Promise<{ walletId: string; retiredAt: number }> {
     this.requirePaired();
+    await this.unregisterSilentPayments();
     // After a restart the guardian no longer answers a retired wallet's phone, so there is nothing to re-read.
     const verify = async () => undefined;
     const res = opts.approval
@@ -2091,6 +2174,13 @@ export class TrikeyWallet {
         if (gs && newer) await this.update((s) => void (s.guardianStatus = { ...s.guardianStatus!, state: 'locked' }));
         break;
       }
+      case 'sp_received': {
+        // A payment reached the address. Look it up now (no prompt: the scan key is on the phone); moving it into the
+        // vault needs the biometric prompt, so that is the person's tap (`sweepSilentPayments`), not something to
+        // spring on them from a background alert.
+        void this.scanSilentPayments().catch(() => undefined);
+        return;
+      }
       case 'wallet_retired': {
         // `retired` is expected during "Replace guardian" (this phone asked for it); otherwise the guardian stopped
         // guarding this wallet. `recovered` is the phone that lost a recovery: the wallet was swept and another phone
@@ -2101,6 +2191,8 @@ export class TrikeyWallet {
             s.retiredByGuardian = { walletId: alert.walletId, reason: alert.reason, ...(alert.successorWalletId ? { successorWalletId: alert.successorWalletId } : {}), at: alertMs };
             if (s.guardianStatus) s.guardianStatus = { ...s.guardianStatus, phoneSpending: 'retired' };
             if (alert.reason === 'recovered') s.pending = undefined; // nothing will answer it
+            // The guardian dropped the phone's registrations with the wallet (PROTOCOL.md, "Silent payments").
+            if (s.silentPayments) s.silentPayments.registration = undefined;
           });
           if (alert.reason === 'recovered') this.stopTalkingToGuardian();
         }
@@ -2110,6 +2202,21 @@ export class TrikeyWallet {
         if ('recoveryId' in alert) this.alertRecoveryId = alert.recoveryId;
     }
     this.refreshAfterAlerts();
+  }
+
+  /**
+   * The wallet is leaving this guardian (replace, retire): takes the scan key and the matches back (`sp.unregister`) while
+   * the guardian still answers, best effort. The guardian drops them with the wallet anyway; this only does not wait
+   * for that. What the new guardian needs is registered with it at the next sync.
+   */
+  private async unregisterSilentPayments(rpc?: GuardianRpc): Promise<void> {
+    const reg = this.s.silentPayments?.registration;
+    if (!reg?.sp) return;
+    try {
+      await (rpc ?? (await this.client())).call('sp.unregister', {}, { timeoutMs: REGISTRATION_TIMEOUT_MS });
+    } catch {
+      /* it will forget with the wallet */
+    }
   }
 
   /** Closes the connection to the guardian; `client()` refuses to open another while the wallet is recovered elsewhere. */
@@ -2196,12 +2303,45 @@ export class TrikeyWallet {
   // Silent payments (DESIGN.md, "Silent payments")
 
   /**
-   * Sets up the helper coin's account (`m/84'/coin'/1'`) and the silent payment keys (BIP 352's paths) from key 2:
-   * one biometric prompt, the first time only. The helper's account key and the scan key are then kept without
-   * biometrics (a quote derives the output and a scan runs without a prompt); the spend key is never stored apart
-   * from key 2.
+   * Turns silent payments on: sets up the helper coin's account (`m/84'/coin'/1'`) and the silent payment keys (BIP 352's
+   * paths) from key 2 (one biometric prompt, the first time only), then tells the guardian (best effort: this works
+   * with the guardian offline, and the registration is repeated at the next sync):
+   *
+   * 1. `singlekey.register` with the helper account (and any coins found without the guardian), so the guardian
+   *    co-signs payments that spend the helper coin within the daily limit, serves the helper's coins and relays
+   *    the sweeps;
+   * 2. `sp.register` with the scan key, the labels and the birth height, so it scans its node's blocks for payments.
+   *    A guardian without its node's RPC answers `1700`: `snapshot().silentPayments.scan` says so, and the scanner
+   *    given to the wallet (`silentPaymentScanner`), if any, takes over.
+   *
+   * The helper account's key and the scan key are then kept without biometrics (a quote derives the output and a scan
+   * runs without a prompt); the spend key is never stored apart from key 2.
    */
   async enableSilentPayments(): Promise<void> {
+    await this.ensureSingleKeys();
+    if (!this.s.silentPayments!.receiving) await this.update((s) => void (s.silentPayments!.receiving = true));
+    await this.registerSilentPayments().catch(() => undefined);
+  }
+
+  /**
+   * Turns receiving off: the guardian forgets the scan key and its matches (`sp.unregister`), and nothing scans. The
+   * coins already found stay (they are registered with `singlekey.register` first, so their sweeps can still go
+   * through the guardian); the helper coin stays too, so payments to silent payment addresses still work. If the
+   * guardian cannot be reached the switch is still turned off here and the guardian is told at the next sync.
+   */
+  async disableSilentPayments(): Promise<void> {
+    if (!this.s.silentPayments?.receiving) return;
+    await this.update((s) => void (s.silentPayments!.receiving = false));
+    await this.registerSilentPayments().catch(() => undefined);
+  }
+
+  /** Waits for the registration with the guardian that is running or queued (one follows `silentPaymentAddress` with a new label). */
+  async settleSilentPaymentRegistration(): Promise<void> {
+    await this.registering;
+  }
+
+  /** Keys only (the first use): the helper account and the silent payment keys. Does not touch the guardian. */
+  private async ensureSingleKeys(): Promise<void> {
     const s = this.s;
     if (s.helper && s.silentPayments && s.secrets.helper && s.secrets.spScan) return;
     await this.withKey2('Set up silent payments', (m) => this.setupSingleKey(m, {}));
@@ -2246,6 +2386,7 @@ export class TrikeyWallet {
           labels: restored.silentPayments?.labels ?? [],
           scannedHeight: birthHeight - 1,
           coins: [],
+          receiving: true,
         };
       });
     } finally {
@@ -2287,24 +2428,39 @@ export class TrikeyWallet {
    * silent payment address spends and gives back as change. Funds there are the phone's alone (not the vault's).
    */
   async helperReceiveAddress(): Promise<{ address: string; index: number }> {
-    await this.enableSilentPayments();
+    await this.ensureSingleKeys();
     const index = this.s.helper!.nextReceiveIndex;
     return { address: this.helperAddress(0, index).address, index };
   }
 
-  /** The address to receive silent payments at: unlabeled, or with label `m >= 1` (remembered for rescans). */
+  /**
+   * The address to receive silent payments at: unlabeled, or with label `m >= 1` (remembered for rescans; a new label
+   * is registered with the guardian, which scans for it too). Refused while receiving is turned off, because nothing
+   * would be watching for the payments.
+   */
   async silentPaymentAddress(opts: { label?: number } = {}): Promise<string> {
     const receiver = await this.silentPaymentReceiver();
+    if (!this.s.silentPayments!.receiving) throw new WalletError('silent_payments_off', 'Silent payments are turned off. Turn them on to get an address.');
     const address = receiver.address(opts);
     const m = opts.label;
-    if (m !== undefined && !this.s.silentPayments!.labels.includes(m))
+    if (m !== undefined && !this.s.silentPayments!.labels.includes(m)) {
       await this.update((s) => void (s.silentPayments!.labels = [...s.silentPayments!.labels, m].sort((a, b) => a - b)));
+      // The guardian scans for the new label too; this does not hold up the address (`settleSilentPaymentRegistration` waits for it).
+      void this.registerSilentPayments().catch(() => undefined);
+    }
     return address;
+  }
+
+  /** A new labeled address: the next unused label (1, 2, ...), registered with the guardian. */
+  async addSilentPaymentLabel(): Promise<{ label: number; address: string }> {
+    await this.ensureSingleKeys();
+    const label = Math.max(0, ...this.s.silentPayments!.labels) + 1;
+    return { label, address: await this.silentPaymentAddress({ label }) };
   }
 
   /** The receiving keys: the scan key (shareable with a scanning service) and the spend key behind key 2's biometrics. */
   async silentPaymentReceiver(): Promise<SilentPaymentReceiver> {
-    await this.enableSilentPayments();
+    await this.ensureSingleKeys();
     await this.loadSingleKeySecrets();
     if (!this.spScanKey) throw new WalletError('key_unavailable', 'The silent payment scan key is missing from this phone.');
     const sp = this.s.silentPayments!;
@@ -2338,8 +2494,9 @@ export class TrikeyWallet {
 
   /** Refreshes the helper's coins and the received coins' state from `singleKeyChain` (part of `sync`). */
   private async syncSingleKey(): Promise<void> {
-    const src = this.deps.singleKeyChain;
+    const src = this.singleKey();
     if (!src || (!this.s.helper && !this.s.silentPayments)) return;
+    src.refresh?.();
     await this.loadSingleKeySecrets();
     const GAP = 10;
     let helper: { utxos: HelperCoin[]; nextReceiveIndex: number; nextChangeIndex: number } | undefined;
@@ -2390,6 +2547,30 @@ export class TrikeyWallet {
     });
   }
 
+  private scanStatus(): SilentPaymentScanStatus {
+    const sp = this.s.silentPayments!;
+    const st = sp.scanner;
+    const base = {
+      scannedHeight: sp.scannedHeight,
+      ...(st?.tipHeight !== undefined ? { tipHeight: st.tipHeight } : {}),
+      ...(st?.checkedAt ? { checkedAt: st.checkedAt } : {}),
+      ...(st?.lastMatchAt ? { lastMatchAt: st.lastMatchAt } : {}),
+      ...(st?.message ? { message: st.message } : {}),
+      ...(st?.guardian ? { guardian: st.guardian } : {}),
+    };
+    if (!sp.receiving) return { ...base, state: 'off', source: 'none' };
+    if (!st) return { ...base, state: 'pending', source: 'none' };
+    return { ...base, state: st.state, source: st.source };
+  }
+
+  /**
+   * The helper coin's balance and the silent payments, from the last sync: what `snapshot()` carries, but available
+   * before the wallet has synced (the app shows the helper's address and the receiving state at once).
+   */
+  singleKeyView(): Pick<WalletSnapshot, 'helper' | 'silentPayments'> {
+    return this.singleKeySnapshot();
+  }
+
   private singleKeySnapshot(): Pick<WalletSnapshot, 'helper' | 'silentPayments'> {
     const out: Pick<WalletSnapshot, 'helper' | 'silentPayments'> = {};
     const h = this.s.helper;
@@ -2407,24 +2588,251 @@ export class TrikeyWallet {
       out.silentPayments = {
         balance: { confirmedSats: confirmed, unconfirmedSats: total - confirmed, totalSats: total },
         coins: open,
+        received: [...sp.coins].sort((a, b) => b.foundAt - a.foundAt || b.height - a.height).slice(0, 100),
         scannedHeight: sp.scannedHeight,
         birthHeight: sp.birthHeight,
+        receiving: sp.receiving,
+        labels: [...sp.labels],
+        scan: this.scanStatus(),
+        helperViaGuardian: this.helperViaGuardian(),
       };
     }
     return out;
   }
 
+  // -- the guardian side: registration, scanning ------------------------------------------------------------------
+
+  /** The chain source for the phone's single-key coins: the one in the deps, else the guardian. */
+  private singleKey(): SingleKeyChainSource | undefined {
+    if (this.deps.singleKeyChain) return this.deps.singleKeyChain;
+    if (!this.s.guardian) return undefined;
+    this.defaultSingleKey ??= new GuardianSingleKeyChain(
+      () => this.guardianRpc(),
+      () => {
+        const h = this.s.helper;
+        return h ? { xpub: h.account.xpub, versions: this.network.bip32 } : undefined;
+      },
+    );
+    return this.defaultSingleKey;
+  }
+
+  private guardianRpc(): GuardianRpc {
+    if (!this.rpc) throw new WalletError('wrong_state', 'Not connected to the guardian; call start() first.');
+    return this.rpc;
+  }
+
+  /** The phone's guardian can be asked about silent payments (it is paired, and still guards this wallet). */
+  private guardianServes(): boolean {
+    const s = this.s;
+    return s.stage === 'paired' && !!s.guardian && !!s.wallet && !this.recoveredElsewhere && s.retiredByGuardian?.walletId !== s.wallet.walletId;
+  }
+
+  /** Whether payments that spend the helper coin go to the guardian for its co-signature. */
+  private helperViaGuardian(): boolean {
+    if (this.deps.silentPaymentsViaGuardian === false) return false;
+    const r = this.s.silentPayments?.registration;
+    if (r?.helper && r.walletId === this.s.wallet?.walletId && r.guardian === this.s.guardian?.pubkey) return true;
+    return this.deps.silentPaymentsViaGuardian === true;
+  }
+
   /**
-   * Looks for received silent payments with the injected scanner, from the block after the last one scanned (or the
-   * wallet's birth height). Every match is checked (its tweak must give its output key, its label must be ours)
-   * before it is kept. Returns the new coins.
+   * Tells the guardian what it needs for silent payments, and takes back what the phone no longer wants it to hold:
+   * the helper account and the coins found without it (`singlekey.register`), then the scan key, labels and birth
+   * height (`sp.register`) while receiving is on, or `sp.unregister` once it is off. Does nothing when the guardian
+   * already has all of it; runs one at a time. Never throws for a guardian that cannot be reached or does not support
+   * it: the outcome is in `snapshot().silentPayments.scan`.
+   */
+  private registerSilentPayments(opts: { force?: boolean } = {}): Promise<void> {
+    const run = this.registering.then(() => this.reconcileRegistration(opts));
+    this.registering = run.catch(() => undefined);
+    return run;
+  }
+
+  /** What the guardian should hold for the helper and the coins found so far. */
+  private registrationWanted(): { walletId: string; guardian: string; coins: { txid: string; vout: number; script: string }[]; coinsKey: string } {
+    const s = this.s;
+    const open = s.silentPayments!.coins.filter((c) => c.status === 'unspent' || c.status === 'sweeping').slice(-MAX_SINGLE_KEY_COINS);
+    const coins = open.map((c) => ({ txid: c.txid, vout: c.vout, script: `5120${c.outputKey}` }));
+    const coinsKey = hex.encode(sha256(new TextEncoder().encode(coins.map((c) => `${c.txid}:${c.vout}`).sort().join(','))));
+    return { walletId: s.wallet!.walletId, guardian: s.guardian!.pubkey, coins, coinsKey };
+  }
+
+  /** `sp.register`'s birth height: where the guardian starts scanning. Blocks before what is already scanned cannot hold anything new. */
+  private registrationHeight(): number {
+    const sp = this.s.silentPayments!;
+    return Math.max(sp.birthHeight, sp.scannedHeight - 6);
+  }
+
+  private async reconcileRegistration(opts: { force?: boolean }): Promise<void> {
+    const s0 = this.s;
+    if (!this.guardianServes() || !s0.helper || !s0.silentPayments) return;
+    const want = this.registrationWanted();
+    const current = () => {
+      const r = this.s.silentPayments?.registration;
+      return r && r.walletId === want.walletId && r.guardian === want.guardian ? r : undefined;
+    };
+    const writeRegistration = (patch: Partial<{ helper: boolean; coins: string; sp: boolean; labels: number[] }>) =>
+      this.update((s) => {
+        const prev = s.silentPayments!.registration;
+        const same = prev && prev.walletId === want.walletId && prev.guardian === want.guardian ? prev : undefined;
+        s.silentPayments!.registration = { helper: false, coins: '', sp: false, labels: [], ...same, walletId: want.walletId, guardian: want.guardian, ...patch };
+      });
+
+    // 1. The helper account and the coins: so the guardian co-signs helper payments, serves the coins and relays their sweeps.
+    if (!current()?.helper || current()!.coins !== want.coinsKey || opts.force) {
+      try {
+        await this.callRegistration('singlekey.register', { helper: s0.helper.account, coins: want.coins });
+        await writeRegistration({ helper: true, coins: want.coinsKey });
+      } catch (e) {
+        await this.noteScannerProblem(e);
+        return;
+      }
+    }
+    // 2. The scan key (or taking it back).
+    const sp = this.s.silentPayments!;
+    const reg = current()!;
+    if (sp.receiving) {
+      const sameLabels = reg.labels.length === sp.labels.length && reg.labels.every((l, i) => l === sp.labels[i]);
+      if (reg.sp && sameLabels && !opts.force) return;
+      const receiver = await this.silentPaymentReceiver();
+      const keys = receiver.scanKeys();
+      try {
+        await this.callRegistration('sp.register', {
+          scanPrivateKey: hex.encode(keys.scanPrivateKey),
+          spendPublicKey: hex.encode(keys.spendPublicKey),
+          labels: keys.labels,
+          birthHeight: this.registrationHeight(),
+        });
+        await writeRegistration({ sp: true, labels: [...sp.labels] });
+        await this.noteScanner({ source: 'guardian', state: 'pending' });
+      } catch (e) {
+        await writeRegistration({ sp: false });
+        await this.noteScannerProblem(e);
+      } finally {
+        keys.scanPrivateKey.fill(0);
+      }
+    } else if (reg.sp) {
+      try {
+        await this.callRegistration('sp.unregister', {});
+        await writeRegistration({ sp: false, labels: [] });
+      } catch (e) {
+        await this.noteScannerProblem(e);
+      }
+    }
+  }
+
+  /** A registration call. They are idempotent, so a repeat the restarted guardian answers with 1501 is asked again under a new id. */
+  private async callRegistration<M extends MethodName>(method: M, params: Params<M>): Promise<Result<M>> {
+    try {
+      return await this.call(method, params, { timeoutMs: REGISTRATION_TIMEOUT_MS });
+    } catch (e) {
+      if (e instanceof WalletError && e.refusal?.kind === 'unavailable') return this.call(method, params, { timeoutMs: REGISTRATION_TIMEOUT_MS });
+      throw e;
+    }
+  }
+
+  /** Records the outcome of a scan (or of registering the guardian's): who answered and in what state. */
+  private async noteScanner(patch: { source: 'guardian' | 'local'; state: ScannerState; tipHeight?: number; message?: string; matched?: boolean }): Promise<void> {
+    const now = this.now();
+    const { matched, ...rest } = patch;
+    await this.update((s) => {
+      const sp = s.silentPayments;
+      if (!sp) return;
+      const lastMatchAt = matched ? now : sp.scanner?.lastMatchAt;
+      // What the guardian said last stays next to a scan the phone did itself, so the person sees both.
+      const guardian = patch.source === 'guardian' ? { state: patch.state, ...(patch.message ? { message: patch.message } : {}) } : sp.scanner?.guardian;
+      sp.scanner = { ...rest, checkedAt: now, ...(lastMatchAt !== undefined ? { lastMatchAt } : {}), ...(guardian ? { guardian } : {}) };
+    });
+  }
+
+  /** The guardian could not do something (`state`): remembered, without hiding a scan this phone did itself that worked. */
+  private async noteGuardianScanner(state: ScannerState, message?: string): Promise<void> {
+    const prev = this.s.silentPayments?.scanner;
+    if (prev?.source === 'local' && prev.state === 'ok') {
+      await this.update((s) => {
+        if (s.silentPayments?.scanner) s.silentPayments.scanner.guardian = { state, ...(message ? { message } : {}) };
+      });
+      return;
+    }
+    await this.noteScanner({ source: 'guardian', state, ...(message ? { message } : {}) });
+  }
+
+  /** Records why the guardian could not do what silent payments ask of it. */
+  private async noteScannerProblem(e: unknown): Promise<void> {
+    const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
+    if (refusal?.kind === 'node_rpc_required') return this.noteGuardianScanner('needs_node_rpc', refusal.message);
+    if (refusal?.kind === 'unreachable' || refusal?.kind === 'unavailable') return this.noteGuardianScanner('unreachable', refusal.message);
+    if (refusal?.kind === 'other' && refusal.code === ErrorCode.MethodNotFound) return this.noteGuardianScanner('unsupported', 'This guardian does not support silent payments yet. Update it.');
+    if (e instanceof WalletError && e.code === 'wallet_recovered_elsewhere') return;
+    return this.noteGuardianScanner('error', e instanceof Error ? e.message : String(e));
+  }
+
+  /** The error to show for a scan the guardian could not do, typed so the app can say what to do. */
+  private scannerError(e: unknown): unknown {
+    const refusal = e instanceof WalletError ? e.refusal : undefined;
+    if (refusal?.kind === 'node_rpc_required')
+      return new WalletError(
+        'node_rpc_required',
+        "Your guardian can't scan for silent payments because it has no access to your node's RPC. On Umbrel and Start9 this comes with the Bitcoin Core app; for another setup, give it BITCOIN_RPC_HOST, BITCOIN_RPC_PORT, BITCOIN_RPC_USER and BITCOIN_RPC_PASS.",
+        { refusal, cause: e },
+      );
+    return e;
+  }
+
+  /**
+   * Looks for received silent payments from the block after the last one scanned (or the wallet's birth height) and
+   * checks every match (its tweak must give its output key, its label must be ours) before keeping it. Returns the new
+   * coins; they wait in the silent payments balance until `sweepSilentPayments` moves them into the vault.
+   *
+   * Who scans: the guardian (`sp.scan`, after `sp.register`; a `1701` is answered by registering again), and when it
+   * cannot (no node RPC, `1700`; not answering; no support) the scanner passed in the deps, if there is one. With
+   * neither it throws `node_rpc_required` or the guardian's refusal.
    */
   async scanSilentPayments(): Promise<{ found: SilentPaymentCoin[]; scannedHeight: number }> {
+    // One scan runs at a time. A caller that comes while one runs gets the next one (a payment can arrive after the
+    // running one asked); callers that come in a burst of alerts share that next one.
+    if (!this.scanRun) return this.startScan();
+    if (this.scanQueued) return this.scanQueued;
+    const queued = this.scanRun.then(
+      () => this.startScan(),
+      () => this.startScan(),
+    );
+    this.scanQueued = queued;
+    return queued;
+  }
+
+  private startScan(): Promise<{ found: SilentPaymentCoin[]; scannedHeight: number }> {
+    this.scanQueued = undefined;
+    const run = this.scanNow().finally(() => {
+      if (this.scanRun === run) this.scanRun = undefined;
+    });
+    this.scanRun = run;
+    return run;
+  }
+
+  private async scanNow(): Promise<{ found: SilentPaymentCoin[]; scannedHeight: number }> {
     const receiver = await this.silentPaymentReceiver();
-    const make = this.deps.silentPaymentScanner;
-    if (!make) throw new WalletError('silent_payments_unavailable', 'No silent payment scanner is set up on this phone.');
+    if (!this.s.silentPayments!.receiving) return { found: [], scannedHeight: this.s.silentPayments!.scannedHeight };
+    const from = () => Math.max(this.s.silentPayments!.birthHeight, this.s.silentPayments!.scannedHeight + 1);
+    let res: Awaited<ReturnType<SilentPaymentScanner['scan']>> | undefined;
+    let source: 'guardian' | 'local' = 'guardian';
+    let failure: unknown;
+    if (this.guardianServes()) {
+      try {
+        res = await this.scanViaGuardian(from);
+      } catch (e) {
+        failure = this.scannerError(e);
+        await this.noteScannerProblem(e);
+      }
+    }
+    const local = this.deps.silentPaymentScanner;
+    if (!res && local) {
+      source = 'local';
+      res = await local(receiver.scanKeys()).scan(from());
+    }
+    if (!res) throw failure ?? new WalletError('silent_payments_unavailable', 'No silent payment scanner is set up on this phone.');
+
     const sp = this.s.silentPayments!;
-    const res = await make(receiver.scanKeys()).scan(Math.max(sp.birthHeight, sp.scannedHeight + 1));
     const have = new Set(sp.coins.map((c) => `${c.txid}:${c.vout}`));
     const now = this.now();
     const found: SilentPaymentCoin[] = [];
@@ -2447,10 +2855,73 @@ export class TrikeyWallet {
     await this.update((s) => {
       const r = s.silentPayments!;
       r.coins = [...r.coins, ...found];
-      r.scannedHeight = Math.max(r.scannedHeight, res.tipHeight);
+      r.scannedHeight = Math.max(r.scannedHeight, res!.tipHeight);
     });
+    await this.noteScanner({ source, state: res.scanning ? 'scanning' : 'ok', tipHeight: res.tipHeight, matched: found.length > 0 });
+    if (found.length) {
+      this.emit({ type: 'silent_payments_found', coins: found });
+      // The guardian can relay their sweeps whoever found them, and keeps relaying them after it forgets its matches.
+      await this.registerSilentPayments().catch(() => undefined);
+    }
     await this.syncSingleKey().catch(() => undefined);
     return { found, scannedHeight: this.s.silentPayments!.scannedHeight };
+  }
+
+  /** `sp.scan` over the guardian (registering first, and again after a `1701`), following a truncated answer. */
+  private async scanViaGuardian(from: () => number): Promise<Awaited<ReturnType<SilentPaymentScanner['scan']>>> {
+    await this.client();
+    await this.registerSilentPayments();
+    let again = false;
+    for (;;) {
+      if (!this.s.silentPayments!.registration?.sp) throw this.scannerStateError();
+      const scanner = new GuardianSilentPaymentScanner(() => this.guardianRpc(), { timeoutMs: SCAN_TIMEOUT_MS });
+      try {
+        let res = await scanner.scan(from());
+        const matches = [...res.matches];
+        // More matches than one answer holds: ask again from the last one (they are oldest first).
+        for (let pages = 0; res.matchesTruncated && pages < 20; pages++) {
+          const last = res.matches.at(-1)?.height;
+          if (last === undefined) break;
+          res = await scanner.scan(last);
+          matches.push(...res.matches);
+        }
+        return { ...res, matches };
+      } catch (e) {
+        const refusal = e instanceof WalletError ? e.refusal : undefined;
+        if (refusal?.kind !== 'silent_payments_not_registered' || again) throw e;
+        // 1701: the guardian lost the registration (it was reset, or another phone's), so register again.
+        again = true;
+        await this.update((s) => {
+          const r = s.silentPayments?.registration;
+          if (r) r.sp = false;
+        });
+        await this.registerSilentPayments({ force: true });
+      }
+    }
+  }
+
+  /** Why the guardian is not scanning, as the error `scanSilentPayments` throws. */
+  private scannerStateError(): unknown {
+    const st = this.s.silentPayments?.scanner;
+    if (st?.state === 'needs_node_rpc') return this.scannerError(new WalletError('guardian_refused', st.message ?? '1700', { refusal: { kind: 'node_rpc_required', message: st.message ?? '' } }));
+    if (st?.state === 'unreachable') return new WalletError('guardian_refused', st.message ?? 'The guardian did not answer.', { refusal: { kind: 'unreachable', message: st.message ?? 'The guardian did not answer.' } });
+    return new WalletError('silent_payments_unavailable', st?.message ?? 'The guardian is not scanning for silent payments.');
+  }
+
+  /**
+   * What `sweepSilentPayments` would do now, without signing or sending: each received coin with the fee its move would
+   * pay and what would reach the vault, and which wait (too small after the fee). From the last sync; no I/O.
+   */
+  previewSilentSweep(opts: { feeRate?: number; minSats?: number } = {}): SilentSweepPreview {
+    const sp = this.s.silentPayments;
+    const feeRate = opts.feeRate ?? pickFeeRate(this.fees, 'normal');
+    const feeSats = Math.ceil(VB_SWEEP * feeRate);
+    const minSats = Math.max(DUST_SATS, opts.minSats ?? this.deps.silentPaymentSweepMinSats ?? DEFAULT_SWEEP_MIN_SATS);
+    const coins = (sp?.coins ?? [])
+      .filter((c) => c.status === 'unspent')
+      .map((c) => ({ txid: c.txid, vout: c.vout, valueSats: c.valueSats, feeSats, netSats: Math.max(0, c.valueSats - feeSats), ...(c.label !== undefined ? { label: c.label } : {}), waiting: c.valueSats - feeSats < minSats }));
+    const ready = coins.filter((c) => !c.waiting).slice(0, MAX_SWEEPS_PER_CALL);
+    return { feeRate, coins, ready: ready.length, totalFeeSats: ready.length * feeSats, totalNetSats: ready.reduce((a, c) => a + c.netSats, 0) };
   }
 
   /**
@@ -2462,9 +2933,12 @@ export class TrikeyWallet {
    */
   async sweepSilentPayments(opts: { feeRate?: number; minSats?: number } = {}): Promise<SilentSweepOutcome[]> {
     this.requirePaired();
-    const src = this.deps.singleKeyChain;
-    if (!src) throw new WalletError('silent_payments_unavailable', 'Moving silent payments needs a chain source for the phone\'s own coins (the guardian does not relay them yet).');
+    const src = this.singleKey();
+    if (!src) throw new WalletError('silent_payments_unavailable', "Moving silent payments needs a chain source for the phone's own coins.");
     if (!this.s.silentPayments) return [];
+    if (!this.deps.singleKeyChain) await this.client();
+    // The guardian relays a sweep of coins it knows: found by its scanner, or registered by the phone.
+    await this.registerSilentPayments().catch(() => undefined);
     await this.syncSingleKey();
     const coins = this.s.silentPayments.coins.filter((c) => c.status === 'unspent');
     if (!coins.length) return [];
@@ -2509,7 +2983,8 @@ export class TrikeyWallet {
         const id = await src.broadcast(t.txHex);
         if (id !== t.txid) throw new Error(`the chain source reported txid ${id}, expected ${t.txid}`);
       } catch (e) {
-        out.push({ ...base, status: 'failed', message: e instanceof Error ? e.message : String(e) });
+        const typed = sweepBroadcastError(e);
+        out.push({ ...base, status: 'failed', message: typed?.message ?? (e instanceof Error ? e.message : String(e)) });
         continue;
       }
       await this.update((s) => {
@@ -2572,7 +3047,7 @@ export class TrikeyWallet {
     const limit = this.s.guardianStatus?.dailyLimit?.limitSats ?? this.s.rules?.policy.dailyLimitSats ?? 0;
     const remaining = Math.max(0, limit - spentTodayEstimate(this.s, this.now()));
     let plan: SigningPath;
-    if (req.signer === 'hardware' || !this.deps.silentPaymentsViaGuardian) plan = { signer: 'phone+hardware', reason: 'requested' };
+    if (req.signer === 'hardware' || !this.helperViaGuardian()) plan = { signer: 'phone+hardware', reason: 'requested' };
     else {
       const blocker = guardianBlocker(this.s.guardianStatus);
       if (blocker) plan = { signer: 'phone+hardware', reason: blocker };
@@ -2672,7 +3147,7 @@ export class TrikeyWallet {
   private async helperPrevTx(txid: string): Promise<string> {
     const cached = await this.txs.get(txid);
     if (cached) return cached;
-    const src = this.deps.singleKeyChain;
+    const src = this.singleKey();
     const txHex = src ? await src.getTransaction(txid) : await this.chain.getTransaction(txid);
     if (txidOfRaw(txHex) !== txid) throw new WalletError('guardian_mismatch', `The chain source returned a transaction that is not ${txid}.`);
     return txHex;
@@ -2711,6 +3186,14 @@ export class TrikeyWallet {
         if (!refusal) throw e;
         guardianRefusal = refusal;
         await this.learnFromRefusal(refusal);
+        // The guardian does not know the helper account (it was reset, or replaced): register again before the next payment.
+        if (refusal.kind === 'psbt_rejected' && (refusal.reason === 'foreign_input' || refusal.reason === 'invalid_helper_input')) {
+          await this.update((s) => {
+            const r = s.silentPayments?.registration;
+            if (r) r.helper = false;
+          });
+          void this.registerSilentPayments().catch(() => undefined);
+        }
         const reason = fallbackReason(refusal);
         if (!reason || opts.fallbackToHardware === false || !this.deps.hardware) return { ok: false, refusal };
         hardwareReason = reason;
@@ -3172,6 +3655,11 @@ export class TrikeyWallet {
       s.replacing = undefined;
       s.retiredByGuardian = undefined;
       s.hardwareConfirm = undefined;
+      // The new guardian knows nothing of the helper account or the scan key yet: `sync` registers them.
+      if (s.silentPayments) {
+        s.silentPayments.registration = undefined;
+        s.silentPayments.scanner = undefined;
+      }
     });
     // From here on the new guardian is the guardian.
     this.rpc?.close();
@@ -3333,6 +3821,8 @@ export class TrikeyWallet {
           throw asWalletError(e, 'wallet.retire');
         }
       };
+      // The old guardian may still hold the scan key from before the move: take it back, then retire.
+      await conn.rpc.call('sp.unregister', {}, { timeoutMs: REGISTRATION_TIMEOUT_MS }).catch(() => undefined);
       const res = await call(await this.approve({ action: 'retire-wallet' }, { walletId: w.walletId, sequence: st.nextHardwareSequence }));
       if (res.walletId !== w.walletId) throw new WalletError('guardian_mismatch', 'The guardian retired another wallet.');
       await this.update((s) => void (s.retiredWallets = s.retiredWallets.map((x) => (x.walletId === w.walletId ? { ...x, retiredOnGuardian: true } : x))));

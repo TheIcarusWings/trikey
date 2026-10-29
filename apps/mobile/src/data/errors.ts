@@ -37,6 +37,17 @@ export type ServiceErrorKind =
   | 'backup_wrong_secret'
   | 'backup_invalid'
   | 'wallet_exists'
+  // silent payments
+  /** Paying a silent payment address needs the helper coin: there is none, or it is too small (the message says how to fund it). */
+  | 'silent_payment_needs_helper'
+  /** There is no scanner that can look for silent payments right now. */
+  | 'silent_payments_unavailable'
+  /** The guardian cannot scan for silent payments without the RPC of the user's node (1700). */
+  | 'node_rpc_required'
+  /** Silent payments are turned off. */
+  | 'silent_payments_off'
+  /** A silent payment cannot be paid from where it was asked (the vault, in Recovery Key mode). */
+  | 'silent_payment_from_vault'
   /** A backup or code for another network than the phone's (`network` says which). */
   | 'network_mismatch'
   /** The hardware wallet has to confirm the recovered wallet first. */
@@ -68,6 +79,10 @@ export class WalletServiceError extends Error {
 }
 
 export const isServiceError = (e: unknown): e is WalletServiceError => e instanceof WalletServiceError;
+
+/** What to tell a person whose guardian answers 1700: it needs the RPC of the user's node to look for silent payments. */
+export const NODE_RPC_TEXT =
+  "Your guardian can't look for silent payments because it has no access to your node's RPC. Umbrel and Start9 give it one with the Bitcoin Core app; on another setup, give the guardian its node's RPC settings. Until then receiving is paused.";
 
 /** The polite "not yet" for a feature without wallet code behind it. */
 export function notAvailableYet(what: string, instead?: string): WalletServiceError {

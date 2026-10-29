@@ -46,6 +46,8 @@ import { SIMULATED_OPTION, hardwareBrandOf, hardwareOptionTable, type UiOs } fro
 import { mapError, refusalToError } from './real-errors';
 import { emptyRecoveryKeyState } from './rk-empty';
 import type { ReceiveAddress, WalletService } from './service';
+import type { SilentPaymentActions } from './sp-actions';
+import { emptySilentPayments } from './sp-empty';
 import {
   SELECTABLE_NETWORKS,
   type AmountUnit,
@@ -74,6 +76,7 @@ import {
   type ScannedCode,
   type SendQuote,
   type SendRequest,
+  type SilentPaymentsState,
   type ThemePreference,
   type Transaction,
   type WalletMode,
@@ -130,6 +133,8 @@ export interface RealWalletService extends WalletService {
 }
 
 const DEFAULT_SWEEP_FEE_CAP_SATS = 20_000;
+/** A helper coin below this cannot pay its share of the fee of a payment at ordinary rates: shown as not funded. */
+const HELPER_USABLE_SATS = 1_000;
 const PREFS_KEY = 'trikey.app.prefs.v1';
 const networkPrefKey = (mode: string) => `trikey.app.network.${mode}`;
 const walletKey = (mode: string, network: NetworkName) => `trikey.wallet.${mode}.${network}`;
@@ -143,6 +148,8 @@ function describeProblem(e: WalletError): { problem: QuoteProblem; message: stri
   switch (e.code) {
     case 'invalid_address':
       return { problem: 'invalid_address', message };
+    case 'silent_payment_needs_helper':
+      return { problem: 'needs_helper', message };
     case 'amount_too_small':
       return { problem: 'amount_too_small', message };
     case 'insufficient_funds':
@@ -495,7 +502,7 @@ class Service implements RealWalletService {
       contacts,
       balanceSats: snap?.balance.totalSats ?? 0,
       receiveAddress: this.receiveAddressNow(),
-      activity: buildActivity(snap?.history ?? [], this.log, now),
+      activity: buildActivity(snap?.history ?? [], this.log, now, this.w?.singleKeyView().silentPayments?.received ?? []),
       recovery,
       recoveryKey: emptyRecoveryKeyState({ keyKind: this.keyKind, network: this.network }),
       hardwareConfirmRequired: this.w?.hardwareConfirmRequired ?? false,
@@ -512,6 +519,46 @@ class Service implements RealWalletService {
         outcome === 'finished' && s?.recovery?.recovery
           ? { lostKey: s.recovery.recovery.survivingRole === 'app' ? 'hardware' : 'phone', movedSats: s.recovery.recovery.amountSats }
           : null,
+      silentPayments: this.silentView(),
+    };
+  }
+
+  /** The silent payment part of the state: what the screens show about the helper coin, the scan and what was received. */
+  private silentView(): SilentPaymentsState {
+    const w = this.w;
+    const view = w?.state.helper && w.state.silentPayments ? w.singleKeyView() : undefined;
+    const sp = view?.silentPayments;
+    const h = view?.helper;
+    if (!w || !sp || !h) return emptySilentPayments('full');
+    const preview = w.previewSilentSweep();
+    const helperSats = h.confirmedSats + h.unconfirmedSats;
+    return {
+      support: 'full',
+      setUp: true,
+      receiving: sp.receiving,
+      scan: {
+        state: sp.scan.state,
+        source: sp.scan.source,
+        scannedHeight: sp.scan.scannedHeight,
+        ...(sp.scan.tipHeight !== undefined ? { tipHeight: sp.scan.tipHeight } : {}),
+        ...(sp.scan.checkedAt ? { checkedAt: this.iso(sp.scan.checkedAt) } : {}),
+        ...(sp.scan.lastMatchAt ? { lastMatchAt: this.iso(sp.scan.lastMatchAt) } : {}),
+        ...(sp.scan.message ? { message: sp.scan.message } : {}),
+        ...(sp.scan.guardian ? { guardian: sp.scan.guardian } : {}),
+      },
+      labels: sp.labels,
+      helper: { sats: helperSats, unconfirmedSats: h.unconfirmedSats, funded: helperSats >= HELPER_USABLE_SATS, viaGuardian: sp.helperViaGuardian },
+      balance: { sats: sp.balance.totalSats, unconfirmedSats: sp.balance.unconfirmedSats },
+      coins: sp.coins
+        .filter((c) => c.status === 'unspent')
+        .map((c) => ({ id: `${c.txid}:${c.vout}`, txid: c.txid, valueSats: c.valueSats, ...(c.label !== undefined ? { label: c.label } : {}), confirmed: c.height > 0, foundAt: this.iso(c.foundAt) })),
+      move: {
+        feeRateSatPerVb: preview.feeRate,
+        ready: preview.ready,
+        totalFeeSats: preview.totalFeeSats,
+        totalNetSats: preview.totalNetSats,
+        coins: preview.coins.map((c) => ({ id: `${c.txid}:${c.vout}`, valueSats: c.valueSats, feeSats: c.feeSats, netSats: c.netSats, waiting: c.waiting })),
+      },
     };
   }
 
@@ -581,6 +628,9 @@ class Service implements RealWalletService {
           // The new wallet's coins, from the guardian that now guards it.
           void this.sync();
         } else this.refresh();
+        break;
+      case 'silent_payments_found':
+        this.refresh();
         break;
       case 'alert': {
         const a = e.alert;
@@ -806,6 +856,9 @@ class Service implements RealWalletService {
       st.guardianStatus?.activeRecoveryId,
       st.rules?.policyHash,
       st.spends.length,
+      // a silent payment is planned from the helper coin and whether the guardian co-signs it
+      st.helper?.utxos.map((u) => `${u.txid}:${u.vout}`).join(','),
+      st.silentPayments?.registration?.helper,
       Math.floor(this.clock.now() / 60_000), // the daily limit window moves
     ]);
     if (this.lastQuote?.key === key) return this.lastQuote.outcome;
@@ -833,6 +886,7 @@ class Service implements RealWalletService {
         remainingAfterSats: q.remainingAfterSats,
         feeRateSatPerVb: q.feeRate,
         ref,
+        ...(q.silentPayment ? { silentPayment: { outputAddress: q.silentPayment.outputAddress, helperFeeSats: q.silentPayment.helper.feeSats } } : {}),
       };
       return { ok: true, quote };
     } catch (e) {
@@ -1027,6 +1081,75 @@ class Service implements RealWalletService {
   readCode(text: string): ScannedCode {
     return parseScannedCode(text, { network: this.network, now: Math.floor(this.clock.now() / 1000) });
   }
+
+  // ===========================================================================
+  // Silent payments (BIP 352)
+
+  readonly silentPayments: SilentPaymentActions = {
+    enable: () =>
+      this.exclusive(() =>
+        this.guarded(async () => {
+          const w = this.requireWallet();
+          this.setProgress('Turning on silent payments');
+          try {
+            await w.enableSilentPayments();
+          } finally {
+            this.setProgress(null);
+          }
+          this.refresh();
+        }),
+      ),
+    disable: () =>
+      this.guarded(async () => {
+        await this.requireWallet().disableSilentPayments();
+        this.refresh();
+      }),
+    address: (opts = {}) => this.guarded(() => this.requireWallet().silentPaymentAddress(opts)),
+    addLabel: () =>
+      this.guarded(async () => {
+        const r = await this.requireWallet().addSilentPaymentLabel();
+        this.refresh();
+        return r;
+      }),
+    helperAddress: () =>
+      this.guarded(async () => {
+        const w = this.requireWallet();
+        const { address } = await w.helperReceiveAddress();
+        this.refresh();
+        return address;
+      }),
+    check: () =>
+      this.guarded(async () => {
+        const w = this.requireWallet();
+        const { found } = await w.scanSilentPayments();
+        this.refresh();
+        return { found: found.length };
+      }),
+    move: () =>
+      this.exclusive(() =>
+        this.guarded(async () => {
+          const w = this.requireWallet();
+          this.setProgress('Moving silent payments into your vault');
+          try {
+            const out = await w.sweepSilentPayments();
+            const swept = out.flatMap((o) => (o.status === 'swept' ? [o] : []));
+            const failed = out.filter((o) => o.status === 'failed');
+            this.refresh();
+            const message = failed.length ? (failed[0] as { message: string }).message : undefined;
+            return {
+              moved: swept.length,
+              movedSats: swept.reduce((a, o) => a + o.amountSats, 0),
+              feeSats: swept.reduce((a, o) => a + o.feeSats, 0),
+              waiting: out.filter((o) => o.status === 'waiting').length,
+              failed: failed.length,
+              ...(message ? { message } : {}),
+            };
+          } finally {
+            this.setProgress(null);
+          }
+        }),
+      ),
+  };
 
   // ===========================================================================
   // Rules

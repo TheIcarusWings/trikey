@@ -10,6 +10,10 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 import { npubEncode } from 'nostr-tools/nip19';
 import { NETWORKS } from '@trikey/core';
 import { encodeRecoveryUri } from '@trikey/protocol';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { hex } from '@scure/base';
+import { TX_OPTS } from '@trikey/core';
+import { createOutputs, receiverAddress, silentPaymentKeysFromSeed } from '@trikey/silent-payments';
 import { GuardianRig, ManualClock } from '@trikey/guardian/testing';
 import {
   MemoryCloudBackupStore,
@@ -619,5 +623,126 @@ describe('the real wallet service: finishing a recovery, replacing the guardian,
     await Z.svc.retireOldWallet();
     expect(Z.svc.getState().oldWallets).toMatchObject([{ retiredOnGuardian: true }]);
     await Z.svc.close();
+  });
+});
+
+describe('the real wallet service: silent payments', { timeout: 120_000 }, () => {
+  let R: GuardianRig;
+  let N: GuardianRig;
+  let S: Phone;
+  const events = (p: Phone) => p.svc.getState().activity.flatMap((i) => (i.type === 'payment' ? [i.tx] : []));
+  /** Somebody outside pays silent payment addresses: a coin funded from nowhere, spent to 30,000 sats per recipient. */
+  let seed = 1;
+  const outsidePayment = (rig: GuardianRig, to: string) => {
+    const key = sha256(new TextEncoder().encode(`outside payer ${seed++}`));
+    const script = btc.p2wpkh(secp256k1.getPublicKey(key, true)).script;
+    const coin = rig.fund(script, 200_000n);
+    const out = createOutputs({ inputs: [{ txid: coin.txid, vout: 0, prevoutScript: script, privateKey: key }], recipients: [to], network: 'regtest' });
+    const tx = new btc.Transaction(TX_OPTS);
+    tx.addInput({ txid: coin.txid, index: 0, witnessUtxo: { script, amount: 200_000n } });
+    tx.addOutput({ script: out.outputs[0]!.script, amount: 30_000n });
+    tx.addOutput({ script, amount: 168_000n });
+    tx.signIdx(key, 0);
+    tx.finalize();
+    expect(rig.electrs.applyTransaction(hex.encode(tx.extract()))).toBeUndefined();
+    return tx.id;
+  };
+  const recipient = receiverAddress(silentPaymentKeysFromSeed(sha256(new TextEncoder().encode('someone else')), { coinType: 1 }), 'regtest');
+
+  async function onboard(rig: GuardianRig, hw: SoftwareHardwareProvider): Promise<Phone> {
+    const p = await phone({ clock: rig.clock, hardware: hw });
+    await p.svc.connectHardware('simulated');
+    await p.svc.pairGuardian(rig.pairingUri());
+    await p.svc.setUpRules(100_000, 7);
+    rig.fund(p.svc.wallet!.multisig().derive(0, 0).script, 500_000n);
+    await p.svc.sync();
+    return p;
+  }
+
+  it('is off until turned on; turning on registers with the guardian, gives an address and a helper address', async () => {
+    R = await GuardianRig.start({ bitcoind: true });
+    S = await onboard(R, new SoftwareHardwareProvider(new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware, network: 'regtest', kind: 'ledger' })));
+    expect(S.svc.getState().silentPayments).toMatchObject({ support: 'full', setUp: false, receiving: false, scan: { state: 'off' } });
+    await S.svc.silentPayments!.enable();
+    expect(R.guardian.sp.registered).toBe(true);
+    const sp = S.svc.getState().silentPayments;
+    expect(sp).toMatchObject({ setUp: true, receiving: true, helper: { funded: false, viaGuardian: true }, balance: { sats: 0 } });
+    expect(sp.scan.source).toBe('guardian');
+    expect(await S.svc.silentPayments!.address()).toMatch(/^tsp1q/);
+    expect(await S.svc.silentPayments!.helperAddress()).toMatch(/^bcrt1q/);
+  });
+
+  it('a silent payment needs the helper coin: before it is funded the quote says so, after, the guardian co-signs it', async () => {
+    const before = S.svc.quoteSend({ address: recipient, amountSats: 20_000, speed: 'normal' });
+    expect(before).toMatchObject({ ok: false, problem: 'needs_helper', message: expect.stringContaining('helper') });
+    const address = await S.svc.silentPayments!.helperAddress();
+    R.fund(btc.OutScript.encode(btc.Address(NETWORKS.regtest.btc).decode(address)), 30_000n);
+    await S.svc.sync();
+    expect(S.svc.getState().silentPayments.helper).toMatchObject({ sats: 30_000, funded: true });
+    const q = S.svc.quoteSend({ address: recipient, amountSats: 20_000, speed: 'normal' });
+    expect(q).toMatchObject({ ok: true, quote: { plan: { signer: 'phone+guardian' }, silentPayment: { outputAddress: expect.stringMatching(/^bcrt1p/), helperFeeSats: expect.any(Number) } } });
+    if (!q.ok) return;
+    const tx = await S.svc.sendPayment(q.quote);
+    expect(tx).toMatchObject({ address: recipient, signedBy: 'phone+guardian' });
+    await R.mine(1);
+    await S.svc.sync();
+    expect(events(S).find((t) => t.txid === tx.txid)).toMatchObject({ kind: 'sent', address: recipient, silentOutputAddress: q.quote.silentPayment!.outputAddress });
+  });
+
+  it('a payment arrives: it waits in its own balance, then one tap moves it into the vault', async () => {
+    const mine = await S.svc.silentPayments!.address();
+    const txid = outsidePayment(R, mine);
+    await R.mine(1);
+    await waitFor(() => S.svc.getState().silentPayments.balance.sats === 30_000 || undefined, 'the payment to show up');
+    expect(events(S).find((t) => t.kind === 'silent_received')).toMatchObject({ amountSats: 30_000, txid });
+    const plan = S.svc.getState().silentPayments.move;
+    expect(plan).toMatchObject({ ready: 1 });
+    expect(plan.totalNetSats).toBe(30_000 - plan.totalFeeSats);
+    const vaultBefore = S.svc.getState().balanceSats;
+    const r = await S.svc.silentPayments!.move();
+    expect(r).toMatchObject({ moved: 1, movedSats: plan.totalNetSats, feeSats: plan.totalFeeSats, failed: 0 });
+    await R.mine(1);
+    await S.svc.sync();
+    expect(S.svc.getState().balanceSats).toBe(vaultBefore + plan.totalNetSats);
+    expect(S.svc.getState().silentPayments.balance.sats).toBe(0);
+    expect(events(S).find((t) => t.kind === 'silent_sweep')).toMatchObject({ amountSats: plan.totalNetSats, feeSats: plan.totalFeeSats, status: 'confirmed' });
+  });
+
+  it('adds a label, turns receiving off (the guardian forgets the key) and refuses an address while it is off', async () => {
+    const { label, address } = await S.svc.silentPayments!.addLabel();
+    expect(label).toBe(1);
+    expect(address).not.toBe(await S.svc.silentPayments!.address());
+    expect(S.svc.getState().silentPayments.labels).toEqual([1]);
+    await S.svc.silentPayments!.disable();
+    expect(R.guardian.sp.registered).toBe(false);
+    expect(S.svc.getState().silentPayments).toMatchObject({ receiving: false, scan: { state: 'off' } });
+    expect(await failure(S.svc.silentPayments!.address())).toMatchObject({ kind: 'silent_payments_off' });
+    await S.svc.silentPayments!.enable();
+    expect(R.guardian.sp.registered).toBe(true);
+  });
+
+  it('a guardian without its node RPC: receiving is paused with the reason, sending still works', async () => {
+    N = await GuardianRig.start();
+    const P = await onboard(N, new SoftwareHardwareProvider(new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware2, network: 'regtest', kind: 'trezor' })));
+    await P.svc.silentPayments!.enable(); // does not fail
+    const sp = P.svc.getState().silentPayments;
+    expect(sp).toMatchObject({ setUp: true, receiving: true, scan: { state: 'needs_node_rpc', source: 'guardian', message: expect.stringContaining('RPC') }, helper: { viaGuardian: true } });
+    expect(await failure(P.svc.silentPayments!.check())).toMatchObject({ kind: 'node_rpc_required', message: expect.stringContaining('Umbrel and Start9') });
+    const address = await P.svc.silentPayments!.helperAddress();
+    N.fund(btc.OutScript.encode(btc.Address(NETWORKS.regtest.btc).decode(address)), 30_000n);
+    await P.svc.sync();
+    expect(P.svc.quoteSend({ address: recipient, amountSats: 10_000, speed: 'normal' })).toMatchObject({ ok: true, quote: { plan: { signer: 'phone+guardian' } } });
+    await N.stop();
+  });
+
+  it('reads silent payment codes through the wallet', () => {
+    expect(S.svc.readCode(recipient)).toMatchObject({ kind: 'address', address: recipient, silentPayment: true });
+    expect(S.svc.readCode(`bitcoin:?sp=${recipient}&amount=0.0002`)).toMatchObject({ kind: 'address', address: recipient, silentPayment: true, amountSats: 20_000 });
+    expect(S.svc.readCode(receiverAddress(silentPaymentKeysFromSeed(new Uint8Array(32).fill(3), { coinType: 0 }), 'bitcoin'))).toMatchObject({ kind: 'unknown', reason: expect.stringContaining('mainnet') });
+  });
+
+  it('closes down', async () => {
+    await S.svc.close();
+    await R.stop();
   });
 });
