@@ -117,6 +117,8 @@ export const BackupPayload = z.strictObject({
   contactNames: z.record(z.string(), z.string()).optional(),
   /** A recovery this phone started: where the funds go. */
   recoveryDestination: z.strictObject({ descriptor: z.string(), walletId: z.string() }).optional(),
+  /** `recovering`: a phone recovering `wallet` with the hardware wallet; its key 2 is in `recoveryDestination`. */
+  stage: z.enum(['paired', 'recovering']).optional(),
 });
 export type BackupPayload = z.infer<typeof BackupPayload>;
 

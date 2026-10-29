@@ -145,6 +145,8 @@ export type WalletErrorCode =
   | 'insufficient_funds'
   /** The coins a quote spends changed (spent or replaced) since it was made. */
   | 'quote_stale'
+  /** On mainnet the wallet will not guess a fee: the node has no estimate. */
+  | 'no_fee_estimate'
   | 'no_chain_data'
   /** The guardian listed only part of the wallet's coins, so a sweep could not spend them all. */
   | 'utxos_truncated'

@@ -520,7 +520,9 @@ export class TrikeyWallet {
     const rpc = await this.client();
     const persist = opts.persist !== false && STATE_CHANGING.has(method);
     const record = async (id: string) => {
-      if (persist) await this.update((s) => void (s.pending = { id, method, params, sentAt: this.now() }));
+      // Re-sending the same id keeps its first `sentAt`, so a request cannot live on forever across restarts.
+      if (persist)
+        await this.update((s) => void (s.pending = { id, method, params, sentAt: s.pending?.id === id ? s.pending.sentAt : this.now() }));
     };
     const clear = async () => {
       if (persist) await this.update((s) => void (s.pending = undefined));
@@ -954,6 +956,9 @@ export class TrikeyWallet {
     const c = this.s.chain;
     if (!c) throw new WalletError('no_chain_data', 'Sync the wallet first.');
     const wallet = this.multisig();
+    const estimated = this.fees?.estimates.some((e) => e.satPerVb !== null) ?? false;
+    if (req.feeRate === undefined && !estimated && this.network.name === 'bitcoin')
+      throw new WalletError('no_fee_estimate', 'The node has no fee estimate right now; sync again or choose a fee rate.');
     const feeRate = req.feeRate ?? pickFeeRate(this.fees, req.speed);
     const changeIndex = c.nextChangeIndex;
     const sel = selectCoins({ wallet, utxos: c.utxos, address: req.address, amountSats: req.amountSats, feeRate, changeIndex });
@@ -971,6 +976,7 @@ export class TrikeyWallet {
     return {
       request: req,
       feeRate,
+      feeRateSource: req.feeRate !== undefined ? 'caller' : estimated ? 'estimate' : 'relay-minimum',
       feeSats: sel.feeSats,
       totalSats: total,
       changeSats: sel.changeSats,
@@ -1282,7 +1288,9 @@ export class TrikeyWallet {
     await this.update((s) => void (s.chain = { ...snap, syncedAt: this.now() }));
     if (snap.utxosTruncated) throw new WalletError('utxos_truncated', 'The wallet has more coins than one sweep can list.');
     if (!snap.utxos.length) throw new WalletError('nothing_to_sweep', 'The wallet has no coins to move.');
-    const fees = await this.chain.estimateFees([3, 6]).catch(() => undefined);
+    const fees = (await this.chain.estimateFees([3, 6]).catch(() => undefined)) ?? this.fees;
+    if (!fees?.estimates.some((e) => e.satPerVb !== null) && this.network.name === 'bitcoin')
+      throw new WalletError('no_fee_estimate', 'The node has no fee estimate right now; try the recovery again later.');
     const vsize = estimateVsize(snap.utxos.length, [destination.derive(0, 0).script]);
     let rate = pickFeeRate(fees, 'normal');
     if (Math.ceil(vsize * rate) > feeCapSats) rate = Math.floor((feeCapSats / vsize) * 1000) / 1000;
@@ -1428,6 +1436,22 @@ export class TrikeyWallet {
   }
 
   /**
+   * A recovering phone's access (`recovery.access`) lasts at most a day: the
+   * hardware wallet signs a new one to keep following the recovery.
+   */
+  async renewRecoveryAccess(): Promise<{ accessExpiresAt: number }> {
+    if (this.s.stage !== 'recovering' || !this.s.guardian) throw new WalletError('wrong_state', 'Only a recovering phone has recovery access.');
+    const guardianPubkey = this.s.guardian.pubkey;
+    const expiresAt = this.nowSec() + ACCESS_TTL_SEC;
+    const text = recoveryAccessMessage({ guardianPubkey, phonePubkey: this.s.nostrPubkey, expiresAt });
+    const signature = await this.withHardware((hw, rec) => this.signWithAuthKey(hw, rec, text, 'recovery-access'));
+    const access = await this.call('recovery.access', { approval: { kind: 'bip137', expiresAt, signature } });
+    if (access.walletId !== this.s.wallet?.walletId) throw new WalletError('guardian_mismatch', 'The guardian holds another wallet now.');
+    await this.refreshStatus().catch(() => undefined);
+    return { accessExpiresAt: access.accessExpiresAt };
+  }
+
+  /**
    * Cancels the running recovery: from this phone (its nostr key), or with a
    * hardware approval (`withHardware`). The guardian says whether the cancel
    * was contested: then phone payments stay paused until `resumePhoneSpending`.
@@ -1535,8 +1559,9 @@ export class TrikeyWallet {
         createdAt: this.nowSec(),
         mnemonic,
         deviceName: s.deviceName,
-        // A recovering phone's key 2 is not in the old wallet; its backup carries the recovery destination instead.
-        ...(s.wallet && s.stage === 'paired' ? { wallet: { descriptor: s.wallet.descriptor, walletId: s.wallet.walletId } } : {}),
+        ...(s.wallet ? { wallet: { descriptor: s.wallet.descriptor, walletId: s.wallet.walletId } } : {}),
+        // A recovering phone's key 2 is not in that wallet but in the recovery's destination.
+        ...(s.stage === 'recovering' ? { stage: 'recovering' as const } : {}),
         ...(s.guardian ? { guardian: s.guardian } : {}),
         ...(s.hardware ? { hardware: s.hardware } : {}),
         ...(s.rules ? { rules: s.rules.policy, nextHardwareSequence: s.rules.nextHardwareSequence } : {}),
@@ -1617,14 +1642,19 @@ export class TrikeyWallet {
     } catch (e) {
       throw new WalletError('backup_invalid', 'The backup holds an invalid phone key.', { cause: e });
     }
-    if (p.wallet) {
-      let w: MultisigWallet;
+    const recovering = p.stage === 'recovering';
+    const parse = (descriptor: string) => {
       try {
-        w = MultisigWallet.fromDescriptor(p.wallet.descriptor, network);
+        return MultisigWallet.fromDescriptor(descriptor, network);
       } catch (e) {
         throw new WalletError('backup_invalid', 'The backup holds an invalid descriptor.', { cause: e });
       }
-      if (w.fingerprint() !== p.wallet.walletId || !sameKey(w.keys.app, key2.account) || !p.guardian || !p.hardware)
+    };
+    if (p.wallet) {
+      const w = parse(p.wallet.descriptor);
+      // Key 2 is the wallet's phone key; a recovering phone's key 2 is the destination's instead.
+      const keyHolder = recovering && p.recoveryDestination ? parse(p.recoveryDestination.descriptor) : w;
+      if (w.fingerprint() !== p.wallet.walletId || !sameKey(keyHolder.keys.app, key2.account) || !p.guardian || !p.hardware)
         throw new WalletError('backup_invalid', 'The backup does not hold a consistent wallet.');
       if (!sameKey(w.keys.hardware, keyExpressionOf(p.hardware.account)) || !sameKey(w.keys.cosigner, keyExpressionOf(p.guardian.key)))
         throw new WalletError('backup_invalid', 'The backup does not hold a consistent wallet.');
@@ -1632,30 +1662,53 @@ export class TrikeyWallet {
 
     const wallet = await TrikeyWallet.create(deps, { mnemonic: p.mnemonic, deviceName: p.deviceName });
     key2.nostr.secretKey.fill(0);
-    await wallet.update((s) => {
-      s.stage = p.wallet ? 'paired' : 'new';
+    try {
+      await wallet.restoreState(p, name, opened.header, cloud.provider, recovering);
+    } catch (e) {
+      // Leave nothing half-restored behind: the user can simply try again.
+      await wallet.forget().catch(() => {});
+      throw e;
+    }
+    return wallet;
+  }
+
+  /** The second half of `restoreFromBackup`: the state from the backup, then the guardian. */
+  private async restoreState(
+    p: BackupPayload,
+    name: string,
+    header: { createdAt: number; slots: { type: 'passkey-prf' | 'recovery-code' }[] },
+    provider: string,
+    recovering: boolean,
+  ): Promise<void> {
+    await this.update((s) => {
+      s.stage = p.wallet ? (recovering ? 'recovering' : 'paired') : 'new';
       s.hardware = p.hardware;
       s.guardian = p.guardian;
-      s.wallet = p.wallet ? { ...p.wallet, pairedAt: wallet.now() } : undefined;
+      s.wallet = p.wallet ? { ...p.wallet, pairedAt: this.now() } : undefined;
       s.rules = p.rules ? { policy: p.rules, policyHash: policyHash(p.rules), nextHardwareSequence: p.nextHardwareSequence ?? 1, fetchedAt: 0 } : undefined;
       s.contactNames = p.contactNames ?? {};
-      s.backup = { name, provider: cloud.provider, createdAt: opened.header.createdAt * 1000, slots: opened.header.slots.map((x) => x.type) };
-      if (p.recoveryDestination) s.recovery = { role: 'initiator', destination: p.recoveryDestination, updatedAt: wallet.now() };
+      s.backup = { name, provider, createdAt: header.createdAt * 1000, slots: header.slots.map((x) => x.type) };
+      if (p.recoveryDestination) s.recovery = { role: 'initiator', destination: p.recoveryDestination, updatedAt: this.now() };
     });
+    if (p.wallet && recovering) {
+      // Recovery access may have expired: following the recovery is best effort (renewRecoveryAccess() restores it).
+      await this.start().catch(() => undefined);
+      await this.recoveryStatus().catch(() => undefined);
+      return;
+    }
     if (p.wallet) {
       // Key 2 and the wallet are restored now. An offline guardian is no reason to fail: sync later.
       try {
-        await wallet.start();
-        const st = await wallet.refreshStatus();
+        await this.start();
+        const st = await this.refreshStatus();
         if (!st.paired) throw new WalletError('guardian_mismatch', 'The guardian no longer has this wallet.');
-        await wallet.getRules();
-        await wallet.sync();
+        await this.getRules();
+        await this.sync();
       } catch (e) {
         const kind = e instanceof WalletError ? e.refusal?.kind : undefined;
         if (kind !== 'unreachable' && kind !== 'unavailable') throw e;
       }
     }
-    return wallet;
   }
 }
 

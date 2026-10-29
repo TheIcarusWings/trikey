@@ -283,7 +283,9 @@ describe('@trikey/wallet end to end', { timeout: 60_000 }, () => {
     phoneB = newPhone({ rpcTimeoutMs: 3000 });
     B = track(await TrikeyWallet.create(phoneB.deps, { deviceName: 'New phone' }));
     const bPrompts: string[] = [];
+    const bAlerts: Alert[] = [];
     B.on((e) => e.type === 'hardware_prompt' && bPrompts.push(e.text));
+    B.on((e) => e.type === 'alert' && bAlerts.push(e.alert));
     const rec = await B.recoverWithHardware({ guardian: { npub: npubEncode(rig.pubkey), relays: rig.relayUrls } });
     expect(bPrompts[0]).toMatch(new RegExp(`^Trikey recovery-access v1 guardian=${rig.pubkey} phone=${B.state.nostrPubkey} expires=`));
     expect(rec).toMatchObject({ state: 'pending', survivingRole: 'hardware', delayDays: 7 });
@@ -301,8 +303,19 @@ describe('@trikey/wallet end to end', { timeout: 60_000 }, () => {
     expect(a.inputs).toHaveLength(coins);
     expect(a.inputs.every((i) => i.signedBy.join() === 'hardware')).toBe(true);
     expect(a.fee).toBeLessThanOrEqual(20_000n);
-    // B may read the wallet but not spend through the guardian.
+    // B may read the wallet but not spend through the guardian, and it is told about its recovery.
     expect((await B.sync()).balance.totalSats).toBe(A.snapshot()!.balance.totalSats);
+    await waitFor(() => bAlerts.find((x) => x.type === 'recovery_started'), 'alert to the recovering phone');
+
+    // B backs up its new key 2 mid-recovery; a restore of that backup follows the same recovery.
+    const bBackup = await B.createBackup({ recoveryCode: true });
+    const phoneE = newPhone();
+    const E = track(await TrikeyWallet.restoreFromBackup(phoneE.deps, { recoveryCode: bBackup.recoveryCode! }, { name: bBackup.name }));
+    expect(E.state).toMatchObject({ stage: 'recovering', key2: B.state.key2, wallet: { walletId }, recovery: { role: 'initiator', destination: { walletId: rec.destinationWalletId } } });
+    expect((await E.recoveryStatus())?.recoveryId).toBe(rec.recoveryId);
+    expect(await E.renewRecoveryAccess()).toMatchObject({ accessExpiresAt: expect.any(Number) });
+    await E.close();
+    cloud.files.delete(bBackup.name);
 
     // The old phone is told, and its phone-only payments are paused.
     const started = await waitFor(() => alertsA().find((x): x is Extract<Alert, { type: 'recovery_started' }> => x.type === 'recovery_started'), 'recovery alert');
@@ -318,6 +331,7 @@ describe('@trikey/wallet end to end', { timeout: 60_000 }, () => {
     await waitFor(() => alertsA().find((x) => x.type === 'recovery_cancelled'), 'cancel alert');
     expect(A.state.guardianStatus?.phoneSpending).toBe('paused_contested');
     expect((await B.recoveryStatus(rec.recoveryId))?.state).toBe('cancelled');
+    await waitFor(() => bAlerts.find((x) => x.type === 'recovery_cancelled'), 'cancel alert to the recovering phone');
     await A.sync();
     const paused = A.quoteSend({ address: externalAddress(), amountSats: 1_000 });
     expect(paused.plan).toEqual({ signer: 'phone+hardware', reason: 'phone-spending-paused' });

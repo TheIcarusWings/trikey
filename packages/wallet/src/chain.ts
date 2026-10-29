@@ -34,7 +34,7 @@ export interface FeeEstimates {
 export interface ChainSource {
   readonly kind: string;
   sync(opts?: { historyLimit?: number }): Promise<ChainSnapshot>;
-  /** Raw transaction hex, checked to hash to `txid`. */
+  /** Raw transaction hex (witness data may be left out), checked to hash to `txid`. For PSBT `nonWitnessUtxo`. */
   getTransaction(txid: string): Promise<string>;
   /** Broadcasts a fully signed transaction; resolves with its txid. */
   broadcast(txHex: string): Promise<string>;
@@ -84,7 +84,8 @@ export class GuardianChainSource implements ChainSource {
   }
 
   async getTransaction(txid: string): Promise<string> {
-    const { txHex } = await this.call('tx.get', { txid });
+    // Without witness data: same txid, all nonWitnessUtxo needs, and it keeps large transactions within a message.
+    const { txHex } = await this.call('tx.get', { txid, witness: false });
     // The guardian checked this too; a phone does not take a previous transaction on trust.
     if (txidOfRaw(txHex) !== txid) throw new WalletError('guardian_mismatch', `tx.get returned a transaction that is not ${txid}`);
     return txHex;

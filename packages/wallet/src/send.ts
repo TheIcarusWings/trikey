@@ -98,6 +98,8 @@ export interface SendQuote {
   request: SendRequest;
   /** sat/vB */
   feeRate: number;
+  /** Where the fee rate came from: the node's estimate, the minimum relay fee (no estimate: may confirm slowly), or the caller. */
+  feeRateSource: 'estimate' | 'relay-minimum' | 'caller';
   feeSats: number;
   /** What leaves the wallet: amount + fee. This is what the daily limit counts. */
   totalSats: number;
