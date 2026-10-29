@@ -11,7 +11,9 @@
     "android": "expo start --android",
     "web": "expo start --web",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "measure": "node --import tsx scripts/measure-timings.mts",
+    "dev-rig": "node --import tsx scripts/dev-rig.mts"
   },
   "dependencies": {
     "@expo-google-fonts/geist": "^0.4.2",

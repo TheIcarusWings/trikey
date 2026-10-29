@@ -14,6 +14,7 @@
     "src",
     "nativewind-env.d.ts",
     "css.d.ts",
-    "app.config.ts"
+    "app.config.ts",
+    "scripts"
   ]
 }
