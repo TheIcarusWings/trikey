@@ -30,6 +30,7 @@ import * as btc from '@scure/btc-signer';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { base64, hex } from '@scure/base';
 import { MultisigWallet, analyzePsbt, finalizePsbt, getNetwork, parsePsbt, sighashAll } from '@trikey/core';
+import { parseRawTx } from './chain/chain.js';
 import type { Guardian } from './guardian.js';
 import { errorText } from './log.js';
 import { HOUR, MAX_SELF_INDEX, type RecoveryRecord, type Registration } from './policy/index.js';
@@ -38,6 +39,8 @@ import type { SweepRecord } from './service-state.js';
 import { formatBtc, formatWhen } from './alerts.js';
 
 export const MAX_CLOCK_DISAGREEMENT_MS = 2 * HOUR;
+/** Confirmations of another spend of a sweep's input before the sweep counts as dead (no reorg brings the coin back). */
+export const DEAD_SWEEP_CONFIRMATIONS = 6;
 
 export type WaitReason = 'locked' | 'chain_unavailable' | 'chain_time' | 'sweep_incomplete' | 'sweep_inputs_missing' | 'refused' | 'error';
 
@@ -258,10 +261,56 @@ export class RecoveryRunner {
     }
   }
 
+  /**
+   * Why a sweep that failed to broadcast never can be, if so: its transaction does not decode, a later
+   * recovery's sweep of the same wallet went out, or an input was spent by another transaction with
+   * `DEAD_SWEEP_CONFIRMATIONS` confirmations (deep enough that no reorg brings the coin back). Anything
+   * unknown (Electrs unavailable, a spend only in the mempool) is not dead: it is retried.
+   */
+  private async deadReason(s: SweepRecord): Promise<{ reason: NonNullable<SweepRecord['deadReason']>; detail: string } | undefined> {
+    const g = this.g;
+    let inputs: { txid: string; vout: number }[];
+    try {
+      inputs = parseRawTx(s.txHex).inputs;
+      if (!inputs.length) throw new Error('no inputs');
+    } catch {
+      return { reason: 'invalid', detail: 'the stored sweep is not a valid transaction' };
+    }
+    const order = (id: string) => g.records.findIndex((r) => r.id === id);
+    const mine = g.records[order(s.recoveryId)];
+    if (mine) {
+      const later = g.service
+        .get()
+        .sweeps.find((o) => o.recoveryId !== s.recoveryId && o.broadcastAt !== undefined && order(o.recoveryId) > order(s.recoveryId) && g.records[order(o.recoveryId)]?.walletId === mine.walletId);
+      if (later) return { reason: 'superseded', detail: `the sweep of the later recovery ${later.recoveryId} (${later.txid}) was broadcast` };
+    }
+    for (const i of inputs) {
+      try {
+        const by = await g.chain.spentElsewhere(i.txid, i.vout, s.txid);
+        if (by && by.confirmations >= DEAD_SWEEP_CONFIRMATIONS)
+          return { reason: 'inputs_spent', detail: `its input ${i.txid}:${i.vout} was spent by ${by.txid} (${by.confirmations} confirmations)` };
+      } catch {
+        /* unknown: not dead */
+      }
+    }
+    return undefined;
+  }
+
+  private async markDead(s: SweepRecord, dead: { reason: NonNullable<SweepRecord['deadReason']>; detail: string }): Promise<void> {
+    const g = this.g;
+    const now = g.clock.now();
+    await g.service.update((d) => {
+      const x = d.sweeps.find((y) => y.recoveryId === s.recoveryId);
+      if (x) Object.assign(x, { deadAt: now, deadReason: dead.reason, deadDetail: dead.detail });
+    });
+    await g.logEvent({ type: 'sweep_dead', recoveryId: s.recoveryId, txid: s.txid, reason: dead.reason, detail: dead.detail });
+    g.log.warn('recovery.sweep_dead', { recoveryId: s.recoveryId, txid: s.txid, reason: dead.reason });
+  }
+
   private async broadcastPending(): Promise<void> {
     const g = this.g;
     for (const s of g.service.get().sweeps) {
-      if (s.broadcastAt !== undefined) continue;
+      if (s.broadcastAt !== undefined || s.deadAt !== undefined) continue;
       let via: 'electrum' | 'bitcoind' | undefined;
       let error: string | undefined;
       try {
@@ -289,6 +338,11 @@ export class RecoveryRunner {
         await g.logEvent({ type: 'sweep_broadcast', recoveryId: s.recoveryId, txid: s.txid, via, amountSats: s.amountSats });
         g.log.info('recovery.sweep_broadcast', { recoveryId: s.recoveryId, txid: s.txid, via });
       } else {
+        const dead = await this.deadReason(s);
+        if (dead) {
+          await this.markDead(s, dead);
+          continue;
+        }
         const changed = s.lastError !== error;
         await g.service.update((d) => {
           const x = d.sweeps.find((y) => y.recoveryId === s.recoveryId);

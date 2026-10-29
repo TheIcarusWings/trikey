@@ -779,7 +779,8 @@ export class Guardian {
           };
           const running = this.activeRecord();
           if (running) return refuse('recovery_pending', `Recovery ${running.id} is running. It must be cancelled or completed before the guardian can be reset.`);
-          const unsent = this.service.get().sweeps.find((s) => s.broadcastAt === undefined);
+          // A dead sweep (it can never be broadcast: recovery-runner.ts) has no signature worth keeping.
+          const unsent = this.service.get().sweeps.find((s) => s.broadcastAt === undefined && s.deadAt === undefined);
           if (unsent) return refuse('sweep_pending', `The sweep of recovery ${unsent.recoveryId} has not been broadcast yet. Wait until it is.`);
 
           const verdict = this.resetThrottle.check();

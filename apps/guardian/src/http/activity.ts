@@ -232,6 +232,8 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
       };
     case 'sweep_broadcast_failed':
       return { ...base, kind: 'recovery', event: `Broadcast of ${shortTx(e.txid)} failed, will retry: ${e.detail}`, signedBy: null, sats: null, result: 'refused' };
+    case 'sweep_dead':
+      return { ...base, kind: 'recovery', event: `Recovery ${e.recoveryId} sweep ${shortTx(e.txid)} can never be broadcast; no longer retried: ${e.detail}`, summary: 'Sweep given up', signedBy: null, sats: null, result: 'refused' };
     case 'recovery_waiting':
       return { ...base, kind: 'recovery', event: `Recovery ${e.recoveryId} waiting: ${e.detail}`, summary: 'Recovery waiting', signedBy: null, sats: null, result: 'refused' };
     case 'cancel_by_dm':

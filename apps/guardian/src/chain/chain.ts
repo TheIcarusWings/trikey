@@ -655,6 +655,23 @@ export class ChainService {
     return { estimates, minRelaySatPerVb: Math.max(minRelay ?? 1, 0.001) };
   }
 
+  /**
+   * A confirmed transaction other than `exceptTxid` that spends the outpoint `txid:vout`, with its
+   * confirmations, if Electrs knows one (looked up through the history of the output's script).
+   * Undefined when the outpoint is unspent, spent only in the mempool, or spent by `exceptTxid`.
+   */
+  async spentElsewhere(txid: string, vout: number, exceptTxid: string): Promise<{ txid: string; confirmations: number } | undefined> {
+    const prev = parseRawTx(await this.getTransaction(txid)).outputs[vout];
+    if (!prev) return undefined;
+    const tip = await this.tip();
+    for (const h of await this.history(prev.script)) {
+      if (h.tx_hash === exceptTxid || h.tx_hash === txid || h.height <= 0) continue;
+      const spender = parseRawTx(await this.getTransaction(h.tx_hash));
+      if (spender.inputs.some((i) => i.txid === txid && i.vout === vout)) return { txid: h.tx_hash, confirmations: Math.max(1, tip.height - h.height + 1) };
+    }
+    return undefined;
+  }
+
   /** True if Electrs knows the transaction (mempool or chain). */
   async hasTransaction(txid: string): Promise<boolean> {
     try {
