@@ -11,3 +11,18 @@ All are H.264 High + AAC 48 kHz, 30 fps, captions burned in.
 | `trikey-v1-three-keys-169.mp4` | 16:9 | 35.4 s | 1.8 MB | music only | `2d3c645c81d84729` |
 | `trikey-v1-three-keys-916-vo.mp4` | 9:16 | 35.4 s | 1.9 MB | voiceover + music | `054853eafb114eb6` |
 | `trikey-v1-three-keys-916.mp4` | 9:16 | 35.4 s | 1.9 MB | music only | `37c66d730a460e17` |
+| `trikey-v1b-brand-11.mp4` | 1:1 | 25.0 s | 1.2 MB | music only | `fa9b3c369d27c712` |
+| `trikey-v1b-brand-169.mp4` | 16:9 | 25.0 s | 1.3 MB | music only | `c3529957ed500e28` |
+| `trikey-v1b-brand-916.mp4` | 9:16 | 25.0 s | 1.4 MB | music only | `5df218d726acb24f` |
+| `trikey-v2-stolen-phone-11-vo.mp4` | 1:1 | 29.6 s | 2.5 MB | voiceover + music | `21cdeaa1920be865` |
+| `trikey-v2-stolen-phone-11.mp4` | 1:1 | 29.6 s | 2.5 MB | music only | `80754d3f5e41700e` |
+| `trikey-v2-stolen-phone-169-vo.mp4` | 16:9 | 29.6 s | 2.1 MB | voiceover + music | `9116e3c58fc74f58` |
+| `trikey-v2-stolen-phone-169.mp4` | 16:9 | 29.6 s | 2.1 MB | music only | `6a20e2a99c579376` |
+| `trikey-v2-stolen-phone-916-vo.mp4` | 9:16 | 29.6 s | 3.2 MB | voiceover + music | `f144cd69bd9ee473` |
+| `trikey-v2-stolen-phone-916.mp4` | 9:16 | 29.6 s | 3.2 MB | music only | `5e5d404bc4f8e32c` |
+| `trikey-v3-lost-phone-11-vo.mp4` | 1:1 | 32.6 s | 2.9 MB | voiceover + music | `57c9fb6d3dcd0a17` |
+| `trikey-v3-lost-phone-11.mp4` | 1:1 | 32.6 s | 2.9 MB | music only | `f87efd474d9df1e0` |
+| `trikey-v3-lost-phone-169-vo.mp4` | 16:9 | 32.6 s | 2.3 MB | voiceover + music | `fbe309dd5156f956` |
+| `trikey-v3-lost-phone-169.mp4` | 16:9 | 32.6 s | 2.3 MB | music only | `f4e97ebdcaa4053d` |
+| `trikey-v3-lost-phone-916-vo.mp4` | 9:16 | 32.6 s | 4.0 MB | voiceover + music | `184504650ee822d6` |
+| `trikey-v3-lost-phone-916.mp4` | 9:16 | 32.6 s | 4.0 MB | music only | `fd55701ca0787980` |
