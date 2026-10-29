@@ -143,6 +143,8 @@ export type WalletErrorCode =
   | 'invalid_address'
   | 'amount_too_small'
   | 'insufficient_funds'
+  /** The coins a quote spends changed (spent or replaced) since it was made. */
+  | 'quote_stale'
   | 'no_chain_data'
   /** The guardian listed only part of the wallet's coins, so a sweep could not spend them all. */
   | 'utxos_truncated'

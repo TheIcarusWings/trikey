@@ -17,6 +17,7 @@ import { randomBytes } from '@noble/hashes/utils.js';
 import { decode as nip19Decode, npubEncode } from 'nostr-tools/nip19';
 import {
   MultisigWallet,
+  PsbtError,
   SoftwareSigner,
   analyzePsbt,
   bip48Path,
@@ -139,7 +140,7 @@ export type WalletEvent =
   | { type: 'state' }
   | { type: 'alert'; alert: Alert; id: string; at: number }
   /** The hardware wallet is about to be asked to sign this exact text: show it, so the user can compare it with the device screen. */
-  | { type: 'hardware_prompt'; purpose: 'pairing' | 'approval' | 'recovery-access'; text: string }
+  | { type: 'hardware_prompt'; purpose: 'pairing' | 'approval' | 'recovery-access' | 'payment' | 'recovery-sweep'; text: string }
   /** A request left over from before the app restarted was settled (or given up). */
   | { type: 'pending_settled'; method: string; ok: boolean; refusal?: GuardianRefusal };
 
@@ -213,6 +214,8 @@ export interface AlertContact {
 }
 
 const APPROVAL_TTL_SEC = 30 * 60;
+/** `send` re-syncs first if the last sync is older than this. */
+const STALE_CHAIN_MS = 60_000;
 const MAX_SEEN_ALERTS = 200;
 const ALERT_COALESCE_MS = 100;
 const ACCESS_TTL_SEC = 12 * 3600;
@@ -367,7 +370,7 @@ export class TrikeyWallet {
   /** Applies `fn` to the state and persists it (serialized, so concurrent updates do not lose each other). */
   private async update(fn: (s: WalletState) => void): Promise<void> {
     const run = this.saving.then(async () => {
-      const next = structuredClone(this.s);
+      const next = JSON.parse(JSON.stringify(this.s)) as WalletState; // Hermes has no structuredClone; the state is plain JSON
       fn(next);
       await this.store.save(next);
       this.s = next;
@@ -984,15 +987,17 @@ export class TrikeyWallet {
     const wallet = this.multisig();
     const prevs = await Promise.all(quote.inputs.map((u) => this.chain.getTransaction(u.txid)));
     const utxos = quote.inputs.map((u, i) => toCoreUtxo(u, prevs[i]));
-    const plan = buildSpend({
-      wallet,
-      utxos,
-      recipients: [{ address: quote.request.address, amount: BigInt(quote.request.amountSats) }],
-      feeRate: quote.feeRate,
-      changeIndex: quote.changeIndex,
-    });
+    const plan = selfCheck(() =>
+      buildSpend({
+        wallet,
+        utxos,
+        recipients: [{ address: quote.request.address, amount: BigInt(quote.request.amountSats) }],
+        feeRate: quote.feeRate,
+        changeIndex: quote.changeIndex,
+      }),
+    );
     // Self-check before key 2 signs: every input is ours with its real previous output, and the outputs are what the user asked.
-    const a = analyzePsbt(plan.psbt, wallet.accountPubkeys(), this.network, { requireNonWitnessUtxo: true });
+    const a = selfCheck(() => analyzePsbt(plan.psbt, wallet.accountPubkeys(), this.network, { requireNonWitnessUtxo: true }));
     if (
       a.inputs.length !== quote.inputs.length ||
       a.externalOut !== BigInt(quote.request.amountSats) ||
@@ -1011,7 +1016,12 @@ export class TrikeyWallet {
    * Guardian refusals come back as typed results.
    */
   async send(quoteOrRequest: SendQuote | SendRequest, opts: { fallbackToHardware?: boolean } = {}): Promise<SendResult> {
+    this.requirePaired();
+    // Spending a coin that is already gone would still use up the daily limit at the guardian: refresh a stale view first.
+    if (!this.s.chain || this.now() - this.s.chain.syncedAt > STALE_CHAIN_MS) await this.sync();
     const quote = 'plan' in quoteOrRequest ? quoteOrRequest : this.quoteSend(quoteOrRequest);
+    const live = new Set(this.s.chain!.utxos.map((u) => `${u.txid}:${u.vout}`));
+    if (quote.inputs.some((u) => !live.has(`${u.txid}:${u.vout}`))) throw new WalletError('quote_stale', 'The wallet\'s coins changed since this quote; quote the payment again.');
     const { wallet, psbt, outflow } = await this.buildPayment(quote);
     const signed = await this.withKey2('Approve the payment', async (m) => new SoftwareSigner('app', m).signPsbt(psbt, this.network));
 
@@ -1041,7 +1051,14 @@ export class TrikeyWallet {
         await this.update((s) => void s.spends.push({ txid, at: this.now(), outflowSats: outflow }));
       }
     }
-    if (!final) final = await this.withHardware((hw, rec) => this.hardwareSignPsbt(hw, rec, signed, wallet, this.s.wallet!.descriptor));
+    if (!final) {
+      this.emit({
+        type: 'hardware_prompt',
+        purpose: 'payment',
+        text: `Send ${quote.request.amountSats} sats to ${quote.request.address}, fee ${quote.feeSats} sats`,
+      });
+      final = await this.withHardware((hw, rec) => this.hardwareSignPsbt(hw, rec, signed, wallet, this.s.wallet!.descriptor));
+    }
 
     const { txHex, txid } = finalizePsbt(final);
     try {
@@ -1273,8 +1290,9 @@ export class TrikeyWallet {
       throw new WalletError('fee_cap_too_low', `The sweep fee cap (${feeCapSats} sats) does not cover the minimum relay fee for ${snap.utxos.length} coins.`);
     const prevs = await Promise.all(snap.utxos.map((u) => this.chain.getTransaction(u.txid)));
     const utxos = snap.utxos.map((u, i) => toCoreUtxo({ txid: u.txid, vout: u.vout, valueSats: u.valueSats, chain: u.chain, index: u.index }, prevs[i]));
-    const plan = buildSweep({ from, utxos, destination, destinationIndex: 0, feeRate: rate });
-    analyzePsbt(plan.psbt, from.accountPubkeys(), this.network, { requireNonWitnessUtxo: true, outputsAcct: destination.accountPubkeys() });
+    const plan = selfCheck(() => buildSweep({ from, utxos, destination, destinationIndex: 0, feeRate: rate }));
+    selfCheck(() => analyzePsbt(plan.psbt, from.accountPubkeys(), this.network, { requireNonWitnessUtxo: true, outputsAcct: destination.accountPubkeys() }));
+    if (plan.fee > BigInt(feeCapSats)) throw new WalletError('fee_cap_too_low', 'The sweep fee would exceed the cap.');
     return plan.psbt;
   }
 
@@ -1392,6 +1410,7 @@ export class TrikeyWallet {
 
       const destination = new MultisigWallet(this.network, { app: keyExpressionOf(this.s.key2), hardware: old.keys.hardware, cosigner: old.keys.cosigner });
       const sweep = await this.buildSweepPsbt(destination, access.policy.sweepFeeCapSats);
+      this.emit({ type: 'hardware_prompt', purpose: 'recovery-sweep', text: `Move every coin of the wallet to the new wallet ${destination.fingerprint()}` });
       const signed = await this.hardwareSignPsbt(hw, hwRec, sweep, old, access.descriptor);
       const a = analyzePsbt(signed, old.accountPubkeys(), this.network);
       if (a.inputs.some((i) => i.signedBy.length !== 1 || i.signedBy[0] !== 'hardware'))
@@ -1624,11 +1643,17 @@ export class TrikeyWallet {
       if (p.recoveryDestination) s.recovery = { role: 'initiator', destination: p.recoveryDestination, updatedAt: wallet.now() };
     });
     if (p.wallet) {
-      await wallet.start();
-      const st = await wallet.refreshStatus();
-      if (!st.paired) throw new WalletError('guardian_mismatch', 'The guardian no longer has this wallet.');
-      await wallet.getRules();
-      await wallet.sync();
+      // Key 2 and the wallet are restored now. An offline guardian is no reason to fail: sync later.
+      try {
+        await wallet.start();
+        const st = await wallet.refreshStatus();
+        if (!st.paired) throw new WalletError('guardian_mismatch', 'The guardian no longer has this wallet.');
+        await wallet.getRules();
+        await wallet.sync();
+      } catch (e) {
+        const kind = e instanceof WalletError ? e.refusal?.kind : undefined;
+        if (kind !== 'unreachable' && kind !== 'unavailable') throw e;
+      }
     }
     return wallet;
   }
@@ -1654,6 +1679,22 @@ function checkSignedBy(
     return merged;
   } catch (e) {
     throw new WalletError(code, message, { cause: e });
+  }
+}
+
+/**
+ * Runs core's PSBT analysis on a PSBT the wallet built from the guardian's
+ * chain data. A failure means that data was wrong (a coin at another index, a
+ * previous transaction that does not match): refuse before anything is signed.
+ */
+function selfCheck<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (e) {
+    // core's analysis, or scure refusing an input whose witnessUtxo disagrees with its previous transaction
+    if (e instanceof PsbtError || (e instanceof Error && /witnessUtxo/.test(e.message)))
+      throw new WalletError('guardian_mismatch', `The guardian's chain data does not match the wallet: ${e.message}`, { cause: e });
+    throw e;
   }
 }
 

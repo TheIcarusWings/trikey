@@ -16,6 +16,11 @@ export const FEE_TARGETS = [1, 3, 6, 144];
 /** Smallest payment the wallet sends (the P2PKH dust limit, the strictest output type). */
 export const MIN_PAYMENT_SATS = 546;
 export const LIMIT_WINDOW_MS = 24 * 3_600_000;
+/**
+ * Estimates above this (sat/vB) are treated as missing, so a confused or lying
+ * fee source cannot make the wallet burn money; pass `feeRate` to go higher.
+ */
+export const MAX_ESTIMATE_SAT_PER_VB = 2000;
 
 /**
  * The fee rate (sat/vB) for `speed`: the node's estimate for that target, else
@@ -23,10 +28,10 @@ export const LIMIT_WINDOW_MS = 24 * 3_600_000;
  * the minimum relay fee.
  */
 export function pickFeeRate(fees: FeeEstimates | undefined, speed: FeeSpeed = 'normal'): number {
-  const floor = fees?.minRelaySatPerVb ?? 1;
+  const floor = Math.min(fees?.minRelaySatPerVb ?? 1, MAX_ESTIMATE_SAT_PER_VB);
   const target = SPEED_TARGETS[speed];
   const usable = (fees?.estimates ?? [])
-    .filter((e) => e.satPerVb !== null && e.target >= target)
+    .filter((e) => e.satPerVb !== null && e.satPerVb <= MAX_ESTIMATE_SAT_PER_VB && e.target >= target)
     .sort((a, b) => a.target - b.target);
   const rate = usable[0]?.satPerVb ?? floor;
   return Math.max(floor, Math.ceil(rate * 1000) / 1000);

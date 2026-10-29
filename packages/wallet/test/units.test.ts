@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { base64, hex, utf8 } from '@scure/base';
+import * as btc from '@scure/btc-signer';
 import { HDKey } from '@scure/bip32';
 import { mnemonicToSeedSync } from '@scure/bip39';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
@@ -14,6 +15,7 @@ import {
   TrikeyWallet,
   WalletError,
   authKeyPath,
+  deriveKey2,
   childPubkey,
   generateRecoveryCode,
   normalizeRecoveryCode,
@@ -259,6 +261,73 @@ describe('software hardware wallet', () => {
     const { hmac } = await dev.registerWallet(policy);
     expect(await dev.displayAddress({ ...policy, registration: { hmac: hmac! } }, 0, 3)).toBe(wallet.derive(0, 3).address);
     await expect(dev.registerWallet({ name: 'x'.repeat(17), descriptor: wallet.descriptor() })).rejects.toThrow(/16/);
+  });
+});
+
+describe('chain data from the guardian is checked', () => {
+  it('refuses to sign when a coin is reported at another derivation index than its previous transaction pays', async () => {
+    const m = 'vessel ladder alter error federal sibling chat ability sun glass valve picture'; // published BIP 39 test vector
+    const app = deriveKey2(m, network).account;
+    const master = HDKey.fromMasterSeed(mnemonicToSeedSync(MNEMONICS.hardware), network.bip32);
+    const wallet = new MultisigWallet(network, {
+      app,
+      hardware: keyExpressionFromMaster(master, "m/48'/1'/0'/2'"),
+      cosigner: cosignerKeyExpression(secp256k1.getPublicKey(new Uint8Array(32).fill(7), true), new Uint8Array(32).fill(1), network),
+    });
+    // A funding transaction paying index 0, which the "guardian" claims is at index 1.
+    const raw = btc.RawTx.encode({
+      version: 2,
+      segwitFlag: false,
+      inputs: [{ txid: new Uint8Array(32).fill(1), index: 0, finalScriptSig: new Uint8Array([0x51]), sequence: 0xffffffff }],
+      outputs: [{ script: wallet.derive(0, 0).script, amount: 100_000n }],
+      lockTime: 0,
+    });
+    const txHex = hex.encode(raw);
+    const txid = btc.Transaction.fromRaw(raw, { allowUnknownInputs: true }).id;
+    const signLoads: string[] = [];
+    const fake: GuardianRpc = {
+      publicKey: 'ab'.repeat(32),
+      start: async () => {},
+      close: () => {},
+      onAlert: () => () => {},
+      call: (async (method: string) => {
+        if (method === 'guardian.status')
+          return { state: 'unlocked', paired: true, nextHardwareSequence: 1, phoneSpending: 'enabled', activeRecoveryId: null, version: 't', time: 1 };
+        if (method === 'fees.estimate') return { estimates: [{ target: 3, satPerVb: 2 }], minRelaySatPerVb: 1 };
+        if (method === 'tx.get') return { txHex };
+        if (method === 'wallet.sync')
+          return {
+            tipHeight: 10,
+            tipHash: 'cd'.repeat(32),
+            utxos: [{ txid, vout: 0, valueSats: 100_000, height: 9, confirmations: 2, chain: 0, index: 1 }],
+            utxosTruncated: false,
+            balance: { confirmedSats: 100_000, unconfirmedSats: 0 },
+            history: [],
+            historyTruncated: false,
+            nextReceiveIndex: 2,
+            nextChangeIndex: 0,
+            gapLimit: 20,
+          };
+        throw new Error(`unexpected ${method}`);
+      }) as GuardianRpc['call'],
+    };
+    const secure = new MemorySecureKeyStore();
+    const deps = { network: 'regtest' as const, secureStore: secure, store: new MemoryKeyValueStore(), relayPool: () => ({}) as any, createRpc: () => fake };
+    const w = await TrikeyWallet.create(deps, { mnemonic: m });
+    await (w as any).update((s: any) => {
+      s.stage = 'paired';
+      s.guardian = { pubkey: 'cd'.repeat(32), relays: ['ws://127.0.0.1:1'], key: { fingerprint: 'deadbeef', path: "m/48'/1'/0'/2'", xpub: wallet.keys.cosigner.xpub } };
+      s.wallet = { descriptor: wallet.descriptor(), walletId: wallet.fingerprint(), pairedAt: 0 };
+      s.rules = { policy: { dailyLimitSats: 1_000_000, recoveryDelayDays: 7, alertContacts: [], sweepFeeCapSats: 20_000 }, policyHash: 'ab'.repeat(32), nextHardwareSequence: 1, fetchedAt: 0 };
+    });
+    await w.start();
+    await w.sync();
+    const e = await walletError(w.send({ address: externalAddress(), amountSats: 10_000 }));
+    expect(e.code).toBe('guardian_mismatch');
+    expect(e.message).toMatch(/does not match/);
+    // Key 2 was never unlocked.
+    expect(secure.loads.filter((l) => l.biometric)).toHaveLength(0);
+    void signLoads;
   });
 });
 
