@@ -52,7 +52,21 @@ export interface DailySpend {
   limitSats: number;
 }
 
+/**
+ * What `GET /api/status` answers without a session (after setup): enough to pick the screen (sign in,
+ * then maybe unlock), nothing about the wallet. Sign in with `POST /api/session`.
+ */
+export interface PublicStatus {
+  authenticated: false;
+  setupComplete: boolean;
+  state: 'locked' | 'unlocked';
+  network?: string;
+  version?: string;
+}
+
 export interface GuardianStatus {
+  /** True: this browser has a session (absent from guardians before sessions, and from the mock). */
+  authenticated?: true;
   /** False until first-run setup has created key 3 and the unlock passphrase. */
   setupComplete: boolean;
   state: 'locked' | 'unlocked';
@@ -122,6 +136,11 @@ export interface SetupInput {
 export interface UnlockInput {
   /** Sent once over the local connection and dropped. Never stored by the UI. */
   passphrase: string;
+}
+
+/** `POST /api/session`: sign in with the unlock passphrase; `unlock: true` also unlocks a locked guardian. */
+export interface SignInInput extends UnlockInput {
+  unlock?: boolean;
 }
 
 /** What `resetGuardian` must be confirmed with, typed exactly (the guardian checks it too). */

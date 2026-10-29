@@ -6,6 +6,7 @@ import type {
   HostingOverview,
   PairedPhone,
   PairingSession,
+  PublicStatus,
   RecoveryCode,
   RecoveryInProgress,
   Rules,
@@ -15,6 +16,9 @@ import type {
 interface ErrorBody {
   error?: { code?: string; message?: string; retryAfterSeconds?: number };
 }
+
+/** Dispatched on `window` when the guardian answers 401 `unauthenticated` (the provider re-reads the status). */
+export const SIGNED_OUT_EVENT = 'trikey:signed-out';
 
 /**
  * Talks to the guardian's own HTTP API. Endpoints are documented in API.md.
@@ -52,6 +56,8 @@ export function createHttpApi(base = ''): GuardianApi {
 
     if (!response.ok) {
       const err = (payload as ErrorBody | undefined)?.error;
+      // The session expired (or the guardian restarted): the app goes back to the sign-in screen.
+      if (response.status === 401 && err?.code === 'unauthenticated') window.dispatchEvent(new Event(SIGNED_OUT_EVENT));
       throw new ApiError(
         err?.code ?? (response.status === 404 ? 'not_found' : 'internal'),
         err?.message ?? `The guardian answered with an error (${response.status}).`,
@@ -63,7 +69,9 @@ export function createHttpApi(base = ''): GuardianApi {
   }
 
   return {
-    getStatus: () => request<GuardianStatus>('GET', '/status'),
+    getStatus: () => request<GuardianStatus | PublicStatus>('GET', '/status'),
+    signIn: (input) => request<GuardianStatus>('POST', '/session', input),
+    signOut: () => request<PublicStatus>('DELETE', '/session'),
 
     getSetupPreflight: () => request<SetupPreflight>('GET', '/setup/preflight'),
     completeSetup: (input) => request<GuardianStatus>('POST', '/setup', input),

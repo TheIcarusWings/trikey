@@ -4,6 +4,7 @@ import { createMockApi, readScenario } from './mock';
 
 export type { GuardianApi } from './client';
 export { ApiError } from './client';
+export { SIGNED_OUT_EVENT } from './http';
 export * from './types';
 
 /**

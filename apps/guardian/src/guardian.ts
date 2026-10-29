@@ -61,6 +61,7 @@ import { RecoveryRunner } from './recovery-runner.js';
 import { onContactDm } from './dm-cancel.js';
 import { startHttpServer } from './http/server.js';
 import { buildRoutes } from './http/api.js';
+import { WebSessions } from './http/sessions.js';
 import { GUARDIAN_VERSION } from './version.js';
 import { SilentPaymentService } from './silent/service.js';
 
@@ -72,6 +73,7 @@ export const FILES = {
   throttle: 'unlock-throttle.json',
   phoneThrottle: 'unlock-throttle-phone.json',
   resetThrottle: 'reset-throttle.json',
+  sessionThrottle: 'session-throttle.json',
 } as const;
 
 /** After this many failed `guardian.unlock` passphrases in a row, the phone may not unlock until the web UI does. */
@@ -174,6 +176,10 @@ export class Guardian {
   throttle!: UnlockThrottle;
   phoneThrottle!: UnlockThrottle;
   resetThrottle!: UnlockThrottle;
+  /** Web sign-ins (`POST /api/session`), throttled on their own. */
+  sessionThrottle!: UnlockThrottle;
+  /** The web UI's sessions (http/sessions.ts). In memory: a restart signs everyone out. */
+  readonly sessions = new WebSessions();
   keystore?: KeystoreFile;
   identity?: GuardianIdentity;
   rpc?: RpcServer;
@@ -246,6 +252,8 @@ export class Guardian {
     await g.phoneThrottle.load();
     g.resetThrottle = new UnlockThrottle(g.path('resetThrottle'), g.clock, opts.throttle);
     await g.resetThrottle.load();
+    g.sessionThrottle = new UnlockThrottle(g.path('sessionThrottle'), g.clock, opts.throttle);
+    await g.sessionThrottle.load();
     g.store = new ObservedStore(opts.store ?? new JsonFileStore(g.path('engine')));
     // The engine checks its clock against the chain (recovery delay, daily limit window): Electrs' tip.
     const chainTime = {
@@ -332,6 +340,8 @@ export class Guardian {
         webDir: this.config.webDir,
         routes: buildRoutes(this),
         log: this.log,
+        sessions: this.sessions,
+        now: () => this.clock.now(),
       });
     }
     this.chain.start();
@@ -742,6 +752,33 @@ export class Guardian {
   }
 
   /**
+   * Checks the unlock passphrase for a web sign-in (`POST /api/session`) without unlocking anything.
+   * Its own throttle, like every other passphrase entry point; the passphrase is never logged.
+   */
+  checkWebPassphrase(passphrase: unknown): Promise<UnlockOutcome> {
+    return this.unlockMutex.run(async (): Promise<UnlockOutcome> => {
+      const file = this.keystore;
+      if (!file) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
+      if (typeof passphrase !== 'string' || passphrase.length === 0 || passphrase.length > 4 * MAX_PASSPHRASE_LENGTH)
+        return { ok: false, code: 'invalid', message: 'Enter the unlock passphrase.' };
+      const verdict = this.sessionThrottle.check();
+      if (!verdict.ok) return { ok: false, code: 'rate_limited', retryAfterSeconds: Math.ceil(verdict.retryAfterMs / 1000) };
+      await this.sessionThrottle.begin();
+      try {
+        (await unlockKeystore(file, passphrase)).wipe();
+      } catch (e) {
+        if (!(e instanceof BadPassphraseError)) throw e;
+        this.log.warn('web.sign_in_failed', { failures: this.sessionThrottle.failures });
+        await this.logEvent({ type: 'unlock_failed', via: 'web' });
+        const next = this.sessionThrottle.check();
+        return { ok: false, code: 'bad_passphrase', retryAfterSeconds: next.ok ? undefined : Math.ceil(next.retryAfterMs / 1000) };
+      }
+      await this.sessionThrottle.succeeded();
+      return { ok: true };
+    });
+  }
+
+  /**
    * Drops key 3 from memory: `manual` from the web UI, `remote` when the paired phone asks
    * (`guardian.lock`, e.g. the user fears the box was tampered with). Always allowed: it only
    * reduces what the guardian can do. Already locked: nothing happens, no alert.
@@ -848,6 +885,8 @@ export class Guardian {
           }
           this.keystore = next;
           this.pairing.invalidate();
+          // Every web session ends with the old key 3 (the routes sign the resetting browser in again).
+          this.sessions.clear();
           this.installSigner(signer);
           this.recovery.wait = undefined;
           await this.logEvent({ type: 'reset' });

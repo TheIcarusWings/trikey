@@ -22,12 +22,13 @@ import type {
  *   recovery   a Delay & Notify recovery is running
  *   unpaired   set up, but no phone paired yet
  *   syncing    unlocked while the node is still catching up, one relay down
+ *   signedout  set up and locked, this browser not signed in yet (the sign-in screen)
  *
  * State lives in memory only, so a page reload starts the scenario over. In the
  * mock, any unlock passphrase works except the literal `wrong`, which is
  * rejected so the error state can be tried. Passphrases are never kept.
  */
-export type MockScenario = 'default' | 'firstrun' | 'locked' | 'recovery' | 'unpaired' | 'syncing';
+export type MockScenario = 'default' | 'firstrun' | 'locked' | 'recovery' | 'unpaired' | 'syncing' | 'signedout';
 
 const LATENCY_MS = 120;
 const HOUR = 3_600_000;
@@ -113,13 +114,13 @@ function demoRecovery(): RecoveryInProgress {
 
 export function readScenario(search: string): MockScenario {
   const value = new URLSearchParams(search).get('mock');
-  const known: MockScenario[] = ['firstrun', 'locked', 'recovery', 'unpaired', 'syncing'];
+  const known: MockScenario[] = ['firstrun', 'locked', 'recovery', 'unpaired', 'syncing', 'signedout'];
   return known.find((s) => s === value) ?? 'default';
 }
 
 export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
   const setupDone = scenario !== 'firstrun';
-  let locked = scenario === 'locked';
+  let locked = scenario === 'locked' || scenario === 'signedout';
   let lockedAt: string | undefined = locked ? localAt(0, '03:12') : undefined;
   let lockReason: 'restart' | 'manual' | 'remote' | undefined = locked ? 'restart' : undefined;
   let phones: PairedPhone[] =
@@ -133,6 +134,8 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
   let relayUrls = RELAYS.map((r) => r.url);
   const syncing = scenario === 'syncing';
   let setupFinished = false;
+  // `?mock=signedout`: the browser has no session yet (the sign-in screen first).
+  let signedIn = scenario !== 'signedout';
 
   const rules: Rules = {
     walletName: 'Main',
@@ -191,7 +194,26 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
   const api: GuardianApi = {
     async getStatus() {
       await wait();
+      if (!signedIn && (setupDone || setupFinished)) return { authenticated: false, setupComplete: true, state: locked ? 'locked' : 'unlocked', network: 'bitcoin' };
       return status();
+    },
+
+    async signIn(input) {
+      await wait(300);
+      if (input.passphrase === 'wrong') throw new ApiError('bad_passphrase', 'That passphrase is not right.', 401);
+      signedIn = true;
+      if (input.unlock && locked) {
+        locked = false;
+        lockedAt = undefined;
+        lockReason = undefined;
+      }
+      return status();
+    },
+
+    async signOut() {
+      await wait();
+      signedIn = false;
+      return { authenticated: false, setupComplete: setupDone || setupFinished, state: locked ? 'locked' : 'unlocked', network: 'bitcoin' };
     },
 
     async getSetupPreflight() {
