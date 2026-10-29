@@ -9,7 +9,7 @@ Status: draft for review. Nothing produced or generated yet.
 - **Captions burned in**, sized for phones (≥ 48 px at 1080 wide). Every video works muted.
 - **Hook in the first 2 s:** a plain, specific line on screen at frame 0. No logo intro.
 - **Demo data only:** the mockups' balances (4,210,000 sats), `bc1q9d4x…7kmr`, contacts "Maria" and "Tom".
-- **No brand assets:** hardware wallets named in text only; Bitkey mentioned in text only, as a comparison.
+- **No competitors named:** describe the idea (easy to use, no company holds a key), never another product. Hardware wallets are named in text only, with no logos.
 - **No people's faces or voices.** Generated b-roll shows objects and hands only; any voiceover uses a stock preset voice, never a clone.
 
 ## How the parts are made
@@ -36,7 +36,7 @@ Ranked by strength. **The first three are the ones I'd produce first.**
 The core explainer. If someone sees only one video, it's this one.
 
 - **Length:** 30 s · **Ratios:** 16:9, 1:1, 9:16 · **Theme:** dark
-- **Hook (0–2 s):** "Bitkey-style bitcoin wallet. Except no company holds a key."
+- **Hook (0–2 s):** "A bitcoin wallet that's easy to use. And no company holds a key."
 - **Beats:**
   1. 0–2 s: hook text on black, orange dot pulses.
   2. 2–9 s: the triangle draws itself. Each corner labels in: **Hardware wallet** · **Your phone** · **Your home server**.
@@ -64,7 +64,7 @@ Threat-model video. Concrete and a little dramatic, without fearmongering.
 - **Higgsfield:** 1 clip, 5 s, 9:16.
 
 ### 3. "Lost my phone: 7-day Delay & Notify." ★ produce first
-Shows the most Bitkey-like feature, and the "anyone can cancel a fake one" twist.
+Shows the time-delayed recovery, and the "anyone can cancel a fake one" twist.
 
 - **Length:** 35 s · **Ratios:** 9:16, 1:1, 16:9 · **Theme:** dark
 - **Hook (0–2 s):** "Lost your phone and your backup? Here's what happens."

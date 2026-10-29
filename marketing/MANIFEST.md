@@ -29,15 +29,15 @@ All are H.264 High + AAC 48 kHz, 30 fps, captions burned in.
 | `trikey-f1-nobody-in-the-middle-169.mp4` | 16:9 | 73.6 s | 32.1 MB | music only | `5c0d04a4ad00ff64` |
 | `trikey-f1-nobody-in-the-middle-916-vo.mp4` | 9:16 | 73.6 s | 32.0 MB | voiceover + music | `609fcbde7ce5fe0d` |
 | `trikey-f1-nobody-in-the-middle-916.mp4` | 9:16 | 73.6 s | 32.0 MB | music only | `4de61c377a8e05cc` |
-| `trikey-v1-three-keys-11-vo.mp4` | 1:1 | 35.4 s | 1.6 MB | voiceover + music | `e79929e6a65d094c` |
-| `trikey-v1-three-keys-11.mp4` | 1:1 | 35.4 s | 1.6 MB | music only | `6f26cea8a4370f9c` |
-| `trikey-v1-three-keys-169-vo.mp4` | 16:9 | 35.4 s | 1.8 MB | voiceover + music | `144f3bea3ebf2150` |
-| `trikey-v1-three-keys-169.mp4` | 16:9 | 35.4 s | 1.8 MB | music only | `80fd242f627aa9dd` |
-| `trikey-v1-three-keys-916-vo.mp4` | 9:16 | 35.4 s | 1.9 MB | voiceover + music | `b80b3f6fd3c05a66` |
-| `trikey-v1-three-keys-916.mp4` | 9:16 | 35.4 s | 1.9 MB | music only | `2ad80cfb51f410c1` |
-| `trikey-v1b-brand-11.mp4` | 1:1 | 25.0 s | 1.3 MB | music only | `27d519de73ebd34d` |
-| `trikey-v1b-brand-169.mp4` | 16:9 | 25.0 s | 1.3 MB | music only | `ce361fa7323b9206` |
-| `trikey-v1b-brand-916.mp4` | 9:16 | 25.0 s | 1.5 MB | music only | `34bd3f7eac5082ac` |
+| `trikey-v1-three-keys-11-vo.mp4` | 1:1 | 35.4 s | 1.6 MB | voiceover + music | `eb2b80344fd5b6be` |
+| `trikey-v1-three-keys-11.mp4` | 1:1 | 35.4 s | 1.7 MB | music only | `79dff66889136d59` |
+| `trikey-v1-three-keys-169-vo.mp4` | 16:9 | 35.4 s | 1.8 MB | voiceover + music | `789160be39ca4ba1` |
+| `trikey-v1-three-keys-169.mp4` | 16:9 | 35.4 s | 1.8 MB | music only | `0edaf7348dd13663` |
+| `trikey-v1-three-keys-916-vo.mp4` | 9:16 | 35.4 s | 1.9 MB | voiceover + music | `4651d3f1a8e12572` |
+| `trikey-v1-three-keys-916.mp4` | 9:16 | 35.4 s | 1.9 MB | music only | `e8b9747cfe3fba07` |
+| `trikey-v1b-brand-11.mp4` | 1:1 | 25.0 s | 1.2 MB | music only | `6947584f38875dc2` |
+| `trikey-v1b-brand-169.mp4` | 16:9 | 25.0 s | 1.3 MB | music only | `f506340798daf9bc` |
+| `trikey-v1b-brand-916.mp4` | 9:16 | 25.0 s | 1.4 MB | music only | `6ee5fd096922ba9d` |
 | `trikey-v2-stolen-phone-11-vo.mp4` | 1:1 | 29.6 s | 2.5 MB | voiceover + music | `45c7f34a5a41b9f5` |
 | `trikey-v2-stolen-phone-11.mp4` | 1:1 | 29.6 s | 2.5 MB | music only | `d231cac6fdd543c4` |
 | `trikey-v2-stolen-phone-169-vo.mp4` | 16:9 | 29.6 s | 2.1 MB | voiceover + music | `cec3a8c7ad1678a7` |

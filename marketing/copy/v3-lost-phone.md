@@ -10,7 +10,7 @@ Lost your phone and its backup?
 
 Your hardware wallet + your guardian start a recovery. It waits 7 days and alerts you and your contacts daily. Anyone can cancel a fake one.
 
-Delay & Notify, like Bitkey, but on your own Umbrel or Start9.
+A time-delayed recovery, run on your own Umbrel or Start9.
 
 Pre-alpha: trikey.app
 ```
@@ -28,7 +28,7 @@ Trikey is 2-of-3: hardware wallet, phone, and a guardian app on your own Umbrel 
 4. If someone else started it, any device or contact taps Cancel.
 5. If nobody cancels, the guardian co-signs the move on the last day.
 
-Same idea as Bitkey's Delay & Notify, except the server is yours and so are the alerts. No support ticket.
+The server that runs the delay is yours, and so are the alerts. No support ticket.
 
 Pre-alpha, not audited, testnet only:
 https://trikey.app

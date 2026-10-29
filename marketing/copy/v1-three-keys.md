@@ -6,7 +6,7 @@ Best on X: 16:9 or 1:1. Best on nostr: 9:16 or 1:1.
 ## X post
 
 ```
-A Bitkey-style bitcoin wallet where no company holds a key.
+A bitcoin wallet that's easy to use, and no company holds a key.
 
 Key 1: any hardware wallet
 Key 2: your phone
@@ -21,7 +21,7 @@ trikey.app
 ## Nostr note
 
 ```
-Building Trikey: a 2-of-3 bitcoin wallet that feels like Bitkey, with no company holding a key.
+Building Trikey: a 2-of-3 bitcoin wallet that's as easy to use as any app, with no company holding a key.
 
 🔑 Key 1: any hardware wallet (Ledger, Trezor, Coldcard, BitBox, Jade…). Big payments, rule changes, recovery.
 📱 Key 2: your phone, backed up to your own cloud. Everyday payments with Face ID.
@@ -41,14 +41,14 @@ Code: https://github.com/TheIcarusWings/trikey
 ## Alt text
 
 ```
-Animated explainer on a dark background. Text: "A Bitkey-style bitcoin wallet. Except no company holds a key." A triangle draws itself with three labeled corners: Key 1, hardware wallet; Key 2, your phone; Key 3, your home server. Pairs of corners light up: "Any two keys move money." A phone screen shows a 50,000 sat payment review, "Signed by phone + guardian," with the caption "Everyday: your phone + your guardian. Face ID only, up to a daily limit your guardian enforces." A daily limit settings screen: "Big payments and new rules need your hardware wallet. So a stolen phone can't loosen them." A multisig descriptor types out: "Plain multisig. Any multisig wallet can recover it. Even without Trikey." End card: Trikey logo, "Three keys. No company.", "Pre-alpha, not audited, testnet only", trikey.app and github.com/TheIcarusWings/trikey.
+Animated explainer on a dark background. Text: "A bitcoin wallet that's easy to use. And no company holds a key." A triangle draws itself with three labeled corners: Key 1, hardware wallet; Key 2, your phone; Key 3, your home server. Pairs of corners light up: "Any two keys move money." A phone screen shows a 50,000 sat payment review, "Signed by phone + guardian," with the caption "Everyday: your phone + your guardian. Face ID only, up to a daily limit your guardian enforces." A daily limit settings screen: "Big payments and new rules need your hardware wallet. So a stolen phone can't loosen them." A multisig descriptor types out: "Plain multisig. Any multisig wallet can recover it. Even without Trikey." End card: Trikey logo, "Three keys. No company.", "Pre-alpha, not audited, testnet only", trikey.app and github.com/TheIcarusWings/trikey.
 ```
 
 ## Voiceover script (the -vo cut)
 
 | At | Line |
 |---|---|
-| 0:00 | A Bitkey-style bitcoin wallet. Except no company holds a key. |
+| 0:00 | A bitcoin wallet that's easy to use. And no company holds a key. |
 | 0:04 | Three keys, all yours: a hardware wallet, your phone, and your own home server. |
 | 0:10 | Any two of them move your money. |
 | 0:13 | Everyday payments use your phone and your guardian, up to a daily limit. |

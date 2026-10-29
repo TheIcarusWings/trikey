@@ -32,4 +32,4 @@ How it's made:
 - **Music:** synthesized by `render/audio/music.py`; no samples.
 
 Rules the videos follow: pre-alpha and not audited is stated on every end card; demo balances and
-addresses only; Bitkey and hardware wallet makers are named in text only, with no logos.
+addresses only; no competitor is named, and hardware wallet makers appear in text only, with no logos.
