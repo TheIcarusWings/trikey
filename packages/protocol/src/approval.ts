@@ -73,3 +73,22 @@ export function approvalMessage(action: HardwareAction, ctx: ApprovalContext): s
 export function pairingMessage(walletId: string, cosignerAccountPubkey: string): string {
   return line(['Trikey pair v1', `wallet=${walletId}`, `guardian=${cosignerAccountPubkey}`]);
 }
+
+/**
+ * Signed by the hardware wallet when a NEW phone, without the old phone or its backup, asks the guardian
+ * for the wallet so it can start a recovery (`recovery.access`). Such a phone knows neither the wallet id
+ * nor the descriptor yet, so the text names the two nostr keys instead: the guardian's (so it cannot be
+ * replayed to another guardian) and the new phone's (so nobody else can use it).
+ *
+ * `Trikey recovery-access v1 guardian=<hex> phone=<hex> expires=<ISO 8601 UTC>`
+ */
+export function recoveryAccessMessage(ctx: { guardianPubkey: string; phonePubkey: string; expiresAt: number }): string {
+  if (!/^[0-9a-f]{64}$/.test(ctx.guardianPubkey) || !/^[0-9a-f]{64}$/.test(ctx.phonePubkey)) throw new Error('invalid nostr pubkey');
+  if (!Number.isSafeInteger(ctx.expiresAt) || ctx.expiresAt < 0) throw new Error('expiresAt must be unix seconds');
+  return line([
+    'Trikey recovery-access v1',
+    `guardian=${ctx.guardianPubkey}`,
+    `phone=${ctx.phonePubkey}`,
+    `expires=${isoSeconds(ctx.expiresAt)}`,
+  ]);
+}

@@ -79,7 +79,12 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `recovery.status` | `recoveryId?` (default: the active one) | `recovery` (or `null`), `psbt?` (the signed sweep, once the guardian has co-signed it) |
 | `phone.resume` | `approval` | `phoneSpending: "enabled"` |
 | `guardian.unlock` | `{kind:"passphrase", passphrase}` or `{kind:"hardware", secret: hex}` | `unlocked: boolean` |
-| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time` |
+| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time`, `dailyLimit?: { limitSats, usedSats, availableSats }` |
+| `wallet.sync` | `historyLimit?` (1-500, default 100) | `tipHeight`, `tipHash`, `utxos`, `utxosTruncated`, `balance: { confirmedSats, unconfirmedSats }`, `history`, `historyTruncated`, `nextReceiveIndex`, `nextChangeIndex`, `gapLimit` (see "Chain data") |
+| `tx.get` | `txid: Hex32` | `txHex` |
+| `tx.broadcast` | `txHex` | `txid` |
+| `fees.estimate` | `targets?` (1-8 block targets, 1-1008; default `[1, 3, 6, 144]`) | `estimates: [{ target, satPerVb \| null }]`, `minRelaySatPerVb` |
+| `recovery.access` | `approval: { kind: "bip137", expiresAt, signature }` | `descriptor`, `walletId`, `network`, `guardianKey`, `hardwareAuth`, `policy`, `nextHardwareSequence`, `phoneSpending`, `activeRecoveryId`, `accessExpiresAt` (see "Recovery access") |
 
 **Policy** is exactly the four rules the guardian's policy engine enforces, and nothing else:
 
@@ -117,6 +122,7 @@ The guardian never parses text from the phone. It rebuilds the text from the req
 | `cancel-recovery` | `Trikey cancel-recovery v1 wallet=<walletId> seq=<n> recovery=<recoveryId> expires=<ISO>` |
 | `resume-phone` | `Trikey resume-phone v1 wallet=<walletId> seq=<n> expires=<ISO>` |
 | pairing proof | `Trikey pair v1 wallet=<walletId> guardian=<cosignerAccountPubkey hex>` |
+| recovery access | `Trikey recovery-access v1 guardian=<guardian nostr pubkey hex> phone=<new phone's nostr pubkey hex> expires=<ISO>` (no wallet id and no sequence: see "Recovery access") |
 
 Example: `Trikey resume-phone v1 wallet=0123456789abcdef seq=4 expires=2030-03-17T17:46:40Z`. `walletId` is the `walletId` of the `pair` result (the engine's descriptor fingerprint); `expires` is `expiresAt` as `YYYY-MM-DDTHH:MM:SSZ`.
 
@@ -162,6 +168,31 @@ A `Recovery` object (the engine's `RecoveryView`, with times in seconds):
 * **`recovery.status`**: the engine marks a recovery `completed` when it co-signs the sweep, not when the sweep confirms. `psbt` is that co-signed sweep; broadcasting it is up to the phone or the guardian service.
 
 **Cancelling from a regular nostr app.** Alert contacts also get each recovery alert as a NIP-17 private DM (kind 14 rumor in a NIP-59 gift wrap), so they can read it in Damus, Amethyst or Primal. A contact cancels by replying to that DM with `CANCEL <recoveryId>` (case-insensitive, nothing else on the line); the guardian treats it like `recovery.cancel` from that contact. Alert contacts may call `recovery.cancel` and nothing else.
+
+### Chain data
+
+The guardian already has the wallet's descriptor and the user's own Electrs, so it serves the paired phone's chain data and broadcasts for it: the phone never asks a public server. `wallet.sync`, `tx.get`, `tx.broadcast` and `fees.estimate` need no key 3, so they **work while the guardian is locked**. Only the paired phone may call them (plus, for the reads, a phone with recovery access); requests from anyone else are dropped without an answer like every other unauthorized request. Amounts are `Sats` (JSON numbers); heights are 0 while unconfirmed.
+
+* **`wallet.sync`** scans both chains of the descriptor (receive `0`, change `1`) the way the guardian checks recovery coverage: until `gapLimit` (20) consecutive addresses have no history.
+  * `utxos`: `{ txid, vout, valueSats, height, confirmations, chain, index }`, every unspent output, confirmed ones first by value, at most 500 (`utxosTruncated` says there are more; `balance` always counts all of them). `chain`/`index` are the derivation steps below the account keys, which the phone needs to build the PSBT input.
+  * `history`: `{ txid, height, confirmations, time?, netSats, feeSats? }`, newest first (unconfirmed, then by height), at most `historyLimit` (`historyTruncated`). `netSats` is what the transaction did to the wallet's balance: received minus spent, fee included, negative for payments. `feeSats` is present when every input belongs to the wallet (otherwise the guardian does not know all input amounts). `time` is the block's timestamp.
+  * `nextReceiveIndex` / `nextChangeIndex`: the first index with no history on each chain. The phone receives at `nextReceiveIndex` and sends change to `nextChangeIndex`.
+* **`tx.get`** returns a raw transaction (for PSBT `nonWitnessUtxo`) after checking it hashes to `txid`, so a confused Electrs cannot hand the phone a different transaction. Unknown: `1600 TxNotFound`. At most 150,000 hex characters.
+* **`tx.broadcast`** relays a fully signed raw transaction, but **only one that spends at least one output paying one of the wallet's addresses** (within the scanned range), so the guardian is not an open relay. Otherwise `1602 ForeignTransaction`. A transaction that does not parse is `-32602`; one the node refuses (double spend, too low a fee, bad signature) is `1601 BroadcastRejected` with the node's reason in `message` and `data.reason`. The result is the txid the guardian computed.
+* **`fees.estimate`** asks the node (`blockchain.estimatefee`) per target and converts BTC/kvB to sat/vB; `satPerVb` is `null` where the node has no estimate (usual on regtest and signet, and right after a restart). `minRelaySatPerVb` is the node's relay fee floor.
+* Electrs unreachable or not synced: `1501 Unavailable`; try again later.
+
+The phone keeps its own "spent today" estimate for showing the remaining limit and choosing the signing path, but the guardian's count is the truth: `guardian.status.dailyLimit`, and `data` of an `over_daily_limit` refusal (`limit`, `used`, `outflow`, `wouldUse`).
+
+### Recovery access
+
+"Lost phone, no backup": the user has a new phone, the hardware wallet and the guardian. The new phone has a fresh nostr key that the guardian does not know, and it knows neither the descriptor nor the guardian's key, only the guardian's `npub` and relays (from the guardian's web UI). `recovery.access` lets the hardware wallet vouch for it:
+
+1. The phone asks the device for the authorization key (the same path the wallet used at pairing; it is derived the same way on every phone, see the guardian README) and has it BIP 137-sign `recoveryAccessMessage({ guardianPubkey, phonePubkey, expiresAt })`, with `expiresAt` at most 24 h ahead.
+2. **`recovery.access`** from any sender, once a wallet is paired. The guardian rebuilds the text with *its own* nostr key and the *sender's* key, so the signature is no use to another phone or against another guardian, and verifies it against the paired `hardwareAuth`. Wrong signature `1202`, expired `1203`, too far ahead `1206`. It does not consume a hardware sequence number.
+3. The sender may then, until `accessExpiresAt` (durably, across guardian restarts), call `guardian.status`, `wallet.sync`, `tx.get`, `fees.estimate`, `recovery.start`, `recovery.status`, `recovery.cancel` (only with a hardware approval) and `recovery.access` again. Not `sign`, `policy.*`, `tx.broadcast`, `phone.resume` or `guardian.unlock`. The result gives the phone everything it needs to sweep: the descriptor, the wallet id, the guardian's key and the rules (for the sweep fee cap).
+
+Anyone holding the hardware wallet can thus start a recovery from any phone, which is the design: a recovery is announced to the paired phone and every alert contact, and any of them can cancel it (DESIGN.md, threat model). The web UI's activity log shows every access grant. A phone with recovery access does not receive alerts; it polls `recovery.status`.
 
 ### Alerts
 
@@ -209,7 +240,10 @@ Existing codes never change meaning; new ones are only added. `data` is optional
 | 1400 | PsbtInvalid | |
 | 1401 | PsbtRejected | |
 | 1500 | RateLimited | |
-| 1501 | Unavailable | try again later |
+| 1501 | Unavailable | try again later (also: chain data unavailable) |
+| 1600 | TxNotFound | `tx.get` of a transaction Electrs does not know |
+| 1601 | BroadcastRejected | the node refused the transaction; its reason is in `message` and `data.reason` |
+| 1602 | ForeignTransaction | `tx.broadcast` of a transaction that spends none of the wallet's coins |
 
 ### Engine refusals to error codes
 
@@ -240,7 +274,7 @@ A receiver MUST, in this order, silently drop (no reply, so nothing can be probe
 
 1. **Wrap:** kind 1059, correct `id` and signature (recompute from the fields; do not trust a cached "verified" flag), a `p` tag with its own pubkey, content at most 400,000 chars.
 2. **Decryption:** NIP-44 wrap -> seal (kind 13, valid signature) -> rumor; `rumor.pubkey == seal.pubkey`; rumor `id` correct.
-3. **Peer:** the seal's author is the expected peer. The phone expects exactly the guardian. The guardian accepts its paired phones, and any sender only for `pair`.
+3. **Peer:** the seal's author is the expected peer. The phone expects exactly the guardian. The guardian accepts its paired phones, alert contacts for `recovery.cancel`, phones holding recovery access for the recovery methods, and any sender only for `pair.prepare` / `pair` (around a pairing session) and `recovery.access`.
 4. **Envelope:** rumor kind 21420, tags as in section 2, JSON valid against the schemas, PSBT hash matches.
 5. **Time**, using the rumor's `created_at` and `expiration` and the receiver's clock:
 

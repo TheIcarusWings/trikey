@@ -49,6 +49,14 @@ export const ErrorCode = {
   // 15xx: operational
   RateLimited: 1500,
   Unavailable: 1501,
+
+  // 16xx: chain data
+  /** Electrs does not know the transaction. */
+  TxNotFound: 1600,
+  /** The node refused to relay the transaction; `message` carries its reason. */
+  BroadcastRejected: 1601,
+  /** `tx.broadcast` of a transaction that spends none of the wallet's coins (the guardian is not an open relay). */
+  ForeignTransaction: 1602,
 } as const;
 
 export type ErrorCodeName = keyof typeof ErrorCode;
@@ -82,6 +90,9 @@ export const ErrorMessage: Record<ErrorCodeValue, string> = {
   [ErrorCode.PsbtRejected]: 'PSBT rejected',
   [ErrorCode.RateLimited]: 'Rate limited',
   [ErrorCode.Unavailable]: 'Temporarily unavailable',
+  [ErrorCode.TxNotFound]: 'Transaction not found',
+  [ErrorCode.BroadcastRejected]: 'The node rejected the transaction',
+  [ErrorCode.ForeignTransaction]: 'The transaction spends none of the wallet\'s coins',
 };
 
 /** An error that crosses the wire: thrown by handlers, and by the client for error responses. */

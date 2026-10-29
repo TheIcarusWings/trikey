@@ -23,8 +23,24 @@ import {
   pairingMessage,
   policyHash,
   generateMessageId,
+  recoveryAccessMessage,
+  MAX_SYNC_UTXOS,
+  MAX_TX_HEX_LENGTH,
 } from '../src/index.js';
-import { CONTACT_A, CONTACT_B, WALLET_ID, approval, fakePsbt, pairParams, policy, recovery } from './helpers.js';
+import {
+  CONTACT_A,
+  CONTACT_B,
+  RAW_TX,
+  WALLET_ID,
+  accessApproval,
+  approval,
+  fakePsbt,
+  hardwareAuth,
+  keyOrigin,
+  pairParams,
+  policy,
+  recovery,
+} from './helpers.js';
 
 const id = generateMessageId();
 
@@ -41,6 +57,11 @@ describe('request schemas', () => {
     'phone.resume': { approval },
     'guardian.unlock': { kind: 'passphrase', passphrase: 'correct horse' },
     'guardian.status': {},
+    'wallet.sync': { historyLimit: 50 },
+    'tx.get': { txid: 'ab'.repeat(32) },
+    'tx.broadcast': { txHex: RAW_TX },
+    'fees.estimate': { targets: [1, 6] },
+    'recovery.access': { approval: accessApproval },
   };
 
   it('has a sample for every method', () => {
@@ -115,6 +136,87 @@ describe('methods', () => {
     expect(Recovery.safeParse({ ...recovery, cancelledBy: 'guardian' }).success).toBe(false);
     expect(Recovery.safeParse({ ...recovery, survivingRole: 'cosigner' }).success).toBe(false);
     expect(methods['phone.resume'].result.safeParse({ phoneSpending: 'enabled' }).success).toBe(true);
+  });
+});
+
+describe('chain methods', () => {
+  const ok = (m: keyof typeof methods, params: unknown) => methods[m].params.safeParse(params).success;
+  const res = (m: keyof typeof methods, result: unknown) => methods[m].result.safeParse(result).success;
+  const utxo = { txid: 'ab'.repeat(32), vout: 1, valueSats: 50_000, height: 120, confirmations: 3, chain: 0, index: 4 };
+  const sync = {
+    tipHeight: 122,
+    tipHash: 'cd'.repeat(32),
+    utxos: [utxo, { ...utxo, vout: 2, height: 0, confirmations: 0, chain: 1, index: 0 }],
+    utxosTruncated: false,
+    balance: { confirmedSats: 50_000, unconfirmedSats: 50_000 },
+    history: [
+      { txid: 'ef'.repeat(32), height: 0, confirmations: 0, netSats: -12_345, feeSats: 345 },
+      { txid: 'ab'.repeat(32), height: 120, confirmations: 3, time: 1_800_000_000, netSats: 100_000 },
+    ],
+    historyTruncated: false,
+    nextReceiveIndex: 5,
+    nextChangeIndex: 1,
+    gapLimit: 20,
+  };
+
+  it('wallet.sync takes an optional history limit and returns coins, history and next indexes', () => {
+    expect(ok('wallet.sync', {})).toBe(true);
+    expect(ok('wallet.sync', { historyLimit: 0 })).toBe(false);
+    expect(ok('wallet.sync', { historyLimit: 501 })).toBe(false);
+    expect(ok('wallet.sync', { gapLimit: 5 })).toBe(false); // the guardian's gap limit, not the phone's
+    expect(res('wallet.sync', sync)).toBe(true);
+    expect(res('wallet.sync', { ...sync, utxos: [{ ...utxo, chain: 2 }] })).toBe(false);
+    expect(res('wallet.sync', { ...sync, utxos: [{ ...utxo, valueSats: -1 }] })).toBe(false);
+    expect(res('wallet.sync', { ...sync, utxos: Array(MAX_SYNC_UTXOS + 1).fill(utxo) })).toBe(false);
+    expect(res('wallet.sync', { ...sync, history: [{ ...sync.history[0], time: Date.now() }] })).toBe(false); // ms, not seconds
+    const { nextChangeIndex: _omit, ...missing } = sync;
+    expect(res('wallet.sync', missing)).toBe(false);
+  });
+
+  it('tx.get and tx.broadcast carry lowercase raw transaction hex of bounded size', () => {
+    expect(ok('tx.get', { txid: 'AB'.repeat(32) })).toBe(false);
+    expect(res('tx.get', { txHex: RAW_TX })).toBe(true);
+    expect(ok('tx.broadcast', { txHex: RAW_TX.toUpperCase() })).toBe(false);
+    expect(ok('tx.broadcast', { txHex: RAW_TX.slice(1) })).toBe(false); // odd length
+    expect(ok('tx.broadcast', { txHex: 'ab'.repeat(MAX_TX_HEX_LENGTH / 2 + 1) })).toBe(false);
+    expect(ok('tx.broadcast', { txHex: 'abcd' })).toBe(false);
+    expect(res('tx.broadcast', { txid: 'ab'.repeat(32) })).toBe(true);
+  });
+
+  it('fees.estimate returns sat/vB per target, null when the node has none', () => {
+    expect(ok('fees.estimate', {})).toBe(true);
+    expect(ok('fees.estimate', { targets: [] })).toBe(false);
+    expect(ok('fees.estimate', { targets: [0] })).toBe(false);
+    expect(res('fees.estimate', { estimates: [{ target: 1, satPerVb: 12.5 }, { target: 144, satPerVb: null }], minRelaySatPerVb: 1 })).toBe(true);
+    expect(res('fees.estimate', { estimates: [{ target: 1, satPerVb: 0 }], minRelaySatPerVb: 1 })).toBe(false);
+  });
+
+  it('recovery.access takes an access approval without a sequence', () => {
+    expect(ok('recovery.access', { approval: { ...accessApproval, sequence: 1 } })).toBe(false);
+    expect(ok('recovery.access', { approval })).toBe(false);
+    expect(ok('recovery.access', {})).toBe(false);
+    expect(
+      res('recovery.access', {
+        descriptor: 'wsh(sortedmulti(2,A,B,C))',
+        walletId: WALLET_ID,
+        network: 'regtest',
+        guardianKey: keyOrigin,
+        hardwareAuth,
+        policy,
+        nextHardwareSequence: 1,
+        phoneSpending: 'enabled',
+        activeRecoveryId: null,
+        accessExpiresAt: 1_900_000_000,
+      }),
+    ).toBe(true);
+  });
+
+  it('guardian.status may carry the daily limit', () => {
+    const status = { state: 'locked', paired: true, nextHardwareSequence: 1, phoneSpending: 'enabled', activeRecoveryId: null, version: '0.1.0', time: 1_800_000_000 };
+    expect(res('guardian.status', status)).toBe(true);
+    expect(res('guardian.status', { ...status, dailyLimit: { limitSats: 100, usedSats: 40, availableSats: 60 } })).toBe(true);
+    const parsed = methods['guardian.status'].result.parse({ ...status, dailyLimit: { limitSats: 100, usedSats: 40, availableSats: 60 } });
+    expect(parsed.dailyLimit?.usedSats).toBe(40);
   });
 });
 
@@ -230,6 +332,9 @@ describe('error codes', () => {
     expect(ErrorCode.MethodNotFound).toBe(-32601);
     expect(ErrorCode.GuardianLocked).toBe(1100);
     expect(ErrorCode.ApprovalRequired).toBe(1201);
+    expect(ErrorCode.TxNotFound).toBe(1600);
+    expect(ErrorCode.BroadcastRejected).toBe(1601);
+    expect(ErrorCode.ForeignTransaction).toBe(1602);
   });
 
   it('RpcError serialises to a wire error object', () => {
@@ -291,6 +396,14 @@ describe('approval messages', () => {
       `Trikey cancel-recovery v1 wallet=${WALLET_ID} seq=4 recovery=12-abcdefabcdef expires=2030-03-17T17:46:40Z`,
     );
     expect(approvalMessage({ action: 'resume-phone' }, ctx)).toBe(`Trikey resume-phone v1 wallet=${WALLET_ID} seq=4 expires=2030-03-17T17:46:40Z`);
+  });
+
+  it('formats the recovery access text, bound to both nostr keys', () => {
+    const msg = recoveryAccessMessage({ guardianPubkey: 'aa'.repeat(32), phonePubkey: 'bb'.repeat(32), expiresAt: 1_900_000_000 });
+    expect(msg).toBe(`Trikey recovery-access v1 guardian=${'aa'.repeat(32)} phone=${'bb'.repeat(32)} expires=2030-03-17T17:46:40Z`);
+    expect(msg.length).toBeLessThanOrEqual(MAX_APPROVAL_MESSAGE_LENGTH);
+    expect(() => recoveryAccessMessage({ guardianPubkey: 'AA'.repeat(32), phonePubkey: 'bb'.repeat(32), expiresAt: 1 })).toThrow();
+    expect(() => recoveryAccessMessage({ guardianPubkey: 'aa'.repeat(32), phonePubkey: 'bb'.repeat(32), expiresAt: -1 })).toThrow();
   });
 
   it('formats the pairing text', () => {

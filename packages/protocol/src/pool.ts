@@ -44,6 +44,7 @@ export interface SimplePoolOptions {
 export class SimplePoolRelayPool implements RelayPool {
   private readonly pool: SimplePool;
   private readonly maxWaitMs: number;
+  private closed = false;
 
   constructor(opts: SimplePoolOptions = {}) {
     this.pool = opts.pool ?? new SimplePool({ enableReconnect: true });
@@ -51,6 +52,8 @@ export class SimplePoolRelayPool implements RelayPool {
   }
 
   async publish(relays: string[], event: NostrEvent): Promise<PublishOutcome[]> {
+    // A destroyed SimplePool would quietly open new connections (that nothing closes) for a late publish.
+    if (this.closed) return relays.map((relay) => ({ relay, ok: false, reason: 'pool closed' }));
     const promises = this.pool.publish(relays, event, { maxWait: this.maxWaitMs });
     const settled = await Promise.allSettled(promises);
     return settled.map((r, i) =>
@@ -61,6 +64,10 @@ export class SimplePoolRelayPool implements RelayPool {
   }
 
   subscribe(relays: string[], filter: Filter, handlers: SubscriptionHandlers): Subscription {
+    if (this.closed) {
+      handlers.onclose?.(['pool closed']);
+      return { close: () => {} };
+    }
     const closer = this.pool.subscribeMany(relays, filter, {
       maxWait: this.maxWaitMs,
       onevent: (e) => handlers.onevent(e),
@@ -71,6 +78,7 @@ export class SimplePoolRelayPool implements RelayPool {
   }
 
   close(): void {
+    this.closed = true;
     this.pool.destroy();
   }
 }
