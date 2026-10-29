@@ -20,9 +20,8 @@ export function nextRefillText(next: NextRefill, now: Date): string {
       return `${amount} arriving`;
     case 'waiting':
     case 'pending': {
-      if (!next.etaAt) return `${amount} after the last one confirms`;
+      if (next.status === 'pending' || !next.etaAt) return `${amount} after ${next.index > 1 ? `refill ${next.index - 1}` : 'the last transaction'} confirms`;
       const ms = new Date(next.etaAt).getTime() - now.getTime();
-      if (next.status === 'pending') return `${amount} about ${formatInDays(daysBetween(now, new Date(next.etaAt)))}`;
       return `${amount} ${ms < 24 * 3_600_000 ? `in ${formatCountdown(ms)}` : formatInDays(daysBetween(now, new Date(next.etaAt)))}`;
     }
   }

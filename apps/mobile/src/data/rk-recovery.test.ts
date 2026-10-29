@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { SoftwareHardwareSigner, MemoryKeyValueStore, MemorySecureKeyStore } from '@trikey/wallet/testing';
 import { runRkSchedulerOnce } from './rk-background-run';
 import { createRkWalletService } from './rk-service';
-import { HARDWARE_3, closeServicesAfterAll, externalAddress, failure, setUp, typed, wordsProof, world } from './rk-test-support';
+import { HARDWARE_3, PERIOD, closeServicesAfterAll, externalAddress, failure, setUp, typed, wordsProof, world } from './rk-test-support';
 import type { RecoveryKit } from './types';
 
 closeServicesAfterAll();
@@ -85,6 +85,8 @@ describe('recovery (RK-Recover)', () => {
   it('kit + this phone when the hardware wallet is gone: a new hardware wallet, a new vault, a new kit', async () => {
     const w = world();
     const { p, kit } = await setUp(w);
+    w.chain.mine(1); // refill 1 confirms before the move
+    await p.svc.sync();
     const lost = w.device.info.fingerprint;
     const info = await p.svc.rk!.readKit(typed(kit));
     expect(info.matchesThisPhone).toBe(true);
@@ -179,7 +181,14 @@ describe('the scheduler without the app (the background task)', () => {
     const w = world();
     const { p } = await setUp(w, 5_000_000n, { phone: await w.phone({ mode: 'real' }) });
     await p.kv.set('trikey.app.mode', 'real');
-    const [first] = p.svc.wallet!.refillTransactions();
+    // Refill 1 is in; a week later (1,008 blocks) refill 2 is unlocked and the spending balance is low: the app is closed.
+    w.chain.mine(1);
+    await p.svc.sync();
+    w.chain.mine(PERIOD);
+    const quote = p.svc.quoteSend({ address: externalAddress(), amountSats: 150_000, speed: 'normal' });
+    if (!quote.ok) throw new Error(quote.message);
+    await p.svc.sendPayment(quote.quote);
+    const [, first] = p.svc.wallet!.refillTransactions();
     const run = await runRkSchedulerOnce({ kv: p.kv, secureKeys: p.secure, fetch: w.fetch });
     expect(run).toEqual({ ran: true, network: 'regtest', broadcast: first!.txid });
     expect(w.chain.inMempool(first!.txid)).toBe(true);
@@ -189,7 +198,7 @@ describe('the scheduler without the app (the background task)', () => {
     const open = await w.phone({ secure: p.secure, kv: p.kv, mode: 'real' });
     await open.svc.sync();
     expect(open.svc.getState().recoveryKey.notices).toEqual([]);
-    expect(open.svc.getState().recoveryKey.next).toMatchObject({ index: 1, status: 'arriving' });
+    expect(open.svc.getState().recoveryKey.next).toMatchObject({ index: 2, status: 'arriving' });
   }, 90_000);
 
   it('does nothing outside the real mode, with no wallet, or when the phone will not give up its key', async () => {

@@ -193,7 +193,6 @@ class Service implements RkWalletService {
   private timer?: ReturnType<typeof setInterval>;
   private closed = false;
   private starting?: Promise<void>;
-  private kit?: RecoveryKit;
   private readonly clock: { now(): number };
 
   constructor(private readonly deps: RkServiceDeps) {
@@ -378,7 +377,6 @@ class Service implements RkWalletService {
     this.unsubWallet?.();
     this.prompts.clearAll();
     await this.w?.close().catch(() => {});
-    this.kit = undefined;
   }
 
   get wallet(): RecoveryKeyWallet | undefined {
@@ -1011,7 +1009,6 @@ class Service implements RkWalletService {
     this.w = undefined;
     this.home = undefined;
     this.cpfp = null;
-    this.kit = undefined;
     this.doc = emptyDoc();
     await this.deps.platform.kv.remove(this.docKey).catch(() => {});
     this.deps.onWalletChange?.(false);
@@ -1050,7 +1047,6 @@ class Service implements RkWalletService {
                       [],
                       'Your second hardware wallet',
                     );
-              self.kit = sheet;
               return sheet;
             } finally {
               self.setProgress(null);
@@ -1068,7 +1064,6 @@ class Service implements RkWalletService {
             self.setProgress('Setting up your vault: approve on your hardware wallet');
             try {
               const v = await w.confirmKitSaved(proof, { verifyAddress });
-              self.kit = undefined;
               self.deps.onWalletChange?.(true);
               await self.resync();
               return { fingerprint: v.fingerprint };

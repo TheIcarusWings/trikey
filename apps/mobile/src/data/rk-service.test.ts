@@ -73,7 +73,8 @@ describe('creating the wallet (RK-Create)', () => {
 
     // Key 3 is gone from the phone: nothing the app stored holds the kit's words or QR.
     const stored = [...kv.data.values()].join('\n');
-    for (const word of new Set(kit.recoveryWords)) expect(stored).not.toMatch(new RegExp(`\\b${word}\\b`));
+    // (A single word can be anywhere: "model" is a BIP 39 word and a field name. Four in a row are the key.)
+    for (let i = 0; i + 4 <= kit.recoveryWords.length; i++) expect(stored).not.toContain(kit.recoveryWords.slice(i, i + 4).join(' '));
     expect(stored).not.toContain(kit.qrText.slice(11, 60));
     expect(Object.keys(JSON.parse(kv.data.get('trikey.rk.simulator.regtest.app')!))).not.toContain('html');
     expect(await failure(svc.rk!.confirmKit(wordsProof(kit)))).toMatchObject({ kind: 'wrong_state' });
@@ -170,15 +171,16 @@ describe('refills (RK-Refills)', () => {
 });
 
 describe('home, the scheduler and sending (RK-Home)', () => {
-  it('sends refill 1 when the app syncs, holds refill 2 until 1,008 blocks have passed, then tops up when the balance is low', async () => {
+  it('sends refill 1 when refills are approved, holds refill 2 until 1,008 blocks have passed, then tops up when the balance is low', async () => {
     const w = world();
     const { p } = await setUp(w);
     const { svc } = p;
-    expect(svc.getState().recoveryKey).toMatchObject({ spendingSats: 0, vaultSats: 5_000_000 });
-
-    // Opening the app (sync) runs the scheduler: refill 1 goes out.
+    // Approving ran the scheduler (it runs whenever the app syncs): refill 1 is already on its way, and counts as soon as it is seen.
+    expect(svc.getState().recoveryKey).toMatchObject({ spendingSats: 200_000, next: { index: 1, status: 'arriving' } });
+    expect(w.chain.mempool()).toHaveLength(1);
+    // Opening the app runs it again and finds nothing more to send.
     await svc.sync();
-    expect(svc.getState().recoveryKey.next).toMatchObject({ index: 1, status: 'arriving' });
+    expect(w.chain.mempool()).toHaveLength(1);
     w.chain.mine(1);
     await svc.sync();
     let rk = svc.getState().recoveryKey;
@@ -290,7 +292,10 @@ describe('home, the scheduler and sending (RK-Home)', () => {
   it('reports a refill this phone did not send, once, until it is dismissed', async () => {
     const w = world();
     const { p } = await setUp(w);
-    // A thief copies the phone's storage and sends refill 1 from another phone.
+    w.chain.mine(1);
+    await p.svc.sync(); // refill 1 (this phone's own) confirms
+    w.chain.mine(PERIOD);
+    // A thief copies the phone's storage and sends refill 2 from another phone, the moment it unlocks.
     const stolen = await RecoveryKeyWallet.open({
       network: 'regtest',
       secureStore: p.secure,
@@ -298,11 +303,11 @@ describe('home, the scheduler and sending (RK-Home)', () => {
       storageKey: 'trikey.rk.simulator.regtest',
       esplora: new EsploraClient({ baseUrl: 'sim://thief', fetch: simFetch(w.chain) }),
     });
-    const refill = stolen!.refillTransactions()[0]!;
+    const refill = stolen!.refillTransactions()[1]!;
     await new EsploraClient({ baseUrl: 'sim://thief', fetch: simFetch(w.chain) }).broadcast(refill.txHex);
     await p.svc.sync();
     const notices = p.svc.getState().recoveryKey.notices;
-    expect(notices).toEqual([expect.objectContaining({ kind: 'unexpected_broadcast', index: 1, txid: refill.txid })]);
+    expect(notices).toEqual([expect.objectContaining({ kind: 'unexpected_broadcast', index: 2, txid: refill.txid })]);
     await p.svc.sync();
     expect(p.svc.getState().recoveryKey.notices).toHaveLength(1); // once, not once per sync
     p.svc.rk!.dismissNotice(notices[0]!.id);

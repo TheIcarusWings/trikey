@@ -92,7 +92,11 @@ export async function setUp(w: World, sats = 5_000_000n, opts: { approve?: boole
   const { fingerprint } = await p.svc.rk!.confirmKit(wordsProof(kit));
   w.fund(p.svc.rk!.vaultAddress(), sats);
   await p.svc.sync();
-  if (opts.approve !== false) await p.svc.rk!.approveRefills();
+  if (opts.approve !== false) {
+    await p.svc.rk!.approveRefills();
+    // Approving sends refill 1 at once (the scheduler runs in the background): wait for that, so what follows is deterministic.
+    await p.svc.sync();
+  }
   return { p, kit, fingerprint };
 }
 
