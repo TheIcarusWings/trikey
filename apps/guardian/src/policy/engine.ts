@@ -217,14 +217,29 @@ function belowHardwareAccount(wallet: MultisigWallet, path: string): string | un
 }
 
 /**
- * If the authorization key sits below the hardware wallet's multisig account by non-hardened steps,
- * the guardian can check itself that it belongs to that device. Returns a reason when it does not.
+ * The authorization key must sit below the hardware wallet's multisig account by non-hardened steps
+ * (the wallet uses `<account>/0/0`, e.g. `m/48'/0'/0'/2'/0/0`), so the guardian checks itself that it
+ * belongs to that device: whoever proves it holds that key holds the hardware wallet's account key.
+ * Any other path is refused (a key the pairer chose freely proves nothing about the device). Returns
+ * a reason when the key does not qualify.
  */
 function authKeyMismatch(wallet: MultisigWallet, key: HardwareAuthKey, network: Network): string | undefined {
   const rest = belowHardwareAccount(wallet, key.path);
-  if (rest === undefined) return undefined;
+  if (rest === undefined)
+    return `the authorization key must be a non-hardened child of the hardware wallet's account (m/${wallet.keys.hardware.originPath.replace(/h/g, "'")}/0/0)`;
   const derived = HDKey.fromExtendedKey(wallet.keys.hardware.xpub, network.bip32).derive(`m/${rest}`).publicKey!;
   return hex.encode(derived) === key.pubkey ? undefined : 'authorization key does not derive from the hardware xpub at its path';
+}
+
+/**
+ * A wallet's key set: its three account pubkeys, sorted. What key 3 will co-sign is decided by these
+ * alone (inputs are matched by account pubkeys plus the tweaks the PSBT delegates, core's
+ * `analyzePsbt`), whatever the descriptor's origins, fingerprints, chaincodes or role order say. So
+ * "the same wallet" is compared by this, never by descriptor hash.
+ */
+export function keySetOf(wallet: MultisigWallet): string {
+  const a = wallet.accountPubkeys();
+  return ROLES.map((r) => hex.encode(a[r])).sort().join(',');
 }
 
 function liveGrants(w: GuardedWallet, now: number): AccessGrant[] {
@@ -396,6 +411,18 @@ export class PolicyEngine {
     return undefined;
   }
 
+  /** The retired wallet with the same key set as `wallet`, if any. */
+  private retiredKeySet(draft: GuardianState, wallet: MultisigWallet): RetiredWallet | undefined {
+    const ks = keySetOf(wallet);
+    return draft.retired.find((r) => {
+      try {
+        return keySetOf(this.wallet(r.registration)) === ks;
+      } catch {
+        return false;
+      }
+    });
+  }
+
   /** Checks a hardware approval for `action` and consumes its sequence number on success. */
   private checkApproval(draft: GuardianState, now: number, approval: HardwareApproval, action: HardwareAction): Refusal | undefined {
     const reg = draft.active!.registration;
@@ -480,7 +507,10 @@ export class PolicyEngine {
       if (mismatch) return bad(mismatch);
       const walletId = wallet.fingerprint();
       // A retired wallet stays retired: re-pairing it would bring back a key set the user moved away from.
-      if (draft.retired.some((r) => r.registration.walletId === walletId)) return refused({ reason: 'wallet_retired', walletId });
+      // Compared by key set: another descriptor for the same keys (other origins, chaincodes or roles)
+      // is the same wallet to key 3.
+      const retired = this.retiredKeySet(draft, wallet);
+      if (retired) return refused({ reason: 'wallet_retired', walletId: retired.registration.walletId });
       if (!checked.authorizer.verify(pairingMessage(walletId, cosignerHex), input.hardwareAuthProof, hwKey))
         return bad('hardware pairing proof does not verify');
       const replaces = typeof input.replacesWalletId === 'string' && /^[0-9a-f]{16}$/.test(input.replacesWalletId) ? input.replacesWalletId : undefined;
@@ -832,9 +862,8 @@ export class PolicyEngine {
       } catch (e) {
         return refuse({ reason: 'invalid_destination', detail: (e as Error).message });
       }
-      if (dest.fingerprint() === wallet.fingerprint()) return refuse({ reason: 'invalid_destination', detail: 'destination is the current wallet' });
-      if (draft.retired.some((r) => r.registration.walletId === dest.fingerprint()))
-        return refuse({ reason: 'invalid_destination', detail: 'destination is a wallet this guardian retired' });
+      if (keySetOf(dest) === keySetOf(wallet)) return refuse({ reason: 'invalid_destination', detail: 'destination is the current wallet' });
+      if (this.retiredKeySet(draft, dest)) return refuse({ reason: 'invalid_destination', detail: 'destination is a wallet this guardian retired' });
 
       const checked = inspectPsbt(req.psbt, wallet, dest);
       if (!checked.ok) {
@@ -1013,7 +1042,7 @@ export class PolicyEngine {
         const phone = rec.initiator ?? (rec.survivingRole === 'app' ? old.appNostrPubkey : undefined);
         if (hex.encode(acct.cosigner) !== old.cosignerAccountPubkey) detail = 'the new wallet uses another guardian key';
         else if (new Set(ROLES.map((r) => hex.encode(acct[r]))).size !== 3) detail = 'the new wallet does not have three distinct keys';
-        else if (draft.retired.some((r) => r.registration.walletId === dest.fingerprint())) detail = 'the new wallet was retired before';
+        else if (keySetOf(dest) === keySetOf(this.wallet(old)) || this.retiredKeySet(draft, dest)) detail = 'the new wallet was retired before';
         else if (!phone) detail = 'the phone that started the recovery is not known; pair the new wallet with a pairing code';
         else {
           let hardwareAuth: HardwareAuthKey | undefined;

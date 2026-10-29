@@ -50,8 +50,13 @@ export const hwSigner = (m = MNEMONICS.hardware) => new SoftwareSigner('hardware
 export const COSIGNER_PRIV = new Uint8Array(32).fill(7);
 export const OTHER_COSIGNER_PRIV = new Uint8Array(32).fill(9);
 
-/** Default single-sig path the fake hardware wallet signs approvals with. */
-export const AUTH_PATH = "m/84'/1'/1000'/0/0";
+/**
+ * Default single-sig path the fake hardware wallet signs approvals with: the wallet package's, a
+ * non-hardened child of the hardware wallet's multisig account (the guardian refuses any other).
+ */
+export const AUTH_PATH = "m/48'/1'/0'/2'/0/0";
+/** A path NOT below the hardware account (what guardians before the 2026-10 review accepted). */
+export const LEGACY_AUTH_PATH = "m/84'/1'/1000'/0/0";
 
 export const T0 = Date.UTC(2026, 9, 1, 12, 0, 0);
 

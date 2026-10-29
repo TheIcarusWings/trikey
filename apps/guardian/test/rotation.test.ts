@@ -31,6 +31,7 @@ import {
 import {
   APP_NOSTR,
   AUTH_PATH,
+  LEGACY_AUTH_PATH,
   CONTACT_A,
   COSIGNER_PRIV,
   Ctx,
@@ -291,8 +292,15 @@ describe('adopting the destination wallet after a recovery', () => {
     expect(res).toMatchObject({ ok: true, changed: true });
   });
 
-  it('lost hardware wallet with a key path the guardian cannot derive: the phone supplies the new key with its proof', async () => {
-    const ctx = await setup(); // AUTH_PATH is not below the hardware account
+  it('lost hardware wallet with a (legacy) key path the guardian cannot derive: the phone supplies the new key with its proof', async () => {
+    // Guardians before the 2026-10 review accepted an authorization key anywhere; such a pairing may
+    // still be on disk. New pairings must use a key below the hardware account (security/repair-retired).
+    const store = new MemoryStore();
+    const first = await setup({ store });
+    const saved = (await store.load())!;
+    saved.active!.registration.hardwareAuth = { kind: 'bip137', pubkey: hwAuthPubkey(LEGACY_AUTH_PATH), path: LEGACY_AUTH_PATH };
+    await store.save(saved);
+    const ctx: Ctx = { ...first, engine: await PolicyEngine.open({ store, clock: first.clock, signer: first.signer }) };
     const dest = await makeWallet({ hardware: MNEMONICS.hardware2 });
     const id = await recoverTo(ctx, 'app', dest, { initiator: APP_NOSTR });
     const rot = await ctx.engine.rotateAfterSweep(id);
@@ -302,6 +310,10 @@ describe('adopting the destination wallet after a recovery', () => {
       ok: false,
       refusal: { reason: 'hardware_auth_unconfirmed' },
     });
+    // The new device's key must be below its account now.
+    const legacy = { kind: 'bip137' as const, pubkey: hwAuthPubkey(LEGACY_AUTH_PATH, MNEMONICS.hardware2), path: LEGACY_AUTH_PATH };
+    const legacyProof = signMessage(pairingMessage(dest.fingerprint(), cosignerPub()), hwAuthPrivateKey(LEGACY_AUTH_PATH, MNEMONICS.hardware2));
+    expect(await ctx.engine.confirmHardwareAuth({ hardwareAuth: legacy, proof: legacyProof })).toMatchObject({ ok: false, refusal: { reason: 'invalid_registration' } });
     const key = { kind: 'bip137' as const, pubkey: hwAuthPubkey(AUTH_PATH, MNEMONICS.hardware2), path: AUTH_PATH };
     const proof = signMessage(pairingMessage(dest.fingerprint(), cosignerPub()), hwAuthPrivateKey(AUTH_PATH, MNEMONICS.hardware2));
     expect(await ctx.engine.confirmHardwareAuth({ hardwareAuth: key, proof })).toMatchObject({ ok: true });
