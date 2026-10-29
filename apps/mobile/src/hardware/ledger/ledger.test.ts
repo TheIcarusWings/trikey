@@ -494,5 +494,17 @@ describe('Ledger Device Management Kit compatibility (offline)', () => {
     const built = walletBuilder.fromRegisteredWallet(new RegisteredWallet(policy.name, policy.descriptorTemplate, policy.keys, policy.hmac));
     expect(built.keys).toEqual(policy.keys);
     expect(built.hmac).toEqual(policy.hmac);
+
+    // The kit serialises the policy the way the Bitcoin app hashes it into the wallet id: version 2, the name, the template
+    // (by length and hash) and the Merkle root of the keys.
+    const serializer = container.get(walletTypes.WalletSerializer) as { serialize(w: unknown): Uint8Array; getId(w: unknown): Uint8Array };
+    const bytes = serializer.serialize(built);
+    expect(bytes[0]).toBe(2);
+    expect(bytes[1]).toBe('Trikey test'.length);
+    expect(new TextDecoder().decode(bytes.slice(2, 2 + 'Trikey test'.length))).toBe('Trikey test');
+    expect(serializer.getId(built)).toHaveLength(32);
+    // The wallet id does not depend on the HMAC, but it does depend on the key order.
+    const reversed = walletBuilder.fromRegisteredWallet(new RegisteredWallet(policy.name, policy.descriptorTemplate, [...policy.keys].reverse(), policy.hmac));
+    expect(serializer.getId(reversed)).not.toEqual(serializer.getId(built));
   });
 });
