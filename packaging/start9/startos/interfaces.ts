@@ -1,9 +1,46 @@
-// The guardian's web UI, exposed as a StartOS interface.
-//
-// The service listens on 0.0.0.0:3000 inside its container (env PORT). It is the only
-// listener; the guardian opens no other inbound port.
-//
-// TODO(verify): the interface-definition API of the 0.4 SDK (createInterface, the
-// interface type 'ui', and how it is exported from main).
-export const UI_PORT = 3000
-export const UI_INTERFACE_ID = 'ui'
+import { storeJson } from './fileModels/store.json'
+import { i18n } from './i18n'
+import { sdk } from './sdk'
+import { uiPort } from './utils'
+
+// The guardian's web interface is its only listener. It has no authentication of its own, so the
+// StartOS proxy gates every request with HTTP basic auth (proxy.auth). The password comes from
+// store.json and is set by the set-web-password action. Until it exists nothing is bound, so the
+// port cannot be reached; the critical task from init/watchPassword.ts asks for it.
+export const setInterfaces = sdk.setupInterfaces(async ({ effects }) => {
+  const password = await storeJson.read((s) => s.uiPassword).const(effects)
+  if (!password) return []
+
+  const uiMulti = sdk.MultiHost.of(effects, 'ui-multi')
+  const uiMultiOrigin = await uiMulti.bindPort(uiPort, {
+    // 'http' keeps the plaintext port on the server itself and the internal bridge. Anything
+    // off the server reaches the guardian through the TLS leg StartOS adds, and that leg
+    // is where the auth gate sits (SDK 3.1: AddSslOptions.auth).
+    protocol: 'http',
+    addSsl: {
+      auth: {
+        type: 'basic',
+        credentials: [{ username: 'admin', password }],
+        realm: null,
+      },
+    },
+  })
+
+  const ui = sdk.createInterface(effects, {
+    name: i18n('Web UI'),
+    id: 'ui',
+    description: i18n(
+      'The Trikey Guardian web interface: set up, pair your phone, unlock and lock key 3',
+    ),
+    type: 'ui',
+    masked: false,
+    schemeOverride: null,
+    username: null,
+    path: '',
+    query: {},
+  })
+
+  const uiReceipt = await uiMultiOrigin.export([ui])
+
+  return [uiReceipt]
+})
