@@ -8,18 +8,19 @@ import { Body, FieldLabel, Footnote } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
 import { Input } from '@/components/ui/input';
-import { GuardianAddressError, parseGuardianAddress } from '@/data';
+import { GuardianAddressError, parseGuardianAddress, useWalletService } from '@/data';
 import { QrScanner } from '@/hardware/ui';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
 /**
  * "Lost my phone and the backup", on a new phone: the hardware wallet can prove it is yours, but this phone has to find
- * the guardian first. Its npub and relays are on the guardian's own page (Settings, and the pairing screen); a pairing
- * code (`trikey://pair?...`) holds both, and so does a QR of it.
+ * the guardian first. The guardian's page shows a "Recover on a new phone" code (`trikey://recover?...`) with its npub,
+ * relays and network; a pairing code (`trikey://pair?...`) holds the npub and relays too, and they can be typed.
  */
 export default function RecoverGuardian() {
   const router = useRouter();
+  const wallet = useWalletService();
   const [address, setAddress] = useState('');
   const [relays, setRelays] = useState('');
   const [scanning, setScanning] = useState(false);
@@ -27,7 +28,14 @@ export default function RecoverGuardian() {
 
   const next = (a = address, r = relays) => {
     try {
-      const parsed = parseGuardianAddress(a, r);
+      const code = wallet.readCode(a);
+      if (code.kind === 'unknown' && /^trikey:/i.test(a.trim())) throw new GuardianAddressError(code.reason);
+      const parsed =
+        code.kind === 'recovery'
+          ? code.guardian
+          : code.kind === 'pairing'
+            ? parseGuardianAddress(`${code.guardianNpub} ${code.relays.join(' ')}`, r)
+            : parseGuardianAddress(code.kind === 'contact' ? code.npub : a, r);
       setProblem(null);
       router.push({ pathname: '/recover/new-hardware', params: { lost: 'phone', npub: parsed.npub, relays: parsed.relays.join(',') } });
     } catch (e) {
@@ -47,16 +55,16 @@ export default function RecoverGuardian() {
         </>
       }>
       <Body>
-        This phone needs to know where your guardian lives. Paste its pairing code, or its npub and relays. You can copy them from the guardian's
-        page on your Umbrel or Start9, or from Settings on your old phone.
+        This phone needs to know where your guardian lives. Scan the "Recover on a new phone" code on the guardian's page on your Umbrel or
+        Start9, or paste its npub and relays (also in Settings on your old phone).
       </Body>
       <View className="gap-1.5">
-        <FieldLabel nativeID="guardian-address">Guardian npub or pairing code</FieldLabel>
+        <FieldLabel nativeID="guardian-address">Recovery code or guardian npub</FieldLabel>
         <View className="flex-row gap-2">
           <Input
             aria-labelledby="guardian-address"
-            accessibilityLabel="Guardian npub or pairing code"
-            placeholder="npub1… or trikey://pair?…"
+            accessibilityLabel="Recovery code or guardian npub"
+            placeholder="trikey://recover?… or npub1…"
             value={address}
             onChangeText={(t) => {
               setAddress(t);
@@ -80,7 +88,8 @@ export default function RecoverGuardian() {
             <QrScanner
               size={220}
               onFrame={(data) => {
-                if (/^trikey:/i.test(data.trim()) || /npub1/i.test(data)) {
+                const code = wallet.readCode(data);
+                if (code.kind === 'recovery' || code.kind === 'pairing' || code.kind === 'contact' || /^trikey:/i.test(data.trim())) {
                   setScanning(false);
                   setAddress(data.trim());
                   next(data.trim(), relays);

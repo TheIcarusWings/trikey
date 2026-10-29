@@ -16,7 +16,10 @@ import type {
   RecoveryDelayDays,
   RecoveryInProgress,
   RecoveryKeyKind,
+  ReplaceGuardianPlan,
+  ReplaceGuardianResult,
   RestoreUnlock,
+  ScannedCode,
   SendQuote,
   SendRequest,
   Sats,
@@ -84,9 +87,30 @@ export interface WalletService {
   // -- guardian --------------------------------------------------------
   /** Unlocks a guardian that restarted. The passphrase is used once and never stored. */
   unlockGuardian(passphrase?: string): Promise<void>;
+  /** Locks the guardian from this phone (key 3 leaves its memory until someone unlocks it with the passphrase). */
   lockGuardian(): Promise<void>;
-  /** Sweeps to a new wallet paired with a new guardian. */
-  replaceGuardian(pairingCode: string): Promise<void>;
+  /**
+   * "Replace guardian", after scanning the new guardian's pairing code: what will happen, in plain steps. Changes
+   * nothing. The plan is also in `state.replace.plan` until the move runs or is cancelled.
+   */
+  previewReplaceGuardian(pairingCode: string): Promise<ReplaceGuardianPlan>;
+  /**
+   * Runs the move to the new guardian (or goes on with one that started). Rejects with kind `guardian_unreachable`
+   * when the old guardian does not answer and `oldGuardianGone` was not confirmed.
+   */
+  replaceGuardian(opts?: { oldGuardianGone?: boolean }): Promise<ReplaceGuardianResult>;
+  /** Forgets a scanned plan, or a move that paired but signed nothing yet. */
+  cancelReplaceGuardian(): Promise<void>;
+  /** Moves coins sent to an old wallet (after "Replace guardian") into this one, with the hardware wallet. */
+  sweepOldWallets(): Promise<{ movedSats: Sats }>;
+  /** The old guardian is back: retire the old wallet there, with the hardware wallet. */
+  retireOldWallet(): Promise<void>;
+  /** After a recovery moved the wallet: the hardware wallet registers it, shows its first address and confirms its key. */
+  confirmHardware(): Promise<void>;
+
+  // -- scanning ----------------------------------------------------------
+  /** What a camera or paste field read: a pairing or recovery code, an address, a PSBT, a nostr key. Checked against the wallet's network. */
+  readCode(text: string): ScannedCode;
 
   // -- rules (the guardian enforces them) ------------------------------
   /** Raising the limit needs the hardware wallet, lowering it does not. */
@@ -102,7 +126,11 @@ export interface WalletService {
   findBackup(provider?: CloudProvider): Promise<FoundBackup | null>;
   /** Lets the person choose a backup file, and makes it available to `findBackup`. Null if they cancelled. */
   importBackupFile(): Promise<FoundBackup | null>;
-  restoreFromBackup(unlock?: RestoreUnlock, provider?: CloudProvider): Promise<void>;
+  /**
+   * Restores the backup that `findBackup` found. A backup for another network than the phone's is refused with kind
+   * `network_mismatch` unless `switchNetwork` (the person agreed to switch).
+   */
+  restoreFromBackup(unlock?: RestoreUnlock, provider?: CloudProvider, opts?: { switchNetwork?: boolean }): Promise<void>;
   recoverWithKit(): Promise<{ movedSats: Sats }>;
   /**
    * `hardware`: this phone and the guardian move everything to a new hardware wallet (it connects `hardwareKind`).
@@ -136,6 +164,10 @@ export interface WalletService {
   dev?: {
     setGuardianStatus?(status: GuardianStatus): void;
     simulateRecoveryFromElsewhere?(): void;
+    /** The demo's recovery ends now: the guardian takes the new wallet over. */
+    finishRecovery?(): void;
+    /** Simulator: swaps the simulated hardware wallet for a new one (to try "Lost my hardware wallet"). Returns its fingerprint. */
+    useNewSimulatedDevice?(): string;
     restartOnboarding?(): void;
     /** Removes the wallet's keys and data from this phone (this mode and network only). */
     forgetWallet?(): Promise<void>;

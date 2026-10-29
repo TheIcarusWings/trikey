@@ -172,17 +172,28 @@ export type WalletErrorCode =
   /** The recovery code fails its check character (a typo). */
   | 'recovery_code_typo'
   | 'passkey_unavailable'
+  /** After a recovery moved the wallet: register it on the hardware wallet and confirm the key first (`confirmHardware`). */
+  | 'hardware_unconfirmed'
+  /** "Replace guardian": the old guardian does not answer; ask the person, then pass `oldGuardianReachable: false`. */
+  | 'old_guardian_unreachable'
+  /** Nothing can serve chain data or broadcast for this wallet (no guardian guards it; no node is configured). */
+  | 'no_chain_source'
+  /** "Replace guardian" already moved part of the way; finish it (`replaceGuardian()`) first. */
+  | 'replace_in_progress'
   | 'internal';
 
 export class WalletError extends Error {
   readonly code: WalletErrorCode;
   readonly refusal?: GuardianRefusal;
+  /** `network_mismatch` on a restore: the network the backup is for. */
+  readonly backupNetwork?: string;
 
-  constructor(code: WalletErrorCode, message: string, opts: { refusal?: GuardianRefusal; cause?: unknown } = {}) {
+  constructor(code: WalletErrorCode, message: string, opts: { refusal?: GuardianRefusal; cause?: unknown; backupNetwork?: string } = {}) {
     super(message, opts.cause === undefined ? undefined : { cause: opts.cause });
     this.name = 'WalletError';
     this.code = code;
     this.refusal = opts.refusal;
+    if (opts.backupNetwork) this.backupNetwork = opts.backupNetwork;
   }
 }
 

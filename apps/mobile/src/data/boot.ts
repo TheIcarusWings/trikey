@@ -64,7 +64,7 @@ export async function bootWallet(mode: AppMode, platform: TrikeyPlatform = getPl
       mnemonic = newMnemonic();
       await kv.set(SIM_DEVICE_KEY, mnemonic);
     }
-    const device = new SoftwareHardwareSigner({ mnemonic, network: 'regtest', kind: 'ledger', model: 'Simulated device' });
+    let device = new SoftwareHardwareSigner({ mnemonic, network: 'regtest', kind: 'ledger', model: 'Simulated device' });
     const provider = new SoftwareHardwareProvider(device);
     return createRealWalletService({
       mode: 'simulator',
@@ -74,6 +74,16 @@ export async function bootWallet(mode: AppMode, platform: TrikeyPlatform = getPl
       shareBackupFile,
       pickBackupFile,
       info: () => [`Simulated device fingerprint ${device.info.fingerprint}`, 'Regtest only. Keys are throwaway.'],
+      devTools: {
+        // "Lost my hardware wallet" needs a second device: the next one the app connects is a new one.
+        useNewSimulatedDevice() {
+          const next = newMnemonic();
+          void kv.set(SIM_DEVICE_KEY, next);
+          device = new SoftwareHardwareSigner({ mnemonic: next, network: 'regtest', kind: 'ledger', model: 'Simulated device' });
+          provider.device = device;
+          return device.info.fingerprint;
+        },
+      },
     });
   }
 

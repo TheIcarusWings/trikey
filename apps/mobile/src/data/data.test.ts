@@ -5,7 +5,7 @@ import { WalletError } from '@trikey/wallet';
 import { SoftwareHardwareProvider, SoftwareHardwareSigner } from '@trikey/wallet/testing';
 import { HardwareError } from '../hardware/errors';
 import { CloudBackupError, SecureKeyError, cloudBackupError, secureKeyError } from '../platform/errors';
-import { addEvent, addSend, buildActivity, emptyLog, hostFromLabel } from './app-log';
+import { addEvent, buildActivity, emptyLog, hostFromLabel, takeLegacySends } from './app-log';
 import { DevicePromptStore, compositeProvider, ledgerHint, withDevicePrompts } from './device';
 import { WalletServiceError } from './errors';
 import { GuardianAddressError, parseGuardianAddress } from './guardian-address';
@@ -128,16 +128,17 @@ describe('mapError', () => {
 });
 
 describe('app log and activity', () => {
-  it('lists the guardian\'s history with what the app knows about each payment, and security events', () => {
+  it('lists the wallet\'s history (with its send log) and the security events', () => {
     const log = emptyLog();
     const now = Date.UTC(2026, 9, 29, 12);
-    addSend(log, { txid: 'a'.repeat(64), address: 'bcrt1qexample', amountSats: 30_000, feeSats: 200, signedBy: 'phone+guardian', at: now - 60_000 });
-    addSend(log, { txid: 'c'.repeat(64), address: 'bcrt1qexample2', amountSats: 5_000, feeSats: 100, signedBy: 'phone+hardware', at: now - 10_000 });
     addEvent(log, { kind: 'limit-changed', limitSats: 80_000, direction: 'lowered', approvedOn: 'phone', at: now - 120_000 });
+    addEvent(log, { kind: 'wallet-retired', reason: 'retired', at: now - 200_000 });
     log.seen['b'.repeat(64)] = now - 30_000;
     const items = buildActivity(
       [
-        { txid: 'a'.repeat(64), height: 0, confirmations: 0, netSats: -30_200, feeSats: 200 },
+        // Sent a moment ago, not listed by the guardian yet (the wallet's `local` entry).
+        { txid: 'c'.repeat(64), height: 0, confirmations: 0, netSats: -5_100, feeSats: 100, amountSats: 5_000, recipient: 'bcrt1qexample2', signedBy: 'hardware', sentAt: now - 10_000, local: true },
+        { txid: 'a'.repeat(64), height: 0, confirmations: 0, netSats: -30_200, feeSats: 200, amountSats: 30_000, recipient: 'bcrt1qexample', signedBy: 'guardian', sentAt: now - 60_000 },
         { txid: 'b'.repeat(64), height: 0, confirmations: 0, netSats: 50_000 },
         { txid: 'd'.repeat(64), height: 100, confirmations: 3, time: Math.floor(now / 1000) - 86_400, netSats: 700_000 },
       ],
@@ -145,11 +146,17 @@ describe('app log and activity', () => {
       now,
     );
     const pay = (i: (typeof items)[number]) => (i.type === 'payment' ? i.tx : undefined);
-    expect(items.map((i) => (i.type === 'payment' ? i.tx.txid[0] : i.event.kind))).toEqual(['c', 'b', 'a', 'limit-changed', 'd']);
+    expect(items.map((i) => (i.type === 'payment' ? i.tx.txid[0] : i.event.kind))).toEqual(['c', 'b', 'a', 'limit-changed', 'wallet-retired', 'd']);
     expect(pay(items[2]!)).toMatchObject({ kind: 'sent', amountSats: 30_000, feeSats: 200, status: 'pending', address: 'bcrt1qexample', signedBy: 'phone+guardian' });
-    expect(pay(items[0]!)).toMatchObject({ kind: 'sent', amountSats: 5_000, status: 'pending' }); // sent a moment ago, not listed yet
+    expect(pay(items[0]!)).toMatchObject({ kind: 'sent', amountSats: 5_000, status: 'pending', signedBy: 'phone+hardware' });
     expect(pay(items[1]!)).toMatchObject({ kind: 'received', amountSats: 50_000, status: 'pending' });
-    expect(pay(items[4]!)).toMatchObject({ kind: 'received', status: 'confirmed', amountSats: 700_000 });
+    expect(pay(items[1]!)!.address).toBeUndefined();
+    expect(pay(items[5]!)).toMatchObject({ kind: 'received', status: 'confirmed', amountSats: 700_000 });
+
+    // An older app's own records go to the wallet's send log once.
+    const old = { ...emptyLog(), sends: { ['e'.repeat(64)]: { txid: 'e'.repeat(64), address: 'bcrt1qold', amountSats: 1_000, feeSats: 10, signedBy: 'phone+hardware' as const, at: 5 } } };
+    expect(takeLegacySends(old)).toEqual([{ txid: 'e'.repeat(64), at: 5, recipient: 'bcrt1qold', amountSats: 1_000, feeSats: 10, signedBy: 'hardware' }]);
+    expect(old.sends).toBeUndefined();
     expect(hostFromLabel('My Umbrel')).toBe('umbrel');
     expect(hostFromLabel('StartOS box')).toBe('start9');
     expect(hostFromLabel(undefined)).toBe('other');
@@ -167,5 +174,31 @@ describe('the demo wallet', () => {
     await wallet.unlockGuardian('anything');
     expect(wallet.getState().guardian.status).toBe('online');
     expect(wallet.getState()).toMatchObject({ backing: 'demo', capabilities: { recoveryKey: true } });
+  });
+
+  it('replaces the guardian, locks it, and finishes a recovery the way the real wallet does', async () => {
+    const wallet = createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0 });
+    expect(wallet.readCode('demo-pairing-code')).toMatchObject({ kind: 'pairing' });
+    const plan = await wallet.previewReplaceGuardian('demo-pairing-code');
+    expect(plan.steps.map((s) => s.step)).toEqual(['pair', 'sign', 'broadcast', 'retire', 'switch']);
+    expect(wallet.getState().replace.plan).toEqual(plan);
+    expect(await wallet.replaceGuardian()).toMatchObject({ status: 'done', oldWalletRetired: true });
+    expect(wallet.getState()).toMatchObject({ guardian: { host: 'start9' }, replace: { plan: null }, oldWallets: [{ retiredOnGuardian: true }] });
+
+    // The old guardian offline: the person has to confirm it is gone.
+    wallet.dev!.setGuardianStatus!('offline');
+    expect((await wallet.previewReplaceGuardian('demo-pairing-code')).oldGuardianReachable).toBe(false);
+    await expect(wallet.replaceGuardian()).rejects.toMatchObject({ kind: 'guardian_unreachable' });
+    expect(await wallet.replaceGuardian({ oldGuardianGone: true })).toMatchObject({ status: 'done', oldWalletRetired: false });
+
+    wallet.dev!.setGuardianStatus!('online');
+    await wallet.lockGuardian();
+    expect(wallet.getState().guardian.status).toBe('locked');
+
+    await wallet.startRecovery('phone');
+    wallet.dev!.finishRecovery!();
+    expect(wallet.getState()).toMatchObject({ recovery: null, recoveryOutcome: 'finished', hardwareConfirmRequired: true, finishedRecovery: { lostKey: 'phone' } });
+    await wallet.confirmHardware();
+    expect(wallet.getState().hardwareConfirmRequired).toBe(false);
   });
 });

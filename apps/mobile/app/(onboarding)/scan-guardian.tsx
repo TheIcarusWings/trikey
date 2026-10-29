@@ -40,20 +40,27 @@ export default function ScanGuardian() {
     if (busy || inFlight.current || code === lastRejected.current) return;
     inFlight.current = true;
     try {
-      const r = replacing ? await run(wallet.replaceGuardian(code)) : await run(wallet.pairGuardian(code));
+      const r = replacing ? await run(wallet.previewReplaceGuardian(code)) : await run(wallet.pairGuardian(code));
       if (!r.ok) {
         lastRejected.current = code; // the camera sees the same code many times a second: do not ask again for it
         return;
       }
-      if (replacing) router.dismissTo('/settings/guardian');
+      // Replacing: back to "Replace guardian", which now shows what will happen.
+      if (replacing) router.back();
       else router.push('/set-limit');
     } finally {
       inFlight.current = false;
     }
   };
 
+  const [scanNote, setScanNote] = useState<string | null>(null);
   const onFrame = (data: string) => {
-    if (/^trikey:/i.test(data.trim())) void submit(data.trim());
+    const code = wallet.readCode(data);
+    if (code.kind === 'pairing') {
+      setScanNote(null);
+      void submit(code.uri);
+    } else if (code.kind === 'recovery') setScanNote("That is the guardian's recovery code. To pair, choose Pair a phone on the guardian and scan the code it shows.");
+    else if (code.kind === 'unknown' && /^trikey:/i.test(data.trim())) setScanNote(code.reason);
   };
 
   return (
@@ -76,6 +83,7 @@ export default function ScanGuardian() {
         <QrScanner onFrame={onFrame} paused={busy} />
       )}
       {busy ? <Text className="text-muted-foreground text-center text-sm leading-5">Reaching your guardian…</Text> : null}
+      <ActionNotice message={busy ? null : scanNote} />
       <ActionNotice message={message} error={error} />
       {demo ? null : (
         <View className="gap-1.5">

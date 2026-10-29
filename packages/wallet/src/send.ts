@@ -84,6 +84,8 @@ export interface SendRequest {
   signer?: 'auto' | 'hardware';
   /** Free text for the guardian's log. */
   memo?: string;
+  /** The person's own note for this payment, kept on the phone (the send log) and in the backup. */
+  label?: string;
 }
 
 export interface QuoteInput {

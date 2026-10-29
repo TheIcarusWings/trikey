@@ -32,7 +32,7 @@ import { base64, utf8 } from '@scure/base';
 import { z } from 'zod';
 import { Network, Policy } from '@trikey/protocol';
 import { WalletError } from './errors.js';
-import { GuardianRecord, HardwareRecord } from './state.js';
+import { GuardianRecord, HardwareRecord, RetiredWallet, SendLogEntry } from './state.js';
 
 export const BACKUP_MAGIC = utf8ToBytes('TKBK');
 export const BACKUP_VERSION = 1;
@@ -119,6 +119,10 @@ export const BackupPayload = z.strictObject({
   recoveryDestination: z.strictObject({ descriptor: z.string(), walletId: z.string() }).optional(),
   /** `recovering`: a phone recovering `wallet` with the hardware wallet; its key 2 is in `recoveryDestination`. */
   stage: z.enum(['paired', 'recovering']).optional(),
+  /** The phone's own record of its payments (recipient, label, signer). */
+  sendLog: z.array(SendLogEntry).max(1000).optional(),
+  /** Wallets left behind by "Replace guardian", so stray coins stay sweepable after a restore. */
+  retiredWallets: z.array(RetiredWallet).max(50).optional(),
 });
 export type BackupPayload = z.infer<typeof BackupPayload>;
 

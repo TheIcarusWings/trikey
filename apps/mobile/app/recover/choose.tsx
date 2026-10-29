@@ -79,7 +79,7 @@ export default function RecoverChoose() {
           <Option
             icon={Smartphone}
             title="Lost my phone and the backup"
-            description={`Use your hardware wallet and guardian. Takes ${recoveryDelayDays} days, with alerts.`}
+            description={`Scan your guardian's recovery code, then use your hardware wallet. Takes ${recoveryDelayDays} days, with alerts.`}
             disabled={busy}
             onPress={() => startRecovery('phone')}
           />

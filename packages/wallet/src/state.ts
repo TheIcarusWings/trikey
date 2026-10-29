@@ -60,7 +60,10 @@ export const ChainCache = z.object({
 export type ChainCache = z.infer<typeof ChainCache>;
 
 export const GuardianStatusCache = z.object({
+  /** When the phone read it: ms, the phone's clock. */
   checkedAt: z.number(),
+  /** The guardian's own time in that answer: unix seconds, the guardian's clock (what its alerts' `at` is measured in). */
+  guardianTime: z.number().optional(),
   state: z.enum(['locked', 'unlocked']),
   paired: z.boolean(),
   phoneSpending: PhoneSpendingState,
@@ -69,6 +72,10 @@ export const GuardianStatusCache = z.object({
   dailyLimit: z.object({ limitSats: z.number(), usedSats: z.number(), availableSats: z.number() }).optional(),
   /** The guardian's clock minus ours, seconds. */
   skewSec: z.number().optional(),
+  /** The wallet the guardian guards now (it changes when the guardian adopts a recovery's destination). */
+  walletId: z.string().optional(),
+  /** After a wallet rotation: the guardian refuses hardware approvals until `hardware.confirm`. */
+  hardwareConfirmRequired: z.boolean().optional(),
 });
 export type GuardianStatusCache = z.infer<typeof GuardianStatusCache>;
 
@@ -98,6 +105,59 @@ export const PendingRequest = z.object({
   sentAt: z.number(),
 });
 export type PendingRequest = z.infer<typeof PendingRequest>;
+
+/** A payment this phone made, as the guardian's history cannot tell it: to whom, why, and which key co-signed. */
+export const SendLogEntry = z.object({
+  txid: z.string().regex(/^[0-9a-f]{64}$/),
+  /** ms, the phone's clock */
+  at: z.number(),
+  recipient: z.string(),
+  amountSats: z.number(),
+  feeSats: z.number(),
+  label: z.string().max(200).optional(),
+  /** The second key next to the phone's: the guardian, or the hardware wallet. */
+  signedBy: z.enum(['guardian', 'hardware']),
+  /** Why it was sent, when it was not an ordinary payment. */
+  purpose: z.enum(['payment', 'sweep']).optional(),
+});
+export type SendLogEntry = z.infer<typeof SendLogEntry>;
+
+/**
+ * A wallet this phone and its hardware wallet moved away from ("Replace guardian"). Its keys are still the user's:
+ * coins sent to it later can be swept with the phone and the hardware wallet (`sweepStrayCoins`).
+ */
+export const RetiredWallet = z.object({
+  walletId: z.string().regex(/^[0-9a-f]{16}$/),
+  descriptor: z.string(),
+  /** The guardian that guarded it. */
+  guardian: GuardianRecord,
+  /** ms */
+  retiredAt: z.number(),
+  /** The old guardian accepted `wallet.retire` (false: it was offline, so it still knows the wallet). */
+  retiredOnGuardian: z.boolean(),
+  /** How the wallet is registered on the hardware wallet (needed to sign for it). */
+  devicePolicy: z.object({ name: z.string().max(16), registrationHmac: z.string().optional() }),
+  /** The wallet it moved to. */
+  successorWalletId: z.string(),
+  /** The sweep that emptied it. */
+  sweepTxid: z.string().optional(),
+});
+export type RetiredWallet = z.infer<typeof RetiredWallet>;
+
+/** "Replace guardian" in progress (persisted, so a crash or an offline node can resume it). */
+export const ReplaceRecord = z.object({
+  startedAt: z.number(),
+  /** `paired`: the new guardian holds the new wallet; `signed`: the sweep is signed and waits to be accepted by a node. */
+  phase: z.enum(['paired', 'signed']),
+  guardian: GuardianRecord,
+  wallet: z.object({ descriptor: z.string(), walletId: z.string().regex(/^[0-9a-f]{16}$/) }),
+  devicePolicy: z.object({ name: z.string().max(16), registrationHmac: z.string().optional() }),
+  rules: z.object({ policy: Policy, policyHash: Hex32, nextHardwareSequence: z.number() }),
+  /** The person confirmed the old guardian is gone: do not wait for it. */
+  oldGuardianOffline: z.boolean(),
+  sweep: z.object({ txid: z.string(), txHex: z.string(), amountSats: z.number(), feeSats: z.number() }).optional(),
+});
+export type ReplaceRecord = z.infer<typeof ReplaceRecord>;
 
 export const BackupRecord = z.object({
   name: z.string(),
@@ -152,6 +212,15 @@ export const WalletState = z.object({
   contactNames: z.record(z.string(), z.string()).default({}),
   /** Ids of the guardian alerts already handled (relays replay them on every subscription). */
   seenAlerts: z.array(z.string()).default([]),
+  /** Payments this phone made (newest last), merged into the history. */
+  sendLog: z.array(SendLogEntry).default([]),
+  /** The wallet changed under the hardware wallet (a recovery the guardian adopted): it must register it and confirm its key (`confirmHardware`). */
+  hardwareConfirm: z.object({ walletId: z.string(), since: z.number() }).optional(),
+  /** Wallets this phone moved away from with "Replace guardian". */
+  retiredWallets: z.array(RetiredWallet).default([]),
+  replacing: ReplaceRecord.optional(),
+  /** The guardian said it retired this phone's wallet (`wallet_retired`): it co-signs nothing for it any more. */
+  retiredByGuardian: z.object({ walletId: z.string(), reason: z.enum(['retired', 'recovered', 'reset']), successorWalletId: z.string().optional(), at: z.number() }).optional(),
 });
 export type WalletState = z.infer<typeof WalletState>;
 

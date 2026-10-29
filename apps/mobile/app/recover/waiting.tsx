@@ -47,18 +47,40 @@ export default function RecoverWaiting() {
   const { busy, run, message, error } = useAction();
   const renew = useAction();
 
-  // A recovery that ended on the guardian's side: say what happened (the wallet cannot switch to the new wallet yet).
-  if (!recovery && recovering && recoveryOutcome) {
-    const done = recoveryOutcome === 'completed';
+  // The guardian took the new wallet over and this phone switched to it: the done screen, then a normal Home.
+  if (!recovery && recoveryOutcome === 'finished') return <Redirect href="/recover/done" />;
+  // Co-signed, not taken over yet: the move is on its way to the network.
+  if (!recovery && recoveryOutcome === 'completed') {
     return (
-      <Screen bare bareTop={pick(10, 32)} gap={20} footer={done ? null : <AppButton title="Start again" onPress={() => router.replace('/recover/choose')} />}>
+      <Screen
+        bare
+        bareTop={pick(10, 32)}
+        gap={20}
+        footer={
+          <>
+            <ActionNotice message={message} error={error} />
+            <AppButton title="Check again" variant="outline" busy={busy} onPress={() => void run(wallet.sync())} />
+          </>
+        }>
         <Text role="heading" aria-level={1} className={cn(pick('text-[32px] font-semibold leading-[38px] tracking-[-0.64px]', 'text-[28px] font-semibold leading-9 tracking-[-0.56px]'))}>
-          {done ? 'Recovery finished' : 'Recovery cancelled'}
+          Almost done
         </Text>
-        <Notice icon={done ? Check : Clock} tone="fill">
-          {done
-            ? "The guardian moved your money to the new wallet. This version of the app can't open the new wallet yet, so don't delete anything: your keys are unchanged, and a later version will switch this phone over."
-            : 'The recovery was cancelled, so nothing moved. Your old wallet is unchanged.'}
+        <Notice icon={Check} tone="fill">
+          The guardian co-signed the move to your new wallet. As soon as the network accepts it, the guardian takes the new wallet over and this phone
+          switches to it. Keep the app open, or come back in a few minutes.
+        </Notice>
+      </Screen>
+    );
+  }
+  // Cancelled on a phone that was recovering: nothing moved.
+  if (!recovery && recovering && recoveryOutcome === 'cancelled') {
+    return (
+      <Screen bare bareTop={pick(10, 32)} gap={20} footer={<AppButton title="Start again" onPress={() => router.replace('/recover/choose')} />}>
+        <Text role="heading" aria-level={1} className={cn(pick('text-[32px] font-semibold leading-[38px] tracking-[-0.64px]', 'text-[28px] font-semibold leading-9 tracking-[-0.56px]'))}>
+          Recovery cancelled
+        </Text>
+        <Notice icon={Clock} tone="fill">
+          The recovery was cancelled, so nothing moved. Your old wallet is unchanged.
         </Notice>
       </Screen>
     );

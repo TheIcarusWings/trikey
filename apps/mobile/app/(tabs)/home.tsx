@@ -2,6 +2,7 @@ import {
   ActivityPreview,
   BalanceHeader,
   GuardianDownNotice,
+  HardwareConfirmCard,
   LimitCard,
   RecoveryBanner,
   SendReceiveButtons,
@@ -44,6 +45,7 @@ export default function HomeScreen() {
     return (
       <Screen tab untitled title="Trikey" androidTitleWeight="normal" gap={20} onRefresh={refresh}>
         <RecoveryBanner />
+        <HardwareConfirmCard />
         <BalanceHeader label="Balance" sats={state.balanceSats} />
         <GuardianDownNotice />
         <SendReceiveButtons sendEmphasis={false} />
@@ -57,6 +59,7 @@ export default function HomeScreen() {
   return (
     <Screen tab untitled title="Trikey" androidTitleWeight="normal" gap={20} onRefresh={refresh}>
       <RecoveryBanner />
+      <HardwareConfirmCard />
       <BalanceHeader label="Balance" sats={state.balanceSats} />
       <SendReceiveButtons />
       <LimitCard />

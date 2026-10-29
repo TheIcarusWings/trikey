@@ -15,6 +15,7 @@ import {
   looksLikeBitcoinAddress,
   remainingToday,
   useWallet,
+  useWalletService,
   type QuoteOutcome,
 } from '@/data';
 import { useQuote } from '@/data/use-quote';
@@ -63,15 +64,11 @@ function limitPill(outcome: QuoteOutcome, state: ReturnType<typeof useWallet>, a
   }
 }
 
-/** What a scanned QR holds: a plain address, or a BIP 21 URI (the address is before the question mark). */
-function addressFromScan(data: string): string {
-  const t = data.trim();
-  return t.replace(/^bitcoin:/i, '').split('?')[0] ?? t;
-}
-
 export default function SendAmount() {
   const router = useRouter();
   const state = useWallet();
+  const wallet = useWalletService();
+  const [scanProblem, setScanProblem] = useState<string | null>(null);
   const [address, setAddress] = useState('');
   const [digits, setDigits] = useState('');
   const [btcView, setBtcView] = useState(false);
@@ -143,13 +140,17 @@ export default function SendAmount() {
             <QrScanner
               size={220}
               onFrame={(data) => {
-                const a = addressFromScan(data);
-                if (looksLikeBitcoinAddress(a)) {
-                  setAddress(a);
+                // A plain address or a BIP 21 link (with its amount); anything else says what it is.
+                const code = wallet.readCode(data);
+                if (code.kind === 'address') {
+                  setAddress(code.address);
+                  if (code.amountSats) setDigits(String(code.amountSats).slice(0, MAX_DIGITS));
+                  setScanProblem(null);
                   setScanning(false);
-                }
+                } else setScanProblem(code.kind === 'unknown' ? code.reason : "That code isn't a bitcoin address.");
               }}
             />
+            {scanProblem ? <Text className="text-destructive text-[13px] leading-[18px]">{scanProblem}</Text> : null}
             <AppButton title="Close camera" variant="ghost" onPress={() => setScanning(false)} />
           </View>
         ) : null}

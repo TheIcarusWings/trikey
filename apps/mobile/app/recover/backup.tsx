@@ -10,7 +10,7 @@ import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
 import { Input } from '@/components/ui/input';
 import { Text } from '@/components/ui/text';
-import { formatShortDate, useWallet, useWalletService, type FoundBackup } from '@/data';
+import { WalletServiceError, formatShortDate, networkLabel, useWallet, useWalletService, type FoundBackup } from '@/data';
 import { cloudLabel, cloudOperator, guardianBox } from '@/lib/labels';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
@@ -44,8 +44,10 @@ export default function RecoverBackup() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wallet]);
 
-  const restore = async (unlock: { passkey: true } | { recoveryCode: string }) => {
-    const r = await restoring.run(wallet.restoreFromBackup(unlock, found?.provider));
+  const [lastUnlock, setLastUnlock] = useState<{ passkey: true } | { recoveryCode: string } | null>(null);
+  const restore = async (unlock: { passkey: true } | { recoveryCode: string }, switchNetwork = false) => {
+    setLastUnlock(unlock);
+    const r = await restoring.run(wallet.restoreFromBackup(unlock, found?.provider, { switchNetwork }));
     if (!r.ok) return;
     router.dismissAll();
     router.replace(wallet.getState().recovering ? '/recover/waiting' : '/home');
@@ -67,6 +69,13 @@ export default function RecoverBackup() {
       footer={
         <>
           <ActionNotice message={restoring.message} error={restoring.error} />
+          {restoring.error instanceof WalletServiceError && restoring.error.kind === 'network_mismatch' && restoring.error.network && lastUnlock ? (
+            <AppButton
+              title={`Switch to ${networkLabel(restoring.error.network)} and restore`}
+              busy={restoring.busy}
+              onPress={() => void restore(lastUnlock, true)}
+            />
+          ) : null}
           {found && canPasskey ? <AppButton title="Unlock with passkey" busy={restoring.busy} onPress={() => void restore({ passkey: true })} /> : null}
           {found && canCode && !demo ? (
             <AppButton

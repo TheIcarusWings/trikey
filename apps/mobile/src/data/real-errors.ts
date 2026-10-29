@@ -6,7 +6,7 @@ import { WalletError, type GuardianRefusal } from '@trikey/wallet';
 import { HardwareError, describeHardwareError } from '../hardware/errors';
 import { PlatformError } from '../platform/errors';
 import { WalletServiceError, type ServiceErrorKind } from './errors';
-import { formatSats } from './format';
+import { formatSats, networkLabel } from './format';
 
 const wait = (seconds?: number) => (seconds && seconds > 0 ? ` Try again in ${Math.ceil(seconds)} seconds.` : '');
 
@@ -129,7 +129,9 @@ export function mapError(e: unknown): WalletServiceError {
       case 'wallet_exists':
         return make('wallet_exists', 'This phone already has a Trikey wallet.');
       case 'network_mismatch':
-        return make('wrong_state', e.message);
+        return e.backupNetwork
+          ? new WalletServiceError('network_mismatch', `That backup is for ${networkLabel(e.backupNetwork)}, not the network this phone is set to.`, { network: e.backupNetwork, cause: e })
+          : make('wrong_state', e.message);
       case 'hardware_unavailable':
         return make('hardware', "This phone can't connect to a hardware wallet.");
       case 'hardware_mismatch':
@@ -180,6 +182,14 @@ export function mapError(e: unknown): WalletServiceError {
         return make('backup_wrong_secret', 'That recovery code has a typo in it. Check every group of characters.');
       case 'passkey_unavailable':
         return make('backup_unavailable', "Passkeys aren't available on this phone yet. Use the recovery code.");
+      case 'hardware_unconfirmed':
+        return make('hardware_unconfirmed', 'Confirm your recovered wallet on your hardware wallet first (the card on Home), then it can approve payments.');
+      case 'old_guardian_unreachable':
+        return new WalletServiceError('guardian_unreachable', "Your old guardian isn't answering. If it is gone for good, confirm that, and the move goes ahead without it.", { cause: e });
+      case 'no_chain_source':
+        return make('refused', `${e.message} Coins sent to the old wallet stay safe: your phone and hardware wallet can move them once something can read it.`);
+      case 'replace_in_progress':
+        return make('wrong_state', e.message);
       case 'internal':
         return make('internal', e.message);
     }

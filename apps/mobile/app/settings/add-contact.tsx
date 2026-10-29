@@ -85,9 +85,9 @@ export default function AddContact() {
             <QrScanner
               size={220}
               onFrame={(data) => {
-                const found = /npub1[02-9ac-hj-np-z]{58}/i.exec(data)?.[0];
-                if (found) {
-                  setNpub(found.toLowerCase());
+                const code = wallet.readCode(data);
+                if (code.kind === 'contact') {
+                  setNpub(code.npub);
                   setScanning(false);
                 }
               }}

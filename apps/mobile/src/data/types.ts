@@ -82,6 +82,8 @@ export interface FoundBackup {
   provider: CloudProvider;
   createdAt: IsoDate;
   unlockedBy: ('passkey' | 'recovery-code')[];
+  /** The backup's network (from its header), when the wallet can tell. */
+  network?: NetworkName;
 }
 
 export type RestoreUnlock = { passkey: true } | { recoveryCode: string };
@@ -155,7 +157,18 @@ export interface Transaction {
 
 export type SecurityEvent = { id: string; at: IsoDate } & (
   | { kind: 'guardian-restarted'; host: GuardianHost }
-  | { kind: 'guardian-locked'; host: GuardianHost }
+  /** `byPhone`: this phone locked it remotely. */
+  | { kind: 'guardian-locked'; host: GuardianHost; byPhone?: boolean }
+  /** The guardian stopped guarding this phone's wallet: retired (Replace guardian), swept by a recovery, or reset. */
+  | { kind: 'wallet-retired'; reason: 'retired' | 'recovered' | 'reset' }
+  /** The wallet moved to a new guardian. */
+  | { kind: 'guardian-replaced'; host: GuardianHost; movedSats: Sats }
+  /** A recovery finished: the guardian took over the new wallet and this phone switched to it. */
+  | { kind: 'recovery-finished'; movedSats: Sats }
+  /** The hardware wallet confirmed the recovered wallet. */
+  | { kind: 'hardware-confirmed' }
+  /** Coins sent to an old wallet were moved into this one. */
+  | { kind: 'stray-coins-moved'; movedSats: Sats }
   | { kind: 'limit-changed'; limitSats: Sats; direction: 'raised' | 'lowered'; approvedOn: 'hardware' | 'phone' }
   | { kind: 'delay-changed'; days: RecoveryDelayDays; approvedOn?: 'hardware' | 'phone' }
   | { kind: 'contact-added'; name: string }
@@ -240,14 +253,65 @@ export interface RecoveryInProgress {
   state?: 'pending' | 'ready';
 }
 
-/** A recovery that ended on the guardian's side. */
-export type RecoveryOutcome = 'completed' | 'cancelled';
+/**
+ * A recovery that ended on the guardian's side: `completed` once the guardian co-signed the move, `finished` once it
+ * also took over the new wallet and this phone switched to it, `cancelled` if it was called off.
+ */
+export type RecoveryOutcome = 'completed' | 'finished' | 'cancelled';
 
 /** Where the guardian's address comes from when this phone has to find it (a new phone, no backup). */
 export interface GuardianAddress {
   /** `npub1...` or hex. */
   npub: string;
   relays: string[];
+}
+
+// ---------------------------------------------------------------- scanning
+
+/** What a camera or a paste field read (the wallet's `parseScannedCode`). */
+export type ScannedCode =
+  | { kind: 'pairing'; uri: string; guardianNpub: string; relays: string[]; label?: string; expiresAt: number }
+  | { kind: 'recovery'; uri: string; guardian: GuardianAddress; network: NetworkName; label?: string }
+  | { kind: 'address'; address: string; network: NetworkName; amountSats?: Sats; label?: string; message?: string }
+  | { kind: 'psbt'; psbtBase64: string }
+  | { kind: 'contact'; npub: string; pubkey: string }
+  | { kind: 'unknown'; text: string; reason: string };
+
+// ---------------------------------------------------------------- replace guardian
+
+export type ReplaceStep = 'pair' | 'sign' | 'broadcast' | 'retire' | 'switch';
+
+/** What "Replace guardian" will do, shown before the person confirms. */
+export interface ReplaceGuardianPlan {
+  newGuardian: { label?: string; host: GuardianHost; npub: string };
+  /** The old guardian answered just now. If not, the person confirms it is gone before the move. */
+  oldGuardianReachable: boolean;
+  movingSats: Sats;
+  coins: number;
+  feeSats: Sats;
+  steps: { step: ReplaceStep; text: string }[];
+}
+
+export type ReplaceGuardianResult =
+  | { status: 'done'; movedSats: Sats; oldWalletRetired: boolean }
+  /** Signed and kept, but nothing could send it to the network yet (the old guardian is offline). */
+  | { status: 'waiting'; movedSats: Sats };
+
+export interface ReplaceGuardianState {
+  /** What the person was shown after scanning, until they confirm or leave. */
+  plan: ReplaceGuardianPlan | null;
+  /** The step running now. */
+  step: ReplaceStep | null;
+  /** A move that started and has not finished: run it again to go on. */
+  pending: null | { guardianLabel?: string; signed: boolean; oldGuardianOffline: boolean };
+}
+
+/** A wallet this phone moved away from with "Replace guardian". Coins sent to it later can still be moved. */
+export interface OldWallet {
+  id: string;
+  host: GuardianHost;
+  /** The old guardian retired it (false: it was offline; retire it once it is back). */
+  retiredOnGuardian: boolean;
 }
 
 // ---------------------------------------------------------------- Recovery Key mode
@@ -336,4 +400,14 @@ export interface WalletState {
 
   recovery: RecoveryInProgress | null;
   recoveryKey: RecoveryKeyState;
+
+  /** After a recovery moved the wallet: the hardware wallet has to register it and confirm its key once. */
+  hardwareConfirmRequired: boolean;
+  replace: ReplaceGuardianState;
+  /** Wallets left behind by "Replace guardian". */
+  oldWallets: OldWallet[];
+  /** The guardian said it no longer guards this phone's wallet, and why. */
+  walletRetired: null | { reason: 'retired' | 'recovered' | 'reset' };
+  /** The last recovery finished into the wallet this phone holds now (`recoveryOutcome` is `finished`). */
+  finishedRecovery: null | { lostKey: LostKey; movedSats: Sats };
 }
