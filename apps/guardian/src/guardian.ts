@@ -93,6 +93,24 @@ export class ConfigError extends Error {
   }
 }
 
+/**
+ * What a phone admitted by `recovery.access` may call: read the wallet and its chain data, start,
+ * follow and (with a hardware approval) cancel a recovery. Not `sign`, rule changes, `tx.broadcast`,
+ * `phone.resume` or `guardian.unlock`: those stay with the paired phone.
+ */
+export const RECOVERY_PEER_METHODS: ReadonlySet<MethodName> = new Set<MethodName>([
+  'guardian.status',
+  'wallet.sync',
+  'tx.get',
+  'fees.estimate',
+  'recovery.access',
+  'recovery.start',
+  'recovery.status',
+  'recovery.cancel',
+]);
+/** At most this many phones hold recovery access at once (the newest win). */
+const MAX_RECOVERY_PEERS = 8;
+
 /** The running (pending or ready) recovery in the engine's state, if any. */
 export function activeRecovery(recoveries: readonly RecoveryRecord[] | undefined): RecoveryRecord | undefined {
   const last = recoveries?.[recoveries.length - 1];
@@ -320,16 +338,36 @@ export class Guardian {
   /**
    * Who may call what over nostr:
    * - the paired phone: every method;
+   * - a phone the hardware wallet let in with `recovery.access` (lost phone, no backup), until the
+   *   access expires: the chain and recovery methods in `RECOVERY_PEER_METHODS`;
    * - registered alert contacts (and the running recovery's recipients): `recovery.cancel` only;
+   * - anyone else, once a wallet is paired: `recovery.access` (which checks a hardware signature);
    * - anyone else: `pair.prepare` / `pair`, and only around a pairing session made in the web UI.
    * Everything else is dropped without an answer.
    */
   authorize(sender: string, method: MethodName): boolean {
     const reg = this.engine.registration();
     if (reg && sender === reg.appNostrPubkey) return true;
+    if (reg && RECOVERY_PEER_METHODS.has(method) && this.hasRecoveryAccess(sender)) return true;
     if (method === 'recovery.cancel') return this.isAlertContact(sender);
+    if (method === 'recovery.access') return !!reg;
     if (method === 'pair.prepare' || method === 'pair') return this.pairing.answering(this.clock.now());
     return false;
+  }
+
+  /** True while `pubkey` holds an unexpired `recovery.access` grant. */
+  hasRecoveryAccess(pubkey: string): boolean {
+    const now = this.clock.now();
+    return this.service.get().recoveryPeers.some((p) => p.pubkey === pubkey && p.until > now);
+  }
+
+  /** Records a `recovery.access` grant (durably, so it survives a restart). */
+  async grantRecoveryAccess(pubkey: string, untilMs: number): Promise<void> {
+    const now = this.clock.now();
+    await this.service.update((d) => {
+      d.recoveryPeers = [...d.recoveryPeers.filter((p) => p.until > now && p.pubkey !== pubkey), { pubkey, until: untilMs }].slice(-MAX_RECOVERY_PEERS);
+    });
+    await this.logEvent({ type: 'recovery_access', phone: pubkey, until: untilMs });
   }
 
   isAlertContact(pubkey: string): boolean {

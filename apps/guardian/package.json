@@ -6,7 +6,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./policy": "./src/policy/index.ts"
+    "./policy": "./src/policy/index.ts",
+    "./testing": "./test/support/index.ts"
   },
   "scripts": {
     "start": "node --import tsx src/main.ts",

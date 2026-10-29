@@ -32,7 +32,7 @@ import { Guardian } from '../src/guardian.js';
 import type { GuardianConfig } from '../src/config.js';
 import { createLogger } from '../src/log.js';
 import { DAY, ManualClock, signMessage } from '../src/policy/index.js';
-import { FakeElectrum } from './fake-electrum.js';
+import { FakeElectrum } from './support/fake-electrum.js';
 import { AUTH_PATH, MNEMONICS, OTHER_COSIGNER_PRIV, appSigner, fund, hwAuthPrivateKey, hwAuthPubkey, hwSigner, makeWallet, network, phoneSpend } from './helpers.js';
 
 const PASS = 'correct horse battery staple';

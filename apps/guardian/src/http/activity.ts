@@ -163,5 +163,15 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
         sats: null,
         result: 'refused',
       };
+    case 'recovery_access':
+      return {
+        ...base,
+        kind: 'recovery',
+        event: `A new phone (${shortNpub(e.phone)}) may read the wallet and start a recovery until ${formatWhen(e.until)}, approved on the hardware wallet`,
+        summary: 'Recovery access for a new phone',
+        signedBy: 'Hardware wallet',
+        sats: null,
+        result: 'ok',
+      };
   }
 }

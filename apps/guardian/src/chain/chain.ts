@@ -9,6 +9,7 @@
  */
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hex } from '@scure/base';
+import * as btc from '@scure/btc-signer';
 import type { MultisigWallet } from '@trikey/core';
 import { errorText, silentLogger, type Logger } from '../log.js';
 import { BitcoinRpc, type BlockchainInfo } from './bitcoind.js';
@@ -23,6 +24,32 @@ export class ChainUnavailableError extends Error {
   constructor(message = 'chain data is unavailable (Electrs is not connected)') {
     super(message);
     this.name = 'ChainUnavailableError';
+  }
+}
+
+/** Electrs does not know the transaction. */
+export class TxNotFoundError extends Error {
+  constructor(readonly txid: string) {
+    super(`transaction ${txid} not found`);
+    this.name = 'TxNotFoundError';
+  }
+}
+
+/** A server answered the broadcast and refused the transaction. `reason` is the node's text. */
+export class BroadcastRejectedError extends ChainUnavailableError {
+  constructor(
+    readonly reason: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'BroadcastRejectedError';
+  }
+}
+
+export class InvalidTransactionError extends Error {
+  constructor(detail: string) {
+    super(`not a valid transaction: ${detail}`);
+    this.name = 'InvalidTransactionError';
   }
 }
 
@@ -62,6 +89,73 @@ export interface ChainPreflight {
 /** Electrum's script hash: sha256 of the output script, byte-reversed, hex. */
 export function scriptHash(script: Uint8Array): string {
   return hex.encode(sha256(script).reverse());
+}
+
+export interface ElectrumHistoryItem {
+  tx_hash: string;
+  /** > 0 confirmed; 0 in the mempool; -1 in the mempool with unconfirmed parents. */
+  height: number;
+}
+
+export interface ScannedAddress {
+  index: number;
+  script: Uint8Array;
+  history: ElectrumHistoryItem[];
+}
+
+export interface WalletScan {
+  chains: Record<0 | 1, { used: ScannedAddress[]; nextIndex: number }>;
+  gapLimit: number;
+}
+
+export interface WalletHistoryEntry {
+  txid: string;
+  /** 0 while unconfirmed. */
+  height: number;
+  confirmations: number;
+  /** Block time, unix seconds. */
+  time?: number;
+  /** Received minus spent by the wallet. */
+  net: bigint;
+  fee?: bigint;
+}
+
+export interface WalletSync {
+  tipHeight: number;
+  tipHash: string;
+  utxos: (WalletUtxo & { confirmations: number })[];
+  utxosTruncated: boolean;
+  confirmedSats: bigint;
+  unconfirmedSats: bigint;
+  history: WalletHistoryEntry[];
+  historyTruncated: boolean;
+  nextReceiveIndex: number;
+  nextChangeIndex: number;
+  gapLimit: number;
+}
+
+function decodeRawTx(txHex: string) {
+  try {
+    return btc.RawTx.decode(hex.decode(txHex));
+  } catch (e) {
+    throw new InvalidTransactionError(errorText(e));
+  }
+}
+
+/** Inputs (outpoints) and outputs of a raw transaction. */
+export function parseRawTx(txHex: string): { inputs: { txid: string; vout: number }[]; outputs: { script: Uint8Array; amount: bigint }[] } {
+  const raw = decodeRawTx(txHex);
+  return {
+    inputs: raw.inputs.map((i) => ({ txid: hex.encode(i.txid), vout: i.index })),
+    outputs: raw.outputs.map((o) => ({ script: o.script, amount: o.amount })),
+  };
+}
+
+/** The txid of a raw transaction (hash of the serialization without witnesses). */
+export function txidOf(txHex: string): string {
+  const raw = decodeRawTx(txHex);
+  const stripped = btc.RawTx.encode({ ...raw, segwitFlag: false, witnesses: undefined });
+  return hex.encode(sha256(sha256(stripped)).reverse());
 }
 
 interface ElectrumUnspent {
@@ -125,8 +219,15 @@ export class ChainService {
 
   /** Derived output scripts are pure functions of the descriptor; derivation is the slow part of a scan. */
   private readonly scripts = new Map<string, Uint8Array>();
+  /** `fingerprint()` rebuilds the descriptor and its checksum: once per wallet object is enough. */
+  private readonly fingerprints = new WeakMap<MultisigWallet, string>();
   private script(wallet: MultisigWallet, chain: 0 | 1, index: number): Uint8Array {
-    const key = `${wallet.fingerprint()}/${chain}/${index}`;
+    let fp = this.fingerprints.get(wallet);
+    if (!fp) {
+      fp = wallet.fingerprint();
+      this.fingerprints.set(wallet, fp);
+    }
+    const key = `${fp}/${chain}/${index}`;
     let s = this.scripts.get(key);
     if (!s) {
       s = wallet.derive(chain, index).script;
@@ -136,48 +237,245 @@ export class ChainService {
     return s;
   }
 
-  private async history(script: Uint8Array): Promise<unknown[]> {
+  private async history(script: Uint8Array): Promise<ElectrumHistoryItem[]> {
     const r = await this.client().request<unknown[]>('blockchain.scripthash.get_history', [scriptHash(script)]);
-    return Array.isArray(r) ? r : [];
+    if (!Array.isArray(r)) return [];
+    return r.map((x) => {
+      const h = x as Partial<ElectrumHistoryItem>;
+      if (typeof h?.tx_hash !== 'string' || !/^[0-9a-f]{64}$/i.test(h.tx_hash) || !Number.isSafeInteger(h.height))
+        throw new ChainUnavailableError('Electrs returned a malformed history entry');
+      return { tx_hash: h.tx_hash.toLowerCase(), height: h.height! };
+    });
   }
 
   /**
-   * Every unspent output (confirmed or not) on the wallet's receive and change
-   * chains. Each chain is scanned until `gapLimit` consecutive addresses have
-   * no history, and at least past `minIndex[chain]` (indexes the caller knows
-   * were used, e.g. from the PSBT being checked).
+   * The wallet's used addresses. Each chain is scanned until `gapLimit`
+   * consecutive addresses have no history, and at least past `minIndex[chain]`
+   * (indexes the caller knows were used, e.g. from the PSBT being checked).
    */
-  async walletUtxos(wallet: MultisigWallet, opts: { gapLimit?: number; minIndex?: Partial<Record<0 | 1, number>> } = {}): Promise<WalletUtxo[]> {
+  async scanWallet(wallet: MultisigWallet, opts: { gapLimit?: number; minIndex?: Partial<Record<0 | 1, number>> } = {}): Promise<WalletScan> {
     const gap = Math.max(1, opts.gapLimit ?? this.opts.gapLimit ?? DEFAULT_GAP_LIMIT);
-    const out: WalletUtxo[] = [];
+    const chains = {} as WalletScan['chains'];
     for (const chain of [0, 1] as const) {
       const mustReach = opts.minIndex?.[chain] ?? -1;
       let lastUsed = -1;
       let next = 0;
-      const used: { index: number; script: Uint8Array }[] = [];
+      const used: ScannedAddress[] = [];
       for (;;) {
         const batch = Array.from({ length: gap }, (_, k) => next + k).map((index) => ({ index, script: this.script(wallet, chain, index) }));
         const histories = await Promise.all(batch.map((b) => this.history(b.script)));
         histories.forEach((h, k) => {
           if (h.length > 0) {
             lastUsed = batch[k].index;
-            used.push(batch[k]);
+            used.push({ ...batch[k], history: h });
           }
         });
         next += gap;
         if (next > mustReach && next - 1 - lastUsed >= gap) break;
         if (next > MAX_SCAN_INDEX) throw new ChainUnavailableError('address scan went past the index limit');
       }
-      for (const u of used) {
-        const list = await this.client().request<ElectrumUnspent[]>('blockchain.scripthash.listunspent', [scriptHash(u.script)]);
+      chains[chain] = { used, nextIndex: lastUsed + 1 };
+    }
+    return { chains, gapLimit: gap };
+  }
+
+  /** Every output script the wallet would recognize after `scan`: both chains up to the next unused index plus the gap. */
+  walletScripts(wallet: MultisigWallet, scan: WalletScan): Map<string, { chain: 0 | 1; index: number }> {
+    const out = new Map<string, { chain: 0 | 1; index: number }>();
+    for (const chain of [0, 1] as const) {
+      const end = Math.min(MAX_SCAN_INDEX, scan.chains[chain].nextIndex + scan.gapLimit);
+      for (let index = 0; index < end; index++) out.set(hex.encode(this.script(wallet, chain, index)), { chain, index });
+    }
+    return out;
+  }
+
+  private async unspentOf(scan: WalletScan): Promise<WalletUtxo[]> {
+    const out: WalletUtxo[] = [];
+    for (const chain of [0, 1] as const) {
+      const lists = await Promise.all(
+        scan.chains[chain].used.map((u) => this.client().request<ElectrumUnspent[]>('blockchain.scripthash.listunspent', [scriptHash(u.script)])),
+      );
+      lists.forEach((list, k) => {
+        const u = scan.chains[chain].used[k];
         for (const x of Array.isArray(list) ? list : []) {
-          if (typeof x?.tx_hash !== 'string' || !/^[0-9a-f]{64}$/i.test(x.tx_hash) || !Number.isSafeInteger(x.tx_pos) || !Number.isSafeInteger(x.value))
+          if (typeof x?.tx_hash !== 'string' || !/^[0-9a-f]{64}$/i.test(x.tx_hash) || !Number.isSafeInteger(x.tx_pos) || !Number.isSafeInteger(x.value) || x.value < 0)
             throw new ChainUnavailableError('Electrs returned a malformed unspent output');
           out.push({ txid: x.tx_hash.toLowerCase(), vout: x.tx_pos, value: BigInt(x.value), height: x.height, chain, index: u.index });
         }
-      }
+      });
     }
     return out;
+  }
+
+  /**
+   * Every unspent output (confirmed or not) on the wallet's receive and change
+   * chains, scanned with the gap limit (see `scanWallet`).
+   */
+  async walletUtxos(wallet: MultisigWallet, opts: { gapLimit?: number; minIndex?: Partial<Record<0 | 1, number>> } = {}): Promise<WalletUtxo[]> {
+    return this.unspentOf(await this.scanWallet(wallet, opts));
+  }
+
+  /** Raw transactions never change once known; keep the ones we fetched. */
+  private readonly txCache = new Map<string, string>();
+
+  /**
+   * The raw transaction (hex) from Electrs, checked to hash to `txid`, so a
+   * confused or lying server cannot hand the phone a different previous
+   * transaction. Throws `TxNotFoundError` if Electrs does not know it.
+   */
+  async getTransaction(txid: string): Promise<string> {
+    const id = txid.toLowerCase();
+    const cached = this.txCache.get(id);
+    if (cached) return cached;
+    let raw: unknown;
+    try {
+      raw = await this.client().request('blockchain.transaction.get', [id]);
+    } catch (e) {
+      if (e instanceof ElectrumError) throw new TxNotFoundError(id);
+      throw e;
+    }
+    if (typeof raw !== 'string' || !/^(?:[0-9a-fA-F]{2})+$/.test(raw)) throw new ChainUnavailableError('Electrs returned a malformed transaction');
+    const txHex = raw.toLowerCase();
+    if (txidOf(txHex) !== id) throw new ChainUnavailableError('Electrs returned a transaction that does not match its txid');
+    if (this.txCache.size > 5000) this.txCache.clear();
+    this.txCache.set(id, txHex);
+    return txHex;
+  }
+
+  private readonly blockTimes = new Map<number, { hash: string; time: number }>();
+
+  /** Timestamp of the block at `height` (unix seconds). */
+  private async blockTime(height: number): Promise<number> {
+    const hit = this.blockTimes.get(height);
+    if (hit) return hit.time;
+    const res = await this.client().request<{ hex: string }>('blockchain.block.headers', [height, 1]);
+    const [h] = splitHeaders(String(res?.hex ?? ''));
+    if (!h) throw new ChainUnavailableError(`Electrs returned no header at height ${height}`);
+    if (this.blockTimes.size > 10_000) this.blockTimes.clear();
+    this.blockTimes.set(height, { hash: h.hash, time: h.time });
+    return h.time;
+  }
+
+  /**
+   * What the phone needs to show and spend the wallet: its unspent outputs, its
+   * history with net amounts, the tip, and the next unused address on each chain.
+   * Amounts are bigints here; the RPC handler puts them on the wire.
+   */
+  async walletSync(wallet: MultisigWallet, opts: { historyLimit?: number; maxUtxos?: number } = {}): Promise<WalletSync> {
+    const tip = await this.tip();
+    const scan = await this.scanWallet(wallet);
+    const utxos = await this.unspentOf(scan);
+    const confirmations = (height: number) => (height > 0 && height <= tip.height ? tip.height - height + 1 : 0);
+
+    let confirmedSats = 0n;
+    let unconfirmedSats = 0n;
+    for (const u of utxos) {
+      if (u.height > 0) confirmedSats += u.value;
+      else unconfirmedSats += u.value;
+    }
+    // Spend-ready first: confirmed coins by value, then unconfirmed ones.
+    const sorted = [...utxos].sort((a, b) => Number(b.height > 0) - Number(a.height > 0) || (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
+    const maxUtxos = opts.maxUtxos ?? Number.MAX_SAFE_INTEGER;
+
+    // Every transaction touching a used address, at its (normalized) height.
+    const heights = new Map<string, number>();
+    for (const chain of [0, 1] as const)
+      for (const u of scan.chains[chain].used) for (const h of u.history) heights.set(h.tx_hash, Math.max(0, h.height));
+    const ordered = [...heights.entries()].sort(([ta, ha], [tb, hb]) => {
+      const ua = ha === 0 ? 1 : 0;
+      const ub = hb === 0 ? 1 : 0;
+      return ub - ua || hb - ha || (ta < tb ? -1 : ta > tb ? 1 : 0);
+    });
+    const limit = opts.historyLimit ?? ordered.length;
+    const scripts = this.walletScripts(wallet, scan);
+    const isOurs = (script: Uint8Array) => scripts.has(hex.encode(script));
+
+    const history: WalletHistoryEntry[] = [];
+    for (const [txid, height] of ordered.slice(0, limit)) {
+      const tx = parseRawTx(await this.getTransaction(txid));
+      let received = 0n;
+      let totalOut = 0n;
+      for (const o of tx.outputs) {
+        totalOut += o.amount;
+        if (isOurs(o.script)) received += o.amount;
+      }
+      let spent = 0n;
+      let allInputsOurs = tx.inputs.length > 0;
+      for (const inp of tx.inputs) {
+        // A previous output can only be ours if its transaction is in our history.
+        if (!heights.has(inp.txid)) {
+          allInputsOurs = false;
+          continue;
+        }
+        const prev = parseRawTx(await this.getTransaction(inp.txid)).outputs[inp.vout];
+        if (prev && isOurs(prev.script)) spent += prev.amount;
+        else allInputsOurs = false;
+      }
+      history.push({
+        txid,
+        height,
+        confirmations: confirmations(height),
+        time: height > 0 ? await this.blockTime(height) : undefined,
+        net: received - spent,
+        fee: allInputsOurs && spent >= totalOut ? spent - totalOut : undefined,
+      });
+    }
+
+    return {
+      tipHeight: tip.height,
+      tipHash: tip.hash,
+      utxos: sorted.slice(0, maxUtxos).map((u) => ({ ...u, height: Math.max(0, u.height), confirmations: confirmations(u.height) })),
+      utxosTruncated: sorted.length > maxUtxos,
+      confirmedSats,
+      unconfirmedSats,
+      history,
+      historyTruncated: ordered.length > limit,
+      nextReceiveIndex: scan.chains[0].nextIndex,
+      nextChangeIndex: scan.chains[1].nextIndex,
+      gapLimit: scan.gapLimit,
+    };
+  }
+
+  /**
+   * True if `txHex` spends at least one output paying one of the wallet's
+   * addresses (receive or change, within the scanned range). The guardian only
+   * relays such transactions, so it is not an open relay for anyone who can
+   * reach it. Previous transactions are only fetched for inputs whose txid is
+   * in the wallet's history, so a foreign transaction costs one scan.
+   */
+  async spendsWalletCoin(wallet: MultisigWallet, txHex: string): Promise<boolean> {
+    const tx = parseRawTx(txHex);
+    const scan = await this.scanWallet(wallet);
+    const ours = new Set<string>();
+    for (const chain of [0, 1] as const) for (const u of scan.chains[chain].used) for (const h of u.history) ours.add(h.tx_hash);
+    const candidates = tx.inputs.filter((i) => ours.has(i.txid));
+    if (!candidates.length) return false;
+    const scripts = this.walletScripts(wallet, scan);
+    for (const inp of candidates) {
+      const prev = parseRawTx(await this.getTransaction(inp.txid)).outputs[inp.vout];
+      if (prev && scripts.has(hex.encode(prev.script))) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Fee rates from the node (Electrum `blockchain.estimatefee`, BTC/kvB) as
+   * sat/vB, `null` where the node has no estimate, plus the minimum relay fee.
+   */
+  async estimateFees(targets: number[]): Promise<{ estimates: { target: number; satPerVb: number | null }[]; minRelaySatPerVb: number }> {
+    const e = this.client();
+    const toSatPerVb = (btcPerKvb: unknown) =>
+      typeof btcPerKvb === 'number' && Number.isFinite(btcPerKvb) && btcPerKvb > 0 ? Math.round(btcPerKvb * 1e8) / 1000 : null;
+    const estimates = await Promise.all(
+      targets.map(async (target) => ({ target, satPerVb: toSatPerVb(await e.request<number>('blockchain.estimatefee', [target])) })),
+    );
+    let minRelay: number | null = null;
+    try {
+      minRelay = toSatPerVb(await e.request<number>('blockchain.relayfee', []));
+    } catch (err) {
+      if (!(err instanceof ElectrumError)) throw err;
+    }
+    return { estimates, minRelaySatPerVb: Math.max(minRelay ?? 1, 0.001) };
   }
 
   /** True if Electrs knows the transaction (mempool or chain). */
@@ -191,15 +489,21 @@ export class ChainService {
     }
   }
 
-  /** Broadcasts through Electrs, falling back to Bitcoin Core. Returns the txid the server reported. */
+  /**
+   * Broadcasts through Electrs, falling back to Bitcoin Core. Returns the txid
+   * the server reported. Throws `BroadcastRejectedError` when a server answered
+   * and refused the transaction, `ChainUnavailableError` when none could be asked.
+   */
   async broadcast(txHex: string): Promise<{ txid: string; via: 'electrum' | 'bitcoind' }> {
     const errors: string[] = [];
+    let rejected: string | undefined;
     const e = this.opts.electrum;
     if (e?.connected) {
       try {
         const txid = await e.request<string>('blockchain.transaction.broadcast', [txHex]);
         return { txid: String(txid).toLowerCase(), via: 'electrum' };
       } catch (err) {
+        if (err instanceof ElectrumError) rejected ??= err.message.replace(/^blockchain\.transaction\.broadcast: /, '');
         errors.push(`Electrs: ${errorText(err)}`);
       }
     } else {
@@ -213,6 +517,7 @@ export class ChainService {
         errors.push(`Bitcoin node: ${errorText(err)}`);
       }
     }
+    if (rejected !== undefined) throw new BroadcastRejectedError(rejected, `broadcast failed (${errors.join('; ')})`);
     throw new ChainUnavailableError(`broadcast failed (${errors.join('; ')})`);
   }
 
