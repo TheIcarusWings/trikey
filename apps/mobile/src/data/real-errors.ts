@@ -55,6 +55,17 @@ export function refusalToError(r: GuardianRefusal): WalletServiceError {
       return new WalletServiceError('refused', "The guardian didn't accept the hardware wallet's approval. Try again.");
     case 'nothing_to_resume':
       return new WalletServiceError('wrong_state', 'Phone payments are already on.');
+    case 'wallet_retired':
+      return new WalletServiceError(
+        'wrong_state',
+        'Your guardian no longer guards this wallet: it was retired after a recovery or a guardian replacement. Your hardware wallet can still approve payments from it.',
+        opts(true),
+      );
+    case 'hardware_confirm_required':
+      return new WalletServiceError(
+        'refused',
+        'Your guardian took over your recovered wallet. Confirm it once with your hardware wallet before changing any rules.',
+      );
     case 'recovery_not_found':
     case 'recovery_not_active':
       return new WalletServiceError('wrong_state', 'That recovery is no longer running.');

@@ -110,14 +110,20 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
 
   | Method | Purpose |
   |---|---|
-  | `pair` | Pair the phone with the guardian |
+  | `pair.prepare`, `pair` | Pair the phone with the guardian (one-time code from the guardian's web UI); `pair` can also replace a retired wallet |
   | `sign` | Ask for a co-signature |
   | `policy.get` | Read the current rules |
-  | `policy.update` | Change the rules (hardware-signed) |
+  | `policy.update` | Change the rules (loosening needs a hardware approval) |
   | `recovery.start` | Start a recovery |
-  | `recovery.cancel` | Cancel a recovery |
+  | `recovery.cancel` | Cancel a recovery (phone, alert contact, or hardware approval) |
   | `recovery.status` | Check a recovery |
+  | `recovery.access` | Let a new phone with no backup reach the guardian for 24 h, signed by the hardware wallet |
+  | `phone.resume` | Turn phone payments back on after a contested cancel (hardware approval) |
+  | `hardware.confirm` | Confirm the hardware wallet's key after the guardian adopts a recovered wallet |
+  | `wallet.retire` | Stop guarding this wallet, e.g. before moving to a new guardian (hardware approval) |
+  | `wallet.sync`, `tx.get`, `tx.broadcast`, `fees.estimate` | Chain data from the guardian's own node, so the phone needs no public servers |
   | `guardian.unlock` | Unlock after a restart |
+  | `guardian.lock` | Lock the guardian remotely |
   | `guardian.status` | Read guardian state |
 
 - **Every request carries:**
