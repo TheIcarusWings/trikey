@@ -5,5 +5,6 @@
  */
 export { FakeElectrum, headerHash, makeHeader, type FakeUtxo } from './fake-electrum.js';
 export { GuardianRig, type FundedOutput, type GuardianRigOptions } from './rig.js';
+export { FakeBitcoind, type FakeBlock } from './fake-bitcoind.js';
 export { Guardian, RECOVERY_PEER_METHODS } from '../../src/guardian.js';
 export { DAY, HOUR, ManualClock } from '../../src/policy/index.js';

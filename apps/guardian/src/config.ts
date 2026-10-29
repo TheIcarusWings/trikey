@@ -8,7 +8,8 @@
  *   ELECTRUM_HOST     Electrs, TCP (no TLS: it runs on the same box)
  *   ELECTRUM_PORT     default 50001
  *   BITCOIN_RPC_HOST, BITCOIN_RPC_PORT, BITCOIN_RPC_USER, BITCOIN_RPC_PASS
- *                     optional: Bitcoin Core, for sync status and as a broadcast fallback
+ *                     optional: Bitcoin Core, for sync status, as a broadcast fallback,
+ *                     and for the silent payment scanner (blocks with prevouts)
  *   BITCOIN_NETWORK   bitcoin|testnet|signet|regtest, plus the names Umbrel and
  *                     others use (mainnet, main, testnet3, testnet4, test)
  */

@@ -15,6 +15,10 @@
  *   guardian-state.json  the policy engine's state
  *   service.json         relays, paired phone, co-signed sweeps, service log
  *   unlock-throttle.json unlock rate limit
+ *   silent-payments.json, silent-payments-key.json
+ *                        the silent payment scanner (silent/service.ts): its
+ *                        registration, matches, and the key its scan key is
+ *                        encrypted under (so it scans while locked)
  */
 import { join } from 'node:path';
 import type { Server } from 'node:http';
@@ -58,6 +62,7 @@ import { onContactDm } from './dm-cancel.js';
 import { startHttpServer } from './http/server.js';
 import { buildRoutes } from './http/api.js';
 import { GUARDIAN_VERSION } from './version.js';
+import { SilentPaymentService } from './silent/service.js';
 
 export const FILES = {
   keystore: 'keystore.json',
@@ -137,6 +142,8 @@ export class Guardian {
   readonly recovery: RecoveryRunner;
   /** Per paired phone: each `tx.broadcast` may scan wallets on Electrs. */
   readonly broadcastLimiter: SlidingWindowLimiter;
+  /** The silent payment scanner (needs the node RPC; works while locked). */
+  readonly sp: SilentPaymentService;
 
   engine!: PolicyEngine;
   store!: ObservedStore;
@@ -181,6 +188,15 @@ export class Guardian {
       : undefined;
     const rpc = opts.config.bitcoinRpc ? new BitcoinRpc(opts.config.bitcoinRpc) : undefined;
     this.chain = new ChainService({ electrum, rpc, log: this.log });
+    this.sp = new SilentPaymentService({
+      dataDir: opts.config.dataDir,
+      rpc,
+      clock: this.clock,
+      log: this.log,
+      pairedPhone: () => this.engine?.registration()?.appNostrPubkey,
+      notify: (alert) => this.notifyPhone(alert),
+      stamp: () => this.stampNow(),
+    });
     this.alerts = new Alerter(this);
     this.recovery = new RecoveryRunner(this);
     this.broadcastLimiter = new SlidingWindowLimiter(opts.broadcastLimit ?? DEFAULT_BROADCAST_LIMIT);
@@ -217,6 +233,7 @@ export class Guardian {
         d.recoveryPeers = [];
       });
     }
+    await g.sp.load();
     g.lockedAt = g.clock.now();
     g.lockReason = 'restart';
     return g;
@@ -287,6 +304,8 @@ export class Guardian {
       await this.notifyPhone({ type: 'guardian_locked', reason: 'restart', ...this.stampNow() });
     }
     await this.logEvent({ type: 'started' });
+    // Silent payments are scanned whether or not key 3 is unlocked.
+    this.sp.kick();
     const every = this.opts.tickIntervalMs ?? 30_000;
     if (every > 0) {
       this.timer = setInterval(() => void this.tick(), every);
@@ -492,6 +511,7 @@ export class Guardian {
   /** After `wallet.retire`: the retired wallet's phone is no longer a peer; tell it (best effort). */
   async afterRetire(walletId: string, phone: string): Promise<void> {
     this.rpc?.removePeer(phone);
+    await this.sp.unregister('wallet retired');
     this.pairing.invalidate();
     await this.service.update((d) => {
       d.phones = [];
@@ -514,6 +534,8 @@ export class Guardian {
           await this.engine.tick();
           await this.recovery.run();
           await this.alerts.run();
+          // In the background: a long catch-up must not hold back alerts or recoveries.
+          this.sp.kick();
         } catch (e) {
           this.log.error('tick.failed', { error: errorText(e) });
         }
@@ -726,6 +748,7 @@ export class Guardian {
               d.sweeps = [];
               d.recoveryPeers = [];
             });
+            await this.sp.unregister('guardian reset');
             await replaceKeystore(this.path('keystore'), next);
           } catch (e) {
             signer.wipe();

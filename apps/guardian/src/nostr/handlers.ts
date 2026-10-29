@@ -4,7 +4,7 @@
  * the method (`Guardian.authorize`), validated the params against the schema,
  * and made the call idempotent per (sender, id).
  */
-import { base64 } from '@scure/base';
+import { base64, hex } from '@scure/base';
 import { MultisigWallet, getNetwork } from '@trikey/core';
 import {
   DEFAULT_SYNC_HISTORY,
@@ -29,9 +29,13 @@ import { ElectrumError } from '../chain/electrum.js';
 import type { Guardian } from '../guardian.js';
 import { errorText } from '../log.js';
 import { policyHash, type CancelActor, type RecoveryRecord, type WatchedWallet } from '../policy/index.js';
+import { helperAccount } from '../singlekey.js';
+import { NodeRpcRequiredError, NotRegisteredError } from '../silent/service.js';
 import { policyToWire, recoveryToWire, refusalError, rulesFromPolicy } from './wire.js';
 
 const normPath = (p: string) => p.replace(/^m\//, '').replace(/'/g, 'h');
+const hexToBytes = (h: string) => hex.decode(h);
+const bytesToHex = (b: Uint8Array) => hex.encode(b);
 
 function guardianKey(g: Guardian): KeyOrigin {
   const pub = g.keystore!.public;
@@ -79,6 +83,38 @@ function pairedWallet(g: Guardian): MultisigWallet {
   const reg = g.engine.registration();
   if (!reg) throw refusalError({ reason: 'not_registered' });
   return walletOf(reg);
+}
+
+/** The phone's registered single-key coins: the helper account (if any) and outpoint -> script of every coin and match. */
+function singleKeyCoins(g: Guardian): { helper?: ReturnType<typeof helperAccount>; coins: Map<string, string> } {
+  const reg = g.engine.registration()!;
+  const sk = g.engine.singleKey();
+  const coins = g.sp.matchScripts();
+  for (const c of sk?.coins ?? []) coins.set(`${c.txid}:${c.vout}`, c.script);
+  return { ...(sk?.helper ? { helper: helperAccount(sk.helper.xpub, reg.network) } : {}), coins };
+}
+
+/** `sp.*` needs the node's RPC: without it, a clear 1700. */
+function requireNodeRpc(g: Guardian): void {
+  if (!g.sp.available)
+    throw new RpcError(
+      ErrorCode.NodeRpcRequired,
+      'Silent payments need your node\'s RPC: set BITCOIN_RPC_HOST, BITCOIN_RPC_PORT, BITCOIN_RPC_USER and BITCOIN_RPC_PASS for the guardian (Electrs cannot serve blocks with their prevouts).',
+    );
+}
+
+/** Scanner failures as protocol errors. */
+async function spCall<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof RpcError) throw e;
+    if (e instanceof NodeRpcRequiredError) throw new RpcError(ErrorCode.NodeRpcRequired);
+    if (e instanceof NotRegisteredError) throw new RpcError(ErrorCode.SilentPaymentsNotRegistered);
+    if (e instanceof RangeError) throw new RpcError(ErrorCode.InvalidParams, e.message);
+    if (e instanceof Error && e.name === 'BitcoinRpcError') throw new RpcError(ErrorCode.Unavailable, 'Your node did not answer (is Bitcoin Core running, and are the RPC settings right?)');
+    throw e;
+  }
 }
 
 /**
@@ -153,6 +189,9 @@ async function chainCall<T>(g: Guardian, method: string, fn: () => Promise<T>): 
  * transaction is a no-op for the limit (the engine counts it once).
  */
 const STATE_CHANGING: MethodName[] = [
+  'singlekey.register',
+  'sp.register',
+  'sp.unregister',
   'guardian.unlock',
   'guardian.lock',
   'pair',
@@ -360,6 +399,7 @@ export function buildHandlers(g: Guardian): Handlers {
 
     'wallet.sync': (params) =>
       chainCall(g, 'wallet.sync', async () => {
+        if (params.wallet === 'helper') return helperSync(params.historyLimit);
         const { wallet, walletId } = syncTarget(g, params.wallet);
         const r = await g.chain.walletSync(wallet, { historyLimit: params.historyLimit ?? DEFAULT_SYNC_HISTORY, maxUtxos: MAX_SYNC_UTXOS });
         return {
@@ -411,15 +451,17 @@ export function buildHandlers(g: Guardian): Handlers {
           throw new RpcError(ErrorCode.RateLimited, 'Too many broadcasts; wait and try again.', { retryAfterSeconds: Math.ceil(turn.retryAfterMs / 1000) });
         }
         const txid = txidOf(params.txHex);
-        // Not an open relay: only a spend of this wallet's coins, or a sweep of the watched (replaced) wallet into this one.
+        // Not an open relay: only a spend of this wallet's coins, a sweep of the phone's single-key coins
+        // (silent payments, the helper coin) into it, or a sweep of the watched (replaced) wallet into it.
         let via = 'wallet';
         if (!(await g.chain.spendsWalletCoin(wallet, params.txHex))) {
-          const refusal = await replacementRefusal(g, wallet, params.txHex);
+          const single = await singleKeyRefusal(g, wallet, params.txHex);
+          const refusal = single === 'not_applicable' ? await replacementRefusal(g, wallet, params.txHex) : single;
           if (refusal) {
             g.log.warn('tx.broadcast_refused', { reason: refusal.reason });
             throw new RpcError(refusal.code, refusal.message, { reason: refusal.reason, ...refusal.data });
           }
-          via = 'replaced_wallet_sweep';
+          via = single === 'not_applicable' ? 'replaced_wallet_sweep' : 'single_key_sweep';
         }
         const r = await g.chain.broadcast(params.txHex);
         if (r.txid !== txid) g.log.warn('tx.broadcast_txid_mismatch', { txid, reported: r.txid });
@@ -434,6 +476,61 @@ export function buildHandlers(g: Guardian): Handlers {
       if (res.unwatched) g.log.info('wallet.unwatched', { walletId: res.walletId });
       return { unwatched: res.unwatched, ...(res.walletId ? { walletId: res.walletId } : {}) };
     },
+
+    // -- silent payments: the phone's single-key coins and the scanner -----------
+    // Paired phone only (Guardian.authorize). No key 3: they work while the guardian is locked.
+
+    'singlekey.register': async (params) => {
+      const res = await g.engine.registerSingleKey({
+        ...(params.helper ? { helper: { xpub: params.helper.xpub, fingerprint: params.helper.fingerprint, path: params.helper.path } } : {}),
+        ...(params.coins ? { coins: params.coins } : {}),
+      });
+      if (!res.ok) throw refusalError(res.refusal);
+      g.log.info('singlekey.registered', { helper: !!res.singleKey.helper, coins: res.singleKey.coins.length });
+      return { helper: !!res.singleKey.helper, coins: res.singleKey.coins.length };
+    },
+
+    'sp.register': (params, ctx) =>
+      spCall(async () => {
+        requireNodeRpc(g);
+        if (!g.engine.registration()) throw refusalError({ reason: 'not_registered' });
+        const r = await g.sp.register({
+          phone: ctx.sender,
+          scanPrivateKey: hexToBytes(params.scanPrivateKey),
+          spendPublicKey: hexToBytes(params.spendPublicKey),
+          labels: params.labels,
+          birthHeight: params.birthHeight,
+        });
+        g.sp.kick();
+        return { registered: true as const, birthHeight: r.birthHeight, scannedHeight: r.scannedHeight, tipHeight: r.tipHeight };
+      }),
+
+    'sp.unregister': () => spCall(async () => ({ unregistered: await g.sp.unregister() })),
+
+    'sp.scan': (params) =>
+      spCall(async () => {
+        requireNodeRpc(g);
+        if (!g.sp.registered) throw new RpcError(ErrorCode.SilentPaymentsNotRegistered);
+        // Catch up first when that is quick; a long first scan goes on behind (`scanning: true`).
+        g.sp.kick();
+        await g.sp.settle(5_000);
+        const r = await g.sp.matches(params.fromHeight);
+        return {
+          tipHeight: r.tipHeight,
+          birthHeight: r.birthHeight,
+          scanning: r.scanning,
+          matches: r.matches.map((m) => ({
+            txid: m.txid,
+            vout: m.vout,
+            valueSats: m.valueSats,
+            outputKey: m.outputKey,
+            tweak: m.tweak,
+            ...(m.label !== undefined ? { label: m.label } : {}),
+            height: m.height,
+          })),
+          matchesTruncated: r.truncated,
+        };
+      }),
 
     'fees.estimate': (params) =>
       chainCall(g, 'fees.estimate', async () => {
@@ -497,5 +594,103 @@ export function buildHandlers(g: Guardian): Handlers {
       return { phoneSpending: 'enabled' as const };
     },
   };
+  /** `wallet.sync` with `wallet: "helper"`: the helper account like a wallet, the other single-key coins by script. */
+  async function helperSync(historyLimit: number | undefined) {
+    pairedWallet(g);
+    const { helper, coins } = singleKeyCoins(g);
+    if (!helper && !coins.size) throw new RpcError(ErrorCode.WalletNotWatched, 'The phone registered no single-key coins with this guardian (singlekey.register).');
+    const scripts = [...new Set(coins.values())].map(hexToBytes);
+    const unspent = (await g.chain.scriptUnspent(scripts, MAX_SYNC_UTXOS)).filter((u) => {
+      const want = coins.get(`${u.txid}:${u.vout}`);
+      return want !== undefined && want === bytesToHex(u.script);
+    });
+    const coinsOut = unspent.map((u) => ({ script: bytesToHex(u.script), txid: u.txid, vout: u.vout, valueSats: Number(u.value), height: u.height, confirmations: u.confirmations }));
+    if (!helper) {
+      const tip = await g.chain.tip();
+      const confirmed = unspent.filter((u) => u.height > 0).reduce((a, u) => a + u.value, 0n);
+      const total = unspent.reduce((a, u) => a + u.value, 0n);
+      return {
+        tipHeight: tip.height,
+        tipHash: tip.hash,
+        utxos: [],
+        utxosTruncated: false,
+        balance: { confirmedSats: Number(confirmed), unconfirmedSats: Number(total - confirmed) },
+        history: [],
+        historyTruncated: false,
+        nextReceiveIndex: 0,
+        nextChangeIndex: 0,
+        gapLimit: 20,
+        coins: coinsOut,
+      };
+    }
+    const r = await g.chain.walletSync(helper, { historyLimit: historyLimit ?? DEFAULT_SYNC_HISTORY, maxUtxos: MAX_SYNC_UTXOS });
+    return {
+      tipHeight: r.tipHeight,
+      tipHash: r.tipHash,
+      utxos: r.utxos.map((u) => ({
+        txid: u.txid,
+        vout: u.vout,
+        valueSats: Number(u.value),
+        height: u.height,
+        confirmations: u.confirmations,
+        chain: u.chain,
+        index: u.index,
+        script: bytesToHex(helper.derive(u.chain, u.index).script),
+      })),
+      utxosTruncated: r.utxosTruncated,
+      // The helper's balance; `coins` are counted on their own.
+      balance: { confirmedSats: Number(r.confirmedSats), unconfirmedSats: Number(r.unconfirmedSats) },
+      history: r.history.map((h) => ({
+        txid: h.txid,
+        height: h.height,
+        confirmations: h.confirmations,
+        ...(h.time !== undefined ? { time: h.time } : {}),
+        netSats: Number(h.net),
+        ...(h.fee !== undefined ? { feeSats: Number(h.fee) } : {}),
+      })),
+      historyTruncated: r.historyTruncated,
+      nextReceiveIndex: r.nextReceiveIndex,
+      nextChangeIndex: r.nextChangeIndex,
+      gapLimit: r.gapLimit,
+      coins: coinsOut,
+    };
+  }
+
   return runOnceAcrossRestarts(g, handlers);
+}
+
+/**
+ * Why `tx.broadcast` may not relay a sweep of the phone's single-key coins, `undefined` when it may, or
+ * `'not_applicable'` when no input is one (chain.ts, `checkSingleKeySweep`): every input a registered
+ * silent payment match or coin (exactly its script) or a helper-account coin; every output an address
+ * of the paired wallet; the fee within the sweep fee cap.
+ */
+async function singleKeyRefusal(
+  g: Guardian,
+  paired: MultisigWallet,
+  txHex: string,
+): Promise<{ code: number; message: string; reason: string; data?: Record<string, unknown> } | undefined | 'not_applicable'> {
+  const { helper, coins } = singleKeyCoins(g);
+  if (!helper && !coins.size) return 'not_applicable';
+  const check = await g.chain.checkSingleKeySweep(paired, { coins, ...(helper ? { helper } : {}) }, txHex);
+  if (!check) return 'not_applicable';
+  if (!check.ok) {
+    const message = {
+      too_many_inputs: 'A sweep of single-key coins may have at most 500 inputs.',
+      too_many_outputs: 'A sweep of single-key coins may have at most 10 outputs.',
+      input_not_single_key: 'Every input of a sweep of single-key coins must be a registered silent payment, a registered coin, or the helper coin.',
+      output_not_to_wallet: 'Every output of a sweep of single-key coins must pay this wallet.',
+      outputs_exceed_inputs: 'The transaction pays out more than it spends.',
+    }[check.reason];
+    return { code: ErrorCode.ForeignTransaction, reason: check.reason, message };
+  }
+  const cap = g.engine.status().rules?.sweepFeeCapSats;
+  if (cap !== undefined && check.feeSats > cap)
+    return {
+      code: ErrorCode.PolicyViolation,
+      reason: 'sweep_fee_exceeds_cap',
+      message: `The sweep fee (${check.feeSats} sats) is over the fee cap (${cap} sats).`,
+      data: { fee: Number(check.feeSats), cap: Number(cap) },
+    };
+  return undefined;
 }
