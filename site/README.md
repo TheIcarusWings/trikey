@@ -50,10 +50,11 @@ Before Vercel deploys, `.github/workflows/site.yml` runs these checks on pushes 
 
    | Type | Name | Value |
    |---|---|---|
-   | A | `@` | `76.76.21.21` |
-   | CNAME | `www` | `cname.vercel-dns.com` |
+   | A | `@` | `216.198.79.1` |
+   | A | `@` | `64.29.17.1` |
+   | CNAME | `www` | `cc44458c4c7e6158.vercel-dns-017.com` |
 
-   Vercel's Domains page shows the exact values for the project. If it lists different ones, use those.
+   These are the values Vercel recommended for this project. The older generic ones (`76.76.21.21` and `cname.vercel-dns.com`) also work. Vercel's Domains page always shows the current ones.
 4. **HTTPS.** Vercel issues the certificate on its own once DNS resolves.
 
 `.app` is on the browsers' HSTS preload list, so every browser insists on HTTPS for `trikey.app`. Until the certificate exists, the site simply won't load. That's expected, not a misconfiguration.
