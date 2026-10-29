@@ -285,7 +285,8 @@ export type ActivityEvent =
   | { type: 'recovery_access_granted'; phone: string; until: number }
   | { type: 'guardian_reset' };
 
-export type ActivityEntry = { id: number; at: number } & ActivityEvent;
+/** `count`/`lastAt`: an identical refusal repeated right after this one is counted here instead of logged again. */
+export type ActivityEntry = { id: number; at: number; count?: number; lastAt?: number } & ActivityEvent;
 
 // ---------------------------------------------------------------------------
 // Persisted state

@@ -130,7 +130,12 @@ export function recoveryInProgress(g: Guardian): RecoveryInProgress | null {
 }
 
 export function activity(g: Guardian, limit: number): ActivityEntry[] {
-  const engine = g.engine.activity({ limit }).map((e) => ({ at: e.at, entry: engineEntry(e) }));
+  const engine = g.engine.activity({ limit }).map((e) => {
+    const entry = engineEntry(e);
+    // A repeated identical refusal is one entry with a count (engine.ts, `log`).
+    const repeated = e.count && e.count > 1 ? { ...entry, event: `${entry.event} (${e.count} times, the last ${iso(e.lastAt ?? e.at)})` } : entry;
+    return { at: e.lastAt ?? e.at, entry: repeated };
+  });
   const service = g.service
     .get()
     .activity.slice(-limit)

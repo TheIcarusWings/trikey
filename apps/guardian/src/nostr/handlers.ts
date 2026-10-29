@@ -164,6 +164,22 @@ async function replacementRefusal(g: Guardian, paired: MultisigWallet, txHex: st
   return undefined;
 }
 
+/**
+ * An engine call that may refuse (`sign`, `recovery.start`, `recovery.update`): once `sender` had too many
+ * refusals in the window it gets `RateLimited` without reaching the engine (no log entry, no state).
+ * Only refusals count.
+ */
+async function refusable<T extends { ok: boolean }>(g: Guardian, sender: string, fn: () => Promise<T>): Promise<T> {
+  const gate = g.refusalLimiter.blocked(sender, g.clock.now());
+  if (!gate.ok) {
+    g.log.warn('rpc.refusals_rate_limited');
+    throw new RpcError(ErrorCode.RateLimited, 'Too many refused requests; wait and try again.', { retryAfterSeconds: Math.ceil(gate.retryAfterMs / 1000) });
+  }
+  const res = await fn();
+  if (!res.ok) g.refusalLimiter.take(sender, g.clock.now());
+  return res;
+}
+
 /** Chain failures as protocol errors: unknown tx 1600, node refusal 1601, no chain data 1501. */
 async function chainCall<T>(g: Guardian, method: string, fn: () => Promise<T>): Promise<T> {
   try {
@@ -346,8 +362,8 @@ export function buildHandlers(g: Guardian): Handlers {
         };
       }),
 
-    sign: async (params) => {
-      const res = await g.engine.cosign(base64.decode(params.psbt));
+    sign: async (params, ctx) => {
+      const res = await refusable(g, ctx.sender, () => g.engine.cosign(base64.decode(params.psbt)));
       if (!res.ok) throw refusalError(res.refusal);
       g.log.info('cosign.signed', { txid: res.txid, outflow: Number(res.outflow), replay: res.replay });
       return { psbt: base64.encode(res.psbt) };
@@ -379,17 +395,17 @@ export function buildHandlers(g: Guardian): Handlers {
     'recovery.start': (params, ctx) =>
       g.recoveryMutex.run(async () => {
         // The sender becomes the new wallet's paired phone if the guardian adopts it after the sweep.
-        const res = await g.engine.startRecovery({ psbt: base64.decode(params.sweepPsbt), destinationDescriptor: params.newDescriptor, initiator: ctx.sender });
+        const res = await refusable(g, ctx.sender, () => g.engine.startRecovery({ psbt: base64.decode(params.sweepPsbt), destinationDescriptor: params.newDescriptor, initiator: ctx.sender }));
         if (!res.ok) throw refusalError(res.refusal);
         g.log.info('recovery.started', { recoveryId: res.recovery.id, survivingRole: res.recovery.survivingRole });
         void g.alerts.run();
         return { recovery: recoveryToWire(res.recovery, g.clock.now()) };
       }),
 
-    'recovery.update': (params) =>
+    'recovery.update': (params, ctx) =>
       g.recoveryMutex.run(async () => {
         const rec = runningRecovery(g, params.recoveryId);
-        const res = await g.engine.updateRecovery({ recoveryId: rec.id, psbt: base64.decode(params.sweepPsbt) });
+        const res = await refusable(g, ctx.sender, () => g.engine.updateRecovery({ recoveryId: rec.id, psbt: base64.decode(params.sweepPsbt) }));
         if (!res.ok) throw refusalError(res.refusal);
         g.log.info('recovery.updated', { recoveryId: rec.id, addedInputs: res.addedInputs });
         void g.tick();

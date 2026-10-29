@@ -55,7 +55,7 @@ import { DirectMessages } from './nostr/dm.js';
 import { Inbox } from './nostr/inbox.js';
 import { buildHandlers } from './nostr/handlers.js';
 import { stampOf, toSeconds } from './nostr/wire.js';
-import { DEFAULT_BROADCAST_LIMIT, SlidingWindowLimiter, type RateLimitOptions } from './rate-limit.js';
+import { DEFAULT_BROADCAST_LIMIT, DEFAULT_REFUSAL_LIMIT, SlidingWindowLimiter, type RateLimitOptions } from './rate-limit.js';
 import { Alerter } from './alerts.js';
 import { RecoveryRunner } from './recovery-runner.js';
 import { onContactDm } from './dm-cancel.js';
@@ -92,6 +92,8 @@ export interface GuardianOptions {
   discoverDmRelays?: boolean;
   /** `tx.broadcast` calls allowed per paired phone per window. Default 20 per 10 minutes. */
   broadcastLimit?: RateLimitOptions;
+  /** Refused `sign` / `recovery.start` / `recovery.update` allowed per sender per window. Default 30 per 10 minutes. */
+  refusalLimit?: RateLimitOptions;
 }
 
 export type UnlockOutcome =
@@ -156,6 +158,8 @@ export class Guardian {
   readonly recovery: RecoveryRunner;
   /** Per paired phone: each `tx.broadcast` may scan wallets on Electrs. */
   readonly broadcastLimiter: SlidingWindowLimiter;
+  /** Per sender: refused `sign` / `recovery.start` / `recovery.update` (a flood is stopped before the engine). */
+  readonly refusalLimiter: SlidingWindowLimiter;
   /** The silent payment scanner (needs the node RPC; works while locked). */
   readonly sp: SilentPaymentService;
 
@@ -221,6 +225,7 @@ export class Guardian {
     this.alerts = new Alerter(this);
     this.recovery = new RecoveryRunner(this);
     this.broadcastLimiter = new SlidingWindowLimiter(opts.broadcastLimit ?? DEFAULT_BROADCAST_LIMIT);
+    this.refusalLimiter = new SlidingWindowLimiter(opts.refusalLimit ?? DEFAULT_REFUSAL_LIMIT);
   }
 
   private path(name: keyof typeof FILES): string {

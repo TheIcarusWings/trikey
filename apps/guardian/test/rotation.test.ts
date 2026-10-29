@@ -446,7 +446,10 @@ describe('retired wallets refuse everything', () => {
     expect(started.ok).toBe(true);
     expect(await engine.retireWallet(approve(ctx, { action: 'retire-wallet' }, 2))).toMatchObject({ ok: false, refusal: { reason: 'recovery_in_progress' } });
     expect(engine.status()).toMatchObject({ registered: true, nextHardwareSequence: 2 });
-    expect(engine.activity({ limit: 10 }).filter((e) => e.type === 'wallet_retire_refused')).toHaveLength(5);
+    // The first two are the same refusal: one entry counted twice (security/refusal-flood).
+    const retireRefusals = engine.activity({ limit: 10 }).filter((e) => e.type === 'wallet_retire_refused');
+    expect(retireRefusals.reduce((n, e) => n + (e.count ?? 1), 0)).toBe(5);
+    expect(retireRefusals).toHaveLength(4);
   });
 
   it('retiring revokes recovery access grants', async () => {

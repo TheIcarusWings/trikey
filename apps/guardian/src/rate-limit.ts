@@ -16,6 +16,12 @@ export class SlidingWindowLimiter {
 
   constructor(private readonly opts: RateLimitOptions) {}
 
+  /** Whether `key` is over its limit at `now` (ms), without counting anything. */
+  blocked(key: string, now: number): RateVerdict {
+    const recent = (this.hits.get(key) ?? []).filter((t) => t > now - this.opts.windowMs);
+    return recent.length >= this.opts.max ? { ok: false, retryAfterMs: Math.max(1, recent[0]! + this.opts.windowMs - now) } : { ok: true };
+  }
+
   /** Counts one call for `key` at `now` (ms), unless the key is over its limit; then it is not counted. */
   take(key: string, now: number): RateVerdict {
     const from = now - this.opts.windowMs;
@@ -31,6 +37,13 @@ export class SlidingWindowLimiter {
     return { ok: true };
   }
 }
+
+/**
+ * Refused `sign` / `recovery.start` / `recovery.update` per sender: a stolen phone (or a buggy one)
+ * sending a stream of requests the engine refuses gets `RateLimited` without reaching the engine once
+ * it has had this many refusals in the window. Successful calls do not count.
+ */
+export const DEFAULT_REFUSAL_LIMIT: RateLimitOptions = { max: 30, windowMs: 10 * 60 * 1000 };
 
 /** `tx.broadcast`: each call may scan the wallet(s) on Electrs, so it is limited per phone. */
 export const DEFAULT_BROADCAST_LIMIT: RateLimitOptions = { max: 20, windowMs: 10 * 60 * 1000 };

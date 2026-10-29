@@ -72,6 +72,8 @@ import { MAX_SINGLE_KEY_COINS, helperAccount, helperAccountPath, isP2TR, isP2WPK
 /** A hardware approval may be valid for at most this long from the moment the guardian checks it. */
 export const MAX_APPROVAL_TTL_MS = 24 * HOUR;
 export const DEFAULT_MAX_ACTIVITY = 5000;
+/** Refusal entries kept, on top of `DEFAULT_MAX_ACTIVITY` other entries (`pruneActivity`). */
+export const DEFAULT_MAX_REFUSALS = 1000;
 /** Largest allowed jump in hardware sequence numbers (so one approval can't exhaust the space). */
 export const MAX_SEQUENCE_STEP = 1000;
 /** At most this many phones hold recovery access at once (the newest win). */
@@ -114,8 +116,10 @@ export interface PolicyEngineOptions {
   signer?: CosignerSigner;
   /** Hardware authorization mechanisms; defaults to BIP137 signmessage. */
   authorizers?: HardwareAuthorizer[];
-  /** Activity entries kept (oldest dropped first). */
+  /** Activity entries kept, refusals not counted (oldest dropped first). */
   maxActivity?: number;
+  /** Refusal entries kept, in their own bucket (oldest dropped first). */
+  maxRefusals?: number;
 }
 
 export interface RegisterInput {
@@ -209,6 +213,34 @@ class Mutex {
 }
 
 const cloneState = (s: GuardianState) => deserializeState(serializeState(s));
+
+/** Refusals ("..._refused" entries) live in their own bucket of the activity log. */
+export const isRefusalEvent = (e: { type: string }) => e.type.endsWith('_refused');
+const bigintJson = (_k: string, v: unknown) => (typeof v === 'bigint' ? `${v}n` : v);
+/** An entry's content without its id, time and repeat count: what makes two refusals "the same". */
+function eventKey(e: object): string {
+  const { id: _i, at: _a, count: _c, lastAt: _l, ...rest } = e as Record<string, unknown>;
+  return JSON.stringify(rest, bigintJson);
+}
+/** The state without its activity log, to tell whether anything else changed. */
+const withoutActivity = (s: GuardianState) => JSON.stringify({ ...s, activity: undefined, nextActivityId: undefined }, bigintJson);
+
+/**
+ * Bounds the activity log: at most `maxOther` entries that are not refusals and `maxRefused` refusals,
+ * the oldest of each dropped first. A flood of refusals can only push out older refusals, never a
+ * co-signature, a recovery or a rule change.
+ */
+export function pruneActivity(list: ActivityEntry[], maxOther: number, maxRefused: number): ActivityEntry[] {
+  let refusedCount = 0;
+  for (const e of list) if (isRefusalEvent(e)) refusedCount++;
+  let dropRefused = refusedCount - maxRefused;
+  let dropOther = list.length - refusedCount - maxOther;
+  if (dropRefused <= 0 && dropOther <= 0) return list;
+  return list.filter((e) => {
+    if (isRefusalEvent(e)) return dropRefused-- > 0 ? false : true;
+    return dropOther-- > 0 ? false : true;
+  });
+}
 const eqHex = (a: Uint8Array, b: Uint8Array) => hex.encode(a) === hex.encode(b);
 const refused = (refusal: Refusal) => ({ ok: false as const, refusal });
 
@@ -290,6 +322,7 @@ export class PolicyEngine {
   private readonly clock: Clock;
   private readonly authorizers: Map<string, HardwareAuthorizer>;
   private readonly maxActivity: number;
+  private readonly maxRefusals: number;
   private readonly chain?: ChainTimeSource;
   private readonly blocksPerDayOverride?: number;
   private signer?: CosignerSigner;
@@ -304,6 +337,7 @@ export class PolicyEngine {
     this.blocksPerDayOverride = opts.blocksPerDay;
     this.authorizers = new Map((opts.authorizers ?? [bip137Authorizer]).map((a) => [a.kind, a]));
     this.maxActivity = opts.maxActivity ?? DEFAULT_MAX_ACTIVITY;
+    this.maxRefusals = opts.maxRefusals ?? DEFAULT_MAX_REFUSALS;
     this.setSigner(opts.signer);
   }
 
@@ -418,8 +452,12 @@ export class PolicyEngine {
       this.refresh(draft, now);
       const out = await fn(draft, now);
       if (draft.active) draft.active.spends = pruneSpends(draft.active.spends, now);
-      if (draft.activity.length > this.maxActivity) draft.activity = draft.activity.slice(-this.maxActivity);
-      await this.store.save(draft);
+      draft.activity = pruneActivity(draft.activity, this.maxActivity, this.maxRefusals);
+      // A refusal that changed nothing but the activity log is not worth a durable write (a stranger's
+      // or a stolen phone's flood would otherwise fsync the whole state each time): it stays in memory
+      // and goes to disk with the next real change.
+      const refusalOnly = (out as { ok?: unknown })?.ok === false && withoutActivity(draft) === withoutActivity(this.state);
+      if (!refusalOnly) await this.store.save(draft);
       this.state = draft;
       return out;
     });
@@ -447,9 +485,11 @@ export class PolicyEngine {
     }
   }
 
-  /** Remembers the latest tip seen (never a lower one). */
+  /** Remembers the latest tip seen (never a lower one; the same tip again changes nothing, so it costs no write). */
   private noteChain(draft: GuardianState, now: number, chain: ChainTime | undefined): void {
-    if (chain && (!draft.chainSeen || chain.height >= draft.chainSeen.height)) draft.chainSeen = { ...chain, at: now };
+    const seen = draft.chainSeen;
+    if (chain && (!seen || chain.height > seen.height || (chain.height === seen.height && chain.medianTimePastMs > seen.medianTimePastMs)))
+      draft.chainSeen = { ...chain, at: now };
   }
 
   /**
@@ -478,7 +518,14 @@ export class PolicyEngine {
     return rec.startHeight + rec.delayDays * this.blocksPerDay(reg?.network ?? 'bitcoin');
   }
 
+  /** Appends to the activity log. A refusal identical to the entry before it is counted there instead (`count`, `lastAt`). */
   private log(draft: GuardianState, now: number, event: ActivityEvent): void {
+    const last = draft.activity[draft.activity.length - 1];
+    if (isRefusalEvent(event) && last && last.type === event.type && eventKey(last) === eventKey(event)) {
+      last.count = (last.count ?? 1) + 1;
+      last.lastAt = now;
+      return;
+    }
     draft.activity.push({ id: draft.nextActivityId++, at: now, ...event } as ActivityEntry);
   }
 
