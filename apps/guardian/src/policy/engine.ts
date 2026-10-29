@@ -708,8 +708,8 @@ export class PolicyEngine {
       const { registration: reg, rules } = w;
       const running = activeRecovery(draft);
       if (running) return refuse({ reason: 'recovery_in_progress', recoveryId: running.id });
-      // A recovery already swept this wallet: it is waiting to be retired.
-      if (w.phoneSpending.state === 'retired') return refuse({ reason: 'wallet_retired', walletId: reg.walletId });
+      // A wallet whose sweep was co-signed but not accepted by a node yet (so not rotated) may still
+      // start another recovery: e.g. one with a higher fee when the first sweep cannot be relayed.
 
       const wallet = this.wallet(reg);
       let dest: MultisigWallet;

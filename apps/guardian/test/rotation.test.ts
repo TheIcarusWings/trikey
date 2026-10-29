@@ -308,6 +308,18 @@ describe('adopting the destination wallet after a recovery', () => {
     expect(ctx.engine.registration()?.hardwareAuth).toEqual(key);
   });
 
+  it('a sweep no node accepted does not rotate, and another recovery (say, with a higher fee) can still replace it', async () => {
+    const ctx = await setup();
+    const dest = await makeWallet({ app: MNEMONICS.app2 });
+    const first = await recoverTo(ctx, 'hardware', dest, { initiator: NEW_PHONE, index: 10 });
+    // The service never got the first sweep relayed, so it never asked to rotate. A second recovery sweeps the coins again.
+    const second = await recoverTo(ctx, 'hardware', dest, { initiator: NEW_PHONE, index: 10 });
+    expect(second).not.toBe(first);
+    expect(await ctx.engine.rotateAfterSweep(second)).toMatchObject({ ok: true, adopted: { walletId: dest.fingerprint() } });
+    // The first one belongs to a retired wallet now: never rotated.
+    expect(await ctx.engine.rotateAfterSweep(first)).toMatchObject({ ok: false, refusal: { reason: 'not_adoptable' } });
+  });
+
   it('a destination with another guardian key, or with an unknown phone, retires the old wallet and leaves the guardian unpaired', async () => {
     const ctx = await setup();
     const elsewhere = await makeWallet({ app: MNEMONICS.app2, cosignerPriv: OTHER_COSIGNER_PRIV });
