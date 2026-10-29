@@ -5,6 +5,12 @@ All are H.264 High + AAC 48 kHz, 30 fps, captions burned in.
 
 | File | Ratio | Length | Size | Audio | SHA-256 (first 16) |
 |---|---|---|---|---|---|
+| `trikey-f1-nobody-in-the-middle-11-vo.mp4` | 1:1 | 73.6 s | 19.9 MB | voiceover + music | `c181b7e9e08adf44` |
+| `trikey-f1-nobody-in-the-middle-11.mp4` | 1:1 | 73.6 s | 19.9 MB | music only | `967d8025b5bbfb6d` |
+| `trikey-f1-nobody-in-the-middle-169-vo.mp4` | 16:9 | 73.6 s | 32.3 MB | voiceover + music | `ed9b9f683b4fe849` |
+| `trikey-f1-nobody-in-the-middle-169.mp4` | 16:9 | 73.6 s | 32.3 MB | music only | `bf20c2dc4cdcb2a2` |
+| `trikey-f1-nobody-in-the-middle-916-vo.mp4` | 9:16 | 73.6 s | 32.5 MB | voiceover + music | `ef63a5fc67c29871` |
+| `trikey-f1-nobody-in-the-middle-916.mp4` | 9:16 | 73.6 s | 32.5 MB | music only | `681749b1c3f3920d` |
 | `trikey-v1-three-keys-11-vo.mp4` | 1:1 | 35.4 s | 1.6 MB | voiceover + music | `fe276250b5a28b20` |
 | `trikey-v1-three-keys-11.mp4` | 1:1 | 35.4 s | 1.6 MB | music only | `03c3bbfbec73628e` |
 | `trikey-v1-three-keys-169-vo.mp4` | 16:9 | 35.4 s | 1.8 MB | voiceover + music | `f7c915a9df7f8411` |

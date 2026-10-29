@@ -94,6 +94,25 @@ function setBroll(el, t, a, b, frames) {
   }
 }
 
+// Full-bleed footage from extracted frames: build/clips/<name>-<916|169>/0001.jpg … at 30 fps.
+// 9:16 uses the vertical take; 1:1 and 16:9 crop the horizontal one.
+function clip(name, parent = $('#stage')) {
+  const el = h('div', { class: 'clip' }, '<img>');
+  el.dir_ = `../../build/clips/${name}-${R === '916' ? '916' : '169'}`;
+  parent.append(el);
+  return el;
+}
+function setClip(el, t, a, b, { from = 0, speed = 1, fi = 0.25, fo = 0.25, frames = 90 } = {}) {
+  const e = show(el, t, a, b, { dy: 0, fi, fo });
+  if (e > 0) {
+    const i = Math.min(frames, Math.max(1, Math.floor((from + (t - a) * speed) * 30) + 1));
+    const src = `${el.dir_}/${String(i).padStart(4, '0')}.jpg`;
+    const img = el.querySelector('img');
+    if (img.dataset.src !== src) { img.dataset.src = src; img.src = src; pending.push(img.decode().catch(() => {})); }
+  }
+  return e;
+}
+
 function endCard(t, a) {
   show($('.end'), t, a, 1e9, { dy: 0, fi: 0.5 });
   const e = $('.end');

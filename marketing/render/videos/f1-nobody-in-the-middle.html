@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Trikey · Nobody in the middle</title>
+<link rel="stylesheet" href="../lib/stage.css">
+<style>
+  /* Story film: full-bleed footage, cinematic supers, UI inserts, light end card. */
+  .clip { position: absolute; inset: 0; z-index: 1; opacity: 0; }
+  .clip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .grade { position: absolute; inset: 0; z-index: 2; pointer-events: none;
+           background: radial-gradient(ellipse at center, rgba(9,9,11,0) 55%, rgba(9,9,11,.55) 100%),
+                       linear-gradient(180deg, rgba(9,9,11,0) 50%, rgba(9,9,11,.6) 78%, rgba(9,9,11,.35) 100%); }
+  .supers { position: absolute; left: 0; right: 0; z-index: 6; text-align: center; }
+  html[data-r="916"] .supers { top: 1180px; padding: 0 80px; }
+  html[data-r="11"]  .supers { top: 770px; padding: 0 70px; }
+  html[data-r="169"] .supers { top: 820px; padding: 0 200px; }
+  .sup { position: absolute; left: 0; right: 0; opacity: 0; font-weight: 600; letter-spacing: -0.025em; line-height: 1.12;
+         text-wrap: balance; text-shadow: 0 2px 24px rgba(0,0,0,.65), 0 1px 3px rgba(0,0,0,.5); }
+  html[data-r="916"] .sup { font-size: 66px; padding: 0 80px; }
+  html[data-r="11"]  .sup { font-size: 52px; padding: 0 70px; }
+  html[data-r="169"] .sup { font-size: 60px; padding: 0 200px; }
+  .ins { position: absolute; z-index: 4; opacity: 0; }
+  html[data-r="916"] .ins { left: 0; right: 0; top: 200px; height: 920px; display: flex; justify-content: center; }
+  html[data-r="11"]  .ins { left: 0; right: 0; top: 60px; height: 680px; display: flex; justify-content: center; }
+  html[data-r="169"] .ins { left: 0; right: 0; top: 70px; height: 720px; display: flex; justify-content: center; }
+  .ins .phone { box-shadow: 0 30px 80px rgba(0,0,0,.6); border-radius: 11.3% / 5.2%; }
+  .logo3 { position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center; opacity: 0; }
+  html[data-r="916"] .logo3 svg { width: 640px; margin-top: -300px; }
+  html[data-r="11"]  .logo3 svg { width: 420px; margin-top: -160px; }
+  html[data-r="169"] .logo3 svg { width: 420px; margin-top: -140px; }
+  .fin { position: absolute; inset: 0; z-index: 8; background: #F4F4F5; color: #09090B; display: flex; flex-direction: column;
+         align-items: center; justify-content: center; text-align: center; opacity: 0; }
+  .fin svg { width: 180px; }
+  .fin .name { font-size: 112px; font-weight: 600; letter-spacing: -0.045em; margin-top: 26px; }
+  .fin .tag { font-size: 44px; font-weight: 500; letter-spacing: -0.02em; margin-top: 10px; }
+  .fin .meta { margin-top: 56px; font-size: 28px; color: #71717A; display: flex; flex-direction: column; gap: 14px; align-items: center; }
+  .fin .pill { border: 1px solid #E4E4E7; border-radius: 999px; padding: 12px 26px; color: #09090B; display: inline-flex; gap: 12px; align-items: center; }
+  .fin .pill b { width: 11px; height: 11px; border-radius: 50%; background: #B45309; display: block; }
+  html[data-r="11"] .fin svg { width: 130px; }
+  html[data-r="11"] .fin .name { font-size: 86px; }
+  html[data-r="11"] .fin .tag { font-size: 36px; }
+  html[data-r="11"] .fin .meta { font-size: 24px; margin-top: 40px; }
+</style>
+</head>
+<body>
+<script src="../lib/stage.js"></script>
+<script>
+window.SPEC = {
+  id: 'f1-nobody-in-the-middle',
+  duration: 73.6,
+  // Beat 13 is stretched to fit its voiceover line; everything after it shifts by 1.6 s.
+  retime: [[0, 0], [46.5, 46.5], [51, 52.6], [72, 73.6]],
+  music: { seed: 5, chords: 'calm' },
+  vo: [
+    [0.3, 401], [4.2, 402], [8.2, 403], [12.2, 404], [15.4, 405], [18.7, 406], [21.7, 407], [24.7, 408],
+    [28.3, 409], [31.7, 410], [37.2, 411], [41.7, 412], [46.7, 413], [53.0, 414], [57.8, 415], [61.3, 416], [66.2, 417],
+  ].map(([at, id]) => ({ at, id })),
+};
+
+const stage = h('div', { id: 'stage' });
+document.body.append(stage);
+
+// [start, end, clip name, frames, from (s), speed]
+const SHOTS = [
+  [0, 4.0, 's01', 120], [4.0, 8.0, 's02', 120], [8.0, 12.0, 's03', 120], [12.0, 15.0, 's04', 120, 0.6],
+  [18.5, 21.5, 's06', 120, 0.5], [21.5, 24.5, 's07', 120, 0.4], [24.5, 27.5, 's08', 120, 0.5],
+  [31.5, 37.0, 's10', 150], [37.0, 41.5, 's11', 120],
+  [41.5, 43.2, 's12a', 90, 0.6], [43.2, 44.9, 's12b', 90, 0.8], [44.9, 46.5, 's12c', 90, 0.8],
+  [46.5, 51.0, 's13', 120], [51.0, 56.0, 's14', 150], [56.0, 59.5, 's15', 120, 0.3], [59.5, 64.0, 's16', 150, 0.3],
+].map(([a, b, name, frames, from = 0]) => ({ a, b, frames, from, el: clip(name) }));
+stage.append(h('div', { class: 'grade' }));
+
+// UI inserts over the dimmed shot: [start, end, screen].
+const INSERTS = [[33.2, 37.0, 'Send-Review'], [38.6, 41.5, 'Send-Hardware'], [48.2, 51.0, 'Recover-Alert']]
+  .map(([a, b, s]) => { const el = h('div', { class: 'ins' }, phone(`../../build/screens/${s}-dark.png`)); stage.append(el); return { a, b, el }; });
+
+// The three keys, as light: dots fade up (shot 5), the logo forms (shot 9).
+const K = 6;
+const PT = { hw: [44, 14], ph: [16, 62], gd: [72, 62] };
+const logo3 = h('div', { class: 'logo3' }, `<svg viewBox="0 0 528 480">
+  <path id="tri" d="M${44 * K} ${14 * K} L${16 * K} ${62 * K} L${72 * K} ${62 * K} Z" fill="none" stroke="#FAFAFA" stroke-width="${6 * K}" stroke-linejoin="round"/>
+  ${Object.entries(PT).map(([k, [x, y]]) => `<circle id="d-${k}" cx="${x * K}" cy="${y * K}" r="${12 * K}" fill="#FAFAFA"/>`).join('')}
+</svg>`);
+stage.append(logo3);
+const tri = $('#tri', logo3);
+const triLen = tri.getTotalLength();
+tri.style.strokeDasharray = triLen;
+
+const SUPERS = [
+  [0.3, 4.0, 'For years, holding bitcoin meant a choice.'],
+  [4.2, 8.0, 'Hand your keys to a company…'],
+  [8.2, 12.0, '…or carry the whole weight alone.'],
+  [12.2, 15.0, 'One key. One mistake. Gone.'],
+  [15.4, 18.5, 'What if you held three keys?'],
+  [18.7, 21.5, 'One in your pocket.'],
+  [21.7, 24.5, 'One in a drawer.'],
+  [24.7, 27.5, 'One on a shelf at home.'],
+  [28.3, 31.5, 'Any two move your money.'],
+  [31.7, 37.0, 'Everyday payments: just your phone and Face ID.'],
+  [37.2, 41.5, 'Big ones: confirm on your hardware wallet.'],
+  [41.7, 46.5, 'Lose one? The other two have you.'],
+  [46.7, 51.0, 'Anything suspicious, you and the people you trust hear about it. Daily.'],
+  [51.4, 56.0, 'No company holds a key.'],
+  [56.2, 59.5, 'No server but yours.'],
+  [59.7, 64.0, 'No one to ask permission.'],
+];
+const supers = h('div', { class: 'supers' });
+stage.append(supers);
+const sups = SUPERS.map(([a, b, text]) => { const el = h('div', { class: 'sup' }, text); supers.append(el); return { a, b, el }; });
+
+const fin = h('div', { class: 'fin' }, `${LOGO('#09090B', '#EA580C')}
+  <div class="name">Trikey</div>
+  <div class="tag">Your keys. Your server. Your bitcoin.</div>
+  <div class="meta"><span class="pill"><b></b>Coming soon · pre-alpha, not audited</span>
+  <span>Open source (MIT) · <span class="mono">github.com/TheIcarusWings/trikey</span></span></div>`);
+stage.append(fin);
+
+window.update = t => {
+  for (const s of SHOTS) {
+    setClip(s.el, t, s.a, s.b, { from: s.from, frames: s.frames, fi: s.a === 0 ? 0 : 0.3, fo: 0.3 });
+    // Slow push-in on every shot.
+    s.el.style.transform = `scale(${1.02 + 0.05 * clamp((t - s.a) / (s.b - s.a))})`;
+  }
+  // Dim and soften the footage under a UI insert.
+  SHOTS.forEach(s => (s.el.style.filter = ''));
+  for (const ins of INSERTS) {
+    const e = show(ins.el, t, ins.a, ins.b, { dy: 50, fi: 0.45, fo: 0.3 });
+    const s = e > 0 && SHOTS.find(s => t >= s.a && t <= s.b);
+    if (s) s.el.style.filter = `brightness(${1 - 0.65 * e}) blur(${8 * e}px)`;
+  }
+  for (const s of sups) show(s.el, t, s.a, s.b, { dy: 14, fi: 0.5, fo: 0.35 });
+
+  // Shot 5 (15–18.5): three lights. Shot 9 (27.5–31.5): they join into the logo.
+  const le = Math.max(env(t, 15.0, 18.5, 0.6, 0.5), env(t, 27.5, 31.5, 0.4, 0.5));
+  logo3.style.opacity = le;
+  Object.keys(PT).forEach((k, i) => {
+    const d = $('#d-' + k, logo3);
+    d.style.opacity = t < 27.5 ? prog(t, 15.3 + i * 0.5, 16.3 + i * 0.5) : 1;
+  });
+  tri.style.strokeDashoffset = t < 27.5 ? triLen : triLen * (1 - prog(t, 27.8, 29.4, easeIO));
+  const warm = prog(t, 29.4, 30.2);
+  $('#d-hw', logo3).setAttribute('fill', `rgb(${[250, 250, 250].map((v, i) => Math.round(lerp(v, [251, 146, 60][i], warm))).join(',')})`);
+
+  show(fin, t, 64.0, 1e9, { dy: 0, fi: 0.8 });
+  fin.querySelectorAll(':scope > *').forEach((c, i) => show(c, t, 64.4 + i * 0.35, 1e9, { dy: 18, fi: 0.6 }));
+};
+</script>
+</body>
+</html>

@@ -4,11 +4,12 @@
 # out of git because the URLs carry the Higgsfield account id.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-mkdir -p build/higgsfield build/vo
+mkdir -p build/higgsfield build/vo build/film
 while IFS=$'\t' read -r kind name url; do
   case "$kind" in
     broll) out="build/higgsfield/$name.mp4" ;;
     vo)    out="build/vo/$name.wav" ;;
+    film)  out="build/film/$name.mp4" ;;
     *)     continue ;;
   esac
   [ -f "$out" ] || curl -fsS -o "$out" "$url"
