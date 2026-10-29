@@ -1045,7 +1045,7 @@ class Service implements RkWalletService {
                   : toKitView(
                       await w.useHardwareRecoveryKey({ kind: self.deps.secondDeviceKind ?? (opts.secondDevice ? toWalletKind(opts.secondDevice) : undefined) }),
                       [],
-                      'Your second hardware wallet',
+                      'second hardware wallet',
                     );
               return sheet;
             } finally {

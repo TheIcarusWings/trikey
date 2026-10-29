@@ -26,7 +26,7 @@ function demoKit(kind: 'seed' | 'xpub', now: Date): RecoveryKit {
     network: 'testnet',
     date,
     challenge: kind === 'seed' ? [2, 5, 9] : [],
-    ...(kind === 'xpub' ? { device: 'Your second hardware wallet' } : {}),
+    ...(kind === 'xpub' ? { device: 'second hardware wallet' } : {}),
   };
 }
 
