@@ -16,6 +16,8 @@ export type RecoveryKeyErrorCode =
   | 'hardware_mismatch'
   /** The device returned something that does not check out (key, signature, PSBT). */
   | 'hardware_invalid_response'
+  /** The device showed a different address than the wallet computed. Stop and find out why. */
+  | 'address_mismatch'
   /** The secure store has no key 2, or the user cancelled the biometric prompt. */
   | 'key_unavailable'
   /** Not a Recovery Kit, or a version or network this build does not read. */

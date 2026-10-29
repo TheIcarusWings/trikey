@@ -10,3 +10,6 @@ export * from './refills.js';
 export * from './chain-state.js';
 export * from './scheduler.js';
 export * from './esplora.js';
+export * from './recovery.js';
+export { StateStore, DEFAULT_STORAGE_KEY, type RkConfig, type RkState, type RkAlert, type HardwareRecord } from './state.js';
+export * from './wallet.js';
