@@ -30,6 +30,21 @@ export const DerivationPath = z.string().regex(/^m(\/\d+['h]?)+$/, 'invalid deri
  */
 export const UnixSeconds = z.int().min(0).max(4_102_444_800);
 
+/**
+ * Unix time in MILLISECONDS, only where a message says so (`atMs`, `timeMs`-style members next to
+ * a seconds member). `at` stays in seconds for compatibility; `atMs` lets the phone order events that
+ * happen in the same second. A guardian always sends `floor(atMs / 1000) === at`.
+ */
+export const UnixMillis = z.int().min(0).max(4_102_444_800_000);
+
+/**
+ * A seconds member and its milliseconds twin must describe the same moment (within a second: the
+ * guardian floors, another implementation might round). Catches a missed unit conversion, as the
+ * seconds limit above does for milliseconds.
+ */
+export const sameMoment = (seconds: number, millis: number | undefined): boolean => millis === undefined || Math.abs(millis / 1000 - seconds) <= 1;
+const SAME_MOMENT = 'atMs must be the same moment as its seconds twin';
+
 /** The most sats any amount can be (21M BTC); far below 2^53, so JSON numbers are exact. */
 export const MAX_SATS = 2_100_000_000_000_000;
 export const Sats = z.int().min(0).max(MAX_SATS);
@@ -202,9 +217,21 @@ export const PairParams = z.strictObject({
   rules: Policy,
   /**
    * The wallet this one replaces, when the phone moves an existing wallet to this guardian ("Replace
-   * guardian": the old one died or was retired). Informational: the guardian records it in its log.
+   * guardian": the old one died or was retired). The guardian records it in its log. With
+   * `replacesDescriptor` it also starts watching that wallet.
    */
   replacesWalletId: WalletId.optional(),
+  /**
+   * The descriptor of the wallet named by `replacesWalletId`. The guardian checks that it hashes to that
+   * id (and shares a user key with this wallet), then keeps it as a WATCHED-ONLY wallet: it serves its
+   * coins and history (`wallet.sync` with `wallet: "replaced"`) and relays a fully signed sweep of its
+   * coins into THIS wallet (`tx.broadcast`). It never co-signs for it: key 3 is not in it, or is a key
+   * of another guardian. Needs `replacesWalletId`.
+   */
+  replacesDescriptor: Descriptor.optional(),
+}).refine((p) => p.replacesDescriptor === undefined || p.replacesWalletId !== undefined, {
+  message: 'replacesDescriptor needs replacesWalletId',
+  path: ['replacesDescriptor'],
 });
 
 export const PairResult = z.object({
@@ -330,32 +357,46 @@ export const HardwareConfirmResult = z.object({
 });
 
 export const GuardianStatusParams = z.strictObject({});
-export const GuardianStatusResult = z.object({
-  state: z.enum(['locked', 'unlocked']),
-  paired: z.boolean(),
-  /** The next hardware approval must use a sequence at least this. */
-  nextHardwareSequence: z.int().min(1),
-  phoneSpending: PhoneSpendingState,
-  activeRecoveryId: z.string().nullable(),
-  version: z.string().max(32),
-  /** The guardian's clock, unix seconds (lets the phone detect skew). */
-  time: UnixSeconds,
-  /**
-   * The rolling 24 h limit as the guardian counts it (fees included). Optional: guardians before the
-   * chain methods do not send it. This is the truth; a phone's own estimate is only a hint.
-   */
-  dailyLimit: z
-    .object({
-      limitSats: Sats,
-      usedSats: Sats,
-      availableSats: Sats,
-    })
-    .optional(),
-  /** The wallet the guardian guards now. It changes when the guardian adopts a recovery's destination wallet. */
-  walletId: WalletId.optional(),
-  /** True after such a rotation until `hardware.confirm`: hardware approvals are refused (1209) until then. */
-  hardwareConfirmRequired: z.boolean().optional(),
-});
+export const GuardianStatusResult = z
+  .object({
+    state: z.enum(['locked', 'unlocked']),
+    paired: z.boolean(),
+    /** The next hardware approval must use a sequence at least this. */
+    nextHardwareSequence: z.int().min(1),
+    phoneSpending: PhoneSpendingState,
+    activeRecoveryId: z.string().nullable(),
+    version: z.string().max(32),
+    /** The guardian's clock, unix seconds (lets the phone detect skew). */
+    time: UnixSeconds,
+    /**
+     * The guardian's clock in unix MILLISECONDS when it answered: the same clock as an alert's `atMs`, so
+     * the phone can tell whether an alert came before or after this answer even within one second.
+     * Optional: guardians before this member do not send it (use `time`).
+     */
+    atMs: UnixMillis.optional(),
+    /**
+     * The rolling 24 h limit as the guardian counts it (fees included). Optional: guardians before the
+     * chain methods do not send it. This is the truth; a phone's own estimate is only a hint.
+     */
+    dailyLimit: z
+      .object({
+        limitSats: Sats,
+        usedSats: Sats,
+        availableSats: Sats,
+      })
+      .optional(),
+    /** The wallet the guardian guards now. It changes when the guardian adopts a recovery's destination wallet. */
+    walletId: WalletId.optional(),
+    /** True after such a rotation until `hardware.confirm`: hardware approvals are refused (1209) until then. */
+    hardwareConfirmRequired: z.boolean().optional(),
+    /**
+     * The wallet this guardian watches (watch-only) because the paired wallet replaced it (`pair` with
+     * `replacesDescriptor`); absent when it watches none. While present, `tx.broadcast` also relays a signed
+     * sweep of that wallet's coins into the paired wallet.
+     */
+    watchedWalletId: WalletId.optional(),
+  })
+  .refine((r) => sameMoment(r.time, r.atMs), { message: SAME_MOMENT, path: ['atMs'] });
 
 /* -------------------------------------------------------------------------- */
 /* Chain data                                                                 */
@@ -412,11 +453,25 @@ export const HistoryEntry = z.object({
   feeSats: Sats.optional(),
 });
 
+/**
+ * Which wallet `wallet.sync` reads: the paired one (default), or the one this guardian only WATCHES
+ * because the paired wallet replaced it: `"replaced"`, or that wallet's id.
+ */
+export const SyncWallet = z.union([z.literal('replaced'), WalletId]);
+
 export const WalletSyncParams = z.strictObject({
   /** Most history entries to return, newest first (default 100, at most 500). */
   historyLimit: z.int().min(1).max(MAX_SYNC_HISTORY).optional(),
+  /**
+   * Omit for the paired wallet. `"replaced"` (or the id of the watched wallet) reads the wallet that the
+   * paired one replaced, for finding stray coins; no such wallet is watched: `1005 WalletNotWatched`.
+   * The id of the paired wallet itself is the same as omitting it.
+   */
+  wallet: SyncWallet.optional(),
 });
 export const WalletSyncResult = z.object({
+  /** The wallet these coins and this history belong to. Optional: guardians before watched wallets do not send it. */
+  walletId: WalletId.optional(),
   tipHeight: Height,
   tipHash: Hex32,
   /** Every unspent output of the wallet, confirmed or not, up to `MAX_SYNC_UTXOS`. */
@@ -446,10 +501,30 @@ export const TxGetParams = z.strictObject({
 export const TxGetResult = z.object({ txHex: RawTxHex });
 
 export const TxBroadcastParams = z.strictObject({
-  /** A fully signed transaction. The guardian relays it only if it spends at least one of the wallet's coins. */
+  /**
+   * A fully signed transaction. The guardian relays it only if it spends at least one of the paired
+   * wallet's coins, or is a sweep of the watched (replaced) wallet's coins into the paired wallet
+   * (PROTOCOL.md, "Chain data").
+   */
   txHex: RawTxHex,
 });
 export const TxBroadcastResult = z.object({ txid: Hex32 });
+
+/**
+ * Stops watching the wallet the paired wallet replaced: its coins are no longer served and a sweep of
+ * them is no longer relayed. Only the paired phone; no approval (it only takes capability away). Asking
+ * for a wallet that is not watched changes nothing and answers `unwatched: false`.
+ */
+export const WalletUnwatchParams = z.strictObject({
+  /** The watched wallet's id. Omit for "whatever is watched". */
+  walletId: WalletId.optional(),
+});
+export const WalletUnwatchResult = z.object({
+  /** True when a watched wallet was dropped by this request. */
+  unwatched: z.boolean(),
+  /** The wallet that was dropped (present when `unwatched`). */
+  walletId: WalletId.optional(),
+});
 
 export const FeesEstimateParams = z.strictObject({
   /** Confirmation targets in blocks (default `[1, 3, 6, 144]`). */
@@ -514,6 +589,7 @@ export const methods = {
   'wallet.sync': { params: WalletSyncParams, result: WalletSyncResult },
   'tx.get': { params: TxGetParams, result: TxGetResult },
   'tx.broadcast': { params: TxBroadcastParams, result: TxBroadcastResult },
+  'wallet.unwatch': { params: WalletUnwatchParams, result: WalletUnwatchResult },
   'fees.estimate': { params: FeesEstimateParams, result: FeesEstimateResult },
   'recovery.access': { params: RecoveryAccessParams, result: RecoveryAccessResult },
   'guardian.lock': { params: GuardianLockParams, result: GuardianLockResult },
@@ -535,7 +611,20 @@ export function isMethodName(s: unknown): s is MethodName {
 /* Alerts (guardian -> phone notifications)                                   */
 /* -------------------------------------------------------------------------- */
 
-const alertBase = { message: z.string().max(500).optional(), at: UnixSeconds };
+const alertBase = {
+  message: z.string().max(500).optional(),
+  /** When it happened, unix seconds. Kept for compatibility; prefer `atMs`. */
+  at: UnixSeconds,
+  /**
+   * When it happened, unix milliseconds on the guardian's clock (`at === floor(atMs / 1000)`), so alerts
+   * and `guardian.status.atMs` can be ordered within one second. Guardians send it on every alert;
+   * optional here only so that alerts from older guardians still parse.
+   */
+  atMs: UnixMillis.optional(),
+};
+/** An alert variant: its members, and `atMs` agreeing with `at`. */
+const stamped = <T extends z.ZodRawShape>(shape: T) =>
+  z.object(shape).refine((a) => sameMoment((a as { at: number }).at, (a as { atMs?: number }).atMs), { message: SAME_MOMENT, path: ['atMs'] });
 const recoveryAlert = {
   recoveryId: RecoveryId,
   /** When the delay ends (the engine's `readyAt`). */
@@ -550,16 +639,16 @@ const recoveryAlert = {
  * `wallet_adopted` and `wallet_retired`.
  */
 export const Alert = z.discriminatedUnion('type', [
-  z.object({ ...alertBase, type: z.literal('recovery_started'), ...recoveryAlert }),
-  z.object({
+  stamped({ ...alertBase, type: z.literal('recovery_started'), ...recoveryAlert }),
+  stamped({
     ...alertBase,
     type: z.literal('recovery_reminder'),
     ...recoveryAlert,
     /** Whole days until the delay ends (the engine's `daysLeft`). */
     daysLeft: z.int().min(0),
   }),
-  z.object({ ...alertBase, type: z.literal('recovery_ready'), ...recoveryAlert }),
-  z.object({
+  stamped({ ...alertBase, type: z.literal('recovery_ready'), ...recoveryAlert }),
+  stamped({
     ...alertBase,
     type: z.literal('recovery_cancelled'),
     recoveryId: RecoveryId,
@@ -567,19 +656,19 @@ export const Alert = z.discriminatedUnion('type', [
     /** True when phone payments are now paused until `phone.resume`. */
     contested: z.boolean().optional(),
   }),
-  z.object({
+  stamped({
     ...alertBase,
     type: z.literal('recovery_completed'),
     recoveryId: RecoveryId,
     txid: Hex32.optional(),
   }),
-  z.object({
+  stamped({
     ...alertBase,
     type: z.literal('guardian_locked'),
     /** `manual`: from the box's web UI; `remote`: by the paired phone (`guardian.lock`). */
     reason: z.enum(['restart', 'manual', 'remote', 'tamper']).optional(),
   }),
-  z.object({
+  stamped({
     ...alertBase,
     /** The guardian now guards a recovery's destination wallet, and this phone is its paired phone. */
     type: z.literal('wallet_adopted'),
@@ -590,7 +679,7 @@ export const Alert = z.discriminatedUnion('type', [
     /** Hardware approvals wait for `hardware.confirm` (a fresh pairing proof for `walletId`). */
     hardwareConfirmRequired: z.boolean(),
   }),
-  z.object({
+  stamped({
     ...alertBase,
     /** The wallet is retired on this guardian: nothing is co-signed for it any more. */
     type: z.literal('wallet_retired'),
@@ -627,6 +716,7 @@ export const RequestSchema = z.discriminatedUnion('method', [
   requestOf('wallet.sync', WalletSyncParams),
   requestOf('tx.get', TxGetParams),
   requestOf('tx.broadcast', TxBroadcastParams),
+  requestOf('wallet.unwatch', WalletUnwatchParams),
   requestOf('fees.estimate', FeesEstimateParams),
   requestOf('recovery.access', RecoveryAccessParams),
   requestOf('guardian.lock', GuardianLockParams),

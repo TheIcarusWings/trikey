@@ -64,6 +64,8 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 
 **Every timestamp on the wire is unix time in seconds** (nostr's unit): `startedAt`, `readyAt`, `cancelledAt`, `completedAt`, alert `at`, `time`, and a hardware approval's `expiresAt`. The guardian's policy engine counts **milliseconds** internally (its clock, `startedAt`, `readyAt`, ...), so the guardian service converts with `Math.floor(ms / 1000)` whenever it puts an engine value in a message. The engine's hardware-approval `expiresAt` is already in seconds and passes through unchanged. A millisecond value is rejected by the schemas (above year 2100), which catches a missed conversion. Delays are in days (`delayDays`, `recoveryDelayDays`).
 
+**Milliseconds, only where named `atMs`.** Seconds are too coarse to order events: two alerts, or an alert and a status answer, can share a second. Every alert and `guardian.status` therefore also carry **`atMs`**, unix *milliseconds* on the guardian's clock, with `at` / `time` kept (in seconds, `floor(atMs / 1000)`) for compatibility. For an alert it is when the thing happened (a recovery alert's `atMs` is the millisecond the engine recorded, not when the relay took it); for `guardian.status` it is when the guardian answered. Alerts and status answers share one clock, so a phone can tell whether an alert came before or after a status answer within the same second, and order alerts by `atMs`. It is optional in the schemas only so that messages from guardians before this member still parse; the schemas reject an `atMs` that is not within a second of its seconds twin (a missed conversion), and a phone that finds none falls back to `at` / `time`.
+
 ### Methods
 
 `Hex32` = 64 lowercase hex chars. `Sats` = integer 0..2,100,000,000,000,000 (exact as a JSON number). `UnixSeconds` = integer. `KeyOrigin` = `{ fingerprint: 8 hex, path: "m/48'/0'/0'/2'", xpub: string }`. `WalletId` = 16 lowercase hex chars (the engine's `MultisigWallet.fingerprint()`). `RecoveryId` = `[0-9a-z-]{1,40}`. `HardwareApproval`, `Policy` and `Recovery` are defined below.
@@ -71,7 +73,7 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | Method | Params | Result |
 |---|---|---|
 | `pair.prepare` | `pairingSecret`, `network` | `guardianKey: KeyOrigin`, `guardianVersion` |
-| `pair` | `pairingSecret`, `deviceName` (1-64), `network` (`bitcoin`\|`testnet`\|`signet`\|`regtest`), `phoneKey: KeyOrigin`, `descriptor`, `phoneNostrPubkey: Hex32`, `hardwareAuth: { pubkey, path }`, `hardwareAuthProof`, `rules: Policy`, `replacesWalletId?: WalletId` | `guardianKey: KeyOrigin`, `descriptor`, `walletId`, `guardianVersion` |
+| `pair` | `pairingSecret`, `deviceName` (1-64), `network` (`bitcoin`\|`testnet`\|`signet`\|`regtest`), `phoneKey: KeyOrigin`, `descriptor`, `phoneNostrPubkey: Hex32`, `hardwareAuth: { pubkey, path }`, `hardwareAuthProof`, `rules: Policy`, `replacesWalletId?: WalletId`, `replacesDescriptor?` (needs `replacesWalletId`; see "Replacing the guardian") | `guardianKey: KeyOrigin`, `descriptor`, `walletId`, `guardianVersion` |
 | `sign` | `psbt`, `memo?` | `psbt` (with the guardian's partial signatures) |
 | `policy.get` | `{}` | `policy`, `nextHardwareSequence`, `policyHash` |
 | `policy.update` | `policy`, `approval?` | `policy`, `nextHardwareSequence`, `policyHash` |
@@ -80,11 +82,12 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `recovery.status` | `recoveryId?` (default: the active one) | `recovery` (or `null`), `psbt?` (the signed sweep, once the guardian has co-signed it) |
 | `phone.resume` | `approval` | `phoneSpending: "enabled"` |
 | `guardian.unlock` | `{kind:"passphrase", passphrase}` or `{kind:"hardware", secret: hex}` | `unlocked: boolean` |
-| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time`, `dailyLimit?: { limitSats, usedSats, availableSats }`, `walletId?`, `hardwareConfirmRequired?` |
+| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time`, `atMs?` (the guardian's clock in milliseconds when it answered, see "Time"), `dailyLimit?: { limitSats, usedSats, availableSats }`, `walletId?`, `hardwareConfirmRequired?`, `watchedWalletId?` (the replaced wallet the guardian watches, if any) |
 | `guardian.lock` | `{}` | `state: "locked"` (see "Locking from the phone") |
-| `wallet.sync` | `historyLimit?` (1-500, default 100) | `tipHeight`, `tipHash`, `utxos`, `utxosTruncated`, `balance: { confirmedSats, unconfirmedSats }`, `history`, `historyTruncated`, `nextReceiveIndex`, `nextChangeIndex`, `gapLimit` (see "Chain data") |
+| `wallet.sync` | `historyLimit?` (1-500, default 100), `wallet?` (`"replaced"` or a `WalletId`; default the paired wallet) | `walletId?`, `tipHeight`, `tipHash`, `utxos`, `utxosTruncated`, `balance: { confirmedSats, unconfirmedSats }`, `history`, `historyTruncated`, `nextReceiveIndex`, `nextChangeIndex`, `gapLimit` (see "Chain data") |
 | `tx.get` | `txid: Hex32`, `witness?: boolean` (default `true`) | `txHex` |
 | `tx.broadcast` | `txHex` | `txid` |
+| `wallet.unwatch` | `walletId?` (the watched wallet; default whichever is watched) | `unwatched: boolean`, `walletId?` (see "Replacing the guardian") |
 | `fees.estimate` | `targets?` (1-8 block targets, 1-1008; default `[1, 3, 6, 144]`) | `estimates: [{ target, satPerVb \| null }]`, `minRelaySatPerVb` |
 | `recovery.access` | `approval: { kind: "bip137", expiresAt, signature }` | `descriptor`, `walletId`, `network`, `guardianKey`, `hardwareAuth`, `policy`, `nextHardwareSequence`, `phoneSpending`, `activeRecoveryId`, `accessExpiresAt` (see "Recovery access") |
 | `hardware.confirm` | `hardwareAuth: { pubkey, path }`, `hardwareAuthProof` | `walletId`, `hardwareAuth`, `nextHardwareSequence` (see "Wallet rotation") |
@@ -152,7 +155,8 @@ Pairing is two requests, both allowed from an unpaired sender:
    * `phoneNostrPubkey`: the phone's nostr key, which MUST equal the authenticated sender; it receives alerts and may cancel recoveries;
    * `hardwareAuth: { pubkey, path }`: the compressed pubkey (33 bytes hex) of the authorization key and the path the device signs with;
    * `hardwareAuthProof`: the BIP 137 signature (base64) over the pairing text;
-   * `rules`: the initial policy.
+   * `rules`: the initial policy;
+   * `replacesWalletId?` / `replacesDescriptor?`: only when this wallet replaces another one (see "Replacing the guardian").
 
    The guardian checks the descriptor, that the three keys are distinct and that the guardian key sits in its slot, the rules, the key (and, when the path lies under the hardware xpub, that it derives from it) and the proof. It then registers the wallet and burns the secret.
 
@@ -183,7 +187,7 @@ A recovery sweeps the wallet to a new wallet that keeps the surviving key. When 
 
 1. **When.** Not when the guardian co-signs the sweep, but once a node has **accepted the sweep** (the broadcast went through, or Electrs already knows the transaction). Confirmation is not awaited: after completion key 3 refuses everything for the swept wallet, so nobody but the user (the surviving key plus the lost one) could make a conflicting spend, and waiting for blocks would leave the recovered user without a guardian (no co-signing, no CPFP through the guardian) for no added safety.
 2. **What carries over.** The rules (limit, delay, fee cap, contacts) and the hardware sequence counter. The 24 h limit window starts empty: phone payments were paused for the whole delay (at least 7 days), so nothing spent from the old wallet is still inside it.
-3. **The paired phone** becomes the phone that sent `recovery.start` (the surviving phone, or the new phone that got in with `recovery.access`). It gets a `wallet_adopted` alert, and `guardian.status` shows the new `walletId`.
+3. **The paired phone** becomes the phone that sent `recovery.start` (the surviving phone, or the new phone that got in with `recovery.access`). It gets a `wallet_adopted` alert, and `guardian.status` shows the new `walletId`. The phone that was paired to the swept wallet, if it is a different one, gets a `wallet_retired` alert with `reason: "recovered"` and `successorWalletId` (and is no longer a peer); with no adopted wallet it gets the alert without a successor.
 4. **The hardware authorization key** is re-established for the new wallet's hardware key: when the hardware wallet survived, the same key; when it was replaced, the key at the same path relative to the new hardware xpub (when the old key's path lies below the hardware account by non-hardened steps; otherwise the guardian knows no key until the phone sends one). Either way it is **unconfirmed**, and every hardware approval (policy loosening, hardware cancel, `phone.resume`, `wallet.retire`) is refused with `1209` until **`hardware.confirm`**: the paired phone sends `hardwareAuth` and a fresh BIP 137 `hardwareAuthProof` over `pairingMessage(newWalletId, cosignerAccountPubkey)`, exactly as at pairing. The key must be the expected one (and, below the hardware xpub, derive from it). Co-signing within the limit and tightening the rules work meanwhile. Sending `hardware.confirm` again for a confirmed wallet with the same key and a valid proof is a no-op.
 5. **Recovery access** grants (`recovery.access`) belonged to the old wallet and are revoked.
 
@@ -192,7 +196,21 @@ A recovery sweeps the wallet to a new wallet that keeps the surviving key. When 
 When the box dies or is replaced, the phone and the hardware wallet move the funds to a new wallet whose third key is the **new** guardian's (that sweep needs no guardian).
 
 * **Old guardian still alive:** the paired phone sends **`wallet.retire`** with a hardware approval of `retire-wallet` (stale sequence `1204`, bad signature `1202`, a running recovery `1301`). The wallet is retired: from then on every co-sign is refused, the old phone is no longer a peer, and pairing is open again for a new wallet (the web UI can make a pairing code). The same descriptor can never be paired again on that guardian (`1004`). The phone gets a `wallet_retired` alert too.
-* **Old guardian gone:** nothing to do on its side. A fresh guardian pairs the phone like any other (section 6): the phone builds a new descriptor with its existing key 2, the existing hardware key and the new guardian's key from `pair.prepare`, so the wallet id, the pairing proof and every later approval are new. `replacesWalletId` names the old wallet for the guardian's log; nothing else is different.
+* **Old guardian gone:** nothing to do on its side. A fresh guardian pairs the phone like any other (section 6): the phone builds a new descriptor with its existing key 2, the existing hardware key and the new guardian's key from `pair.prepare`, so the wallet id, the pairing proof and every later approval are new. `replacesWalletId` names the old wallet for the guardian's log. With **`replacesDescriptor`** (the old wallet's descriptor) the new guardian also *watches* the old wallet, so the phone needs no public server to move the money; see below. A phone that sends only `replacesWalletId` (older apps) gets exactly the earlier behaviour: nothing is watched.
+
+**Watching the replaced wallet.** `pair` may carry `replacesDescriptor` together with `replacesWalletId` (a descriptor without the id is `-32602`, from the schema). The guardian then checks that:
+
+1. the descriptor parses as a Trikey wallet on the guardian's network, and its fingerprint equals `replacesWalletId` (else `-32602`, "replacesDescriptor does not hash to replacesWalletId", and the pairing does not happen; like any refused `pair` it counts as one failed attempt against the pairing code);
+2. it is not the wallet being paired;
+3. it shares the phone's key or the hardware wallet's key with the new wallet (a replacement changes the guardian's key and keeps the user's; one shared key is enough, so a replaced hardware wallet can still be moved).
+
+It stores the descriptor as a **watched-only wallet** that belongs to the paired wallet: the guardian never co-signs for it (key 3 is not in it, or is another guardian's key), starts no recovery of it, accepts no hardware approval for it, and drops it when the paired wallet is retired, rotated or reset. A watched wallet gives the paired phone three things:
+
+* **`wallet.sync` with `wallet: "replaced"`** (or the watched wallet's id) reads its coins and history exactly like the paired wallet's, with `walletId` in the result saying which wallet it is. With no watched wallet, or another id: `1005 WalletNotWatched`. The id of the paired wallet itself is the same as omitting `wallet`. A phone with `recovery.access` may read it too (it can already read the paired wallet).
+* **`tx.get`** serves the transactions of its coins, as it serves any transaction Electrs knows, so the phone can build `nonWitnessUtxo` for the sweep.
+* **`tx.broadcast`** relays a signed sweep of its coins into the paired wallet (rules under "Chain data").
+
+**`wallet.unwatch`** (the paired phone only, no approval: it only removes capability) stops all three: the watched descriptor is deleted, `wallet.sync` for it answers `1005` and a sweep of its coins is `1602` again. `walletId` names the wallet to drop; omitted, whatever is watched. Nothing watched, or a different id: nothing changes and the answer is `{ "unwatched": false }`, so a repeated request is harmless. `guardian.status.watchedWalletId` says whether a wallet is watched. The phone should send `wallet.unwatch` once the old wallet is empty and it has no use for it (or keep watching to catch late deposits to old addresses, as `sweepStrayCoins` does).
 
 ### Locking from the phone
 
@@ -207,7 +225,10 @@ The guardian already has the wallet's descriptor and the user's own Electrs, so 
   * `history`: `{ txid, height, confirmations, time?, netSats, feeSats? }`, newest first (unconfirmed, then by height), at most `historyLimit` (`historyTruncated`). `netSats` is what the transaction did to the wallet's balance: received minus spent, fee included, negative for payments. `feeSats` is present when every input belongs to the wallet (otherwise the guardian does not know all input amounts). `time` is the block's timestamp.
   * `nextReceiveIndex` / `nextChangeIndex`: the first index with no history on each chain. The phone receives at `nextReceiveIndex` and sends change to `nextChangeIndex`.
 * **`tx.get`** returns a raw transaction (for PSBT `nonWitnessUtxo`) after checking it hashes to `txid`, so a confused Electrs cannot hand the phone a different transaction. With `witness: false` it is the serialization without witness data: same txid, all `nonWitnessUtxo` needs, and much smaller. Unknown: `1600 TxNotFound`. At most 150,000 hex characters, else `1603 TxTooLarge`.
-* **`tx.broadcast`** relays a fully signed raw transaction, but **only one that spends at least one output paying one of the wallet's addresses** (within the scanned range), so the guardian is not an open relay. Otherwise `1602 ForeignTransaction`. A transaction that does not parse is `-32602`; one the node refuses (double spend, too low a fee, bad signature) is `1601 BroadcastRejected` with the node's reason in `message` and `data.reason`. The result is the txid the guardian computed.
+* **`tx.broadcast`** relays a fully signed raw transaction, but the guardian is not an open relay: it relays **only** either (a) one that **spends at least one output paying one of the paired wallet's addresses** (within the scanned range), or (b) a **sweep of the watched wallet into the paired wallet** (below). Otherwise `1602 ForeignTransaction`, with `data.reason` naming the rule that failed. Each paired phone may call it at most 20 times per 10 minutes, refused calls included (`1500 RateLimited`, `data.retryAfterSeconds`); the check can scan both wallets on Electrs. It needs no key 3.
+  * **A sweep of the watched wallet** (rule b) must satisfy all of: the current pairing named that wallet in `replacesWalletId` and the guardian holds its descriptor (else `data.reason: "spends_no_wallet_coin"`); at most 500 inputs (`too_many_inputs`) and 10 outputs (`too_many_outputs`, which also covers none); **every input** spends a coin of the watched wallet, i.e. its transaction is in the watched wallet's history and the previous output pays one of its addresses, the previous transactions being fetched and checked against their txid (`input_not_from_replaced_wallet`); **every output** pays an address of the paired wallet, receive or change, within the scanned range (`output_not_to_wallet`); the outputs do not exceed the inputs (`outputs_exceed_inputs`); and the fee (inputs minus outputs) is at most the policy's `sweepFeeCapSats` (`1200 PolicyViolation`, `data.reason: "sweep_fee_exceeds_cap"`, `data.fee`, `data.cap`; the fee cap can be raised with a hardware approval like any other rule).
+  * **Why all outputs and all inputs.** A sweep moves everything to the new wallet, so there is nothing to pay anyone else: an output elsewhere, even a small one, would let the rule double as a payment channel for a stolen phone key, and an input that is not the watched wallet's would let one watched coin carry any transaction through. Allowing "all outputs except an amount within the fee cap" would add nothing a sweep needs (a fee is not an output) and would be the leak the rule exists to close. The fee cap bounds what miners can take.
+  * The guardian does **not** check signatures: a transaction the node would refuse is `1601 BroadcastRejected` with the node's reason. A transaction that does not parse is `-32602`; one the node refuses (double spend, too low a fee, bad signature) is `1601 BroadcastRejected` with the node's reason in `message` and `data.reason`. The result is the txid the guardian computed.
 * **`fees.estimate`** asks the node (`blockchain.estimatefee`) per target and converts BTC/kvB to sat/vB; `satPerVb` is `null` where the node has no estimate (usual on regtest and signet, and right after a restart). `minRelaySatPerVb` is the node's relay fee floor.
 * Electrs unreachable or not synced: `1501 Unavailable`; try again later.
 
@@ -225,7 +246,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 
 ### Alerts
 
-`params` is `{ type, at, message? , ...}` (`at` in unix seconds) with `type` one of the engine's alert kinds (`AlertKind`), plus `guardian_locked`, which the service raises itself:
+`params` is `{ type, at, atMs?, message? , ...}` (`at` in unix seconds; `atMs` the same moment in unix milliseconds, sent on every alert, see "Time") with `type` one of the engine's alert kinds (`AlertKind`), plus `guardian_locked`, which the service raises itself:
 
 | `type` | extra members |
 |---|---|
@@ -236,7 +257,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 | `recovery_completed` | `recoveryId`, `txid?` |
 | `guardian_locked` | `reason?` (`restart`\|`manual`\|`remote`\|`tamper`); `remote` = `guardian.lock` from the phone |
 | `wallet_adopted` | `walletId`, `previousWalletId`, `recoveryId`, `hardwareConfirmRequired` (see "Wallet rotation") |
-| `wallet_retired` | `walletId`, `reason` (`retired`\|`recovered`\|`reset`), `successorWalletId?` |
+| `wallet_retired` | `walletId`, `reason` (`retired`\|`recovered`\|`reset`), `successorWalletId?`. Sent to the phone that was paired to the wallet: `retired` after `wallet.retire`; `reset` after the web UI's reset; `recovered` when a recovery swept the wallet and the phone paired to the new wallet is a different one (a lost phone's replacement), or the guardian adopted none (`successorWalletId` is the adopted wallet when there is one). The phone that started the recovery and is adopted gets `wallet_adopted` instead |
 
 Names match the engine (`daily_reminder` was renamed `recovery_reminder`; `daysRemaining` is now `daysLeft`, `executeAfter` is `readyAt`). The engine's `DueAlert` carries `dueAt` and `readyAt` in milliseconds; the service converts both to seconds (`at` and `readyAt`). `daysLeft` is already in days. The engine's due-alert record does not hold `cancelledBy`, the cancel's `contested` flag or the txid; the service reads them from the recovery record (`status().recovery`) when it builds those alerts.
 
@@ -255,6 +276,7 @@ Existing codes never change meaning; new ones are only added. `data` is optional
 | 1002 | PairingRejected | wrong, expired or used pairing secret |
 | 1003 | AlreadyPaired | |
 | 1004 | WalletRetired | the wallet was retired on this guardian (after a recovery, or `wallet.retire`) |
+| 1005 | WalletNotWatched | `wallet.sync` for the replaced wallet, but the guardian watches none (or not that one) |
 | 1100 | GuardianLocked | unlock it first |
 | 1101 | UnlockFailed | |
 | 1200 | PolicyViolation | a limit or rule forbids this |
@@ -276,7 +298,7 @@ Existing codes never change meaning; new ones are only added. `data` is optional
 | 1501 | Unavailable | try again later (also: chain data unavailable) |
 | 1600 | TxNotFound | `tx.get` of a transaction Electrs does not know |
 | 1601 | BroadcastRejected | the node refused the transaction; its reason is in `message` and `data.reason` |
-| 1602 | ForeignTransaction | `tx.broadcast` of a transaction that spends none of the wallet's coins |
+| 1602 | ForeignTransaction | `tx.broadcast` of a transaction that is neither a spend of the paired wallet's coins nor a sweep of the watched wallet into it; `data.reason` says which rule failed |
 | 1603 | TxTooLarge | `tx.get` of a transaction longer than 150,000 hex characters (`witness: false` may fit) |
 
 ### Engine refusals to error codes

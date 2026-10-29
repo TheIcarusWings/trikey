@@ -19,6 +19,8 @@ export const ErrorCode = {
   AlreadyPaired: 1003,
   /** The wallet was retired on this guardian (replaced after a recovery, or by `wallet.retire`): nothing is signed for it again. */
   WalletRetired: 1004,
+  /** `wallet.sync` asked for the replaced (watched) wallet, but this guardian watches none, or not that one. */
+  WalletNotWatched: 1005,
 
   // 11xx: guardian state
   GuardianLocked: 1100,
@@ -62,7 +64,10 @@ export const ErrorCode = {
   TxNotFound: 1600,
   /** The node refused to relay the transaction; `message` carries its reason. */
   BroadcastRejected: 1601,
-  /** `tx.broadcast` of a transaction that spends none of the wallet's coins (the guardian is not an open relay). */
+  /**
+   * `tx.broadcast` of a transaction that is neither a spend of the paired wallet's coins nor a sweep of the
+   * watched wallet's coins into the paired wallet (the guardian is not an open relay). `data.reason` says which rule failed.
+   */
   ForeignTransaction: 1602,
   /** `tx.get` of a transaction larger than a message can carry (try `witness: false`). */
   TxTooLarge: 1603,
@@ -82,6 +87,7 @@ export const ErrorMessage: Record<ErrorCodeValue, string> = {
   [ErrorCode.PairingRejected]: 'Pairing rejected',
   [ErrorCode.AlreadyPaired]: 'Already paired',
   [ErrorCode.WalletRetired]: 'This wallet was retired on this guardian',
+  [ErrorCode.WalletNotWatched]: 'This guardian does not watch that wallet',
   [ErrorCode.GuardianLocked]: 'Guardian is locked',
   [ErrorCode.UnlockFailed]: 'Unlock failed',
   [ErrorCode.PolicyViolation]: 'Request violates the policy',
@@ -103,7 +109,7 @@ export const ErrorMessage: Record<ErrorCodeValue, string> = {
   [ErrorCode.Unavailable]: 'Temporarily unavailable',
   [ErrorCode.TxNotFound]: 'Transaction not found',
   [ErrorCode.BroadcastRejected]: 'The node rejected the transaction',
-  [ErrorCode.ForeignTransaction]: 'The transaction spends none of the wallet\'s coins',
+  [ErrorCode.ForeignTransaction]: 'The transaction is not a spend of this wallet\'s coins or a sweep of the replaced wallet into it',
   [ErrorCode.TxTooLarge]: 'The transaction is too large to send',
 };
 
