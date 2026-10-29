@@ -737,3 +737,72 @@ describeConsensus('consensus: transactions that must be rejected', () => {
     expect(() => finalizePsbt(signed)).toThrow();
   });
 });
+
+describeConsensus('consensus: taproot (BIP 341 key path, TAPROOT flag)', () => {
+  // Throwaway keys: an internal key and a P2WPKH key, fixed bytes on regtest.
+  const internal = new Uint8Array(32).fill(41);
+  const p2tr = btc.p2tr(secp256k1.getPublicKey(internal, true).slice(1), undefined, network.btc);
+  const wpkhKey = new Uint8Array(32).fill(42);
+  const p2wpkh = btc.p2wpkh(secp256k1.getPublicKey(wpkhKey, true), network.btc);
+  const TAPROOT = { flags: ['ALL'] } as const;
+  const SPLIT = { flags: ['ALL_PRE_TAPROOT', 'TAPROOT'] } as const;
+
+  function prev(script: Uint8Array, amount: bigint, seed: number) {
+    const raw = btc.RawTx.encode({
+      version: 2,
+      segwitFlag: false,
+      inputs: [{ txid: sha256(Uint8Array.of(seed, 0x7a)), index: 0, finalScriptSig: new Uint8Array([0x51]), sequence: 0xffffffff }],
+      outputs: [{ script, amount }],
+      lockTime: 0,
+    });
+    return { txid: hex.encode(sha256(sha256(raw)).reverse()), amount, script };
+  }
+
+  /** A key-path spend of a P2TR coin (plus, optionally, a P2WPKH coin), signed with SIGHASH_DEFAULT. */
+  function spend(withSecond: boolean) {
+    const a = prev(p2tr.script, 50_000n, 1);
+    const b = prev(p2wpkh.script, 30_000n, 2);
+    const tx = new btc.Transaction(TX_OPTS);
+    tx.addInput({ txid: a.txid, index: 0, sequence: SEQUENCE_RBF, witnessUtxo: { script: a.script, amount: a.amount }, tapInternalKey: p2tr.tapInternalKey });
+    if (withSecond) tx.addInput({ txid: b.txid, index: 0, sequence: SEQUENCE_RBF, witnessUtxo: { script: b.script, amount: b.amount } });
+    tx.addOutput({ script: btc.OutScript.encode(btc.Address(network.btc).decode(dest)), amount: withSecond ? 79_000n : 49_000n });
+    tx.signIdx(internal, 0);
+    if (withSecond) tx.signIdx(wpkhKey, 1);
+    tx.finalize();
+    const spent = [{ script: a.script, amount: a.amount }, ...(withSecond ? [{ script: b.script, amount: b.amount }] : [])];
+    return { txHex: hex.encode(tx.extract()), spent };
+  }
+
+  const flipSig = (txHex: string) => {
+    const raw = btc.RawTx.decode(hex.decode(txHex));
+    const w = raw.witnesses![0]!;
+    expect(w).toHaveLength(1); // key path: one 64-byte Schnorr signature (SIGHASH_DEFAULT)
+    expect(w[0]!.length).toBe(64);
+    w[0] = w[0]!.map((x, i) => (i === 10 ? x ^ 1 : x));
+    return hex.encode(btc.RawTx.encode(raw));
+  };
+
+  it('a valid key-path spend verifies with TAPROOT', () => {
+    const s = spend(false);
+    assertConsensusValid(verifyConsensus(s.txHex, s.spent, { flags: [...TAPROOT.flags] }));
+    assertConsensusValid(verifyConsensus(s.txHex, s.spent, { flags: [...SPLIT.flags] }));
+  });
+
+  it('a tampered signature fails with TAPROOT, and only TAPROOT catches it', () => {
+    const s = spend(false);
+    const bad = flipSig(s.txHex);
+    assertConsensusInvalid(verifyConsensus(bad, s.spent, { flags: [...TAPROOT.flags] }), [0]);
+    // Before taproot, witness v1 outputs are anyone-can-spend: the default flags accept the forgery.
+    assertConsensusValid(verifyConsensus(bad, s.spent));
+  });
+
+  it('the signature commits to every spent output: a wrong amount for the OTHER input fails the taproot input', () => {
+    const s = spend(true);
+    assertConsensusValid(verifyConsensus(s.txHex, s.spent, { flags: [...TAPROOT.flags] }));
+    const lied = [s.spent[0]!, { ...s.spent[1]!, amount: 30_001n }];
+    // Input 1 (segwit v0) commits to its own amount and fails too; input 0 fails only through BIP 341's
+    // commitment to every spent amount.
+    assertConsensusInvalid(verifyConsensus(s.txHex, lied, { flags: [...TAPROOT.flags] }), [0, 1]);
+    assertConsensusInvalid(verifyConsensus(flipSig(s.txHex), s.spent, { flags: [...TAPROOT.flags] }), [0]);
+  });
+});

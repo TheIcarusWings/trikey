@@ -1,6 +1,9 @@
 //! stdin: {"tx": "<hex>", "prevouts": [{"script": "<hex>", "amount": <sats>}, ...], "flags": ["CHECKSEQUENCEVERIFY", ...]}
 //! `flags` is optional; by default every consensus flag before taproot is enforced
 //! (P2SH, DERSIG, NULLDUMMY, CHECKLOCKTIMEVERIFY, CHECKSEQUENCEVERIFY, WITNESS).
+//! `TAPROOT` adds BIPs 341 and 342 (taproot key and script paths). Taproot signatures commit to
+//! every spent output, so the verifier always hands libbitcoinconsensus all of them
+//! (`bitcoinconsensus_verify_script_with_spent_outputs`); `ALL` is every flag including TAPROOT.
 //! Exit codes: 0 if every input verifies, 1 if any input fails, 2 on malformed input.
 use std::io::Read;
 
@@ -28,6 +31,8 @@ fn flag_bits(names: &[String]) -> Result<u32, String> {
             "CHECKSEQUENCEVERIFY" => bitcoinconsensus::VERIFY_CHECKSEQUENCEVERIFY,
             "WITNESS" => bitcoinconsensus::VERIFY_WITNESS,
             "ALL_PRE_TAPROOT" => bitcoinconsensus::VERIFY_ALL_PRE_TAPROOT,
+            "TAPROOT" => bitcoinconsensus::VERIFY_TAPROOT,
+            "ALL" => bitcoinconsensus::VERIFY_ALL_PRE_TAPROOT | bitcoinconsensus::VERIFY_TAPROOT,
             other => return Err(format!("unknown flag: {other}")),
         };
     }
@@ -73,7 +78,7 @@ fn main() {
         .zip(&req.prevouts)
         .map(|(s, p)| bitcoinconsensus::Utxo { script_pubkey: s.as_ptr(), script_pubkey_len: s.len() as u32, value: p.amount as i64 })
         .collect();
-    // An input without a prevout would silently go unchecked.
+    // An input without a prevout would silently go unchecked (and taproot needs every spent output).
     if input_count(&tx) != Some(req.prevouts.len() as u64) {
         usage_error(&format!("tx has {:?} inputs but {} prevouts were given", input_count(&tx), req.prevouts.len()));
     }
