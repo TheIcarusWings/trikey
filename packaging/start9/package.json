@@ -1,0 +1,10 @@
+{
+  "name": "trikey-guardian-startos",
+  "private": true,
+  "dependencies": {
+    "@start9labs/start-sdk": "3.1.1"
+  },
+  "overrides": {
+    "@start9labs/start-sdk": "$@start9labs/start-sdk"
+  }
+}
