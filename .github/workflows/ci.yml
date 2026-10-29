@@ -9,23 +9,34 @@ permissions:
   contents: read
 
 jobs:
+  # Builds the consensus verifier (Bitcoin Core's script interpreter) first, so the
+  # consensus tests in packages/core always run here: with CI set they fail, not
+  # skip, if the binary is missing. This job replaces the old standalone
+  # consensus-verify job, which only compiled the tool and tested nothing.
   test:
     runs-on: ubuntu-latest
+    env:
+      TRIKEY_CONSENSUS_VERIFY: ${{ github.workspace }}/tools/consensus-verify/target/release/consensus-verify
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools/consensus-verify/target
+          key: consensus-verify-${{ runner.os }}-${{ hashFiles('tools/consensus-verify/Cargo.lock', 'tools/consensus-verify/src/**') }}
+          restore-keys: |
+            consensus-verify-${{ runner.os }}-
+      - run: cargo build --release --locked --manifest-path tools/consensus-verify/Cargo.toml
+      - run: test -x "$TRIKEY_CONSENSUS_VERIFY"
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-
-  consensus-verify:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: cargo build --release --manifest-path tools/consensus-verify/Cargo.toml
 
   secrets:
     runs-on: ubuntu-latest
