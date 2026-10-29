@@ -1,20 +1,8 @@
-import { useState, type ReactNode } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { TriangleAlert } from 'lucide-react';
-import { api, ApiError, type RecoveryInProgress } from '@/api';
-import { useGuardian } from '@/components/guardian-provider';
+import type { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
+import { Smartphone, TriangleAlert } from 'lucide-react';
+import { api, type RecoveryInProgress } from '@/api';
 import { ErrorState, PageSkeleton } from '@/components/states';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -76,12 +64,8 @@ function Details({ recovery }: { recovery: RecoveryInProgress }) {
 
 export function RecoveryPage() {
   usePageTitle('Recovery');
-  const navigate = useNavigate();
-  const { refresh } = useGuardian();
   const { data: recovery, error, loading, reload } = useApi(() => api.getRecovery(), [], 30_000);
   const now = useNow(30_000);
-  const [cancelling, setCancelling] = useState(false);
-  const [cancelError, setCancelError] = useState<string>();
 
   if (loading) return <PageSkeleton rows={2} />;
   if (error && recovery === undefined) return <ErrorState error={error} onRetry={reload} title="Couldn't load the recovery" />;
@@ -91,7 +75,7 @@ export function RecoveryPage() {
       <div className="flex max-w-[760px] flex-col gap-4">
         <h1 className="text-2xl leading-8 font-semibold tracking-[-0.01em]">Recovery</h1>
         <Card className="items-start gap-3 px-5 py-6">
-          <p className="m-0 text-sm text-muted-foreground">No recovery is in progress. Phone-only payments work as usual.</p>
+          <p className="m-0 text-sm text-muted-foreground">No recovery is in progress.</p>
           <Button asChild variant="outline">
             <Link to="/">Back to the dashboard</Link>
           </Button>
@@ -101,20 +85,7 @@ export function RecoveryPage() {
   }
 
   const remainingMs = Date.parse(recovery.endsAt) - now;
-  const done = remainingMs <= 0;
-
-  const cancel = async () => {
-    setCancelling(true);
-    setCancelError(undefined);
-    try {
-      await api.cancelRecovery(recovery.id);
-      refresh();
-      navigate('/');
-    } catch (e) {
-      setCancelError(e instanceof ApiError ? e.message : 'Could not cancel the recovery.');
-      setCancelling(false);
-    }
-  };
+  const done = recovery.state === 'ready' || remainingMs <= 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -127,7 +98,7 @@ export function RecoveryPage() {
           </AlertTitle>
           <AlertDescription>
             {done
-              ? 'The guardian is about to co-sign the move and broadcast it.'
+              ? (recovery.waitingFor ?? 'The guardian is about to co-sign the move and broadcast it.')
               : `Phone-only payments are paused. If nobody cancels, this guardian co-signs the move on ${formatDateAt(recovery.endsAt)}.`}
           </AlertDescription>
         </div>
@@ -135,35 +106,14 @@ export function RecoveryPage() {
 
       <Details recovery={recovery} />
 
-      {cancelError && <ErrorState error={new Error(cancelError)} title="Couldn't cancel" className="max-w-[760px]" />}
-
-      <div className="flex max-w-[760px] flex-wrap items-center gap-3">
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button variant="destructive" className="font-semibold" disabled={cancelling}>
-              {cancelling ? 'Cancelling…' : 'Cancel recovery'}
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Cancel this recovery?</AlertDialogTitle>
-              <AlertDialogDescription>
-                The guardian will not co-sign the move, and phone-only payments start working again. Do this if you did not start
-                the recovery. If you did, you will have to start it again from the beginning.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Keep waiting</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={cancel}
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              >Cancel recovery</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-        <span className="min-w-[200px] flex-1 text-[13px] leading-[18px] text-muted-foreground">
-          Only do this if you didn't start it. Your phone and contacts can cancel too.
-        </span>
+      <div className="flex max-w-[760px] items-start gap-3 rounded-xl border px-4 py-3.5">
+        <Smartphone className="mt-px size-[18px] shrink-0" aria-hidden="true" />
+        <p className="m-0 text-sm leading-5">
+          Didn't start this? Cancel it in the Trikey app, or reply{' '}
+          <span className="font-mono text-[13px]">CANCEL {recovery.id}</span> to the alert message in your nostr app. Your
+          alert contacts can do the same. The guardian records who cancelled, so cancels come from your phone, your contacts
+          or your hardware wallet, not from this page.
+        </p>
       </div>
     </div>
   );

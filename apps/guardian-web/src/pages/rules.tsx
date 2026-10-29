@@ -52,7 +52,7 @@ export function RulesPage() {
               <RuleRow
                 title="Recovery fee cap"
                 hint="A recovery can't spend more than this on fees"
-                value={`${rules.recoveryFeeCapPercent}% of the wallet`}
+                value={<span className="tabular-nums">{formatSats(rules.sweepFeeCapSats)} sats</span>}
               />
               <RuleRow
                 title="Hardware wallet payments"
