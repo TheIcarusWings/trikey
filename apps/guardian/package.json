@@ -24,6 +24,10 @@
     "@scure/btc-signer": "^2.4.1",
     "@trikey/core": "*",
     "@trikey/protocol": "*",
+    "@trikey/silent-payments": "*",
     "nostr-tools": "^2.23.0"
+  },
+  "devDependencies": {
+    "@trikey/wallet": "*"
   }
 }

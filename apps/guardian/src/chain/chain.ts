@@ -11,6 +11,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { hex } from '@scure/base';
 import * as btc from '@scure/btc-signer';
 import type { MultisigWallet } from '@trikey/core';
+import type { AddressSource } from '../singlekey.js';
 import { errorText, silentLogger, type Logger } from '../log.js';
 import { BitcoinRpc, type BlockchainInfo } from './bitcoind.js';
 import { ElectrumClient, ElectrumError, ElectrumUnavailableError } from './electrum.js';
@@ -28,6 +29,10 @@ export const MAX_REPLACEMENT_OUTPUTS = 10;
 /** Why a transaction is not a sweep of the replaced wallet into the active one. */
 export type ReplacementRefusal = 'too_many_inputs' | 'too_many_outputs' | 'input_not_from_replaced_wallet' | 'output_not_to_wallet' | 'outputs_exceed_inputs';
 export type ReplacementCheck = { ok: true; feeSats: bigint; inputs: number; outputs: number } | { ok: false; reason: ReplacementRefusal };
+
+/** Why a transaction is not a sweep of the phone's single-key coins into the active wallet. */
+export type SingleKeySweepRefusal = 'too_many_inputs' | 'too_many_outputs' | 'input_not_single_key' | 'output_not_to_wallet' | 'outputs_exceed_inputs';
+export type SingleKeySweepCheck = { ok: true; feeSats: bigint; inputs: number; outputs: number } | { ok: false; reason: SingleKeySweepRefusal };
 
 export class ChainUnavailableError extends Error {
   constructor(message = 'chain data is unavailable (Electrs is not connected)') {
@@ -233,8 +238,8 @@ export class ChainService {
   /** Derived output scripts are pure functions of the descriptor; derivation is the slow part of a scan. */
   private readonly scripts = new Map<string, Uint8Array>();
   /** `fingerprint()` rebuilds the descriptor and its checksum: once per wallet object is enough. */
-  private readonly fingerprints = new WeakMap<MultisigWallet, string>();
-  private script(wallet: MultisigWallet, chain: 0 | 1, index: number): Uint8Array {
+  private readonly fingerprints = new WeakMap<AddressSource, string>();
+  private script(wallet: AddressSource, chain: 0 | 1, index: number): Uint8Array {
     let fp = this.fingerprints.get(wallet);
     if (!fp) {
       fp = wallet.fingerprint();
@@ -266,7 +271,7 @@ export class ChainService {
    * consecutive addresses have no history, and at least past `minIndex[chain]`
    * (indexes the caller knows were used, e.g. from the PSBT being checked).
    */
-  async scanWallet(wallet: MultisigWallet, opts: { gapLimit?: number; minIndex?: Partial<Record<0 | 1, number>> } = {}): Promise<WalletScan> {
+  async scanWallet(wallet: AddressSource, opts: { gapLimit?: number; minIndex?: Partial<Record<0 | 1, number>> } = {}): Promise<WalletScan> {
     const gap = Math.max(1, opts.gapLimit ?? this.opts.gapLimit ?? DEFAULT_GAP_LIMIT);
     const chains = {} as WalletScan['chains'];
     for (const chain of [0, 1] as const) {
@@ -293,7 +298,7 @@ export class ChainService {
   }
 
   /** Every output script the wallet would recognize after `scan`: both chains up to the next unused index plus the gap. */
-  walletScripts(wallet: MultisigWallet, scan: WalletScan): Map<string, { chain: 0 | 1; index: number }> {
+  walletScripts(wallet: AddressSource, scan: WalletScan): Map<string, { chain: 0 | 1; index: number }> {
     const out = new Map<string, { chain: 0 | 1; index: number }>();
     for (const chain of [0, 1] as const) {
       const end = Math.min(MAX_SCAN_INDEX, scan.chains[chain].nextIndex + scan.gapLimit);
@@ -324,7 +329,7 @@ export class ChainService {
    * Every unspent output (confirmed or not) on the wallet's receive and change
    * chains, scanned with the gap limit (see `scanWallet`).
    */
-  async walletUtxos(wallet: MultisigWallet, opts: { gapLimit?: number; minIndex?: Partial<Record<0 | 1, number>> } = {}): Promise<WalletUtxo[]> {
+  async walletUtxos(wallet: AddressSource, opts: { gapLimit?: number; minIndex?: Partial<Record<0 | 1, number>> } = {}): Promise<WalletUtxo[]> {
     return this.unspentOf(await this.scanWallet(wallet, opts));
   }
 
@@ -381,7 +386,7 @@ export class ChainService {
    * history with net amounts, the tip, and the next unused address on each chain.
    * Amounts are bigints here; the RPC handler puts them on the wire.
    */
-  async walletSync(wallet: MultisigWallet, opts: { historyLimit?: number; maxUtxos?: number } = {}): Promise<WalletSync> {
+  async walletSync(wallet: AddressSource, opts: { historyLimit?: number; maxUtxos?: number } = {}): Promise<WalletSync> {
     const tip = await this.tip();
     const scan = await this.scanWallet(wallet);
     const utxos = await this.unspentOf(scan);
@@ -476,7 +481,7 @@ export class ChainService {
    * reach it. Previous transactions are only fetched for inputs whose txid is
    * in the wallet's history, so a foreign transaction costs one scan.
    */
-  async spendsWalletCoin(wallet: MultisigWallet, txHex: string): Promise<boolean> {
+  async spendsWalletCoin(wallet: AddressSource, txHex: string): Promise<boolean> {
     const tx = parseRawTx(txHex);
     const scan = await this.scanWallet(wallet);
     const ours = new Set<string>();
@@ -530,6 +535,101 @@ export class ChainService {
     for (const out of tx.outputs) {
       if (!newScripts.has(hex.encode(out.script))) return { ok: false, reason: 'output_not_to_wallet' };
       totalOut += out.amount;
+    }
+    if (totalOut > totalIn) return { ok: false, reason: 'outputs_exceed_inputs' };
+    return { ok: true, feeSats: totalIn - totalOut, inputs: tx.inputs.length, outputs: tx.outputs.length };
+  }
+
+  /**
+   * Unspent outputs paying any of `scripts` (confirmed or not), at most `max`: the phone's registered
+   * single-key coins and the silent payment scanner's matches (`wallet.sync` with `wallet: "helper"`).
+   */
+  async scriptUnspent(scripts: Uint8Array[], max = Number.MAX_SAFE_INTEGER): Promise<{ script: Uint8Array; txid: string; vout: number; value: bigint; height: number; confirmations: number }[]> {
+    const tip = await this.tip();
+    const unique = [...new Map(scripts.map((sc) => [hex.encode(sc), sc])).values()];
+    const out: { script: Uint8Array; txid: string; vout: number; value: bigint; height: number; confirmations: number }[] = [];
+    for (let i = 0; i < unique.length && out.length < max; i += 16) {
+      const batch = unique.slice(i, i + 16);
+      const lists = await Promise.all(batch.map((sc) => this.client().request<ElectrumUnspent[]>('blockchain.scripthash.listunspent', [scriptHash(sc)])));
+      lists.forEach((list, k) => {
+        for (const x of Array.isArray(list) ? list : []) {
+          if (typeof x?.tx_hash !== 'string' || !/^[0-9a-f]{64}$/i.test(x.tx_hash) || !Number.isSafeInteger(x.tx_pos) || !Number.isSafeInteger(x.value) || x.value < 0)
+            throw new ChainUnavailableError('Electrs returned a malformed unspent output');
+          const height = Math.max(0, x.height);
+          out.push({ script: batch[k]!, txid: x.tx_hash.toLowerCase(), vout: x.tx_pos, value: BigInt(x.value), height, confirmations: height > 0 ? Math.max(1, tip.height - height + 1) : 0 });
+        }
+      });
+    }
+    return out.slice(0, max);
+  }
+
+  /**
+   * Whether `txHex` sweeps the phone's single-key coins into the active wallet (`SingleKeySweepCheck`),
+   * or `undefined` when none of its inputs is one (the rule does not apply). Every rule must hold:
+   *
+   * - at most `MAX_REPLACEMENT_INPUTS` inputs and `MAX_REPLACEMENT_OUTPUTS` outputs;
+   * - EVERY input spends a registered single-key coin: an outpoint in `coins` (a silent payment match
+   *   or a coin the phone registered) whose previous output pays exactly the registered script, or a
+   *   coin of the helper account (scanned range). Previous transactions come from Electrs, checked
+   *   against their txid, so the amounts are the real ones;
+   * - EVERY output pays an address of the active wallet (scanned range, both chains): a sweep pays
+   *   nobody else;
+   * - the outputs do not exceed the inputs. The fee is returned for the caller's fee cap.
+   */
+  async checkSingleKeySweep(
+    active: AddressSource,
+    single: { coins: Map<string, string>; helper?: AddressSource },
+    txHex: string,
+  ): Promise<SingleKeySweepCheck | undefined> {
+    const tx = parseRawTx(txHex);
+    const outpoint = (i: { txid: string; vout: number }) => `${i.txid}:${i.vout}`;
+    let helperScripts: Map<string, unknown> | undefined;
+    let helperHistory: Set<string> | undefined;
+    const loadHelper = async () => {
+      if (!single.helper || helperScripts) return;
+      const scan = await this.scanWallet(single.helper);
+      helperScripts = this.walletScripts(single.helper, scan);
+      helperHistory = new Set<string>();
+      for (const chain of [0, 1] as const) for (const u of scan.chains[chain].used) for (const h of u.history) helperHistory.add(h.tx_hash);
+    };
+    // Applies when some input is a registered coin, or a coin of the helper account.
+    let applies = tx.inputs.some((i) => single.coins.has(outpoint(i)));
+    if (!applies && single.helper) {
+      await loadHelper();
+      for (const i of tx.inputs) {
+        if (!helperHistory!.has(i.txid)) continue;
+        const prev = parseRawTx(await this.getTransaction(i.txid)).outputs[i.vout];
+        if (prev && helperScripts!.has(hex.encode(prev.script))) applies = true;
+      }
+    }
+    if (!applies) return undefined;
+    if (tx.inputs.length === 0 || tx.inputs.length > MAX_REPLACEMENT_INPUTS) return { ok: false, reason: 'too_many_inputs' };
+    if (tx.outputs.length === 0 || tx.outputs.length > MAX_REPLACEMENT_OUTPUTS) return { ok: false, reason: 'too_many_outputs' };
+    let totalIn = 0n;
+    for (const i of tx.inputs) {
+      const registered = single.coins.get(outpoint(i));
+      let prev: { script: Uint8Array; amount: bigint } | undefined;
+      try {
+        prev = parseRawTx(await this.getTransaction(i.txid)).outputs[i.vout];
+      } catch (e) {
+        if (e instanceof TxNotFoundError) return { ok: false, reason: 'input_not_single_key' };
+        throw e;
+      }
+      if (!prev) return { ok: false, reason: 'input_not_single_key' };
+      const script = hex.encode(prev.script);
+      if (registered !== undefined) {
+        if (registered !== script) return { ok: false, reason: 'input_not_single_key' };
+      } else {
+        await loadHelper();
+        if (!helperScripts?.has(script)) return { ok: false, reason: 'input_not_single_key' };
+      }
+      totalIn += prev.amount;
+    }
+    const vault = this.walletScripts(active, await this.scanWallet(active));
+    let totalOut = 0n;
+    for (const o of tx.outputs) {
+      if (!vault.has(hex.encode(o.script))) return { ok: false, reason: 'output_not_to_wallet' };
+      totalOut += o.amount;
     }
     if (totalOut > totalIn) return { ok: false, reason: 'outputs_exceed_inputs' };
     return { ok: true, feeSats: totalIn - totalOut, inputs: tx.inputs.length, outputs: tx.outputs.length };

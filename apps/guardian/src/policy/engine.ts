@@ -61,10 +61,12 @@ import {
   Result,
   RetiredWallet,
   Rules,
+  SingleKeyRegistration,
   SurvivingRole,
   WatchedWallet,
   emptyState,
 } from './types.js';
+import { MAX_SINGLE_KEY_COINS, helperAccount, helperAccountPath, isP2TR, isP2WPKH, parseHelperXpub, samePath } from '../singlekey.js';
 
 /** A hardware approval may be valid for at most this long from the moment the guardian checks it. */
 export const MAX_APPROVAL_TTL_MS = 24 * HOUR;
@@ -540,6 +542,64 @@ export class PolicyEngine {
   }
 
   /**
+   * The paired phone's single-key coins (`singlekey.register`): the helper coin's account xpub (which
+   * lets that account's P2WPKH coin ride along when the guardian co-signs a silent payment, and its
+   * coins be served and swept) and/or explicit single-key coins (received silent payments). Public data
+   * only. Each part given replaces what was registered; `coins: []` clears the coins. It needs no key 3
+   * and no approval: it gives no one more than the daily limit, which counts only the vault's outflow.
+   */
+  async registerSingleKey(input: {
+    helper?: { xpub: string; fingerprint: string; path: string };
+    coins?: { txid: string; vout: number; script: string }[];
+  }): Promise<Result<{ singleKey: SingleKeyRegistration }>> {
+    return this.mutate((draft, now) => {
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      const bad = (detail: string) => refused({ reason: 'invalid_registration', detail });
+      if (input.helper === undefined && input.coins === undefined) return bad('nothing to register');
+      const network = getNetwork(w.registration.network);
+      const next: SingleKeyRegistration = { ...(w.singleKey ?? { coins: [] }), updatedAt: now };
+      if (input.helper !== undefined) {
+        const { xpub, fingerprint, path } = input.helper;
+        if (typeof path !== 'string' || !samePath(path, helperAccountPath(network))) return bad(`the helper account must be at ${helperAccountPath(network)}`);
+        if (typeof fingerprint !== 'string' || !/^[0-9a-f]{8}$/.test(fingerprint)) return bad('helper fingerprint must be 4 bytes of lowercase hex');
+        try {
+          parseHelperXpub(String(xpub), network);
+        } catch (e) {
+          return bad(`helper: ${(e as Error).message}`);
+        }
+        const vault = this.wallet(w.registration).keys;
+        if ([vault.app, vault.hardware, vault.cosigner].some((k) => k.xpub === xpub)) return bad('the helper account cannot be a vault key');
+        next.helper = { xpub, fingerprint, path: helperAccountPath(network), registeredAt: now };
+      }
+      if (input.coins !== undefined) {
+        if (!Array.isArray(input.coins) || input.coins.length > MAX_SINGLE_KEY_COINS) return bad(`at most ${MAX_SINGLE_KEY_COINS} coins`);
+        const seen = new Set<string>();
+        const coins: SingleKeyRegistration['coins'] = [];
+        for (const c of input.coins) {
+          const txid = String(c?.txid).toLowerCase();
+          const script = String(c?.script).toLowerCase();
+          if (!/^[0-9a-f]{64}$/.test(txid) || !Number.isSafeInteger(c?.vout) || c.vout < 0 || c.vout > 1_000_000) return bad('a coin needs a txid and an output index');
+          if (!/^(?:[0-9a-f]{2})+$/.test(script) || !(isP2TR(hex.decode(script)) || isP2WPKH(hex.decode(script)))) return bad('a coin must pay a single-key P2TR or P2WPKH script');
+          const id = `${txid}:${c.vout}`;
+          if (seen.has(id)) continue;
+          seen.add(id);
+          coins.push({ txid, vout: c.vout, script });
+        }
+        next.coins = coins;
+      }
+      w.singleKey = next;
+      this.log(draft, now, { type: 'single_key_registered', helper: !!next.helper, coins: next.coins.length });
+      return { ok: true as const, singleKey: next };
+    });
+  }
+
+  /** The paired phone's single-key coins, if it registered any (read-only). */
+  singleKey(): SingleKeyRegistration | undefined {
+    return this.state.active?.singleKey;
+  }
+
+  /**
    * After a rotation, the hardware wallet proves again that it holds the authorization key, now for
    * the active wallet's id: a signature over `pairingMessage(walletId, cosignerAccountPubkey)`, as at
    * pairing. Until then every hardware approval is refused (`hardware_auth_unconfirmed`). The key must
@@ -601,7 +661,11 @@ export class PolicyEngine {
           recoveryId: ps.recoveryId,
         });
 
-      const checked = inspectPsbt(psbt, this.wallet(reg));
+      // The phone's helper coin may ride along in a silent payment (DESIGN.md, "Silent payments"): only
+      // once the phone registered its helper account, only a script of that account, only in a PSBT
+      // with a taproot output (inspect.ts), and at most one finalized P2WPKH input (core).
+      const helper = w.singleKey?.helper ? helperAccount(w.singleKey.helper.xpub, reg.network) : undefined;
+      const checked = inspectPsbt(psbt, this.wallet(reg), undefined, helper ? { helper: (c) => !!helper.locate(c.script) } : {});
       if (!checked.ok) {
         const retired = checked.refusal.reason === 'foreign_input' ? this.retiredOwner(draft, psbt) : undefined;
         return refuse(retired ? { reason: 'wallet_retired', walletId: retired } : checked.refusal);
@@ -624,7 +688,8 @@ export class PolicyEngine {
       if (!this.signer) return refuse({ reason: 'guardian_locked' }, txid);
       const signed = await addCosignerSignatures(psbt, analysis, this.signer);
       if (!replay) w.spends.push({ txid, at: now, outflow, shares });
-      this.log(draft, now, { type: 'cosign_signed', txid, outflow, usedAfter: wouldUse, replay });
+      const helperInput = analysis.helper?.outpoint;
+      this.log(draft, now, { type: 'cosign_signed', txid, outflow, usedAfter: wouldUse, replay, ...(helperInput ? { helperInput } : {}) });
       return { ok: true as const, psbt: signed, txid, outflow, usedAfter: wouldUse, replay };
     });
   }

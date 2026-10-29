@@ -37,7 +37,7 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
       return {
         ...base,
         kind: 'payment',
-        event: e.replay ? `Payment ${shortTx(e.txid)} signed again (already counted)` : `Payment ${shortTx(e.txid)}`,
+        event: `${e.replay ? `Payment ${shortTx(e.txid)} signed again (already counted)` : `Payment ${shortTx(e.txid)}`}${e.helperInput ? ' (a silent payment: the phone\'s helper coin paid its share of the fee)' : ''}`,
         summary: 'Phone payment',
         signedBy: 'Phone',
         sats: sats(e.outflow),
@@ -146,6 +146,16 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
         event: `Wallet ${e.walletId} retired: this guardian co-signs nothing for it any more, and a new wallet can be paired`,
         summary: 'Wallet retired',
         signedBy: 'Hardware wallet',
+        sats: null,
+        result: 'ok',
+      };
+    case 'single_key_registered':
+      return {
+        ...base,
+        kind: 'system',
+        event: `The phone registered its single-key coins for silent payments (${[e.helper ? 'the helper account' : '', e.coins ? `${e.coins} coin${e.coins === 1 ? '' : 's'}` : ''].filter(Boolean).join(' and ') || 'none'})`,
+        summary: 'Silent payment coins registered',
+        signedBy: 'Phone',
         sats: null,
         result: 'ok',
       };

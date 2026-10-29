@@ -1,8 +1,10 @@
 /**
  * The real guardian service in-process, for end-to-end tests here and in other
  * packages (`@trikey/guardian/testing`): a temp data directory, in-memory nostr
- * relays (`DevRelay`), a fake Electrs over TCP and a hand-moved clock. Regtest
- * only. Key 3 is generated fresh for every rig; nothing here is a real secret.
+ * relays (`DevRelay`), a fake Electrs over TCP, optionally a fake Bitcoin Core
+ * RPC (`bitcoind: true`, for the silent payment scanner) and a hand-moved
+ * clock. Regtest only. Key 3 is generated fresh for every rig; nothing here is
+ * a real secret.
  */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -19,6 +21,7 @@ import type { RateLimitOptions } from '../../src/rate-limit.js';
 import { createLogger } from '../../src/log.js';
 import { ManualClock } from '../../src/policy/index.js';
 import { FakeElectrum } from './fake-electrum.js';
+import { FakeBitcoind } from './fake-bitcoind.js';
 
 export interface GuardianRigOptions {
   /** Default: a ManualClock at the real time. */
@@ -35,6 +38,12 @@ export interface GuardianRigOptions {
   http?: boolean;
   /** `tx.broadcast` calls allowed per phone per window (default: the guardian's, 20 per 10 minutes). */
   broadcastLimit?: RateLimitOptions;
+  /**
+   * Also run a fake Bitcoin Core RPC (`bitcoind`) and give the guardian its settings, as
+   * BITCOIN_RPC_HOST/PORT/USER/PASS would. Its blocks follow the fake Electrs: `mine()` puts the
+   * mempool into the next block of both. Default false (the guardian then has no node RPC).
+   */
+  bitcoind?: boolean;
 }
 
 export interface FundedOutput {
@@ -50,6 +59,8 @@ export class GuardianRig {
   readonly relays: DevRelay[] = [];
   readonly logLines: string[] = [];
   electrs!: FakeElectrum;
+  /** With `bitcoind: true`. */
+  bitcoind?: FakeBitcoind;
   guardian!: Guardian;
   dir!: string;
 
@@ -71,6 +82,10 @@ export class GuardianRig {
     rig.electrs = new FakeElectrum({ blocks, startTime: rig.nowSec() - blocks * 600, spacing: 600 });
     rig.electrs.applyBroadcasts = opts.applyBroadcasts ?? true;
     await rig.electrs.start();
+    if (opts.bitcoind) {
+      rig.bitcoind = new FakeBitcoind({ lookupTx: (txid) => rig.electrs.txs.get(txid), blocks, startTime: rig.nowSec() - blocks * 600 });
+      await rig.bitcoind.start();
+    }
     await rig.open();
     const res = await rig.guardian.setup({ passphrase: rig.passphrase, relays: rig.relayUrls });
     if (!res.ok) throw new Error(`guardian setup failed: ${res.message}`);
@@ -97,6 +112,7 @@ export class GuardianRig {
       dataDir: this.dir,
       network: 'regtest',
       electrum: { host: '127.0.0.1', port: this.electrs.port },
+      ...(this.bitcoind ? { bitcoinRpc: { host: '127.0.0.1', port: this.bitcoind.port, user: this.bitcoind.user, pass: this.bitcoind.pass } } : {}),
       kdf: { t: 1, m: 64, p: 1 }, // cheap Argon2 for tests only
       relayOptions: this.relayUrls.map((url) => ({ url, defaultSelected: true })),
     };
@@ -164,12 +180,21 @@ export class GuardianRig {
     const rawTx = hex.encode(raw);
     const height = opts.confirmed === false ? 0 : this.electrs.height;
     this.electrs.addUtxo(script, { txid, vout: 0, value: Number(value), height }, rawTx);
+    if (height > 0) this.bitcoind?.addTx(Math.min(height, this.bitcoind.height), rawTx);
     return { txid, vout: 0, value, rawTx };
   }
 
   /** Mines `count` blocks up to the clock's time and confirms everything in the fake mempool in the first of them. */
   async mine(count = 1): Promise<void> {
     const first = this.electrs.height + 1;
+    if (this.bitcoind) {
+      // The node mines the same mempool into its next block.
+      const pending = new Set<string>();
+      for (const list of this.electrs.history.values()) for (const h of list) if (h.height <= 0) pending.add(h.tx_hash);
+      const raws = [...pending].flatMap((id) => (this.electrs.txs.has(id) ? [this.electrs.txs.get(id)!] : []));
+      this.bitcoind.mine(raws);
+      for (let i = 1; i < count; i++) this.bitcoind.mine([]);
+    }
     this.electrs.mine(count, this.nowSec() - (count - 1) * 600, 600);
     this.electrs.confirmMempool(first);
     const e = this.guardian.chain.electrum!;
@@ -180,6 +205,7 @@ export class GuardianRig {
   async stop(): Promise<void> {
     await this.guardian?.stop();
     await this.electrs?.stop();
+    await this.bitcoind?.stop();
     for (const r of this.relays) await r.stop();
     if (this.dir) await rm(this.dir, { recursive: true, force: true });
   }

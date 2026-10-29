@@ -438,6 +438,8 @@ export const WalletUtxo = z.object({
   chain: AddressChain,
   /** ... and the address index. */
   index: AddressIndex,
+  /** The output script, lowercase hex: sent for the helper account's coins (`wallet: "helper"`), which the phone looks up by script. */
+  script: z.string().regex(/^0014[0-9a-f]{40}$/, 'expected a P2WPKH script in lowercase hex').optional(),
 });
 
 export const HistoryEntry = z.object({
@@ -454,10 +456,25 @@ export const HistoryEntry = z.object({
 });
 
 /**
- * Which wallet `wallet.sync` reads: the paired one (default), or the one this guardian only WATCHES
- * because the paired wallet replaced it: `"replaced"`, or that wallet's id.
+ * Which wallet `wallet.sync` reads: the paired one (default), the one this guardian only WATCHES
+ * because the paired wallet replaced it (`"replaced"`, or that wallet's id), or the phone's single-key
+ * coins (`"helper"`: the helper coin's account and the registered silent payment coins).
  */
-export const SyncWallet = z.union([z.literal('replaced'), WalletId]);
+export const SyncWallet = z.union([z.literal('replaced'), z.literal('helper'), WalletId]);
+
+/** A single-key output script, lowercase hex: P2TR (`5120…`, a received silent payment) or P2WPKH (`0014…`). */
+export const SingleKeyScript = z.string().regex(/^(?:5120[0-9a-f]{64}|0014[0-9a-f]{40})$/, 'expected a P2TR or P2WPKH script in lowercase hex');
+
+/** An unspent single-key coin found by its script (a received silent payment), for `wallet.sync` with `wallet: "helper"`. */
+export const ScriptUtxo = z.object({
+  script: SingleKeyScript,
+  txid: Hex32,
+  vout: z.int().min(0).max(1_000_000),
+  valueSats: Sats,
+  /** 0 while unconfirmed. */
+  height: Height,
+  confirmations: z.int().min(0),
+});
 
 export const WalletSyncParams = z.strictObject({
   /** Most history entries to return, newest first (default 100, at most 500). */
@@ -465,7 +482,10 @@ export const WalletSyncParams = z.strictObject({
   /**
    * Omit for the paired wallet. `"replaced"` (or the id of the watched wallet) reads the wallet that the
    * paired one replaced, for finding stray coins; no such wallet is watched: `1005 WalletNotWatched`.
-   * The id of the paired wallet itself is the same as omitting it.
+   * `"helper"` reads the phone's single-key coins registered with `singlekey.register` (the helper
+   * account's addresses, scanned like a wallet's, in `utxos`/`history`; registered coins and the silent
+   * payment scanner's matches in `coins`); nothing registered: `1005`. The id of the paired wallet
+   * itself is the same as omitting it.
    */
   wallet: SyncWallet.optional(),
 });
@@ -488,6 +508,11 @@ export const WalletSyncResult = z.object({
   nextChangeIndex: AddressIndex,
   /** Each chain was scanned until this many consecutive unused addresses. */
   gapLimit: z.int().min(1).max(1000),
+  /**
+   * `wallet: "helper"` only: the unspent registered single-key coins and silent payment matches, by
+   * script (they have no chain/index). Optional: absent for the vault and from older guardians.
+   */
+  coins: z.array(ScriptUtxo).max(MAX_SYNC_UTXOS).optional(),
 });
 
 export const TxGetParams = z.strictObject({
@@ -503,8 +528,9 @@ export const TxGetResult = z.object({ txHex: RawTxHex });
 export const TxBroadcastParams = z.strictObject({
   /**
    * A fully signed transaction. The guardian relays it only if it spends at least one of the paired
-   * wallet's coins, or is a sweep of the watched (replaced) wallet's coins into the paired wallet
-   * (PROTOCOL.md, "Chain data").
+   * wallet's coins, is a sweep of the watched (replaced) wallet's coins into the paired wallet, or a
+   * sweep of the phone's single-key coins (silent payment matches, registered coins, the helper coin)
+   * into the paired wallet (PROTOCOL.md, "Chain data").
    */
   txHex: RawTxHex,
 });
@@ -539,6 +565,118 @@ export const FeesEstimateResult = z.object({
   estimates: z.array(FeeEstimate).max(8),
   /** The node's minimum relay fee, sat/vB. */
   minRelaySatPerVb: z.number().positive().max(1_000_000),
+});
+
+/* -------------------------------------------------------------------------- */
+/* Silent payments (BIP 352): the phone's single-key coins and the scanner    */
+/* -------------------------------------------------------------------------- */
+// Paired phone only. None needs key 3: they work while the guardian is locked. DESIGN.md, "Silent payments".
+
+/** Most single-key coins `singlekey.register` takes. */
+export const MAX_SINGLE_KEY_COINS = 500;
+/** Most labels `sp.register` takes (the change label 0 included). */
+export const MAX_SP_LABELS = 1000;
+/** Most matches one `sp.scan` answer lists (oldest first from `fromHeight`; `matchesTruncated` says there are more). */
+export const MAX_SP_MATCHES = 500;
+/** How many blocks below `fromHeight` an `sp.scan` answer repeats (the scanner re-scans as many for reorgs). */
+export const SP_REORG_DEPTH = 6;
+
+export const SingleKeyCoin = z.strictObject({
+  txid: Hex32,
+  vout: z.int().min(0).max(1_000_000),
+  script: SingleKeyScript,
+});
+
+/**
+ * The phone's single-key coins, public data only. `helper` is the helper coin's BIP 84 account key
+ * (`m/84'/coin'/1'` of key 2's seed): once registered, the guardian co-signs a silent payment whose one
+ * extra input is a finalized P2WPKH spend of that account (the daily limit counts only the vault's
+ * outflow), serves the account's coins (`wallet.sync` with `wallet: "helper"`) and relays a sweep of them
+ * into the vault. `coins` are received silent payments (or other single-key coins) the phone found
+ * itself; the scanner's own matches need no registration. Each member given replaces what was
+ * registered (`coins: []` clears them); at least one is needed.
+ */
+export const SingleKeyRegisterParams = z
+  .strictObject({
+    helper: KeyOrigin.optional(),
+    coins: z.array(SingleKeyCoin).max(MAX_SINGLE_KEY_COINS).optional(),
+  })
+  .refine((p) => p.helper !== undefined || p.coins !== undefined, { message: 'register a helper account or coins' });
+export const SingleKeyRegisterResult = z.object({
+  /** True when a helper account is registered (now or before). */
+  helper: z.boolean(),
+  /** How many explicit coins are registered. */
+  coins: z.int().min(0).max(MAX_SINGLE_KEY_COINS),
+});
+
+/** A BIP 352 label: an integer 0..2^32-1. 0 is the change label. */
+export const SpLabel = z.int().min(0).max(4_294_967_295);
+
+/**
+ * Hands the guardian the receiver's SCAN key so it scans every block of the user's own node for payments
+ * to the phone's silent payment address. The scan key can find payments but never spend them; the
+ * guardian never derives a spending key. Re-registering the same keys updates the labels and birth
+ * height (and re-scans when they grow or move back); other keys replace the registration and its matches.
+ * Needs the node's RPC (`1700 NodeRpcRequired`).
+ */
+export const SpRegisterParams = z.strictObject({
+  /** b_scan, 32 bytes hex (`m/352'/coin'/0'/1'/0`). */
+  scanPrivateKey: Hex32,
+  /** B_spend, compressed (`m/352'/coin'/0'/0'/0`). */
+  spendPublicKey: CompressedPubkey,
+  /** Labels to scan for; must include the change label 0. */
+  labels: z
+    .array(SpLabel)
+    .min(1)
+    .max(MAX_SP_LABELS)
+    .refine((l) => l.includes(0), 'labels must include the change label 0')
+    .refine((l) => new Set(l).size === l.length, 'labels must be distinct'),
+  /** The first block that can hold a payment (the wallet's birth height). */
+  birthHeight: Height,
+});
+export const SpRegisterResult = z.object({
+  registered: z.literal(true),
+  birthHeight: Height,
+  /** The last block scanned so far (`birthHeight - 1` before the first). Scanning goes on in the background. */
+  scannedHeight: z.int().min(-1).max(100_000_000),
+  /** The node's tip when the guardian answered. */
+  tipHeight: Height,
+});
+
+/** Stops scanning, and forgets the scan key and every match. */
+export const SpUnregisterParams = z.strictObject({});
+export const SpUnregisterResult = z.object({ unregistered: z.boolean() });
+
+/** A payment the scanner found: what the phone needs to check it (`tweak` must give `outputKey`) and to spend it (b_spend + tweak). */
+export const SpMatch = z.object({
+  txid: Hex32,
+  vout: z.int().min(0).max(1_000_000),
+  valueSats: Sats,
+  /** The taproot output key, x-only. */
+  outputKey: Hex32,
+  /** The private key tweak: the coin's key is b_spend + tweak (mod n). */
+  tweak: Hex32,
+  /** The label it paid (0: the wallet's own change); absent for the unlabeled address. */
+  label: SpLabel.optional(),
+  /** The block it is in (the scanner reads confirmed blocks only). */
+  height: Height,
+});
+
+export const SpScanParams = z.strictObject({
+  /**
+   * The first height the phone has not seen yet. The answer also repeats matches of the `SP_REORG_DEPTH`
+   * (6) blocks below it, so a payment a reorg moved into a block the phone already scanned is not lost.
+   */
+  fromHeight: Height.optional(),
+});
+export const SpScanResult = z.object({
+  /** The last block scanned: matches up to here are final (a later reorg can still move or drop them). */
+  tipHeight: Height,
+  birthHeight: Height,
+  /** True while the scanner is still catching up with the node. */
+  scanning: z.boolean(),
+  matches: z.array(SpMatch).max(MAX_SP_MATCHES),
+  matchesTruncated: z.boolean(),
 });
 
 /* -------------------------------------------------------------------------- */
@@ -595,6 +733,10 @@ export const methods = {
   'guardian.lock': { params: GuardianLockParams, result: GuardianLockResult },
   'wallet.retire': { params: WalletRetireParams, result: WalletRetireResult },
   'hardware.confirm': { params: HardwareConfirmParams, result: HardwareConfirmResult },
+  'singlekey.register': { params: SingleKeyRegisterParams, result: SingleKeyRegisterResult },
+  'sp.register': { params: SpRegisterParams, result: SpRegisterResult },
+  'sp.unregister': { params: SpUnregisterParams, result: SpUnregisterResult },
+  'sp.scan': { params: SpScanParams, result: SpScanResult },
 } as const;
 
 export type MethodName = keyof typeof methods;
@@ -636,7 +778,7 @@ const recoveryAlert = {
 /**
  * Alert types mirror the engine's `AlertKind` (`recovery_started`, `recovery_reminder`, `recovery_ready`,
  * `recovery_cancelled`, `recovery_completed`), plus what the service raises itself: `guardian_locked`,
- * `wallet_adopted` and `wallet_retired`.
+ * `wallet_adopted`, `wallet_retired` and `sp_received`.
  */
 export const Alert = z.discriminatedUnion('type', [
   stamped({ ...alertBase, type: z.literal('recovery_started'), ...recoveryAlert }),
@@ -688,6 +830,19 @@ export const Alert = z.discriminatedUnion('type', [
     reason: z.enum(['retired', 'recovered', 'reset']),
     successorWalletId: WalletId.optional(),
   }),
+  stamped({
+    ...alertBase,
+    /**
+     * The silent payment scanner found a payment to the registered address in a new block. `sp.scan`
+     * returns it with its tweak; the phone checks it against its spend key before keeping it.
+     */
+    type: z.literal('sp_received'),
+    txid: Hex32,
+    vout: z.int().min(0).max(1_000_000),
+    valueSats: Sats,
+    height: Height,
+    label: SpLabel.optional(),
+  }),
 ]);
 
 export type AlertType = z.infer<typeof Alert>['type'];
@@ -722,6 +877,10 @@ export const RequestSchema = z.discriminatedUnion('method', [
   requestOf('guardian.lock', GuardianLockParams),
   requestOf('wallet.retire', WalletRetireParams),
   requestOf('hardware.confirm', HardwareConfirmParams),
+  requestOf('singlekey.register', SingleKeyRegisterParams),
+  requestOf('sp.register', SpRegisterParams),
+  requestOf('sp.unregister', SpUnregisterParams),
+  requestOf('sp.scan', SpScanParams),
 ]);
 export type Request = z.infer<typeof RequestSchema>;
 
@@ -779,3 +938,6 @@ export type WalletUtxo = z.infer<typeof WalletUtxo>;
 export type HistoryEntry = z.infer<typeof HistoryEntry>;
 export type FeeEstimate = z.infer<typeof FeeEstimate>;
 export type AccessApproval = z.infer<typeof AccessApproval>;
+export type ScriptUtxo = z.infer<typeof ScriptUtxo>;
+export type SingleKeyCoin = z.infer<typeof SingleKeyCoin>;
+export type SpMatch = z.infer<typeof SpMatch>;

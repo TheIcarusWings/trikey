@@ -1,8 +1,10 @@
 /**
- * Optional Bitcoin Core JSON-RPC client: sync status for the web UI and a
- * fallback for broadcasting when Electrs refuses or is down. Electrs stays the
- * primary chain source. The node is on the platform's internal network, so
- * this is plain HTTP with basic auth; the credentials never reach a log line.
+ * Optional Bitcoin Core JSON-RPC client: sync status for the web UI, a
+ * fallback for broadcasting when Electrs refuses or is down, and blocks with
+ * their prevouts for the silent payment scanner (`getblock <hash> 3`, which
+ * Electrs cannot serve). Electrs stays the primary chain source. The node is
+ * on the platform's internal network, so this is plain HTTP with basic auth;
+ * the credentials never reach a log line.
  */
 import type { BitcoinRpcConfig } from '../config.js';
 
@@ -26,6 +28,24 @@ export interface BlockchainInfo {
   mediantime: number;
 }
 
+/** A transaction in `getblock <hash> 3`: every input carries the output it spends (`prevout`). */
+export interface VerboseTx {
+  txid: string;
+  hex: string;
+  vin: { coinbase?: string; txid?: string; vout?: number; prevout?: { value: number; scriptPubKey: { hex: string } } }[];
+  vout: { value: number; n: number; scriptPubKey: { hex: string } }[];
+}
+
+/** `getblock <hash> 3` (Bitcoin Core 23+). */
+export interface VerboseBlock {
+  hash: string;
+  height: number;
+  /** -1 when the block is not on the main chain. */
+  confirmations: number;
+  previousblockhash?: string;
+  tx: VerboseTx[];
+}
+
 export class BitcoinRpc {
   private readonly url: string;
   private readonly auth: string;
@@ -40,14 +60,14 @@ export class BitcoinRpc {
     this.auth = `Basic ${Buffer.from(`${cfg.user}:${cfg.pass}`).toString('base64')}`;
   }
 
-  async call<T>(method: string, params: unknown[] = []): Promise<T> {
+  async call<T>(method: string, params: unknown[] = [], opts: { timeoutMs?: number } = {}): Promise<T> {
     let res: Response;
     try {
       res = await fetch(this.url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: this.auth },
         body: JSON.stringify({ jsonrpc: '1.0', id: ++this.id, method, params }),
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal: AbortSignal.timeout(opts.timeoutMs ?? this.timeoutMs),
       });
     } catch (e) {
       throw new BitcoinRpcError(method, `node unreachable (${e instanceof Error ? e.name : 'error'})`);
@@ -70,5 +90,18 @@ export class BitcoinRpc {
   /** Returns the txid. */
   sendRawTransaction(txHex: string): Promise<string> {
     return this.call<string>('sendrawtransaction', [txHex]);
+  }
+
+  getBlockCount(): Promise<number> {
+    return this.call<number>('getblockcount');
+  }
+
+  getBlockHash(height: number): Promise<string> {
+    return this.call<string>('getblockhash', [height]);
+  }
+
+  /** The block with every transaction and each input's prevout (verbosity 3). Large: a minute to answer is allowed. */
+  getBlockWithPrevouts(hash: string): Promise<VerboseBlock> {
+    return this.call<VerboseBlock>('getblock', [hash, 3], { timeoutMs: Math.max(this.timeoutMs, 60_000) });
   }
 }

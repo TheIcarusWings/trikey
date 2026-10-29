@@ -33,7 +33,7 @@ node --import tsx apps/guardian/src/main.ts
 | `TRIKEY_DATA_DIR` | `/data` | State, see below |
 | `TRIKEY_WEB_DIR` | none | The built web UI (`apps/guardian-web/dist`) |
 | `ELECTRUM_HOST`, `ELECTRUM_PORT` | none, `50001` | Electrs, plain TCP. Without it, recoveries cannot complete. |
-| `BITCOIN_RPC_HOST`, `_PORT`, `_USER`, `_PASS` | none | Optional: sync progress and a broadcast fallback |
+| `BITCOIN_RPC_HOST`, `_PORT`, `_USER`, `_PASS` | none | Optional: sync progress, a broadcast fallback, and the silent payment scanner (`getblock <hash> 3`; without them `sp.*` answers `1700`) |
 | `BITCOIN_NETWORK` | `bitcoin` | `bitcoin`, `testnet`, `signet`, `regtest`; also `mainnet`, `main`, `testnet3`, `testnet4`, `test` |
 | `TRIKEY_LOG_LEVEL` | `info` | `debug` for more |
 
@@ -54,6 +54,8 @@ All files in `TRIKEY_DATA_DIR` are mode 0600 and written atomically.
 | `guardian-state.json` | The policy engine, format version 2: the active wallet (registration, rules, limit accounting, recovery access grants), retired wallets, recoveries, activity. A version-1 file (one wallet) is migrated when it is loaded and written back as version 2. |
 | `service.json` | Relays, the paired phone's name, co-signed sweeps and their broadcast state, the service log, recently handled request ids. (Recovery access grants used to live here; they are moved into the engine on start.) |
 | `unlock-throttle.json` | Failed unlock attempts (exponential backoff after 3, up to 1 hour). |
+| `silent-payments.json` | The silent payment scanner: the paired phone's registration (B_spend, labels, birth height, the scan key **encrypted**), the last scanned blocks' hashes (for reorgs) and the matches. No spending key. |
+| `silent-payments-key.json` | The random key the scan key is encrypted under, **not** under the passphrase, so scanning goes on while the guardian is locked (the scan key finds payments, it cannot spend them; see `src/silent/service.ts`). |
 
 After every start the guardian is locked: key 3 is decrypted only by an unlock
 (web UI or `guardian.unlock` from the paired phone) and kept only in memory.
@@ -111,6 +113,16 @@ After every start the guardian is locked: key 3 is decrypted only by an unlock
   wallet gets `wallet_retired` (`recovered`) when another phone is adopted.
 - **Remote lock**: `guardian.lock` from the paired phone, answered
   `{ state: "locked" }`, alert `guardian_locked` with reason `remote`.
+- **Silent payments** (DESIGN.md, "Silent payments"; PROTOCOL.md, "Silent payments"):
+  `singlekey.register` with the helper account (`m/84'/<coin>'/1'` KeyOrigin) makes
+  `sign` accept one finalized P2WPKH helper input of that account in a PSBT with a
+  taproot output (the limit counts only what leaves the vault) and `wallet.sync`
+  serve it (`wallet: "helper"`). `sp.register` with the scan key, `B_spend`, labels
+  (with 0) and the birth height starts the scanner; `sp.scan` returns matches,
+  `sp_received` announces new ones, `sp.unregister` stops it. `tx.broadcast`
+  relays a sweep of matches, registered coins and the helper coin into the vault
+  (every output to the vault, fee within the sweep fee cap).
+  `test/support/wallet-adapters.ts` is the reference for the wallet's side.
 - **Recovery code**: the web UI's "Recover on a new phone" QR code is
   `trikey://recover?v=1&npub=...&relay=...&net=...` (`decodeRecoveryUri`),
   no secret; it gives a new phone the npub and relays for `recovery.access`.
@@ -134,6 +146,8 @@ src/
   observed-store.ts   read-only view of the engine's saved state
   nostr/              RPC handlers, wire conversions, NIP-17 DMs, the shared inbox (each wrap opened once)
   chain/              Electrum client, headers, Bitcoin Core RPC, ChainService
+  silent/             the silent payment scanner: block scanning (scan.ts), registration, storage, reorgs (service.ts)
+  singlekey.ts        the phone's single-key coins: the helper account (P2WPKH derivation, lookup)
   http/               HTTP server (headers, origin checks, static), API routes
   policy/             the policy engine (pure decisions, no I/O)
 ```
@@ -143,8 +157,13 @@ src/
 `npm test -w @trikey/guardian`. `test/guardian.e2e.test.ts` runs the real service
 with a temp data dir, two in-memory relays, a fake Electrs and a simulated phone
 and alert contact, all on regtest with throwaway keys; `test/chain-methods.e2e.test.ts`
-covers the chain methods and recovery access.
+covers the chain methods and recovery access; `test/silent-payments.e2e.test.ts`
+runs the real phone wallet (`@trikey/wallet`) against the guardian for silent payments
+(co-signing with the helper coin, the scanner over a fake Bitcoin Core RPC with a
+reorg, sweeps). `test/sp-perf.test.ts` measures the scanner (`SP_PERF_TXS=2000` for a
+full-size block).
 
-`test/support/` (exported as `@trikey/guardian/testing`) holds the fake Electrs and
-`GuardianRig`, which runs the real service in-process for other packages' tests
-(`@trikey/wallet` uses it).
+`test/support/` (exported as `@trikey/guardian/testing`) holds the fake Electrs, the
+fake Bitcoin Core RPC (`FakeBitcoind`, `getblock <hash> 3` with prevouts) and
+`GuardianRig` (`bitcoind: true` adds the node RPC), which runs the real service
+in-process for other packages' tests (`@trikey/wallet` uses it).

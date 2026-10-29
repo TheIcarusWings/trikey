@@ -86,6 +86,7 @@ const CODES: Record<RefusalReason, number> = {
   no_recovery: ErrorCode.RecoveryNotActive,
   recovery_in_progress: ErrorCode.RecoveryAlreadyActive,
   invalid_psbt: ErrorCode.PsbtInvalid,
+  invalid_helper_input: ErrorCode.PsbtInvalid,
   foreign_input: ErrorCode.PsbtInvalid,
   missing_non_witness_utxo: ErrorCode.PsbtInvalid,
   non_witness_utxo_mismatch: ErrorCode.PsbtInvalid,
@@ -171,6 +172,8 @@ export function refusalText(r: Refusal): string {
       return 'A recovery is in progress';
     case 'invalid_psbt':
       return `Invalid PSBT: ${r.detail}`;
+    case 'invalid_helper_input':
+      return `The helper coin's input is not acceptable${r.input !== undefined ? ` (input ${r.input})` : ''}: ${r.detail}`;
     case 'foreign_input':
       return `An input does not belong to this wallet${r.input !== undefined ? ` (input ${r.input})` : ''}`;
     case 'missing_non_witness_utxo':

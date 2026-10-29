@@ -46,6 +46,20 @@ export interface WatchedWallet {
   since: number;
 }
 
+/**
+ * The paired phone's single-key coins (DESIGN.md, "Silent payments"): public data only, so the guardian
+ * can serve their chain data, accept the helper coin next to vault inputs when it co-signs a silent
+ * payment, and relay a sweep of them into the vault. It belongs to the active wallet and its phone, and
+ * goes with them (rotation, retirement, reset).
+ */
+export interface SingleKeyRegistration {
+  /** The helper coin's BIP 84 account, `m/84'/coin'/1'` of key 2's seed. */
+  helper?: { xpub: string; fingerprint: string; path: string; registeredAt: number };
+  /** Received silent payments (or other single-key coins) the phone named, by outpoint and script. */
+  coins: { txid: string; vout: number; script: string }[];
+  updatedAt: number;
+}
+
 export interface Registration {
   /** `MultisigWallet.fingerprint()` of the descriptor. Bound into every hardware approval. */
   walletId: string;
@@ -161,6 +175,11 @@ export type Refusal =
   | { reason: 'invalid_registration'; detail: string }
   | { reason: 'guardian_locked' }
   | { reason: 'invalid_psbt'; detail: string }
+  /**
+   * The PSBT carries a single-key input next to the vault's that is not an acceptable helper input:
+   * not finalized, a bad witness or signature, or more than one (`code` is core's `PsbtError` code).
+   */
+  | { reason: 'invalid_helper_input'; input?: number; code: string; detail: string }
   | { reason: 'foreign_input'; input?: number; detail: string }
   | { reason: 'missing_non_witness_utxo'; input: number }
   | { reason: 'non_witness_utxo_mismatch'; input: number }
@@ -207,7 +226,9 @@ export type Result<T> = ({ ok: true } & T) | { ok: false; refusal: Refusal };
 export type ActivityEvent =
   | { type: 'registered'; walletId: string; replacesWalletId?: string; watching?: boolean }
   | { type: 'wallet_unwatched'; walletId: string }
-  | { type: 'cosign_signed'; txid: string; outflow: bigint; usedAfter: bigint; replay: boolean }
+  /** `helperInput`: the outpoint of the phone's helper coin that rode along (a silent payment). */
+  | { type: 'cosign_signed'; txid: string; outflow: bigint; usedAfter: bigint; replay: boolean; helperInput?: string }
+  | { type: 'single_key_registered'; helper: boolean; coins: number }
   | { type: 'cosign_refused'; txid?: string; refusal: Refusal }
   | { type: 'rules_changed'; by: 'app' | 'hardware'; sequence?: number; from: Rules; to: Rules }
   | { type: 'rules_change_refused'; by: 'app' | 'hardware'; refusal: Refusal }
@@ -257,6 +278,8 @@ export interface GuardedWallet {
   accessGrants: AccessGrant[];
   /** The wallet this one replaced, watch-only, if the phone sent its descriptor at pairing. Dropped by `unwatch`. */
   watched?: WatchedWallet;
+  /** The paired phone's single-key coins (`registerSingleKey`). */
+  singleKey?: SingleKeyRegistration;
 }
 
 export type Retirement =

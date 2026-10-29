@@ -38,7 +38,11 @@ export interface ConsensusResult {
   output: string;
 }
 
-/** Flag names understood by the verifier. Omit `flags` for every flag before taproot. */
+/**
+ * Flag names understood by the verifier. Omit `flags` for every flag before taproot. `TAPROOT` adds
+ * BIPs 341/342 (the verifier always passes every spent output, which taproot signatures commit to);
+ * `ALL` is `ALL_PRE_TAPROOT` plus `TAPROOT`.
+ */
 export type ConsensusFlag =
   | 'P2SH'
   | 'DERSIG'
@@ -46,7 +50,9 @@ export type ConsensusFlag =
   | 'CHECKLOCKTIMEVERIFY'
   | 'CHECKSEQUENCEVERIFY'
   | 'WITNESS'
-  | 'ALL_PRE_TAPROOT';
+  | 'TAPROOT'
+  | 'ALL_PRE_TAPROOT'
+  | 'ALL';
 
 const DEFAULT_BINARY = fileURLToPath(
   new URL(
