@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { ShieldCheck } from '@/components/icons';
+import { Info, ShieldCheck } from '@/components/icons';
 import { InfoRow, Notice, Panel } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Segmented } from '@/components/segmented';
@@ -70,12 +70,21 @@ export default function SendReview() {
       <Panel>
         <View className={pick('flex-row justify-between gap-4 px-4 py-3.5', 'flex-row justify-between gap-4 p-4')}>
           <Text className="text-muted-foreground text-[15px] leading-5">To</Text>
-          <Text className="shrink text-right font-mono text-[15px] leading-5">{shorten(address)}</Text>
+          <View className="shrink items-end">
+            {quote.silentPayment ? <Text className="text-right text-[15px] leading-5">Silent payment to</Text> : null}
+            <Text className="shrink text-right font-mono text-[15px] leading-5">{shorten(address, quote.silentPayment ? 12 : 8)}</Text>
+          </View>
         </View>
         <InfoRow label="Amount" value={`${formatSats(quote.request.amountSats)} sats`} tabular />
         <InfoRow label="Network fee" value={`${quote.estimate ? 'about ' : ''}${formatSats(quote.feeSats)} sats`} tabular />
-        <InfoRow label="Total" value={`${quote.estimate ? 'about ' : ''}${formatSats(quote.totalSats)} sats`} strong tabular />
+        <InfoRow label="Total" value={`${quote.estimate ? 'about ' : ''}${formatSats(quote.silentPayment ? quote.request.amountSats + quote.feeSats : quote.totalSats)} sats`} strong tabular />
       </Panel>
+      {quote.silentPayment?.helperFeeSats !== undefined ? (
+        <Notice icon={Info} tone="fill">
+          A silent payment also spends your helper coin, a small coin of this phone. It pays {formatSats(quote.silentPayment.helperFeeSats)} sats of the fee, and the rest comes
+          back to it.
+        </Notice>
+      ) : null}
       <View className="gap-2">
         <Text className="text-sm font-medium leading-5">Speed</Text>
         <Segmented

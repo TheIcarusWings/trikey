@@ -7,15 +7,27 @@ import { pick } from '@/lib/platform';
 const QR_INK = '#111418';
 const QR_PAPER = '#FFFFFF';
 
-export function AddressQr({ address, size = pick(200, 216) }: { address: string; size?: number }) {
+export function AddressQr({
+  address,
+  size = pick(200, 216),
+  uri,
+  label = 'your receiving address',
+}: {
+  address: string;
+  size?: number;
+  /** What the code holds. Default `bitcoin:<address>`; a silent payment address goes in as it is, which every wallet that knows them reads. */
+  uri?: string;
+  /** For screen readers: "QR code for <label>". */
+  label?: string;
+}) {
   return (
     <View
       accessible
       accessibilityRole="image"
-      accessibilityLabel="QR code for your receiving address"
+      accessibilityLabel={`QR code for ${label}`}
       style={{ width: size + 32, height: size + 32 }}
       className="border-border self-center rounded-2xl border bg-white p-4">
-      <QRCode value={`bitcoin:${address}`} size={size} color={QR_INK} backgroundColor={QR_PAPER} ecl="M" quietZone={0} />
+      <QRCode value={uri ?? `bitcoin:${address}`} size={size} color={QR_INK} backgroundColor={QR_PAPER} ecl="M" quietZone={0} />
     </View>
   );
 }

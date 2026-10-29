@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { DeviceMock } from '@/components/device-mock';
-import { TriangleAlert } from '@/components/icons';
+import { Info, TriangleAlert } from '@/components/icons';
 import { Notice } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
@@ -108,6 +108,9 @@ export default function SendHardware() {
   }
 
   const btc = (quote.request.amountSats / SATS_PER_BTC).toFixed(quote.request.amountSats % 100_000 === 0 ? 3 : 8);
+  // A silent payment goes to a plain taproot address that only this phone worked out: that is what the device shows.
+  const silent = quote.silentPayment;
+  const shown = silent?.outputAddress ?? address;
 
   return (
     <Screen
@@ -148,13 +151,24 @@ export default function SendHardware() {
       <DeviceMock
         width={220}
         height={140}
-        label={`${brand} screen showing: Send ${btc} BTC to ${shorten(address)}`}
-        lines={[`Send ${btc} BTC`, `to ${shorten(address)}`, `fee ${btcFee(quote.feeSats)}`]}
+        label={`${brand} screen showing: Send ${btc} BTC to ${shorten(shown)}`}
+        lines={[`Send ${btc} BTC`, `to ${shorten(shown)}`, `fee ${btcFee(quote.feeSats)}`]}
       />
+      {silent ? (
+        <View className="gap-1.5">
+          <Text className="text-sm font-medium leading-5">Silent payment to</Text>
+          <Text className="text-muted-foreground font-mono text-[13px] leading-5" selectable>
+            {groupAddress(address)}
+          </Text>
+          <Notice icon={Info} tone="fill">
+            A hardware wallet can't show silent payment addresses. It shows the plain address Trikey worked out for this one payment instead.
+          </Notice>
+        </View>
+      ) : null}
       <View className="gap-1.5">
-        <Text className="text-sm font-medium leading-5">Check the address on the device matches</Text>
+        <Text className="text-sm font-medium leading-5">{silent ? 'Check that your device shows this address' : 'Check the address on the device matches'}</Text>
         <Text className={cn('text-muted-foreground font-mono text-sm leading-[22px]')} selectable>
-          {groupAddress(address)}
+          {groupAddress(shown)}
         </Text>
       </View>
     </Screen>
