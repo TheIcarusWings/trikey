@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Welcome</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#18181B}a:hover{color:#3F3F46}
+</style>
+</helmet>
+<div style="width: 980px; height: 1064px; box-sizing: border-box; padding: 48px; background: {{t.ground}}; display: flex; gap: 80px; align-items: flex-start; font-family: 'Geist', -apple-system, system-ui, sans-serif; color: {{t.ink}}">
+<div style="display: flex; flex-direction: column; gap: 16px">
+<div style="font-size: 13px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {{t.muted}}">iOS</div>
+<div style="width: 390px; height: 844px; box-sizing: border-box; border-radius: 44px; border: 1px solid {{t.frame}}; background: {{t.screen}}; overflow: hidden; padding: 64px 24px 40px; display: flex; flex-direction: column; align-items: center; gap: 16px">
+<div style="flex-grow: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; text-align: center">
+<svg width="88" height="80" viewBox="0 0 88 80" role="img" aria-label="Trikey logo"><path d="M44 14 L16 62 L72 62 Z" fill="none" stroke="{{t.ink}}" stroke-width="3" stroke-linejoin="round"></path><circle cx="44" cy="14" r="10" fill="{{t.brand}}"></circle><circle cx="16" cy="62" r="10" fill="{{t.ink}}"></circle><circle cx="72" cy="62" r="10" fill="{{t.ink}}"></circle></svg>
+<h1 style="margin: 0; font-size: 34px; line-height: 40px; font-weight: 600; letter-spacing: -0.02em">Trikey</h1>
+<p style="margin: 0; font-size: 17px; line-height: 24px; color: {{t.muted}}; max-width: 300px">A bitcoin wallet where all three keys are yours. No company holds one.</p>
+</div>
+<a href="Onb-HowItWorks.dc.html" style="align-self: stretch; display: flex; align-items: center; justify-content: center; height: 52px; border-radius: 10px; background: {{t.accent}}; color: {{t.onAccent}}; font-size: 17px; font-weight: 600; text-decoration: none">Create a wallet</a>
+<a href="Recover-Choose.dc.html" style="align-self: stretch; display: flex; align-items: center; justify-content: center; height: 48px; color: {{t.accent}}; font-size: 17px; font-weight: 500; text-decoration: none">I already have a Trikey wallet</a>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 16px">
+<div style="font-size: 13px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {{t.muted}}">Android</div>
+<div style="width: 412px; height: 915px; box-sizing: border-box; border-radius: 28px; border: 1px solid {{t.frame}}; background: {{t.screen}}; overflow: hidden; padding: 56px 24px 32px; display: flex; flex-direction: column; align-items: center; gap: 12px; font-family: 'Geist', system-ui, sans-serif">
+<div style="flex-grow: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; text-align: center">
+<svg width="88" height="80" viewBox="0 0 88 80" role="img" aria-label="Trikey logo"><path d="M44 14 L16 62 L72 62 Z" fill="none" stroke="{{t.ink}}" stroke-width="3" stroke-linejoin="round"></path><circle cx="44" cy="14" r="10" fill="{{t.brand}}"></circle><circle cx="16" cy="62" r="10" fill="{{t.ink}}"></circle><circle cx="72" cy="62" r="10" fill="{{t.ink}}"></circle></svg>
+<h1 style="margin: 0; font-size: 36px; line-height: 44px; font-weight: 400">Trikey</h1>
+<p style="margin: 0; font-size: 16px; line-height: 24px; color: {{t.muted}}; max-width: 320px">A bitcoin wallet where all three keys are yours. No company holds one.</p>
+</div>
+<a href="Onb-HowItWorks.dc.html" style="align-self: stretch; display: flex; align-items: center; justify-content: center; height: 48px; border-radius: 10px; background: {{t.accent}}; color: {{t.onAccent}}; font-size: 15px; font-weight: 500; letter-spacing: 0.01em; text-decoration: none">Create a wallet</a>
+<a href="Recover-Choose.dc.html" style="align-self: stretch; display: flex; align-items: center; justify-content: center; height: 48px; border-radius: 10px; color: {{t.accent}}; font-size: 15px; font-weight: 500; letter-spacing: 0.01em; text-decoration: none">I already have a Trikey wallet</a>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":980,"height":1064}}'>
+class Component extends DCLogic {
+renderVals() {
+const light = {ground:"#F4F4F5",screen:"#FFFFFF",frame:"#E4E4E7",ink:"#09090B",muted:"#71717A",line:"#E4E4E7",fill:"#F4F4F5",fill2:"#F4F4F5",seg:"#F4F4F5",segSel:"#FFFFFF",cardLine:"#E4E4E7",accent:"#18181B",onAccent:"#FAFAFA",accentSoft:"#F4F4F5",pillSel:"#F4F4F5",pillSelInk:"#18181B",outline:"#E4E4E7",chevron:"#A1A1AA",good:"#15803D",goodSoft:"#F0FDF4",warn:"#B45309",warnSoft:"#FFFBEB",bad:"#DC2626",badSoft:"#FEF2F2",device:"#18181B",deviceScreen:"#FFFFFF",deviceInk:"#09090B",brand:"#EA580C"};
+const dark = {ground:"#18181B",screen:"#09090B",frame:"#27272A",ink:"#FAFAFA",muted:"#A1A1AA",line:"#27272A",fill:"#27272A",fill2:"#27272A",seg:"#27272A",segSel:"#09090B",cardLine:"#27272A",accent:"#FAFAFA",onAccent:"#18181B",accentSoft:"#27272A",pillSel:"#27272A",pillSelInk:"#FAFAFA",outline:"#27272A",chevron:"#71717A",good:"#4ADE80",goodSoft:"#052E16",warn:"#FBBF24",warnSoft:"#422006",bad:"#F87171",badSoft:"#450A0A",device:"#3F3F46",deviceScreen:"#E4E4E7",deviceInk:"#09090B",brand:"#FB923C"};
+return { t: this.props.theme === 'dark' ? dark : light };
+}
+}
+</script>
+</body>
+</html>

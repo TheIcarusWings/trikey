@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Replace guardian</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#18181B}a:hover{color:#3F3F46}
+</style>
+</helmet>
+<div style="width: 980px; height: 1064px; box-sizing: border-box; padding: 48px; background: {{t.ground}}; display: flex; gap: 80px; align-items: flex-start; font-family: 'Geist', -apple-system, system-ui, sans-serif; color: {{t.ink}}">
+<div style="display: flex; flex-direction: column; gap: 16px">
+<div style="font-size: 13px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {{t.muted}}">iOS</div>
+<div style="width: 390px; height: 844px; box-sizing: border-box; border-radius: 44px; border: 1px solid {{t.frame}}; background: {{t.screen}}; overflow: hidden; padding: 54px 20px 40px; display: flex; flex-direction: column; gap: 16px">
+<a href="Settings-Guardian.dc.html" style="display: flex; align-items: center; gap: 2px; height: 44px; color: {{t.ink}}; font-size: 17px; text-decoration: none"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18 9 12l6-6"></path></svg>Guardian</a>
+<h1 style="margin: 0; font-size: 32px; line-height: 38px; font-weight: 600; letter-spacing: -0.02em">Replace guardian</h1>
+<p style="margin: 0; font-size: 15px; line-height: 21px; color: {{t.muted}}">For a new home server, or if the old one died. Your money moves once to a new wallet with the same phone and hardware wallet. No waiting period.</p>
+<ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 14px">
+<li style="display: flex; gap: 12px; align-items: flex-start"><span style="width: 28px; height: 28px; flex-shrink: 0; border-radius: 14px; border: 1px solid {{t.line}}; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600">1</span><span style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 16px; line-height: 22px; font-weight: 500">Install Trikey Guardian on the new box</span><span style="font-size: 14px; line-height: 20px; color: {{t.muted}}">Umbrel or Start9</span></span></li>
+<li style="display: flex; gap: 12px; align-items: flex-start"><span style="width: 28px; height: 28px; flex-shrink: 0; border-radius: 14px; border: 1px solid {{t.line}}; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600">2</span><span style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 16px; line-height: 22px; font-weight: 500">Scan its pairing code</span><span style="font-size: 14px; line-height: 20px; color: {{t.muted}}">This creates your new wallet</span></span></li>
+<li style="display: flex; gap: 12px; align-items: flex-start"><span style="width: 28px; height: 28px; flex-shrink: 0; border-radius: 14px; border: 1px solid {{t.line}}; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600">3</span><span style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 16px; line-height: 22px; font-weight: 500">Approve the move on your Ledger</span><span style="font-size: 14px; line-height: 20px; color: {{t.muted}}">One transaction, about 1,200 sats in fees</span></span></li>
+</ol>
+<div style="display: flex; gap: 12px; align-items: flex-start; border-radius: 12px; border: 1px solid {{t.line}}; padding: 14px 16px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="{{t.ink}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0; margin-top: 1px"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"></path></svg><span style="font-size: 14px; line-height: 20px">After the move, the old guardian's key is useless, even if someone finds the old box.</span></div>
+<div style="flex-grow: 1"></div>
+<a href="Onb-ScanGuardian.dc.html" style="display: flex; align-items: center; justify-content: center; height: 48px; border-radius: 10px; background: {{t.accent}}; color: {{t.onAccent}}; font-size: 16px; font-weight: 500; text-decoration: none">Scan new guardian</a>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 16px">
+<div style="font-size: 13px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {{t.muted}}">Android</div>
+<div style="width: 412px; height: 915px; box-sizing: border-box; border-radius: 28px; border: 1px solid {{t.frame}}; background: {{t.screen}}; overflow: hidden; padding: 32px 16px 32px; display: flex; flex-direction: column; gap: 16px; font-family: 'Geist', system-ui, sans-serif">
+<div style="display: flex; align-items: center; gap: 4px; height: 64px"><a href="Settings-Guardian.dc.html" aria-label="Back" style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; color: {{t.ink}}"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"></path></svg></a><h1 style="margin: 0; font-size: 22px; line-height: 28px; font-weight: 500">Replace guardian</h1></div>
+<p style="margin: 0 8px; font-size: 14px; line-height: 20px; color: {{t.muted}}">For a new home server, or if the old one died. Your money moves once to a new wallet with the same phone and hardware wallet. No waiting period.</p>
+<ol style="margin: 0 8px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 16px">
+<li style="display: flex; gap: 16px; align-items: flex-start"><span style="width: 28px; height: 28px; flex-shrink: 0; border-radius: 14px; border: 1px solid {{t.line}}; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600">1</span><span style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 16px; line-height: 24px; font-weight: 500">Install Trikey Guardian on the new box</span><span style="font-size: 14px; line-height: 20px; color: {{t.muted}}">Umbrel or Start9</span></span></li>
+<li style="display: flex; gap: 16px; align-items: flex-start"><span style="width: 28px; height: 28px; flex-shrink: 0; border-radius: 14px; border: 1px solid {{t.line}}; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600">2</span><span style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 16px; line-height: 24px; font-weight: 500">Scan its pairing code</span><span style="font-size: 14px; line-height: 20px; color: {{t.muted}}">This creates your new wallet</span></span></li>
+<li style="display: flex; gap: 16px; align-items: flex-start"><span style="width: 28px; height: 28px; flex-shrink: 0; border-radius: 14px; border: 1px solid {{t.line}}; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600">3</span><span style="display: flex; flex-direction: column; gap: 2px"><span style="font-size: 16px; line-height: 24px; font-weight: 500">Approve the move on your Ledger</span><span style="font-size: 14px; line-height: 20px; color: {{t.muted}}">One transaction, about 1,200 sats in fees</span></span></li>
+</ol>
+<div style="margin: 0 8px; display: flex; gap: 12px; align-items: flex-start; border-radius: 12px; border: 1px solid {{t.line}}; padding: 14px 16px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="{{t.ink}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0; margin-top: 1px"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"></path></svg><span style="font-size: 14px; line-height: 20px">After the move, the old guardian's key is useless, even if someone finds the old box.</span></div>
+<div style="flex-grow: 1"></div>
+<a href="Onb-ScanGuardian.dc.html" style="margin: 0 8px; display: flex; align-items: center; justify-content: center; height: 48px; border-radius: 10px; background: {{t.accent}}; color: {{t.onAccent}}; font-size: 15px; font-weight: 500; text-decoration: none">Scan new guardian</a>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":980,"height":1064}}'>
+class Component extends DCLogic {
+renderVals() {
+const light = {ground:"#F4F4F5",screen:"#FFFFFF",frame:"#E4E4E7",ink:"#09090B",muted:"#71717A",line:"#E4E4E7",fill:"#F4F4F5",fill2:"#F4F4F5",seg:"#F4F4F5",segSel:"#FFFFFF",cardLine:"#E4E4E7",accent:"#18181B",onAccent:"#FAFAFA",accentSoft:"#F4F4F5",pillSel:"#F4F4F5",pillSelInk:"#18181B",outline:"#E4E4E7",chevron:"#A1A1AA",good:"#15803D",goodSoft:"#F0FDF4",warn:"#B45309",warnSoft:"#FFFBEB",bad:"#DC2626",badSoft:"#FEF2F2",device:"#18181B",deviceScreen:"#FFFFFF",deviceInk:"#09090B",brand:"#EA580C"};
+const dark = {ground:"#18181B",screen:"#09090B",frame:"#27272A",ink:"#FAFAFA",muted:"#A1A1AA",line:"#27272A",fill:"#27272A",fill2:"#27272A",seg:"#27272A",segSel:"#09090B",cardLine:"#27272A",accent:"#FAFAFA",onAccent:"#18181B",accentSoft:"#27272A",pillSel:"#27272A",pillSelInk:"#FAFAFA",outline:"#27272A",chevron:"#71717A",good:"#4ADE80",goodSoft:"#052E16",warn:"#FBBF24",warnSoft:"#422006",bad:"#F87171",badSoft:"#450A0A",device:"#3F3F46",deviceScreen:"#E4E4E7",deviceInk:"#09090B",brand:"#FB923C"};
+return { t: this.props.theme === 'dark' ? dark : light };
+}
+}
+</script>
+</body>
+</html>

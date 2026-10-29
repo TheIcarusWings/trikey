@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Receive</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#18181B}a:hover{color:#3F3F46}
+</style>
+</helmet>
+<div style="width: 980px; height: 1064px; box-sizing: border-box; padding: 48px; background: {{t.ground}}; display: flex; gap: 80px; align-items: flex-start; font-family: 'Geist', -apple-system, system-ui, sans-serif; color: {{t.ink}}">
+<div style="display: flex; flex-direction: column; gap: 16px">
+<div style="font-size: 13px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {{t.muted}}">iOS</div>
+<div style="width: 390px; height: 844px; box-sizing: border-box; border-radius: 44px; border: 1px solid {{t.frame}}; background: {{t.screen}}; overflow: hidden; padding: 54px 20px 40px; display: flex; flex-direction: column; gap: 16px">
+<a href="Home.dc.html" style="display: flex; align-items: center; gap: 2px; height: 44px; color: {{t.accent}}; font-size: 17px; text-decoration: none"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18 9 12l6-6"></path></svg>Home</a>
+<h1 style="margin: 0; font-size: 32px; line-height: 38px; font-weight: 600; letter-spacing: -0.02em">Receive</h1>
+<div style="align-self: center; width: 232px; height: 232px; box-sizing: border-box; padding: 16px; border-radius: 16px; background: #FFFFFF; border: 1px solid {{t.line}}"><svg width="200" height="200" viewBox="0 0 25 25" role="img" aria-label="QR code for the address below"><rect x="0" y="0" width="7" height="7" fill="#111418"></rect><rect x="1" y="1" width="5" height="5" fill="#FFFFFF"></rect><rect x="2" y="2" width="3" height="3" fill="#111418"></rect><rect x="18" y="0" width="7" height="7" fill="#111418"></rect><rect x="19" y="1" width="5" height="5" fill="#FFFFFF"></rect><rect x="20" y="2" width="3" height="3" fill="#111418"></rect><rect x="0" y="18" width="7" height="7" fill="#111418"></rect><rect x="1" y="19" width="5" height="5" fill="#FFFFFF"></rect><rect x="2" y="20" width="3" height="3" fill="#111418"></rect><path d="M9 1h2v2H9zM12 0h1v3h-1zM14 2h2v1h-2zM9 5h1v3H9zM11 6h3v1h-3zM15 5h1v2h-1zM8 9h2v1H8zM11 9h1v4h-1zM13 10h3v1h-3zM17 9h2v2h-2zM20 9h1v3h-1zM22 10h3v1h-3zM0 9h3v1H0zM4 10h2v2H4zM1 12h2v1H1zM9 13h2v2H9zM14 13h1v3h-1zM16 14h3v1h-3zM21 13h2v2h-2zM0 15h2v1H0zM3 14h3v1H3zM9 17h3v1H9zM13 18h2v2h-2zM16 17h1v3h-1zM18 19h3v1h-3zM22 17h3v2h-3zM9 20h1v3H9zM11 21h3v1h-3zM15 22h2v3h-2zM19 22h1v1h-1zM21 21h2v4h-2zM11 24h3v1h-3z" fill="#111418"></path></svg></div>
+<div style="font-family: 'Geist Mono', ui-monospace, monospace; font-size: 15px; line-height: 24px; text-align: center; padding: 0 12px">bc1q xh7u 3m0k 9e2r 5t8w q4lz j6yd 3c0v np7s 2fga 8w5k e9h3 rj4m t6qy 0xl2 dn</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+<button type="button" style="display: flex; align-items: center; justify-content: center; gap: 8px; height: 48px; border: none; border-radius: 10px; background: {{t.fill}}; color: {{t.ink}}; font: 600 16px 'Geist', sans-serif"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a1 1 0 0 1 1-1h10"></path></svg>Copy</button>
+<button type="button" style="display: flex; align-items: center; justify-content: center; gap: 8px; height: 48px; border: none; border-radius: 10px; background: {{t.fill}}; color: {{t.ink}}; font: 600 16px 'Geist', sans-serif">Share</button>
+</div>
+<div style="flex-grow: 1"></div>
+<div style="border-radius: 12px; border: 1px solid {{t.line}}; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px"><span style="font-size: 15px; line-height: 21px">For larger amounts, check that your Ledger shows the same address.</span><a href="Receive-Verify.dc.html" style="font-size: 15px; line-height: 21px; font-weight: 600; color: {{t.accent}}; text-decoration: none">Verify on Ledger</a></div>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 16px">
+<div style="font-size: 13px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {{t.muted}}">Android</div>
+<div style="width: 412px; height: 915px; box-sizing: border-box; border-radius: 28px; border: 1px solid {{t.frame}}; background: {{t.screen}}; overflow: hidden; padding: 32px 16px 32px; display: flex; flex-direction: column; gap: 16px; font-family: 'Geist', system-ui, sans-serif">
+<div style="display: flex; align-items: center; gap: 4px; height: 64px"><a href="Home.dc.html" aria-label="Back" style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; color: {{t.ink}}"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"></path></svg></a><h1 style="margin: 0; font-size: 22px; line-height: 28px; font-weight: 400">Receive</h1></div>
+<div style="align-self: center; margin-top: 16px; width: 248px; height: 248px; box-sizing: border-box; padding: 16px; border-radius: 16px; background: #FFFFFF; border: 1px solid {{t.line}}"><svg width="216" height="216" viewBox="0 0 25 25" role="img" aria-label="QR code for the address below"><rect x="0" y="0" width="7" height="7" fill="#111418"></rect><rect x="1" y="1" width="5" height="5" fill="#FFFFFF"></rect><rect x="2" y="2" width="3" height="3" fill="#111418"></rect><rect x="18" y="0" width="7" height="7" fill="#111418"></rect><rect x="19" y="1" width="5" height="5" fill="#FFFFFF"></rect><rect x="20" y="2" width="3" height="3" fill="#111418"></rect><rect x="0" y="18" width="7" height="7" fill="#111418"></rect><rect x="1" y="19" width="5" height="5" fill="#FFFFFF"></rect><rect x="2" y="20" width="3" height="3" fill="#111418"></rect><path d="M9 1h2v2H9zM12 0h1v3h-1zM14 2h2v1h-2zM9 5h1v3H9zM11 6h3v1h-3zM15 5h1v2h-1zM8 9h2v1H8zM11 9h1v4h-1zM13 10h3v1h-3zM17 9h2v2h-2zM20 9h1v3h-1zM22 10h3v1h-3zM0 9h3v1H0zM4 10h2v2H4zM1 12h2v1H1zM9 13h2v2H9zM14 13h1v3h-1zM16 14h3v1h-3zM21 13h2v2h-2zM0 15h2v1H0zM3 14h3v1H3zM9 17h3v1H9zM13 18h2v2h-2zM16 17h1v3h-1zM18 19h3v1h-3zM22 17h3v2h-3zM9 20h1v3H9zM11 21h3v1h-3zM15 22h2v3h-2zM19 22h1v1h-1zM21 21h2v4h-2zM11 24h3v1h-3z" fill="#111418"></path></svg></div>
+<div style="font-family: 'Geist Mono', ui-monospace, monospace; font-size: 15px; line-height: 24px; text-align: center; padding: 0 16px">bc1q xh7u 3m0k 9e2r 5t8w q4lz j6yd 3c0v np7s 2fga 8w5k e9h3 rj4m t6qy 0xl2 dn</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 0 8px">
+<button type="button" style="display: flex; align-items: center; justify-content: center; gap: 8px; height: 48px; border: 1px solid {{t.outline}}; border-radius: 10px; background: transparent; color: {{t.accent}}; font: 500 15px 'Geist', sans-serif"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a1 1 0 0 1 1-1h10"></path></svg>Copy</button>
+<button type="button" style="display: flex; align-items: center; justify-content: center; gap: 8px; height: 48px; border: 1px solid {{t.outline}}; border-radius: 10px; background: transparent; color: {{t.accent}}; font: 500 15px 'Geist', sans-serif">Share</button>
+</div>
+<div style="flex-grow: 1"></div>
+<div style="margin: 0 8px; border-radius: 12px; border: 1px solid {{t.cardLine}}; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px"><span style="font-size: 14px; line-height: 20px">For larger amounts, check that your Ledger shows the same address.</span><a href="Receive-Verify.dc.html" style="font-size: 14px; line-height: 20px; font-weight: 500; color: {{t.accent}}; text-decoration: none">Verify on Ledger</a></div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":980,"height":1064}}'>
+class Component extends DCLogic {
+renderVals() {
+const light = {ground:"#F4F4F5",screen:"#FFFFFF",frame:"#E4E4E7",ink:"#09090B",muted:"#71717A",line:"#E4E4E7",fill:"#F4F4F5",fill2:"#F4F4F5",seg:"#F4F4F5",segSel:"#FFFFFF",cardLine:"#E4E4E7",accent:"#18181B",onAccent:"#FAFAFA",accentSoft:"#F4F4F5",pillSel:"#F4F4F5",pillSelInk:"#18181B",outline:"#E4E4E7",chevron:"#A1A1AA",good:"#15803D",goodSoft:"#F0FDF4",warn:"#B45309",warnSoft:"#FFFBEB",bad:"#DC2626",badSoft:"#FEF2F2",device:"#18181B",deviceScreen:"#FFFFFF",deviceInk:"#09090B",brand:"#EA580C"};
+const dark = {ground:"#18181B",screen:"#09090B",frame:"#27272A",ink:"#FAFAFA",muted:"#A1A1AA",line:"#27272A",fill:"#27272A",fill2:"#27272A",seg:"#27272A",segSel:"#09090B",cardLine:"#27272A",accent:"#FAFAFA",onAccent:"#18181B",accentSoft:"#27272A",pillSel:"#27272A",pillSelInk:"#FAFAFA",outline:"#27272A",chevron:"#71717A",good:"#4ADE80",goodSoft:"#052E16",warn:"#FBBF24",warnSoft:"#422006",bad:"#F87171",badSoft:"#450A0A",device:"#3F3F46",deviceScreen:"#E4E4E7",deviceInk:"#09090B",brand:"#FB923C"};
+return { t: this.props.theme === 'dark' ? dark : light };
+}
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recovery waiting</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#18181B}a:hover{color:#3F3F46}
+</style>
+</helmet>
+<div style="width: 980px; height: 1064px; box-sizing: border-box; padding: 48px; background: {{t.ground}}; display: flex; gap: 80px; align-items: flex-start; font-family: 'Geist', -apple-system, system-ui, sans-serif; color: {{t.ink}}">
+<div style="display: flex; flex-direction: column; gap: 16px">
+<div style="font-size: 13px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {{t.muted}}">iOS</div>
+<div style="width: 390px; height: 844px; box-sizing: border-box; border-radius: 44px; border: 1px solid {{t.frame}}; background: {{t.screen}}; overflow: hidden; padding: 64px 20px 40px; display: flex; flex-direction: column; gap: 20px">
+<h1 style="margin: 0; font-size: 32px; line-height: 38px; font-weight: 600; letter-spacing: -0.02em">Recovery in progress</h1>
+<div style="border-radius: 12px; border: 1px solid {{t.line}}; padding: 16px; display: flex; flex-direction: column; gap: 12px">
+<span style="font-size: 36px; line-height: 44px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums">5 days 14 h</span>
+<span style="font-size: 14px; line-height: 20px; color: {{t.muted}}">until your money moves to the new wallet</span>
+<div style="height: 6px; border-radius: 3px; background: {{t.fill}}; overflow: hidden"><div style="width: 20%; height: 6px; border-radius: 3px; background: {{t.ink}}"></div></div>
+</div>
+<ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 16px">
+<li style="display: flex; gap: 12px"><span style="width: 22px; height: 22px; flex-shrink: 0; border-radius: 11px; background: {{t.goodSoft}}; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="{{t.good}}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5 10 17 19 7"></path></svg></span><span style="display: flex; flex-direction: column"><span style="font-size: 15px; line-height: 21px; font-weight: 500">Started with your Ledger</span><span style="font-size: 13px; line-height: 18px; color: {{t.muted}}">Oct 29, 14:05</span></span></li>
+<li style="display: flex; gap: 12px"><span style="width: 22px; height: 22px; flex-shrink: 0; border-radius: 11px; background: {{t.goodSoft}}; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="{{t.good}}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5 10 17 19 7"></path></svg></span><span style="display: flex; flex-direction: column"><span style="font-size: 15px; line-height: 21px; font-weight: 500">Alerts sent</span><span style="font-size: 13px; line-height: 18px; color: {{t.muted}}">Your old phone, Maria and Tom, daily</span></span></li>
+<li style="display: flex; gap: 12px"><span style="width: 22px; height: 22px; flex-shrink: 0; border-radius: 11px; border: 1.5px solid {{t.line}}; box-sizing: border-box"></span><span style="display: flex; flex-direction: column"><span style="font-size: 15px; line-height: 21px; font-weight: 500">Guardian co-signs the move</span><span style="font-size: 13px; line-height: 18px; color: {{t.muted}}">Nov 5, 14:05</span></span></li>
+</ol>
+<div style="display: flex; gap: 12px; align-items: flex-start; border-radius: 12px; background: {{t.fill}}; padding: 14px 16px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="{{t.ink}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0; margin-top: 1px"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><span style="font-size: 14px; line-height: 20px">Phone-only payments are paused until this finishes. This wait protects you if someone else started it.</span></div>
+<div style="flex-grow: 1"></div>
+<a href="Recover-Choose.dc.html" style="display: flex; align-items: center; justify-content: center; height: 48px; border-radius: 10px; border: 1px solid {{t.line}}; color: {{t.bad}}; font-size: 16px; font-weight: 500; text-decoration: none">Cancel recovery</a>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 16px">
+<div style="font-size: 13px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {{t.muted}}">Android</div>
+<div style="width: 412px; height: 915px; box-sizing: border-box; border-radius: 28px; border: 1px solid {{t.frame}}; background: {{t.screen}}; overflow: hidden; padding: 40px 24px 32px; display: flex; flex-direction: column; gap: 20px; font-family: 'Geist', system-ui, sans-serif">
+<h1 style="margin: 24px 0 0; font-size: 28px; line-height: 36px; font-weight: 600; letter-spacing: -0.02em">Recovery in progress</h1>
+<div style="border-radius: 12px; border: 1px solid {{t.line}}; padding: 16px; display: flex; flex-direction: column; gap: 12px">
+<span style="font-size: 36px; line-height: 44px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums">5 days 14 h</span>
+<span style="font-size: 14px; line-height: 20px; color: {{t.muted}}">until your money moves to the new wallet</span>
+<div style="height: 6px; border-radius: 3px; background: {{t.fill}}; overflow: hidden"><div style="width: 20%; height: 6px; border-radius: 3px; background: {{t.ink}}"></div></div>
+</div>
+<ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 16px">
+<li style="display: flex; gap: 16px"><span style="width: 22px; height: 22px; flex-shrink: 0; border-radius: 11px; background: {{t.goodSoft}}; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="{{t.good}}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5 10 17 19 7"></path></svg></span><span style="display: flex; flex-direction: column"><span style="font-size: 15px; line-height: 22px; font-weight: 500">Started with your Ledger</span><span style="font-size: 13px; line-height: 18px; color: {{t.muted}}">Oct 29, 14:05</span></span></li>
+<li style="display: flex; gap: 16px"><span style="width: 22px; height: 22px; flex-shrink: 0; border-radius: 11px; background: {{t.goodSoft}}; display: flex; align-items: center; justify-content: center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="{{t.good}}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5 10 17 19 7"></path></svg></span><span style="display: flex; flex-direction: column"><span style="font-size: 15px; line-height: 22px; font-weight: 500">Alerts sent</span><span style="font-size: 13px; line-height: 18px; color: {{t.muted}}">Your old phone, Maria and Tom, daily</span></span></li>
+<li style="display: flex; gap: 16px"><span style="width: 22px; height: 22px; flex-shrink: 0; border-radius: 11px; border: 1.5px solid {{t.line}}; box-sizing: border-box"></span><span style="display: flex; flex-direction: column"><span style="font-size: 15px; line-height: 22px; font-weight: 500">Guardian co-signs the move</span><span style="font-size: 13px; line-height: 18px; color: {{t.muted}}">Nov 5, 14:05</span></span></li>
+</ol>
+<div style="display: flex; gap: 12px; align-items: flex-start; border-radius: 12px; background: {{t.fill}}; padding: 14px 16px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="{{t.ink}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0; margin-top: 1px"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><span style="font-size: 14px; line-height: 20px">Phone-only payments are paused until this finishes. This wait protects you if someone else started it.</span></div>
+<div style="flex-grow: 1"></div>
+<a href="Recover-Choose.dc.html" style="display: flex; align-items: center; justify-content: center; height: 48px; border-radius: 10px; border: 1px solid {{t.line}}; color: {{t.bad}}; font-size: 15px; font-weight: 500; text-decoration: none">Cancel recovery</a>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":980,"height":1064}}'>
+class Component extends DCLogic {
+renderVals() {
+const light = {ground:"#F4F4F5",screen:"#FFFFFF",frame:"#E4E4E7",ink:"#09090B",muted:"#71717A",line:"#E4E4E7",fill:"#F4F4F5",fill2:"#F4F4F5",seg:"#F4F4F5",segSel:"#FFFFFF",cardLine:"#E4E4E7",accent:"#18181B",onAccent:"#FAFAFA",accentSoft:"#F4F4F5",pillSel:"#F4F4F5",pillSelInk:"#18181B",outline:"#E4E4E7",chevron:"#A1A1AA",good:"#15803D",goodSoft:"#F0FDF4",warn:"#B45309",warnSoft:"#FFFBEB",bad:"#DC2626",badSoft:"#FEF2F2",device:"#18181B",deviceScreen:"#FFFFFF",deviceInk:"#09090B",brand:"#EA580C"};
+const dark = {ground:"#18181B",screen:"#09090B",frame:"#27272A",ink:"#FAFAFA",muted:"#A1A1AA",line:"#27272A",fill:"#27272A",fill2:"#27272A",seg:"#27272A",segSel:"#09090B",cardLine:"#27272A",accent:"#FAFAFA",onAccent:"#18181B",accentSoft:"#27272A",pillSel:"#27272A",pillSelInk:"#FAFAFA",outline:"#27272A",chevron:"#71717A",good:"#4ADE80",goodSoft:"#052E16",warn:"#FBBF24",warnSoft:"#422006",bad:"#F87171",badSoft:"#450A0A",device:"#3F3F46",deviceScreen:"#E4E4E7",deviceInk:"#09090B",brand:"#FB923C"};
+return { t: this.props.theme === 'dark' ? dark : light };
+}
+}
+</script>
+</body>
+</html>

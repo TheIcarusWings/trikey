@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recovery alert</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#18181B}a:hover{color:#3F3F46}
+</style>
+</helmet>
+<div style="width: 980px; height: 1064px; box-sizing: border-box; padding: 48px; background: {{t.ground}}; display: flex; gap: 80px; align-items: flex-start; font-family: 'Geist', -apple-system, system-ui, sans-serif; color: {{t.ink}}">
+<div style="display: flex; flex-direction: column; gap: 16px">
+<div style="font-size: 13px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {{t.muted}}">iOS</div>
+<div style="width: 390px; height: 844px; box-sizing: border-box; border-radius: 44px; border: 1px solid {{t.frame}}; background: {{t.screen}}; overflow: hidden; padding: 80px 20px 40px; display: flex; flex-direction: column; gap: 20px">
+<span style="width: 56px; height: 56px; border-radius: 28px; background: {{t.badSoft}}; display: flex; align-items: center; justify-content: center"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="{{t.bad}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 20h20zM12 10v4M12 17h.01"></path></svg></span>
+<h1 style="margin: 0; font-size: 30px; line-height: 36px; font-weight: 600; letter-spacing: -0.02em">Someone started a recovery</h1>
+<p style="margin: 0; font-size: 16px; line-height: 23px">A new phone asked your guardian to move your money, using your Ledger. If that wasn't you, cancel now.</p>
+<div style="border-radius: 12px; border: 1px solid {{t.line}}; display: flex; flex-direction: column">
+<div style="display: flex; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid {{t.line}}; font-size: 15px; line-height: 20px"><span style="color: {{t.muted}}">Started</span><span>Oct 29, 14:05</span></div>
+<div style="display: flex; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid {{t.line}}; font-size: 15px; line-height: 20px"><span style="color: {{t.muted}}">Says this key is lost</span><span>This phone</span></div>
+<div style="display: flex; justify-content: space-between; padding: 14px 16px; font-size: 15px; line-height: 20px"><span style="color: {{t.muted}}">Money moves</span><span style="font-weight: 600">Nov 5, 14:05</span></div>
+</div>
+<div style="flex-grow: 1"></div>
+<a href="Home.dc.html" style="display: flex; align-items: center; justify-content: center; height: 48px; border-radius: 10px; background: {{t.bad}}; color: {{t.screen}}; font-size: 16px; font-weight: 600; text-decoration: none">Cancel recovery</a>
+<a href="Recover-Waiting.dc.html" style="display: flex; align-items: center; justify-content: center; height: 48px; border-radius: 10px; border: 1px solid {{t.line}}; color: {{t.ink}}; font-size: 16px; font-weight: 500; text-decoration: none">This was me</a>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 16px">
+<div style="font-size: 13px; line-height: 16px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {{t.muted}}">Android</div>
+<div style="width: 412px; height: 915px; box-sizing: border-box; border-radius: 28px; border: 1px solid {{t.frame}}; background: {{t.screen}}; overflow: hidden; padding: 72px 24px 32px; display: flex; flex-direction: column; gap: 20px; font-family: 'Geist', system-ui, sans-serif">
+<span style="width: 56px; height: 56px; border-radius: 28px; background: {{t.badSoft}}; display: flex; align-items: center; justify-content: center"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="{{t.bad}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 20h20zM12 10v4M12 17h.01"></path></svg></span>
+<h1 style="margin: 0; font-size: 28px; line-height: 36px; font-weight: 600; letter-spacing: -0.02em">Someone started a recovery</h1>
+<p style="margin: 0; font-size: 16px; line-height: 24px">A new phone asked your guardian to move your money, using your Ledger. If that wasn't you, cancel now.</p>
+<div style="border-radius: 12px; border: 1px solid {{t.line}}; display: flex; flex-direction: column">
+<div style="display: flex; justify-content: space-between; padding: 16px; border-bottom: 1px solid {{t.line}}; font-size: 15px; line-height: 20px"><span style="color: {{t.muted}}">Started</span><span>Oct 29, 14:05</span></div>
+<div style="display: flex; justify-content: space-between; padding: 16px; border-bottom: 1px solid {{t.line}}; font-size: 15px; line-height: 20px"><span style="color: {{t.muted}}">Says this key is lost</span><span>This phone</span></div>
+<div style="display: flex; justify-content: space-between; padding: 16px; font-size: 15px; line-height: 20px"><span style="color: {{t.muted}}">Money moves</span><span style="font-weight: 600">Nov 5, 14:05</span></div>
+</div>
+<div style="flex-grow: 1"></div>
+<a href="Home.dc.html" style="display: flex; align-items: center; justify-content: center; height: 48px; border-radius: 10px; background: {{t.bad}}; color: {{t.screen}}; font-size: 15px; font-weight: 600; text-decoration: none">Cancel recovery</a>
+<a href="Recover-Waiting.dc.html" style="display: flex; align-items: center; justify-content: center; height: 48px; border-radius: 10px; border: 1px solid {{t.line}}; color: {{t.ink}}; font-size: 15px; font-weight: 500; text-decoration: none">This was me</a>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":980,"height":1064}}'>
+class Component extends DCLogic {
+renderVals() {
+const light = {ground:"#F4F4F5",screen:"#FFFFFF",frame:"#E4E4E7",ink:"#09090B",muted:"#71717A",line:"#E4E4E7",fill:"#F4F4F5",fill2:"#F4F4F5",seg:"#F4F4F5",segSel:"#FFFFFF",cardLine:"#E4E4E7",accent:"#18181B",onAccent:"#FAFAFA",accentSoft:"#F4F4F5",pillSel:"#F4F4F5",pillSelInk:"#18181B",outline:"#E4E4E7",chevron:"#A1A1AA",good:"#15803D",goodSoft:"#F0FDF4",warn:"#B45309",warnSoft:"#FFFBEB",bad:"#DC2626",badSoft:"#FEF2F2",device:"#18181B",deviceScreen:"#FFFFFF",deviceInk:"#09090B",brand:"#EA580C"};
+const dark = {ground:"#18181B",screen:"#09090B",frame:"#27272A",ink:"#FAFAFA",muted:"#A1A1AA",line:"#27272A",fill:"#27272A",fill2:"#27272A",seg:"#27272A",segSel:"#09090B",cardLine:"#27272A",accent:"#FAFAFA",onAccent:"#18181B",accentSoft:"#27272A",pillSel:"#27272A",pillSelInk:"#FAFAFA",outline:"#27272A",chevron:"#71717A",good:"#4ADE80",goodSoft:"#052E16",warn:"#FBBF24",warnSoft:"#422006",bad:"#F87171",badSoft:"#450A0A",device:"#3F3F46",deviceScreen:"#E4E4E7",deviceInk:"#09090B",brand:"#FB923C"};
+return { t: this.props.theme === 'dark' ? dark : light };
+}
+}
+</script>
+</body>
+</html>

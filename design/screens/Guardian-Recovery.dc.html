@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Guardian: recovery in progress</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#18181B}a:hover{color:#3F3F46}
+</style>
+</helmet>
+<div style="min-height: 880px; display: flex; flex-wrap: wrap; background: {{t.screen}}; color: {{t.ink}}; font-family: 'Geist', system-ui, sans-serif">
+<aside style="flex: 1 1 220px; box-sizing: border-box; padding: 20px 12px; border-right: 1px solid {{t.line}}; background: {{t.ground}}; display: flex; flex-direction: column; gap: 20px">
+<div style="display: flex; align-items: center; gap: 10px; padding: 0 10px"><svg width="24" height="22" viewBox="0 0 88 80" aria-hidden="true"><path d="M44 14 L16 62 L72 62 Z" fill="none" stroke="{{t.ink}}" stroke-width="6" stroke-linejoin="round"></path><circle cx="44" cy="14" r="12" fill="{{t.brand}}"></circle><circle cx="16" cy="62" r="12" fill="{{t.ink}}"></circle><circle cx="72" cy="62" r="12" fill="{{t.ink}}"></circle></svg><span style="font-size: 15px; font-weight: 600">Trikey Guardian</span></div>
+<nav aria-label="Guardian" style="display: flex; flex-direction: column; gap: 2px">
+<a href="Guardian-Dashboard.dc.html" style="display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 8px; color: {{t.ink}}; font-size: 14px; font-weight: 500; text-decoration: none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>Dashboard</a>
+<a href="Guardian-Recovery.dc.html" aria-current="page" style="display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 8px; background: {{t.warnSoft}}; color: {{t.ink}}; font-size: 14px; font-weight: 500; text-decoration: none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="{{t.warn}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>Recovery</a>
+<a href="Guardian-Activity.dc.html" style="display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 8px; color: {{t.ink}}; font-size: 14px; font-weight: 500; text-decoration: none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"></path></svg>Activity</a>
+<a href="Guardian-Rules.dc.html" style="display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 8px; color: {{t.ink}}; font-size: 14px; font-weight: 500; text-decoration: none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"></path></svg>Rules</a>
+<a href="Family-Invite.dc.html" style="display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 8px; color: {{t.ink}}; font-size: 14px; font-weight: 500; text-decoration: none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"></circle><path d="M2.5 20a6.5 6.5 0 0 1 13 0M17 8v6M14 11h6"></path></svg>Host for someone</a>
+</nav>
+</aside>
+<main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 32px; display: flex; flex-direction: column; gap: 24px">
+<div style="max-width: 760px; display: flex; gap: 12px; align-items: flex-start; border-radius: 12px; border: 1px solid {{t.line}}; background: {{t.warnSoft}}; padding: 16px 20px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="{{t.warn}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0; margin-top: 2px"><path d="M12 3 2 20h20zM12 10v4M12 17h.01"></path></svg><span style="display: flex; flex-direction: column; gap: 4px"><span style="font-size: 15px; line-height: 22px; font-weight: 600">Recovery in progress · 5 days 14 hours left</span><span style="font-size: 14px; line-height: 20px">Phone-only payments are paused. If nobody cancels, this guardian co-signs the move on Nov 5 at 14:05.</span></span></div>
+<div style="max-width: 760px; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px">
+<div style="border-radius: 12px; border: 1px solid {{t.line}}; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; flex-direction: column">
+<span style="padding: 16px 20px 8px; font-size: 15px; line-height: 22px; font-weight: 600">Request</span>
+<div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 20px; border-top: 1px solid {{t.line}}; font-size: 14px; line-height: 20px"><span style="color: {{t.muted}}">Started</span><span>Oct 29, 14:05</span></div>
+<div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 20px; border-top: 1px solid {{t.line}}; font-size: 14px; line-height: 20px"><span style="color: {{t.muted}}">Key said to be lost</span><span>Phone</span></div>
+<div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 20px; border-top: 1px solid {{t.line}}; font-size: 14px; line-height: 20px"><span style="color: {{t.muted}}">Signed with</span><span>Ledger · valid</span></div>
+<div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 20px; border-top: 1px solid {{t.line}}; font-size: 14px; line-height: 20px"><span style="color: {{t.muted}}">Moves</span><span style="font-variant-numeric: tabular-nums">4,208,800 sats</span></div>
+<div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 20px 16px; border-top: 1px solid {{t.line}}; font-size: 14px; line-height: 20px"><span style="color: {{t.muted}}">Fee</span><span style="font-variant-numeric: tabular-nums">1,200 sats · under the cap</span></div>
+</div>
+<div style="border-radius: 12px; border: 1px solid {{t.line}}; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; flex-direction: column">
+<span style="padding: 16px 20px 8px; font-size: 15px; line-height: 22px; font-weight: 600">Alerts sent</span>
+<div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 20px; border-top: 1px solid {{t.line}}; font-size: 14px; line-height: 20px"><span>Paired phone</span><span style="color: {{t.muted}}">Oct 29, 30</span></div>
+<div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 20px; border-top: 1px solid {{t.line}}; font-size: 14px; line-height: 20px"><span>Maria</span><span style="color: {{t.muted}}">Oct 29, 30</span></div>
+<div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 20px 16px; border-top: 1px solid {{t.line}}; font-size: 14px; line-height: 20px"><span>Tom</span><span style="color: {{t.muted}}">Oct 29, 30</span></div>
+</div>
+</div>
+<div style="max-width: 760px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px"><a href="Guardian-Dashboard.dc.html" style="display: inline-flex; align-items: center; height: 36px; padding: 0 16px; border-radius: 8px; background: {{t.bad}}; color: {{t.screen}}; font-size: 14px; font-weight: 600; text-decoration: none">Cancel recovery</a><span style="font-size: 13px; line-height: 18px; color: {{t.muted}}">Only do this if you didn't start it. Your phone and contacts can cancel too.</span></div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light"},"$preview":{"width":1280,"height":880}}'>
+class Component extends DCLogic {
+renderVals() {
+const light = {ground:"#F4F4F5",screen:"#FFFFFF",frame:"#E4E4E7",ink:"#09090B",muted:"#71717A",line:"#E4E4E7",fill:"#F4F4F5",fill2:"#F4F4F5",seg:"#F4F4F5",segSel:"#FFFFFF",cardLine:"#E4E4E7",accent:"#18181B",onAccent:"#FAFAFA",accentSoft:"#F4F4F5",pillSel:"#F4F4F5",pillSelInk:"#18181B",outline:"#E4E4E7",chevron:"#A1A1AA",good:"#15803D",goodSoft:"#F0FDF4",warn:"#B45309",warnSoft:"#FFFBEB",bad:"#DC2626",badSoft:"#FEF2F2",device:"#18181B",deviceScreen:"#FFFFFF",deviceInk:"#09090B",brand:"#EA580C"};
+const dark = {ground:"#18181B",screen:"#09090B",frame:"#27272A",ink:"#FAFAFA",muted:"#A1A1AA",line:"#27272A",fill:"#27272A",fill2:"#27272A",seg:"#27272A",segSel:"#09090B",cardLine:"#27272A",accent:"#FAFAFA",onAccent:"#18181B",accentSoft:"#27272A",pillSel:"#27272A",pillSelInk:"#FAFAFA",outline:"#27272A",chevron:"#71717A",good:"#4ADE80",goodSoft:"#052E16",warn:"#FBBF24",warnSoft:"#422006",bad:"#F87171",badSoft:"#450A0A",device:"#3F3F46",deviceScreen:"#E4E4E7",deviceInk:"#09090B",brand:"#FB923C"};
+return { t: this.props.theme === 'dark' ? dark : light };
+}
+}
+</script>
+</body>
+</html>
