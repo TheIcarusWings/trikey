@@ -1,0 +1,51 @@
+// Adapted from react-native-reusables (MIT). The designs use flat 12px-radius panels
+// with a hairline border and their own padding, so Card has no built-in padding, gap
+// or shadow; CardContent adds the 14/16 padding most panels use.
+import { Text, TextClassContext } from '@/components/ui/text';
+import { cn } from '@/lib/utils';
+import { View } from 'react-native';
+
+function Card({ className, ...props }: React.ComponentProps<typeof View> & React.RefAttributes<View>) {
+  return (
+    <TextClassContext.Provider value="text-card-foreground">
+      <View className={cn('bg-card border-border flex flex-col rounded-xl border', className)} {...props} />
+    </TextClassContext.Provider>
+  );
+}
+
+function CardHeader({ className, ...props }: React.ComponentProps<typeof View> & React.RefAttributes<View>) {
+  return <View className={cn('flex flex-col gap-1.5 px-4 pt-4', className)} {...props} />;
+}
+
+function CardTitle({
+  className,
+  ref,
+  ...props
+}: React.ComponentProps<typeof Text> & React.RefAttributes<typeof Text>) {
+  return (
+    <Text
+      ref={ref}
+      role="heading"
+      aria-level={3}
+      className={cn('font-semibold leading-none', className)}
+      {...props}
+    />
+  );
+}
+
+function CardDescription({
+  className,
+  ...props
+}: React.ComponentProps<typeof Text> & React.RefAttributes<typeof Text>) {
+  return <Text className={cn('text-muted-foreground text-sm', className)} {...props} />;
+}
+
+function CardContent({ className, ...props }: React.ComponentProps<typeof View> & React.RefAttributes<View>) {
+  return <View className={cn('px-4 py-3.5', className)} {...props} />;
+}
+
+function CardFooter({ className, ...props }: React.ComponentProps<typeof View> & React.RefAttributes<View>) {
+  return <View className={cn('flex flex-row items-center px-4 pb-4', className)} {...props} />;
+}
+
+export { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle };
