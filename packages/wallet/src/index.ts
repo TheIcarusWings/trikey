@@ -4,6 +4,7 @@ export * from './chain.js';
 export * from './send.js';
 export * from './keys.js';
 export * from './wallet.js';
+export { GuardianSilentPaymentScanner, GuardianSingleKeyChain, type GuardianScanResult, type RpcLike } from './guardian-sp.js';
 export { parseScannedCode, type ScannedCode, type ScanOptions } from './scan.js';
 export {
   DEFAULT_SWEEP_MIN_SATS,
