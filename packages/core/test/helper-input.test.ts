@@ -77,6 +77,34 @@ describe('analyzePsbt helperInput', () => {
     expect(a.outputs.map((o) => o.isSelf)).toEqual([false, true, false]);
   });
 
+  it('counts the outflow as Σ vault inputs − Σ vault outputs: the helper\'s value adds nothing', async () => {
+    const { psbt, vaultIn } = silentShape();
+    const a = analyzePsbt(await signed(psbt), acct(), network, on);
+    // 30,000 paid + the vault's 1,000 of the fee. Σ all inputs − Σ change would add the helper's 20,000.
+    expect(a.vaultIn).toBe(vaultIn);
+    expect(a.totalIn).toBe(vaultIn + 20_000n);
+    expect(a.outflow).toBe(vaultIn - a.selfOut);
+    expect(a.outflow).toBe(31_000n);
+    expect(a.externalOut + a.fee - a.outflow).toBe(20_000n);
+  });
+
+  it('counts vault money sent to the helper\'s key as outflow, and helper money into the vault as none', async () => {
+    const vault = fundFixed(w, RECEIVE, 0, 200_000n, 1);
+    const parked = mixedPsbt(w, [{ kind: 'vault', utxo: vault }, { kind: 'helper', coin, script: h.script }], [
+      { script: p2trScript(), amount: 1_000n },
+      { self: { chain: CHANGE, index: 6 }, amount: 50_000n },
+      { script: h.script, amount: 168_000n },
+    ]);
+    expect(analyzePsbt(await signed(parked), acct(), network, on).outflow).toBe(150_000n);
+    const intoVault = mixedPsbt(w, [{ kind: 'vault', utxo: vault }, { kind: 'helper', coin, script: h.script }], [
+      { script: p2trScript(), amount: 1_000n },
+      { self: { chain: CHANGE, index: 6 }, amount: 218_000n },
+    ]);
+    const a = analyzePsbt(await signed(intoVault), acct(), network, on);
+    expect(a.selfOut).toBe(218_000n);
+    expect(a.outflow).toBe(0n);
+  });
+
   it('co-signing after it: a cosigner signs only the vault inputs and the helper stays finalized', async () => {
     const { psbt } = silentShape({ vault: 2 });
     const phone = await signed(psbt, [[2, h.priv]]);

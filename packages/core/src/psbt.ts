@@ -278,10 +278,17 @@ export interface PsbtAnalysis {
   selfOut: bigint;
   externalOut: bigint;
   fee: bigint;
-  /** Value leaving the key set, fee included. This is what spend limits count. */
+  /**
+   * Value leaving the key set, fee included: Σ the key set's inputs − Σ outputs proven to pay it back
+   * (`selfOut`). This is what spend limits count. With a helper input it is NOT `externalOut + fee`:
+   * the helper's own value is not the key set's, so it adds nothing (and a helper output is never
+   * change). It is never negative (a helper paying into the vault leaves nothing).
+   */
   outflow: bigint;
   /** With `helperInput`, when the PSBT has one: the helper input, kept out of `inputs`. */
   helper?: AnalyzedHelperInput;
+  /** With a helper input: Σ the key set's inputs (`totalIn` counts the helper too, for the fee). */
+  vaultIn?: bigint;
 }
 
 function readTweaks(proprietary: [Uint8Array, Uint8Array][] | undefined, acct: AccountPubkeys): Tweaks | undefined {
@@ -399,7 +406,11 @@ export function analyzePsbt(
   }
   const fee = totalIn - selfOut - externalOut;
   if (fee < 0n) throw new PsbtError('outputs_exceed_inputs', 'outputs exceed inputs');
-  return { txid: tx.id, inputs, outputs, totalIn, selfOut, externalOut, fee, outflow: externalOut + fee, ...(helper ? { helper } : {}) };
+  if (!helper) return { txid: tx.id, inputs, outputs, totalIn, selfOut, externalOut, fee, outflow: externalOut + fee };
+  // Σ vault inputs − Σ vault outputs: the helper's value is the phone's, not the key set's, either way.
+  const vaultIn = totalIn - helper.amount;
+  const outflow = vaultIn > selfOut ? vaultIn - selfOut : 0n;
+  return { txid: tx.id, inputs, outputs, totalIn, selfOut, externalOut, fee, outflow, helper, vaultIn };
 }
 
 const isP2wpkh = (s: Uint8Array) => s.length === 22 && s[0] === 0x00 && s[1] === 0x14;

@@ -40,4 +40,4 @@ export {
 export { normalizeRules, canonicalRules, rulesToPolicyJson, policyHash, phoneMayApply, MAX_ALERT_CONTACTS } from './rules.js';
 export { type AlertKind, type DueAlert } from './alerts.js';
 export { LIMIT_WINDOW_MS, SPEND_RETENTION_MS, splitOutflow, windowUsage } from './limit.js';
-export { MAX_SELF_INDEX, inspectPsbt, type Inspection } from './inspect.js';
+export { MAX_SELF_INDEX, inspectPsbt, hasTaprootOutput, type Inspection, type InspectOptions } from './inspect.js';

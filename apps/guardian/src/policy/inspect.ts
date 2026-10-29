@@ -5,6 +5,7 @@ import {
   PsbtAnalysis,
   PsbtError,
   analyzePsbt,
+  type HelperInputCandidate,
   compareBytes,
   parsePsbt,
   sighashAll,
@@ -19,13 +20,34 @@ import { Refusal } from './types.js';
  */
 export const MAX_SELF_INDEX = 100_000;
 
+/** Does the PSBT pay a taproot (P2TR) output? Every silent payment does. */
+export function hasTaprootOutput(tx: btc.Transaction): boolean {
+  for (let i = 0; i < tx.outputsLength; i++) {
+    const s = tx.getOutput(i).script;
+    if (s && s.length === 34 && s[0] === 0x51 && s[1] === 0x20) return true;
+  }
+  return false;
+}
+
+export interface InspectOptions {
+  /**
+   * Accept one helper input (core's `helperInput`): a finalized P2WPKH spend whose script this
+   * function accepts. Only offered for PSBTs with a taproot output (`hasTaprootOutput`).
+   */
+  helper?: (candidate: HelperInputCandidate) => boolean;
+}
+
 export interface Inspection {
   analysis: PsbtAnalysis;
   /** Per output: does it pay a descriptor-derived address of the target wallet? */
   toTarget: boolean[];
   /** Σ outputs paying the target wallet. */
   targetOut: bigint;
-  /** totalIn − targetOut: value leaving the target wallet, fee included. */
+  /**
+   * Σ the wallet's inputs − targetOut: value leaving the wallet, fee included. A helper input's value is
+   * not the wallet's and is not counted (core's `vaultIn`); outputs count only when they pay a derived
+   * address of the target wallet, so a helper output is never change. Never negative.
+   */
   outflow: bigint;
 }
 
@@ -33,6 +55,11 @@ function mapPsbtError(e: unknown): Refusal {
   if (!(e instanceof PsbtError)) return { reason: 'invalid_psbt', detail: e instanceof Error ? e.message : String(e) };
   const input = e.input ?? -1;
   switch (e.code) {
+    case 'helper_not_finalized':
+    case 'helper_invalid_witness':
+    case 'helper_invalid_signature':
+    case 'too_many_helper_inputs':
+      return { reason: 'invalid_helper_input', input: e.input, code: e.code, detail: e.message };
     case 'missing_non_witness_utxo':
       return { reason: 'missing_non_witness_utxo', input };
     case 'non_witness_utxo_mismatch':
@@ -69,6 +96,7 @@ export function inspectPsbt(
   psbt: Uint8Array,
   wallet: MultisigWallet,
   target: MultisigWallet = wallet,
+  opts: InspectOptions = {},
 ): { ok: true; inspection: Inspection } | { ok: false; refusal: Refusal } {
   let analysis: PsbtAnalysis;
   let tx: btc.Transaction;
@@ -77,6 +105,7 @@ export function inspectPsbt(
     analysis = analyzePsbt(psbt, wallet.accountPubkeys(), wallet.network, {
       requireNonWitnessUtxo: true,
       outputsAcct: target.accountPubkeys(),
+      ...(opts.helper && hasTaprootOutput(tx) ? { helperInput: opts.helper } : {}),
     });
   } catch (e) {
     return { ok: false, refusal: mapPsbtError(e) };
@@ -85,7 +114,8 @@ export function inspectPsbt(
   if (!analysis.outputs.length) return { ok: false, refusal: { reason: 'invalid_psbt', detail: 'no outputs' } };
   const toTarget = analysis.outputs.map((_, i) => paysDerivedAddress(target, tx.getOutput(i)));
   const targetOut = analysis.outputs.reduce((s, o, i) => (toTarget[i] ? s + o.amount : s), 0n);
-  return { ok: true, inspection: { analysis, toTarget, targetOut, outflow: analysis.totalIn - targetOut } };
+  const vaultIn = analysis.vaultIn ?? analysis.totalIn;
+  return { ok: true, inspection: { analysis, toTarget, targetOut, outflow: vaultIn > targetOut ? vaultIn - targetOut : 0n } };
 }
 
 /** Adds key 3's SIGHASH_ALL signature to every input and returns the new PSBT. */
