@@ -26,7 +26,7 @@ done
 
 # Film shots: chosen take for each clip slot (build/film/<take>.mp4). 9:16 is a centre crop until
 # vertical takes exist (build/film/<take>-916.mp4 is used when present).
-declare -A FILM=([s01]=s01b [s02]=s02a [s03]=s03b [s04]=s04a [s06]=s06a [s07]=s07a [s08]=s08a [s10]=s10a
+declare -A FILM=([s01]=s01b [s02]=s02a [s03]=s03d [s04]=s04c [s06]=s06a [s07]=s07a [s08]=s08a [s10]=s10a
   [s11]=s11a [s12a]=s12a-a [s12b]=s12b-a [s12c]=s12c-a [s13]=s13a [s14]=s14a [s15]=s15a [s16]=s16a
   [e1snatch]=e1-snatch [e2burgled]=e2-burgled [e2pin]=e2-pin [e3lift]=e3-lift [e3van]=e3-van [e3junk]=e3-junk)
 # Horizontal focus (0 = left, 1 = right) for the 9:16 centre crop, where the subject isn't centred.
