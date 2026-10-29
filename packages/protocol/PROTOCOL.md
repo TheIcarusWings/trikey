@@ -75,15 +75,15 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `pair.prepare` | `pairingSecret`, `network` | `guardianKey: KeyOrigin`, `guardianVersion` |
 | `pair` | `pairingSecret`, `deviceName` (1-64), `network` (`bitcoin`\|`testnet`\|`signet`\|`regtest`), `phoneKey: KeyOrigin`, `descriptor`, `phoneNostrPubkey: Hex32`, `hardwareAuth: { pubkey, path }`, `hardwareAuthProof`, `rules: Policy`, `replacesWalletId?: WalletId`, `replacesDescriptor?` (needs `replacesWalletId`; see "Replacing the guardian") | `guardianKey: KeyOrigin`, `descriptor`, `walletId`, `guardianVersion` |
 | `sign` | `psbt`, `memo?` | `psbt` (with the guardian's partial signatures) |
-| `policy.get` | `{}` | `policy`, `nextHardwareSequence`, `policyHash` |
+| `policy.get` | `{}` | `policy`, `nextHardwareSequence`, `policyHash`, `warnings?` (`["no_alert_contacts"]`: no alert contact, so a recovery is announced only to the paired phone; mainnet guardians refuse such a policy, test networks warn) |
 | `policy.update` | `policy`, `approval?` | `policy`, `nextHardwareSequence`, `policyHash` |
 | `recovery.start` | `sweepPsbt`, `newDescriptor` | `recovery` |
 | `recovery.update` | `recoveryId`, `sweepPsbt` | `recovery` (same id and `readyAt`, the new `sweepTxid`, `amountSats` and `feeSats`) |
 | `recovery.cancel` | `recoveryId`, `approval?` | `recovery`, `contested: boolean` |
 | `recovery.status` | `recoveryId?` (default: the active one) | `recovery` (or `null`), `psbt?` (the signed sweep, once the guardian has co-signed it) |
 | `phone.resume` | `approval` | `phoneSpending: "enabled"` |
-| `guardian.unlock` | `{kind:"passphrase", passphrase}` or `{kind:"hardware", secret: hex}` | `unlocked: boolean` |
-| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time`, `atMs?` (the guardian's clock in milliseconds when it answered, see "Time"), `dailyLimit?: { limitSats, usedSats, availableSats }`, `walletId?`, `hardwareConfirmRequired?`, `watchedWalletId?` (the replaced wallet the guardian watches, if any) |
+| `guardian.unlock` | `{kind:"passphrase", passphrase}` or `{kind:"hardware", secret: hex}` | `unlocked: boolean` (`1101` with `data.reason` `phone_unlock_disabled` after 5 wrong passphrases in a row until the web UI unlocks, or `recovery_pending` while a recovery the phone did not start runs; the phone's attempts have their own rate limit) |
+| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time`, `atMs?` (the guardian's clock in milliseconds when it answered, see "Time"), `dailyLimit?: { limitSats, usedSats, availableSats }`, `walletId?`, `hardwareConfirmRequired?`, `watchedWalletId?` (the replaced wallet the guardian watches, if any), `warnings?` (as `policy.get`'s) |
 | `guardian.lock` | `{}` | `state: "locked"` (see "Locking from the phone") |
 | `wallet.sync` | `historyLimit?` (1-500, default 100), `wallet?` (`"replaced"`, `"helper"` or a `WalletId`; default the paired wallet) | `walletId?`, `tipHeight`, `tipHash`, `utxos`, `utxosTruncated`, `balance: { confirmedSats, unconfirmedSats }`, `history`, `historyTruncated`, `nextReceiveIndex`, `nextChangeIndex`, `gapLimit`, `coins?` (`"helper"` only) (see "Chain data", "Silent payments") |
 | `tx.get` | `txid: Hex32`, `witness?: boolean` (default `true`) | `txHex` |
@@ -179,7 +179,7 @@ A `Recovery` object (the engine's `RecoveryView`, with times in seconds):
 | `sweepTxid`, `destinationWalletId`, `amountSats`, `feeSats` | what the sweep does |
 | `cancelledAt?`, `cancelledBy?`, `completedAt?` | `cancelledBy` is `app` \| `contact` \| `hardware` \| `superseded` (closed by the guardian when another, completed recovery of the same wallet swept it and the wallet rotated) |
 
-* **`recovery.start`**: the sweep PSBT must be signed on every input by **one** surviving key, either the phone's or the hardware wallet's. The guardian reads which from the signatures. `newDescriptor` must keep the surviving key and drop the other user key. The fee must not exceed `sweepFeeCapSats`. Alerts go to the paired phone and every alert contact.
+* **`recovery.start`**: the sweep PSBT must be signed on every input by **one** surviving key, either the phone's or the hardware wallet's. The guardian reads which from the signatures. `newDescriptor` must keep the surviving key and drop the other user key. The fee must not exceed `sweepFeeCapSats`. Alerts go to the paired phone and every alert contact. The guardian needs its chain data to start one (`1501` `chain_unavailable` without it): the delay counts from the later of its clock and the chain's median time past (`readyAt`), and completes only when its clock, the median time past and the block count since the start (144 per day of delay; 1 on regtest) all agree. Refused `sign`, `recovery.start` and `recovery.update` requests are rate limited per sender (30 per 10 minutes, then `1500` RateLimited).
 * **`recovery.update`**: for coins that arrived after the start (a sweep must move every coin of the wallet, so even dust blocks the completion). The surviving key signs a new sweep that spends every input of the current one plus the new coins, to the same destination; the guardian swaps it in **without restarting the delay** if it pays only `newDescriptor` of the running recovery, every input is the wallet's and is signed by the same surviving key alone, it spends a superset of the current sweep's inputs, and the fee is within the cap (the smaller of the cap at the start and now). Everything is checked again at completion. Who may call it: whoever may call `recovery.start`. Errors as for `recovery.start`; `1300`/`1302` when `recoveryId` is not the running recovery.
 * **`recovery.cancel`** may be sent by the paired phone or an alert contact (the guardian authenticates the sender's nostr key; it must let contacts through its peer check for this method) without `approval`, or with an `approval` of `cancel-recovery` for the hardware wallet. `contested` is true unless the canceller holds the key that started the recovery (the phone cancelling a phone-started recovery, or the hardware wallet cancelling a hardware-started one); a contested cancel pauses phone payments (`phoneSpending: paused_contested`) until `phone.resume`.
 * **`phone.resume`** needs an approval of `resume-phone` and only works when phone payments are paused by a contested cancel and no recovery is running.
@@ -336,9 +336,9 @@ The guardian service maps the engine's `Refusal.reason` to an error code and put
 | `not_registered`, `not_authorized` | 1001 |
 | `already_registered` | 1003 |
 | `invalid_registration`, `invalid_rules` | -32602 (InvalidParams) |
-| `over_daily_limit`, `not_signed_by_app`, `signature_count`, `hardware_signed_outside_recovery`, `sweep_fee_exceeds_cap`, `delay_not_elapsed`, `recovery_signers`, `invalid_destination`, `destination_drops_surviving_key`, `destination_keeps_lost_key`, `sweep_not_to_destination` | 1200 |
+| `over_daily_limit`, `not_signed_by_app`, `signature_count`, `hardware_signed_outside_recovery`, `sweep_fee_exceeds_cap`, `delay_not_elapsed` (`waitingFor: "chain_time" \| "blocks"` when the clock says the delay is over but the chain does not), `recovery_signers`, `invalid_destination`, `destination_drops_surviving_key`, `destination_keeps_lost_key`, `sweep_not_to_destination`, `invalid_recovery_update` | 1200 |
 | `hardware_approval_required` | 1201 |
-| `approval_invalid_signature`, `unsupported_approval` | 1202 |
+| `approval_invalid_signature`, `unsupported_approval`, `approval_revoked` | 1202 |
 | `approval_expired` | 1203 |
 | `approval_stale_sequence` | 1204 |
 | `approval_sequence_too_far` | 1205 |
@@ -350,6 +350,7 @@ The guardian service maps the engine's `Refusal.reason` to an error code and put
 | `no_recovery` | 1302 (1300 when a specific `recoveryId` is unknown) |
 | `recovery_in_progress` | 1301 |
 | `invalid_psbt`, `invalid_helper_input`, `foreign_input`, `missing_non_witness_utxo`, `non_witness_utxo_mismatch`, `invalid_signature` | 1400 |
+| `chain_unavailable` (no chain data: a recovery cannot start or complete, nor a co-signature once the last chain observation is old), `clock_ahead_of_chain` (the guardian's clock is more than 3 h ahead of the chain's median time past: it co-signs nothing) | 1501 |
 
 ## 4. Validation, expiry and replay
 
