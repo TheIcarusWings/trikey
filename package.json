@@ -11,7 +11,8 @@
   },
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "e2e"
   ],
   "engines": {
     "node": ">=22"

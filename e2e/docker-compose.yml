@@ -1,0 +1,86 @@
+# Real Bitcoin infrastructure for the end-to-end tests: a regtest bitcoind and an Electrs on top of it.
+#
+# REGTEST ONLY. The RPC user and password below are throwaway values for a chain that has no value, and both
+# ports are published on 127.0.0.1 only. Never reuse them anywhere else.
+#
+#   npm run stack:up -w @trikey/e2e      start, wait for health, create the funding wallet, mine 101 blocks
+#   npm run stack:down -w @trikey/e2e    stop and delete the chain
+#
+# Images are pinned by tag AND digest (the digest is the multi-arch index, so amd64 and arm64 both work):
+#   bitcoin/bitcoin 29.5     Bitcoin Core's own images; the entrypoint passes arguments starting with "-" to bitcoind
+#   getumbrel/electrs v0.12.0  romanz/electrs as Umbrel ships it (the Electrs a guardian talks to on an Umbrel)
+# To update a pin, look the digest up (Docker Hub registry API, `Docker-Content-Digest` of the tag's manifest)
+# and change the tag and the digest together.
+name: trikey-e2e
+
+services:
+  bitcoind:
+    image: bitcoin/bitcoin:29.5@sha256:97b2ae3833880760b36481cba435de7b6f32218bc8eb6aaa5ac321d9591b9ae4
+    restart: "no"
+    environment:
+      E2E_RPC_USER: ${E2E_RPC_USER:-trikey}
+      E2E_RPC_PASS: ${E2E_RPC_PASS:-trikey-regtest-only}
+    command:
+      - bitcoind
+      - -regtest=1
+      - -server=1
+      - -txindex=1
+      - -printtoconsole=1
+      - -rpcuser=${E2E_RPC_USER:-trikey}
+      - -rpcpassword=${E2E_RPC_PASS:-trikey-regtest-only}
+      - -rpcport=18443
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=0.0.0.0/0
+      # The guardian, Electrs and the tests all talk to the node at once.
+      - -rpcthreads=16
+      - -rpcworkqueue=256
+      # Regtest accepts non-standard transactions unless told otherwise. Relay policy (dust, minimum relay fee, ...)
+      # is what the tests are about, so enforce it as on mainnet.
+      - -acceptnonstdtxn=0
+      # Regtest has no fee estimates; wallet sends set their own rate, this only covers the rest.
+      - -fallbackfee=0.0002
+    ports:
+      - "127.0.0.1:${E2E_RPC_PORT:-18443}:18443"
+    healthcheck:
+      test: ["CMD-SHELL", 'bitcoin-cli -regtest -rpcconnect=127.0.0.1 -rpcport=18443 -rpcuser="$$E2E_RPC_USER" -rpcpassword="$$E2E_RPC_PASS" getblockchaininfo > /dev/null']
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 5s
+    stop_grace_period: 20s
+
+  # Electrs refuses to index while bitcoind is still in initial block download, which a regtest chain with no blocks
+  # is; it only becomes healthy once `npm run stack:up` has mined the first blocks. Hence no `--wait` on the stack and
+  # a restart policy: if it gives up early, it tries again.
+  electrs:
+    image: getumbrel/electrs:v0.12.0@sha256:83cb57d7b23f553b3bb858f47e784018a723993777508f2299dc07c2fccb9db0
+    restart: on-failure
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    environment:
+      E2E_RPC_USER: ${E2E_RPC_USER:-trikey}
+      E2E_RPC_PASS: ${E2E_RPC_PASS:-trikey-regtest-only}
+    # Electrs takes the RPC credentials (`auth`) from a config file only, never from the command line or the environment.
+    # Its index lives in /tmp (writable whoever the image runs as); it goes with the container, `down` removes it.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cat > /tmp/electrs.toml <<EOF
+        network = "regtest"
+        auth = "$${E2E_RPC_USER}:$${E2E_RPC_PASS}"
+        daemon_rpc_addr = "bitcoind:18443"
+        electrum_rpc_addr = "0.0.0.0:50001"
+        db_dir = "/tmp/electrs-db"
+        wait_duration_secs = 1
+        log_filters = "INFO"
+        EOF
+        exec electrs --conf /tmp/electrs.toml
+    ports:
+      - "127.0.0.1:${E2E_ELECTRS_PORT:-50001}:50001"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/50001'"]
+      interval: 2s
+      timeout: 5s
+      retries: 90
+      start_period: 5s
