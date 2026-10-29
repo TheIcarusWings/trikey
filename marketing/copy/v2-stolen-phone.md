@@ -11,7 +11,7 @@ Someone steals your phone and gets past Face ID. What can they take?
 With Trikey: at most your daily limit. Your guardian won't co-sign more, and raising the limit needs your hardware wallet.
 
 Pre-alpha, not audited. Building in public:
-github.com/TheIcarusWings/trikey
+trikey.app
 ```
 
 ## Nostr note
@@ -29,7 +29,8 @@ Say they even get past Face ID. Your Trikey wallet is 2-of-3: phone, hardware wa
 No company in the loop: the guardian runs on your box and talks to the phone over end-to-end encrypted nostr relays.
 
 Pre-alpha, not audited, testnet only. Design doc and threat model:
-https://github.com/TheIcarusWings/trikey
+https://trikey.app
+Code: https://github.com/TheIcarusWings/trikey
 
 #bitcoin #nostr #selfcustody #umbrel #startos
 ```
@@ -37,7 +38,7 @@ https://github.com/TheIcarusWings/trikey
 ## Alt text
 
 ```
-Short explainer. Opens on a café table: a hand snatches a phone off the table. Text: "Someone just stole your phone." Cut to the Trikey home screen showing a 4,210,000 sat balance: "Say they get past Face ID." A send screen reads "Approve on your Ledger: 1,500,000 sats is over today's limit," with the caption "Over the daily limit, your guardian won't co-sign. Only your hardware wallet can. They don't have it." The daily limit settings screen: "Raising the limit needs your hardware wallet too. Lowering it works from the phone alone." A bar shows a small red slice: "A thief's max today: 200,000. Out of reach: 4,010,000," then "Recovery started, phone-only payments paused." Caption: "At most, they get your daily limit. Then start a recovery with your hardware wallet." End card: Trikey logo, "Pre-alpha, not audited, testnet only", github.com/TheIcarusWings/trikey.
+Short explainer. Opens on a café table: a hand snatches a phone off the table. Text: "Someone just stole your phone." Cut to the Trikey home screen showing a 4,210,000 sat balance: "Say they get past Face ID." A send screen reads "Approve on your Ledger: 1,500,000 sats is over today's limit," with the caption "Over the daily limit, your guardian won't co-sign. Only your hardware wallet can. They don't have it." The daily limit settings screen: "Raising the limit needs your hardware wallet too. Lowering it works from the phone alone." A bar shows a small red slice: "A thief's max today: 200,000. Out of reach: 4,010,000," then "Recovery started, phone-only payments paused." Caption: "At most, they get your daily limit. Then start a recovery with your hardware wallet." End card: Trikey logo, "Pre-alpha, not audited, testnet only", trikey.app and github.com/TheIcarusWings/trikey.
 ```
 
 ## Voiceover script (the -vo cut)

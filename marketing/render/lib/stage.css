@@ -101,9 +101,11 @@ html[data-r="169"] .mark { left: 130px; top: 70px; font-size: 28px; }
 .end .tag { font-size: 40px; color: var(--muted); margin-top: 12px; }
 .end .status { margin-top: 64px; font-size: 30px; color: var(--ink); border: 1px solid var(--line); border-radius: 999px; padding: 14px 30px; display: inline-flex; gap: 14px; align-items: center; }
 .end .status b { width: 12px; height: 12px; border-radius: 50%; background: var(--warn); display: block; }
-.end .url { margin-top: 28px; font-size: 30px; color: var(--muted); }
+.end .site { margin-top: 30px; font-size: 44px; font-weight: 600; letter-spacing: -0.02em; }
+.end .url { margin-top: 8px; font-size: 26px; color: var(--muted); }
 html[data-r="11"] .end .logo { width: 130px; }
 html[data-r="11"] .end .name { font-size: 84px; }
 html[data-r="11"] .end .tag { font-size: 32px; }
 html[data-r="11"] .end .status { margin-top: 44px; font-size: 26px; }
-html[data-r="11"] .end .url { font-size: 26px; }
+html[data-r="11"] .end .site { font-size: 36px; margin-top: 22px; }
+html[data-r="11"] .end .url { font-size: 22px; }

@@ -48,6 +48,7 @@ function scaffold() {
        <div class="name">Trikey</div>
        <div class="tag">Three keys. No company.</div>
        <div class="status"><b></b>Pre-alpha · not audited · testnet only</div>
+       <div class="site">trikey.app</div>
        <div class="url mono">github.com/TheIcarusWings/trikey</div>`)
   );
   document.body.append(stage);

@@ -51,3 +51,6 @@ html[data-r="11"] .fin .line { font-size: 52px; }
 html[data-r="916"] .day { top: 420px; }
 html[data-r="11"]  .day { top: 140px; }
 html[data-r="169"] .day { top: 120px; }
+/* Website line on the end card, above the repo. */
+.fin .site { font-size: 40px; font-weight: 600; letter-spacing: -0.02em; color: #09090B; margin-top: 10px; }
+html[data-r="11"] .fin .site { font-size: 34px; }

@@ -12,7 +12,7 @@ Your hardware wallet + your guardian start a recovery. It waits 7 days and alert
 
 Delay & Notify, like Bitkey, but on your own Umbrel or Start9.
 
-Pre-alpha: github.com/TheIcarusWings/trikey
+Pre-alpha: trikey.app
 ```
 
 ## Nostr note
@@ -31,7 +31,8 @@ Trikey is 2-of-3: hardware wallet, phone, and a guardian app on your own Umbrel 
 Same idea as Bitkey's Delay & Notify, except the server is yours and so are the alerts. No support ticket.
 
 Pre-alpha, not audited, testnet only:
-https://github.com/TheIcarusWings/trikey
+https://trikey.app
+Code: https://github.com/TheIcarusWings/trikey
 
 #bitcoin #nostr #umbrel #startos #plebchain
 ```
@@ -39,7 +40,7 @@ https://github.com/TheIcarusWings/trikey
 ## Alt text
 
 ```
-Short explainer. Opens on a phone left behind on an empty train seat at dusk. Text: "Lost your phone? And the backup with it?" The Trikey Guardian web page on umbrel.local shows "Recovery in progress, 5 days 14 hours left," signed with a Ledger: "Your hardware wallet + your guardian start a recovery." A timeline runs from Start to Day 7 while yellow alert dots appear every day for "Your old phone", "Maria" and "Tom": "Then it waits 7 days. Every day, you and your contacts get an alert." A phone screen reads "Someone started a recovery" and a finger taps "Cancel recovery": "Didn't start it? Cancel. Any of your devices or contacts can stop a fake recovery." A phone screen reads "Your money is safe, 4,208,800 sats moved to your new wallet": "Nobody cancels? Your guardian co-signs on day 7." Then large text: "Your server. Your contacts. No support ticket." End card: Trikey logo, "Pre-alpha, not audited, testnet only", github.com/TheIcarusWings/trikey.
+Short explainer. Opens on a phone left behind on an empty train seat at dusk. Text: "Lost your phone? And the backup with it?" The Trikey Guardian web page on umbrel.local shows "Recovery in progress, 5 days 14 hours left," signed with a Ledger: "Your hardware wallet + your guardian start a recovery." A timeline runs from Start to Day 7 while yellow alert dots appear every day for "Your old phone", "Maria" and "Tom": "Then it waits 7 days. Every day, you and your contacts get an alert." A phone screen reads "Someone started a recovery" and a finger taps "Cancel recovery": "Didn't start it? Cancel. Any of your devices or contacts can stop a fake recovery." A phone screen reads "Your money is safe, 4,208,800 sats moved to your new wallet": "Nobody cancels? Your guardian co-signs on day 7." Then large text: "Your server. Your contacts. No support ticket." End card: Trikey logo, "Pre-alpha, not audited, testnet only", trikey.app and github.com/TheIcarusWings/trikey.
 ```
 
 ## Voiceover script (the -vo cut)

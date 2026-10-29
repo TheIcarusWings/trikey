@@ -23,7 +23,7 @@ Lost it? Restore your backup, or let your hardware wallet + guardian run a 7-day
 
 Stolen? At most your daily limit. Raising it needs your hardware wallet.
 
-github.com/TheIcarusWings/trikey
+trikey.app
 ```
 
 ### Nostr note
@@ -44,7 +44,8 @@ Stolen?
 
 One key gone. Your bitcoin isn't.
 
-Pre-alpha, not audited, testnet only: https://github.com/TheIcarusWings/trikey
+Pre-alpha, not audited, testnet only: https://trikey.app
+Code: https://github.com/TheIcarusWings/trikey
 
 #bitcoin #nostr #selfcustody #umbrel #startos
 ```
@@ -52,7 +53,7 @@ Pre-alpha, not audited, testnet only: https://github.com/TheIcarusWings/trikey
 ### Alt text
 
 ```
-Short film with white captions. A hand picks up a phone from a bedside table: "Key 2: your phone. Your everyday key." A phone left on a night train seat: "Lost it?" The app's "Restore from backup" screen: "Got your backup? Restore it on a new phone. No waiting." A thumb presses a small hardware wallet, then the Trikey Guardian web page showing a recovery in progress: "No backup? Your hardware wallet and guardian start a recovery." A grey home server on a bookshelf with a counter running "Day 1 of 7" to "Day 7 of 7", then a friend's phone buzzing on a café table: "It waits 7 days and alerts you and your contacts every day." A gloved hand grabs a phone off a café table: "Stolen?" The app's "Approve on your Ledger" screen for a payment over the limit: "They can spend at most your daily limit. Raising it needs your hardware wallet." The "Recovery in progress" screen: "Start a recovery and phone-only payments pause." End card: Trikey logo, "One key gone. Your bitcoin isn't.", "Coming soon, pre-alpha, not audited", github.com/TheIcarusWings/trikey.
+Short film with white captions. A hand picks up a phone from a bedside table: "Key 2: your phone. Your everyday key." A phone left on a night train seat: "Lost it?" The app's "Restore from backup" screen: "Got your backup? Restore it on a new phone. No waiting." A thumb presses a small hardware wallet, then the Trikey Guardian web page showing a recovery in progress: "No backup? Your hardware wallet and guardian start a recovery." A grey home server on a bookshelf with a counter running "Day 1 of 7" to "Day 7 of 7", then a friend's phone buzzing on a café table: "It waits 7 days and alerts you and your contacts every day." A gloved hand grabs a phone off a café table: "Stolen?" The app's "Approve on your Ledger" screen for a payment over the limit: "They can spend at most your daily limit. Raising it needs your hardware wallet." The "Recovery in progress" screen: "Start a recovery and phone-only payments pause." End card: Trikey logo, "One key gone. Your bitcoin isn't.", "Coming soon, pre-alpha, not audited", trikey.app and github.com/TheIcarusWings/trikey.
 ```
 
 ---
@@ -68,7 +69,8 @@ Lost it? Restore your seed words on a new device.
 
 Stolen? It's PIN-locked, and it's one key of three. Any recovery a thief tries alerts you every day, and you cancel it.
 
-github.com/TheIcarusWings/trikey
+trikey.app
+Code: github.com/TheIcarusWings/trikey
 ```
 
 ### Nostr note
@@ -88,7 +90,8 @@ Stolen?
 
 Keep your seed words somewhere other than the device. One key gone. Your bitcoin isn't.
 
-Pre-alpha, not audited, testnet only: https://github.com/TheIcarusWings/trikey
+Pre-alpha, not audited, testnet only: https://trikey.app
+Code: https://github.com/TheIcarusWings/trikey
 
 #bitcoin #nostr #selfcustody #hardwarewallet
 ```
@@ -96,7 +99,7 @@ Pre-alpha, not audited, testnet only: https://github.com/TheIcarusWings/trikey
 ### Alt text
 
 ```
-Short film with white captions. A drawer opens on a small black hardware wallet resting on linen: "Key 1: your hardware wallet. For big payments and changing the rules." A hand searches an empty drawer: "Lost it?" A handwritten page under a desk lamp: "Restore your seed words on a new device. Done." A flashlight sweeps over a ransacked, empty drawer: "Stolen?" Gloved fingers press the device's buttons while its screen shows a padlock: "It's PIN-locked. And even unlocked, it's one key of three." The app's "Someone started a recovery" alert, and a finger taps "Cancel recovery": "If they try to start a recovery, you're alerted every day and cancel it." The app's "Recovery complete" screen: "Restore your seed words and move everything to a fresh wallet with your phone." End card: Trikey logo, "One key gone. Your bitcoin isn't.", "Coming soon, pre-alpha, not audited", github.com/TheIcarusWings/trikey.
+Short film with white captions. A drawer opens on a small black hardware wallet resting on linen: "Key 1: your hardware wallet. For big payments and changing the rules." A hand searches an empty drawer: "Lost it?" A handwritten seed backup, a numbered list of words, under a desk lamp: "Restore your seed words on a new device. Done." A flashlight sweeps over a ransacked, empty drawer: "Stolen?" Gloved fingers press the device's buttons while its screen shows a padlock: "It's PIN-locked. And even unlocked, it's one key of three." The app's "Someone started a recovery" alert, and a finger taps "Cancel recovery": "If they try to start a recovery, you're alerted every day and cancel it." The app's "Recovery complete" screen: "Restore your seed words and move everything to a fresh wallet with your phone." End card: Trikey logo, "One key gone. Your bitcoin isn't.", "Coming soon, pre-alpha, not audited", trikey.app and github.com/TheIcarusWings/trikey.
 ```
 
 ---
@@ -112,7 +115,8 @@ Dies or goes offline? Your phone + hardware wallet still move any amount.
 
 Stolen? The guardian locks itself after any restart. And it never held your money: one key of three.
 
-github.com/TheIcarusWings/trikey
+trikey.app
+Code: github.com/TheIcarusWings/trikey
 ```
 
 ### Nostr note
@@ -132,7 +136,8 @@ Stolen?
 
 One key gone. Your bitcoin isn't.
 
-Pre-alpha, not audited, testnet only: https://github.com/TheIcarusWings/trikey
+Pre-alpha, not audited, testnet only: https://trikey.app
+Code: https://github.com/TheIcarusWings/trikey
 
 #bitcoin #nostr #umbrel #startos #selfhosted
 ```
@@ -140,5 +145,5 @@ Pre-alpha, not audited, testnet only: https://github.com/TheIcarusWings/trikey
 ### Alt text
 
 ```
-Short film with white captions. A small grey box with a soft white light on a home bookshelf: "Key 3: the guardian, on your own home server." A hand pulls its power cable and the light goes out: "It dies or goes offline?" The app's home screen with a "Guardian locked" card: "Your phone and hardware wallet still move any amount." The app's "Replace guardian" screen: "Set up a new guardian and move to a fresh wallet." At night a gloved hand lifts the box off the shelf: "Stolen?" In the back of a van the box is plugged into a power bank, then the Trikey Guardian page reads "Guardian locked": "It locks itself after any restart. Useless to them." The box is dropped on a pile of junk in a rainy alley: "And it never held your money. Just one key of three." End card: Trikey logo, "One key gone. Your bitcoin isn't.", "Coming soon, pre-alpha, not audited", github.com/TheIcarusWings/trikey.
+Short film with white captions. A small grey box with a soft white light on a home bookshelf: "Key 3: the guardian, on your own home server." A hand pulls its power cable and the light goes out: "It dies or goes offline?" The app's home screen with a "Guardian locked" card: "Your phone and hardware wallet still move any amount." The app's "Replace guardian" screen: "Set up a new guardian and move to a fresh wallet." At night a gloved hand lifts the box off the shelf: "Stolen?" In the back of a van the box is plugged into a power bank, then the Trikey Guardian page reads "Guardian locked": "It locks itself after any restart. Useless to them." The box is dropped on a pile of junk in a rainy alley: "And it never held your money. Just one key of three." End card: Trikey logo, "One key gone. Your bitcoin isn't.", "Coming soon, pre-alpha, not audited", trikey.app and github.com/TheIcarusWings/trikey.
 ```

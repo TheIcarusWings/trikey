@@ -34,7 +34,7 @@ function episode({ shots, inserts = [], supers, counter, end }) {
     <div class="line">${end.line}</div>
     <div class="small">Trikey · Three keys. No company.</div>
     <div class="meta"><span class="pill"><b></b>Coming soon · pre-alpha, not audited</span>
-    <span class="mono">github.com/TheIcarusWings/trikey</span></div>`);
+    <span class="site">trikey.app</span><span class="mono">github.com/TheIcarusWings/trikey</span></div>`);
   stage.append(fin);
 
   return t => {

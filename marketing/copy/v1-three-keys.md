@@ -15,7 +15,7 @@ Key 3: a guardian on your own Umbrel or Start9
 Any two move money. Plain multisig, MIT licensed.
 
 Pre-alpha, not audited. Building in public:
-github.com/TheIcarusWings/trikey
+trikey.app
 ```
 
 ## Nostr note
@@ -32,7 +32,8 @@ Any two keys move money. The wallet is a plain wsh(sortedmulti(2,…)) descripto
 Phone and guardian talk over end-to-end encrypted nostr relays. Outbound only, no ports opened at home, no company servers.
 
 Pre-alpha and not audited. Testnet only. Code, design doc and threat model, MIT licensed:
-https://github.com/TheIcarusWings/trikey
+https://trikey.app
+Code: https://github.com/TheIcarusWings/trikey
 
 #bitcoin #nostr #umbrel #startos #plebchain
 ```
@@ -40,7 +41,7 @@ https://github.com/TheIcarusWings/trikey
 ## Alt text
 
 ```
-Animated explainer on a dark background. Text: "A Bitkey-style bitcoin wallet. Except no company holds a key." A triangle draws itself with three labeled corners: Key 1, hardware wallet; Key 2, your phone; Key 3, your home server. Pairs of corners light up: "Any two keys move money." A phone screen shows a 50,000 sat payment review, "Signed by phone + guardian," with the caption "Everyday: your phone + your guardian. Face ID only, up to a daily limit your guardian enforces." A daily limit settings screen: "Big payments and new rules need your hardware wallet. So a stolen phone can't loosen them." A multisig descriptor types out: "Plain multisig. Any multisig wallet can recover it. Even without Trikey." End card: Trikey logo, "Three keys. No company.", "Pre-alpha, not audited, testnet only", github.com/TheIcarusWings/trikey.
+Animated explainer on a dark background. Text: "A Bitkey-style bitcoin wallet. Except no company holds a key." A triangle draws itself with three labeled corners: Key 1, hardware wallet; Key 2, your phone; Key 3, your home server. Pairs of corners light up: "Any two keys move money." A phone screen shows a 50,000 sat payment review, "Signed by phone + guardian," with the caption "Everyday: your phone + your guardian. Face ID only, up to a daily limit your guardian enforces." A daily limit settings screen: "Big payments and new rules need your hardware wallet. So a stolen phone can't loosen them." A multisig descriptor types out: "Plain multisig. Any multisig wallet can recover it. Even without Trikey." End card: Trikey logo, "Three keys. No company.", "Pre-alpha, not audited, testnet only", trikey.app and github.com/TheIcarusWings/trikey.
 ```
 
 ## Voiceover script (the -vo cut)
