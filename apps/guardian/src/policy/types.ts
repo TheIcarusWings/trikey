@@ -217,6 +217,8 @@ export type Refusal =
   | { reason: 'destination_drops_surviving_key'; survivingRole: SurvivingRole }
   | { reason: 'destination_keeps_lost_key'; lostRole: SurvivingRole }
   | { reason: 'sweep_not_to_destination'; output: number }
+  /** `recovery.update`: the new sweep does not keep every input of the current one. */
+  | { reason: 'invalid_recovery_update'; detail: string }
   | { reason: 'sweep_fee_exceeds_cap'; fee: bigint; cap: bigint }
   | { reason: 'not_authorized' }
   /** `waitingFor`: the clock is past `readyAt` but the chain is not (its median time past, or the block count). */
@@ -260,6 +262,9 @@ export type ActivityEvent =
       destinationWalletId: string;
     }
   | { type: 'recovery_start_refused'; refusal: Refusal }
+  /** `recovery.update`: the sweep now also moves coins that arrived after the start (the delay runs on). */
+  | { type: 'recovery_updated'; recoveryId: string; sweepTxid: string; amountSats: bigint; feeSats: bigint; addedInputs: number }
+  | { type: 'recovery_update_refused'; refusal: Refusal }
   | { type: 'recovery_ready'; recoveryId: string }
   | { type: 'recovery_cancelled'; recoveryId: string; by: CancelledBy; contested: boolean }
   | { type: 'recovery_cancel_refused'; refusal: Refusal }

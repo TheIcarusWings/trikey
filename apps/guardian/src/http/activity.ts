@@ -81,6 +81,18 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
         sats: sats(e.amountSats),
         result: 'ok',
       };
+    case 'recovery_updated':
+      return {
+        ...base,
+        kind: 'recovery',
+        event: `Recovery ${e.recoveryId}: the sweep now also moves ${e.addedInputs} coin${e.addedInputs === 1 ? '' : 's'} that arrived after the start (the waiting period runs on)`,
+        summary: 'Recovery sweep updated',
+        signedBy: null,
+        sats: Number(e.amountSats),
+        result: 'ok',
+      };
+    case 'recovery_update_refused':
+      return { ...base, kind: 'recovery', event: `Recovery sweep update refused: ${refusalText(e.refusal)}`, signedBy: null, sats: null, result: 'refused' };
     case 'recovery_start_refused':
       return { ...base, kind: 'recovery', event: `Recovery refused: ${refusalText(e.refusal)}`, signedBy: null, sats: null, result: 'refused' };
     case 'recovery_ready':

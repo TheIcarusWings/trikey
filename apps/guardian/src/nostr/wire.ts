@@ -74,6 +74,7 @@ const CODES: Record<RefusalReason, number> = {
   destination_drops_surviving_key: ErrorCode.PolicyViolation,
   destination_keeps_lost_key: ErrorCode.PolicyViolation,
   sweep_not_to_destination: ErrorCode.PolicyViolation,
+  invalid_recovery_update: ErrorCode.PolicyViolation,
   hardware_approval_required: ErrorCode.ApprovalRequired,
   approval_invalid_signature: ErrorCode.ApprovalInvalid,
   unsupported_approval: ErrorCode.ApprovalInvalid,
@@ -156,6 +157,8 @@ export function refusalText(r: Refusal): string {
       return 'The new wallet must not keep the lost key';
     case 'sweep_not_to_destination':
       return `Output ${r.output} does not pay the new wallet`;
+    case 'invalid_recovery_update':
+      return `The updated sweep is not acceptable: ${r.detail}`;
     case 'hardware_approval_required':
       return `Hardware wallet approval required (${r.detail})`;
     case 'approval_invalid_signature':

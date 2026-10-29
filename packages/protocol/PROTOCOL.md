@@ -39,7 +39,7 @@ rumor  kind 21420, unsigned, authored by the sender          <- carries the JSON
 
 The rumor `content` is the JSON message (section 3), at most 200,000 characters. The rumor `id` must be correct and `rumor.pubkey` must equal `seal.pubkey`.
 
-**PSBT hash rule.** A message carries a PSBT when it is a `sign` request (`params.psbt`), a `recovery.start` request (`params.sweepPsbt`), or a success response whose `result.psbt` is a string. Such a message MUST have a `psbt` tag equal to the lowercase-hex SHA-256 of the base64-decoded PSBT, and a message without a PSBT MUST NOT have one. At most one PSBT per message.
+**PSBT hash rule.** A message carries a PSBT when it is a `sign` request (`params.psbt`), a `recovery.start` or `recovery.update` request (`params.sweepPsbt`), or a success response whose `result.psbt` is a string. Such a message MUST have a `psbt` tag equal to the lowercase-hex SHA-256 of the base64-decoded PSBT, and a message without a PSBT MUST NOT have one. At most one PSBT per message.
 
 ## 3. Messages (JSON, no `jsonrpc` field)
 
@@ -78,6 +78,7 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `policy.get` | `{}` | `policy`, `nextHardwareSequence`, `policyHash` |
 | `policy.update` | `policy`, `approval?` | `policy`, `nextHardwareSequence`, `policyHash` |
 | `recovery.start` | `sweepPsbt`, `newDescriptor` | `recovery` |
+| `recovery.update` | `recoveryId`, `sweepPsbt` | `recovery` (same id and `readyAt`, the new `sweepTxid`, `amountSats` and `feeSats`) |
 | `recovery.cancel` | `recoveryId`, `approval?` | `recovery`, `contested: boolean` |
 | `recovery.status` | `recoveryId?` (default: the active one) | `recovery` (or `null`), `psbt?` (the signed sweep, once the guardian has co-signed it) |
 | `phone.resume` | `approval` | `phoneSpending: "enabled"` |
@@ -176,9 +177,10 @@ A `Recovery` object (the engine's `RecoveryView`, with times in seconds):
 | `startedAt`, `readyAt` | when it started, and when the delay ends and the guardian may co-sign |
 | `delayDays` | 7, 14 or 30, snapshotted at start (later policy changes do not affect a running recovery) |
 | `sweepTxid`, `destinationWalletId`, `amountSats`, `feeSats` | what the sweep does |
-| `cancelledAt?`, `cancelledBy?`, `completedAt?` | `cancelledBy` is `app` \| `contact` \| `hardware` |
+| `cancelledAt?`, `cancelledBy?`, `completedAt?` | `cancelledBy` is `app` \| `contact` \| `hardware` \| `superseded` (closed by the guardian when another, completed recovery of the same wallet swept it and the wallet rotated) |
 
 * **`recovery.start`**: the sweep PSBT must be signed on every input by **one** surviving key, either the phone's or the hardware wallet's. The guardian reads which from the signatures. `newDescriptor` must keep the surviving key and drop the other user key. The fee must not exceed `sweepFeeCapSats`. Alerts go to the paired phone and every alert contact.
+* **`recovery.update`**: for coins that arrived after the start (a sweep must move every coin of the wallet, so even dust blocks the completion). The surviving key signs a new sweep that spends every input of the current one plus the new coins, to the same destination; the guardian swaps it in **without restarting the delay** if it pays only `newDescriptor` of the running recovery, every input is the wallet's and is signed by the same surviving key alone, it spends a superset of the current sweep's inputs, and the fee is within the cap (the smaller of the cap at the start and now). Everything is checked again at completion. Who may call it: whoever may call `recovery.start`. Errors as for `recovery.start`; `1300`/`1302` when `recoveryId` is not the running recovery.
 * **`recovery.cancel`** may be sent by the paired phone or an alert contact (the guardian authenticates the sender's nostr key; it must let contacts through its peer check for this method) without `approval`, or with an `approval` of `cancel-recovery` for the hardware wallet. `contested` is true unless the canceller holds the key that started the recovery (the phone cancelling a phone-started recovery, or the hardware wallet cancelling a hardware-started one); a contested cancel pauses phone payments (`phoneSpending: paused_contested`) until `phone.resume`.
 * **`phone.resume`** needs an approval of `resume-phone` and only works when phone payments are paused by a contested cancel and no recovery is running.
 * **`recovery.status`**: the engine marks a recovery `completed` when it co-signs the sweep, not when the sweep confirms. `psbt` is that co-signed sweep; broadcasting it is up to the phone or the guardian service.

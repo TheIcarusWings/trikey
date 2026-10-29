@@ -24,6 +24,7 @@ import {
   policyHash,
   generateMessageId,
   recoveryAccessMessage,
+  psbtOf,
   MAX_SYNC_UTXOS,
   MAX_TX_HEX_LENGTH,
   MAX_SINGLE_KEY_COINS,
@@ -60,6 +61,7 @@ describe('request schemas', () => {
     'policy.get': {},
     'policy.update': { policy, approval },
     'recovery.start': { sweepPsbt: fakePsbt(2), newDescriptor: 'wsh(sortedmulti(2,A,B,C))' },
+    'recovery.update': { recoveryId: 'rec-12345678', sweepPsbt: fakePsbt(3) },
     'recovery.cancel': { recoveryId: 'rec-12345678' },
     'recovery.status': {},
     'phone.resume': { approval },
@@ -186,6 +188,24 @@ describe('methods', () => {
     expect(ok('hardware.confirm', { hardwareAuth })).toBe(false);
     expect(ok('hardware.confirm', { hardwareAuth: { ...hardwareAuth, pubkey: 'ab'.repeat(32) }, hardwareAuthProof: pairParams.hardwareAuthProof })).toBe(false);
     expect(methods['hardware.confirm'].result.safeParse({ walletId: WALLET_ID, hardwareAuth, nextHardwareSequence: 3 }).success).toBe(true);
+  });
+
+  it('recovery.update names the running recovery and carries the new sweep (security review 2026-10, finding 8)', () => {
+    expect(ok('recovery.update', { recoveryId: 'rec-12345678', sweepPsbt: fakePsbt() })).toBe(true);
+    expect(ok('recovery.update', { sweepPsbt: fakePsbt() })).toBe(false);
+    expect(ok('recovery.update', { recoveryId: 'rec-12345678' })).toBe(false);
+    expect(ok('recovery.update', { recoveryId: 'rec-12345678', sweepPsbt: fakePsbt(), newDescriptor: 'wsh(sortedmulti(2,A,B,C))' })).toBe(false); // same destination only
+    expect(methods['recovery.update'].result.safeParse({ recovery }).success).toBe(true);
+    // It carries a PSBT, so its envelope has the psbt tag.
+    const msg = { id, method: 'recovery.update', params: { recoveryId: 'rec-12345678', sweepPsbt: fakePsbt(4) } };
+    expect(RequestSchema.safeParse(msg).success).toBe(true);
+    expect(psbtOf(msg as never)).toBe(fakePsbt(4));
+  });
+
+  it('a recovery the guardian closed at a rotation is cancelled by "superseded"; policy warnings are an enum', () => {
+    expect(Recovery.safeParse({ ...recovery, state: 'cancelled', cancelledBy: 'superseded', cancelledAt: recovery.startedAt + 5 }).success).toBe(true);
+    expect(methods['policy.get'].result.safeParse({ policy, nextHardwareSequence: 1, policyHash: 'ab'.repeat(32), warnings: ['no_alert_contacts'] }).success).toBe(true);
+    expect(methods['policy.get'].result.safeParse({ policy, nextHardwareSequence: 1, policyHash: 'ab'.repeat(32), warnings: ['whatever'] }).success).toBe(false);
   });
 
   it('results carry the engine-shaped recovery and the contested flag', () => {

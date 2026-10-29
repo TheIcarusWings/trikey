@@ -197,6 +197,7 @@ const STATE_CHANGING: MethodName[] = [
   'pair',
   'policy.update',
   'recovery.start',
+  'recovery.update',
   'recovery.cancel',
   'phone.resume',
   'hardware.confirm',
@@ -382,6 +383,16 @@ export function buildHandlers(g: Guardian): Handlers {
         if (!res.ok) throw refusalError(res.refusal);
         g.log.info('recovery.started', { recoveryId: res.recovery.id, survivingRole: res.recovery.survivingRole });
         void g.alerts.run();
+        return { recovery: recoveryToWire(res.recovery, g.clock.now()) };
+      }),
+
+    'recovery.update': (params) =>
+      g.recoveryMutex.run(async () => {
+        const rec = runningRecovery(g, params.recoveryId);
+        const res = await g.engine.updateRecovery({ recoveryId: rec.id, psbt: base64.decode(params.sweepPsbt) });
+        if (!res.ok) throw refusalError(res.refusal);
+        g.log.info('recovery.updated', { recoveryId: rec.id, addedInputs: res.addedInputs });
+        void g.tick();
         return { recovery: recoveryToWire(res.recovery, g.clock.now()) };
       }),
 

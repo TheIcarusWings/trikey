@@ -112,7 +112,7 @@ export function psbtHash(psbtBase64: string): string {
 export function psbtOf(message: Message): string | undefined {
   if (isRequest(message)) {
     if (message.method === 'sign') return message.params.psbt;
-    if (message.method === 'recovery.start') return message.params.sweepPsbt;
+    if (message.method === 'recovery.start' || message.method === 'recovery.update') return message.params.sweepPsbt;
     return undefined;
   }
   if (isResponse(message) && 'result' in message) {

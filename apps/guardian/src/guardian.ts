@@ -129,6 +129,7 @@ export const RECOVERY_PEER_METHODS: ReadonlySet<MethodName> = new Set<MethodName
   'fees.estimate',
   'recovery.access',
   'recovery.start',
+  'recovery.update',
   'recovery.status',
   'recovery.cancel',
 ]);

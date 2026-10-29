@@ -298,6 +298,18 @@ export const RecoveryStartParams = z.strictObject({
 });
 export const RecoveryStartResult = z.object({ recovery: Recovery });
 
+/**
+ * Replaces the running recovery's sweep with one that also spends coins that arrived after the start,
+ * WITHOUT restarting the delay. The guardian accepts it only if it pays the same destination, is signed
+ * on every input by the same surviving key alone, spends every input of the current sweep (and only
+ * the wallet's coins), and keeps the fee within the cap; it re-checks everything at completion.
+ */
+export const RecoveryUpdateParams = z.strictObject({
+  recoveryId: RecoveryId,
+  sweepPsbt: PsbtBase64,
+});
+export const RecoveryUpdateResult = z.object({ recovery: Recovery });
+
 export const RecoveryCancelParams = z.strictObject({
   recoveryId: RecoveryId,
   /**
@@ -732,6 +744,7 @@ export const methods = {
   'policy.get': { params: PolicyGetParams, result: PolicyGetResult },
   'policy.update': { params: PolicyUpdateParams, result: PolicyUpdateResult },
   'recovery.start': { params: RecoveryStartParams, result: RecoveryStartResult },
+  'recovery.update': { params: RecoveryUpdateParams, result: RecoveryUpdateResult },
   'recovery.cancel': { params: RecoveryCancelParams, result: RecoveryCancelResult },
   'recovery.status': { params: RecoveryStatusParams, result: RecoveryStatusResult },
   'phone.resume': { params: PhoneResumeParams, result: PhoneResumeResult },
@@ -876,6 +889,7 @@ export const RequestSchema = z.discriminatedUnion('method', [
   requestOf('policy.get', PolicyGetParams),
   requestOf('policy.update', PolicyUpdateParams),
   requestOf('recovery.start', RecoveryStartParams),
+  requestOf('recovery.update', RecoveryUpdateParams),
   requestOf('recovery.cancel', RecoveryCancelParams),
   requestOf('recovery.status', RecoveryStatusParams),
   requestOf('phone.resume', PhoneResumeParams),

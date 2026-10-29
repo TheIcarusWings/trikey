@@ -1068,6 +1068,49 @@ export class PolicyEngine {
   }
 
   /**
+   * Replaces the running recovery's sweep (`recovery.update`), so coins that arrived after the start
+   * (dust, a late deposit) do not block it: a sweep must move every coin. The delay is NOT restarted,
+   * so the new sweep may only add coins: same destination, every input the wallet's and signed by the
+   * same surviving key alone, a superset of the current sweep's inputs, and the fee within the cap.
+   * `completeRecovery` checks all of it again.
+   */
+  async updateRecovery(req: { recoveryId: string; psbt: Uint8Array }): Promise<Result<{ recovery: RecoveryView; addedInputs: number }>> {
+    return this.mutate((draft, now) => {
+      const refuse = (refusal: Refusal) => {
+        this.log(draft, now, { type: 'recovery_update_refused', refusal });
+        return refused(refusal);
+      };
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      const rec = activeRecovery(draft);
+      if (!rec || rec.id !== req.recoveryId) return refuse({ reason: 'no_recovery' });
+      const wallet = this.wallet(w.registration);
+      const dest = MultisigWallet.fromDescriptor(rec.destinationDescriptor, wallet.network);
+      const checked = inspectPsbt(req.psbt, wallet, dest);
+      if (!checked.ok) return refuse(checked.refusal);
+      const { analysis, toTarget, targetOut } = checked.inspection;
+      if (analysis.inputs.some((i) => i.signedBy.length !== 1 || i.signedBy[0] !== rec.survivingRole))
+        return refuse({ reason: 'recovery_signers', detail: `every input must be signed by the surviving key (${rec.survivingRole}) alone` });
+      const stray = toTarget.findIndex((t) => !t);
+      if (stray >= 0) return refuse({ reason: 'sweep_not_to_destination', output: stray });
+      const before = inspectPsbt(base64.decode(rec.sweepPsbt), wallet, dest);
+      if (!before.ok) return refuse(before.refusal);
+      const spent = new Set(analysis.inputs.map((i) => i.outpoint));
+      const missing = before.inspection.analysis.inputs.find((i) => !spent.has(i.outpoint));
+      if (missing) return refuse({ reason: 'invalid_recovery_update', detail: `the new sweep must still spend ${missing.outpoint}` });
+      const cap = rec.feeCapSats < w.rules.sweepFeeCapSats ? rec.feeCapSats : w.rules.sweepFeeCapSats;
+      if (analysis.fee > cap) return refuse({ reason: 'sweep_fee_exceeds_cap', fee: analysis.fee, cap });
+      const addedInputs = spent.size - before.inspection.analysis.inputs.length;
+      rec.sweepPsbt = base64.encode(req.psbt);
+      rec.sweepTxid = analysis.txid;
+      rec.amountSats = targetOut;
+      rec.feeSats = analysis.fee;
+      this.log(draft, now, { type: 'recovery_updated', recoveryId: rec.id, sweepTxid: analysis.txid, amountSats: targetOut, feeSats: analysis.fee, addedInputs });
+      return { ok: true as const, recovery: viewOf(rec, now), addedInputs };
+    });
+  }
+
+  /**
    * Cancels the running recovery. Allowed for the paired phone, any alert
    * contact (by authenticated nostr pubkey), or the hardware wallet (signed
    * approval). Unless the canceller holds the key that started the recovery,
