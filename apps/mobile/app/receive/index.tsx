@@ -9,7 +9,7 @@ import { AddressQr } from '@/components/qr';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import { groupAddress, useWallet, useWalletService } from '@/data';
-import { Notice } from '@/components/panels';
+import { NetworkPill, Notice, networkLabel } from '@/components/panels';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -23,6 +23,7 @@ export default function Receive() {
   const params = useLocalSearchParams<{ to?: string }>();
   const toVault = rkMode && params.to === 'vault';
   const receiveAddress = toVault ? (wallet.rk?.vaultAddress() ?? '') : state.receiveAddress;
+  const testNetwork = networkLabel(state.backing, state.network);
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -57,6 +58,7 @@ export default function Receive() {
   return (
     <Screen
       title={toVault ? 'Add to vault' : 'Receive'}
+      titleAccessory={<NetworkPill />}
       backLabel="Home"
       footer={
         rkMode && !toVault ? (
@@ -84,9 +86,16 @@ export default function Receive() {
       {receiveAddress ? (
         <View className="mt-1 items-center gap-4">
           <AddressQr address={receiveAddress} />
-          <Text className="text-foreground px-3 text-center font-mono text-[15px] leading-6" selectable>
-            {groupAddress(receiveAddress)}
-          </Text>
+          <View className="gap-1.5">
+            <Text className="text-foreground px-3 text-center font-mono text-[15px] leading-6" selectable>
+              {groupAddress(receiveAddress)}
+            </Text>
+            {testNetwork ? (
+              <Text className="text-muted-foreground text-center text-[13px] leading-[18px]">
+                {state.backing === 'demo' ? 'Sample address. Demo mode moves no bitcoin.' : `${testNetwork} address. Only send test bitcoin to it.`}
+              </Text>
+            ) : null}
+          </View>
         </View>
       ) : (
         <Notice tone="warn" title="No address to show">

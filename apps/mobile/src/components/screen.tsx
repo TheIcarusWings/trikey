@@ -49,6 +49,8 @@ type ScreenProps = {
   backLabel?: string;
   /** Rendered between the back control and the title (a status chip). */
   beforeTitle?: ReactNode;
+  /** A small chip beside the title: right of the large title on iOS, at the end of the top bar on Android (the network pill). */
+  titleAccessory?: ReactNode;
   /** iOS: skip the large title because the screen draws its own heading. */
   hideIosTitle?: boolean;
   /** iOS: extra classes for the large title (a smaller size, for long titles). */
@@ -82,6 +84,7 @@ export function Screen({
   step,
   backLabel = 'Back',
   beforeTitle,
+  titleAccessory,
   hideIosTitle,
   iosTitleClass,
   noBack,
@@ -97,6 +100,10 @@ export function Screen({
   onRefresh,
 }: ScreenProps) {
   const [refreshing, setRefreshing] = useState(false);
+  // Content taller than its space scrolls under the footer: a hairline above the footer marks where it continues.
+  const [viewport, setViewport] = useState(0);
+  const [contentHeight, setContentHeight] = useState(0);
+  const overflowing = scrollable && viewport > 0 && contentHeight > viewport + 1;
   const refresh = useCallback(async () => {
     if (!onRefresh) return;
     setRefreshing(true);
@@ -141,12 +148,15 @@ export function Screen({
               {stepLabel.toUpperCase()}
             </Text>
           ) : null}
-          <Text
-            role="heading"
-            aria-level={1}
-            className={cn('text-[32px] font-semibold leading-[38px] tracking-[-0.64px]', iosTitleClass)}>
-            {title}
-          </Text>
+          <View className="flex-row items-center justify-between gap-3">
+            <Text
+              role="heading"
+              aria-level={1}
+              className={cn('shrink text-[32px] font-semibold leading-[38px] tracking-[-0.64px]', iosTitleClass)}>
+              {title}
+            </Text>
+            {titleAccessory}
+          </View>
         </View>
       ) : null}
     </View>
@@ -175,6 +185,7 @@ export function Screen({
             {barTitle}
           </Text>
         ) : null}
+        {titleAccessory ? <View className={cn('ml-auto', stepLabel || titleInBar || (tab && barTitle) ? '' : 'flex-1 items-end')}>{titleAccessory}</View> : null}
       </View>
       {beforeTitle ? <View style={{ paddingHorizontal: GUTTER }}>{beforeTitle}</View> : null}
       {title && !titleInBar && !tab ? (
@@ -192,6 +203,8 @@ export function Screen({
   const body = scrollable ? (
     <ScrollView
       className="flex-1"
+      onLayout={(e) => setViewport(e.nativeEvent.layout.height)}
+      onContentSizeChange={(_, h) => setContentHeight(h)}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
       refreshControl={onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} /> : undefined}
@@ -212,7 +225,9 @@ export function Screen({
       {header}
       {body}
       {footer ? (
-        <View className="gap-4" style={{ paddingHorizontal: GUTTER, paddingBottom: insets.bottom }}>
+        <View
+          className={cn('gap-4', overflowing && 'border-border border-t pt-3')}
+          style={{ paddingHorizontal: GUTTER, paddingBottom: insets.bottom }}>
           {footer}
         </View>
       ) : null}

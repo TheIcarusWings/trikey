@@ -69,7 +69,7 @@ const HARDWARE: Record<HardwareKind, HardwareWallet> = {
 const MARIA: Contact = { id: 'c-maria', name: 'Maria', npub: 'npub1x7qd0m4zc2gk8w5v9n3ylr6ts0ahe7j4fp8u2xw3mq5ca6vhzk2q8' };
 const TOM: Contact = { id: 'c-tom', name: 'Tom', npub: 'npub1m3dz8k4w0c6ylv5n2xr9ts7ahe3j4fp8u2xw3mq5ca6vhz9f9fwa' };
 
-const ADDRESS_MARIA_SHOP = 'bc1q7tuen4r8m2kd5vq3jw6hf9ztc0p7lsx0ah';
+const ADDRESS_MARIA_SHOP = 'tb1q7tuen4r8m2kd5vq3jw6hf9ztc0p7lsx0ah';
 
 function txid(seed: string): string {
   // Not a real hash, just 64 hex characters that look the part.
@@ -213,7 +213,7 @@ export function createDemoState(platform: 'ios' | 'android' = 'ios'): WalletStat
     contacts: [MARIA, TOM],
 
     balanceSats: 4_210_000,
-    receiveAddress: 'bc1qxh7u3m0k9e2r5t8wq4lzj6yd3c0vnp7s2fga8w5ke9h3rj4mt6qy0xl2dn',
+    receiveAddress: 'tb1qxh7u3m0k9e2r5t8wq4lzj6yd3c0vnp7s2fga8w5ke9h3rj4mt6qy0xl2dn',
     activity: guardianActivity(),
 
     recovery: null,

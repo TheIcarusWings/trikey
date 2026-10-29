@@ -4,7 +4,7 @@ import { ActivityRow } from '@/components/activity-row';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { ArrowDownLeft, ArrowUpRight, Clock, HardwareWallet, Lock, TriangleAlert } from '@/components/icons';
-import { Notice } from '@/components/panels';
+import { NetworkPill, Notice } from '@/components/panels';
 import { ProgressBar } from '@/components/progress';
 import { Card } from '@/components/ui/card';
 import { Icon } from '@/components/ui/icon';
@@ -46,7 +46,11 @@ export function BalanceHeader({
   const secondary = unit === 'btc' ? `${formatSats(sats)} sats` : `${formatBtc(sats)} BTC`;
   return (
     <View className="gap-1" accessible accessibilityLabel={`${label}: ${main} ${unitText}`}>
-      <Text className={cn('text-muted-foreground', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{label}</Text>
+      <View className="flex-row items-center justify-between gap-3">
+        <Text className={cn('text-muted-foreground', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{label}</Text>
+        {/* Android shows the network in the top bar. */}
+        {IS_IOS ? <NetworkPill /> : null}
+      </View>
       <Text
         className={cn(
           'tabular-nums',

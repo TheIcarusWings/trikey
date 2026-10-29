@@ -8,7 +8,7 @@ import {
   SendReceiveButtons,
 } from '@/components/home';
 import { RecoveryKeyNotices, VaultCard } from '@/components/home-rk';
-import { Footnote } from '@/components/panels';
+import { Footnote, NetworkPill } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { useWallet, useWalletService } from '@/data';
 import { pick } from '@/lib/platform';
@@ -26,7 +26,7 @@ export default function HomeScreen() {
 
   if (state.mode === 'recoveryKey') {
     return (
-      <Screen tab untitled title="Trikey" androidTitleWeight="normal" gap={20} onRefresh={refresh}>
+      <Screen tab untitled title="Trikey" titleAccessory={<NetworkPill />} androidTitleWeight="normal" gap={20} onRefresh={refresh}>
         <RecoveryKeyNotices />
         <BalanceHeader
           label="Spending balance"
@@ -49,7 +49,7 @@ export default function HomeScreen() {
   const down = state.guardian.status !== 'online';
   if (down) {
     return (
-      <Screen tab untitled title="Trikey" androidTitleWeight="normal" gap={20} onRefresh={refresh}>
+      <Screen tab untitled title="Trikey" titleAccessory={<NetworkPill />} androidTitleWeight="normal" gap={20} onRefresh={refresh}>
         <RecoveryBanner />
         <HardwareConfirmCard />
         <BalanceHeader label="Balance" sats={state.balanceSats} />
@@ -63,7 +63,7 @@ export default function HomeScreen() {
   }
 
   return (
-    <Screen tab untitled title="Trikey" androidTitleWeight="normal" gap={20} onRefresh={refresh}>
+    <Screen tab untitled title="Trikey" titleAccessory={<NetworkPill />} androidTitleWeight="normal" gap={20} onRefresh={refresh}>
       <RecoveryBanner />
       <HardwareConfirmCard />
       <BalanceHeader label="Balance" sats={state.balanceSats} />
