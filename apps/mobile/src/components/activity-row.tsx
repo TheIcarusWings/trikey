@@ -42,15 +42,15 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
 
   if (item.type === 'payment') {
     const { tx } = item;
-    const sent = tx.kind === 'sent';
-    const title = tx.kind === 'refill' ? `Refill ${tx.refillIndex ?? ''}`.trim() : sent ? 'Sent' : 'Received';
+    const sent = tx.kind === 'sent' || tx.kind === 'speed_up';
+    const title = tx.kind === 'refill' ? `Refill ${tx.refillIndex ?? ''}`.trim() : tx.kind === 'speed_up' ? 'Speed up' : sent ? 'Sent' : 'Received';
 
     let subtitle: string;
     let subtitleTone: 'muted' | 'warn' = 'muted';
     if (tx.status === 'pending') {
       subtitle = 'Waiting to confirm';
       subtitleTone = 'warn';
-    } else if (tx.kind === 'refill') {
+    } else if (tx.kind === 'refill' || tx.fromVault) {
       subtitle = `${formatShortDate(tx.at)} · from vault`;
     } else if (today) {
       subtitle = `${variant === 'home' ? 'Today' : formatTime(tx.at, timeStyle)} · confirmed`;

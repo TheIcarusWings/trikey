@@ -29,6 +29,9 @@ import type {
   WalletMode,
   WalletState,
 } from './types';
+import type { RecoveryKeyActions } from './rk-actions';
+
+export type { RecoveryKeyActions };
 
 export interface ReceiveAddress {
   address: string;
@@ -145,14 +148,26 @@ export interface WalletService {
   renewRecoveryAccess(): Promise<void>;
 
   // -- Recovery Key mode -----------------------------------------------
+  /** What key 3 will be: a printed kit or a second hardware wallet (`nfc` is not available yet). Used by `rk.makeKit`. */
   setRecoveryKeyKind(kind: RecoveryKeyKind): void;
-  /** Approves a batch of weekly refills on the hardware wallet. */
-  approveRefills(amountSats: Sats): Promise<void>;
+  /**
+   * Recovery Key mode's own actions: the kit, the refills, the vault, recovery with the kit and the chain server. Only
+   * a wallet that can run Recovery Key mode has them (the demo and the real wallet in that mode).
+   */
+  readonly rk?: RecoveryKeyActions;
+  /**
+   * Makes a quote exact when the wallet needs the chain for it (Recovery Key mode picks the coins). Optional: the
+   * quote `quoteSend` gave stays valid, with `estimate: true`. Screens that show the final fee call it.
+   */
+  refineQuote?(quote: SendQuote): Promise<QuoteOutcome>;
 
   // -- preferences -----------------------------------------------------
   setUnit(unit: AmountUnit): void;
   setTheme(theme: ThemePreference): void;
-  /** Switches between the guardian home and the Recovery Key home. */
+  /**
+   * Before a wallet exists: which kind onboarding makes (guardian, or Recovery Key mode for "No home server?"). Once a
+   * wallet exists the phone runs that one, and this does nothing, except in the demo, which shows either home.
+   */
   setMode(mode: WalletMode): void;
 
   // -- hardware prompts --------------------------------------------------
@@ -169,9 +184,18 @@ export interface WalletService {
     /** Simulator: swaps the simulated hardware wallet for a new one (to try "Lost my hardware wallet"). Returns its fingerprint. */
     useNewSimulatedDevice?(): string;
     restartOnboarding?(): void;
+    /** The demo's Recovery Key home shows what it does when a refill this phone did not send appears, and when one is stuck. */
+    simulateRecoveryKeyAlerts?(): void;
     /** Removes the wallet's keys and data from this phone (this mode and network only). */
     forgetWallet?(): Promise<void>;
     /** Facts about the setup, for the developer ("device fingerprint ..."). */
     info?(): string[];
+    /** Simulator, Recovery Key mode: the simulated chain on the developer's computer (docs/dev-regtest.md). */
+    simChain?: {
+      /** Mines blocks (to unlock a refill, mine 1,008). */
+      mine(blocks: number): Promise<{ height: number }>;
+      /** Pays `sats` to the vault's next deposit address or the spending balance's receive address, and mines a block. */
+      fund(target: 'vault' | 'spending', sats: Sats): Promise<{ address: string; height: number }>;
+    };
   };
 }

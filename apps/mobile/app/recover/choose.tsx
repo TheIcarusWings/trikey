@@ -47,7 +47,7 @@ function Option({
 export default function RecoverChoose() {
   const router = useRouter();
   const wallet = useWalletService();
-  const { recoveryDelayDays, onboarded, backing } = useWallet();
+  const { recoveryDelayDays, onboarded, backing, mode } = useWallet();
   const { busy, run, message, error } = useAction();
   const demo = backing === 'demo';
 
@@ -60,6 +60,23 @@ export default function RecoverChoose() {
     const r = await run(wallet.startRecovery(lostKey));
     if (r.ok) router.push('/recover/waiting');
   };
+
+  // A Recovery Key wallet on this phone: its recoveries are the kit's (no guardian, no waiting).
+  if (mode === 'recoveryKey' && onboarded) {
+    return (
+      <Screen title="What happened?" androidTitleBelow backLabel="Back">
+        <Body>Any two of your three keys can get your money back, right away. Pick what you lost.</Body>
+        <Option icon={FileText} title="Lost my Recovery Kit" description="Or it may have been seen. This phone and your hardware wallet move everything to a new vault with a new kit." onPress={() => router.push('/rk/replace')} />
+        <Option
+          icon={HardwareWallet}
+          title="Lost my hardware wallet"
+          description="Use your Recovery Kit and this phone to move everything to a new vault with a new hardware wallet."
+          onPress={() => router.push({ pathname: '/recover/kit', params: { with: 'phone' } })}
+        />
+        <Body>Lost or stolen phone? Open Trikey on the new phone, choose "I already have a Trikey wallet", then "I have a Recovery Kit". You need the kit and your hardware wallet.</Body>
+      </Screen>
+    );
+  }
 
   return (
     <Screen title="What happened?" androidTitleBelow backLabel="Back">

@@ -42,7 +42,7 @@ const STEPS: Record<HardwareKind, string[]> = {
 export default function ConfirmDevice() {
   const router = useRouter();
   const wallet = useWalletService();
-  const params = useLocalSearchParams<{ kind?: string }>();
+  const params = useLocalSearchParams<{ kind?: string; flow?: string }>();
   const kind = (['ledger', 'trezor', 'bitbox02', 'qr', 'simulated'].includes(params.kind ?? '') ? params.kind : 'ledger') as HardwareKind;
   const { progress } = useWallet();
   const [connected, setConnected] = useState<HardwareWallet | null>(null);
@@ -86,7 +86,7 @@ export default function ConfirmDevice() {
           {problem ? (
             <AppButton title="Try again" size="hero" onPress={() => setAttempt((a) => a + 1)} />
           ) : (
-            <AppButton title="Continue" size="hero" disabled={!connected} onPress={() => router.push('/scan-guardian')} />
+            <AppButton title="Continue" size="hero" disabled={!connected} onPress={() => router.push(params.flow === 'rk' ? '/rk/create' : '/scan-guardian')} />
           )}
         </>
       }>
@@ -95,7 +95,7 @@ export default function ConfirmDevice() {
         lines={['Register wallet?', 'Trikey · 2 of 3', { text: 'Approve', muted: true }]}
       />
       <View className={cn('mt-2 gap-3 pl-5', pick('gap-2.5', 'gap-3'))}>
-        {STEPS[kind].map((step, i) => (
+        {(params.flow === 'rk' ? STEPS[kind].slice(0, 2) : STEPS[kind]).map((step, i) => (
           <View key={step} className="flex-row">
             <Text className={cn('w-5 -ml-5', pick('text-[15px] leading-[21px]', 'text-base leading-6'))}>{i + 1}.</Text>
             <Text className={cn('flex-1', pick('text-[15px] leading-[21px]', 'text-base leading-6'))}>{step}</Text>

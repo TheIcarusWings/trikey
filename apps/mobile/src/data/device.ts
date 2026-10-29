@@ -20,6 +20,30 @@ export class DevicePromptStore {
   private cancelActive?: () => void;
   /** The text of the last `hardware_prompt` event: what the device is about to show. */
   pendingDetail?: string;
+  /**
+   * Several signatures are asked for in a row (Recovery Key refills: one confirmation each). The wallet announces all of
+   * them first; each `signPsbt` then takes the next one, and the sheet says "2 of 8".
+   */
+  private queue: { text: string; step?: number; steps?: number }[] = [];
+
+  queueDetail(text: string, step?: number, steps?: number): void {
+    this.queue.push({ text, step, steps });
+  }
+
+  /** The text (and place in a series) for the next signature: the next queued one, else the last single prompt's. */
+  takeDetail(): { text?: string; step?: number; steps?: number } {
+    const next = this.queue.shift();
+    if (next) return next;
+    const text = this.pendingDetail;
+    this.pendingDetail = undefined;
+    return { text };
+  }
+
+  /** Forgets what was announced and not asked (a signature failed or was given up on). */
+  clearQueue(): void {
+    this.queue = [];
+    this.pendingDetail = undefined;
+  }
 
   getSnapshot = (): DevicePrompt | null => this.current;
 
@@ -156,9 +180,9 @@ class PromptingSigner implements HardwareSigner {
   }
 
   signPsbt(psbtBase64: string, wallet: HardwareWalletPolicy) {
-    const detail = this.store.pendingDetail;
-    this.store.pendingDetail = undefined;
-    return this.run('Confirm on your device', detail ?? 'Review the payment on the device before approving.', () => this.inner.signPsbt(psbtBase64, wallet));
+    const { text, step, steps } = this.store.takeDetail();
+    const title = steps && steps > 1 && step ? `Confirm on your device (${step} of ${steps})` : 'Confirm on your device';
+    return this.run(title, text ?? 'Review the payment on the device before approving.', () => this.inner.signPsbt(psbtBase64, wallet));
   }
 
   signMessage(path: string, message: string) {

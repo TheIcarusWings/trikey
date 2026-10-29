@@ -2,6 +2,8 @@ import { parseScannedCode } from '@trikey/wallet/scan';
 import { WalletServiceError } from './errors';
 import { SIMULATED_OPTION, hardwareOptionTable, type UiOs } from './hardware-options';
 import { buildRefillSchedule, limitChangeNeedsHardware, quoteSend as quoteSendRule } from './rules';
+import { emptyRecoveryKeyState } from './rk-empty';
+import { DEMO_FINGERPRINT, createMockRecoveryKey } from './rk-mock';
 import type { WalletService } from './service';
 import type {
   ActivityItem,
@@ -133,12 +135,19 @@ function recoveryKeyState(): RecoveryKeyState {
     status: i < 3 ? 'received' : 'upcoming',
   }));
   return {
-    keyKind: 'paper',
+    ...emptyRecoveryKeyState({ keyKind: 'paper' }),
+    stage: 'ready',
+    savedKey: 'kit',
+    fingerprint: DEMO_FINGERPRINT,
     spendingSats: 180_000,
     vaultSats: 4_030_000,
-    refillAmountSats: 200_000,
-    refills,
+    refillsLeft: 5,
     refillsTotal: 8,
+    refillsStatus: 'live',
+    needsApproval: false,
+    next: { index: 4, amountSats: 200_000, status: 'waiting', etaAt: '2026-11-01T08:00:00', inBlocks: 432 },
+    syncedAt: NOW.toISOString(),
+    refills,
     activity: [
       pay({
         id: 'rk-tx-1',
@@ -545,17 +554,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     setRecoveryKeyKind(keyKind: RecoveryKeyKind) {
       update((s) => ({ recoveryKey: { ...s.recoveryKey, keyKind } }));
     },
-    async approveRefills(amountSats: Sats) {
-      await wait(deviceDelay);
-      update((s) => ({
-        recoveryKey: {
-          ...s.recoveryKey,
-          refillAmountSats: amountSats,
-          refills: buildRefillSchedule(amountSats, NOW),
-          refillsTotal: 8,
-        },
-      }));
-    },
+    rk: createMockRecoveryKey({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }),
 
     // -- preferences --------------------------------------------------
     setUnit: (unit: AmountUnit) => update({ unit }),
@@ -599,6 +598,18 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
             alertRecipients: ['This phone', ...s.contacts.map((c) => c.name)],
             acknowledged: false,
             movingSats: s.balanceSats,
+          },
+        }));
+      },
+      simulateRecoveryKeyAlerts() {
+        update((s) => ({
+          recoveryKey: {
+            ...s.recoveryKey,
+            notices: [
+              { id: 'unexpected_broadcast:demo', kind: 'unexpected_broadcast', at: NOW.toISOString(), index: 4, txid: txid('9f3a61c0d7e2') },
+              { id: 'foreign_vault_spend:demo', kind: 'foreign_vault_spend', at: NOW.toISOString(), txid: txid('2be84d5a90c1') },
+            ],
+            speedUp: { index: 4, txid: txid('9f3a61c0d7e2'), feeSats: 1_850, targetRate: 22, currentRate: 4.2 },
           },
         }));
       },

@@ -3,18 +3,16 @@ import { Pressable, View } from 'react-native';
 import { ActivityRow } from '@/components/activity-row';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { ArrowDownLeft, ArrowUpRight, Clock, HardwareWallet, Lock, TriangleAlert, Vault } from '@/components/icons';
+import { ArrowDownLeft, ArrowUpRight, Clock, HardwareWallet, Lock, TriangleAlert } from '@/components/icons';
 import { Notice } from '@/components/panels';
 import { ProgressBar } from '@/components/progress';
 import { Card } from '@/components/ui/card';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import {
-  daysBetween,
   formatAmount,
   formatBtc,
   formatCountdown,
-  formatInDays,
   formatSats,
   remainingToday,
   useActivity,
@@ -108,48 +106,6 @@ export function LimitCard() {
         <Text className={cn('text-muted-foreground', pick('text-[13px] leading-[18px]', 'text-xs leading-4'))}>
           Guardian online {'·'} {guardianBox(guardian)}
         </Text>
-      </View>
-    </Card>
-  );
-}
-
-/** Recovery Key mode: the vault, the next refill and how many are left. */
-export function VaultCard() {
-  const router = useRouter();
-  const now = useNow();
-  const { recoveryKey: rk } = useWallet();
-  const upcoming = rk.refills.filter((r) => r.status === 'upcoming');
-  const next = upcoming[0];
-  return (
-    <Card className="gap-3 px-4 py-3.5">
-      <View className="flex-row items-center justify-between">
-        <View className="flex-row items-center gap-2.5">
-          <Icon as={Vault} size={20} className="text-foreground" strokeWidth={1.8} />
-          <Text className="text-[15px] font-medium leading-5">Vault</Text>
-        </View>
-        <Text className="text-[15px] leading-5 tabular-nums">{formatSats(rk.vaultSats)} sats</Text>
-      </View>
-      <Text className="text-muted-foreground text-[13px] leading-[18px]">Spending from the vault needs your Ledger.</Text>
-      <View className="bg-border h-px" />
-      {next ? (
-        <View className="flex-row justify-between">
-          <Text className="text-sm leading-5">Next refill</Text>
-          <Text className="text-sm leading-5 tabular-nums">
-            +{formatSats(next.amountSats)} {formatInDays(daysBetween(now, new Date(next.unlocksAt)))}
-          </Text>
-        </View>
-      ) : null}
-      <View className="flex-row items-center justify-between">
-        <Text className="text-muted-foreground text-sm leading-5">
-          {upcoming.length} of {rk.refillsTotal} refills left
-        </Text>
-        <Pressable
-          role="link"
-          onPress={() => router.push('/rk/refills')}
-          hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
-          accessibilityLabel="Approve more refills">
-          <Text className="text-sm font-medium leading-5 underline underline-offset-[3px]">Approve more</Text>
-        </Pressable>
       </View>
     </Card>
   );
