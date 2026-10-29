@@ -55,7 +55,7 @@ skipped there (those tests return after building and signing their transactions)
 
 | Service | Image | Notes |
 |---|---|---|
-| `bitcoind` | `bitcoin/bitcoin:29.5` | `-regtest -txindex -acceptnonstdtxn=0`: regtest accepts non-standard transactions unless told otherwise, and relay policy is what is tested |
+| `bitcoind` | `bitcoin/bitcoin:32.1` (Electrs 0.12 needs its `/rest/spenttxouts`) | `-regtest -txindex -acceptnonstdtxn=0`: regtest accepts non-standard transactions unless told otherwise, and relay policy is what is tested |
 | `electrs` | `getumbrel/electrs:v0.12.0` | romanz/electrs as Umbrel ships it; the credentials go in through a generated config file, since Electrs takes `auth` from a file only |
 
 Both are pinned by tag and digest (the multi-arch index digest). To update a pin, take the new tag's

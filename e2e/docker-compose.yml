@@ -7,7 +7,7 @@
 #   npm run stack:down -w @trikey/e2e    stop and delete the chain
 #
 # Images are pinned by tag AND digest (the digest is the multi-arch index, so amd64 and arm64 both work):
-#   bitcoin/bitcoin 29.5     Bitcoin Core's own images; the entrypoint passes arguments starting with "-" to bitcoind
+#   bitcoin/bitcoin 32.1     Bitcoin Core's own images; the entrypoint passes arguments starting with "-" to bitcoind
 #   getumbrel/electrs v0.12.0  romanz/electrs as Umbrel ships it (the Electrs a guardian talks to on an Umbrel)
 # To update a pin, look the digest up (Docker Hub registry API, `Docker-Content-Digest` of the tag's manifest)
 # and change the tag and the digest together.
@@ -15,7 +15,7 @@ name: trikey-e2e
 
 services:
   bitcoind:
-    image: bitcoin/bitcoin:29.5@sha256:97b2ae3833880760b36481cba435de7b6f32218bc8eb6aaa5ac321d9591b9ae4
+    image: bitcoin/bitcoin:32.1@sha256:d2454aaf2ff4ce1ebbc49f4aa05ed044c907b849a80a3f4c0ad23e488e50bbe0
     restart: "no"
     environment:
       E2E_RPC_USER: ${E2E_RPC_USER:-trikey}
