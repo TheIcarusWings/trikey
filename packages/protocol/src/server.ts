@@ -45,7 +45,7 @@ export interface RpcServerOptions {
   handlers: Handlers;
   /** Paired phones (hex pubkeys). Requests from anyone else are dropped, except `allowUnpaired` methods. */
   peers?: Iterable<string>;
-  /** Methods an unpaired sender may call. Default `['pair']`. */
+  /** Methods an unpaired sender may call. Default `['pair.prepare', 'pair']`. */
   allowUnpaired?: MethodName[];
   /** Replace the default peers-based check entirely. */
   authorize?: (sender: string, method: MethodName) => boolean | Promise<boolean>;
@@ -81,7 +81,7 @@ export class RpcServer {
     this.limits = opts.limits ?? DEFAULT_LIMITS;
     this.guard = opts.guard ?? new ReplayGuard({ limits: this.limits });
     this.peers = new Set(opts.peers ?? []);
-    this.allowUnpaired = new Set(opts.allowUnpaired ?? ['pair']);
+    this.allowUnpaired = new Set(opts.allowUnpaired ?? ['pair.prepare', 'pair']);
     this.publicKey = getPublicKey(opts.secretKey);
   }
 
