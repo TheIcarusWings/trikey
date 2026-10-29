@@ -16,7 +16,7 @@ import type { Alert } from '@trikey/protocol';
 import type { Guardian } from './guardian.js';
 import { errorText } from './log.js';
 import type { DueAlert, RecoveryRecord } from './policy/index.js';
-import { toSeconds } from './nostr/wire.js';
+import { stampOf, toSeconds } from './nostr/wire.js';
 
 export function formatBtc(sats: bigint | number): string {
   const s = BigInt(sats);
@@ -42,16 +42,16 @@ function contestedOf(g: Guardian, rec: RecoveryRecord): boolean {
 
 /** The wire alert for the phone. */
 export function alertToWire(g: Guardian, a: DueAlert, rec: RecoveryRecord | undefined): Alert {
-  const at = toSeconds(a.dueAt);
+  const stamp = stampOf(a.dueAt);
   const message = alertText(g, a, rec, 'short');
   switch (a.kind) {
     case 'recovery_started':
     case 'recovery_ready':
-      return { type: a.kind, at, recoveryId: a.recoveryId, readyAt: toSeconds(a.readyAt), survivingRole: a.survivingRole, amountSats: Number(a.amountSats), message };
+      return { type: a.kind, ...stamp, recoveryId: a.recoveryId, readyAt: toSeconds(a.readyAt), survivingRole: a.survivingRole, amountSats: Number(a.amountSats), message };
     case 'recovery_reminder':
       return {
         type: 'recovery_reminder',
-        at,
+        ...stamp,
         recoveryId: a.recoveryId,
         readyAt: toSeconds(a.readyAt),
         survivingRole: a.survivingRole,
@@ -62,14 +62,14 @@ export function alertToWire(g: Guardian, a: DueAlert, rec: RecoveryRecord | unde
     case 'recovery_cancelled':
       return {
         type: 'recovery_cancelled',
-        at,
+        ...stamp,
         recoveryId: a.recoveryId,
         cancelledBy: rec?.cancelledBy?.kind ?? 'app',
         ...(rec ? { contested: contestedOf(g, rec) } : {}),
         message,
       };
     case 'recovery_completed':
-      return { type: 'recovery_completed', at, recoveryId: a.recoveryId, ...(rec ? { txid: rec.sweepTxid } : {}), message };
+      return { type: 'recovery_completed', ...stamp, recoveryId: a.recoveryId, ...(rec ? { txid: rec.sweepTxid } : {}), message };
   }
 }
 

@@ -20,6 +20,15 @@ export const DEFAULT_GAP_LIMIT = 20;
 /** Stop scanning a chain past this index (far beyond any real wallet; keeps a lying server from looping us). */
 export const MAX_SCAN_INDEX = 100_000;
 
+/** Most inputs of a replacement sweep the guardian will check and relay: what `wallet.sync` can list as coins. */
+export const MAX_REPLACEMENT_INPUTS = 500;
+/** Most outputs of a replacement sweep. A sweep has one (two with a change output would be unusual). */
+export const MAX_REPLACEMENT_OUTPUTS = 10;
+
+/** Why a transaction is not a sweep of the replaced wallet into the active one. */
+export type ReplacementRefusal = 'too_many_inputs' | 'too_many_outputs' | 'input_not_from_replaced_wallet' | 'output_not_to_wallet' | 'outputs_exceed_inputs';
+export type ReplacementCheck = { ok: true; feeSats: bigint; inputs: number; outputs: number } | { ok: false; reason: ReplacementRefusal };
+
 export class ChainUnavailableError extends Error {
   constructor(message = 'chain data is unavailable (Electrs is not connected)') {
     super(message);
@@ -480,6 +489,50 @@ export class ChainService {
       if (prev && scripts.has(hex.encode(prev.script))) return true;
     }
     return false;
+  }
+
+  /**
+   * Whether `txHex` is a sweep of the replaced wallet into the active one, for a guardian that watches
+   * the replaced wallet (see `ReplacementCheck`). Every rule must hold, so this guardian relays nothing
+   * it does not understand:
+   *
+   * - at most `MAX_REPLACEMENT_INPUTS` inputs and `MAX_REPLACEMENT_OUTPUTS` outputs;
+   * - EVERY input spends a coin of the replaced wallet: its transaction is in the replaced wallet's
+   *   history and the previous output pays one of its addresses (scanned range). The previous
+   *   transactions are fetched from Electrs and checked against their txid, so a lying server cannot
+   *   make a foreign coin look like the wallet's;
+   * - EVERY output pays an address of the active wallet (scanned range, both chains): nothing goes to
+   *   anyone else. The only leak is the fee, returned so the caller can hold it to the sweep fee cap;
+   * - the outputs do not exceed the inputs.
+   *
+   * Cheap rules first: the size limits and the input check cost one scan of the replaced wallet; the
+   * output check one scan of the active one.
+   */
+  async checkReplacementSweep(replaced: MultisigWallet, active: MultisigWallet, txHex: string): Promise<ReplacementCheck> {
+    const tx = parseRawTx(txHex);
+    if (tx.inputs.length === 0 || tx.inputs.length > MAX_REPLACEMENT_INPUTS) return { ok: false, reason: 'too_many_inputs' };
+    if (tx.outputs.length === 0 || tx.outputs.length > MAX_REPLACEMENT_OUTPUTS) return { ok: false, reason: 'too_many_outputs' };
+
+    const scanOld = await this.scanWallet(replaced);
+    const history = new Set<string>();
+    for (const chain of [0, 1] as const) for (const u of scanOld.chains[chain].used) for (const h of u.history) history.add(h.tx_hash);
+    if (tx.inputs.some((i) => !history.has(i.txid))) return { ok: false, reason: 'input_not_from_replaced_wallet' };
+    const oldScripts = this.walletScripts(replaced, scanOld);
+    let totalIn = 0n;
+    for (const inp of tx.inputs) {
+      const prev = parseRawTx(await this.getTransaction(inp.txid)).outputs[inp.vout];
+      if (!prev || !oldScripts.has(hex.encode(prev.script))) return { ok: false, reason: 'input_not_from_replaced_wallet' };
+      totalIn += prev.amount;
+    }
+
+    const newScripts = this.walletScripts(active, await this.scanWallet(active));
+    let totalOut = 0n;
+    for (const out of tx.outputs) {
+      if (!newScripts.has(hex.encode(out.script))) return { ok: false, reason: 'output_not_to_wallet' };
+      totalOut += out.amount;
+    }
+    if (totalOut > totalIn) return { ok: false, reason: 'outputs_exceed_inputs' };
+    return { ok: true, feeSats: totalIn - totalOut, inputs: tx.inputs.length, outputs: tx.outputs.length };
   }
 
   /**

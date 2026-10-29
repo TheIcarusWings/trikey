@@ -75,7 +75,9 @@ After every start the guardian is locked: key 3 is decrypted only by an unlock
 - **Chain data** comes from the guardian, never from public servers:
   `wallet.sync`, `tx.get`, `tx.broadcast` and `fees.estimate` work while the
   guardian is locked, for the paired phone only. `tx.broadcast` relays only
-  transactions that spend the wallet's own coins.
+  transactions that spend the wallet's own coins, or sweep the wallet it
+  replaced into it (below), at most 20 per 10 minutes per phone. Alerts and
+  `guardian.status` carry `atMs` (milliseconds) next to the seconds.
 - **Co-signing** (`sign`) needs `nonWitnessUtxo` on every input, the phone's
   signature alone, and an unlocked guardian; the daily limit counts outflow
   plus fee over a rolling 24 h. `guardian.status.dailyLimit` is the count.
@@ -97,7 +99,16 @@ After every start the guardian is locked: key 3 is decrypted only by an unlock
   The old wallet is retired: everything for it is refused (`1004`).
 - **Replace guardian**: `wallet.retire` with a `retire-wallet` approval on
   the old guardian (if it still runs), then pair the new guardian as usual
-  with a new descriptor (`replacesWalletId` names the old one).
+  with a new descriptor (`replacesWalletId` names the old one). Send the old
+  wallet's descriptor as `replacesDescriptor` too and the new guardian
+  *watches* it (no co-signing, no recovery): `wallet.sync` with
+  `wallet: "replaced"` lists its coins (stray deposits included), `tx.get`
+  serves their transactions, and `tx.broadcast` relays the phone's signed sweep
+  of them into the new wallet when the old box is gone. The sweep must spend
+  only the old wallet's coins, pay only the new wallet's addresses and stay
+  under the sweep fee cap. `wallet.unwatch` ends it.
+- **Rotation after a recovery**: the phone that was paired to the swept
+  wallet gets `wallet_retired` (`recovered`) when another phone is adopted.
 - **Remote lock**: `guardian.lock` from the paired phone, answered
   `{ state: "locked" }`, alert `guardian_locked` with reason `remote`.
 - **Recovery code**: the web UI's "Recover on a new phone" QR code is
@@ -113,6 +124,7 @@ src/
   guardian.ts         the service: lifecycle, setup, lock/unlock, nostr authorization, tick
   keystore.ts         key 3 at rest (Argon2id + XChaCha20-Poly1305), KeystoreSigner
   unlock-throttle.ts  persistent unlock rate limit
+  rate-limit.ts       per-phone sliding-window limit for tx.broadcast
   identity.ts         the guardian's nostr key
   pairing.ts          one-time pairing sessions
   alerts.ts           Delay & Notify alerts: protocol notifications + NIP-17 DMs

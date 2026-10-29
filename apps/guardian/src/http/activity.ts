@@ -27,7 +27,7 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
       return {
         ...base,
         kind: 'system',
-        event: `Wallet ${e.walletId} paired${e.replacesWalletId ? ` (it replaces wallet ${e.replacesWalletId} on another guardian)` : ''}`,
+        event: `Wallet ${e.walletId} paired${e.replacesWalletId ? ` (it replaces wallet ${e.replacesWalletId} on another guardian${e.watching ? '; this guardian watches that wallet so the phone can move its coins' : ''})` : ''}`,
         summary: 'Wallet paired',
         signedBy: 'Hardware wallet',
         sats: null,
@@ -149,6 +149,8 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
         sats: null,
         result: 'ok',
       };
+    case 'wallet_unwatched':
+      return { ...base, kind: 'system', event: `Stopped watching the replaced wallet ${e.walletId}`, summary: 'Stopped watching a wallet', signedBy: 'Phone', sats: null, result: 'ok' };
     case 'wallet_retire_refused':
       return { ...base, kind: 'system', event: `Retiring the wallet refused: ${refusalText(e.refusal)}`, signedBy: null, sats: null, result: 'refused' };
     case 'hardware_auth_confirmed':

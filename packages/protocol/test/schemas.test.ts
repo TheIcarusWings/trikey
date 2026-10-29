@@ -60,6 +60,7 @@ describe('request schemas', () => {
     'wallet.sync': { historyLimit: 50 },
     'tx.get': { txid: 'ab'.repeat(32) },
     'tx.broadcast': { txHex: RAW_TX },
+    'wallet.unwatch': {},
     'fees.estimate': { targets: [1, 6] },
     'recovery.access': { approval: accessApproval },
     'guardian.lock': {},
@@ -137,6 +138,30 @@ describe('methods', () => {
     expect(ok('pair', { ...pairParams, replacesWalletId: 'not-a-wallet-id' })).toBe(false);
   });
 
+  it('pair may carry the replaced wallet\'s descriptor, which needs its id', () => {
+    const replaced = 'wsh(sortedmulti(2,D,E,F))';
+    expect(ok('pair', { ...pairParams, replacesWalletId: WALLET_ID, replacesDescriptor: replaced })).toBe(true);
+    expect(ok('pair', { ...pairParams, replacesDescriptor: replaced })).toBe(false); // nothing to check it against
+    expect(ok('pair', { ...pairParams, replacesWalletId: WALLET_ID, replacesDescriptor: 'short' })).toBe(false);
+    expect(ok('pair', { ...pairParams, replacesWalletId: WALLET_ID, replacesDescriptor: 'x'.repeat(2001) })).toBe(false);
+    expect(ok('pair', { ...pairParams, replacesWalletId: WALLET_ID, replacesDescriptor: 42 })).toBe(false);
+    // The wire request is refused the same way, and an old phone's pair (no descriptor) is unchanged.
+    expect(RequestSchema.safeParse({ id, method: 'pair', params: { ...pairParams, replacesDescriptor: replaced } }).success).toBe(false);
+    expect(RequestSchema.safeParse({ id, method: 'pair', params: { ...pairParams, replacesWalletId: WALLET_ID, replacesDescriptor: replaced } }).success).toBe(true);
+    expect(RequestSchema.safeParse({ id, method: 'pair', params: { ...pairParams, replacesWalletId: WALLET_ID } }).success).toBe(true);
+  });
+
+  it('wallet.unwatch takes an optional wallet id, and says whether it dropped one', () => {
+    expect(ok('wallet.unwatch', {})).toBe(true);
+    expect(ok('wallet.unwatch', { walletId: WALLET_ID })).toBe(true);
+    expect(ok('wallet.unwatch', { walletId: 'replaced' })).toBe(false);
+    expect(ok('wallet.unwatch', { walletId: WALLET_ID.toUpperCase() })).toBe(false);
+    expect(ok('wallet.unwatch', { approval })).toBe(false); // no approval: it only takes capability away
+    expect(methods['wallet.unwatch'].result.safeParse({ unwatched: true, walletId: WALLET_ID }).success).toBe(true);
+    expect(methods['wallet.unwatch'].result.safeParse({ unwatched: false }).success).toBe(true);
+    expect(methods['wallet.unwatch'].result.safeParse({}).success).toBe(false);
+  });
+
   it('guardian.lock takes nothing; wallet.retire requires a hardware approval; hardware.confirm a key and its proof', () => {
     expect(ok('guardian.lock', {})).toBe(true);
     expect(ok('guardian.lock', { reason: 'stolen' })).toBe(false);
@@ -195,6 +220,18 @@ describe('chain methods', () => {
     expect(res('wallet.sync', missing)).toBe(false);
   });
 
+  it('wallet.sync may name the replaced (watched) wallet, and says which wallet it read', () => {
+    expect(ok('wallet.sync', { wallet: 'replaced' })).toBe(true);
+    expect(ok('wallet.sync', { wallet: WALLET_ID, historyLimit: 10 })).toBe(true);
+    expect(ok('wallet.sync', { wallet: 'old' })).toBe(false);
+    expect(ok('wallet.sync', { wallet: 'REPLACED' })).toBe(false);
+    expect(ok('wallet.sync', { wallet: WALLET_ID.slice(2) })).toBe(false);
+    expect(ok('wallet.sync', { wallet: undefined })).toBe(true);
+    expect(res('wallet.sync', { ...sync, walletId: WALLET_ID })).toBe(true);
+    expect(res('wallet.sync', { ...sync, walletId: 'replaced' })).toBe(false);
+    expect(res('wallet.sync', sync)).toBe(true); // a guardian without watched wallets omits it
+  });
+
   it('tx.get and tx.broadcast carry lowercase raw transaction hex of bounded size', () => {
     expect(ok('tx.get', { txid: 'AB'.repeat(32) })).toBe(false);
     expect(ok('tx.get', { txid: 'ab'.repeat(32), witness: false })).toBe(true);
@@ -238,8 +275,27 @@ describe('chain methods', () => {
     const status = { state: 'locked', paired: true, nextHardwareSequence: 1, phoneSpending: 'enabled', activeRecoveryId: null, version: '0.1.0', time: 1_800_000_000 };
     expect(res('guardian.status', status)).toBe(true);
     expect(res('guardian.status', { ...status, dailyLimit: { limitSats: 100, usedSats: 40, availableSats: 60 } })).toBe(true);
+    expect(res('guardian.status', { ...status, watchedWalletId: WALLET_ID })).toBe(true);
+    expect(res('guardian.status', { ...status, watchedWalletId: 'replaced' })).toBe(false);
     const parsed = methods['guardian.status'].result.parse({ ...status, dailyLimit: { limitSats: 100, usedSats: 40, availableSats: 60 } });
     expect(parsed.dailyLimit?.usedSats).toBe(40);
+  });
+});
+
+describe('guardian.status atMs', () => {
+  const res = (result: unknown) => methods['guardian.status'].result.safeParse(result).success;
+  const status = { state: 'unlocked', paired: true, nextHardwareSequence: 1, phoneSpending: 'enabled', activeRecoveryId: null, version: '0.1.0', time: 1_800_000_000 };
+
+  it('is optional, in milliseconds, and the same moment as time', () => {
+    expect(res(status)).toBe(true); // an older guardian
+    expect(res({ ...status, atMs: 1_800_000_000_123 })).toBe(true);
+    expect(res({ ...status, atMs: 1_800_000_000_000 })).toBe(true);
+    expect(res({ ...status, atMs: 1_800_000_000 })).toBe(false); // seconds by mistake: the year 1970
+    expect(res({ ...status, atMs: 1_800_000_000_123.5 })).toBe(false);
+    expect(res({ ...status, atMs: -1 })).toBe(false);
+    expect(res({ ...status, atMs: 4_102_444_800_001 })).toBe(false);
+    expect(res({ ...status, atMs: 1_800_000_030_000 })).toBe(false); // 30 s away from time
+    expect(res({ ...status, atMs: 1_800_000_001_000 })).toBe(true); // a rounding implementation is within a second
   });
 });
 
@@ -338,6 +394,31 @@ describe('responses and alerts', () => {
     expect(Alert.safeParse({ type: 'daily_reminder', ...info, daysLeft: 6, at }).success).toBe(false); // renamed to recovery_reminder
   });
 
+  it('every alert may carry atMs, the same moment as at in milliseconds', () => {
+    const at = 1_800_000_000;
+    const info = { recoveryId: 'rec-1', readyAt: at + 604800, survivingRole: 'app', amountSats: 100_000 };
+    const alerts = [
+      { type: 'recovery_started', ...info },
+      { type: 'recovery_reminder', ...info, daysLeft: 6 },
+      { type: 'recovery_ready', ...info },
+      { type: 'recovery_cancelled', recoveryId: 'rec-1', cancelledBy: 'app' },
+      { type: 'recovery_completed', recoveryId: 'rec-1' },
+      { type: 'guardian_locked', reason: 'manual' },
+      { type: 'wallet_adopted', walletId: WALLET_ID, previousWalletId: 'fedcba9876543210', recoveryId: 'rec-1', hardwareConfirmRequired: false },
+      { type: 'wallet_retired', walletId: WALLET_ID, reason: 'retired' },
+    ];
+    for (const a of alerts) {
+      expect(Alert.safeParse({ ...a, at }).success, `${a.type} without atMs (older guardian)`).toBe(true);
+      expect(Alert.safeParse({ ...a, at, atMs: at * 1000 + 250 }).success, `${a.type} with atMs`).toBe(true);
+      expect(NotificationSchema.safeParse({ id, method: 'alert', params: { ...a, at, atMs: at * 1000 + 999 } }).success, a.type).toBe(true);
+      expect(Alert.safeParse({ ...a, at, atMs: at }).success, `${a.type}: atMs in seconds`).toBe(false);
+      expect(Alert.safeParse({ ...a, at, atMs: (at + 60) * 1000 }).success, `${a.type}: atMs a minute off`).toBe(false);
+      expect(Alert.safeParse({ ...a, at, atMs: 1.5 }).success, `${a.type}: atMs fractional`).toBe(false);
+    }
+    const parsed = Alert.parse({ type: 'guardian_locked', at, atMs: at * 1000 + 7 });
+    expect(parsed.atMs).toBe(at * 1000 + 7);
+  });
+
   it('cancelledBy is app, contact or hardware', () => {
     const at = 1_800_000_000;
     for (const cancelledBy of ['app', 'contact', 'hardware']) {
@@ -366,6 +447,7 @@ describe('error codes', () => {
     expect(ErrorCode.ForeignTransaction).toBe(1602);
     expect(ErrorCode.TxTooLarge).toBe(1603);
     expect(ErrorCode.WalletRetired).toBe(1004);
+    expect(ErrorCode.WalletNotWatched).toBe(1005);
     expect(ErrorCode.HardwareAuthUnconfirmed).toBe(1209);
   });
 

@@ -20,6 +20,10 @@
  *   - the phone and hardware wallet retire it (`retireWallet`, "Replace
  *     guardian"), after which pairing is open for a new wallet.
  * Nothing is ever signed or started for a retired wallet.
+ *
+ * The active wallet may also carry a WATCHED wallet: the one it replaced on another guardian, kept by
+ * descriptor so the service can serve its coins and relay a sweep of them (`WatchedWallet`). It is not
+ * guarded: no co-signing, no recovery, no approvals. It goes when the active wallet does.
  */
 import { HDKey } from '@scure/bip32';
 import { base64, hex } from '@scure/base';
@@ -58,6 +62,7 @@ import {
   RetiredWallet,
   Rules,
   SurvivingRole,
+  WatchedWallet,
   emptyState,
 } from './types.js';
 
@@ -91,8 +96,13 @@ export interface RegisterInput {
   /** Proof (BIP137 signature) over `pairingMessage(walletId, cosignerAccountPubkey)` by the authorization key. */
   hardwareAuthProof: string;
   appNostrPubkey: string;
-  /** The wallet this one replaces on another guardian, if the phone said so (informational). */
+  /** The wallet this one replaces on another guardian, if the phone said so. */
   replacesWalletId?: string;
+  /**
+   * The descriptor of `replacesWalletId`. It must hash to that id and share a user key (phone or
+   * hardware) with this wallet; the engine then keeps it as a watched-only wallet (`WatchedWallet`).
+   */
+  replacesDescriptor?: string;
 }
 
 export type RuleChangeAuth = { authenticatedBy: 'app' } | { authenticatedBy: 'hardware'; approval: HardwareApproval };
@@ -302,6 +312,11 @@ export class PolicyEngine {
     return this.state.active?.registration;
   }
 
+  /** The wallet the active wallet replaced, if the guardian watches it (read-only). */
+  watchedWallet(): WatchedWallet | undefined {
+    return this.state.active?.watched;
+  }
+
   /** Wallets this guardian retired, oldest first (read-only). */
   retiredWallets(): readonly RetiredWallet[] {
     return this.state.retired;
@@ -467,6 +482,23 @@ export class PolicyEngine {
       if (!checked.authorizer.verify(pairingMessage(walletId, cosignerHex), input.hardwareAuthProof, hwKey))
         return bad('hardware pairing proof does not verify');
       const replaces = typeof input.replacesWalletId === 'string' && /^[0-9a-f]{16}$/.test(input.replacesWalletId) ? input.replacesWalletId : undefined;
+      let watched: WatchedWallet | undefined;
+      if (input.replacesDescriptor !== undefined) {
+        if (!replaces) return bad('replacesDescriptor needs replacesWalletId');
+        let replaced: MultisigWallet;
+        try {
+          replaced = MultisigWallet.fromDescriptor(input.replacesDescriptor, network);
+        } catch (e) {
+          return bad(`replacesDescriptor: ${(e as Error).message}`);
+        }
+        if (replaced.fingerprint() !== replaces) return bad('replacesDescriptor does not hash to replacesWalletId');
+        if (replaces === walletId) return bad('a wallet cannot replace itself');
+        // A replacement keeps the user's keys and changes the guardian's: at least one of key 2 and the hardware key must carry over.
+        const before = replaced.accountPubkeys();
+        if (!eqHex(before.app, acct.app) && !eqHex(before.hardware, acct.hardware))
+          return bad('the replaced wallet shares neither the phone key nor the hardware key with this wallet');
+        watched = { walletId: replaces, network: network.name, descriptor: replaced.descriptor(), since: now };
+      }
 
       draft.active = {
         registration: {
@@ -484,9 +516,26 @@ export class PolicyEngine {
         spends: [],
         phoneSpending: { state: 'enabled' },
         accessGrants: [],
+        ...(watched ? { watched } : {}),
       };
-      this.log(draft, now, { type: 'registered', walletId, ...(replaces ? { replacesWalletId: replaces } : {}) });
+      this.log(draft, now, { type: 'registered', walletId, ...(replaces ? { replacesWalletId: replaces } : {}), ...(watched ? { watching: true } : {}) });
       return { ok: true as const, walletId };
+    });
+  }
+
+  /**
+   * Stops watching the replaced wallet (`wallet.unwatch`). `walletId` names the wallet to drop; omitted,
+   * whatever is watched. Nothing watched, or another wallet named: nothing changes (`unwatched: false`).
+   */
+  async unwatch(walletId?: string): Promise<Result<{ unwatched: boolean; walletId?: string }>> {
+    return this.mutate((draft, now) => {
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      if (!w.watched || (walletId !== undefined && walletId !== w.watched.walletId)) return { ok: true as const, unwatched: false };
+      const dropped = w.watched.walletId;
+      delete w.watched;
+      this.log(draft, now, { type: 'wallet_unwatched', walletId: dropped });
+      return { ok: true as const, unwatched: true, walletId: dropped };
     });
   }
 
