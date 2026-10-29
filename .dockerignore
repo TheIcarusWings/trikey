@@ -1,0 +1,40 @@
+# Build context for packaging/docker/Dockerfile (context = repository root).
+
+# Dependencies and build output: the image installs and builds its own.
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/.vite
+**/coverage
+tools/consensus-verify/target
+
+# Version control, editor and agent state
+.git
+.github
+.claude
+.vscode
+.idea
+**/.DS_Store
+
+# Not needed to build the guardian image
+design
+docs
+apps/mobile
+packaging/umbrel
+packaging/start9
+
+# Secrets and local state: never let these reach the image
+.env
+.env.*
+**/.env
+**/.env.*
+.trikey
+**/.trikey
+**/*.key
+**/*.pem
+**/*.p8
+**/*.p12
+**/secrets
+**/wallet*.json
+**/seed*.txt
+**/*.log

@@ -1,0 +1,35 @@
+---
+manifestVersion: 1
+id: trikey-guardian
+name: Trikey Guardian
+tagline: Key 3 of your 2-of-3 bitcoin wallet, on your own node
+# TODO(verify): the icon is a placeholder (the web UI favicon). Replace with a proper icon URL.
+icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/guardian-web/public/favicon.svg
+category: bitcoin
+version: "0.1.0"
+# TODO(verify): host-facing port for the app_proxy. Pick one that no other app in the store uses.
+port: 3010
+description: >-
+  Trikey is a 2-of-3 bitcoin wallet in which every key belongs to you: a hardware wallet,
+  your phone, and a guardian on your own Umbrel.
+
+
+  Trikey Guardian is the third key. It co-signs phone payments under a daily limit you set,
+  and it runs a Delay & Notify recovery if you lose your phone. It talks to your own Bitcoin
+  node and Electrs, opens no inbound ports, and holds its key only in memory while unlocked.
+
+developer: Trikey contributors
+website: https://github.com/TheIcarusWings/trikey
+submitter: Trikey contributors
+repo: https://github.com/TheIcarusWings/trikey
+support: https://github.com/TheIcarusWings/trikey/issues
+# TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
+gallery: []
+# Empty for a new package.
+releaseNotes: ""
+dependencies:
+  - bitcoin
+  - electrs
+path: ""
+defaultUsername: ""
+defaultPassword: ""
