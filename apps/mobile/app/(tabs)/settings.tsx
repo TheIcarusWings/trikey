@@ -11,7 +11,7 @@ import { SelfTestRow } from '@/components/self-test-row';
 import { Segmented } from '@/components/segmented';
 import { Switch } from '@/components/ui/switch';
 import { Text } from '@/components/ui/text';
-import { formatSats, useWallet, useWalletService, type GuardianStatus, type RecoveryKeyKind, type ThemePreference } from '@/data';
+import { formatSats, serverHost, useWallet, useWalletService, type GuardianStatus, type RecoveryKeyKind, type ThemePreference } from '@/data';
 import { cloudLabel, guardianBox } from '@/lib/labels';
 import { IS_IOS, pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
@@ -36,7 +36,7 @@ export default function SettingsScreen() {
   const { guardian } = state;
 
   const guardianDot = guardian.status === 'online' ? 'good' : guardian.status === 'locked' ? 'warn' : 'bad';
-  const refillsLeft = state.recoveryKey.refills.filter((r) => r.status === 'upcoming').length;
+  const refillsLeft = state.recoveryKey.refillsLeft;
   const box = guardianBox(guardian);
 
   return (
@@ -44,17 +44,24 @@ export default function SettingsScreen() {
       <SectionLabel first>Your keys</SectionLabel>
       <ListGroup>
         <SettingsRow title="Hardware wallet" value={state.hardware.model} />
-        <SettingsRow
-          title="This phone"
-          value={pick(
-            state.backup ? 'Backed up' : 'Not backed up',
-            state.backup ? `Backed up to ${cloudLabel(state.backup.provider)}` : 'Not backed up'
-          )}
-          onPress={() => router.push({ pathname: '/backup', params: { again: '1' } })}
-          accessibilityHint="Make a new backup"
-        />
         {rk ? (
-          <SettingsRow title="Recovery Key" value={KEY_LABEL[state.recoveryKey.keyKind]} />
+          <SettingsRow title="This phone" value={pick('Spends with Face ID', 'Spends with your fingerprint')} />
+        ) : (
+          <SettingsRow
+            title="This phone"
+            value={pick(
+              state.backup ? 'Backed up' : 'Not backed up',
+              state.backup ? `Backed up to ${cloudLabel(state.backup.provider)}` : 'Not backed up'
+            )}
+            onPress={() => router.push({ pathname: '/backup', params: { again: '1' } })}
+            accessibilityHint="Make a new backup"
+          />
+        )}
+        {rk ? (
+          <SettingsRow
+            title="Recovery Key"
+            value={state.recoveryKey.savedKey === 'hardware' ? 'Second hardware wallet' : state.recoveryKey.savedKey === 'kit' ? 'Printed kit' : KEY_LABEL[state.recoveryKey.keyKind]}
+          />
         ) : (
           <SettingsRow
             title="Guardian"
@@ -72,6 +79,12 @@ export default function SettingsScreen() {
             title="Refills"
             value={`${refillsLeft} of ${state.recoveryKey.refillsTotal} left`}
             onPress={() => router.push('/rk/refills')}
+          />
+          <SettingsRow
+            title="Refill amount"
+            value={pick(`${formatSats(state.recoveryKey.refillAmountSats)} sats`, `${formatSats(state.recoveryKey.refillAmountSats)} sats, ${state.recoveryKey.refillCount} at a time`)}
+            tabular
+            onPress={() => router.push('/settings/refills')}
           />
         </ListGroup>
       ) : (
@@ -95,7 +108,24 @@ export default function SettingsScreen() {
         </ListGroup>
       )}
 
-      {rk ? null : (
+      {rk ? (
+        <>
+          <SectionLabel>Chain data</SectionLabel>
+          <ListGroup>
+            <SettingsRow
+              title="Chain server"
+              value={state.recoveryKey.server.isDefault ? pick(`${serverHost(state.recoveryKey.server.url)} (${state.backing === 'simulator' ? 'simulated' : 'public'})`, `${serverHost(state.recoveryKey.server.url)}, ${state.backing === 'simulator' ? 'simulated' : 'public'}`) : serverHost(state.recoveryKey.server.url)}
+              onPress={() => router.push('/settings/server')}
+              accessibilityHint="Choose where Trikey reads the chain"
+            />
+          </ListGroup>
+          <SectionLabel>If something is lost</SectionLabel>
+          <ListGroup>
+            <SettingsRow title="Lost your Recovery Kit?" onPress={() => router.push('/rk/replace')} />
+            <SettingsRow title="Lost your hardware wallet?" onPress={() => router.push({ pathname: '/recover/kit', params: { with: 'phone' } })} />
+          </ListGroup>
+        </>
+      ) : (
         <>
           <SectionLabel>If something is lost</SectionLabel>
           <ListGroup>
@@ -152,7 +182,7 @@ function DeveloperSection() {
             ))}
           </View>
         ) : null}
-        {state.capabilities.recoveryKey ? (
+        {state.capabilities.recoveryKey && state.backing === 'demo' ? (
           <View className="min-h-16 flex-row items-center justify-between gap-4 px-4">
             <View className="flex-1">
               <Text nativeID="rk-mode-label" className="text-base leading-6">
@@ -184,11 +214,7 @@ function DeveloperSection() {
           </View>
         ) : null}
       </ListGroup>
-      {state.backing === 'demo' ? null : (
-        <Notice icon={Info} tone="fill">
-          Recovery Key mode is demo-only for now. In this mode its screens say "coming later" and nothing is faked.
-        </Notice>
-      )}
+      {dev?.simChain ? <SimulatorChainTools /> : null}
       <SelfTestRow />
       <View className={IS_IOS ? 'gap-3' : 'gap-3 pb-2'}>
         {dev?.simulateRecoveryFromElsewhere && !rk ? (
@@ -211,7 +237,8 @@ function DeveloperSection() {
             }}
           />
         ) : null}
-        {dev?.useNewSimulatedDevice && !rk ? <NewDeviceButton onSwap={dev.useNewSimulatedDevice} /> : null}
+        {dev?.simulateRecoveryKeyAlerts && rk ? <AppButton title="Simulate a refill sent by someone else" variant="outline" onPress={() => dev.simulateRecoveryKeyAlerts!()} /> : null}
+        {dev?.useNewSimulatedDevice ? <NewDeviceButton onSwap={dev.useNewSimulatedDevice} /> : null}
         {dev?.restartOnboarding ? (
           <AppButton
             title="Replay onboarding"
@@ -269,6 +296,38 @@ function NewDeviceButton({ onSwap }: { onSwap: () => string }) {
           The next hardware wallet the app connects is a new one ({fingerprint}). The old one is "lost".
         </Text>
       ) : null}
+    </View>
+  );
+}
+
+/** Simulator, Recovery Key mode: the simulated chain on the developer's computer (`npm run rk-sim -w @trikey/mobile`). */
+function SimulatorChainTools() {
+  const wallet = useWalletService();
+  const { busy, run, message, error } = useAction();
+  const [last, setLast] = useState<string | null>(null);
+  const sim = wallet.dev!.simChain!;
+  const mine = async (blocks: number) => {
+    const r = await run(sim.mine(blocks));
+    if (r.ok) setLast(`Mined ${blocks.toLocaleString('en-US')} ${blocks === 1 ? 'block' : 'blocks'}. The chain is at block ${r.value.height.toLocaleString('en-US')}.`);
+  };
+  const fund = async (target: 'vault' | 'spending', sats: number) => {
+    const r = await run(sim.fund(target, sats));
+    if (r.ok) setLast(`Paid ${formatSats(sats)} sats to ${r.value.address.slice(0, 14)}… and mined a block (now ${r.value.height.toLocaleString('en-US')}).`);
+  };
+  return (
+    <View className="gap-3">
+      <Text role="heading" className="text-sm font-medium leading-5">
+        Simulated chain
+      </Text>
+      <View className="flex-row gap-3">
+        <AppButton title="Mine 1" variant="outline" size="compact" className="flex-1 self-auto" disabled={busy} onPress={() => void mine(1)} />
+        <AppButton title="Mine 144" variant="outline" size="compact" className="flex-1 self-auto" disabled={busy} onPress={() => void mine(144)} />
+        <AppButton title="Mine 1,008" variant="outline" size="compact" className="flex-1 self-auto" disabled={busy} onPress={() => void mine(1008)} />
+      </View>
+      <AppButton title="Fund the vault with 1,000,000 sats" variant="outline" disabled={busy} onPress={() => void fund('vault', 1_000_000)} />
+      <AppButton title="Fund the spending balance with 100,000 sats" variant="outline" disabled={busy} onPress={() => void fund('spending', 100_000)} />
+      {last ? <Text className="text-muted-foreground text-[13px] leading-[18px]">{last}</Text> : null}
+      <ActionNotice message={message} error={error} />
     </View>
   );
 }

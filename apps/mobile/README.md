@@ -34,8 +34,8 @@ and data) or from the small "wallet mode" link on the first screen.
 | Mode | What is behind the screens | Default |
 |---|---|---|
 | **Demo** | Sample data and timers (`src/data/mock.ts`) | development builds and the web |
-| **Simulator** | The real wallet (`src/data/real.ts` on `@trikey/wallet`) with a software "hardware wallet" and throwaway keys, on regtest, against a guardian you run on your computer | |
-| **Real** | The real wallet with Ledger, Trezor and QR devices, this phone's secure storage and a test network chosen at onboarding (testnet, signet, regtest; "Mainnet (not yet)") | release builds on a phone |
+| **Simulator** | The real wallet with a software "hardware wallet" and throwaway keys, on regtest: guardian mode (`src/data/real.ts` on `@trikey/wallet`) against a guardian you run on your computer, Recovery Key mode (`src/data/rk-service.ts` on `@trikey/recovery-key`) against the simulated chain from `npm run rk-sim` | |
+| **Real** | The real wallet (either kind) with Ledger, Trezor and QR devices, this phone's secure storage and a test network chosen at onboarding (testnet, signet, regtest; "Mainnet (not yet)") | release builds on a phone |
 
 Real needs secure key storage, so the browser preview offers Demo and Simulator only. In the browser the simulator
 keeps everything in memory (a reload starts over).
@@ -44,7 +44,39 @@ keeps everything in memory (a reload starts over).
   `npm run dev-rig -w @trikey/mobile`: the real guardian, two relays and a fake Electrs in one process, no bitcoind.
 - `npm run measure -w @trikey/mobile` times the expensive steps (wallet creation, pairing, a payment, the Argon2id of the
   recovery code) in Node, through the same code path the app uses.
-- Recovery Key mode stays demo-only: in the other modes its screens say "coming later".
+- Guardian mode or Recovery Key mode ("No home server?" at onboarding) is chosen when the wallet is made: a phone runs one
+  wallet of one kind per mode and network. Recovery Key mode is described below.
+
+## Recovery Key mode
+
+The wallet for people with no home server: the vault's third key is a printed Recovery Kit (or a second hardware wallet), and the
+phone spends from a small balance that pre-signed, timelocked refills top up (`DESIGN.md`, "Recovery Key mode"). In the app:
+
+- **Service.** `src/data/rk-service.ts` implements `WalletService` on `RecoveryKeyWallet`; what only this mode has is `service.rk`
+  (`src/data/rk-actions.ts`: the kit, the refills, the vault, recovery with the kit, the chain server). `src/data/routed.ts` hands
+  the screens whichever kind the phone runs. The demo's mock implements the same actions with sample data.
+- **Screens.** `app/rk/*` (make the kit, approve refills, replace a lost kit), the Recovery Key home (`src/components/home-rk.tsx`),
+  `app/recover/kit.tsx` (recover with a kit), Settings (chain server, refill amount).
+- **The kit is never stored.** The page is handed to the OS print dialog (`expo-print`, `src/lib/print-kit.ts`), which also saves a
+  PDF or sends it with AirDrop. The app writes no file of it: a copy in the app's own storage would sit next to the phone key.
+  Printers, print queues and wherever a PDF goes may keep a copy, and the screen says so.
+- **Chain server.** The default is a public Esplora (mempool.space on testnet4 and signet), which sees every address and the phone's
+  IP address; Settings, Chain server takes your own (tried with a real request, and checked for the right network, before it is used).
+- **Test networks only.** The app never passes `allowMainnet`; testnet, signet and regtest are offered.
+
+### Refill scheduler
+
+`runScheduler()` (sends the next refill when its timelock has passed and the spending balance is low; reports refills this phone did
+not send, vault spends it did not make, stuck refills) runs:
+
+- when the app opens, when it comes back to the front, on pull to refresh and every minute while it is open (`sync()` of the service);
+- from a periodic background task on iOS and Android (`src/data/rk-background.native.ts`: `expo-background-task` on
+  `expo-task-manager`, the replacement for `expo-background-fetch`). It needs no account: the config plugin only adds the
+  `processing` background mode and a task identifier to Info.plist. The system decides when it runs (15 minutes at the soonest,
+  on iOS often once or twice a day while charging), it does not run in Expo Go or the iOS Simulator, and on iOS the wallet's
+  integrity key is only readable while the phone is unlocked, so a run on a locked phone ends quietly. Opening the app always runs
+  the scheduler too. Not tried on a device yet; `npm test` runs the same code (`src/data/rk-background-run.ts`) against the
+  simulated chain.
 
 ## Alpha without developer accounts
 

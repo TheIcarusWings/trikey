@@ -13,7 +13,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "measure": "node --import tsx scripts/measure-timings.mts",
-    "dev-rig": "node --import tsx scripts/dev-rig.mts"
+    "dev-rig": "node --import tsx scripts/dev-rig.mts",
+    "rk-sim": "node --import tsx scripts/rk-sim.mts"
   },
   "dependencies": {
     "@expo-google-fonts/geist": "^0.4.2",

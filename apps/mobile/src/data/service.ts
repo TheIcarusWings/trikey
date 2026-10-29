@@ -184,6 +184,8 @@ export interface WalletService {
     /** Simulator: swaps the simulated hardware wallet for a new one (to try "Lost my hardware wallet"). Returns its fingerprint. */
     useNewSimulatedDevice?(): string;
     restartOnboarding?(): void;
+    /** The demo's Recovery Key home shows what it does when a refill this phone did not send appears, and when one is stuck. */
+    simulateRecoveryKeyAlerts?(): void;
     /** Removes the wallet's keys and data from this phone (this mode and network only). */
     forgetWallet?(): Promise<void>;
     /** Facts about the setup, for the developer ("device fingerprint ..."). */

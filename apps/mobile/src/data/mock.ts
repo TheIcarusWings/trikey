@@ -601,6 +601,18 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
           },
         }));
       },
+      simulateRecoveryKeyAlerts() {
+        update((s) => ({
+          recoveryKey: {
+            ...s.recoveryKey,
+            notices: [
+              { id: 'unexpected_broadcast:demo', kind: 'unexpected_broadcast', at: NOW.toISOString(), index: 4, txid: txid('9f3a61c0d7e2') },
+              { id: 'foreign_vault_spend:demo', kind: 'foreign_vault_spend', at: NOW.toISOString(), txid: txid('2be84d5a90c1') },
+            ],
+            speedUp: { index: 4, txid: txid('9f3a61c0d7e2'), feeSats: 1_850, targetRate: 22, currentRate: 4.2 },
+          },
+        }));
+      },
       restartOnboarding() {
         update({ onboarded: false, recovery: null });
       },

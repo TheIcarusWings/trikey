@@ -44,6 +44,64 @@ my hardware wallet" has a replacement to connect.
 
 The rest of this page is that full setup, with a real bitcoind and Electrs.
 
+## Recovery Key mode: `rk-sim` (no guardian, no relay, no bitcoind)
+
+Recovery Key mode has no home server: the phone reads the chain from an Esplora server, and its refills are pre-signed
+transactions with BIP 68 timelocks. The simulator needs a chain it can move at will, so one command starts
+`@trikey/recovery-key`'s simulated Esplora (it enforces BIP 68, signatures and replacement rules, like the package's own
+tests) as a small HTTP server on your computer:
+
+```sh
+npm run rk-sim -w @trikey/mobile                          # http://127.0.0.1:3002
+PORT=3002 HOST=0.0.0.0 npm run rk-sim -w @trikey/mobile   # reachable from a phone on your Wi-Fi
+```
+
+Options after `--`: `--height <n>` (starting block height, default 200), `--auto <seconds>` (mine a block that often),
+`--json` (print the start line as JSON). Everything is regtest with throwaway keys, and it forgets everything when it
+stops. The simulated chain refuses mainnet.
+
+It reads commands from the terminal (or a pipe; each answer is one line starting with `ok` or `error`). When started
+without a terminal, it keeps serving after its input closes.
+
+| Command | What it does |
+|---|---|
+| `mine [n]` | Mine n blocks (default 1). `mine 1008` unlocks the next refill. |
+| `fund <address> <sats>` | Pay a regtest address (the app's vault or spending address) and mine a block. |
+| `fee <sat/vB> [stall]` | Set the fee estimates. With `stall`, blocks also refuse transactions that pay less, so a refill signed at the old fee gets stuck and the app offers "Speed up". `fee 1` puts it back. |
+| `status` | Height, mempool size, fee estimates, the server's address. |
+
+The same controls are HTTP endpoints the app calls (`POST /dev/mine?n=`, `/dev/fund?address=&sats=`, `/dev/fees?rate=&stall=1`,
+`GET /dev/status`), with CORS open so the web preview can use them.
+
+In the app:
+
+1. Settings, Developer, Wallet mode, **Simulator** (or the small "wallet mode" link on the first screen). The simulated
+   hardware wallet and the chain server (`http://127.0.0.1:3002`) are the defaults. On an Android emulator the computer is
+   `10.0.2.2`: set `http://10.0.2.2:3002` in Settings, Chain server (after the wallet exists), or start the app with
+   `EXPO_PUBLIC_RK_SIM_URL=http://10.0.2.2:3002`. A real phone needs the computer's LAN address and `HOST=0.0.0.0`.
+2. On the first screen choose "Create a wallet", then "No home server?". Connect the **Simulated device**, pick "Print a
+   Recovery Kit" and print it (in a browser the print dialog just opens; "No printer? Show the words" shows all 128). Type
+   the three words asked for, or on a phone scan the QR with the camera.
+3. The refills screen says where to send bitcoin: the vault's address. Pay it from the terminal (`fund bcrt1q... 5000000`)
+   or from Settings, Developer, **Simulated chain**, "Fund the vault with 1,000,000 sats" (these buttons also mine a block).
+   "Check again" then shows the schedule: amount and count are editable up to what the vault can pay for, and the
+   hardware wallet asks once per refill (the simulated one signs at once, and the sheet shows "Confirm on your device (2 of 8)").
+4. Home shows the spending balance, the vault, the next refill ("ready", "in 7 days"), and "N of M refills left".
+   Pull down (or just wait: the app syncs every minute) and the scheduler sends refill 1. "Mine 1" in Developer
+   confirms it. Refill 2 stays "in 7 days" until "Mine 1,008" has been pressed once or twice (it needs 1,008 blocks after
+   refill 1 confirmed), and goes out only while the spending balance is low: spend some first.
+5. Try the unhappy paths: "Pay from vault" with more than the coins outside the refills (the screen warns that it ends
+   them), `fee 20 stall` after refill 1 went out ("Speed up" appears), "Lost your Recovery Kit?" in Settings, and
+   recovery on a "new phone": Settings, Developer, "Remove this wallet from this phone", then "I already have a Trikey
+   wallet", "I have a Recovery Kit", type the 128 words, and pick the kit with your hardware wallet. "Use a new simulated
+   hardware wallet" (Developer) makes the old device "lost", for "the kit and this phone".
+6. Each mode and network keeps its own data (`trikey.rk.<mode>.<network>` in the key-value store), and a browser keeps its
+   "secure" keys in memory, so a page reload forgets the whole simulated wallet. The simulator wallet is the web preview's
+   only Recovery Key mode with real signing: the demo shows the same screens with sample data.
+
+The background task is native only (see "Refill scheduler" in `apps/mobile/README.md`): in the simulator and on the web,
+the scheduler runs when the app is open.
+
 ## 0. What the phone must be able to reach
 
 Only the **relay**. The phone never talks to the guardian directly: both connect out to the relay, and the
