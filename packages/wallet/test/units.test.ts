@@ -23,8 +23,10 @@ import {
   parseBackup,
   phoneMayApply,
   pickFeeRate,
+  isWalletNotWatched,
   refusalFromError,
   sealBackup,
+  sweepBroadcastError,
   selectCoins,
   spentTodayEstimate,
   verifyBip137Message,
@@ -259,6 +261,49 @@ describe('guardian refusals', () => {
     expect(refusalFromError(new RpcTimeoutError('sign', 10))).toMatchObject({ kind: 'unreachable' });
     expect(refusalFromError(new PublishError([]))).toMatchObject({ kind: 'unreachable' });
     expect(refusalFromError(new Error('boom'))).toBeUndefined();
+  });
+
+  it('keep the details of a sweep refusal: the fee and cap, the rule that failed, the wait', () => {
+    expect(refusalFromError(new RpcError(ErrorCode.PolicyViolation, 'cap', { reason: 'sweep_fee_exceeds_cap', fee: 41_000, cap: 20_000 }))).toMatchObject({
+      kind: 'policy_violation',
+      reason: 'sweep_fee_exceeds_cap',
+      feeSats: 41_000,
+      capSats: 20_000,
+    });
+    expect(refusalFromError(new RpcError(ErrorCode.ForeignTransaction, 'f', { reason: 'output_not_to_wallet' }))).toMatchObject({ kind: 'foreign_transaction', reason: 'output_not_to_wallet' });
+    expect(refusalFromError(new RpcError(ErrorCode.RateLimited, 'r', { retryAfterSeconds: 30 }))).toMatchObject({ kind: 'rate_limited', retryAfterSeconds: 30 });
+  });
+
+  it('1005 reads as "nothing watched"', () => {
+    expect(isWalletNotWatched(new RpcError(ErrorCode.WalletNotWatched))).toBe(true);
+    expect(isWalletNotWatched(new WalletError('guardian_refused', 'x', { refusal: { kind: 'other', code: ErrorCode.WalletNotWatched, message: 'x' } }))).toBe(true);
+    expect(isWalletNotWatched(new RpcError(ErrorCode.TxNotFound))).toBe(false);
+    expect(isWalletNotWatched(new Error('boom'))).toBe(false);
+  });
+
+  it('a sweep broadcast refusal becomes a typed wallet error only when it is final', () => {
+    const cap = sweepBroadcastError(new RpcError(ErrorCode.PolicyViolation, 'cap', { reason: 'sweep_fee_exceeds_cap', fee: 41_000, cap: 20_000 }))!;
+    expect(cap).toMatchObject({ code: 'sweep_fee_exceeds_cap', feeSats: 41_000, capSats: 20_000 });
+    expect(cap.message).toMatch(/41,000 sats in fees, over the 20,000 sats cap/);
+    expect(cap.message).toMatch(/hardware wallet/);
+    expect(sweepBroadcastError(new RpcError(ErrorCode.PolicyViolation, 'cap', { reason: 'sweep_fee_exceeds_cap' }))).toMatchObject({ code: 'sweep_fee_exceeds_cap' });
+    for (const reason of ['too_many_inputs', 'too_many_outputs', 'input_not_from_replaced_wallet', 'output_not_to_wallet', 'outputs_exceed_inputs', 'a_new_rule']) {
+      const e = sweepBroadcastError(new RpcError(ErrorCode.ForeignTransaction, 'f', { reason }))!;
+      expect(e).toMatchObject({ code: 'sweep_refused', reason });
+      expect(e.message).toMatch(/Nothing was sent/);
+    }
+    expect(sweepBroadcastError(new RpcError(ErrorCode.RateLimited, 'r', { retryAfterSeconds: 31.2 }))).toMatchObject({ code: 'rate_limited', retryAfterSeconds: 31.2 });
+    expect(sweepBroadcastError(new RpcError(ErrorCode.RateLimited, 'r'))!.message).toMatch(/Wait a moment/);
+    // Not final: the guardian does not watch the wallet (older guardians say 1602 with no reason), the node is down, the node refused it.
+    expect(sweepBroadcastError(new RpcError(ErrorCode.ForeignTransaction))).toBeUndefined();
+    expect(sweepBroadcastError(new RpcError(ErrorCode.ForeignTransaction, 'f', { reason: 'spends_no_wallet_coin' }))).toBeUndefined();
+    expect(sweepBroadcastError(new RpcError(ErrorCode.Unavailable))).toBeUndefined();
+    expect(sweepBroadcastError(new RpcTimeoutError('tx.broadcast', 10))).toBeUndefined();
+    expect(sweepBroadcastError(new RpcError(ErrorCode.BroadcastRejected, 'no', { reason: 'min relay fee not met' }))).toBeUndefined();
+    expect(sweepBroadcastError(new Error('boom'))).toBeUndefined();
+    // A refusal already wrapped by the chain source is read the same way.
+    const wrapped = new WalletError('guardian_refused', 'tx.broadcast: no', { refusal: { kind: 'foreign_transaction', reason: 'output_not_to_wallet', message: 'no' } });
+    expect(sweepBroadcastError(wrapped)).toMatchObject({ code: 'sweep_refused', reason: 'output_not_to_wallet' });
   });
 });
 

@@ -14,6 +14,8 @@ import { WalletError, asWalletError } from './errors.js';
 
 /** Everything one sync returns; the shape of the protocol's `wallet.sync` result. */
 export interface ChainSnapshot {
+  /** Which wallet this is, when the source says (the guardian does: the replaced wallet's id for `wallet: "replaced"`). */
+  walletId?: string;
   tipHeight: number;
   tipHash: string;
   utxos: WalletUtxo[];
@@ -98,9 +100,14 @@ export function txidOfRaw(txHex: string): string {
 export class GuardianChainSource implements ChainSource {
   readonly kind = 'guardian';
 
+  /**
+   * `wallet: "replaced"` (or the replaced wallet's id) reads the wallet the guardian watches for "Replace guardian"
+   * instead of the paired one; its coins and previous transactions come from here, and a sweep of them is relayed
+   * into the paired wallet. Default: the paired wallet.
+   */
   constructor(
     private readonly rpc: () => GuardianRpc,
-    private readonly opts: { timeoutMs?: number } = {},
+    private readonly opts: { timeoutMs?: number; wallet?: string } = {},
   ) {}
 
   private async call<M extends MethodName>(method: M, params: Params<M>): Promise<Result<M>> {
@@ -112,7 +119,7 @@ export class GuardianChainSource implements ChainSource {
   }
 
   sync(opts: { historyLimit?: number } = {}): Promise<ChainSnapshot> {
-    return this.call('wallet.sync', opts.historyLimit ? { historyLimit: opts.historyLimit } : {});
+    return this.call('wallet.sync', { ...(opts.historyLimit ? { historyLimit: opts.historyLimit } : {}), ...(this.opts.wallet ? { wallet: this.opts.wallet } : {}) });
   }
 
   async getTransaction(txid: string): Promise<string> {
@@ -133,4 +140,12 @@ export class GuardianChainSource implements ChainSource {
   estimateFees(targets?: number[]): Promise<FeeEstimates> {
     return this.call('fees.estimate', targets ? { targets } : {});
   }
+}
+
+/**
+ * When an alert happened, in unix milliseconds on the guardian's clock: its `atMs`, or `at` (seconds) times 1000 from a
+ * guardian that predates `atMs`.
+ */
+export function alertTimeMs(a: { at: number; atMs?: number }): number {
+  return a.atMs ?? a.at * 1000;
 }

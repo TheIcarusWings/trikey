@@ -64,6 +64,8 @@ export const GuardianStatusCache = z.object({
   checkedAt: z.number(),
   /** The guardian's own time in that answer: unix seconds, the guardian's clock (what its alerts' `at` is measured in). */
   guardianTime: z.number().optional(),
+  /** The same moment in unix milliseconds (`guardian.status.atMs`): orders the answer against alerts within one second. Absent from older guardians. */
+  guardianTimeMs: z.number().optional(),
   state: z.enum(['locked', 'unlocked']),
   paired: z.boolean(),
   phoneSpending: PhoneSpendingState,
@@ -76,6 +78,8 @@ export const GuardianStatusCache = z.object({
   walletId: z.string().optional(),
   /** After a wallet rotation: the guardian refuses hardware approvals until `hardware.confirm`. */
   hardwareConfirmRequired: z.boolean().optional(),
+  /** The replaced wallet this guardian watches ("Replace guardian"): its coins can be read and swept through the guardian. */
+  watchedWalletId: z.string().optional(),
 });
 export type GuardianStatusCache = z.infer<typeof GuardianStatusCache>;
 
