@@ -4,7 +4,9 @@
  * task are in rk-recovery.test.ts. Inside a `describe` the tests run in order, like a person's first weeks.
  */
 import { describe, expect, it } from 'vitest';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { EsploraClient, RecoveryKeyWallet } from '@trikey/recovery-key';
+import { receiverAddress, silentPaymentKeysFromSeed } from '@trikey/silent-payments';
 import { simFetch } from '@trikey/recovery-key/testing';
 import { WalletServiceError } from './errors';
 import { MemoryKeyValueStore, MemorySecureKeyStore, SoftwareHardwareSigner } from '@trikey/wallet/testing';
@@ -272,6 +274,33 @@ describe('home, the scheduler and sending (RK-Home)', () => {
     expect(big).toMatchObject({ ok: true, quote: { plan: { signer: 'hardware', reason: 'over-spending-balance' } } });
     expect(q(externalAddress(), 20_000, { signer: 'hardware' })).toMatchObject({ ok: true, quote: { plan: { signer: 'hardware', reason: 'requested' } } });
     expect(q(externalAddress(), 90_000_000)).toMatchObject({ ok: false, problem: 'insufficient_funds' });
+  }, 60_000);
+
+  it('pays a silent payment address from the spending balance, with the phone alone; the vault cannot, and receiving is for later', async () => {
+    const w = world();
+    const { p } = await setUp(w);
+    await p.svc.sync();
+    w.chain.mine(1);
+    await p.svc.sync();
+    expect(p.svc.getState().silentPayments).toMatchObject({ support: 'send_only', setUp: false, receiving: false });
+    expect(p.svc.silentPayments).toBeUndefined(); // nothing to turn on: there is no helper coin and no scanning server yet
+    const sp = receiverAddress(silentPaymentKeysFromSeed(sha256(new TextEncoder().encode('rk recipient')), { coinType: 1 }), 'regtest');
+    const q = p.svc.quoteSend({ address: sp, amountSats: 20_000, speed: 'normal' });
+    expect(q).toMatchObject({ ok: true, quote: { plan: { signer: 'phone' }, silentPayment: {}, estimate: true } });
+    if (!q.ok) return;
+    // The exact fee is what the payment pays: the output has the size of any taproot output.
+    const exact = await p.svc.refineQuote!(q.quote);
+    expect(exact).toMatchObject({ ok: true, quote: { estimate: false, silentPayment: {} } });
+    const tx = await p.svc.sendPayment(exact.ok ? exact.quote : q.quote);
+    expect(tx).toMatchObject({ address: sp, signedBy: 'phone', amountSats: 20_000 });
+    if (exact.ok) expect(tx.feeSats).toBe(exact.quote.feeSats);
+    expect(w.chain.inMempool(tx.txid)).toBe(true);
+    // The vault's multisig coins cannot make a silent payment.
+    expect(p.svc.quoteSend({ address: sp, amountSats: 20_000, speed: 'normal', signer: 'hardware' })).toMatchObject({ ok: false, message: expect.stringContaining('spending balance') });
+    expect(p.svc.quoteSend({ address: sp, amountSats: 300_000, speed: 'normal' })).toMatchObject({ ok: false, message: expect.stringContaining('spending balance') });
+    // The wrong network is refused in words.
+    const main = receiverAddress(silentPaymentKeysFromSeed(sha256(new TextEncoder().encode('rk recipient')), { coinType: 0 }), 'bitcoin');
+    expect(p.svc.quoteSend({ address: main, amountSats: 20_000, speed: 'normal' })).toMatchObject({ ok: false, problem: 'invalid_address' });
   }, 60_000);
 
   it('shows the spending address and a vault address without using them up, and checks the vault address on the device', async () => {

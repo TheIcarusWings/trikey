@@ -1,3 +1,4 @@
+import { looksLikeSilentPaymentAddress } from './sp-empty';
 import type {
   FeeSpeed,
   QuoteOutcome,
@@ -89,9 +90,13 @@ export function buildRefillSchedule(amountSats: Sats, from: Date, count = 8): Re
   }));
 }
 
-/** Loose check, enough for the form. Real code decodes the bech32 checksum. */
+/** Loose check, enough for the form. Real code decodes the bech32 checksum. A silent payment address (`sp1…`) counts. */
 export function looksLikeBitcoinAddress(value: string): boolean {
-  return /^(bc1|tb1|bcrt1)[a-z0-9]{20,90}$/i.test(value.trim()) || /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(value.trim());
+  return (
+    /^(bc1|tb1|bcrt1)[a-z0-9]{20,90}$/i.test(value.trim()) ||
+    /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/.test(value.trim()) ||
+    looksLikeSilentPaymentAddress(value)
+  );
 }
 
 export function looksLikeNpub(value: string): boolean {

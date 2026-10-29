@@ -5,7 +5,7 @@
 import { WalletError, type GuardianRefusal } from '@trikey/wallet';
 import { HardwareError, describeHardwareError } from '../hardware/errors';
 import { PlatformError } from '../platform/errors';
-import { WalletServiceError, type ServiceErrorKind } from './errors';
+import { NODE_RPC_TEXT, WalletServiceError, type ServiceErrorKind } from './errors';
 import { formatSats, networkLabel } from './format';
 
 const wait = (seconds?: number) => (seconds && seconds > 0 ? ` Try again in ${Math.ceil(seconds)} seconds.` : '');
@@ -88,8 +88,15 @@ export function refusalToError(r: GuardianRefusal): WalletServiceError {
     case 'broadcast_rejected':
       return new WalletServiceError('broadcast_failed', `The network refused the payment${r.reason ? `: ${r.reason}` : ''}. Nothing was sent.`);
     case 'tx_not_found':
-    case 'foreign_transaction':
       return new WalletServiceError('refused', r.message);
+    case 'foreign_transaction':
+      return new WalletServiceError('refused', r.reason ? `The guardian won't send this (${r.reason.replace(/_/g, ' ')}). Nothing was sent.` : r.message);
+    // 1700: the guardian cannot read blocks from the user's node, which scanning for silent payments needs.
+    case 'node_rpc_required':
+      return new WalletServiceError('node_rpc_required', NODE_RPC_TEXT);
+    // 1701: the guardian has no silent payment address registered for this phone (it was reset, or another phone paired).
+    case 'silent_payments_not_registered':
+      return new WalletServiceError('silent_payments_unavailable', "Your guardian forgot this phone's silent payment address. Trikey registers it again on the next check: try once more.");
     case 'other':
       return new WalletServiceError('refused', r.message || 'The guardian said no.');
   }
@@ -156,6 +163,16 @@ export function mapError(e: unknown): WalletServiceError {
         return make('invalid_input', e.message);
       case 'insufficient_funds':
         return make('insufficient_funds', "There isn't enough bitcoin for that and the network fee.");
+      case 'silent_payment_needs_helper':
+        return make('silent_payment_needs_helper', e.message);
+      case 'silent_payments_unavailable':
+        return make('silent_payments_unavailable', e.message);
+      case 'silent_payments_off':
+        return make('silent_payments_off', 'Silent payments are turned off. Turn them on in Settings to get an address.');
+      case 'node_rpc_required':
+        return make('node_rpc_required', NODE_RPC_TEXT);
+      case 'invalid_label':
+        return make('invalid_input', "That label can't be used. Labels start at 1.");
       case 'quote_stale':
         return make('quote_stale', 'Your coins changed since the payment was prepared. Go back and review it again.');
       case 'no_fee_estimate':

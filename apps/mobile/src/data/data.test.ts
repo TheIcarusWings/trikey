@@ -11,7 +11,9 @@ import { WalletServiceError } from './errors';
 import { GuardianAddressError, parseGuardianAddress } from './guardian-address';
 import { mapError, refusalToError } from './real-errors';
 import { createMockWalletService } from './mock';
-import { quoteSend as mockQuote } from './rules';
+import { looksLikeBitcoinAddress, quoteSend as mockQuote } from './rules';
+import { DEMO_SP_RECIPIENT, DEMO_TAPROOT_OUTPUT } from './sp-mock';
+import { looksLikeSilentPaymentAddress } from './sp-empty';
 
 const sk = new Uint8Array(32).fill(5);
 const npub = npubEncode(getPublicKey(sk));
@@ -200,5 +202,128 @@ describe('the demo wallet', () => {
     expect(wallet.getState()).toMatchObject({ recovery: null, recoveryOutcome: 'finished', hardwareConfirmRequired: true, finishedRecovery: { lostKey: 'phone' } });
     await wallet.confirmHardware();
     expect(wallet.getState().hardwareConfirmRequired).toBe(false);
+  });
+});
+
+describe('silent payment errors', () => {
+  it('maps the wallet\'s codes and the guardian\'s 1700 and 1701 into words and kinds', () => {
+    expect(mapError(new WalletError('silent_payment_needs_helper', 'Fund your helper coin first.'))).toMatchObject({ kind: 'silent_payment_needs_helper', message: 'Fund your helper coin first.' });
+    expect(mapError(new WalletError('silent_payments_unavailable', 'No scanner.'))).toMatchObject({ kind: 'silent_payments_unavailable', message: 'No scanner.' });
+    expect(mapError(new WalletError('silent_payments_off', 'x'))).toMatchObject({ kind: 'silent_payments_off', message: expect.stringContaining('turned off') });
+    expect(mapError(new WalletError('invalid_label', 'x'))).toMatchObject({ kind: 'invalid_input', message: expect.stringContaining('Labels start at 1') });
+    // 1700: the guardian needs the node's RPC. The words say plainly what to do, and that receiving is paused.
+    const noRpc = refusalToError({ kind: 'node_rpc_required', message: 'x' });
+    expect(noRpc).toMatchObject({ kind: 'node_rpc_required', message: expect.stringContaining('Umbrel and Start9') });
+    expect(noRpc.message).toMatch(/receiving is paused/);
+    expect(mapError(new WalletError('node_rpc_required', 'x', { refusal: { kind: 'node_rpc_required', message: 'm' } }))).toMatchObject({ kind: 'node_rpc_required' });
+    // 1701: register again
+    expect(refusalToError({ kind: 'silent_payments_not_registered', message: 'x' })).toMatchObject({ kind: 'silent_payments_unavailable', message: expect.stringContaining('registers it again') });
+    // a sweep the guardian will not relay names the rule
+    expect(refusalToError({ kind: 'foreign_transaction', reason: 'output_not_to_wallet', message: 'm' }).message).toContain('output not to wallet');
+  });
+
+  it('reads silent payment addresses as addresses', () => {
+    expect(looksLikeSilentPaymentAddress(DEMO_SP_RECIPIENT)).toBe(true);
+    expect(looksLikeSilentPaymentAddress(DEMO_SP_RECIPIENT.toUpperCase())).toBe(true);
+    expect(looksLikeBitcoinAddress(DEMO_SP_RECIPIENT)).toBe(true);
+    expect(looksLikeSilentPaymentAddress('sp1qqshort')).toBe(false);
+    expect(looksLikeSilentPaymentAddress('bc1q9d4xe8w2m5ka3hq7l0pz6vtrc2yn7kmr')).toBe(false);
+  });
+});
+
+describe('activity of silent payments', () => {
+  it('labels what was received to the address, the moves into the vault, and payments to a silent payment address', () => {
+    const now = Date.UTC(2026, 9, 29, 12);
+    const coin = { txid: 'a'.repeat(64), vout: 0, valueSats: 30_000, outputKey: 'b'.repeat(64), tweak: 'c'.repeat(64), label: 2, height: 120, status: 'swept' as const, sweepTxid: 'd'.repeat(64), foundAt: now - 3_600_000 };
+    const items = buildActivity(
+      [
+        { txid: 'd'.repeat(64), height: 121, confirmations: 2, time: Math.floor(now / 1000) - 600, netSats: 29_556, silentSweep: { fromTxid: coin.txid, fromVout: 0 } },
+        { txid: 'e'.repeat(64), height: 0, confirmations: 0, netSats: -20_300, feeSats: 300, amountSats: 20_000, recipient: DEMO_SP_RECIPIENT, signedBy: 'guardian', sentAt: now - 5_000, silentPayment: { outputKey: 'f'.repeat(64), outputAddress: DEMO_TAPROOT_OUTPUT } },
+      ],
+      emptyLog(),
+      now,
+      [coin],
+    );
+    const pays = items.flatMap((i) => (i.type === 'payment' ? [i.tx] : []));
+    expect(pays.find((t) => t.kind === 'silent_sweep')).toMatchObject({ amountSats: 29_556, feeSats: 444, status: 'confirmed' });
+    expect(pays.find((t) => t.kind === 'silent_received')).toMatchObject({ amountSats: 30_000, silentLabel: 2, status: 'confirmed' });
+    expect(pays.find((t) => t.kind === 'sent')).toMatchObject({ address: DEMO_SP_RECIPIENT, silentOutputAddress: DEMO_TAPROOT_OUTPUT, signedBy: 'phone+guardian' });
+  });
+});
+
+describe('the demo wallet\'s silent payments', () => {
+  const fresh = () => createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0 });
+
+  it('shows sample data: an address, a helper coin, a balance waiting to move, and the scan status', async () => {
+    const w = fresh();
+    const sp = w.getState().silentPayments;
+    expect(sp).toMatchObject({ support: 'full', setUp: true, receiving: true, scan: { state: 'ok', source: 'guardian' }, labels: [1], helper: { funded: true, viaGuardian: true }, balance: { sats: 42_000 } });
+    expect(sp.move).toMatchObject({ ready: 2, totalFeeSats: 888, totalNetSats: 41_112 });
+    expect(await w.silentPayments!.address()).toMatch(/^sp1q/);
+    expect(await w.silentPayments!.address({ label: 1 })).not.toBe(await w.silentPayments!.address());
+    expect(await w.silentPayments!.helperAddress()).toMatch(/^bc1q/);
+    const kinds = w.getState().activity.flatMap((i) => (i.type === 'payment' ? [i.tx.kind] : []));
+    expect(kinds).toEqual(expect.arrayContaining(['silent_received', 'silent_sweep']));
+  });
+
+  it('moves the received coins into the vault, one transaction each, and lists the moves', async () => {
+    const w = fresh();
+    const before = w.getState().balanceSats;
+    const r = await w.silentPayments!.move();
+    expect(r).toEqual({ moved: 2, movedSats: 41_112, feeSats: 888, waiting: 0, failed: 0 });
+    expect(w.getState().balanceSats).toBe(before + 41_112);
+    expect(w.getState().silentPayments.balance.sats).toBe(0);
+    const moves = w.getState().activity.flatMap((i) => (i.type === 'payment' && i.tx.kind === 'silent_sweep' ? [i.tx] : []));
+    expect(moves.length).toBe(3); // the two new ones and the earlier one
+    expect(await w.silentPayments!.move()).toMatchObject({ moved: 0 });
+  });
+
+  it('finds a new payment on a check, and says plainly when the guardian has no node RPC', async () => {
+    const w = fresh();
+    expect(await w.silentPayments!.check()).toEqual({ found: 1 });
+    expect(w.getState().silentPayments.balance.sats).toBe(42_000 + 18_500);
+    expect(await w.silentPayments!.check()).toEqual({ found: 0 });
+    w.dev!.setNodeRpc!(false);
+    expect(w.getState().silentPayments.scan).toMatchObject({ state: 'needs_node_rpc', message: expect.stringContaining('Umbrel and Start9') });
+    await expect(w.silentPayments!.check()).rejects.toMatchObject({ kind: 'node_rpc_required' });
+    w.dev!.setNodeRpc!(true);
+    expect(w.getState().silentPayments.scan.state).toBe('ok');
+  });
+
+  it('turns off and on, and adds a label', async () => {
+    const w = fresh();
+    await w.silentPayments!.disable();
+    expect(w.getState().silentPayments).toMatchObject({ receiving: false, scan: { state: 'off' } });
+    await expect(w.silentPayments!.address()).rejects.toMatchObject({ kind: 'silent_payments_off' });
+    await w.silentPayments!.enable();
+    expect(w.getState().silentPayments.receiving).toBe(true);
+    const { label, address } = await w.silentPayments!.addLabel();
+    expect(label).toBe(2);
+    expect(address).toMatch(/^sp1q/);
+    expect(w.getState().silentPayments.labels).toEqual([1, 2]);
+    await expect(w.silentPayments!.address({ label: 0 })).rejects.toMatchObject({ kind: 'invalid_input' });
+  });
+
+  it('quotes a payment to a silent payment address with the helper coin\'s share, and asks to fund the helper when there is none', async () => {
+    const w = fresh();
+    const q = w.quoteSend({ address: DEMO_SP_RECIPIENT, amountSats: 10_000, speed: 'normal' });
+    expect(q).toMatchObject({ ok: true, quote: { plan: { signer: 'phone+guardian' }, silentPayment: { outputAddress: DEMO_TAPROOT_OUTPUT, helperFeeSats: 396 } } });
+    if (!q.ok) return;
+    expect(q.quote.feeSats).toBe(420 + 396);
+    const tx = await w.sendPayment(q.quote);
+    expect(tx).toMatchObject({ address: DEMO_SP_RECIPIENT, silentOutputAddress: DEMO_TAPROOT_OUTPUT, signedBy: 'phone+guardian' });
+    expect(w.getState().silentPayments.helper.sats).toBe(24_320 - 396);
+    w.dev!.setHelperFunded!(false);
+    expect(w.quoteSend({ address: DEMO_SP_RECIPIENT, amountSats: 10_000, speed: 'normal' })).toMatchObject({ ok: false, problem: 'needs_helper' });
+    // Recovery Key mode pays from the spending balance, without a helper; the vault cannot make one.
+    w.setMode('recoveryKey');
+    expect(w.quoteSend({ address: DEMO_SP_RECIPIENT, amountSats: 10_000, speed: 'normal' })).toMatchObject({ ok: true, quote: { plan: { signer: 'phone' }, silentPayment: {} } });
+    expect(w.quoteSend({ address: DEMO_SP_RECIPIENT, amountSats: 10_000, speed: 'normal', signer: 'hardware' })).toMatchObject({ ok: false, message: expect.stringContaining('spending balance') });
+  });
+
+  it('reads sp1 codes and bitcoin: links with sp= as silent payment addresses', () => {
+    const w = fresh();
+    expect(w.readCode(DEMO_SP_RECIPIENT)).toMatchObject({ kind: 'address', address: DEMO_SP_RECIPIENT, silentPayment: true });
+    expect(w.readCode(`bitcoin:?sp=${DEMO_SP_RECIPIENT}&amount=0.0003`)).toMatchObject({ kind: 'address', address: DEMO_SP_RECIPIENT, silentPayment: true, amountSats: 30_000 });
   });
 });

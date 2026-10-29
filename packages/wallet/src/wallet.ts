@@ -2522,6 +2522,14 @@ export class TrikeyWallet {
     return { ...base, state: st.state, source: st.source };
   }
 
+  /**
+   * The helper coin's balance and the silent payments, from the last sync: what `snapshot()` carries, but available
+   * before the wallet has synced (the app shows the helper's address and the receiving state at once).
+   */
+  singleKeyView(): Pick<WalletSnapshot, 'helper' | 'silentPayments'> {
+    return this.singleKeySnapshot();
+  }
+
   private singleKeySnapshot(): Pick<WalletSnapshot, 'helper' | 'silentPayments'> {
     const out: Pick<WalletSnapshot, 'helper' | 'silentPayments'> = {};
     const h = this.s.helper;
