@@ -5,6 +5,24 @@ All are H.264 High + AAC 48 kHz, 30 fps, captions burned in.
 
 | File | Ratio | Length | Size | Audio | SHA-256 (first 16) |
 |---|---|---|---|---|---|
+| `trikey-e1-phone-11-vo.mp4` | 1:1 | 39.5 s | 8.6 MB | voiceover + music | `6f50405c91f45141` |
+| `trikey-e1-phone-11.mp4` | 1:1 | 39.5 s | 8.6 MB | music only | `9792b932d73660b1` |
+| `trikey-e1-phone-169-vo.mp4` | 16:9 | 39.5 s | 13.9 MB | voiceover + music | `c969253be66f2dce` |
+| `trikey-e1-phone-169.mp4` | 16:9 | 39.5 s | 13.9 MB | music only | `dd4777372a040ffa` |
+| `trikey-e1-phone-916-vo.mp4` | 9:16 | 39.5 s | 14.0 MB | voiceover + music | `6732e6a92a24e442` |
+| `trikey-e1-phone-916.mp4` | 9:16 | 39.5 s | 14.0 MB | music only | `30ea0c246a860395` |
+| `trikey-e2-hardware-wallet-11-vo.mp4` | 1:1 | 35.0 s | 9.5 MB | voiceover + music | `946fb6e54ca16ba7` |
+| `trikey-e2-hardware-wallet-11.mp4` | 1:1 | 35.0 s | 9.5 MB | music only | `6c86cdc6245bc92a` |
+| `trikey-e2-hardware-wallet-169-vo.mp4` | 16:9 | 35.0 s | 15.2 MB | voiceover + music | `2b23a0555e785335` |
+| `trikey-e2-hardware-wallet-169.mp4` | 16:9 | 35.0 s | 15.2 MB | music only | `0d50ae36d97aacb7` |
+| `trikey-e2-hardware-wallet-916-vo.mp4` | 9:16 | 35.0 s | 15.8 MB | voiceover + music | `6b498cbb2ab544dd` |
+| `trikey-e2-hardware-wallet-916.mp4` | 9:16 | 35.0 s | 15.8 MB | music only | `24dead58612e2cbe` |
+| `trikey-e3-home-server-11-vo.mp4` | 1:1 | 31.0 s | 8.1 MB | voiceover + music | `bbc28dc2458a4062` |
+| `trikey-e3-home-server-11.mp4` | 1:1 | 31.0 s | 8.1 MB | music only | `71f889092719690d` |
+| `trikey-e3-home-server-169-vo.mp4` | 16:9 | 31.0 s | 13.1 MB | voiceover + music | `3d7fa0ed17b45e11` |
+| `trikey-e3-home-server-169.mp4` | 16:9 | 31.0 s | 13.1 MB | music only | `27c475bb91e70d6e` |
+| `trikey-e3-home-server-916-vo.mp4` | 9:16 | 31.0 s | 13.3 MB | voiceover + music | `69b416052599b3f5` |
+| `trikey-e3-home-server-916.mp4` | 9:16 | 31.0 s | 13.3 MB | music only | `8a3526498f02f0ea` |
 | `trikey-f1-nobody-in-the-middle-11-vo.mp4` | 1:1 | 73.6 s | 19.9 MB | voiceover + music | `c181b7e9e08adf44` |
 | `trikey-f1-nobody-in-the-middle-11.mp4` | 1:1 | 73.6 s | 19.9 MB | music only | `967d8025b5bbfb6d` |
 | `trikey-f1-nobody-in-the-middle-169-vo.mp4` | 16:9 | 73.6 s | 32.3 MB | voiceover + music | `ed9b9f683b4fe849` |

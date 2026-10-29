@@ -1,0 +1,53 @@
+/* Story films: full-bleed footage, cinematic supers, UI inserts, light end card. */
+.clip { position: absolute; inset: 0; z-index: 1; opacity: 0; }
+.clip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.grade { position: absolute; inset: 0; z-index: 2; pointer-events: none;
+         background: radial-gradient(ellipse at center, rgba(9,9,11,0) 55%, rgba(9,9,11,.55) 100%),
+                     linear-gradient(180deg, rgba(9,9,11,0) 50%, rgba(9,9,11,.6) 78%, rgba(9,9,11,.35) 100%); }
+.supers { position: absolute; left: 0; right: 0; z-index: 6; text-align: center; }
+html[data-r="916"] .supers { top: 1180px; padding: 0 80px; }
+html[data-r="11"]  .supers { top: 770px; padding: 0 70px; }
+html[data-r="169"] .supers { top: 820px; padding: 0 200px; }
+.sup { position: absolute; left: 0; right: 0; opacity: 0; font-weight: 600; letter-spacing: -0.025em; line-height: 1.12;
+       text-wrap: balance; text-shadow: 0 2px 24px rgba(0,0,0,.65), 0 1px 3px rgba(0,0,0,.5); }
+html[data-r="916"] .sup { font-size: 66px; padding: 0 80px; }
+html[data-r="11"]  .sup { font-size: 52px; padding: 0 70px; }
+html[data-r="169"] .sup { font-size: 60px; padding: 0 200px; }
+.ins { position: absolute; z-index: 4; opacity: 0; }
+html[data-r="916"] .ins { left: 0; right: 0; top: 200px; height: 920px; display: flex; justify-content: center; }
+html[data-r="11"]  .ins { left: 0; right: 0; top: 60px; height: 680px; display: flex; justify-content: center; }
+html[data-r="169"] .ins { left: 0; right: 0; top: 70px; height: 720px; display: flex; justify-content: center; }
+.ins .phone { box-shadow: 0 30px 80px rgba(0,0,0,.6); border-radius: 11.3% / 5.2%; }
+.logo3 { position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center; opacity: 0; }
+html[data-r="916"] .logo3 svg { width: 640px; margin-top: -300px; }
+html[data-r="11"]  .logo3 svg { width: 420px; margin-top: -160px; }
+html[data-r="169"] .logo3 svg { width: 420px; margin-top: -140px; }
+.fin { position: absolute; inset: 0; z-index: 8; background: #F4F4F5; color: #09090B; display: flex; flex-direction: column;
+       align-items: center; justify-content: center; text-align: center; opacity: 0; }
+.fin svg { width: 180px; }
+.fin .name { font-size: 112px; font-weight: 600; letter-spacing: -0.045em; margin-top: 26px; }
+.fin .tag { font-size: 44px; font-weight: 500; letter-spacing: -0.02em; margin-top: 10px; }
+.fin .meta { margin-top: 56px; font-size: 28px; color: #71717A; display: flex; flex-direction: column; gap: 14px; align-items: center; }
+.fin .pill { border: 1px solid #E4E4E7; border-radius: 999px; padding: 12px 26px; color: #09090B; display: inline-flex; gap: 12px; align-items: center; }
+.fin .pill b { width: 11px; height: 11px; border-radius: 50%; background: #B45309; display: block; }
+html[data-r="11"] .fin svg { width: 130px; }
+html[data-r="11"] .fin .name { font-size: 86px; }
+html[data-r="11"] .fin .tag { font-size: 36px; }
+html[data-r="11"] .fin .meta { font-size: 24px; margin-top: 40px; }
+
+/* Guardian web UI inserts sit in a plain browser window. */
+.ins .browser { align-self: center; box-shadow: 0 30px 80px rgba(0,0,0,.6); }
+html[data-r="916"] .ins .browser { width: 980px; }
+html[data-r="11"]  .ins .browser { width: 960px; }
+html[data-r="169"] .ins .browser { width: 1180px; }
+/* Episode end card: one line instead of the tagline. */
+.fin .line { font-size: 64px; font-weight: 600; letter-spacing: -0.035em; margin-top: 30px; text-wrap: balance; padding: 0 60px; }
+.fin .small { font-size: 30px; color: #71717A; margin-top: 14px; }
+html[data-r="11"] .fin .line { font-size: 52px; }
+/* Delay & Notify day counter. */
+.day { position: absolute; z-index: 5; left: 0; right: 0; margin: 0 auto; width: fit-content; opacity: 0; display: inline-flex; gap: 14px; align-items: center;
+       background: rgba(9,9,11,.72); border: 1px solid #3F3F46; border-radius: 999px; padding: 14px 28px; font-size: 32px; color: #FAFAFA; white-space: nowrap; }
+.day b { width: 12px; height: 12px; border-radius: 50%; background: #FBBF24; display: block; }
+html[data-r="916"] .day { top: 420px; }
+html[data-r="11"]  .day { top: 140px; }
+html[data-r="169"] .day { top: 120px; }

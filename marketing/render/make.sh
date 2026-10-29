@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 # Builds the videos into out/. Run from anywhere:
 #   render/make.sh            all videos
-#   render/make.sh v1 v2      some videos (v1, v1b, v2, v3, f1)
+#   render/make.sh v1 v2      some videos (v1, v1b, v2, v3, f1, e1, e2, e3)
 # Needs: node + playwright, ffmpeg, python3 + numpy. Higgsfield assets come from
 # render/fetch-assets.sh; videos without them get only the music-only cut.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-declare -A PAGE=([f1]=f1-nobody-in-the-middle [v1b]=v1b-brand [v1]=v1-three-keys [v2]=v2-stolen-phone [v3]=v3-lost-phone)
-declare -A MOOD=([f1]=calm [v1b]=bright [v1]=bright [v2]=tense [v3]=calm)
-declare -A SEED=([v1]=1 [v2]=2 [v3]=3 [v1b]=4 [f1]=5)
+declare -A PAGE=([e1]=e1-phone [e2]=e2-hardware-wallet [e3]=e3-home-server [f1]=f1-nobody-in-the-middle [v1b]=v1b-brand [v1]=v1-three-keys [v2]=v2-stolen-phone [v3]=v3-lost-phone)
+declare -A MOOD=([e1]=tense [e2]=tense [e3]=tense [f1]=calm [v1b]=bright [v1]=bright [v2]=tense [v3]=calm)
+declare -A SEED=([v1]=1 [v2]=2 [v3]=3 [v1b]=4 [f1]=5 [e1]=6 [e2]=7 [e3]=8)
 # Which draft take feeds each b-roll slot (SPEC.broll.name ← build/higgsfield/<take>.mp4).
 declare -A TAKE=([v2-snatch]=v2-snatch-b [v3-train]=v3-train)
 
 node render/lib/screens.js build/screens dark \
-  Home Send-Review Send-Hardware Settings-Limit Recover-Alert Recover-Done Guardian-Recovery >/dev/null
+  Home Send-Review Send-Hardware Settings-Limit Recover-Alert Recover-Done Guardian-Recovery \
+  Recover-Backup Recover-Waiting Home-Locked Settings-ReplaceGuardian Guardian-Locked >/dev/null
 
 for slot in "${!TAKE[@]}"; do
   src="build/higgsfield/${TAKE[$slot]}.mp4"
@@ -26,9 +27,10 @@ done
 # Film shots: chosen take for each clip slot (build/film/<take>.mp4). 9:16 is a centre crop until
 # vertical takes exist (build/film/<take>-916.mp4 is used when present).
 declare -A FILM=([s01]=s01b [s02]=s02a [s03]=s03b [s04]=s04a [s06]=s06a [s07]=s07a [s08]=s08a [s10]=s10a
-  [s11]=s11a [s12a]=s12a-a [s12b]=s12b-a [s12c]=s12c-a [s13]=s13a [s14]=s14a [s15]=s15a [s16]=s16a)
+  [s11]=s11a [s12a]=s12a-a [s12b]=s12b-a [s12c]=s12c-a [s13]=s13a [s14]=s14a [s15]=s15a [s16]=s16a
+  [e1snatch]=e1-snatch [e2burgled]=e2-burgled [e2pin]=e2-pin [e3lift]=e3-lift [e3van]=e3-van [e3junk]=e3-junk)
 # Horizontal focus (0 = left, 1 = right) for the 9:16 centre crop, where the subject isn't centred.
-declare -A FOCUS=([s07]=0.72 [s06]=0.55 [s13]=0.55)
+declare -A FOCUS=([s07]=0.72 [s06]=0.55 [s13]=0.55 [e1snatch]=0.35 [e2burgled]=0.4 [e2pin]=0.45 [e3lift]=0.45 [e3junk]=0.55)
 for slot in "${!FILM[@]}"; do
   src="build/film/${FILM[$slot]}.mp4"
   [ -f "$src" ] || continue
@@ -45,7 +47,7 @@ done
 
 [ -d build/vo ] && render/audio/prep-vo.sh >/dev/null
 
-for v in ${@:-v1 v1b v2 v3 f1}; do
+for v in ${@:-v1 v1b v2 v3 f1 e1 e2 e3}; do
   id=${PAGE[$v]}
   slot=$(grep -o "broll: { name: '[^']*'" "render/videos/$id.html" | cut -d"'" -f2 || true)
   if [ -n "$slot" ] && [ ! -d "build/broll/$slot" ]; then echo "skip $v: b-roll $slot not fetched"; continue; fi
