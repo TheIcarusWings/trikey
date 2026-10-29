@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ElectrumClient, ElectrumError, ElectrumUnavailableError, LineDecoder } from '../src/chain/electrum.js';
 import { isLinked, medianTimePast, parseHeader, splitHeaders } from '../src/chain/headers.js';
 import { ChainService } from '../src/chain/chain.js';
-import { FakeElectrum, headerHash, makeHeader } from './fake-electrum.js';
+import { FakeElectrum, headerHash, makeHeader } from './support/fake-electrum.js';
 import { makeWallet } from './helpers.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

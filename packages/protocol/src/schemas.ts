@@ -305,6 +305,158 @@ export const GuardianStatusResult = z.object({
   version: z.string().max(32),
   /** The guardian's clock, unix seconds (lets the phone detect skew). */
   time: UnixSeconds,
+  /**
+   * The rolling 24 h limit as the guardian counts it (fees included). Optional: guardians before the
+   * chain methods do not send it. This is the truth; a phone's own estimate is only a hint.
+   */
+  dailyLimit: z
+    .object({
+      limitSats: Sats,
+      usedSats: Sats,
+      availableSats: Sats,
+    })
+    .optional(),
+});
+
+/* -------------------------------------------------------------------------- */
+/* Chain data                                                                 */
+/* -------------------------------------------------------------------------- */
+// The guardian serves the paired wallet's chain data from the user's own Electrs, so the phone never
+// talks to a public server. None of these need key 3: they work while the guardian is locked.
+
+/** Longest raw transaction (hex characters) `tx.get` returns or `tx.broadcast` accepts: 75 kB, well within a message. */
+export const MAX_TX_HEX_LENGTH = 150_000;
+/** Most unspent outputs one `wallet.sync` lists (the balance always counts all of them). */
+export const MAX_SYNC_UTXOS = 500;
+/** Most history entries one `wallet.sync` lists, newest first. */
+export const MAX_SYNC_HISTORY = 500;
+export const DEFAULT_SYNC_HISTORY = 100;
+/** Highest address index on a chain (the guardian's own "self" limit). */
+export const MAX_ADDRESS_INDEX = 100_000;
+
+/** A raw transaction, lowercase hex. */
+export const RawTxHex = z
+  .string()
+  .max(MAX_TX_HEX_LENGTH)
+  .regex(/^(?:[0-9a-f]{2}){60,}$/, 'expected a raw transaction in lowercase hex');
+
+/** Receive (0) or change (1). */
+export const AddressChain = z.union([z.literal(0), z.literal(1)]);
+const AddressIndex = z.int().min(0).max(MAX_ADDRESS_INDEX);
+/** Block height; 0 while unconfirmed. */
+const Height = z.int().min(0).max(100_000_000);
+
+export const WalletUtxo = z.object({
+  txid: Hex32,
+  vout: z.int().min(0).max(1_000_000),
+  valueSats: Sats,
+  /** Block height of the funding transaction, 0 while unconfirmed. */
+  height: Height,
+  /** 0 while unconfirmed, 1 in the tip block. */
+  confirmations: z.int().min(0),
+  /** The derivation step below the account keys: receive (0) or change (1) ... */
+  chain: AddressChain,
+  /** ... and the address index. */
+  index: AddressIndex,
+});
+
+export const HistoryEntry = z.object({
+  txid: Hex32,
+  /** 0 while unconfirmed. */
+  height: Height,
+  confirmations: z.int().min(0),
+  /** Block time (unix seconds), when confirmed. */
+  time: UnixSeconds.optional(),
+  /** What the transaction did to the wallet's balance: received minus spent, fee included. Negative for payments. */
+  netSats: z.int().min(-MAX_SATS).max(MAX_SATS),
+  /** Present when every input belongs to the wallet (so the guardian knows them all). */
+  feeSats: Sats.optional(),
+});
+
+export const WalletSyncParams = z.strictObject({
+  /** Most history entries to return, newest first (default 100, at most 500). */
+  historyLimit: z.int().min(1).max(MAX_SYNC_HISTORY).optional(),
+});
+export const WalletSyncResult = z.object({
+  tipHeight: Height,
+  tipHash: Hex32,
+  /** Every unspent output of the wallet, confirmed or not, up to `MAX_SYNC_UTXOS`. */
+  utxos: z.array(WalletUtxo).max(MAX_SYNC_UTXOS),
+  /** True when the wallet has more unspent outputs than listed. `balance` still counts them all. */
+  utxosTruncated: z.boolean(),
+  balance: z.object({ confirmedSats: Sats, unconfirmedSats: Sats }),
+  /** Newest first: unconfirmed transactions, then by height. */
+  history: z.array(HistoryEntry).max(MAX_SYNC_HISTORY),
+  historyTruncated: z.boolean(),
+  /** The first address index with no history on the receive chain ... */
+  nextReceiveIndex: AddressIndex,
+  /** ... and on the change chain. */
+  nextChangeIndex: AddressIndex,
+  /** Each chain was scanned until this many consecutive unused addresses. */
+  gapLimit: z.int().min(1).max(1000),
+});
+
+export const TxGetParams = z.strictObject({
+  txid: Hex32,
+  /**
+   * `false`: the transaction without its witness data (the legacy serialization). It has the same txid and
+   * is all a PSBT's `nonWitnessUtxo` needs, at a fraction of the size. Default `true`.
+   */
+  witness: z.boolean().optional(),
+});
+export const TxGetResult = z.object({ txHex: RawTxHex });
+
+export const TxBroadcastParams = z.strictObject({
+  /** A fully signed transaction. The guardian relays it only if it spends at least one of the wallet's coins. */
+  txHex: RawTxHex,
+});
+export const TxBroadcastResult = z.object({ txid: Hex32 });
+
+export const FeesEstimateParams = z.strictObject({
+  /** Confirmation targets in blocks (default `[1, 3, 6, 144]`). */
+  targets: z.array(z.int().min(1).max(1008)).min(1).max(8).optional(),
+});
+export const FeeEstimate = z.object({
+  target: z.int().min(1).max(1008),
+  /** sat/vB, or null when the node has no estimate for this target (common on regtest and signet). */
+  satPerVb: z.number().positive().max(1_000_000).nullable(),
+});
+export const FeesEstimateResult = z.object({
+  estimates: z.array(FeeEstimate).max(8),
+  /** The node's minimum relay fee, sat/vB. */
+  minRelaySatPerVb: z.number().positive().max(1_000_000),
+});
+
+/* -------------------------------------------------------------------------- */
+/* Recovery access (a new phone, without the old phone or its backup)         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The hardware wallet's BIP 137 signature over `recoveryAccessMessage(...)`, with the authorization key
+ * recorded at pairing. It is bound to the guardian and to the requesting phone's nostr key, so it is no use
+ * to anyone else; it consumes no sequence number.
+ */
+export const AccessApproval = z.strictObject({
+  kind: z.literal('bip137'),
+  /** Unix SECONDS; at most 24 h ahead of the guardian's clock. The access lasts until then. */
+  expiresAt: UnixSeconds,
+  signature: Bip137Signature,
+});
+
+export const RecoveryAccessParams = z.strictObject({ approval: AccessApproval });
+export const RecoveryAccessResult = z.object({
+  /** The paired wallet: everything a new phone needs to rebuild it and sweep it. */
+  descriptor: Descriptor,
+  walletId: WalletId,
+  network: Network,
+  guardianKey: KeyOrigin,
+  hardwareAuth: HardwareAuthKey,
+  policy: Policy,
+  nextHardwareSequence: z.int().min(1),
+  phoneSpending: PhoneSpendingState,
+  activeRecoveryId: z.string().nullable(),
+  /** Until when this phone may use the recovery methods (unix seconds). */
+  accessExpiresAt: UnixSeconds,
 });
 
 /** The method table: one params schema and one result schema per method. */
@@ -320,6 +472,11 @@ export const methods = {
   'phone.resume': { params: PhoneResumeParams, result: PhoneResumeResult },
   'guardian.unlock': { params: GuardianUnlockParams, result: GuardianUnlockResult },
   'guardian.status': { params: GuardianStatusParams, result: GuardianStatusResult },
+  'wallet.sync': { params: WalletSyncParams, result: WalletSyncResult },
+  'tx.get': { params: TxGetParams, result: TxGetResult },
+  'tx.broadcast': { params: TxBroadcastParams, result: TxBroadcastResult },
+  'fees.estimate': { params: FeesEstimateParams, result: FeesEstimateResult },
+  'recovery.access': { params: RecoveryAccessParams, result: RecoveryAccessResult },
 } as const;
 
 export type MethodName = keyof typeof methods;
@@ -403,6 +560,11 @@ export const RequestSchema = z.discriminatedUnion('method', [
   requestOf('phone.resume', PhoneResumeParams),
   requestOf('guardian.unlock', GuardianUnlockParams),
   requestOf('guardian.status', GuardianStatusParams),
+  requestOf('wallet.sync', WalletSyncParams),
+  requestOf('tx.get', TxGetParams),
+  requestOf('tx.broadcast', TxBroadcastParams),
+  requestOf('fees.estimate', FeesEstimateParams),
+  requestOf('recovery.access', RecoveryAccessParams),
 ]);
 export type Request = z.infer<typeof RequestSchema>;
 
@@ -456,3 +618,7 @@ export type CancelledBy = z.infer<typeof CancelledBy>;
 export type SurvivingRole = z.infer<typeof SurvivingRole>;
 export type PhoneSpendingState = z.infer<typeof PhoneSpendingState>;
 export type Network = z.infer<typeof Network>;
+export type WalletUtxo = z.infer<typeof WalletUtxo>;
+export type HistoryEntry = z.infer<typeof HistoryEntry>;
+export type FeeEstimate = z.infer<typeof FeeEstimate>;
+export type AccessApproval = z.infer<typeof AccessApproval>;

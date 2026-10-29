@@ -37,6 +37,11 @@ export const fakeSignature = Buffer.from([31, ...new Uint8Array(64).fill(7)]).to
 
 export const approval = { kind: 'bip137' as const, sequence: 3, expiresAt: 1_900_000_000, signature: fakeSignature };
 
+export const accessApproval = { kind: 'bip137' as const, expiresAt: 1_900_000_000, signature: fakeSignature };
+
+/** Shaped like a raw transaction (the protocol only checks it is bounded lowercase hex). */
+export const RAW_TX = '02000000' + 'ab'.repeat(80);
+
 export const hardwareAuth = { pubkey: `02${'ab'.repeat(32)}`, path: "m/48'/0'/0'/2'/0/0" };
 
 export const pairParams = {

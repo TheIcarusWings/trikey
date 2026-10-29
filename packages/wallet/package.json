@@ -6,12 +6,27 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts"
   },
   "scripts": {
+    "test": "vitest run",
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@trikey/core": "*"
+    "@noble/ciphers": "^2.1.1",
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "@scure/base": "^2.4.0",
+    "@scure/bip32": "^2.4.0",
+    "@scure/bip39": "^2.4.0",
+    "@scure/btc-signer": "^2.4.1",
+    "@trikey/core": "*",
+    "@trikey/protocol": "*",
+    "nostr-tools": "^2.23.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@trikey/guardian": "*"
   }
 }

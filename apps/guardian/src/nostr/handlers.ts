@@ -6,10 +6,30 @@
  */
 import { base64 } from '@scure/base';
 import { MultisigWallet, getNetwork } from '@trikey/core';
-import { ErrorCode, RpcError, type HandlerContext, type Handlers, type KeyOrigin, type MethodName } from '@trikey/protocol';
+import {
+  DEFAULT_SYNC_HISTORY,
+  ErrorCode,
+  MAX_SYNC_UTXOS,
+  MAX_TX_HEX_LENGTH,
+  RpcError,
+  recoveryAccessMessage,
+  type HandlerContext,
+  type Handlers,
+  type KeyOrigin,
+  type MethodName,
+} from '@trikey/protocol';
+import {
+  BroadcastRejectedError,
+  ChainUnavailableError,
+  ElectrumUnavailableError,
+  InvalidTransactionError,
+  TxNotFoundError,
+  txidOf,
+} from '../chain/chain.js';
+import { ElectrumError } from '../chain/electrum.js';
 import type { Guardian } from '../guardian.js';
 import { errorText } from '../log.js';
-import { policyHash, type CancelActor, type RecoveryRecord } from '../policy/index.js';
+import { MAX_APPROVAL_TTL_MS, bip137Authorizer, policyHash, type CancelActor, type RecoveryRecord } from '../policy/index.js';
 import { policyToWire, recoveryToWire, refusalError, rulesFromPolicy } from './wire.js';
 
 const normPath = (p: string) => p.replace(/^m\//, '').replace(/'/g, 'h');
@@ -37,6 +57,35 @@ function runningRecovery(g: Guardian, id: string): RecoveryRecord {
   if (active && active.id === id) return active;
   const known = g.records.some((r) => r.id === id);
   throw new RpcError(known ? ErrorCode.RecoveryNotActive : ErrorCode.RecoveryNotFound);
+}
+
+/** The paired wallet, for the chain methods (parsed once per descriptor; the chain service caches by wallet object). */
+let walletCache: { descriptor: string; wallet: MultisigWallet } | undefined;
+function pairedWallet(g: Guardian): MultisigWallet {
+  const reg = g.engine.registration();
+  if (!reg) throw refusalError({ reason: 'not_registered' });
+  if (walletCache?.descriptor !== reg.descriptor) walletCache = { descriptor: reg.descriptor, wallet: MultisigWallet.fromDescriptor(reg.descriptor, getNetwork(reg.network)) };
+  return walletCache.wallet;
+}
+
+/** Chain failures as protocol errors: unknown tx 1600, node refusal 1601, no chain data 1501. */
+async function chainCall<T>(g: Guardian, method: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof RpcError) throw e;
+    if (e instanceof TxNotFoundError) throw new RpcError(ErrorCode.TxNotFound);
+    if (e instanceof InvalidTransactionError) throw new RpcError(ErrorCode.InvalidParams, e.message.slice(0, 500));
+    if (e instanceof BroadcastRejectedError) {
+      g.log.warn('tx.broadcast_rejected', { reason: e.reason });
+      throw new RpcError(ErrorCode.BroadcastRejected, `The node rejected the transaction: ${e.reason}`.slice(0, 500), { reason: e.reason.slice(0, 300) });
+    }
+    if (e instanceof ChainUnavailableError || e instanceof ElectrumUnavailableError || e instanceof ElectrumError) {
+      g.log.warn('chain.unavailable', { method, error: errorText(e) });
+      throw new RpcError(ErrorCode.Unavailable, 'Chain data is unavailable right now (is Electrs running and synced?)');
+    }
+    throw e;
+  }
 }
 
 /**
@@ -82,6 +131,15 @@ export function buildHandlers(g: Guardian): Handlers {
         activeRecoveryId: s.recoveryStatus !== 'none' && s.recovery ? s.recovery.id : null,
         version: g.version,
         time: g.nowSec(),
+        ...(s.dailyLimit
+          ? {
+              dailyLimit: {
+                limitSats: Number(s.dailyLimit.limit),
+                usedSats: Number(s.dailyLimit.used),
+                availableSats: Number(s.dailyLimit.available),
+              },
+            }
+          : {}),
       };
     },
 
@@ -212,6 +270,102 @@ export function buildHandlers(g: Guardian): Handlers {
       if (params.recoveryId && !rec) throw new RpcError(ErrorCode.RecoveryNotFound);
       const psbt = rec?.status === 'completed' ? g.service.sweep(rec.id)?.psbt : undefined;
       return { recovery: rec ? recoveryToWire(rec, g.clock.now()) : null, ...(psbt ? { psbt } : {}) };
+    },
+
+    // -- chain data: no key 3 needed, so these work while locked ----------------
+
+    'wallet.sync': (params) =>
+      chainCall(g, 'wallet.sync', async () => {
+        const wallet = pairedWallet(g);
+        const r = await g.chain.walletSync(wallet, { historyLimit: params.historyLimit ?? DEFAULT_SYNC_HISTORY, maxUtxos: MAX_SYNC_UTXOS });
+        return {
+          tipHeight: r.tipHeight,
+          tipHash: r.tipHash,
+          utxos: r.utxos.map((u) => ({
+            txid: u.txid,
+            vout: u.vout,
+            valueSats: Number(u.value),
+            height: u.height,
+            confirmations: u.confirmations,
+            chain: u.chain,
+            index: u.index,
+          })),
+          utxosTruncated: r.utxosTruncated,
+          balance: { confirmedSats: Number(r.confirmedSats), unconfirmedSats: Number(r.unconfirmedSats) },
+          history: r.history.map((h) => ({
+            txid: h.txid,
+            height: h.height,
+            confirmations: h.confirmations,
+            ...(h.time !== undefined ? { time: h.time } : {}),
+            netSats: Number(h.net),
+            ...(h.fee !== undefined ? { feeSats: Number(h.fee) } : {}),
+          })),
+          historyTruncated: r.historyTruncated,
+          nextReceiveIndex: r.nextReceiveIndex,
+          nextChangeIndex: r.nextChangeIndex,
+          gapLimit: r.gapLimit,
+        };
+      }),
+
+    'tx.get': (params) =>
+      chainCall(g, 'tx.get', async () => {
+        pairedWallet(g);
+        const txHex = await g.chain.getTransaction(params.txid, { witness: params.witness });
+        if (txHex.length > MAX_TX_HEX_LENGTH)
+          throw new RpcError(ErrorCode.TxTooLarge, params.witness === false ? undefined : 'The transaction is too large to send; ask for it without witness data.');
+        return { txHex };
+      }),
+
+    'tx.broadcast': (params) =>
+      chainCall(g, 'tx.broadcast', async () => {
+        const wallet = pairedWallet(g);
+        const txid = txidOf(params.txHex);
+        // Not an open relay: only transactions that spend this wallet's coins.
+        if (!(await g.chain.spendsWalletCoin(wallet, params.txHex))) {
+          g.log.warn('tx.broadcast_refused', { reason: 'spends no wallet coin' });
+          throw new RpcError(ErrorCode.ForeignTransaction);
+        }
+        const r = await g.chain.broadcast(params.txHex);
+        if (r.txid !== txid) g.log.warn('tx.broadcast_txid_mismatch', { txid, reported: r.txid });
+        g.log.info('tx.broadcast', { txid, via: r.via });
+        return { txid };
+      }),
+
+    'fees.estimate': (params) =>
+      chainCall(g, 'fees.estimate', async () => {
+        pairedWallet(g);
+        return g.chain.estimateFees([...new Set(params.targets ?? [1, 3, 6, 144])]);
+      }),
+
+    // -- a new phone without the old one or its backup -------------------------
+
+    'recovery.access': async (params, ctx) => {
+      const reg = g.engine.registration();
+      if (!reg || !g.identity) throw refusalError({ reason: 'not_registered' });
+      const now = g.clock.now();
+      const { expiresAt, signature } = params.approval;
+      if (expiresAt * 1000 <= now) throw new RpcError(ErrorCode.ApprovalExpired);
+      if (expiresAt * 1000 > now + MAX_APPROVAL_TTL_MS) throw new RpcError(ErrorCode.ApprovalExpiryTooFar);
+      const message = recoveryAccessMessage({ guardianPubkey: g.identity.pubkey, phonePubkey: ctx.sender, expiresAt });
+      if (!bip137Authorizer.verify(message, signature, reg.hardwareAuth)) {
+        g.log.warn('recovery.access_refused', { reason: 'signature' });
+        throw new RpcError(ErrorCode.ApprovalInvalid);
+      }
+      if (!g.hasRecoveryAccess(ctx.sender) && ctx.sender !== reg.appNostrPubkey) g.log.warn('recovery.access_granted', { until: expiresAt });
+      await g.grantRecoveryAccess(ctx.sender, expiresAt * 1000);
+      const s = g.engine.status();
+      return {
+        descriptor: reg.descriptor,
+        walletId: reg.walletId,
+        network: reg.network,
+        guardianKey: guardianKey(g),
+        hardwareAuth: { pubkey: reg.hardwareAuth.pubkey, path: reg.hardwareAuth.path },
+        policy: policyToWire(s.rules!),
+        nextHardwareSequence: s.nextHardwareSequence,
+        phoneSpending: s.phoneSpending,
+        activeRecoveryId: s.recoveryStatus !== 'none' && s.recovery ? s.recovery.id : null,
+        accessExpiresAt: expiresAt,
+      };
     },
 
     'phone.resume': async (params) => {

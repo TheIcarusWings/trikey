@@ -1,13 +1,18 @@
 /**
  * A small fake Electrs for tests: newline-delimited JSON-RPC over TCP, serving
- * canned headers, script histories, unspent outputs and transactions, and
- * recording broadcasts. Only the methods the guardian uses.
+ * canned headers, script histories, unspent outputs, transactions and fee
+ * estimates, and recording broadcasts. Only the methods the guardian uses.
+ *
+ * With `applyBroadcasts`, a broadcast behaves like a mempool: it must spend
+ * known unspent outputs (else it is rejected like a double spend), removes
+ * them, and adds its outputs as unconfirmed coins of whatever scripts they pay;
+ * `confirmMempool()` then gives those transactions a height.
  */
 import { createServer, type Server, type Socket } from 'node:net';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hex } from '@scure/base';
 import * as btc from '@scure/btc-signer';
-import { scriptHash } from '../src/chain/chain.js';
+import { scriptHash } from '../../src/chain/chain.js';
 
 export interface FakeUtxo {
   txid: string;
@@ -45,6 +50,16 @@ export class FakeElectrum {
   readonly calls: { method: string; params: unknown[] }[] = [];
   /** Make broadcasts fail with this message. */
   rejectBroadcast?: string;
+  /** Treat broadcasts as a mempool (see the file comment). */
+  applyBroadcasts = false;
+  /** `blockchain.estimatefee` answers, BTC/kvB by target; targets not listed answer -1 (no estimate). */
+  feeRates = new Map<number, number>([
+    [1, 0.0002],
+    [3, 0.0001],
+    [6, 0.00005],
+  ]);
+  /** `blockchain.relayfee`, BTC/kvB. */
+  relayFee = 0.00001;
   /** Split every reply into tiny chunks (exercises the client's framing). */
   fragment = false;
   port = 0;
@@ -84,6 +99,42 @@ export class FakeElectrum {
     this.unspent.set(sh, [...(this.unspent.get(sh) ?? []), utxo]);
     this.history.set(sh, [...(this.history.get(sh) ?? []), { tx_hash: utxo.txid, height: utxo.height }]);
     if (rawTx) this.txs.set(utxo.txid, rawTx);
+  }
+
+  /**
+   * Applies a transaction to the fake UTXO set: spends its inputs (they must be
+   * known unspent outputs) and adds its outputs, with `height` (0 = mempool).
+   * Returns an error text instead of applying it if an input is unknown or spent.
+   */
+  applyTransaction(rawHex: string, height = 0): string | undefined {
+    const tx = btc.Transaction.fromRaw(hex.decode(rawHex), { allowUnknownOutputs: true, allowUnknownInputs: true, disableScriptCheck: true });
+    const spends: { sh: string; txid: string; vout: number }[] = [];
+    for (let i = 0; i < tx.inputsLength; i++) {
+      const inp = tx.getInput(i);
+      const txid = hex.encode(inp.txid!);
+      const vout = inp.index!;
+      const sh = [...this.unspent.entries()].find(([, list]) => list.some((u) => u.txid === txid && u.vout === vout))?.[0];
+      if (!sh) return 'bad-txns-inputs-missingorspent';
+      spends.push({ sh, txid, vout });
+    }
+    const id = tx.id;
+    for (const sp of spends) {
+      this.removeUtxo(sp.txid, sp.vout);
+      this.history.set(sp.sh, [...(this.history.get(sp.sh) ?? []), { tx_hash: id, height }]);
+    }
+    for (let i = 0; i < tx.outputsLength; i++) {
+      const o = tx.getOutput(i);
+      if (!o.script || o.amount === undefined) continue;
+      this.addUtxo(o.script, { txid: id, vout: i, value: Number(o.amount), height });
+    }
+    this.txs.set(id, rawHex);
+    return undefined;
+  }
+
+  /** Gives every mempool transaction (height <= 0) the height `height` (default: the tip). */
+  confirmMempool(height = this.height): void {
+    for (const list of this.history.values()) for (const h of list) if (h.height <= 0) h.height = height;
+    for (const list of this.unspent.values()) for (const u of list) if (u.height <= 0) u.height = height;
   }
 
   removeUtxo(txid: string, vout: number): void {
@@ -169,11 +220,24 @@ export class FakeElectrum {
       case 'blockchain.transaction.broadcast': {
         if (this.rejectBroadcast) return fail(this.rejectBroadcast, 1);
         const raw = p[0] as string;
-        const txid = btc.Transaction.fromRaw(hex.decode(raw), { allowUnknownOutputs: true }).id;
+        let txid: string;
+        try {
+          txid = btc.Transaction.fromRaw(hex.decode(raw), { allowUnknownOutputs: true }).id;
+        } catch {
+          return fail('TX decode failed', -22);
+        }
+        if (this.applyBroadcasts && !this.txs.has(txid)) {
+          const err = this.applyTransaction(raw);
+          if (err) return fail(err, -25);
+        }
         this.broadcasts.push(raw);
         this.txs.set(txid, raw);
         return ok(txid);
       }
+      case 'blockchain.estimatefee':
+        return ok(this.feeRates.get(p[0] as number) ?? -1);
+      case 'blockchain.relayfee':
+        return ok(this.relayFee);
       default:
         return fail(`unknown method ${req.method}`, -32601);
     }

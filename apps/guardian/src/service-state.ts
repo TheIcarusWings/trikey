@@ -40,7 +40,8 @@ export type ServiceEvent =
   | { type: 'sweep_broadcast_failed'; recoveryId: string; txid: string; detail: string }
   | { type: 'recovery_waiting'; recoveryId: string; reason: string; detail: string }
   | { type: 'cancel_by_dm'; recoveryId: string; contact: string; ok: boolean; detail?: string }
-  | { type: 'clock_skew'; systemTime: number; chainTime: number };
+  | { type: 'clock_skew'; systemTime: number; chainTime: number }
+  | { type: 'recovery_access'; phone: string; until: number };
 
 export type ServiceActivity = { id: number; at: number } & ServiceEvent;
 
@@ -54,13 +55,18 @@ export interface ServiceStateData {
   nextActivityId: number;
   /** State-changing requests already run: `${sender}:${id}` -> keep until (ms). See `rememberRequest`. */
   requests: { key: string; until: number }[];
+  /**
+   * Phones without the paired phone's key that the hardware wallet let in to recover the wallet
+   * (`recovery.access`): nostr pubkey -> until (ms). They may use the recovery and chain methods only.
+   */
+  recoveryPeers: { pubkey: string; until: number }[];
 }
 
 const MAX_ACTIVITY = 2000;
 const MAX_REQUESTS = 4096;
 
 export function emptyServiceState(): ServiceStateData {
-  return { version: 1, relays: [], phones: [], sweeps: [], activity: [], nextActivityId: 1, requests: [] };
+  return { version: 1, relays: [], phones: [], sweeps: [], activity: [], nextActivityId: 1, requests: [], recoveryPeers: [] };
 }
 
 export class ServiceState {

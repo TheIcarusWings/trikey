@@ -265,6 +265,24 @@ describe('RpcClient <-> RpcServer through two dev relays', () => {
     expect(rig.calls['sign']).toBe(1);
   });
 
+  it('after a restart, a re-sent request takes the answer the relays replay for its id', async () => {
+    const id = generateMessageId();
+    await rig.client.call('sign', { psbt: fakePsbt(9) }, { id });
+    // The app restarts: a new client subscribes, and the relays replay the stored answer for `id` first.
+    const pool = new SimplePoolRelayPool();
+    const restarted = new RpcClient({ pool, relays: rig.relays, secretKey: phone.secretKey, peer: guardian.pubkey });
+    await restarted.start();
+    // Nothing new reaches the guardian: the answer can only come from the replay.
+    rig.relayA.dropIncoming = true;
+    rig.relayB.dropIncoming = true;
+    await expect(restarted.call('sign', { psbt: fakePsbt(9) }, { id, timeoutMs: 1000 })).resolves.toEqual({ psbt: fakePsbt(9) });
+    expect(rig.calls['sign']).toBe(1);
+    // A fresh id is not answered from that store.
+    await expect(restarted.call('sign', { psbt: fakePsbt(9) }, { timeoutMs: 300 })).rejects.toBeInstanceOf(RpcTimeoutError);
+    restarted.close();
+    pool.close();
+  });
+
   it('drops a tampered event and recovers on the next clean one', async () => {
     rig.relayA.dropIncoming = true; // force the path through relay B
 

@@ -21,6 +21,8 @@ export interface DevRelayOptions {
   enforceExpiration?: boolean;
   /** Log protocol traffic to the console. */
   log?: boolean;
+  /** Clock for NIP-40 expiration, unix seconds (tests that move time by hand). Default: the system clock. */
+  now?: () => number;
 }
 
 interface Sub {
@@ -30,9 +32,9 @@ interface Sub {
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
-function isExpired(e: NostrEvent): boolean {
+function isExpired(e: NostrEvent, now: number): boolean {
   const t = e.tags.find((x) => x[0] === 'expiration')?.[1];
-  return t !== undefined && /^\d+$/.test(t) && Number(t) <= nowSec();
+  return t !== undefined && /^\d+$/.test(t) && Number(t) <= now;
 }
 
 export class DevRelay {
@@ -64,6 +66,10 @@ export class DevRelay {
 
   get connectionCount(): number {
     return this.sockets.size;
+  }
+
+  private now(): number {
+    return this.opts.now ? this.opts.now() : nowSec();
   }
 
   start(): Promise<string> {
@@ -142,7 +148,7 @@ export class DevRelay {
       };
       if (!verifyEvent(clean)) return send(socket, ['OK', id, false, 'invalid: bad id or signature']);
     }
-    if (this.opts.enforceExpiration !== false && isExpired(ev)) {
+    if (this.opts.enforceExpiration !== false && isExpired(ev, this.now())) {
       return send(socket, ['OK', id, false, 'invalid: event expired']);
     }
     this.log('EVENT', ev.id, 'kind', ev.kind);
@@ -166,7 +172,7 @@ export class DevRelay {
     if (!this.dropOutgoing) {
       const limit = Math.min(...fs.map((f) => f.limit ?? Infinity));
       const stored = [...this.events.values()]
-        .filter((e) => !(this.opts.enforceExpiration !== false && isExpired(e)) && matchFilters(fs, e))
+        .filter((e) => !(this.opts.enforceExpiration !== false && isExpired(e, this.now())) && matchFilters(fs, e))
         .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1))
         .slice(0, Number.isFinite(limit) ? limit : undefined);
       for (const e of stored.reverse()) this.deliver({ socket, filters: fs }, subId, e);

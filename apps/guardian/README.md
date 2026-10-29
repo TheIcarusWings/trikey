@@ -57,6 +57,37 @@ All files in `TRIKEY_DATA_DIR` are mode 0600 and written atomically.
 After every start the guardian is locked: key 3 is decrypted only by an unlock
 (web UI or `guardian.unlock` from the paired phone) and kept only in memory.
 
+## What the mobile app needs to know
+
+`@trikey/wallet` implements all of this; this is the contract it relies on.
+
+- **Pairing** is `pair.prepare` then `pair` with the secret from the QR code
+  (PROTOCOL.md, "Pairing"). Keys in the descriptor are in the order phone,
+  hardware wallet, guardian, all at BIP 48 `m/48'/<coin>'/0'/2'`; the wallet
+  id is the descriptor's `MultisigWallet.fingerprint()`.
+- **The hardware authorization key** (the single-sig key that signs the
+  pairing proof and every approval with BIP 137) is the hardware wallet's key
+  at `m/48'/<coin>'/0'/2'/0/0`, below its multisig account by non-hardened
+  steps. For any such path the guardian checks at pairing that the key
+  derives from the hardware xpub in the descriptor. A new phone without a
+  backup must find the same key again, so the path is fixed, not chosen.
+- **Chain data** comes from the guardian, never from public servers:
+  `wallet.sync`, `tx.get`, `tx.broadcast` and `fees.estimate` work while the
+  guardian is locked, for the paired phone only. `tx.broadcast` relays only
+  transactions that spend the wallet's own coins.
+- **Co-signing** (`sign`) needs `nonWitnessUtxo` on every input, the phone's
+  signature alone, and an unlocked guardian; the daily limit counts outflow
+  plus fee over a rolling 24 h. `guardian.status.dailyLimit` is the count.
+- **Recovery without the old phone or a backup**: the new phone's nostr key
+  is unknown here, so the hardware wallet vouches for it with a
+  `recovery.access` signature over the guardian's and the new phone's nostr
+  keys. That phone may then read the wallet and start a recovery for the
+  access period (at most 24 h, renewable); every grant appears in the activity
+  log. The sweep must spend every coin and keep the surviving key.
+- **After a restart** a state-changing request the guardian handled before
+  can come back as `1501`: re-read the state and send a new request if the
+  change is not there.
+
 ## Layout
 
 ```
@@ -83,4 +114,9 @@ src/
 
 `npm test -w @trikey/guardian`. `test/guardian.e2e.test.ts` runs the real service
 with a temp data dir, two in-memory relays, a fake Electrs and a simulated phone
-and alert contact, all on regtest with throwaway keys.
+and alert contact, all on regtest with throwaway keys; `test/chain-methods.e2e.test.ts`
+covers the chain methods and recovery access.
+
+`test/support/` (exported as `@trikey/guardian/testing`) holds the fake Electrs and
+`GuardianRig`, which runs the real service in-process for other packages' tests
+(`@trikey/wallet` uses it).
