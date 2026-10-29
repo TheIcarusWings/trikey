@@ -14,12 +14,33 @@ export type Sats = number;
 export type IsoDate = string;
 
 export type WalletMode = 'guardian' | 'recoveryKey';
+
+/**
+ * Where the wallet behind the screens comes from.
+ * - `demo`: the mock, with sample data and timers.
+ * - `simulator`: the real wallet with a software "hardware wallet", against a guardian the developer runs on regtest.
+ * - `real`: the real wallet with real hardware providers and the phone's secure storage.
+ */
+export type AppMode = 'demo' | 'simulator' | 'real';
+
+/** Networks the app can use. `bitcoin` (mainnet) is not selectable while the project is pre-alpha. */
+export type NetworkName = 'bitcoin' | 'testnet' | 'signet' | 'regtest';
+export const SELECTABLE_NETWORKS: NetworkName[] = ['testnet', 'signet', 'regtest'];
 export type AmountUnit = 'sats' | 'btc';
 export type ThemePreference = 'system' | 'light' | 'dark';
 
 // ---------------------------------------------------------------- key 1
 
-export type HardwareKind = 'ledger' | 'trezor' | 'bitbox02' | 'qr';
+export type HardwareKind = 'ledger' | 'trezor' | 'bitbox02' | 'qr' | 'simulated';
+
+/** One entry of the "Connect your hardware wallet" list. */
+export interface HardwareOption {
+  kind: HardwareKind;
+  name: string;
+  detail: string;
+  /** False when this phone cannot use it right now (no Bluetooth, no camera). */
+  available: boolean;
+}
 
 export interface HardwareWallet {
   kind: HardwareKind;
@@ -31,23 +52,58 @@ export interface HardwareWallet {
 
 // ---------------------------------------------------------------- key 2
 
-export type CloudProvider = 'icloud' | 'google-drive' | 'dropbox' | 'proton-drive' | 'other';
+export type CloudProvider = 'icloud' | 'google-drive' | 'dropbox' | 'proton-drive' | 'other' | 'file';
 
 export interface PhoneBackup {
   provider: CloudProvider;
   lastBackedUpAt: IsoDate;
+  /** What unlocks it. Without a passkey (no developer accounts yet) the recovery code is the only way. */
+  unlockedBy?: ('passkey' | 'recovery-code')[];
 }
+
+/** One place a backup can be written: shown on the Backup screen. */
+export interface BackupProviderOption {
+  provider: CloudProvider;
+  label: string;
+  /** What it means for the user, one short sentence. */
+  detail?: string;
+  available: boolean;
+}
+
+/** What the Backup screen needs to know before it offers anything. */
+export interface BackupOptions {
+  providers: BackupProviderOption[];
+  /** Passkeys with PRF work on this phone. Without them the backup is unlocked by the recovery code alone. */
+  passkey: boolean;
+}
+
+/** A backup the wallet found (in the cloud or the file provider, or one that was just imported). */
+export interface FoundBackup {
+  provider: CloudProvider;
+  createdAt: IsoDate;
+  unlockedBy: ('passkey' | 'recovery-code')[];
+}
+
+export type RestoreUnlock = { passkey: true } | { recoveryCode: string };
 
 // ---------------------------------------------------------------- key 3
 
 export type GuardianStatus = 'online' | 'locked' | 'offline';
-export type GuardianHost = 'umbrel' | 'start9';
+export type GuardianHost = 'umbrel' | 'start9' | 'other';
+
+/** Whether phone-only payments work (the guardian's word for it). */
+export type PhoneSpending = 'enabled' | 'paused_recovery' | 'paused_contested' | 'retired';
 
 export interface Guardian {
   host: GuardianHost;
+  /** The name the guardian gave itself when pairing, if any ("Umbrel"). */
+  label?: string;
   status: GuardianStatus;
   lastSeenAt: IsoDate;
-  relaysConnected: number;
+  /** Relays the guardian answers on. */
+  relays: string[];
+  /** How many of them are connected right now, when the wallet can tell. */
+  relaysConnected?: number;
   /** Where the guardian reads the chain from. */
   chainData: 'your-node';
   /** The guardian's nostr public key, bech32. */
@@ -63,8 +119,8 @@ export interface DailyLimit {
   limitSats: Sats;
   /** Counted over a rolling 24 hours, fees included. */
   usedSats: Sats;
-  /** Co-signatures the guardian gave inside the window. */
-  cosignedCount: number;
+  /** Co-signatures the guardian gave inside the window, when known. */
+  cosignedCount?: number;
 }
 
 export interface Contact {
@@ -101,7 +157,7 @@ export type SecurityEvent = { id: string; at: IsoDate } & (
   | { kind: 'guardian-restarted'; host: GuardianHost }
   | { kind: 'guardian-locked'; host: GuardianHost }
   | { kind: 'limit-changed'; limitSats: Sats; direction: 'raised' | 'lowered'; approvedOn: 'hardware' | 'phone' }
-  | { kind: 'delay-changed'; days: RecoveryDelayDays }
+  | { kind: 'delay-changed'; days: RecoveryDelayDays; approvedOn?: 'hardware' | 'phone' }
   | { kind: 'contact-added'; name: string }
   | { kind: 'contact-removed'; name: string }
 );
@@ -118,6 +174,8 @@ export interface SendRequest {
   address: string;
   amountSats: Sats;
   speed: FeeSpeed;
+  /** `hardware` skips the guardian: the user chose to approve on the hardware wallet. */
+  signer?: 'auto' | 'hardware';
 }
 
 /** Why the hardware wallet has to sign instead of phone + guardian. */
@@ -126,6 +184,9 @@ export type HardwareReason =
   | 'guardian-locked'
   | 'guardian-offline'
   | 'recovery-pending'
+  | 'phone-spending-paused'
+  /** The user asked for it (after a refusal, or to be safe). */
+  | 'requested'
   | 'over-spending-balance';
 
 export type SigningPlan =
@@ -140,7 +201,23 @@ export interface SendQuote {
   plan: SigningPlan;
   /** What is left of the daily limit (or spending balance) after this payment. */
   remainingAfterSats: Sats;
+  /** sat/vB, when the wallet picked it. */
+  feeRateSatPerVb?: number;
+  /** The wallet's own handle for this quote. Pass the whole quote back to `sendPayment`. */
+  ref?: string;
 }
+
+/** Why no quote could be made. The amount screen turns these into the line under the amount. */
+export type QuoteProblem =
+  | 'invalid_address'
+  | 'amount_too_small'
+  | 'insufficient_funds'
+  | 'not_synced'
+  | 'not_ready'
+  | 'no_fee_estimate'
+  | 'other';
+
+export type QuoteOutcome = { ok: true; quote: SendQuote } | { ok: false; problem: QuoteProblem; message: string };
 
 // ---------------------------------------------------------------- recovery
 
@@ -159,6 +236,18 @@ export interface RecoveryInProgress {
   /** The user has seen the alert and said "This was me". */
   acknowledged: boolean;
   movingSats: Sats;
+  /** `pending` while the wait runs, `ready` once the guardian may co-sign the move. */
+  state?: 'pending' | 'ready';
+}
+
+/** A recovery that ended on the guardian's side. */
+export type RecoveryOutcome = 'completed' | 'cancelled';
+
+/** Where the guardian's address comes from when this phone has to find it (a new phone, no backup). */
+export interface GuardianAddress {
+  /** `npub1...` or hex. */
+  npub: string;
+  relays: string[];
 }
 
 // ---------------------------------------------------------------- Recovery Key mode
@@ -187,7 +276,44 @@ export interface RecoveryKeyState {
 
 // ---------------------------------------------------------------- everything
 
+/** What the wallet behind the screens cannot do yet. The screens say so politely instead of pretending. */
+export interface WalletCapabilities {
+  /** Lock the guardian from the phone. */
+  lockGuardian: boolean;
+  /** Move to a new guardian. */
+  replaceGuardian: boolean;
+  /** Recovery Key mode (no home server). */
+  recoveryKey: boolean;
+}
+
+/** What the hardware wallet is being asked right now: the "Confirm on your device" sheet. */
+export interface DevicePrompt {
+  id: number;
+  title: string;
+  /** The exact text or address the device will show, to compare with its screen. */
+  detail?: string;
+  /** The current step, when the device says ("Unlock your Ledger"). */
+  hint?: string;
+}
+
 export interface WalletState {
+  /** Which wallet is behind the screens. */
+  backing: AppMode;
+  /** The network of the wallet (or the one picked for the next one). Null in the demo. */
+  network: NetworkName | null;
+  capabilities: WalletCapabilities;
+  /** A long step that is running, in words ("Creating your phone key"). */
+  progress: string | null;
+  devicePrompt: DevicePrompt | null;
+  /** A sync is running. */
+  syncing: boolean;
+  /** Has the wallet heard from the guardian at least once? */
+  synced: boolean;
+  phoneSpending: PhoneSpending;
+  /** A recovery on this phone's wallet that is no longer running. */
+  recoveryOutcome: RecoveryOutcome | null;
+  /** The phone is the new phone of a recovery that has not finished. */
+  recovering: boolean;
   /** False until onboarding or recovery finishes. */
   onboarded: boolean;
   mode: WalletMode;
@@ -195,6 +321,8 @@ export interface WalletState {
   theme: ThemePreference;
 
   hardware: HardwareWallet;
+  /** The hardware wallet has shown the first address and it matched. */
+  addressVerified: boolean;
   backup: PhoneBackup | null;
   guardian: Guardian;
   recoveryDelayDays: RecoveryDelayDays;
@@ -202,6 +330,7 @@ export interface WalletState {
   contacts: Contact[];
 
   balanceSats: Sats;
+  /** Empty until the hardware wallet has confirmed the wallet's addresses. */
   receiveAddress: string;
   activity: ActivityItem[];
 

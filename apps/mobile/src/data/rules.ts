@@ -1,5 +1,6 @@
 import type {
   FeeSpeed,
+  QuoteOutcome,
   Refill,
   RecoveryDelayDays,
   Sats,
@@ -19,7 +20,7 @@ import type {
 export const FEE_SATS: Record<FeeSpeed, Sats> = { slow: 210, normal: 420, fast: 840 };
 
 export const FEE_SPEEDS: { speed: FeeSpeed; label: string }[] = [
-  { speed: 'slow', label: '~1 day' },
+  { speed: 'slow', label: '~1 hour' },
   { speed: 'normal', label: '~30 min' },
   { speed: 'fast', label: '~10 min' },
 ];
@@ -46,24 +47,27 @@ export function planSend(state: WalletState, totalSats: Sats): SigningPlan {
       : { signer: 'hardware', reason: 'over-spending-balance' };
   }
   if (state.recovery) return { signer: 'hardware', reason: 'recovery-pending' };
+  if (state.phoneSpending !== 'enabled') return { signer: 'hardware', reason: 'phone-spending-paused' };
   if (state.guardian.status === 'locked') return { signer: 'hardware', reason: 'guardian-locked' };
   if (state.guardian.status === 'offline') return { signer: 'hardware', reason: 'guardian-offline' };
   if (totalSats > remainingToday(state)) return { signer: 'hardware', reason: 'over-limit' };
   return { signer: 'phone+guardian' };
 }
 
-export function quoteSend(state: WalletState, request: SendRequest): SendQuote {
+export function quoteSend(state: WalletState, request: SendRequest): QuoteOutcome {
   const feeSats = FEE_SATS[request.speed];
   const totalSats = request.amountSats + feeSats;
-  const plan = planSend(state, totalSats);
+  const plan: SigningPlan =
+    request.signer === 'hardware' ? { signer: 'hardware', reason: 'requested' } : planSend(state, totalSats);
   const budget = phoneOnlyBudget(state);
-  return {
+  const quote: SendQuote = {
     request,
     feeSats,
     totalSats,
     plan,
     remainingAfterSats: plan.signer === 'hardware' ? budget : Math.max(0, budget - totalSats),
   };
+  return { ok: true, quote };
 }
 
 export function limitChangeNeedsHardware(current: Sats, next: Sats): boolean {
