@@ -9,3 +9,4 @@ export * from './spending.js';
 export * from './refills.js';
 export * from './chain-state.js';
 export * from './scheduler.js';
+export * from './esplora.js';

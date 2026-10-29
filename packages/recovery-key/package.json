@@ -7,7 +7,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./testing": "./src/testing/index.ts"
+    "./testing": "./src/testing/index.ts",
+    "./testing/server": "./src/testing/esplora-server.ts"
   },
   "scripts": {
     "test": "vitest run",
