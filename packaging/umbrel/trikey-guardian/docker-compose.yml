@@ -9,6 +9,8 @@ services:
       APP_PORT: 3000
 
   server:
+    # The store copy of this file (.github/workflows/umbrel-store.yml) pins the image by
+    # digest on release: ghcr.io/theicaruswings/trikey-guardian:<version>@sha256:...
     image: ghcr.io/theicaruswings/trikey-guardian:0.1.0
     init: true
     restart: on-failure
@@ -20,11 +22,16 @@ services:
       # Electrs (dependency "electrs")
       ELECTRUM_HOST: ${APP_ELECTRS_NODE_IP}
       ELECTRUM_PORT: ${APP_ELECTRS_NODE_PORT}
-      # Bitcoin Core (dependency "bitcoin")
+      # Bitcoin Core (dependency "bitcoin"). The guardian needs all four BITCOIN_RPC_* values or
+      # none: with them it reports sync progress, broadcasts as a fallback and scans for silent
+      # payments (`getblock <hash> 3`; without them `sp.*` answers 1700). Umbrel exports them
+      # from apps/bitcoin/exports.sh (getumbrel/umbrel-apps): the node's IP, port 8332, and the
+      # `umbrel` RPC user with its generated password.
       BITCOIN_RPC_HOST: ${APP_BITCOIN_NODE_IP}
       BITCOIN_RPC_PORT: ${APP_BITCOIN_RPC_PORT}
       BITCOIN_RPC_USER: ${APP_BITCOIN_RPC_USER}
       BITCOIN_RPC_PASS: ${APP_BITCOIN_RPC_PASS}
-      # TODO(verify): the value Umbrel exports for APP_BITCOIN_NETWORK. The guardian expects
-      # bitcoin|testnet|signet|regtest. Map it if Umbrel uses other names.
+      # Umbrel exports mainnet, testnet, testnet4, signet or regtest (apps/bitcoin/exports.sh).
+      # The guardian accepts all five (apps/guardian/src/config.ts maps mainnet to bitcoin and
+      # testnet4 to testnet), so no mapping is needed.
       BITCOIN_NETWORK: ${APP_BITCOIN_NETWORK}

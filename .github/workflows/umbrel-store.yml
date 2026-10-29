@@ -1,0 +1,107 @@
+name: Umbrel store
+
+# An Umbrel community app store is a repository whose root holds umbrel-app-store.yml
+# (packaging/README.md). This monorepo keeps the store under packaging/umbrel/, so on a release
+# tag this workflow copies it to its own repository, trikey-umbrel-store, with the image pinned
+# by digest.
+#
+# It needs a secret, UMBREL_STORE_TOKEN: a fine-grained personal access token with
+# "Contents: read and write" on the store repository, and nothing else. Without the secret the
+# workflow does nothing and says so. The store repository's name can be changed with the
+# repository variable UMBREL_STORE_REPO (owner/name).
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      # Secrets cannot be tested in an `if:`, so the check goes through the environment.
+      HAS_TOKEN: ${{ secrets.UMBREL_STORE_TOKEN != '' }}
+      STORE_REPO: ${{ vars.UMBREL_STORE_REPO || format('{0}/trikey-umbrel-store', github.repository_owner) }}
+      IMAGE: ghcr.io/theicaruswings/trikey-guardian
+    steps:
+      - name: Check for the store token
+        run: |
+          if [ "${HAS_TOKEN}" != "true" ]; then
+            echo "::notice title=Umbrel store not updated::The UMBREL_STORE_TOKEN secret is not set, so ${GITHUB_REF_NAME} was not copied to ${STORE_REPO}. See packaging/README.md."
+          fi
+
+      - uses: actions/checkout@v4
+        if: env.HAS_TOKEN == 'true'
+
+      - name: Check that the app matches the tag
+        if: env.HAS_TOKEN == 'true'
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          app=packaging/umbrel/trikey-guardian
+          grep -Fq "version: \"${version}\"" "${app}/umbrel-app.yml" \
+            || { echo "::error::${app}/umbrel-app.yml does not say version \"${version}\""; exit 1; }
+          grep -Fq "image: ${IMAGE}:${version}" "${app}/docker-compose.yml" \
+            || { echo "::error::${app}/docker-compose.yml does not use ${IMAGE}:${version}"; exit 1; }
+
+      - name: Log in to GHCR
+        if: env.HAS_TOKEN == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # docker.yml pushes the same tag at the same time, so wait for it.
+      - name: Find the image digest
+        if: env.HAS_TOKEN == 'true'
+        id: digest
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for attempt in $(seq 1 60); do
+            if digest=$(docker buildx imagetools inspect "${IMAGE}:${version}" --format '{{.Manifest.Digest}}' 2>/dev/null) && [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+              echo "${IMAGE}:${version} is ${digest}"
+              exit 0
+            fi
+            echo "Waiting for ${IMAGE}:${version} (${attempt}/60)"
+            sleep 30
+          done
+          echo "::error::${IMAGE}:${version} was not published within 30 minutes"
+          exit 1
+
+      - name: Check out the store repository
+        if: env.HAS_TOKEN == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.STORE_REPO }}
+          token: ${{ secrets.UMBREL_STORE_TOKEN }}
+          path: store
+
+      - name: Copy the store
+        if: env.HAS_TOKEN == 'true'
+        env:
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # Replace the store's contents with packaging/umbrel/, keeping its own history.
+          find store -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
+          cp -R packaging/umbrel/. store/
+          sed -i "s|image: ${IMAGE}:${version}\$|image: ${IMAGE}:${version}@${DIGEST}|" store/trikey-guardian/docker-compose.yml
+          grep -F "image: ${IMAGE}:${version}@${DIGEST}" store/trikey-guardian/docker-compose.yml
+
+      - name: Commit and push
+        if: env.HAS_TOKEN == 'true'
+        working-directory: store
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "The store is already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Trikey Guardian ${GITHUB_REF_NAME}" -m "From ${GITHUB_REPOSITORY}@${GITHUB_SHA}"
+          git push
