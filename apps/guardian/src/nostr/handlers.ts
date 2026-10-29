@@ -244,6 +244,7 @@ export function buildHandlers(g: Guardian): Handlers {
         time: stamp.at,
         atMs: stamp.atMs,
         ...(g.engine.watchedWallet() ? { watchedWalletId: g.engine.watchedWallet()!.walletId } : {}),
+        ...(s.warnings.length ? { warnings: s.warnings } : {}),
         ...(s.walletId ? { walletId: s.walletId, hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
         ...(s.dailyLimit
           ? {
@@ -352,7 +353,12 @@ export function buildHandlers(g: Guardian): Handlers {
     'policy.get': () => {
       const s = g.engine.status();
       if (!s.rules) throw refusalError({ reason: 'not_registered' });
-      return { policy: policyToWire(s.rules), nextHardwareSequence: s.nextHardwareSequence, policyHash: policyHash(s.rules) };
+      return {
+        policy: policyToWire(s.rules),
+        nextHardwareSequence: s.nextHardwareSequence,
+        policyHash: policyHash(s.rules),
+        ...(s.warnings.length ? { warnings: s.warnings } : {}),
+      };
     },
 
     'policy.update': async (params) => {

@@ -55,6 +55,7 @@ export async function guardianStatus(g: Guardian): Promise<GuardianStatus> {
     network: g.config.network,
     ...(g.setupComplete && g.identity ? { npub: g.identity.npub } : {}),
     version: g.version,
+    ...(s.warnings.length ? { warnings: s.warnings } : {}),
   };
 }
 

@@ -83,7 +83,14 @@ export interface GuardianStatus {
   /** The guardian's nostr identity (shown in the pairing QR). Set once setup is complete. */
   npub?: string;
   version?: string;
+  /**
+   * Weak spots of the paired wallet's policy. `no_alert_contacts`: a recovery's alerts reach only the
+   * paired phone (a thief may hold it). Mainnet guardians refuse that; test networks warn.
+   */
+  warnings?: PolicyWarning[];
 }
+
+export type PolicyWarning = 'no_alert_contacts';
 
 export type PhoneSpending = 'enabled' | 'paused_recovery' | 'paused_contested' | 'retired';
 

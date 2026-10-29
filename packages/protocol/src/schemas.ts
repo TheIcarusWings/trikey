@@ -258,6 +258,12 @@ export const SignResult = z.object({
   psbt: PsbtBase64,
 });
 
+/**
+ * `no_alert_contacts`: no alert contact, so a recovery's alerts go to the paired phone only, which a
+ * thief may hold. Mainnet guardians refuse such a policy; test networks allow it with this warning.
+ */
+export const PolicyWarning = z.enum(['no_alert_contacts']);
+
 export const PolicyGetParams = z.strictObject({});
 export const PolicyGetResult = z.object({
   policy: Policy,
@@ -265,6 +271,8 @@ export const PolicyGetResult = z.object({
   nextHardwareSequence: z.int().min(1),
   /** sha256 of the canonical JSON of `policy` (hex). */
   policyHash: Hex32,
+  /** Weak spots of the policy the phone should show (`PolicyWarning`). Absent when there are none. */
+  warnings: z.array(PolicyWarning).max(8).optional(),
 });
 
 export const PolicyUpdateParams = z.strictObject({
@@ -398,6 +406,8 @@ export const GuardianStatusResult = z
      * sweep of that wallet's coins into the paired wallet.
      */
     watchedWalletId: WalletId.optional(),
+    /** As `policy.get`'s: weak spots of the paired wallet's policy. Absent when there are none. */
+    warnings: z.array(PolicyWarning).max(8).optional(),
   })
   .refine((r) => sameMoment(r.time, r.atMs), { message: SAME_MOMENT, path: ['atMs'] });
 
@@ -929,6 +939,7 @@ export function isErrorResponse(m: Response): m is z.infer<typeof ResponseErr> {
 
 export type KeyOrigin = z.infer<typeof KeyOrigin>;
 export type Policy = z.infer<typeof Policy>;
+export type PolicyWarning = z.infer<typeof PolicyWarning>;
 export type HardwareApproval = z.infer<typeof HardwareApproval>;
 export type HardwareAuthKey = z.infer<typeof HardwareAuthKey>;
 export type Recovery = z.infer<typeof Recovery>;

@@ -88,6 +88,16 @@ export const MAX_CLOCK_AHEAD_OF_CHAIN_MS = 3 * HOUR;
  * 10 minutes); on regtest, where blocks are mined on demand, one per day.
  */
 export const BLOCKS_PER_DAY: Record<NetworkName, number> = { bitcoin: 144, testnet: 144, signet: 144, regtest: 1 };
+/** Mainnet policies must name an alert contact (it may be the owner's own nostr app on another device). */
+export const MAINNET_CONTACT_REQUIRED =
+  'on mainnet at least one alert contact is required (it can be your own nostr app on another device), so a recovery is never announced only to a phone a thief may hold';
+
+/** Weak spots of a policy the phone and the web UI should show. */
+export type PolicyWarning = 'no_alert_contacts';
+
+export function policyWarnings(rules: Rules | undefined): PolicyWarning[] {
+  return rules && !rules.alertContacts.length ? ['no_alert_contacts'] : [];
+}
 
 export interface PolicyEngineOptions {
   store: StateStore;
@@ -166,6 +176,8 @@ export interface GuardianStatus {
   hardwareConfirmRequired: boolean;
   /** How many wallets this guardian retired. */
   retiredWallets: number;
+  /** Weak spots of the active wallet's policy (`no_alert_contacts`: alerts reach only the paired phone). */
+  warnings: PolicyWarning[];
 }
 
 export interface CosignResult {
@@ -347,6 +359,7 @@ export class PolicyEngine {
       dailyLimit: rules ? { limit: rules.dailyLimitSats, used, available: rules.dailyLimitSats > used ? rules.dailyLimitSats - used : 0n } : undefined,
       hardwareConfirmRequired: !!reg && !reg.hardwareAuthConfirmed,
       retiredWallets: s.retired.length,
+      warnings: policyWarnings(rules),
     };
   }
 
@@ -574,6 +587,8 @@ export class PolicyEngine {
       } catch (e) {
         return bad(`rules: ${(e as Error).message}`);
       }
+      // Without a contact, a recovery's alerts reach only the paired phone, which a thief may hold.
+      if (network.name === 'bitcoin' && !rules.alertContacts.length) return bad(`rules: ${MAINNET_CONTACT_REQUIRED}`);
       const checked = this.checkAuthKey(input.hardwareAuth);
       if (!checked.ok) return bad(checked.detail);
       const hwKey = checked.key;
@@ -859,6 +874,7 @@ export class PolicyEngine {
       } catch (e) {
         return refuse({ reason: 'invalid_rules', detail: (e as Error).message });
       }
+      if (w.registration.network === 'bitcoin' && !rules.alertContacts.length) return refuse({ reason: 'invalid_rules', detail: MAINNET_CONTACT_REQUIRED });
       let sequence: number | undefined;
       if (auth.authenticatedBy === 'app') {
         const may = phoneMayApply(current, rules);

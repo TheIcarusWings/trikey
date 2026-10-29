@@ -14,6 +14,9 @@ export {
   MAX_ACCESS_GRANTS,
   MAX_CLOCK_AHEAD_OF_CHAIN_MS,
   BLOCKS_PER_DAY,
+  MAINNET_CONTACT_REQUIRED,
+  policyWarnings,
+  type PolicyWarning,
   keySetOf,
 } from './engine.js';
 export * from './types.js';
