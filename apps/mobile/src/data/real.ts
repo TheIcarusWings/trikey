@@ -43,6 +43,7 @@ import { DevicePromptStore, compositeProvider, ledgerHint, withDevicePrompts } f
 import { WalletServiceError, notAvailableYet } from './errors';
 import { SIMULATED_OPTION, hardwareBrandOf, hardwareOptionTable, type UiOs } from './hardware-options';
 import { mapError, refusalToError } from './real-errors';
+import { emptyRecoveryKeyState } from './rk-empty';
 import type { ReceiveAddress, WalletService } from './service';
 import {
   SELECTABLE_NETWORKS,
@@ -465,7 +466,7 @@ class Service implements RealWalletService {
     return {
       backing: this.mode,
       network: this.network,
-      capabilities: { lockGuardian: true, replaceGuardian: true, recoveryKey: false },
+      capabilities: { lockGuardian: true, replaceGuardian: true, recoveryKey: true },
       progress: this.progress,
       devicePrompt: this.prompts.getSnapshot(),
       syncing: this.syncing,
@@ -494,15 +495,7 @@ class Service implements RealWalletService {
       receiveAddress: this.receiveAddressNow(),
       activity: buildActivity(snap?.history ?? [], this.log, now),
       recovery,
-      recoveryKey: {
-        keyKind: this.keyKind,
-        spendingSats: 0,
-        vaultSats: 0,
-        refillAmountSats: 0,
-        refills: [],
-        refillsTotal: 0,
-        activity: [],
-      },
+      recoveryKey: emptyRecoveryKeyState({ keyKind: this.keyKind, network: this.network }),
       hardwareConfirmRequired: this.w?.hardwareConfirmRequired ?? false,
       replace: {
         plan: this.replacePlan,
@@ -1237,15 +1230,11 @@ class Service implements RealWalletService {
   }
 
   // ===========================================================================
-  // Recovery Key mode: no wallet code yet
+  // Recovery Key mode lives in ./rk-service.ts
 
   setRecoveryKeyKind(kind: RecoveryKeyKind): void {
     this.keyKind = kind;
     this.refresh();
-  }
-
-  async approveRefills(_amountSats: Sats): Promise<void> {
-    throw notAvailableYet('Recovery Key mode', 'It comes after the guardian mode.');
   }
 
   // ===========================================================================
@@ -1272,7 +1261,7 @@ class Service implements RealWalletService {
   }
 
   setMode(_mode: WalletMode): void {
-    // Recovery Key mode has no wallet code yet: the home stays the guardian's.
+    // The phone runs one kind of wallet; ./routed.ts decides which service that is.
   }
 
   cancelDevicePrompt(): void {

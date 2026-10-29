@@ -27,6 +27,10 @@ export type ServiceErrorKind =
   | 'insufficient_funds'
   | 'quote_stale'
   | 'broadcast_failed'
+  /** Recovery Key mode: the chain server did not answer, or answered nonsense. */
+  | 'chain_unreachable'
+  /** Recovery Key mode: a Recovery Kit that is not this one, or was not saved. */
+  | 'kit_invalid'
   // backup and restore
   | 'backup_unavailable'
   | 'backup_not_found'

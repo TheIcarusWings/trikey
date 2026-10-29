@@ -122,7 +122,7 @@ describe('the real wallet service', { timeout: 60_000 }, () => {
     A = await phone();
     const s0 = A.svc.getState();
     expect(s0).toMatchObject({ backing: 'simulator', network: 'regtest', onboarded: false, recovering: false, synced: false, balanceSats: 0 });
-    expect(s0.capabilities).toEqual({ lockGuardian: true, replaceGuardian: true, recoveryKey: false });
+    expect(s0.capabilities).toEqual({ lockGuardian: true, replaceGuardian: true, recoveryKey: true });
     expect(s0).toMatchObject({ hardwareConfirmRequired: false, replace: { plan: null, step: null, pending: null }, oldWallets: [], walletRetired: null });
     expect(await A.svc.getHardwareOptions()).toEqual([expect.objectContaining({ kind: 'simulated', available: true })]);
 
@@ -391,7 +391,8 @@ describe('the real wallet service', { timeout: 60_000 }, () => {
 
   it('says "not available yet" for what has no wallet code behind it, and never pretends', async () => {
     expect(await failure(A.svc.recoverWithKit())).toMatchObject({ kind: 'not_available', message: expect.stringMatching(/isn't available yet/) });
-    expect(await failure(A.svc.approveRefills(100_000))).toMatchObject({ kind: 'not_available' });
+    // Recovery Key mode is a wallet of its own (./rk-service.ts): the guardian's service has none of its actions.
+    expect(A.svc.rk).toBeUndefined();
   });
 
   it('keeps the modes apart and survives a restart: the same wallet opens again, from its own storage', async () => {

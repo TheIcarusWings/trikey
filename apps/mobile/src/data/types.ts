@@ -135,7 +135,7 @@ export interface Contact {
 // ---------------------------------------------------------------- activity
 
 export type TxStatus = 'pending' | 'confirmed';
-export type TxKind = 'sent' | 'received' | 'refill';
+export type TxKind = 'sent' | 'received' | 'refill' | 'speed_up';
 export type TxSigners = 'phone+guardian' | 'phone+hardware' | 'hardware+guardian' | 'phone';
 
 export interface Transaction {
@@ -153,6 +153,8 @@ export interface Transaction {
   signedBy?: TxSigners;
   /** Which refill of the schedule this is (Recovery Key mode). */
   refillIndex?: number;
+  /** Recovery Key mode: paid from the vault (phone + hardware wallet) rather than the spending balance. */
+  fromVault?: boolean;
 }
 
 export type SecurityEvent = { id: string; at: IsoDate } & (
@@ -218,6 +220,10 @@ export interface SendQuote {
   feeRateSatPerVb?: number;
   /** The wallet's own handle for this quote. Pass the whole quote back to `sendPayment`. */
   ref?: string;
+  /** Something to know before approving that is not a refusal (Recovery Key mode: this payment ends the refills that are left). */
+  warning?: string;
+  /** The fee is an estimate until `refineQuote` has run (Recovery Key mode). */
+  estimate?: boolean;
 }
 
 /** Why no quote could be made. The amount screen turns these into the line under the amount. */
@@ -326,16 +332,169 @@ export interface Refill {
   status: 'received' | 'upcoming';
 }
 
+/** How far the wallet's creation got: `hardware` means key 1 is connected and the Recovery Key is not saved yet. */
+export type RecoveryKeyStage = 'new' | 'hardware' | 'ready';
+
+/** The next refill: when it can go and what it is waiting for. */
+export interface NextRefill {
+  /** 1-based position in the chain. */
+  index: number;
+  amountSats: Sats;
+  /**
+   * `ready`: it can go now (the phone sends it when the spending balance is low). `waiting`: its timelock has not passed.
+   * `arriving`: it is on its way. `pending`: it waits for the refill before it to confirm.
+   */
+  status: 'ready' | 'waiting' | 'arriving' | 'pending';
+  /** About when it can go, from the chain's block count at ten minutes a block (waiting and pending). */
+  etaAt?: IsoDate;
+  inBlocks?: number;
+}
+
+/** Something that needs the person's eyes, shown as a banner on home until they dismiss it. */
+export type RecoveryKeyNotice =
+  /** A refill was sent that this phone did not send: someone else holds the signed refills. */
+  | { id: string; kind: 'unexpected_broadcast'; at: IsoDate; index: number; txid: string }
+  /** A vault coin moved in a transaction this phone did not make: two keys are in other hands. */
+  | { id: string; kind: 'foreign_vault_spend'; at: IsoDate; txid: string };
+
+/** A refill stuck for lack of fee, with what speeding it up costs. */
+export interface SpeedUpOffer {
+  index: number;
+  txid: string;
+  /** What the extra transaction pays, for both. */
+  feeSats: Sats;
+  /** sat/vB the pair would pay once sped up, and what the refill pays now. */
+  targetRate: number;
+  currentRate: number;
+}
+
+/** Where the wallet reads the chain from (an Esplora server). */
+export interface ChainServer {
+  url: string;
+  /** The public server the app ships with for this network, not one the person chose. */
+  isDefault: boolean;
+}
+
 export interface RecoveryKeyState {
   keyKind: RecoveryKeyKind;
+  stage: RecoveryKeyStage;
+  /** What key 3 is, once it is saved: a printed kit, or a second hardware wallet. */
+  savedKey: 'kit' | 'hardware' | null;
+  /** The vault's fingerprint as the kit prints it ("ab12 cd34 ef56 7890"). */
+  fingerprint: string | null;
   /** Single-key balance the phone spends with Face ID alone. */
   spendingSats: Sats;
   /** Everything else, spendable only with phone + hardware. */
   vaultSats: Sats;
+  /** Defaults for a new batch of refills. */
   refillAmountSats: Sats;
-  refills: Refill[];
+  refillCount: number;
+  /** Refills that can still arrive, and how many the chain holds. */
+  refillsLeft: number;
   refillsTotal: number;
+  /**
+   * `none`: no refills approved yet. `live`: some can still arrive. `exhausted`: all arrived. `invalidated`: a payment
+   * or sweep ended the rest (`invalidatedBy`).
+   */
+  refillsStatus: 'none' | 'live' | 'exhausted' | 'invalidated';
+  /** Approve more: the chain is not live, or only a couple of refills are left. */
+  needsApproval: boolean;
+  invalidatedBy: null | { index: number; byThisPhone: boolean };
+  next: NextRefill | null;
+  notices: RecoveryKeyNotice[];
+  speedUp: SpeedUpOffer | null;
+  server: ChainServer;
+  /** The last time the chain was read (ISO), if it was. */
+  syncedAt: IsoDate | null;
+  /** The demo's schedule. The real wallet leaves it empty. */
+  refills: Refill[];
   activity: ActivityItem[];
+}
+
+/** Which Recovery Key choices this phone offers on the "Make your Recovery Key" screen. */
+export interface RecoveryKeyOption {
+  kind: RecoveryKeyKind;
+  available: boolean;
+  /** Why not, in words. */
+  unavailableReason?: string;
+}
+
+/** Proof that the Recovery Kit is saved: the words asked for, a scan of its QR code, or (a wallet map) the person's word. */
+export type KitProof = { words: Record<number, string> } | { scanned: string } | { mapSaved: true };
+
+/**
+ * A Recovery Kit as the screens print and check it. A paper kit (`seed`) holds key 3 in the clear: print it, then let it
+ * go. Nothing in the app stores it, and the screens must not either.
+ */
+export interface RecoveryKit {
+  kind: 'seed' | 'xpub';
+  /** The whole printable page. For the OS print dialog only: never write it to storage. */
+  html: string;
+  qrText: string;
+  recoveryWords: string[];
+  mapWords: string[];
+  fingerprint: string;
+  network: NetworkName;
+  /** "29 Oct 2026" */
+  date: string;
+  /** 1-based word positions to type back to show the kit is saved. Empty for a wallet map (a second hardware wallet). */
+  challenge: number[];
+  /** The second hardware wallet, for a wallet map. */
+  device?: string;
+}
+
+/** What a scanned or typed kit holds. */
+export interface KitInfo {
+  fingerprint: string;
+  network: NetworkName;
+  kind: 'seed' | 'xpub';
+  vaultSats: Sats;
+  unconfirmedSats: Sats;
+  /** The kit's hardware wallet (key 1), by fingerprint. */
+  hardwareFingerprint: string;
+  /** This phone holds the vault's phone key (the "kit + this phone" recovery works here). */
+  matchesThisPhone: boolean;
+}
+
+export interface RefillPreview {
+  /** `fresh`: a new chain from the vault's coins. `extend`: more links onto the live chain (same amount and period). */
+  mode: 'fresh' | 'extend';
+  amountSats: Sats;
+  count: number;
+  /** The most the vault can pay for at this amount. */
+  maxCount: number;
+  periodDays: number;
+  feePerRefillSats: Sats;
+  totalSats: Sats;
+  vaultSats: Sats;
+  schedule: { index: number; amountSats: Sats; at: IsoDate; today: boolean }[];
+  /** How many times the hardware wallet will ask. */
+  confirmations: number;
+}
+
+export interface RefillApproval {
+  from: number;
+  to: number;
+}
+
+/** Where a recovery with the kit puts the money. */
+export type KitDestination = { address: string } | { newVault: true };
+
+export interface KitRecoveryResult {
+  txid: string;
+  /** What reached the destination. */
+  movedSats: Sats;
+  feeSats: Sats;
+  /** The money went to a new vault on this phone, which now runs the wallet. */
+  newVault: boolean;
+}
+
+export interface ServerCheck {
+  ok: boolean;
+  /** The chain's height, when it answered. */
+  height?: number;
+  /** What went wrong, or what to know even though it answered. */
+  message: string;
 }
 
 // ---------------------------------------------------------------- everything
