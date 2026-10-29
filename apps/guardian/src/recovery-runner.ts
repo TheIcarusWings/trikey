@@ -172,7 +172,10 @@ export class RecoveryRunner {
   async checkCoverage(rec: RecoveryRecord, reg: Registration): Promise<CoverageResult> {
     const wallet = MultisigWallet.fromDescriptor(reg.descriptor, getNetwork(reg.network));
     const { outpoints, maxIndex } = sweepInputs(base64.decode(rec.sweepPsbt));
-    const utxos = await this.g.chain.walletUtxos(wallet, { minIndex: maxIndex });
+    // At least to the wallet's high-water marks: every change output key 3 ever co-signed is in range.
+    const floor = this.g.scanFloor(reg.walletId);
+    const minIndex = { 0: Math.max(maxIndex[0] ?? -1, floor[0] ?? -1), 1: Math.max(maxIndex[1] ?? -1, floor[1] ?? -1) };
+    const utxos = await this.g.chain.walletUtxos(wallet, { minIndex });
     const unspent = new Set(utxos.map((u) => `${u.txid}:${u.vout}`));
     const missed = utxos.filter((u) => !outpoints.has(`${u.txid}:${u.vout}`));
     if (missed.length) {

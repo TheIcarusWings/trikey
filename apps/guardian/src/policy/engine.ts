@@ -38,7 +38,7 @@ import {
   recoveryAccessMessage,
 } from './authorizer.js';
 import { Clock, DAY, HOUR, systemClock } from './clock.js';
-import { addCosignerSignatures, inspectPsbt } from './inspect.js';
+import { CHANGE_WINDOW, MAX_SELF_INDEX, NO_HIGH_WATER, addCosignerSignatures, inspectPsbt, maxHighWater } from './inspect.js';
 import { pruneSpends, splitOutflow, usageWith, windowUsage } from './limit.js';
 import { isNostrPubkey, normalizeRules, phoneMayApply } from './rules.js';
 import { CosignerSigner } from './signer.js';
@@ -53,6 +53,7 @@ import {
   GuardianState,
   HardwareApproval,
   HardwareAuthKey,
+  HighWater,
   RecoveryDelayDays,
   RecoveryRecord,
   RecoveryStatus,
@@ -624,6 +625,35 @@ export class PolicyEngine {
     });
   }
 
+  /** The active wallet's high-water marks (DESIGN.md: scans of the wallet must reach at least these). */
+  highWater(walletId?: string): HighWater {
+    const w = this.state.active;
+    if (!w || (walletId !== undefined && w.registration.walletId !== walletId)) return { ...NO_HIGH_WATER };
+    return { ...(w.highWater ?? NO_HIGH_WATER) };
+  }
+
+  /**
+   * Raises the active wallet's high-water marks to what a scan of `walletId` found used (an incoming
+   * payment to a fresh address, say). Never lowers them. Writes nothing when nothing rises.
+   */
+  async noteUsedIndexes(walletId: string, used: HighWater): Promise<boolean> {
+    const rises = (s: GuardianState) => {
+      const w = s.active;
+      if (!w || w.registration.walletId !== walletId) return false;
+      const cur = w.highWater ?? NO_HIGH_WATER;
+      const ok = (n: number) => Number.isSafeInteger(n) && n <= MAX_SELF_INDEX;
+      return (ok(used.receive) && used.receive > cur.receive) || (ok(used.change) && used.change > cur.change);
+    };
+    if (!rises(this.state)) return false;
+    return this.mutate((draft) => {
+      if (!rises(draft)) return false;
+      const w = draft.active!;
+      const clamp = (n: number) => (Number.isSafeInteger(n) ? Math.min(n, MAX_SELF_INDEX) : -1);
+      w.highWater = maxHighWater(w.highWater ?? NO_HIGH_WATER, { receive: clamp(used.receive), change: clamp(used.change) });
+      return true;
+    });
+  }
+
   /** The paired phone's single-key coins, if it registered any (read-only). */
   singleKey(): SingleKeyRegistration | undefined {
     return this.state.active?.singleKey;
@@ -695,7 +725,11 @@ export class PolicyEngine {
       // once the phone registered its helper account, only a script of that account, only in a PSBT
       // with a taproot output (inspect.ts), and at most one finalized P2WPKH input (core).
       const helper = w.singleKey?.helper ? helperAccount(w.singleKey.helper.xpub, reg.network) : undefined;
-      const checked = inspectPsbt(psbt, this.wallet(reg), undefined, helper ? { helper: (c) => !!helper.locate(c.script) } : {});
+      // Change only within CHANGE_WINDOW of the high-water marks: a coin parked further out would be
+      // out of sight of every gap-limit scan, so it counts as leaving the wallet.
+      const marks = w.highWater ?? NO_HIGH_WATER;
+      const selfLimit = { receive: marks.receive + CHANGE_WINDOW, change: marks.change + CHANGE_WINDOW };
+      const checked = inspectPsbt(psbt, this.wallet(reg), undefined, { selfLimit, ...(helper ? { helper: (c) => !!helper.locate(c.script) } : {}) });
       if (!checked.ok) {
         const retired = checked.refusal.reason === 'foreign_input' ? this.retiredOwner(draft, psbt) : undefined;
         return refuse(retired ? { reason: 'wallet_retired', walletId: retired } : checked.refusal);
@@ -718,6 +752,8 @@ export class PolicyEngine {
       if (!this.signer) return refuse({ reason: 'guardian_locked' }, txid);
       const signed = await addCosignerSignatures(psbt, analysis, this.signer);
       if (!replay) w.spends.push({ txid, at: now, outflow, shares });
+      // Co-signed change is "seen": the marks rise to it, so every later scan reaches it.
+      w.highWater = maxHighWater(marks, checked.inspection.selfIndexes);
       const helperInput = analysis.helper?.outpoint;
       this.log(draft, now, { type: 'cosign_signed', txid, outflow, usedAfter: wouldUse, replay, ...(helperInput ? { helperInput } : {}) });
       return { ok: true as const, psbt: signed, txid, outflow, usedAfter: wouldUse, replay };
@@ -1034,6 +1070,7 @@ export class PolicyEngine {
       if (rec.rotatedAt !== undefined) return refused({ reason: 'not_adoptable', detail: 'already rotated' });
 
       let next: Registration | undefined;
+      let nextMarks: HighWater | undefined;
       let detail: string | undefined;
       const network = getNetwork(old.network);
       try {
@@ -1067,6 +1104,9 @@ export class PolicyEngine {
             registeredAt: now,
             origin: { kind: 'recovery', recoveryId: rec.id, fromWalletId: old.walletId },
           };
+          // The sweep's outputs are the new wallet's first coins: its scans start from them.
+          const sw = inspectPsbt(base64.decode(rec.sweepPsbt), this.wallet(old), dest);
+          if (sw.ok) nextMarks = sw.inspection.selfIndexes;
         }
       } catch (e) {
         detail = `the new wallet's descriptor does not parse (${(e as Error).message})`;
@@ -1076,7 +1116,7 @@ export class PolicyEngine {
       const revokedGrants = this.retireActive(draft, now, { reason: 'recovered', recoveryId: rec.id, ...(next ? { successorWalletId: next.walletId } : {}) });
       // The limit window starts empty: phone payments were paused for the whole delay (7 days at least),
       // so none of the old wallet's spends is still inside the 24 h window.
-      if (next) draft.active = { registration: next, rules, spends: [], phoneSpending: { state: 'enabled' }, accessGrants: [] };
+      if (next) draft.active = { registration: next, rules, spends: [], phoneSpending: { state: 'enabled' }, accessGrants: [], ...(nextMarks ? { highWater: nextMarks } : {}) };
       rec.rotatedAt = now;
       this.log(draft, now, {
         type: 'wallet_rotated',

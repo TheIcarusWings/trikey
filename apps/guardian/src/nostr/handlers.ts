@@ -401,7 +401,14 @@ export function buildHandlers(g: Guardian): Handlers {
       chainCall(g, 'wallet.sync', async () => {
         if (params.wallet === 'helper') return helperSync(params.historyLimit);
         const { wallet, walletId } = syncTarget(g, params.wallet);
-        const r = await g.chain.walletSync(wallet, { historyLimit: params.historyLimit ?? DEFAULT_SYNC_HISTORY, maxUtxos: MAX_SYNC_UTXOS });
+        // The paired wallet's scan reaches its high-water marks, and raises them to what it finds.
+        const paired = walletId === g.engine.registration()?.walletId;
+        const r = await g.chain.walletSync(wallet, {
+          historyLimit: params.historyLimit ?? DEFAULT_SYNC_HISTORY,
+          maxUtxos: MAX_SYNC_UTXOS,
+          ...(paired ? { minIndex: g.scanFloor(walletId) } : {}),
+        });
+        if (paired) await g.noteScan(walletId, r);
         return {
           walletId,
           tipHeight: r.tipHeight,
@@ -454,7 +461,7 @@ export function buildHandlers(g: Guardian): Handlers {
         // Not an open relay: only a spend of this wallet's coins, a sweep of the phone's single-key coins
         // (silent payments, the helper coin) into it, or a sweep of the watched (replaced) wallet into it.
         let via = 'wallet';
-        if (!(await g.chain.spendsWalletCoin(wallet, params.txHex))) {
+        if (!(await g.chain.spendsWalletCoin(wallet, params.txHex, { minIndex: g.scanFloor(g.engine.registration()!.walletId) }))) {
           const single = await singleKeyRefusal(g, wallet, params.txHex);
           const refusal = single === 'not_applicable' ? await replacementRefusal(g, wallet, params.txHex) : single;
           if (refusal) {

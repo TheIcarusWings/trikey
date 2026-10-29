@@ -426,6 +426,24 @@ export class Guardian {
     return this.engine.hasRecoveryAccess(pubkey);
   }
 
+  /**
+   * Where every scan of the active wallet must reach (a scan's `minIndex`): its high-water marks, the
+   * highest index seen used or co-signed per chain, so no coin key 3 co-signed as change is out of sight.
+   */
+  scanFloor(walletId: string): Partial<Record<0 | 1, number>> {
+    const hw = this.engine.highWater(walletId);
+    return { 0: hw.receive, 1: hw.change };
+  }
+
+  /** Raises the active wallet's marks to what a scan found used (incoming payments to fresh addresses). */
+  async noteScan(walletId: string, scan: { nextReceiveIndex: number; nextChangeIndex: number }): Promise<void> {
+    try {
+      await this.engine.noteUsedIndexes(walletId, { receive: scan.nextReceiveIndex - 1, change: scan.nextChangeIndex - 1 });
+    } catch (e) {
+      this.log.error('wallet.high_water_failed', { error: errorText(e) });
+    }
+  }
+
   isAlertContact(pubkey: string): boolean {
     const rules = this.engine.status().rules;
     if (rules?.alertContacts.includes(pubkey)) return true;

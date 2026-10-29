@@ -267,10 +267,22 @@ export type ActivityEntry = { id: number; at: number } & ActivityEvent;
 // ---------------------------------------------------------------------------
 // Persisted state
 
+/** Per chain (receive 0, change 1): the highest address index seen used or co-signed, -1 for none. */
+export interface HighWater {
+  receive: number;
+  change: number;
+}
+
 /** The wallet the guardian guards now, with everything that belongs to it. */
 export interface GuardedWallet {
   registration: Registration;
   rules: Rules;
+  /**
+   * High-water marks (absent: none yet). An output counts as change only within `CHANGE_WINDOW` of
+   * its chain's mark, and every scan of the wallet starts from them (DESIGN.md, "Rules the guardian
+   * enforces"): raised by co-signed change and by what the scans find used.
+   */
+  highWater?: HighWater;
   /** Phone-only spends in the limit window. */
   spends: SpendRecord[];
   phoneSpending: PhoneSpending;
