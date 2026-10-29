@@ -200,9 +200,15 @@ const cloneState = (s: GuardianState) => deserializeState(serializeState(s));
 const eqHex = (a: Uint8Array, b: Uint8Array) => hex.encode(a) === hex.encode(b);
 const refused = (refusal: Refusal) => ({ ok: false as const, refusal });
 
+/** The running (pending or ready) recovery of the ACTIVE wallet: never one of a wallet that was retired. */
 function activeRecovery(s: GuardianState): RecoveryRecord | undefined {
-  const last = s.recoveries[s.recoveries.length - 1];
-  return last && (last.status === 'pending' || last.status === 'ready') ? last : undefined;
+  const id = s.active?.registration.walletId;
+  if (!id) return undefined;
+  for (let i = s.recoveries.length - 1; i >= 0; i--) {
+    const r = s.recoveries[i];
+    if (r.walletId === id) return r.status === 'pending' || r.status === 'ready' ? r : undefined;
+  }
+  return undefined;
 }
 
 function viewOf(r: RecoveryRecord, now: number): RecoveryView {
@@ -319,7 +325,8 @@ export class PolicyEngine {
     const w = s.active;
     const reg = w?.registration;
     const active = activeRecovery(s);
-    const last = s.recoveries[s.recoveries.length - 1];
+    // The most recent one, leaving out those the guardian closed itself at a rotation.
+    const last = active ?? [...s.recoveries].reverse().find((r) => r.cancelledBy?.kind !== 'superseded');
     let phoneSpending: PhoneSpendingStatus;
     if (active) phoneSpending = 'paused_recovery';
     else if (w?.phoneSpending.state === 'paused_contested') phoneSpending = 'paused_contested';
@@ -1207,6 +1214,16 @@ export class PolicyEngine {
       }
 
       const rules = w.rules;
+      // Any other recovery of the swept wallet (one started between this one's completion and now, by
+      // whoever holds a key of it) is closed: it can never complete against a retired wallet, and must
+      // not stay "running" against the wallet adopted next.
+      for (const other of draft.recoveries) {
+        if (other.walletId !== old.walletId || other.id === rec.id || (other.status !== 'pending' && other.status !== 'ready')) continue;
+        other.status = 'cancelled';
+        other.cancelledAt = now;
+        other.cancelledBy = { kind: 'superseded', recoveryId: rec.id };
+        this.log(draft, now, { type: 'recovery_cancelled', recoveryId: other.id, by: other.cancelledBy, contested: false });
+      }
       const revokedGrants = this.retireActive(draft, now, { reason: 'recovered', recoveryId: rec.id, ...(next ? { successorWalletId: next.walletId } : {}) });
       // The limit window starts empty: phone payments were paused for the whole delay (7 days at least),
       // so none of the old wallet's spends is still inside the 24 h window.

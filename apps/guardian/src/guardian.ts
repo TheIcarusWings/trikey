@@ -126,10 +126,14 @@ export const RECOVERY_PEER_METHODS: ReadonlySet<MethodName> = new Set<MethodName
 /** What the web UI's reset must be confirmed with, typed exactly. */
 export const RESET_CONFIRMATION = 'RESET GUARDIAN';
 
-/** The running (pending or ready) recovery in the engine's state, if any. */
-export function activeRecovery(recoveries: readonly RecoveryRecord[] | undefined): RecoveryRecord | undefined {
-  const last = recoveries?.[recoveries.length - 1];
-  return last && (last.status === 'pending' || last.status === 'ready') ? last : undefined;
+/** The running (pending or ready) recovery of wallet `walletId` (the active one) in the engine's state, if any. */
+export function activeRecovery(recoveries: readonly RecoveryRecord[] | undefined, walletId: string | undefined): RecoveryRecord | undefined {
+  if (!recoveries || !walletId) return undefined;
+  for (let i = recoveries.length - 1; i >= 0; i--) {
+    const r = recoveries[i];
+    if (r.walletId === walletId) return r.status === 'pending' || r.status === 'ready' ? r : undefined;
+  }
+  return undefined;
 }
 
 export class Guardian {
@@ -273,7 +277,7 @@ export class Guardian {
   }
 
   activeRecord(): RecoveryRecord | undefined {
-    return activeRecovery(this.records);
+    return activeRecovery(this.records, this.engine.registration()?.walletId);
   }
 
   async logEvent(event: ServiceEvent): Promise<void> {

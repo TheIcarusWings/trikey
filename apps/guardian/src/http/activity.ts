@@ -86,6 +86,16 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
     case 'recovery_ready':
       return { ...base, kind: 'recovery', event: `Recovery ${e.recoveryId}: waiting period over`, signedBy: null, sats: null, result: 'ok' };
     case 'recovery_cancelled': {
+      if (e.by.kind === 'superseded')
+        return {
+          ...base,
+          kind: 'recovery',
+          event: `Recovery ${e.recoveryId} closed: recovery ${e.by.recoveryId} already swept the wallet`,
+          summary: 'Recovery closed',
+          signedBy: null,
+          sats: null,
+          result: 'ok',
+        };
       const who = e.by.kind === 'app' ? 'the phone' : e.by.kind === 'contact' ? `contact ${shortNpub(e.by.pubkey)}` : 'the hardware wallet';
       return {
         ...base,

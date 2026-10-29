@@ -122,7 +122,11 @@ export type RecoveryStatus = 'none' | 'pending' | 'ready' | 'completed' | 'cance
 export type SurvivingRole = Exclude<Role, 'cosigner'>;
 
 export type CancelActor = { kind: 'nostr'; pubkey: string } | { kind: 'hardware'; approval: HardwareApproval };
-export type CancelledBy = { kind: 'app' | 'contact'; pubkey: string } | { kind: 'hardware'; sequence: number };
+export type CancelledBy =
+  | { kind: 'app' | 'contact'; pubkey: string }
+  | { kind: 'hardware'; sequence: number }
+  /** Closed by the guardian when the wallet rotated after another (completed) recovery `recoveryId` swept it. */
+  | { kind: 'superseded'; recoveryId: string };
 
 export interface RecoveryRecord {
   id: string;

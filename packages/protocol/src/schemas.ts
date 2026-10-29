@@ -135,8 +135,11 @@ export const HardwareApproval = z.strictObject({
 
 export const RecoveryState = z.enum(['pending', 'ready', 'cancelled', 'completed']);
 
-/** Who cancelled a recovery: the paired phone, an alert contact, or the hardware wallet (signed approval). */
-export const CancelledBy = z.enum(['app', 'contact', 'hardware']);
+/**
+ * Who cancelled a recovery: the paired phone, an alert contact, or the hardware wallet (signed approval);
+ * `superseded`: the guardian closed it when another, completed recovery of the same wallet swept it.
+ */
+export const CancelledBy = z.enum(['app', 'contact', 'hardware', 'superseded']);
 
 /** The key that signed the sweep, and so survives the recovery. */
 export const SurvivingRole = z.enum(['app', 'hardware']);
