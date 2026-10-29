@@ -201,6 +201,16 @@ function DeveloperSection() {
             }}
           />
         ) : null}
+        {dev?.finishRecovery && state.recovery && !rk ? (
+          <AppButton
+            title="Finish the recovery now"
+            variant="outline"
+            onPress={() => {
+              dev.finishRecovery!();
+              router.push('/recover/done');
+            }}
+          />
+        ) : null}
         {dev?.restartOnboarding ? (
           <AppButton
             title="Replay onboarding"

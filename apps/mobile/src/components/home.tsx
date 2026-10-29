@@ -3,7 +3,7 @@ import { Pressable, View } from 'react-native';
 import { ActivityRow } from '@/components/activity-row';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { ArrowDownLeft, ArrowUpRight, Clock, Lock, TriangleAlert, Vault } from '@/components/icons';
+import { ArrowDownLeft, ArrowUpRight, Clock, HardwareWallet, Lock, TriangleAlert, Vault } from '@/components/icons';
 import { Notice } from '@/components/panels';
 import { ProgressBar } from '@/components/progress';
 import { Card } from '@/components/ui/card';
@@ -215,7 +215,7 @@ export function RecoveryBanner() {
   const router = useRouter();
   const now = useNow();
   const wallet = useWalletService();
-  const { recovery, phoneSpending, hardware } = useWallet();
+  const { recovery, phoneSpending, hardware, walletRetired: retired } = useWallet();
   const { busy, run, message, error } = useAction();
 
   if (!recovery) {
@@ -231,10 +231,16 @@ export function RecoveryBanner() {
         </View>
       );
     }
-    if (phoneSpending === 'retired') {
+    if (phoneSpending === 'retired' || retired) {
+      const why =
+        retired?.reason === 'reset'
+          ? 'Your guardian was reset, so it no longer guards this wallet. Your phone and hardware wallet can still move the money: replace the guardian from Settings.'
+          : retired?.reason === 'retired'
+            ? 'This wallet was retired on your guardian, so the guardian co-signs nothing for it any more. Your hardware wallet can still approve payments.'
+            : "A recovery moved this wallet's money to a new wallet, so this phone can no longer pay from it.";
       return (
-        <Notice icon={Clock} tone="fill" title="This wallet was moved">
-          A recovery moved this wallet's money to a new wallet, so this phone can no longer pay from it.
+        <Notice icon={Clock} tone="fill" title={retired?.reason === 'reset' ? 'Guardian reset' : 'This wallet was moved'}>
+          {why}
         </Notice>
       );
     }
@@ -251,5 +257,26 @@ export function RecoveryBanner() {
         {needsAnswer ? 'Tap to review it and cancel if it was not you.' : `${remaining} until your money moves to the new wallet.`}
       </Notice>
     </Pressable>
+  );
+}
+
+/**
+ * After a recovery moved the wallet: the hardware wallet has to see the new wallet once (register it, show its first
+ * address, confirm its key to the guardian). Until then it cannot approve payments or rule changes.
+ */
+export function HardwareConfirmCard() {
+  const wallet = useWalletService();
+  const { hardwareConfirmRequired, hardware } = useWallet();
+  const { busy, run, message, error } = useAction();
+  if (!hardwareConfirmRequired) return null;
+  return (
+    <View className="gap-3">
+      <Notice icon={HardwareWallet} iconClass="text-warn" tone="warn-outline" title={`Confirm on your ${hardware.brand}`}>
+        Your recovered wallet is ready. Your {hardware.brand} needs to see it once: it registers the wallet, shows its first address and confirms its key
+        to the guardian. Until then it can't approve payments or rule changes, and receiving waits.
+      </Notice>
+      <AppButton title={busy ? `Waiting for your ${hardware.brand}…` : `Confirm on ${hardware.brand}`} busy={busy} onPress={() => void run(wallet.confirmHardware())} />
+      <ActionNotice message={message} error={error} />
+    </View>
   );
 }
