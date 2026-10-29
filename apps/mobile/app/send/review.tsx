@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
@@ -8,6 +8,7 @@ import { InfoRow, Notice, Panel } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Segmented } from '@/components/segmented';
 import { Text } from '@/components/ui/text';
+import { useQuote } from '@/data/use-quote';
 import { FEE_SPEEDS, WalletServiceError, formatSats, shorten, useWallet, useWalletService, type FeeSpeed } from '@/data';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
@@ -22,12 +23,8 @@ export default function SendReview() {
   // Once signing starts the wallet state changes (limit used), and the quote must not flip under us.
   const sending = useRef(false);
 
-  const outcome = useMemo(
-    () => wallet.quoteSend({ address, amountSats: Number(amount), speed }),
-    // Re-quote when the wallet changes too: the daily limit may have moved.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [wallet, state, address, amount, speed]
-  );
+  // Re-quoted when the speed or what the plan depends on changes (the daily limit may have moved).
+  const { outcome } = useQuote({ address, amountSats: Number(amount), speed });
   const quote = outcome.ok ? outcome.quote : null;
   const hardware = quote?.plan.signer === 'hardware';
 

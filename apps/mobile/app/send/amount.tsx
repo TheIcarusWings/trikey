@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
 import { Delete, QrCode } from '@/components/icons';
@@ -15,9 +15,9 @@ import {
   looksLikeBitcoinAddress,
   remainingToday,
   useWallet,
-  useWalletService,
   type QuoteOutcome,
 } from '@/data';
+import { useQuote } from '@/data/use-quote';
 import { QrScanner } from '@/hardware/ui';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
@@ -71,7 +71,6 @@ function addressFromScan(data: string): string {
 
 export default function SendAmount() {
   const router = useRouter();
-  const wallet = useWalletService();
   const state = useWallet();
   const [address, setAddress] = useState('');
   const [digits, setDigits] = useState('');
@@ -82,14 +81,10 @@ export default function SendAmount() {
   const addressOk = looksLikeBitcoinAddress(address);
   const addressBad = address.trim().length > 0 && !addressOk;
   const tooMuch = amountSats > state.balanceSats;
-  const outcome = useMemo(
-    () => wallet.quoteSend({ address: address.trim(), amountSats, speed: 'normal' }),
-    // The quote depends on the wallet state (limit used, guardian status), not just the form.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [wallet, state, address, amountSats]
-  );
+  // Planning a payment is real work: quote once the form has been still for a moment, not on every digit.
+  const { outcome, pending } = useQuote({ address: address.trim(), amountSats, speed: 'normal' }, state.backing === 'demo' ? 0 : 250);
   const pill = limitPill(outcome, state, amountSats);
-  const canReview = addressOk && amountSats > 0 && !tooMuch && outcome.ok;
+  const canReview = addressOk && amountSats > 0 && !tooMuch && outcome.ok && !pending;
   const addressRejected = !outcome.ok && outcome.problem === 'invalid_address' && address.trim().length > 0 && addressOk;
 
   const press = (digit: string) => setDigits((d) => (d.length >= MAX_DIGITS ? d : d === '' && digit === '0' ? '' : d + digit));
@@ -163,7 +158,7 @@ export default function SendAmount() {
       <View className={cn('items-center gap-2', pick('py-3', 'py-4'))} accessible accessibilityLabel={`Amount: ${primary} ${btcView ? 'bitcoin' : 'sats'}`}>
         <Text className="text-[52px] font-semibold leading-[60px] tracking-[-1.56px] tabular-nums">{primary}</Text>
         <Text className={cn('text-muted-foreground', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{secondary}</Text>
-        <Pill dot={pill.dot}>{tooMuch ? "That's more than your balance" : pill.text}</Pill>
+        <Pill dot={pill.dot}>{tooMuch ? "That's more than your balance" : pending ? 'Checking…' : pill.text}</Pill>
       </View>
 
       <View className="gap-1">

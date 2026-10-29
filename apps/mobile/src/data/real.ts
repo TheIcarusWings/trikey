@@ -576,6 +576,8 @@ class Service implements RealWalletService {
         if (e.alert.type === 'guardian_locked') {
           addEvent(this.log, { kind: 'guardian-locked', host: hostFromLabel(this.w?.state.guardian?.label), at: e.at * 1000 });
           void this.saveLogNow();
+          // Ask the guardian itself: the wallet ignores a "locked" alert that is not newer than its last status check.
+          void this.w?.refreshStatus().catch(() => undefined);
         } else this.refresh();
         break;
     }
@@ -768,9 +770,34 @@ class Service implements RealWalletService {
   // ===========================================================================
   // Sending and receiving
 
+  /** The last quote and what it was made from: asking again for the same thing about the same coins costs nothing. */
+  private lastQuote?: { key: string; outcome: QuoteOutcome };
+
   quoteSend(request: SendRequest): QuoteOutcome {
     const w = this.w;
     if (!w || w.stage !== 'paired') return { ok: false, problem: 'not_ready', message: 'The wallet is not set up yet.' };
+    const st = w.state;
+    const key = JSON.stringify([
+      request.address,
+      request.amountSats,
+      request.speed,
+      request.signer ?? 'auto',
+      st.chain?.syncedAt,
+      st.guardianStatus?.checkedAt,
+      st.guardianStatus?.state,
+      st.guardianStatus?.phoneSpending,
+      st.guardianStatus?.activeRecoveryId,
+      st.rules?.policyHash,
+      st.spends.length,
+      Math.floor(this.clock.now() / 60_000), // the daily limit window moves
+    ]);
+    if (this.lastQuote?.key === key) return this.lastQuote.outcome;
+    const outcome = this.makeQuote(w, request);
+    this.lastQuote = { key, outcome };
+    return outcome;
+  }
+
+  private makeQuote(w: TrikeyWallet, request: SendRequest): QuoteOutcome {
     try {
       const q = w.quoteSend({
         address: request.address,

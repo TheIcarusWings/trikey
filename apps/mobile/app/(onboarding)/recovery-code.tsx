@@ -66,7 +66,7 @@ export default function RecoveryCode() {
         your hardware wallet's seed words.
       </Body>
       <Card className="items-center gap-3 px-4 py-5">
-        <Text selectable accessibilityLabel={`Recovery code: ${code}`} className="text-center font-mono text-[22px] font-medium leading-8 tracking-[1px]">
+        <Text selectable accessibilityLabel={`Recovery code: ${code}`} className="text-center font-mono text-[19px] font-medium leading-8 tracking-[0.5px]">
           {code}
         </Text>
         <AppButton
