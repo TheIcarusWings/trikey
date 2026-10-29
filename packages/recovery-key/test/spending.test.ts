@@ -4,7 +4,21 @@ import * as btc from '@scure/btc-signer';
 import { hex } from '@scure/base';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { TX_OPTS } from '@trikey/core';
-import { SPENDING_INTERNAL, SpendingAccount, buildCpfpChild, buildSpendingPayment, finalizeSpending, signSpendingPsbt, type SpendingCoin } from '../src/spending.js';
+import {
+  SPENDING_INTERNAL,
+  SpendingAccount,
+  buildCpfpChild,
+  buildSpendingPayment,
+  checkSilentPaymentOutput,
+  finalizeSpending,
+  placeholderSilentPaymentScript,
+  signSpendingPsbt,
+  silentPaymentOutput,
+  type SpendingCoin,
+} from '../src/spending.js';
+import { HDKey } from '@scure/bip32';
+import { mnemonicToSeedSync } from '@scure/bip39';
+import { createOutputs, receiverAddress, silentPaymentKeysFromSeed } from '@trikey/silent-payments';
 import { cpfpChildVsize, feeForRate, packageRate } from '../src/fees.js';
 import { decodeRawTx, verifyInput } from '../src/script-verify.js';
 import { deriveKey2 } from '../src/keys.js';
@@ -91,5 +105,57 @@ describe('spending balance', () => {
     expect((await rejects(() => buildCpfpChild({ account, parentOutput: coin(200_000n, 120), parentVsize: 190, parentFee: 380n, targetRate: 10, changeIndex: 1 }))).code).toBe('nothing_to_bump');
     const e = await rejects(() => buildCpfpChild({ account, parentOutput: parent, parentVsize: 190, parentFee: 380n, targetRate: 400, changeIndex: 1 }));
     expect(e.code).toBe('fee_too_high');
+  });
+
+  describe('silent payments (BIP 352)', () => {
+    const keys = silentPaymentKeysFromSeed(sha256(new TextEncoder().encode('spending recipient')), { coinType: 1 });
+    const sp = receiverAddress(keys, 'regtest');
+
+    it('plans with a placeholder the size of the real output, then rebuilds with exactly the same inputs and fee', () => {
+      const coins = [coin(80_000n), coin(70_000n), coin(1_000n)];
+      const planned = buildSpendingPayment({ account, coins, address: sp, amount: 100_000n, feeRate: 4, changeIndex: 9, recipientScript: placeholderSilentPaymentScript() });
+      expect(planned.inputs.map((c) => c.value)).toEqual([80_000n, 70_000n]);
+      const out = silentPaymentOutput({ account, mnemonic: MNEMONICS.phone, inputs: planned.inputs, address: sp });
+      expect(out.script).toHaveLength(34);
+      const final = buildSpendingPayment({ account, coins: planned.inputs, useInputs: planned.inputs, address: sp, amount: 100_000n, feeRate: 4, changeIndex: 9, recipientScript: out.script });
+      expect(final.fee).toBe(planned.fee);
+      expect(final.vsize).toBe(planned.vsize);
+      expect(final.inputs.map((c) => c.txid)).toEqual(planned.inputs.map((c) => c.txid));
+      const tx = btc.Transaction.fromPSBT(final.psbt, TX_OPTS);
+      expect(hex.encode(tx.getOutput(0).script!)).toBe(hex.encode(out.script));
+      expect(tx.getOutput(0).amount).toBe(100_000n);
+    });
+
+    it('derives the output from the keys of all inputs, as an independent sender would', () => {
+      const coins = [coin(80_000n, 100, 0, 3), coin(70_000n, 100, 1, 8)];
+      const out = silentPaymentOutput({ account, mnemonic: MNEMONICS.phone, inputs: coins, address: sp });
+      const master = HDKey.fromMasterSeed(mnemonicToSeedSync(MNEMONICS.phone), network.bip32);
+      const expected = createOutputs({
+        inputs: coins.map((c) => ({ txid: c.txid, vout: c.vout, prevoutScript: account.derive(c.chain, c.index).script, privateKey: master.derive(`m/84'/1'/0'/${c.chain}/${c.index}`).privateKey! })),
+        recipients: [sp],
+        network: 'regtest',
+      });
+      expect(hex.encode(out.outputKey)).toBe(hex.encode(expected.outputs[0]!.outputKey));
+      // One input fewer or another one gives another output: the output is bound to the inputs.
+      expect(hex.encode(silentPaymentOutput({ account, mnemonic: MNEMONICS.phone, inputs: coins.slice(0, 1), address: sp }).outputKey)).not.toBe(hex.encode(out.outputKey));
+    });
+
+    it('the signed transaction is checked from the recipient\'s side; another output is caught', () => {
+      const coins = [coin(150_000n)];
+      const out = silentPaymentOutput({ account, mnemonic: MNEMONICS.phone, inputs: coins, address: sp });
+      const plan = buildSpendingPayment({ account, coins, useInputs: coins, address: sp, amount: 100_000n, feeRate: 2, changeIndex: 1, recipientScript: out.script });
+      const done = finalizeSpending(signSpendingPsbt(plan.psbt, MNEMONICS.phone, network));
+      expect(() => checkSilentPaymentOutput({ account, mnemonic: MNEMONICS.phone, txHex: done.txHex, inputs: plan.inputs, address: sp, outputKey: out.outputKey })).not.toThrow();
+      const wrong = new Uint8Array(out.outputKey);
+      wrong[5] ^= 1;
+      expect(() => checkSilentPaymentOutput({ account, mnemonic: MNEMONICS.phone, txHex: done.txHex, inputs: plan.inputs, address: sp, outputKey: wrong })).toThrow(/does not give the silent payment output/);
+      expect(() => checkSilentPaymentOutput({ account, mnemonic: MNEMONICS.phone, txHex: done.txHex, inputs: [coin(150_000n)], address: sp, outputKey: out.outputKey })).toThrow();
+    });
+
+    it('refuses to rebuild when the coins it was made from no longer cover the payment', async () => {
+      const coins = [coin(150_000n)];
+      const e = await rejects(() => buildSpendingPayment({ account, coins, useInputs: coins, address: sp, amount: 149_999n, feeRate: 5, changeIndex: 1, recipientScript: placeholderSilentPaymentScript() }));
+      expect(e.code).toBe('internal');
+    });
   });
 });

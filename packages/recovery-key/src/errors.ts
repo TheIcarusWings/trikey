@@ -31,6 +31,8 @@ export type RecoveryKeyErrorCode =
   /** The user did not prove the kit was saved (wrong words, or a scan of another kit). */
   | 'kit_not_confirmed'
   | 'invalid_address'
+  /** A silent payment address cannot be paid from the vault: its multisig inputs cannot make a silent payment (BIP 352). */
+  | 'silent_payment_from_vault'
   | 'amount_too_small'
   | 'insufficient_funds'
   /** A refill chain or one of its transactions fails verification. */

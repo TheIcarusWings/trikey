@@ -65,7 +65,21 @@ import {
 } from './refills.js';
 import { refillStates, summarizeChain, type ChainSummary, type ChainView, type RefillState } from './chain-state.js';
 import { decide, type Decision } from './scheduler.js';
-import { SPENDING_INTERNAL, SPENDING_RECEIVE, SpendingAccount, buildCpfpChild, buildSpendingPayment, finalizeSpending, signSpendingPsbt, type SpendingCoin } from './spending.js';
+import {
+  SPENDING_INTERNAL,
+  SPENDING_RECEIVE,
+  SpendingAccount,
+  buildCpfpChild,
+  buildSpendingPayment,
+  checkSilentPaymentAddress,
+  checkSilentPaymentOutput,
+  finalizeSpending,
+  isSilentPaymentAddress,
+  placeholderSilentPaymentScript,
+  signSpendingPsbt,
+  silentPaymentOutput,
+  type SpendingCoin,
+} from './spending.js';
 import { scanAccount, type EsploraClient, type ScanResult } from './esplora.js';
 import { DEFAULT_SWEEP_FEE_CAP_SATS, buildVaultSweep, gatherVaultCoins, signVaultTx, type VaultSigner } from './recovery.js';
 import { decodeRawTx, vsizeOf } from './script-verify.js';
@@ -178,6 +192,12 @@ export interface SendQuote {
   totalSats: number;
   inputs: { txid: string; vout: number }[];
   changeIndex: number;
+  /**
+   * `address` is a silent payment address (`sp1…`/`tsp1…`). The output is made from the spending coins' keys, which
+   * are behind the biometric prompt, so it exists only when `send` signs: it is the same size as any taproot output, so
+   * the fee does not change.
+   */
+  silentPayment?: true;
 }
 
 interface Synced {
@@ -1034,7 +1054,17 @@ export class RecoveryKeyWallet {
     const sy = await this.refresh();
     const feeRate = this.feeRateFor(sy, req.feeRate);
     const changeIndex = this.s.indices.spendingInternal;
-    const plan = buildSpendingPayment({ account: this.spendingAccount(), coins: await this.spendingCoins(sy), address: req.address, amount: BigInt(req.amountSats), feeRate, changeIndex });
+    const silent = isSilentPaymentAddress(req.address);
+    if (silent) checkSilentPaymentAddress(req.address, this.network);
+    const plan = buildSpendingPayment({
+      account: this.spendingAccount(),
+      coins: await this.spendingCoins(sy),
+      address: req.address,
+      amount: BigInt(req.amountSats),
+      feeRate,
+      changeIndex,
+      ...(silent ? { recipientScript: placeholderSilentPaymentScript() } : {}),
+    });
     return {
       address: req.address,
       amountSats: req.amountSats,
@@ -1043,6 +1073,7 @@ export class RecoveryKeyWallet {
       totalSats: req.amountSats + Number(plan.fee),
       inputs: plan.inputs.map((c) => ({ txid: c.txid, vout: c.vout })),
       changeIndex,
+      ...(silent ? { silentPayment: true as const } : {}),
     };
   }
 
@@ -1053,15 +1084,32 @@ export class RecoveryKeyWallet {
     const changeIndex = this.s.indices.spendingInternal;
     const account = this.spendingAccount();
     const coins = await this.spendingCoins(sy);
-    const first = buildSpendingPayment({ account, coins, address: req.address, amount: BigInt(req.amountSats), feeRate, changeIndex });
+    const silent = isSilentPaymentAddress(req.address);
+    if (silent) checkSilentPaymentAddress(req.address, this.network);
+    // A silent payment is chosen like any other (to a placeholder output of the same size); its real output is made
+    // below, inside the prompt, from the keys of exactly the coins chosen.
+    const placeholder = silent ? { recipientScript: placeholderSilentPaymentScript() } : {};
+    const first = buildSpendingPayment({ account, coins, address: req.address, amount: BigInt(req.amountSats), feeRate, changeIndex, ...placeholder });
     // Pin every amount to its funding transaction before signing.
     const withPrev = await Promise.all(first.inputs.map(async (c) => ({ ...c, prevTxHex: await this.prevTx(c.txid) })));
-    const plan = buildSpendingPayment({ account, coins: withPrev, address: req.address, amount: BigInt(req.amountSats), feeRate, changeIndex });
-    const signed = await this.withKey2('Approve the payment', async (m) => signSpendingPsbt(plan.psbt, m, this.network));
-    const done = finalizeSpending(signed);
+    const plan = buildSpendingPayment({ account, coins: withPrev, address: req.address, amount: BigInt(req.amountSats), feeRate, changeIndex, ...placeholder, ...(silent ? { useInputs: withPrev } : {}) });
+    const { done, plan: final } = await this.withKey2('Approve the payment', async (m) => {
+      let built = plan;
+      let out: { outputKey: Uint8Array; script: Uint8Array } | undefined;
+      if (silent) {
+        // The recipient's output comes from the sum of these inputs' keys: the inputs are fixed from here on.
+        out = silentPaymentOutput({ account, mnemonic: m, inputs: plan.inputs, address: req.address });
+        built = buildSpendingPayment({ account, coins: plan.inputs, useInputs: plan.inputs, address: req.address, amount: BigInt(req.amountSats), feeRate, changeIndex, recipientScript: out.script });
+        if (built.fee !== plan.fee || built.inputs.length !== plan.inputs.length) throw new RecoveryKeyError('internal', 'The silent payment changed size when its output was made.');
+      }
+      const signed = signSpendingPsbt(built.psbt, m, this.network);
+      const finished = finalizeSpending(signed);
+      if (out) checkSilentPaymentOutput({ account, mnemonic: m, txHex: finished.txHex, inputs: built.inputs, address: req.address, outputKey: out.outputKey });
+      return { done: finished, plan: built };
+    });
     await this.update((s) => {
       s.ownTxids.push(done.txid);
-      if (plan.change) s.indices.spendingInternal = Math.max(s.indices.spendingInternal, changeIndex + 1);
+      if (final.change) s.indices.spendingInternal = Math.max(s.indices.spendingInternal, changeIndex + 1);
     });
     await this.deps.esplora.broadcast(done.txHex);
     return { txid: done.txid, feeSats: Number(done.fee) };
@@ -1095,6 +1143,8 @@ export class RecoveryKeyWallet {
    * in the same hardware session.
    */
   async payFromVault(req: { address: string; amountSats: number; feeRate?: number }, opts: { reapproveRefills?: boolean | { count?: number } } = {}): Promise<{ txid: string; feeSats: number; invalidatesRefills: boolean; refills?: { from: number; to: number } }> {
+    if (isSilentPaymentAddress(req.address))
+      throw new RecoveryKeyError('silent_payment_from_vault', "A silent payment can't come from the vault: its coins need two keys, and a silent payment is made from a single key's coins. Pay it from the spending balance.");
     const sy = await this.refresh();
     const vault = this.vault();
     const feeRate = this.feeRateFor(sy, req.feeRate);
