@@ -1,0 +1,387 @@
+<title>Trikey Wallet Design</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@85,600;85,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column of figures, each followed by its caption; tables close the page. */
+:root {
+  --bg: #f3f5f8;
+  --surface: #ffffff;
+  --fg: #15202b;
+  --muted: #5a6573;
+  --line: #cdd4dc;
+  --accent: #b4530f;
+  --good: #1e7a4c;
+  --warn: #9a6208;
+  --bad: #b3261e;
+  --display: "Archivo", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --surface: #171e26; --fg: #e6ebf0; --muted: #94a0ae; --line: #2f3a46;
+    --accent: #f2924a; --good: #4cc38a; --warn: #e3b341; --bad: #f2726b; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #171e26; --fg: #e6ebf0; --muted: #94a0ae; --line: #2f3a46;
+  --accent: #f2924a; --good: #4cc38a; --warn: #e3b341; --bad: #f2726b; color-scheme: dark;
+}
+
+body { background: var(--bg); color: var(--fg); font: 15px/1.6 var(--body); }
+.wrap {
+  max-width: 980px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+  display: grid; gap: 56px;
+}
+h1, h2, h3 { font-family: var(--display); font-stretch: 85%; line-height: 1.15; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(30px, 5vw, 44px); font-weight: 700; }
+h2 { font-size: 26px; font-weight: 700; }
+h3 { font-size: 19px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+.eyebrow { font: 500 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+section { display: grid; gap: 18px; min-width: 0; }
+.lede { font-size: 17px; }
+.muted { color: var(--muted); }
+code, .mono { font-family: var(--mono); font-size: .92em; }
+
+.promise { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.promise div { border-top: 2px solid var(--fg); padding-top: 10px; display: grid; gap: 4px; min-width: 0; }
+.promise b { font-weight: 600; }
+.promise span { color: var(--muted); font-size: 14px; }
+
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+.scroll { overflow-x: auto; }
+figcaption { color: var(--muted); font-size: 14px; max-width: 72ch; }
+svg.dg { display: block; width: 100%; height: auto; min-width: 560px; color: var(--fg); }
+.dg text { font-family: var(--body); }
+.dg .t { fill: currentColor; font-size: 13px; font-weight: 600; }
+.dg .s { fill: var(--muted); font-size: 11.5px; }
+.dg .m { fill: currentColor; font-family: var(--mono); font-size: 12.5px; }
+.dg .s-warn { fill: var(--warn); font-size: 11.5px; font-weight: 500; }
+.dg .s-bad { fill: var(--bad); font-size: 11.5px; font-weight: 600; }
+.dg .s-good { fill: var(--good); font-size: 11.5px; font-weight: 600; }
+.dg .s-acc { fill: var(--accent); font-size: 12px; font-weight: 600; }
+.dg .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.dg .box-fg { fill: var(--surface); stroke: currentColor; stroke-width: 1.2; }
+.dg .box-acc { fill: color-mix(in srgb, var(--accent) 8%, var(--surface)); stroke: var(--accent); stroke-width: 1.5; }
+.dg .box-good { fill: color-mix(in srgb, var(--good) 10%, var(--surface)); stroke: var(--good); stroke-width: 1.3; }
+.dg .dash { stroke-dasharray: 4 3; }
+.dg .ln { stroke: currentColor; stroke-width: 1.3; fill: none; }
+.dg .ln-acc { stroke: var(--accent); stroke-width: 1.6; fill: none; }
+.dg .ln-good { stroke: var(--good); stroke-width: 1.4; fill: none; }
+.dg .ln-bad { stroke: var(--bad); stroke-width: 1.4; fill: none; }
+.dg .ln-soft { stroke: var(--muted); stroke-width: 1.1; fill: none; stroke-dasharray: 3 4; }
+.dg .life { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 4; }
+.dg .mk { fill: currentColor; }
+.dg .mk-acc { fill: var(--accent); }
+.dg .mk-good { fill: var(--good); }
+.dg .note { fill: color-mix(in srgb, var(--fg) 5%, var(--surface)); stroke: var(--line); }
+.dg .zone-bad { fill: color-mix(in srgb, var(--bad) 12%, transparent); stroke: none; }
+.dg .dot-bad { fill: var(--bad); }
+.dg .dot-good { fill: var(--good); }
+.dg .dot-fg { fill: currentColor; }
+
+.flows { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 14px; }
+.flows th, .flows td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.flows thead th { font: 500 11.5px var(--mono); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.flows td:first-child { font-weight: 600; white-space: nowrap; }
+.flows td.keys { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
+.flows td:last-child { color: var(--muted); }
+
+.gaps { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.gaps div { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 14px 16px; display: grid; gap: 6px; min-width: 0; }
+.gaps b { font-weight: 600; }
+.gaps p { font-size: 14px; color: var(--muted); }
+
+ol.decide { margin: 0; padding-left: 22px; display: grid; gap: 10px; max-width: 72ch; }
+ol.decide li::marker { font-family: var(--mono); color: var(--accent); }
+</style>
+
+<div class="wrap">
+
+<header style="display:grid;gap:14px">
+  <div class="eyebrow">Trikey · design · Oct 2026</div>
+  <h1>Three keys, all yours</h1>
+  <p class="lede">Bitkey-style everyday use with no server, no guardians and no company in the loop. All three keys belong to you. Bitcoin's own rules enforce the spending limit, so nobody has to.</p>
+  <div class="promise">
+    <div><b>Pay with Face ID</b><span>Everyday payments come from a small spending balance on the phone.</span></div>
+    <div><b>Limit enforced by Bitcoin</b><span>The balance refills at a fixed rate that consensus rules won't let anyone speed up.</span></div>
+    <div><b>Recover with no one's permission</b><span>Any two of your keys move everything, right away.</span></div>
+    <div><b>Any hardware wallet</b><span>Plain 2-of-3 multisig: Ledger, Trezor, Coldcard, BitBox, Jade and the rest.</span></div>
+  </div>
+</header>
+
+<section aria-labelledby="keys-h">
+  <h2 id="keys-h">The three keys</h2>
+  <figure>
+    <div class="scroll">
+    <svg class="dg" viewBox="0 0 760 320" role="img" aria-label="Three keys you hold: a hardware wallet with its seed words, a phone key with an optional cloud backup, and a Recovery Key kept offline. Any two of them can spend from the vault.">
+      <defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <rect class="box-fg" x="20" y="20" width="220" height="104" rx="4"/>
+      <text class="t" x="36" y="46">Key 1 · Hardware wallet</text>
+      <text class="s" x="36" y="68">Ledger, Trezor, Coldcard, BitBox…</text>
+      <text class="s" x="36" y="88">Approves big payments and</text>
+      <text class="s" x="36" y="104">refill batches.</text>
+
+      <rect class="box-fg" x="270" y="20" width="220" height="104" rx="4"/>
+      <text class="t" x="286" y="46">Key 2 · Phone key</text>
+      <text class="s" x="286" y="68">In the app, behind Face ID</text>
+      <text class="s" x="286" y="88">(Secure Enclave / Keystore).</text>
+      <text class="s" x="286" y="104">Also holds the spending balance.</text>
+
+      <rect class="box-fg" x="520" y="20" width="220" height="104" rx="4"/>
+      <text class="t" x="536" y="46">Key 3 · Recovery Key</text>
+      <text class="s" x="536" y="68">Offline, emergencies only.</text>
+      <text class="s" x="536" y="88">Paper Recovery Kit, NFC card</text>
+      <text class="s" x="536" y="104">or a second hardware wallet.</text>
+
+      <line class="ln-soft" x1="160" y1="124" x2="160" y2="150"/>
+      <rect class="box" x="80" y="150" width="160" height="50" rx="4"/>
+      <text class="t" x="160" y="171" text-anchor="middle">Seed words</text>
+      <text class="s-warn" x="160" y="189" text-anchor="middle">keep apart from key 3</text>
+
+      <line class="ln-soft" x1="410" y1="124" x2="410" y2="150"/>
+      <rect class="box" x="330" y="150" width="160" height="50" rx="4"/>
+      <text class="t" x="410" y="171" text-anchor="middle">Cloud backup</text>
+      <text class="s" x="410" y="189" text-anchor="middle">optional · passkey unlock</text>
+
+      <line class="ln-soft" x1="660" y1="124" x2="660" y2="150"/>
+      <rect class="box" x="580" y="150" width="160" height="50" rx="4"/>
+      <text class="t" x="660" y="171" text-anchor="middle">Recovery Kit</text>
+      <text class="s" x="660" y="189" text-anchor="middle">also holds the wallet map</text>
+
+      <line class="ln" x1="50" y1="124" x2="50" y2="262" marker-end="url(#a1)"/>
+      <line class="ln" x1="300" y1="124" x2="300" y2="262" marker-end="url(#a1)"/>
+      <line class="ln" x1="550" y1="124" x2="550" y2="262" marker-end="url(#a1)"/>
+      <rect class="box-acc" x="20" y="264" width="720" height="44" rx="4"/>
+      <text class="t" x="380" y="282" text-anchor="middle">Vault · any 2 of 3 keys</text>
+      <text class="m" x="380" y="299" text-anchor="middle">wsh(sortedmulti(2, key1, key2, key3))</text>
+    </svg>
+    </div>
+    <figcaption>Nobody else holds anything. The "wallet map" is the wallet descriptor: the public keys needed to find your coins. It goes in the Recovery Kit and the cloud backup. The hardware wallet's seed words and the Recovery Kit are the two paper items, and must be stored in different places: anyone who finds both holds two keys.</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="pairs-h">
+  <h2 id="pairs-h">Which two keys, when</h2>
+  <figure>
+    <div class="scroll">
+    <svg class="dg" viewBox="0 0 760 350" role="img" aria-label="A triangle of the three keys. Phone plus hardware is for big payments and approving refills. Hardware plus Recovery Key is for a lost or stolen phone. Phone plus Recovery Key is for a lost hardware wallet whose seed words are also gone. The phone alone can only spend the spending balance.">
+      <rect class="box-fg" x="290" y="20" width="180" height="50" rx="4"/>
+      <text class="t" x="380" y="42" text-anchor="middle">Hardware wallet</text><text class="s" x="380" y="59" text-anchor="middle">key 1</text>
+      <rect class="box-fg" x="40" y="250" width="180" height="50" rx="4"/>
+      <text class="t" x="130" y="272" text-anchor="middle">Phone</text><text class="s" x="130" y="289" text-anchor="middle">key 2</text>
+      <rect class="box-fg" x="540" y="250" width="180" height="50" rx="4"/>
+      <text class="t" x="630" y="272" text-anchor="middle">Recovery Key</text><text class="s" x="630" y="289" text-anchor="middle">key 3</text>
+
+      <line class="ln-acc" x1="150" y1="250" x2="310" y2="70"/>
+      <text class="s-acc" x="214" y="140" text-anchor="end">Phone + hardware</text>
+      <text class="s" x="214" y="157" text-anchor="end">big payments,</text>
+      <text class="s" x="214" y="172" text-anchor="end">approving refills</text>
+
+      <line class="ln" x1="450" y1="70" x2="610" y2="250"/>
+      <text class="t" x="546" y="140">Hardware + Recovery Key</text>
+      <text class="s" x="546" y="157">lost phone with no backup,</text>
+      <text class="s" x="546" y="172">or stolen phone</text>
+
+      <line class="ln" x1="220" y1="275" x2="540" y2="275"/>
+      <text class="t" x="380" y="266" text-anchor="middle">Phone + Recovery Key</text>
+      <text class="s" x="380" y="292" text-anchor="middle">lost hardware wallet and its seed words</text>
+
+      <text class="s" x="380" y="190" text-anchor="middle">any two keys move everything;</text>
+      <text class="s" x="380" y="206" text-anchor="middle">one key alone moves nothing in the vault</text>
+      <text class="s-warn" x="130" y="324" text-anchor="middle">phone alone: spending balance only</text>
+    </svg>
+    </div>
+    <figcaption>Most people will only ever use the orange edge. The other two exist for emergencies, and neither one involves a waiting period, because no one has to be convinced of anything: two real keys sign.</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="spend-h">
+  <h2 id="spend-h">The daily limit, without a server</h2>
+  <p>Bitkey's server checks every phone-only payment against a limit. Here, the phone spends from its own small balance, and the vault feeds that balance through refills you sign in advance. Each refill is locked to the one before it.</p>
+  <figure>
+    <div class="scroll">
+    <svg class="dg" viewBox="0 0 800 300" role="img" aria-label="A chain of pre-signed refill transactions. Refill 1 spends the vault coins, sends a fixed amount to the spending balance and returns the rest to the vault. Refill 2 spends that change, but can only confirm one week after refill 1. Refill 3 likewise waits a week after refill 2.">
+      <defs>
+        <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="a2g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mk-good" d="M0,0 L10,5 L0,10 z"/></marker>
+      </defs>
+      <rect class="box-acc" x="10" y="34" width="120" height="64" rx="4"/>
+      <text class="t" x="70" y="58" text-anchor="middle">Vault coins</text><text class="s" x="70" y="76" text-anchor="middle">1.000 BTC</text>
+
+      <rect class="box-fg" x="180" y="34" width="140" height="64" rx="4"/>
+      <text class="t" x="250" y="56" text-anchor="middle">Refill 1</text>
+      <text class="s" x="250" y="73" text-anchor="middle">signed in advance</text>
+      <text class="s" x="250" y="89" text-anchor="middle">can confirm now</text>
+
+      <rect class="box-fg" x="370" y="34" width="140" height="64" rx="4"/>
+      <text class="t" x="440" y="56" text-anchor="middle">Refill 2</text>
+      <text class="s" x="440" y="73" text-anchor="middle">signed in advance</text>
+      <text class="s-warn" x="440" y="89" text-anchor="middle">1 week after refill 1</text>
+
+      <rect class="box-fg" x="560" y="34" width="140" height="64" rx="4"/>
+      <text class="t" x="630" y="56" text-anchor="middle">Refill 3</text>
+      <text class="s" x="630" y="73" text-anchor="middle">signed in advance</text>
+      <text class="s-warn" x="630" y="89" text-anchor="middle">1 week after refill 2</text>
+      <text class="t" x="740" y="70">…</text>
+
+      <line class="ln" x1="130" y1="66" x2="176" y2="66" marker-end="url(#a2)"/>
+      <line class="ln" x1="320" y1="66" x2="366" y2="66" marker-end="url(#a2)"/>
+      <line class="ln" x1="510" y1="66" x2="556" y2="66" marker-end="url(#a2)"/>
+      <line class="ln" x1="700" y1="66" x2="730" y2="66" marker-end="url(#a2)"/>
+      <text class="s" x="345" y="24" text-anchor="middle">rest back to vault</text>
+      <text class="s" x="535" y="24" text-anchor="middle">rest back to vault</text>
+
+      <line class="ln-good" x1="250" y1="98" x2="250" y2="196" marker-end="url(#a2g)"/>
+      <line class="ln-good" x1="440" y1="98" x2="440" y2="196" marker-end="url(#a2g)"/>
+      <line class="ln-good" x1="630" y1="98" x2="630" y2="196" marker-end="url(#a2g)"/>
+      <text class="s-good" x="258" y="152">+0.002</text>
+      <text class="s-good" x="448" y="152">+0.002</text>
+      <text class="s-good" x="638" y="152">+0.002</text>
+
+      <rect class="box-good" x="180" y="198" width="520" height="46" rx="4"/>
+      <text class="t" x="440" y="218" text-anchor="middle">Spending balance · phone key only</text>
+      <text class="s" x="440" y="235" text-anchor="middle">pays with Face ID, no hardware needed</text>
+
+      <line class="ln" x1="180" y1="270" x2="700" y2="270"/>
+      <circle class="dot-fg" cx="250" cy="270" r="3"/><circle class="dot-fg" cx="440" cy="270" r="3"/><circle class="dot-fg" cx="630" cy="270" r="3"/>
+      <text class="s" x="250" y="290" text-anchor="middle">week 0</text>
+      <text class="s" x="440" y="290" text-anchor="middle">week 1</text>
+      <text class="s" x="630" y="290" text-anchor="middle">week 2</text>
+    </svg>
+    </div>
+    <figcaption>Amounts are examples. Each refill is fully signed by phone + hardware when you approve the batch. Its input carries a relative timelock (BIP 68: about 1,008 blocks), so the network rejects it until a week after the previous refill confirms. Refills you don't use don't pile up: at most one confirms per week. If fees spike, the phone speeds a refill up from its own output (CPFP).</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="flows-h">
+  <h2 id="flows-h">How it feels day to day</h2>
+
+  <figure>
+    <h3>Everyday payment</h3>
+    <div class="scroll">
+    <svg class="dg" viewBox="0 0 800 290" role="img" aria-label="Sequence: the user confirms a payment with Face ID; the phone pays from the spending balance; if the balance is low and the next refill has unlocked, the phone broadcasts it; the hardware wallet is not involved.">
+      <defs><marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <rect class="box-fg" x="10" y="10" width="100" height="30" rx="3"/><text class="t" x="60" y="30" text-anchor="middle">You</text>
+      <rect class="box-fg" x="180" y="10" width="120" height="30" rx="3"/><text class="t" x="240" y="30" text-anchor="middle">Phone app</text>
+      <rect class="box" x="400" y="10" width="140" height="30" rx="3"/><text class="t" x="470" y="30" text-anchor="middle">Bitcoin network</text>
+      <rect class="box" x="640" y="10" width="140" height="30" rx="3"/><text class="t" x="710" y="30" text-anchor="middle">Hardware wallet</text>
+      <line class="life" x1="60" y1="40" x2="60" y2="280"/><line class="life" x1="240" y1="40" x2="240" y2="280"/>
+      <line class="life" x1="470" y1="40" x2="470" y2="280"/><line class="life" x1="710" y1="40" x2="710" y2="280"/>
+
+      <line class="ln" x1="60" y1="70" x2="236" y2="70" marker-end="url(#a3)"/><text class="s" x="150" y="62" text-anchor="middle">Send · Face ID</text>
+      <rect class="note" x="155" y="84" width="170" height="36" rx="3"/>
+      <text class="s" x="240" y="99" text-anchor="middle">signs with the phone key,</text><text class="s" x="240" y="113" text-anchor="middle">from the spending balance</text>
+      <line class="ln" x1="240" y1="142" x2="466" y2="142" marker-end="url(#a3)"/><text class="s" x="355" y="134" text-anchor="middle">payment</text>
+      <line class="ln" x1="240" y1="164" x2="64" y2="164" marker-end="url(#a3)"/><text class="s" x="150" y="156" text-anchor="middle">Sent</text>
+      <rect class="note" x="140" y="182" width="200" height="36" rx="3"/>
+      <text class="s" x="240" y="197" text-anchor="middle">balance low and next refill</text><text class="s" x="240" y="211" text-anchor="middle">unlocked? then, in the background:</text>
+      <line class="ln" x1="240" y1="240" x2="466" y2="240" marker-end="url(#a3)"/><text class="s" x="355" y="232" text-anchor="middle">pre-signed refill</text>
+      <text class="s" x="470" y="266" text-anchor="middle">accepted only once the week has passed</text>
+      <text class="s" x="710" y="150" text-anchor="middle">not needed</text>
+    </svg>
+    </div>
+    <figcaption>This matches Bitkey from your side: amount, Face ID, sent. The difference is underneath. Bitkey asks its server for a second signature; here the phone needs no second signature, because the spending balance is already its own.</figcaption>
+  </figure>
+
+  <figure>
+    <h3>Approving a refill batch (every couple of months)</h3>
+    <div class="scroll">
+    <svg class="dg" viewBox="0 0 800 330" role="img" aria-label="Sequence: when refills run low, the app asks the user to approve a new batch; the phone builds eight refills from the current vault coins and sends them to the hardware wallet; the user confirms each one; the hardware returns signatures; the phone adds its own and stores the chain.">
+      <defs><marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <rect class="box-fg" x="10" y="10" width="100" height="30" rx="3"/><text class="t" x="60" y="30" text-anchor="middle">You</text>
+      <rect class="box-fg" x="200" y="10" width="120" height="30" rx="3"/><text class="t" x="260" y="30" text-anchor="middle">Phone app</text>
+      <rect class="box-fg" x="440" y="10" width="140" height="30" rx="3"/><text class="t" x="510" y="30" text-anchor="middle">Hardware wallet</text>
+      <line class="life" x1="60" y1="40" x2="60" y2="320"/><line class="life" x1="260" y1="40" x2="260" y2="320"/>
+      <line class="life" x1="510" y1="40" x2="510" y2="320"/>
+
+      <line class="ln" x1="260" y1="70" x2="64" y2="70" marker-end="url(#a4)"/><text class="s" x="160" y="62" text-anchor="middle">"2 refills left. Approve more?"</text>
+      <line class="ln" x1="60" y1="96" x2="256" y2="96" marker-end="url(#a4)"/><text class="s" x="160" y="88" text-anchor="middle">Approve · connect device</text>
+      <rect class="note" x="165" y="110" width="190" height="36" rx="3"/>
+      <text class="s" x="260" y="125" text-anchor="middle">builds 8 refills from all</text><text class="s" x="260" y="139" text-anchor="middle">current vault coins</text>
+      <line class="ln" x1="260" y1="168" x2="506" y2="168" marker-end="url(#a4)"/><text class="s" x="385" y="160" text-anchor="middle">8 refill transactions</text>
+      <rect class="note" x="400" y="182" width="220" height="36" rx="3"/>
+      <text class="s" x="510" y="197" text-anchor="middle">each shows: 0.002 BTC to your</text><text class="s" x="510" y="211" text-anchor="middle">spending balance, rest to vault</text>
+      <line class="ln" x1="60" y1="238" x2="506" y2="238" marker-end="url(#a4)"/><text class="s" x="285" y="230" text-anchor="middle">confirm on device ×8</text>
+      <line class="ln" x1="510" y1="264" x2="264" y2="264" marker-end="url(#a4)"/><text class="s" x="385" y="256" text-anchor="middle">signatures</text>
+      <rect class="note" x="165" y="278" width="190" height="36" rx="3"/>
+      <text class="s" x="260" y="293" text-anchor="middle">adds its own signatures,</text><text class="s" x="260" y="307" text-anchor="middle">stores the chain</text>
+      <text class="s" x="680" y="160" text-anchor="middle">Recovery Key:</text>
+      <text class="s" x="680" y="176" text-anchor="middle">not involved</text>
+    </svg>
+    </div>
+    <figcaption>This is the only regular chore Bitkey doesn't have. Coins received after a batch stay safely in the vault and join the next batch. A big payment from the vault uses the same hardware session to sign a fresh batch, because it moves coins the old refills depended on.</figcaption>
+  </figure>
+
+  <figure>
+    <h3>Phone stolen</h3>
+    <div class="scroll">
+    <svg class="dg" viewBox="0 0 800 220" role="img" aria-label="Timeline: after the phone is stolen, the thief can spend the spending balance and any refill that unlocks before the user sweeps the vault with hardware plus Recovery Key. After the sweep, the remaining refills are invalid because the coins they spend have moved.">
+      <rect class="zone-bad" x="80" y="60" width="430" height="70"/>
+      <text class="s-bad" x="295" y="52" text-anchor="middle">the most a thief can take</text>
+      <line class="ln" x1="40" y1="130" x2="770" y2="130"/>
+      <circle class="dot-bad" cx="80" cy="130" r="5"/>
+      <text class="t" x="80" y="156" text-anchor="middle">phone stolen</text>
+      <circle class="dot-bad" cx="190" cy="130" r="4"/>
+      <text class="s" x="190" y="84" text-anchor="middle">spends the</text><text class="s" x="190" y="99" text-anchor="middle">balance (0.002)</text>
+      <circle class="dot-bad" cx="380" cy="130" r="4"/>
+      <text class="s" x="380" y="84" text-anchor="middle">next refill unlocks</text><text class="s" x="380" y="99" text-anchor="middle">(+0.002)</text>
+      <circle class="dot-good" cx="510" cy="130" r="5"/>
+      <text class="t" x="510" y="156" text-anchor="middle">you sweep the vault</text>
+      <text class="s" x="510" y="172" text-anchor="middle">hardware + Recovery Key</text>
+      <text class="s" x="650" y="84" text-anchor="middle">later refills are invalid:</text><text class="s" x="650" y="99" text-anchor="middle">their coins have moved</text>
+      <text class="s" x="380" y="200" text-anchor="middle">the vault itself is never at risk: the phone is one key of three</text>
+    </svg>
+    </div>
+    <figcaption>Same outcome as Bitkey, where a thief can spend up to the daily limit until you act. The difference is that you act alone: the sweep needs no one's approval and no waiting period. The app watches your vault on-chain and alerts any of your devices when a refill or vault coin moves.</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="sit-h">
+  <h2 id="sit-h">Every situation</h2>
+  <div class="scroll">
+  <table class="flows">
+    <thead><tr><th>Situation</th><th>What you do</th><th>Keys used</th><th>Compared with Bitkey</th></tr></thead>
+    <tbody>
+      <tr><td>Set up</td><td>Create wallet, connect hardware wallet, make the Recovery Kit (print, tap a card, or use a second device), approve the first refill batch</td><td class="keys">all three, once</td><td>Bitkey has no Recovery Kit; its server is key 3</td></tr>
+      <tr><td>Everyday payment</td><td>Amount, Face ID</td><td class="keys">phone</td><td>Same</td></tr>
+      <tr><td>Big payment</td><td>Also approve on the hardware wallet</td><td class="keys">phone + hardware</td><td>Same</td></tr>
+      <tr><td>Refills running low</td><td>Approve a new batch on the hardware wallet</td><td class="keys">phone + hardware</td><td>New chore, every couple of months</td></tr>
+      <tr><td>New phone, backup on</td><td>Restore with passkey</td><td class="keys">none (restores key 2)</td><td>Same idea; Bitkey unlocks with the device</td></tr>
+      <tr><td>Lost phone, no backup</td><td>Hardware wallet + Recovery Kit move everything to a new wallet</td><td class="keys">hardware + recovery</td><td>No 7-day wait</td></tr>
+      <tr><td>Lost hardware wallet</td><td>Restore its seed words onto a new device</td><td class="keys">none (restores key 1)</td><td>Bitkey: 7-day wait with its server</td></tr>
+      <tr><td>Lost hardware and seed words</td><td>Phone + Recovery Kit move everything to a new wallet</td><td class="keys">phone + recovery</td><td>No 7-day wait</td></tr>
+      <tr><td>Phone stolen</td><td>Sweep the vault with hardware + Recovery Kit</td><td class="keys">hardware + recovery</td><td>Same exposure, no permission needed</td></tr>
+      <tr><td>Inheritance</td><td>Recovery Kit + seed words go in the estate plan; miniscript devices can add a timelocked heir path</td><td class="keys">any two</td><td>Bitkey: through its server</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section aria-labelledby="gap-h">
+  <h2 id="gap-h">What you trade for having no third party</h2>
+  <div class="gaps">
+    <div><b>One more thing to keep</b><p>The Recovery Kit has to live somewhere other than the seed words. Bitkey avoids this only because its server holds key 3, which is the trust we're removing.</p></div>
+    <div><b>No undo window</b><p>If someone gets two of your keys, nothing makes them wait. In return, losing one device never needs anyone's approval.</p></div>
+    <div><b>Refill upkeep</b><p>A few on-device confirmations every couple of months, plus a fresh batch after big payments.</p></div>
+    <div><b>On-chain footprint</b><p>Each refill is a real transaction with a fee. Weekly refills keep that small; daily ones would mean more fees and more confirmations.</p></div>
+  </div>
+</section>
+
+<section aria-labelledby="dec-h">
+  <h2 id="dec-h">Decisions for you</h2>
+  <ol class="decide">
+    <li><b>Default Recovery Key:</b> printed Recovery Kit, an NFC card you tap (closest to Bitkey's feel), or a second hardware wallet.</li>
+    <li><b>Default refill:</b> amount and rhythm, for example 0.002 BTC weekly with 8 refills per batch. Users could change these later on the hardware wallet.</li>
+    <li><b>Phone key cloud backup:</b> on by default (no sweep needed after losing the phone) or off (one less copy of a key anywhere).</li>
+    <li><b>Where the app watches the chain:</b> a public server (it sees your addresses, but can't touch funds) or your own node.</li>
+  </ol>
+  <p class="muted">To check before building: that every target hardware wallet signs refill transactions with a custom relative timelock (Trezor in particular), and which NFC cards work as a Recovery Key.</p>
+</section>
+
+</div>

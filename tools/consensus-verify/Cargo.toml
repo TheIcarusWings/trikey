@@ -1,0 +1,14 @@
+[package]
+name = "consensus-verify"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+# Verifies every input of a raw transaction with libbitcoinconsensus
+# (Bitcoin Core's script interpreter), so tests check real consensus rules.
+[dependencies]
+bitcoinconsensus = "0.106"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

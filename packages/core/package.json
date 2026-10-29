@@ -1,0 +1,23 @@
+{
+  "name": "@trikey/core",
+  "version": "0.1.0",
+  "description": "Descriptors, BIP48 2-of-3 wallets and PSBT tools shared by the Trikey app and guardian",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "@scure/base": "^2.4.0",
+    "@scure/bip32": "^2.4.0",
+    "@scure/bip39": "^2.4.0",
+    "@scure/btc-signer": "^2.4.1"
+  }
+}

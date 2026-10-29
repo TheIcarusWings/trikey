@@ -1,0 +1,30 @@
+{
+  "name": "trikey",
+  "version": "0.1.0",
+  "description": "A 2-of-3 bitcoin wallet: any hardware wallet, your phone, and a guardian on your own Umbrel or Start9",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheIcarusWings/trikey.git"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build:verifier": "cargo build --release --manifest-path tools/consensus-verify/Cargo.toml"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

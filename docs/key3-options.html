@@ -1,0 +1,507 @@
+<title>Trikey Key 3 Options</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@85,600;85,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; each option is a figure + verdict pair; flows close the page. */
+:root {
+  --bg: #f3f5f8;
+  --surface: #ffffff;
+  --fg: #15202b;
+  --muted: #5a6573;
+  --line: #cdd4dc;
+  --accent: #b4530f;
+  --good: #1e7a4c;
+  --warn: #9a6208;
+  --bad: #b3261e;
+  --display: "Archivo", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --surface: #171e26; --fg: #e6ebf0; --muted: #94a0ae; --line: #2f3a46;
+    --accent: #f2924a; --good: #4cc38a; --warn: #e3b341; --bad: #f2726b; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #171e26; --fg: #e6ebf0; --muted: #94a0ae; --line: #2f3a46;
+  --accent: #f2924a; --good: #4cc38a; --warn: #e3b341; --bad: #f2726b; color-scheme: dark;
+}
+
+body { background: var(--bg); color: var(--fg); font: 15px/1.6 var(--body); }
+.wrap {
+  max-width: 980px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+  display: grid; gap: 56px;
+}
+h1, h2, h3 { font-family: var(--display); font-stretch: 85%; line-height: 1.15; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(30px, 5vw, 44px); font-weight: 700; }
+h2 { font-size: 26px; font-weight: 700; }
+h3 { font-size: 19px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+.eyebrow { font: 500 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+section { display: grid; gap: 18px; min-width: 0; }
+.lede { font-size: 17px; color: var(--fg); }
+.muted { color: var(--muted); }
+code, .mono { font-family: var(--mono); font-size: .92em; }
+
+.decided { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.decided div { border-top: 2px solid var(--fg); padding-top: 10px; display: grid; gap: 4px; min-width: 0; }
+.decided b { font-weight: 600; }
+.decided span { color: var(--muted); font-size: 14px; }
+
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+.scroll { overflow-x: auto; }
+figcaption { color: var(--muted); font-size: 14px; max-width: 72ch; }
+svg.dg { display: block; width: 100%; height: auto; min-width: 560px; color: var(--fg); }
+.dg text { font-family: var(--body); }
+.dg .t { fill: currentColor; font-size: 13px; font-weight: 600; }
+.dg .s { fill: var(--muted); font-size: 11.5px; }
+.dg .m { fill: currentColor; font-family: var(--mono); font-size: 12.5px; }
+.dg .s-warn { fill: var(--warn); font-size: 11.5px; font-weight: 500; }
+.dg .s-bad { fill: var(--bad); font-size: 11.5px; font-weight: 500; }
+.dg .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.dg .box-fg { fill: var(--surface); stroke: currentColor; stroke-width: 1.2; }
+.dg .box-acc { fill: var(--surface); stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 5 4; }
+.dg .dash { stroke-dasharray: 4 3; }
+.dg .ln { stroke: currentColor; stroke-width: 1.3; fill: none; }
+.dg .ln-soft { stroke: var(--muted); stroke-width: 1.1; fill: none; stroke-dasharray: 3 4; }
+.dg .life { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 4; }
+.dg .mk { fill: currentColor; }
+.dg .chip-whole { fill: color-mix(in srgb, var(--bad) 12%, var(--surface)); stroke: var(--bad); }
+.dg .chip-own { fill: color-mix(in srgb, var(--good) 12%, var(--surface)); stroke: var(--good); }
+.dg .chip-part { fill: color-mix(in srgb, var(--warn) 12%, var(--surface)); stroke: var(--warn); }
+.dg .ct-whole { fill: var(--bad); font-size: 11.5px; font-weight: 600; }
+.dg .ct-own { fill: var(--good); font-size: 11.5px; font-weight: 600; }
+.dg .ct-part { fill: var(--warn); font-size: 11.5px; font-weight: 600; }
+.dg .note { fill: color-mix(in srgb, var(--fg) 5%, var(--surface)); stroke: var(--line); }
+.dg .band { fill: color-mix(in srgb, var(--warn) 10%, transparent); stroke: none; }
+.dg .bar-good { fill: color-mix(in srgb, var(--good) 22%, var(--surface)); stroke: var(--good); }
+.dg .bar-warn { fill: color-mix(in srgb, var(--warn) 22%, var(--surface)); stroke: var(--warn); }
+
+.option { display: grid; gap: 14px; padding-top: 22px; border-top: 1px solid var(--line); }
+.option header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; }
+.tag { font: 500 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 3px 8px; border-radius: 3px; border: 1px solid var(--line); color: var(--muted); }
+.tag.lead { border-color: var(--accent); color: var(--accent); }
+.verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 24px; font-size: 14px; }
+.verdict p { max-width: none; }
+.verdict b { font-weight: 600; }
+
+.matrix { border-collapse: collapse; width: 100%; min-width: 820px; font-size: 13.5px; }
+.matrix th, .matrix td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.matrix thead th { font: 500 11.5px var(--mono); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.matrix tbody th { font-weight: 600; white-space: nowrap; }
+.matrix tr.lead th { color: var(--accent); }
+.pill { display: inline-block; font: 600 11.5px var(--mono); padding: 1px 7px; border-radius: 999px; margin-right: 6px; }
+.y { color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent); }
+.p { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
+.n { color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
+.cellnote { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+
+.flows { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 14px; }
+.flows th, .flows td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.flows thead th { font: 500 11.5px var(--mono); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.flows td:first-child { font-weight: 600; white-space: nowrap; }
+.flows td:last-child { color: var(--muted); }
+
+.gaps { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.gaps div { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 14px 16px; display: grid; gap: 6px; min-width: 0; }
+.gaps b { font-weight: 600; }
+.gaps p { font-size: 14px; color: var(--muted); }
+
+ol.decide { margin: 0; padding-left: 22px; display: grid; gap: 10px; max-width: 72ch; }
+ol.decide li::marker { font-family: var(--mono); color: var(--accent); }
+</style>
+
+<div class="wrap">
+
+<header style="display:grid;gap:14px">
+  <div class="eyebrow">Trikey · design review · Oct 2026</div>
+  <h1>How should key 3 work?</h1>
+  <p class="lede">Bitkey's third key sits on Block's servers. It signs everyday phone payments under a daily limit and runs the waiting period when you recover a lost device. We want the same experience with no whole key on anyone's server. Below are the options, drawn side by side, then the flows for the leading one.</p>
+</header>
+
+<section aria-labelledby="decided-h">
+  <h2 id="decided-h">Already decided</h2>
+  <div class="decided">
+    <div><b>Key 1: any hardware wallet</b><span>Ledger, Trezor, Coldcard, BitBox02, Jade, Keystone, Passport, SeedSigner, Krux.</span></div>
+    <div><b>Key 2: phone key</b><span>Encrypted backup in any cloud. Unlock with a Recovery Code; a passkey is an optional shortcut.</span></div>
+    <div><b>Script: plain 2-of-3 multisig</b><span>The one script every device can sign. Miniscript users can opt into a 1-year timelock backstop.</span></div>
+    <div><b>First app: mobile</b><span>React Native, with Ledger Bluetooth and Trezor Connect.</span></div>
+  </div>
+  <figure>
+    <div class="scroll">
+    <svg class="dg" viewBox="0 0 760 300" role="img" aria-label="Three keys, any two of which can spend. Key 1 is a hardware wallet, key 2 is the phone key with an encrypted cloud backup, key 3 is still to be decided.">
+      <defs><marker id="m0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <rect class="box-fg" x="20" y="20" width="220" height="120" rx="4"/>
+      <text class="t" x="36" y="46">Key 1 · Hardware wallet</text>
+      <text class="s" x="36" y="70">Ledger, Trezor, Coldcard, BitBox,</text>
+      <text class="s" x="36" y="86">Jade, Keystone, Passport…</text>
+      <text class="s" x="36" y="116">Approves big spends and recovery.</text>
+
+      <rect class="box-fg" x="270" y="20" width="220" height="120" rx="4"/>
+      <text class="t" x="286" y="46">Key 2 · Phone key</text>
+      <text class="s" x="286" y="70">Lives in the app, protected by</text>
+      <text class="s" x="286" y="86">Secure Enclave / Keystore.</text>
+      <text class="s" x="286" y="116">Signs every spend.</text>
+
+      <rect class="box-acc" x="520" y="20" width="220" height="120" rx="4"/>
+      <text class="t" x="536" y="46">Key 3 · to decide</text>
+      <text class="s" x="536" y="70">Signs automatically under your</text>
+      <text class="s" x="536" y="86">daily limit, runs recovery delays</text>
+      <text class="s" x="536" y="102">and alerts, never alone.</text>
+
+      <rect class="box" x="320" y="164" width="170" height="52" rx="4"/>
+      <text class="t" x="405" y="186" text-anchor="middle">Encrypted backup</text>
+      <text class="s" x="405" y="204" text-anchor="middle">any cloud · Recovery Code</text>
+      <line class="ln-soft" x1="405" y1="140" x2="405" y2="164"/>
+
+      <rect class="box-fg" x="20" y="248" width="720" height="40" rx="4"/>
+      <text class="m" x="380" y="273" text-anchor="middle">wsh(sortedmulti(2, key1, key2, key3)) · any 2 of 3 can spend</text>
+      <line class="ln" x1="130" y1="140" x2="130" y2="246" marker-end="url(#m0)"/>
+      <line class="ln" x1="294" y1="140" x2="294" y2="246" marker-end="url(#m0)"/>
+      <line class="ln" x1="630" y1="140" x2="630" y2="246" marker-end="url(#m0)"/>
+      <text class="s" x="138" y="200">1 of 3</text>
+      <text class="s" x="638" y="200">1 of 3</text>
+    </svg>
+    </div>
+    <figcaption>Phone + hardware can always spend any amount without key 3. Key 3 exists for the two things Bitkey's server does: co-signing phone-only spends under a limit, and co-signing a recovery after a waiting period. Both need something online that signs automatically and enforces the rules.</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="opts-h">
+  <h2 id="opts-h">The options</h2>
+  <p class="muted">Each diagram shows where key 3's secret lives (red: a whole key someone else holds; green: yours, or only a share) and the path of an everyday phone-only payment.</p>
+
+  <!-- Bitkey reference -->
+  <article class="option">
+    <header><h3>Reference: Bitkey today</h3><span class="tag">baseline</span></header>
+    <figure>
+      <div class="scroll">
+      <svg class="dg" viewBox="0 0 720 230" role="img" aria-label="Bitkey: the phone sends the payment to Block's servers, where an enclave holds the whole third key and a policy service checks the daily limit.">
+        <defs><marker id="m1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+        <rect class="box-fg" x="16" y="30" width="160" height="60" rx="4"/>
+        <text class="t" x="96" y="56" text-anchor="middle">Phone app</text><text class="s" x="96" y="74" text-anchor="middle">key 2</text>
+        <rect class="box-fg" x="16" y="152" width="160" height="60" rx="4"/>
+        <text class="t" x="96" y="178" text-anchor="middle">Bitkey device</text><text class="s" x="96" y="196" text-anchor="middle">key 1</text>
+        <line class="ln-soft" x1="96" y1="90" x2="96" y2="152"/>
+        <text class="s" x="106" y="125">phone + device: any amount</text>
+
+        <line class="ln" x1="178" y1="60" x2="468" y2="60" marker-start="url(#m1)" marker-end="url(#m1)"/>
+        <text class="s" x="322" y="50" text-anchor="middle">payment + phone signature ⇄ co-signature</text>
+        <text class="s" x="322" y="78" text-anchor="middle">HTTPS · customer account</text>
+
+        <rect class="box" x="470" y="20" width="234" height="170" rx="4"/>
+        <text class="t" x="587" y="44" text-anchor="middle">Block's servers</text>
+        <rect class="chip-whole" x="490" y="58" width="194" height="28" rx="3"/>
+        <text class="ct-whole" x="587" y="77" text-anchor="middle">enclave holds whole key 3</text>
+        <text class="s" x="587" y="110" text-anchor="middle">policy: daily limit, Delay &amp; Notify</text>
+        <text class="s" x="587" y="128" text-anchor="middle">alerts: push, email, SMS</text>
+        <text class="s" x="587" y="146" text-anchor="middle">spend history, recovery timers</text>
+      </svg>
+      </div>
+      <figcaption>Block can't spend alone (one key of three), but it holds the key, the rules and your transaction history. Its enclave only checks the script; the spending rules run in Block's ordinary API servers.</figcaption>
+    </figure>
+  </article>
+
+  <!-- A: self-hosted -->
+  <article class="option">
+    <header><h3>A · A cosigner on your own device</h3><span class="tag">simple</span></header>
+    <figure>
+      <div class="scroll">
+      <svg class="dg" viewBox="0 0 720 230" role="img" aria-label="Option A: the phone sends an encrypted request through nostr relays to a cosigner running on the user's own home device, which holds the whole key 3.">
+        <defs><marker id="m2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+        <rect class="box-fg" x="16" y="30" width="160" height="60" rx="4"/>
+        <text class="t" x="96" y="56" text-anchor="middle">Phone app</text><text class="s" x="96" y="74" text-anchor="middle">key 2</text>
+        <rect class="box-fg" x="16" y="152" width="160" height="60" rx="4"/>
+        <text class="t" x="96" y="178" text-anchor="middle">Hardware wallet</text><text class="s" x="96" y="196" text-anchor="middle">key 1</text>
+        <line class="ln-soft" x1="96" y1="90" x2="96" y2="152"/>
+        <text class="s" x="106" y="125">phone + hardware: any amount</text>
+
+        <rect class="box dash" x="250" y="36" width="110" height="48" rx="4"/>
+        <text class="t" x="305" y="58" text-anchor="middle">nostr relays</text><text class="s" x="305" y="74" text-anchor="middle">see ciphertext only</text>
+        <line class="ln" x1="178" y1="60" x2="248" y2="60" marker-start="url(#m2)" marker-end="url(#m2)"/>
+        <line class="ln" x1="362" y1="60" x2="468" y2="60" marker-start="url(#m2)" marker-end="url(#m2)"/>
+        <text class="s" x="415" y="50" text-anchor="middle">request ⇄ signature</text>
+
+        <rect class="box" x="470" y="20" width="234" height="150" rx="4"/>
+        <text class="t" x="587" y="44" text-anchor="middle">Your home device</text>
+        <text class="s" x="587" y="62" text-anchor="middle">node · desktop · spare phone</text>
+        <rect class="chip-own" x="490" y="74" width="194" height="28" rx="3"/>
+        <text class="ct-own" x="587" y="93" text-anchor="middle">whole key 3, but yours</text>
+        <text class="s" x="587" y="126" text-anchor="middle">policy, timers, alerts</text>
+        <text class="s-warn" x="587" y="148" text-anchor="middle">must stay online 24/7</text>
+      </svg>
+      </div>
+      <figcaption>All three keys are yours. Nobody else is involved, but Bitkey users never have to run a server, so this can't be the default. It's a good "advanced" mode, and it's the easiest one to build first.</figcaption>
+    </figure>
+    <div class="verdict">
+      <p><b>Good:</b> no third party, mature crypto, works with every hardware wallet.</p>
+      <p><b>Bad:</b> not seamless. If the device is off, phone-only payments stop, and a phone thief who also steals the home device gets a quorum.</p>
+    </div>
+  </article>
+
+  <!-- C: threshold guardians -->
+  <article class="option">
+    <header><h3>B · Threshold guardians: key 3 split into shares</h3><span class="tag lead">leading option</span></header>
+    <figure>
+      <div class="scroll">
+      <svg class="dg" viewBox="0 0 720 250" role="img" aria-label="Option B: key 3 is split into three shares held by independent guardians. Any two guardians reply to the phone's request with partial signatures, which the phone combines into one ordinary signature. No guardian holds the whole key.">
+        <defs><marker id="m3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+        <rect class="box-fg" x="16" y="30" width="160" height="60" rx="4"/>
+        <text class="t" x="96" y="56" text-anchor="middle">Phone app</text><text class="s" x="96" y="74" text-anchor="middle">key 2</text>
+        <rect class="box-fg" x="16" y="170" width="160" height="60" rx="4"/>
+        <text class="t" x="96" y="196" text-anchor="middle">Hardware wallet</text><text class="s" x="96" y="214" text-anchor="middle">key 1</text>
+        <line class="ln-soft" x1="96" y1="90" x2="96" y2="170"/>
+        <text class="s" x="106" y="134">phone + hardware: any amount</text>
+
+        <rect class="box dash" x="250" y="36" width="110" height="48" rx="4"/>
+        <text class="t" x="305" y="58" text-anchor="middle">nostr relays</text><text class="s" x="305" y="74" text-anchor="middle">see ciphertext only</text>
+        <line class="ln" x1="178" y1="60" x2="248" y2="60" marker-start="url(#m3)" marker-end="url(#m3)"/>
+        <text class="s" x="305" y="112" text-anchor="middle">any 2 guardians reply;</text>
+        <text class="s" x="305" y="128" text-anchor="middle">phone combines the parts</text>
+        <text class="s" x="305" y="144" text-anchor="middle">into one normal signature</text>
+
+        <line class="ln" x1="362" y1="54" x2="468" y2="40" marker-start="url(#m3)" marker-end="url(#m3)"/>
+        <line class="ln" x1="362" y1="60" x2="468" y2="118" marker-start="url(#m3)" marker-end="url(#m3)"/>
+        <line class="ln-soft" x1="362" y1="66" x2="468" y2="196"/>
+        <text class="s" x="420" y="30" text-anchor="middle">request ⇄ partial</text>
+
+        <rect class="box" x="470" y="12" width="234" height="62" rx="4"/>
+        <text class="t" x="587" y="33" text-anchor="middle">Guardian 1 · provider</text>
+        <rect class="chip-own" x="490" y="42" width="194" height="22" rx="3"/>
+        <text class="ct-own" x="587" y="57" text-anchor="middle">share 1 of 3 + policy</text>
+
+        <rect class="box" x="470" y="90" width="234" height="62" rx="4"/>
+        <text class="t" x="587" y="111" text-anchor="middle">Guardian 2 · provider</text>
+        <rect class="chip-own" x="490" y="120" width="194" height="22" rx="3"/>
+        <text class="ct-own" x="587" y="135" text-anchor="middle">share 2 of 3 + policy</text>
+
+        <rect class="box" x="470" y="168" width="234" height="62" rx="4"/>
+        <text class="t" x="587" y="189" text-anchor="middle">Guardian 3 · your node or a friend</text>
+        <rect class="chip-own" x="490" y="198" width="194" height="22" rx="3"/>
+        <text class="ct-own" x="587" y="213" text-anchor="middle">share 3 of 3 + policy</text>
+      </svg>
+      </div>
+      <figcaption>The whole key 3 never exists anywhere, not even when it's created. Each guardian checks the payment and today's total itself before adding its part. On-chain, key 3 looks like an ordinary key, so every hardware wallet still works. The app picks three independent default guardians, so setup is as quick as Bitkey's; you can swap any of them for your own node or a friend.</figcaption>
+    </figure>
+    <div class="verdict">
+      <p><b>Good:</b> keeps every Bitkey feature and works with every hardware wallet. It needs no setup and no single holder. Two colluding guardians still have only one key of three.</p>
+      <p><b>Bad:</b> it uses newer crypto (threshold ECDSA) with few audited libraries, and nobody ships this for bitcoin yet. Replacing a guardian may mean a new key 3 and one on-chain sweep.</p>
+    </div>
+  </article>
+
+  <!-- D: miniscript guardians -->
+  <article class="option">
+    <header><h3>C · Several guardians, each with its own key</h3><span class="tag">no new crypto</span></header>
+    <figure>
+      <div class="scroll">
+      <svg class="dg" viewBox="0 0 720 250" role="img" aria-label="Option C: three guardians each hold their own separate key; the bitcoin script itself requires two of the three guardian keys to stand in for key 3.">
+        <defs><marker id="m4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+        <rect class="box-fg" x="16" y="30" width="160" height="60" rx="4"/>
+        <text class="t" x="96" y="56" text-anchor="middle">Phone app</text><text class="s" x="96" y="74" text-anchor="middle">key 2</text>
+        <rect class="box-fg" x="16" y="170" width="160" height="60" rx="4"/>
+        <text class="t" x="96" y="196" text-anchor="middle">Hardware wallet</text><text class="s" x="96" y="214" text-anchor="middle">key 1</text>
+        <line class="ln-soft" x1="96" y1="90" x2="96" y2="170"/>
+        <text class="s" x="106" y="134">phone + hardware: any amount</text>
+
+        <rect class="box dash" x="250" y="36" width="110" height="48" rx="4"/>
+        <text class="t" x="305" y="58" text-anchor="middle">nostr relays</text><text class="s" x="305" y="74" text-anchor="middle">see ciphertext only</text>
+        <line class="ln" x1="178" y1="60" x2="248" y2="60" marker-start="url(#m4)" marker-end="url(#m4)"/>
+        <text class="s" x="305" y="112" text-anchor="middle">any 2 guardians sign;</text>
+        <text class="s" x="305" y="128" text-anchor="middle">the script checks both</text>
+        <text class="s-bad" x="305" y="152" text-anchor="middle">Trezor can't sign this script</text>
+
+        <line class="ln" x1="362" y1="54" x2="468" y2="40" marker-start="url(#m4)" marker-end="url(#m4)"/>
+        <line class="ln" x1="362" y1="60" x2="468" y2="118" marker-start="url(#m4)" marker-end="url(#m4)"/>
+        <line class="ln-soft" x1="362" y1="66" x2="468" y2="196"/>
+        <text class="s" x="420" y="30" text-anchor="middle">request ⇄ signature</text>
+
+        <rect class="box" x="470" y="12" width="234" height="62" rx="4"/>
+        <text class="t" x="587" y="33" text-anchor="middle">Guardian 1</text>
+        <rect class="chip-part" x="490" y="42" width="194" height="22" rx="3"/>
+        <text class="ct-part" x="587" y="57" text-anchor="middle">whole key G1 (needs 1 more)</text>
+        <rect class="box" x="470" y="90" width="234" height="62" rx="4"/>
+        <text class="t" x="587" y="111" text-anchor="middle">Guardian 2</text>
+        <rect class="chip-part" x="490" y="120" width="194" height="22" rx="3"/>
+        <text class="ct-part" x="587" y="135" text-anchor="middle">whole key G2 (needs 1 more)</text>
+        <rect class="box" x="470" y="168" width="234" height="62" rx="4"/>
+        <text class="t" x="587" y="189" text-anchor="middle">Guardian 3</text>
+        <rect class="chip-part" x="490" y="198" width="194" height="22" rx="3"/>
+        <text class="ct-part" x="587" y="213" text-anchor="middle">whole key G3 (needs 1 more)</text>
+      </svg>
+      </div>
+      <figcaption>Same trust model as B, but the 2-of-3 between guardians is written into the script: <code>thresh(2, key1, key2, multi(2, G1, G2, G3))</code>. It's standard, mature miniscript, but Trezor and mainline Coldcard can't sign it, and transactions are larger.</figcaption>
+    </figure>
+    <div class="verdict">
+      <p><b>Good:</b> no new cryptography; any guardian can be replaced by moving coins, and each guardian alone is powerless.</p>
+      <p><b>Bad:</b> it breaks our "every hardware wallet" decision, and every payment pays for the bigger script.</p>
+    </div>
+  </article>
+
+  <!-- E: timelocks only -->
+  <article class="option">
+    <header><h3>D · No key 3, only timelocks in the script</h3><span class="tag">fully keyless</span></header>
+    <figure>
+      <div class="scroll">
+      <svg class="dg" viewBox="0 0 720 220" role="img" aria-label="Option D: there is no third key. Phone and hardware can spend at any time, and the hardware alone can spend a coin one year after receiving it. Phone-only spending is not possible.">
+        <rect class="box-fg" x="16" y="30" width="160" height="60" rx="4"/>
+        <text class="t" x="96" y="56" text-anchor="middle">Phone app</text><text class="s" x="96" y="74" text-anchor="middle">key 2</text>
+        <rect class="box-fg" x="16" y="140" width="160" height="60" rx="4"/>
+        <text class="t" x="96" y="166" text-anchor="middle">Hardware wallet</text><text class="s" x="96" y="184" text-anchor="middle">key 1</text>
+
+        <text class="s-bad" x="250" y="36">phone alone: no second automatic signer, so no daily-limit payments</text>
+        <rect class="bar-good" x="250" y="60" width="450" height="26" rx="3"/>
+        <text class="t" x="262" y="78">phone + hardware: any time</text>
+        <rect class="bar-warn" x="610" y="104" width="90" height="26" rx="3"/>
+        <text class="t" x="600" y="122" text-anchor="end">hardware alone, after 1 year →</text>
+        <line class="ln" x1="250" y1="150" x2="700" y2="150"/>
+        <line class="ln" x1="250" y1="144" x2="250" y2="156"/>
+        <line class="ln" x1="610" y1="144" x2="610" y2="156"/>
+        <text class="s" x="250" y="172" text-anchor="start">coin received</text>
+        <text class="s" x="610" y="172" text-anchor="middle">+1 year</text>
+        <text class="s-warn" x="475" y="200" text-anchor="middle">every coin must be moved before its year runs out</text>
+      </svg>
+      </div>
+      <figcaption>The most trustless option, but it covers only "I lost my phone": there's no spending limit, no alert, no cancel. It also excludes Trezor. We're keeping it as the opt-in backstop under B, not as key 3.</figcaption>
+    </figure>
+  </article>
+</section>
+
+<section aria-labelledby="mx-h">
+  <h2 id="mx-h">Side by side</h2>
+  <div class="scroll">
+  <table class="matrix">
+    <thead><tr><th></th><th>Phone-only pay under limit</th><th>Delay &amp; Notify with cancel</th><th>No whole key on a server</th><th>Every hardware wallet</th><th>Works out of the box</th><th>Maturity</th></tr></thead>
+    <tbody>
+      <tr><th>Bitkey</th><td><span class="pill y">yes</span></td><td><span class="pill y">yes</span></td><td><span class="pill n">no</span><span class="cellnote">enclave at Block</span></td><td><span class="pill n">no</span><span class="cellnote">Bitkey device only</span></td><td><span class="pill y">yes</span></td><td><span class="pill y">shipped</span></td></tr>
+      <tr><th>A · Own device</th><td><span class="pill y">yes</span></td><td><span class="pill y">yes</span></td><td><span class="pill y">yes</span><span class="cellnote">key on your hardware</span></td><td><span class="pill y">yes</span></td><td><span class="pill n">no</span><span class="cellnote">you run a 24/7 device</span></td><td><span class="pill y">mature</span></td></tr>
+      <tr><th>Hosted single key</th><td><span class="pill y">yes</span></td><td><span class="pill y">yes</span></td><td><span class="pill n">no</span><span class="cellnote">a provider holds it</span></td><td><span class="pill y">yes</span></td><td><span class="pill y">yes</span></td><td><span class="pill y">mature</span></td></tr>
+      <tr class="lead"><th>B · Threshold guardians</th><td><span class="pill y">yes</span></td><td><span class="pill y">yes</span><span class="cellnote">each guardian runs its own timer</span></td><td><span class="pill y">yes</span><span class="cellnote">shares only</span></td><td><span class="pill y">yes</span></td><td><span class="pill y">yes</span><span class="cellnote">default guardians</span></td><td><span class="pill p">new</span><span class="cellnote">needs an audit</span></td></tr>
+      <tr><th>C · Miniscript guardians</th><td><span class="pill y">yes</span></td><td><span class="pill y">yes</span></td><td><span class="pill p">split</span><span class="cellnote">3 whole sub-keys, 2 needed</span></td><td><span class="pill n">no</span><span class="cellnote">no Trezor</span></td><td><span class="pill y">yes</span></td><td><span class="pill y">mature</span></td></tr>
+      <tr><th>D · Timelocks only</th><td><span class="pill n">no</span></td><td><span class="pill p">partial</span><span class="cellnote">after 1 year, no cancel</span></td><td><span class="pill y">yes</span></td><td><span class="pill n">no</span><span class="cellnote">no Trezor</span></td><td><span class="pill p">mostly</span><span class="cellnote">yearly coin refresh</span></td><td><span class="pill y">mature</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Only <b>B</b> is green on everything except maturity. Pre-signed vaults with a watchtower were also researched and set aside: every deposit needs a signing ceremony and they can't do limits. Covenant soft forks (CTV, CCV) would help but aren't active.</p>
+</section>
+
+<section aria-labelledby="flows-h">
+  <h2 id="flows-h">How B works, flow by flow</h2>
+
+  <figure>
+    <h3>Everyday payment, phone only</h3>
+    <div class="scroll">
+    <svg class="dg" viewBox="0 0 800 390" role="img" aria-label="Sequence: the user confirms a payment with Face ID; the phone signs and sends a request through the relays to all three guardians; each checks the rules; two reply with partial signatures; the phone combines them and broadcasts.">
+      <defs><marker id="m5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <g>
+        <rect class="box-fg" x="10" y="10" width="80" height="30" rx="3"/><text class="t" x="50" y="30" text-anchor="middle">You</text>
+        <rect class="box-fg" x="120" y="10" width="100" height="30" rx="3"/><text class="t" x="170" y="30" text-anchor="middle">Phone app</text>
+        <rect class="box" x="260" y="10" width="100" height="30" rx="3"/><text class="t" x="310" y="30" text-anchor="middle">Relays</text>
+        <rect class="box" x="400" y="10" width="100" height="30" rx="3"/><text class="t" x="450" y="30" text-anchor="middle">Guardian 1</text>
+        <rect class="box" x="530" y="10" width="100" height="30" rx="3"/><text class="t" x="580" y="30" text-anchor="middle">Guardian 2</text>
+        <rect class="box" x="660" y="10" width="100" height="30" rx="3"/><text class="t" x="710" y="30" text-anchor="middle">Guardian 3</text>
+      </g>
+      <line class="life" x1="50" y1="40" x2="50" y2="380"/><line class="life" x1="170" y1="40" x2="170" y2="380"/>
+      <line class="life" x1="310" y1="40" x2="310" y2="380"/><line class="life" x1="450" y1="40" x2="450" y2="380"/>
+      <line class="life" x1="580" y1="40" x2="580" y2="380"/><line class="life" x1="710" y1="40" x2="710" y2="380"/>
+
+      <line class="ln" x1="50" y1="72" x2="166" y2="72" marker-end="url(#m5)"/><text class="s" x="110" y="64" text-anchor="middle">Send · Face ID</text>
+      <rect class="note" x="105" y="88" width="130" height="38" rx="3"/>
+      <text class="s" x="170" y="104" text-anchor="middle">builds payment,</text><text class="s" x="170" y="119" text-anchor="middle">signs with key 2</text>
+      <line class="ln" x1="170" y1="148" x2="306" y2="148" marker-end="url(#m5)"/><text class="s" x="240" y="140" text-anchor="middle">sign request</text>
+      <line class="ln" x1="310" y1="170" x2="446" y2="170" marker-end="url(#m5)"/>
+      <line class="ln" x1="310" y1="184" x2="576" y2="184" marker-end="url(#m5)"/>
+      <line class="ln" x1="310" y1="198" x2="706" y2="198" marker-end="url(#m5)"/>
+      <text class="s" x="380" y="162" text-anchor="middle">to all three</text>
+      <rect class="note" x="400" y="214" width="360" height="44" rx="3"/>
+      <text class="s" x="580" y="232" text-anchor="middle">each checks: coins are this wallet's, today's total</text>
+      <text class="s" x="580" y="248" text-anchor="middle">stays under the limit, no recovery in progress</text>
+      <line class="ln" x1="450" y1="282" x2="174" y2="282" marker-end="url(#m5)"/><text class="s" x="300" y="274" text-anchor="middle">partial signature</text>
+      <line class="ln" x1="580" y1="304" x2="174" y2="304" marker-end="url(#m5)"/><text class="s" x="420" y="298" text-anchor="middle">partial signature</text>
+      <text class="s" x="710" y="300" text-anchor="middle">offline? not needed</text>
+      <rect class="note" x="95" y="318" width="150" height="38" rx="3"/>
+      <text class="s" x="170" y="334" text-anchor="middle">combines into one</text><text class="s" x="170" y="349" text-anchor="middle">signature, broadcasts</text>
+      <line class="ln" x1="170" y1="372" x2="54" y2="372" marker-end="url(#m5)"/><text class="s" x="110" y="366" text-anchor="middle">Sent</text>
+    </svg>
+    </div>
+    <figcaption>You see the same thing as with Bitkey: amount, Face ID, sent. The extra step is the guardians replying over relays, which takes a few seconds. Signatures prepared in advance when coins arrive can cut that to one quick round.</figcaption>
+  </figure>
+
+  <figure>
+    <h3>Lost hardware wallet: Delay &amp; Notify</h3>
+    <div class="scroll">
+    <svg class="dg" viewBox="0 0 800 400" role="img" aria-label="Sequence: the user starts recovery on the phone; guardians verify, freeze phone-only spending and start a seven-day timer; alerts go to every registered device and contact, any of which can cancel; after seven days the guardians co-sign a sweep to the new wallet.">
+      <defs><marker id="m6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="mk" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <rect class="box-fg" x="10" y="10" width="100" height="30" rx="3"/><text class="t" x="60" y="30" text-anchor="middle">You</text>
+      <rect class="box-fg" x="150" y="10" width="100" height="30" rx="3"/><text class="t" x="200" y="30" text-anchor="middle">Phone app</text>
+      <rect class="box" x="300" y="10" width="120" height="30" rx="3"/><text class="t" x="360" y="30" text-anchor="middle">Guardians</text>
+      <rect class="box" x="460" y="10" width="120" height="30" rx="3"/><text class="t" x="520" y="30" text-anchor="middle">Push bridge</text>
+      <rect class="box" x="620" y="10" width="160" height="30" rx="3"/><text class="t" x="700" y="30" text-anchor="middle">Your devices, contacts</text>
+      <line class="life" x1="60" y1="40" x2="60" y2="390"/><line class="life" x1="200" y1="40" x2="200" y2="390"/>
+      <line class="life" x1="360" y1="40" x2="360" y2="390"/><line class="life" x1="520" y1="40" x2="520" y2="390"/>
+      <line class="life" x1="700" y1="40" x2="700" y2="390"/>
+
+      <line class="ln" x1="60" y1="70" x2="196" y2="70" marker-end="url(#m6)"/><text class="s" x="130" y="62" text-anchor="middle">Replace hardware</text>
+      <rect class="note" x="115" y="84" width="170" height="38" rx="3"/>
+      <text class="s" x="200" y="100" text-anchor="middle">pairs the new device, builds</text><text class="s" x="200" y="115" text-anchor="middle">a sweep, signs with key 2</text>
+      <line class="ln" x1="200" y1="146" x2="356" y2="146" marker-end="url(#m6)"/><text class="s" x="280" y="138" text-anchor="middle">start recovery</text>
+      <rect class="note" x="275" y="160" width="170" height="38" rx="3"/>
+      <text class="s" x="360" y="176" text-anchor="middle">verify, freeze phone-only</text><text class="s" x="360" y="191" text-anchor="middle">spending, start 7-day timer</text>
+      <line class="ln" x1="360" y1="222" x2="516" y2="222" marker-end="url(#m6)"/><text class="s" x="440" y="214" text-anchor="middle">recovery started</text>
+      <line class="ln" x1="520" y1="244" x2="696" y2="244" marker-end="url(#m6)"/><text class="s" x="610" y="236" text-anchor="middle">alert with Cancel</text>
+      <rect class="band" x="0" y="262" width="800" height="50"/>
+      <text class="t" x="400" y="284" text-anchor="middle">Day 0 → Day 7</text>
+      <text class="s" x="400" y="301" text-anchor="middle">daily reminders · any registered device or contact can tap Cancel</text>
+      <line class="ln" x1="360" y1="336" x2="204" y2="336" marker-end="url(#m6)"/><text class="s" x="280" y="328" text-anchor="middle">sweep co-signed</text>
+      <rect class="note" x="115" y="348" width="170" height="38" rx="3"/>
+      <text class="s" x="200" y="364" text-anchor="middle">broadcasts the sweep</text><text class="s" x="200" y="379" text-anchor="middle">to the new wallet</text>
+      <text class="s" x="700" y="336" text-anchor="middle">If cancelled: recovery</text>
+      <text class="s" x="700" y="352" text-anchor="middle">stops, funds stay put</text>
+    </svg>
+    </div>
+    <figcaption>The lost-phone case is the same flow started from the hardware wallet. The push bridge exists only because nostr can't wake a sleeping app: it forwards an opaque "check your messages" ping and holds no keys.</figcaption>
+  </figure>
+
+  <div class="scroll">
+  <table class="flows">
+    <thead><tr><th>Situation</th><th>What you do</th><th>What happens underneath</th><th>Compared with Bitkey</th></tr></thead>
+    <tbody>
+      <tr><td>Set up</td><td>Create wallet, connect hardware wallet, save Recovery Code (passkey optional)</td><td>App creates key 2 and reads key 1's public key. Three default guardians create key 3's shares together over nostr. The wallet is registered on the device and the encrypted backup goes to your cloud.</td><td>Same steps; Bitkey taps NFC</td></tr>
+      <tr><td>Pay, under limit</td><td>Amount, Face ID</td><td>Phone + 2 guardians sign</td><td>Same</td></tr>
+      <tr><td>Pay, over limit</td><td>Also approve on the hardware wallet</td><td>Phone + hardware sign; guardians not contacted</td><td>Same</td></tr>
+      <tr><td>New phone, backup available</td><td>Open cloud backup, enter Recovery Code or use passkey</td><td>Key 2 restored right away, no waiting</td><td>Same idea; Bitkey unlocks with the device</td></tr>
+      <tr><td>Lost phone and backup</td><td>Start recovery with the hardware wallet, wait 7 days</td><td>Hardware + guardians, Delay &amp; Notify, sweep to a new wallet</td><td>Same</td></tr>
+      <tr><td>Lost hardware wallet</td><td>Start recovery on the phone, pair a new device, wait 7 days</td><td>Phone + guardians, Delay &amp; Notify, sweep</td><td>Same</td></tr>
+      <tr><td>Someone else tries a recovery</td><td>Tap Cancel on the alert</td><td>Guardians drop it; phone-only spending stays frozen until it's resolved</td><td>Same</td></tr>
+      <tr><td>Raise the daily limit</td><td>Approve on the hardware wallet</td><td>Guardians only accept rule changes signed by key 1</td><td>Same</td></tr>
+      <tr><td>Guardians vanish or refuse</td><td>Tap "Move funds", approve on hardware wallet</td><td>Phone + hardware sweep to a wallet with new guardians</td><td>Bitkey: Emergency Exit Kit</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section aria-labelledby="gaps-h">
+  <h2 id="gaps-h">Where users might feel a difference</h2>
+  <div class="gaps">
+    <div><b>Connecting the hardware wallet</b><p>Bitkey taps over NFC. Ledger Nano X, Stax and Flex and Trezor Safe 7 pair over Bluetooth. Other devices need USB-C (Android) or QR. On iPhone, USB-only devices won't work.</p></div>
+    <div><b>Notifications</b><p>Nostr has no push. A small push bridge wakes the app; it sees only an opaque ping. Contacts get alerts as nostr DMs in any nostr app.</p></div>
+    <div><b>Signing speed</b><p>Guardians reply over relays in seconds, not Bitkey's sub-second. Pre-computed signatures made when coins arrive close most of the gap.</p></div>
+    <div><b>Who runs the default guardians</b><p>"Works out of the box" needs three independent operators ready on day one, for example us plus two partners. That's a business question as much as a technical one.</p></div>
+  </div>
+</section>
+
+<section aria-labelledby="dec-h">
+  <h2 id="dec-h">Decisions for you</h2>
+  <ol class="decide">
+    <li><b>Adopt B (threshold guardians) as key 3.</b> Build the guardian protocol, rules and recovery first with a single-key guardian (option A) on testnet only, then switch to shares before mainnet. The wallet script stays the same.</li>
+    <li><b>Pick the threshold library.</b> <span class="mono">cggmp24</span> is MIT/Apache and audited (2023), but replacing a guardian means a new key 3 and a sweep. <span class="mono">DKLs23</span> can swap guardians while keeping the key, but it has a non-commercial licence and parts of it are unaudited. Either way, plan an independent audit.</li>
+    <li><b>Default guardian operators:</b> who they are, and whether users pay them (Lightning, per wallet).</li>
+    <li><b>Keep option A</b> as an advanced mode ("be your own guardian") alongside B?</li>
+  </ol>
+</section>
+
+</div>
