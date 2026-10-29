@@ -20,9 +20,13 @@ import {
   type MethodName,
   type Params,
   type Request,
+  type Response,
   type Result,
 } from './schemas.js';
 import { SUBSCRIPTION_LOOKBACK_SEC, unwrapMessage, wrapMessage } from './transport.js';
+
+/** How many unmatched responses `RpcClient` keeps for re-sent requests. */
+const MAX_UNMATCHED = 64;
 
 /** Why an incoming event was ignored. Reported through `onDrop`; nothing is sent to the sender. */
 export interface DropInfo {
@@ -100,6 +104,13 @@ export class RpcClient {
   private readonly guard: ReplayGuard;
   private readonly seenWraps = new RecentSet();
   private readonly pending = new Map<string, Pending>();
+  /**
+   * Responses that arrived for no pending call, by id (bounded). After an app restart the relays replay
+   * the guardian's answers to requests sent before it; a `call` that re-sends one of those ids (`opts.id`)
+   * takes its answer from here. Without this, the replayed answer would also use up the id in the replay
+   * guard, so the answer to the re-sent request would be dropped as a duplicate.
+   */
+  private readonly unmatched = new Map<string, Response>();
   private readonly alertHandlers = new Set<(alert: Alert, meta: { id: string; at: number }) => void>();
   private sub?: Subscription;
   private starting?: Promise<void>;
@@ -162,6 +173,11 @@ export class RpcClient {
     const retryMs = opts.retryIntervalMs ?? this.o.retryIntervalMs ?? 0;
     const id = opts.id ?? generateMessageId();
     const request = { id, method, params: methods[method].params.parse(params) } as Request;
+    const early = opts.id !== undefined ? this.unmatched.get(id) : undefined;
+    if (early) {
+      this.unmatched.delete(id);
+      return this.settle(method, early) as Promise<Result<M>>;
+    }
 
     const lim = this.limits.request;
     const ttlSec = opts.ttlSec ?? Math.min(lim.maxTtlSec, Math.max(lim.defaultTtlSec, Math.ceil(timeoutMs / 1000) + 30));
@@ -267,18 +283,20 @@ export class RpcClient {
 
     const pending = this.pending.get(message.id);
     if (!pending) {
+      this.unmatched.delete(message.id);
+      this.unmatched.set(message.id, message);
+      while (this.unmatched.size > MAX_UNMATCHED) this.unmatched.delete(this.unmatched.keys().next().value!);
       this.drop({ reason: 'unmatched', wrapId: wrap.id, sender: meta.sender, messageId: meta.id });
       return;
     }
-    if (isErrorResponse(message)) {
-      pending.reject(new RpcError(message.error.code, message.error.message, message.error.data));
-      return;
-    }
-    const parsed = methods[pending.method].result.safeParse(message.result);
-    if (!parsed.success) {
-      pending.reject(new InvalidResponseError(pending.method, parsed.error.issues[0]?.message ?? 'schema'));
-      return;
-    }
-    pending.resolve(parsed.data);
+    this.settle(pending.method, message).then(pending.resolve, pending.reject);
+  }
+
+  /** The result of `response` to a `method` call: resolves with the validated result, rejects with its error. */
+  private async settle(method: MethodName, response: Response): Promise<unknown> {
+    if (isErrorResponse(response)) throw new RpcError(response.error.code, response.error.message, response.error.data);
+    const parsed = methods[method].result.safeParse(response.result);
+    if (!parsed.success) throw new InvalidResponseError(method, parsed.error.issues[0]?.message ?? 'schema');
+    return parsed.data;
   }
 }
