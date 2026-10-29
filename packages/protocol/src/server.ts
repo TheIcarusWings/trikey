@@ -51,6 +51,15 @@ export interface RpcServerOptions {
   authorize?: (sender: string, method: MethodName) => boolean | Promise<boolean>;
   limits?: Limits;
   guard?: ReplayGuard;
+  /**
+   * Senders whose requests use the main replay guard and response cache. Everyone else an `authorize`
+   * lets through (a stranger asking for `recovery.access`, a phone during a pairing window) gets a
+   * small, separately bounded guard and cache of its own (`strangerCacheSize`), so strangers can never
+   * evict a paired phone's entries. Default: the `peers`.
+   */
+  isPeer?: (sender: string) => boolean;
+  /** Entries the strangers' replay guard and response cache keep. Default 256 and 32. */
+  strangerCacheSize?: { guard?: number; responses?: number };
   /** How many responses are kept to answer retries. Default 256. */
   responseCacheSize?: number;
   onDrop?: (info: DropInfo) => void;
@@ -76,6 +85,9 @@ export class RpcServer {
   private readonly peers: Set<string>;
   private readonly allowUnpaired: Set<MethodName>;
   private readonly responses = new Map<string, Response>(); // `${sender}:${id}` -> response
+  /** Strangers' replay guard and responses (see `isPeer`). */
+  private readonly strangerGuard: ReplayGuard;
+  private readonly strangerResponses = new Map<string, Response>();
   private sub?: Subscription;
   private starting?: Promise<void>;
   private closed = false;
@@ -86,6 +98,7 @@ export class RpcServer {
     if (this.relays.length === 0) throw new Error('RpcServer needs at least one relay');
     this.limits = opts.limits ?? DEFAULT_LIMITS;
     this.guard = opts.guard ?? new ReplayGuard({ limits: this.limits });
+    this.strangerGuard = new ReplayGuard({ limits: this.limits, maxEntries: opts.strangerCacheSize?.guard ?? 256 });
     this.peers = new Set(opts.peers ?? []);
     this.allowUnpaired = new Set(opts.allowUnpaired ?? ['pair.prepare', 'pair']);
     this.publicKey = getPublicKey(opts.secretKey);
@@ -200,10 +213,16 @@ export class RpcServer {
       return;
     }
 
-    const verdict = this.guard.admit(meta, this.now());
+    // Peers and strangers have separate caches, so strangers cannot evict a peer's entries.
+    const peer = this.o.isPeer ? this.o.isPeer(sender) : this.peers.has(sender);
+    const guard = peer ? this.guard : this.strangerGuard;
+    // A sender that became a peer since (a phone retrying its `pair`) is still a duplicate.
+    const other = peer ? this.strangerGuard : this.guard;
+    const verdict = other.has(sender, meta.id, this.now()) ? 'duplicate' : guard.admit(meta, this.now());
     if (verdict === 'duplicate') {
       // A retry (or a replay): never run the handler again; resend the earlier answer if we have one.
-      const cached = this.responses.get(`${sender}:${meta.id}`);
+      const key = `${sender}:${meta.id}`;
+      const cached = this.responses.get(key) ?? this.strangerResponses.get(key);
       this.drop({ reason: 'replay', wrapId, sender, messageId: meta.id, detail: cached ? 'resent cached response' : 'in flight' });
       if (cached) await this.reply(sender, cached);
       return;
@@ -215,8 +234,14 @@ export class RpcServer {
 
     const ctx: HandlerContext = { sender, id: message.id, wrapId, createdAt: meta.createdAt };
     const response = await this.dispatch(message, ctx);
-    this.remember(`${sender}:${message.id}`, response);
+    if (peer) this.remember(this.responses, `${sender}:${message.id}`, response, this.o.responseCacheSize ?? 256);
+    else this.remember(this.strangerResponses, `${sender}:${message.id}`, response, this.o.strangerCacheSize?.responses ?? 32);
     await this.reply(sender, response);
+  }
+
+  /** Sizes of the replay guards (peers, strangers), for tests and diagnostics. */
+  get guardSizes(): { peers: number; strangers: number } {
+    return { peers: this.guard.size, strangers: this.strangerGuard.size };
   }
 
   private async dispatch(request: Request, ctx: HandlerContext): Promise<Response> {
@@ -238,14 +263,13 @@ export class RpcServer {
     }
   }
 
-  private remember(key: string, response: Response): void {
-    this.responses.delete(key);
-    this.responses.set(key, response);
-    const max = this.o.responseCacheSize ?? 256;
-    while (this.responses.size > max) {
-      const oldest = this.responses.keys().next();
+  private remember(cache: Map<string, Response>, key: string, response: Response, max: number): void {
+    cache.delete(key);
+    cache.set(key, response);
+    while (cache.size > max) {
+      const oldest = cache.keys().next();
       if (oldest.done) break;
-      this.responses.delete(oldest.value);
+      cache.delete(oldest.value);
     }
   }
 

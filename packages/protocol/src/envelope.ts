@@ -350,6 +350,11 @@ export class RecentSet {
   private readonly items = new Set<string>();
   constructor(private readonly max = 4096) {}
 
+  /** Whether `value` is present (records nothing). */
+  has(value: string): boolean {
+    return this.items.has(value);
+  }
+
   /** Returns true if `value` was already present. */
   seen(value: string): boolean {
     if (this.items.has(value)) {

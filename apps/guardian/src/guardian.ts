@@ -398,6 +398,8 @@ export class Guardian {
       secretKey: this.identity.secretKey,
       handlers: buildHandlers(this),
       authorize: (sender, method) => this.authorize(sender, method),
+      // Strangers (anyone who is not one of these) get their own small replay cache (protocol server.ts).
+      isPeer: (sender) => this.isKnownSender(sender),
       listen: false, // the inbox below opens every wrap once and hands RPC rumors over
       now: () => this.nowSec(),
       onDrop: (d) => {
@@ -428,6 +430,7 @@ export class Guardian {
       onRpc: (opened) => rpc.handleOpened(opened),
       onDm: (opened) => dm.handleOpened(opened),
       log: this.log,
+      isPeer: (sender) => this.isKnownSender(sender),
     });
     await this.inbox.start();
     this.log.info('nostr.listening', { npub: this.identity.npub, relays: relays.length });
@@ -451,6 +454,12 @@ export class Guardian {
     if (method === 'recovery.access') return !!reg;
     if (method === 'pair.prepare' || method === 'pair') return this.pairing.answering(this.clock.now());
     return false;
+  }
+
+  /** The paired phone, an alert contact (or a running recovery's recipient), or a phone with recovery access: not a stranger. */
+  isKnownSender(sender: string): boolean {
+    const reg = this.engine.registration();
+    return (!!reg && sender === reg.appNostrPubkey) || this.isAlertContact(sender) || this.hasRecoveryAccess(sender);
   }
 
   /** Phones holding an unexpired `recovery.access` grant for the active wallet. */

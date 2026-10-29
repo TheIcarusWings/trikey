@@ -235,6 +235,12 @@ function runOnceAcrossRestarts(g: Guardian, handlers: Handlers): Handlers {
     const h = handlers[m] as ((p: unknown, ctx: HandlerContext) => unknown) | undefined;
     if (!h) continue;
     out[m] = async (params: unknown, ctx: HandlerContext) => {
+      // Anyone may send `pair` during a pairing window: a wrong secret costs no disk write (it is
+      // refused here, before the request is recorded; it still counts against the session).
+      if (m === 'pair') {
+        const check = g.pairing.check(String((params as { pairingSecret?: unknown })?.pairingSecret ?? ''), ctx.sender, g.clock.now());
+        if (!check.ok) throw new RpcError(ErrorCode.PairingRejected, PAIRING_REJECTIONS[check.reason]);
+      }
       const fresh = await g.service.rememberRequest(`${ctx.sender}:${ctx.id}`, ctx.createdAt * 1000 + REMEMBER_MS, g.clock.now());
       if (!fresh) {
         g.log.warn('rpc.replay_after_restart', { method: m });
