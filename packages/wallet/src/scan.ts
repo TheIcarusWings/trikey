@@ -8,14 +8,19 @@ import { base64, hex } from '@scure/base';
 import { decode as nip19Decode, npubEncode } from 'nostr-tools/nip19';
 import { NETWORKS, type NetworkName } from '@trikey/core';
 import { decodeTrikeyUri } from '@trikey/protocol';
+import { SilentPaymentError, decodeSilentPaymentAddress, hrpFor, looksLikeSilentPaymentAddress } from '@trikey/silent-payments';
 
 export type ScannedCode =
   /** `trikey://pair?...`: a guardian's one-time pairing code (onboarding, or "Replace guardian"). */
   | { kind: 'pairing'; uri: string; guardianNpub: string; relays: string[]; label?: string; expiresAt: number }
   /** `trikey://recover?...`: where a guardian lives, for a new phone without the old one or a backup. */
   | { kind: 'recovery'; uri: string; guardian: { npub: string; relays: string[] }; network: NetworkName; label?: string }
-  /** A bitcoin address, bare or as a BIP 21 URI (`bitcoin:<address>?amount=<BTC>&label=...`). */
-  | { kind: 'address'; address: string; network: NetworkName; amountSats?: number; label?: string; message?: string }
+  /**
+   * A bitcoin address, bare or as a BIP 21 URI (`bitcoin:<address>?amount=<BTC>&label=...`). A silent payment address
+   * (`sp1…`/`tsp1…`, bare, as the URI's address or its `sp=` parameter) comes back here too with `silentPayment`:
+   * `quoteSend` pays it through the helper coin.
+   */
+  | { kind: 'address'; address: string; network: NetworkName; amountSats?: number; label?: string; message?: string; silentPayment?: true }
   /** A PSBT (base64 or hex), e.g. one a QR signer showed back. */
   | { kind: 'psbt'; psbtBase64: string }
   /** A nostr public key (`npub1...`, `nostr:npub1...`): an alert contact. */
@@ -77,6 +82,13 @@ function asAddress(text: string, opts: ScanOptions): ScannedCode | undefined {
     address = q < 0 ? rest : rest.slice(0, q);
     query = q < 0 ? '' : rest.slice(q + 1);
   }
+  // A silent payment address: bare, as the URI's address, or in its `sp=` parameter (preferred over a fallback address).
+  const spParam = query ? new URLSearchParams(query).get('sp') : null;
+  const sp = looksLikeSilentPaymentAddress(address) ? address : spParam && looksLikeSilentPaymentAddress(spParam) ? spParam : undefined;
+  if (sp) {
+    const r = asSilentPayment(sp, text, opts);
+    return r.kind === 'address' ? withQuery(r, query, text) : r;
+  }
   // QR codes often carry bech32 in upper case (it packs tighter); addresses are case-insensitive there.
   if (/^(bc|tb|bcrt)1/i.test(address)) address = address.toLowerCase();
   const nets = addressNetworks(address);
@@ -85,7 +97,26 @@ function asAddress(text: string, opts: ScanOptions): ScannedCode | undefined {
   if (want && !nets.includes(want))
     return { kind: 'unknown', text, reason: `This is a ${NET_LABEL[nets[0]!]} address, but your wallet is on ${NET_LABEL[want]}.` };
   const network = want ?? nets[0]!;
-  const out: Extract<ScannedCode, { kind: 'address' }> = { kind: 'address', address, network };
+  return withQuery({ kind: 'address', address, network }, query, text);
+}
+
+function asSilentPayment(sp: string, text: string, opts: ScanOptions): ScannedCode {
+  let hrp: 'sp' | 'tsp';
+  let address: string;
+  try {
+    ({ hrp, address } = decodeSilentPaymentAddress(sp));
+  } catch (e) {
+    if (e instanceof SilentPaymentError) return { kind: 'unknown', text, reason: 'This silent payment address has a typo or is not one Trikey can pay.' };
+    throw e;
+  }
+  const want = opts.network;
+  if (want && hrpFor(want) !== hrp)
+    return { kind: 'unknown', text, reason: `This is a ${hrp === 'sp' ? 'mainnet' : 'test network'} silent payment address, but your wallet is on ${NET_LABEL[want]}.` };
+  return { kind: 'address', address, network: want ?? (hrp === 'sp' ? 'bitcoin' : 'testnet'), silentPayment: true };
+}
+
+/** Adds a BIP 21 query's amount, label and message; refuses `req-` parameters. */
+function withQuery(out: Extract<ScannedCode, { kind: 'address' }>, query: string, text: string): ScannedCode {
   if (query) {
     const q = new URLSearchParams(query);
     for (const key of q.keys())

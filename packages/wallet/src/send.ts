@@ -112,6 +112,23 @@ export interface SendQuote {
   /** Daily limit left after this payment, by the phone's estimate (0 if it does not fit). */
   remainingAfterSats: number;
   dailyLimitSats?: number;
+  /**
+   * Set for a payment to a silent payment address (`request.address` is the `sp1…`/`tsp1…` string). Then
+   * `feeSats` is the whole transaction's fee, `totalSats` what leaves the vault (amount + the vault's share of the
+   * fee: what a daily limit would count), and the helper coin pays the rest of the fee for its own input and change.
+   */
+  silentPayment?: SilentPaymentQuote;
+}
+
+export interface SilentPaymentQuote {
+  /** The recipient as the person entered it, for display. */
+  address: string;
+  /** The taproot output key this payment creates (x-only hex). */
+  outputKey: string;
+  /** The same output as a plain taproot address: what a hardware wallet shows, as it cannot show `sp1…`. */
+  outputAddress: string;
+  /** The helper coin this payment spends, and its change (to a fresh helper address). */
+  helper: { txid: string; vout: number; valueSats: number; chain: 0 | 1; index: number; feeSats: number; changeSats: number; changeIndex: number };
 }
 
 export function toCoreUtxo(u: QuoteInput, prevTxHex?: string): Utxo {

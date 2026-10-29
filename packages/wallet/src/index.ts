@@ -6,6 +6,21 @@ export * from './keys.js';
 export * from './wallet.js';
 export { parseScannedCode, type ScannedCode, type ScanOptions } from './scan.js';
 export {
+  DEFAULT_SWEEP_MIN_SATS,
+  HELPER_ACCOUNT,
+  LocalSilentPaymentScanner,
+  SilentPaymentReceiver,
+  analyzeMixedPsbt,
+  helperAccountPath,
+  scanBlockFromBitcoind,
+  type BlockSource,
+  type MixedAnalysis,
+  type ScanBlock,
+  type SilentPaymentMatch,
+  type SilentPaymentScanKeys,
+  type SilentPaymentScanner,
+} from './silent.js';
+export {
   BACKUP_FILE_PREFIX,
   BACKUP_FILE_SUFFIX,
   BACKUP_VERSION,
@@ -31,5 +46,9 @@ export {
   type ReplaceRecord,
   type RetiredWallet,
   type SendLogEntry,
+  type HelperCoin,
+  type HelperRecord,
+  type SilentPaymentCoin,
+  type SilentPaymentsRecord,
   type WalletStage,
 } from './state.js';

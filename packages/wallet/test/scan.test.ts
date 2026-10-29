@@ -6,6 +6,7 @@ import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { npubEncode } from 'nostr-tools/nip19';
 import { NETWORKS } from '@trikey/core';
 import { encodePairingUri, encodeRecoveryUri } from '@trikey/protocol';
+import { receiverAddress } from '@trikey/silent-payments';
 import { parseScannedCode } from '../src/index.js';
 
 const NOW = 1_800_000_000;
@@ -17,6 +18,9 @@ const key = secp256k1.getPublicKey(new Uint8Array(32).fill(3), true);
 const tb = btc.p2wpkh(key, NETWORKS.testnet.btc).address!;
 const bcrt = btc.p2wpkh(key, NETWORKS.regtest.btc).address!;
 const bc = btc.p2wpkh(key, NETWORKS.bitcoin.btc).address!;
+const spKeys = { scanPrivateKey: new Uint8Array(32).fill(4), spendPublicKey: secp256k1.getPublicKey(new Uint8Array(32).fill(5), true) };
+const sp = receiverAddress(spKeys, 'bitcoin');
+const tsp = receiverAddress(spKeys, 'signet');
 
 describe('parseScannedCode', () => {
   it('tells a pairing code from a recovery code', () => {
@@ -66,5 +70,21 @@ describe('parseScannedCode', () => {
     expect(parseScannedCode(hex.encode(psbt).toUpperCase())).toEqual({ kind: 'psbt', psbtBase64: base64.encode(psbt) });
     expect(parseScannedCode(`nostr:${npubEncode(pub)}`)).toEqual({ kind: 'contact', npub: npubEncode(pub), pubkey: pub });
     expect(parseScannedCode(`${npubEncode(pub).slice(0, -1)}x`)).toMatchObject({ kind: 'unknown', reason: expect.stringMatching(/typo/) });
+  });
+
+  it('reads silent payment addresses (bare, upper case, in a payment link) and checks their network', () => {
+    expect(parseScannedCode(sp)).toEqual({ kind: 'address', address: sp, network: 'bitcoin', silentPayment: true });
+    expect(parseScannedCode(tsp.toUpperCase(), { network: 'regtest' })).toEqual({ kind: 'address', address: tsp, network: 'regtest', silentPayment: true });
+    expect(parseScannedCode(`bitcoin:${bc}?sp=${sp}&amount=0.001&label=Shop`, { network: 'bitcoin' })).toEqual({
+      kind: 'address',
+      address: sp,
+      network: 'bitcoin',
+      silentPayment: true,
+      amountSats: 100_000,
+      label: 'Shop',
+    });
+    expect(parseScannedCode(tsp, { network: 'bitcoin' })).toMatchObject({ kind: 'unknown', reason: expect.stringMatching(/test network silent payment address.*mainnet/) });
+    expect(parseScannedCode(sp, { network: 'signet' })).toMatchObject({ kind: 'unknown', reason: expect.stringMatching(/mainnet silent payment address.*signet/) });
+    expect(parseScannedCode(`${sp.slice(0, -1)}${sp.endsWith('q') ? 'p' : 'q'}`)).toMatchObject({ kind: 'unknown', reason: expect.stringMatching(/typo/) });
   });
 });

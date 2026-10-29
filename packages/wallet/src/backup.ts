@@ -123,6 +123,13 @@ export const BackupPayload = z.strictObject({
   sendLog: z.array(SendLogEntry).max(1000).optional(),
   /** Wallets left behind by "Replace guardian", so stray coins stay sweepable after a restore. */
   retiredWallets: z.array(RetiredWallet).max(50).optional(),
+  /** The helper coin's address indexes (its key derives from the mnemonic; this is where to look). */
+  helper: z.strictObject({ nextReceiveIndex: z.int().min(0), nextChangeIndex: z.int().min(0) }).optional(),
+  /**
+   * What a rescan of received silent payments needs: where to start and the labels handed out. No key: the scan
+   * and spend keys derive from the mnemonic.
+   */
+  silentPayments: z.strictObject({ birthHeight: z.int().min(0), labels: z.array(z.int().min(1)).max(10_000) }).optional(),
 });
 export type BackupPayload = z.infer<typeof BackupPayload>;
 

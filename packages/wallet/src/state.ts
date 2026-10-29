@@ -119,8 +119,78 @@ export const SendLogEntry = z.object({
   signedBy: z.enum(['guardian', 'hardware']),
   /** Why it was sent, when it was not an ordinary payment. */
   purpose: z.enum(['payment', 'sweep']).optional(),
+  /** A payment to a silent payment address (`recipient` is the `sp1…` address): the output it made. */
+  silentPayment: z
+    .object({
+      /** The taproot output key (x-only hex). */
+      outputKey: Hex32,
+      /** The plain taproot address of that output: what the hardware wallet showed. */
+      outputAddress: z.string(),
+    })
+    .optional(),
 });
 export type SendLogEntry = z.infer<typeof SendLogEntry>;
+
+const CompressedKey = z.string().regex(/^0[23][0-9a-f]{64}$/);
+
+/** A coin of the helper account (single-key P2WPKH, key 2's seed at `m/84'/coin'/1'`). */
+export const HelperCoin = z.object({
+  txid: Hex32,
+  vout: z.number().int().min(0),
+  valueSats: z.number().int().min(0),
+  chain: z.union([z.literal(0), z.literal(1)]),
+  index: z.number().int().min(0),
+  /** 0 while unconfirmed. */
+  height: z.number().int().min(0),
+  confirmations: z.number().int().min(0),
+});
+export type HelperCoin = z.infer<typeof HelperCoin>;
+
+/** The helper coin's account: it pays for silent payments (DESIGN.md, "Silent payments"). */
+export const HelperRecord = z.object({
+  /** The BIP 84 account key `m/84'/coin'/1'` of key 2's seed, with the seed's fingerprint. */
+  account: KeyOrigin,
+  nextReceiveIndex: z.number().int().min(0),
+  nextChangeIndex: z.number().int().min(0),
+  utxos: z.array(HelperCoin).default([]),
+  /** ms; undefined before the first sync of the helper's coins. */
+  syncedAt: z.number().optional(),
+});
+export type HelperRecord = z.infer<typeof HelperRecord>;
+
+/** A silent payment this phone received (a single-key taproot coin). */
+export const SilentPaymentCoin = z.object({
+  txid: Hex32,
+  vout: z.number().int().min(0),
+  valueSats: z.number().int().min(0),
+  /** Output key, x-only hex. */
+  outputKey: Hex32,
+  /** Private key tweak (hex): the coin's key is b_spend + tweak. Not a secret without the spend key. */
+  tweak: Hex32,
+  label: z.number().int().min(0).optional(),
+  /** 0 while unconfirmed. */
+  height: z.number().int().min(0),
+  /** `sweeping`: moved into the vault, not confirmed yet; `swept`: that move confirmed; `spent`: gone otherwise. */
+  status: z.enum(['unspent', 'sweeping', 'swept', 'spent']),
+  sweepTxid: Hex32.optional(),
+  /** ms */
+  foundAt: z.number(),
+});
+export type SilentPaymentCoin = z.infer<typeof SilentPaymentCoin>;
+
+/** The phone's single-key silent payment wallet (keys at BIP 352's paths of key 2's seed). */
+export const SilentPaymentsRecord = z.object({
+  scanPublicKey: CompressedKey,
+  spendPublicKey: CompressedKey,
+  /** No payment can be older than this block (where scanning starts after a restore). */
+  birthHeight: z.number().int().min(0),
+  /** Labels handed out (m >= 1; the change label 0 is always scanned and never handed out). */
+  labels: z.array(z.number().int().min(1)).default([]),
+  /** Highest block scanned so far (birthHeight - 1 before the first scan). */
+  scannedHeight: z.number().int().min(-1),
+  coins: z.array(SilentPaymentCoin).default([]),
+});
+export type SilentPaymentsRecord = z.infer<typeof SilentPaymentsRecord>;
 
 /**
  * A wallet this phone and its hardware wallet moved away from ("Replace guardian"). Its keys are still the user's:
@@ -183,8 +253,12 @@ export const WalletState = z.object({
   network: Network,
   stage: WalletStage,
   createdAt: z.number(),
-  /** Secure store ids. */
-  secrets: z.object({ key2: z.string(), nostr: z.string() }),
+  /**
+   * Secure store ids. `helper` (the helper account's private key) and `spScan` (the silent payment scan key) are
+   * kept without biometrics, like the nostr key: a quote derives the silent payment output and a scan runs
+   * without a prompt. Key 2 (and with it the silent payment spend key) stays behind biometrics.
+   */
+  secrets: z.object({ key2: z.string(), nostr: z.string(), helper: z.string().optional(), spScan: z.string().optional() }),
   /** Key 2's BIP 48 account key. */
   key2: KeyOrigin,
   nostrPubkey: Hex32,
@@ -219,6 +293,10 @@ export const WalletState = z.object({
   /** Wallets this phone moved away from with "Replace guardian". */
   retiredWallets: z.array(RetiredWallet).default([]),
   replacing: ReplaceRecord.optional(),
+  /** The helper coin's account (set up on first use of silent payments). */
+  helper: HelperRecord.optional(),
+  /** Received silent payments (set up on first use). */
+  silentPayments: SilentPaymentsRecord.optional(),
   /** The guardian said it retired this phone's wallet (`wallet_retired`): it co-signs nothing for it any more. */
   retiredByGuardian: z.object({ walletId: z.string(), reason: z.enum(['retired', 'recovered', 'reset']), successorWalletId: z.string().optional(), at: z.number() }).optional(),
 });

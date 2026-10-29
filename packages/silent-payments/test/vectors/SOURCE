@@ -1,0 +1,14 @@
+send_and_receive_test_vectors.json
+
+Source:   https://github.com/bitcoin/bips/blob/master/bip-0352/send_and_receive_test_vectors.json
+          (raw: https://raw.githubusercontent.com/bitcoin/bips/master/bip-0352/send_and_receive_test_vectors.json)
+Spec:     BIP 352 "Silent Payments", version 1.1.2 (29 test cases, the last one
+          "Single recipient: taproot key-path spend with annex")
+Fetched:  2026-10-29
+SHA-256:  2faa899c480fea1fb13b06fb669e9cfdd11738a5140ec516f46a46e68e2c2ad8
+Licence:  BSD-2-Clause, the licence of BIP 352 and its auxiliary files
+          (BIP 352 header: "License: BSD-2-Clause").
+          Authors of BIP 352: josibake, Ruben Somsen, Sebastian Falbesoner.
+
+Copied unmodified. test/vectors.test.ts runs every case, sending and
+receiving, the way the BIP's reference.py does.

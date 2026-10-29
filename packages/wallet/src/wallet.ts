@@ -12,13 +12,18 @@
  * `tx.get`, the hardware wallet's addresses, signatures and PSBTs.
  */
 import { HDKey } from '@scure/bip32';
+import { mnemonicToSeedSync } from '@scure/bip39';
 import { base64, hex } from '@scure/base';
 import { randomBytes } from '@noble/hashes/utils.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+import * as btc from '@scure/btc-signer';
+import { deriveSilentPaymentKeys, looksLikeSilentPaymentAddress, spendingPrivateKey } from '@trikey/silent-payments';
 import { decode as nip19Decode, npubEncode } from 'nostr-tools/nip19';
 import {
   MultisigWallet,
   PsbtError,
   SoftwareSigner,
+  TX_OPTS,
   analyzePsbt,
   bip48Path,
   buildSpend,
@@ -73,7 +78,7 @@ import {
   type SlotInput,
 } from './backup.js';
 import { verifyMessage } from './bip137.js';
-import { GuardianChainSource, txidOfRaw, type ChainSnapshot, type ChainSource, type FeeEstimates, type GuardianRpc } from './chain.js';
+import { GuardianChainSource, txidOfRaw, type ChainSnapshot, type ChainSource, type FeeEstimates, type GuardianRpc, type SingleKeyChainSource } from './chain.js';
 import { WalletError, asWalletError, refusalFromError, type GuardianRefusal } from './errors.js';
 import {
   authKeyPath,
@@ -89,8 +94,33 @@ import type { CloudBackupStore, HardwareKind, HardwareProvider, HardwareSigner, 
 import { TxCache } from './txcache.js';
 import { parseScannedCode, type ScannedCode } from './scan.js';
 import {
+  DEFAULT_SWEEP_MIN_SATS,
+  DUST_SATS,
+  MAX_SWEEPS_PER_CALL,
+  SEQUENCE_RBF,
+  SILENT_PAYMENT_ACCOUNT,
+  SilentPaymentReceiver,
+  VB_P2WPKH_INPUT,
+  VB_P2WPKH_OUTPUT,
+  VB_SWEEP,
+  analyzeMixedPsbt,
+  buildSweepTransaction,
+  decodeRecipient,
+  helperAccount,
+  helperChild,
+  helperPathNumbers,
+  p2wpkhScript,
+  placeholderTaprootAddress,
+  senderInputsOf,
+  silentPaymentOutput,
+  taprootAddress,
+  type SilentPaymentScanKeys,
+  type SilentPaymentScanner,
+} from './silent.js';
+import {
   FEE_TARGETS,
   LIMIT_WINDOW_MS,
+  MIN_PAYMENT_SATS,
   guardianBlocker,
   pickFeeRate,
   selectCoins,
@@ -106,11 +136,13 @@ import {
   type GuardianRecord,
   type GuardianStatusCache,
   type HardwareRecord,
+  type HelperCoin,
   type PendingRequest,
   type RecoveryRecord,
   type ReplaceRecord,
   type RetiredWallet,
   type SendLogEntry,
+  type SilentPaymentCoin,
   type WalletState,
 } from './state.js';
 
@@ -151,6 +183,25 @@ export interface WalletDeps {
   standaloneChain?: (wallet: { descriptor: string; walletId: string; network: NetworkName }) => ChainSource | undefined;
   /** How long to wait for an old guardian before calling it unreachable (ms, default the smaller of 10 s and `rpcTimeoutMs`). */
   probeTimeoutMs?: number;
+  /**
+   * Chain data and broadcasting for the phone's single-key coins: the helper coin that pays for silent payments,
+   * and received silent payments. The guardian does not serve these yet (see `SingleKeyChainSource`). Without it the
+   * helper's balance stays unknown and received coins cannot be checked or swept.
+   */
+  singleKeyChain?: SingleKeyChainSource;
+  /**
+   * Builds what finds received silent payments, given the scan keys (the scan private key, B_spend, the labels):
+   * later the guardian over nostr; `LocalSilentPaymentScanner` for tests or a phone that reads the user's own node.
+   */
+  silentPaymentScanner?: (keys: SilentPaymentScanKeys) => SilentPaymentScanner;
+  /**
+   * Ask the guardian to co-sign silent payments within the daily limit. Off by default: today's guardian refuses any
+   * input that is not the vault's (the helper coin is not), so silent payments go to the hardware wallet. Turn it on
+   * once the guardian accepts a helper input (DESIGN.md, "Silent payments").
+   */
+  silentPaymentsViaGuardian?: boolean;
+  /** A received silent payment waits while it would bring less than this into the vault after the fee (default 1,000 sats). */
+  silentPaymentSweepMinSats?: number;
 }
 
 export type WalletEvent =
@@ -186,6 +237,8 @@ export interface WalletHistoryEntry extends HistoryEntry {
   purpose?: 'payment' | 'sweep';
   /** Sent by this phone and not in the guardian's history yet. */
   local?: true;
+  /** A payment to a silent payment address (`recipient` is the `sp1…` address): the taproot output it made. */
+  silentPayment?: { outputKey: string; outputAddress: string };
 }
 
 /** What "Replace guardian" will do, for the person to confirm (`previewReplaceGuardian`). */
@@ -264,7 +317,24 @@ export interface WalletSnapshot {
   dailyLimit?: { limitSats: number; spentEstimateSats: number; remainingSats: number };
   /** After a recovery moved the wallet: the hardware wallet must register it and confirm its key (`confirmHardware`). */
   hardwareConfirmRequired: boolean;
+  /** The helper coin that pays for silent payments (once set up): its own balance, not the vault's. */
+  helper?: { confirmedSats: number; unconfirmedSats: number; coins: number; syncedAt?: number };
+  /** Received silent payments (once set up): a separate balance, single-key on this phone until swept into the vault. */
+  silentPayments?: {
+    balance: { confirmedSats: number; unconfirmedSats: number; totalSats: number };
+    /** Coins not yet swept (and sweeps not yet seen as done). */
+    coins: SilentPaymentCoin[];
+    scannedHeight: number;
+    birthHeight: number;
+  };
 }
+
+/** What `sweepSilentPayments` did with one received coin. */
+export type SilentSweepOutcome =
+  | { status: 'swept'; txid: string; vout: number; valueSats: number; sweepTxid: string; amountSats: number; feeSats: number; address: string }
+  /** Left for later: too small after the fee (`dust`), or the chain does not show it unspent with that value (`missing`). */
+  | { status: 'waiting'; txid: string; vout: number; valueSats: number; reason: 'dust' | 'missing' | 'batch_full' }
+  | { status: 'failed'; txid: string; vout: number; valueSats: number; message: string };
 
 export type SendResult =
   | {
@@ -369,6 +439,9 @@ export class TrikeyWallet {
   /** The new guardian's connection while "Replace guardian" runs. */
   private replaceRpc?: { rpc: GuardianRpc; pool: RelayPool };
   private adopting?: Promise<boolean>;
+  /** The helper account's private key and the silent payment scan key, loaded without biometrics (see `secrets`). */
+  private helperKey?: HDKey;
+  private spScanKey?: Uint8Array;
 
   private constructor(
     private readonly deps: WalletDeps,
@@ -514,6 +587,10 @@ export class TrikeyWallet {
     await this.close();
     await this.deps.secureStore.remove(this.s.secrets.key2);
     await this.deps.secureStore.remove(this.s.secrets.nostr);
+    if (this.s.secrets.helper) await this.deps.secureStore.remove(this.s.secrets.helper);
+    if (this.s.secrets.spScan) await this.deps.secureStore.remove(this.s.secrets.spScan);
+    this.helperKey = undefined;
+    this.spScanKey = undefined;
     await this.store.clear();
     await this.txs.clear();
   }
@@ -1126,6 +1203,7 @@ export class TrikeyWallet {
     });
     await this.prefetchPrevTxs(snap.utxos).catch(() => undefined);
     await this.trackRecovery(status.activeRecoveryId).catch(() => undefined);
+    await this.syncSingleKey().catch(() => undefined);
     return this.snapshot()!;
   }
 
@@ -1171,6 +1249,7 @@ export class TrikeyWallet {
       ...(e.label ? { label: e.label } : {}),
       signedBy: e.signedBy,
       ...(e.purpose ? { purpose: e.purpose } : {}),
+      ...(e.silentPayment ? { silentPayment: e.silentPayment } : {}),
     });
     const listed = new Set<string>();
     const out: WalletHistoryEntry[] = (c?.history ?? []).map((h) => {
@@ -1201,6 +1280,7 @@ export class TrikeyWallet {
       guardian: this.s.guardianStatus,
       dailyLimit: limit === undefined ? undefined : { limitSats: limit, spentEstimateSats: spent, remainingSats: Math.max(0, limit - spent) },
       hardwareConfirmRequired: this.hardwareConfirmRequired,
+      ...this.singleKeySnapshot(),
     };
   }
 
@@ -1265,6 +1345,7 @@ export class TrikeyWallet {
    * typing): coins, fee, and which keys will sign. `send` carries it out.
    */
   quoteSend(req: SendRequest): SendQuote {
+    if (looksLikeSilentPaymentAddress(req.address)) return this.quoteSilentPayment(req);
     this.requirePaired();
     const c = this.s.chain;
     if (!c) throw new WalletError('no_chain_data', 'Sync the wallet first.');
@@ -1339,6 +1420,7 @@ export class TrikeyWallet {
     // Spending a coin that is already gone would still use up the daily limit at the guardian: refresh a stale view first.
     if (!this.s.chain || this.now() - this.s.chain.syncedAt > STALE_CHAIN_MS) await this.sync();
     const quote = 'plan' in quoteOrRequest ? quoteOrRequest : this.quoteSend(quoteOrRequest);
+    if (quote.silentPayment) return this.sendSilentPayment(quote, opts);
     const live = new Set(this.s.chain!.utxos.map((u) => `${u.txid}:${u.vout}`));
     if (quote.inputs.some((u) => !live.has(`${u.txid}:${u.vout}`))) throw new WalletError('quote_stale', 'The wallet\'s coins changed since this quote; quote the payment again.');
     const { wallet, psbt, outflow } = await this.buildPayment(quote);
@@ -1971,6 +2053,595 @@ export class TrikeyWallet {
   }
 
   // ===========================================================================
+  // Silent payments (DESIGN.md, "Silent payments")
+
+  /**
+   * Sets up the helper coin's account (`m/84'/coin'/1'`) and the silent payment keys (BIP 352's paths) from key 2:
+   * one biometric prompt, the first time only. The helper's account key and the scan key are then kept without
+   * biometrics (a quote derives the output and a scan runs without a prompt); the spend key is never stored apart
+   * from key 2.
+   */
+  async enableSilentPayments(): Promise<void> {
+    const s = this.s;
+    if (s.helper && s.silentPayments && s.secrets.helper && s.secrets.spScan) return;
+    await this.withKey2('Set up silent payments', (m) => this.setupSingleKey(m, {}));
+  }
+
+  private async setupSingleKey(
+    mnemonic: string,
+    restored: { helper?: { nextReceiveIndex: number; nextChangeIndex: number }; silentPayments?: { birthHeight: number; labels: number[] } },
+  ): Promise<void> {
+    const seed = mnemonicToSeedSync(mnemonic);
+    try {
+      const master = HDKey.fromMasterSeed(seed, this.network.bip32);
+      const { account, origin } = helperAccount(master, this.network);
+      const keys = deriveSilentPaymentKeys(master, { coinType: this.network.coinType, account: SILENT_PAYMENT_ACCOUNT });
+      keys.spendPrivateKey.fill(0);
+      const tag = hex.encode(randomBytes(8));
+      const ids = { helper: this.s.secrets.helper ?? `trikey.helper.${tag}`, spScan: this.s.secrets.spScan ?? `trikey.spscan.${tag}` };
+      const helperSecret = new Uint8Array(64);
+      helperSecret.set(account.chainCode!, 0);
+      helperSecret.set(account.privateKey!, 32);
+      try {
+        await this.deps.secureStore.save(ids.helper, helperSecret, { requireBiometrics: false });
+      } finally {
+        helperSecret.fill(0);
+      }
+      await this.deps.secureStore.save(ids.spScan, keys.scanPrivateKey, { requireBiometrics: false });
+      this.helperKey = account;
+      this.spScanKey = keys.scanPrivateKey;
+      const birthHeight = restored.silentPayments?.birthHeight ?? this.s.chain?.tipHeight ?? 0;
+      await this.update((s) => {
+        s.secrets = { ...s.secrets, ...ids };
+        s.helper ??= {
+          account: { fingerprint: origin.fingerprint, path: origin.path, xpub: account.publicExtendedKey },
+          nextReceiveIndex: restored.helper?.nextReceiveIndex ?? 0,
+          nextChangeIndex: restored.helper?.nextChangeIndex ?? 0,
+          utxos: [],
+        };
+        s.silentPayments ??= {
+          scanPublicKey: hex.encode(keys.scanPublicKey),
+          spendPublicKey: hex.encode(keys.spendPublicKey),
+          birthHeight,
+          labels: restored.silentPayments?.labels ?? [],
+          scannedHeight: birthHeight - 1,
+          coins: [],
+        };
+      });
+    } finally {
+      seed.fill(0);
+    }
+  }
+
+  /** Loads the helper account key and the scan key (no biometrics) if they are not in memory yet. */
+  private async loadSingleKeySecrets(): Promise<void> {
+    const ids = this.s.secrets;
+    if (!this.helperKey && ids.helper) {
+      const raw = await this.deps.secureStore.load(ids.helper, 'Silent payments');
+      if (raw?.length === 64) {
+        const key = new HDKey({ chainCode: raw.slice(0, 32), privateKey: raw.slice(32), versions: this.network.bip32 });
+        raw.fill(0);
+        // The stored key must be the account the state names.
+        const xpub = HDKey.fromExtendedKey(this.s.helper!.account.xpub, this.network.bip32);
+        if (hex.encode(key.publicKey!) !== hex.encode(xpub.publicKey!)) throw new WalletError('internal', 'The stored helper key does not match the helper account.');
+        this.helperKey = key;
+      }
+    }
+    if (!this.spScanKey && ids.spScan) {
+      const raw = await this.deps.secureStore.load(ids.spScan, 'Silent payments');
+      if (raw?.length === 32) this.spScanKey = raw;
+    }
+  }
+
+  /** The helper's address at `chain/index` (from the account's public key; no secret needed). */
+  private helperAddress(chain: 0 | 1, index: number): { address: string; script: Uint8Array; pubkey: Uint8Array } {
+    const h = this.s.helper;
+    if (!h) throw new WalletError('wrong_state', 'Silent payments are not set up yet.');
+    const pubkey = helperChild(HDKey.fromExtendedKey(h.account.xpub, this.network.bip32), chain, index).publicKey!;
+    const p = btc.p2wpkh(pubkey, this.network.btc);
+    return { address: p.address!, script: p.script, pubkey };
+  }
+
+  /**
+   * Where to send the helper coin: a small single-key coin (say 10,000 to 50,000 sats) that every payment to a
+   * silent payment address spends and gives back as change. Funds there are the phone's alone (not the vault's).
+   */
+  async helperReceiveAddress(): Promise<{ address: string; index: number }> {
+    await this.enableSilentPayments();
+    const index = this.s.helper!.nextReceiveIndex;
+    return { address: this.helperAddress(0, index).address, index };
+  }
+
+  /** The address to receive silent payments at: unlabeled, or with label `m >= 1` (remembered for rescans). */
+  async silentPaymentAddress(opts: { label?: number } = {}): Promise<string> {
+    const receiver = await this.silentPaymentReceiver();
+    const address = receiver.address(opts);
+    const m = opts.label;
+    if (m !== undefined && !this.s.silentPayments!.labels.includes(m))
+      await this.update((s) => void (s.silentPayments!.labels = [...s.silentPayments!.labels, m].sort((a, b) => a - b)));
+    return address;
+  }
+
+  /** The receiving keys: the scan key (shareable with a scanning service) and the spend key behind key 2's biometrics. */
+  async silentPaymentReceiver(): Promise<SilentPaymentReceiver> {
+    await this.enableSilentPayments();
+    await this.loadSingleKeySecrets();
+    if (!this.spScanKey) throw new WalletError('key_unavailable', 'The silent payment scan key is missing from this phone.');
+    const sp = this.s.silentPayments!;
+    return new SilentPaymentReceiver({
+      network: this.network.name,
+      scanPrivateKey: this.spScanKey,
+      spendPublicKey: hex.decode(sp.spendPublicKey),
+      labels: sp.labels,
+      spendKey: (reason) => this.withSpendKey(reason, async (b) => b.slice()),
+    });
+  }
+
+  /** Loads key 2 (biometric prompt), derives the silent payment spend key, runs `fn` with it, and wipes it. */
+  private async withSpendKey<T>(reason: string, fn: (spendPrivateKey: Uint8Array) => Promise<T>): Promise<T> {
+    const want = this.s.silentPayments?.spendPublicKey;
+    return this.withKey2(reason, async (m) => {
+      const seed = mnemonicToSeedSync(m);
+      let b: Uint8Array | undefined;
+      try {
+        const k = deriveSilentPaymentKeys(HDKey.fromMasterSeed(seed, this.network.bip32), { coinType: this.network.coinType, account: SILENT_PAYMENT_ACCOUNT });
+        k.scanPrivateKey.fill(0);
+        b = k.spendPrivateKey;
+        if (hex.encode(k.spendPublicKey) !== want) throw new WalletError('internal', 'Key 2 does not hold this silent payment wallet.');
+        return await fn(b);
+      } finally {
+        seed.fill(0);
+        b?.fill(0);
+      }
+    });
+  }
+
+  /** Refreshes the helper's coins and the received coins' state from `singleKeyChain` (part of `sync`). */
+  private async syncSingleKey(): Promise<void> {
+    const src = this.deps.singleKeyChain;
+    if (!src || (!this.s.helper && !this.s.silentPayments)) return;
+    await this.loadSingleKeySecrets();
+    const GAP = 10;
+    let helper: { utxos: HelperCoin[]; nextReceiveIndex: number; nextChangeIndex: number } | undefined;
+    if (this.s.helper) {
+      const h = this.s.helper;
+      const book = new Map<string, { chain: 0 | 1; index: number }>();
+      const next: Record<0 | 1, number> = { 0: h.nextReceiveIndex, 1: h.nextChangeIndex };
+      for (const chain of [0, 1] as const) {
+        // Extend the window while the last addresses looked at have coins.
+        for (let start = 0, end = next[chain] + GAP; start < end; ) {
+          const scripts: string[] = [];
+          for (let i = start; i < end; i++) {
+            const sc = hex.encode(this.helperAddress(chain, i).script);
+            book.set(sc, { chain, index: i });
+            scripts.push(sc);
+          }
+          const used = new Set(await src.used(scripts));
+          let top = -1;
+          scripts.forEach((sc, k) => used.has(sc) && (top = start + k));
+          if (top >= 0) next[chain] = Math.max(next[chain], top + 1);
+          start = end;
+          end = Math.max(end, next[chain] + GAP);
+        }
+      }
+      const utxos = (await src.unspent([...book.keys()])).flatMap((u): HelperCoin[] => {
+        const at = book.get(u.script);
+        return at ? [{ txid: u.txid, vout: u.vout, valueSats: u.valueSats, chain: at.chain, index: at.index, height: u.height, confirmations: u.confirmations }] : [];
+      });
+      helper = { utxos, nextReceiveIndex: next[0], nextChangeIndex: next[1] };
+    }
+    let coins: SilentPaymentCoin[] | undefined;
+    const sp = this.s.silentPayments;
+    if (sp?.coins.length) {
+      const open = sp.coins.filter((c) => c.status === 'unspent' || c.status === 'sweeping');
+      const live = await src.unspent(open.map((c) => `5120${c.outputKey}`));
+      const byOutpoint = new Map(live.map((u) => [`${u.txid}:${u.vout}`, u]));
+      coins = sp.coins.map((c) => {
+        if (c.status !== 'unspent' && c.status !== 'sweeping') return c;
+        const u = byOutpoint.get(`${c.txid}:${c.vout}`);
+        if (u) return { ...c, height: u.height };
+        return { ...c, status: c.sweepTxid ? ('swept' as const) : ('spent' as const) };
+      });
+    }
+    const now = this.now();
+    await this.update((s) => {
+      if (helper && s.helper) s.helper = { ...s.helper, ...helper, syncedAt: now };
+      if (coins && s.silentPayments) s.silentPayments.coins = coins;
+    });
+  }
+
+  private singleKeySnapshot(): Pick<WalletSnapshot, 'helper' | 'silentPayments'> {
+    const out: Pick<WalletSnapshot, 'helper' | 'silentPayments'> = {};
+    const h = this.s.helper;
+    if (h) {
+      const confirmed = h.utxos.filter((u) => u.confirmations > 0).reduce((a, u) => a + u.valueSats, 0);
+      const total = h.utxos.reduce((a, u) => a + u.valueSats, 0);
+      out.helper = { confirmedSats: confirmed, unconfirmedSats: total - confirmed, coins: h.utxos.length, ...(h.syncedAt ? { syncedAt: h.syncedAt } : {}) };
+    }
+    const sp = this.s.silentPayments;
+    if (sp) {
+      const open = sp.coins.filter((c) => c.status === 'unspent' || c.status === 'sweeping');
+      const unspent = open.filter((c) => c.status === 'unspent');
+      const confirmed = unspent.filter((c) => c.height > 0).reduce((a, c) => a + c.valueSats, 0);
+      const total = unspent.reduce((a, c) => a + c.valueSats, 0);
+      out.silentPayments = {
+        balance: { confirmedSats: confirmed, unconfirmedSats: total - confirmed, totalSats: total },
+        coins: open,
+        scannedHeight: sp.scannedHeight,
+        birthHeight: sp.birthHeight,
+      };
+    }
+    return out;
+  }
+
+  /**
+   * Looks for received silent payments with the injected scanner, from the block after the last one scanned (or the
+   * wallet's birth height). Every match is checked (its tweak must give its output key, its label must be ours)
+   * before it is kept. Returns the new coins.
+   */
+  async scanSilentPayments(): Promise<{ found: SilentPaymentCoin[]; scannedHeight: number }> {
+    const receiver = await this.silentPaymentReceiver();
+    const make = this.deps.silentPaymentScanner;
+    if (!make) throw new WalletError('silent_payments_unavailable', 'No silent payment scanner is set up on this phone.');
+    const sp = this.s.silentPayments!;
+    const res = await make(receiver.scanKeys()).scan(Math.max(sp.birthHeight, sp.scannedHeight + 1));
+    const have = new Set(sp.coins.map((c) => `${c.txid}:${c.vout}`));
+    const now = this.now();
+    const found: SilentPaymentCoin[] = [];
+    for (const m of res.matches) {
+      const id = `${m.txid}:${m.vout}`;
+      if (have.has(id) || !/^[0-9a-f]{64}$/.test(m.txid) || !Number.isSafeInteger(m.valueSats) || m.valueSats <= 0 || !receiver.verify(m)) continue;
+      have.add(id);
+      found.push({
+        txid: m.txid,
+        vout: m.vout,
+        valueSats: m.valueSats,
+        outputKey: m.outputKey,
+        tweak: m.tweak,
+        ...(m.label !== undefined ? { label: m.label } : {}),
+        height: Math.max(0, m.height),
+        status: 'unspent',
+        foundAt: now,
+      });
+    }
+    await this.update((s) => {
+      const r = s.silentPayments!;
+      r.coins = [...r.coins, ...found];
+      r.scannedHeight = Math.max(r.scannedHeight, res.tipHeight);
+    });
+    await this.syncSingleKey().catch(() => undefined);
+    return { found, scannedHeight: this.s.silentPayments!.scannedHeight };
+  }
+
+  /**
+   * Moves received silent payments into the vault, **one coin per transaction**, each to its own fresh vault
+   * receive address, so the moves do not link the payments to each other. Each is a taproot key-path spend with
+   * the coin's key (b_spend + tweak, behind key 2's biometrics: one prompt for the batch) at the guardian's fee
+   * estimate. A coin that would bring less than `minSats` (default `silentPaymentSweepMinSats`, 1,000) after the fee
+   * waits for a cheaper fee.
+   */
+  async sweepSilentPayments(opts: { feeRate?: number; minSats?: number } = {}): Promise<SilentSweepOutcome[]> {
+    this.requirePaired();
+    const src = this.deps.singleKeyChain;
+    if (!src) throw new WalletError('silent_payments_unavailable', 'Moving silent payments needs a chain source for the phone\'s own coins (the guardian does not relay them yet).');
+    if (!this.s.silentPayments) return [];
+    await this.syncSingleKey();
+    const coins = this.s.silentPayments.coins.filter((c) => c.status === 'unspent');
+    if (!coins.length) return [];
+    const estimated = this.fees?.estimates.some((e) => e.satPerVb !== null) ?? false;
+    if (opts.feeRate === undefined && !estimated && this.network.name === 'bitcoin') throw new WalletError('no_fee_estimate', 'There is no fee estimate right now; sync again or choose a fee rate.');
+    const feeRate = opts.feeRate ?? pickFeeRate(this.fees, 'normal');
+    const feeSats = Math.ceil(VB_SWEEP * feeRate);
+    const minSats = Math.max(DUST_SATS, opts.minSats ?? this.deps.silentPaymentSweepMinSats ?? DEFAULT_SWEEP_MIN_SATS);
+    // The chain must show each coin unspent with the value the scanner reported (the signature commits to it).
+    const live = new Map((await src.unspent(coins.map((c) => `5120${c.outputKey}`))).map((u) => [`${u.txid}:${u.vout}`, u]));
+    const out: SilentSweepOutcome[] = [];
+    const todo: SilentPaymentCoin[] = [];
+    for (const c of coins) {
+      const base = { txid: c.txid, vout: c.vout, valueSats: c.valueSats };
+      if (live.get(`${c.txid}:${c.vout}`)?.valueSats !== c.valueSats) out.push({ ...base, status: 'waiting', reason: 'missing' });
+      else if (c.valueSats - feeSats < minSats) out.push({ ...base, status: 'waiting', reason: 'dust' });
+      else if (todo.length >= MAX_SWEEPS_PER_CALL) out.push({ ...base, status: 'waiting', reason: 'batch_full' });
+      else todo.push(c);
+    }
+    if (!todo.length) return out;
+    const vault = this.multisig();
+    const first = this.s.chain?.nextReceiveIndex ?? 0;
+    const receiver = await this.silentPaymentReceiver();
+    // One prompt for the batch: the spend key derives from key 2 and is wiped after.
+    const signed = await this.withSpendKey(`Move ${todo.length} silent payment${todo.length === 1 ? '' : 's'} into your vault`, async (b) => {
+      const txs: { coin: SilentPaymentCoin; txHex: string; txid: string; amountSats: number; address: string }[] = [];
+      for (const [i, coin] of todo.entries()) {
+        if (!receiver.verify(coin)) throw new WalletError('internal', 'A stored silent payment does not belong to this wallet.');
+        const dest = vault.derive(0, first + i);
+        const d = spendingPrivateKey(b, hex.decode(coin.tweak));
+        try {
+          txs.push({ coin, address: dest.address, ...buildSweepTransaction({ coin, privateKey: d, destination: { script: dest.script }, feeSats }) });
+        } finally {
+          d.fill(0);
+        }
+      }
+      return txs;
+    });
+    for (const t of signed) {
+      const base = { txid: t.coin.txid, vout: t.coin.vout, valueSats: t.coin.valueSats };
+      try {
+        const id = await src.broadcast(t.txHex);
+        if (id !== t.txid) throw new Error(`the chain source reported txid ${id}, expected ${t.txid}`);
+      } catch (e) {
+        out.push({ ...base, status: 'failed', message: e instanceof Error ? e.message : String(e) });
+        continue;
+      }
+      await this.update((s) => {
+        for (const c of s.silentPayments!.coins)
+          if (c.txid === t.coin.txid && c.vout === t.coin.vout) {
+            c.status = 'sweeping';
+            c.sweepTxid = t.txid;
+          }
+      });
+      out.push({ ...base, status: 'swept', sweepTxid: t.txid, amountSats: t.amountSats, feeSats, address: t.address });
+    }
+    await this.sync().catch(() => undefined);
+    return out;
+  }
+
+  /**
+   * A payment to a silent payment address (from `quoteSend`). The helper coin is the only eligible input, so the
+   * phone alone derives the output: vault coins are chosen as for any payment (to a placeholder output of the same
+   * size), then the output is computed from all the inputs' outpoints and the helper's key. The helper pays the fee
+   * for its own input and change (back to a fresh helper address); the vault pays the amount and the rest.
+   */
+  private quoteSilentPayment(req: SendRequest): SendQuote {
+    this.requirePaired();
+    const c = this.s.chain;
+    if (!c) throw new WalletError('no_chain_data', 'Sync the wallet first.');
+    const wallet = this.multisig();
+    const recipient = decodeRecipient(req.address, this.network.name);
+    if (!Number.isSafeInteger(req.amountSats) || req.amountSats < MIN_PAYMENT_SATS)
+      throw new WalletError('amount_too_small', `The smallest payment is ${MIN_PAYMENT_SATS} sats.`);
+    const h = this.s.helper;
+    const fundIt = (why: string) =>
+      new WalletError(
+        'silent_payment_needs_helper',
+        `${why} Paying a silent payment address needs Trikey's helper coin: your vault's coins cannot make one on their own. ` +
+          `Send a small amount (10,000 to 50,000 sats) to your helper address${h ? ` ${this.helperAddress(0, h.nextReceiveIndex).address}` : ' (Settings, Silent payments)'}, wait for it to confirm, and try again.`,
+      );
+    if (!h) throw fundIt('There is no helper coin yet.');
+    const coin = [...h.utxos].sort((a, b) => Number(b.confirmations > 0) - Number(a.confirmations > 0) || b.valueSats - a.valueSats)[0];
+    if (!coin) throw fundIt('There is no helper coin.');
+    if (!this.helperKey) throw new WalletError('no_chain_data', 'Sync the wallet first.');
+    const estimated = this.fees?.estimates.some((e) => e.satPerVb !== null) ?? false;
+    if (req.feeRate === undefined && !estimated && this.network.name === 'bitcoin')
+      throw new WalletError('no_fee_estimate', 'The node has no fee estimate right now; sync again or choose a fee rate.');
+    const feeRate = req.feeRate ?? pickFeeRate(this.fees, req.speed);
+    const helperFee = Math.ceil((VB_P2WPKH_INPUT + VB_P2WPKH_OUTPUT) * feeRate);
+    const helperChange = coin.valueSats - helperFee;
+    if (helperChange < DUST_SATS) throw fundIt(`The helper coin (${coin.valueSats} sats) is too small for its share of the fee (${helperFee} sats).`);
+
+    const sel = selectCoins({ wallet, utxos: c.utxos, address: placeholderTaprootAddress(this.network), amountSats: req.amountSats, feeRate, changeIndex: c.nextChangeIndex });
+    const helperKey = helperChild(this.helperKey, coin.chain, coin.index);
+    const output = silentPaymentOutput({
+      address: recipient.address,
+      network: this.network.name,
+      inputs: [
+        ...sel.inputs.map((u) => ({ txid: u.txid, vout: u.vout, prevoutScript: wallet.derive(u.chain, u.index).script })),
+        { txid: coin.txid, vout: coin.vout, prevoutScript: p2wpkhScript(helperKey.publicKey!), privateKey: helperKey.privateKey! },
+      ],
+    });
+    const total = req.amountSats + sel.feeSats;
+    const limit = this.s.guardianStatus?.dailyLimit?.limitSats ?? this.s.rules?.policy.dailyLimitSats ?? 0;
+    const remaining = Math.max(0, limit - spentTodayEstimate(this.s, this.now()));
+    let plan: SigningPath;
+    if (req.signer === 'hardware' || !this.deps.silentPaymentsViaGuardian) plan = { signer: 'phone+hardware', reason: 'requested' };
+    else {
+      const blocker = guardianBlocker(this.s.guardianStatus);
+      if (blocker) plan = { signer: 'phone+hardware', reason: blocker };
+      else if (total > remaining) plan = { signer: 'phone+hardware', reason: 'over-limit' };
+      else plan = { signer: 'phone+guardian' };
+    }
+    return {
+      request: { ...req, address: recipient.address },
+      feeRate,
+      feeRateSource: req.feeRate !== undefined ? 'caller' : estimated ? 'estimate' : 'relay-minimum',
+      feeSats: sel.feeSats + helperFee,
+      totalSats: total,
+      changeSats: sel.changeSats,
+      changeIndex: c.nextChangeIndex,
+      inputs: sel.inputs,
+      plan,
+      remainingAfterSats: plan.signer === 'phone+guardian' ? remaining - total : remaining,
+      dailyLimitSats: limit,
+      silentPayment: {
+        address: recipient.address,
+        outputKey: hex.encode(output.outputKey),
+        outputAddress: taprootAddress(output.outputKey, this.network),
+        helper: { txid: coin.txid, vout: coin.vout, valueSats: coin.valueSats, chain: coin.chain, index: coin.index, feeSats: helperFee, changeSats: helperChange, changeIndex: h.nextChangeIndex },
+      },
+    };
+  }
+
+  /** The PSBT of a silent payment quote: vault inputs, the helper input, then the output, vault change and helper change. */
+  private async buildSilentPayment(quote: SendQuote) {
+    const sp = quote.silentPayment!;
+    const wallet = this.multisig();
+    const vaultPrevs = await this.prevTxs(quote.inputs.map((u) => u.txid), this.chain);
+    const helperPrev = await this.helperPrevTx(sp.helper.txid);
+    const helperKey = this.helperAddress(sp.helper.chain, sp.helper.index);
+    const fingerprint = parseInt(this.s.helper!.account.fingerprint, 16);
+    const tx = new btc.Transaction(TX_OPTS);
+    quote.inputs.forEach((u, i) => {
+      const d = wallet.derive(u.chain, u.index);
+      tx.addInput({
+        txid: u.txid,
+        index: u.vout,
+        sequence: SEQUENCE_RBF,
+        witnessUtxo: { script: d.script, amount: BigInt(u.valueSats) },
+        nonWitnessUtxo: hex.decode(vaultPrevs[i]!),
+        sighashType: btc.SigHash.ALL,
+        ...wallet.psbtFields(d),
+      });
+    });
+    tx.addInput({
+      txid: sp.helper.txid,
+      index: sp.helper.vout,
+      sequence: SEQUENCE_RBF,
+      witnessUtxo: { script: helperKey.script, amount: BigInt(sp.helper.valueSats) },
+      nonWitnessUtxo: hex.decode(helperPrev),
+      sighashType: btc.SigHash.ALL,
+      bip32Derivation: [[helperKey.pubkey, { fingerprint, path: helperPathNumbers(this.network, sp.helper.chain, sp.helper.index) }]],
+    });
+    tx.addOutput({ script: btc.OutScript.encode({ type: 'tr', pubkey: hex.decode(sp.outputKey) }), amount: BigInt(quote.request.amountSats) });
+    if (quote.changeSats > 0) {
+      const change = wallet.derive(1, quote.changeIndex);
+      tx.addOutput({ script: change.script, amount: BigInt(quote.changeSats), ...wallet.psbtFields(change) });
+    }
+    const helperChange = this.helperAddress(1, sp.helper.changeIndex);
+    tx.addOutput({
+      script: helperChange.script,
+      amount: BigInt(sp.helper.changeSats),
+      bip32Derivation: [[helperChange.pubkey, { fingerprint, path: helperPathNumbers(this.network, 1, sp.helper.changeIndex) }]],
+    });
+    const psbt = tx.toPSBT();
+
+    // Self-check before key 2 signs: the vault inputs are ours with their real previous outputs, the helper input is
+    // the quoted coin, the output is re-derived from the PSBT's own inputs, and the amounts are what was quoted.
+    const helperOutpoint = `${sp.helper.txid}:${sp.helper.vout}`;
+    const a = selfCheck(() => analyzeMixedPsbt(psbt, wallet, { allowForeign: (f) => f.outpoint === helperOutpoint, requireNonWitnessUtxo: true }));
+    if (!this.helperKey) throw new WalletError('no_chain_data', 'Sync the wallet first.');
+    const again = silentPaymentOutput({
+      address: sp.address,
+      network: this.network.name,
+      inputs: senderInputsOf(psbt, { outpoint: helperOutpoint, privateKey: helperChild(this.helperKey, sp.helper.chain, sp.helper.index).privateKey! }),
+    });
+    const outs = a.outputs;
+    if (
+      hex.encode(again.outputKey) !== sp.outputKey ||
+      a.vaultInputs.length !== quote.inputs.length ||
+      a.foreignInputs.length !== 1 ||
+      a.fee !== BigInt(quote.feeSats) ||
+      a.vaultOutflow !== BigInt(quote.totalSats) ||
+      outs[0]!.amount !== BigInt(quote.request.amountSats) ||
+      a.vaultOut !== BigInt(quote.changeSats) ||
+      outs[outs.length - 1]!.amount !== BigInt(sp.helper.changeSats)
+    )
+      throw new WalletError('internal', 'The payment does not match its quote; quote it again.');
+    return { wallet, psbt, helperOutpoint, analysis: a };
+  }
+
+  /** The helper coin's previous transaction: from the phone's cache, the single-key chain source, or the guardian (`tx.get`). */
+  private async helperPrevTx(txid: string): Promise<string> {
+    const cached = await this.txs.get(txid);
+    if (cached) return cached;
+    const src = this.deps.singleKeyChain;
+    const txHex = src ? await src.getTransaction(txid) : await this.chain.getTransaction(txid);
+    if (txidOfRaw(txHex) !== txid) throw new WalletError('guardian_mismatch', `The chain source returned a transaction that is not ${txid}.`);
+    return txHex;
+  }
+
+  /**
+   * Signs and broadcasts a silent payment. Key 2 signs the vault inputs and the helper input (one biometric
+   * prompt); the helper input is finalized right away, so the hardware wallet sees it as an external input that is
+   * already signed. Then the guardian co-signs (only with `silentPaymentsViaGuardian`, within the limit) or the
+   * hardware wallet signs, which shows the output as a plain taproot address.
+   */
+  private async sendSilentPayment(quote: SendQuote, opts: { fallbackToHardware?: boolean }): Promise<SendResult> {
+    const sp = quote.silentPayment!;
+    const live = new Set(this.s.chain!.utxos.map((u) => `${u.txid}:${u.vout}`));
+    const helperLive = this.s.helper?.utxos.some((u) => u.txid === sp.helper.txid && u.vout === sp.helper.vout);
+    if (quote.inputs.some((u) => !live.has(`${u.txid}:${u.vout}`)) || !helperLive) throw new WalletError('quote_stale', "The wallet's coins changed since this quote; quote the payment again.");
+    const { wallet, psbt, helperOutpoint } = await this.buildSilentPayment(quote);
+    const allowHelper = (f: { outpoint: string }) => f.outpoint === helperOutpoint;
+    const signed = await this.withKey2('Approve the payment', async (m) => {
+      const out = await new SoftwareSigner('app', m).signPsbt(psbt, this.network);
+      return finalizeForeign(out, allowHelper, wallet);
+    });
+
+    let final: Uint8Array | undefined;
+    let signedBy: 'phone+guardian' | 'phone+hardware' = 'phone+hardware';
+    let hardwareReason: HardwareReason | undefined = quote.plan.signer === 'phone+hardware' ? quote.plan.reason : undefined;
+    let guardianRefusal: GuardianRefusal | undefined;
+    if (quote.plan.signer === 'phone+guardian') {
+      try {
+        const res = await (await this.client()).call('sign', { psbt: base64.encode(signed), ...(quote.request.memo ? { memo: quote.request.memo } : {}) });
+        final = checkMixedSignedBy(signed, base64.decode(res.psbt), wallet, allowHelper, ['app', 'cosigner'], 'guardian_mismatch', 'The guardian did not co-sign every vault input.');
+        signedBy = 'phone+guardian';
+        await this.update((s) => void s.spends.push({ txid: parsePsbt(signed).id, at: this.now(), outflowSats: quote.totalSats }));
+      } catch (e) {
+        const refusal = refusalFromError(e);
+        if (!refusal) throw e;
+        guardianRefusal = refusal;
+        await this.learnFromRefusal(refusal);
+        const reason = fallbackReason(refusal);
+        if (!reason || opts.fallbackToHardware === false || !this.deps.hardware) return { ok: false, refusal };
+        hardwareReason = reason;
+      }
+    }
+    if (!final) {
+      if (this.s.hardwareConfirm) throw new WalletError('hardware_unconfirmed', 'Confirm the new wallet on your hardware wallet first, then it can approve payments.');
+      this.emit({
+        type: 'hardware_prompt',
+        purpose: 'payment',
+        text: `Send ${quote.request.amountSats} sats to the silent payment address ${sp.address}, fee ${quote.feeSats} sats. Your hardware wallet shows it as ${sp.outputAddress}.`,
+      });
+      final = await this.withHardware(async (hw, rec) => {
+        let out: Uint8Array;
+        try {
+          out = base64.decode(await hw.signPsbt(base64.encode(signed), this.devicePolicy(rec)));
+        } catch (e) {
+          if (e instanceof WalletError) throw e;
+          throw new WalletError('hardware_invalid_response', `The hardware wallet did not sign: ${(e as Error).message}`, { cause: e });
+        }
+        return checkMixedSignedBy(signed, out, wallet, allowHelper, ['app', 'hardware'], 'hardware_invalid_response', 'The hardware wallet did not sign every vault input.');
+      });
+    }
+
+    const tx = parsePsbt(final);
+    for (let i = 0; i < tx.inputsLength; i++) if (!tx.getInput(i).finalScriptWitness) tx.finalizeIdx(i);
+    const txHex = hex.encode(tx.extract());
+    const txid = tx.id;
+    try {
+      await this.chain.broadcast(txHex);
+    } catch (e) {
+      const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
+      if (!refusal) throw e;
+      return { ok: false, refusal, signedTx: { txid, txHex } };
+    }
+    const label = quote.request.label?.trim().slice(0, 200);
+    await this.logSend({
+      txid,
+      at: this.now(),
+      recipient: sp.address,
+      amountSats: quote.request.amountSats,
+      feeSats: quote.feeSats,
+      ...(label ? { label } : {}),
+      signedBy: signedBy === 'phone+guardian' ? 'guardian' : 'hardware',
+      silentPayment: { outputKey: sp.outputKey, outputAddress: sp.outputAddress },
+    });
+    // The helper's change is its coin now (until the next sync confirms it).
+    const changeVout = tx.outputsLength - 1;
+    await this.update((s) => {
+      const h = s.helper!;
+      h.utxos = [
+        ...h.utxos.filter((u) => !(u.txid === sp.helper.txid && u.vout === sp.helper.vout)),
+        { txid, vout: changeVout, valueSats: sp.helper.changeSats, chain: 1, index: sp.helper.changeIndex, height: 0, confirmations: 0 },
+      ];
+      h.nextChangeIndex = Math.max(h.nextChangeIndex, sp.helper.changeIndex + 1);
+    });
+    await this.txs.put([{ txid, txHex }]).catch(() => undefined);
+    await this.sync().catch(() => undefined);
+    return {
+      ok: true,
+      txid,
+      txHex,
+      amountSats: quote.request.amountSats,
+      feeSats: quote.feeSats,
+      signedBy,
+      ...(hardwareReason ? { hardwareReason } : {}),
+      ...(guardianRefusal ? { guardianRefusal } : {}),
+    };
+  }
+
+  // ===========================================================================
   // Scanning
 
   /** What a camera or paste field read (`parseScannedCode`), checked against this wallet's network. */
@@ -2483,6 +3154,8 @@ export class TrikeyWallet {
         ...(s.recovery?.destination ? { recoveryDestination: { descriptor: s.recovery.destination.descriptor, walletId: s.recovery.destination.walletId } } : {}),
         ...(s.sendLog.length ? { sendLog: s.sendLog.slice(-MAX_SEND_LOG) } : {}),
         ...(s.retiredWallets.length ? { retiredWallets: s.retiredWallets } : {}),
+        ...(s.helper ? { helper: { nextReceiveIndex: s.helper.nextReceiveIndex, nextChangeIndex: s.helper.nextChangeIndex } } : {}),
+        ...(s.silentPayments ? { silentPayments: { birthHeight: s.silentPayments.birthHeight, labels: s.silentPayments.labels } } : {}),
       };
       return sealBackup(payload, slots, { now: this.now() });
     });
@@ -2629,6 +3302,8 @@ export class TrikeyWallet {
       s.sendLog = p.sendLog ?? [];
       s.retiredWallets = p.retiredWallets ?? [];
     });
+    // The helper and the silent payment keys derive from the mnemonic in hand: no extra prompt.
+    if (p.helper || p.silentPayments) await this.setupSingleKey(p.mnemonic, { helper: p.helper, silentPayments: p.silentPayments });
     if (p.wallet && recovering) {
       // Recovery access may have expired: following the recovery is best effort (renewRecoveryAccess() restores it).
       await this.start().catch(() => undefined);
@@ -2668,6 +3343,53 @@ function checkSignedBy(
     const merged = combinePsbts([ours, returned]);
     const a = analyzePsbt(merged, wallet.accountPubkeys(), wallet.network);
     if (a.txid !== parsePsbt(ours).id || a.inputs.some((i) => roles.some((r) => !i.signedBy.includes(r)))) throw new Error(message);
+    return merged;
+  } catch (e) {
+    throw new WalletError(code, message, { cause: e });
+  }
+}
+
+/**
+ * Checks and finalizes the foreign inputs `allow` accepts (the helper coin) after key 2 signed them: one valid
+ * SIGHASH_ALL P2WPKH signature by the input's own key. Finalized, they reach the hardware wallet as external inputs
+ * that are already signed (what Trezor's external inputs and other careful devices expect).
+ */
+function finalizeForeign(psbt: Uint8Array, allow: (f: { outpoint: string }) => boolean, wallet: MultisigWallet): Uint8Array {
+  const a = selfCheck(() => analyzeMixedPsbt(psbt, wallet, { allowForeign: allow }));
+  const tx = parsePsbt(psbt);
+  for (const f of a.foreignInputs) {
+    const inp = tx.getInput(f.index);
+    const sigs = inp.partialSig ?? [];
+    const [pub, sig] = sigs[0] ?? [];
+    if (sigs.length !== 1 || !pub || !sig) throw new WalletError('internal', `Key 2 did not sign the helper input ${f.outpoint}.`);
+    if (hex.encode(btc.p2wpkh(pub).script) !== hex.encode(f.script)) throw new WalletError('internal', 'The helper input was signed by another key.');
+    const msg = tx.preimageWitnessV0(f.index, btc.OutScript.encode({ type: 'pkh', hash: btc.p2wpkh(pub).hash }), btc.SigHash.ALL, f.amount);
+    let ok = sig[sig.length - 1] === btc.SigHash.ALL;
+    try {
+      ok &&= secp256k1.verify(sig.slice(0, -1), msg, pub, { prehash: false, format: 'der', lowS: true });
+    } catch {
+      ok = false;
+    }
+    if (!ok) throw new WalletError('internal', 'The helper input signature does not verify.');
+    tx.finalizeIdx(f.index);
+  }
+  return tx.toPSBT();
+}
+
+/** `checkSignedBy` for a PSBT with a finalized helper input: the vault inputs must carry every role's signature. */
+function checkMixedSignedBy(
+  ours: Uint8Array,
+  returned: Uint8Array,
+  wallet: MultisigWallet,
+  allow: (f: { outpoint: string }) => boolean,
+  roles: ('app' | 'hardware' | 'cosigner')[],
+  code: 'guardian_mismatch' | 'hardware_invalid_response',
+  message: string,
+): Uint8Array {
+  try {
+    const merged = combinePsbts([ours, returned]);
+    const a = analyzeMixedPsbt(merged, wallet, { allowForeign: (f) => allow(f) && f.finalized });
+    if (a.txid !== parsePsbt(ours).id || a.vaultInputs.some((i) => roles.some((r) => !i.signedBy.includes(r)))) throw new Error(message);
     return merged;
   } catch (e) {
     throw new WalletError(code, message, { cause: e });

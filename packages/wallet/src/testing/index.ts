@@ -6,7 +6,9 @@
  *   backed by a BIP 39 seed in memory (PSBT signing with core's
  *   `SoftwareSigner`, BIP 137 message signing). It behaves like a careful
  *   device: it refuses to sign for a wallet that was not registered on it, or
- *   PSBT inputs outside that wallet, and derives addresses itself.
+ *   PSBT inputs outside that wallet unless they are already finalized (external
+ *   inputs, like Trezor's: the helper coin of a silent payment), and derives
+ *   addresses itself.
  * - `MemorySecureKeyStore`, `MemoryKeyValueStore`, `MemoryCloudBackupStore`,
  *   `MemoryPasskeyPrf`.
  *
@@ -18,7 +20,8 @@ import { base64, hex } from '@scure/base';
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, concatBytes, randomBytes, utf8ToBytes } from '@noble/hashes/utils.js';
-import { MultisigWallet, ROLES, SoftwareSigner, analyzePsbt, getNetwork, parseSortedMultiDescriptor, type Network, type NetworkName } from '@trikey/core';
+import { MultisigWallet, ROLES, SoftwareSigner, getNetwork, parseSortedMultiDescriptor, type Network, type NetworkName } from '@trikey/core';
+import { analyzeMixedPsbt } from '../silent.js';
 import { signMessage } from '../bip137.js';
 import { isValidMnemonic } from '../keys.js';
 import type {
@@ -45,6 +48,8 @@ export interface SoftwareHardwareOptions {
   model?: string;
   /** Demand `registerWallet` before signing or showing addresses (default: true for ledger, bitbox02, jade, coldcard). */
   requireRegistration?: boolean;
+  /** Sign PSBTs that also spend finalized inputs of another wallet (external inputs). Default true. */
+  allowExternalInputs?: boolean;
 }
 
 /** One call the simulated device received (for test assertions). */
@@ -52,7 +57,7 @@ export type DeviceCall =
   | { op: 'getXpub'; path: string }
   | { op: 'registerWallet'; name: string; descriptor: string }
   | { op: 'displayAddress'; chain: 0 | 1; index: number; address: string }
-  | { op: 'signPsbt'; inputs: number }
+  | { op: 'signPsbt'; inputs: number; externalInputs: number }
   | { op: 'signMessage'; path: string; message: string }
   | { op: 'close' };
 
@@ -70,6 +75,7 @@ export class SoftwareHardwareSigner implements HardwareSigner {
   private readonly master: HDKey;
   private readonly mnemonic: string;
   private readonly requireRegistration: boolean;
+  private readonly allowExternalInputs: boolean;
   private readonly hmacKey: Uint8Array;
   /** descriptor -> hmac */
   private readonly registered = new Map<string, string>();
@@ -81,6 +87,7 @@ export class SoftwareHardwareSigner implements HardwareSigner {
     this.master = HDKey.fromMasterSeed(mnemonicToSeedSync(opts.mnemonic), this.network.bip32);
     const kind = opts.kind ?? 'ledger';
     this.requireRegistration = opts.requireRegistration ?? REGISTERING_KINDS.includes(kind);
+    this.allowExternalInputs = opts.allowExternalInputs ?? true;
     this.hmacKey = sha256(concatBytes(utf8ToBytes('trikey-sim-device'), this.master.privateKey!));
     this.info = { kind, model: opts.model ?? 'Simulated device', fingerprint: this.master.fingerprint.toString(16).padStart(8, '0') };
   }
@@ -132,9 +139,10 @@ export class SoftwareHardwareSigner implements HardwareSigner {
     const wallet = this.walletOf(policy);
     this.checkRegistered(policy);
     const psbt = base64.decode(psbtBase64);
-    // Like a real device: every input must belong to the registered wallet.
-    const a = analyzePsbt(psbt, wallet.accountPubkeys(), this.network);
-    this.calls.push({ op: 'signPsbt', inputs: a.inputs.length });
+    // Like a real device: every input must belong to the registered wallet, or be another wallet's input that is
+    // already finalized (an external input: it signs nothing there and checks the rest of the transaction).
+    const a = analyzeMixedPsbt(psbt, wallet, { allowForeign: (f) => this.allowExternalInputs && f.finalized });
+    this.calls.push({ op: 'signPsbt', inputs: a.vaultInputs.length, externalInputs: a.foreignInputs.length });
     const signed = await new SoftwareSigner('hardware', this.mnemonic, 'simulated device').signPsbt(psbt, this.network);
     return base64.encode(signed);
   }
