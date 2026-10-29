@@ -1,12 +1,16 @@
 # trikey.app
 
 The project website and the domain verification files the mobile app needs.
-Plain HTML and CSS: no build step, no framework, no JavaScript, and no requests
-to other sites (a strict `Content-Security-Policy` meta tag enforces this).
+Plain HTML and CSS with one small script of our own (`js/story.js`): no build step,
+no framework, no tracking and no requests to other sites (a strict
+`Content-Security-Policy` meta tag enforces this). The script turns the film
+scenes into pinned scroll scenes; without it, or with reduced motion, the page is
+a plain stack of cards and reads the same.
 
 | Path | What it is |
 |---|---|
 | `index.html`, `style.css` | The landing page |
+| `js/story.js` | Scroll scenes: sticky stages, shot timing, video scrubbing. Progressive enhancement only |
 | `404.html` | Not-found page (Vercel serves it automatically) |
 | `img/` | Phone screenshots, rendered from `design/screens` (light and dark WebP) |
 | `media/` | Photos (WebP) and three short muted video loops (H.264 MP4, under 1 MB each) taken from the launch film footage, plus one generated still of the three keys. Loops are hidden for people who prefer reduced motion; the poster image stays. |

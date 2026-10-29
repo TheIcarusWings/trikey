@@ -12,6 +12,7 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preload" href="fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="style.css">
+<script src="js/story.js"></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -37,7 +38,7 @@
     <div class="wrap">
       <div class="hero-copy">
         <p class="status"><span class="status-dot" aria-hidden="true"></span>Coming soon · pre-alpha, not audited</p>
-        <h1 id="hero-h">Your keys. Your server. Your bitcoin.</h1>
+        <h1 id="hero-h"><span>Your keys.</span> <span>Your server.</span> <span>Your bitcoin.</span></h1>
         <p class="lead">Trikey is a 2-of-3 bitcoin wallet that feels like Bitkey, with no company holding a key. Your phone, your hardware wallet and your own home server: any two move your money.</p>
         <div class="actions">
           <a class="btn" href="https://github.com/TheIcarusWings/trikey">Follow on GitHub</a>
@@ -50,127 +51,182 @@
     </div>
   </section>
 
-  <!-- I. The old choice -->
-  <section id="choice" class="act" aria-labelledby="choice-h">
-    <div class="wrap">
-      <div class="frame frame-wide frame-dark">
-        <img class="media" src="media/loop-tower.webp" width="1280" height="720" alt="">
-        <video class="media" autoplay muted loop playsinline preload="metadata" poster="media/loop-tower.webp" aria-hidden="true"><source src="media/loop-tower.mp4" type="video/mp4"></video>
-        <div class="overlay">
-          <h2 id="choice-h" class="beat beat-lead">For years, holding bitcoin meant a choice.</h2>
+  <!-- I. The old choice. Pinned scenes when scripts and motion are on;
+       stacked cards otherwise. -->
+  <section id="choice" class="pin" data-pin="4.5" aria-labelledby="choice-h">
+    <div class="pin-stage">
+      <div class="shot shot-wide" data-from="0" data-to="0.3">
+        <div class="frame frame-dark">
+          <img class="media" src="media/scrub-tower.webp" width="1280" height="720" alt="A tall glass office tower at night, every window lit.">
+          <video class="media" data-scrub muted playsinline preload="metadata" poster="media/scrub-tower.webp" aria-hidden="true"><source src="media/scrub-tower.mp4" type="video/mp4"></video>
+          <div class="overlay overlay-center"><h2 id="choice-h" class="beat beat-hero">For years, holding bitcoin meant a choice.</h2></div>
         </div>
       </div>
-      <div class="pair">
-        <figure class="frame frame-card frame-dark">
+      <div class="shot" data-from="0.3" data-to="0.55">
+        <div class="frame frame-dark">
           <img class="media" src="media/lobby.webp" width="1600" height="900" loading="lazy" alt="An empty corporate lobby at night, seen through glass.">
-          <figcaption class="overlay"><p class="beat">Hand your keys to a company…</p></figcaption>
-        </figure>
-        <figure class="frame frame-card frame-dark">
-          <img class="media" src="media/desk.webp" width="1600" height="900" loading="lazy" alt="A single handwritten backup sheet under a desk lamp in a dark room.">
-          <figcaption class="overlay"><p class="beat">…or carry the whole weight alone.</p></figcaption>
-        </figure>
+          <div class="overlay"><p class="beat beat-hero">Hand your keys to a company…</p></div>
+        </div>
       </div>
-      <p class="beat beat-lead beat-quiet center">One key. One mistake. Gone.</p>
+      <div class="shot" data-from="0.55" data-to="0.8">
+        <div class="frame frame-dark">
+          <img class="media" src="media/desk.webp" width="1600" height="900" loading="lazy" alt="A single handwritten backup sheet under a desk lamp in a dark room.">
+          <div class="overlay"><p class="beat beat-hero">…or carry the whole weight alone.</p></div>
+        </div>
+      </div>
+      <div class="shot shot-text" data-from="0.8" data-to="1">
+        <div class="frame frame-dark frame-black">
+          <div class="overlay overlay-center"><p class="beat beat-hero beat-quiet">One key. One mistake. Gone.</p></div>
+        </div>
+      </div>
     </div>
   </section>
 
   <!-- II. The idea -->
-  <section id="idea" class="act" aria-labelledby="idea-h">
-    <div class="wrap">
-      <div class="section-head center">
-        <p class="eyebrow">A third way</p>
-        <h2 id="idea-h" class="beat beat-lead">What if you held three keys?</h2>
+  <section id="idea" class="pin" data-pin="6" aria-labelledby="idea-h">
+    <div class="pin-stage">
+      <div class="shot shot-text" data-from="0" data-to="0.2">
+        <div class="frame frame-dark frame-black">
+          <div class="overlay overlay-center">
+            <svg class="dots" viewBox="0 0 88 80" aria-hidden="true" focusable="false"><circle cx="16" cy="62" r="9"/><circle cx="72" cy="62" r="9"/><circle cx="44" cy="14" r="9"/></svg>
+            <h2 id="idea-h" class="beat beat-hero">What if you held three keys?</h2>
+          </div>
+        </div>
       </div>
-      <ol class="keys">
-        <li class="key">
-          <div class="frame frame-key">
-            <img class="media" src="media/bedside.webp" width="1600" height="900" loading="lazy" alt="A hand reaches for a phone on a bedside table in morning light.">
+      <div class="shot" data-from="0.2" data-to="0.4">
+        <div class="frame frame-dark">
+          <img class="media" src="media/bedside.webp" width="1600" height="900" loading="lazy" alt="A hand reaches for a phone on a bedside table in morning light.">
+          <div class="overlay"><p class="eyebrow">Key 2 · your phone</p><p class="beat beat-hero">One in your pocket.</p></div>
+        </div>
+      </div>
+      <div class="shot" data-from="0.4" data-to="0.6">
+        <div class="frame frame-dark">
+          <img class="media" src="media/drawer.webp" width="1600" height="900" loading="lazy" alt="An open wooden drawer with a small black hardware wallet resting on folded linen.">
+          <div class="overlay"><p class="eyebrow">Key 1 · any hardware wallet</p><p class="beat beat-hero">One in a drawer.</p></div>
+        </div>
+      </div>
+      <div class="shot" data-from="0.6" data-to="0.8">
+        <div class="frame frame-dark">
+          <img class="media" src="media/loop-shelf.webp" width="1280" height="720" loading="lazy" alt="A small grey box with a soft white light on a home bookshelf, between books and plants.">
+          <video class="media" autoplay muted loop playsinline preload="none" poster="media/loop-shelf.webp" aria-hidden="true"><source src="media/loop-shelf.mp4" type="video/mp4"></video>
+          <div class="overlay"><p class="eyebrow">Key 3 · Trikey Guardian</p><p class="beat beat-hero">One on a shelf at home.</p></div>
+        </div>
+      </div>
+      <div class="shot shot-text" data-from="0.8" data-to="1">
+        <div class="frame frame-dark frame-black">
+          <div class="overlay overlay-center">
+            <svg class="logo-form" viewBox="0 0 88 80" aria-hidden="true" focusable="false"><path d="M44 14 L16 62 L72 62 Z" pathLength="1"/><circle cx="16" cy="62" r="12"/><circle cx="72" cy="62" r="12"/><circle cx="44" cy="14" r="12"/><circle class="top" cx="44" cy="14" r="12"/></svg>
+            <p class="beat beat-hero">Any two move your money.</p>
           </div>
-          <p class="key-where">One in your pocket.</p>
-          <h3><span class="mono">Key 2</span> Your phone</h3>
-          <p>Everyday payments with Face ID. The key sits behind your phone's biometrics, with an encrypted backup in your own cloud that a passkey unlocks.</p>
-        </li>
-        <li class="key">
-          <div class="frame frame-key">
-            <img class="media" src="media/drawer.webp" width="1600" height="900" loading="lazy" alt="An open wooden drawer with a small black hardware wallet resting on folded linen.">
-          </div>
-          <p class="key-where">One in a drawer.</p>
-          <h3><span class="mono">Key 1</span> Any hardware wallet</h3>
-          <p>Ledger, Trezor, Coldcard, Jade, Keystone and other multisig devices. For big payments, changing your rules, and recovery.</p>
-        </li>
-        <li class="key">
-          <div class="frame frame-key">
-            <img class="media" src="media/loop-shelf.webp" width="1280" height="720" loading="lazy" alt="A small grey box with a soft white light on a home bookshelf, between books and plants.">
-            <video class="media" autoplay muted loop playsinline preload="none" poster="media/loop-shelf.webp" aria-hidden="true"><source src="media/loop-shelf.mp4" type="video/mp4"></video>
-          </div>
-          <p class="key-where">One on a shelf at home.</p>
-          <h3><span class="mono">Key 3</span> Trikey Guardian</h3>
-          <p>An app on your own Umbrel or Start9. It co-signs phone payments under a daily limit and runs a 7, 14 or 30-day Delay &amp; Notify recovery.</p>
-        </li>
-      </ol>
-
-      <div class="any-two">
-        <svg class="logo logo-big" width="88" height="80" viewBox="0 0 88 80" aria-hidden="true" focusable="false"><path class="line" d="M44 14 L16 62 L72 62 Z" stroke-width="6" stroke-linejoin="round"/><circle class="top" cx="44" cy="14" r="12"/><circle class="ink" cx="16" cy="62" r="12"/><circle class="ink" cx="72" cy="62" r="12"/></svg>
-        <p class="beat beat-lead">Any two move your money.</p>
-        <p class="aside">Under the hood it's a plain <code>wsh(sortedmulti(2,…))</code> descriptor, so any multisig wallet can recover your funds without Trikey.</p>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- III. How it feels -->
-  <section class="act act-surface" aria-labelledby="feel-h">
+  <section class="act" aria-labelledby="keys-h">
     <div class="wrap">
       <div class="section-head">
-        <p class="eyebrow">How it feels</p>
-        <h2 id="feel-h">Quick when it's small. Careful when it's big.</h2>
+        <p class="eyebrow">The three keys</p>
+        <h2 id="keys-h">Each key has one job.</h2>
       </div>
-      <div class="pair">
-        <figure class="scene">
-          <div class="frame frame-scene">
-            <img class="media" src="media/cafe.webp" width="1600" height="900" loading="lazy" alt="">
+      <ol class="keys">
+        <li class="tile">
+          <p class="eyebrow">Key 2</p>
+          <h3>Your phone</h3>
+          <p>Everyday payments with Face ID. The key sits behind your phone's biometrics, with an encrypted backup in your own cloud that a passkey unlocks.</p>
+        </li>
+        <li class="tile">
+          <p class="eyebrow">Key 1</p>
+          <h3>Any hardware wallet</h3>
+          <p>Ledger, Trezor, Coldcard, Jade, Keystone and other multisig devices. For big payments, changing your rules, and recovery.</p>
+        </li>
+        <li class="tile">
+          <p class="eyebrow">Key 3</p>
+          <h3>Trikey Guardian</h3>
+          <p>An app on your own Umbrel or Start9. It co-signs phone payments under a daily limit and runs a 7, 14 or 30-day Delay &amp; Notify recovery.</p>
+        </li>
+      </ol>
+      <p class="aside footnote">Under the hood it's a plain <code>wsh(sortedmulti(2,…))</code> descriptor, so any multisig wallet can recover your funds without Trikey.</p>
+    </div>
+  </section>
+
+  <!-- III. How it feels -->
+  <section id="feel" class="pin" data-pin="3.5" aria-labelledby="feel-h">
+    <h2 id="feel-h" class="visually-hidden">How it feels</h2>
+    <div class="pin-stage">
+      <div class="shot shot-phone" data-from="0" data-to="0.4">
+        <div class="frame frame-dark">
+          <img class="media" src="media/cafe.webp" width="1600" height="900" loading="lazy" alt="">
+          <div class="overlay overlay-split">
+            <div class="say">
+              <p class="eyebrow">How it feels</p>
+              <p class="beat beat-hero">Everyday payments: just your phone and Face ID.</p>
+              <p class="say-note">Your guardian at home co-signs anything under the daily limit you set.</p>
+            </div>
             <picture>
               <source srcset="img/phone-send-review-dark.webp" media="(prefers-color-scheme: dark)">
               <img class="phone" src="img/phone-send-review.webp" width="520" height="1125" loading="lazy" alt="The Trikey Review screen for a 50,000 sat payment, with a note: signed by this phone and your guardian, within today's limit, so no hardware wallet needed. A Send with Face ID button.">
             </picture>
           </div>
-          <figcaption>
-            <p class="scene-title">Everyday payments: just your phone and Face ID.</p>
-            <p>Your guardian at home co-signs anything under the daily limit you set.</p>
-          </figcaption>
-        </figure>
-        <figure class="scene">
-          <div class="frame frame-scene">
-            <img class="media" src="media/hwpress.webp" width="1600" height="900" loading="lazy" alt="">
+        </div>
+      </div>
+      <div class="shot shot-phone" data-from="0.4" data-to="0.75">
+        <div class="frame frame-dark">
+          <img class="media" src="media/hwpress.webp" width="1600" height="900" loading="lazy" alt="">
+          <div class="overlay overlay-split">
+            <div class="say">
+              <p class="eyebrow">How it feels</p>
+              <p class="beat beat-hero">Big ones: confirm on your hardware wallet.</p>
+              <p class="say-note">Over the limit, the hardware wallet signs instead of the guardian. Raising the limit needs it too.</p>
+            </div>
             <picture>
               <source srcset="img/phone-send-hardware-dark.webp" media="(prefers-color-scheme: dark)">
               <img class="phone" src="img/phone-send-hardware.webp" width="520" height="1125" loading="lazy" alt="The Trikey Approve on your Ledger screen: 1,500,000 sats is over today's limit of 180,000 left, so the hardware wallet signs this one instead of the guardian. Check the address on the device matches.">
             </picture>
           </div>
-          <figcaption>
-            <p class="scene-title">Big ones: confirm on your hardware wallet.</p>
-            <p>Over the limit, the hardware wallet signs instead of the guardian. Raising the limit needs it too.</p>
-          </figcaption>
-        </figure>
+        </div>
       </div>
-      <div class="coda">
-        <p class="beat beat-lead">Lose one? The other two have you.</p>
-        <p class="aside">Anything suspicious, you and the people you trust hear about it. Every day.</p>
+      <div class="shot shot-text" data-from="0.75" data-to="1">
+        <div class="frame frame-dark frame-black">
+          <div class="overlay overlay-center">
+            <p class="beat beat-hero">Lose one? The other two have you.</p>
+            <p class="say-note">Anything suspicious, you and the people you trust hear about it. Every day.</p>
+          </div>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- If a key goes missing -->
-  <section id="missing" class="act" aria-labelledby="missing-h">
+  <!-- If a key goes missing: pick one. Works with CSS alone; without :has()
+       every part is shown. -->
+  <section id="missing" class="act lose" aria-labelledby="missing-h">
     <div class="wrap">
-      <div class="section-head">
-        <p class="eyebrow">A short series</p>
-        <h2 id="missing-h">If a key goes missing</h2>
+      <div class="section-head center">
+        <p class="eyebrow">If a key goes missing</p>
+        <h2 id="missing-h">Pick a key to lose.</h2>
       </div>
 
-      <article class="episode" aria-labelledby="ep1-h">
+      <div class="lose-picker">
+        <svg class="tri" viewBox="0 0 320 250" aria-hidden="true" focusable="false">
+          <path class="e e-left" d="M160 40 L50 210"/>
+          <path class="e e-right" d="M160 40 L270 210"/>
+          <path class="e e-bottom" d="M50 210 L270 210"/>
+          <circle class="n n-guardian" cx="160" cy="40" r="22"/>
+          <circle class="n n-phone" cx="50" cy="210" r="22"/>
+          <circle class="n n-hardware" cx="270" cy="210" r="22"/>
+        </svg>
+        <fieldset class="lose-choices">
+          <legend class="visually-hidden">Which key goes missing?</legend>
+          <label><input type="radio" name="lose" id="lose-phone" checked> Your phone</label>
+          <label><input type="radio" name="lose" id="lose-hardware"> Your hardware wallet</label>
+          <label><input type="radio" name="lose" id="lose-guardian"> Your home server</label>
+        </fieldset>
+      </div>
+
+      <article class="episode ep-phone" aria-labelledby="ep1-h">
         <div class="frame frame-banner frame-dark">
           <img class="media" src="media/train.webp" width="1600" height="900" loading="lazy" alt="A phone left behind on an empty train seat at night.">
-          <div class="overlay"><p class="eyebrow">Part 1 · Key 2</p><h3 id="ep1-h">Your phone</h3></div>
+          <div class="overlay"><p class="eyebrow">Part 1 · Key 2</p><h3 id="ep1-h">Your phone</h3><p class="ep-cover">Your hardware wallet and guardian have you.</p></div>
         </div>
         <div class="episode-body">
           <div class="episode-copy">
@@ -191,10 +247,10 @@
         </div>
       </article>
 
-      <article class="episode" aria-labelledby="ep2-h">
+      <article class="episode ep-hardware" aria-labelledby="ep2-h">
         <div class="frame frame-banner frame-dark">
           <img class="media" src="media/emptydrawer.webp" width="1600" height="900" loading="lazy" alt="A hand searches an open drawer and finds only folded linen.">
-          <div class="overlay"><p class="eyebrow">Part 2 · Key 1</p><h3 id="ep2-h">Your hardware wallet</h3></div>
+          <div class="overlay"><p class="eyebrow">Part 2 · Key 1</p><h3 id="ep2-h">Your hardware wallet</h3><p class="ep-cover">Your phone and guardian have you.</p></div>
         </div>
         <div class="episode-body">
           <div class="episode-copy">
@@ -215,10 +271,10 @@
         </div>
       </article>
 
-      <article class="episode" aria-labelledby="ep3-h">
+      <article class="episode ep-guardian" aria-labelledby="ep3-h">
         <div class="frame frame-banner frame-dark">
           <img class="media" src="media/unplug.webp" width="1600" height="900" loading="lazy" alt="A hand pulls the power cable from a small grey box on a bookshelf.">
-          <div class="overlay"><p class="eyebrow">Part 3 · Key 3</p><h3 id="ep3-h">Your home server</h3></div>
+          <div class="overlay"><p class="eyebrow">Part 3 · Key 3</p><h3 id="ep3-h">Your home server</h3><p class="ep-cover">Your phone and hardware wallet have you.</p></div>
         </div>
         <div class="episode-body">
           <div class="episode-copy">
@@ -228,7 +284,7 @@
             </div>
             <div class="case">
               <p class="case-q">Stolen?</p>
-              <p>It locks itself after any restart: key 3 stays encrypted until you unlock it. Unplugged, it's useless to them. And it never held your money. Just one key of three.</p>
+              <p>It locks itself after any restart: key 3 stays encrypted until you unlock it. Unplugged, it's useless to them. Think it's been tampered with? Lock it from your phone. And it never held your money. Just one key of three.</p>
             </div>
           </div>
           <picture>
@@ -243,18 +299,25 @@
   </section>
 
   <!-- IV. What it stands for -->
-  <section class="act act-surface" aria-labelledby="stands-h">
-    <div class="wrap">
-      <h2 id="stands-h" class="visually-hidden">What it stands for</h2>
-      <div class="frame frame-tall frame-dark">
-        <img class="media" src="media/loop-bridge.webp" width="1280" height="720" loading="lazy" alt="">
-        <video class="media" autoplay muted loop playsinline preload="none" poster="media/loop-bridge.webp" aria-hidden="true"><source src="media/loop-bridge.mp4" type="video/mp4"></video>
-        <ul class="overlay creed">
-          <li class="beat">No company holds a key.</li>
-          <li class="beat">No server but yours.</li>
-          <li class="beat">No one to ask permission.</li>
-        </ul>
+  <section id="stands" class="pin" data-pin="3" aria-labelledby="stands-h">
+    <h2 id="stands-h" class="visually-hidden">What it stands for</h2>
+    <div class="pin-stage">
+      <div class="shot shot-creed" data-from="0" data-to="1">
+        <div class="frame frame-dark">
+          <img class="media" src="media/loop-bridge.webp" width="1280" height="720" loading="lazy" alt="">
+          <video class="media" autoplay muted loop playsinline preload="none" poster="media/loop-bridge.webp" aria-hidden="true"><source src="media/loop-bridge.mp4" type="video/mp4"></video>
+          <ul class="overlay creed">
+            <li class="beat beat-hero" data-from="0" data-to="1">No company holds a key.</li>
+            <li class="beat beat-hero" data-from="0.3" data-to="1">No server but yours.</li>
+            <li class="beat beat-hero" data-from="0.6" data-to="1">No one to ask permission.</li>
+          </ul>
+        </div>
       </div>
+    </div>
+  </section>
+
+  <section class="act act-surface" aria-label="Principles">
+    <div class="wrap">
       <dl class="bento">
         <div class="tile">
           <dt>Your own home server</dt>
@@ -266,7 +329,7 @@
         </div>
         <div class="tile">
           <dt>No home server?</dt>
-          <dd>Recovery Key mode keeps key 3 offline (a printed kit, an NFC card or a second hardware wallet) and gives the phone a small spending balance with timelocked refills.</dd>
+          <dd>Recovery Key mode keeps key 3 offline, on a printed Recovery Kit or a second hardware wallet, and gives the phone a small spending balance with timelocked refills.</dd>
         </div>
         <div class="tile">
           <dt>Open source</dt>
@@ -299,7 +362,7 @@
       <li><a href="https://github.com/TheIcarusWings/trikey/security/advisories/new">Report a vulnerability</a></li>
       <li><a href="./.well-known/security.txt">security.txt</a></li>
     </ul>
-    <p>Trikey is an independent project and isn't affiliated with Bitkey, Block or any hardware wallet maker. Photos and footage are generated; the people and devices in them are fictional. This site sets no cookies, runs no scripts and loads nothing from other sites. Type is Geist, under the SIL Open Font License.</p>
+    <p>Trikey is an independent project and isn't affiliated with Bitkey, Block or any hardware wallet maker. Photos and footage are generated; the people and devices in them are fictional. No cookies, no tracking, no third-party scripts: the one small script here is ours, and the page reads fine without it. Type is Geist, under the SIL Open Font License.</p>
   </footer>
 </div>
 </body>
