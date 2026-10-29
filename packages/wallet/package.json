@@ -1,0 +1,17 @@
+{
+  "name": "@trikey/wallet",
+  "version": "0.1.0",
+  "description": "The Trikey phone wallet: key 2, pairing, payments, rule changes, recovery and backup. Platform-agnostic; the app supplies storage and hardware adapters.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@trikey/core": "*"
+  }
+}
