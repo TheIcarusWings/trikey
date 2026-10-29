@@ -2,12 +2,14 @@
  * Completes a Delay & Notify recovery once its delay is over, and broadcasts
  * the sweep. Before asking the engine to co-sign (`completeRecovery`):
  *
- * 1. Time, twice. The engine checks its clock (the system clock) against
- *    `readyAt`. A clock pushed forward would shorten the delay (DESIGN.md,
- *    threat model), so the chain must agree too: the median time past of the
- *    latest block (from Electrs) must also be past `readyAt`. If the two
- *    differ by more than 2 hours we log a warning; the earlier of them is used
- *    either way, which is the conservative choice.
+ * 1. Time, three ways. `readyAt` counts from the later of the system clock and
+ *    the chain's median time past at the start (engine). At completion the
+ *    system clock AND the median time past of the latest block (from Electrs)
+ *    must both be past `readyAt`, and the chain must have grown by the delay's
+ *    blocks since the start (`PolicyEngine.heightNeeded`): a clock pushed
+ *    forward, or set back at the start, cannot shorten the delay (DESIGN.md,
+ *    threat model). If clock and chain differ by more than 2 hours we log a
+ *    warning. The engine checks all three again.
  * 2. Coverage. The sweep must spend every unspent output of the wallet's
  *    derived addresses (receive and change chains, gap limit 20, extended to
  *    the indexes the sweep itself uses), and nothing that is no longer
@@ -119,8 +121,11 @@ export class RecoveryRunner {
     if (g.locked) return this.block(rec, 'locked', 'The guardian is locked. Unlock it so it can co-sign the recovery.');
 
     let mtp: number;
+    let height: number;
     try {
-      mtp = (await g.chain.tip()).medianTimePast * 1000;
+      const tip = await g.chain.tip();
+      mtp = tip.medianTimePast * 1000;
+      height = tip.height;
     } catch (e) {
       return this.block(rec, 'chain_unavailable', `Waiting for chain data from Electrs (${errorText(e)}).`);
     }
@@ -140,6 +145,10 @@ export class RecoveryRunner {
         'chain_time',
         `The recovery delay ends ${formatWhen(rec.readyAt)}, but the chain's median time is ${formatWhen(mtp)}. Waiting for more blocks.`,
       );
+    // The delay must span its blocks too (the engine checks this again).
+    const needed = g.engine.heightNeeded(rec);
+    if (needed !== undefined && height < needed)
+      return this.block(rec, 'chain_time', `The recovery delay must also span ${needed - (rec.startHeight ?? 0)} blocks; the chain is at block ${height} of ${needed}. Waiting for more blocks.`);
 
     let coverage: CoverageResult;
     try {

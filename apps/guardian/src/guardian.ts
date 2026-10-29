@@ -217,7 +217,14 @@ export class Guardian {
     g.throttle = new UnlockThrottle(g.path('throttle'), g.clock, opts.throttle);
     await g.throttle.load();
     g.store = new ObservedStore(opts.store ?? new JsonFileStore(g.path('engine')));
-    g.engine = await PolicyEngine.open({ store: g.store, clock: g.clock });
+    // The engine checks its clock against the chain (recovery delay, daily limit window): Electrs' tip.
+    const chainTime = {
+      tip: async () => {
+        const t = await g.chain.tip();
+        return { height: t.height, medianTimePastMs: t.medianTimePast * 1000 };
+      },
+    };
+    g.engine = await PolicyEngine.open({ store: g.store, clock: g.clock, chain: chainTime });
     const net = g.config.network;
     if (g.keystore && g.keystore.public.network !== net)
       throw new ConfigError(`key 3 was created for ${g.keystore.public.network}, but BITCOIN_NETWORK is ${net}`);

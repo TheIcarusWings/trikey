@@ -6,6 +6,7 @@ import { RECEIVE, buildSweep } from '@trikey/core';
 import {
   DAY,
   JsonFileStore,
+  ClockChain,
   ManualClock,
   MemoryStore,
   PolicyEngine,
@@ -27,7 +28,7 @@ afterEach(async () => {
 });
 
 const reopen = (store: StateStore, clock: ManualClock, locked = false) =>
-  PolicyEngine.open({ store, clock, signer: locked ? undefined : new SoftwareCosignerSigner(COSIGNER_PRIV) });
+  PolicyEngine.open({ store, clock, signer: locked ? undefined : new SoftwareCosignerSigner(COSIGNER_PRIV), chain: new ClockChain(clock) });
 
 describe('JsonFileStore', () => {
   it('round-trips state with bigints and replaces the file atomically', async () => {

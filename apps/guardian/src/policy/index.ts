@@ -12,10 +12,12 @@ export {
   type CosignResult,
   type RotationResult,
   MAX_ACCESS_GRANTS,
+  MAX_CLOCK_AHEAD_OF_CHAIN_MS,
+  BLOCKS_PER_DAY,
   keySetOf,
 } from './engine.js';
 export * from './types.js';
-export { type Clock, systemClock, ManualClock, SECOND, HOUR, DAY } from './clock.js';
+export { type Clock, type ChainTime, type ChainTimeSource, systemClock, ManualClock, ClockChain, ManualChain, SECOND, HOUR, DAY } from './clock.js';
 export { type StateStore, MemoryStore, JsonFileStore, serializeState, deserializeState, migrateState } from './storage.js';
 export { type CosignerSigner, SoftwareCosignerSigner } from './signer.js';
 export {

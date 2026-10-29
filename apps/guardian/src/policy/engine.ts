@@ -37,7 +37,7 @@ import {
   pairingMessage,
   recoveryAccessMessage,
 } from './authorizer.js';
-import { Clock, DAY, HOUR, systemClock } from './clock.js';
+import { ChainTime, ChainTimeSource, Clock, DAY, HOUR, systemClock } from './clock.js';
 import { CHANGE_WINDOW, MAX_SELF_INDEX, NO_HIGH_WATER, addCosignerSignatures, inspectPsbt, maxHighWater } from './inspect.js';
 import { pruneSpends, splitOutflow, usageWith, windowUsage } from './limit.js';
 import { isNostrPubkey, normalizeRules, phoneMayApply } from './rules.js';
@@ -76,10 +76,30 @@ export const DEFAULT_MAX_ACTIVITY = 5000;
 export const MAX_SEQUENCE_STEP = 1000;
 /** At most this many phones hold recovery access at once (the newest win). */
 export const MAX_ACCESS_GRANTS = 8;
+/**
+ * How far the system clock may run ahead of the chain's median time past (which trails real time by
+ * about an hour) before the engine stops co-signing: a clock pushed forward would otherwise open a
+ * fresh 24 h limit window with every step. Also the most the limit's monotonic time can jump ahead.
+ */
+export const MAX_CLOCK_AHEAD_OF_CHAIN_MS = 3 * HOUR;
+/**
+ * Blocks a recovery's delay must also span, per day of delay: a clock AND a median time past that both
+ * claim the delay is over are not enough without the blocks to match. 144 on public networks (one per
+ * 10 minutes); on regtest, where blocks are mined on demand, one per day.
+ */
+export const BLOCKS_PER_DAY: Record<NetworkName, number> = { bitcoin: 144, testnet: 144, signet: 144, regtest: 1 };
 
 export interface PolicyEngineOptions {
   store: StateStore;
   clock?: Clock;
+  /**
+   * The chain's height and median time past (the service: Electrs). Without one (or while it fails)
+   * the engine refuses to start or complete a recovery, and to co-sign once its last observation of the
+   * chain is more than `MAX_CLOCK_AHEAD_OF_CHAIN_MS` behind the clock.
+   */
+  chain?: ChainTimeSource;
+  /** Override `BLOCKS_PER_DAY` (tests). */
+  blocksPerDay?: number;
   /** Key 3. Absent while the guardian is locked. */
   signer?: CosignerSigner;
   /** Hardware authorization mechanisms; defaults to BIP137 signmessage. */
@@ -252,6 +272,8 @@ export class PolicyEngine {
   private readonly clock: Clock;
   private readonly authorizers: Map<string, HardwareAuthorizer>;
   private readonly maxActivity: number;
+  private readonly chain?: ChainTimeSource;
+  private readonly blocksPerDayOverride?: number;
   private signer?: CosignerSigner;
 
   private constructor(
@@ -260,6 +282,8 @@ export class PolicyEngine {
     opts: PolicyEngineOptions,
   ) {
     this.clock = opts.clock ?? systemClock;
+    this.chain = opts.chain;
+    this.blocksPerDayOverride = opts.blocksPerDay;
     this.authorizers = new Map((opts.authorizers ?? [bip137Authorizer]).map((a) => [a.kind, a]));
     this.maxActivity = opts.maxActivity ?? DEFAULT_MAX_ACTIVITY;
     this.setSigner(opts.signer);
@@ -301,7 +325,7 @@ export class PolicyEngine {
     else if (w?.phoneSpending.state === 'paused_contested') phoneSpending = 'paused_contested';
     else if (w?.phoneSpending.state === 'retired') phoneSpending = 'retired';
     else phoneSpending = 'enabled';
-    const used = w ? windowUsage(w.spends, now) : 0n;
+    const used = w ? windowUsage(w.spends, Math.max(now, s.timeFloor ?? 0)) : 0n;
     const rules = w?.rules;
     return {
       registered: !!reg,
@@ -390,6 +414,48 @@ export class PolicyEngine {
       return true;
     }
     return false;
+  }
+
+  /** The chain's tip now, or undefined when it cannot be had. Asked before taking the lock: it is only a reference. */
+  private async chainTime(): Promise<ChainTime | undefined> {
+    if (!this.chain) return undefined;
+    try {
+      const t = await this.chain.tip();
+      return Number.isSafeInteger(t?.height) && t.height >= 0 && Number.isFinite(t.medianTimePastMs) ? { height: t.height, medianTimePastMs: t.medianTimePastMs } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Remembers the latest tip seen (never a lower one). */
+  private noteChain(draft: GuardianState, now: number, chain: ChainTime | undefined): void {
+    if (chain && (!draft.chainSeen || chain.height >= draft.chainSeen.height)) draft.chainSeen = { ...chain, at: now };
+  }
+
+  /**
+   * The time the daily limit counts with: the system clock, but never earlier than the last time used
+   * (monotonic), and refused while the clock is more than `MAX_CLOCK_AHEAD_OF_CHAIN_MS` ahead of the
+   * chain's median time past (the live one, else the last one seen): a clock pushed forward would open
+   * a fresh 24 h window with every step.
+   */
+  private limitTime(draft: GuardianState, now: number, chain: ChainTime | undefined): { ok: true; at: number } | { ok: false; refusal: Refusal } {
+    const seen = chain ?? draft.chainSeen;
+    if (!seen) return { ok: false, refusal: { reason: 'chain_unavailable', detail: 'no chain data to check the clock against yet' } };
+    if (now > seen.medianTimePastMs + MAX_CLOCK_AHEAD_OF_CHAIN_MS)
+      return { ok: false, refusal: { reason: 'clock_ahead_of_chain', systemTime: now, chainTime: seen.medianTimePastMs } };
+    return { ok: true, at: Math.max(draft.timeFloor ?? 0, now) };
+  }
+
+  /** Blocks per day of delay a recovery of a wallet on `network` must span. */
+  blocksPerDay(network: NetworkName): number {
+    return this.blocksPerDayOverride ?? BLOCKS_PER_DAY[network] ?? 144;
+  }
+
+  /** The chain height a recovery can complete at, if it recorded its start height. */
+  heightNeeded(rec: RecoveryRecord): number | undefined {
+    if (rec.startHeight === undefined) return undefined;
+    const reg = this.walletById(rec.walletId);
+    return rec.startHeight + rec.delayDays * this.blocksPerDay(reg?.network ?? 'bitcoin');
   }
 
   private log(draft: GuardianState, now: number, event: ActivityEvent): void {
@@ -700,7 +766,9 @@ export class PolicyEngine {
 
   /** Co-signs a phone-signed spend within the daily limit. */
   async cosign(psbt: Uint8Array): Promise<Result<CosignResult>> {
+    const chain = await this.chainTime();
     return this.mutate(async (draft, now) => {
+      this.noteChain(draft, now, chain);
       const refuse = (refusal: Refusal, txid?: string) => {
         this.log(draft, now, { type: 'cosign_refused', txid, refusal });
         return refused(refusal);
@@ -720,6 +788,10 @@ export class PolicyEngine {
           cause: ps.state === 'retired' ? 'wallet_retired' : 'contested_recovery',
           recoveryId: ps.recoveryId,
         });
+      // The limit's time: monotonic, and not trusted past the chain's time plus a few hours.
+      const time = this.limitTime(draft, now, chain);
+      if (!time.ok) return refuse(time.refusal);
+      const at = time.at;
 
       // The phone's helper coin may ride along in a silent payment (DESIGN.md, "Silent payments"): only
       // once the phone registered its helper account, only a script of that account, only in a PSBT
@@ -743,15 +815,16 @@ export class PolicyEngine {
       }
 
       const replay = w.spends.some((s) => s.txid === txid);
-      const used = windowUsage(w.spends, now);
+      const used = windowUsage(w.spends, at);
       const shares = splitOutflow(analysis.inputs, outflow);
-      const wouldUse = replay ? used : usageWith(w.spends, shares, now);
+      const wouldUse = replay ? used : usageWith(w.spends, shares, at);
       if (!replay && wouldUse > rules.dailyLimitSats)
         return refuse({ reason: 'over_daily_limit', limit: rules.dailyLimitSats, used, outflow, wouldUse }, txid);
 
       if (!this.signer) return refuse({ reason: 'guardian_locked' }, txid);
       const signed = await addCosignerSignatures(psbt, analysis, this.signer);
-      if (!replay) w.spends.push({ txid, at: now, outflow, shares });
+      if (!replay) w.spends.push({ txid, at, outflow, shares });
+      draft.timeFloor = at;
       // Co-signed change is "seen": the marks rise to it, so every later scan reaches it.
       w.highWater = maxHighWater(marks, checked.inspection.selfIndexes);
       const helperInput = analysis.helper?.outpoint;
@@ -875,7 +948,9 @@ export class PolicyEngine {
    * be the destination wallet's paired phone if the guardian adopts it).
    */
   async startRecovery(req: { psbt: Uint8Array; destinationDescriptor: string; initiator?: string }): Promise<Result<{ recovery: RecoveryView }>> {
+    const chain = await this.chainTime();
     return this.mutate((draft, now) => {
+      this.noteChain(draft, now, chain);
       const refuse = (refusal: Refusal) => {
         this.log(draft, now, { type: 'recovery_start_refused', refusal });
         return refused(refusal);
@@ -927,6 +1002,12 @@ export class PolicyEngine {
       if (stray >= 0) return refuse({ reason: 'sweep_not_to_destination', output: stray });
       if (analysis.fee > rules.sweepFeeCapSats) return refuse({ reason: 'sweep_fee_exceeds_cap', fee: analysis.fee, cap: rules.sweepFeeCapSats });
 
+      // The delay counts from the later of the clock and the chain's median time past, so a clock set
+      // back cannot shorten it; and it must span its blocks too. No chain data: no start (the system
+      // clock alone is not trusted with the delay).
+      if (!chain) return refuse({ reason: 'chain_unavailable', detail: 'the guardian cannot read the chain tip to anchor the recovery delay' });
+      const anchoredAt = Math.max(now, chain.medianTimePastMs);
+
       const initiator = typeof req.initiator === 'string' && isNostrPubkey(req.initiator.toLowerCase()) ? req.initiator.toLowerCase() : undefined;
       const rec: RecoveryRecord = {
         id: `${draft.recoveries.length + 1}-${analysis.txid.slice(0, 12)}`,
@@ -944,7 +1025,9 @@ export class PolicyEngine {
         feeCapSats: rules.sweepFeeCapSats,
         recipients: [...new Set([reg.appNostrPubkey, ...rules.alertContacts])],
         startedAt: now,
-        readyAt: now + rules.recoveryDelayDays * DAY,
+        anchoredAt,
+        startHeight: chain.height,
+        readyAt: anchoredAt + rules.recoveryDelayDays * DAY,
         alertsSent: {},
       };
       draft.recoveries.push(rec);
@@ -1007,7 +1090,9 @@ export class PolicyEngine {
 
   /** After the delay, co-signs the sweep and returns it (and the raw tx) for broadcast. */
   async completeRecovery(): Promise<Result<{ psbt: Uint8Array; txHex: string; txid: string; recovery: RecoveryView }>> {
+    const chain = await this.chainTime();
     return this.mutate(async (draft, now) => {
+      this.noteChain(draft, now, chain);
       const refuse = (refusal: Refusal) => {
         this.log(draft, now, { type: 'recovery_complete_refused', refusal });
         return refused(refusal);
@@ -1019,6 +1104,15 @@ export class PolicyEngine {
       if (!rec) return refuse({ reason: 'no_recovery' });
       if (rec.walletId !== reg.walletId) return refuse({ reason: 'not_adoptable', detail: 'the recovery is not of the active wallet' });
       if (now < rec.readyAt) return refuse({ reason: 'delay_not_elapsed', readyAt: rec.readyAt });
+      // Three clocks must agree the delay is over: the system clock (above), the chain's median time
+      // past, and the block count since the start.
+      if (!chain) return refuse({ reason: 'chain_unavailable', detail: 'the guardian cannot read the chain tip to check the recovery delay' });
+      if (chain.medianTimePastMs < rec.readyAt)
+        return refuse({ reason: 'delay_not_elapsed', readyAt: rec.readyAt, waitingFor: 'chain_time', chainTime: chain.medianTimePastMs });
+      if (rec.startHeight !== undefined) {
+        const heightNeeded = rec.startHeight + rec.delayDays * this.blocksPerDay(reg.network);
+        if (chain.height < heightNeeded) return refuse({ reason: 'delay_not_elapsed', readyAt: rec.readyAt, waitingFor: 'blocks', height: chain.height, heightNeeded });
+      }
 
       // Re-check everything from the stored PSBT rather than trusting what was checked at start.
       const wallet = this.wallet(reg);

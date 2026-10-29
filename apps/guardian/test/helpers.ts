@@ -19,6 +19,8 @@ import {
   cosignerKeyExpression,
 } from '@trikey/core';
 import {
+  ChainTimeSource,
+  ClockChain,
   DAY,
   HardwareAction,
   HardwareApproval,
@@ -121,11 +123,14 @@ export interface Ctx {
   signer: SoftwareCosignerSigner;
 }
 
-export async function setup(opts: { rules?: Partial<Rules>; store?: StateStore; clock?: ManualClock; locked?: boolean } = {}): Promise<Ctx> {
+export async function setup(
+  opts: { rules?: Partial<Rules>; store?: StateStore; clock?: ManualClock; locked?: boolean; chain?: ChainTimeSource; blocksPerDay?: number } = {},
+): Promise<Ctx> {
   const clock = opts.clock ?? new ManualClock(T0);
   const store = opts.store ?? new MemoryStore();
   const signer = new SoftwareCosignerSigner(COSIGNER_PRIV);
-  const engine = await PolicyEngine.open({ store, clock, signer: opts.locked ? undefined : signer });
+  // By default a chain that follows the clock exactly: only the clock-trust tests (security/clock-trust) move them apart.
+  const engine = await PolicyEngine.open({ store, clock, signer: opts.locked ? undefined : signer, chain: opts.chain ?? new ClockChain(clock), blocksPerDay: opts.blocksPerDay });
   const wallet = await makeWallet();
   const walletId = wallet.fingerprint();
   const res = await engine.register({

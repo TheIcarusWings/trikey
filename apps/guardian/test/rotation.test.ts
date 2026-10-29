@@ -13,6 +13,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MultisigWallet, RECEIVE, buildSweep } from '@trikey/core';
 import {
+  ClockChain,
   JsonFileStore,
   ManualClock,
   MemoryStore,
@@ -130,7 +131,7 @@ describe('state migration from the single-wallet format', () => {
     const path = join(dir, 'guardian-state.json');
     await writeFile(path, text);
     const clock = new ManualClock(T0);
-    const engine = await PolicyEngine.open({ store: new JsonFileStore(path), clock, signer: new SoftwareCosignerSigner(COSIGNER_PRIV) });
+    const engine = await PolicyEngine.open({ store: new JsonFileStore(path), clock, signer: new SoftwareCosignerSigner(COSIGNER_PRIV), chain: new ClockChain(clock) });
     expect(engine.status()).toMatchObject({ registered: true, walletId, nextHardwareSequence: 5, hardwareConfirmRequired: false, retiredWallets: 0 });
     expect(engine.status().dailyLimit!.used).toBe(30_000n);
 
@@ -259,7 +260,7 @@ describe('adopting the destination wallet after a recovery', () => {
   it('lost hardware wallet: derives the new device key at the same relative path, and the phone stays paired', async () => {
     const clock = new ManualClock(T0);
     const store = new MemoryStore();
-    const engine = await PolicyEngine.open({ store, clock, signer: new SoftwareCosignerSigner(COSIGNER_PRIV) });
+    const engine = await PolicyEngine.open({ store, clock, signer: new SoftwareCosignerSigner(COSIGNER_PRIV), chain: new ClockChain(clock) });
     const wallet = await makeWallet();
     const walletId = wallet.fingerprint();
     // The wallet package's fixed path: the hardware account, then /0/0.
@@ -300,7 +301,7 @@ describe('adopting the destination wallet after a recovery', () => {
     const saved = (await store.load())!;
     saved.active!.registration.hardwareAuth = { kind: 'bip137', pubkey: hwAuthPubkey(LEGACY_AUTH_PATH), path: LEGACY_AUTH_PATH };
     await store.save(saved);
-    const ctx: Ctx = { ...first, engine: await PolicyEngine.open({ store, clock: first.clock, signer: first.signer }) };
+    const ctx: Ctx = { ...first, engine: await PolicyEngine.open({ store, clock: first.clock, signer: first.signer, chain: new ClockChain(first.clock) }) };
     const dest = await makeWallet({ hardware: MNEMONICS.hardware2 });
     const id = await recoverTo(ctx, 'app', dest, { initiator: APP_NOSTR });
     const rot = await ctx.engine.rotateAfterSweep(id);

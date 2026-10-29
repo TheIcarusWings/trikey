@@ -148,7 +148,16 @@ export interface RecoveryRecord {
   feeCapSats: bigint;
   /** Alert recipients (nostr pubkeys) snapshotted at start: the phone plus contacts. */
   recipients: string[];
+  /** The system clock when the recovery started (when its first alert is due). */
   startedAt: number;
+  /**
+   * max(system clock, chain median time past) at start: what `readyAt` counts from, so a clock set
+   * back cannot shorten the delay. Absent for recoveries started before the guardian recorded it.
+   */
+  anchoredAt?: number;
+  /** The chain tip's height at start; completion needs `delayDays × blocks per day` more blocks. */
+  startHeight?: number;
+  /** anchoredAt + delay. Completion needs the system clock AND the chain's median time past past it. */
   readyAt: number;
   cancelledAt?: number;
   cancelledBy?: CancelledBy;
@@ -206,7 +215,12 @@ export type Refusal =
   | { reason: 'sweep_not_to_destination'; output: number }
   | { reason: 'sweep_fee_exceeds_cap'; fee: bigint; cap: bigint }
   | { reason: 'not_authorized' }
-  | { reason: 'delay_not_elapsed'; readyAt: number }
+  /** `waitingFor`: the clock is past `readyAt` but the chain is not (its median time past, or the block count). */
+  | { reason: 'delay_not_elapsed'; readyAt: number; waitingFor?: 'chain_time' | 'blocks'; chainTime?: number; height?: number; heightNeeded?: number }
+  /** No chain data to check the clock against (recovery start and completion need it; co-signing once the last observation is old). */
+  | { reason: 'chain_unavailable'; detail: string }
+  /** The system clock is more than `MAX_CLOCK_AHEAD_OF_CHAIN_MS` ahead of the chain's median time past: nothing is co-signed. */
+  | { reason: 'clock_ahead_of_chain'; systemTime: number; chainTime: number }
   | { reason: 'nothing_to_resume' }
   | { reason: 'unknown_alert'; alertId: string }
   /** The PSBT spends a wallet this guardian retired (after a recovery, or `wallet.retire`). */
@@ -322,6 +336,13 @@ export interface GuardianState {
   recoveries: RecoveryRecord[];
   activity: ActivityEntry[];
   nextActivityId: number;
+  /** The latest chain tip the engine saw (`ChainTime` plus when, on the system clock). */
+  chainSeen?: { height: number; medianTimePastMs: number; at: number };
+  /**
+   * Monotonic time for the daily limit: never goes backwards, and never past the chain's median time
+   * past plus `MAX_CLOCK_AHEAD_OF_CHAIN_MS` (the engine refuses to co-sign beyond that).
+   */
+  timeFloor?: number;
 }
 
 /** The single-wallet format written by guardians before wallet rotation. */
