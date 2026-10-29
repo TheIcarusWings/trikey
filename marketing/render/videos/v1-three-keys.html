@@ -26,16 +26,18 @@
 <script>
 window.SPEC = {
   id: 'v1-three-keys',
-  duration: 33,
+  duration: 35.4,
+  // Beats were authored on the left-hand times; the right-hand times fit the voiceover.
+  retime: [[0, 0], [4.4, 5.4], [10.2, 12.6], [13.4, 15.6], [19, 20.6], [24, 25.6], [29, 31.2], [33, 35.4]],
   music: { seed: 1, chords: 'bright' },
   vo: [
     { at: 0.25, id: 101, text: 'A Bitkey-style bitcoin wallet. Except no company holds a key.' },
-    { at: 4.6, id: 102, text: 'Three keys, all yours: a hardware wallet, your phone, and your own home server.' },
-    { at: 10.4, id: 103, text: 'Any two of them move your money.' },
-    { at: 13.6, id: 104, text: 'Everyday payments use your phone and your guardian, up to a daily limit.' },
-    { at: 19.2, id: 105, text: 'Big payments and rule changes need your hardware wallet.' },
-    { at: 24.2, id: 106, text: "It's plain multisig, so any wallet can recover it. Even without Trikey." },
-    { at: 29.4, id: 107, text: 'Trikey. Pre-alpha, and building in public.' },
+    { at: 5.6, id: 102, text: 'Three keys, all yours: a hardware wallet, your phone, and your own home server.' },
+    { at: 12.8, id: 103, text: 'Any two of them move your money.' },
+    { at: 15.8, id: 104, text: 'Everyday payments use your phone and your guardian, up to a daily limit.' },
+    { at: 20.8, id: 105, text: 'Big payments and rule changes need your hardware wallet.' },
+    { at: 25.8, id: 106, text: "It's plain multisig, so any wallet can recover it. Even without Trikey." },
+    { at: 31.5, id: 107, text: 'Trikey. Pre-alpha, and building in public.' },
   ],
 };
 

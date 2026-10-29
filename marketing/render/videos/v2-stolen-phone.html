@@ -26,16 +26,18 @@
 <script>
 window.SPEC = {
   id: 'v2-stolen-phone',
-  duration: 31,
+  duration: 29.6,
+  // Beats were authored on the left-hand times; the right-hand times fit the voiceover.
+  retime: [[0, 0], [4.2, 3.4], [8.2, 6.4], [14.6, 12.4], [19.8, 17.5], [27, 25.4], [31, 29.6]],
   music: { seed: 2, chords: 'tense' },
   broll: { name: 'v2-snatch', frames: 150 },
   vo: [
     { at: 0.25, id: 201, text: 'Someone just stole your phone.' },
-    { at: 4.4, id: 202, text: 'Say they even get past Face ID.' },
-    { at: 8.4, id: 203, text: 'Your guardian only co-signs up to your daily limit. Anything bigger gets refused.' },
-    { at: 14.8, id: 204, text: "And raising that limit needs your hardware wallet. Which they don't have." },
-    { at: 20.0, id: 205, text: 'So at most, they get your daily limit. Start a recovery with your hardware wallet, and phone payments pause.' },
-    { at: 27.3, id: 107, text: 'Trikey. Pre-alpha, and building in public.' },
+    { at: 3.6, id: 202, text: 'Say they even get past Face ID.' },
+    { at: 6.6, id: 203, text: 'Your guardian only co-signs up to your daily limit. Anything bigger gets refused.' },
+    { at: 12.6, id: 204, text: "And raising that limit needs your hardware wallet. Which they don't have." },
+    { at: 17.7, id: 205, text: 'So at most, they get your daily limit. Start a recovery with your hardware wallet, and phone payments pause.' },
+    { at: 25.7, id: 107, text: 'Trikey. Pre-alpha, and building in public.' },
   ],
 };
 

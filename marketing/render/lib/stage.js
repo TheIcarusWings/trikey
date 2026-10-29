@@ -100,8 +100,20 @@ function endCard(t, a) {
   e.querySelectorAll(':scope > *').forEach((c, i) => show(c, t, a + 0.15 + i * 0.12, 1e9, { dy: 20, fi: 0.5 }));
 }
 
+// SPEC.retime: [[authoredTime, outputTime], …] stretches each beat to fit its voiceover line.
+function remap(t) {
+  const R = window.SPEC.retime;
+  if (!R) return t;
+  for (let i = 1; i < R.length; i++) {
+    const [o0, n0] = R[i - 1], [o1, n1] = R[i];
+    if (t <= n1) return o0 + ((t - n0) * (o1 - o0)) / (n1 - n0);
+  }
+  const [o, n] = R[R.length - 1];
+  return o + (t - n);
+}
+
 window.seek = async t => {
-  window.update(t);
+  window.update(remap(t));
   await Promise.all(pending.splice(0));
 };
 window.ready = async () => {

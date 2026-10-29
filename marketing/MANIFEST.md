@@ -5,6 +5,9 @@ All are H.264 High + AAC 48 kHz, 30 fps, captions burned in.
 
 | File | Ratio | Length | Size | Audio | SHA-256 (first 16) |
 |---|---|---|---|---|---|
-| `trikey-v1-three-keys-11.mp4` | 1:1 | 33.0 s | 1.6 MB | music only | `b0eea0ba168f8e5d` |
-| `trikey-v1-three-keys-169.mp4` | 16:9 | 33.0 s | 1.8 MB | music only | `e70f7f4eb16fb7b9` |
-| `trikey-v1-three-keys-916.mp4` | 9:16 | 33.0 s | 1.8 MB | music only | `98438dd46b521ae7` |
+| `trikey-v1-three-keys-11-vo.mp4` | 1:1 | 35.4 s | 1.6 MB | voiceover + music | `fe276250b5a28b20` |
+| `trikey-v1-three-keys-11.mp4` | 1:1 | 35.4 s | 1.6 MB | music only | `03c3bbfbec73628e` |
+| `trikey-v1-three-keys-169-vo.mp4` | 16:9 | 35.4 s | 1.8 MB | voiceover + music | `f7c915a9df7f8411` |
+| `trikey-v1-three-keys-169.mp4` | 16:9 | 35.4 s | 1.8 MB | music only | `2d3c645c81d84729` |
+| `trikey-v1-three-keys-916-vo.mp4` | 9:16 | 35.4 s | 1.9 MB | voiceover + music | `054853eafb114eb6` |
+| `trikey-v1-three-keys-916.mp4` | 9:16 | 35.4 s | 1.9 MB | music only | `37c66d730a460e17` |

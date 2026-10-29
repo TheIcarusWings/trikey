@@ -27,17 +27,19 @@
 <script>
 window.SPEC = {
   id: 'v3-lost-phone',
-  duration: 37.6,
+  duration: 32.6,
+  // Beats were authored on the left-hand times; the right-hand times fit the voiceover.
+  retime: [[0, 0], [4, 3.6], [9.6, 8.0], [17, 14.0], [24, 19.6], [29.6, 24.6], [33.6, 28.6], [37.6, 32.6]],
   music: { seed: 3, chords: 'calm' },
   broll: { name: 'v3-train', frames: 150 },
   vo: [
     { at: 0.25, id: 301, text: 'Lost your phone? And the backup with it?' },
-    { at: 4.2, id: 302, text: 'Your hardware wallet and your guardian start a recovery.' },
-    { at: 9.8, id: 303, text: 'It waits seven days, and alerts you and your contacts every day.' },
-    { at: 17.2, id: 304, text: 'If someone else started it, any of your devices or contacts can cancel it.' },
-    { at: 24.2, id: 305, text: 'If nobody cancels, your guardian co-signs the move to your new wallet.' },
-    { at: 29.8, id: 306, text: 'Your server. Your contacts. No support ticket.' },
-    { at: 33.9, id: 107, text: 'Trikey. Pre-alpha, and building in public.' },
+    { at: 3.8, id: 302, text: 'Your hardware wallet and your guardian start a recovery.' },
+    { at: 8.2, id: 303, text: 'It waits seven days, and alerts you and your contacts every day.' },
+    { at: 14.2, id: 304, text: 'If someone else started it, any of your devices or contacts can cancel it.' },
+    { at: 19.8, id: 305, text: 'If nobody cancels, your guardian co-signs the move to your new wallet.' },
+    { at: 24.8, id: 306, text: 'Your server. Your contacts. No support ticket.' },
+    { at: 28.9, id: 107, text: 'Trikey. Pre-alpha, and building in public.' },
   ],
 };
 

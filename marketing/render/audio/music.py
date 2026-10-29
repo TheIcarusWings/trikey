@@ -33,7 +33,7 @@ def tone(f, n, detune=0.0, harmonics=4):
 
 def envelope(n, attack, release):
     e = np.ones(n)
-    a, r = int(attack * SR), int(release * SR)
+    a, r = min(int(attack * SR), n // 2), min(int(release * SR), n // 2)
     e[:a] = np.linspace(0, 1, a) ** 2
     e[n - r:] *= np.linspace(1, 0, r) ** 2
     return e
