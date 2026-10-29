@@ -9,6 +9,7 @@ to other sites (a strict `Content-Security-Policy` meta tag enforces this).
 | `index.html`, `style.css` | The landing page |
 | `404.html` | Not-found page (Vercel serves it automatically) |
 | `img/` | Phone screenshots, rendered from `design/screens` (light and dark WebP) |
+| `media/` | Photos (WebP) and three short muted video loops (H.264 MP4, under 1 MB each) taken from the launch film footage, plus one generated still of the three keys. Loops are hidden for people who prefer reduced motion; the poster image stays. |
 | `fonts/` | Geist and Geist Mono (latin, variable `woff2`) with their OFL license texts |
 | `favicon.svg` | The logo |
 | `vercel.json` | Response headers: `application/json` for the Apple file, HSTS and other security headers |

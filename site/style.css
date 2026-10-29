@@ -225,6 +225,12 @@ code,
   border: 0;
 }
 
+.center {
+  text-align: center;
+  justify-items: center;
+  margin-inline: auto;
+}
+
 .lead {
   font-size: clamp(1.125rem, 2.6vw, 1.3125rem);
   line-height: 1.5;
@@ -242,8 +248,14 @@ code,
 .section-head {
   display: grid;
   gap: 0.75rem;
-  max-width: 40rem;
-  margin-bottom: 2.5rem;
+  max-width: 44rem;
+  margin-bottom: clamp(2rem, 5vw, 3rem);
+}
+
+.section-head h2 {
+  font-size: clamp(1.75rem, 4.6vw, 2.75rem);
+  line-height: 1.1;
+  letter-spacing: -0.035em;
 }
 
 .actions {
@@ -257,9 +269,10 @@ code,
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 0.375rem;
   min-height: 2.75rem;
   padding: 0 1.125rem;
-  border-radius: 10px;
+  border-radius: 999px;
   background: var(--ink);
   color: var(--bg);
   font-weight: 600;
@@ -282,7 +295,7 @@ code,
   margin: 0;
   padding: 1rem 1.125rem;
   border: 1px solid var(--ink);
-  border-radius: 12px;
+  border-radius: 16px;
   color: var(--ink);
   font-size: 1rem;
   line-height: 1.5;
@@ -305,65 +318,13 @@ code,
 
 .aside {
   color: var(--muted);
-  max-width: 36rem;
+  max-width: 38rem;
 }
-
-/* Acts: each section is one scene of the film. */
-
-.act {
-  padding-block: clamp(4.5rem, 12vw, 8rem);
-}
-
-.act + .act {
-  border-top: 1px solid var(--line);
-}
-
-.act-surface {
-  background: var(--surface);
-}
-
-/* The night scenes stay dark in both themes. */
-.act-night {
-  --ink: #fafafa;
-  --body: #d4d4d8;
-  --muted: #a1a1aa;
-  --line: #27272a;
-  --brand: #fb923c;
-  background: #09090b;
-  color: var(--body);
-  border-top: 0;
-}
-
-.act-night + .act {
-  border-top: 0;
-}
-
-.beat {
-  color: var(--ink);
-  font-weight: 600;
-  font-size: clamp(1.5rem, 4.4vw, 2.25rem);
-  line-height: 1.2;
-  letter-spacing: -0.03em;
-  text-wrap: balance;
-}
-
-.beat-lead {
-  font-size: clamp(2.125rem, 7vw, 4rem);
-  line-height: 1.05;
-  letter-spacing: -0.04em;
-}
-
-.beat-quiet {
-  color: var(--muted);
-}
-
-/* I. The old choice */
 
 .status {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  margin-bottom: 2.5rem;
   padding: 0.375rem 0.75rem;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -379,44 +340,193 @@ code,
   background: var(--muted);
 }
 
-.act-night h1 {
-  max-width: 15ch;
+/* Media frames: rounded photo and video cards. Footage is the same in both
+   themes, so text on it is always light over a dark scrim. */
+
+.frame {
+  position: relative;
+  margin: 0;
+  overflow: hidden;
+  border-radius: clamp(16px, 2.4vw, 28px);
+  background: #18181b;
+  isolation: isolate;
 }
 
-.fork {
+.frame > img,
+.frame > .media,
+.frame > picture > img.media {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.frame > .media {
+  position: absolute;
+  inset: 0;
+}
+
+.frame > video.media {
+  z-index: 1;
+}
+
+.frame-hero {
+  margin-top: clamp(2.5rem, 6vw, 4rem);
+  aspect-ratio: 16 / 9;
+}
+
+.frame-wide {
+  aspect-ratio: 4 / 5;
+}
+
+.frame-card {
+  aspect-ratio: 4 / 3;
+}
+
+.frame-key {
+  aspect-ratio: 4 / 3;
+}
+
+.frame-banner {
+  aspect-ratio: 3 / 2;
+}
+
+.frame-tall {
+  aspect-ratio: 4 / 5;
+}
+
+/* Wider screens get cinema-shaped frames. */
+@media (min-width: 640px) {
+  .frame-wide,
+  .frame-tall {
+    aspect-ratio: 16 / 9;
+  }
+
+  .frame-banner {
+    aspect-ratio: 21 / 9;
+  }
+}
+
+.frame-dark {
+  --ink: #fafafa;
+  --muted: #d4d4d8;
+  color: #fafafa;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  align-content: end;
+  gap: 0.5rem;
+  margin: 0;
+  padding: clamp(1.25rem, 4vw, 3rem);
+  background: linear-gradient(to top, rgb(9 9 11 / 0.78), rgb(9 9 11 / 0.15) 60%, rgb(9 9 11 / 0));
+}
+
+.overlay h3 {
+  color: #fafafa;
+  font-size: clamp(1.75rem, 4.6vw, 2.75rem);
+  letter-spacing: -0.035em;
+}
+
+.overlay .eyebrow {
+  color: #d4d4d8;
+}
+
+/* Acts */
+
+.act {
+  padding-block: clamp(4rem, 10vw, 7rem);
+}
+
+.act-surface {
+  background: var(--surface);
+}
+
+.beat {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: clamp(1.5rem, 4.4vw, 2.25rem);
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+
+.beat-lead {
+  font-size: clamp(2.125rem, 7vw, 4rem);
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+}
+
+.beat-quiet {
+  color: var(--muted);
+}
+
+p.beat.center {
+  max-width: 20ch;
+  margin-top: clamp(3.5rem, 9vw, 6rem);
+}
+
+.pair {
   display: grid;
   gap: 1rem;
-  margin-block: clamp(3rem, 9vw, 5.5rem);
-  max-width: 44rem;
+  margin-top: 1rem;
 }
 
-.fork .beat:last-child {
-  padding-left: clamp(1.5rem, 8vw, 6rem);
+@media (min-width: 760px) {
+  .pair {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
-.scroll-cue {
-  display: inline-block;
-  margin-top: clamp(3rem, 9vw, 5rem);
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 0.875rem;
-  text-decoration: none;
+/* Opening */
+
+.hero {
+  padding-block: clamp(2.5rem, 7vw, 5rem) clamp(3rem, 7vw, 5rem);
 }
 
-.scroll-cue:hover {
-  text-decoration: underline;
+.hero-copy {
+  display: grid;
+  justify-items: center;
+  gap: 1.5rem;
+  max-width: 48rem;
+  margin-inline: auto;
+  text-align: center;
+}
+
+.hero h1 {
+  font-size: clamp(2.5rem, 8vw, 5rem);
+  line-height: 1;
+  letter-spacing: -0.045em;
+}
+
+.hero .lead {
+  max-width: 38rem;
+}
+
+.hero .actions {
+  justify-content: center;
+}
+
+/* I. The old choice */
+
+#choice .frame-wide .overlay {
+  align-content: center;
+  background: linear-gradient(to top, rgb(9 9 11 / 0.7), rgb(9 9 11 / 0.35));
+}
+
+#choice .frame-wide .beat {
+  max-width: 14ch;
 }
 
 /* II. The idea */
 
-.act > .wrap > .beat-lead:first-child {
-  max-width: 14ch;
-}
-
 .keys {
   display: grid;
   gap: 2.5rem;
-  margin: clamp(3rem, 8vw, 5rem) 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
@@ -424,7 +534,7 @@ code,
 @media (min-width: 760px) {
   .keys {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 2rem;
+    gap: 1.25rem;
   }
 }
 
@@ -432,23 +542,10 @@ code,
   display: grid;
   align-content: start;
   gap: 0.75rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--line);
 }
 
-.key-icon {
-  width: 3rem;
-  height: 3rem;
-  fill: none;
-  stroke: var(--ink);
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.key-icon .led {
-  fill: var(--ink);
-  stroke: none;
+.key .frame {
+  margin-bottom: 0.5rem;
 }
 
 .key-where {
@@ -481,7 +578,7 @@ code,
   display: grid;
   justify-items: center;
   gap: 1.5rem;
-  margin-top: clamp(4.5rem, 12vw, 7.5rem);
+  margin-top: clamp(4.5rem, 12vw, 7rem);
   text-align: center;
 }
 
@@ -496,35 +593,45 @@ code,
 
 /* III. How it feels */
 
-.scenes {
-  display: grid;
-  gap: 4rem;
-  margin-top: 2.5rem;
-}
-
-@media (min-width: 760px) {
-  .scenes {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 3rem;
-  }
-}
-
 .scene {
   display: grid;
-  justify-items: center;
-  gap: 2rem;
+  gap: 1.25rem;
   margin: 0;
+}
+
+.frame-scene {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 5;
+  padding-block: 2.5rem;
+}
+
+.frame-scene > .media {
+  filter: brightness(0.7);
+}
+
+.frame-scene picture {
+  position: relative;
+  z-index: 2;
+  width: 42%;
+}
+
+.frame-scene .phone {
+  max-width: none;
+  filter: drop-shadow(0 24px 40px rgb(0 0 0 / 0.45));
 }
 
 .scene figcaption {
   display: grid;
-  gap: 0.75rem;
-  max-width: 24rem;
-  text-align: center;
+  gap: 0.375rem;
+  padding-inline: 0.25rem;
 }
 
-.scene figcaption .beat {
-  font-size: clamp(1.375rem, 3.2vw, 1.75rem);
+.scene-title {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 1.25rem;
+  letter-spacing: -0.02em;
 }
 
 .scene figcaption p:last-child {
@@ -534,48 +641,46 @@ code,
 .coda {
   display: grid;
   gap: 1.25rem;
-  margin-top: clamp(4.5rem, 12vw, 7.5rem);
+  margin-top: clamp(4rem, 10vw, 6rem);
 }
 
 /* If a key goes missing */
 
 .episode {
   display: grid;
-  gap: 2.5rem;
-  align-items: center;
-  padding-block: 3rem;
-  border-top: 1px solid var(--line);
+  gap: 2rem;
+  margin-bottom: clamp(3rem, 7vw, 4.5rem);
 }
 
-.episode picture {
+.episode-body {
+  display: grid;
+  gap: 2.5rem;
+  align-items: start;
+}
+
+.episode-body picture {
   justify-self: center;
 }
 
 @media (min-width: 860px) {
-  .episode {
-    grid-template-columns: minmax(0, 1fr) 17rem;
+  .episode-body {
+    grid-template-columns: minmax(0, 1fr) 15rem;
     gap: 4rem;
+    padding-inline: 1.5rem;
   }
 
-  .episode:nth-of-type(even) {
-    grid-template-columns: 17rem minmax(0, 1fr);
-  }
-
-  .episode:nth-of-type(even) picture {
-    order: -1;
+  .episode-body .phone {
+    max-width: 15rem;
+    margin-top: -6rem;
+    position: relative;
+    z-index: 3;
   }
 }
 
 .episode-copy {
   display: grid;
   gap: 1.75rem;
-  max-width: 34rem;
-}
-
-.episode h3 {
-  font-size: clamp(1.75rem, 4.6vw, 2.5rem);
-  letter-spacing: -0.035em;
-  margin-top: -1rem;
+  max-width: 36rem;
 }
 
 .case {
@@ -591,63 +696,52 @@ code,
   font-size: 1.125rem;
 }
 
-.tagline {
-  padding-top: 3rem;
-  border-top: 1px solid var(--line);
-  text-align: center;
-}
-
 /* IV. What it stands for */
 
 .creed {
-  display: grid;
-  gap: 0.75rem;
-  margin: 0;
-  padding: 0;
   list-style: none;
+  gap: 0.25rem;
 }
 
 .creed .beat {
-  font-size: clamp(2.125rem, 7vw, 4rem);
+  color: #fafafa;
+  font-size: clamp(2rem, 6.4vw, 4rem);
   line-height: 1.08;
   letter-spacing: -0.04em;
 }
 
-@media (min-width: 640px) {
-  .creed .beat:nth-child(2) {
-    padding-left: clamp(1rem, 6vw, 4rem);
-  }
-
-  .creed .beat:nth-child(3) {
-    padding-left: clamp(2rem, 12vw, 8rem);
-  }
-}
-
-.facts {
+.bento {
   display: grid;
-  gap: 1.75rem;
-  margin: clamp(4rem, 10vw, 6rem) 0 0;
+  gap: 1rem;
+  margin: 1rem 0 0;
 }
 
 @media (min-width: 760px) {
-  .facts {
+  .bento {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 2rem 3rem;
   }
 }
 
-.facts div {
-  padding-top: 1.25rem;
-  border-top: 1px solid var(--line);
+@media (min-width: 1000px) {
+  .bento {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
-.facts dt {
+.tile {
+  padding: 1.5rem;
+  border-radius: 20px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+
+.tile dt {
   color: var(--ink);
   font-weight: 600;
-  margin-bottom: 0.375rem;
+  margin-bottom: 0.5rem;
 }
 
-.facts dd {
+.tile dd {
   margin: 0;
   font-size: 1rem;
   line-height: 1.55;
@@ -666,7 +760,6 @@ code,
   font-size: clamp(1.75rem, 5vw, 2.75rem);
   line-height: 1.12;
   letter-spacing: -0.035em;
-  max-width: 18ch;
 }
 
 .follow .notice {
@@ -678,19 +771,27 @@ code,
   justify-content: center;
 }
 
-/* Scenes fade in as they scroll into view, where the browser can do it
-   without scripts. Everything is visible without this. */
+/* Motion. Scenes fade in where the browser can do it without scripts, and the
+   footage plays only for people who haven't asked for less motion: the
+   poster image underneath stays in place either way. */
+
+@media (prefers-reduced-motion: reduce) {
+  .frame > video.media {
+    display: none;
+  }
+}
 
 @media (prefers-reduced-motion: no-preference) {
   @supports (animation-timeline: view()) {
     .beat,
+    .frame,
     .key,
-    .scene,
-    .episode,
-    .facts div {
+    .scene figcaption,
+    .episode-body,
+    .tile {
       animation: rise linear both;
       animation-timeline: view();
-      animation-range: entry 5% cover 30%;
+      animation-range: entry 5% cover 25%;
     }
   }
 }

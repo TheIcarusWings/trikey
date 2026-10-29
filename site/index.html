@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; form-action 'none'">
-<title>Trikey: three keys, any two move your bitcoin</title>
+<title>Trikey: your keys, your server, your bitcoin</title>
 <meta name="description" content="Trikey is an open source 2-of-3 bitcoin wallet that feels like Bitkey, with no company holding a key: your phone, your hardware wallet and your own home server. Coming soon. Pre-alpha, not audited.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
@@ -32,39 +32,77 @@
 
 <main id="main">
 
-  <!-- I. The old choice -->
-  <section class="act act-night" aria-labelledby="choice-h">
+  <!-- Opening -->
+  <section class="hero" aria-labelledby="hero-h">
     <div class="wrap">
-      <p class="status"><span class="status-dot" aria-hidden="true"></span>Coming soon · pre-alpha, not audited</p>
-      <h1 id="choice-h" class="beat beat-lead">For years, holding bitcoin meant a choice.</h1>
-      <div class="fork">
-        <p class="beat">Hand your keys to a company…</p>
-        <p class="beat">…or carry the whole weight alone.</p>
+      <div class="hero-copy">
+        <p class="status"><span class="status-dot" aria-hidden="true"></span>Coming soon · pre-alpha, not audited</p>
+        <h1 id="hero-h">Your keys. Your server. Your bitcoin.</h1>
+        <p class="lead">Trikey is a 2-of-3 bitcoin wallet that feels like Bitkey, with no company holding a key. Your phone, your hardware wallet and your own home server: any two move your money.</p>
+        <div class="actions">
+          <a class="btn" href="https://github.com/TheIcarusWings/trikey">Follow on GitHub</a>
+          <a class="btn btn-quiet" href="#choice">Watch the story <span aria-hidden="true">↓</span></a>
+        </div>
       </div>
-      <p class="beat beat-quiet">One key. One mistake. Gone.</p>
-      <a class="scroll-cue" href="#idea">There's a third way <span aria-hidden="true">↓</span></a>
+      <figure class="frame frame-hero">
+        <img src="media/three-keys.webp" width="1344" height="752" fetchpriority="high" alt="A phone, a small hardware wallet and a small grey home server with one white light, laid out in a triangle on a linen tablecloth.">
+      </figure>
+    </div>
+  </section>
+
+  <!-- I. The old choice -->
+  <section id="choice" class="act" aria-labelledby="choice-h">
+    <div class="wrap">
+      <div class="frame frame-wide frame-dark">
+        <img class="media" src="media/loop-tower.webp" width="1280" height="720" alt="">
+        <video class="media" autoplay muted loop playsinline preload="metadata" poster="media/loop-tower.webp" aria-hidden="true"><source src="media/loop-tower.mp4" type="video/mp4"></video>
+        <div class="overlay">
+          <h2 id="choice-h" class="beat beat-lead">For years, holding bitcoin meant a choice.</h2>
+        </div>
+      </div>
+      <div class="pair">
+        <figure class="frame frame-card frame-dark">
+          <img class="media" src="media/lobby.webp" width="1600" height="900" loading="lazy" alt="An empty corporate lobby at night, seen through glass.">
+          <figcaption class="overlay"><p class="beat">Hand your keys to a company…</p></figcaption>
+        </figure>
+        <figure class="frame frame-card frame-dark">
+          <img class="media" src="media/desk.webp" width="1600" height="900" loading="lazy" alt="A single handwritten backup sheet under a desk lamp in a dark room.">
+          <figcaption class="overlay"><p class="beat">…or carry the whole weight alone.</p></figcaption>
+        </figure>
+      </div>
+      <p class="beat beat-lead beat-quiet center">One key. One mistake. Gone.</p>
     </div>
   </section>
 
   <!-- II. The idea -->
   <section id="idea" class="act" aria-labelledby="idea-h">
     <div class="wrap">
-      <h2 id="idea-h" class="beat beat-lead">What if you held three keys?</h2>
+      <div class="section-head center">
+        <p class="eyebrow">A third way</p>
+        <h2 id="idea-h" class="beat beat-lead">What if you held three keys?</h2>
+      </div>
       <ol class="keys">
         <li class="key">
-          <svg class="key-icon" viewBox="0 0 48 48" aria-hidden="true" focusable="false"><rect x="14" y="5" width="20" height="38" rx="4"/><path d="M21 38h6"/></svg>
+          <div class="frame frame-key">
+            <img class="media" src="media/bedside.webp" width="1600" height="900" loading="lazy" alt="A hand reaches for a phone on a bedside table in morning light.">
+          </div>
           <p class="key-where">One in your pocket.</p>
           <h3><span class="mono">Key 2</span> Your phone</h3>
           <p>Everyday payments with Face ID. The key sits behind your phone's biometrics, with an encrypted backup in your own cloud that a passkey unlocks.</p>
         </li>
         <li class="key">
-          <svg class="key-icon" viewBox="0 0 48 48" aria-hidden="true" focusable="false"><rect x="11" y="10" width="26" height="28" rx="5"/><rect x="16" y="15" width="16" height="9" rx="1.5"/><circle cx="19" cy="31" r="1.8"/><circle cx="29" cy="31" r="1.8"/></svg>
+          <div class="frame frame-key">
+            <img class="media" src="media/drawer.webp" width="1600" height="900" loading="lazy" alt="An open wooden drawer with a small black hardware wallet resting on folded linen.">
+          </div>
           <p class="key-where">One in a drawer.</p>
           <h3><span class="mono">Key 1</span> Any hardware wallet</h3>
           <p>Ledger, Trezor, Coldcard, Jade, Keystone and other multisig devices. For big payments, changing your rules, and recovery.</p>
         </li>
         <li class="key">
-          <svg class="key-icon" viewBox="0 0 48 48" aria-hidden="true" focusable="false"><rect x="8" y="12" width="32" height="24" rx="4"/><path d="M14 30h12"/><circle class="led" cx="33" cy="30" r="1.8"/></svg>
+          <div class="frame frame-key">
+            <img class="media" src="media/loop-shelf.webp" width="1280" height="720" loading="lazy" alt="A small grey box with a soft white light on a home bookshelf, between books and plants.">
+            <video class="media" autoplay muted loop playsinline preload="none" poster="media/loop-shelf.webp" aria-hidden="true"><source src="media/loop-shelf.mp4" type="video/mp4"></video>
+          </div>
           <p class="key-where">One on a shelf at home.</p>
           <h3><span class="mono">Key 3</span> Trikey Guardian</h3>
           <p>An app on your own Umbrel or Start9. It co-signs phone payments under a daily limit and runs a 7, 14 or 30-day Delay &amp; Notify recovery.</p>
@@ -74,34 +112,42 @@
       <div class="any-two">
         <svg class="logo logo-big" width="88" height="80" viewBox="0 0 88 80" aria-hidden="true" focusable="false"><path class="line" d="M44 14 L16 62 L72 62 Z" stroke-width="6" stroke-linejoin="round"/><circle class="top" cx="44" cy="14" r="12"/><circle class="ink" cx="16" cy="62" r="12"/><circle class="ink" cx="72" cy="62" r="12"/></svg>
         <p class="beat beat-lead">Any two move your money.</p>
-        <p class="aside">It feels like Bitkey, but no company holds a key. Under the hood it's a plain <code>wsh(sortedmulti(2,…))</code> descriptor, so any multisig wallet can recover your funds without Trikey.</p>
+        <p class="aside">Under the hood it's a plain <code>wsh(sortedmulti(2,…))</code> descriptor, so any multisig wallet can recover your funds without Trikey.</p>
       </div>
     </div>
   </section>
 
   <!-- III. How it feels -->
-  <section class="act" aria-labelledby="feel-h">
+  <section class="act act-surface" aria-labelledby="feel-h">
     <div class="wrap">
-      <p class="eyebrow">How it feels</p>
-      <h2 id="feel-h" class="visually-hidden">How it feels</h2>
-      <div class="scenes">
+      <div class="section-head">
+        <p class="eyebrow">How it feels</p>
+        <h2 id="feel-h">Quick when it's small. Careful when it's big.</h2>
+      </div>
+      <div class="pair">
         <figure class="scene">
-          <picture>
-            <source srcset="img/phone-send-review-dark.webp" media="(prefers-color-scheme: dark)">
-            <img class="phone" src="img/phone-send-review.webp" width="520" height="1125" loading="lazy" alt="The Trikey Review screen for a 50,000 sat payment, with a note: signed by this phone and your guardian, within today's limit, so no hardware wallet needed. A Send with Face ID button.">
-          </picture>
+          <div class="frame frame-scene">
+            <img class="media" src="media/cafe.webp" width="1600" height="900" loading="lazy" alt="">
+            <picture>
+              <source srcset="img/phone-send-review-dark.webp" media="(prefers-color-scheme: dark)">
+              <img class="phone" src="img/phone-send-review.webp" width="520" height="1125" loading="lazy" alt="The Trikey Review screen for a 50,000 sat payment, with a note: signed by this phone and your guardian, within today's limit, so no hardware wallet needed. A Send with Face ID button.">
+            </picture>
+          </div>
           <figcaption>
-            <p class="beat">Everyday payments: just your phone and Face ID.</p>
+            <p class="scene-title">Everyday payments: just your phone and Face ID.</p>
             <p>Your guardian at home co-signs anything under the daily limit you set.</p>
           </figcaption>
         </figure>
         <figure class="scene">
-          <picture>
-            <source srcset="img/phone-send-hardware-dark.webp" media="(prefers-color-scheme: dark)">
-            <img class="phone" src="img/phone-send-hardware.webp" width="520" height="1125" loading="lazy" alt="The Trikey Approve on your Ledger screen: 1,500,000 sats is over today's limit of 180,000 left, so the hardware wallet signs this one instead of the guardian. Check the address on the device matches.">
-          </picture>
+          <div class="frame frame-scene">
+            <img class="media" src="media/hwpress.webp" width="1600" height="900" loading="lazy" alt="">
+            <picture>
+              <source srcset="img/phone-send-hardware-dark.webp" media="(prefers-color-scheme: dark)">
+              <img class="phone" src="img/phone-send-hardware.webp" width="520" height="1125" loading="lazy" alt="The Trikey Approve on your Ledger screen: 1,500,000 sats is over today's limit of 180,000 left, so the hardware wallet signs this one instead of the guardian. Check the address on the device matches.">
+            </picture>
+          </div>
           <figcaption>
-            <p class="beat">Big ones: confirm on your hardware wallet.</p>
+            <p class="scene-title">Big ones: confirm on your hardware wallet.</p>
             <p>Over the limit, the hardware wallet signs instead of the guardian. Raising the limit needs it too.</p>
           </figcaption>
         </figure>
@@ -114,7 +160,7 @@
   </section>
 
   <!-- If a key goes missing -->
-  <section id="missing" class="act act-surface" aria-labelledby="missing-h">
+  <section id="missing" class="act" aria-labelledby="missing-h">
     <div class="wrap">
       <div class="section-head">
         <p class="eyebrow">A short series</p>
@@ -122,91 +168,107 @@
       </div>
 
       <article class="episode" aria-labelledby="ep1-h">
-        <div class="episode-copy">
-          <p class="eyebrow">Part 1 · Key 2</p>
-          <h3 id="ep1-h">Your phone</h3>
-          <div class="case">
-            <p class="case-q">Lost it?</p>
-            <p>Got your backup? Restore it on a new phone with your passkey. No waiting.</p>
-            <p>No backup? Your hardware wallet and guardian start a recovery. It waits 7, 14 or 30 days and alerts you and your contacts every day. Any of you can cancel a fake one.</p>
-          </div>
-          <div class="case">
-            <p class="case-q">Stolen?</p>
-            <p>They can spend at most your daily limit. Raising it needs your hardware wallet. Start a recovery and phone-only payments pause.</p>
-          </div>
+        <div class="frame frame-banner frame-dark">
+          <img class="media" src="media/train.webp" width="1600" height="900" loading="lazy" alt="A phone left behind on an empty train seat at night.">
+          <div class="overlay"><p class="eyebrow">Part 1 · Key 2</p><h3 id="ep1-h">Your phone</h3></div>
         </div>
-        <picture>
-          <source srcset="img/phone-recovery-waiting-dark.webp" media="(prefers-color-scheme: dark)">
-          <img class="phone" src="img/phone-recovery-waiting.webp" width="520" height="1125" loading="lazy" alt="The Trikey Recovery in progress screen: 5 days 14 hours until your money moves to the new wallet. Started with your Ledger, alerts sent daily, guardian co-signs the move on a set date. Phone-only payments are paused. A Cancel recovery button.">
-        </picture>
+        <div class="episode-body">
+          <div class="episode-copy">
+            <div class="case">
+              <p class="case-q">Lost it?</p>
+              <p>Got your backup? Restore it on a new phone with your passkey. No waiting.</p>
+              <p>No backup? Your hardware wallet and guardian start a recovery. It waits 7, 14 or 30 days and alerts you and your contacts every day. Any of you can cancel a fake one.</p>
+            </div>
+            <div class="case">
+              <p class="case-q">Stolen?</p>
+              <p>They can spend at most your daily limit. Raising it needs your hardware wallet. Start a recovery and phone-only payments pause.</p>
+            </div>
+          </div>
+          <picture>
+            <source srcset="img/phone-recovery-waiting-dark.webp" media="(prefers-color-scheme: dark)">
+            <img class="phone" src="img/phone-recovery-waiting.webp" width="520" height="1125" loading="lazy" alt="The Trikey Recovery in progress screen: 5 days 14 hours until your money moves to the new wallet. Started with your Ledger, alerts sent daily, guardian co-signs the move on a set date. Phone-only payments are paused. A Cancel recovery button.">
+          </picture>
+        </div>
       </article>
 
       <article class="episode" aria-labelledby="ep2-h">
-        <div class="episode-copy">
-          <p class="eyebrow">Part 2 · Key 1</p>
-          <h3 id="ep2-h">Your hardware wallet</h3>
-          <div class="case">
-            <p class="case-q">Lost it?</p>
-            <p>Restore your seed words on a new device. Done.</p>
-          </div>
-          <div class="case">
-            <p class="case-q">Stolen?</p>
-            <p>It's PIN-locked. And even unlocked, it's one key of three. If they try to start a recovery with it, you and your contacts are alerted every day, and you cancel it.</p>
-            <p>Then restore your seed words and move everything to a fresh wallet with your phone. Keep the seed words somewhere other than the device, and outside your home.</p>
-          </div>
+        <div class="frame frame-banner frame-dark">
+          <img class="media" src="media/emptydrawer.webp" width="1600" height="900" loading="lazy" alt="A hand searches an open drawer and finds only folded linen.">
+          <div class="overlay"><p class="eyebrow">Part 2 · Key 1</p><h3 id="ep2-h">Your hardware wallet</h3></div>
         </div>
-        <picture>
-          <source srcset="img/phone-recovery-alert-dark.webp" media="(prefers-color-scheme: dark)">
-          <img class="phone" src="img/phone-recovery-alert.webp" width="520" height="1125" loading="lazy" alt="The Trikey recovery alert: Someone started a recovery. It shows when it started, which key it says is lost, and the date money moves, with a red Cancel recovery button.">
-        </picture>
+        <div class="episode-body">
+          <div class="episode-copy">
+            <div class="case">
+              <p class="case-q">Lost it?</p>
+              <p>Restore your seed words on a new device. Done.</p>
+            </div>
+            <div class="case">
+              <p class="case-q">Stolen?</p>
+              <p>It's PIN-locked. And even unlocked, it's one key of three. If they try to start a recovery with it, you and your contacts are alerted every day, and you cancel it.</p>
+              <p>Then restore your seed words and move everything to a fresh wallet with your phone. Keep the seed words somewhere other than the device, and outside your home.</p>
+            </div>
+          </div>
+          <picture>
+            <source srcset="img/phone-recovery-alert-dark.webp" media="(prefers-color-scheme: dark)">
+            <img class="phone" src="img/phone-recovery-alert.webp" width="520" height="1125" loading="lazy" alt="The Trikey recovery alert: Someone started a recovery. It shows when it started, which key it says is lost, and the date money moves, with a red Cancel recovery button.">
+          </picture>
+        </div>
       </article>
 
       <article class="episode" aria-labelledby="ep3-h">
-        <div class="episode-copy">
-          <p class="eyebrow">Part 3 · Key 3</p>
-          <h3 id="ep3-h">Your home server</h3>
-          <div class="case">
-            <p class="case-q">It dies or goes offline?</p>
-            <p>Your phone and hardware wallet still move any amount. Phone-only payments wait until the guardian is back, or you set up a new guardian and move to a fresh wallet.</p>
-          </div>
-          <div class="case">
-            <p class="case-q">Stolen?</p>
-            <p>It locks itself after any restart: key 3 stays encrypted until you unlock it. Unplugged, it's useless to them. And it never held your money. Just one key of three.</p>
-          </div>
+        <div class="frame frame-banner frame-dark">
+          <img class="media" src="media/unplug.webp" width="1600" height="900" loading="lazy" alt="A hand pulls the power cable from a small grey box on a bookshelf.">
+          <div class="overlay"><p class="eyebrow">Part 3 · Key 3</p><h3 id="ep3-h">Your home server</h3></div>
         </div>
-        <picture>
-          <source srcset="img/phone-home-locked-dark.webp" media="(prefers-color-scheme: dark)">
-          <img class="phone" src="img/phone-home-locked.webp" width="520" height="1125" loading="lazy" alt="The Trikey home screen with a Guardian locked card: your Umbrel restarted, so the guardian locked itself, and phone-only payments are paused until you unlock it. You can still send any amount by approving on your hardware wallet.">
-        </picture>
+        <div class="episode-body">
+          <div class="episode-copy">
+            <div class="case">
+              <p class="case-q">It dies or goes offline?</p>
+              <p>Your phone and hardware wallet still move any amount. Phone-only payments wait until the guardian is back, or you set up a new guardian and move to a fresh wallet.</p>
+            </div>
+            <div class="case">
+              <p class="case-q">Stolen?</p>
+              <p>It locks itself after any restart: key 3 stays encrypted until you unlock it. Unplugged, it's useless to them. And it never held your money. Just one key of three.</p>
+            </div>
+          </div>
+          <picture>
+            <source srcset="img/phone-home-locked-dark.webp" media="(prefers-color-scheme: dark)">
+            <img class="phone" src="img/phone-home-locked.webp" width="520" height="1125" loading="lazy" alt="The Trikey home screen with a Guardian locked card: your Umbrel restarted, so the guardian locked itself, and phone-only payments are paused until you unlock it. You can still send any amount by approving on your hardware wallet.">
+          </picture>
+        </div>
       </article>
 
-      <p class="beat beat-lead tagline">One key gone. Your bitcoin isn't.</p>
+      <p class="beat beat-lead center tagline">One key gone. Your bitcoin isn't.</p>
     </div>
   </section>
 
   <!-- IV. What it stands for -->
-  <section class="act act-night" aria-labelledby="stands-h">
+  <section class="act act-surface" aria-labelledby="stands-h">
     <div class="wrap">
       <h2 id="stands-h" class="visually-hidden">What it stands for</h2>
-      <ul class="creed">
-        <li class="beat">No company holds a key.</li>
-        <li class="beat">No server but yours.</li>
-        <li class="beat">No one to ask permission.</li>
-      </ul>
-      <dl class="facts">
-        <div>
+      <div class="frame frame-tall frame-dark">
+        <img class="media" src="media/loop-bridge.webp" width="1280" height="720" loading="lazy" alt="">
+        <video class="media" autoplay muted loop playsinline preload="none" poster="media/loop-bridge.webp" aria-hidden="true"><source src="media/loop-bridge.mp4" type="video/mp4"></video>
+        <ul class="overlay creed">
+          <li class="beat">No company holds a key.</li>
+          <li class="beat">No server but yours.</li>
+          <li class="beat">No one to ask permission.</li>
+        </ul>
+      </div>
+      <dl class="bento">
+        <div class="tile">
           <dt>Your own home server</dt>
           <dd>The guardian runs on your Umbrel or Start9 and reads the chain from your own node. No public servers.</dd>
         </div>
-        <div>
+        <div class="tile">
           <dt>Outbound only</dt>
           <dd>Phone and guardian talk over end-to-end encrypted nostr relays. Nothing opens a port on your home network, and relays see only ciphertext.</dd>
         </div>
-        <div>
+        <div class="tile">
           <dt>No home server?</dt>
           <dd>Recovery Key mode keeps key 3 offline (a printed kit, an NFC card or a second hardware wallet) and gives the phone a small spending balance with timelocked refills.</dd>
         </div>
-        <div>
+        <div class="tile">
           <dt>Open source</dt>
           <dd>MIT licensed. The wallet, the guardian, the design and the threat model are all public.</dd>
         </div>
@@ -218,8 +280,7 @@
   <section id="follow" class="act" aria-labelledby="follow-h">
     <div class="wrap follow">
       <svg class="logo logo-big" width="88" height="80" viewBox="0 0 88 80" aria-hidden="true" focusable="false"><path class="line" d="M44 14 L16 62 L72 62 Z" stroke-width="6" stroke-linejoin="round"/><circle class="top" cx="44" cy="14" r="12"/><circle class="ink" cx="16" cy="62" r="12"/><circle class="ink" cx="72" cy="62" r="12"/></svg>
-      <h2 id="follow-h">Trikey. Your keys. Your server. Your bitcoin.</h2>
-      <p class="lead">Coming soon. We're building it in public.</p>
+      <h2 id="follow-h">Coming soon. Built in public.</h2>
       <p class="notice"><strong>Pre-alpha and not audited. Don't use it with real funds.</strong> There's no release yet, so there's nothing to download. It runs on testnet, signet and regtest while it's built. An independent security review is planned before mainnet. Know the trade-offs too: a remote compromise of your home server gives up one key of three, and phone-only payments wait while the guardian is offline.</p>
       <div class="actions">
         <a class="btn" href="https://github.com/TheIcarusWings/trikey">Follow on GitHub</a>
@@ -238,7 +299,7 @@
       <li><a href="https://github.com/TheIcarusWings/trikey/security/advisories/new">Report a vulnerability</a></li>
       <li><a href="./.well-known/security.txt">security.txt</a></li>
     </ul>
-    <p>Trikey is an independent project and isn't affiliated with Bitkey, Block or any hardware wallet maker. This site sets no cookies, runs no scripts and loads nothing from other sites. Type is Geist, under the SIL Open Font License.</p>
+    <p>Trikey is an independent project and isn't affiliated with Bitkey, Block or any hardware wallet maker. Photos and footage are generated; the people and devices in them are fictional. This site sets no cookies, runs no scripts and loads nothing from other sites. Type is Geist, under the SIL Open Font License.</p>
   </footer>
 </div>
 </body>
