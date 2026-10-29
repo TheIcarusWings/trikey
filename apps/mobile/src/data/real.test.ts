@@ -591,11 +591,12 @@ describe('the real wallet service: finishing a recovery, replacing the guardian,
     await waitFor(() => Q.svc.getState().balanceSats === (out.status === 'done' ? out.movedSats : -1) || undefined, 'the new wallet synced');
     expect(Q.svc.quoteSend({ address: externalAddress(), amountSats: 10_000, speed: 'normal' })).toMatchObject({ ok: true, quote: { plan: { signer: 'phone+guardian' } } });
     // The old wallet stays listed; its stray coins need something that can read it.
-    expect(await failure(Q.svc.sweepOldWallets())).toMatchObject({ kind: 'refused', message: expect.stringMatching(/no longer serves/) });
+    // The new guardian watches the old wallet, so stray coins can still be found and moved through it.
+    expect(await Q.svc.sweepOldWallets()).toEqual({ movedSats: 0 });
     await Q.svc.close();
   });
 
-  it('replace guardian with the old one offline: the person confirms it is gone, the signed move waits, and goes out when the box is back', async () => {
+  it('replace guardian with the old one offline: the person confirms it is gone, the new guardian sends the move, and the old wallet is retired when the box is back', async () => {
     const dev2 = new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware2, network: 'regtest', kind: 'trezor' });
     const Z = await onboarded(R4, new SoftwareHardwareProvider(dev2), 1500);
     R4.fund(Z.svc.wallet!.multisig().derive(0, 0).script, 80_000n);
@@ -608,16 +609,15 @@ describe('the real wallet service: finishing a recovery, replacing the guardian,
     expect(await failure(Z.svc.replaceGuardian())).toMatchObject({ kind: 'guardian_unreachable' });
     expect(R2.guardian.engine.registration()).toBeUndefined();
 
-    const waiting = await Z.svc.replaceGuardian({ oldGuardianGone: true });
-    expect(waiting).toMatchObject({ status: 'waiting', movedSats: expect.any(Number) });
-    expect(Z.svc.getState().replace.pending).toEqual({ guardianLabel: 'Test Guardian', signed: true, oldGuardianOffline: true });
-    expect(Z.svc.getState().guardian.npub).toBe(npubEncode(R4.pubkey)); // not switched yet
-
-    await R4.restart(); // back, locked; chain data and retiring work all the same
-    const done = await Z.svc.replaceGuardian();
-    expect(done).toMatchObject({ status: 'done', oldWalletRetired: true });
-    expect(Z.svc.getState()).toMatchObject({ replace: { pending: null }, oldWallets: [{ retiredOnGuardian: true }] });
+    // The new guardian watches the old wallet and relays its sweep, so nothing has to wait for the old box.
+    const done = await Z.svc.replaceGuardian({ oldGuardianGone: true });
+    expect(done).toMatchObject({ status: 'done', movedSats: expect.any(Number), oldWalletRetired: false });
+    expect(Z.svc.getState()).toMatchObject({ replace: { pending: null }, oldWallets: [{ retiredOnGuardian: false }] });
     expect(Z.svc.getState().guardian.npub).toBe(npubEncode(R2.pubkey));
+
+    await R4.restart(); // the old box comes back, locked: retiring the old wallet works all the same
+    await Z.svc.retireOldWallet();
+    expect(Z.svc.getState().oldWallets).toMatchObject([{ retiredOnGuardian: true }]);
     await Z.svc.close();
   });
 });

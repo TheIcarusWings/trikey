@@ -190,6 +190,14 @@ export function mapError(e: unknown): WalletServiceError {
         return make('refused', `${e.message} Coins sent to the old wallet stay safe: your phone and hardware wallet can move them once something can read it.`);
       case 'replace_in_progress':
         return make('wrong_state', e.message);
+      case 'wallet_recovered_elsewhere':
+        return make('wrong_state', 'This wallet was recovered on another phone, so this phone can no longer use it. Its history stays here to read.');
+      case 'sweep_fee_exceeds_cap':
+        return make('refused', e.message || "Moving your money would cost more in fees than your guardian's recovery fee cap allows. Try again when fees are lower, or raise the cap with your hardware wallet.");
+      case 'sweep_refused':
+        return make('refused', e.message || "The guardian wouldn't send this move.");
+      case 'rate_limited':
+        return make('rate_limited', e.message || 'Too many tries. Wait a moment and try again.');
       case 'internal':
         return make('internal', e.message);
     }
