@@ -6,7 +6,9 @@ import type {
   HostingOverview,
   PairedPhone,
   PairingSession,
+  RecoveryCode,
   RecoveryInProgress,
+  ResetInput,
   Rules,
   SetupInput,
   SetupPreflight,
@@ -25,6 +27,8 @@ export type ApiErrorCode =
   | 'forbidden'
   | 'not_found'
   | 'invalid'
+  | 'recovery_pending'
+  | 'sweep_pending'
   | 'network'
   | 'internal';
 
@@ -69,6 +73,16 @@ export interface GuardianApi {
    * the box's web UI is none of those parties.
    */
   getRecovery(): Promise<RecoveryInProgress | null>;
+
+  /** The permanent "Recover on a new phone" code. `not_found` while no wallet is paired. */
+  getRecoveryCode(): Promise<RecoveryCode>;
+
+  /**
+   * Forgets every wallet and creates a new key 3 (the old one is destroyed). Needs the passphrase and
+   * `confirm: RESET_CONFIRMATION`. Rejects with `recovery_pending` while a recovery runs and
+   * `sweep_pending` while a co-signed sweep waits to be broadcast; `bad_passphrase`, `rate_limited`.
+   */
+  resetGuardian(input: ResetInput): Promise<GuardianStatus>;
 
   /** Creates a fresh one-time pairing session and invalidates the previous one. */
   startPairing(): Promise<PairingSession>;

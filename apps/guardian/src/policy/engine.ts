@@ -8,6 +8,18 @@
  * Every mutating call runs under one lock, works on a copy of the state and
  * persists it before returning, so a signature is never handed out for a
  * spend that was not durably recorded against the limit.
+ *
+ * Wallets: the engine guards ONE active wallet and keeps the ones it guarded
+ * before as retired, read-only history (state version 2). A wallet leaves the
+ * active slot in two ways, both "rotations":
+ *   - a recovery swept it (`rotateAfterSweep`, once the sweep is on its way):
+ *     when the destination keeps this guardian's key it becomes the active
+ *     wallet, with the rules carried over, the recovering phone as its paired
+ *     phone and its hardware authorization key unconfirmed until a fresh
+ *     pairing proof (`confirmHardwareAuth`);
+ *   - the phone and hardware wallet retire it (`retireWallet`, "Replace
+ *     guardian"), after which pairing is open for a new wallet.
+ * Nothing is ever signed or started for a retired wallet.
  */
 import { HDKey } from '@scure/bip32';
 import { base64, hex } from '@scure/base';
@@ -19,6 +31,7 @@ import {
   approvalMessage,
   bip137Authorizer,
   pairingMessage,
+  recoveryAccessMessage,
 } from './authorizer.js';
 import { Clock, DAY, HOUR, systemClock } from './clock.js';
 import { addCosignerSignatures, inspectPsbt } from './inspect.js';
@@ -27,10 +40,12 @@ import { isNostrPubkey, normalizeRules, phoneMayApply } from './rules.js';
 import { CosignerSigner } from './signer.js';
 import { StateStore, deserializeState, serializeState } from './storage.js';
 import {
+  AccessGrant,
   ActivityEntry,
   ActivityEvent,
   CancelActor,
   CancelledBy,
+  GuardedWallet,
   GuardianState,
   HardwareApproval,
   HardwareAuthKey,
@@ -40,6 +55,7 @@ import {
   Refusal,
   Registration,
   Result,
+  RetiredWallet,
   Rules,
   SurvivingRole,
   emptyState,
@@ -50,6 +66,8 @@ export const MAX_APPROVAL_TTL_MS = 24 * HOUR;
 export const DEFAULT_MAX_ACTIVITY = 5000;
 /** Largest allowed jump in hardware sequence numbers (so one approval can't exhaust the space). */
 export const MAX_SEQUENCE_STEP = 1000;
+/** At most this many phones hold recovery access at once (the newest win). */
+export const MAX_ACCESS_GRANTS = 8;
 
 export interface PolicyEngineOptions {
   store: StateStore;
@@ -73,6 +91,8 @@ export interface RegisterInput {
   /** Proof (BIP137 signature) over `pairingMessage(walletId, cosignerAccountPubkey)` by the authorization key. */
   hardwareAuthProof: string;
   appNostrPubkey: string;
+  /** The wallet this one replaces on another guardian, if the phone said so (informational). */
+  replacesWalletId?: string;
 }
 
 export type RuleChangeAuth = { authenticatedBy: 'app' } | { authenticatedBy: 'hardware'; approval: HardwareApproval };
@@ -109,6 +129,10 @@ export interface GuardianStatus {
   /** The next hardware approval must use a sequence number at least this. */
   nextHardwareSequence: number;
   dailyLimit?: { limit: bigint; used: bigint; available: bigint };
+  /** True after a rotation until the hardware authorization key is confirmed for the active wallet. */
+  hardwareConfirmRequired: boolean;
+  /** How many wallets this guardian retired. */
+  retiredWallets: number;
 }
 
 export interface CosignResult {
@@ -118,6 +142,16 @@ export interface CosignResult {
   usedAfter: bigint;
   /** True when this exact transaction had already been co-signed (nothing new was counted). */
   replay: boolean;
+}
+
+export interface RotationResult {
+  /** The wallet the recovery swept, now retired. */
+  retiredWalletId: string;
+  /** The destination wallet, now the active one, when the guardian adopted it. */
+  adopted?: Registration;
+  /** Why the destination was not adopted. */
+  detail?: string;
+  revokedGrants: number;
 }
 
 class Mutex {
@@ -161,6 +195,30 @@ function normalizeHdPath(p: string): string {
   return p.replace(/'/g, 'h');
 }
 
+/** The non-hardened steps of `path` below the wallet's hardware account (`m/<origin>/...`), if it lies there. */
+function belowHardwareAccount(wallet: MultisigWallet, path: string): string | undefined {
+  const origin = `m/${wallet.keys.hardware.originPath}`;
+  const p = normalizeHdPath(path);
+  if (!p.startsWith(`${origin}/`)) return undefined;
+  const rest = p.slice(origin.length + 1);
+  return /^\d+(\/\d+)*$/.test(rest) ? rest : undefined;
+}
+
+/**
+ * If the authorization key sits below the hardware wallet's multisig account by non-hardened steps,
+ * the guardian can check itself that it belongs to that device. Returns a reason when it does not.
+ */
+function authKeyMismatch(wallet: MultisigWallet, key: HardwareAuthKey, network: Network): string | undefined {
+  const rest = belowHardwareAccount(wallet, key.path);
+  if (rest === undefined) return undefined;
+  const derived = HDKey.fromExtendedKey(wallet.keys.hardware.xpub, network.bip32).derive(`m/${rest}`).publicKey!;
+  return hex.encode(derived) === key.pubkey ? undefined : 'authorization key does not derive from the hardware xpub at its path';
+}
+
+function liveGrants(w: GuardedWallet, now: number): AccessGrant[] {
+  return w.accessGrants.filter((g) => g.until > now);
+}
+
 export class PolicyEngine {
   private readonly mutex = new Mutex();
   private readonly clock: Clock;
@@ -179,7 +237,7 @@ export class PolicyEngine {
     this.setSigner(opts.signer);
   }
 
-  /** Loads persisted state (or starts empty). */
+  /** Loads persisted state (or starts empty). A version-1 file is migrated on load and written back as version 2 at the next change. */
   static async open(opts: PolicyEngineOptions): Promise<PolicyEngine> {
     const state = (await opts.store.load()) ?? emptyState();
     return new PolicyEngine(opts.store, state, opts);
@@ -190,7 +248,7 @@ export class PolicyEngine {
 
   /** Installs key 3 after unlock, or removes it (`undefined`) to lock. */
   setSigner(signer: CosignerSigner | undefined): void {
-    const reg = this.state.registration;
+    const reg = this.state.active?.registration;
     if (signer && reg && hex.encode(signer.accountPubkey) !== reg.cosignerAccountPubkey)
       throw new Error('signer does not hold the registered cosigner key');
     this.signer = signer;
@@ -206,28 +264,30 @@ export class PolicyEngine {
   status(): GuardianStatus {
     const s = this.state;
     const now = this.clock.now();
-    const reg = s.registration;
+    const w = s.active;
+    const reg = w?.registration;
     const active = activeRecovery(s);
     const last = s.recoveries[s.recoveries.length - 1];
     let phoneSpending: PhoneSpendingStatus;
     if (active) phoneSpending = 'paused_recovery';
-    else if (s.phoneSpending.state === 'paused_contested') phoneSpending = 'paused_contested';
-    else if (s.phoneSpending.state === 'retired') phoneSpending = 'retired';
+    else if (w?.phoneSpending.state === 'paused_contested') phoneSpending = 'paused_contested';
+    else if (w?.phoneSpending.state === 'retired') phoneSpending = 'retired';
     else phoneSpending = 'enabled';
-    const used = windowUsage(s.spends, now);
+    const used = w ? windowUsage(w.spends, now) : 0n;
+    const rules = w?.rules;
     return {
       registered: !!reg,
       locked: this.locked,
       walletId: reg?.walletId,
       network: reg?.network,
-      rules: s.rules,
+      rules,
       phoneSpending,
       recoveryStatus: active ? viewOf(active, now).status : 'none',
       recovery: last ? viewOf(last, now) : undefined,
       nextHardwareSequence: s.hardwareSequence + 1,
-      dailyLimit: s.rules
-        ? { limit: s.rules.dailyLimitSats, used, available: s.rules.dailyLimitSats > used ? s.rules.dailyLimitSats - used : 0n }
-        : undefined,
+      dailyLimit: rules ? { limit: rules.dailyLimitSats, used, available: rules.dailyLimitSats > used ? rules.dailyLimitSats - used : 0n } : undefined,
+      hardwareConfirmRequired: !!reg && !reg.hardwareAuthConfirmed,
+      retiredWallets: s.retired.length,
     };
   }
 
@@ -237,13 +297,38 @@ export class PolicyEngine {
     return all.slice(-(opts.limit ?? 100)).reverse();
   }
 
+  /** The active wallet's registration. */
   registration(): Registration | undefined {
-    return this.state.registration;
+    return this.state.active?.registration;
+  }
+
+  /** Wallets this guardian retired, oldest first (read-only). */
+  retiredWallets(): readonly RetiredWallet[] {
+    return this.state.retired;
+  }
+
+  /** The registration of the active or a retired wallet. */
+  walletById(walletId: string): Registration | undefined {
+    const a = this.state.active?.registration;
+    if (a?.walletId === walletId) return a;
+    return this.state.retired.find((r) => r.registration.walletId === walletId)?.registration;
   }
 
   /** Alerts the service should send now (nostr DMs), with the recipients still owed each one. */
   dueAlerts(): DueAlert[] {
     return computeDueAlerts(this.state.recoveries, this.clock.now());
+  }
+
+  /** True while `pubkey` holds an unexpired `recovery.access` grant for the active wallet. */
+  hasRecoveryAccess(pubkey: string): boolean {
+    const w = this.state.active;
+    return !!w && liveGrants(w, this.clock.now()).some((g) => g.pubkey === pubkey);
+  }
+
+  /** Phones holding an unexpired `recovery.access` grant for the active wallet. */
+  recoveryPeers(): string[] {
+    const w = this.state.active;
+    return w ? liveGrants(w, this.clock.now()).map((g) => g.pubkey) : [];
   }
 
   // -------------------------------------------------------------------------
@@ -255,7 +340,7 @@ export class PolicyEngine {
       const now = this.clock.now();
       this.refresh(draft, now);
       const out = await fn(draft, now);
-      draft.spends = pruneSpends(draft.spends, now);
+      if (draft.active) draft.active.spends = pruneSpends(draft.active.spends, now);
       if (draft.activity.length > this.maxActivity) draft.activity = draft.activity.slice(-this.maxActivity);
       await this.store.save(draft);
       this.state = draft;
@@ -282,9 +367,22 @@ export class PolicyEngine {
     return MultisigWallet.fromDescriptor(reg.descriptor, getNetwork(reg.network));
   }
 
+  /** The retired wallet whose coins `psbt` spends, if any (for a precise refusal). */
+  private retiredOwner(draft: GuardianState, psbt: Uint8Array): string | undefined {
+    for (const r of draft.retired) {
+      try {
+        if (inspectPsbt(psbt, this.wallet(r.registration)).ok) return r.registration.walletId;
+      } catch {
+        /* not this one */
+      }
+    }
+    return undefined;
+  }
+
   /** Checks a hardware approval for `action` and consumes its sequence number on success. */
   private checkApproval(draft: GuardianState, now: number, approval: HardwareApproval, action: HardwareAction): Refusal | undefined {
-    const reg = draft.registration!;
+    const reg = draft.active!.registration;
+    if (!reg.hardwareAuthConfirmed || !reg.hardwareAuth) return { reason: 'hardware_auth_unconfirmed', walletId: reg.walletId };
     const authorizer = this.authorizers.get(approval?.kind);
     if (!authorizer || approval.kind !== reg.hardwareAuth.kind) return { reason: 'unsupported_approval', kind: String(approval?.kind) };
     if (!Number.isSafeInteger(approval.sequence) || approval.sequence <= draft.hardwareSequence)
@@ -307,12 +405,35 @@ export class PolicyEngine {
     return undefined;
   }
 
+  /** Validates an authorization key (normalized copy) or returns why not. */
+  private checkAuthKey(key: HardwareAuthKey | undefined): { ok: true; key: HardwareAuthKey; authorizer: HardwareAuthorizer } | { ok: false; detail: string } {
+    if (!key || typeof key !== 'object') return { ok: false, detail: 'hardwareAuth is missing' };
+    const hwKey: HardwareAuthKey = { ...key, pubkey: String(key.pubkey).toLowerCase() };
+    const authorizer = this.authorizers.get(hwKey.kind);
+    if (!authorizer) return { ok: false, detail: `unsupported hardware authorization kind: ${hwKey.kind}` };
+    try {
+      authorizer.validateKey(hwKey);
+    } catch (e) {
+      return { ok: false, detail: `hardwareAuth: ${(e as Error).message}` };
+    }
+    return { ok: true, key: hwKey, authorizer };
+  }
+
+  /** Moves the active wallet to the retired list. Returns how many live access grants that revoked. */
+  private retireActive(draft: GuardianState, now: number, retirement: RetiredWallet['retirement']): number {
+    const w = draft.active!;
+    const revoked = liveGrants(w, now).length;
+    draft.retired.push({ registration: w.registration, rules: w.rules, retiredAt: now, retirement });
+    draft.active = undefined;
+    return revoked;
+  }
+
   // -------------------------------------------------------------------------
   // Registration
 
   async register(input: RegisterInput): Promise<Result<{ walletId: string }>> {
     return this.mutate((draft, now) => {
-      if (draft.registration) return refused({ reason: 'already_registered' });
+      if (draft.active) return refused({ reason: 'already_registered' });
       const bad = (detail: string) => refused({ reason: 'invalid_registration', detail });
       let network: Network;
       let wallet: MultisigWallet;
@@ -335,41 +456,73 @@ export class PolicyEngine {
       } catch (e) {
         return bad(`rules: ${(e as Error).message}`);
       }
-      const hwKey: HardwareAuthKey = { ...input.hardwareAuth, pubkey: String(input.hardwareAuth?.pubkey).toLowerCase() };
-      const authorizer = this.authorizers.get(hwKey.kind);
-      if (!authorizer) return bad(`unsupported hardware authorization kind: ${hwKey.kind}`);
-      try {
-        authorizer.validateKey(hwKey);
-      } catch (e) {
-        return bad(`hardwareAuth: ${(e as Error).message}`);
-      }
-      // If the authorization key sits below the hardware wallet's multisig account by
-      // non-hardened steps, the guardian can check it belongs to that device itself.
-      const hwOrigin = `m/${wallet.keys.hardware.originPath}`;
-      const path = normalizeHdPath(hwKey.path);
-      if (path.startsWith(`${hwOrigin}/`)) {
-        const rest = path.slice(hwOrigin.length + 1);
-        if (/^\d+(\/\d+)*$/.test(rest)) {
-          const derived = HDKey.fromExtendedKey(wallet.keys.hardware.xpub, network.bip32).derive(`m/${rest}`).publicKey!;
-          if (hex.encode(derived) !== hwKey.pubkey) return bad('authorization key does not derive from the hardware xpub at its path');
-        }
-      }
+      const checked = this.checkAuthKey(input.hardwareAuth);
+      if (!checked.ok) return bad(checked.detail);
+      const hwKey = checked.key;
+      const mismatch = authKeyMismatch(wallet, hwKey, network);
+      if (mismatch) return bad(mismatch);
       const walletId = wallet.fingerprint();
-      if (!authorizer.verify(pairingMessage(walletId, cosignerHex), input.hardwareAuthProof, hwKey))
+      // A retired wallet stays retired: re-pairing it would bring back a key set the user moved away from.
+      if (draft.retired.some((r) => r.registration.walletId === walletId)) return refused({ reason: 'wallet_retired', walletId });
+      if (!checked.authorizer.verify(pairingMessage(walletId, cosignerHex), input.hardwareAuthProof, hwKey))
         return bad('hardware pairing proof does not verify');
+      const replaces = typeof input.replacesWalletId === 'string' && /^[0-9a-f]{16}$/.test(input.replacesWalletId) ? input.replacesWalletId : undefined;
 
-      draft.registration = {
-        walletId,
-        network: network.name,
-        descriptor: wallet.descriptor(),
-        cosignerAccountPubkey: cosignerHex,
-        hardwareAuth: hwKey,
-        appNostrPubkey: appNostr,
-        registeredAt: now,
+      draft.active = {
+        registration: {
+          walletId,
+          network: network.name,
+          descriptor: wallet.descriptor(),
+          cosignerAccountPubkey: cosignerHex,
+          hardwareAuth: hwKey,
+          hardwareAuthConfirmed: true,
+          appNostrPubkey: appNostr,
+          registeredAt: now,
+          origin: { kind: 'paired', ...(replaces ? { replacesWalletId: replaces } : {}) },
+        },
+        rules,
+        spends: [],
+        phoneSpending: { state: 'enabled' },
+        accessGrants: [],
       };
-      draft.rules = rules;
-      this.log(draft, now, { type: 'registered', walletId });
+      this.log(draft, now, { type: 'registered', walletId, ...(replaces ? { replacesWalletId: replaces } : {}) });
       return { ok: true as const, walletId };
+    });
+  }
+
+  /**
+   * After a rotation, the hardware wallet proves again that it holds the authorization key, now for
+   * the active wallet's id: a signature over `pairingMessage(walletId, cosignerAccountPubkey)`, as at
+   * pairing. Until then every hardware approval is refused (`hardware_auth_unconfirmed`). The key must
+   * be the one the guardian expects, when it expects one, and must derive from the hardware xpub when
+   * its path lies below it. Repeating it for a confirmed wallet with the same key is a no-op.
+   */
+  async confirmHardwareAuth(input: { hardwareAuth: HardwareAuthKey; proof: string }): Promise<Result<{ registration: Registration; changed: boolean }>> {
+    return this.mutate((draft, now) => {
+      const refuse = (refusal: Refusal) => {
+        this.log(draft, now, { type: 'hardware_auth_confirm_refused', refusal });
+        return refused(refusal);
+      };
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      const reg = w.registration;
+      const bad = (detail: string) => refuse({ reason: 'invalid_registration', detail });
+      const checked = this.checkAuthKey(input.hardwareAuth);
+      if (!checked.ok) return bad(checked.detail);
+      const key = checked.key;
+      const sameKey = (k: HardwareAuthKey | undefined) => !!k && k.kind === key.kind && k.pubkey === key.pubkey && normalizeHdPath(k.path) === normalizeHdPath(key.path);
+      if (reg.hardwareAuth && !sameKey(reg.hardwareAuth))
+        return bad(reg.hardwareAuthConfirmed ? 'the hardware authorization key is already confirmed' : 'not the authorization key the guardian expects for this wallet');
+      const network = getNetwork(reg.network);
+      const mismatch = authKeyMismatch(this.wallet(reg), key, network);
+      if (mismatch) return bad(mismatch);
+      if (typeof input.proof !== 'string' || !checked.authorizer.verify(pairingMessage(reg.walletId, reg.cosignerAccountPubkey), input.proof, key))
+        return bad('hardware pairing proof does not verify');
+      if (reg.hardwareAuthConfirmed) return { ok: true as const, registration: reg, changed: false };
+      reg.hardwareAuth = { kind: key.kind, pubkey: key.pubkey, path: key.path };
+      reg.hardwareAuthConfirmed = true;
+      this.log(draft, now, { type: 'hardware_auth_confirmed', walletId: reg.walletId });
+      return { ok: true as const, registration: reg, changed: true };
     });
   }
 
@@ -383,12 +536,15 @@ export class PolicyEngine {
         this.log(draft, now, { type: 'cosign_refused', txid, refusal });
         return refused(refusal);
       };
-      const reg = draft.registration;
-      const rules = draft.rules;
-      if (!reg || !rules) return refused({ reason: 'not_registered' });
+      const w = draft.active;
+      if (!w) {
+        const retired = this.retiredOwner(draft, psbt);
+        return refused(retired ? { reason: 'wallet_retired', walletId: retired } : { reason: 'not_registered' });
+      }
+      const { registration: reg, rules } = w;
       const active = activeRecovery(draft);
       if (active) return refuse({ reason: 'recovery_in_progress', recoveryId: active.id });
-      const ps = draft.phoneSpending;
+      const ps = w.phoneSpending;
       if (ps.state !== 'enabled')
         return refuse({
           reason: 'phone_spending_paused',
@@ -397,7 +553,10 @@ export class PolicyEngine {
         });
 
       const checked = inspectPsbt(psbt, this.wallet(reg));
-      if (!checked.ok) return refuse(checked.refusal);
+      if (!checked.ok) {
+        const retired = checked.refusal.reason === 'foreign_input' ? this.retiredOwner(draft, psbt) : undefined;
+        return refuse(retired ? { reason: 'wallet_retired', walletId: retired } : checked.refusal);
+      }
       const { analysis, outflow } = checked.inspection;
       const txid = analysis.txid;
       for (const inp of analysis.inputs) {
@@ -406,16 +565,16 @@ export class PolicyEngine {
         if (inp.signedBy[0] !== 'app') return refuse({ reason: 'not_signed_by_app', input: inp.index, signedBy: inp.signedBy }, txid);
       }
 
-      const replay = draft.spends.some((s) => s.txid === txid);
-      const used = windowUsage(draft.spends, now);
+      const replay = w.spends.some((s) => s.txid === txid);
+      const used = windowUsage(w.spends, now);
       const shares = splitOutflow(analysis.inputs, outflow);
-      const wouldUse = replay ? used : usageWith(draft.spends, shares, now);
+      const wouldUse = replay ? used : usageWith(w.spends, shares, now);
       if (!replay && wouldUse > rules.dailyLimitSats)
         return refuse({ reason: 'over_daily_limit', limit: rules.dailyLimitSats, used, outflow, wouldUse }, txid);
 
       if (!this.signer) return refuse({ reason: 'guardian_locked' }, txid);
       const signed = await addCosignerSignatures(psbt, analysis, this.signer);
-      if (!replay) draft.spends.push({ txid, at: now, outflow, shares });
+      if (!replay) w.spends.push({ txid, at: now, outflow, shares });
       this.log(draft, now, { type: 'cosign_signed', txid, outflow, usedAfter: wouldUse, replay });
       return { ok: true as const, psbt: signed, txid, outflow, usedAfter: wouldUse, replay };
     });
@@ -431,8 +590,9 @@ export class PolicyEngine {
         this.log(draft, now, { type: 'rules_change_refused', by, refusal });
         return refused(refusal);
       };
-      const current = draft.rules;
-      if (!draft.registration || !current) return refused({ reason: 'not_registered' });
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      const current = w.rules;
       let rules: Rules;
       try {
         rules = normalizeRules(next);
@@ -453,9 +613,75 @@ export class PolicyEngine {
       } else {
         return refuse({ reason: 'not_authorized' });
       }
-      draft.rules = rules;
+      w.rules = rules;
       this.log(draft, now, { type: 'rules_changed', by, sequence, from: current, to: rules });
       return { ok: true as const, rules };
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Recovery access (a new phone without the old one or its backup)
+
+  /**
+   * Lets a new phone read the wallet and start a recovery, on the hardware wallet's word: a BIP137
+   * signature over `recoveryAccessMessage(guardian, phone, expiresAt)` by the authorization key (the
+   * confirmed one, or after a rotation the expected one). Consumes no sequence number. The grant
+   * belongs to the active wallet and ends at `expiresAt`, or when the wallet rotates or retires.
+   */
+  async grantRecoveryAccess(req: {
+    phonePubkey: string;
+    guardianPubkey: string;
+    approval: { kind: string; expiresAt: number; signature: string };
+  }): Promise<Result<{ until: number; renewed: boolean }>> {
+    // Anyone may ask once a wallet is paired, so a refusal is decided on the current state without
+    // touching the disk (no state write, no log entry per stranger's attempt); only a grant is saved.
+    const check = (s: GuardianState, now: number): Refusal | { walletId: string; phone: string; until: number } => {
+      const w = s.active;
+      if (!w) return { reason: 'not_registered' };
+      const reg = w.registration;
+      if (!reg.hardwareAuth) return { reason: 'hardware_auth_unconfirmed', walletId: reg.walletId };
+      const { expiresAt, signature, kind } = req.approval ?? {};
+      const authorizer = this.authorizers.get(kind);
+      if (!authorizer || kind !== reg.hardwareAuth.kind) return { reason: 'unsupported_approval', kind: String(kind) };
+      if (!Number.isSafeInteger(expiresAt) || expiresAt * 1000 <= now) return { reason: 'approval_expired', expiresAt };
+      const maxExpiresAt = Math.floor((now + MAX_APPROVAL_TTL_MS) / 1000);
+      if (expiresAt > maxExpiresAt) return { reason: 'approval_expiry_too_far', expiresAt, maxExpiresAt };
+      const phone = String(req.phonePubkey).toLowerCase();
+      let message: string;
+      try {
+        message = recoveryAccessMessage({ guardianPubkey: String(req.guardianPubkey).toLowerCase(), phonePubkey: phone, expiresAt });
+      } catch {
+        return { reason: 'approval_invalid_signature' };
+      }
+      if (typeof signature !== 'string' || !authorizer.verify(message, signature, reg.hardwareAuth)) return { reason: 'approval_invalid_signature' };
+      return { walletId: reg.walletId, phone, until: expiresAt * 1000 };
+    };
+    const first = check(this.state, this.clock.now());
+    if ('reason' in first) return refused(first);
+    return this.mutate((draft, now) => {
+      // Re-checked under the lock: the wallet may have rotated or retired in between.
+      const again = check(draft, now);
+      if ('reason' in again) return refused(again);
+      if (again.walletId !== first.walletId) return refused({ reason: 'not_registered' });
+      const w = draft.active!;
+      const live = liveGrants(w, now);
+      const renewed = live.some((g) => g.pubkey === again.phone);
+      w.accessGrants = [...live.filter((g) => g.pubkey !== again.phone), { pubkey: again.phone, until: again.until, grantedAt: now }].slice(-MAX_ACCESS_GRANTS);
+      this.log(draft, now, { type: 'recovery_access_granted', phone: again.phone, until: again.until });
+      return { ok: true as const, until: again.until, renewed };
+    });
+  }
+
+  /** Takes over grants recorded by a guardian version that kept them in service.json (one-time migration). */
+  async importAccessGrants(grants: { pubkey: string; until: number }[]): Promise<number> {
+    return this.mutate((draft, now) => {
+      const w = draft.active;
+      if (!w) return 0;
+      const incoming = grants.filter((g) => isNostrPubkey(g.pubkey) && Number.isFinite(g.until) && g.until > now);
+      const byKey = new Map(liveGrants(w, now).map((g) => [g.pubkey, g]));
+      for (const g of incoming) if (!byKey.has(g.pubkey)) byKey.set(g.pubkey, { pubkey: g.pubkey, until: g.until, grantedAt: now });
+      w.accessGrants = [...byKey.values()].slice(-MAX_ACCESS_GRANTS);
+      return incoming.length;
     });
   }
 
@@ -465,19 +691,25 @@ export class PolicyEngine {
   /**
    * Starts a recovery with a sweep signed (on every input) by the surviving
    * key, paying only to `destinationDescriptor`, which must keep that key and
-   * drop the other user key.
+   * drop the other user key. `initiator` is the nostr key that asked (it will
+   * be the destination wallet's paired phone if the guardian adopts it).
    */
-  async startRecovery(req: { psbt: Uint8Array; destinationDescriptor: string }): Promise<Result<{ recovery: RecoveryView }>> {
+  async startRecovery(req: { psbt: Uint8Array; destinationDescriptor: string; initiator?: string }): Promise<Result<{ recovery: RecoveryView }>> {
     return this.mutate((draft, now) => {
       const refuse = (refusal: Refusal) => {
         this.log(draft, now, { type: 'recovery_start_refused', refusal });
         return refused(refusal);
       };
-      const reg = draft.registration;
-      const rules = draft.rules;
-      if (!reg || !rules) return refused({ reason: 'not_registered' });
+      const w = draft.active;
+      if (!w) {
+        const retired = this.retiredOwner(draft, req.psbt);
+        return refused(retired ? { reason: 'wallet_retired', walletId: retired } : { reason: 'not_registered' });
+      }
+      const { registration: reg, rules } = w;
       const running = activeRecovery(draft);
       if (running) return refuse({ reason: 'recovery_in_progress', recoveryId: running.id });
+      // A recovery already swept this wallet: it is waiting to be retired.
+      if (w.phoneSpending.state === 'retired') return refuse({ reason: 'wallet_retired', walletId: reg.walletId });
 
       const wallet = this.wallet(reg);
       let dest: MultisigWallet;
@@ -487,9 +719,14 @@ export class PolicyEngine {
         return refuse({ reason: 'invalid_destination', detail: (e as Error).message });
       }
       if (dest.fingerprint() === wallet.fingerprint()) return refuse({ reason: 'invalid_destination', detail: 'destination is the current wallet' });
+      if (draft.retired.some((r) => r.registration.walletId === dest.fingerprint()))
+        return refuse({ reason: 'invalid_destination', detail: 'destination is a wallet this guardian retired' });
 
       const checked = inspectPsbt(req.psbt, wallet, dest);
-      if (!checked.ok) return refuse(checked.refusal);
+      if (!checked.ok) {
+        const retired = checked.refusal.reason === 'foreign_input' ? this.retiredOwner(draft, req.psbt) : undefined;
+        return refuse(retired ? { reason: 'wallet_retired', walletId: retired } : checked.refusal);
+      }
       const { analysis, toTarget, targetOut } = checked.inspection;
 
       const roles = new Set<Role>();
@@ -511,10 +748,13 @@ export class PolicyEngine {
       if (stray >= 0) return refuse({ reason: 'sweep_not_to_destination', output: stray });
       if (analysis.fee > rules.sweepFeeCapSats) return refuse({ reason: 'sweep_fee_exceeds_cap', fee: analysis.fee, cap: rules.sweepFeeCapSats });
 
+      const initiator = typeof req.initiator === 'string' && isNostrPubkey(req.initiator.toLowerCase()) ? req.initiator.toLowerCase() : undefined;
       const rec: RecoveryRecord = {
         id: `${draft.recoveries.length + 1}-${analysis.txid.slice(0, 12)}`,
+        walletId: reg.walletId,
         status: 'pending',
         survivingRole: surviving,
+        ...(initiator ? { initiator } : {}),
         sweepPsbt: base64.encode(req.psbt),
         sweepTxid: analysis.txid,
         destinationDescriptor: dest.descriptor(),
@@ -555,9 +795,9 @@ export class PolicyEngine {
         this.log(draft, now, { type: 'recovery_cancel_refused', refusal });
         return refused(refusal);
       };
-      const reg = draft.registration;
-      const rules = draft.rules;
-      if (!reg || !rules) return refused({ reason: 'not_registered' });
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      const { registration: reg, rules } = w;
       const rec = activeRecovery(draft);
       if (!rec) return refuse({ reason: 'no_recovery' });
       let by: CancelledBy;
@@ -580,7 +820,7 @@ export class PolicyEngine {
       rec.status = 'cancelled';
       rec.cancelledAt = now;
       rec.cancelledBy = by;
-      if (contested) draft.phoneSpending = { state: 'paused_contested', recoveryId: rec.id };
+      if (contested) w.phoneSpending = { state: 'paused_contested', recoveryId: rec.id };
       this.log(draft, now, { type: 'recovery_cancelled', recoveryId: rec.id, by, contested });
       return { ok: true as const, recovery: viewOf(rec, now), contested };
     });
@@ -593,11 +833,12 @@ export class PolicyEngine {
         this.log(draft, now, { type: 'recovery_complete_refused', refusal });
         return refused(refusal);
       };
-      const reg = draft.registration;
-      const rules = draft.rules;
-      if (!reg || !rules) return refused({ reason: 'not_registered' });
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      const { registration: reg, rules } = w;
       const rec = activeRecovery(draft);
       if (!rec) return refuse({ reason: 'no_recovery' });
+      if (rec.walletId !== reg.walletId) return refuse({ reason: 'not_adoptable', detail: 'the recovery is not of the active wallet' });
       if (now < rec.readyAt) return refuse({ reason: 'delay_not_elapsed', readyAt: rec.readyAt });
 
       // Re-check everything from the stored PSBT rather than trusting what was checked at start.
@@ -619,9 +860,116 @@ export class PolicyEngine {
       const { txHex, txid } = finalizePsbt(signed);
       rec.status = 'completed';
       rec.completedAt = now;
-      draft.phoneSpending = { state: 'retired', recoveryId: rec.id };
+      w.phoneSpending = { state: 'retired', recoveryId: rec.id };
       this.log(draft, now, { type: 'recovery_completed', recoveryId: rec.id, txid });
       return { ok: true as const, psbt: signed, txHex, txid, recovery: viewOf(rec, now) };
+    });
+  }
+
+  /**
+   * Wallet rotation after a completed recovery, once its sweep has been accepted by a node (the
+   * service calls this after a successful broadcast; see DESIGN.md, "Recovery flows", for why not at
+   * completion and not at confirmation). The swept wallet is retired and its recovery access grants
+   * revoked. The destination becomes the active wallet when it holds this guardian's key and the
+   * guardian knows its phone; otherwise the guardian is left unpaired and the destination can be
+   * paired like any wallet.
+   *
+   * Adopted wallet: the rules carry over; the paired phone is the recovery's
+   * initiator (the surviving phone, or the new phone admitted by `recovery.access`); the hardware
+   * authorization key is the old one when the hardware wallet survived, else the same path below the
+   * new hardware xpub when the old path lay below the old one, else unknown. Either way unconfirmed:
+   * hardware approvals wait for `confirmHardwareAuth`.
+   */
+  async rotateAfterSweep(recoveryId: string): Promise<Result<RotationResult>> {
+    return this.mutate((draft, now) => {
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      const old = w.registration;
+      const rec = draft.recoveries.find((r) => r.id === recoveryId);
+      if (!rec || rec.status !== 'completed') return refused({ reason: 'no_recovery' });
+      if (rec.walletId !== old.walletId) return refused({ reason: 'not_adoptable', detail: 'the recovery is not of the active wallet' });
+      if (rec.rotatedAt !== undefined) return refused({ reason: 'not_adoptable', detail: 'already rotated' });
+
+      let next: Registration | undefined;
+      let detail: string | undefined;
+      const network = getNetwork(old.network);
+      try {
+        const dest = MultisigWallet.fromDescriptor(rec.destinationDescriptor, network);
+        const acct = dest.accountPubkeys();
+        const phone = rec.initiator ?? (rec.survivingRole === 'app' ? old.appNostrPubkey : undefined);
+        if (hex.encode(acct.cosigner) !== old.cosignerAccountPubkey) detail = 'the new wallet uses another guardian key';
+        else if (new Set(ROLES.map((r) => hex.encode(acct[r]))).size !== 3) detail = 'the new wallet does not have three distinct keys';
+        else if (draft.retired.some((r) => r.registration.walletId === dest.fingerprint())) detail = 'the new wallet was retired before';
+        else if (!phone) detail = 'the phone that started the recovery is not known; pair the new wallet with a pairing code';
+        else {
+          let hardwareAuth: HardwareAuthKey | undefined;
+          const prev = old.hardwareAuth;
+          if (prev && rec.survivingRole === 'hardware') hardwareAuth = { ...prev };
+          else if (prev) {
+            const rest = belowHardwareAccount(this.wallet(old), prev.path);
+            if (rest !== undefined) {
+              const path = `m/${dest.keys.hardware.originPath.replace(/h/g, "'")}/${rest}`;
+              const pubkey = hex.encode(HDKey.fromExtendedKey(dest.keys.hardware.xpub, network.bip32).derive(`m/${rest}`).publicKey!);
+              hardwareAuth = { kind: prev.kind, pubkey, path };
+            }
+          }
+          next = {
+            walletId: dest.fingerprint(),
+            network: old.network,
+            descriptor: dest.descriptor(),
+            cosignerAccountPubkey: old.cosignerAccountPubkey,
+            ...(hardwareAuth ? { hardwareAuth } : {}),
+            hardwareAuthConfirmed: false,
+            appNostrPubkey: phone,
+            registeredAt: now,
+            origin: { kind: 'recovery', recoveryId: rec.id, fromWalletId: old.walletId },
+          };
+        }
+      } catch (e) {
+        detail = `the new wallet's descriptor does not parse (${(e as Error).message})`;
+      }
+
+      const rules = w.rules;
+      const revokedGrants = this.retireActive(draft, now, { reason: 'recovered', recoveryId: rec.id, ...(next ? { successorWalletId: next.walletId } : {}) });
+      // The limit window starts empty: phone payments were paused for the whole delay (7 days at least),
+      // so none of the old wallet's spends is still inside the 24 h window.
+      if (next) draft.active = { registration: next, rules, spends: [], phoneSpending: { state: 'enabled' }, accessGrants: [] };
+      rec.rotatedAt = now;
+      this.log(draft, now, {
+        type: 'wallet_rotated',
+        recoveryId: rec.id,
+        fromWalletId: old.walletId,
+        ...(next ? { toWalletId: next.walletId, phone: next.appNostrPubkey } : {}),
+        ...(detail ? { detail } : {}),
+        revokedGrants,
+      });
+      return { ok: true as const, retiredWalletId: old.walletId, ...(next ? { adopted: next } : {}), ...(detail ? { detail } : {}), revokedGrants };
+    });
+  }
+
+  /**
+   * "Replace guardian", the old guardian's side: the phone and the hardware wallet (a `retire-wallet`
+   * approval) retire the active wallet. From then on nothing is co-signed or started for it, its
+   * recovery access grants are gone, and pairing is open for a new wallet. Not while a recovery runs
+   * (cancel it first): a hardware-held thief must not be able to end the guardian's protection in
+   * the middle of its own recovery.
+   */
+  async retireWallet(approval: HardwareApproval): Promise<Result<{ walletId: string; retiredAt: number }>> {
+    return this.mutate((draft, now) => {
+      const refuse = (refusal: Refusal) => {
+        this.log(draft, now, { type: 'wallet_retire_refused', refusal });
+        return refused(refusal);
+      };
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      const active = activeRecovery(draft);
+      if (active) return refuse({ reason: 'recovery_in_progress', recoveryId: active.id });
+      const r = this.checkApproval(draft, now, approval, { action: 'retire-wallet' });
+      if (r) return refuse(r);
+      const walletId = w.registration.walletId;
+      const revokedGrants = this.retireActive(draft, now, { reason: 'retired', sequence: approval.sequence });
+      this.log(draft, now, { type: 'wallet_retired', walletId, sequence: approval.sequence, revokedGrants });
+      return { ok: true as const, walletId, retiredAt: now };
     });
   }
 
@@ -632,15 +980,34 @@ export class PolicyEngine {
         this.log(draft, now, { type: 'phone_spending_resume_refused', refusal });
         return refused(refusal);
       };
-      if (!draft.registration) return refused({ reason: 'not_registered' });
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
       const active = activeRecovery(draft);
       if (active) return refuse({ reason: 'recovery_in_progress', recoveryId: active.id });
-      if (draft.phoneSpending.state !== 'paused_contested') return refuse({ reason: 'nothing_to_resume' });
+      if (w.phoneSpending.state !== 'paused_contested') return refuse({ reason: 'nothing_to_resume' });
       const r = this.checkApproval(draft, now, approval, { action: 'resume-phone' });
       if (r) return refuse(r);
-      draft.phoneSpending = { state: 'enabled' };
+      w.phoneSpending = { state: 'enabled' };
       this.log(draft, now, { type: 'phone_spending_resumed', sequence: approval.sequence });
       return { ok: true as const };
+    });
+  }
+
+  /**
+   * Forgets every wallet (active and retired), recovery and limit record: the web UI's "reset
+   * guardian", which the service only runs together with a new key 3 (see guardian.ts). Refused
+   * while a recovery is pending or ready, so a reset can never make a running recovery disappear.
+   */
+  async reset(): Promise<Result<{ forgotten: string[] }>> {
+    return this.mutate((draft, now) => {
+      const running = activeRecovery(draft);
+      if (running) return refused({ reason: 'recovery_in_progress', recoveryId: running.id });
+      const forgotten = [...(draft.active ? [draft.active.registration.walletId] : []), ...draft.retired.map((r) => r.registration.walletId)];
+      const nextActivityId = draft.nextActivityId;
+      Object.assign(draft, emptyState(), { nextActivityId });
+      delete draft.active;
+      this.log(draft, now, { type: 'guardian_reset' });
+      return { ok: true as const, forgotten };
     });
   }
 

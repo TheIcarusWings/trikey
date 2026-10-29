@@ -11,8 +11,10 @@ export type {
   HostingOverview,
   PairedPhone,
   PairingSession,
+  RecoveryCode,
   RecoveryInProgress,
   RelayOption,
+  RetiredWalletSummary,
   Rules,
   SetupPreflight,
 } from '../../../guardian-web/src/api/types.js';

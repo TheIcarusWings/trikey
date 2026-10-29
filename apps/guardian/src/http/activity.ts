@@ -24,7 +24,15 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
   const base = { id: `e${e.id}`, at: iso(e.at) };
   switch (e.type) {
     case 'registered':
-      return { ...base, kind: 'system', event: `Wallet ${e.walletId} paired`, summary: 'Wallet paired', signedBy: 'Hardware wallet', sats: null, result: 'ok' };
+      return {
+        ...base,
+        kind: 'system',
+        event: `Wallet ${e.walletId} paired${e.replacesWalletId ? ` (it replaces wallet ${e.replacesWalletId} on another guardian)` : ''}`,
+        summary: 'Wallet paired',
+        signedBy: 'Hardware wallet',
+        sats: null,
+        result: 'ok',
+      };
     case 'cosign_signed':
       return {
         ...base,
@@ -109,6 +117,56 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
         sats: null,
         result: 'ok',
       };
+    case 'wallet_rotated': {
+      const grants = e.revokedGrants ? ` ${e.revokedGrants} recovery access grant${e.revokedGrants === 1 ? '' : 's'} revoked.` : '';
+      return e.toWalletId
+        ? {
+            ...base,
+            kind: 'recovery',
+            event: `Recovery ${e.recoveryId}: now guarding the new wallet ${e.toWalletId}, paired with phone ${shortNpub(e.phone ?? '')}; wallet ${e.fromWalletId} retired. The hardware wallet must confirm the new wallet before it can approve anything.${grants}`,
+            summary: 'Now guarding the recovered wallet',
+            signedBy: null,
+            sats: null,
+            result: 'ok',
+          }
+        : {
+            ...base,
+            kind: 'recovery',
+            event: `Recovery ${e.recoveryId}: wallet ${e.fromWalletId} retired; the new wallet is not guarded here (${e.detail ?? 'unknown reason'}).${grants}`,
+            summary: 'Swept wallet retired',
+            signedBy: null,
+            sats: null,
+            result: 'ok',
+          };
+    }
+    case 'wallet_retired':
+      return {
+        ...base,
+        kind: 'system',
+        event: `Wallet ${e.walletId} retired: this guardian co-signs nothing for it any more, and a new wallet can be paired`,
+        summary: 'Wallet retired',
+        signedBy: 'Hardware wallet',
+        sats: null,
+        result: 'ok',
+      };
+    case 'wallet_retire_refused':
+      return { ...base, kind: 'system', event: `Retiring the wallet refused: ${refusalText(e.refusal)}`, signedBy: null, sats: null, result: 'refused' };
+    case 'hardware_auth_confirmed':
+      return { ...base, kind: 'rules', event: `Hardware wallet confirmed for wallet ${e.walletId}`, summary: 'Hardware wallet confirmed', signedBy: 'Hardware wallet', sats: null, result: 'ok' };
+    case 'hardware_auth_confirm_refused':
+      return { ...base, kind: 'rules', event: `Hardware wallet confirmation refused: ${refusalText(e.refusal)}`, signedBy: null, sats: null, result: 'refused' };
+    case 'recovery_access_granted':
+      return {
+        ...base,
+        kind: 'recovery',
+        event: `A new phone (${shortNpub(e.phone)}) may read the wallet and start a recovery until ${formatWhen(e.until)}, approved on the hardware wallet`,
+        summary: 'Recovery access for a new phone',
+        signedBy: 'Hardware wallet',
+        sats: null,
+        result: 'ok',
+      };
+    case 'guardian_reset':
+      return { ...base, kind: 'system', event: 'Guardian reset: every wallet, rule and recovery record was forgotten', summary: 'Guardian reset', signedBy: null, sats: null, result: 'ok' };
   }
 }
 
@@ -124,7 +182,18 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
     case 'unlock_failed':
       return { ...base, kind: 'system', event: `Wrong unlock passphrase ${e.via === 'web' ? 'on this box' : 'from the phone'}`, summary: 'Unlock failed', signedBy: null, sats: null, result: 'refused' };
     case 'locked':
-      return { ...base, kind: 'system', event: 'Guardian locked', signedBy: null, sats: null, result: 'locked' };
+      return {
+        ...base,
+        kind: 'system',
+        event: e.reason === 'remote' ? 'Guardian locked from the phone' : 'Guardian locked',
+        signedBy: e.reason === 'remote' ? 'Phone' : null,
+        sats: null,
+        result: 'locked',
+      };
+    case 'reset':
+      return { ...base, kind: 'system', event: 'Guardian reset on this box: a new key 3 was created and the old one destroyed', summary: 'Guardian reset', signedBy: null, sats: null, result: 'ok' };
+    case 'reset_refused':
+      return { ...base, kind: 'system', event: `Guardian reset refused: ${e.detail}`, signedBy: null, sats: null, result: 'refused' };
     case 'paired':
       return { ...base, kind: 'system', event: `Phone "${e.name}" paired`, summary: 'Phone paired', signedBy: 'Phone', sats: null, result: 'ok' };
     case 'pair_refused':

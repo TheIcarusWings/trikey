@@ -33,7 +33,9 @@ export type ServiceEvent =
   | { type: 'started' }
   | { type: 'unlocked'; via: 'web' | 'phone' }
   | { type: 'unlock_failed'; via: 'web' | 'phone' }
-  | { type: 'locked'; reason: 'manual' }
+  | { type: 'locked'; reason: 'manual' | 'remote' }
+  | { type: 'reset' }
+  | { type: 'reset_refused'; detail: string }
   | { type: 'paired'; name: string }
   | { type: 'pair_refused'; detail: string }
   | { type: 'sweep_broadcast'; recoveryId: string; txid: string; via: 'electrum' | 'bitcoind'; amountSats: number }
@@ -56,8 +58,8 @@ export interface ServiceStateData {
   /** State-changing requests already run: `${sender}:${id}` -> keep until (ms). See `rememberRequest`. */
   requests: { key: string; until: number }[];
   /**
-   * Phones without the paired phone's key that the hardware wallet let in to recover the wallet
-   * (`recovery.access`): nostr pubkey -> until (ms). They may use the recovery and chain methods only.
+   * Recovery access grants as guardians before wallet rotation kept them. They now live in the
+   * engine, per wallet (`GuardedWallet.accessGrants`); `Guardian.open` moves any found here.
    */
   recoveryPeers: { pubkey: string; until: number }[];
 }

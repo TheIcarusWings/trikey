@@ -33,7 +33,7 @@ import type { GuardianConfig } from '../src/config.js';
 import { createLogger } from '../src/log.js';
 import { DAY, ManualClock, signMessage } from '../src/policy/index.js';
 import { FakeElectrum } from './support/fake-electrum.js';
-import { AUTH_PATH, MNEMONICS, OTHER_COSIGNER_PRIV, appSigner, fund, hwAuthPrivateKey, hwAuthPubkey, hwSigner, makeWallet, network, phoneSpend } from './helpers.js';
+import { AUTH_PATH, MNEMONICS, appSigner, fund, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, phoneSpend } from './helpers.js';
 
 const PASS = 'correct horse battery staple';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -358,7 +358,8 @@ describe('Trikey Guardian service, end to end', { timeout: 30_000 }, () => {
 
   it('alerts the phone and the contact (NIP-17 DM) about a recovery, and the contact cancels it by replying', async () => {
     const coins = [fundOnChain(wallet, 0, 2, 400_000n), fundOnChain(wallet, 1, 0, 100_000n)];
-    dest = await makeWallet({ app: MNEMONICS.app2, cosignerPriv: OTHER_COSIGNER_PRIV }); // keeps the hardware key
+    // A new phone key; keeps the hardware key and this guardian's key, so the guardian adopts it after the sweep.
+    dest = new MultisigWallet(network, { app: await appSigner(MNEMONICS.app2).getKey(network), hardware: wallet.keys.hardware, cosigner: wallet.keys.cosigner });
     const plan = buildSweep({ from: wallet, utxos: coins, destination: dest, destinationIndex: 0, feeRate: 2 });
     sweepPsbt = base64.encode(await hwSigner().signPsbt(plan.psbt, network));
 
@@ -465,7 +466,12 @@ describe('Trikey Guardian service, end to end', { timeout: 30_000 }, () => {
 
     await waitFor(() => phoneAlerts.find((a) => a.type === 'recovery_completed' && a.recoveryId === id), 'completed alert');
     await waitFor(() => contactInbox.find((m) => m.content.includes(`recovery ${id} completed`) && m.content.includes(txid)), 'completed DM');
-    expect(await phone.call('guardian.status', {})).toMatchObject({ phoneSpending: 'retired', activeRecoveryId: null });
+    // Once the sweep is out, the guardian guards the destination wallet: rotated, rules carried over,
+    // the phone that started the recovery is its phone, the hardware wallet must confirm before approving.
+    const adopted = await waitFor(() => phoneAlerts.find((a) => a.type === 'wallet_adopted'), 'adopted alert');
+    expect(adopted).toMatchObject({ walletId: dest.fingerprint(), previousWalletId: walletId, recoveryId: id, hardwareConfirmRequired: true });
+    expect(await phone.call('guardian.status', {})).toMatchObject({ phoneSpending: 'enabled', activeRecoveryId: null, walletId: dest.fingerprint(), hardwareConfirmRequired: true });
+    expect((await api('GET', '/status')).body.wallets).toEqual([{ id: dest.fingerprint(), name: 'Main', phonesPaired: 1 }]);
     // A second tick does not broadcast again.
     await guardian.tick();
     expect(electrs.broadcasts).toHaveLength(1);
@@ -474,11 +480,11 @@ describe('Trikey Guardian service, end to end', { timeout: 30_000 }, () => {
   it('keeps everything across a restart, answers the phone while locked, and unlocks over nostr', async () => {
     const before = phoneAlerts.length;
     await restart();
-    expect((await api('GET', '/status')).body).toMatchObject({ state: 'locked', setupComplete: true, wallets: [{ id: walletId }] });
+    expect((await api('GET', '/status')).body).toMatchObject({ state: 'locked', setupComplete: true, wallets: [{ id: dest.fingerprint() }] });
     await waitFor(() => phoneAlerts.slice(before).find((a) => a.type === 'guardian_locked' && a.reason === 'restart'), 'locked alert');
 
     const st = await phone.call('guardian.status', {});
-    expect(st).toMatchObject({ state: 'locked', paired: true, phoneSpending: 'retired', nextHardwareSequence: 3 });
+    expect(st).toMatchObject({ state: 'locked', paired: true, phoneSpending: 'enabled', nextHardwareSequence: 3, walletId: dest.fingerprint() });
     expect((await phone.call('policy.get', {})).policy).toEqual(rules);
     expect((await phone.call('recovery.status', { recoveryId: recovery1Id })).recovery).toMatchObject({ state: 'cancelled', cancelledBy: 'contact' });
 

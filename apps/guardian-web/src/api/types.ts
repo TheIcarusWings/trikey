@@ -8,7 +8,7 @@ export type ISODate = string;
 
 // --- status -------------------------------------------------------------
 
-export type LockReason = 'restart' | 'manual';
+export type LockReason = 'restart' | 'manual' | 'remote';
 
 export interface RelayStatus {
   /** wss:// or ws:// URL. */
@@ -36,6 +36,16 @@ export interface WalletSummary {
   phonesPaired: number;
 }
 
+/** A wallet this guardian guarded before. It co-signs nothing for it any more. */
+export interface RetiredWalletSummary {
+  id: string;
+  retiredAt: ISODate;
+  /** `recovered`: a recovery swept it; `retired`: the phone and hardware wallet retired it ("Replace guardian"). */
+  reason: 'recovered' | 'retired';
+  /** The recovered wallet the guardian guards now in its place, if any. */
+  successorId?: string;
+}
+
 export interface DailySpend {
   /** Phone-only sats counted over the rolling 24 hours, fees included. */
   usedSats: number;
@@ -52,6 +62,13 @@ export interface GuardianStatus {
   relays: RelayStatus[];
   chain: ChainStatus;
   wallets: WalletSummary[];
+  /** Wallets retired on this guardian, oldest first (read-only history). */
+  retiredWallets?: RetiredWalletSummary[];
+  /**
+   * True after the guardian took over a recovered wallet, until the phone confirms the hardware
+   * wallet for it: rule loosening and other hardware approvals wait until then.
+   */
+  hardwareConfirmRequired?: boolean;
   dailySpend: DailySpend;
   /** True while a Delay & Notify recovery is running. Details: getRecovery(). */
   recoveryInProgress: boolean;
@@ -98,6 +115,32 @@ export interface SetupInput {
 export interface UnlockInput {
   /** Sent once over the local connection and dropped. Never stored by the UI. */
   passphrase: string;
+}
+
+/** What `resetGuardian` must be confirmed with, typed exactly (the guardian checks it too). */
+export const RESET_CONFIRMATION = 'RESET GUARDIAN';
+
+export interface ResetInput {
+  /** The unlock passphrase, again. Sent once and dropped. */
+  passphrase: string;
+  /** Exactly `RESET_CONFIRMATION`. */
+  confirm: string;
+}
+
+// --- recovery code ------------------------------------------------------
+
+/**
+ * "Recover on a new phone": where to find this guardian, for a phone that has neither the old phone
+ * nor its backup. No secret: the hardware wallet is what lets the new phone in.
+ */
+export interface RecoveryCode {
+  /** trikey://recover?v=1&npub=...&relay=...&net=..., also encoded in the QR code. */
+  uri: string;
+  npub: string;
+  relays: string[];
+  network: string;
+  /** The wallet a recovery from this code would move. */
+  walletId: string;
 }
 
 // --- activity -----------------------------------------------------------

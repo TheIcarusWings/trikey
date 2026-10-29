@@ -23,6 +23,13 @@ export interface HardwareAuthKey {
   path: string;
 }
 
+/** How a wallet came to the guardian. */
+export type WalletOrigin =
+  /** Paired from a phone with a one-time pairing code (`replacesWalletId`: the wallet it moved from, on another guardian). */
+  | { kind: 'paired'; replacesWalletId?: string }
+  /** Adopted after a recovery swept `fromWalletId` to it (wallet rotation). */
+  | { kind: 'recovery'; recoveryId: string; fromWalletId: string };
+
 export interface Registration {
   /** `MultisigWallet.fingerprint()` of the descriptor. Bound into every hardware approval. */
   walletId: string;
@@ -30,10 +37,30 @@ export interface Registration {
   descriptor: string;
   /** Raw account pubkey (hex) of key 3, the guardian's own key. */
   cosignerAccountPubkey: string;
-  hardwareAuth: HardwareAuthKey;
+  /**
+   * The key hardware approvals are verified against. After a wallet rotation this is only the
+   * expected key (carried over, or derived from the new hardware xpub), or absent when the guardian
+   * could not derive it, until `hardwareAuthConfirmed`.
+   */
+  hardwareAuth?: HardwareAuthKey;
+  /**
+   * A pairing proof over THIS wallet id verified against `hardwareAuth`. False after a rotation until
+   * the phone sends a fresh proof (`confirmHardwareAuth`); every hardware approval is refused meanwhile.
+   */
+  hardwareAuthConfirmed: boolean;
   /** The paired phone's nostr pubkey (x-only hex). */
   appNostrPubkey: string;
   registeredAt: number;
+  origin: WalletOrigin;
+}
+
+/** A phone the hardware wallet let in with `recovery.access` (lost phone, no backup). */
+export interface AccessGrant {
+  /** Nostr pubkey (x-only hex). */
+  pubkey: string;
+  /** ms */
+  until: number;
+  grantedAt: number;
 }
 
 /** A hardware approval as delivered by the phone. The guardian rebuilds the signed text itself. */
@@ -69,8 +96,16 @@ export type CancelledBy = { kind: 'app' | 'contact'; pubkey: string } | { kind: 
 
 export interface RecoveryRecord {
   id: string;
+  /** The wallet the sweep spends from (the active wallet when the recovery started). */
+  walletId: string;
   status: 'pending' | 'ready' | 'completed' | 'cancelled';
   survivingRole: SurvivingRole;
+  /**
+   * The nostr key that sent `recovery.start`: the paired phone, or a new phone admitted by
+   * `recovery.access`. It becomes the destination wallet's paired phone. Absent for recoveries
+   * started before the guardian recorded it.
+   */
+  initiator?: string;
   /** PSBT (base64) signed by the surviving key on every input. */
   sweepPsbt: string;
   sweepTxid: string;
@@ -90,13 +125,15 @@ export interface RecoveryRecord {
   completedAt?: number;
   /** alert id -> recipients it has been sent to */
   alertsSent: Record<string, string[]>;
+  /** When the guardian rotated wallets after this (completed) recovery's sweep was accepted by a node. */
+  rotatedAt?: number;
 }
 
 export type PhoneSpending =
   | { state: 'enabled' }
   /** A recovery was cancelled by someone other than its initiator: stays paused until the hardware resumes it. */
   | { state: 'paused_contested'; recoveryId: string }
-  /** A recovery swept the wallet: the old key set is retired. */
+  /** A recovery swept the wallet: nothing more is co-signed for it (until the rotation retires it for good). */
   | { state: 'retired'; recoveryId: string };
 
 // ---------------------------------------------------------------------------
@@ -136,7 +173,13 @@ export type Refusal =
   | { reason: 'not_authorized' }
   | { reason: 'delay_not_elapsed'; readyAt: number }
   | { reason: 'nothing_to_resume' }
-  | { reason: 'unknown_alert'; alertId: string };
+  | { reason: 'unknown_alert'; alertId: string }
+  /** The PSBT spends a wallet this guardian retired (after a recovery, or `wallet.retire`). */
+  | { reason: 'wallet_retired'; walletId: string }
+  /** After a wallet rotation, a hardware approval before the authorization key was confirmed for the new wallet. */
+  | { reason: 'hardware_auth_unconfirmed'; walletId: string }
+  /** The service asked to rotate after a recovery that cannot be rotated (internal). */
+  | { reason: 'not_adoptable'; detail: string };
 
 export type RefusalReason = Refusal['reason'];
 
@@ -146,7 +189,7 @@ export type Result<T> = ({ ok: true } & T) | { ok: false; refusal: Refusal };
 // Activity log (what the web UI shows)
 
 export type ActivityEvent =
-  | { type: 'registered'; walletId: string }
+  | { type: 'registered'; walletId: string; replacesWalletId?: string }
   | { type: 'cosign_signed'; txid: string; outflow: bigint; usedAfter: bigint; replay: boolean }
   | { type: 'cosign_refused'; txid?: string; refusal: Refusal }
   | { type: 'rules_changed'; by: 'app' | 'hardware'; sequence?: number; from: Rules; to: Rules }
@@ -168,21 +211,73 @@ export type ActivityEvent =
   | { type: 'recovery_complete_refused'; refusal: Refusal }
   | { type: 'phone_spending_resumed'; sequence: number }
   | { type: 'phone_spending_resume_refused'; refusal: Refusal }
-  | { type: 'alert_sent'; alertId: string; recipients: string[] };
+  | { type: 'alert_sent'; alertId: string; recipients: string[] }
+  /**
+   * After a recovery's sweep was accepted by a node: `fromWalletId` retired, and `toWalletId` (the
+   * destination) adopted when it keeps this guardian's key. `revokedGrants`: recovery access grants dropped.
+   */
+  | { type: 'wallet_rotated'; recoveryId: string; fromWalletId: string; toWalletId?: string; phone?: string; detail?: string; revokedGrants: number }
+  | { type: 'wallet_retired'; walletId: string; sequence: number; revokedGrants: number }
+  | { type: 'wallet_retire_refused'; refusal: Refusal }
+  | { type: 'hardware_auth_confirmed'; walletId: string }
+  | { type: 'hardware_auth_confirm_refused'; refusal: Refusal }
+  | { type: 'recovery_access_granted'; phone: string; until: number }
+  | { type: 'guardian_reset' };
 
 export type ActivityEntry = { id: number; at: number } & ActivityEvent;
 
 // ---------------------------------------------------------------------------
 // Persisted state
 
+/** The wallet the guardian guards now, with everything that belongs to it. */
+export interface GuardedWallet {
+  registration: Registration;
+  rules: Rules;
+  /** Phone-only spends in the limit window. */
+  spends: SpendRecord[];
+  phoneSpending: PhoneSpending;
+  /** `recovery.access` grants for this wallet. Revoked when it rotates or retires. */
+  accessGrants: AccessGrant[];
+}
+
+export type Retirement =
+  /** A recovery swept it; `successorWalletId` is the destination the guardian adopted, if it did. */
+  | { reason: 'recovered'; recoveryId: string; successorWalletId?: string }
+  /** `wallet.retire` with a hardware approval ("Replace guardian"). */
+  | { reason: 'retired'; sequence: number };
+
+/** A wallet the guardian guarded before: read-only history. Nothing is signed or started for it again. */
+export interface RetiredWallet {
+  registration: Registration;
+  rules: Rules;
+  retiredAt: number;
+  retirement: Retirement;
+}
+
+/**
+ * Version 2: one active wallet plus retired ones (wallet rotation). Version 1 held a single
+ * wallet at the top level; `deserializeState` migrates it (`migrateState`).
+ */
 export interface GuardianState {
+  version: 2;
+  active?: GuardedWallet;
+  retired: RetiredWallet[];
+  /** Highest hardware approval sequence accepted so far (0 = none yet). One counter across rotations. */
+  hardwareSequence: number;
+  /** Every recovery, of any wallet (`RecoveryRecord.walletId`); ids stay unique across rotations. */
+  recoveries: RecoveryRecord[];
+  activity: ActivityEntry[];
+  nextActivityId: number;
+}
+
+/** The single-wallet format written by guardians before wallet rotation. */
+export interface GuardianStateV1 {
   version: 1;
-  registration?: Registration;
+  registration?: Omit<Registration, 'hardwareAuthConfirmed' | 'origin' | 'hardwareAuth'> & { hardwareAuth: HardwareAuthKey };
   rules?: Rules;
-  /** Highest hardware approval sequence accepted so far (0 = none yet). */
   hardwareSequence: number;
   spends: SpendRecord[];
-  recoveries: RecoveryRecord[];
+  recoveries: (Omit<RecoveryRecord, 'walletId'> & { walletId?: string })[];
   phoneSpending: PhoneSpending;
   activity: ActivityEntry[];
   nextActivityId: number;
@@ -190,11 +285,10 @@ export interface GuardianState {
 
 export function emptyState(): GuardianState {
   return {
-    version: 1,
+    version: 2,
+    retired: [],
     hardwareSequence: 0,
-    spends: [],
     recoveries: [],
-    phoneSpending: { state: 'enabled' },
     activity: [],
     nextActivityId: 1,
   };

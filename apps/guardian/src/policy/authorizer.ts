@@ -1,6 +1,7 @@
 /**
  * Hardware-wallet authorization of sensitive actions (rule changes, cancelling
- * a recovery, resuming phone payments after a contested recovery).
+ * a recovery, resuming phone payments after a contested recovery, retiring
+ * the wallet, letting a new phone in to recover).
  *
  * The phone shows the change, asks the hardware wallet to `signmessage` a
  * canonical one-line text with the single-sig key recorded at pairing, and
@@ -24,7 +25,8 @@ export const MAX_MESSAGE_LENGTH = 240;
 export type HardwareAction =
   | { action: 'policy'; rules: Rules }
   | { action: 'cancel-recovery'; recoveryId: string }
-  | { action: 'resume-phone' };
+  | { action: 'resume-phone' }
+  | { action: 'retire-wallet' };
 
 export interface ApprovalContext {
   walletId: string;
@@ -69,12 +71,25 @@ export function approvalMessage(action: HardwareAction, ctx: ApprovalContext): s
       return line(['Trikey cancel-recovery v1', ...head, `recovery=${action.recoveryId}`, tail]);
     case 'resume-phone':
       return line(['Trikey resume-phone v1', ...head, tail]);
+    case 'retire-wallet':
+      return line(['Trikey retire-wallet v1', ...head, tail]);
   }
 }
 
 /** Signed once at pairing, to prove the device holds the authorization key. */
 export function pairingMessage(walletId: string, cosignerAccountPubkey: string): string {
   return line(['Trikey pair v1', `wallet=${walletId}`, `guardian=${cosignerAccountPubkey}`]);
+}
+
+/**
+ * Signed by the hardware wallet to let a NEW phone (no old phone, no backup) read the wallet and start
+ * a recovery (`recovery.access`). Bound to the guardian's and the phone's nostr keys, not to a wallet
+ * id or sequence (the new phone knows neither). Same text as @trikey/protocol's `recoveryAccessMessage`.
+ */
+export function recoveryAccessMessage(ctx: { guardianPubkey: string; phonePubkey: string; expiresAt: number }): string {
+  if (!/^[0-9a-f]{64}$/.test(ctx.guardianPubkey) || !/^[0-9a-f]{64}$/.test(ctx.phonePubkey)) throw new Error('invalid nostr pubkey');
+  if (!Number.isSafeInteger(ctx.expiresAt) || ctx.expiresAt < 0) throw new Error('expiresAt must be unix seconds');
+  return line(['Trikey recovery-access v1', `guardian=${ctx.guardianPubkey}`, `phone=${ctx.phonePubkey}`, `expires=${isoSeconds(ctx.expiresAt)}`]);
 }
 
 /** A way for the hardware wallet to prove it approved a message. Add more kinds behind this. */

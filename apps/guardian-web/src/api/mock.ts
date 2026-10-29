@@ -1,4 +1,5 @@
 import { ApiError, type GuardianApi } from './client';
+import { RESET_CONFIRMATION } from './types';
 import type {
   ActivityEntry,
   FamilyInvite,
@@ -120,13 +121,14 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
   const setupDone = scenario !== 'firstrun';
   let locked = scenario === 'locked';
   let lockedAt: string | undefined = locked ? localAt(0, '03:12') : undefined;
-  let lockReason: 'restart' | 'manual' | undefined = locked ? 'restart' : undefined;
+  let lockReason: 'restart' | 'manual' | 'remote' | undefined = locked ? 'restart' : undefined;
   let phones: PairedPhone[] =
     scenario === 'unpaired' || scenario === 'firstrun'
       ? []
       : [{ id: 'ph_1', name: 'Pixel 8', pairedAt: localAt(9, '16:44') }];
   let activity: ActivityEntry[] = setupDone ? demoActivity() : [];
-  const recovery: RecoveryInProgress | null = scenario === 'recovery' ? demoRecovery() : null;
+  let recovery: RecoveryInProgress | null = scenario === 'recovery' ? demoRecovery() : null;
+  let walletIds = scenario === 'unpaired' || scenario === 'firstrun' ? [] : ['3a7f09c2d41e8b65'];
   let pairing: PairingSession | null = null;
   let relayUrls = RELAYS.map((r) => r.url);
   const syncing = scenario === 'syncing';
@@ -180,7 +182,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       chain: syncing
         ? { state: 'syncing', progress: 0.87, source: 'Bitcoin Node + Electrs' }
         : { state: 'synced', source: 'Bitcoin Node + Electrs' },
-      wallets: setupDone || setupFinished ? [{ id: 'w_main', name: 'Main', phonesPaired: phones.length }] : [],
+      wallets: setupDone || setupFinished ? walletIds.map((id) => ({ id, name: 'Main', phonesPaired: phones.length })) : [],
       dailySpend: { usedSats: 70_420, limitSats: rules.dailyLimitSats },
       recoveryInProgress: recovery !== null,
     };
@@ -244,6 +246,34 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
     async getRecovery() {
       await wait();
       return clone(recovery);
+    },
+
+    async getRecoveryCode() {
+      await wait();
+      const walletId = walletIds[0];
+      if (!walletId) throw new ApiError('not_found', 'Pair a wallet first: the recovery code is for the wallet this guardian protects.', 404);
+      const params = new URLSearchParams();
+      params.set('v', '1');
+      params.set('npub', DEMO_NPUB);
+      for (const url of relayUrls) params.append('relay', url);
+      params.set('net', 'bitcoin');
+      return { uri: `trikey://recover?${params.toString()}`, npub: DEMO_NPUB, relays: [...relayUrls], network: 'bitcoin', walletId };
+    },
+
+    async resetGuardian(input) {
+      await wait(400);
+      if (input.confirm !== RESET_CONFIRMATION) throw new ApiError('invalid', `Type ${RESET_CONFIRMATION} to confirm.`, 400);
+      if (input.passphrase === 'wrong') throw new ApiError('bad_passphrase', 'That passphrase is not right.', 401);
+      if (recovery) throw new ApiError('recovery_pending', `Recovery ${recovery.id} is running. It must be cancelled or completed before the guardian can be reset.`, 409);
+      walletIds = [];
+      phones = [];
+      recovery = null;
+      locked = false;
+      lockedAt = undefined;
+      lockReason = undefined;
+      activity = [];
+      pushActivity({ kind: 'system', event: 'Guardian reset on this box: a new key 3 was created and the old one destroyed', signedBy: null, sats: null, result: 'ok' });
+      return status();
     },
 
     async startPairing() {

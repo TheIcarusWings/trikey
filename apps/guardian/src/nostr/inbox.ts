@@ -54,7 +54,7 @@ export class Inbox {
         this.o.relays,
         { kinds: [1059], '#p': [this.o.pubkey], since: this.o.now() - SUBSCRIPTION_LOOKBACK_SEC },
         {
-          onevent: (e) => void this.onWrap(e),
+          onevent: (e) => this.onWrap(e),
           oneose: () => {
             clearTimeout(timer);
             resolve();
@@ -68,9 +68,24 @@ export class Inbox {
   close(): void {
     this.sub?.close();
     this.sub = undefined;
+    this.closed = true;
   }
 
-  private async onWrap(wrap: NostrEvent): Promise<void> {
+  /** Waits for the handlers of wraps that arrived before `close()` (so nothing writes after the guardian stops). */
+  async drain(): Promise<void> {
+    while (this.inFlight.size) await Promise.allSettled([...this.inFlight]);
+  }
+
+  private closed = false;
+  private readonly inFlight = new Set<Promise<void>>();
+
+  private onWrap(wrap: NostrEvent): void {
+    if (this.closed) return;
+    const p = this.handle(wrap).finally(() => this.inFlight.delete(p));
+    this.inFlight.add(p);
+  }
+
+  private async handle(wrap: NostrEvent): Promise<void> {
     if (!wrap || typeof wrap.id !== 'string' || this.seen.seen(wrap.id)) return;
     let opened: OpenedWrap;
     try {

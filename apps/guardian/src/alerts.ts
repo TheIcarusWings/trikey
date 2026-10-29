@@ -166,13 +166,18 @@ export class Alerter {
     const g = this.g;
     const due = g.engine.dueAlerts();
     if (!due.length || !g.rpc || !g.dm) return;
-    const phone = g.engine.registration()?.appNostrPubkey;
+    const current = g.engine.registration()?.appNostrPubkey;
     for (const a of due) {
       const rec = g.records.find((r) => r.id === a.recoveryId);
-      // A phone recovering the wallet with the hardware wallet (recovery.access) gets the protocol alert too, best effort.
-      for (const peer of g.recoveryPeers()) {
+      // Phones get protocol alerts, contacts NIP-17 DMs. After a rotation the swept wallet's phone is no
+      // longer the paired one, but it is still a phone.
+      const phones = new Set([current, rec ? g.engine.walletById(rec.walletId)?.appNostrPubkey : undefined].filter((x): x is string => !!x));
+      // A phone recovering the wallet with the hardware wallet (recovery.access), and the phone that started
+      // this recovery, get the protocol alert too, best effort.
+      const extra = new Set([...g.recoveryPeers(), ...(rec?.initiator ? [rec.initiator] : [])]);
+      for (const peer of extra) {
         const key = `${a.id}:${peer}`;
-        if (peer === phone || this.sentToPeers.has(key)) continue;
+        if (phones.has(peer) || a.recipients.includes(peer) || rec?.recipients.includes(peer) || this.sentToPeers.has(key)) continue;
         try {
           if ((await g.rpc.notify(peer, alertToWire(g, a, rec))).some((o) => o.ok)) this.sentToPeers.add(key);
         } catch (e) {
@@ -182,12 +187,9 @@ export class Alerter {
       const delivered: string[] = [];
       for (const to of a.recipients) {
         try {
-          const ok =
-            to === phone
-              ? await g.notifyPhone(alertToWire(g, a, rec))
-              : (await g.dm.send(to, alertText(g, a, rec))).some((o) => o.ok);
+          const ok = phones.has(to) ? await g.notifyPeer(to, alertToWire(g, a, rec)) : (await g.dm.send(to, alertText(g, a, rec))).some((o) => o.ok);
           if (ok) delivered.push(to);
-          else g.log.warn('alert.not_delivered', { alertId: a.id, to: to === phone ? 'phone' : 'contact' });
+          else g.log.warn('alert.not_delivered', { alertId: a.id, to: phones.has(to) ? 'phone' : 'contact' });
         } catch (e) {
           g.log.warn('alert.send_failed', { alertId: a.id, error: errorText(e) });
         }

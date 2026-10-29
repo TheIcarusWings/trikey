@@ -3,7 +3,7 @@
  * service state. Which endpoints work when:
  *
  *   before setup: GET /status, GET /setup/preflight, POST /setup
- *   locked:       GET /status, POST /unlock
+ *   locked:       GET /status, POST /unlock, POST /reset
  *   unlocked:     everything
  *
  * Anything else answers 409 `setup_required` or `locked`.
@@ -11,12 +11,12 @@
 import * as btc from '@scure/btc-signer';
 import { base64 } from '@scure/base';
 import { getNetwork, parsePsbt } from '@trikey/core';
-import { encodePairingUri } from '@trikey/protocol';
+import { encodePairingUri, encodeRecoveryUri } from '@trikey/protocol';
 import type { Guardian } from '../guardian.js';
 import type { RecoveryRecord } from '../policy/index.js';
 import { engineEntry, serviceEntry, shortNpub } from './activity.js';
 import { HttpError, type Route, type RouteResult } from './server.js';
-import type { ActivityEntry, GuardianStatus, PairingSession, RecoveryInProgress, Rules, SetupPreflight } from './types.js';
+import type { ActivityEntry, GuardianStatus, PairingSession, RecoveryCode, RecoveryInProgress, Rules, SetupPreflight } from './types.js';
 
 const iso = (ms: number) => new Date(ms).toISOString();
 const ok = (body: unknown, status = 200): RouteResult => ({ status, body });
@@ -42,6 +42,13 @@ export async function guardianStatus(g: Guardian): Promise<GuardianStatus> {
     relays: g.relayStatus(),
     chain: await g.chain.syncStatus(),
     wallets: reg ? [{ id: reg.walletId, name: 'Main', phonesPaired: 1 }] : [],
+    retiredWallets: g.engine.retiredWallets().map((r) => ({
+      id: r.registration.walletId,
+      retiredAt: iso(r.retiredAt),
+      reason: r.retirement.reason,
+      ...(r.retirement.reason === 'recovered' && r.retirement.successorWalletId ? { successorId: r.retirement.successorWalletId } : {}),
+    })),
+    ...(reg ? { hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
     dailySpend: { usedSats: Number(s.dailyLimit?.used ?? 0n), limitSats: Number(s.dailyLimit?.limit ?? 0n) },
     recoveryInProgress: s.recoveryStatus !== 'none',
     ...(reg ? { phoneSpending: s.phoneSpending } : {}),
@@ -218,6 +225,40 @@ export function buildRoutes(g: Guardian): Route[] {
       handler: () => {
         requireUnlocked(g);
         return ok({ recovery: recoveryInProgress(g) });
+      },
+    },
+
+    {
+      method: 'GET',
+      path: '/recovery-code',
+      handler: () => {
+        requireUnlocked(g);
+        const reg = g.engine.registration();
+        if (!reg || !g.identity) throw new HttpError(404, 'not_found', 'Pair a wallet first: the recovery code is for the wallet this guardian protects.');
+        const relays = g.service.get().relays;
+        const body: RecoveryCode = {
+          uri: encodeRecoveryUri({ guardianPubkey: g.identity.pubkey, relays, network: g.config.network, label: 'Trikey Guardian' }),
+          npub: g.identity.npub,
+          relays: [...relays],
+          network: g.config.network,
+          walletId: reg.walletId,
+        };
+        return ok(body);
+      },
+    },
+
+    {
+      method: 'POST',
+      path: '/reset',
+      handler: async ({ body }) => {
+        if (!g.setupComplete) throw new HttpError(409, 'setup_required', 'Set up the guardian first.');
+        const input = (body ?? {}) as { passphrase?: unknown; confirm?: unknown };
+        const r = await g.reset({ passphrase: input.passphrase, confirm: input.confirm });
+        if (r.ok) return ok(await guardianStatus(g));
+        if (r.code === 'bad_passphrase') throw new HttpError(401, 'bad_passphrase', 'That passphrase is not right.', r.retryAfterSeconds);
+        if (r.code === 'rate_limited') throw new HttpError(429, 'rate_limited', 'Too many tries. Wait and try again.', r.retryAfterSeconds);
+        const status = r.code === 'invalid' ? 400 : 409;
+        throw new HttpError(status, r.code, 'message' in r ? r.message : 'Reset refused.');
       },
     },
 
