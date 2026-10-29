@@ -12,7 +12,9 @@
       "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSFaceIDUsageDescription": "Trikey asks for Face ID before it signs a payment with this phone's key."
+        "NSFaceIDUsageDescription": "Trikey asks for Face ID before it signs a payment with this phone's key.",
+        "NSBluetoothAlwaysUsageDescription": "Trikey uses Bluetooth to talk to your Ledger or Trezor when you set up your wallet and approve payments.",
+        "NSCameraUsageDescription": "Trikey uses the camera to scan QR codes from your hardware wallet."
       }
     },
     "android": {
@@ -29,6 +31,22 @@
     },
     "plugins": [
       "expo-router",
+      "expo-dev-client",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Trikey uses the camera to scan QR codes from your hardware wallet.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "react-native-ble-plx",
+        {
+          "bluetoothAlwaysPermission": "Trikey uses Bluetooth to talk to your Ledger or Trezor when you set up your wallet and approve payments.",
+          "neverForLocation": true
+        }
+      ],
       [
         "expo-splash-screen",
         {

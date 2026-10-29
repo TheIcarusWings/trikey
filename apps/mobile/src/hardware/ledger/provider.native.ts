@@ -3,6 +3,7 @@
  * Metro picks this file on native; the web build gets `provider.ts`, which has no native imports.
  */
 import '../common/buffer';
+import '../common/random';
 import { DeviceManagementKitBuilder, type DeviceManagementKit, type DiscoveredDevice } from '@ledgerhq/device-management-kit';
 import { SignerBtcBuilder } from '@ledgerhq/device-signer-kit-bitcoin';
 import { RNBleTransportFactory, rnBleTransportIdentifier } from '@ledgerhq/device-transport-kit-react-native-ble';
