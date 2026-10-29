@@ -2,7 +2,7 @@
  * Receiving (BIP 352, "Receiver"): the per-transaction tweak a scanning server can compute without any key
  * (input_hash·A), scanning taproot outputs with b_scan and B_spend (plus labels), and the spending key of a match.
  */
-import { K_MAX, bytesToHex, equalBytes, liftX, mod, mulG, pointFromCompressed, privateKeyScalar, scalarChecked, ser256, serP, xOnly, type Point } from './curve.js';
+import { K_MAX, bytesToHex, equalBytes, mod, mulG, pointFromCompressed, privateKeyScalar, scalarChecked, ser256, serP, xOnly, type Point } from './curve.js';
 import { SilentPaymentError } from './errors.js';
 import { inputPublicKey, isP2TR, spendsFutureWitness, type TxInput } from './inputs.js';
 import type { LabelTable } from './labels.js';

@@ -435,7 +435,7 @@ export function placeholderTaprootAddress(network: Network): string {
 export function buildSweepTransaction(opts: {
   coin: { txid: string; vout: number; valueSats: number; outputKey: string };
   privateKey: Uint8Array;
-  destination: { script: Uint8Array; psbtFields?: Record<string, unknown> };
+  destination: { script: Uint8Array };
   feeSats: number;
 }): { txHex: string; txid: string; amountSats: number } {
   const amountSats = opts.coin.valueSats - opts.feeSats;
