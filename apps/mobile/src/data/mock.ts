@@ -1,12 +1,16 @@
+import { WalletServiceError } from './errors';
+import { SIMULATED_OPTION, hardwareOptionTable, type UiOs } from './hardware-options';
 import { buildRefillSchedule, limitChangeNeedsHardware, quoteSend as quoteSendRule } from './rules';
 import type { WalletService } from './service';
 import type {
   ActivityItem,
   AmountUnit,
+  BackupOptions,
   CloudProvider,
   Contact,
   Guardian,
   GuardianStatus,
+  FoundBackup,
   HardwareKind,
   HardwareWallet,
   LostKey,
@@ -49,6 +53,7 @@ const RECOVERY_STARTED = '2026-10-29T14:05:00';
 const DAY = 24 * 60 * 60 * 1000;
 
 const HARDWARE: Record<HardwareKind, HardwareWallet> = {
+  simulated: { kind: 'simulated', brand: 'simulated device', model: 'Simulated device' },
   ledger: { kind: 'ledger', brand: 'Ledger', model: 'Ledger Nano X' },
   trezor: { kind: 'trezor', brand: 'Trezor', model: 'Trezor Safe 7' },
   bitbox02: { kind: 'bitbox02', brand: 'BitBox02', model: 'BitBox02' },
@@ -158,20 +163,33 @@ function recoveryKeyState(): RecoveryKeyState {
 
 export function createDemoState(platform: 'ios' | 'android' = 'ios'): WalletState {
   return {
+    backing: 'demo',
+    network: null,
+    capabilities: { lockGuardian: true, replaceGuardian: true, recoveryKey: true },
+    progress: null,
+    devicePrompt: null,
+    syncing: false,
+    synced: true,
+    phoneSpending: 'enabled',
+    recoveryOutcome: null,
+    recovering: false,
     onboarded: true,
     mode: 'guardian',
     unit: 'sats',
     theme: 'system',
 
     hardware: HARDWARE.ledger,
+    addressVerified: true,
     backup: {
       provider: platform === 'ios' ? 'icloud' : 'google-drive',
       lastBackedUpAt: '2026-10-27T20:00:00',
+      unlockedBy: ['passkey'],
     },
     guardian: {
       host: 'umbrel',
       status: 'online',
       lastSeenAt: NOW.toISOString(),
+      relays: ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net'],
       relaysConnected: 3,
       chainData: 'your-node',
       npub: 'npub1g4rd8k3w0c6ylv5n2xr9ts7ahe3j4fp8u2xw3mq5ca6vhz9fd3n8',
@@ -238,8 +256,15 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
       };
     },
     now: () => NOW,
+    async sync() {
+      await wait(networkDelay);
+    },
 
     // -- onboarding ---------------------------------------------------
+    setNetwork() {},
+    async getHardwareOptions() {
+      return hardwareOptionTable(platform as UiOs).map((o) => ({ ...o, available: true }));
+    },
     async connectHardware(kind: HardwareKind) {
       await wait(deviceDelay);
       const hardware = HARDWARE[kind];
@@ -259,11 +284,24 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
         dailyLimit: { ...s.dailyLimit, limitSats, usedSats: 0, cosignedCount: 0 },
       }));
     },
+    async getBackupOptions(): Promise<BackupOptions> {
+      const label = (provider: CloudProvider, text: string) => ({ provider, label: text, available: true });
+      const providers =
+        platform === 'ios'
+          ? [label('icloud', 'iCloud Drive'), label('google-drive', 'Google Drive'), label('dropbox', 'Dropbox'), label('proton-drive', 'Proton Drive or another app')]
+          : [label('google-drive', 'Google Drive'), label('dropbox', 'Dropbox'), label('proton-drive', 'Proton Drive'), label('other', 'Another app')];
+      return { providers, passkey: true };
+    },
     async createBackup(provider: CloudProvider): Promise<PhoneBackup> {
       await wait(networkDelay);
-      const backup: PhoneBackup = { provider, lastBackedUpAt: NOW.toISOString() };
+      const backup: PhoneBackup = { provider, lastBackedUpAt: NOW.toISOString(), unlockedBy: ['passkey'] };
       update({ backup });
       return backup;
+    },
+    recoveryCode: () => null,
+    dismissRecoveryCode() {},
+    async exportBackupFile() {
+      await wait(networkDelay);
     },
     finishOnboarding(mode: WalletMode = 'guardian') {
       update({ onboarded: true, mode });
@@ -271,6 +309,10 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
 
     // -- sending ------------------------------------------------------
     quoteSend: (request) => quoteSendRule(state, request),
+    async receiveAddress(opts) {
+      if (opts?.verifyOnDevice) await wait(deviceDelay);
+      return { address: state.receiveAddress, verifiedOnDevice: !!opts?.verifyOnDevice };
+    },
     async sendPayment(quote: SendQuote) {
       // Face ID / fingerprint for phone signatures, the device for hardware ones.
       await wait(quote.plan.signer === 'hardware' ? deviceDelay : networkDelay);
@@ -300,7 +342,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
           dailyLimit: {
             ...s.dailyLimit,
             usedSats: s.dailyLimit.usedSats + totalSats,
-            cosignedCount: s.dailyLimit.cosignedCount + 1,
+            cosignedCount: (s.dailyLimit.cosignedCount ?? 0) + 1,
           },
         }));
       }
@@ -309,11 +351,13 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     },
 
     // -- guardian -----------------------------------------------------
-    async unlockGuardian() {
+    async unlockGuardian(passphrase?: string) {
       await wait(deviceDelay);
+      // The demo accepts any passphrase except the word "wrong", so the error state can be seen.
+      if (passphrase === 'wrong') throw new WalletServiceError('unlock_failed', "That passphrase didn't work. Try again.");
       update((s) => ({ guardian: { ...s.guardian, status: 'online', lastSeenAt: NOW.toISOString() } }));
     },
-    lockGuardian() {
+    async lockGuardian() {
       update((s) => ({ guardian: { ...s.guardian, status: 'locked' } }));
     },
     async replaceGuardian(_pairingCode: string) {
@@ -358,6 +402,14 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     },
 
     // -- recovery -----------------------------------------------------
+    async findBackup(): Promise<FoundBackup | null> {
+      await wait(networkDelay);
+      return { provider: platform === 'ios' ? 'icloud' : 'google-drive', createdAt: '2026-10-27T20:00:00', unlockedBy: ['passkey', 'recovery-code'] };
+    },
+    async importBackupFile(): Promise<FoundBackup | null> {
+      await wait(networkDelay);
+      return { provider: 'file', createdAt: '2026-10-27T20:00:00', unlockedBy: ['recovery-code'] };
+    },
     async restoreFromBackup() {
       await wait(networkDelay);
       update({ onboarded: true, mode: 'guardian' });
@@ -388,8 +440,16 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     },
     async cancelRecovery() {
       await wait(networkDelay);
-      update({ recovery: null });
+      update({ recovery: null, phoneSpending: 'enabled' });
     },
+    async resumePhoneSpending() {
+      await wait(deviceDelay);
+      update({ phoneSpending: 'enabled' });
+    },
+    async renewRecoveryAccess() {
+      await wait(deviceDelay);
+    },
+    cancelDevicePrompt() {},
 
     // -- Recovery Key mode -------------------------------------------
     setRecoveryKeyKind(keyKind: RecoveryKeyKind) {

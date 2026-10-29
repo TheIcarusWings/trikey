@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { installPolyfills, runtimeReport } from '../polyfill-install';
+import { installPolyfills, installProcessShim, runtimeReport } from '../polyfill-install';
 import { Utf8TextDecoder, Utf8TextEncoder } from '../utf8';
 
 const fill = <T extends ArrayBufferView>(a: T): T => {
@@ -113,5 +113,17 @@ describe('UTF-8 fallback matches the platform implementation', () => {
     const dest = new Uint8Array(4);
     expect(enc.encodeInto('a₿b', dest)).toEqual({ read: 2, written: 4 }); // 'b' does not fit
     expect(dest).toEqual(Uint8Array.of(0x61, 0xe2, 0x82, 0xbf));
+  });
+});
+
+describe('installProcessShim', () => {
+  it('gives a `process` without a version the flags readable-stream needs, and leaves Node alone', () => {
+    const g = { process: { env: {} } as Record<string, unknown> };
+    expect(installProcessShim(g)).toEqual(['process.browser', 'process.version']);
+    expect(g.process.browser).toBe(true);
+    expect(() => (g.process.version as string).slice(0, 5)).not.toThrow();
+    expect(installProcessShim(g)).toEqual([]);
+    expect(installProcessShim({})).toEqual([]);
+    expect(installProcessShim(globalThis as never)).toEqual([]); // Node has process.version
   });
 });

@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, View } from 'react-native';
+import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { HardwareWallet, QrCode } from '@/components/icons';
 import { Body, FieldLabel, Footnote, Notice } from '@/components/panels';
@@ -9,23 +10,25 @@ import { Icon } from '@/components/ui/icon';
 import { Input } from '@/components/ui/input';
 import { looksLikeNpub, useWallet, useWalletService } from '@/data';
 import { pick } from '@/lib/platform';
-import { useBusy } from '@/lib/use-busy';
+import { QrScanner } from '@/hardware/ui';
+import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
 
 export default function AddContact() {
   const router = useRouter();
   const wallet = useWalletService();
-  const { hardware } = useWallet();
+  const { hardware, backing } = useWallet();
+  const [scanning, setScanning] = useState(false);
   const [name, setName] = useState('');
   const [npub, setNpub] = useState('');
-  const [busy, run] = useBusy();
+  const { busy, run, message, error } = useAction();
 
   const valid = name.trim().length > 0 && looksLikeNpub(npub);
   const npubBad = npub.trim().length > 0 && !looksLikeNpub(npub);
 
   const add = async () => {
-    await run(wallet.addContact(name, npub));
-    router.back();
+    const r = await run(wallet.addContact(name, npub));
+    if (r.ok) router.back();
   };
 
   return (
@@ -33,12 +36,15 @@ export default function AddContact() {
       title="Add a contact"
       backLabel="Alert contacts"
       footer={
-        <AppButton
-          title={busy ? `Waiting for your ${hardware.brand}…` : `Approve on ${hardware.brand}`}
-          busy={busy}
-          disabled={!valid}
-          onPress={add}
-        />
+        <>
+          <ActionNotice message={message} error={error} />
+          <AppButton
+            title={busy ? `Waiting for your ${hardware.brand}…` : `Approve on ${hardware.brand}`}
+            busy={busy}
+            disabled={!valid}
+            onPress={add}
+          />
+        </>
       }>
       <Body>They'll get a nostr message whenever a recovery starts, and can reply to cancel it. They can't move or see your money.</Body>
       <View className="gap-1.5">
@@ -69,11 +75,26 @@ export default function AddContact() {
           <Pressable
             role="button"
             accessibilityLabel="Scan their QR code"
-            onPress={() => setNpub('npub1q8a5w4k0c6ylv5n2xr9ts7ahe3j4fp8u2xw3mq5ca6vhz9fd3nw7tc')}
+            onPress={() => (backing === 'demo' ? setNpub('npub1q8a5w4k0c6ylv5n2xr9ts7ahe3j4fp8u2xw3mq5ca6vhz9fd3nw7tc') : setScanning((v) => !v))}
             className={cn('border-border items-center justify-center rounded-[10px] border active:bg-accent', pick('size-11', 'size-12'))}>
             <Icon as={QrCode} size={20} className="text-foreground" strokeWidth={2} />
           </Pressable>
         </View>
+        {scanning ? (
+          <View className="mt-2 gap-2">
+            <QrScanner
+              size={220}
+              onFrame={(data) => {
+                const found = /npub1[02-9ac-hj-np-z]{58}/i.exec(data)?.[0];
+                if (found) {
+                  setNpub(found.toLowerCase());
+                  setScanning(false);
+                }
+              }}
+            />
+            <AppButton title="Close camera" variant="ghost" onPress={() => setScanning(false)} />
+          </View>
+        ) : null}
         <Footnote>{npubBad ? 'That is not an npub. It starts with npub1.' : 'From their profile in any nostr app, like Damus, Amethyst or Primal.'}</Footnote>
       </View>
       <Notice icon={HardwareWallet} tone="fill">

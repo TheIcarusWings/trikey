@@ -1,11 +1,11 @@
 import { useRouter } from 'expo-router';
 import { Pressable, View } from 'react-native';
 import { ActivityRow } from '@/components/activity-row';
+import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { ArrowDownLeft, ArrowUpRight, Clock, Lock, TriangleAlert, Vault } from '@/components/icons';
 import { Notice } from '@/components/panels';
 import { ProgressBar } from '@/components/progress';
-import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
@@ -24,8 +24,9 @@ import {
   type ActivityItem,
   type Sats,
 } from '@/data';
-import { hostLabel } from '@/lib/labels';
-import { useBusy } from '@/lib/use-busy';
+import { guardianBox } from '@/lib/labels';
+import { UnlockForm } from '@/components/unlock-form';
+import { useAction } from '@/lib/use-action';
 import { IS_IOS, pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -40,7 +41,8 @@ export function BalanceHeader({
   /** Replaces the BTC line, e.g. "Spend with Face ID, no Ledger needed". */
   caption?: string;
 }) {
-  const { unit } = useWallet();
+  const { unit, synced, syncing, backing } = useWallet();
+  const waiting = backing !== 'demo' && !synced ? (syncing ? 'Syncing with your guardian…' : 'Not synced yet. Pull down to refresh.') : undefined;
   const main = formatAmount(sats, unit);
   const unitText = unit === 'btc' ? 'BTC' : 'sats';
   const secondary = unit === 'btc' ? `${formatSats(sats)} sats` : `${formatBtc(sats)} BTC`;
@@ -55,7 +57,7 @@ export function BalanceHeader({
         {main} <Text className={cn('text-muted-foreground text-[22px]', IS_IOS ? 'font-semibold' : 'font-normal')}>{unitText}</Text>
       </Text>
       <Text className={cn('text-muted-foreground tabular-nums', pick('text-[15px] leading-5', 'text-sm leading-5'))}>
-        {caption ?? secondary}
+        {caption ?? waiting ?? secondary}
       </Text>
     </View>
   );
@@ -104,7 +106,7 @@ export function LimitCard() {
       <View className="flex-row items-center gap-2">
         <View className="bg-good size-2 rounded-full" />
         <Text className={cn('text-muted-foreground', pick('text-[13px] leading-[18px]', 'text-xs leading-4'))}>
-          Guardian online {'·'} {hostLabel(guardian.host)}
+          Guardian online {'·'} {guardianBox(guardian)}
         </Text>
       </View>
     </Card>
@@ -153,15 +155,14 @@ export function VaultCard() {
   );
 }
 
-/** Guardian locked (after a restart) or offline: phone-only payments wait for the hardware wallet. */
+/**
+ * Guardian locked (after a restart) or offline: phone-only payments wait. A locked guardian takes its passphrase here;
+ * the hardware wallet can still pay in the meantime.
+ */
 export function GuardianDownNotice() {
-  const wallet = useWalletService();
-  const { guardian, hardware } = useWallet();
-  const [busy, setBusy] = useBusy();
+  const { guardian } = useWallet();
   const locked = guardian.status === 'locked';
-  const host = hostLabel(guardian.host);
-
-  const unlock = () => setBusy(wallet.unlockGuardian());
+  const host = guardianBox(guardian);
 
   return (
     <View className={cn('bg-warn-soft gap-3 p-4', pick('rounded-[10px]', 'rounded-xl'))}>
@@ -173,25 +174,12 @@ export function GuardianDownNotice() {
           </Text>
           <Text className={cn(pick('text-[15px] leading-[21px]', 'text-sm leading-5'), 'text-foreground')}>
             {locked
-              ? `Your ${host} restarted, so the guardian locked itself. Phone-only payments are paused until you unlock it.`
+              ? `Your ${host} restarted, so the guardian locked itself. Phone-only payments are paused until you unlock it with its passphrase.`
               : `Trikey can't reach your ${host}. Phone-only payments are paused until it is back.`}
           </Text>
         </View>
       </View>
-      {locked ? (
-        <Button
-          onPress={unlock}
-          disabled={busy}
-          accessibilityLabel={`Unlock with ${hardware.brand}`}
-          className={cn(
-            'bg-foreground active:bg-foreground/90',
-            pick('h-11 rounded-xl', 'h-10 self-end rounded-lg px-5')
-          )}>
-          <Text className={cn('text-background', pick('text-base font-semibold', 'text-sm font-medium'))}>
-            {busy ? `Waiting for your ${hardware.brand}…` : `Unlock with ${hardware.brand}`}
-          </Text>
-        </Button>
-      ) : null}
+      {locked ? <UnlockForm /> : null}
     </View>
   );
 }
@@ -211,6 +199,7 @@ export function ActivityPreview({ limit }: { limit: number }) {
         className={cn(pick('pb-2 text-xl font-bold leading-[26px]', 'pb-1 text-base font-medium leading-6'))}>
         Activity
       </Text>
+      {items.length === 0 ? <Text className="text-muted-foreground py-4 text-[15px] leading-5">No payments yet.</Text> : null}
       {items.map((item, i) => (
         <ActivityRow key={item.tx.id} item={item} variant="home" last={i === items.length - 1} ctx={ctx} />
       ))}
@@ -218,12 +207,39 @@ export function ActivityPreview({ limit }: { limit: number }) {
   );
 }
 
-/** Shown on home while a recovery is running or waiting for the user's answer. */
+/**
+ * Shown on home while a recovery is running or waiting for the user's answer, and after a recovery someone else cancelled:
+ * phone-only payments stay paused until the hardware wallet resumes them.
+ */
 export function RecoveryBanner() {
   const router = useRouter();
   const now = useNow();
-  const { recovery } = useWallet();
-  if (!recovery) return null;
+  const wallet = useWalletService();
+  const { recovery, phoneSpending, hardware } = useWallet();
+  const { busy, run, message, error } = useAction();
+
+  if (!recovery) {
+    if (phoneSpending === 'paused_contested') {
+      return (
+        <View className="gap-3">
+          <Notice icon={TriangleAlert} iconClass="text-warn" tone="warn-outline" title="Phone payments are paused">
+            A recovery was cancelled by someone other than the phone that started it, so phone-only payments stay off until your {hardware.brand}{' '}
+            confirms. You can still pay with your {hardware.brand}.
+          </Notice>
+          <AppButton title={busy ? `Waiting for your ${hardware.brand}…` : `Resume with ${hardware.brand}`} variant="outline" busy={busy} onPress={() => void run(wallet.resumePhoneSpending())} />
+          <ActionNotice message={message} error={error} />
+        </View>
+      );
+    }
+    if (phoneSpending === 'retired') {
+      return (
+        <Notice icon={Clock} tone="fill" title="This wallet was moved">
+          A recovery moved this wallet's money to a new wallet, so this phone can no longer pay from it.
+        </Notice>
+      );
+    }
+    return null;
+  }
   const remaining = formatCountdown(new Date(recovery.completesAt).getTime() - now.getTime());
   const needsAnswer = recovery.origin === 'someone-else' && !recovery.acknowledged;
   return (
@@ -237,4 +253,3 @@ export function RecoveryBanner() {
     </Pressable>
   );
 }
-

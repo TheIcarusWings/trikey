@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
+import { ComingLater, ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { Lock } from '@/components/icons';
 import { Body, Notice } from '@/components/panels';
@@ -10,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Text } from '@/components/ui/text';
 import { buildRefillSchedule, formatSats, formatShortDate, useNow, useWallet, useWalletService } from '@/data';
 import { pick } from '@/lib/platform';
-import { useBusy } from '@/lib/use-busy';
+import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
 
 function ScheduleRow({ label, amount, muted, strong, last }: { label: string; amount: number; muted?: boolean; strong?: boolean; last?: boolean }) {
@@ -30,10 +31,10 @@ export default function RecoveryKeyRefills() {
   const router = useRouter();
   const wallet = useWalletService();
   const now = useNow();
-  const { onboarded, recoveryKey, hardware } = useWallet();
+  const { onboarded, recoveryKey, hardware, capabilities } = useWallet();
   const [amount, setAmount] = useState(recoveryKey.refillAmountSats);
   const [editing, setEditing] = useState(false);
-  const [busy, run] = useBusy();
+  const { busy, run, message, error } = useAction();
 
   const schedule = buildRefillSchedule(amount, now);
   const total = schedule.reduce((sum, r) => sum + r.amountSats, 0);
@@ -42,7 +43,8 @@ export default function RecoveryKeyRefills() {
   const lastDate = schedule[schedule.length - 1]!.unlocksAt;
 
   const approve = async () => {
-    await run(wallet.approveRefills(amount));
+    const r = await run(wallet.approveRefills(amount));
+    if (!r.ok) return;
     if (onboarded) {
       router.back();
       return;
@@ -56,7 +58,13 @@ export default function RecoveryKeyRefills() {
     <Screen
       title="Approve refills"
       backLabel="Back"
-      footer={<AppButton title={busy ? `Waiting for your ${hardware.brand}…` : `Approve on ${hardware.brand}`} busy={busy} onPress={approve} />}>
+      footer={
+        <>
+          <ActionNotice message={message} error={error} />
+          <AppButton title={busy ? `Waiting for your ${hardware.brand}…` : `Approve on ${hardware.brand}`} busy={busy} disabled={!capabilities.recoveryKey} onPress={approve} />
+        </>
+      }>
+      {capabilities.recoveryKey ? null : <ComingLater>Refills belong to Recovery Key mode, which has no wallet code behind it yet.</ComingLater>}
       <Body>Your phone can spend on its own from a small balance. Approve a few weeks of top-ups now, and each one unlocks on its date.</Body>
       <Card className="flex-row items-center justify-between px-4 py-3.5">
         <View>

@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
+import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { QuestionHeading } from '@/components/choice';
 import { Check } from '@/components/icons';
@@ -10,10 +11,10 @@ import { Segmented } from '@/components/segmented';
 import { Icon } from '@/components/ui/icon';
 import { Input } from '@/components/ui/input';
 import { Text } from '@/components/ui/text';
-import { DELAY_OPTIONS, formatSats, useWallet, useWalletService, type RecoveryDelayDays } from '@/data';
-import { hostLabel } from '@/lib/labels';
+import { DELAY_OPTIONS, WalletServiceError, formatSats, useWallet, useWalletService, type RecoveryDelayDays } from '@/data';
+import { guardianBox } from '@/lib/labels';
 import { IS_IOS, pick } from '@/lib/platform';
-import { useBusy } from '@/lib/use-busy';
+import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
 
 type Preset = '100000' | '200000' | '500000' | 'custom';
@@ -28,19 +29,22 @@ const PRESETS: { value: Preset; label: string }[] = [
 export default function SetLimit() {
   const router = useRouter();
   const wallet = useWalletService();
-  const { guardian, hardware } = useWallet();
+  const { guardian, hardware, progress } = useWallet();
   const [preset, setPreset] = useState<Preset>('200000');
   const [custom, setCustom] = useState('');
   const [days, setDays] = useState<RecoveryDelayDays>(7);
-  const [busy, run] = useBusy();
+  const { busy, run, message, error } = useAction();
 
   const limit = preset === 'custom' ? Number(custom.replace(/\D/g, '')) : Number(preset);
   const valid = limit > 0;
 
   const approve = async () => {
-    await run(wallet.setUpRules(limit, days));
-    router.push('/backup');
+    const r = await run(wallet.setUpRules(limit, days));
+    if (r.ok) router.push('/backup');
   };
+
+  // The guardian's pairing code lives for 5 minutes: when it ran out, the way forward is to scan a new one.
+  const rescan = error instanceof WalletServiceError && (error.kind === 'pairing_expired' || error.kind === 'pairing_invalid');
 
   return (
     <Screen
@@ -55,18 +59,25 @@ export default function SetLimit() {
           )}>
           <Icon as={Check} size={IS_IOS ? 16 : 18} className="text-good" strokeWidth={2.4} />
           <Text className={cn('text-good', pick('text-[13px] font-semibold leading-[18px]', 'text-sm font-medium leading-5'))}>
-            Guardian paired {'·'} {hostLabel(guardian.host)}
+            Guardian found {'·'} {guardianBox(guardian)}
           </Text>
         </View>
       }
       footer={
-        <AppButton
-          title={busy ? `Waiting for your ${hardware.brand}…` : `Approve on ${hardware.brand}`}
-          size="hero"
-          busy={busy}
-          disabled={!valid}
-          onPress={approve}
-        />
+        <>
+          <ActionNotice message={message} error={error} />
+          {rescan ? (
+            <AppButton title="Scan the guardian again" size="hero" onPress={() => router.dismissTo('/scan-guardian')} />
+          ) : (
+            <AppButton
+              title={busy ? (progress ?? `Waiting for your ${hardware.brand}…`) : `Approve on ${hardware.brand}`}
+              size="hero"
+              busy={busy}
+              disabled={!valid}
+              onPress={approve}
+            />
+          )}
+        </>
       }>
       <Body>You can pay up to this much in 24 hours with just your phone. Anything more needs your hardware wallet.</Body>
       <Text
@@ -103,6 +114,9 @@ export default function SetLimit() {
         android="outlined"
         boldSelected
       />
+      <Body className="text-[13px] leading-[18px]">
+        The guardian's pairing code lasts 5 minutes. If it runs out before you approve, scan a fresh one.
+      </Body>
     </Screen>
   );
 }

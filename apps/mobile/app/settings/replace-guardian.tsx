@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { View } from 'react-native';
 import { AppButton } from '@/components/app-button';
+import { ComingLater } from '@/components/action-notice';
 import { Shield } from '@/components/icons';
 import { Body, Notice } from '@/components/panels';
 import { Screen } from '@/components/screen';
@@ -11,7 +12,7 @@ import { cn } from '@/lib/utils';
 
 export default function ReplaceGuardian() {
   const router = useRouter();
-  const { hardware } = useWallet();
+  const { hardware, capabilities } = useWallet();
   const steps = [
     { title: 'Install Trikey Guardian on the new box', detail: 'Umbrel or Start9' },
     { title: 'Scan its pairing code', detail: 'This creates your new wallet' },
@@ -21,7 +22,7 @@ export default function ReplaceGuardian() {
     <Screen
       title="Replace guardian"
       backLabel="Guardian"
-      footer={<AppButton title="Scan new guardian" onPress={() => router.push({ pathname: '/scan-guardian', params: { replace: '1' } })} />}>
+      footer={<AppButton title="Scan new guardian" disabled={!capabilities.replaceGuardian} onPress={() => router.push({ pathname: '/scan-guardian', params: { replace: '1' } })} />}>
       <Body>
         For a new home server, or if the old one died. Your money moves once to a new wallet with the same phone and hardware wallet. No
         waiting period.
@@ -39,6 +40,12 @@ export default function ReplaceGuardian() {
           </View>
         ))}
       </View>
+      {capabilities.replaceGuardian ? null : (
+        <ComingLater>
+          Replacing the guardian isn't built into this version yet. Your money stays where it is. If your guardian is lost, the recovery flows still
+          work.
+        </ComingLater>
+      )}
       <Notice icon={Shield}>After the move, the old guardian's key is useless, even if someone finds the old box.</Notice>
     </Screen>
   );

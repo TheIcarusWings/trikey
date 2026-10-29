@@ -25,6 +25,74 @@ npm test -w @trikey/mobile        # unit tests (vitest)
 npm run typecheck -w @trikey/mobile
 ```
 
+## Wallet modes
+
+The screens run on one of three wallets, chosen at startup and remembered on the phone. Switch in
+**Settings, Developer, Wallet mode** (a confirmation first; nothing is deleted, each mode keeps its own wallet
+and data) or from the small "wallet mode" link on the first screen.
+
+| Mode | What is behind the screens | Default |
+|---|---|---|
+| **Demo** | Sample data and timers (`src/data/mock.ts`) | development builds and the web |
+| **Simulator** | The real wallet (`src/data/real.ts` on `@trikey/wallet`) with a software "hardware wallet" and throwaway keys, on regtest, against a guardian you run on your computer | |
+| **Real** | The real wallet with Ledger, Trezor and QR devices, this phone's secure storage and a test network chosen at onboarding (testnet, signet, regtest; "Mainnet (not yet)") | release builds on a phone |
+
+Real needs secure key storage, so the browser preview offers Demo and Simulator only. In the browser the simulator
+keeps everything in memory (a reload starts over).
+
+- Run a local backend for the simulator: [docs/dev-regtest.md](docs/dev-regtest.md). The quickest is
+  `npm run dev-rig -w @trikey/mobile`: the real guardian, two relays and a fake Electrs in one process, no bitcoind.
+- `npm run measure -w @trikey/mobile` times the expensive steps (wallet creation, pairing, a payment, the Argon2id of the
+  recovery code) in Node, through the same code path the app uses.
+- Recovery Key mode stays demo-only: in the other modes its screens say "coming later".
+
+## Alpha without developer accounts
+
+The alpha needs **no Apple Developer, Google Play or Google Cloud account**. What that takes away, and what replaces it:
+
+| | Without accounts | Why |
+|---|---|---|
+| Passkeys | unavailable (`isSupported()` is false) | they need a domain you control and an app-association entry in your team |
+| iCloud Drive and Google Drive backup | unavailable (`isAvailable()` is false), shown as "coming later" | they need the iCloud entitlement and a Google OAuth client |
+| **Backup** | **a recovery code plus a backup file** | see below |
+
+**Backup, step by step.** The backup step creates an encrypted backup file on the phone (the `file` provider) and shows a
+**recovery code once**: write it on paper. "Save backup file" sends the file to the share sheet (Files, AirDrop, an email to
+yourself). The file alone is useless without the code, and the code alone is useless without the file, so keep them apart.
+To restore on a new phone, choose "Open a backup file" on the Restore screen, pick the file and type the code. Nothing leaves
+the phone unless you send it.
+
+### iOS (free Apple ID)
+
+1. Xcode on a Mac, signed in with your Apple ID (Xcode, Settings, Accounts). A free account is enough.
+2. Leave `EXPO_PUBLIC_PASSKEY_RP_ID` **unset** (it adds the Associated Domains capability, which a free account cannot sign) and
+   build **without iCloud**: `TRIKEY_DISABLE_ICLOUD=1` (see `.env.example`). Nothing in the app or in `app.config.ts` then asks
+   for the iCloud or associated-domains entitlements.
+3. Build a development client straight onto your phone (USB, or Wi-Fi after the first time):
+
+   ```sh
+   cd apps/mobile
+   TRIKEY_DISABLE_ICLOUD=1 npx expo run:ios --device
+   ```
+
+   Pick your Apple ID as the team if Xcode asks, and trust the developer profile on the phone (Settings, General, VPN &
+   Device Management). Set your own `TRIKEY_IOS_BUNDLE_ID` (a bundle id you can register for free, like
+   `com.yourname.trikey`) if `app.trikey.wallet` is refused.
+4. A free provisioning profile lasts **7 days**: after that the app stops opening until you run the same command again. The
+   wallet's data stays on the phone, so a reinstall over it keeps your wallet, but make a backup first.
+
+### Android
+
+```sh
+cd apps/mobile
+npx expo run:android            # a connected phone or an emulator (debug build)
+# or a locally built APK to hand to testers:
+npx expo prebuild --platform android && (cd android && ./gradlew assembleRelease)
+```
+
+A debug or locally signed build installs without any store account. (Google Drive backup stays "coming later"; the backup file
+works as on iOS.)
+
 ## Platform layer: `src/platform/`
 
 `createPlatform()` returns what `@trikey/wallet` needs from the phone (the interfaces are in

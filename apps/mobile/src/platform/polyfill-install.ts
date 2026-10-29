@@ -76,6 +76,19 @@ export function installPolyfills(g: Target, deps: { getRandomValues: RandomFill 
   return installed;
 }
 
+/**
+ * `readable-stream` (behind `stream-browserify`, which the hardware wallet libraries pull in) reads
+ * `process.version.slice(0, 5)` while its module loads, unless `process.browser` is set. React Native and Metro's web
+ * build give `process` an `env` but no `version`, so loading it throws. Tell it where it runs.
+ */
+export function installProcessShim(g: { process?: Record<string, unknown> }): string[] {
+  const p = g.process;
+  if (!p || p.browser !== undefined || typeof p.version === 'string') return [];
+  p.browser = true;
+  p.version = ''; // falsy on purpose: libraries that test for Node by `process.version` must not take this for Node
+  return ['process.browser', 'process.version'];
+}
+
 export interface RuntimeCheck {
   name: string;
   ok: boolean;

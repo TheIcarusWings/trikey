@@ -4,7 +4,7 @@ import { ActivityRow } from '@/components/activity-row';
 import { Screen } from '@/components/screen';
 import { FilterTabs } from '@/components/segmented';
 import { Text } from '@/components/ui/text';
-import { groupLabel, useActivity, useNow, useWallet, type ActivityItem } from '@/data';
+import { groupLabel, useActivity, useNow, useWallet, useWalletService, type ActivityItem } from '@/data';
 import { IS_IOS } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -18,6 +18,7 @@ const FILTERS: { value: Filter; label: string }[] = [
 
 export default function ActivityScreen() {
   const state = useWallet();
+  const wallet = useWalletService();
   const now = useNow();
   const all = useActivity();
   const [filter, setFilter] = useState<Filter>('all');
@@ -37,7 +38,7 @@ export default function ActivityScreen() {
   const ctx = { now, unit: state.unit, hardwareBrand: state.hardware.brand };
 
   return (
-    <Screen tab title="Activity" gap={14}>
+    <Screen tab title="Activity" gap={14} onRefresh={() => wallet.sync()}>
       <FilterTabs options={FILTERS} value={filter} onChange={setFilter} />
       {sections.length === 0 ? (
         <Text className="text-muted-foreground py-8 text-center text-[15px]">Nothing here yet.</Text>

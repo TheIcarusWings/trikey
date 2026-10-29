@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
+import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { HardwareWallet, Smartphone } from '@/components/icons';
 import { Body, FieldLabel, Footnote, Notice } from '@/components/panels';
@@ -9,7 +10,7 @@ import { Text } from '@/components/ui/text';
 import { Input } from '@/components/ui/input';
 import { formatSats, limitChangeNeedsHardware, useWallet, useWalletService } from '@/data';
 import { pick } from '@/lib/platform';
-import { useBusy } from '@/lib/use-busy';
+import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
 
 export default function DailyLimitSettings() {
@@ -18,15 +19,15 @@ export default function DailyLimitSettings() {
   const { dailyLimit, hardware } = useWallet();
   const current = dailyLimit.limitSats;
   const [text, setText] = useState(formatSats(current));
-  const [busy, run] = useBusy();
+  const { busy, run, message, error } = useAction();
 
   const next = Number(text.replace(/\D/g, ''));
   const changed = next > 0 && next !== current;
   const needsHardware = limitChangeNeedsHardware(current, next);
 
   const save = async () => {
-    await run(wallet.setDailyLimit(next));
-    router.back();
+    const r = await run(wallet.setDailyLimit(next));
+    if (r.ok) router.back();
   };
 
   return (
@@ -34,12 +35,15 @@ export default function DailyLimitSettings() {
       title="Daily limit"
       backLabel="Settings"
       footer={
-        <AppButton
-          title={busy ? `Waiting for your ${hardware.brand}…` : needsHardware || !changed ? `Approve on ${hardware.brand}` : 'Save'}
-          busy={busy}
-          disabled={!changed}
-          onPress={save}
-        />
+        <>
+          <ActionNotice message={message} error={error} />
+          <AppButton
+            title={busy ? `Waiting for your ${hardware.brand}…` : needsHardware || !changed ? `Approve on ${hardware.brand}` : 'Save'}
+            busy={busy}
+            disabled={!changed}
+            onPress={save}
+          />
+        </>
       }>
       <Body>How much you can send in 24 hours with just your phone. Your guardian enforces it.</Body>
       <View className="gap-1.5">

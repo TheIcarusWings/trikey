@@ -1,20 +1,27 @@
 import { useRouter } from 'expo-router';
+import { useState } from 'react';
 import { View } from 'react-native';
 import { AppButton } from '@/components/app-button';
 import { Logo } from '@/components/icons';
+import { ModeSwitcher } from '@/components/mode-switcher';
+import { NetworkPicker } from '@/components/network-picker';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
+import { useWallet } from '@/data';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
 export default function Welcome() {
   const router = useRouter();
+  const { backing } = useWallet();
+  const [showMode, setShowMode] = useState(false);
   return (
     <Screen
       bare
       scrollable={false}
       footer={
         <>
+          {backing === 'real' ? <NetworkPicker /> : null}
           <AppButton title="Create a wallet" size="hero" onPress={() => router.push('/how-it-works')} />
           <AppButton
             title="I already have a Trikey wallet"
@@ -23,6 +30,15 @@ export default function Welcome() {
             className={pick('', 'rounded-[10px]')}
             onPress={() => router.push('/recover/choose')}
           />
+          {backing === 'demo' ? null : (
+            <Text
+              role="link"
+              onPress={() => setShowMode((v) => !v)}
+              className="text-muted-foreground text-center text-[13px] leading-[18px] underline underline-offset-[3px]">
+              {backing === 'simulator' ? 'Simulator mode (regtest)' : 'Pre-alpha, test networks only'} · wallet mode
+            </Text>
+          )}
+          {showMode ? <ModeSwitcher /> : null}
         </>
       }>
       <View className="flex-1 items-center justify-center gap-5">

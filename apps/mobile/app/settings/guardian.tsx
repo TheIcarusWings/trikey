@@ -1,15 +1,17 @@
 import { useRouter } from 'expo-router';
 import { View } from 'react-native';
+import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { Server } from '@/components/icons';
 import { Footnote, InfoRow, Panel } from '@/components/panels';
 import { Screen } from '@/components/screen';
+import { UnlockForm } from '@/components/unlock-form';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { formatSats, shorten, useNow, useWallet, useWalletService } from '@/data';
-import { hostLabel } from '@/lib/labels';
+import { guardianBox } from '@/lib/labels';
 import { pick } from '@/lib/platform';
-import { useBusy } from '@/lib/use-busy';
+import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
 
 function lastSeen(iso: string, now: Date): string {
@@ -23,9 +25,9 @@ export default function GuardianSettings() {
   const router = useRouter();
   const wallet = useWalletService();
   const now = useNow();
-  const { guardian, dailyLimit, hardware } = useWallet();
-  const [busy, run] = useBusy();
-  const host = hostLabel(guardian.host);
+  const { guardian, dailyLimit } = useWallet();
+  const { busy, run, message, error } = useAction();
+  const host = guardianBox(guardian);
 
   const status =
     guardian.status === 'online'
@@ -34,13 +36,9 @@ export default function GuardianSettings() {
         ? { text: `Locked on ${host}`, tone: 'text-warn', dot: 'bg-warn' }
         : { text: `Offline: can't reach ${host}`, tone: 'text-destructive', dot: 'bg-destructive' };
 
-  const lockOrUnlock = async () => {
-    if (guardian.status === 'online') {
-      wallet.lockGuardian();
-      router.dismissTo('/home');
-    } else if (guardian.status === 'locked') {
-      await run(wallet.unlockGuardian());
-    }
+  const lock = async () => {
+    const r = await run(wallet.lockGuardian());
+    if (r.ok) router.dismissTo('/home');
   };
 
   return (
@@ -50,20 +48,8 @@ export default function GuardianSettings() {
       backLabel="Settings"
       footer={
         <>
-          {guardian.status === 'offline' ? null : (
-            <AppButton
-              title={
-                guardian.status === 'online'
-                  ? 'Lock guardian now'
-                  : busy
-                    ? `Waiting for your ${hardware.brand}…`
-                    : `Unlock with ${hardware.brand}`
-              }
-              variant="outline"
-              busy={busy}
-              onPress={lockOrUnlock}
-            />
-          )}
+          <ActionNotice message={message} error={error} />
+          {guardian.status === 'online' ? <AppButton title="Lock guardian now" variant="outline" busy={busy} onPress={() => void lock()} /> : null}
           <AppButton title="Replace guardian" variant="outline" danger onPress={() => router.push('/settings/replace-guardian')} />
         </>
       }>
@@ -81,14 +67,38 @@ export default function GuardianSettings() {
           </View>
         </View>
       </View>
+      {guardian.status === 'locked' ? <UnlockForm /> : null}
       <Panel>
         <InfoRow label="Last seen" value={lastSeen(guardian.lastSeenAt, now)} />
-        <InfoRow label="Co-signed today" value={`${dailyLimit.cosignedCount} · ${formatSats(dailyLimit.usedSats)} sats`} tabular />
-        <InfoRow label="Relays" value={`${guardian.relaysConnected} connected`} />
+        <InfoRow
+          label="Co-signed today"
+          value={dailyLimit.cosignedCount === undefined ? `${formatSats(dailyLimit.usedSats)} sats` : `${dailyLimit.cosignedCount} · ${formatSats(dailyLimit.usedSats)} sats`}
+          tabular
+        />
+        <InfoRow label="Relays" value={guardian.relaysConnected === undefined ? `${guardian.relays.length}` : `${guardian.relaysConnected} connected`} />
         <InfoRow label="Chain data" value="Your node" />
         <InfoRow label="Guardian ID" value={shorten(guardian.npub, 8, 4)} mono />
       </Panel>
-      <Footnote>The guardian holds key 3. It locks itself after a restart and needs your {hardware.brand} to unlock.</Footnote>
+      <View className="gap-1.5">
+        <Text className="text-sm font-medium leading-5">Guardian public key (npub)</Text>
+        <Text className="text-muted-foreground font-mono text-[13px] leading-5" selectable>
+          {guardian.npub}
+        </Text>
+      </View>
+      {guardian.relays.length > 0 ? (
+        <View className="gap-1.5">
+          <Text className="text-sm font-medium leading-5">Relays</Text>
+          {guardian.relays.map((relay) => (
+            <Text key={relay} className="text-muted-foreground font-mono text-[13px] leading-5" selectable>
+              {relay}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+      <Footnote>
+        The guardian holds key 3. It locks itself after a restart and takes its passphrase to unlock. Keep the npub and relays: a new phone needs
+        them to recover with your hardware wallet.
+      </Footnote>
     </Screen>
   );
 }

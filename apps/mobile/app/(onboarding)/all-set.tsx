@@ -7,7 +7,7 @@ import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { formatSats, useWallet, useWalletService } from '@/data';
-import { cloudLabel, hostLabel } from '@/lib/labels';
+import { cloudLabel, guardianBox } from '@/lib/labels';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -46,7 +46,7 @@ export default function AllSet() {
       <ListGroup divided>
         <SummaryRow label="Hardware wallet" value={hardware.model} />
         <SummaryRow label="This phone" value={backup ? `Backed up to ${cloudLabel(backup.provider)}` : 'Not backed up yet'} />
-        <SummaryRow label="Guardian" value={`${hostLabel(guardian.host)} · ${guardian.status}`} tone={guardian.status === 'online' ? 'good' : 'warn'} />
+        <SummaryRow label="Guardian" value={`${guardianBox(guardian)} · ${guardian.status}`} tone={guardian.status === 'online' ? 'good' : 'warn'} />
         <SummaryRow label="Daily limit" value={`${formatSats(dailyLimit.limitSats)} sats`} tabular />
         <SummaryRow label="Recovery wait" value={`${recoveryDelayDays} days`} />
       </ListGroup>

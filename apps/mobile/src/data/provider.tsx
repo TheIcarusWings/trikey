@@ -1,4 +1,4 @@
-import { createContext, useContext, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useReducer, useSyncExternalStore, type ReactNode } from 'react';
 import type { WalletService } from './service';
 import type { ActivityItem, WalletState } from './types';
 
@@ -25,8 +25,17 @@ export function useWallet(): WalletState {
   return useSyncExternalStore(service.subscribe, service.getState, service.getState);
 }
 
+/** The wallet's "now". With a live clock (the real wallet) it re-renders about once a `clockTickMs`, so countdowns move. */
 export function useNow(): Date {
-  return useWalletService().now();
+  const service = useWalletService();
+  const [, tick] = useReducer((n: number) => n + 1, 0);
+  const every = service.clockTickMs ?? 0;
+  useEffect(() => {
+    if (!every) return;
+    const id = setInterval(tick, every);
+    return () => clearInterval(id);
+  }, [every]);
+  return service.now();
 }
 
 /** Activity for whichever home is showing: the guardian wallet's or the Recovery Key wallet's. */

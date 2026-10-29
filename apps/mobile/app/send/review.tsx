@@ -1,15 +1,17 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
+import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { ShieldCheck } from '@/components/icons';
 import { InfoRow, Notice, Panel } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Segmented } from '@/components/segmented';
 import { Text } from '@/components/ui/text';
-import { FEE_SPEEDS, formatSats, shorten, useWallet, useWalletService, type FeeSpeed } from '@/data';
+import { useQuote } from '@/data/use-quote';
+import { FEE_SPEEDS, WalletServiceError, formatSats, shorten, useWallet, useWalletService, type FeeSpeed } from '@/data';
 import { pick } from '@/lib/platform';
-import { useBusy } from '@/lib/use-busy';
+import { useAction } from '@/lib/use-action';
 
 export default function SendReview() {
   const router = useRouter();
@@ -17,39 +19,53 @@ export default function SendReview() {
   const state = useWallet();
   const { address = '', amount = '0' } = useLocalSearchParams<{ address?: string; amount?: string }>();
   const [speed, setSpeed] = useState<FeeSpeed>('normal');
-  const [busy, run] = useBusy();
+  const { busy, run, message, error } = useAction();
   // Once signing starts the wallet state changes (limit used), and the quote must not flip under us.
   const sending = useRef(false);
 
-  const quote = useMemo(
-    () => wallet.quoteSend({ address, amountSats: Number(amount), speed }),
-    // Re-quote when the wallet changes too: the daily limit may have moved.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [wallet, state, address, amount, speed]
-  );
-  const hardware = quote.plan.signer === 'hardware';
+  // Re-quoted when the speed or what the plan depends on changes (the daily limit may have moved).
+  const { outcome } = useQuote({ address, amountSats: Number(amount), speed });
+  const quote = outcome.ok ? outcome.quote : null;
+  const hardware = quote?.plan.signer === 'hardware';
 
   // A higher fee can push the payment over the limit; hand over to the hardware wallet then.
   useEffect(() => {
-    if (hardware && !sending.current) router.replace({ pathname: '/send/hardware', params: { address, amount } });
-  }, [hardware, router, address, amount]);
+    if (hardware && !sending.current) router.replace({ pathname: '/send/hardware', params: { address, amount, speed } });
+  }, [hardware, router, address, amount, speed]);
+
+  if (!quote) {
+    return (
+      <Screen title="Review" backLabel="Back" footer={<AppButton title="Back" variant="outline" onPress={() => router.back()} />}>
+        <Notice tone="warn-outline">{outcome.ok ? '' : outcome.message}</Notice>
+      </Screen>
+    );
+  }
 
   const send = async () => {
     sending.current = true;
-    const tx = await run(wallet.sendPayment(quote));
-    router.replace({ pathname: '/send/done', params: { id: tx.id, speed } });
+    const r = await run(wallet.sendPayment(quote));
+    if (r.ok) router.replace({ pathname: '/send/done', params: { id: r.value.id, speed } });
   };
+
+  // The guardian said no (over the limit, locked, away, a recovery, paused): the hardware wallet can still approve it.
+  const offerHardware = error instanceof WalletServiceError && error.suggestsHardware;
 
   return (
     <Screen
       title="Review"
       backLabel="Back"
       footer={
-        <AppButton
-          title={busy ? 'Signing…' : pick('Send with Face ID', 'Send with fingerprint')}
-          busy={busy}
-          onPress={send}
-        />
+        <>
+          <ActionNotice message={message} error={error} />
+          {offerHardware ? (
+            <AppButton
+              title={`Approve with your ${state.hardware.brand} instead`}
+              onPress={() => router.replace({ pathname: '/send/hardware', params: { address, amount, speed, signer: 'hardware' } })}
+            />
+          ) : (
+            <AppButton title={busy ? 'Signing…' : pick('Send with Face ID', 'Send with fingerprint')} busy={busy} onPress={send} />
+          )}
+        </>
       }>
       <Panel>
         <View className={pick('flex-row justify-between gap-4 px-4 py-3.5', 'flex-row justify-between gap-4 p-4')}>

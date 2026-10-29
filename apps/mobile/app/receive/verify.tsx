@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View } from 'react-native';
+import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { DeviceMock } from '@/components/device-mock';
 import { TriangleAlert } from '@/components/icons';
@@ -8,7 +9,8 @@ import { Body, Notice } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Card } from '@/components/ui/card';
 import { Text } from '@/components/ui/text';
-import { groupAddress, useWallet } from '@/data';
+import { WalletServiceError, groupAddress, useWallet, useWalletService } from '@/data';
+import { useAction } from '@/lib/use-action';
 
 /** Splits "bc1qxh7u3m0k…" into the lines a hardware wallet shows. */
 function deviceLines(address: string): string[] {
@@ -16,15 +18,36 @@ function deviceLines(address: string): string[] {
   return [address.slice(0, 20), address.slice(20, 40), address.slice(40)].filter(Boolean);
 }
 
+/**
+ * Asks the hardware wallet to show the address (`receiveAddress({ verifyOnDevice: true })`). The wallet compares what
+ * the device shows with its own; the person still compares both screens, and "They match" waits for the device.
+ */
 export default function ReceiveVerify() {
   const router = useRouter();
+  const wallet = useWalletService();
   const { receiveAddress, hardware } = useWallet();
   const [mismatch, setMismatch] = useState(false);
+  const [verified, setVerified] = useState(false);
+  const { busy, run, message, error } = useAction();
   const grouped = groupAddress(receiveAddress).split(' ');
   // The first and last groups are the ones people compare, so they are set in bold.
   const head = grouped.slice(0, 2).join(' ');
   const middle = grouped.slice(2, -2).join(' ');
   const tail = grouped.slice(-2).join(' ');
+  const hardMismatch = error instanceof WalletServiceError && error.kind === 'address_mismatch';
+
+  useEffect(() => {
+    let off = false;
+    void run(wallet.receiveAddress({ verifyOnDevice: true })).then((r) => {
+      if (!off && r.ok) setVerified(r.value.verifiedOnDevice);
+    });
+    return () => {
+      off = true;
+      wallet.cancelDevicePrompt();
+    };
+    // Once per visit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <Screen
@@ -32,7 +55,12 @@ export default function ReceiveVerify() {
       backLabel="Receive"
       footer={
         <>
-          <AppButton title="They match" onPress={() => router.back()} />
+          <AppButton
+            title={busy ? `Waiting for your ${hardware.brand}…` : 'They match'}
+            busy={busy}
+            disabled={!verified}
+            onPress={() => router.back()}
+          />
           <AppButton title="They don't match" variant="outline" danger onPress={() => setMismatch(true)} />
         </>
       }>
@@ -58,6 +86,20 @@ export default function ReceiveVerify() {
           </Text>
         </Text>
       </Card>
+      {verified ? (
+        <Notice tone="fill" title="Your device agrees">
+          The address your {hardware.brand} showed is the one on this phone. Check the screens match too before you rely on it.
+        </Notice>
+      ) : null}
+      {hardMismatch ? (
+        <View accessibilityLiveRegion="assertive">
+          <Notice icon={TriangleAlert} iconClass="text-destructive" tone="warn-outline" title="Don't use this address">
+            {message}
+          </Notice>
+        </View>
+      ) : (
+        <ActionNotice message={message} error={error} />
+      )}
       {mismatch ? (
         <View accessibilityLiveRegion="assertive">
           <Notice icon={TriangleAlert} iconClass="text-destructive" tone="warn-outline" title="Don't use this address">

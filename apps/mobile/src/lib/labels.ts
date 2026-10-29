@@ -1,7 +1,12 @@
-import type { CloudProvider, GuardianHost, GuardianStatus } from '@/data';
+import type { CloudProvider, Guardian, GuardianHost, GuardianStatus } from '@/data';
 
 export function hostLabel(host: GuardianHost): string {
-  return host === 'umbrel' ? 'Umbrel' : 'Start9';
+  return host === 'umbrel' ? 'Umbrel' : host === 'start9' ? 'Start9' : 'guardian box';
+}
+
+/** What to call the guardian's box: the name it gave itself, else its platform. */
+export function guardianBox(guardian: Pick<Guardian, 'host' | 'label'>): string {
+  return guardian.host === 'other' && guardian.label ? guardian.label : hostLabel(guardian.host);
 }
 
 export function cloudLabel(provider: CloudProvider): string {
@@ -16,6 +21,8 @@ export function cloudLabel(provider: CloudProvider): string {
       return 'Proton Drive';
     case 'other':
       return 'another app';
+    case 'file':
+      return 'a file on this phone';
   }
 }
 
@@ -32,6 +39,8 @@ export function cloudOperator(provider: CloudProvider): string {
       return 'Proton';
     case 'other':
       return 'The cloud provider';
+    case 'file':
+      return 'Whoever holds the file';
   }
 }
 

@@ -1,5 +1,6 @@
 import { useRouter } from 'expo-router';
 import { AppButton } from '@/components/app-button';
+import { ComingLater } from '@/components/action-notice';
 import { RadioRow } from '@/components/choice';
 import { TriangleAlert } from '@/components/icons';
 import { Body, Notice } from '@/components/panels';
@@ -22,14 +23,19 @@ const OPTIONS: { value: RecoveryKeyKind; title: string; description: string; bad
 export default function RecoveryKeyCreate() {
   const router = useRouter();
   const wallet = useWalletService();
-  const { recoveryKey, hardware } = useWallet();
+  const { recoveryKey, hardware, capabilities } = useWallet();
   const kind = recoveryKey.keyKind;
 
   return (
     <Screen
       title="Make your Recovery Key"
       backLabel="Back"
-      footer={<AppButton title="Continue" onPress={() => router.push('/rk/refills')} />}>
+      footer={<AppButton title="Continue" disabled={!capabilities.recoveryKey} onPress={() => router.push('/rk/refills')} />}>
+      {capabilities.recoveryKey ? null : (
+        <ComingLater>
+          Recovery Key mode, for a wallet with no home server, is shown here as a design only. It has no wallet code behind it yet.
+        </ComingLater>
+      )}
       <Body>Without a home server, your third key stays offline. You'll use it only if you lose your phone or your {hardware.brand}.</Body>
       <RadioGroup value={kind} onValueChange={(v) => wallet.setRecoveryKeyKind(v as RecoveryKeyKind)} aria-label="Where to keep it" className="gap-2.5">
         {OPTIONS.map((option) => (

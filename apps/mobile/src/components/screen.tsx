@@ -1,6 +1,6 @@
 import { useRouter, type Href } from 'expo-router';
-import type { ReactNode } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native';
+import { useCallback, useState, type ReactNode } from 'react';
+import { KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, ChevronLeft } from '@/components/icons';
 import { Icon } from '@/components/ui/icon';
@@ -69,6 +69,8 @@ type ScreenProps = {
   bareTop?: number;
   scrollable?: boolean;
   contentClassName?: string;
+  /** Pull to refresh: called when the person pulls the content down. */
+  onRefresh?: () => Promise<unknown>;
 };
 
 export function Screen({
@@ -92,7 +94,20 @@ export function Screen({
   bareTop = 40,
   scrollable = true,
   contentClassName,
+  onRefresh,
 }: ScreenProps) {
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = useCallback(async () => {
+    if (!onRefresh) return;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } catch {
+      /* the screen shows what it knows; a failed refresh is not an error page */
+    } finally {
+      setRefreshing(false);
+    }
+  }, [onRefresh]);
   const goBack = useGoBack();
   const insets = useScreenInsets();
   const back = onBack ?? goBack;
@@ -179,6 +194,7 @@ export function Screen({
       className="flex-1"
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
+      refreshControl={onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} /> : undefined}
       contentContainerStyle={{ flexGrow: 1, paddingHorizontal: GUTTER, gap, paddingBottom: footer || tab ? 16 : insets.bottom }}>
       {children}
     </ScrollView>
