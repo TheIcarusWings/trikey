@@ -1,0 +1,29 @@
+{
+  "name": "@trikey/protocol",
+  "version": "0.1.0",
+  "description": "Trikey's nostr RPC protocol: schemas, NIP-59 transport, pairing URIs and a dev relay",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./dev/relay": "./src/dev/relay.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p .",
+    "dev:relay": "tsx src/dev/relay.ts"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.4.0",
+    "@scure/base": "^2.4.0",
+    "@scure/bip32": "^2.4.0",
+    "@scure/bip39": "^2.4.0",
+    "nostr-tools": "^2.23.0",
+    "ws": "^8.18.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.0"
+  }
+}
