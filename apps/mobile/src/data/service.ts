@@ -205,7 +205,7 @@ export interface WalletService {
   dev?: {
     setGuardianStatus?(status: GuardianStatus): void;
     simulateRecoveryFromElsewhere?(): void;
-    /** The demo's recovery (started on this phone) gets a coin in the old wallet: the move grows and `recovery.sweepUpdate` says so. */
+    /** The demo's recovery (started on this phone) gets a coin in the old wallet; each call steps `recovery.sweepUpdate` through waiting, added (the move grows) and refused. */
     simulateRecoveryCoin?(): void;
     /** The demo's recovery ends now: the guardian takes the new wallet over. */
     finishRecovery?(): void;
