@@ -8,6 +8,8 @@ import type {
   PairingSession,
   RecoveryCode,
   RecoveryInProgress,
+  RelaySettings,
+  RelaysInput,
   PublicStatus,
   ResetInput,
   Rules,
@@ -88,6 +90,14 @@ export interface GuardianApi {
 
   /** The permanent "Recover on a new phone" code. `not_found` while no wallet is paired. */
   getRecoveryCode(): Promise<RecoveryCode>;
+
+  /** The relays in use, those still watched after a change, and suggestions for the editor. */
+  getRelays(): Promise<RelaySettings>;
+  /**
+   * Replaces the relay list (1 to 8). The guardian moves at once, tells the paired phone, and keeps watching the
+   * removed relays for 30 days. Rejects with `invalid` for a list it refuses.
+   */
+  setRelays(input: RelaysInput): Promise<RelaySettings>;
 
   /**
    * Forgets every wallet and creates a new key 3 (the old one is destroyed). Needs the passphrase and

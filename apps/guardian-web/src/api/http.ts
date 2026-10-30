@@ -10,6 +10,7 @@ import type {
   PublicStatus,
   RecoveryCode,
   RecoveryInProgress,
+  RelaySettings,
   Rules,
   SetupPreflight,
 } from './types';
@@ -46,7 +47,7 @@ export function withBrowserEntropy<T extends object>(input: T): T & { entropy: s
  * Request bodies are JSON only; the passphrase goes out in one POST and is
  * not logged, cached or kept anywhere by this module.
  *
- * Every POST and DELETE carries a JSON body (`{}` when there is nothing to
+ * Every POST, PUT and DELETE carries a JSON body (`{}` when there is nothing to
  * send): the guardian refuses state-changing requests without
  * `Content-Type: application/json`, which keeps cross-site requests out.
  */
@@ -114,6 +115,8 @@ export function createHttpApi(base = ''): GuardianApi {
     },
 
     getRecoveryCode: () => request<RecoveryCode>('GET', '/recovery-code'),
+    getRelays: () => request<RelaySettings>('GET', '/relays'),
+    setRelays: (input) => request<RelaySettings>('PUT', '/relays', input),
     resetGuardian: async (input) => request<GuardianStatus>('POST', '/reset', withBrowserEntropy(input)),
 
     startPairing: () => request<PairingSession>('POST', '/pairing'),

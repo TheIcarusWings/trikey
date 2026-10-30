@@ -10,8 +10,11 @@ import type {
   PairingSession,
   RecoveryInProgress,
   RelayOption,
+  RelaySettings,
+  RetiringRelay,
   Rules,
 } from './types';
+import { relayListError } from '../lib/relays';
 
 /**
  * In-memory guardian with demo data matching design/screens/Guardian-*.
@@ -144,6 +147,8 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
   let walletIds = scenario === 'unpaired' || scenario === 'firstrun' ? [] : ['3a7f09c2d41e8b65'];
   let pairing: PairingSession | null = null;
   let relayUrls = RELAYS.map((r) => r.url);
+  let retiring: RetiringRelay[] = [];
+  let relaysChange: RelaySettings['lastChange'];
   const syncing = scenario === 'syncing';
   let setupFinished = false;
   // `?mock=signedout`: the browser has no session yet (the sign-in screen first).
@@ -182,18 +187,31 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
     activity = [{ ...entry, id: `a${Date.now()}${activity.length}`, at: new Date().toISOString() }, ...activity];
   };
 
+  const relayStatus = (url: string) => {
+    const i = RELAYS.findIndex((r) => r.url === url);
+    // A relay the mock does not know (one typed in the editor) shows as connected; `syncing` has the second one down.
+    return { url, ...(RELAYS[i]?.label ? { label: RELAYS[i]!.label } : {}), connected: !(syncing && i === 1) };
+  };
+
+  const relaySettings = (): RelaySettings => {
+    retiring = retiring.filter((r) => Date.parse(r.until) > Date.now());
+    return {
+      relays: relayUrls.map(relayStatus),
+      retiring: clone(retiring),
+      options: clone(RELAYS),
+      ...(relaysChange ? { lastChange: clone(relaysChange) } : {}),
+      max: 8,
+    };
+  };
+
   const status = (): GuardianStatus => {
-    const relays = RELAYS.map((r, i) => ({
-      url: r.url,
-      label: r.label,
-      connected: relayUrls.includes(r.url) && !(syncing && i === 1),
-    }));
+    const relays = relayUrls.map(relayStatus);
     return {
       setupComplete: setupDone || setupFinished,
       state: locked ? 'locked' : 'unlocked',
       lockedAt: locked ? lockedAt : undefined,
       lockReason: locked ? lockReason : undefined,
-      relays: relays.filter((r) => relayUrls.includes(r.url)),
+      relays,
       chain: syncing
         ? { state: 'syncing', progress: 0.87, source: 'Bitcoin Node + Electrs' }
         : { state: 'synced', source: 'Bitcoin Node + Electrs' },
@@ -295,6 +313,34 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       for (const url of relayUrls) params.append('relay', url);
       params.set('net', 'signet');
       return { uri: `trikey://recover?${params.toString()}`, npub: DEMO_NPUB, relays: [...relayUrls], network: 'signet', walletId };
+    },
+
+    async getRelays() {
+      await wait();
+      if (locked) throw new ApiError('locked', 'The guardian is locked. Unlock it first.', 409);
+      return relaySettings();
+    },
+
+    async setRelays(input) {
+      await wait(300);
+      if (locked) throw new ApiError('locked', 'The guardian is locked. Unlock it first.', 409);
+      const problem = relayListError(input.relays);
+      if (problem) throw new ApiError('invalid', problem, 400);
+      const next = [...input.relays];
+      const removed = relayUrls.filter((u) => !next.includes(u));
+      if (removed.length || next.some((u) => !relayUrls.includes(u))) {
+        const until = new Date(Date.now() + 30 * DAY).toISOString();
+        retiring = [...retiring.filter((r) => !next.includes(r.url) && !removed.includes(r.url)), ...removed.map((url) => ({ ...relayStatus(url), until }))];
+        relaysChange = { at: new Date().toISOString() };
+        pushActivity({ kind: 'system', event: 'Relays changed on this box. The paired phone was told.', summary: 'Relays changed', signedBy: null, sats: null, result: 'ok' });
+        // The phone confirms a moment later, as a real one would.
+        if (phones.length)
+          setTimeout(() => {
+            if (relaysChange) relaysChange = { ...relaysChange, phoneConfirmedAt: new Date().toISOString() };
+          }, 4000);
+      }
+      relayUrls = next;
+      return relaySettings();
     },
 
     async resetGuardian(input) {
