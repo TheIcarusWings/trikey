@@ -69,6 +69,9 @@ export default function SendAmount() {
   const address = (params.address ?? '').trim();
   const [digits, setDigits] = useState(() => (params.amount ? String(params.amount).slice(0, MAX_DIGITS) : ''));
   const [btcView, setBtcView] = useState(false);
+  // The amount came from "Send max" and was not typed over since.
+  const [max, setMax] = useState(false);
+  const [maxProblem, setMaxProblem] = useState<string | null>(null);
   // Recovery Key mode, "Pay from vault": the hardware wallet signs this one, whatever the spending balance holds.
   const fromVault = params.vault === '1';
 
@@ -83,18 +86,27 @@ export default function SendAmount() {
   const needsHelper = !outcome.ok && outcome.problem === 'needs_helper';
   const canReview = amountSats > 0 && !tooMuch && (outcome.ok || needsHelper) && !pending;
 
-  // "Send max": everything the wallet can send to this address at the standard speed, after its fee. Shown once the
-  // wallet offers it (quoteSendMax); the quote says how much that is.
-  const quoteMax = (wallet as { quoteSendMax?: (r: { address: string; speed: 'normal' }) => QuoteOutcome }).quoteSendMax;
-  const sendMax = quoteMax
-    ? () => {
-        const q = quoteMax.call(wallet, { address, speed: 'normal' });
-        if (q.ok) setDigits(String(q.quote.request.amountSats).slice(0, MAX_DIGITS));
-      }
-    : undefined;
+  // "Send max": everything the wallet can send to this address, after its fee. Review quotes it again as a max payment
+  // (no change), so the amount follows the speed chosen there.
+  const sendMax = fromVault || state.mode === 'recoveryKey'
+    ? undefined
+    : () => {
+        const q = wallet.quoteSendMax({ address, speed: 'normal' });
+        if (q.ok) {
+          setDigits(String(q.quote.request.amountSats).slice(0, MAX_DIGITS));
+          setMax(true);
+        } else setMaxProblem(q.message);
+      };
 
-  const press = (digit: string) => setDigits((d) => (d.length >= MAX_DIGITS ? d : d === '' && digit === '0' ? '' : d + digit));
-  const erase = () => setDigits((d) => d.slice(0, -1));
+  const press = (digit: string) => {
+    setMax(false);
+    setMaxProblem(null);
+    setDigits((d) => (d.length >= MAX_DIGITS ? d : d === '' && digit === '0' ? '' : d + digit));
+  };
+  const erase = () => {
+    setMax(false);
+    setDigits((d) => d.slice(0, -1));
+  };
 
   const review = () => {
     // A silent payment needs the helper coin: one screen says so and leads to funding it.
@@ -102,7 +114,7 @@ export default function SendAmount() {
       if (needsHelper) router.push({ pathname: '/send/helper', params: { address, amount: String(amountSats), why: outcome.message } });
       return;
     }
-    const next = { address, amount: String(amountSats), ...(fromVault ? { signer: 'hardware' } : {}) };
+    const next = { address, amount: String(amountSats), ...(fromVault ? { signer: 'hardware' } : {}), ...(max ? { max: '1' } : {}) };
     // Every payment stops on Review first, the ones the hardware wallet signs included.
     router.push({ pathname: '/send/review', params: next });
   };
@@ -124,7 +136,7 @@ export default function SendAmount() {
         <Text className={cn('tabular-nums', pick('text-[56px] font-semibold leading-[64px] tracking-[-2.2px]', 'text-[56px] font-normal leading-[64px] tracking-[-1.1px]'))}>{primary}</Text>
         <Text className={cn('text-muted-foreground', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{secondary}</Text>
       </View>
-      <StatusLine tone={pill.dot} text={tooMuch ? "That's more than your balance" : pending ? 'Checking…' : pill.text} />
+      <StatusLine tone={pill.dot} text={maxProblem ?? (tooMuch ? "That's more than your balance" : pending ? 'Checking…' : max ? `Everything you can send · ${pill.text}` : pill.text)} />
       {sendMax ? (
         <Pressable role="button" onPress={sendMax} className="-mt-3 min-h-11 items-center justify-center self-center px-3 active:opacity-60">
           <Text className="text-muted-foreground text-sm font-medium underline">Send max</Text>

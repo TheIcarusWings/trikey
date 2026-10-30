@@ -3,7 +3,7 @@ import { Pressable, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { Check, Clock } from '@/components/icons';
+import { Check, Clock, Coins, TriangleAlert } from '@/components/icons';
 import { Notice } from '@/components/panels';
 import { ProgressBar } from '@/components/progress';
 import { Screen } from '@/components/screen';
@@ -140,7 +140,17 @@ export default function RecoverWaiting() {
       <Text className={cn('text-muted-foreground -mt-2 text-center', pick('text-[15px] leading-[21px]', 'text-sm leading-5'))}>
         Phone-only payments are paused until then. Your {hardware.brand} can still approve payments.
       </Text>
-      {/* The main session adds a line here for coins that arrived after the recovery started ("N new coins were added"). */}
+      {recovery.sweepUpdate ? (
+        recovery.sweepUpdate.status === 'refused' ? (
+          <Notice icon={TriangleAlert} iconClass="text-warn" tone="warn">
+            {recovery.sweepUpdate.text}
+          </Notice>
+        ) : (
+          <Notice icon={recovery.sweepUpdate.status === 'added' ? Check : Coins} tone="fill">
+            {recovery.sweepUpdate.text}
+          </Notice>
+        )
+      ) : null}
       <View className="gap-4">
         <Step
           done

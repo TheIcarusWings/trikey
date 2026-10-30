@@ -1,6 +1,8 @@
 import type { BottomTabBarProps } from 'expo-router/js-tabs';
 import type { LucideIcon } from 'lucide-react-native';
-import { Pressable, View } from 'react-native';
+import { BlurView } from 'expo-blur';
+import { useEffect, useState } from 'react';
+import { AccessibilityInfo, Pressable, StyleSheet, View } from 'react-native';
 import { House, Shield } from '@/components/icons';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
@@ -19,7 +21,24 @@ export const FLOATING_TAB_BAR_SPACE = 104;
  * Bottom navigation in each platform's design: on iOS a floating, translucent pill over the content (as iOS 26 tab bars
  * float), on Android a Material 3 navigation bar with the active pill behind the icon.
  */
+/** iOS "Reduce Transparency": when it is on, nothing on screen is see-through. */
+function useReduceTransparency(): boolean {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    if (!IS_IOS || IS_WEB) return;
+    let alive = true;
+    void AccessibilityInfo.isReduceTransparencyEnabled().then((v) => alive && setOn(v));
+    const sub = AccessibilityInfo.addEventListener('reduceTransparencyChanged', setOn);
+    return () => {
+      alive = false;
+      sub.remove();
+    };
+  }, []);
+  return on;
+}
+
 export function TabBar({ state, emitter, navigateToTab, insets }: BottomTabBarProps) {
+  const reduceTransparency = useReduceTransparency();
   const bottom = IS_WEB ? (IS_IOS ? 30 : 16) : IS_IOS ? Math.max(insets.bottom - 4, 8) : Math.max(insets.bottom, 16);
 
   const tabs = state.routes.map((route, index) => {
@@ -64,18 +83,25 @@ export function TabBar({ state, emitter, navigateToTab, insets }: BottomTabBarPr
   });
 
   if (IS_IOS) {
+    // On an iPhone the system blur shows through (unless Reduce Transparency is on: then the bar is solid). The web
+    // preview draws the same with CSS.
+    const blur = !IS_WEB && !reduceTransparency;
     return (
       <View pointerEvents="box-none" className="absolute inset-x-0 bottom-0 items-center" style={{ paddingBottom: bottom - 6 }}>
         <View
-          role="tablist"
-          accessibilityLabel="Main"
-          className="bg-background/80 border-foreground/10 w-[200px] flex-row gap-1 rounded-full border p-1"
-          style={[
-            { shadowColor: '#000', shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 8 }, elevation: 6 },
-            // A real blur where the platform can draw one cheaply; elsewhere the 80% fill stands in for it.
-            IS_WEB ? ({ backdropFilter: 'blur(24px) saturate(180%)', WebkitBackdropFilter: 'blur(24px) saturate(180%)' } as object) : null,
-          ]}>
-          {tabs}
+          className="rounded-full"
+          style={{ shadowColor: '#000', shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 8 }, elevation: 6 }}>
+          <View
+            role="tablist"
+            accessibilityLabel="Main"
+            className={cn(
+              'border-foreground/10 w-[200px] flex-row gap-1 overflow-hidden rounded-full border p-1',
+              blur ? 'bg-background/40' : reduceTransparency ? 'bg-background' : 'bg-background/80'
+            )}
+            style={IS_WEB ? ({ backdropFilter: 'blur(24px) saturate(180%)', WebkitBackdropFilter: 'blur(24px) saturate(180%)' } as object) : undefined}>
+            {blur ? <BlurView tint="systemChromeMaterial" intensity={80} style={StyleSheet.absoluteFill} /> : null}
+            {tabs}
+          </View>
         </View>
       </View>
     );

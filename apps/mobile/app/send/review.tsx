@@ -31,7 +31,8 @@ export default function SendReview() {
   const router = useRouter();
   const wallet = useWalletService();
   const state = useWallet();
-  const { address = '', amount = '0', signer } = useLocalSearchParams<{ address?: string; amount?: string; signer?: string }>();
+  const { address = '', amount = '0', signer, max } = useLocalSearchParams<{ address?: string; amount?: string; signer?: string; max?: string }>();
+  const sendMax = max === '1';
   const [speed, setSpeed] = useState<FeeSpeed>('normal');
   const [choosingSpeed, setChoosingSpeed] = useState(false);
   const [aboutFees, setAboutFees] = useState(false);
@@ -41,7 +42,14 @@ export default function SendReview() {
   const forced = signer === 'hardware' ? { signer: 'hardware' as const } : {};
 
   // Re-quoted when the speed or what the plan depends on changes (the daily limit may have moved).
-  const { outcome } = useQuote({ address, amountSats: Number(amount), speed, ...forced }, 0, { exact: true });
+  const typed = useQuote({ address, amountSats: Number(amount), speed, ...forced }, 0, { exact: true });
+  // "Send max": everything after the fee, at the speed chosen here, with no change; again whenever the coins change.
+  const maxOutcome = useMemo(
+    () => (sendMax ? wallet.quoteSendMax({ address, speed }) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sendMax, wallet, address, speed, state.balanceSats, state.dailyLimit.usedSats, state.guardian.status],
+  );
+  const outcome = maxOutcome ?? typed.outcome;
   const quote = outcome.ok ? outcome.quote : null;
   const hardware = quote?.plan.signer === 'hardware';
 
@@ -50,12 +58,12 @@ export default function SendReview() {
     if (!choosingSpeed) return {} as Partial<Record<FeeSpeed, number>>;
     const out: Partial<Record<FeeSpeed, number>> = {};
     for (const s of SPEEDS) {
-      const q = wallet.quoteSend({ address, amountSats: Number(amount), speed: s, ...forced });
+      const q = sendMax ? wallet.quoteSendMax({ address, speed: s }) : wallet.quoteSend({ address, amountSats: Number(amount), speed: s, ...forced });
       if (q.ok) out[s] = q.quote.feeSats;
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [choosingSpeed, wallet, address, amount, signer]);
+  }, [choosingSpeed, wallet, address, amount, signer, sendMax]);
 
   if (!quote) {
     return (
@@ -125,7 +133,7 @@ export default function SendReview() {
             {silent ? <Text className="text-muted-foreground text-[13px] leading-[18px]">Silent payment</Text> : null}
           </View>
         </View>
-        <InfoRow label="Amount" value={`${formatSats(quote.request.amountSats)} sats`} tabular />
+        <InfoRow label={quote.max ? 'Amount (everything)' : 'Amount'} value={`${formatSats(quote.request.amountSats)} sats`} tabular />
         <View className={cn('flex-row items-center justify-between gap-4 px-4', pick('py-2', 'py-2.5'))}>
           <Pressable
             role="button"
