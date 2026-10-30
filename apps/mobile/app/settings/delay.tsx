@@ -33,7 +33,7 @@ export default function RecoveryDelaySettings() {
 
   return (
     <Screen
-      title="Recovery wait"
+      title="Security waiting period"
       backLabel="Settings"
       footer={
         <>

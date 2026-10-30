@@ -11,8 +11,7 @@ import { SelfTestRow } from '@/components/self-test-row';
 import { Segmented } from '@/components/segmented';
 import { Switch } from '@/components/ui/switch';
 import { Text } from '@/components/ui/text';
-import { formatSats, serverHost, useWallet, useWalletService, type GuardianStatus, type RecoveryKeyKind, type ThemePreference } from '@/data';
-import { cloudLabel, guardianBox } from '@/lib/labels';
+import { formatSats, serverHost, useWallet, useWalletService, type GuardianStatus, type ThemePreference } from '@/data';
 import { IS_IOS, pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 
@@ -32,94 +31,21 @@ function silentPaymentsSummary(state: ReturnType<typeof useWallet>): { text: str
   return { text: 'On', dot: 'good' };
 }
 
-const KEY_LABEL: Record<RecoveryKeyKind, string> = {
-  paper: 'Printed kit',
-  nfc: 'NFC card',
-  hardware: 'Second hardware wallet',
-};
-
 export default function SettingsScreen() {
   const router = useRouter();
-  const wallet = useWalletService();
   const state = useWallet();
   const rk = state.mode === 'recoveryKey';
-  const { guardian } = state;
-
-  const guardianDot = guardian.status === 'online' ? 'good' : guardian.status === 'locked' ? 'warn' : 'bad';
-  const refillsLeft = state.recoveryKey.refillsLeft;
-  const box = guardianBox(guardian);
   const silentValue = silentPaymentsSummary(state);
 
   return (
-    <Screen tab title="Settings" gap={pick(12, 0)}>
-      <SectionLabel first>Your keys</SectionLabel>
+    <Screen title="Settings" backLabel="Home" gap={pick(12, 0)}>
+      <SectionLabel first>App</SectionLabel>
       <ListGroup>
-        <SettingsRow title="Hardware wallet" value={state.hardware.model} />
-        {rk ? (
-          <SettingsRow title="This phone" value={pick('Spends with Face ID', 'Spends with your fingerprint')} />
-        ) : (
-          <SettingsRow
-            title="This phone"
-            value={pick(
-              state.backup ? 'Backed up' : 'Not backed up',
-              state.backup ? `Backed up to ${cloudLabel(state.backup.provider)}` : 'Not backed up'
-            )}
-            onPress={() => router.push({ pathname: '/backup', params: { again: '1' } })}
-            accessibilityHint="Make a new backup"
-          />
-        )}
-        {rk ? (
-          <SettingsRow
-            title="Recovery Key"
-            value={state.recoveryKey.savedKey === 'hardware' ? 'Second hardware wallet' : state.recoveryKey.savedKey === 'kit' ? 'Printed kit' : KEY_LABEL[state.recoveryKey.keyKind]}
-          />
-        ) : (
-          <SettingsRow
-            title="Guardian"
-            value={pick(box, `${box} · ${guardian.status}`)}
-            dot={guardianDot}
-            onPress={() => router.push('/settings/guardian')}
-          />
-        )}
+        <SettingsRow title="Appearance" value={THEME_LABEL[state.theme]} onPress={() => router.push('/settings/appearance')} />
+        <SettingsRow title="Show amounts in" value={state.unit === 'btc' ? 'BTC' : 'sats'} onPress={() => router.push('/settings/units')} />
       </ListGroup>
 
-      <SectionLabel>Rules</SectionLabel>
-      {rk ? (
-        <ListGroup>
-          <SettingsRow
-            title="Refills"
-            value={`${refillsLeft} of ${state.recoveryKey.refillsTotal} left`}
-            onPress={() => router.push('/rk/refills')}
-          />
-          <SettingsRow
-            title="Refill amount"
-            value={pick(`${formatSats(state.recoveryKey.refillAmountSats)} sats`, `${formatSats(state.recoveryKey.refillAmountSats)} sats, ${state.recoveryKey.refillCount} at a time`)}
-            tabular
-            onPress={() => router.push('/settings/refills')}
-          />
-        </ListGroup>
-      ) : (
-        <ListGroup>
-          <SettingsRow
-            title="Daily limit"
-            value={`${formatSats(state.dailyLimit.limitSats)} sats`}
-            tabular
-            onPress={() => router.push('/settings/limit')}
-          />
-          <SettingsRow
-            title="Recovery wait"
-            value={`${state.recoveryDelayDays} days`}
-            onPress={() => router.push('/settings/delay')}
-          />
-          <SettingsRow
-            title="Alert contacts"
-            value={pick(String(state.contacts.length), `${state.contacts.length} ${state.contacts.length === 1 ? 'person' : 'people'}`)}
-            onPress={() => router.push('/settings/contacts')}
-          />
-        </ListGroup>
-      )}
-
-      <SectionLabel>Silent payments</SectionLabel>
+      <SectionLabel>Payments</SectionLabel>
       <ListGroup>
         <SettingsRow
           title="Silent payments"
@@ -141,26 +67,8 @@ export default function SettingsScreen() {
               accessibilityHint="Choose where Trikey reads the chain"
             />
           </ListGroup>
-          <SectionLabel>If something is lost</SectionLabel>
-          <ListGroup>
-            <SettingsRow title="Lost your Recovery Kit?" onPress={() => router.push('/rk/replace')} />
-            <SettingsRow title="Lost your hardware wallet?" onPress={() => router.push({ pathname: '/recover/kit', params: { with: 'phone' } })} />
-          </ListGroup>
         </>
-      ) : (
-        <>
-          <SectionLabel>If something is lost</SectionLabel>
-          <ListGroup>
-            <SettingsRow title="Lost your hardware wallet?" onPress={() => router.push('/recover/choose')} />
-          </ListGroup>
-        </>
-      )}
-
-      <SectionLabel>App</SectionLabel>
-      <ListGroup>
-        <SettingsRow title="Appearance" value={THEME_LABEL[state.theme]} onPress={() => router.push('/settings/appearance')} />
-        <SettingsRow title="Show amounts in" value={state.unit === 'btc' ? 'BTC' : 'sats'} onPress={() => router.push('/settings/units')} />
-      </ListGroup>
+      ) : null}
 
       <DeveloperSection />
     </Screen>

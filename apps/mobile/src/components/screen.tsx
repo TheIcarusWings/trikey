@@ -3,6 +3,7 @@ import { useCallback, useState, type ReactNode } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, ChevronLeft } from '@/components/icons';
+import { FLOATING_TAB_BAR_SPACE } from '@/components/tab-bar';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { IS_ANDROID, IS_IOS, IS_WEB, pick } from '@/lib/platform';
@@ -208,7 +209,7 @@ export function Screen({
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
       refreshControl={onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} /> : undefined}
-      contentContainerStyle={{ flexGrow: 1, paddingHorizontal: GUTTER, gap, paddingBottom: footer || tab ? 16 : insets.bottom }}>
+      contentContainerStyle={{ flexGrow: 1, paddingHorizontal: GUTTER, gap, paddingBottom: tab && IS_IOS ? FLOATING_TAB_BAR_SPACE : footer || tab ? 16 : insets.bottom }}>
       {children}
     </ScrollView>
   ) : (
