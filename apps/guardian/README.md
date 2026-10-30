@@ -37,6 +37,7 @@ node --import tsx apps/guardian/src/main.ts
 | `BITCOIN_RPC_HOST`, `_PORT`, `_USER`, `_PASS` | none | Optional: sync progress, a broadcast fallback, and the silent payment scanner (`getblock <hash> 3`; without them `sp.*` answers `1700`) |
 | `BITCOIN_NETWORK` | `bitcoin` | `bitcoin`, `testnet`, `signet`, `regtest`; also `mainnet`, `main`, `testnet3`, `testnet4`, `test` |
 | `TRIKEY_LOG_LEVEL` | `info` | `debug` for more |
+| `SP_SCAN_THREADS` | cores - 1, at least 1 | Worker threads for the silent payment scanner, 1 to 64. `1` scans in the main thread, without workers. Lower it to leave more of the box to Bitcoin Core during a first scan. |
 
 For the web UI's dev server (`VITE_API=http`), run the guardian with `PORT=8787` or
 set `GUARDIAN_API_PROXY`.

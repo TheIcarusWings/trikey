@@ -44,6 +44,8 @@ export interface GuardianRigOptions {
    * mempool into the next block of both. Default false (the guardian then has no node RPC).
    */
   bitcoind?: boolean;
+  /** Worker threads for the silent payment scanner, as SP_SCAN_THREADS would set (default: none, the main thread scans). */
+  spScanThreads?: number;
 }
 
 export interface FundedOutput {
@@ -115,6 +117,7 @@ export class GuardianRig {
       ...(this.bitcoind ? { bitcoinRpc: { host: '127.0.0.1', port: this.bitcoind.port, user: this.bitcoind.user, pass: this.bitcoind.pass } } : {}),
       kdf: { t: 1, m: 64, p: 1 }, // cheap Argon2 for tests only
       relayOptions: this.relayUrls.map((url) => ({ url, defaultSelected: true })),
+      ...(this.opts.spScanThreads ? { spScanThreads: this.opts.spScanThreads } : {}),
     };
     this.guardian = await Guardian.open({
       config,

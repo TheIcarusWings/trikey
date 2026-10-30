@@ -12,7 +12,8 @@
  * Cheap rules first, before any elliptic-curve work: the coinbase is skipped, then every transaction
  * without a taproot output (read from the block's JSON, before the raw transaction is even decoded),
  * then transactions none of whose prevouts is an eligible script type, or that spend a witness version
- * above 1.
+ * above 1. The rules read from the JSON are `candidateScripts`, apart from the rest (`scanCandidate`),
+ * so that with worker threads (`scan-pool.ts`) the main thread applies them and sends only what is left.
  */
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { hex } from '@scure/base';
@@ -71,6 +72,19 @@ export interface BlockScanStats {
 const TAPROOT_HEX = /^5120[0-9a-f]{64}$/;
 /** Prevout script types BIP 352 can count: P2TR, P2WPKH, P2SH (maybe P2SH-P2WPKH), P2PKH. */
 const MAYBE_ELIGIBLE = /^(?:5120[0-9a-f]{64}|0014[0-9a-f]{40}|a914[0-9a-f]{40}87|76a914[0-9a-f]{40}88ac)$/;
+
+/**
+ * The cheap rules, read from the block's JSON before anything is decoded: the prevout scripts (hex) of a
+ * transaction that may hold a payment, or undefined when it cannot (the coinbase, no taproot output, no
+ * prevout of an eligible type). Throws when the node left the prevouts out.
+ */
+export function candidateScripts(tx: VerboseTx): string[] | undefined {
+  if (tx.vin.some((v) => v.coinbase !== undefined)) return undefined;
+  if (!tx.vout.some((o) => TAPROOT_HEX.test(o.scriptPubKey.hex))) return undefined;
+  if (tx.vin.some((v) => !v.prevout)) throw new Error(`transaction ${tx.txid} has no prevouts: the scanner needs getblock verbosity 3 (Bitcoin Core 23 or later)`);
+  const scripts = tx.vin.map((v) => v.prevout!.scriptPubKey.hex);
+  return scripts.some((s) => MAYBE_ELIGIBLE.test(s)) ? scripts : undefined;
+}
 
 /** Scans for one receiver: (b_scan, B_spend) and its labels, decoded once. */
 export class SilentPaymentBlockScanner {
@@ -145,11 +159,16 @@ export class SilentPaymentBlockScanner {
   /** One transaction of `getblock <hash> 3`. */
   scanTransaction(tx: VerboseTx, stats?: BlockScanStats): BlockMatch[] {
     if (stats) stats.transactions++;
-    if (tx.vin.some((v) => v.coinbase !== undefined)) return [];
-    if (!tx.vout.some((o) => TAPROOT_HEX.test(o.scriptPubKey.hex))) return [];
-    if (tx.vin.some((v) => !v.prevout)) throw new Error(`transaction ${tx.txid} has no prevouts: the scanner needs getblock verbosity 3 (Bitcoin Core 23 or later)`);
-    if (!tx.vin.some((v) => MAYBE_ELIGIBLE.test(v.prevout!.scriptPubKey.hex))) return [];
-    const parsed = parseTransaction(tx.hex, tx.vin.map((v) => ({ script: v.prevout!.scriptPubKey.hex })));
+    const scripts = candidateScripts(tx);
+    return scripts ? this.scanCandidate(tx.hex, scripts, stats) : [];
+  }
+
+  /**
+   * The rest of `scanTransaction`, for a transaction `candidateScripts` let through: decode it (raw hex,
+   * with its prevout scripts) and run the receiver loop. The worker threads (`scan-pool.ts`) call this.
+   */
+  scanCandidate(txHex: string, prevoutScripts: string[], stats?: BlockScanStats): BlockMatch[] {
+    const parsed = parseTransaction(txHex, prevoutScripts.map((script) => ({ script })));
     if (stats) stats.scanned++;
     const taproot = parsed.outputs.map((o, vout) => ({ o, vout })).filter(({ o }) => o.script.length === 34 && o.script[0] === 0x51 && o.script[1] === 0x20);
     const found = this.scanOutputs(parsed.inputs, taproot.map(({ o }) => o.script.slice(2)));

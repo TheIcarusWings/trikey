@@ -21,6 +21,12 @@
  * checked this way. Matches from blocks that are no longer on the main chain are dropped, and a
  * payment that a reorg moved to another block is found again at its new height.
  *
+ * **Threads.** With `scanThreads` above 1 (`SP_SCAN_THREADS`), each block's transactions are scanned by
+ * that many worker threads (`scan-pool.ts`), and the next block is fetched from the node while one is
+ * scanned (two blocks in memory at most). Blocks are still applied one at a time, in height order, as in
+ * one thread. The workers live for one run and get their own copy of the scan key; they are terminated
+ * when the run ends, on `sp.unregister`, on a new registration and on `stop()`.
+ *
  * The registration belongs to the paired phone: when the guardian pairs another phone (retire, reset,
  * a rotation to another phone) it is dropped, scan key included.
  */
@@ -34,7 +40,8 @@ import type { BitcoinRpc } from '../chain/bitcoind.js';
 import { Mutex, readJsonFile, writeFileAtomic } from '../files.js';
 import { errorText, silentLogger, type Logger } from '../log.js';
 import type { Clock } from '../policy/index.js';
-import { SilentPaymentBlockScanner, type BlockScanStats } from './scan.js';
+import { SilentPaymentBlockScanner, type BlockMatch, type BlockScanStats } from './scan.js';
+import { SilentPaymentScanPool } from './scan-pool.js';
 import { secureRandomBytes } from '@trikey/core/random';
 
 export const SP_FILES = { state: 'silent-payments.json', key: 'silent-payments-key.json' } as const;
@@ -113,6 +120,8 @@ export interface SilentPaymentServiceOptions {
   stamp(): { at: number; atMs: number };
   /** Blocks scanned between two saves of the state file during a long catch-up. */
   saveEvery?: number;
+  /** Worker threads that scan each block (`SP_SCAN_THREADS`). 1, the default, scans in this thread. */
+  scanThreads?: number;
 }
 
 export interface RegisterInput {
@@ -127,6 +136,11 @@ export class SilentPaymentService {
   private state: StateFile = empty();
   private fileKey?: Uint8Array;
   private scanner?: SilentPaymentBlockScanner;
+  /** The worker threads of the run in flight (with `scanThreads` above 1). */
+  private pool?: SilentPaymentScanPool;
+  private stopped = false;
+  /** The worker threads failed (they could not start, or one died): this process scans in its own thread from then on. */
+  private threadsFailed = false;
   private readonly mutex = new Mutex();
   private running?: Promise<void>;
   private again = false;
@@ -161,6 +175,11 @@ export class SilentPaymentService {
 
   get scannedHeight(): number {
     return this.state.scannedHeight;
+  }
+
+  /** Worker threads running now (0 between runs, and with one thread). */
+  get workerThreads(): number {
+    return this.pool?.liveThreads ?? 0;
   }
 
   /** Loads the state and decrypts the scan key (no passphrase needed: see the file comment). */
@@ -233,7 +252,7 @@ export class SilentPaymentService {
     const labels = [...new Set(input.labels)].sort((x, y) => x - y);
     if (!labels.includes(0)) throw new RangeError('labels must include the change label 0');
     const tip = await rpc.getBlockCount();
-    this.generation++; // a scan in flight stops at its next block and lets this through
+    this.cancelRun(); // a scan in flight stops at its next block and lets this through
     return this.mutex.run(async () => {
       const key = (await this.keyFile(true))!;
       const spendPublicKey = hex.encode(input.spendPublicKey);
@@ -273,14 +292,27 @@ export class SilentPaymentService {
 
   /** Forgets the registration, the scan key and every match. True if there was one. */
   unregister(why = 'sp.unregister'): Promise<boolean> {
-    this.generation++; // a scan in flight stops at its next block
+    this.cancelRun(); // a scan in flight stops at its next block
     return this.mutex.run(() => this.forget(why));
+  }
+
+  /** A run in flight stops at its next block; its worker threads, which hold the scan key, end now. */
+  private cancelRun(): void {
+    this.generation++;
+    void this.pool?.close();
+  }
+
+  /** Shutdown: stops the run in flight and its workers, and starts no other. Waits for it at most `ms`. */
+  async stop(ms = 5000): Promise<void> {
+    this.stopped = true;
+    this.cancelRun();
+    await this.settle(ms);
   }
 
   /** `unregister` for callers that hold the mutex. */
   private async forget(why: string): Promise<boolean> {
     const had = !!this.state.registration;
-    this.generation++;
+    this.cancelRun();
     this.state = empty();
     this.scanner = undefined;
     await this.save();
@@ -318,7 +350,7 @@ export class SilentPaymentService {
 
   /** Starts a run in the background (coalescing with one in flight). */
   kick(): void {
-    if (!this.state.registration || !this.opts.rpc) return;
+    if (!this.state.registration || !this.opts.rpc || this.stopped) return;
     void this.run().catch(() => undefined);
   }
 
@@ -390,25 +422,77 @@ export class SilentPaymentService {
       await this.save();
     }
     const saveEvery = this.opts.saveEvery ?? 50;
-    for (let h = start; h <= tip; h++) {
-      if (gen !== this.generation) return;
+    const fetchBlock = async (h: number) => {
       const hash = await rpc.getBlockHash(h);
       const block = await rpc.getBlockWithPrevouts(hash);
       if (block.hash !== hash || block.height !== h) throw new Error(`the node answered block ${block.height} ${block.hash} for ${h} ${hash}`);
-      const found = scanner.scanBlock(block, stats);
-      if (gen !== this.generation) return;
-      const now = this.opts.clock.now();
-      for (const f of found) {
-        const id = `${f.txid}:${f.vout}`;
-        const old = before.get(id);
-        const m: StoredMatch = { ...f, height: h, blockHash: hash, foundAt: old?.foundAt ?? now, ...(old?.alerted || this.state.alerted.includes(id) ? { alerted: true } : {}) };
-        this.state.matches = [...this.state.matches.filter((x) => `${x.txid}:${x.vout}` !== id), m];
+      return { hash, block };
+    };
+    const prefetch = (h: number) => {
+      const p = fetchBlock(h);
+      p.catch(() => undefined); // thrown where it is awaited, or dropped with a cancelled run
+      return p;
+    };
+    let pool: SilentPaymentScanPool | undefined;
+    if ((this.opts.scanThreads ?? 1) > 1 && !this.threadsFailed && start <= tip && gen === this.generation) {
+      const scanPrivateKey = await this.decrypt(reg);
+      try {
+        pool = this.pool = new SilentPaymentScanPool(this.opts.scanThreads!, { scanPrivateKey, spendPublicKey: hex.decode(reg.spendPublicKey), labels: reg.labels });
+      } finally {
+        scanPrivateKey.fill(0);
       }
-      this.state.hashes = [...this.state.hashes.filter((x) => x.height !== h), { height: h, hash }].slice(-MAX_REORG_LOOKBACK);
-      this.state.scannedHeight = h;
-      blocks++;
-      dirty = true;
-      if (blocks % saveEvery === 0) await this.save();
+    }
+    try {
+      // With workers, the next block is fetched while this one is scanned: two blocks in memory at most.
+      let next = pool ? prefetch(start) : undefined;
+      for (let h = start; h <= tip; h++) {
+        if (gen !== this.generation) return;
+        let hash: string;
+        let found: BlockMatch[];
+        if (pool) {
+          const got = await next!;
+          next = h < tip ? prefetch(h + 1) : undefined;
+          hash = got.hash;
+          const counted = { ...stats };
+          try {
+            found = await pool.scanBlock(got.block, stats);
+          } catch (e) {
+            if (gen !== this.generation) return; // the pool was closed by sp.unregister, a new registration or stop()
+            // The workers failed, not the block: scan it, and every block after it, in this thread.
+            this.threadsFailed = true;
+            this.log.warn('sp.scan_threads_failed', { error: errorText(e) });
+            if (this.pool === pool) this.pool = undefined;
+            await pool.close();
+            pool = undefined;
+            Object.assign(stats, counted); // the block is counted once, by the scan that finishes it
+            found = scanner.scanBlock(got.block, stats);
+          }
+        } else {
+          // `next` holds the block prefetched before the workers failed.
+          const got = await (next ?? fetchBlock(h));
+          next = undefined;
+          hash = got.hash;
+          found = scanner.scanBlock(got.block, stats);
+        }
+        if (gen !== this.generation) return;
+        const now = this.opts.clock.now();
+        for (const f of found) {
+          const id = `${f.txid}:${f.vout}`;
+          const old = before.get(id);
+          const m: StoredMatch = { ...f, height: h, blockHash: hash, foundAt: old?.foundAt ?? now, ...(old?.alerted || this.state.alerted.includes(id) ? { alerted: true } : {}) };
+          this.state.matches = [...this.state.matches.filter((x) => `${x.txid}:${x.vout}` !== id), m];
+        }
+        this.state.hashes = [...this.state.hashes.filter((x) => x.height !== h), { height: h, hash }].slice(-MAX_REORG_LOOKBACK);
+        this.state.scannedHeight = h;
+        blocks++;
+        dirty = true;
+        if (blocks % saveEvery === 0) await this.save();
+      }
+    } finally {
+      if (pool) {
+        if (this.pool === pool) this.pool = undefined;
+        await pool.close();
+      }
     }
     if (dirty) await this.save();
     this.lastRun = { blocks, ms: Date.now() - began, stats };
