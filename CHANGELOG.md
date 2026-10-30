@@ -8,6 +8,13 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 
 ## Unreleased
 
+- **Guardian: change relays** in Settings, for when a relay disappears or you want your own. The guardian moves at
+  once and keeps listening and publishing on the old relays for 30 days, so nothing that still knows only them (the
+  phone, an older backup, a printed recovery sheet) is cut off meanwhile. The phone is told (`relays_changed`, and
+  `guardian.status.relays`) and switches by itself, but only once the guardian has answered it over the new relays
+  (`relays.ack`), so an unreachable or mistyped relay never strands it. The change is a security event in the activity
+  log; pairing and recovery codes carry the new list. Phones from before this keep working over the old relays for
+  the 30 days. New: `GET`/`PUT /api/relays`; protocol: the `relays_changed` alert, `relays.ack`, `guardian.status.relays`.
 - Guardian: after a crash the process exits with 1, not 0, so Umbrel's `restart: on-failure` brings it back
   instead of leaving the app at 502.
 
