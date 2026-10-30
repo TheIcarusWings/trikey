@@ -63,6 +63,10 @@ Do this:
 
 1. In the Bitcoin Node app, switch the network to **signet** (or testnet4) and restart the node. Let it sync.
 2. Install **Electrs** if it is not installed. Open it and wait until it says it is synced.
+   - **Versions:** Electrs 0.12 needs a recent Bitcoin Core (one with the `/rest/spenttxouts` REST endpoint,
+     bitcoin/bitcoin#33657) and the node's REST interface turned on. Trikey's CI tests against Bitcoin Core 32.1 with
+     Electrs 0.12.0. If Electrs keeps restarting with "failed to open index … http status: 404", the node is too old
+     or REST is off; Umbrel's own apps normally pair matching versions, so update both from the App Store first.
 3. Check the node and Electrs both say the new network. A quick check on the box:
    `sudo docker ps` should show both running, and the guardian's first-run page (below) reports whether it found them.
 
