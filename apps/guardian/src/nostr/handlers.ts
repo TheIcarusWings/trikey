@@ -321,6 +321,16 @@ export function buildHandlers(g: Guardian): Handlers {
       if (g.engine.registration()) throw new RpcError(ErrorCode.AlreadyPaired);
       if (params.network !== g.config.network)
         throw new RpcError(ErrorCode.InvalidParams, `This guardian runs on ${g.config.network}, not ${params.network}.`);
+      // A contribution that is one byte value repeated (all zeros included) cannot come from a working generator,
+      // and the phone's generator also made key 2: refuse, so the owner learns it now (entropy review I3). The mix
+      // itself would stay as strong as the guardian's seed either way.
+      if (params.entropy !== undefined && /^([0-9a-f]{2})\1*$/i.test(params.entropy)) {
+        g.log.warn('pair.degenerate_entropy', {});
+        throw new RpcError(
+          ErrorCode.InvalidParams,
+          "The phone's random contribution is one byte repeated, so its random generator looks broken. Pairing refused; nothing was registered.",
+        );
+      }
       // The phone's contribution to key 3, if any: `pair` registers the key derived from the last one sent.
       const session = check.session;
       session.key3Entropy = params.entropy;
