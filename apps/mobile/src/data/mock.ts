@@ -63,6 +63,7 @@ export interface MockOptions {
 const NOW = new Date('2026-10-29T15:20:00');
 const RECOVERY_STARTED = '2026-10-29T14:05:00';
 const DAY = 24 * 60 * 60 * 1000;
+const ACCESS_MS = 12 * 60 * 60 * 1000;
 /** "1 new coin", "2 new coins": the recovery's sweep line, worded as the real wallet words it. */
 const newCoins = (n: number) => `${n} new coin${n === 1 ? '' : 's'}`;
 
@@ -615,6 +616,8 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     },
     async renewRecoveryAccess() {
       await wait(deviceDelay);
+      // The hardware wallet vouches for another 12 hours.
+      update((s) => (s.recovery?.accessExpiresAt ? { recovery: { ...s.recovery, accessExpiresAt: new Date(NOW.getTime() + ACCESS_MS).toISOString(), accessExpired: false } } : {}));
     },
     cancelDevicePrompt() {},
 
@@ -681,6 +684,16 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
           }
           const n = status === 'refused' ? r.sweepUpdate!.coins : 1;
           return { recovery: { ...r, sweepUpdate: { status: 'waiting', coins: n, text: `${newCoins(n)} arrived. Adding ${n === 1 ? 'it' : 'them'} to your recovery…` } } };
+        });
+      },
+      simulateRecoveryAccessExpiry() {
+        // The demo's recovery, followed from the new phone: its 12 hours of access to the guardian run out, and call again to renew them.
+        update((s) => {
+          const r = s.recovery;
+          if (!r || r.origin !== 'this-phone') return {};
+          const expired = !r.accessExpired;
+          const ends = expired ? new Date(NOW.getTime() - 60_000) : new Date(new Date(RECOVERY_STARTED).getTime() + ACCESS_MS);
+          return { recovering: true, recovery: { ...r, accessExpiresAt: ends.toISOString(), accessExpired: expired } };
         });
       },
       simulateRecoveryFromElsewhere() {

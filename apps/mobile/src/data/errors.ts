@@ -13,6 +13,8 @@ export type ServiceErrorKind =
   | 'guardian_unreachable'
   | 'recovery_in_progress'
   | 'phone_spending_paused'
+  /** A recovering phone's access to the guardian ran out: nothing was sent. Approving again with the hardware wallet (`renewRecoveryAccess`) restores it. */
+  | 'recovery_access_expired'
   | 'unlock_failed'
   | 'rate_limited'
   | 'refused'

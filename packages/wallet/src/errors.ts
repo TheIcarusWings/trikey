@@ -146,6 +146,12 @@ export type WalletErrorCode =
   | 'wrong_state'
   /** A wallet already exists in this store. */
   | 'wallet_exists'
+  /**
+   * A recovering phone's `recovery.access` has run out (by the wallet's clock), so the guardian would drop its requests
+   * unanswered. Nothing was sent: `renewRecoveryAccess()` (the hardware wallet approves again) restores it. The recovery
+   * itself continues at the guardian.
+   */
+  | 'recovery_access_expired'
   | 'network_mismatch'
   /** No hardware provider, or the connected device is not this wallet's hardware wallet. */
   | 'hardware_unavailable'

@@ -312,6 +312,30 @@ describe('the demo wallet\'s send max', () => {
   });
 });
 
+describe('a recovering phone whose access to the guardian runs out', () => {
+  it('maps the wallet\'s recovery_access_expired to its own kind, in words that say what to do', () => {
+    expect(mapError(new WalletError('recovery_access_expired', 'x'))).toMatchObject({
+      kind: 'recovery_access_expired',
+      message: expect.stringMatching(/The recovery continues at your guardian.*approve again with your hardware wallet/),
+    });
+  });
+
+  it('shows in the demo and is renewed by approving again', async () => {
+    const w = createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0 });
+    await w.startRecovery('hardware');
+    expect(w.getState().recovery!.accessExpired).toBeUndefined(); // the demo's recovery has no access to run out until asked
+    w.dev!.simulateRecoveryAccessExpiry!();
+    expect(w.getState()).toMatchObject({ recovering: true, recovery: { accessExpired: true } });
+    w.dev!.simulateRecoveryAccessExpiry!();
+    expect(w.getState().recovery!.accessExpired).toBe(false);
+    w.dev!.simulateRecoveryAccessExpiry!();
+    const ended = w.getState().recovery!.accessExpiresAt!;
+    await w.renewRecoveryAccess();
+    expect(w.getState().recovery).toMatchObject({ accessExpired: false });
+    expect(new Date(w.getState().recovery!.accessExpiresAt!).getTime()).toBeGreaterThan(new Date(ended).getTime());
+  });
+});
+
 describe('the demo wallet\'s silent payments', () => {
   const fresh = () => createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0 });
 

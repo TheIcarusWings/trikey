@@ -301,6 +301,16 @@ export interface RecoveryInProgress {
   /** `pending` while the wait runs, `ready` once the guardian may co-sign the move. */
   state?: 'pending' | 'ready';
   /**
+   * The new phone of a recovery (`WalletState.recovering`): when its access to the guardian ends (the hardware wallet
+   * vouches for 12 hours at a time). Missing on any other phone, and when it is not known (a phone restored from a backup).
+   */
+  accessExpiresAt?: IsoDate;
+  /**
+   * The access has run out: the guardian ignores this phone, so the phone asks it nothing (the recovery itself goes on
+   * at the guardian) and the guardian's status stays as last known until `renewRecoveryAccess()`.
+   */
+  accessExpired?: boolean;
+  /**
    * Coins that arrived in the old wallet after the recovery started. The move has to include every coin, so the phone
    * signs a new one with the same destination and the same wait (`recovery.update`). The waiting screen shows `text`
    * under the move's amount; `movingSats` already includes what was added. Missing while no coin arrived.

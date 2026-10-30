@@ -219,6 +219,16 @@ function DeveloperSection() {
             }}
           />
         ) : null}
+        {dev?.simulateRecoveryAccessExpiry && state.recovery?.origin === 'this-phone' && !rk ? (
+          <AppButton
+            title={state.recovery.accessExpired ? 'Renew the recovery access' : 'Simulate the recovery access running out'}
+            variant="outline"
+            onPress={() => {
+              dev.simulateRecoveryAccessExpiry!();
+              router.push('/recover/waiting');
+            }}
+          />
+        ) : null}
         {dev?.finishRecovery && state.recovery && !rk ? (
           <AppButton
             title="Finish the recovery now"

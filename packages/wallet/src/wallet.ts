@@ -336,6 +336,12 @@ export interface PairOutcome {
   key3Note?: string;
 }
 
+/** A recovering phone's access to the guardian (`recovery.access`): when it ends (unix seconds), and whether it has by the wallet's clock. */
+export interface RecoveryAccessView {
+  expiresAt: number;
+  expired: boolean;
+}
+
 export interface WalletSnapshot {
   walletId?: string;
   balance: { confirmedSats: number; unconfirmedSats: number; totalSats: number };
@@ -354,6 +360,8 @@ export interface WalletSnapshot {
   dailyLimit?: { limitSats: number; spentEstimateSats: number; remainingSats: number };
   /** After a recovery moved the wallet: the hardware wallet must register it and confirm its key (`confirmHardware`). */
   hardwareConfirmRequired: boolean;
+  /** A recovering phone whose access end is known: see `TrikeyWallet.recoveryAccess`. */
+  recoveryAccess?: RecoveryAccessView;
   /** The helper coin that pays for silent payments (once set up): its own balance, not the vault's. */
   helper?: { confirmedSats: number; unconfirmedSats: number; coins: number; syncedAt?: number };
   /** Received silent payments (once set up): a separate balance, single-key on this phone until swept into the vault. */
@@ -800,16 +808,23 @@ export class TrikeyWallet {
   /** Where chain data comes from. In guardian mode: the guardian. */
   get chain(): ChainSource {
     this.chainSource ??= new GuardianChainSource(() => {
+      this.requireRecoveryAccess();
       if (!this.rpc) throw new WalletError('wrong_state', 'Not connected to the guardian; call start() first.');
       return this.rpc;
     });
     return this.chainSource;
   }
 
-  private async call<M extends MethodName>(method: M, params: Params<M>, opts: { timeoutMs?: number } = {}): Promise<Result<M>> {
+  /**
+   * `viaAlert`: the guardian itself just told this phone something (an alert that its recovery completed). It may have
+   * taken the phone over, so the expiry check is skipped: the phone is then its paired phone and is answered.
+   */
+  private async call<M extends MethodName>(method: M, params: Params<M>, opts: { timeoutMs?: number; viaAlert?: boolean } = {}): Promise<Result<M>> {
+    // `recovery.access` is how access is renewed: the guardian answers it for anyone who holds the hardware wallet's signature.
+    if (method !== 'recovery.access' && !opts.viaAlert) this.requireRecoveryAccess();
     const rpc = await this.client();
     try {
-      return await rpc.call(method, params, opts);
+      return await rpc.call(method, params, { timeoutMs: opts.timeoutMs });
     } catch (e) {
       throw asWalletError(e, method);
     }
@@ -1316,8 +1331,12 @@ export class TrikeyWallet {
 
   /** Reads `guardian.status` (locked or not, phone payments, recovery, the daily limit count). Follows an adopted recovery. */
   async refreshStatus(): Promise<GuardianStatusCache> {
+    return this.readStatus();
+  }
+
+  private async readStatus(opts: { viaAlert?: boolean } = {}): Promise<GuardianStatusCache> {
     if (this.recoveredElsewhere && this.s.guardianStatus) return this.s.guardianStatus; // the guardian does not answer this phone any more
-    const st = await this.call('guardian.status', {});
+    const st = await this.call('guardian.status', {}, opts);
     await this.storeStatus(st);
     await this.followGuardianRelays(st.relays, this.s.guardian?.pubkey);
     await this.followGuardianWallet(st.walletId);
@@ -1450,13 +1469,15 @@ export class TrikeyWallet {
     if (!sameKey(w.keys.hardware, keyExpressionOf(hw.account))) throw new WalletError('internal', "The recovery destination does not hold the hardware wallet's key.");
     if (!sameKey(w.keys.cosigner, keyExpressionOf(g.key))) throw new WalletError('guardian_mismatch', "The recovery destination does not hold this guardian's key.");
     const recoveryId = rec.recovery?.recoveryId;
-    const st = await this.call('recovery.status', recoveryId ? { recoveryId } : {});
+    // The guardian just named this wallet (it answered this phone, so it took it over): no expiry check on the way.
+    const st = await this.call('recovery.status', recoveryId ? { recoveryId } : {}, { viaAlert: true });
     const r = st.recovery;
     if (!r || r.state !== 'completed' || r.destinationWalletId !== walletId) return false; // not (yet) what the guardian says happened
     const previousWalletId = this.s.wallet?.walletId ?? '';
     const now = this.now();
     await this.update((s) => {
       s.stage = 'paired';
+      s.recoveryAccessExpiresAt = undefined; // this phone is the guardian's paired phone now: no grant needed
       s.wallet = { descriptor: dest.descriptor, walletId, pairedAt: now };
       // The device knows the old wallet only: it registers the new one in `confirmHardware`.
       s.hardware = { ...hw, policyName: policyNameOf(walletId), registrationHmac: undefined, addressVerified: false };
@@ -1480,6 +1501,7 @@ export class TrikeyWallet {
       const kept = this.snapshot();
       if (kept) return kept;
     }
+    this.requireRecoveryAccess(); // before anything is sent: the guardian would drop it
     await this.client();
     const snapP = this.chain.sync({ historyLimit: this.deps.historyLimit });
     snapP.catch(() => undefined); // awaited below; a failed status must not leave it unhandled
@@ -1595,8 +1617,27 @@ export class TrikeyWallet {
       ...(this.walletRetired ? { walletRetired: this.walletRetired } : {}),
       dailyLimit: limit === undefined ? undefined : { limitSats: limit, spentEstimateSats: spent, remainingSats: Math.max(0, limit - spent) },
       hardwareConfirmRequired: this.hardwareConfirmRequired,
+      ...(this.recoveryAccess ? { recoveryAccess: this.recoveryAccess } : {}),
       ...this.singleKeySnapshot(),
     };
+  }
+
+  /**
+   * A recovering phone's access to the guardian: when it ends and whether it has (the wallet's clock). Undefined on a
+   * phone that is not recovering, or whose access end is not known. While it is expired the wallet sends the guardian
+   * nothing that needs access (it would be dropped unanswered): those calls throw `recovery_access_expired` at once.
+   * `renewRecoveryAccess()` restores it. Available without a sync, unlike `snapshot()`.
+   */
+  get recoveryAccess(): RecoveryAccessView | undefined {
+    const at = this.s.recoveryAccessExpiresAt;
+    if (this.s.stage !== 'recovering' || at === undefined) return undefined;
+    return { expiresAt: at, expired: this.nowSec() >= at };
+  }
+
+  /** Throws `recovery_access_expired` while this recovering phone's access has run out: the guardian would not answer. */
+  private requireRecoveryAccess(): void {
+    if (this.recoveryAccess?.expired)
+      throw new WalletError('recovery_access_expired', 'This phone\'s recovery access has expired. Approve again with the hardware wallet to see the recovery\'s progress; the recovery itself continues at the guardian.');
   }
 
   /** After a recovery moved the wallet: the hardware wallet must register it and confirm its key (`confirmHardware`). */
@@ -2408,6 +2449,7 @@ export class TrikeyWallet {
       keep = true;
       await this.update((s) => {
         s.stage = 'recovering';
+        s.recoveryAccessExpiresAt = access.accessExpiresAt;
         s.hardware = hwRec;
         s.guardian = { pubkey: guardianPubkey, relays, key: access.guardianKey };
         s.wallet = { descriptor: access.descriptor, walletId: access.walletId, pairedAt: this.now() };
@@ -2440,14 +2482,37 @@ export class TrikeyWallet {
    * A recovering phone's access (`recovery.access`) lasts at most a day: the
    * hardware wallet signs a new one to keep following the recovery.
    */
-  async renewRecoveryAccess(): Promise<{ accessExpiresAt: number }> {
+  /** After a refused or surprising `recovery.access`: whether the guardian adopted this phone's recovery meanwhile (and the phone followed). */
+  private async adoptedMeanwhile(): Promise<boolean> {
+    try {
+      await this.readStatus({ viaAlert: true });
+    } catch {
+      return false;
+    }
+    return this.s.stage === 'paired'; // it was recovering: paired now means the guardian adopted its wallet
+  }
+
+  async renewRecoveryAccess(): Promise<{ accessExpiresAt?: number; adopted?: true }> {
     if (this.s.stage !== 'recovering' || !this.s.guardian) throw new WalletError('wrong_state', 'Only a recovering phone has recovery access.');
     const guardianPubkey = this.s.guardian.pubkey;
     const expiresAt = this.nowSec() + ACCESS_TTL_SEC;
     const text = recoveryAccessMessage({ guardianPubkey, phonePubkey: this.s.nostrPubkey, expiresAt, ...(this.s.wallet?.walletId ? { walletId: this.s.wallet.walletId } : {}) });
     const signature = await this.withHardware((hw, rec) => this.signWithAuthKey(hw, rec, text, 'recovery-access'));
-    const access = await this.call('recovery.access', { approval: { kind: 'bip137', expiresAt, signature } });
-    if (access.walletId !== this.s.wallet?.walletId) throw new WalletError('guardian_mismatch', 'The guardian holds another wallet now.');
+    let access: Result<'recovery.access'>;
+    try {
+      access = await this.call('recovery.access', { approval: { kind: 'bip137', expiresAt, signature } });
+    } catch (e) {
+      // The recovery may have finished while this phone missed the alert (its access had lapsed): the guardian then
+      // holds the wallet this phone built, refuses an approval for the old one, and answers this phone as its paired
+      // phone. `readStatus` follows that wallet (adoptRecovered checks every part of it); otherwise the refusal stands.
+      if (await this.adoptedMeanwhile()) return { adopted: true };
+      throw e;
+    }
+    if (access.walletId !== this.s.wallet?.walletId) {
+      if (await this.adoptedMeanwhile()) return { adopted: true };
+      throw new WalletError('guardian_mismatch', 'The guardian holds another wallet now.');
+    }
+    await this.update((s) => void (s.recoveryAccessExpiresAt = access.accessExpiresAt));
     await this.refreshStatus().catch(() => undefined);
     return { accessExpiresAt: access.accessExpiresAt };
   }
@@ -2458,6 +2523,7 @@ export class TrikeyWallet {
    * was contested: then phone payments stay paused until `resumePhoneSpending`.
    */
   async cancelRecovery(opts: { recoveryId?: string; withHardware?: boolean } = {}): Promise<{ recovery: Recovery; contested: boolean }> {
+    this.requireRecoveryAccess(); // a phone whose access ran out is not answered (`renewRecoveryAccess()` first)
     let id = opts.recoveryId ?? this.s.guardianStatus?.activeRecoveryId ?? undefined;
     if (!id) id = (await this.refreshStatus()).activeRecoveryId ?? undefined;
     if (!id) throw new WalletError('no_recovery', 'No recovery is running.');
@@ -2532,6 +2598,12 @@ export class TrikeyWallet {
         }
         return; // the guardian no longer answers for it: nothing to re-read
       }
+      case 'wallet_adopted':
+      case 'recovery_completed':
+        // The guardian may have taken this phone over (a recovery it started): ask it even if the access has run out.
+        this.alertMayAdopt = true;
+        if ('recoveryId' in alert) this.alertRecoveryId = alert.recoveryId;
+        break;
       default:
         if ('recoveryId' in alert) this.alertRecoveryId = alert.recoveryId;
     }
@@ -2566,6 +2638,7 @@ export class TrikeyWallet {
   private alertRefresh?: Promise<void>;
   private alertAgain = false;
   private alertRecoveryId?: string;
+  private alertMayAdopt = false;
 
   private refreshAfterAlerts(): void {
     if (this.alertRefresh) {
@@ -2577,8 +2650,13 @@ export class TrikeyWallet {
         this.alertAgain = false;
         await new Promise((r) => setTimeout(r, ALERT_COALESCE_MS)); // let a burst of replayed alerts arrive
         if (!this.rpc) return;
+        // A phone whose recovery access ran out is only answered once the guardian adopted it: an alert about the
+        // recovery's progress changes nothing it could read, so only the ones that may mean "adopted" ask.
+        const viaAlert = this.alertMayAdopt;
+        this.alertMayAdopt = false;
+        if (this.recoveryAccess?.expired && !viaAlert) continue;
         try {
-          const st = await this.refreshStatus();
+          const st = await this.readStatus({ viaAlert });
           const id = st.activeRecoveryId ?? this.alertRecoveryId;
           if (id) await this.recoveryStatus(id);
         } catch {

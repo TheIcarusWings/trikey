@@ -492,6 +492,7 @@ class Service implements RealWalletService {
     if (r.state === 'completed') return { recovery: null, outcome: rec.destination && this.w?.state.wallet?.walletId === rec.destination.walletId ? 'finished' : 'completed' };
     const initiator = rec.role === 'initiator';
     const sweepUpdate = initiator ? sweepUpdateView(rec.sweepUpdate) : undefined;
+    const access = this.w?.recoveryAccess;
     const names = (this.w?.alertContacts() ?? []).map((c) => c.name ?? c.npub.slice(0, 12));
     return {
       outcome: null,
@@ -505,6 +506,7 @@ class Service implements RealWalletService {
         acknowledged: initiator || this.log.acknowledged.includes(r.recoveryId),
         movingSats: r.amountSats,
         state: r.state,
+        ...(access ? { accessExpiresAt: this.iso(access.expiresAt * 1000), accessExpired: access.expired } : {}),
         ...(sweepUpdate ? { sweepUpdate } : {}),
       },
     };
@@ -1502,7 +1504,13 @@ class Service implements RealWalletService {
   }
 
   renewRecoveryAccess(): Promise<void> {
-    return this.exclusive(() => this.guarded(async () => void (await this.requireWallet().renewRecoveryAccess())));
+    return this.exclusive(() =>
+      this.guarded(async () => {
+        await this.requireWallet().renewRecoveryAccess();
+        // Following the recovery picks up now, not at the next tick.
+        void this.sync();
+      }),
+    );
   }
 
   // ===========================================================================
