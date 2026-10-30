@@ -9,7 +9,7 @@ import { AddressQr } from '@/components/qr';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import { groupAddress, useWallet, useWalletService } from '@/data';
-import { ListGroup, NetworkPill, Notice, SettingsRow, networkLabel } from '@/components/panels';
+import { ListGroup, Notice, SettingsRow, networkLabel } from '@/components/panels';
 import { SilentReceiveScreen } from '@/components/silent-receive';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
@@ -69,7 +69,6 @@ export default function Receive() {
   return (
     <Screen
       title={toVault ? 'Add to vault' : 'Receive'}
-      titleAccessory={<NetworkPill />}
       backLabel="Home"
       footer={
         rkMode && !toVault ? (
@@ -91,9 +90,13 @@ export default function Receive() {
               {groupAddress(receiveAddress)}
             </Text>
             {testNetwork ? (
-              <Text className="text-muted-foreground text-center text-[13px] leading-[18px]">
-                {state.backing === 'demo' ? 'Sample address. Demo mode moves no bitcoin.' : `${testNetwork} address. Only send test bitcoin to it.`}
-              </Text>
+              // Right at the address, where the mistake would happen.
+              <View className="bg-warn-soft flex-row items-center gap-2 self-center rounded-lg px-3 py-2">
+                <View className="bg-warn size-1.5 rounded-full" />
+                <Text className="text-foreground shrink text-[13px] font-medium leading-[18px]">
+                  {state.backing === 'demo' ? 'Sample address. Demo mode moves no bitcoin.' : `${testNetwork} address. Bitcoin sent from a real wallet is lost.`}
+                </Text>
+              </View>
             ) : null}
           </View>
         </View>

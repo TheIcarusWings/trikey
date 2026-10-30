@@ -5,7 +5,7 @@ import { ActivityRow } from '@/components/activity-row';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { ArrowDownLeft, ArrowUpRight, Clock, Eye, EyeOff, HardwareWallet, Lock, Settings, TriangleAlert } from '@/components/icons';
-import { NetworkPill, Notice } from '@/components/panels';
+import { Notice } from '@/components/panels';
 import { Card } from '@/components/ui/card';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
@@ -45,12 +45,11 @@ function useBalanceHidden(): [boolean, () => void] {
   return [hidden, toggle];
 }
 
-/** The top of a tab root: the network chip and the way to Settings (iOS in the content, Android in the top bar). */
+/** The top of a tab root: the way to Settings (iOS in the content, Android in the top bar). The network is the strip above. */
 export function HomeTopActions() {
   const router = useRouter();
   return (
-    <View className={cn('flex-row items-center', IS_IOS ? 'h-11 justify-between' : 'gap-1')}>
-      <NetworkPill />
+    <View className={cn('flex-row items-center', IS_IOS ? 'h-11 justify-end' : 'gap-1')}>
       <Pressable
         role="link"
         accessibilityLabel="Settings"
