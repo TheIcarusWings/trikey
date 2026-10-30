@@ -101,7 +101,7 @@ The product story in four acts: the old choice, the idea, how it feels, what it 
 | 14 | Blue hour, the protagonist walks across a bridge, city lights on | **No company holds a key.** | 4 s |
 | 15 | Through a window: the home shelf, the box glowing | **No server but yours.** | 3 s |
 | 16 | Wide, the figure small against the city | **No one to ask permission.** | 3 s |
-| 17 | Light ground, the logo animation, then end card | **Trikey. Your keys. Your server. Your bitcoin.** · Open source (MIT) · Coming soon · pre-alpha, not audited | 6 s |
+| 17 | Light ground, the logo animation, then end card | **Trikey. One key gone. Your bitcoin isn't.** (card; the voiceover says "Your keys. Your server. Your bitcoin.") · Open source (MIT) · Coming soon · pre-alpha, not audited | 6 s |
 
 Music: low and patient in act I, lifting at the logo in act II, steady and warm through IV.
 

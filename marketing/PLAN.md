@@ -10,6 +10,7 @@ Status: draft for review. Nothing produced or generated yet.
 - **Hook in the first 2 s:** a plain, specific line on screen at frame 0. No logo intro.
 - **Demo data only:** the mockups' balances (4,210,000 sats), `bc1q9d4x…7kmr`, contacts "Maria" and "Tom".
 - **No competitors named:** describe the idea (easy to use, no company holds a key), never another product. Hardware wallets are named in text only, with no logos.
+- **Brand lines:** "Three keys. No company." says what Trikey is; "One key gone. Your bitcoin isn't." is the promise. The promise closes the series, the lost/stolen phone explainers and the film, and it's used on trikey.app.
 - **No people's faces or voices.** Generated b-roll shows objects and hands only; any voiceover uses a stock preset voice, never a clone.
 
 ## How the parts are made

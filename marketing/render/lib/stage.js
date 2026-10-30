@@ -36,8 +36,8 @@ function h(tag, attrs = {}, html = '') {
 const LOGO = (ink = 'var(--ink)', brand = 'var(--brand)') =>
   `<svg viewBox="0 0 88 80" aria-hidden="true"><path d="M44 14 L16 62 L72 62 Z" fill="none" stroke="${ink}" stroke-width="6" stroke-linejoin="round"/><circle cx="44" cy="14" r="12" fill="${brand}"/><circle cx="16" cy="62" r="12" fill="${ink}"/><circle cx="72" cy="62" r="12" fill="${ink}"/></svg>`;
 
-// Builds the common scaffolding: stage, captions, visual area, corner mark, end card.
-function scaffold() {
+// Builds the common scaffolding: stage, captions, visual area, corner mark, end card (with its tag line).
+function scaffold(tag = 'Three keys. No company.') {
   const stage = h('div', { id: 'stage' });
   stage.append(
     h('div', { class: 'caps' }),
@@ -46,7 +46,7 @@ function scaffold() {
     h('div', { class: 'end' },
       `<div class="logo">${LOGO()}</div>
        <div class="name">Trikey</div>
-       <div class="tag">Three keys. No company.</div>
+       <div class="tag">${tag}</div>
        <div class="status"><b></b>Pre-alpha · not audited · testnet only</div>
        <div class="site">trikey.app</div>
        <div class="url mono">github.com/TheIcarusWings/trikey</div>`)
