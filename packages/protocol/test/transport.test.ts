@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   EnvelopeError,
   GIFT_WRAP_KIND,
+  WRAP_BACKDATE_SEC,
   ReplayGuard,
   TRIKEY_RPC_KIND,
   buildRumorTemplate,
@@ -48,7 +49,10 @@ describe('wrapMessage / unwrapMessage', () => {
     expect(wrap.kind).toBe(1059);
     expect(wrap.pubkey).not.toBe(phone.pubkey); // signed by a throwaway key
     expect(wrap.tags.find((t) => t[0] === 'p')?.[1]).toBe(guardian.pubkey);
-    expect(wrap.tags.find((t) => t[0] === 'expiration')?.[1]).toBe(String(NOW + 300));
+    // The public expiration is later than the rumor's and is not NOW + 300 (that would reveal the send time).
+    const wrapExp = Number(wrap.tags.find((t) => t[0] === 'expiration')?.[1]);
+    expect(wrapExp).toBeGreaterThanOrEqual(NOW + 3600);
+    expect(wrapExp).toBeLessThanOrEqual(NOW + 3600 + WRAP_BACKDATE_SEC);
     expect(wrap.content).not.toContain('guardian.status');
 
     const incoming = unwrapMessage(wrap, { recipientSecretKey: guardian.secretKey, expectedPeer: phone.pubkey, now: NOW });
