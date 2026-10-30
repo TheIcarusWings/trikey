@@ -17,6 +17,7 @@ import { entropyToMnemonic, mnemonicToSeedSync } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { deterministicRandom, installRandomSource } from '@trikey/core/testing/random';
 import { afterEach, describe, expect, it } from 'vitest';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { loadConfig, parseExtraEntropy } from '../src/config.js';
 import { RESET_CONFIRMATION, parseBrowserEntropy } from '../src/guardian.js';
 import { SETUP_SEED_FORMAT, cosignerFromSeed, generateSeed, setupSeedEntropy, type SetupEntropy } from '../src/keystore.js';
@@ -161,25 +162,23 @@ describe('trikey/guardian-seed/v1: generateSeed', () => {
 describe('TRIKEY_EXTRA_ENTROPY and the request field', () => {
   const APP_SEED = 'a1'.repeat(32);
 
-  it('TRIKEY_EXTRA_ENTROPY: unset or empty is none, 64 hex characters are 32 bytes, anything else refuses to start without echoing it', () => {
+  it('TRIKEY_EXTRA_ENTROPY: unset or empty is none, 64 hex characters are 32 bytes, anything else is hashed (never refuses to start)', () => {
     expect(parseExtraEntropy(undefined)).toBeUndefined();
     expect(parseExtraEntropy('')).toBeUndefined();
     expect(parseExtraEntropy('  ')).toBeUndefined();
     expect(hex.encode(parseExtraEntropy(APP_SEED)!)).toBe(APP_SEED);
     expect(hex.encode(parseExtraEntropy(` ${APP_SEED.toUpperCase()}\n`)!)).toBe(APP_SEED);
-    for (const bad of ['a1'.repeat(31), 'a1'.repeat(33), 'zz'.repeat(32), `0x${'a1'.repeat(31)}`, 'secret-looking-but-wrong']) {
-      let message = '';
-      try {
-        parseExtraEntropy(bad);
-      } catch (e) {
-        message = (e as Error).message;
-      }
-      expect(message).toMatch(/TRIKEY_EXTRA_ENTROPY must be exactly 32 bytes/);
-      expect(message).not.toContain(bad);
+    const seen = new Set<string>();
+    for (const other of ['a1'.repeat(31), 'a1'.repeat(33), 'zz'.repeat(32), `0x${'a1'.repeat(31)}`, 'a platform seed in another format']) {
+      const bytes = parseExtraEntropy(other)!;
+      expect(bytes).toHaveLength(32);
+      expect(hex.encode(bytes)).toBe(hex.encode(sha256(new TextEncoder().encode(other))));
+      seen.add(hex.encode(bytes));
     }
+    expect(seen.size).toBe(5);
     expect(hex.encode(loadConfig({ TRIKEY_EXTRA_ENTROPY: APP_SEED }).extraEntropy!)).toBe(APP_SEED);
     expect(loadConfig({}).extraEntropy).toBeUndefined();
-    expect(() => loadConfig({ TRIKEY_EXTRA_ENTROPY: 'abc' })).toThrow(/TRIKEY_EXTRA_ENTROPY/);
+    expect(loadConfig({ TRIKEY_EXTRA_ENTROPY: 'abc' }).extraEntropy).toHaveLength(32);
   });
 
   it('the request field: absent is none, 64 lowercase hex characters are 32 bytes, anything else is refused', () => {

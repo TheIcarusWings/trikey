@@ -17,10 +17,11 @@
  *                     main thread, without workers
  *   TRIKEY_EXTRA_ENTROPY optional: 32 bytes as 64 hex characters (on Umbrel, the app's
  *                     APP_SEED), mixed into every new setup seed (keystore.ts,
- *                     `trikey/guardian-seed/v1`). Anything else refuses to start. Never logged
+ *                     `trikey/guardian-seed/v1`). Any other value is hashed to 32 bytes. Never logged
  */
 import { availableParallelism } from 'node:os';
 import type { NetworkName } from '@trikey/core';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { hex } from '@scure/base';
 import { DEFAULT_KDF, SETUP_ENTROPY_BYTES, type KdfParams } from './keystore.js';
 
@@ -95,15 +96,17 @@ export function parseScanThreads(value: string | undefined, cores = availablePar
 }
 
 /**
- * TRIKEY_EXTRA_ENTROPY: unset or empty means none; otherwise exactly 32 bytes as hex (Umbrel's APP_SEED is
- * the hex HMAC-SHA256 of its seed and the app id: 64 characters). The error never echoes the value.
+ * TRIKEY_EXTRA_ENTROPY: unset or empty means none. 64 hex characters (Umbrel's APP_SEED: the hex HMAC-SHA256 of
+ * its seed and the app id) are used as the 32 bytes they spell; any other value is hashed to 32 bytes with
+ * SHA-256. It never stops the guardian from starting: the value only adds to the OS randomness (it is mixed in,
+ * never in place of it), so a platform that passes it in another format still gets its benefit, and a broken
+ * value costs nothing. The value is never echoed.
  */
 export function parseExtraEntropy(value: string | undefined): Uint8Array | undefined {
   if (value === undefined || value.trim() === '') return undefined;
   const v = value.trim();
-  if (!new RegExp(`^[0-9a-fA-F]{${SETUP_ENTROPY_BYTES * 2}}$`).test(v))
-    throw new Error(`TRIKEY_EXTRA_ENTROPY must be exactly ${SETUP_ENTROPY_BYTES} bytes as ${SETUP_ENTROPY_BYTES * 2} hex characters`);
-  return hex.decode(v.toLowerCase());
+  if (new RegExp(`^[0-9a-fA-F]{${SETUP_ENTROPY_BYTES * 2}}$`).test(v)) return hex.decode(v.toLowerCase());
+  return sha256(new TextEncoder().encode(v)).slice(0, SETUP_ENTROPY_BYTES);
 }
 
 export const DEFAULT_RELAY_OPTIONS: GuardianConfig['relayOptions'] = [

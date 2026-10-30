@@ -65,8 +65,8 @@ HMAC-SHA256 of the Umbrel's own seed and the app id (64 hex characters, the same
 guardian mixes it into every new setup seed, next to its OS draw and the browser's 32 bytes
 (DESIGN.md, "Entropy", `trikey/guardian-seed/v1`), so a guardian whose generator turns out predictable
 still gets a seed nobody can guess from relay traffic. It changes nothing for a guardian already set
-up. If a future umbrelOS changed `APP_SEED`'s format, the guardian would refuse to start
-(`config.invalid` in the log): drop the line in that case. The Start9 package sets nothing; StartOS has
+up. If a future umbrelOS passed `APP_SEED` in another format, the guardian hashes it to 32 bytes with
+SHA-256 and carries on: it never stops starting over this value. The Start9 package sets nothing; StartOS has
 no per-service seed we could confirm.
 
 ## Build and sideload the Start9 package
