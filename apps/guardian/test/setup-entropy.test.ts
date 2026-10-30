@@ -92,40 +92,39 @@ describe('trikey/guardian-seed/v1: the derivation', () => {
 describe('trikey/guardian-seed/v1: generateSeed', () => {
   /** The seed of `generateSeed` from a known 32-byte OS draw, through the construction. */
   const seedFrom = (os: Uint8Array, inputs: SetupEntropy = {}) => mnemonicToSeedSync(entropyToMnemonic(setupSeedEntropy(os, inputs), wordlist));
-  /** The 32 bytes `deterministicRandom(seed)` gives first (SHA-256 of its first block). */
-  const firstDraw = (name: string) => {
-    const src = deterministicRandom(name);
+  /**
+   * `generateSeed` under a deterministic source (SHA-256 of `name` and a counter, one block per fill),
+   * with the last 32-byte fill it made: its OS draw. The start-up health test (random-health.ts) draws its
+   * own throwaway blocks first, so the OS draw is the last fill, not the first.
+   */
+  const seedUnder = (name: string, inputs: SetupEntropy) => {
+    let n = 0;
+    let last: Uint8Array | undefined;
+    const src = installRandomSource((buf) => {
+      for (let o = 0; o < buf.length; o += 32) buf.set(sha256(new TextEncoder().encode(`${name}/${n++}`)).slice(0, buf.length - o), o);
+      if (buf.length === 32) last = Uint8Array.from(buf);
+    });
     try {
-      return crypto.getRandomValues(new Uint8Array(32));
+      const seed = generateSeed(inputs);
+      return { seed, os: last! };
     } finally {
       src.restore();
     }
   };
 
   it('is not the plain OS-entropy seed given the same OS bytes, and mixes every input it gets', () => {
-    const os = firstDraw('m1');
-    const plain = hex.encode(mnemonicToSeedSync(entropyToMnemonic(os, wordlist)));
     const seeds: Record<string, string> = {};
     for (const [name, inputs] of Object.entries({ none: {}, browser: { browser: BROWSER }, extra: { extra: EXTRA }, both: { browser: BROWSER, extra: EXTRA } } as Record<string, SetupEntropy>)) {
-      const src = deterministicRandom('m1');
-      try {
-        const seed = generateSeed(inputs);
-        expect(seed).toHaveLength(64);
-        seeds[name] = hex.encode(seed);
-      } finally {
-        src.restore();
-      }
+      const { seed, os } = seedUnder('m1', inputs);
+      expect(seed).toHaveLength(64);
+      seeds[name] = hex.encode(seed);
       expect(seeds[name]).toBe(hex.encode(seedFrom(os, inputs)));
-      expect(seeds[name]).not.toBe(plain);
+      expect(seeds[name]).not.toBe(hex.encode(mnemonicToSeedSync(entropyToMnemonic(os, wordlist))));
     }
     expect(new Set(Object.values(seeds)).size).toBe(4);
     // The same source and inputs give the same seed; another source another seed.
-    const again = deterministicRandom('m1');
-    try {
-      expect(hex.encode(generateSeed({ browser: BROWSER, extra: EXTRA }))).toBe(seeds['both']);
-    } finally {
-      again.restore();
-    }
+    expect(hex.encode(seedUnder('m1', { browser: BROWSER, extra: EXTRA }).seed)).toBe(seeds['both']);
+    expect(hex.encode(seedUnder('m2', { browser: BROWSER, extra: EXTRA }).seed)).not.toBe(seeds['both']);
   });
 
   it('attacker-chosen inputs do not make the seed predictable: it still varies with the OS draw', () => {
