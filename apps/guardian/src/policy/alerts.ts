@@ -61,7 +61,8 @@ export function dueAlerts(recoveries: RecoveryRecord[], now: number): DueAlert[]
         survivingRole: rec.survivingRole,
         amountSats: rec.amountSats,
         readyAt: rec.readyAt,
-        daysLeft: Math.max(0, Math.ceil((rec.readyAt - now) / DAY)),
+        // From the anchored start when the clock reads earlier (set back): the delay as it really runs.
+        daysLeft: Math.max(0, Math.ceil((rec.readyAt - Math.max(now, rec.anchoredAt ?? now)) / DAY)),
       });
     }
   }

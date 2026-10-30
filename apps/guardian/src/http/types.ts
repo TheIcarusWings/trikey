@@ -8,6 +8,7 @@ export type {
   ActivityEntry,
   ChainStatus,
   GuardianStatus,
+  PublicStatus,
   HostingOverview,
   PairedPhone,
   PairingSession,

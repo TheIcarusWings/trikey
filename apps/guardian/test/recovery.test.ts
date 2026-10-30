@@ -123,7 +123,7 @@ describe('Delay & Notify: lost phone, hardware survives', () => {
 
   it('refuses a sweep to a wallet that keeps the lost key', async () => {
     const ctx = await setup();
-    const sameKeys = await makeWallet(); // same app + hardware, new cosigner chaincode
+    const sameKeys = await makeWallet({ cosignerPriv: OTHER_COSIGNER_PRIV }); // same app + hardware, another guardian key
     expect(sameKeys.fingerprint()).not.toBe(ctx.wallet.fingerprint());
     const { res } = await start(ctx, 'hardware', { dest: sameKeys });
     expect(res).toMatchObject({ ok: false, refusal: { reason: 'destination_keeps_lost_key', lostRole: 'app' } });

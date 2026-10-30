@@ -406,8 +406,9 @@ describe('the silent payment scanner', { timeout: 60_000 }, () => {
     expect(rig.electrs.broadcasts).not.toContain(elsewhere);
 
     // The wallet: the guardian's matches (checked against its spend key), then one sweep per coin.
-    const scanned = await A.scanSilentPayments();
-    expect(scanned.found.map((c) => c.txid).sort()).toEqual(matches.map((x) => x.txid).sort());
+    // The wallet scans on its own when sp_received arrives, so check what it holds, not only this scan's new finds.
+    await A.scanSilentPayments();
+    expect(A.state.silentPayments!.coins.map((c) => c.txid).sort()).toEqual(matches.map((x) => x.txid).sort());
     const balanceBefore = (await A.sync()).balance.totalSats;
     const out = await A.sweepSilentPayments();
     const swept = out.filter((o) => o.status === 'swept');

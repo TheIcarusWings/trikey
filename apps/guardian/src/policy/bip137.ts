@@ -73,11 +73,15 @@ export interface RecoveredSigner {
 export function recoverMessageSigner(message: string, signature: string | Uint8Array): RecoveredSigner {
   const sig = parseBip137Signature(signature);
   const hash = messageHash(message);
-  const point = secp256k1.Signature.fromBytes(sig.compact, 'compact').addRecoveryBit(sig.recovery).recoverPublicKey(hash);
+  const parsed = secp256k1.Signature.fromBytes(sig.compact, 'compact');
+  // Signers (libsecp256k1, every hardware wallet) only make low-S signatures. A high-S one is a
+  // malleated copy of a real one (s -> n - s): refused, so no approval has two valid encodings.
+  if (parsed.hasHighS()) throw new Error('high-S signature');
+  const point = parsed.addRecoveryBit(sig.recovery).recoverPublicKey(hash);
   const compressed = sig.addressType !== 'p2pkh-uncompressed';
   const publicKey = point.toBytes(compressed);
   // Recovery implies validity, but check again with an independent code path.
-  if (!secp256k1.verify(sig.compact, hash, publicKey, { prehash: false, lowS: false, format: 'compact' }))
+  if (!secp256k1.verify(sig.compact, hash, publicKey, { prehash: false, lowS: true, format: 'compact' }))
     throw new Error('signature does not verify');
   return { publicKey, addressType: sig.addressType };
 }

@@ -113,7 +113,7 @@ export function psbtHash(psbtBase64: string): string {
 export function psbtOf(message: Message): string | undefined {
   if (isRequest(message)) {
     if (message.method === 'sign') return message.params.psbt;
-    if (message.method === 'recovery.start') return message.params.sweepPsbt;
+    if (message.method === 'recovery.start' || message.method === 'recovery.update') return message.params.sweepPsbt;
     return undefined;
   }
   if (isResponse(message) && 'result' in message) {
@@ -350,6 +350,11 @@ export class ReplayGuard {
 export class RecentSet {
   private readonly items = new Set<string>();
   constructor(private readonly max = 4096) {}
+
+  /** Whether `value` is present (records nothing). */
+  has(value: string): boolean {
+    return this.items.has(value);
+  }
 
   /** Returns true if `value` was already present. */
   seen(value: string): boolean {

@@ -71,6 +71,16 @@ export function DashboardPage() {
         <ErrorState error={new Error(lockError)} title="Couldn't lock the guardian" className="max-w-none" />
       )}
 
+      {status.warnings?.includes('no_alert_contacts') && (
+        <Alert variant="warning" className="max-w-none">
+          <AlertTitle>No alert contact</AlertTitle>
+          <AlertDescription>
+            A recovery would be announced only to the paired phone, which a thief may hold. Add an alert contact in the app; it can be
+            your own nostr app on another device.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {status.recoveryInProgress && (
         <Alert variant="warning" className="max-w-none">
           <Clock aria-hidden="true" />

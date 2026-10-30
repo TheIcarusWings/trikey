@@ -195,13 +195,13 @@ describe('lost phone, no backup: recovery ends with the new phone co-signing fro
     expect(rig.guardian.engine.registration()!.key3Mix?.entropy).toBe('c3'.repeat(32));
   }, 30_000);
 
-  it('shows a recovery code with only the npub, relays and network', async () => {
+  it('shows a recovery code with the npub, relays, network and wallet id (no secret)', async () => {
     const r = await rig.api('GET', '/recovery-code');
     expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ npub: rig.guardian.identity!.npub, relays: rig.relayUrls, network: 'regtest', walletId: oldId });
     expect(r.body.uri).toMatch(/^trikey:\/\/recover\?v=1&npub=npub1/);
     expect(r.body.uri).not.toMatch(/secret|exp=/);
-    expect(decodeRecoveryUri(r.body.uri)).toEqual({ guardianPubkey: rig.pubkey, relays: rig.relayUrls, network: 'regtest', label: 'Trikey Guardian' });
+    expect(decodeRecoveryUri(r.body.uri)).toEqual({ guardianPubkey: rig.pubkey, relays: rig.relayUrls, network: 'regtest', label: 'Trikey Guardian', walletId: oldId });
     // Locked: like everything but status and unlock.
     await rig.lock();
     expect((await rig.api('GET', '/recovery-code')).body.error.code).toBe('locked');

@@ -2,11 +2,13 @@
  * The web UI's API (apps/guardian-web/API.md), backed by the engine and the
  * service state. Which endpoints work when:
  *
- *   before setup: GET /status, GET /setup/preflight, POST /setup
- *   locked:       GET /status, POST /unlock, POST /reset
- *   unlocked:     everything
+ *   without a session: GET /status (reduced: `PublicStatus`), POST /session, DELETE /session,
+ *                      and before setup GET /setup/preflight, POST /setup (which signs the browser in)
+ *   locked:            GET /status, POST /unlock, POST /reset
+ *   unlocked:          everything
  *
- * Anything else answers 409 `setup_required` or `locked`.
+ * Without a session anything else answers 401 `unauthenticated`; with one, 409 `setup_required` or
+ * `locked` as before (security review 2026-10, finding 10b).
  */
 import * as btc from '@scure/btc-signer';
 import { base64 } from '@scure/base';
@@ -16,7 +18,8 @@ import type { Guardian } from '../guardian.js';
 import type { RecoveryRecord } from '../policy/index.js';
 import { engineEntry, serviceEntry, shortNpub } from './activity.js';
 import { HttpError, type Route, type RouteResult } from './server.js';
-import type { ActivityEntry, GuardianStatus, PairingSession, RecoveryCode, RecoveryInProgress, Rules, SetupPreflight } from './types.js';
+import type { ActivityEntry, GuardianStatus, PairingSession, PublicStatus, RecoveryCode, RecoveryInProgress, Rules, SetupPreflight } from './types.js';
+import { sessionCookie } from './sessions.js';
 
 const iso = (ms: number) => new Date(ms).toISOString();
 const ok = (body: unknown, status = 200): RouteResult => ({ status, body });
@@ -31,11 +34,22 @@ function requireNotSetUp(g: Guardian): void {
   if (g.setupComplete) throw new HttpError(409, 'already_setup', 'This guardian is already set up.');
 }
 
+/** `GET /api/status` without a session: which screen to show, nothing about the wallet. */
+export function publicStatus(g: Guardian): PublicStatus {
+  return { authenticated: false, setupComplete: g.setupComplete, state: g.locked ? 'locked' : 'unlocked', network: g.config.network, version: g.version };
+}
+
+/** Signs the browser in: a new session and its cookie. */
+function signedIn(g: Guardian, secure: boolean): Record<string, string> {
+  return { 'Set-Cookie': sessionCookie(g.sessions.create(g.clock.now()), secure) };
+}
+
 export async function guardianStatus(g: Guardian): Promise<GuardianStatus> {
   const s = g.engine.status();
   const reg = g.engine.registration();
   const locked = g.locked;
   return {
+    authenticated: true,
     setupComplete: g.setupComplete,
     state: locked ? 'locked' : 'unlocked',
     ...(locked && g.lockedAt !== undefined ? { lockedAt: iso(g.lockedAt), lockReason: g.lockReason } : {}),
@@ -55,6 +69,7 @@ export async function guardianStatus(g: Guardian): Promise<GuardianStatus> {
     network: g.config.network,
     ...(g.setupComplete && g.identity ? { npub: g.identity.npub } : {}),
     version: g.version,
+    ...(s.warnings.length ? { warnings: s.warnings } : {}),
   };
 }
 
@@ -129,7 +144,12 @@ export function recoveryInProgress(g: Guardian): RecoveryInProgress | null {
 }
 
 export function activity(g: Guardian, limit: number): ActivityEntry[] {
-  const engine = g.engine.activity({ limit }).map((e) => ({ at: e.at, entry: engineEntry(e) }));
+  const engine = g.engine.activity({ limit }).map((e) => {
+    const entry = engineEntry(e);
+    // A repeated identical refusal is one entry with a count (engine.ts, `log`).
+    const repeated = e.count && e.count > 1 ? { ...entry, event: `${entry.event} (${e.count} times, the last ${iso(e.lastAt ?? e.at)})` } : entry;
+    return { at: e.lastAt ?? e.at, entry: repeated };
+  });
   const service = g.service
     .get()
     .activity.slice(-limit)
@@ -152,11 +172,46 @@ function pairingSessionBody(g: Guardian, id: string): PairingSession {
 
 export function buildRoutes(g: Guardian): Route[] {
   return [
-    { method: 'GET', path: '/status', handler: async () => ok(await guardianStatus(g)) },
+    // Without a session (after setup): only what picks the screen.
+    {
+      method: 'GET',
+      path: '/status',
+      public: true,
+      handler: async ({ session }) => ok(session.authenticated || !g.setupComplete ? await guardianStatus(g) : publicStatus(g)),
+    },
+
+    // Sign in with the unlock passphrase (its own throttle). `unlock: true` on a locked guardian unlocks it
+    // too (one passphrase entry): that goes through the web unlock and its throttle instead.
+    {
+      method: 'POST',
+      path: '/session',
+      public: true,
+      handler: async ({ body, session }) => {
+        if (!g.setupComplete) throw new HttpError(409, 'setup_required', 'Set up the guardian first.');
+        const input = (body ?? {}) as { passphrase?: unknown; unlock?: unknown };
+        const r = input.unlock === true && g.locked ? await g.unlock(input.passphrase, 'web') : await g.checkWebPassphrase(input.passphrase);
+        if (r.ok) return { status: 200, body: await guardianStatus(g), headers: signedIn(g, session.secure) };
+        if (r.code === 'bad_passphrase') throw new HttpError(401, 'bad_passphrase', 'That passphrase is not right.', r.retryAfterSeconds);
+        if (r.code === 'rate_limited') throw new HttpError(429, 'rate_limited', 'Too many tries. Wait and try again.', r.retryAfterSeconds);
+        throw new HttpError(r.code === 'setup_required' ? 409 : 400, r.code, 'message' in r ? r.message : 'Sign-in failed.');
+      },
+    },
+
+    {
+      method: 'DELETE',
+      path: '/session',
+      public: true,
+      handler: ({ session }) => {
+        g.sessions.destroy(session.token);
+        return { status: 200, body: publicStatus(g), headers: { 'Set-Cookie': sessionCookie(undefined, session.secure) } };
+      },
+    },
 
     {
       method: 'GET',
       path: '/setup/preflight',
+      // First-run setup is open only until setup completes.
+      public: () => !g.setupComplete,
       handler: async () => {
         requireNotSetUp(g);
         const p = await g.chain.preflight();
@@ -168,12 +223,14 @@ export function buildRoutes(g: Guardian): Route[] {
     {
       method: 'POST',
       path: '/setup',
-      handler: async ({ body }) => {
+      public: () => !g.setupComplete,
+      handler: async ({ body, session }) => {
         requireNotSetUp(g);
         const input = (body ?? {}) as { passphrase?: unknown; relays?: unknown };
         const r = await g.setup({ passphrase: input.passphrase, relays: input.relays });
         if (!r.ok) throw new HttpError(r.code === 'already_setup' ? 409 : 400, r.code, r.message);
-        return ok(await guardianStatus(g));
+        // The browser that set the guardian up is signed in.
+        return { status: 200, body: await guardianStatus(g), headers: signedIn(g, session.secure) };
       },
     },
 
@@ -237,7 +294,8 @@ export function buildRoutes(g: Guardian): Route[] {
         if (!reg || !g.identity) throw new HttpError(404, 'not_found', 'Pair a wallet first: the recovery code is for the wallet this guardian protects.');
         const relays = g.service.get().relays;
         const body: RecoveryCode = {
-          uri: encodeRecoveryUri({ guardianPubkey: g.identity.pubkey, relays, network: g.config.network, label: 'Trikey Guardian' }),
+          // With the wallet id, the new phone signs the access text bound to this wallet (recovery.access v2).
+          uri: encodeRecoveryUri({ guardianPubkey: g.identity.pubkey, relays, network: g.config.network, label: 'Trikey Guardian', walletId: reg.walletId }),
           npub: g.identity.npub,
           relays: [...relays],
           network: g.config.network,
@@ -250,11 +308,12 @@ export function buildRoutes(g: Guardian): Route[] {
     {
       method: 'POST',
       path: '/reset',
-      handler: async ({ body }) => {
+      handler: async ({ body, session }) => {
         if (!g.setupComplete) throw new HttpError(409, 'setup_required', 'Set up the guardian first.');
         const input = (body ?? {}) as { passphrase?: unknown; confirm?: unknown };
         const r = await g.reset({ passphrase: input.passphrase, confirm: input.confirm });
-        if (r.ok) return ok(await guardianStatus(g));
+        // A reset ends every session; the browser that did it (with the passphrase) is signed in again.
+        if (r.ok) return { status: 200, body: await guardianStatus(g), headers: signedIn(g, session.secure) };
         if (r.code === 'bad_passphrase') throw new HttpError(401, 'bad_passphrase', 'That passphrase is not right.', r.retryAfterSeconds);
         if (r.code === 'rate_limited') throw new HttpError(429, 'rate_limited', 'Too many tries. Wait and try again.', r.retryAfterSeconds);
         const status = r.code === 'invalid' ? 400 : 409;

@@ -1,12 +1,15 @@
 /**
  * The guardian's only inbound listener: the web UI and its JSON API.
  *
- * DEPLOYMENT: this server does no user authentication of its own. It must only
- * be reachable through the platform's authenticating proxy (Umbrel's
+ * DEPLOYMENT: keep it behind the platform's authenticating proxy (Umbrel's
  * `app_proxy`, Start9's interface), never exposed directly to a LAN or the
- * internet: anyone who can reach it can lock the guardian, create pairing codes
- * and read the activity log. The proxy is also what stops DNS-rebinding pages,
- * which would otherwise look same-origin to the checks below.
+ * internet. The proxy is also what stops DNS-rebinding pages, which would
+ * otherwise look same-origin to the checks below. Since the 2026-10 security
+ * review it does not rely on the proxy alone (other apps' containers on the box
+ * can likely reach it directly): every `/api` route needs a session
+ * (`sessions.ts`: `POST /api/session` with the unlock passphrase) unless it is
+ * marked public (`GET /api/status`, reduced without a session, and first-run
+ * setup until setup completes).
  *
  * What it does do:
  * - security headers on every response (strict CSP, no framing, no referrer);
@@ -23,6 +26,7 @@ import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, normalize, sep } from 'node:path';
 import { errorText, type Logger } from '../log.js';
+import { SESSION_COOKIE, parseCookies, type WebSessions } from './sessions.js';
 
 export type Method = 'GET' | 'POST' | 'DELETE';
 
@@ -31,17 +35,23 @@ export interface RouteContext {
   query: URLSearchParams;
   /** Parsed JSON body (POST/DELETE), or undefined. */
   body: unknown;
+  /** The request's web session (always `authenticated` when the server has no `sessions`). */
+  session: { authenticated: boolean; token?: string; secure: boolean };
 }
 
 export interface RouteResult {
   status: number;
   body?: unknown;
+  /** Extra response headers (`Set-Cookie`). */
+  headers?: Record<string, string | string[]>;
 }
 
 export interface Route {
   method: Method;
   /** Path under /api, with `:name` segments, e.g. `/pairing/:id`. */
   path: string;
+  /** Callable without a session (when the server has `sessions`): always, or while the function says so. */
+  public?: boolean | (() => boolean);
   handler: (ctx: RouteContext) => Promise<RouteResult> | RouteResult;
 }
 
@@ -214,6 +224,17 @@ export interface HttpServerOptions {
   routes: Route[];
   webDir?: string;
   log: Logger;
+  /** Web sessions: with them, every non-public route answers 401 `unauthenticated` without one. */
+  sessions?: WebSessions;
+  /** Clock for session expiry (ms). Default `Date.now`. */
+  now?: () => number;
+}
+
+/** Whether the request reached us over HTTPS (directly, or as the proxy says). */
+function isSecure(req: IncomingMessage): boolean {
+  if ((req.socket as { encrypted?: boolean }).encrypted) return true;
+  const proto = req.headers['x-forwarded-proto'];
+  return typeof proto === 'string' && proto.split(',')[0].trim().toLowerCase() === 'https';
 }
 
 export function createHttpHandler(opts: HttpServerOptions): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
@@ -298,6 +319,11 @@ export function createHttpHandler(opts: HttpServerOptions): (req: IncomingMessag
       res.setHeader('Allow', [...new Set(matching.map((r) => r.method))].join(', '));
       throw new HttpError(405, 'method_not_allowed', 'Method not allowed.');
     }
+    const token = parseCookies(req.headers['cookie'])[SESSION_COOKIE];
+    const secure = isSecure(req);
+    const authenticated = opts.sessions ? opts.sessions.check(token, (opts.now ?? Date.now)()) : true;
+    const open = typeof route.public === 'function' ? route.public() : route.public === true;
+    if (!authenticated && !open) throw new HttpError(401, 'unauthenticated', 'Sign in with the unlock passphrase first.');
     let body: unknown;
     if (STATE_CHANGING.has(req.method ?? '')) {
       const origin = checkOrigin(req.headers);
@@ -319,7 +345,8 @@ export function createHttpHandler(opts: HttpServerOptions): (req: IncomingMessag
     } catch {
       throw new HttpError(400, 'invalid', 'Bad path.');
     }
-    const out = await route.handler({ params, query, body });
+    const out = await route.handler({ params, query, body, session: { authenticated, ...(token ? { token } : {}), secure } });
+    for (const [name, value] of Object.entries(out.headers ?? {})) res.setHeader(name, value);
     sendJson(res, out.status, out.body);
   }
 

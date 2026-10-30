@@ -30,13 +30,14 @@ export function formatWhen(ms: number): string {
 }
 
 const SURVIVOR: Record<RecoveryRecord['survivingRole'], string> = { hardware: 'hardware wallet', app: 'phone' };
-const CANCELLER = { app: "the owner's phone", contact: 'an alert contact', hardware: 'the hardware wallet' } as const;
+const CANCELLER = { app: "the owner's phone", contact: 'an alert contact', hardware: 'the hardware wallet', superseded: 'the guardian, because another recovery already swept the wallet' } as const;
 
 function contestedOf(g: Guardian, rec: RecoveryRecord): boolean {
   const entry = g.engine.activity({ limit: 5000 }).find((e) => e.type === 'recovery_cancelled' && e.recoveryId === rec.id);
   if (entry && entry.type === 'recovery_cancelled') return entry.contested;
   // Same rule as the engine: only the key that started the recovery cancels it uncontested.
   const by = rec.cancelledBy?.kind;
+  if (by === 'superseded') return false;
   return !((by === 'app' && rec.survivingRole === 'app') || (by === 'hardware' && rec.survivingRole === 'hardware'));
 }
 

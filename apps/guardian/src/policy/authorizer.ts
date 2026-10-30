@@ -16,7 +16,8 @@
  */
 import { hex } from '@scure/base';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { verifyMessageWithPubkey } from './bip137.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { parseBip137Signature, verifyMessageWithPubkey } from './bip137.js';
 import { normalizeRules, policyHash } from './rules.js';
 import { HardwareAuthKey, Rules } from './types.js';
 
@@ -83,13 +84,31 @@ export function pairingMessage(walletId: string, cosignerAccountPubkey: string):
 
 /**
  * Signed by the hardware wallet to let a NEW phone (no old phone, no backup) read the wallet and start
- * a recovery (`recovery.access`). Bound to the guardian's and the phone's nostr keys, not to a wallet
- * id or sequence (the new phone knows neither). Same text as @trikey/protocol's `recoveryAccessMessage`.
+ * a recovery (`recovery.access`). Bound to the guardian's and the phone's nostr keys, and in version 2
+ * (`walletId` given) to the wallet too: the new phone learns the id from the guardian's recovery code.
+ * Version 1 (no wallet id) is still accepted, except a signature whose grant a rotation or retirement
+ * revoked (`GuardianState.revokedAccess`). Same text as @trikey/protocol's `recoveryAccessMessage`.
  */
-export function recoveryAccessMessage(ctx: { guardianPubkey: string; phonePubkey: string; expiresAt: number }): string {
+export function recoveryAccessMessage(ctx: { guardianPubkey: string; phonePubkey: string; expiresAt: number; walletId?: string }): string {
   if (!/^[0-9a-f]{64}$/.test(ctx.guardianPubkey) || !/^[0-9a-f]{64}$/.test(ctx.phonePubkey)) throw new Error('invalid nostr pubkey');
   if (!Number.isSafeInteger(ctx.expiresAt) || ctx.expiresAt < 0) throw new Error('expiresAt must be unix seconds');
-  return line(['Trikey recovery-access v1', `guardian=${ctx.guardianPubkey}`, `phone=${ctx.phonePubkey}`, `expires=${isoSeconds(ctx.expiresAt)}`]);
+  if (ctx.walletId !== undefined && !/^[0-9a-f]{16}$/.test(ctx.walletId)) throw new Error('invalid wallet id');
+  return line([
+    ctx.walletId !== undefined ? 'Trikey recovery-access v2' : 'Trikey recovery-access v1',
+    ...(ctx.walletId !== undefined ? [`wallet=${ctx.walletId}`] : []),
+    `guardian=${ctx.guardianPubkey}`,
+    `phone=${ctx.phonePubkey}`,
+    `expires=${isoSeconds(ctx.expiresAt)}`,
+  ]);
+}
+
+/** What identifies a proof whatever its encoding (BIP137: sha256 of r || s, so another header byte is the same proof). */
+export function proofId(proof: string): string | undefined {
+  try {
+    return hex.encode(sha256(parseBip137Signature(proof).compact));
+  } catch {
+    return undefined;
+  }
 }
 
 /** A way for the hardware wallet to prove it approved a message. Add more kinds behind this. */

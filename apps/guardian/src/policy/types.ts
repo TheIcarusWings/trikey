@@ -106,6 +106,8 @@ export interface AccessGrant {
   /** ms */
   until: number;
   grantedAt: number;
+  /** `proofId` of the hardware signature that granted it (absent for grants from before it was recorded). */
+  sig?: string;
 }
 
 /** A hardware approval as delivered by the phone. The guardian rebuilds the signed text itself. */
@@ -137,7 +139,11 @@ export type RecoveryStatus = 'none' | 'pending' | 'ready' | 'completed' | 'cance
 export type SurvivingRole = Exclude<Role, 'cosigner'>;
 
 export type CancelActor = { kind: 'nostr'; pubkey: string } | { kind: 'hardware'; approval: HardwareApproval };
-export type CancelledBy = { kind: 'app' | 'contact'; pubkey: string } | { kind: 'hardware'; sequence: number };
+export type CancelledBy =
+  | { kind: 'app' | 'contact'; pubkey: string }
+  | { kind: 'hardware'; sequence: number }
+  /** Closed by the guardian when the wallet rotated after another (completed) recovery `recoveryId` swept it. */
+  | { kind: 'superseded'; recoveryId: string };
 
 export interface RecoveryRecord {
   id: string;
@@ -163,7 +169,16 @@ export interface RecoveryRecord {
   feeCapSats: bigint;
   /** Alert recipients (nostr pubkeys) snapshotted at start: the phone plus contacts. */
   recipients: string[];
+  /** The system clock when the recovery started (when its first alert is due). */
   startedAt: number;
+  /**
+   * max(system clock, chain median time past) at start: what `readyAt` counts from, so a clock set
+   * back cannot shorten the delay. Absent for recoveries started before the guardian recorded it.
+   */
+  anchoredAt?: number;
+  /** The chain tip's height at start; completion needs `delayDays × blocks per day` more blocks. */
+  startHeight?: number;
+  /** anchoredAt + delay. Completion needs the system clock AND the chain's median time past past it. */
   readyAt: number;
   cancelledAt?: number;
   cancelledBy?: CancelledBy;
@@ -209,6 +224,8 @@ export type Refusal =
   | { reason: 'hardware_approval_required'; detail: string }
   | { reason: 'unsupported_approval'; kind: string }
   | { reason: 'approval_invalid_signature' }
+  /** A `recovery.access` signature whose grant a wallet rotation or retirement revoked. */
+  | { reason: 'approval_revoked' }
   | { reason: 'approval_stale_sequence'; sequence: number; lastSequence: number }
   | { reason: 'approval_sequence_too_far'; sequence: number; lastSequence: number }
   | { reason: 'approval_expired'; expiresAt: number }
@@ -219,9 +236,16 @@ export type Refusal =
   | { reason: 'destination_drops_surviving_key'; survivingRole: SurvivingRole }
   | { reason: 'destination_keeps_lost_key'; lostRole: SurvivingRole }
   | { reason: 'sweep_not_to_destination'; output: number }
+  /** `recovery.update`: the new sweep does not keep every input of the current one. */
+  | { reason: 'invalid_recovery_update'; detail: string }
   | { reason: 'sweep_fee_exceeds_cap'; fee: bigint; cap: bigint }
   | { reason: 'not_authorized' }
-  | { reason: 'delay_not_elapsed'; readyAt: number }
+  /** `waitingFor`: the clock is past `readyAt` but the chain is not (its median time past, or the block count). */
+  | { reason: 'delay_not_elapsed'; readyAt: number; waitingFor?: 'chain_time' | 'blocks'; chainTime?: number; height?: number; heightNeeded?: number }
+  /** No chain data to check the clock against (recovery start and completion need it; co-signing once the last observation is old). */
+  | { reason: 'chain_unavailable'; detail: string }
+  /** The system clock is more than `MAX_CLOCK_AHEAD_OF_CHAIN_MS` ahead of the chain's median time past: nothing is co-signed. */
+  | { reason: 'clock_ahead_of_chain'; systemTime: number; chainTime: number }
   | { reason: 'nothing_to_resume' }
   | { reason: 'unknown_alert'; alertId: string }
   /** The PSBT spends a wallet this guardian retired (after a recovery, or `wallet.retire`). */
@@ -257,6 +281,9 @@ export type ActivityEvent =
       destinationWalletId: string;
     }
   | { type: 'recovery_start_refused'; refusal: Refusal }
+  /** `recovery.update`: the sweep now also moves coins that arrived after the start (the delay runs on). */
+  | { type: 'recovery_updated'; recoveryId: string; sweepTxid: string; amountSats: bigint; feeSats: bigint; addedInputs: number }
+  | { type: 'recovery_update_refused'; refusal: Refusal }
   | { type: 'recovery_ready'; recoveryId: string }
   | { type: 'recovery_cancelled'; recoveryId: string; by: CancelledBy; contested: boolean }
   | { type: 'recovery_cancel_refused'; refusal: Refusal }
@@ -277,15 +304,28 @@ export type ActivityEvent =
   | { type: 'recovery_access_granted'; phone: string; until: number }
   | { type: 'guardian_reset' };
 
-export type ActivityEntry = { id: number; at: number } & ActivityEvent;
+/** `count`/`lastAt`: an identical refusal repeated right after this one is counted here instead of logged again. */
+export type ActivityEntry = { id: number; at: number; count?: number; lastAt?: number } & ActivityEvent;
 
 // ---------------------------------------------------------------------------
 // Persisted state
+
+/** Per chain (receive 0, change 1): the highest address index seen used or co-signed, -1 for none. */
+export interface HighWater {
+  receive: number;
+  change: number;
+}
 
 /** The wallet the guardian guards now, with everything that belongs to it. */
 export interface GuardedWallet {
   registration: Registration;
   rules: Rules;
+  /**
+   * High-water marks (absent: none yet). An output counts as change only within `CHANGE_WINDOW` of
+   * its chain's mark, and every scan of the wallet starts from them (DESIGN.md, "Rules the guardian
+   * enforces"): raised by co-signed change and by what the scans find used.
+   */
+  highWater?: HighWater;
   /** Phone-only spends in the limit window. */
   spends: SpendRecord[];
   phoneSpending: PhoneSpending;
@@ -325,6 +365,19 @@ export interface GuardianState {
   recoveries: RecoveryRecord[];
   activity: ActivityEntry[];
   nextActivityId: number;
+  /** The latest chain tip the engine saw (`ChainTime` plus when, on the system clock). */
+  chainSeen?: { height: number; medianTimePastMs: number; at: number };
+  /**
+   * Monotonic time for the daily limit: never goes backwards, and never past the chain's median time
+   * past plus `MAX_CLOCK_AHEAD_OF_CHAIN_MS` (the engine refuses to co-sign beyond that).
+   */
+  timeFloor?: number;
+  /**
+   * Hardware signatures (`proofId`) of `recovery.access` grants a rotation or retirement revoked, kept
+   * until they expire: a version-1 text names no wallet, so the same signature would otherwise get the
+   * grant back on the next wallet.
+   */
+  revokedAccess?: { sig: string; until: number }[];
 }
 
 /** The single-wallet format written by guardians before wallet rotation. */

@@ -2,12 +2,14 @@
  * Completes a Delay & Notify recovery once its delay is over, and broadcasts
  * the sweep. Before asking the engine to co-sign (`completeRecovery`):
  *
- * 1. Time, twice. The engine checks its clock (the system clock) against
- *    `readyAt`. A clock pushed forward would shorten the delay (DESIGN.md,
- *    threat model), so the chain must agree too: the median time past of the
- *    latest block (from Electrs) must also be past `readyAt`. If the two
- *    differ by more than 2 hours we log a warning; the earlier of them is used
- *    either way, which is the conservative choice.
+ * 1. Time, three ways. `readyAt` counts from the later of the system clock and
+ *    the chain's median time past at the start (engine). At completion the
+ *    system clock AND the median time past of the latest block (from Electrs)
+ *    must both be past `readyAt`, and the chain must have grown by the delay's
+ *    blocks since the start (`PolicyEngine.heightNeeded`): a clock pushed
+ *    forward, or set back at the start, cannot shorten the delay (DESIGN.md,
+ *    threat model). If clock and chain differ by more than 2 hours we log a
+ *    warning. The engine checks all three again.
  * 2. Coverage. The sweep must spend every unspent output of the wallet's
  *    derived addresses (receive and change chains, gap limit 20, extended to
  *    the indexes the sweep itself uses), and nothing that is no longer
@@ -28,6 +30,7 @@ import * as btc from '@scure/btc-signer';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { base64, hex } from '@scure/base';
 import { MultisigWallet, analyzePsbt, finalizePsbt, getNetwork, parsePsbt, sighashAll } from '@trikey/core';
+import { parseRawTx } from './chain/chain.js';
 import type { Guardian } from './guardian.js';
 import { errorText } from './log.js';
 import { HOUR, MAX_SELF_INDEX, type RecoveryRecord, type Registration } from './policy/index.js';
@@ -36,6 +39,8 @@ import type { SweepRecord } from './service-state.js';
 import { formatBtc, formatWhen } from './alerts.js';
 
 export const MAX_CLOCK_DISAGREEMENT_MS = 2 * HOUR;
+/** Confirmations of another spend of a sweep's input before the sweep counts as dead (no reorg brings the coin back). */
+export const DEAD_SWEEP_CONFIRMATIONS = 6;
 
 export type WaitReason = 'locked' | 'chain_unavailable' | 'chain_time' | 'sweep_incomplete' | 'sweep_inputs_missing' | 'refused' | 'error';
 
@@ -119,8 +124,11 @@ export class RecoveryRunner {
     if (g.locked) return this.block(rec, 'locked', 'The guardian is locked. Unlock it so it can co-sign the recovery.');
 
     let mtp: number;
+    let height: number;
     try {
-      mtp = (await g.chain.tip()).medianTimePast * 1000;
+      const tip = await g.chain.tip();
+      mtp = tip.medianTimePast * 1000;
+      height = tip.height;
     } catch (e) {
       return this.block(rec, 'chain_unavailable', `Waiting for chain data from Electrs (${errorText(e)}).`);
     }
@@ -140,6 +148,10 @@ export class RecoveryRunner {
         'chain_time',
         `The recovery delay ends ${formatWhen(rec.readyAt)}, but the chain's median time is ${formatWhen(mtp)}. Waiting for more blocks.`,
       );
+    // The delay must span its blocks too (the engine checks this again).
+    const needed = g.engine.heightNeeded(rec);
+    if (needed !== undefined && height < needed)
+      return this.block(rec, 'chain_time', `The recovery delay must also span ${needed - (rec.startHeight ?? 0)} blocks; the chain is at block ${height} of ${needed}. Waiting for more blocks.`);
 
     let coverage: CoverageResult;
     try {
@@ -172,7 +184,10 @@ export class RecoveryRunner {
   async checkCoverage(rec: RecoveryRecord, reg: Registration): Promise<CoverageResult> {
     const wallet = MultisigWallet.fromDescriptor(reg.descriptor, getNetwork(reg.network));
     const { outpoints, maxIndex } = sweepInputs(base64.decode(rec.sweepPsbt));
-    const utxos = await this.g.chain.walletUtxos(wallet, { minIndex: maxIndex });
+    // At least to the wallet's high-water marks: every change output key 3 ever co-signed is in range.
+    const floor = this.g.scanFloor(reg.walletId);
+    const minIndex = { 0: Math.max(maxIndex[0] ?? -1, floor[0] ?? -1), 1: Math.max(maxIndex[1] ?? -1, floor[1] ?? -1) };
+    const utxos = await this.g.chain.walletUtxos(wallet, { minIndex });
     const unspent = new Set(utxos.map((u) => `${u.txid}:${u.vout}`));
     const missed = utxos.filter((u) => !outpoints.has(`${u.txid}:${u.vout}`));
     if (missed.length) {
@@ -246,10 +261,56 @@ export class RecoveryRunner {
     }
   }
 
+  /**
+   * Why a sweep that failed to broadcast never can be, if so: its transaction does not decode, a later
+   * recovery's sweep of the same wallet went out, or an input was spent by another transaction with
+   * `DEAD_SWEEP_CONFIRMATIONS` confirmations (deep enough that no reorg brings the coin back). Anything
+   * unknown (Electrs unavailable, a spend only in the mempool) is not dead: it is retried.
+   */
+  private async deadReason(s: SweepRecord): Promise<{ reason: NonNullable<SweepRecord['deadReason']>; detail: string } | undefined> {
+    const g = this.g;
+    let inputs: { txid: string; vout: number }[];
+    try {
+      inputs = parseRawTx(s.txHex).inputs;
+      if (!inputs.length) throw new Error('no inputs');
+    } catch {
+      return { reason: 'invalid', detail: 'the stored sweep is not a valid transaction' };
+    }
+    const order = (id: string) => g.records.findIndex((r) => r.id === id);
+    const mine = g.records[order(s.recoveryId)];
+    if (mine) {
+      const later = g.service
+        .get()
+        .sweeps.find((o) => o.recoveryId !== s.recoveryId && o.broadcastAt !== undefined && order(o.recoveryId) > order(s.recoveryId) && g.records[order(o.recoveryId)]?.walletId === mine.walletId);
+      if (later) return { reason: 'superseded', detail: `the sweep of the later recovery ${later.recoveryId} (${later.txid}) was broadcast` };
+    }
+    for (const i of inputs) {
+      try {
+        const by = await g.chain.spentElsewhere(i.txid, i.vout, s.txid);
+        if (by && by.confirmations >= DEAD_SWEEP_CONFIRMATIONS)
+          return { reason: 'inputs_spent', detail: `its input ${i.txid}:${i.vout} was spent by ${by.txid} (${by.confirmations} confirmations)` };
+      } catch {
+        /* unknown: not dead */
+      }
+    }
+    return undefined;
+  }
+
+  private async markDead(s: SweepRecord, dead: { reason: NonNullable<SweepRecord['deadReason']>; detail: string }): Promise<void> {
+    const g = this.g;
+    const now = g.clock.now();
+    await g.service.update((d) => {
+      const x = d.sweeps.find((y) => y.recoveryId === s.recoveryId);
+      if (x) Object.assign(x, { deadAt: now, deadReason: dead.reason, deadDetail: dead.detail });
+    });
+    await g.logEvent({ type: 'sweep_dead', recoveryId: s.recoveryId, txid: s.txid, reason: dead.reason, detail: dead.detail });
+    g.log.warn('recovery.sweep_dead', { recoveryId: s.recoveryId, txid: s.txid, reason: dead.reason });
+  }
+
   private async broadcastPending(): Promise<void> {
     const g = this.g;
     for (const s of g.service.get().sweeps) {
-      if (s.broadcastAt !== undefined) continue;
+      if (s.broadcastAt !== undefined || s.deadAt !== undefined) continue;
       let via: 'electrum' | 'bitcoind' | undefined;
       let error: string | undefined;
       try {
@@ -277,6 +338,11 @@ export class RecoveryRunner {
         await g.logEvent({ type: 'sweep_broadcast', recoveryId: s.recoveryId, txid: s.txid, via, amountSats: s.amountSats });
         g.log.info('recovery.sweep_broadcast', { recoveryId: s.recoveryId, txid: s.txid, via });
       } else {
+        const dead = await this.deadReason(s);
+        if (dead) {
+          await this.markDead(s, dead);
+          continue;
+        }
         const changed = s.lastError !== error;
         await g.service.update((d) => {
           const x = d.sweeps.find((y) => y.recoveryId === s.recoveryId);

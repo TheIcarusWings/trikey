@@ -19,6 +19,8 @@ import {
   cosignerKeyExpression,
 } from '@trikey/core';
 import {
+  ChainTimeSource,
+  ClockChain,
   DAY,
   HardwareAction,
   HardwareApproval,
@@ -50,8 +52,13 @@ export const hwSigner = (m = MNEMONICS.hardware) => new SoftwareSigner('hardware
 export const COSIGNER_PRIV = new Uint8Array(32).fill(7);
 export const OTHER_COSIGNER_PRIV = new Uint8Array(32).fill(9);
 
-/** Default single-sig path the fake hardware wallet signs approvals with. */
-export const AUTH_PATH = "m/84'/1'/1000'/0/0";
+/**
+ * Default single-sig path the fake hardware wallet signs approvals with: the wallet package's, a
+ * non-hardened child of the hardware wallet's multisig account (the guardian refuses any other).
+ */
+export const AUTH_PATH = "m/48'/1'/0'/2'/0/0";
+/** A path NOT below the hardware account (what guardians before the 2026-10 review accepted). */
+export const LEGACY_AUTH_PATH = "m/84'/1'/1000'/0/0";
 
 export const T0 = Date.UTC(2026, 9, 1, 12, 0, 0);
 
@@ -116,11 +123,14 @@ export interface Ctx {
   signer: SoftwareCosignerSigner;
 }
 
-export async function setup(opts: { rules?: Partial<Rules>; store?: StateStore; clock?: ManualClock; locked?: boolean } = {}): Promise<Ctx> {
+export async function setup(
+  opts: { rules?: Partial<Rules>; store?: StateStore; clock?: ManualClock; locked?: boolean; chain?: ChainTimeSource; blocksPerDay?: number } = {},
+): Promise<Ctx> {
   const clock = opts.clock ?? new ManualClock(T0);
   const store = opts.store ?? new MemoryStore();
   const signer = new SoftwareCosignerSigner(COSIGNER_PRIV);
-  const engine = await PolicyEngine.open({ store, clock, signer: opts.locked ? undefined : signer });
+  // By default a chain that follows the clock exactly: only the clock-trust tests (security/clock-trust) move them apart.
+  const engine = await PolicyEngine.open({ store, clock, signer: opts.locked ? undefined : signer, chain: opts.chain ?? new ClockChain(clock), blocksPerDay: opts.blocksPerDay });
   const wallet = await makeWallet();
   const walletId = wallet.fingerprint();
   const res = await engine.register({
