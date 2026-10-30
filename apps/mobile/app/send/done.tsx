@@ -7,6 +7,7 @@ import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { formatSats, remainingToday, shorten, useActivity, useWallet, type FeeSpeed } from '@/data';
+import { useHapticOnce } from '@/lib/haptics';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -23,6 +24,8 @@ export default function SendDone() {
   const { id, speed } = useLocalSearchParams<{ id?: string; speed?: string }>();
   const item = activity.find((a) => a.type === 'payment' && a.tx.id === id);
   const tx = item?.type === 'payment' ? item.tx : undefined;
+  // Sent: felt once as this screen opens (a payment approved on the hardware wallet lands here too).
+  useHapticOnce('success', true, id);
 
   const viaHardware = tx?.signedBy === 'phone+hardware';
   const left = state.mode === 'recoveryKey' ? state.recoveryKey.spendingSats : remainingToday(state);

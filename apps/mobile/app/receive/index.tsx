@@ -13,6 +13,7 @@ import { ListGroup, NetworkPill, Notice, SettingsRow, networkLabel } from '@/com
 import { SilentReceiveScreen } from '@/components/silent-receive';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
+import { haptic } from '@/lib/haptics';
 
 export default function Receive() {
   const router = useRouter();
@@ -37,6 +38,7 @@ export default function Receive() {
 
   const copy = async () => {
     await Clipboard.setStringAsync(receiveAddress);
+    haptic('light');
     setCopied(true);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setCopied(false), 2000);

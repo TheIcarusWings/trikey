@@ -9,6 +9,7 @@ import { Body, Notice, Panel } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import { useWallet } from '@/data';
+import { haptic } from '@/lib/haptics';
 
 /**
  * Settings > Report a problem: a new GitHub issue with the app's diagnostics filled in. The issue is public, so the
@@ -23,6 +24,7 @@ export default function ReportScreen() {
 
   const copy = async () => {
     await Clipboard.setStringAsync(lines.join('\n'));
+    haptic('light');
     setCopied(true);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setCopied(false), 2000);

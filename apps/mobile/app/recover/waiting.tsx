@@ -15,6 +15,7 @@ import { IS_IOS, pick } from '@/lib/platform';
 import { useTheme } from '@/theme/use-theme';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
+import { haptic } from '@/lib/haptics';
 
 function Step({ done, title, detail }: { done: boolean; title: string; detail: string }) {
   return (
@@ -97,6 +98,7 @@ export default function RecoverWaiting() {
   const cancel = async () => {
     const r = await run(wallet.cancelRecovery());
     if (!r.ok) return;
+    haptic('success');
     if (onboarded) {
       router.dismissAll();
       router.replace('/home');

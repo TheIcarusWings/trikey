@@ -14,6 +14,7 @@ import { useWallet, useWalletService } from '@/data';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
+import { haptic } from '@/lib/haptics';
 
 /**
  * The recovery code of the backup just made, shown once. Without a passkey it is what unlocks the backup, so the
@@ -36,6 +37,7 @@ export default function RecoveryCode() {
 
   const copy = async () => {
     await Clipboard.setStringAsync(code);
+    haptic('light');
     setCopied(true);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setCopied(false), 2000);

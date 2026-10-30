@@ -13,6 +13,7 @@ import { looksLikeBitcoinAddress, looksLikeSilentPaymentAddress, useWallet, useW
 import { QrScanner } from '@/hardware/ui';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
+import { haptic } from '@/lib/haptics';
 
 /** Demo address the mock "scanner" returns until the camera is wired up. */
 const DEMO_ADDRESS = 'tb1q9d4xe8w2m5ka3hq7l0pz6vtrc2yn7kmr';
@@ -37,6 +38,7 @@ export default function SendTo() {
   const paste = async () => {
     const text = (await Clipboard.getStringAsync()).trim();
     if (!text) return;
+    haptic('light');
     // A pasted BIP 21 link brings its amount along, as a scanned one does.
     const code = wallet.readCode(text);
     if (code.kind === 'address') {
