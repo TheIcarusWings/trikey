@@ -63,4 +63,4 @@ A short film with white captions. Night: a glass office tower full of lit window
 | 0:53 | No company holds a key. |
 | 0:57 | No server but yours. |
 | 1:01 | No one to ask permission. |
-| 1:06 | Trikey. Your keys. Your server. Your bitcoin. |
+| 1:06 | Trikey. One key gone. Your bitcoin isn't. |
