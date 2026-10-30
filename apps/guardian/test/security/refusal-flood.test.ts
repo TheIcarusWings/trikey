@@ -42,7 +42,8 @@ describe('security: refusal floods (finding 9), engine', () => {
     expect((await store.load())!.activity.some((e) => e.type === 'cosign_refused' && e.count === 50)).toBe(true);
   });
 
-  it('a flood of distinct refusals never evicts co-signatures or other entries that matter', async () => {
+  // 41 signed PSBTs: about 4 s on a quiet machine, over vitest's 5 s default on a busy one.
+  it('a flood of distinct refusals never evicts co-signatures or other entries that matter', { timeout: 30_000 }, async () => {
     const ctx = await setup({ store: new MemoryStore(), rules: { dailyLimitSats: 10_000n } });
     const engine = await PolicyEngine.open({ store: ctx.store, clock: ctx.clock, signer: ctx.signer, chain: new ClockChain(ctx.clock), maxActivity: 20, maxRefusals: 10 });
     const ok = await phoneSpend(ctx.wallet, [fund(ctx.wallet, RECEIVE, 0, 500_000n)], 5_000n);

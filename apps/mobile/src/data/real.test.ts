@@ -34,7 +34,8 @@ const MNEMONICS = {
 const externalAddress = (seed = 2) => btc.p2wpkh(secp256k1.getPublicKey(new Uint8Array(32).fill(seed), true), NETWORKS.regtest.btc).address!;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function waitFor<T>(fn: () => T | undefined | false, what: string, timeoutMs = 8000): Promise<T> {
+// Generous: the guardian rig and the wallet share one machine with the other test files, and a busy one is slow.
+async function waitFor<T>(fn: () => T | undefined | false, what: string, timeoutMs = 30_000): Promise<T> {
   const start = Date.now();
   for (;;) {
     const v = fn();
@@ -564,7 +565,7 @@ describe('the real wallet service: finishing a recovery, replacing the guardian,
     R1.clock.set(new Date(started.completesAt).getTime() + 2 * HOUR);
     await R1.mine(11);
     await R1.guardian.tick();
-    await waitFor(() => P.svc.getState().recoveryOutcome === 'finished' || undefined, 'the switch to the new wallet', 15_000);
+    await waitFor(() => P.svc.getState().recoveryOutcome === 'finished' || undefined, 'the switch to the new wallet');
     const s = P.svc.getState();
     expect(s).toMatchObject({ recovering: false, onboarded: true, recovery: null, hardwareConfirmRequired: true, finishedRecovery: { lostKey: 'phone' } });
     expect(s.finishedRecovery!.movedSats).toBeGreaterThan(290_000);
@@ -973,7 +974,7 @@ describe('the real wallet service: send max, and coins that arrive while a recov
       G.clock.set(new Date(r.completesAt).getTime() + 2 * HOUR);
       await G.mine(11);
       await G.guardian.tick();
-      await waitFor(() => (P.svc.getState().recoveryOutcome === 'finished' ? true : undefined), 'the switch to the new wallet', 20_000);
+      await waitFor(() => (P.svc.getState().recoveryOutcome === 'finished' ? true : undefined), 'the switch to the new wallet');
       const left: string[] = [];
       for (const chain of [0, 1]) for (let i = 0; i < 14; i++) for (const u of G.electrs.unspent.get(scriptHash(oldWallet.derive(chain, i).script)) ?? []) left.push(`${u.txid}:${u.vout}`);
       expect(left).toEqual([]);
