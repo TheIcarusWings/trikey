@@ -92,7 +92,7 @@ Checked, with the source:
 Not checked, because there is no StartOS server or `start-cli` here (nothing was packed or run):
 
 - `TODO(verify)` `s9pk pack`: that `start-cli` accepts the manifest, icon, license and
-  instructions, and pulls `ghcr.io/theicaruswings/trikey-guardian:0.1.0` (the tag exists only
+  instructions, and pulls `ghcr.io/theicaruswings/trikey-guardian:0.1.0-alpha` (the tag exists only
   after the first release).
 - `TODO(verify)` that the version ranges (`>=28.4:0` for Bitcoin, `>=0.11.1:0` for Electrs) match
   what the Start9 registry publishes. They are looser than the ones in `mempool-startos`.
