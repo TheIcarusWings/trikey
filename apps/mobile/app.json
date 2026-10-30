@@ -3,7 +3,7 @@
     "name": "Trikey",
     "slug": "trikey",
     "scheme": "trikey",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "icon": "./assets/icon.png",
