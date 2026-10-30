@@ -164,6 +164,10 @@ export type WalletErrorCode =
   | 'invalid_address'
   | 'amount_too_small'
   | 'insufficient_funds'
+  /** "Send max" with no coins to spend. */
+  | 'nothing_to_send'
+  /** "Send max": the coins minus the network fee are below the smallest payment (`feeSats` is the fee). */
+  | 'send_max_too_small'
   /** The coins a quote spends changed (spent or replaced) since it was made. */
   | 'quote_stale'
   /** On mainnet the wallet will not guess a fee: the node has no estimate. */

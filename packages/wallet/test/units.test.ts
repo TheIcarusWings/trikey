@@ -9,7 +9,7 @@ import * as btc from '@scure/btc-signer';
 import { HDKey } from '@scure/bip32';
 import { mnemonicToSeedSync } from '@scure/bip39';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { MultisigWallet, buildSpend, cosignerKeyExpression, keyExpressionFromMaster } from '@trikey/core';
+import { MultisigWallet, buildSpend, cosignerKeyExpression, estimateVsize, keyExpressionFromMaster } from '@trikey/core';
 import { ErrorCode, PublishError, RpcError, RpcTimeoutError, policyHash, type Policy } from '@trikey/protocol';
 import {
   TrikeyWallet,
@@ -27,6 +27,7 @@ import {
   refusalFromError,
   sealBackup,
   sweepBroadcastError,
+  selectAllCoins,
   selectCoins,
   spentTodayEstimate,
   verifyBip137Message,
@@ -230,6 +231,33 @@ describe('fees, limit estimate and coin selection', () => {
     expect((await walletError(() => selectCoins({ ...base, amountSats: 100 }))).code).toBe('amount_too_small');
     expect((await walletError(() => selectCoins({ ...base, address: 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', amountSats: 10_000 }))).code).toBe('invalid_address');
     void buildSpend;
+  });
+
+  it('send max takes every confirmed coin, charges the fee buildSpend would and leaves the rest as the amount', async () => {
+    const u = (value: number, confirmations: number, vout: number) => ({ txid: 'ab'.repeat(32), vout, valueSats: value, height: confirmations ? 100 : 0, confirmations, chain: 0 as const, index: vout });
+    const outputScript = btc.OutScript.encode(btc.Address(network.btc).decode(externalAddress()));
+    const utxos = [u(50_000, 0, 0), u(30_000, 3, 1), u(40_000, 1, 2)];
+    const sel = selectAllCoins({ utxos, outputScript, feeRate: 2 });
+    // The unconfirmed coin is left alone, as `selectCoins` leaves it.
+    expect(sel.inputs.map((i) => i.vout).sort()).toEqual([1, 2]);
+    expect(sel.feeSats).toBe(Math.ceil(estimateVsize(2, [outputScript]) * 2));
+    expect(sel.amountSats).toBe(70_000 - sel.feeSats);
+    // Only when the confirmed ones cannot make a payment above dust do the unconfirmed ones join, as in `selectCoins`.
+    expect(selectAllCoins({ utxos: [u(50_000, 0, 0), u(700, 2, 1)], outputScript, feeRate: 2 }).inputs).toHaveLength(2);
+    // The fee follows the rate and the number of coins, and the amount plus the fee is always everything spent.
+    for (const rate of [1, 7.5, 40]) {
+      const r = selectAllCoins({ utxos: [u(90_000, 5, 0), u(10_000, 5, 1), u(546, 5, 2)], outputScript, feeRate: rate });
+      expect(r.inputs).toHaveLength(3);
+      expect(r.amountSats + r.feeSats).toBe(100_546);
+    }
+    expect((await walletError(() => selectAllCoins({ utxos: [], outputScript, feeRate: 2 }))).code).toBe('nothing_to_send');
+    // Dust: 1,000 sats at 2 sat/vB cost 2 * (11 + 105 + 31) = 294 in fees, leaving 706 (fine); at 5 sat/vB 735 leaves 265 (below dust).
+    expect(selectAllCoins({ utxos: [u(1000, 1, 0)], outputScript, feeRate: 2 }).amountSats).toBe(706);
+    const tooSmall = await walletError(() => selectAllCoins({ utxos: [u(1000, 1, 0)], outputScript, feeRate: 5 }));
+    expect(tooSmall.code).toBe('send_max_too_small');
+    expect(tooSmall.feeSats).toBe(735);
+    // A balance the fee eats whole is the same refusal, not a negative amount.
+    expect((await walletError(() => selectAllCoins({ utxos: [u(600, 1, 0)], outputScript, feeRate: 10 }))).code).toBe('send_max_too_small');
   });
 
   it('lets the phone alone only tighten', () => {

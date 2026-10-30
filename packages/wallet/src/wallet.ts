@@ -123,8 +123,11 @@ import {
   FEE_TARGETS,
   LIMIT_WINDOW_MS,
   MIN_PAYMENT_SATS,
+  buildSendMaxPsbt,
   guardianBlocker,
+  outputScriptOf,
   pickFeeRate,
+  selectAllCoins,
   selectCoins,
   spentTodayEstimate,
   toCoreUtxo,
@@ -1547,39 +1550,80 @@ export class TrikeyWallet {
    */
   quoteSend(req: SendRequest): SendQuote {
     if (looksLikeSilentPaymentAddress(req.address)) return this.quoteSilentPayment(req);
+    const { feeRate, feeRateSource, wallet, chain: c } = this.quoteBasics(req);
+    const changeIndex = c.nextChangeIndex;
+    const sel = selectCoins({ wallet, utxos: c.utxos, address: req.address, amountSats: req.amountSats, feeRate, changeIndex });
+    return this.makeQuote(req, { feeRate, feeRateSource, feeSats: sel.feeSats, amountSats: req.amountSats, changeSats: sel.changeSats, changeIndex, inputs: sel.inputs });
+  }
+
+  /**
+   * "Send max": the most that can be sent to `req.address` at a speed (or `feeRate`): every coin the vault may spend
+   * (the confirmed ones; unconfirmed ones only when the confirmed cannot make a payment above dust, as in `quoteSend`),
+   * one output, no change, and the fee at the speed's rate. `request.amountSats` of the quote is the coins' sum minus
+   * the fee, and `totalSats` is the whole sum. Same shape as `quoteSend`'s (`sendMax: true`), and `send` carries it out.
+   *
+   * The signers are chosen as for any payment: within today's limit the guardian co-signs, over it the hardware wallet
+   * signs. For a silent payment address the helper coin joins as in `quoteSend` and pays its own share of the fee: the
+   * amount is still what leaves the vault, minus the vault's share. No I/O.
+   *
+   * Throws `nothing_to_send` (no coins), `send_max_too_small` (what is left is below the smallest payment, 546 sats),
+   * `invalid_address`, `no_chain_data`, `no_fee_estimate` and, for a silent payment, `silent_payment_needs_helper`.
+   */
+  quoteSendMax(req: Omit<SendRequest, 'amountSats'>): SendQuote {
+    if (looksLikeSilentPaymentAddress(req.address)) return this.quoteSilentPayment({ ...req, amountSats: 0 }, { max: true });
+    const { feeRate, feeRateSource, wallet, chain: c } = this.quoteBasics(req);
+    const sel = selectAllCoins({ utxos: c.utxos, outputScript: outputScriptOf(req.address, wallet), feeRate });
+    return this.makeQuote({ ...req, amountSats: sel.amountSats }, { feeRate, feeRateSource, feeSats: sel.feeSats, amountSats: sel.amountSats, changeSats: 0, changeIndex: c.nextChangeIndex, inputs: sel.inputs, sendMax: true });
+  }
+
+  /** What every quote starts from: the paired wallet, its last sync, and the fee rate (the caller's, or the estimate for the speed). */
+  private quoteBasics(req: { feeRate?: number; speed?: SendRequest['speed'] }) {
     this.requirePaired();
-    const c = this.s.chain;
-    if (!c) throw new WalletError('no_chain_data', 'Sync the wallet first.');
+    const chain = this.s.chain;
+    if (!chain) throw new WalletError('no_chain_data', 'Sync the wallet first.');
     const wallet = this.multisig();
     const estimated = this.fees?.estimates.some((e) => e.satPerVb !== null) ?? false;
     if (req.feeRate === undefined && !estimated && this.network.name === 'bitcoin')
       throw new WalletError('no_fee_estimate', 'The node has no fee estimate right now; sync again or choose a fee rate.');
     const feeRate = req.feeRate ?? pickFeeRate(this.fees, req.speed);
-    const changeIndex = c.nextChangeIndex;
-    const sel = selectCoins({ wallet, utxos: c.utxos, address: req.address, amountSats: req.amountSats, feeRate, changeIndex });
-    const total = req.amountSats + sel.feeSats;
+    const feeRateSource: SendQuote['feeRateSource'] = req.feeRate !== undefined ? 'caller' : estimated ? 'estimate' : 'relay-minimum';
+    return { wallet, chain, feeRate, feeRateSource };
+  }
+
+  /** Who signs a payment that takes `totalSats` out of the vault: the guardian within the limit (and when it may), else the hardware wallet. */
+  private signingPlan(req: { signer?: 'auto' | 'hardware' }, totalSats: number, viaGuardian = true) {
     const limit = this.s.guardianStatus?.dailyLimit?.limitSats ?? this.s.rules?.policy.dailyLimitSats ?? 0;
     const remaining = Math.max(0, limit - spentTodayEstimate(this.s, this.now()));
     let plan: SigningPath;
-    if (req.signer === 'hardware') plan = { signer: 'phone+hardware', reason: 'requested' };
+    if (req.signer === 'hardware' || !viaGuardian) plan = { signer: 'phone+hardware', reason: 'requested' };
     else {
       const blocker = guardianBlocker(this.s.guardianStatus);
       if (blocker) plan = { signer: 'phone+hardware', reason: blocker };
-      else if (total > remaining) plan = { signer: 'phone+hardware', reason: 'over-limit' };
+      else if (totalSats > remaining) plan = { signer: 'phone+hardware', reason: 'over-limit' };
       else plan = { signer: 'phone+guardian' };
     }
+    return { plan, limit, remainingAfterSats: plan.signer === 'phone+guardian' ? remaining - totalSats : remaining };
+  }
+
+  private makeQuote(
+    req: SendRequest,
+    q: { feeRate: number; feeRateSource: SendQuote['feeRateSource']; feeSats: number; amountSats: number; changeSats: number; changeIndex: number; inputs: SendQuote['inputs']; sendMax?: true },
+  ): SendQuote {
+    const totalSats = q.amountSats + q.feeSats;
+    const { plan, limit, remainingAfterSats } = this.signingPlan(req, totalSats);
     return {
       request: req,
-      feeRate,
-      feeRateSource: req.feeRate !== undefined ? 'caller' : estimated ? 'estimate' : 'relay-minimum',
-      feeSats: sel.feeSats,
-      totalSats: total,
-      changeSats: sel.changeSats,
-      changeIndex,
-      inputs: sel.inputs,
+      feeRate: q.feeRate,
+      feeRateSource: q.feeRateSource,
+      feeSats: q.feeSats,
+      totalSats,
+      changeSats: q.changeSats,
+      changeIndex: q.changeIndex,
+      inputs: q.inputs,
       plan,
-      remainingAfterSats: plan.signer === 'phone+guardian' ? remaining - total : remaining,
+      remainingAfterSats,
       dailyLimitSats: limit,
+      ...(q.sendMax ? { sendMax: true as const } : {}),
     };
   }
 
@@ -1587,18 +1631,20 @@ export class TrikeyWallet {
   private async buildPayment(quote: SendQuote) {
     const wallet = this.multisig();
     const prevs = await this.prevTxs(quote.inputs.map((u) => u.txid), this.chain);
-    const utxos = quote.inputs.map((u, i) => toCoreUtxo(u, prevs[i]));
-    const plan = selfCheck(() =>
-      buildSpend({
-        wallet,
-        utxos,
-        recipients: [{ address: quote.request.address, amount: BigInt(quote.request.amountSats) }],
-        feeRate: quote.feeRate,
-        changeIndex: quote.changeIndex,
-      }),
-    );
+    // A send max spends exactly the quoted coins to one output: `buildSpend` would stop early and leave a coin behind.
+    const psbt = quote.sendMax
+      ? selfCheck(() => buildSendMaxPsbt({ wallet, inputs: quote.inputs, prevTxHexes: prevs, outputScript: outputScriptOf(quote.request.address, wallet), amountSats: quote.request.amountSats }))
+      : selfCheck(() =>
+          buildSpend({
+            wallet,
+            utxos: quote.inputs.map((u, i) => toCoreUtxo(u, prevs[i])),
+            recipients: [{ address: quote.request.address, amount: BigInt(quote.request.amountSats) }],
+            feeRate: quote.feeRate,
+            changeIndex: quote.changeIndex,
+          }).psbt,
+        );
     // Self-check before key 2 signs: every input is ours with its real previous output, and the outputs are what the user asked.
-    const a = selfCheck(() => analyzePsbt(plan.psbt, wallet.accountPubkeys(), this.network, { requireNonWitnessUtxo: true }));
+    const a = selfCheck(() => analyzePsbt(psbt, wallet.accountPubkeys(), this.network, { requireNonWitnessUtxo: true }));
     if (
       a.inputs.length !== quote.inputs.length ||
       a.externalOut !== BigInt(quote.request.amountSats) ||
@@ -1606,7 +1652,21 @@ export class TrikeyWallet {
       a.selfOut !== BigInt(quote.changeSats)
     )
       throw new WalletError('internal', 'The payment does not match its quote; quote it again.');
-    return { wallet, psbt: plan.psbt, outflow: Number(a.outflow) };
+    return { wallet, psbt, outflow: Number(a.outflow) };
+  }
+
+  /**
+   * A send max is only "max" for the coins it was quoted with: refuse it when the coins it would spend now are others
+   * (a coin arrived or was spent), so no coin is left behind that the person was told was going.
+   */
+  private checkSendMaxStillMax(quote: SendQuote): void {
+    const c = this.s.chain!;
+    const now = quote.silentPayment
+      ? selectAllCoins({ utxos: c.utxos, outputScript: outputScriptOf(placeholderTaprootAddress(this.network), this.multisig()), feeRate: quote.feeRate })
+      : selectAllCoins({ utxos: c.utxos, outputScript: outputScriptOf(quote.request.address, this.multisig()), feeRate: quote.feeRate });
+    const key = (u: { txid: string; vout: number }) => `${u.txid}:${u.vout}`;
+    const quoted = new Set(quote.inputs.map(key));
+    if (now.inputs.length !== quoted.size || now.inputs.some((u) => !quoted.has(key(u)))) throw new WalletError('quote_stale', "The wallet's coins changed since this quote; quote the payment again.");
   }
 
   /**
@@ -1624,6 +1684,7 @@ export class TrikeyWallet {
     if (quote.silentPayment) return this.sendSilentPayment(quote, opts);
     const live = new Set(this.s.chain!.utxos.map((u) => `${u.txid}:${u.vout}`));
     if (quote.inputs.some((u) => !live.has(`${u.txid}:${u.vout}`))) throw new WalletError('quote_stale', 'The wallet\'s coins changed since this quote; quote the payment again.');
+    if (quote.sendMax) this.checkSendMaxStillMax(quote);
     const { wallet, psbt, outflow } = await this.buildPayment(quote);
     const signed = await this.withKey2('Approve the payment', async (m) => new SoftwareSigner('app', m).signPsbt(psbt, this.network));
 
@@ -3017,13 +3078,13 @@ export class TrikeyWallet {
    * size), then the output is computed from all the inputs' outpoints and the helper's key. The helper pays the fee
    * for its own input and change (back to a fresh helper address); the vault pays the amount and the rest.
    */
-  private quoteSilentPayment(req: SendRequest): SendQuote {
+  private quoteSilentPayment(req: SendRequest, opts: { max?: boolean } = {}): SendQuote {
     this.requirePaired();
     const c = this.s.chain;
     if (!c) throw new WalletError('no_chain_data', 'Sync the wallet first.');
     const wallet = this.multisig();
     const recipient = decodeRecipient(req.address, this.network.name);
-    if (!Number.isSafeInteger(req.amountSats) || req.amountSats < MIN_PAYMENT_SATS)
+    if (!opts.max && (!Number.isSafeInteger(req.amountSats) || req.amountSats < MIN_PAYMENT_SATS))
       throw new WalletError('amount_too_small', `The smallest payment is ${MIN_PAYMENT_SATS} sats.`);
     const h = this.s.helper;
     const fundIt = (why: string) =>
@@ -3036,15 +3097,20 @@ export class TrikeyWallet {
     const coin = [...h.utxos].sort((a, b) => Number(b.confirmations > 0) - Number(a.confirmations > 0) || b.valueSats - a.valueSats)[0];
     if (!coin) throw fundIt('There is no helper coin.');
     if (!this.helperKey) throw new WalletError('no_chain_data', 'Sync the wallet first.');
-    const estimated = this.fees?.estimates.some((e) => e.satPerVb !== null) ?? false;
-    if (req.feeRate === undefined && !estimated && this.network.name === 'bitcoin')
-      throw new WalletError('no_fee_estimate', 'The node has no fee estimate right now; sync again or choose a fee rate.');
-    const feeRate = req.feeRate ?? pickFeeRate(this.fees, req.speed);
+    const { feeRate, feeRateSource } = this.quoteBasics(req);
     const helperFee = Math.ceil((VB_P2WPKH_INPUT + VB_P2WPKH_OUTPUT) * feeRate);
     const helperChange = coin.valueSats - helperFee;
     if (helperChange < DUST_SATS) throw fundIt(`The helper coin (${coin.valueSats} sats) is too small for its share of the fee (${helperFee} sats).`);
 
-    const sel = selectCoins({ wallet, utxos: c.utxos, address: placeholderTaprootAddress(this.network), amountSats: req.amountSats, feeRate, changeIndex: c.nextChangeIndex });
+    // Vault coins are chosen to a placeholder output of the real one's size (a taproot key): for a send max, all of them,
+    // and the amount is what is left after the vault's own fee, never the helper's.
+    const placeholder = placeholderTaprootAddress(this.network);
+    const sel = opts.max
+      ? (() => {
+          const all = selectAllCoins({ utxos: c.utxos, outputScript: outputScriptOf(placeholder, wallet), feeRate });
+          return { inputs: all.inputs, feeSats: all.feeSats, changeSats: 0, amountSats: all.amountSats };
+        })()
+      : { ...selectCoins({ wallet, utxos: c.utxos, address: placeholder, amountSats: req.amountSats, feeRate, changeIndex: c.nextChangeIndex }), amountSats: req.amountSats };
     const helperKey = helperChild(this.helperKey, coin.chain, coin.index);
     const output = silentPaymentOutput({
       address: recipient.address,
@@ -3054,28 +3120,19 @@ export class TrikeyWallet {
         { txid: coin.txid, vout: coin.vout, prevoutScript: p2wpkhScript(helperKey.publicKey!), privateKey: helperKey.privateKey! },
       ],
     });
-    const total = req.amountSats + sel.feeSats;
-    const limit = this.s.guardianStatus?.dailyLimit?.limitSats ?? this.s.rules?.policy.dailyLimitSats ?? 0;
-    const remaining = Math.max(0, limit - spentTodayEstimate(this.s, this.now()));
-    let plan: SigningPath;
-    if (req.signer === 'hardware' || !this.helperViaGuardian()) plan = { signer: 'phone+hardware', reason: 'requested' };
-    else {
-      const blocker = guardianBlocker(this.s.guardianStatus);
-      if (blocker) plan = { signer: 'phone+hardware', reason: blocker };
-      else if (total > remaining) plan = { signer: 'phone+hardware', reason: 'over-limit' };
-      else plan = { signer: 'phone+guardian' };
-    }
+    const total = sel.amountSats + sel.feeSats;
+    const { plan, limit, remainingAfterSats } = this.signingPlan(req, total, this.helperViaGuardian());
     return {
-      request: { ...req, address: recipient.address },
+      request: { ...req, address: recipient.address, amountSats: sel.amountSats },
       feeRate,
-      feeRateSource: req.feeRate !== undefined ? 'caller' : estimated ? 'estimate' : 'relay-minimum',
+      feeRateSource,
       feeSats: sel.feeSats + helperFee,
       totalSats: total,
       changeSats: sel.changeSats,
       changeIndex: c.nextChangeIndex,
       inputs: sel.inputs,
       plan,
-      remainingAfterSats: plan.signer === 'phone+guardian' ? remaining - total : remaining,
+      remainingAfterSats,
       dailyLimitSats: limit,
       silentPayment: {
         address: recipient.address,
@@ -3179,6 +3236,8 @@ export class TrikeyWallet {
     const allowHelper = (f: { outpoint: string }) => f.outpoint === helperOutpoint;
     const signed = await this.withKey2('Approve the payment', async (m) => {
       const out = await new SoftwareSigner('app', m).signPsbt(psbt, this.network);
+    // A send max with nothing to send says so before it talks about the helper.
+    if (opts.max && !c.utxos.length) throw new WalletError('nothing_to_send', 'The wallet has no coins to send.');
       return finalizeForeign(out, allowHelper, wallet);
     });
 
@@ -3230,6 +3289,7 @@ export class TrikeyWallet {
     }
 
     const tx = parsePsbt(final);
+      ...(opts.max ? { sendMax: true as const } : {}),
     for (let i = 0; i < tx.inputsLength; i++) if (!tx.getInput(i).finalScriptWitness) tx.finalizeIdx(i);
     const txHex = hex.encode(tx.extract());
     const txid = tx.id;
@@ -3322,6 +3382,7 @@ export class TrikeyWallet {
     } finally {
       if (this.hwSession === hw) this.hwSession = undefined;
       await hw.close().catch(() => {});
+    if (quote.sendMax) this.checkSendMaxStillMax(quote);
     }
   }
 

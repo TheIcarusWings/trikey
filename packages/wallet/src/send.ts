@@ -3,7 +3,8 @@
  * estimate, coin selection and which keys sign.
  */
 import * as btc from '@scure/btc-signer';
-import { buildSpend, type MultisigWallet, type Utxo } from '@trikey/core';
+import { hex } from '@scure/base';
+import { SEQUENCE_RBF, TX_OPTS, buildSpend, estimateVsize, type MultisigWallet, type Utxo } from '@trikey/core';
 import type { WalletUtxo } from '@trikey/protocol';
 import type { FeeEstimates } from './chain.js';
 import { WalletError } from './errors.js';
@@ -118,6 +119,12 @@ export interface SendQuote {
    * fee: what a daily limit would count), and the helper coin pays the rest of the fee for its own input and change.
    */
   silentPayment?: SilentPaymentQuote;
+  /**
+   * Set by `quoteSendMax`: `request.amountSats` is everything the vault can send (the coins' sum minus the fee), `inputs`
+   * is every coin it spends, and there is no change. `send` builds it as a send-max transaction and refuses it
+   * (`quote_stale`) if the coins it would spend now are not these.
+   */
+  sendMax?: true;
 }
 
 export interface SilentPaymentQuote {
@@ -172,4 +179,63 @@ export function selectCoins(opts: {
   }
   const have = all.reduce((s, u) => s + u.valueSats, 0);
   throw new WalletError('insufficient_funds', `Not enough funds: ${have} sats available.`);
+}
+
+/**
+ * "Send max": every coin the vault may spend, one output, no change. The fee is the one `buildSpend` would charge for that
+ * transaction (same size estimate, same rounding), and the amount is what is left. Coins are chosen as `selectCoins`
+ * does: the confirmed ones, and only when they cannot make a payment above dust, all of them (unconfirmed included).
+ *
+ * `outputScript` is the recipient's script (for a silent payment, a placeholder of the same size). Throws
+ * `nothing_to_send` with no coins, and `send_max_too_small` when the amount would be below dust.
+ */
+export function selectAllCoins(opts: { utxos: WalletUtxo[]; outputScript: Uint8Array; feeRate: number }): { inputs: QuoteInput[]; amountSats: number; feeSats: number } {
+  const asInput = (u: WalletUtxo): QuoteInput => ({ txid: u.txid, vout: u.vout, valueSats: u.valueSats, chain: u.chain, index: u.index });
+  const confirmed = opts.utxos.filter((u) => u.confirmations > 0).map(asInput);
+  const all = opts.utxos.map(asInput);
+  if (!all.length) throw new WalletError('nothing_to_send', 'The wallet has no coins to send.');
+  const fit = (set: QuoteInput[]) => {
+    const total = set.reduce((s, u) => s + u.valueSats, 0);
+    const feeSats = Math.ceil(estimateVsize(set.length, [opts.outputScript]) * opts.feeRate);
+    return { inputs: set, total, feeSats, amountSats: total - feeSats };
+  };
+  let last = fit(all);
+  for (const set of confirmed.length < all.length ? [confirmed, all] : [all]) {
+    if (!set.length) continue;
+    last = fit(set);
+    if (Number.isSafeInteger(last.amountSats) && last.amountSats >= MIN_PAYMENT_SATS) return { inputs: last.inputs, amountSats: last.amountSats, feeSats: last.feeSats };
+  }
+  throw new WalletError(
+    'send_max_too_small',
+    `After the ${last.feeSats} sats network fee, the ${last.total} sats in the wallet leave ${Math.max(0, last.amountSats)} sats: less than the smallest payment (${MIN_PAYMENT_SATS} sats).`,
+    { feeSats: last.feeSats },
+  );
+}
+
+/** The PSBT of a send-max quote: every input, then the one output. `prevTxHexes[i]` is the previous transaction of `inputs[i]`. */
+export function buildSendMaxPsbt(opts: { wallet: MultisigWallet; inputs: QuoteInput[]; prevTxHexes: string[]; outputScript: Uint8Array; amountSats: number }): Uint8Array {
+  const tx = new btc.Transaction(TX_OPTS);
+  opts.inputs.forEach((u, i) => {
+    const d = opts.wallet.derive(u.chain, u.index);
+    tx.addInput({
+      txid: u.txid,
+      index: u.vout,
+      sequence: SEQUENCE_RBF,
+      witnessUtxo: { script: d.script, amount: BigInt(u.valueSats) },
+      nonWitnessUtxo: hex.decode(opts.prevTxHexes[i]!),
+      sighashType: btc.SigHash.ALL,
+      ...opts.wallet.psbtFields(d),
+    });
+  });
+  tx.addOutput({ script: opts.outputScript, amount: BigInt(opts.amountSats) });
+  return tx.toPSBT();
+}
+
+/** The output script of `address`; throws `invalid_address` unless it is valid on the wallet's network. */
+export function outputScriptOf(address: string, wallet: MultisigWallet): Uint8Array {
+  try {
+    return btc.OutScript.encode(btc.Address(wallet.network.btc).decode(address));
+  } catch {
+    throw new WalletError('invalid_address', `Not a valid ${wallet.network.name} address.`);
+  }
 }
