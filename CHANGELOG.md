@@ -8,6 +8,8 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 
 ## Unreleased
 
+## 0.1.4-alpha (2026-10-30)
+
 - **App: a lost-phone recovery no longer shows the guardian offline for most of the wait.** The new phone's access to
   the guardian lasts 12 hours at a time (your hardware wallet vouches for it), and once it ran out the guardian ignored
   the phone, so every check waited 30 seconds for an answer that never came and the app showed the guardian offline,
@@ -17,10 +19,8 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
   your guardian. To see its progress here, approve again with your hardware wallet", makes "Keep following" the main
   button then, and shows "Following until 14:05" before. Approving again brings syncing back right away, and
   the guardian's alerts (including the one that says it took the new wallet over) still reach a phone whose access
-  ran out. No protocol or guardian change.
-
-## 0.1.4-alpha (2026-10-30)
-
+  ran out, and if it missed that one, "Keep following" switches it to the new wallet. No protocol or guardian change
+  (#41).
 - **App: the guardian no longer shows offline right after a lost-phone recovery.** A sync asked for while another
   ran was dropped, so the switch to the new wallet's sync could be lost and a late failure marked the guardian offline
   until the next timer; syncs now queue (#39).
