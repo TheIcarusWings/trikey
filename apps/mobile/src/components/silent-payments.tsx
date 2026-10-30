@@ -111,8 +111,8 @@ export function AddressBlock({ address, qr = true, label }: { address: string; q
         </Text>
       </View>
       <View className="flex-row gap-3">
-        <AppButton title={copied ? 'Copied' : 'Copy'} icon={copied ? Check : Copy} variant={variant} className="flex-1 self-auto" onPress={copy} accessibilityLabel={copied ? `${label} copied` : `Copy ${label}`} />
-        <AppButton title="Share" variant={variant} className="flex-1 self-auto" onPress={share} accessibilityLabel={`Share ${label}`} />
+        <AppButton title={copied ? 'Copied' : 'Copy'} icon={copied ? Check : Copy} className="flex-1 self-auto" onPress={copy} accessibilityLabel={copied ? `${label} copied` : `Copy ${label}`} />
+        <AppButton title="Share" variant="outline" className="flex-1 self-auto" onPress={share} accessibilityLabel={`Share ${label}`} />
       </View>
     </View>
   );

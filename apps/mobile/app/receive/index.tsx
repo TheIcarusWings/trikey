@@ -57,7 +57,6 @@ export default function Receive() {
   };
 
   // iOS: filled buttons. Android: outlined, accent-colored labels.
-  const variant = pick('secondary', 'outline') as 'secondary' | 'outline';
   // The reusable (silent payment) address is one quiet link away, not a second tab.
   const switchKind = (to: 'address' | 'silent', title: string) => (
     <Pressable role="button" onPress={() => setKind(to)} className="min-h-11 items-center justify-center self-center px-3 active:opacity-60">
@@ -109,13 +108,13 @@ export default function Receive() {
         <AppButton
           title={copied ? 'Copied' : 'Copy'}
           icon={copied ? Check : Copy}
-          variant={variant}
+          // Copying is what most people do here: it is the main button, Share the second.
           className="flex-1 self-auto"
           onPress={copy}
           disabled={!receiveAddress}
           accessibilityLabel={copied ? 'Address copied' : 'Copy address'}
         />
-        <AppButton title="Share" icon={Share2} variant={variant} className="flex-1 self-auto" onPress={share} disabled={!receiveAddress} accessibilityLabel="Share address" />
+        <AppButton title="Share" icon={Share2} variant="outline" className="flex-1 self-auto" onPress={share} disabled={!receiveAddress} accessibilityLabel="Share address" />
       </View>
       {rkMode && !toVault ? null : (
         <ListGroup>
