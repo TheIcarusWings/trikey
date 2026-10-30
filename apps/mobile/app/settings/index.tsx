@@ -1,3 +1,4 @@
+import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
@@ -36,6 +37,8 @@ export default function SettingsScreen() {
   const state = useWallet();
   const rk = state.mode === 'recoveryKey';
   const silentValue = silentPaymentsSummary(state);
+  // The descriptor export appears once the wallet offers it.
+  const hasWalletDetails = typeof (useWalletService() as { getWalletDetails?: unknown }).getWalletDetails === 'function';
 
   return (
     <Screen title="Settings" backLabel="Home" gap={pick(12, 0)}>
@@ -70,7 +73,21 @@ export default function SettingsScreen() {
         </>
       ) : null}
 
+      {hasWalletDetails ? (
+        <>
+          <SectionLabel>Advanced</SectionLabel>
+          <ListGroup>
+            <SettingsRow title="Wallet details" subtitle="To recover in another wallet" onPress={() => router.push('/settings/wallet-details')} />
+          </ListGroup>
+        </>
+      ) : null}
+
       <DeveloperSection />
+
+      <SectionLabel>About</SectionLabel>
+      <ListGroup>
+        <SettingsRow title="Trikey" value={`${Constants.expoConfig?.version ?? ''} · pre-alpha`} />
+      </ListGroup>
     </Screen>
   );
 }
