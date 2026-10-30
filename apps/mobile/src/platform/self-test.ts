@@ -68,6 +68,16 @@ export async function runCryptoSelfTest(): Promise<SelfTestReport> {
   );
 
   steps.push(
+    await runStep('Random health and crypto known answers', async () => {
+      // The same test the app runs at start-up and before every new key (packages/core/src/random-health.ts), here as a
+      // report that does not latch. A failure names the test; it never shows bytes.
+      const { randomSourceSelfTest } = await import('@trikey/core/random-health');
+      const r = randomSourceSelfTest();
+      expect(r.ok, r.failure ?? 'the random source or the crypto failed its start-up test');
+    }),
+  );
+
+  steps.push(
     await runStep('Text encoding', () => {
       const text = 'Trikey ₿ 🔑 é';
       expect(new TextDecoder().decode(new TextEncoder().encode(text)) === text, 'UTF-8 round trip failed');

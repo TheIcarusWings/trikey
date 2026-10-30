@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./random": "./src/random.ts",
+    "./random-health": "./src/random-health.ts",
     "./testing": "./test/support/consensus.ts",
     "./testing/random": "./test/support/random.ts"
   },

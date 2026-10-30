@@ -151,6 +151,7 @@ import {
   type WalletState,
 } from './state.js';
 import { secureRandomBytes } from '@trikey/core/random';
+import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 
 export interface Clock {
   /** Milliseconds since the Unix epoch. */
@@ -1082,6 +1083,7 @@ export class TrikeyWallet {
     this.pairing = undefined;
     let contribution: Uint8Array;
     try {
+      assertRandomSourceHealthy('key 3 contribution');
       contribution = secureRandomBytes(32);
     } catch (e) {
       throw asRandomSourceError(e);
@@ -4063,6 +4065,11 @@ export class TrikeyWallet {
   async createBackup(opts: { passkey?: boolean; recoveryCode?: boolean; cloud?: CloudBackupStore } = { passkey: true }): Promise<{ name: string; recoveryCode?: string }> {
     const cloud = opts.cloud ?? this.deps.cloud;
     if (!cloud || !(await cloud.isAvailable())) throw new WalletError('backup_unavailable', 'No cloud storage is available for the backup.');
+    try {
+      assertRandomSourceHealthy('new backup');
+    } catch (e) {
+      throw asRandomSourceError(e);
+    }
     if (!opts.passkey && !opts.recoveryCode) throw new WalletError('backup_unavailable', 'Choose a passkey, a recovery code or both.');
     const slots: SlotInput[] = [];
     let credentialId = this.s.backup?.passkeyCredentialId;

@@ -66,6 +66,7 @@ import { entropyToMnemonic, mnemonicToSeedSync } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { bip48Path, getNetwork, tweakPrivateKey, type NetworkName } from '@trikey/core';
 import { secureRandomBytes } from '@trikey/core/random';
+import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 import { writeFileAtomic } from './files.js';
 import type { CosignerSigner, Key3Mix } from './policy/index.js';
 
@@ -140,6 +141,7 @@ export function checkPassphrase(passphrase: unknown): string | undefined {
 
 /** A fresh BIP39 seed (24 words of entropy from `secureRandomBytes`, no BIP39 passphrase). The caller zeroes it. */
 export function generateSeed(): Uint8Array {
+  assertRandomSourceHealthy('new guardian key');
   const entropy = secureRandomBytes(32);
   try {
     // The mnemonic only exists as an intermediate string; it is never shown or stored.

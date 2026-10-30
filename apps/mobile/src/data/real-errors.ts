@@ -2,10 +2,11 @@
  * The real wallet's failures in words for the user: wallet errors, the guardian's refusals, the hardware adapters'
  * errors and the platform's (secure storage, cloud, passkeys) become one `WalletServiceError`.
  */
+import { RandomSourceError } from '@trikey/core/random';
 import { WalletError, type GuardianRefusal } from '@trikey/wallet';
 import { HardwareError, describeHardwareError } from '../hardware/errors';
 import { PlatformError } from '../platform/errors';
-import { NODE_RPC_TEXT, WalletServiceError, type ServiceErrorKind } from './errors';
+import { NODE_RPC_TEXT, RNG_REFUSED_TEXT, WalletServiceError, type ServiceErrorKind } from './errors';
 import { formatSats, networkLabel } from './format';
 
 const wait = (seconds?: number) => (seconds && seconds > 0 ? ` Try again in ${Math.ceil(seconds)} seconds.` : '');
@@ -118,6 +119,7 @@ function platformCause(e: unknown): PlatformError<string> | undefined {
 /** Any error from the wallet, the adapters or the platform, as a `WalletServiceError`. Never throws. */
 export function mapError(e: unknown): WalletServiceError {
   if (e instanceof WalletServiceError) return e;
+  if (e instanceof RandomSourceError) return new WalletServiceError('refused', RNG_REFUSED_TEXT, { cause: e });
 
   const platform = platformCause(e);
   if (platform) {
@@ -227,6 +229,8 @@ export function mapError(e: unknown): WalletServiceError {
         return make('refused', e.message || "The guardian wouldn't send this move.");
       case 'rate_limited':
         return make('rate_limited', e.message || 'Too many tries. Wait a moment and try again.');
+      case 'random_source_failed':
+        return make('refused', RNG_REFUSED_TEXT);
       case 'internal':
         return make('internal', e.message);
     }

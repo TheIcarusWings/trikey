@@ -86,4 +86,23 @@ describe('Recovery Key mode key generation', () => {
       await w.close();
     }
   });
+
+  it('a source that cycles (passes every per-call check) makes no wallet and no kit either', async () => {
+    const blocks = [7, 9].map((m) => Uint8Array.from({ length: 32 }, (_, i) => (i * 61 + m * 17) & 255));
+    let n = 0;
+    const src = installRandomSource((buf) => {
+      for (let o = 0; o < buf.length; o += 32) buf.set(blocks[n++ % 2]!.subarray(0, Math.min(32, buf.length - o)), o);
+    }, 'cycling');
+    try {
+      expect(() => newPhoneMnemonic()).toThrow(/health test/);
+      expect(() => newRecoveryKeyEntropy()).toThrow(/health test/);
+      const d = await deps();
+      const e = await RecoveryKeyWallet.create(d.deps).catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(RecoveryKeyError);
+      expect((e as RecoveryKeyError).code).toBe('random_source_failed');
+      expect(d.secure.items.size).toBe(0);
+    } finally {
+      src.restore();
+    }
+  });
 });
