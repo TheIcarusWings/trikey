@@ -70,6 +70,8 @@ export class GuardianRig {
   readonly clock: ManualClock;
   readonly passphrase: string;
   readonly relays: DevRelay[] = [];
+  /** Relays started later (`addRelay`), which the guardian was not set up with: for changing its relays. */
+  readonly extraRelays: DevRelay[] = [];
   readonly logLines: string[] = [];
   electrs!: FakeElectrum;
   /** With `bitcoind: true`. */
@@ -106,8 +108,17 @@ export class GuardianRig {
     return rig;
   }
 
+  /** The relays the guardian was set up with (not those added later). */
   get relayUrls(): string[] {
     return this.relays.map((r) => r.url);
+  }
+
+  /** Starts another in-memory relay on the rig's clock, which the guardian does not use until its relays change. */
+  async addRelay(): Promise<DevRelay> {
+    const r = new DevRelay({ now: () => this.nowSec() });
+    await r.start();
+    this.extraRelays.push(r);
+    return r;
   }
 
   /** The guardian's nostr pubkey (hex). */
@@ -154,7 +165,7 @@ export class GuardianRig {
    * cookie. Signed out, it signs in with the passphrase first (`POST /api/session`) when the guardian
    * answers 401 `unauthenticated`, unless `session: false` (to test the signed-out API).
    */
-  async api(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown, opts: { session?: boolean } = {}): Promise<{ status: number; body: any }> {
+  async api(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, opts: { session?: boolean } = {}): Promise<{ status: number; body: any }> {
     const addr = this.guardian.httpAddress;
     if (!addr) throw new Error('start the rig with http: true');
     const send = async () => {
@@ -183,11 +194,11 @@ export class GuardianRig {
     if (r.status !== 200) throw new Error(`sign-in failed: ${JSON.stringify(r.body)}`);
   }
 
-  /** A fresh one-time pairing URI, as the web UI's QR code would show it. */
+  /** A fresh one-time pairing URI, as the web UI's QR code would show it (with the guardian's current relays). */
   pairingUri(): string {
     const s = this.guardian.pairing.create(this.clock.now());
     return encodePairingUri(
-      { guardianPubkey: this.pubkey, relays: this.relayUrls, secret: s.secret, expiresAt: Math.floor(s.expiresAt / 1000), label: 'Test Guardian' },
+      { guardianPubkey: this.pubkey, relays: this.guardian.service.get().relays, secret: s.secret, expiresAt: Math.floor(s.expiresAt / 1000), label: 'Test Guardian' },
       Math.floor(s.createdAt / 1000),
     );
   }
@@ -246,7 +257,7 @@ export class GuardianRig {
     await this.guardian?.stop();
     await this.electrs?.stop();
     await this.bitcoind?.stop();
-    for (const r of this.relays) await r.stop();
+    for (const r of [...this.relays, ...this.extraRelays]) await r.stop();
     if (this.dir) await rm(this.dir, { recursive: true, force: true });
   }
 }

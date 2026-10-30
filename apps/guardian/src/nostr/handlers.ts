@@ -281,6 +281,8 @@ export function buildHandlers(g: Guardian): Handlers {
         ...(s.warnings.length ? { warnings: s.warnings } : {}),
         ...(s.walletId ? { walletId: s.walletId, hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
         ...(s.registered ? { key3Mixed: !!g.engine.registration()?.key3Mix } : {}),
+        // A phone that missed a `relays_changed` alert catches up here (PROTOCOL.md, "Changing relays").
+        ...(g.service.get().relays.length ? { relays: [...g.service.get().relays] } : {}),
         ...(s.dailyLimit
           ? {
               dailyLimit: {
@@ -399,6 +401,8 @@ export function buildHandlers(g: Guardian): Handlers {
           d.phones = [{ pubkey: ctx.sender, name: params.deviceName, pairedAt: now }];
         });
         await g.logEvent({ type: 'paired', name: params.deviceName });
+        // The pairing code carried the current relays: no relay change is left for a phone to confirm.
+        await g.relaysKnownByNewPhone();
         g.log.info('guardian.paired', { walletId: res.walletId, key3Mixed: !!key.mix });
         return {
           guardianKey: originOf(key.pub),
@@ -595,6 +599,9 @@ export function buildHandlers(g: Guardian): Handlers {
       }),
 
     'sp.unregister': () => spCall(async () => ({ unregistered: await g.sp.unregister() })),
+
+    // Only the paired phone gets here (`Guardian.authorize`); it changes the record the web UI shows, nothing else.
+    'relays.ack': (params) => g.confirmRelays(params.relays),
 
     'sp.scan': (params) =>
       spCall(async () => {

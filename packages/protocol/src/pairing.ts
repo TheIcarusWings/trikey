@@ -2,10 +2,11 @@ import { base64url } from '@scure/base';
 import { secureRandomBytes } from '@trikey/core/random';
 import { decode as nip19Decode, npubEncode } from 'nostr-tools/nip19';
 import { nowSeconds } from './envelope.js';
+import { MAX_RELAYS, checkRelayUrl } from './relay-url.js';
 
 export const PAIRING_SCHEME = 'trikey:';
 export const PAIRING_VERSION = '1';
-export const MAX_PAIRING_RELAYS = 8;
+export const MAX_PAIRING_RELAYS = MAX_RELAYS;
 /** Pairing QR codes are valid for at most this long. */
 export const MAX_PAIRING_TTL_SEC = 86_400;
 
@@ -36,29 +37,11 @@ export function generatePairingSecret(): string {
 
 const SECRET_RE = /^[A-Za-z0-9_-]{22,128}$/;
 
-function isLocalOrOnion(host: string): boolean {
-  if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.onion') || host.endsWith('.lan')) return true;
-  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host);
-  if (!m) return false;
-  const [a, b] = [Number(m[1]), Number(m[2])];
-  return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
-}
-
 /** Validate and normalise a relay URL: `wss://` anywhere, `ws://` only for local network or `.onion` hosts. */
 export function normalizeRelayUrl(raw: string): string {
-  let u: URL;
-  try {
-    u = new URL(raw);
-  } catch {
-    throw new PairingUriError(`invalid relay URL: ${raw}`);
-  }
-  if (u.protocol !== 'wss:' && u.protocol !== 'ws:') throw new PairingUriError(`relay must be ws(s): ${raw}`);
-  if (u.protocol === 'ws:' && !isLocalOrOnion(u.hostname)) {
-    throw new PairingUriError(`insecure ws:// relay only allowed for local hosts: ${raw}`);
-  }
-  if (u.username || u.password || u.hash) throw new PairingUriError(`relay URL must not carry credentials or fragment: ${raw}`);
-  // `URL` adds a trailing slash to bare origins; drop it so URLs stay as the user wrote them.
-  return u.pathname === '/' && !u.search ? `${u.protocol}//${u.host}` : u.toString();
+  const r = checkRelayUrl(raw);
+  if ('error' in r) throw new PairingUriError(r.error);
+  return r.url;
 }
 
 function validate(p: PairingPayload, now: number, checkExpiry: boolean): void {

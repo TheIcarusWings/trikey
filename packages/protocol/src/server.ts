@@ -78,7 +78,7 @@ export interface RpcServerOptions {
 export class RpcServer {
   readonly publicKey: string;
   private readonly o: RpcServerOptions;
-  private readonly relays: string[];
+  private relays: string[];
   private readonly limits: Limits;
   private readonly guard: ReplayGuard;
   private readonly seenWraps = new RecentSet();
@@ -118,23 +118,47 @@ export class RpcServer {
     return this.peers.has(pubkey);
   }
 
+  /** The relays it publishes to (and, unless `listen: false`, subscribes on). */
+  get relayList(): readonly string[] {
+    return this.relays;
+  }
+
+  /**
+   * Uses `relays` from now on, for answers and alerts and (unless `listen: false`) for its subscription, which is
+   * opened on the new list before the old one is closed. The replay guard and the response cache are kept, so a
+   * request re-delivered by a relay that was added is still answered from the cache, not run again.
+   */
+  setRelays(relays: string[]): void {
+    const next = [...new Set(relays)];
+    if (next.length === 0) throw new Error('RpcServer needs at least one relay');
+    this.relays = next;
+    if (this.closed || this.o.listen === false || !this.sub) return;
+    const old = this.sub;
+    this.sub = this.subscribe(() => {});
+    old.close();
+  }
+
+  private subscribe(oneose: () => void): Subscription {
+    return this.o.pool.subscribe(
+      this.relays,
+      { kinds: [1059], '#p': [this.publicKey], since: this.now() - SUBSCRIPTION_LOOKBACK_SEC },
+      {
+        onevent: (e) => void this.handleWrap(e).catch((err: unknown) => this.o.onError?.(err, {})),
+        oneose,
+      },
+    );
+  }
+
   /** Subscribe to wraps addressed to us. Idempotent; resolves once the relays reply with EOSE (or after 3 s). */
   start(): Promise<void> {
     if (this.closed) return Promise.reject(new Error('server closed'));
     if (this.o.listen === false) return Promise.resolve();
     this.starting ??= new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, 3000);
-      this.sub = this.o.pool.subscribe(
-        this.relays,
-        { kinds: [1059], '#p': [this.publicKey], since: this.now() - SUBSCRIPTION_LOOKBACK_SEC },
-        {
-          onevent: (e) => void this.handleWrap(e).catch((err: unknown) => this.o.onError?.(err, {})),
-          oneose: () => {
-            clearTimeout(timer);
-            resolve();
-          },
-        },
-      );
+      this.sub = this.subscribe(() => {
+        clearTimeout(timer);
+        resolve();
+      });
     });
     return this.starting;
   }

@@ -278,5 +278,23 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
         sats: null,
         result: 'ok',
       };
+    case 'relays_changed': {
+      const added = e.to.filter((r) => !e.from.includes(r));
+      const removed = e.from.filter((r) => !e.to.includes(r));
+      const parts = [added.length ? `added ${added.join(', ')}` : '', removed.length ? `removed ${removed.join(', ')} (still watched until ${formatWhen(e.retiringUntil)})` : ''];
+      return {
+        ...base,
+        kind: 'system',
+        event: `Relays changed on this box: ${parts.filter(Boolean).join('; ')}. A paired phone is told and moves by itself.`,
+        summary: 'Relays changed',
+        signedBy: null,
+        sats: null,
+        result: 'ok',
+      };
+    }
+    case 'relays_confirmed':
+      return { ...base, kind: 'system', event: `The paired phone switched to the new relays (${e.relays.join(', ')})`, summary: 'Phone switched relays', signedBy: 'Phone', sats: null, result: 'ok' };
+    case 'relays_retired':
+      return { ...base, kind: 'system', event: `Stopped watching the old relays ${e.relays.join(', ')}: their 30 days are over`, summary: 'Old relays dropped', signedBy: null, sats: null, result: 'ok' };
   }
 }

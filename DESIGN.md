@@ -144,6 +144,18 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
   - the hash of the PSBT it refers to.
 - **Replay protection:** old rumors are dropped. Strangers (senders that are not the paired phone, an alert contact or a phone with recovery access) get their own small replay cache and seen-wrap set, so they cannot push a peer's entries out; refused `sign` / `recovery.start` / `recovery.update` are rate limited per sender, and repeated identical refusals are one log entry with a count.
 - **Relays:** several, with the user's own relay optional (Umbrel has a Nostr Relay app).
+- **Changing relays** (web UI, Settings; `PUT /api/relays`, PROTOCOL.md "Changing relays"). The phone, its backups
+  and printed recovery sheets all carry the list from pairing, so a change must never cut any of them off. The guardian
+  listens *and publishes* on the new relays and on the removed ones at once, and keeps the removed ones for 30 days
+  (publishing only on the new ones would leave a phone that has not switched hearing nothing). It tells the paired
+  phone (`relays_changed`, and `guardian.status.relays` for one that missed the alert); the phone takes a list only
+  from its paired guardian, with the pairing code's rules, and moves only after the guardian answered its
+  `relays.ack` over the new relays alone, so a list it cannot reach (a relay that is down, a typo) leaves it where it
+  works. The ack is recorded and shown, but does not end the 30 days: it proves the phone moved, not that the backups
+  and sheets made before did. Pairing and recovery codes carry the new list at once; the web UI asks for a new
+  recovery sheet. The change is logged as a security event: someone with the web UI could point the phone at relays
+  they run, but relays only carry gift wraps, so the most that buys is dropping messages (availability), which a
+  reset with the same passphrase already allows.
 - **No public standard exists** for PSBT exchange over nostr, so this is our own spec. Publish it as a NIP draft once it's stable.
 
 ## Recovery flows
@@ -192,7 +204,7 @@ guardian pairs a phone that already has a wallet like any other: same key 2 and 
 key 3, so a new descriptor and wallet id.
 
 **Reset guardian** (web UI): forgets every wallet and creates a **new key 3**, keeping the nostr
-identity, relays and passphrase. It needs the passphrase again and a typed confirmation, and is
+identity, relays and passphrase (relays are changed in Settings, see "Changing relays"). It needs the passphrase again and a typed confirmation, and is
 refused while a recovery is pending or ready, or while a co-signed sweep waits to be broadcast (and
 still can be: a sweep that never can is given up, see rule 5). It ends every web session. Key 3
 is rotated rather than kept so that a reset can never be used to re-pair the user's wallet with a
@@ -212,7 +224,7 @@ printed and kept with the hardware wallet.
   - If the thief keeps the guardian powered, they can only reach the daily limit, and any recovery triggers the 7-day alerts.
   - Tell users to keep the hardware wallet's seed words outside the home.
 - **Remote compromise of the home server** gives up one key of three. That's the same exposure as Bitkey's server being breached.
-- **Malicious relays** can drop messages but can't read or forge them.
+- **Malicious relays** can drop messages but can't read or forge them. A relay change from the web UI (a security event in the activity log) can at worst move the phone to relays that drop everything; the old relays stay watched for 30 days and the phone moves only to relays the guardian answered it over.
 - **Contested recovery** (a thief cancels a genuine recovery): phone-only spending stays paused, so the thief can't drain either. Same as Bitkey.
 - **After a recovery the guardian trusts its outcome:** the phone that started it becomes the new wallet's paired phone. That is what the Delay & Notify period protects; a thief who gets that far already holds the new wallet's keys. The hardware wallet must re-prove its authorization key for the new wallet before it can loosen anything, and the old wallet's recovery access grants are revoked.
 - **Retired wallets are dead to the guardian:** no co-signing, no recovery, no re-pairing of the same key set, under any descriptor (another origin fingerprint, chaincode or role order is the same keys to key 3). The hardware authorization key must derive from the hardware account, so a phone thief cannot pair a retired (or any) key set with an authorization key of its own. Coins sent to a retired wallet's address later can only move with two of its own keys.

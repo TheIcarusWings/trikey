@@ -84,7 +84,7 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 
 ### Methods
 
-`Hex32` = 64 lowercase hex chars. `Sats` = integer 0..2,100,000,000,000,000 (exact as a JSON number). `UnixSeconds` = integer. `KeyOrigin` = `{ fingerprint: 8 hex, path: "m/48'/0'/0'/2'", xpub: string }`. `WalletId` = 16 lowercase hex chars (the engine's `MultisigWallet.fingerprint()`). `RecoveryId` = `[0-9a-z-]{1,40}`. `HardwareApproval`, `Policy` and `Recovery` are defined below.
+`RelayList` = 1-8 distinct relay URLs, each exactly as `normalizeRelayUrl` writes it (the pairing code's rules, section 6). `Hex32` = 64 lowercase hex chars. `Sats` = integer 0..2,100,000,000,000,000 (exact as a JSON number). `UnixSeconds` = integer. `KeyOrigin` = `{ fingerprint: 8 hex, path: "m/48'/0'/0'/2'", xpub: string }`. `WalletId` = 16 lowercase hex chars (the engine's `MultisigWallet.fingerprint()`). `RecoveryId` = `[0-9a-z-]{1,40}`. `HardwareApproval`, `Policy` and `Recovery` are defined below.
 
 | Method | Params | Result |
 |---|---|---|
@@ -99,7 +99,7 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `recovery.status` | `recoveryId?` (default: the active one) | `recovery` (or `null`), `psbt?` (the signed sweep, once the guardian has co-signed it) |
 | `phone.resume` | `approval` | `phoneSpending: "enabled"` |
 | `guardian.unlock` | `{kind:"passphrase", passphrase}` or `{kind:"hardware", secret: hex}` | `unlocked: boolean` (`1101` with `data.reason` `phone_unlock_disabled` after 5 wrong passphrases in a row until the web UI unlocks, or `recovery_pending` while a recovery the phone did not start runs; the phone's attempts have their own rate limit) |
-| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time`, `atMs?` (the guardian's clock in milliseconds when it answered, see "Time"), `dailyLimit?: { limitSats, usedSats, availableSats }`, `walletId?`, `hardwareConfirmRequired?`, `watchedWalletId?` (the replaced wallet the guardian watches, if any), `key3Mixed?` (while paired: key 3 was made with the phone's `entropy`), `warnings?` (as `policy.get`'s) |
+| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time`, `atMs?` (the guardian's clock in milliseconds when it answered, see "Time"), `dailyLimit?: { limitSats, usedSats, availableSats }`, `walletId?`, `hardwareConfirmRequired?`, `watchedWalletId?` (the replaced wallet the guardian watches, if any), `key3Mixed?` (while paired: key 3 was made with the phone's `entropy`), `warnings?` (as `policy.get`'s), `relays?` (the guardian's current relays, section 5 "Changing relays") |
 | `guardian.lock` | `{}` | `state: "locked"` (see "Locking from the phone") |
 | `wallet.sync` | `historyLimit?` (1-500, default 100), `wallet?` (`"replaced"`, `"helper"` or a `WalletId`; default the paired wallet) | `walletId?`, `tipHeight`, `tipHash`, `utxos`, `utxosTruncated`, `balance: { confirmedSats, unconfirmedSats }`, `history`, `historyTruncated`, `nextReceiveIndex`, `nextChangeIndex`, `gapLimit`, `coins?` (`"helper"` only) (see "Chain data", "Silent payments") |
 | `tx.get` | `txid: Hex32`, `witness?: boolean` (default `true`) | `txHex` |
@@ -113,6 +113,7 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `sp.register` | `scanPrivateKey: Hex32`, `spendPublicKey` (compressed), `labels` (1-1000 distinct integers 0..2^32-1, with 0), `birthHeight` | `registered: true`, `birthHeight`, `scannedHeight`, `tipHeight` |
 | `sp.unregister` | `{}` | `unregistered: boolean` |
 | `sp.scan` | `fromHeight?` | `tipHeight`, `birthHeight`, `scanning`, `matches: [{ txid, vout, valueSats, outputKey, tweak, label?, height }]` (at most 500, oldest first), `matchesTruncated` |
+| `relays.ack` | `relays: RelayList` (the relays the phone uses now) | `current: boolean` (they are the guardian's current list, in any order), `relays: RelayList` (the guardian's current list) (paired phone only; see section 5, "Changing relays") |
 
 **Policy** is exactly the four rules the guardian's policy engine enforces, and nothing else:
 
@@ -306,7 +307,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 
 ### Alerts
 
-`params` is `{ type, at, atMs?, message? , ...}` (`at` in unix seconds; `atMs` the same moment in unix milliseconds, sent on every alert, see "Time") with `type` one of the engine's alert kinds (`AlertKind`), plus `guardian_locked`, which the service raises itself:
+`params` is `{ type, at, atMs?, message? , ...}` (`at` in unix seconds; `atMs` the same moment in unix milliseconds, sent on every alert, see "Time") with `type` one of the engine's alert kinds (`AlertKind`), plus `guardian_locked`, `wallet_adopted`, `wallet_retired`, `sp_received` and `relays_changed`, which the service raises itself. The `type` set is closed: a phone drops an alert whose `type` it does not know as malformed (section 4), so a new type reaches only phones that know it, and must never be needed by an older one to keep working:
 
 | `type` | extra members |
 |---|---|
@@ -318,6 +319,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 | `guardian_locked` | `reason?` (`restart`\|`manual`\|`remote`\|`tamper`); `remote` = `guardian.lock` from the phone |
 | `wallet_adopted` | `walletId`, `previousWalletId`, `recoveryId`, `hardwareConfirmRequired` (see "Wallet rotation") |
 | `sp_received` | `txid`, `vout`, `valueSats`, `height`, `label?`: the silent payment scanner found a payment in a new block (see "Silent payments"); `sp.scan` has its tweak |
+| `relays_changed` | `relays` (`RelayList`): the guardian moved to these relays (its web UI). Sent to the paired phone (and phones with recovery access) over the old and the new relays. See section 5, "Changing relays" |
 | `wallet_retired` | `walletId`, `reason` (`retired`\|`recovered`\|`reset`), `successorWalletId?`. Sent to the phone that was paired to the wallet: `retired` after `wallet.retire`; `reset` after the web UI's reset; `recovered` when a recovery swept the wallet and the phone paired to the new wallet is a different one (a lost phone's replacement), or the guardian adopted none (`successorWalletId` is the adopted wallet when there is one). The phone that started the recovery and is adopted gets `wallet_adopted` instead |
 
 Names match the engine (`daily_reminder` was renamed `recovery_reminder`; `daysRemaining` is now `daysLeft`, `executeAfter` is `readyAt`). The engine's `DueAlert` carries `dueAt` and `readyAt` in milliseconds; the service converts both to seconds (`at` and `readyAt`). `daysLeft` is already in days. The engine's due-alert record does not hold `cancelledBy`, the cancel's `contested` flag or the txid; the service reads them from the recovery record (`status().recovery`) when it builds those alerts.
@@ -418,14 +420,26 @@ If no response arrives, the phone MAY re-send the same request: same `id`, same 
 
 A phone that restarts while a request is unanswered can re-send it with the same `id` once it is subscribed again. The relays may then replay the guardian's original answer (it is stored until the wrap's expiration, which is later than the rumor's), which the phone receives before it re-sends; the reference client keeps recent answers that matched no call and resolves a call that re-uses their `id` with them (its replay guard would otherwise drop the fresh answer for that `id` as a duplicate).
 
-For state-changing methods (`guardian.unlock`, `guardian.lock`, `pair`, `policy.update`, `recovery.start`, `recovery.cancel`, `phone.resume`, `hardware.confirm`, `wallet.retire`, `wallet.unwatch`, `singlekey.register`, `sp.register`, `sp.unregister`) the guardian remembers handled ids **across restarts**. A retry of a request it handled before restarting gets `1501 Unavailable` instead of running again, because its cached response was lost. The phone should then check the state (`guardian.status`, `recovery.status`, `policy.get`) and, if needed, send a new request with a new `id`.
+For state-changing methods (`guardian.unlock`, `guardian.lock`, `pair`, `policy.update`, `recovery.start`, `recovery.cancel`, `phone.resume`, `hardware.confirm`, `wallet.retire`, `wallet.unwatch`, `singlekey.register`, `sp.register`, `sp.unregister`) the guardian remembers handled ids **across restarts** (`relays.ack` is not among them: running it twice changes nothing). A retry of a request it handled before restarting gets `1501 Unavailable` instead of running again, because its cached response was lost. The phone should then check the state (`guardian.status`, `recovery.status`, `policy.get`) and, if needed, send a new request with a new `id`.
 
 ## 5. Relays
 
-* The relay list comes from the pairing URI. Both sides use the same list; publish to all, subscribe on all.
+* The relay list comes from the pairing URI (and can change later, below). Both sides use the same list; publish to all, subscribe on all.
 * A relay must accept kind 1059 and honour `#p` filters. Relays that implement NIP-40 will purge wraps at their (randomised, later) wrap expiration; see "Wrap timestamps".
 * PSBT messages are large after two layers of base64 (roughly 1.8x the PSBT's base64 size); choose relays that accept events of a few hundred KB.
 * A hostile relay can drop, delay or replay events. It cannot read or alter them (altered ciphertext fails the MAC; a re-signed wrap fails to decrypt) and replays are caught by section 4.
+
+### Changing relays
+
+The guardian's owner can replace its relay list in the web UI (`PUT /api/relays`, apps/guardian-web/API.md) with the pairing code's rules: 1-8 relays, `wss://` or `ws://` on a local or `.onion` host, normalised, duplicates dropped. The phone, its backups and printed recovery codes all hold the list from pairing, so the change is made so that none of them is cut off:
+
+1. **The guardian moves at once and keeps the old relays.** From the change it subscribes and publishes on the new relays *and* the removed ones ("retiring"), for a **grace period of 30 days**. It publishes everything (answers, alerts) on all of them: a phone that has not switched listens only on the old relays, so an answer sent only to the new ones would never reach it. Pairing and recovery codes carry the new list. After the grace period it drops the old relays (at most 16 retiring relays are kept; over many changes, those that end first go first).
+2. **It tells the phone.** The paired phone (and phones with recovery access) get a `relays_changed` alert with the new list, over old and new relays. `guardian.status` carries the current list as `relays`, so a phone that missed the alert (offline longer than the relays keep it) catches up at its next status read.
+3. **The phone checks, then moves only to relays that work.** It takes a list only from its paired guardian (the alert or answer arrived on the connection to that guardian, whose key section 4 checked) and only if it passes the pairing code's relay rules, so nobody else can move it. It then connects on the new relays alone and sends **`relays.ack`** `{ relays }` there (a phone that is only recovering sends `guardian.status` instead). Only when the guardian answers over the new relays does the phone store the list (its next backup carries it) and move its connection; requests already sent on the old connection are answered there. No answer: it stays on the relays it has, which the guardian still watches, and tries again at the next alert or status read (the reference wallet at most every 5 minutes for the same list). A relay that is down or mistyped therefore never cuts the phone off: the owner sees in the web UI that the phone has not confirmed, and fixes the list.
+4. **`relays.ack`** (paired phone only; anyone else is dropped unanswered) answers `current` (the list is the guardian's current one, in any order) and the current `relays`. With `current: true` the guardian records the confirmation once (the web UI and the activity log show it). With `current: false` the guardian moved again meanwhile; the phone follows `relays` the same way. The ack does **not** end the grace period: it proves the phone moved, not that a backup restored later (same nostr key, old list) or a recovery code printed before the change did.
+5. **After the grace period** a phone, backup or recovery code that still knows only the old relays no longer reaches the guardian: the phone has to be paired again, or recover with a recovery code from the web UI.
+
+**Versions.** Phones from before relay changes drop `relays_changed` as malformed (an unknown alert `type`, section 4) and ignore `guardian.status.relays` (result members are lenient): they keep working over the old relays for the grace period, and only lose the guardian after it unless updated. Guardians from before never send the alert or the member, so a phone never sends them `relays.ack`; if one did, they answer `-32601` (MethodNotFound) to the paired phone, which the phone takes as an answer.
 
 ## 6. Pairing
 
@@ -461,5 +475,6 @@ It carries **no secret and no expiry**: the npub and relays are not secret, and 
 ## 7. Compatibility notes
 
 * Add new methods or optional result members freely; never change the meaning of an existing error code or field. A breaking envelope change bumps the `trikey` tag value.
+* A new alert `type` is dropped by phones that do not know it (the alert schema is a closed union, and a malformed message is dropped silently, section 4), and a new method is answered `-32601` by guardians that do not know it. So a new alert may only add something an older phone can do without (`relays_changed`: an older phone keeps the old relays for the grace period), and a phone sends a new method only to a guardian that showed it knows it.
 * Hardware approvals are an `approval` object with a `kind`. Only `bip137` exists. If the project settles on a PSBT-based approval (see DESIGN.md, open question 1), it will be a new `kind`, not a change to `bip137`.
 * The policy is deliberately closed: a new rule means a new engine rule first, then a new `Policy` member and a new `policyHash` input (which changes every hash, so it needs a protocol version bump).

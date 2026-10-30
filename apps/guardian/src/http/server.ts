@@ -28,12 +28,12 @@ import { extname, join, normalize, sep } from 'node:path';
 import { errorText, type Logger } from '../log.js';
 import { SESSION_COOKIE, parseCookies, type WebSessions } from './sessions.js';
 
-export type Method = 'GET' | 'POST' | 'DELETE';
+export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 export interface RouteContext {
   params: Record<string, string>;
   query: URLSearchParams;
-  /** Parsed JSON body (POST/DELETE), or undefined. */
+  /** Parsed JSON body (POST/PUT/DELETE), or undefined. */
   body: unknown;
   /** The request's web session (always `authenticated` when the server has no `sessions`). */
   session: { authenticated: boolean; token?: string; secure: boolean };
