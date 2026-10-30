@@ -87,6 +87,7 @@ export default function SettingsScreen() {
       <SectionLabel>About</SectionLabel>
       <ListGroup>
         <SettingsRow title="Trikey" value={`${Constants.expoConfig?.version ?? ''} · pre-alpha`} />
+        <SettingsRow title="Report a problem" subtitle="Opens a public GitHub issue" onPress={() => router.push('/settings/report')} />
       </ListGroup>
     </Screen>
   );
