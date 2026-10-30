@@ -87,9 +87,13 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
-# Production node_modules, then the workspace manifests and sources that the
-# service imports at runtime. Only the built web UI is taken from the build stage.
-COPY --from=prod /app/node_modules ./node_modules
+# The whole production install, then the sources that the service imports at
+# runtime. Only the built web UI is taken from the build stage. "Whole" matters:
+# npm puts a package inside a workspace (packages/protocol/node_modules/zod) when
+# the root already holds another major version of it (the app's dependencies pull
+# in zod 3; the protocol needs zod 4), and copying only /app/node_modules dropped
+# it, so the guardian could not start.
+COPY --from=prod /app ./
 # tsx and the esbuild it runs on, from the full install: both come from the
 # lockfile, and @esbuild holds the binary for this platform.
 COPY --from=deps /app/node_modules/tsx ./node_modules/tsx

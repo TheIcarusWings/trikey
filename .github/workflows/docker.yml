@@ -107,3 +107,41 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           # Also as an annotation, which the checks API returns (the summary is only on the web page).
           echo "::notice title=Published image::${IMAGE}@${DIGEST}"
+
+  # Builds the image for this machine and starts it: the guardian must come up and answer /api/status.
+  # Building alone does not show that every module the service imports is in the image (0.1.0-alpha and
+  # 0.1.1-alpha shipped without the protocol's zod and could not start).
+  smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build (linux/amd64, loaded locally)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packaging/docker/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: trikey-guardian:smoke
+
+      - name: Start it and wait for /api/status
+        run: |
+          docker run -d --name guardian -p 127.0.0.1:3000:3000 -e BITCOIN_NETWORK=regtest trikey-guardian:smoke
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/api/status > /tmp/status.json; then
+              echo "The guardian answered after ${i} s:"; cat /tmp/status.json; echo
+              docker logs guardian 2>&1 | tail -n 20
+              exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' guardian)" != "true" ]; then break; fi
+            sleep 1
+          done
+          echo "::error title=Image smoke test::the guardian did not answer /api/status"
+          docker logs guardian 2>&1 | tail -n 60 | while IFS= read -r line; do echo "::error title=guardian log::${line}"; done
+          exit 1
