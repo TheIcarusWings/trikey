@@ -138,6 +138,16 @@ Guardian log lines have one event per line and carry no keys or request bodies, 
 - **The guardian exits at once, and the log says "/data is not writable by this process (uid 1000; the folder belongs to uid 0)".**
   Its data folder was created by Docker as root. From 0.1.1-alpha the store ships the data folder, so a new install is fine.
   On an older install, uninstall the app and install it again. (That deletes the guardian's data, so do it before you have a wallet on it.)
+- **The guardian exits at once with "Cannot find package 'zod'".** The 0.1.0-alpha and 0.1.1-alpha images left a dependency out
+  and cannot start at all. Refresh the store and install 0.1.2-alpha or later.
+- **A 502 right after setup, and the log ends with "Maximum call stack size exceeded" (nostr-tools `pool.js`).** One nostr relay
+  could not be reached, and up to 0.1.2-alpha that took the whole guardian down. Fixed in 0.1.3-alpha: update from the store.
+- **A 502 that stays after the guardian crashed.** Up to 0.1.3-alpha a crash ended with exit code 0, which Umbrel's
+  `restart: on-failure` takes for a deliberate stop, so the app stayed down. Restart it from the Umbrel home screen (right-click or
+  long-press the app). Later versions exit with 1 after a crash, so Umbrel restarts them by itself.
+- **"No relay is connected" on the guardian's Home.** The Umbrel cannot reach any of the chosen relays, so the phone cannot reach the
+  guardian either. Check the box's internet connection (a relay that is down only matters if all of them are). The relays are
+  chosen at setup and cannot be changed afterwards in this build; note which ones you picked in the bug report.
 
 **From source (developers).** To test a commit that is not released, build the image on the box and install a copy of the app that
 uses it. This follows `packaging/README.md`. I have not run it on a real Umbrel, so treat each step as "check, then continue".
