@@ -1,6 +1,8 @@
 /**
- * Rate limit for unlock attempts, shared by the web UI (`POST /api/unlock`)
- * and the protocol (`guardian.unlock`), persisted so a restart does not reset it.
+ * Rate limit for passphrase attempts, persisted so a restart does not reset it.
+ * The guardian keeps one per entry point (the web UI's unlock, the phone's
+ * `guardian.unlock`, the web UI's reset, web sessions): a stolen phone guessing
+ * away must never delay the owner at the box.
  *
  * The first `freeAttempts` failures cost nothing; after that each attempt has
  * to wait `baseDelayMs * 2^(failures - freeAttempts)`, capped at `maxDelayMs`,

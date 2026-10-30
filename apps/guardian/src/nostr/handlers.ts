@@ -175,6 +175,22 @@ async function replacementRefusal(g: Guardian, paired: MultisigWallet, txHex: st
   return undefined;
 }
 
+/**
+ * An engine call that may refuse (`sign`, `recovery.start`, `recovery.update`): once `sender` had too many
+ * refusals in the window it gets `RateLimited` without reaching the engine (no log entry, no state).
+ * Only refusals count.
+ */
+async function refusable<T extends { ok: boolean }>(g: Guardian, sender: string, fn: () => Promise<T>): Promise<T> {
+  const gate = g.refusalLimiter.blocked(sender, g.clock.now());
+  if (!gate.ok) {
+    g.log.warn('rpc.refusals_rate_limited');
+    throw new RpcError(ErrorCode.RateLimited, 'Too many refused requests; wait and try again.', { retryAfterSeconds: Math.ceil(gate.retryAfterMs / 1000) });
+  }
+  const res = await fn();
+  if (!res.ok) g.refusalLimiter.take(sender, g.clock.now());
+  return res;
+}
+
 /** Chain failures as protocol errors: unknown tx 1600, node refusal 1601, no chain data 1501. */
 async function chainCall<T>(g: Guardian, method: string, fn: () => Promise<T>): Promise<T> {
   try {
@@ -208,6 +224,7 @@ const STATE_CHANGING: MethodName[] = [
   'pair',
   'policy.update',
   'recovery.start',
+  'recovery.update',
   'recovery.cancel',
   'phone.resume',
   'hardware.confirm',
@@ -229,6 +246,12 @@ function runOnceAcrossRestarts(g: Guardian, handlers: Handlers): Handlers {
     const h = handlers[m] as ((p: unknown, ctx: HandlerContext) => unknown) | undefined;
     if (!h) continue;
     out[m] = async (params: unknown, ctx: HandlerContext) => {
+      // Anyone may send `pair` during a pairing window: a wrong secret costs no disk write (it is
+      // refused here, before the request is recorded; it still counts against the session).
+      if (m === 'pair') {
+        const check = g.pairing.check(String((params as { pairingSecret?: unknown })?.pairingSecret ?? ''), ctx.sender, g.clock.now());
+        if (!check.ok) throw new RpcError(ErrorCode.PairingRejected, PAIRING_REJECTIONS[check.reason]);
+      }
       const fresh = await g.service.rememberRequest(`${ctx.sender}:${ctx.id}`, ctx.createdAt * 1000 + REMEMBER_MS, g.clock.now());
       if (!fresh) {
         g.log.warn('rpc.replay_after_restart', { method: m });
@@ -255,6 +278,7 @@ export function buildHandlers(g: Guardian): Handlers {
         time: stamp.at,
         atMs: stamp.atMs,
         ...(g.engine.watchedWallet() ? { watchedWalletId: g.engine.watchedWallet()!.walletId } : {}),
+        ...(s.warnings.length ? { warnings: s.warnings } : {}),
         ...(s.walletId ? { walletId: s.walletId, hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
         ...(s.registered ? { key3Mixed: !!g.engine.registration()?.key3Mix } : {}),
         ...(s.dailyLimit
@@ -278,6 +302,8 @@ export function buildHandlers(g: Guardian): Handlers {
         throw new RpcError(ErrorCode.RateLimited, 'Too many unlock attempts; wait and try again.', { retryAfterSeconds: r.retryAfterSeconds });
       if (r.code === 'bad_passphrase')
         throw new RpcError(ErrorCode.UnlockFailed, 'Wrong passphrase.', r.retryAfterSeconds ? { retryAfterSeconds: r.retryAfterSeconds } : undefined);
+      // The phone may not unlock right now (too many failures in a row, or a recovery it did not start): the web UI can.
+      if (r.code === 'phone_unlock_disabled' || r.code === 'recovery_pending') throw new RpcError(ErrorCode.UnlockFailed, r.message, { reason: r.code });
       throw new RpcError(ErrorCode.Unavailable, 'message' in r ? r.message : undefined);
     },
 
@@ -373,8 +399,8 @@ export function buildHandlers(g: Guardian): Handlers {
         };
       }),
 
-    sign: async (params) => {
-      const res = await g.engine.cosign(base64.decode(params.psbt));
+    sign: async (params, ctx) => {
+      const res = await refusable(g, ctx.sender, () => g.engine.cosign(base64.decode(params.psbt)));
       if (!res.ok) throw refusalError(res.refusal);
       g.log.info('cosign.signed', { txid: res.txid, outflow: Number(res.outflow), replay: res.replay });
       return { psbt: base64.encode(res.psbt) };
@@ -383,7 +409,12 @@ export function buildHandlers(g: Guardian): Handlers {
     'policy.get': () => {
       const s = g.engine.status();
       if (!s.rules) throw refusalError({ reason: 'not_registered' });
-      return { policy: policyToWire(s.rules), nextHardwareSequence: s.nextHardwareSequence, policyHash: policyHash(s.rules) };
+      return {
+        policy: policyToWire(s.rules),
+        nextHardwareSequence: s.nextHardwareSequence,
+        policyHash: policyHash(s.rules),
+        ...(s.warnings.length ? { warnings: s.warnings } : {}),
+      };
     },
 
     'policy.update': async (params) => {
@@ -401,10 +432,20 @@ export function buildHandlers(g: Guardian): Handlers {
     'recovery.start': (params, ctx) =>
       g.recoveryMutex.run(async () => {
         // The sender becomes the new wallet's paired phone if the guardian adopts it after the sweep.
-        const res = await g.engine.startRecovery({ psbt: base64.decode(params.sweepPsbt), destinationDescriptor: params.newDescriptor, initiator: ctx.sender });
+        const res = await refusable(g, ctx.sender, () => g.engine.startRecovery({ psbt: base64.decode(params.sweepPsbt), destinationDescriptor: params.newDescriptor, initiator: ctx.sender }));
         if (!res.ok) throw refusalError(res.refusal);
         g.log.info('recovery.started', { recoveryId: res.recovery.id, survivingRole: res.recovery.survivingRole });
         void g.alerts.run();
+        return { recovery: recoveryToWire(res.recovery, g.clock.now()) };
+      }),
+
+    'recovery.update': (params, ctx) =>
+      g.recoveryMutex.run(async () => {
+        const rec = runningRecovery(g, params.recoveryId);
+        const res = await refusable(g, ctx.sender, () => g.engine.updateRecovery({ recoveryId: rec.id, psbt: base64.decode(params.sweepPsbt) }));
+        if (!res.ok) throw refusalError(res.refusal);
+        g.log.info('recovery.updated', { recoveryId: rec.id, addedInputs: res.addedInputs });
+        void g.tick();
         return { recovery: recoveryToWire(res.recovery, g.clock.now()) };
       }),
 
@@ -432,7 +473,14 @@ export function buildHandlers(g: Guardian): Handlers {
       chainCall(g, 'wallet.sync', async () => {
         if (params.wallet === 'helper') return helperSync(params.historyLimit);
         const { wallet, walletId } = syncTarget(g, params.wallet);
-        const r = await g.chain.walletSync(wallet, { historyLimit: params.historyLimit ?? DEFAULT_SYNC_HISTORY, maxUtxos: MAX_SYNC_UTXOS });
+        // The paired wallet's scan reaches its high-water marks, and raises them to what it finds.
+        const paired = walletId === g.engine.registration()?.walletId;
+        const r = await g.chain.walletSync(wallet, {
+          historyLimit: params.historyLimit ?? DEFAULT_SYNC_HISTORY,
+          maxUtxos: MAX_SYNC_UTXOS,
+          ...(paired ? { minIndex: g.scanFloor(walletId) } : {}),
+        });
+        if (paired) await g.noteScan(walletId, r);
         return {
           walletId,
           tipHeight: r.tipHeight,
@@ -485,7 +533,7 @@ export function buildHandlers(g: Guardian): Handlers {
         // Not an open relay: only a spend of this wallet's coins, a sweep of the phone's single-key coins
         // (silent payments, the helper coin) into it, or a sweep of the watched (replaced) wallet into it.
         let via = 'wallet';
-        if (!(await g.chain.spendsWalletCoin(wallet, params.txHex))) {
+        if (!(await g.chain.spendsWalletCoin(wallet, params.txHex, { minIndex: g.scanFloor(g.engine.registration()!.walletId) }))) {
           const single = await singleKeyRefusal(g, wallet, params.txHex);
           const refusal = single === 'not_applicable' ? await replacementRefusal(g, wallet, params.txHex) : single;
           if (refusal) {

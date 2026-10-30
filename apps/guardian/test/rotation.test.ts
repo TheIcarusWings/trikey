@@ -13,6 +13,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MultisigWallet, RECEIVE, buildSweep } from '@trikey/core';
 import {
+  ClockChain,
   JsonFileStore,
   ManualClock,
   MemoryStore,
@@ -31,6 +32,7 @@ import {
 import {
   APP_NOSTR,
   AUTH_PATH,
+  LEGACY_AUTH_PATH,
   CONTACT_A,
   COSIGNER_PRIV,
   Ctx,
@@ -129,7 +131,7 @@ describe('state migration from the single-wallet format', () => {
     const path = join(dir, 'guardian-state.json');
     await writeFile(path, text);
     const clock = new ManualClock(T0);
-    const engine = await PolicyEngine.open({ store: new JsonFileStore(path), clock, signer: new SoftwareCosignerSigner(COSIGNER_PRIV) });
+    const engine = await PolicyEngine.open({ store: new JsonFileStore(path), clock, signer: new SoftwareCosignerSigner(COSIGNER_PRIV), chain: new ClockChain(clock) });
     expect(engine.status()).toMatchObject({ registered: true, walletId, nextHardwareSequence: 5, hardwareConfirmRequired: false, retiredWallets: 0 });
     expect(engine.status().dailyLimit!.used).toBe(30_000n);
 
@@ -258,7 +260,7 @@ describe('adopting the destination wallet after a recovery', () => {
   it('lost hardware wallet: derives the new device key at the same relative path, and the phone stays paired', async () => {
     const clock = new ManualClock(T0);
     const store = new MemoryStore();
-    const engine = await PolicyEngine.open({ store, clock, signer: new SoftwareCosignerSigner(COSIGNER_PRIV) });
+    const engine = await PolicyEngine.open({ store, clock, signer: new SoftwareCosignerSigner(COSIGNER_PRIV), chain: new ClockChain(clock) });
     const wallet = await makeWallet();
     const walletId = wallet.fingerprint();
     // The wallet package's fixed path: the hardware account, then /0/0.
@@ -291,8 +293,15 @@ describe('adopting the destination wallet after a recovery', () => {
     expect(res).toMatchObject({ ok: true, changed: true });
   });
 
-  it('lost hardware wallet with a key path the guardian cannot derive: the phone supplies the new key with its proof', async () => {
-    const ctx = await setup(); // AUTH_PATH is not below the hardware account
+  it('lost hardware wallet with a (legacy) key path the guardian cannot derive: the phone supplies the new key with its proof', async () => {
+    // Guardians before the 2026-10 review accepted an authorization key anywhere; such a pairing may
+    // still be on disk. New pairings must use a key below the hardware account (security/repair-retired).
+    const store = new MemoryStore();
+    const first = await setup({ store });
+    const saved = (await store.load())!;
+    saved.active!.registration.hardwareAuth = { kind: 'bip137', pubkey: hwAuthPubkey(LEGACY_AUTH_PATH), path: LEGACY_AUTH_PATH };
+    await store.save(saved);
+    const ctx: Ctx = { ...first, engine: await PolicyEngine.open({ store, clock: first.clock, signer: first.signer, chain: new ClockChain(first.clock) }) };
     const dest = await makeWallet({ hardware: MNEMONICS.hardware2 });
     const id = await recoverTo(ctx, 'app', dest, { initiator: APP_NOSTR });
     const rot = await ctx.engine.rotateAfterSweep(id);
@@ -302,6 +311,10 @@ describe('adopting the destination wallet after a recovery', () => {
       ok: false,
       refusal: { reason: 'hardware_auth_unconfirmed' },
     });
+    // The new device's key must be below its account now.
+    const legacy = { kind: 'bip137' as const, pubkey: hwAuthPubkey(LEGACY_AUTH_PATH, MNEMONICS.hardware2), path: LEGACY_AUTH_PATH };
+    const legacyProof = signMessage(pairingMessage(dest.fingerprint(), cosignerPub()), hwAuthPrivateKey(LEGACY_AUTH_PATH, MNEMONICS.hardware2));
+    expect(await ctx.engine.confirmHardwareAuth({ hardwareAuth: legacy, proof: legacyProof })).toMatchObject({ ok: false, refusal: { reason: 'invalid_registration' } });
     const key = { kind: 'bip137' as const, pubkey: hwAuthPubkey(AUTH_PATH, MNEMONICS.hardware2), path: AUTH_PATH };
     const proof = signMessage(pairingMessage(dest.fingerprint(), cosignerPub()), hwAuthPrivateKey(AUTH_PATH, MNEMONICS.hardware2));
     expect(await ctx.engine.confirmHardwareAuth({ hardwareAuth: key, proof })).toMatchObject({ ok: true });
@@ -433,7 +446,10 @@ describe('retired wallets refuse everything', () => {
     expect(started.ok).toBe(true);
     expect(await engine.retireWallet(approve(ctx, { action: 'retire-wallet' }, 2))).toMatchObject({ ok: false, refusal: { reason: 'recovery_in_progress' } });
     expect(engine.status()).toMatchObject({ registered: true, nextHardwareSequence: 2 });
-    expect(engine.activity({ limit: 10 }).filter((e) => e.type === 'wallet_retire_refused')).toHaveLength(5);
+    // The first two are the same refusal: one entry counted twice (security/refusal-flood).
+    const retireRefusals = engine.activity({ limit: 10 }).filter((e) => e.type === 'wallet_retire_refused');
+    expect(retireRefusals.reduce((n, e) => n + (e.count ?? 1), 0)).toBe(5);
+    expect(retireRefusals).toHaveLength(4);
   });
 
   it('retiring revokes recovery access grants', async () => {

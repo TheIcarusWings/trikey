@@ -135,8 +135,11 @@ export const HardwareApproval = z.strictObject({
 
 export const RecoveryState = z.enum(['pending', 'ready', 'cancelled', 'completed']);
 
-/** Who cancelled a recovery: the paired phone, an alert contact, or the hardware wallet (signed approval). */
-export const CancelledBy = z.enum(['app', 'contact', 'hardware']);
+/**
+ * Who cancelled a recovery: the paired phone, an alert contact, or the hardware wallet (signed approval);
+ * `superseded`: the guardian closed it when another, completed recovery of the same wallet swept it.
+ */
+export const CancelledBy = z.enum(['app', 'contact', 'hardware', 'superseded']);
 
 /** The key that signed the sweep, and so survives the recovery. */
 export const SurvivingRole = z.enum(['app', 'hardware']);
@@ -266,6 +269,12 @@ export const SignResult = z.object({
   psbt: PsbtBase64,
 });
 
+/**
+ * `no_alert_contacts`: no alert contact, so a recovery's alerts go to the paired phone only, which a
+ * thief may hold. Mainnet guardians refuse such a policy; test networks allow it with this warning.
+ */
+export const PolicyWarning = z.enum(['no_alert_contacts']);
+
 export const PolicyGetParams = z.strictObject({});
 export const PolicyGetResult = z.object({
   policy: Policy,
@@ -273,6 +282,8 @@ export const PolicyGetResult = z.object({
   nextHardwareSequence: z.int().min(1),
   /** sha256 of the canonical JSON of `policy` (hex). */
   policyHash: Hex32,
+  /** Weak spots of the policy the phone should show (`PolicyWarning`). Absent when there are none. */
+  warnings: z.array(PolicyWarning).max(8).optional(),
 });
 
 export const PolicyUpdateParams = z.strictObject({
@@ -297,6 +308,18 @@ export const RecoveryStartParams = z.strictObject({
   newDescriptor: Descriptor,
 });
 export const RecoveryStartResult = z.object({ recovery: Recovery });
+
+/**
+ * Replaces the running recovery's sweep with one that also spends coins that arrived after the start,
+ * WITHOUT restarting the delay. The guardian accepts it only if it pays the same destination, is signed
+ * on every input by the same surviving key alone, spends every input of the current sweep (and only
+ * the wallet's coins), and keeps the fee within the cap; it re-checks everything at completion.
+ */
+export const RecoveryUpdateParams = z.strictObject({
+  recoveryId: RecoveryId,
+  sweepPsbt: PsbtBase64,
+});
+export const RecoveryUpdateResult = z.object({ recovery: Recovery });
 
 export const RecoveryCancelParams = z.strictObject({
   recoveryId: RecoveryId,
@@ -411,6 +434,8 @@ export const GuardianStatusResult = z
      * sweep of that wallet's coins into the paired wallet.
      */
     watchedWalletId: WalletId.optional(),
+    /** As `policy.get`'s: weak spots of the paired wallet's policy. Absent when there are none. */
+    warnings: z.array(PolicyWarning).max(8).optional(),
   })
   .refine((r) => sameMoment(r.time, r.atMs), { message: SAME_MOMENT, path: ['atMs'] });
 
@@ -735,6 +760,7 @@ export const methods = {
   'policy.get': { params: PolicyGetParams, result: PolicyGetResult },
   'policy.update': { params: PolicyUpdateParams, result: PolicyUpdateResult },
   'recovery.start': { params: RecoveryStartParams, result: RecoveryStartResult },
+  'recovery.update': { params: RecoveryUpdateParams, result: RecoveryUpdateResult },
   'recovery.cancel': { params: RecoveryCancelParams, result: RecoveryCancelResult },
   'recovery.status': { params: RecoveryStatusParams, result: RecoveryStatusResult },
   'phone.resume': { params: PhoneResumeParams, result: PhoneResumeResult },
@@ -879,6 +905,7 @@ export const RequestSchema = z.discriminatedUnion('method', [
   requestOf('policy.get', PolicyGetParams),
   requestOf('policy.update', PolicyUpdateParams),
   requestOf('recovery.start', RecoveryStartParams),
+  requestOf('recovery.update', RecoveryUpdateParams),
   requestOf('recovery.cancel', RecoveryCancelParams),
   requestOf('recovery.status', RecoveryStatusParams),
   requestOf('phone.resume', PhoneResumeParams),
@@ -942,6 +969,7 @@ export function isErrorResponse(m: Response): m is z.infer<typeof ResponseErr> {
 
 export type KeyOrigin = z.infer<typeof KeyOrigin>;
 export type Policy = z.infer<typeof Policy>;
+export type PolicyWarning = z.infer<typeof PolicyWarning>;
 export type HardwareApproval = z.infer<typeof HardwareApproval>;
 export type HardwareAuthKey = z.infer<typeof HardwareAuthKey>;
 export type Recovery = z.infer<typeof Recovery>;

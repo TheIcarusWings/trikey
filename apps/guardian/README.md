@@ -8,13 +8,14 @@ root for the why, `packages/protocol/PROTOCOL.md` for the wire protocol and
 
 ## Do not expose it
 
-The guardian has no user authentication of its own. Its HTTP port must only be
-reachable through the platform's authenticating proxy (Umbrel's `app_proxy`,
-Start9's interface). Anyone who can reach the port directly can lock the guardian,
-create pairing codes and read its activity log (resetting it also needs the
-unlock passphrase), and a DNS-rebinding page in the
-user's browser would pass its same-origin checks. Do not publish the port on the
-LAN or the internet.
+Keep the HTTP port behind the platform's authenticating proxy (Umbrel's
+`app_proxy`, Start9's interface), and do not publish it on the LAN or the
+internet: a DNS-rebinding page in the user's browser would pass its same-origin
+checks. The web API also has sessions of its own (since the 2026-10 security
+review, because other apps' containers on the box can likely reach the port
+directly): every endpoint but the reduced `GET /api/status` and first-run setup
+needs a session, which only the unlock passphrase opens (`POST /api/session`;
+`apps/guardian-web/API.md`).
 
 Network use: outbound `wss://` to the nostr relays chosen at setup (and alert
 contacts' NIP-17 inbox relays, `wss://` only), TCP to Electrs and optionally HTTP to
@@ -53,7 +54,8 @@ All files in `TRIKEY_DATA_DIR` are mode 0600 and written atomically.
 | `nostr-identity.json` | The guardian's nostr key, **unencrypted** so a locked guardian can still answer the phone and send alerts (trade-off in `src/identity.ts`). |
 | `guardian-state.json` | The policy engine, format version 2: the active wallet (registration, rules, limit accounting, recovery access grants), retired wallets, recoveries, activity. A version-1 file (one wallet) is migrated when it is loaded and written back as version 2. |
 | `service.json` | Relays, the paired phone's name, co-signed sweeps and their broadcast state, the service log, recently handled request ids. (Recovery access grants used to live here; they are moved into the engine on start.) |
-| `unlock-throttle.json` | Failed unlock attempts (exponential backoff after 3, up to 1 hour). |
+| `unlock-throttle.json` | Failed web unlock attempts (exponential backoff after 3, up to 1 hour). |
+| `unlock-throttle-phone.json`, `reset-throttle.json`, `session-throttle.json` | The same for the phone's `guardian.unlock` (which also stops after 5 failures in a row until a web unlock), the web UI's reset and its sign-in: each entry point has its own count, so none can starve another. |
 | `silent-payments.json` | The silent payment scanner: the paired phone's registration (B_spend, labels, birth height, the scan key **encrypted**), the last scanned blocks' hashes (for reorgs) and the matches. No spending key. |
 | `silent-payments-key.json` | The random key the scan key is encrypted under, **not** under the passphrase, so scanning goes on while the guardian is locked (the scan key finds payments, it cannot spend them; see `src/silent/service.ts`). |
 
@@ -71,9 +73,14 @@ After every start the guardian is locked: key 3 is decrypted only by an unlock
 - **The hardware authorization key** (the single-sig key that signs the
   pairing proof and every approval with BIP 137) is the hardware wallet's key
   at `m/48'/<coin>'/0'/2'/0/0`, below its multisig account by non-hardened
-  steps. For any such path the guardian checks at pairing that the key
-  derives from the hardware xpub in the descriptor. A new phone without a
-  backup must find the same key again, so the path is fixed, not chosen.
+  steps. The guardian requires such a path (anything else is refused at
+  pairing and at `hardware.confirm`) and checks that the key derives from the
+  hardware xpub in the descriptor. A new phone without a backup must find the
+  same key again, so the path is fixed, not chosen. High-S BIP 137 signatures
+  are refused.
+- **Rules**: on mainnet at least one alert contact is required (pairing, and
+  every `policy.update`); test networks allow none and `policy.get` /
+  `guardian.status` then carry `warnings: ["no_alert_contacts"]`.
 - **Chain data** comes from the guardian, never from public servers:
   `wallet.sync`, `tx.get`, `tx.broadcast` and `fees.estimate` work while the
   guardian is locked, for the paired phone only. `tx.broadcast` relays only
@@ -83,12 +90,29 @@ After every start the guardian is locked: key 3 is decrypted only by an unlock
 - **Co-signing** (`sign`) needs `nonWitnessUtxo` on every input, the phone's
   signature alone, and an unlocked guardian; the daily limit counts outflow
   plus fee over a rolling 24 h. `guardian.status.dailyLimit` is the count.
+  Change counts as change only up to 20 past the chain's high-water mark (the
+  highest index seen used or co-signed; `wallet.sync` raises it to what it
+  finds), so take change and self-transfer addresses from `wallet.sync`'s
+  `nextChangeIndex` / `nextReceiveIndex`. The guardian refuses to co-sign while
+  its clock is more than 3 h ahead of the chain (`1501`, `clock_ahead_of_chain`).
+  Refused `sign` / `recovery.start` / `recovery.update` are rate limited per
+  sender (30 per 10 minutes, then `RateLimited`).
 - **Recovery without the old phone or a backup**: the new phone's nostr key
   is unknown here, so the hardware wallet vouches for it with a
   `recovery.access` signature over the guardian's and the new phone's nostr
   keys. That phone may then read the wallet and start a recovery for the
   access period (at most 24 h, renewable); every grant appears in the activity
-  log. The sweep must spend every coin and keep the surviving key.
+  log. When the recovery code names the wallet (`wallet=`), or when renewing,
+  sign the version-2 text bound to the wallet id. The sweep must spend every
+  coin and keep the surviving key; `recovery.start` needs the guardian's chain
+  data (`1501` without it). Coins that arrive after the start are added with
+  `recovery.update` (same destination, a superset of the inputs, the delay runs
+  on). The delay ends when the guardian's clock, the chain's median time past
+  and the block count (144 per day, 1 on regtest) all agree.
+- **Unlocking from the phone** (`guardian.unlock`) is refused (`1101` with
+  `data.reason`) after 5 wrong passphrases in a row until the web UI unlocks
+  (`phone_unlock_disabled`), and while a recovery the phone did not start runs
+  (`recovery_pending`). `guardian.lock` always works.
 - **After a restart** a state-changing request the guardian handled before
   can come back as `1501`: re-read the state and send a new request if the
   change is not there.
@@ -124,8 +148,8 @@ After every start the guardian is locked: key 3 is decrypted only by an unlock
   (every output to the vault, fee within the sweep fee cap).
   `test/support/wallet-adapters.ts` is the reference for the wallet's side.
 - **Recovery code**: the web UI's "Recover on a new phone" QR code is
-  `trikey://recover?v=1&npub=...&relay=...&net=...` (`decodeRecoveryUri`),
-  no secret; it gives a new phone the npub and relays for `recovery.access`.
+  `trikey://recover?v=1&npub=...&relay=...&net=...&wallet=...` (`decodeRecoveryUri`),
+  no secret; it gives a new phone the npub, relays and wallet id for `recovery.access`.
 
 ## Layout
 
@@ -136,8 +160,8 @@ src/
   config.ts           environment
   guardian.ts         the service: lifecycle, setup, lock/unlock, nostr authorization, tick
   keystore.ts         key 3 at rest (Argon2id + XChaCha20-Poly1305), the trikey/key3/v1 mix, KeystoreSigner
-  unlock-throttle.ts  persistent unlock rate limit
-  rate-limit.ts       per-phone sliding-window limit for tx.broadcast
+  unlock-throttle.ts  persistent passphrase rate limits (web unlock, phone unlock, reset, sign-in)
+  rate-limit.ts       per-sender sliding-window limits (tx.broadcast, refusals)
   identity.ts         the guardian's nostr key
   pairing.ts          one-time pairing sessions
   alerts.ts           Delay & Notify alerts: protocol notifications + NIP-17 DMs
@@ -149,7 +173,7 @@ src/
   chain/              Electrum client, headers, Bitcoin Core RPC, ChainService
   silent/             the silent payment scanner: block scanning (scan.ts), registration, storage, reorgs (service.ts)
   singlekey.ts        the phone's single-key coins: the helper account (P2WPKH derivation, lookup)
-  http/               HTTP server (headers, origin checks, static), API routes
+  http/               HTTP server (headers, origin checks, sessions, static), API routes
   policy/             the policy engine (pure decisions, no I/O)
 ```
 
@@ -162,7 +186,8 @@ covers the chain methods and recovery access; `test/silent-payments.e2e.test.ts`
 runs the real phone wallet (`@trikey/wallet`) against the guardian for silent payments
 (co-signing with the helper coin, the scanner over a fake Bitcoin Core RPC with a
 reorg, sweeps). `test/sp-perf.test.ts` measures the scanner (`SP_PERF_TXS=2000` for a
-full-size block).
+full-size block). `test/security/` holds the regression tests of the 2026-10
+security review, one file per finding (`SECURITY-REVIEW.md` at the repository root).
 
 `test/support/` (exported as `@trikey/guardian/testing`) holds the fake Electrs, the
 fake Bitcoin Core RPC (`FakeBitcoind`, `getblock <hash> 3` with prevouts) and

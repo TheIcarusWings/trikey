@@ -6,6 +6,7 @@ import { RECEIVE, buildSweep } from '@trikey/core';
 import {
   DAY,
   JsonFileStore,
+  ClockChain,
   ManualClock,
   MemoryStore,
   PolicyEngine,
@@ -27,7 +28,7 @@ afterEach(async () => {
 });
 
 const reopen = (store: StateStore, clock: ManualClock, locked = false) =>
-  PolicyEngine.open({ store, clock, signer: locked ? undefined : new SoftwareCosignerSigner(COSIGNER_PRIV) });
+  PolicyEngine.open({ store, clock, signer: locked ? undefined : new SoftwareCosignerSigner(COSIGNER_PRIV), chain: new ClockChain(clock) });
 
 describe('JsonFileStore', () => {
   it('round-trips state with bigints and replaces the file atomically', async () => {
@@ -131,12 +132,17 @@ describe('restart persistence', () => {
     expect(await ctx.engine.cosign(a.psbt)).toMatchObject({ ok: true, replay: false });
   });
 
-  it('caps the activity log', async () => {
+  it('caps the activity log (refusals in their own bucket: security/refusal-flood)', async () => {
     const ctx = await setup({ store: new MemoryStore() });
-    const small = await PolicyEngine.open({ store: ctx.store, clock: ctx.clock, maxActivity: 5 });
-    for (let i = 0; i < 8; i++) await small.cosign(new Uint8Array([i]));
+    const small = await PolicyEngine.open({ store: ctx.store, clock: ctx.clock, maxActivity: 5, maxRefusals: 3, chain: new ClockChain(ctx.clock), signer: ctx.signer });
+    for (let i = 0; i < 8; i++) {
+      const s = await phoneSpend(ctx.wallet, [fund(ctx.wallet, RECEIVE, i, 100_000n)], 5_000n);
+      await small.cosign(s.psbt);
+      await small.cosign(new Uint8Array([i])); // a refusal, each a different one
+    }
     const log = small.activity({ limit: 100 });
-    expect(log).toHaveLength(5);
-    expect(log[0].id).toBeGreaterThan(log[4].id);
+    expect(log.filter((e) => e.type === 'cosign_signed')).toHaveLength(5);
+    expect(log.filter((e) => e.type === 'cosign_refused')).toHaveLength(3);
+    expect(log[0].id).toBeGreaterThan(log[7].id);
   });
 });

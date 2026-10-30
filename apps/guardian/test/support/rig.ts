@@ -130,17 +130,41 @@ export class GuardianRig {
     await this.guardian.chain.electrum!.waitReady(3000);
   }
 
-  /** Calls the web UI's API (`http: true` only), as the browser would: same-origin JSON. */
-  async api(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<{ status: number; body: any }> {
+  /** The web session cookie the rig's "browser" holds (see `api`). */
+  sessionCookie?: string;
+
+  /**
+   * Calls the web UI's API (`http: true` only), as the browser would: same-origin JSON, with the session
+   * cookie. Signed out, it signs in with the passphrase first (`POST /api/session`) when the guardian
+   * answers 401 `unauthenticated`, unless `session: false` (to test the signed-out API).
+   */
+  async api(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown, opts: { session?: boolean } = {}): Promise<{ status: number; body: any }> {
     const addr = this.guardian.httpAddress;
     if (!addr) throw new Error('start the rig with http: true');
-    const res = await fetch(`http://127.0.0.1:${addr.port}/api${path}`, {
-      method,
-      headers: method === 'GET' ? {} : { 'content-type': 'application/json' },
-      body: method === 'GET' ? undefined : JSON.stringify(body ?? {}),
-    });
-    const text = await res.text();
-    return { status: res.status, body: text ? JSON.parse(text) : undefined };
+    const send = async () => {
+      const res = await fetch(`http://127.0.0.1:${addr.port}/api${path}`, {
+        method,
+        headers: { ...(method === 'GET' ? {} : { 'content-type': 'application/json' }), ...(opts.session !== false && this.sessionCookie ? { cookie: this.sessionCookie } : {}) },
+        body: method === 'GET' ? undefined : JSON.stringify(body ?? {}),
+      });
+      const set = res.headers.get('set-cookie');
+      if (set && opts.session !== false) this.sessionCookie = /Max-Age=0/i.test(set) ? undefined : set.split(';')[0];
+      const text = await res.text();
+      return { status: res.status, body: text ? JSON.parse(text) : undefined };
+    };
+    const r = await send();
+    const signedOut = (r.status === 401 && r.body?.error?.code === 'unauthenticated') || (path === '/status' && r.body?.authenticated === false);
+    if (signedOut && opts.session !== false && path !== '/session') {
+      await this.signIn();
+      return send();
+    }
+    return r;
+  }
+
+  /** Signs the rig's "browser" in to the web UI with the passphrase. */
+  async signIn(): Promise<void> {
+    const r = await this.api('POST', '/session', { passphrase: this.passphrase });
+    if (r.status !== 200) throw new Error(`sign-in failed: ${JSON.stringify(r.body)}`);
   }
 
   /** A fresh one-time pairing URI, as the web UI's QR code would show it. */

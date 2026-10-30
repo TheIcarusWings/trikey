@@ -152,10 +152,16 @@ export interface RecoveryPayload {
   network: GuardianNetwork;
   /** Optional name to show in the app. */
   label?: string;
+  /**
+   * The wallet the guardian guards (optional; codes from older guardians lack it). With it, the phone
+   * signs the version-2 `recoveryAccessMessage`, bound to this wallet.
+   */
+  walletId?: string;
 }
 
 function validateRecovery(p: RecoveryPayload): void {
   if (!/^[0-9a-f]{64}$/.test(p.guardianPubkey)) throw new PairingUriError('invalid guardian pubkey');
+  if (p.walletId !== undefined && !/^[0-9a-f]{16}$/.test(p.walletId)) throw new PairingUriError('invalid wallet id');
   if (p.relays.length < 1 || p.relays.length > MAX_PAIRING_RELAYS) throw new PairingUriError(`need 1..${MAX_PAIRING_RELAYS} relays`);
   if (!NETWORKS.includes(p.network)) throw new PairingUriError('invalid network');
   if (p.label !== undefined && (p.label.length < 1 || p.label.length > 64)) throw new PairingUriError('invalid label');
@@ -164,7 +170,7 @@ function validateRecovery(p: RecoveryPayload): void {
 /**
  * Encode a recovery payload. Distinct from the pairing URI (another action, no `secret`, no `exp`):
  *
- *     trikey://recover?v=1&npub=<npub>&relay=<url>[&relay=<url>...]&net=<network>[&label=<text>]
+ *     trikey://recover?v=1&npub=<npub>&relay=<url>[&relay=<url>...]&net=<network>[&label=<text>][&wallet=<walletId>]
  */
 export function encodeRecoveryUri(p: RecoveryPayload): string {
   const relays = [...new Set(p.relays.map(normalizeRelayUrl))];
@@ -175,6 +181,7 @@ export function encodeRecoveryUri(p: RecoveryPayload): string {
   for (const r of relays) q.append('relay', r);
   q.set('net', p.network);
   if (p.label !== undefined) q.set('label', p.label);
+  if (p.walletId !== undefined) q.set('wallet', p.walletId);
   return `${PAIRING_SCHEME}//recover?${q.toString()}`;
 }
 
@@ -217,6 +224,8 @@ export function decodeRecoveryUri(uri: string): RecoveryPayload {
   };
   const label = q.get('label');
   if (label !== null) payload.label = label;
+  const walletId = q.get('wallet');
+  if (walletId !== null) payload.walletId = walletId;
   validateRecovery(payload);
   return payload;
 }

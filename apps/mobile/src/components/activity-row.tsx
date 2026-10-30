@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import type { LucideIcon } from 'lucide-react-native';
 import { Pressable, View } from 'react-native';
-import { ArrowDownLeft, ArrowUpRight, Lock, Shield } from '@/components/icons';
+import { ArrowDownLeft, ArrowUpRight, Lock, Shield, Vault } from '@/components/icons';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import {
@@ -43,7 +43,19 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
   if (item.type === 'payment') {
     const { tx } = item;
     const sent = tx.kind === 'sent' || tx.kind === 'speed_up';
-    const title = tx.kind === 'refill' ? `Refill ${tx.refillIndex ?? ''}`.trim() : tx.kind === 'speed_up' ? 'Speed up' : sent ? 'Sent' : 'Received';
+    const silentIn = tx.kind === 'silent_received';
+    const silentMove = tx.kind === 'silent_sweep';
+    const title = silentIn
+      ? 'Silent payment received'
+      : silentMove
+        ? 'Moved into your vault'
+        : tx.kind === 'refill'
+          ? `Refill ${tx.refillIndex ?? ''}`.trim()
+          : tx.kind === 'speed_up'
+            ? 'Speed up'
+            : sent
+              ? 'Sent'
+              : 'Received';
 
     let subtitle: string;
     let subtitleTone: 'muted' | 'warn' = 'muted';
@@ -57,15 +69,21 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
     } else {
       subtitle = formatShortDate(tx.at);
     }
+    // What kind of silent payment it was, next to when.
+    if (tx.status !== 'pending') {
+      if (silentIn) subtitle = `${subtitle} · ${tx.silentLabel !== undefined ? `label ${tx.silentLabel}` : 'silent payment'}`;
+      else if (silentMove) subtitle = `${subtitle} · from silent payments${tx.feeSats !== undefined ? `, fee ${formatSats(tx.feeSats)}` : ''}`;
+      else if (tx.silentOutputAddress) subtitle = `${subtitle} · silent payment`;
+    }
 
     return {
       title,
       subtitle,
       subtitleTone,
-      amount: `${sent ? MINUS : '+'}${formatAmount(tx.amountSats, ctx.unit)}`,
-      amountTone: sent ? 'default' : 'good',
-      icon: sent ? ArrowUpRight : ArrowDownLeft,
-      iconTone: sent ? 'fill' : 'good',
+      amount: `${sent ? MINUS : silentMove ? '' : '+'}${formatAmount(tx.amountSats, ctx.unit)}`,
+      amountTone: sent || silentMove ? 'default' : 'good',
+      icon: silentMove ? Vault : sent ? ArrowUpRight : ArrowDownLeft,
+      iconTone: sent || silentMove ? 'fill' : 'good',
       href: `/tx/${tx.id}`,
     };
   }

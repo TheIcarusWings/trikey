@@ -6,7 +6,7 @@
  * Who signed a payment, where it went and its note are the wallet's own send log (`snapshot().history`), which the
  * backup carries too. An older app kept them here (`sends`); `takeLegacySends` hands those to the wallet once.
  */
-import type { KeyValueStore, SendLogEntry, WalletHistoryEntry } from '@trikey/wallet';
+import type { KeyValueStore, SendLogEntry, SilentPaymentCoin as WalletSilentCoin, WalletHistoryEntry } from '@trikey/wallet';
 import type { ActivityItem, GuardianHost, IsoDate, SecurityEvent, Transaction, TxSigners } from './types';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -87,23 +87,40 @@ const iso = (ms: number): IsoDate => new Date(ms).toISOString();
  * The wallet's history (the guardian's, with the wallet's send log merged in: recipient, signer, payments the
  * guardian has not listed yet) as the Activity list, plus the security events.
  */
-export function buildActivity(history: WalletHistoryEntry[], log: AppLog, nowMs: number): ActivityItem[] {
+export function buildActivity(history: WalletHistoryEntry[], log: AppLog, nowMs: number, silentReceived: readonly WalletSilentCoin[] = []): ActivityItem[] {
   const items: ActivityItem[] = [];
   for (const h of history) {
     const confirmed = h.confirmations > 0;
     const at = confirmed && h.time ? h.time * 1000 : (h.sentAt ?? log.seen[h.txid] ?? nowMs);
     const sent = h.netSats < 0;
     const fee = h.feeSats;
+    // A received silent payment moved into the vault shows as the move, not as a payment from somebody.
+    const move = h.silentSweep ? silentReceived.find((c) => c.txid === h.silentSweep!.fromTxid && c.vout === h.silentSweep!.fromVout) : undefined;
     const tx: Transaction = {
       id: h.txid,
-      kind: sent ? 'sent' : 'received',
+      kind: h.silentSweep ? 'silent_sweep' : sent ? 'sent' : 'received',
       amountSats: sent ? (h.amountSats ?? Math.max(0, -h.netSats - (fee ?? 0))) : h.netSats,
       ...(sent ? { feeSats: fee } : {}),
+      ...(h.silentSweep && move ? { feeSats: Math.max(0, move.valueSats - h.netSats) } : {}),
       status: confirmed ? 'confirmed' : 'pending',
       at: iso(at),
       ...(sent && h.recipient ? { address: h.recipient } : {}),
       ...(sent && h.signedBy ? { signedBy: h.signedBy === 'guardian' ? ('phone+guardian' as const) : ('phone+hardware' as const) } : {}),
+      ...(sent && h.silentPayment ? { silentOutputAddress: h.silentPayment.outputAddress } : {}),
       txid: h.txid,
+    };
+    items.push({ type: 'payment', at: tx.at, tx });
+  }
+  // What was received to the silent payment address: found by a scan, waiting (or moved).
+  for (const c of silentReceived) {
+    const tx: Transaction = {
+      id: `sp-rx-${c.txid}:${c.vout}`,
+      kind: 'silent_received',
+      amountSats: c.valueSats,
+      status: c.height > 0 ? 'confirmed' : 'pending',
+      at: iso(c.foundAt),
+      txid: c.txid,
+      ...(c.label !== undefined ? { silentLabel: c.label } : {}),
     };
     items.push({ type: 'payment', at: tx.at, tx });
   }

@@ -8,16 +8,19 @@ import type {
   PairingSession,
   RecoveryCode,
   RecoveryInProgress,
+  PublicStatus,
   ResetInput,
   Rules,
   SetupInput,
   SetupPreflight,
+  SignInInput,
   UnlockInput,
 } from './types';
 
 /** Stable error codes the UI reacts to. Anything else is shown as a generic failure. */
 export type ApiErrorCode =
   | 'bad_passphrase'
+  | 'unauthenticated'
   | 'rate_limited'
   | 'locked'
   | 'setup_required'
@@ -53,7 +56,16 @@ export class ApiError extends Error {
  * changes from the phone app (hardware-signed when they loosen a rule).
  */
 export interface GuardianApi {
-  getStatus(): Promise<GuardianStatus>;
+  /** Without a session (after setup) the guardian answers a `PublicStatus` only: sign in first. */
+  getStatus(): Promise<GuardianStatus | PublicStatus>;
+
+  /**
+   * Signs this browser in with the unlock passphrase (an HttpOnly session cookie). With `unlock: true`
+   * a locked guardian is unlocked too. Rejects with `bad_passphrase` or `rate_limited`.
+   */
+  signIn(input: SignInInput): Promise<GuardianStatus>;
+  /** Ends this browser's session. */
+  signOut(): Promise<PublicStatus>;
 
   getSetupPreflight(): Promise<SetupPreflight>;
   /** Creates key 3 and the unlock passphrase. The guardian ends up unlocked. */

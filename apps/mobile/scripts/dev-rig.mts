@@ -1,6 +1,6 @@
 /**
- * A complete fake backend for the app's Regtest simulator, in one process and with no bitcoind: the real Trikey Guardian
- * service, two in-memory nostr relays and a fake Electrs (the rig the guardian's own tests use). Regtest, throwaway keys,
+ * A complete fake backend for the app's Regtest simulator, in one process and with no real bitcoind: the real Trikey Guardian
+ * service, two in-memory nostr relays, a fake Electrs and a fake Bitcoin Core RPC (the rig the guardian's own tests use). Regtest, throwaway keys,
  * everything forgotten when it stops.
  *
  *   npm run dev-rig -w @trikey/mobile
@@ -11,7 +11,10 @@
  *   pairing [2]           a fresh pairing code (trikey://pair?...), valid for 5 minutes; `2`: a second guardian on the
  *                         same chain, started on first use (for Settings > Guardian > Replace guardian)
  *   recovery-code [2]     the guardian's "Recover on a new phone" code (trikey://recover?...)
- *   fund <address> <sats> pay the address (a bcrt1... address from the app's Receive screen); confirmed at once
+ *   fund <address> <sats> pay the address (a bcrt1... address from the app's Receive screen); confirmed at once. Also
+ *                         the helper coin's address (Settings, Silent payments) and a silent payment address's owner
+ *   pay-sp <tsp1...> [sats]  somebody else pays a silent payment address (the one from Receive, "Silent payment");
+ *                         30,000 sats by default; mine a block and the guardian finds it and alerts the app
  *   mine [n]              mine n blocks (default 1): confirms what the app broadcast
  *   lock | unlock         lock the guardian (the app shows "Guardian locked") or unlock it
  *   offline | online      stop the first guardian (its relays and the chain keep running), or start it again
@@ -19,12 +22,19 @@
  *                         answers with the new time (ms). Move the app's clock the same way (a browser test can).
  *   quit
  *
+ * Silent payments: the guardian gets a fake Bitcoin Core RPC (what an Umbrel or Start9 provides) so it can scan for them.
+ * `--no-rpc` leaves it out: the app then shows "Receiving is paused" (the guardian answers 1700).
+ *
  * The relays listen on 127.0.0.1: use it with the web preview or the iOS Simulator. For a phone or an Android emulator, or
  * with a real node, follow docs/dev-regtest.md.
  */
 import { createInterface } from 'node:readline';
 import * as btc from '@scure/btc-signer';
-import { getNetwork } from '@trikey/core';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { hex } from '@scure/base';
+import { TX_OPTS, getNetwork } from '@trikey/core';
+import { createOutputs } from '@trikey/silent-payments';
 import { encodeRecoveryUri } from '@trikey/protocol';
 import { GuardianRig, ManualClock } from '@trikey/guardian/testing';
 
@@ -32,7 +42,8 @@ import { GuardianRig, ManualClock } from '@trikey/guardian/testing';
 let offsetMs = 0;
 const clock = new ManualClock(Date.now());
 setInterval(() => clock.set(Date.now() + offsetMs), 200).unref();
-const rig = await GuardianRig.start({ clock });
+const withRpc = !process.argv.includes('--no-rpc');
+const rig = await GuardianRig.start({ clock, bitcoind: withRpc });
 let second: GuardianRig | undefined;
 
 /** The second guardian shares the first one's Electrs: one Bitcoin network, two boxes. */
@@ -71,9 +82,10 @@ say(
         'Trikey dev rig is running (regtest, throwaway keys).',
         `  relays      ${rig.relayUrls.join('  ')}`,
         `  passphrase  ${rig.passphrase}   (to unlock the guardian in the app)`,
+        `  node RPC    ${withRpc ? 'yes (fake Bitcoin Core): silent payments can be received' : 'no (--no-rpc): receiving silent payments pauses (1700)'}`,
         `  pairing     ${rig.pairingUri()}`,
         '',
-        'Commands: pairing [2] | recovery-code [2] | fund <address> <sats> | mine [n] | lock | unlock | offline | online | skip <days> | quit',
+        'Commands: pairing [2] | recovery-code [2] | fund <address> <sats> | pay-sp <tsp1...> [sats] | mine [n] | lock | unlock | offline | online | skip <days> | quit',
       ].join('\n'),
 );
 
@@ -102,6 +114,25 @@ for await (const line of createInterface({ input: process.stdin })) {
         if (!address || !sats || !/^\d+$/.test(sats)) throw new Error('usage: fund <address> <sats>');
         rig.fund(btc.OutScript.encode(btc.Address(getNetwork('regtest').btc).decode(address)), BigInt(sats));
         say(`ok funded ${address} with ${sats} sats`);
+        break;
+      }
+      case 'pay-sp': {
+        const [to, sats] = args;
+        if (!to || !/^tsp1/i.test(to)) throw new Error('usage: pay-sp <tsp1... address> [sats]');
+        const amount = BigInt(sats && /^\d+$/.test(sats) ? sats : 30_000);
+        // A coin from nowhere, spent to the silent payment address by an outside wallet (its P2WPKH key makes the output).
+        const key = sha256(new TextEncoder().encode(`dev-rig outside payer ${Date.now()} ${Math.random()}`));
+        const script = btc.p2wpkh(secp256k1.getPublicKey(key, true)).script;
+        const coin = rig.fund(script, amount + 5_000n);
+        const out = createOutputs({ inputs: [{ txid: coin.txid, vout: 0, prevoutScript: script, privateKey: key }], recipients: [to], network: 'regtest' });
+        const tx = new btc.Transaction(TX_OPTS);
+        tx.addInput({ txid: coin.txid, index: 0, witnessUtxo: { script, amount: amount + 5_000n } });
+        tx.addOutput({ script: out.outputs[0]!.script, amount });
+        tx.signIdx(key, 0);
+        tx.finalize();
+        const err = rig.electrs.applyTransaction(hex.encode(tx.extract()));
+        if (err) throw new Error(err);
+        say(`ok ${tx.id} paid ${amount} sats to ${to.slice(0, 14)}…; mine a block for the guardian to find it`);
         break;
       }
       case 'mine':

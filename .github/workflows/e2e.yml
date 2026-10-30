@@ -1,0 +1,73 @@
+name: e2e
+
+# End-to-end tests against real Bitcoin infrastructure: a regtest bitcoind and Electrs in Docker, the real guardian
+# service in-process, the real wallet (e2e/README.md). Slower than the unit tests, so it is a workflow of its own.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/guardian/**'
+      - 'packages/**'
+      - 'e2e/**'
+      - 'package-lock.json'
+      - '.github/workflows/e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: regtest bitcoind + Electrs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Typecheck the e2e workspace
+        run: npm run typecheck -w @trikey/e2e
+      # The same tests on the guardian's in-process fakes: catches a mistake in the test code in seconds, before any
+      # container is pulled. Checks that need a real node skip.
+      - name: Dry run on fakes
+        run: npm run test:dry -w @trikey/e2e
+      - name: Start bitcoind and Electrs
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run stack:up -w @trikey/e2e 2>&1 | tee "$RUNNER_TEMP/stack-up.log"
+      - name: End-to-end tests
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:e2e -w @trikey/e2e 2>&1 | tee "$RUNNER_TEMP/e2e.log"
+      - name: Container logs
+        if: failure()
+        run: docker compose -f e2e/docker-compose.yml -p trikey-e2e logs --no-color --timestamps
+      # Also as annotations: they can be read through the checks API where the raw logs can't.
+      - name: Failure summary as annotations
+        if: failure()
+        shell: bash
+        run: |
+          annotate() { # title, file: the last 30 lines as one annotation
+            [ -s "$2" ] || return 0
+            msg=$(tail -n 30 "$2" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+            echo "::error title=$1::$msg"
+          }
+          annotate "stack:up output" "$RUNNER_TEMP/stack-up.log"
+          annotate "e2e test output" "$RUNNER_TEMP/e2e.log"
+          for svc in bitcoind electrs; do
+            docker compose -f e2e/docker-compose.yml -p trikey-e2e logs --no-color "$svc" > "$RUNNER_TEMP/$svc.log" 2>&1 || true
+            annotate "$svc logs" "$RUNNER_TEMP/$svc.log"
+          done
+      - name: Tear down
+        if: always()
+        run: docker compose -f e2e/docker-compose.yml -p trikey-e2e down --volumes --remove-orphans

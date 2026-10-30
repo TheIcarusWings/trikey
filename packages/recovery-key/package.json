@@ -22,6 +22,7 @@
     "@scure/bip39": "^2.4.0",
     "@scure/btc-signer": "^2.4.1",
     "@trikey/core": "*",
+    "@trikey/silent-payments": "*",
     "@trikey/wallet": "*",
     "qr": "0.7.2"
   }

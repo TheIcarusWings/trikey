@@ -6,6 +6,7 @@ import {
   LimitCard,
   RecoveryBanner,
   SendReceiveButtons,
+  SilentPaymentsRow,
 } from '@/components/home';
 import { RecoveryKeyNotices, VaultCard } from '@/components/home-rk';
 import { Footnote, NetworkPill } from '@/components/panels';
@@ -55,6 +56,7 @@ export default function HomeScreen() {
         <BalanceHeader label="Balance" sats={state.balanceSats} />
         <GuardianDownNotice />
         <SendReceiveButtons sendEmphasis={false} />
+        <SilentPaymentsRow />
         <Footnote className={pick('', 'text-xs leading-4')}>
           You can still send any amount by approving on your hardware wallet.
         </Footnote>
@@ -69,6 +71,7 @@ export default function HomeScreen() {
       <BalanceHeader label="Balance" sats={state.balanceSats} />
       <SendReceiveButtons />
       <LimitCard />
+      <SilentPaymentsRow />
       <ActivityPreview limit={3} />
     </Screen>
   );

@@ -10,6 +10,7 @@ import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import { groupAddress, useWallet, useWalletService } from '@/data';
 import { NetworkPill, Notice, networkLabel } from '@/components/panels';
+import { ReceiveKind, SilentReceiveScreen } from '@/components/silent-receive';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -20,7 +21,8 @@ export default function Receive() {
   const { hardware } = state;
   // Recovery Key mode has two kinds of receiving address: the phone's spending balance, and the vault ("Add to vault").
   const rkMode = state.mode === 'recoveryKey';
-  const params = useLocalSearchParams<{ to?: string }>();
+  const params = useLocalSearchParams<{ to?: string; kind?: string }>();
+  const [kind, setKind] = useState<'address' | 'silent'>(params.kind === 'silent' ? 'silent' : 'address');
   const toVault = rkMode && params.to === 'vault';
   const receiveAddress = toVault ? (wallet.rk?.vaultAddress() ?? '') : state.receiveAddress;
   const testNetwork = networkLabel(state.backing, state.network);
@@ -54,6 +56,8 @@ export default function Receive() {
 
   // iOS: filled buttons. Android: outlined, accent-colored labels.
   const variant = pick('secondary', 'outline') as 'secondary' | 'outline';
+  const kindControl = toVault ? null : <ReceiveKind value={kind} onChange={setKind} />;
+  if (kind === 'silent' && !toVault) return <SilentReceiveScreen kindControl={kindControl} />;
 
   return (
     <Screen
@@ -83,6 +87,7 @@ export default function Receive() {
         </Card>
         )
       }>
+      {kindControl}
       {receiveAddress ? (
         <View className="mt-1 items-center gap-4">
           <AddressQr address={receiveAddress} />

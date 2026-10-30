@@ -182,6 +182,9 @@ describe('silent payments through the guardian', { timeout: 60_000 }, () => {
   it('serves the registered helper account: wallet.sync "helper", tx.get, and the wallet\'s helper balance', async () => {
     expect((await rpcError(raw.call('wallet.sync', { wallet: 'helper' }))).code).toBe(ErrorCode.WalletNotWatched);
     await A.enableSilentPayments();
+    // The wallet registers its scan key with the guardian on its own; the scanner tests below drive sp.* by hand,
+    // so start them from "not registered".
+    await raw.call('sp.unregister', {});
     const acct = A.state.helper!.account;
     expect(acct.xpub).toBe(helperAccount.publicExtendedKey);
     expect(await raw.call('singlekey.register', { helper: acct })).toEqual({ helper: true, coins: 0 });
@@ -300,8 +303,7 @@ describe('the silent payment scanner', { timeout: 60_000 }, () => {
   it('refuses sp.register from a sender that is not the paired phone (dropped, as every unauthorized request)', async () => {
     const stranger = client(generateSecretKey(), rig, 1500);
     const e = await rpcError(stranger.call('sp.register', { scanPrivateKey: hex.encode(spKeys.scanPrivateKey), spendPublicKey: hex.encode(spKeys.spendPublicKey), labels: [0], birthHeight: 1 }));
-    expect(e).toBeInstanceOf(RpcTimeoutError);
-    expect(rig.guardian.sp.registered).toBe(false);
+    expect(e).toBeInstanceOf(RpcTimeoutError); // dropped: a stranger can't register (or replace) a scan key
     const e2 = await rpcError(stranger.call('singlekey.register', { coins: [] }));
     expect(e2).toBeInstanceOf(RpcTimeoutError);
   });
@@ -312,7 +314,7 @@ describe('the silent payment scanner', { timeout: 60_000 }, () => {
     const sp = A.state.silentPayments!;
     birth = sp.birthHeight;
     expect(hex.encode(spKeys.spendPublicKey)).toBe(sp.spendPublicKey);
-    expect((await rpcError(raw.call('sp.scan', {}))).code).toBe(ErrorCode.SilentPaymentsNotRegistered);
+    // (No "not registered yet" check here: adding a label makes the wallet re-register by itself.)
     const reg = await raw.call('sp.register', { scanPrivateKey: hex.encode(spKeys.scanPrivateKey), spendPublicKey: sp.spendPublicKey, labels: [0, ...sp.labels], birthHeight: birth });
     expect(reg).toMatchObject({ registered: true, birthHeight: birth, scannedHeight: birth - 1, tipHeight: rig.bitcoind!.height });
     // Bad keys are refused with InvalidParams.
@@ -404,8 +406,9 @@ describe('the silent payment scanner', { timeout: 60_000 }, () => {
     expect(rig.electrs.broadcasts).not.toContain(elsewhere);
 
     // The wallet: the guardian's matches (checked against its spend key), then one sweep per coin.
-    const scanned = await A.scanSilentPayments();
-    expect(scanned.found.map((c) => c.txid).sort()).toEqual(matches.map((x) => x.txid).sort());
+    // The wallet scans on its own when sp_received arrives, so check what it holds, not only this scan's new finds.
+    await A.scanSilentPayments();
+    expect(A.state.silentPayments!.coins.map((c) => c.txid).sort()).toEqual(matches.map((x) => x.txid).sort());
     const balanceBefore = (await A.sync()).balance.totalSats;
     const out = await A.sweepSilentPayments();
     const swept = out.filter((o) => o.status === 'swept');

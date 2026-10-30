@@ -42,6 +42,8 @@ export function mapRkError(e: unknown): WalletServiceError {
         return make('kit_invalid');
       case 'invalid_address':
         return make('invalid_input', "That doesn't look like an address on this network.");
+      case 'silent_payment_from_vault':
+        return make('silent_payment_from_vault');
       case 'amount_too_small':
         return make('invalid_input', "That's too small to send. The smallest payment is 546 sats.");
       case 'insufficient_funds':

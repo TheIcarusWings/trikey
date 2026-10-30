@@ -1,0 +1,111 @@
+/* Shared stage for Trikey social videos. One layout per ratio: html[data-r=916|11|169]. */
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=block');
+
+:root {
+  --ink: #FAFAFA;
+  --muted: #A1A1AA;
+  --dim: #71717A;
+  --ground: #09090B;
+  --raise: #18181B;
+  --line: #27272A;
+  --brand: #FB923C;
+  --good: #4ADE80;
+  --bad: #F87171;
+  --warn: #FBBF24;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--ground); }
+body { font-family: 'Geist', system-ui, sans-serif; color: var(--ink); -webkit-font-smoothing: antialiased; }
+.mono { font-family: 'Geist Mono', ui-monospace, monospace; }
+
+#stage { position: relative; overflow: hidden; background: var(--ground); }
+html[data-r="916"] #stage { width: 1080px; height: 1920px; }
+html[data-r="11"]  #stage { width: 1080px; height: 1080px; }
+html[data-r="169"] #stage { width: 1920px; height: 1080px; }
+
+/* Captions */
+.caps { position: absolute; z-index: 5; }
+.cap { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 0.45em; opacity: 0; }
+.cap .main { font-weight: 600; letter-spacing: -0.025em; line-height: 1.1; text-wrap: balance; }
+.cap .sub { color: var(--muted); font-weight: 400; line-height: 1.3; letter-spacing: -0.005em; text-wrap: pretty; }
+.cap .main em { font-style: normal; color: var(--brand); }
+
+html[data-r="916"] .caps { left: 84px; right: 84px; top: 220px; height: 420px; }
+html[data-r="916"] .cap { justify-content: flex-end; }
+html[data-r="916"] .cap .main { font-size: 72px; }
+html[data-r="916"] .cap .sub { font-size: 38px; }
+
+html[data-r="11"] .caps { inset: 0; }
+html[data-r="11"] .cap { top: 56px; left: 72px; right: 72px; bottom: auto; height: 250px; justify-content: flex-end; }
+/* 1:1 phone beats sit side by side so the screen stays readable. */
+html[data-r="11"] .cap.side { top: 0; bottom: 0; height: auto; left: 64px; right: auto; width: 470px; justify-content: center; }
+html[data-r="11"] .cap.side .main { font-size: 50px; }
+html[data-r="11"] .cap .main { font-size: 54px; }
+html[data-r="11"] .cap .sub { font-size: 30px; }
+
+html[data-r="169"] .caps { left: 130px; width: 740px; top: 120px; bottom: 120px; }
+html[data-r="169"] .cap { justify-content: center; }
+html[data-r="169"] .cap .main { font-size: 76px; }
+html[data-r="169"] .cap .sub { font-size: 36px; }
+
+/* Visual area */
+.vis { position: absolute; z-index: 2; }
+html[data-r="916"] .vis { left: 50px; right: 50px; top: 670px; bottom: 120px; }
+html[data-r="11"]  .vis { inset: 0; }
+html[data-r="11"]  .layer { left: 40px; right: 40px; top: 330px; bottom: 36px; }
+html[data-r="11"]  .layer.side { left: 570px; right: 40px; top: 44px; bottom: 44px; }
+html[data-r="169"] .vis { left: 960px; right: 70px; top: 70px; bottom: 70px; }
+
+.layer { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0; }
+
+/* Phone mockups: the PNG is the 390×844 iOS frame. */
+.phone { position: relative; height: 100%; aspect-ratio: 390 / 844; container-type: size; }
+.phone > img { width: 100%; height: 100%; display: block; border-radius: 11.3% / 5.2%; }
+.phone .ov { position: absolute; }
+
+/* Desktop (guardian web UI) mockups in a plain browser frame */
+.browser { position: relative; width: 100%; border-radius: 18px; overflow: hidden; border: 1px solid var(--line); background: var(--raise); }
+.browser .bar { height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-bottom: 1px solid var(--line); }
+.browser .bar i { width: 11px; height: 11px; border-radius: 50%; background: #3F3F46; display: block; }
+.browser .bar span { margin-left: 12px; font-size: 15px; color: var(--dim); }
+.browser img { display: block; width: 100%; }
+/* 9:16 and 1:1 zoom into the content column (CSS px 240–1070 × 20–470 of the 1280-wide page). */
+html[data-r="916"] .browser .crop, html[data-r="11"] .browser .crop { aspect-ratio: 830 / 450; overflow: hidden; }
+html[data-r="916"] .browser .crop img, html[data-r="11"] .browser .crop img { width: 154.2%; max-width: none; margin-left: -28.9%; margin-top: -2.4%; }
+
+/* Tap ripple */
+.tap { position: absolute; width: 14cqw; aspect-ratio: 1; border-radius: 50%; transform: translate(-50%, -50%);
+  background: rgba(250, 250, 250, 0.35); border: 0.5cqw solid rgba(250, 250, 250, 0.8); opacity: 0; }
+
+/* B-roll */
+.broll { position: absolute; z-index: 1; opacity: 0; }
+.broll img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.broll .shade { position: absolute; inset: 0; }
+html[data-r="916"] .broll, html[data-r="11"] .broll { inset: 0; }
+html[data-r="916"] .broll .shade { background: linear-gradient(180deg, rgba(9,9,11,.92) 0%, rgba(9,9,11,.55) 34%, rgba(9,9,11,0) 55%); }
+html[data-r="11"] .broll .shade { background: linear-gradient(180deg, rgba(9,9,11,.92) 0%, rgba(9,9,11,.5) 38%, rgba(9,9,11,0) 60%); }
+html[data-r="169"] .broll { top: 70px; bottom: 70px; right: 220px; width: 528px; border-radius: 28px; overflow: hidden; border: 1px solid var(--line); }
+
+/* Corner wordmark */
+.mark { position: absolute; z-index: 6; display: flex; align-items: center; gap: 14px; font-weight: 600; letter-spacing: -0.01em; }
+html[data-r="916"] .mark { left: 84px; top: 120px; font-size: 32px; }
+html[data-r="11"]  .mark { right: 72px; bottom: 48px; font-size: 24px; display: none; }
+html[data-r="169"] .mark { left: 130px; top: 70px; font-size: 28px; }
+.mark svg { height: 1.1em; width: auto; }
+
+/* End card */
+.end { position: absolute; inset: 0; z-index: 8; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; opacity: 0; background: var(--ground); }
+.end .logo { width: 180px; }
+.end .name { font-size: 110px; font-weight: 600; letter-spacing: -0.04em; margin-top: 28px; }
+.end .tag { font-size: 40px; color: var(--muted); margin-top: 12px; }
+.end .status { margin-top: 64px; font-size: 30px; color: var(--ink); border: 1px solid var(--line); border-radius: 999px; padding: 14px 30px; display: inline-flex; gap: 14px; align-items: center; }
+.end .status b { width: 12px; height: 12px; border-radius: 50%; background: var(--warn); display: block; }
+.end .site { margin-top: 30px; font-size: 44px; font-weight: 600; letter-spacing: -0.02em; }
+.end .url { margin-top: 8px; font-size: 26px; color: var(--muted); }
+html[data-r="11"] .end .logo { width: 130px; }
+html[data-r="11"] .end .name { font-size: 84px; }
+html[data-r="11"] .end .tag { font-size: 32px; }
+html[data-r="11"] .end .status { margin-top: 44px; font-size: 26px; }
+html[data-r="11"] .end .site { font-size: 36px; margin-top: 22px; }
+html[data-r="11"] .end .url { font-size: 22px; }

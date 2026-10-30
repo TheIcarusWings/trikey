@@ -59,12 +59,13 @@ import { DirectMessages } from './nostr/dm.js';
 import { Inbox } from './nostr/inbox.js';
 import { buildHandlers } from './nostr/handlers.js';
 import { stampOf, toSeconds } from './nostr/wire.js';
-import { DEFAULT_BROADCAST_LIMIT, SlidingWindowLimiter, type RateLimitOptions } from './rate-limit.js';
+import { DEFAULT_BROADCAST_LIMIT, DEFAULT_REFUSAL_LIMIT, SlidingWindowLimiter, type RateLimitOptions } from './rate-limit.js';
 import { Alerter } from './alerts.js';
 import { RecoveryRunner } from './recovery-runner.js';
 import { onContactDm } from './dm-cancel.js';
 import { startHttpServer } from './http/server.js';
 import { buildRoutes } from './http/api.js';
+import { WebSessions } from './http/sessions.js';
 import { GUARDIAN_VERSION } from './version.js';
 import { SilentPaymentService } from './silent/service.js';
 
@@ -74,7 +75,13 @@ export const FILES = {
   engine: 'guardian-state.json',
   service: 'service.json',
   throttle: 'unlock-throttle.json',
+  phoneThrottle: 'unlock-throttle-phone.json',
+  resetThrottle: 'reset-throttle.json',
+  sessionThrottle: 'session-throttle.json',
 } as const;
+
+/** After this many failed `guardian.unlock` passphrases in a row, the phone may not unlock until the web UI does. */
+export const PHONE_UNLOCK_MAX_FAILURES = 5;
 
 export interface GuardianOptions {
   config: GuardianConfig;
@@ -91,12 +98,18 @@ export interface GuardianOptions {
   discoverDmRelays?: boolean;
   /** `tx.broadcast` calls allowed per paired phone per window. Default 20 per 10 minutes. */
   broadcastLimit?: RateLimitOptions;
+  /** Refused `sign` / `recovery.start` / `recovery.update` allowed per sender per window. Default 30 per 10 minutes. */
+  refusalLimit?: RateLimitOptions;
 }
 
 export type UnlockOutcome =
   | { ok: true }
   | { ok: false; code: 'bad_passphrase' | 'rate_limited'; retryAfterSeconds?: number }
-  | { ok: false; code: 'setup_required' | 'invalid'; message: string };
+  /**
+   * `phone_unlock_disabled`: too many failed phone attempts in a row, until the web UI unlocks;
+   * `recovery_pending`: the phone may not unlock while a recovery it did not start is running.
+   */
+  | { ok: false; code: 'setup_required' | 'invalid' | 'phone_unlock_disabled' | 'recovery_pending'; message: string };
 
 export type SetupOutcome = { ok: true } | { ok: false; code: 'invalid' | 'already_setup'; message: string };
 
@@ -124,16 +137,21 @@ export const RECOVERY_PEER_METHODS: ReadonlySet<MethodName> = new Set<MethodName
   'fees.estimate',
   'recovery.access',
   'recovery.start',
+  'recovery.update',
   'recovery.status',
   'recovery.cancel',
 ]);
 /** What the web UI's reset must be confirmed with, typed exactly. */
 export const RESET_CONFIRMATION = 'RESET GUARDIAN';
 
-/** The running (pending or ready) recovery in the engine's state, if any. */
-export function activeRecovery(recoveries: readonly RecoveryRecord[] | undefined): RecoveryRecord | undefined {
-  const last = recoveries?.[recoveries.length - 1];
-  return last && (last.status === 'pending' || last.status === 'ready') ? last : undefined;
+/** The running (pending or ready) recovery of wallet `walletId` (the active one) in the engine's state, if any. */
+export function activeRecovery(recoveries: readonly RecoveryRecord[] | undefined, walletId: string | undefined): RecoveryRecord | undefined {
+  if (!recoveries || !walletId) return undefined;
+  for (let i = recoveries.length - 1; i >= 0; i--) {
+    const r = recoveries[i];
+    if (r.walletId === walletId) return r.status === 'pending' || r.status === 'ready' ? r : undefined;
+  }
+  return undefined;
 }
 
 export class Guardian {
@@ -146,13 +164,26 @@ export class Guardian {
   readonly recovery: RecoveryRunner;
   /** Per paired phone: each `tx.broadcast` may scan wallets on Electrs. */
   readonly broadcastLimiter: SlidingWindowLimiter;
+  /** Per sender: refused `sign` / `recovery.start` / `recovery.update` (a flood is stopped before the engine). */
+  readonly refusalLimiter: SlidingWindowLimiter;
   /** The silent payment scanner (needs the node RPC; works while locked). */
   readonly sp: SilentPaymentService;
 
   engine!: PolicyEngine;
   store!: ObservedStore;
   service!: ServiceState;
+  /**
+   * Passphrase attempts, each with its own throttle so one cannot starve another: the web UI's unlock
+   * (and setup), the phone's `guardian.unlock`, and the web UI's reset. A stolen phone guessing away
+   * never delays the owner at the box.
+   */
   throttle!: UnlockThrottle;
+  phoneThrottle!: UnlockThrottle;
+  resetThrottle!: UnlockThrottle;
+  /** Web sign-ins (`POST /api/session`), throttled on their own. */
+  sessionThrottle!: UnlockThrottle;
+  /** The web UI's sessions (http/sessions.ts). In memory: a restart signs everyone out. */
+  readonly sessions = new WebSessions();
   keystore?: KeystoreFile;
   identity?: GuardianIdentity;
   rpc?: RpcServer;
@@ -206,6 +237,7 @@ export class Guardian {
     this.alerts = new Alerter(this);
     this.recovery = new RecoveryRunner(this);
     this.broadcastLimiter = new SlidingWindowLimiter(opts.broadcastLimit ?? DEFAULT_BROADCAST_LIMIT);
+    this.refusalLimiter = new SlidingWindowLimiter(opts.refusalLimit ?? DEFAULT_REFUSAL_LIMIT);
   }
 
   private path(name: keyof typeof FILES): string {
@@ -222,8 +254,21 @@ export class Guardian {
     await g.service.load();
     g.throttle = new UnlockThrottle(g.path('throttle'), g.clock, opts.throttle);
     await g.throttle.load();
+    g.phoneThrottle = new UnlockThrottle(g.path('phoneThrottle'), g.clock, opts.throttle);
+    await g.phoneThrottle.load();
+    g.resetThrottle = new UnlockThrottle(g.path('resetThrottle'), g.clock, opts.throttle);
+    await g.resetThrottle.load();
+    g.sessionThrottle = new UnlockThrottle(g.path('sessionThrottle'), g.clock, opts.throttle);
+    await g.sessionThrottle.load();
     g.store = new ObservedStore(opts.store ?? new JsonFileStore(g.path('engine')));
-    g.engine = await PolicyEngine.open({ store: g.store, clock: g.clock });
+    // The engine checks its clock against the chain (recovery delay, daily limit window): Electrs' tip.
+    const chainTime = {
+      tip: async () => {
+        const t = await g.chain.tip();
+        return { height: t.height, medianTimePastMs: t.medianTimePast * 1000 };
+      },
+    };
+    g.engine = await PolicyEngine.open({ store: g.store, clock: g.clock, chain: chainTime });
     const net = g.config.network;
     if (g.keystore && g.keystore.public.network !== net)
       throw new ConfigError(`key 3 was created for ${g.keystore.public.network}, but BITCOIN_NETWORK is ${net}`);
@@ -273,7 +318,7 @@ export class Guardian {
   }
 
   activeRecord(): RecoveryRecord | undefined {
-    return activeRecovery(this.records);
+    return activeRecovery(this.records, this.engine.registration()?.walletId);
   }
 
   async logEvent(event: ServiceEvent): Promise<void> {
@@ -302,6 +347,8 @@ export class Guardian {
         webDir: this.config.webDir,
         routes: buildRoutes(this),
         log: this.log,
+        sessions: this.sessions,
+        now: () => this.clock.now(),
       });
     }
     this.chain.start();
@@ -368,6 +415,8 @@ export class Guardian {
       secretKey: this.identity.secretKey,
       handlers: buildHandlers(this),
       authorize: (sender, method) => this.authorize(sender, method),
+      // Strangers (anyone who is not one of these) get their own small replay cache (protocol server.ts).
+      isPeer: (sender) => this.isKnownSender(sender),
       listen: false, // the inbox below opens every wrap once and hands RPC rumors over
       now: () => this.nowSec(),
       onDrop: (d) => {
@@ -398,6 +447,7 @@ export class Guardian {
       onRpc: (opened) => rpc.handleOpened(opened),
       onDm: (opened) => dm.handleOpened(opened),
       log: this.log,
+      isPeer: (sender) => this.isKnownSender(sender),
     });
     await this.inbox.start();
     this.log.info('nostr.listening', { npub: this.identity.npub, relays: relays.length });
@@ -423,6 +473,12 @@ export class Guardian {
     return false;
   }
 
+  /** The paired phone, an alert contact (or a running recovery's recipient), or a phone with recovery access: not a stranger. */
+  isKnownSender(sender: string): boolean {
+    const reg = this.engine.registration();
+    return (!!reg && sender === reg.appNostrPubkey) || this.isAlertContact(sender) || this.hasRecoveryAccess(sender);
+  }
+
   /** Phones holding an unexpired `recovery.access` grant for the active wallet. */
   recoveryPeers(): string[] {
     return this.engine.recoveryPeers();
@@ -431,6 +487,24 @@ export class Guardian {
   /** True while `pubkey` holds an unexpired `recovery.access` grant for the active wallet. */
   hasRecoveryAccess(pubkey: string): boolean {
     return this.engine.hasRecoveryAccess(pubkey);
+  }
+
+  /**
+   * Where every scan of the active wallet must reach (a scan's `minIndex`): its high-water marks, the
+   * highest index seen used or co-signed per chain, so no coin key 3 co-signed as change is out of sight.
+   */
+  scanFloor(walletId: string): Partial<Record<0 | 1, number>> {
+    const hw = this.engine.highWater(walletId);
+    return { 0: hw.receive, 1: hw.change };
+  }
+
+  /** Raises the active wallet's marks to what a scan found used (incoming payments to fresh addresses). */
+  async noteScan(walletId: string, scan: { nextReceiveIndex: number; nextChangeIndex: number }): Promise<void> {
+    try {
+      await this.engine.noteUsedIndexes(walletId, { receive: scan.nextReceiveIndex - 1, change: scan.nextChangeIndex - 1 });
+    } catch (e) {
+      this.log.error('wallet.high_water_failed', { error: errorText(e) });
+    }
   }
 
   isAlertContact(pubkey: string): boolean {
@@ -665,6 +739,23 @@ export class Guardian {
     return this.signer && !this.signer.wiped ? this.signer : undefined;
   }
 
+  /**
+   * Why the paired phone may not unlock right now, if it may not: after `PHONE_UNLOCK_MAX_FAILURES`
+   * failed passphrases in a row (until the web UI unlocks), and while a recovery the phone did not start
+   * is pending or ready (a stolen phone must not be able to switch key 3 on to sign the thief's way out;
+   * locking is always allowed).
+   */
+  private phoneUnlockRefusal(): UnlockOutcome | undefined {
+    if (this.phoneThrottle.failures >= PHONE_UNLOCK_MAX_FAILURES)
+      return { ok: false, code: 'phone_unlock_disabled', message: 'Too many wrong passphrases from the phone. Unlock the guardian in its web UI.' };
+    const rec = this.activeRecord();
+    const phone = this.engine.registration()?.appNostrPubkey;
+    const startedByPhone = rec && (rec.initiator !== undefined ? rec.initiator === phone : rec.survivingRole === 'app');
+    if (rec && !startedByPhone)
+      return { ok: false, code: 'recovery_pending', message: `Recovery ${rec.id} is running. The phone cannot unlock the guardian meanwhile; unlock it in its web UI.` };
+    return undefined;
+  }
+
   /** Unlock with the passphrase (web UI or `guardian.unlock`). Rate limited; the passphrase is never logged. */
   unlock(passphrase: unknown, via: 'web' | 'phone'): Promise<UnlockOutcome> {
     return this.unlockMutex.run(async (): Promise<UnlockOutcome> => {
@@ -673,17 +764,25 @@ export class Guardian {
       if (!this.locked) return { ok: true };
       if (typeof passphrase !== 'string' || passphrase.length === 0 || passphrase.length > 4 * MAX_PASSPHRASE_LENGTH)
         return { ok: false, code: 'invalid', message: 'Enter the unlock passphrase.' };
-      const verdict = this.throttle.check();
+      if (via === 'phone') {
+        const refusal = this.phoneUnlockRefusal();
+        if (refusal) {
+          this.log.warn('guardian.phone_unlock_refused', { code: 'code' in refusal ? refusal.code : undefined });
+          return refusal;
+        }
+      }
+      const throttle = via === 'web' ? this.throttle : this.phoneThrottle;
+      const verdict = throttle.check();
       if (!verdict.ok) return { ok: false, code: 'rate_limited', retryAfterSeconds: Math.ceil(verdict.retryAfterMs / 1000) };
-      await this.throttle.begin();
+      await throttle.begin();
       let seed: GuardianSeed;
       try {
         seed = await unlockKeystoreSeed(file, passphrase);
       } catch (e) {
         if (!(e instanceof BadPassphraseError)) throw e;
-        this.log.warn('guardian.unlock_failed', { via, failures: this.throttle.failures });
+        this.log.warn('guardian.unlock_failed', { via, failures: throttle.failures });
         await this.logEvent({ type: 'unlock_failed', via });
-        const next = this.throttle.check();
+        const next = throttle.check();
         return { ok: false, code: 'bad_passphrase', retryAfterSeconds: next.ok ? undefined : Math.ceil(next.retryAfterMs / 1000) };
       }
       // The paired wallet's key 3: derived again from the seed and, if the phone contributed, its bytes.
@@ -695,10 +794,39 @@ export class Guardian {
         throw e;
       }
       this.installSigner(signer, seed);
-      await this.throttle.succeeded();
+      await throttle.succeeded();
+      // A successful unlock at the box also lets the phone try again.
+      if (via === 'web') await this.phoneThrottle.succeeded();
       this.log.info('guardian.unlocked', { via });
       await this.logEvent({ type: 'unlocked', via });
       void this.tick();
+      return { ok: true };
+    });
+  }
+
+  /**
+   * Checks the unlock passphrase for a web sign-in (`POST /api/session`) without unlocking anything.
+   * Its own throttle, like every other passphrase entry point; the passphrase is never logged.
+   */
+  checkWebPassphrase(passphrase: unknown): Promise<UnlockOutcome> {
+    return this.unlockMutex.run(async (): Promise<UnlockOutcome> => {
+      const file = this.keystore;
+      if (!file) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
+      if (typeof passphrase !== 'string' || passphrase.length === 0 || passphrase.length > 4 * MAX_PASSPHRASE_LENGTH)
+        return { ok: false, code: 'invalid', message: 'Enter the unlock passphrase.' };
+      const verdict = this.sessionThrottle.check();
+      if (!verdict.ok) return { ok: false, code: 'rate_limited', retryAfterSeconds: Math.ceil(verdict.retryAfterMs / 1000) };
+      await this.sessionThrottle.begin();
+      try {
+        (await unlockKeystoreSeed(file, passphrase)).wipe();
+      } catch (e) {
+        if (!(e instanceof BadPassphraseError)) throw e;
+        this.log.warn('web.sign_in_failed', { failures: this.sessionThrottle.failures });
+        await this.logEvent({ type: 'unlock_failed', via: 'web' });
+        const next = this.sessionThrottle.check();
+        return { ok: false, code: 'bad_passphrase', retryAfterSeconds: next.ok ? undefined : Math.ceil(next.retryAfterMs / 1000) };
+      }
+      await this.sessionThrottle.succeeded();
       return { ok: true };
     });
   }
@@ -756,22 +884,23 @@ export class Guardian {
           };
           const running = this.activeRecord();
           if (running) return refuse('recovery_pending', `Recovery ${running.id} is running. It must be cancelled or completed before the guardian can be reset.`);
-          const unsent = this.service.get().sweeps.find((s) => s.broadcastAt === undefined);
+          // A dead sweep (it can never be broadcast: recovery-runner.ts) has no signature worth keeping.
+          const unsent = this.service.get().sweeps.find((s) => s.broadcastAt === undefined && s.deadAt === undefined);
           if (unsent) return refuse('sweep_pending', `The sweep of recovery ${unsent.recoveryId} has not been broadcast yet. Wait until it is.`);
 
-          const verdict = this.throttle.check();
+          const verdict = this.resetThrottle.check();
           if (!verdict.ok) return { ok: false, code: 'rate_limited', retryAfterSeconds: Math.ceil(verdict.retryAfterMs / 1000) };
-          await this.throttle.begin();
+          await this.resetThrottle.begin();
           try {
             (await unlockKeystoreSeed(file, passphrase)).wipe();
           } catch (e) {
             if (!(e instanceof BadPassphraseError)) throw e;
-            this.log.warn('guardian.reset_bad_passphrase', { failures: this.throttle.failures });
+            this.log.warn('guardian.reset_bad_passphrase', { failures: this.resetThrottle.failures });
             await this.logEvent({ type: 'unlock_failed', via: 'web' });
-            const next = this.throttle.check();
+            const next = this.resetThrottle.check();
             return { ok: false, code: 'bad_passphrase', retryAfterSeconds: next.ok ? undefined : Math.ceil(next.retryAfterMs / 1000) };
           }
-          await this.throttle.succeeded();
+          await this.resetThrottle.succeeded();
 
           // Tell the paired phone while it is still a peer.
           const reg = this.engine.registration();
@@ -815,6 +944,8 @@ export class Guardian {
           }
           this.keystore = next;
           this.pairing.invalidate();
+          // Every web session ends with the old key 3 (the routes sign the resetting browser in again).
+          this.sessions.clear();
           this.installSigner(signer, held);
           this.recovery.wait = undefined;
           await this.logEvent({ type: 'reset' });

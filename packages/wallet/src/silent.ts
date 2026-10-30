@@ -108,7 +108,14 @@ export interface SilentPaymentMatch {
  * reads blocks from its node); `LocalSilentPaymentScanner` does it from blocks given to it.
  */
 export interface SilentPaymentScanner {
-  scan(fromHeight: number): Promise<{ tipHeight: number; matches: SilentPaymentMatch[] }>;
+  scan(fromHeight: number): Promise<{
+    tipHeight: number;
+    matches: SilentPaymentMatch[];
+    /** The scanner is still catching up with the chain (the guardian says so). */
+    scanning?: boolean;
+    /** There are more matches than one answer holds: ask again from the last match's height. */
+    matchesTruncated?: boolean;
+  }>;
 }
 
 /**

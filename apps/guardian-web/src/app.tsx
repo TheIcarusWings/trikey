@@ -1,5 +1,5 @@
 import { BrowserRouter, Link, Navigate, Outlet, Route, Routes } from 'react-router-dom';
-import type { GuardianStatus } from '@/api';
+import type { GuardianStatus, PublicStatus } from '@/api';
 import { GuardianProvider, useGuardian } from '@/components/guardian-provider';
 import { Centered } from '@/components/layout/centered';
 import { Shell } from '@/components/layout/shell';
@@ -12,24 +12,28 @@ import { DashboardPage } from '@/pages/dashboard';
 import { FirstRunPage } from '@/pages/first-run';
 import { HostPage } from '@/pages/host';
 import { LockedPage } from '@/pages/locked';
+import { SignInPage } from '@/pages/sign-in';
 import { PairPage } from '@/pages/pair';
 import { RecoveryPage } from '@/pages/recovery';
 import { RecoverPhonePage } from '@/pages/recover-phone';
 import { ResetPage } from '@/pages/reset';
 import { RulesPage } from '@/pages/rules';
 
-type Phase = 'setup' | 'locked' | 'ready';
+type Phase = 'setup' | 'signin' | 'locked' | 'ready';
 
-const PHASE_PATH: Record<Phase, string> = { setup: '/setup', locked: '/locked', ready: '/' };
+const PHASE_PATH: Record<Phase, string> = { setup: '/setup', signin: '/sign-in', locked: '/locked', ready: '/' };
 
-function phaseOf(status: GuardianStatus): Phase {
+function phaseOf(status: GuardianStatus | PublicStatus): Phase {
   if (!status.setupComplete) return 'setup';
+  // Signed out (no session yet, or it expired): sign in first, which also unlocks a locked guardian.
+  if (status.authenticated === false) return 'signin';
   return status.state === 'locked' ? 'locked' : 'ready';
 }
 
-/** Sends people to the screen that matches the guardian's state: setup, locked or the app. */
+/** Sends people to the screen that matches the guardian's state: setup, sign-in, locked or the app. */
 function Gate({ phase, children }: { phase: Phase; children: React.ReactNode }) {
-  const { status, error, loading, refresh, landingFor } = useGuardian();
+  const { status: signedIn, signedOut, error, loading, refresh, landingFor } = useGuardian();
+  const status = signedIn ?? signedOut;
 
   if (loading) {
     return (
@@ -80,6 +84,11 @@ export function App() {
             <Route element={<GatedOutlet phase="setup" />}>
               <Route element={<Centered width="wide" />}>
                 <Route path="/setup" element={<FirstRunPage />} />
+              </Route>
+            </Route>
+            <Route element={<GatedOutlet phase="signin" />}>
+              <Route element={<Centered width="narrow" />}>
+                <Route path="/sign-in" element={<SignInPage />} />
               </Route>
             </Route>
             <Route element={<GatedOutlet phase="locked" />}>

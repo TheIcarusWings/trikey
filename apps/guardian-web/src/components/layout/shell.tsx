@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Clock, LayoutGrid, List, Menu, QrCode, Shield, Smartphone, UserPlus, X } from 'lucide-react';
-import { usingMockApi } from '@/api';
+import { Clock, LayoutGrid, List, LogOut, Menu, QrCode, Shield, Smartphone, UserPlus, X } from 'lucide-react';
+import { api, usingMockApi } from '@/api';
 import { useGuardian } from '@/components/guardian-provider';
 import { Logo } from '@/components/logo';
 import { ThemeToggle } from '@/components/theme-toggle';
@@ -58,13 +58,25 @@ function NavList({ items, onNavigate }: { items: NavItem[]; onNavigate?: () => v
 }
 
 function SidebarFooter() {
+  const { setStatus } = useGuardian();
+  const signOut = async () => {
+    try {
+      setStatus(await api.signOut());
+    } catch {
+      /* the next status poll tells */
+    }
+  };
   return (
     <div className="flex flex-col gap-2">
       {usingMockApi && (
         <p className="m-0 px-2.5 text-xs leading-4 text-muted-foreground">Demo data. No guardian is connected.</p>
       )}
-      <div className="px-1.5">
+      <div className="flex items-center justify-between gap-2 px-1.5">
         <ThemeToggle />
+        <button type="button" onClick={signOut} className="flex h-8 items-center gap-1.5 rounded-md px-2 text-[13px] text-muted-foreground hover:bg-accent/60">
+          <LogOut className="size-3.5" aria-hidden="true" />
+          Sign out
+        </button>
       </div>
     </div>
   );

@@ -35,10 +35,11 @@ import {
   approvalMessage,
   bip137Authorizer,
   pairingMessage,
+  proofId,
   recoveryAccessMessage,
 } from './authorizer.js';
-import { Clock, DAY, HOUR, systemClock } from './clock.js';
-import { addCosignerSignatures, inspectPsbt } from './inspect.js';
+import { ChainTime, ChainTimeSource, Clock, DAY, HOUR, systemClock } from './clock.js';
+import { CHANGE_WINDOW, MAX_SELF_INDEX, NO_HIGH_WATER, addCosignerSignatures, inspectPsbt, maxHighWater } from './inspect.js';
 import { pruneSpends, splitOutflow, usageWith, windowUsage } from './limit.js';
 import { isNostrPubkey, normalizeRules, phoneMayApply } from './rules.js';
 import { CosignerSigner } from './signer.js';
@@ -53,6 +54,7 @@ import {
   GuardianState,
   HardwareApproval,
   HardwareAuthKey,
+  HighWater,
   RecoveryDelayDays,
   RecoveryRecord,
   RecoveryStatus,
@@ -78,20 +80,54 @@ function isKey3MixRecord(m: unknown): m is Key3Mix {
 /** A hardware approval may be valid for at most this long from the moment the guardian checks it. */
 export const MAX_APPROVAL_TTL_MS = 24 * HOUR;
 export const DEFAULT_MAX_ACTIVITY = 5000;
+/** Refusal entries kept, on top of `DEFAULT_MAX_ACTIVITY` other entries (`pruneActivity`). */
+export const DEFAULT_MAX_REFUSALS = 1000;
 /** Largest allowed jump in hardware sequence numbers (so one approval can't exhaust the space). */
 export const MAX_SEQUENCE_STEP = 1000;
 /** At most this many phones hold recovery access at once (the newest win). */
 export const MAX_ACCESS_GRANTS = 8;
+/**
+ * How far the system clock may run ahead of the chain's median time past (which trails real time by
+ * about an hour) before the engine stops co-signing: a clock pushed forward would otherwise open a
+ * fresh 24 h limit window with every step. Also the most the limit's monotonic time can jump ahead.
+ */
+export const MAX_CLOCK_AHEAD_OF_CHAIN_MS = 3 * HOUR;
+/**
+ * Blocks a recovery's delay must also span, per day of delay: a clock AND a median time past that both
+ * claim the delay is over are not enough without the blocks to match. 144 on public networks (one per
+ * 10 minutes); on regtest, where blocks are mined on demand, one per day.
+ */
+export const BLOCKS_PER_DAY: Record<NetworkName, number> = { bitcoin: 144, testnet: 144, signet: 144, regtest: 1 };
+/** Mainnet policies must name an alert contact (it may be the owner's own nostr app on another device). */
+export const MAINNET_CONTACT_REQUIRED =
+  'on mainnet at least one alert contact is required (it can be your own nostr app on another device), so a recovery is never announced only to a phone a thief may hold';
+
+/** Weak spots of a policy the phone and the web UI should show. */
+export type PolicyWarning = 'no_alert_contacts';
+
+export function policyWarnings(rules: Rules | undefined): PolicyWarning[] {
+  return rules && !rules.alertContacts.length ? ['no_alert_contacts'] : [];
+}
 
 export interface PolicyEngineOptions {
   store: StateStore;
   clock?: Clock;
+  /**
+   * The chain's height and median time past (the service: Electrs). Without one (or while it fails)
+   * the engine refuses to start or complete a recovery, and to co-sign once its last observation of the
+   * chain is more than `MAX_CLOCK_AHEAD_OF_CHAIN_MS` behind the clock.
+   */
+  chain?: ChainTimeSource;
+  /** Override `BLOCKS_PER_DAY` (tests). */
+  blocksPerDay?: number;
   /** Key 3. Absent while the guardian is locked. */
   signer?: CosignerSigner;
   /** Hardware authorization mechanisms; defaults to BIP137 signmessage. */
   authorizers?: HardwareAuthorizer[];
-  /** Activity entries kept (oldest dropped first). */
+  /** Activity entries kept, refusals not counted (oldest dropped first). */
   maxActivity?: number;
+  /** Refusal entries kept, in their own bucket (oldest dropped first). */
+  maxRefusals?: number;
 }
 
 export interface RegisterInput {
@@ -160,6 +196,8 @@ export interface GuardianStatus {
   hardwareConfirmRequired: boolean;
   /** How many wallets this guardian retired. */
   retiredWallets: number;
+  /** Weak spots of the active wallet's policy (`no_alert_contacts`: alerts reach only the paired phone). */
+  warnings: PolicyWarning[];
 }
 
 export interface CosignResult {
@@ -191,12 +229,46 @@ class Mutex {
 }
 
 const cloneState = (s: GuardianState) => deserializeState(serializeState(s));
+
+/** Refusals ("..._refused" entries) live in their own bucket of the activity log. */
+export const isRefusalEvent = (e: { type: string }) => e.type.endsWith('_refused');
+const bigintJson = (_k: string, v: unknown) => (typeof v === 'bigint' ? `${v}n` : v);
+/** An entry's content without its id, time and repeat count: what makes two refusals "the same". */
+function eventKey(e: object): string {
+  const { id: _i, at: _a, count: _c, lastAt: _l, ...rest } = e as Record<string, unknown>;
+  return JSON.stringify(rest, bigintJson);
+}
+/** The state without its activity log, to tell whether anything else changed. */
+const withoutActivity = (s: GuardianState) => JSON.stringify({ ...s, activity: undefined, nextActivityId: undefined }, bigintJson);
+
+/**
+ * Bounds the activity log: at most `maxOther` entries that are not refusals and `maxRefused` refusals,
+ * the oldest of each dropped first. A flood of refusals can only push out older refusals, never a
+ * co-signature, a recovery or a rule change.
+ */
+export function pruneActivity(list: ActivityEntry[], maxOther: number, maxRefused: number): ActivityEntry[] {
+  let refusedCount = 0;
+  for (const e of list) if (isRefusalEvent(e)) refusedCount++;
+  let dropRefused = refusedCount - maxRefused;
+  let dropOther = list.length - refusedCount - maxOther;
+  if (dropRefused <= 0 && dropOther <= 0) return list;
+  return list.filter((e) => {
+    if (isRefusalEvent(e)) return dropRefused-- > 0 ? false : true;
+    return dropOther-- > 0 ? false : true;
+  });
+}
 const eqHex = (a: Uint8Array, b: Uint8Array) => hex.encode(a) === hex.encode(b);
 const refused = (refusal: Refusal) => ({ ok: false as const, refusal });
 
+/** The running (pending or ready) recovery of the ACTIVE wallet: never one of a wallet that was retired. */
 function activeRecovery(s: GuardianState): RecoveryRecord | undefined {
-  const last = s.recoveries[s.recoveries.length - 1];
-  return last && (last.status === 'pending' || last.status === 'ready') ? last : undefined;
+  const id = s.active?.registration.walletId;
+  if (!id) return undefined;
+  for (let i = s.recoveries.length - 1; i >= 0; i--) {
+    const r = s.recoveries[i];
+    if (r.walletId === id) return r.status === 'pending' || r.status === 'ready' ? r : undefined;
+  }
+  return undefined;
 }
 
 function viewOf(r: RecoveryRecord, now: number): RecoveryView {
@@ -232,14 +304,29 @@ function belowHardwareAccount(wallet: MultisigWallet, path: string): string | un
 }
 
 /**
- * If the authorization key sits below the hardware wallet's multisig account by non-hardened steps,
- * the guardian can check itself that it belongs to that device. Returns a reason when it does not.
+ * The authorization key must sit below the hardware wallet's multisig account by non-hardened steps
+ * (the wallet uses `<account>/0/0`, e.g. `m/48'/0'/0'/2'/0/0`), so the guardian checks itself that it
+ * belongs to that device: whoever proves it holds that key holds the hardware wallet's account key.
+ * Any other path is refused (a key the pairer chose freely proves nothing about the device). Returns
+ * a reason when the key does not qualify.
  */
 function authKeyMismatch(wallet: MultisigWallet, key: HardwareAuthKey, network: Network): string | undefined {
   const rest = belowHardwareAccount(wallet, key.path);
-  if (rest === undefined) return undefined;
+  if (rest === undefined)
+    return `the authorization key must be a non-hardened child of the hardware wallet's account (m/${wallet.keys.hardware.originPath.replace(/h/g, "'")}/0/0)`;
   const derived = HDKey.fromExtendedKey(wallet.keys.hardware.xpub, network.bip32).derive(`m/${rest}`).publicKey!;
   return hex.encode(derived) === key.pubkey ? undefined : 'authorization key does not derive from the hardware xpub at its path';
+}
+
+/**
+ * A wallet's key set: its three account pubkeys, sorted. What key 3 will co-sign is decided by these
+ * alone (inputs are matched by account pubkeys plus the tweaks the PSBT delegates, core's
+ * `analyzePsbt`), whatever the descriptor's origins, fingerprints, chaincodes or role order say. So
+ * "the same wallet" is compared by this, never by descriptor hash.
+ */
+export function keySetOf(wallet: MultisigWallet): string {
+  const a = wallet.accountPubkeys();
+  return ROLES.map((r) => hex.encode(a[r])).sort().join(',');
 }
 
 function liveGrants(w: GuardedWallet, now: number): AccessGrant[] {
@@ -251,6 +338,9 @@ export class PolicyEngine {
   private readonly clock: Clock;
   private readonly authorizers: Map<string, HardwareAuthorizer>;
   private readonly maxActivity: number;
+  private readonly maxRefusals: number;
+  private readonly chain?: ChainTimeSource;
+  private readonly blocksPerDayOverride?: number;
   private signer?: CosignerSigner;
   /** Set by `register` with its own key 3; installed by `mutate` after the save. */
   private nextSigner?: CosignerSigner;
@@ -261,8 +351,11 @@ export class PolicyEngine {
     opts: PolicyEngineOptions,
   ) {
     this.clock = opts.clock ?? systemClock;
+    this.chain = opts.chain;
+    this.blocksPerDayOverride = opts.blocksPerDay;
     this.authorizers = new Map((opts.authorizers ?? [bip137Authorizer]).map((a) => [a.kind, a]));
     this.maxActivity = opts.maxActivity ?? DEFAULT_MAX_ACTIVITY;
+    this.maxRefusals = opts.maxRefusals ?? DEFAULT_MAX_REFUSALS;
     this.setSigner(opts.signer);
   }
 
@@ -296,13 +389,14 @@ export class PolicyEngine {
     const w = s.active;
     const reg = w?.registration;
     const active = activeRecovery(s);
-    const last = s.recoveries[s.recoveries.length - 1];
+    // The most recent one, leaving out those the guardian closed itself at a rotation.
+    const last = active ?? [...s.recoveries].reverse().find((r) => r.cancelledBy?.kind !== 'superseded');
     let phoneSpending: PhoneSpendingStatus;
     if (active) phoneSpending = 'paused_recovery';
     else if (w?.phoneSpending.state === 'paused_contested') phoneSpending = 'paused_contested';
     else if (w?.phoneSpending.state === 'retired') phoneSpending = 'retired';
     else phoneSpending = 'enabled';
-    const used = w ? windowUsage(w.spends, now) : 0n;
+    const used = w ? windowUsage(w.spends, Math.max(now, s.timeFloor ?? 0)) : 0n;
     const rules = w?.rules;
     return {
       registered: !!reg,
@@ -317,6 +411,7 @@ export class PolicyEngine {
       dailyLimit: rules ? { limit: rules.dailyLimitSats, used, available: rules.dailyLimitSats > used ? rules.dailyLimitSats - used : 0n } : undefined,
       hardwareConfirmRequired: !!reg && !reg.hardwareAuthConfirmed,
       retiredWallets: s.retired.length,
+      warnings: policyWarnings(rules),
     };
   }
 
@@ -377,8 +472,12 @@ export class PolicyEngine {
         this.refresh(draft, now);
         const out = await fn(draft, now);
         if (draft.active) draft.active.spends = pruneSpends(draft.active.spends, now);
-        if (draft.activity.length > this.maxActivity) draft.activity = draft.activity.slice(-this.maxActivity);
-        await this.store.save(draft);
+        draft.activity = pruneActivity(draft.activity, this.maxActivity, this.maxRefusals);
+        // A refusal that changed nothing but the activity log is not worth a durable write (a stranger's
+        // or a stolen phone's flood would otherwise fsync the whole state each time): it stays in memory
+        // and goes to disk with the next real change.
+        const refusalOnly = (out as { ok?: unknown })?.ok === false && withoutActivity(draft) === withoutActivity(this.state);
+        if (!refusalOnly) await this.store.save(draft);
         this.state = draft;
         // A registration that brings its own key 3 swaps it in with the state, never before the save.
         if (this.nextSigner && this.signer) this.signer = this.nextSigner;
@@ -400,7 +499,58 @@ export class PolicyEngine {
     return false;
   }
 
+  /** The chain's tip now, or undefined when it cannot be had. Asked before taking the lock: it is only a reference. */
+  private async chainTime(): Promise<ChainTime | undefined> {
+    if (!this.chain) return undefined;
+    try {
+      const t = await this.chain.tip();
+      return Number.isSafeInteger(t?.height) && t.height >= 0 && Number.isFinite(t.medianTimePastMs) ? { height: t.height, medianTimePastMs: t.medianTimePastMs } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Remembers the latest tip seen (never a lower one; the same tip again changes nothing, so it costs no write). */
+  private noteChain(draft: GuardianState, now: number, chain: ChainTime | undefined): void {
+    const seen = draft.chainSeen;
+    if (chain && (!seen || chain.height > seen.height || (chain.height === seen.height && chain.medianTimePastMs > seen.medianTimePastMs)))
+      draft.chainSeen = { ...chain, at: now };
+  }
+
+  /**
+   * The time the daily limit counts with: the system clock, but never earlier than the last time used
+   * (monotonic), and refused while the clock is more than `MAX_CLOCK_AHEAD_OF_CHAIN_MS` ahead of the
+   * chain's median time past (the live one, else the last one seen): a clock pushed forward would open
+   * a fresh 24 h window with every step.
+   */
+  private limitTime(draft: GuardianState, now: number, chain: ChainTime | undefined): { ok: true; at: number } | { ok: false; refusal: Refusal } {
+    const seen = chain ?? draft.chainSeen;
+    if (!seen) return { ok: false, refusal: { reason: 'chain_unavailable', detail: 'no chain data to check the clock against yet' } };
+    if (now > seen.medianTimePastMs + MAX_CLOCK_AHEAD_OF_CHAIN_MS)
+      return { ok: false, refusal: { reason: 'clock_ahead_of_chain', systemTime: now, chainTime: seen.medianTimePastMs } };
+    return { ok: true, at: Math.max(draft.timeFloor ?? 0, now) };
+  }
+
+  /** Blocks per day of delay a recovery of a wallet on `network` must span. */
+  blocksPerDay(network: NetworkName): number {
+    return this.blocksPerDayOverride ?? BLOCKS_PER_DAY[network] ?? 144;
+  }
+
+  /** The chain height a recovery can complete at, if it recorded its start height. */
+  heightNeeded(rec: RecoveryRecord): number | undefined {
+    if (rec.startHeight === undefined) return undefined;
+    const reg = this.walletById(rec.walletId);
+    return rec.startHeight + rec.delayDays * this.blocksPerDay(reg?.network ?? 'bitcoin');
+  }
+
+  /** Appends to the activity log. A refusal identical to the entry before it is counted there instead (`count`, `lastAt`). */
   private log(draft: GuardianState, now: number, event: ActivityEvent): void {
+    const last = draft.activity[draft.activity.length - 1];
+    if (isRefusalEvent(event) && last && last.type === event.type && eventKey(last) === eventKey(event)) {
+      last.count = (last.count ?? 1) + 1;
+      last.lastAt = now;
+      return;
+    }
     draft.activity.push({ id: draft.nextActivityId++, at: now, ...event } as ActivityEntry);
   }
 
@@ -418,6 +568,18 @@ export class PolicyEngine {
       }
     }
     return undefined;
+  }
+
+  /** The retired wallet with the same key set as `wallet`, if any. */
+  private retiredKeySet(draft: GuardianState, wallet: MultisigWallet): RetiredWallet | undefined {
+    const ks = keySetOf(wallet);
+    return draft.retired.find((r) => {
+      try {
+        return keySetOf(this.wallet(r.registration)) === ks;
+      } catch {
+        return false;
+      }
+    });
   }
 
   /** Checks a hardware approval for `action` and consumes its sequence number on success. */
@@ -463,7 +625,13 @@ export class PolicyEngine {
   /** Moves the active wallet to the retired list. Returns how many live access grants that revoked. */
   private retireActive(draft: GuardianState, now: number, retirement: RetiredWallet['retirement']): number {
     const w = draft.active!;
-    const revoked = liveGrants(w, now).length;
+    const live = liveGrants(w, now);
+    const revoked = live.length;
+    // Their signatures stay refused until they expire (a version-1 text names no wallet).
+    draft.revokedAccess = [
+      ...(draft.revokedAccess ?? []).filter((r) => r.until > now),
+      ...live.flatMap((g) => (g.sig ? [{ sig: g.sig, until: g.until }] : [])),
+    ].slice(-64);
     draft.retired.push({ registration: w.registration, rules: w.rules, retiredAt: now, retirement });
     draft.active = undefined;
     return revoked;
@@ -500,6 +668,8 @@ export class PolicyEngine {
       } catch (e) {
         return bad(`rules: ${(e as Error).message}`);
       }
+      // Without a contact, a recovery's alerts reach only the paired phone, which a thief may hold.
+      if (network.name === 'bitcoin' && !rules.alertContacts.length) return bad(`rules: ${MAINNET_CONTACT_REQUIRED}`);
       const checked = this.checkAuthKey(input.hardwareAuth);
       if (!checked.ok) return bad(checked.detail);
       const hwKey = checked.key;
@@ -507,7 +677,10 @@ export class PolicyEngine {
       if (mismatch) return bad(mismatch);
       const walletId = wallet.fingerprint();
       // A retired wallet stays retired: re-pairing it would bring back a key set the user moved away from.
-      if (draft.retired.some((r) => r.registration.walletId === walletId)) return refused({ reason: 'wallet_retired', walletId });
+      // Compared by key set: another descriptor for the same keys (other origins, chaincodes or roles)
+      // is the same wallet to key 3.
+      const retired = this.retiredKeySet(draft, wallet);
+      if (retired) return refused({ reason: 'wallet_retired', walletId: retired.registration.walletId });
       if (!checked.authorizer.verify(pairingMessage(walletId, cosignerHex), input.hardwareAuthProof, hwKey))
         return bad('hardware pairing proof does not verify');
       const replaces = typeof input.replacesWalletId === 'string' && /^[0-9a-f]{16}$/.test(input.replacesWalletId) ? input.replacesWalletId : undefined;
@@ -624,6 +797,35 @@ export class PolicyEngine {
     });
   }
 
+  /** The active wallet's high-water marks (DESIGN.md: scans of the wallet must reach at least these). */
+  highWater(walletId?: string): HighWater {
+    const w = this.state.active;
+    if (!w || (walletId !== undefined && w.registration.walletId !== walletId)) return { ...NO_HIGH_WATER };
+    return { ...(w.highWater ?? NO_HIGH_WATER) };
+  }
+
+  /**
+   * Raises the active wallet's high-water marks to what a scan of `walletId` found used (an incoming
+   * payment to a fresh address, say). Never lowers them. Writes nothing when nothing rises.
+   */
+  async noteUsedIndexes(walletId: string, used: HighWater): Promise<boolean> {
+    const rises = (s: GuardianState) => {
+      const w = s.active;
+      if (!w || w.registration.walletId !== walletId) return false;
+      const cur = w.highWater ?? NO_HIGH_WATER;
+      const ok = (n: number) => Number.isSafeInteger(n) && n <= MAX_SELF_INDEX;
+      return (ok(used.receive) && used.receive > cur.receive) || (ok(used.change) && used.change > cur.change);
+    };
+    if (!rises(this.state)) return false;
+    return this.mutate((draft) => {
+      if (!rises(draft)) return false;
+      const w = draft.active!;
+      const clamp = (n: number) => (Number.isSafeInteger(n) ? Math.min(n, MAX_SELF_INDEX) : -1);
+      w.highWater = maxHighWater(w.highWater ?? NO_HIGH_WATER, { receive: clamp(used.receive), change: clamp(used.change) });
+      return true;
+    });
+  }
+
   /** The paired phone's single-key coins, if it registered any (read-only). */
   singleKey(): SingleKeyRegistration | undefined {
     return this.state.active?.singleKey;
@@ -670,7 +872,9 @@ export class PolicyEngine {
 
   /** Co-signs a phone-signed spend within the daily limit. */
   async cosign(psbt: Uint8Array): Promise<Result<CosignResult>> {
+    const chain = await this.chainTime();
     return this.mutate(async (draft, now) => {
+      this.noteChain(draft, now, chain);
       const refuse = (refusal: Refusal, txid?: string) => {
         this.log(draft, now, { type: 'cosign_refused', txid, refusal });
         return refused(refusal);
@@ -690,12 +894,20 @@ export class PolicyEngine {
           cause: ps.state === 'retired' ? 'wallet_retired' : 'contested_recovery',
           recoveryId: ps.recoveryId,
         });
+      // The limit's time: monotonic, and not trusted past the chain's time plus a few hours.
+      const time = this.limitTime(draft, now, chain);
+      if (!time.ok) return refuse(time.refusal);
+      const at = time.at;
 
       // The phone's helper coin may ride along in a silent payment (DESIGN.md, "Silent payments"): only
       // once the phone registered its helper account, only a script of that account, only in a PSBT
       // with a taproot output (inspect.ts), and at most one finalized P2WPKH input (core).
       const helper = w.singleKey?.helper ? helperAccount(w.singleKey.helper.xpub, reg.network) : undefined;
-      const checked = inspectPsbt(psbt, this.wallet(reg), undefined, helper ? { helper: (c) => !!helper.locate(c.script) } : {});
+      // Change only within CHANGE_WINDOW of the high-water marks: a coin parked further out would be
+      // out of sight of every gap-limit scan, so it counts as leaving the wallet.
+      const marks = w.highWater ?? NO_HIGH_WATER;
+      const selfLimit = { receive: marks.receive + CHANGE_WINDOW, change: marks.change + CHANGE_WINDOW };
+      const checked = inspectPsbt(psbt, this.wallet(reg), undefined, { selfLimit, ...(helper ? { helper: (c) => !!helper.locate(c.script) } : {}) });
       if (!checked.ok) {
         const retired = checked.refusal.reason === 'foreign_input' ? this.retiredOwner(draft, psbt) : undefined;
         return refuse(retired ? { reason: 'wallet_retired', walletId: retired } : checked.refusal);
@@ -709,15 +921,18 @@ export class PolicyEngine {
       }
 
       const replay = w.spends.some((s) => s.txid === txid);
-      const used = windowUsage(w.spends, now);
+      const used = windowUsage(w.spends, at);
       const shares = splitOutflow(analysis.inputs, outflow);
-      const wouldUse = replay ? used : usageWith(w.spends, shares, now);
+      const wouldUse = replay ? used : usageWith(w.spends, shares, at);
       if (!replay && wouldUse > rules.dailyLimitSats)
         return refuse({ reason: 'over_daily_limit', limit: rules.dailyLimitSats, used, outflow, wouldUse }, txid);
 
       if (!this.signer) return refuse({ reason: 'guardian_locked' }, txid);
       const signed = await addCosignerSignatures(psbt, analysis, this.signer);
-      if (!replay) w.spends.push({ txid, at: now, outflow, shares });
+      if (!replay) w.spends.push({ txid, at, outflow, shares });
+      draft.timeFloor = at;
+      // Co-signed change is "seen": the marks rise to it, so every later scan reaches it.
+      w.highWater = maxHighWater(marks, checked.inspection.selfIndexes);
       const helperInput = analysis.helper?.outpoint;
       this.log(draft, now, { type: 'cosign_signed', txid, outflow, usedAfter: wouldUse, replay, ...(helperInput ? { helperInput } : {}) });
       return { ok: true as const, psbt: signed, txid, outflow, usedAfter: wouldUse, replay };
@@ -743,6 +958,7 @@ export class PolicyEngine {
       } catch (e) {
         return refuse({ reason: 'invalid_rules', detail: (e as Error).message });
       }
+      if (w.registration.network === 'bitcoin' && !rules.alertContacts.length) return refuse({ reason: 'invalid_rules', detail: MAINNET_CONTACT_REQUIRED });
       let sequence: number | undefined;
       if (auth.authenticatedBy === 'app') {
         const may = phoneMayApply(current, rules);
@@ -779,7 +995,7 @@ export class PolicyEngine {
   }): Promise<Result<{ until: number; renewed: boolean }>> {
     // Anyone may ask once a wallet is paired, so a refusal is decided on the current state without
     // touching the disk (no state write, no log entry per stranger's attempt); only a grant is saved.
-    const check = (s: GuardianState, now: number): Refusal | { walletId: string; phone: string; until: number } => {
+    const check = (s: GuardianState, now: number): Refusal | { walletId: string; phone: string; until: number; sig?: string } => {
       const w = s.active;
       if (!w) return { reason: 'not_registered' };
       const reg = w.registration;
@@ -791,14 +1007,22 @@ export class PolicyEngine {
       const maxExpiresAt = Math.floor((now + MAX_APPROVAL_TTL_MS) / 1000);
       if (expiresAt > maxExpiresAt) return { reason: 'approval_expiry_too_far', expiresAt, maxExpiresAt };
       const phone = String(req.phonePubkey).toLowerCase();
-      let message: string;
-      try {
-        message = recoveryAccessMessage({ guardianPubkey: String(req.guardianPubkey).toLowerCase(), phonePubkey: phone, expiresAt });
-      } catch {
-        return { reason: 'approval_invalid_signature' };
-      }
-      if (typeof signature !== 'string' || !authorizer.verify(message, signature, reg.hardwareAuth)) return { reason: 'approval_invalid_signature' };
-      return { walletId: reg.walletId, phone, until: expiresAt * 1000 };
+      if (typeof signature !== 'string') return { reason: 'approval_invalid_signature' };
+      // Version 2 names this wallet; version 1 names none (older phones, or a recovery code without the id).
+      const verifies = (walletId?: string) => {
+        try {
+          const message = recoveryAccessMessage({ guardianPubkey: String(req.guardianPubkey).toLowerCase(), phonePubkey: phone, expiresAt, walletId });
+          return authorizer.verify(message, signature, reg.hardwareAuth!);
+        } catch {
+          return false;
+        }
+      };
+      const v2 = verifies(reg.walletId);
+      if (!v2 && !verifies(undefined)) return { reason: 'approval_invalid_signature' };
+      const sig = proofId(signature);
+      // A version-1 signature whose grant a rotation or retirement revoked does not get it back here.
+      if (!v2 && sig && (s.revokedAccess ?? []).some((r) => r.sig === sig && r.until > now)) return { reason: 'approval_revoked' };
+      return { walletId: reg.walletId, phone, until: expiresAt * 1000, ...(sig ? { sig } : {}) };
     };
     const first = check(this.state, this.clock.now());
     if ('reason' in first) return refused(first);
@@ -810,7 +1034,10 @@ export class PolicyEngine {
       const w = draft.active!;
       const live = liveGrants(w, now);
       const renewed = live.some((g) => g.pubkey === again.phone);
-      w.accessGrants = [...live.filter((g) => g.pubkey !== again.phone), { pubkey: again.phone, until: again.until, grantedAt: now }].slice(-MAX_ACCESS_GRANTS);
+      w.accessGrants = [
+        ...live.filter((g) => g.pubkey !== again.phone),
+        { pubkey: again.phone, until: again.until, grantedAt: now, ...(again.sig ? { sig: again.sig } : {}) },
+      ].slice(-MAX_ACCESS_GRANTS);
       this.log(draft, now, { type: 'recovery_access_granted', phone: again.phone, until: again.until });
       return { ok: true as const, until: again.until, renewed };
     });
@@ -839,7 +1066,9 @@ export class PolicyEngine {
    * be the destination wallet's paired phone if the guardian adopts it).
    */
   async startRecovery(req: { psbt: Uint8Array; destinationDescriptor: string; initiator?: string }): Promise<Result<{ recovery: RecoveryView }>> {
+    const chain = await this.chainTime();
     return this.mutate((draft, now) => {
+      this.noteChain(draft, now, chain);
       const refuse = (refusal: Refusal) => {
         this.log(draft, now, { type: 'recovery_start_refused', refusal });
         return refused(refusal);
@@ -862,9 +1091,8 @@ export class PolicyEngine {
       } catch (e) {
         return refuse({ reason: 'invalid_destination', detail: (e as Error).message });
       }
-      if (dest.fingerprint() === wallet.fingerprint()) return refuse({ reason: 'invalid_destination', detail: 'destination is the current wallet' });
-      if (draft.retired.some((r) => r.registration.walletId === dest.fingerprint()))
-        return refuse({ reason: 'invalid_destination', detail: 'destination is a wallet this guardian retired' });
+      if (keySetOf(dest) === keySetOf(wallet)) return refuse({ reason: 'invalid_destination', detail: 'destination is the current wallet' });
+      if (this.retiredKeySet(draft, dest)) return refuse({ reason: 'invalid_destination', detail: 'destination is a wallet this guardian retired' });
 
       const checked = inspectPsbt(req.psbt, wallet, dest);
       if (!checked.ok) {
@@ -892,6 +1120,12 @@ export class PolicyEngine {
       if (stray >= 0) return refuse({ reason: 'sweep_not_to_destination', output: stray });
       if (analysis.fee > rules.sweepFeeCapSats) return refuse({ reason: 'sweep_fee_exceeds_cap', fee: analysis.fee, cap: rules.sweepFeeCapSats });
 
+      // The delay counts from the later of the clock and the chain's median time past, so a clock set
+      // back cannot shorten it; and it must span its blocks too. No chain data: no start (the system
+      // clock alone is not trusted with the delay).
+      if (!chain) return refuse({ reason: 'chain_unavailable', detail: 'the guardian cannot read the chain tip to anchor the recovery delay' });
+      const anchoredAt = Math.max(now, chain.medianTimePastMs);
+
       const initiator = typeof req.initiator === 'string' && isNostrPubkey(req.initiator.toLowerCase()) ? req.initiator.toLowerCase() : undefined;
       const rec: RecoveryRecord = {
         id: `${draft.recoveries.length + 1}-${analysis.txid.slice(0, 12)}`,
@@ -909,7 +1143,9 @@ export class PolicyEngine {
         feeCapSats: rules.sweepFeeCapSats,
         recipients: [...new Set([reg.appNostrPubkey, ...rules.alertContacts])],
         startedAt: now,
-        readyAt: now + rules.recoveryDelayDays * DAY,
+        anchoredAt,
+        startHeight: chain.height,
+        readyAt: anchoredAt + rules.recoveryDelayDays * DAY,
         alertsSent: {},
       };
       draft.recoveries.push(rec);
@@ -923,6 +1159,49 @@ export class PolicyEngine {
         destinationWalletId: rec.destinationWalletId,
       });
       return { ok: true as const, recovery: viewOf(rec, now) };
+    });
+  }
+
+  /**
+   * Replaces the running recovery's sweep (`recovery.update`), so coins that arrived after the start
+   * (dust, a late deposit) do not block it: a sweep must move every coin. The delay is NOT restarted,
+   * so the new sweep may only add coins: same destination, every input the wallet's and signed by the
+   * same surviving key alone, a superset of the current sweep's inputs, and the fee within the cap.
+   * `completeRecovery` checks all of it again.
+   */
+  async updateRecovery(req: { recoveryId: string; psbt: Uint8Array }): Promise<Result<{ recovery: RecoveryView; addedInputs: number }>> {
+    return this.mutate((draft, now) => {
+      const refuse = (refusal: Refusal) => {
+        this.log(draft, now, { type: 'recovery_update_refused', refusal });
+        return refused(refusal);
+      };
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      const rec = activeRecovery(draft);
+      if (!rec || rec.id !== req.recoveryId) return refuse({ reason: 'no_recovery' });
+      const wallet = this.wallet(w.registration);
+      const dest = MultisigWallet.fromDescriptor(rec.destinationDescriptor, wallet.network);
+      const checked = inspectPsbt(req.psbt, wallet, dest);
+      if (!checked.ok) return refuse(checked.refusal);
+      const { analysis, toTarget, targetOut } = checked.inspection;
+      if (analysis.inputs.some((i) => i.signedBy.length !== 1 || i.signedBy[0] !== rec.survivingRole))
+        return refuse({ reason: 'recovery_signers', detail: `every input must be signed by the surviving key (${rec.survivingRole}) alone` });
+      const stray = toTarget.findIndex((t) => !t);
+      if (stray >= 0) return refuse({ reason: 'sweep_not_to_destination', output: stray });
+      const before = inspectPsbt(base64.decode(rec.sweepPsbt), wallet, dest);
+      if (!before.ok) return refuse(before.refusal);
+      const spent = new Set(analysis.inputs.map((i) => i.outpoint));
+      const missing = before.inspection.analysis.inputs.find((i) => !spent.has(i.outpoint));
+      if (missing) return refuse({ reason: 'invalid_recovery_update', detail: `the new sweep must still spend ${missing.outpoint}` });
+      const cap = rec.feeCapSats < w.rules.sweepFeeCapSats ? rec.feeCapSats : w.rules.sweepFeeCapSats;
+      if (analysis.fee > cap) return refuse({ reason: 'sweep_fee_exceeds_cap', fee: analysis.fee, cap });
+      const addedInputs = spent.size - before.inspection.analysis.inputs.length;
+      rec.sweepPsbt = base64.encode(req.psbt);
+      rec.sweepTxid = analysis.txid;
+      rec.amountSats = targetOut;
+      rec.feeSats = analysis.fee;
+      this.log(draft, now, { type: 'recovery_updated', recoveryId: rec.id, sweepTxid: analysis.txid, amountSats: targetOut, feeSats: analysis.fee, addedInputs });
+      return { ok: true as const, recovery: viewOf(rec, now), addedInputs };
     });
   }
 
@@ -972,7 +1251,9 @@ export class PolicyEngine {
 
   /** After the delay, co-signs the sweep and returns it (and the raw tx) for broadcast. */
   async completeRecovery(): Promise<Result<{ psbt: Uint8Array; txHex: string; txid: string; recovery: RecoveryView }>> {
+    const chain = await this.chainTime();
     return this.mutate(async (draft, now) => {
+      this.noteChain(draft, now, chain);
       const refuse = (refusal: Refusal) => {
         this.log(draft, now, { type: 'recovery_complete_refused', refusal });
         return refused(refusal);
@@ -984,6 +1265,15 @@ export class PolicyEngine {
       if (!rec) return refuse({ reason: 'no_recovery' });
       if (rec.walletId !== reg.walletId) return refuse({ reason: 'not_adoptable', detail: 'the recovery is not of the active wallet' });
       if (now < rec.readyAt) return refuse({ reason: 'delay_not_elapsed', readyAt: rec.readyAt });
+      // Three clocks must agree the delay is over: the system clock (above), the chain's median time
+      // past, and the block count since the start.
+      if (!chain) return refuse({ reason: 'chain_unavailable', detail: 'the guardian cannot read the chain tip to check the recovery delay' });
+      if (chain.medianTimePastMs < rec.readyAt)
+        return refuse({ reason: 'delay_not_elapsed', readyAt: rec.readyAt, waitingFor: 'chain_time', chainTime: chain.medianTimePastMs });
+      if (rec.startHeight !== undefined) {
+        const heightNeeded = rec.startHeight + rec.delayDays * this.blocksPerDay(reg.network);
+        if (chain.height < heightNeeded) return refuse({ reason: 'delay_not_elapsed', readyAt: rec.readyAt, waitingFor: 'blocks', height: chain.height, heightNeeded });
+      }
 
       // Re-check everything from the stored PSBT rather than trusting what was checked at start.
       const wallet = this.wallet(reg);
@@ -1035,6 +1325,7 @@ export class PolicyEngine {
       if (rec.rotatedAt !== undefined) return refused({ reason: 'not_adoptable', detail: 'already rotated' });
 
       let next: Registration | undefined;
+      let nextMarks: HighWater | undefined;
       let detail: string | undefined;
       const network = getNetwork(old.network);
       try {
@@ -1043,7 +1334,7 @@ export class PolicyEngine {
         const phone = rec.initiator ?? (rec.survivingRole === 'app' ? old.appNostrPubkey : undefined);
         if (hex.encode(acct.cosigner) !== old.cosignerAccountPubkey) detail = 'the new wallet uses another guardian key';
         else if (new Set(ROLES.map((r) => hex.encode(acct[r]))).size !== 3) detail = 'the new wallet does not have three distinct keys';
-        else if (draft.retired.some((r) => r.registration.walletId === dest.fingerprint())) detail = 'the new wallet was retired before';
+        else if (keySetOf(dest) === keySetOf(this.wallet(old)) || this.retiredKeySet(draft, dest)) detail = 'the new wallet was retired before';
         else if (!phone) detail = 'the phone that started the recovery is not known; pair the new wallet with a pairing code';
         else {
           let hardwareAuth: HardwareAuthKey | undefined;
@@ -1070,16 +1361,29 @@ export class PolicyEngine {
             // Same key 3, so the same way to derive it.
             ...(old.key3Mix ? { key3Mix: { ...old.key3Mix } } : {}),
           };
+          // The sweep's outputs are the new wallet's first coins: its scans start from them.
+          const sw = inspectPsbt(base64.decode(rec.sweepPsbt), this.wallet(old), dest);
+          if (sw.ok) nextMarks = sw.inspection.selfIndexes;
         }
       } catch (e) {
         detail = `the new wallet's descriptor does not parse (${(e as Error).message})`;
       }
 
       const rules = w.rules;
+      // Any other recovery of the swept wallet (one started between this one's completion and now, by
+      // whoever holds a key of it) is closed: it can never complete against a retired wallet, and must
+      // not stay "running" against the wallet adopted next.
+      for (const other of draft.recoveries) {
+        if (other.walletId !== old.walletId || other.id === rec.id || (other.status !== 'pending' && other.status !== 'ready')) continue;
+        other.status = 'cancelled';
+        other.cancelledAt = now;
+        other.cancelledBy = { kind: 'superseded', recoveryId: rec.id };
+        this.log(draft, now, { type: 'recovery_cancelled', recoveryId: other.id, by: other.cancelledBy, contested: false });
+      }
       const revokedGrants = this.retireActive(draft, now, { reason: 'recovered', recoveryId: rec.id, ...(next ? { successorWalletId: next.walletId } : {}) });
       // The limit window starts empty: phone payments were paused for the whole delay (7 days at least),
       // so none of the old wallet's spends is still inside the 24 h window.
-      if (next) draft.active = { registration: next, rules, spends: [], phoneSpending: { state: 'enabled' }, accessGrants: [] };
+      if (next) draft.active = { registration: next, rules, spends: [], phoneSpending: { state: 'enabled' }, accessGrants: [], ...(nextMarks ? { highWater: nextMarks } : {}) };
       rec.rotatedAt = now;
       this.log(draft, now, {
         type: 'wallet_rotated',

@@ -26,6 +26,15 @@ export interface SweepRecord {
   broadcastVia?: 'electrum' | 'bitcoind';
   lastError?: string;
   attempts: number;
+  /**
+   * Set once the sweep can never be broadcast: an input was spent by another transaction with
+   * `DEAD_SWEEP_CONFIRMATIONS` confirmations, a later recovery's sweep of the same wallet was
+   * broadcast, or the stored transaction does not even decode. A dead sweep is not retried and does
+   * not hold back a reset.
+   */
+  deadAt?: number;
+  deadReason?: 'inputs_spent' | 'superseded' | 'invalid';
+  deadDetail?: string;
 }
 
 export type ServiceEvent =
@@ -40,6 +49,7 @@ export type ServiceEvent =
   | { type: 'pair_refused'; detail: string }
   | { type: 'sweep_broadcast'; recoveryId: string; txid: string; via: 'electrum' | 'bitcoind'; amountSats: number }
   | { type: 'sweep_broadcast_failed'; recoveryId: string; txid: string; detail: string }
+  | { type: 'sweep_dead'; recoveryId: string; txid: string; reason: 'inputs_spent' | 'superseded' | 'invalid'; detail: string }
   | { type: 'recovery_waiting'; recoveryId: string; reason: string; detail: string }
   | { type: 'cancel_by_dm'; recoveryId: string; contact: string; ok: boolean; detail?: string }
   | { type: 'clock_skew'; systemTime: number; chainTime: number }

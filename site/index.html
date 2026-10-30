@@ -17,6 +17,7 @@
 <body>
 <a class="skip" href="#main">Skip to content</a>
 
+<div class="header-bar">
 <div class="wrap">
   <header class="site-header">
     <a class="brand" href="./" aria-label="Trikey, home">
@@ -27,9 +28,10 @@
       <a class="nav-wide" href="#idea">How it works</a>
       <a class="nav-wide" href="#missing">If a key goes missing</a>
       <a class="nav-wide" href="#faq">Questions</a>
-      <a href="https://github.com/TheIcarusWings/trikey">GitHub</a>
+      <a class="nav-cta" href="https://github.com/TheIcarusWings/trikey">Follow on GitHub</a>
     </nav>
   </header>
+</div>
 </div>
 
 <main id="main">
@@ -46,8 +48,9 @@
           <a class="btn btn-quiet" href="#choice">Watch the story <span aria-hidden="true">↓</span></a>
         </div>
       </div>
-      <figure class="frame frame-hero">
-        <img src="media/three-keys.webp" width="1344" height="752" fetchpriority="high" alt="A phone, a small hardware wallet and a small grey home server with one white light, laid out in a triangle on a linen tablecloth.">
+      <figure class="frame frame-hero frame-film">
+        <video class="film" controls playsinline preload="none" poster="media/three-keys.webp" aria-label="Film: Nobody in the middle. 74 seconds, with voiceover and captions. Before it plays: a phone, a small hardware wallet and a small grey home server laid out in a triangle on a linen tablecloth."><source src="media/films/f1-nobody-in-the-middle.mp4" type="video/mp4"><track kind="captions" srclang="en" label="English" src="media/films/f1-nobody-in-the-middle.vtt"></video>
+        <figcaption class="film-label">Watch the film · 1:14</figcaption>
       </figure>
     </div>
   </section>
@@ -134,16 +137,19 @@
       </div>
       <ol class="keys">
         <li class="tile">
+          <img class="key-shot" src="media/key-phone.webp" width="800" height="600" loading="lazy" alt="A plain black phone, screen off, on linen.">
           <p class="eyebrow">Key 2</p>
           <h3>Your phone</h3>
           <p>Everyday payments with Face ID. The key sits behind your phone's biometrics, with an encrypted backup in your own cloud that a passkey unlocks.</p>
         </li>
         <li class="tile">
+          <img class="key-shot" src="media/key-hardware.webp" width="800" height="600" loading="lazy" alt="A small matte black hardware wallet with a tiny screen and two buttons, on linen.">
           <p class="eyebrow">Key 1</p>
           <h3>Any hardware wallet</h3>
           <p>Ledger, Trezor, Coldcard, Jade, Keystone and other multisig devices. For big payments, changing your rules, and recovery.</p>
         </li>
         <li class="tile">
+          <img class="key-shot" src="media/key-guardian.webp" width="800" height="600" loading="lazy" alt="A small grey aluminium home server with one white light, on linen.">
           <p class="eyebrow">Key 3</p>
           <h3>Trikey Guardian</h3>
           <p>An app on your own Umbrel or Start9. It co-signs phone payments under a daily limit and runs a 7, 14 or 30-day Delay &amp; Notify recovery.</p>
@@ -193,7 +199,7 @@
       <div class="shot shot-text" data-from="0.75" data-to="1">
         <div class="frame frame-dark frame-black">
           <div class="overlay overlay-center">
-            <p class="beat beat-hero">Lose one? The other two have you.</p>
+            <p class="beat beat-hero">Lose one? You still have the other two.</p>
             <p class="say-note">Anything suspicious, you and the people you trust hear about it. Every day.</p>
           </div>
         </div>
@@ -231,9 +237,14 @@
       </div>
 
       <article class="episode ep-phone" aria-labelledby="ep1-h">
-        <div class="frame frame-banner frame-dark">
-          <img class="media" src="media/train.webp" width="1600" height="900" loading="lazy" alt="A phone left behind on an empty train seat at night.">
-          <div class="overlay"><p class="eyebrow">Part 1 · Key 2</p><h3 id="ep1-h">Your phone</h3><p class="ep-cover">Your hardware wallet and guardian have you.</p></div>
+        <header class="ep-head">
+          <p class="eyebrow">Part 1 · Key 2</p>
+          <h3 id="ep1-h">Your phone</h3>
+          <p class="ep-cover">Your hardware wallet and guardian have you.</p>
+        </header>
+        <div class="frame frame-film">
+          <video class="film" controls playsinline preload="none" poster="media/films/e1-phone.webp" aria-label="Film: If a key goes missing, part 1, your phone. 40 seconds, with voiceover and captions."><source src="media/films/e1-phone.mp4" type="video/mp4"><track kind="captions" srclang="en" label="English" src="media/films/e1-phone.vtt"></video>
+          <p class="film-label">Watch part 1 · 0:40</p>
         </div>
         <div class="episode-body">
           <div class="episode-copy">
@@ -255,9 +266,14 @@
       </article>
 
       <article class="episode ep-hardware" aria-labelledby="ep2-h">
-        <div class="frame frame-banner frame-dark">
-          <img class="media" src="media/emptydrawer.webp" width="1600" height="900" loading="lazy" alt="A hand searches an open drawer and finds only folded linen.">
-          <div class="overlay"><p class="eyebrow">Part 2 · Key 1</p><h3 id="ep2-h">Your hardware wallet</h3><p class="ep-cover">Your phone and guardian have you.</p></div>
+        <header class="ep-head">
+          <p class="eyebrow">Part 2 · Key 1</p>
+          <h3 id="ep2-h">Your hardware wallet</h3>
+          <p class="ep-cover">Your phone and guardian have you.</p>
+        </header>
+        <div class="frame frame-film">
+          <video class="film" controls playsinline preload="none" poster="media/films/e2-hardware-wallet.webp" aria-label="Film: If a key goes missing, part 2, your hardware wallet. 35 seconds, with voiceover and captions."><source src="media/films/e2-hardware-wallet.mp4" type="video/mp4"><track kind="captions" srclang="en" label="English" src="media/films/e2-hardware-wallet.vtt"></video>
+          <p class="film-label">Watch part 2 · 0:35</p>
         </div>
         <div class="episode-body">
           <div class="episode-copy">
@@ -279,9 +295,14 @@
       </article>
 
       <article class="episode ep-guardian" aria-labelledby="ep3-h">
-        <div class="frame frame-banner frame-dark">
-          <img class="media" src="media/unplug.webp" width="1600" height="900" loading="lazy" alt="A hand pulls the power cable from a small grey box on a bookshelf.">
-          <div class="overlay"><p class="eyebrow">Part 3 · Key 3</p><h3 id="ep3-h">Your home server</h3><p class="ep-cover">Your phone and hardware wallet have you.</p></div>
+        <header class="ep-head">
+          <p class="eyebrow">Part 3 · Key 3</p>
+          <h3 id="ep3-h">Your home server</h3>
+          <p class="ep-cover">Your phone and hardware wallet have you.</p>
+        </header>
+        <div class="frame frame-film">
+          <video class="film" controls playsinline preload="none" poster="media/films/e3-home-server.webp" aria-label="Film: If a key goes missing, part 3, your home server. 31 seconds, with voiceover and captions."><source src="media/films/e3-home-server.mp4" type="video/mp4"><track kind="captions" srclang="en" label="English" src="media/films/e3-home-server.vtt"></video>
+          <p class="film-label">Watch part 3 · 0:31</p>
         </div>
         <div class="episode-body">
           <div class="episode-copy">
@@ -321,6 +342,75 @@
           </ul>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- How it compares -->
+  <section id="compare" class="act" aria-labelledby="compare-h">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">How it compares</p>
+        <h2 id="compare-h">The third way, side by side.</h2>
+      </div>
+      <p class="swipe-hint" aria-hidden="true">Swipe to compare →</p>
+      <div class="compare-scroll" tabindex="0" role="region" aria-labelledby="compare-h">
+        <table class="compare">
+          <thead>
+            <tr>
+              <td></td>
+              <th scope="col">An exchange</th>
+              <th scope="col">One hardware wallet</th>
+              <th scope="col">Multisig with a company key</th>
+              <th scope="col" class="us"><span>Trikey</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Who holds the keys</th>
+              <td>The exchange</td>
+              <td>You hold one</td>
+              <td>You hold two, a company holds one</td>
+              <td class="us">You hold all three</td>
+            </tr>
+            <tr>
+              <th scope="row">Single point of failure</th>
+              <td><span class="no">Yes</span> the company</td>
+              <td><span class="no">Yes</span> your seed words</td>
+              <td><span class="yes">No</span></td>
+              <td class="us"><span class="yes">No</span></td>
+            </tr>
+            <tr>
+              <th scope="row">Everyday payments from your phone</th>
+              <td><span class="yes">Yes</span></td>
+              <td><span class="no">No</span> the device signs every time</td>
+              <td><span class="yes">Yes</span></td>
+              <td class="us"><span class="yes">Yes</span> under your daily limit</td>
+            </tr>
+            <tr>
+              <th scope="row">A stolen phone can drain it</th>
+              <td>Depends on the account</td>
+              <td>Not applicable</td>
+              <td>Usually not: the company's limits apply</td>
+              <td class="us"><span class="yes">No</span> at most your daily limit</td>
+            </tr>
+            <tr>
+              <th scope="row">Recover a lost key without a company</th>
+              <td><span class="no">No</span></td>
+              <td><span class="yes">Yes</span> with your seed words</td>
+              <td><span class="no">No</span> its server takes part</td>
+              <td class="us"><span class="yes">Yes</span> any two of your keys</td>
+            </tr>
+            <tr>
+              <th scope="row">If the company behind it disappears</th>
+              <td>Depends on the company</td>
+              <td>Nothing changes</td>
+              <td>Depends on its exit plan</td>
+              <td class="us">Nothing changes: no company is in the loop</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="aside footnote">Trikey is coming soon and isn't audited yet. Bitkey is the best-known example of multisig with a company key; Trikey keeps its feel and gives the third key back to you.</p>
     </div>
   </section>
 
@@ -452,6 +542,52 @@
     </div>
   </section>
 
+  <!-- Where it stands -->
+  <section id="status" class="act" aria-labelledby="status-h">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Where it stands</p>
+        <h2 id="status-h">Built in public, in this order.</h2>
+        <p class="aside">Every step lands in the open repository first. No dates: it ships when it's ready, and not before a security review.</p>
+      </div>
+      <ol class="road">
+        <li class="road-now">
+          <p class="road-state">In the repo</p>
+          <h3>Guardian core</h3>
+          <p>Nostr RPC, pairing, the policy engine, Delay &amp; Notify, lock and unlock, chain data from your node.</p>
+          <a class="road-link" href="https://github.com/TheIcarusWings/trikey/tree/main/apps/guardian">apps/guardian</a>
+        </li>
+        <li class="road-now">
+          <p class="road-state">In the repo</p>
+          <h3>Packaging</h3>
+          <p>A Docker image, an Umbrel community app store entry and a Start9 package skeleton.</p>
+          <a class="road-link" href="https://github.com/TheIcarusWings/trikey/tree/main/packaging">packaging</a>
+        </li>
+        <li class="road-now">
+          <p class="road-state">In the repo</p>
+          <h3>The phone app</h3>
+          <p>Onboarding, send and receive, recovery and settings, with Ledger, Trezor and QR devices. Recovery Key mode screens are still a demo.</p>
+          <a class="road-link" href="https://github.com/TheIcarusWings/trikey/tree/main/apps/mobile">apps/mobile</a>
+        </li>
+        <li class="road-next">
+          <p class="road-state">Next</p>
+          <h3>Testnet and signet beta</h3>
+          <p>Open testing with coins that have no value.</p>
+        </li>
+        <li class="road-later">
+          <p class="road-state">Before mainnet</p>
+          <h3>Independent security review</h3>
+          <p>An outside audit of the wallet, the guardian and the protocol.</p>
+        </li>
+        <li class="road-later">
+          <p class="road-state">After the review</p>
+          <h3>Mainnet</h3>
+          <p>Real bitcoin, once the review is done and its findings are fixed.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
   <!-- Questions -->
   <section id="faq" class="act act-surface" aria-labelledby="faq-h">
     <div class="wrap faq">
@@ -515,16 +651,40 @@
   </section>
 </main>
 
-<div class="wrap">
-  <footer class="site-footer">
-    <ul>
-      <li><a href="https://github.com/TheIcarusWings/trikey">Source on GitHub</a></li>
-      <li><a href="https://github.com/TheIcarusWings/trikey/blob/main/LICENSE">MIT license</a></li>
-      <li><a href="https://github.com/TheIcarusWings/trikey/security/advisories/new">Report a vulnerability</a></li>
-      <li><a href="./.well-known/security.txt">security.txt</a></li>
-    </ul>
-    <p>Trikey is an independent project and isn't affiliated with Bitkey, Block or any hardware wallet maker. Photos and footage are generated; the people and devices in them are fictional. No cookies, no tracking, no third-party scripts: the one small script here is ours, and the page reads fine without it. Type is Geist, under the SIL Open Font License.</p>
-  </footer>
-</div>
+<footer class="site-foot">
+  <div class="wrap">
+    <div class="foot-top">
+      <p class="foot-line">Your keys. Your server.<br>Your bitcoin.</p>
+      <nav class="foot-cols" aria-label="Footer">
+        <div>
+          <p class="eyebrow">Project</p>
+          <ul>
+            <li><a href="https://github.com/TheIcarusWings/trikey">Source on GitHub</a></li>
+            <li><a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md">Design</a></li>
+            <li><a href="https://github.com/TheIcarusWings/trikey/blob/main/LICENSE">MIT license</a></li>
+          </ul>
+        </div>
+        <div>
+          <p class="eyebrow">Security</p>
+          <ul>
+            <li><a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model">Threat model</a></li>
+            <li><a href="https://github.com/TheIcarusWings/trikey/security/advisories/new">Report a vulnerability</a></li>
+            <li><a href="./.well-known/security.txt">security.txt</a></li>
+          </ul>
+        </div>
+        <div>
+          <p class="eyebrow">On this page</p>
+          <ul>
+            <li><a href="#idea">How it works</a></li>
+            <li><a href="#missing">If a key goes missing</a></li>
+            <li><a href="#faq">Questions</a></li>
+          </ul>
+        </div>
+      </nav>
+    </div>
+    <p class="foot-word" aria-hidden="true">Trikey</p>
+    <p class="foot-fine">Pre-alpha, not audited: don't use it with real funds. Trikey is an independent project and isn't affiliated with Bitkey, Block or any hardware wallet maker. Photos and footage are generated; the people and devices in them are fictional. No cookies, no tracking, no third-party scripts: the one small script here is ours, and the page reads fine without it. Type is Geist, under the SIL Open Font License.</p>
+  </div>
+</footer>
 </body>
 </html>

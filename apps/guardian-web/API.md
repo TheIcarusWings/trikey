@@ -10,9 +10,17 @@ The guardian re-exports them type-only (`apps/guardian/src/http/types.ts`), so a
 change here that the server does not follow fails `npm run typecheck`. This file
 lists the endpoints, status codes and behavior the types do not carry.
 
-**Deployment.** The guardian does no user authentication itself. It must only be
-reachable through the platform's authenticating proxy (Umbrel's `app_proxy`,
-Start9's interface), never exposed beyond it.
+**Deployment and sessions.** Keep the guardian behind the platform's authenticating
+proxy (Umbrel's `app_proxy`, Start9's interface), never exposed beyond it. It does not
+rely on the proxy alone (other apps' containers on the same box can likely reach it
+directly; security review 2026-10, finding 10b): every endpoint needs a **session**,
+except `GET /api/status` (reduced to `PublicStatus` without one), `POST /api/session`,
+`DELETE /api/session`, and the first-run endpoints until setup completes.
+`POST /api/session` with the unlock passphrase signs the browser in: the guardian sets
+an `HttpOnly; SameSite=Strict` cookie (`Secure` when the request came over HTTPS, as
+`X-Forwarded-Proto` says), a random 32-byte token held in memory only. A session ends
+after 30 minutes without a request, 12 hours after sign-in, at sign-out, at a reset, and
+when the guardian restarts. Without one, everything else answers `401 unauthenticated`.
 
 ## Conventions
 
@@ -27,7 +35,7 @@ Start9's interface), never exposed beyond it.
   { "error": { "code": "bad_passphrase", "message": "That passphrase is not right." } }
   ```
 
-  Codes: `bad_passphrase` (401), `rate_limited` (429, with `retryAfterSeconds` and a
+  Codes: `unauthenticated` (401, no session: sign in), `bad_passphrase` (401), `rate_limited` (429, with `retryAfterSeconds` and a
   `Retry-After` header), `locked` (409), `setup_required` (409), `already_setup` (409),
   `already_paired` (409), `recovery_pending` (409), `sweep_pending` (409), `not_found` (404), `invalid` (400, 413 or 415), `forbidden`
   (403, a cross-origin request), `not_available` (501), `internal` (500). The UI
@@ -40,7 +48,7 @@ Start9's interface), never exposed beyond it.
   send; anything else is `415`), and must be same-origin: the guardian checks
   `Sec-Fetch-Site: same-origin` when the browser sends it, else `Origin` against
   `Host` / `X-Forwarded-Host` (`403 forbidden`). Bodies are limited to 16 KiB.
-- The UI is a single-page app with client-side routes (`/`, `/setup`, `/locked`,
+- The UI is a single-page app with client-side routes (`/`, `/setup`, `/sign-in`, `/locked`,
   `/activity`, `/rules`, `/recovery`, `/pair`, `/recover-phone`, `/reset`, `/host`). The guardian serves
   `index.html` for every non-`/api` path that is not a file in `dist/` (a missing
   file under `/assets/` is a `404`).
@@ -52,15 +60,17 @@ Start9's interface), never exposed beyond it.
 
 | Guardian state | Allowed |
 |---|---|
-| Setup not complete | `GET /status`, `GET /setup/preflight`, `POST /setup` |
-| Locked | `GET /status`, `POST /unlock`, `POST /reset` |
-| Unlocked | everything |
+| Setup not complete | `GET /status`, `GET /setup/preflight`, `POST /setup` (no session needed; setup signs the browser in) |
+| No session (after setup) | `GET /status` (as `PublicStatus`), `POST /session`, `DELETE /session` |
+| Locked, signed in | `GET /status`, `POST /unlock`, `POST /reset`, the session endpoints |
+| Unlocked, signed in | everything |
 
-Anything else answers `409 locked` (or `409 setup_required` before setup;
-`409 already_setup` for the setup endpoints afterwards). The UI reads `GET /status`
-first and shows the matching screen, and polls it every 15 s (every 3 s on the locked
-screen, so an unlock from the phone shows up quickly). The guardian is locked after
-every start of its process.
+Without a session anything else answers `401 unauthenticated`; with one, `409 locked`
+(or `409 setup_required` before setup; `409 already_setup` for the setup endpoints
+afterwards). The UI reads `GET /status` first and shows the matching screen (sign-in when
+it says `authenticated: false`), and polls it every 15 s (every 3 s on the locked screen,
+so an unlock from the phone shows up quickly); any `401 unauthenticated` sends it back to
+the sign-in screen. The guardian is locked after every start of its process.
 
 ## Endpoints
 
@@ -68,10 +78,12 @@ every start of its process.
 
 | Method and path | Request | Response | Notes |
 |---|---|---|---|
-| `GET /api/status` | none | `GuardianStatus` | Always available. `setupComplete`, `state` (`locked` or `unlocked`), `lockedAt` and `lockReason` (`restart`, `manual` from this UI, or `remote` from the paired phone's `guardian.lock`) while locked, `relays[]` (with live connection state), `chain` (`synced` once Electrs answers, `syncing` with `progress` when Bitcoin Core RPC reports initial block download, else `unavailable`; `height`), `wallets[]` (zero or one: the engine guards one active wallet), `retiredWallets[]` (wallets it guarded before, read-only history: `reason` `recovered` with the `successorId` it guards now, or `retired`), `hardwareConfirmRequired` (after the guardian took over a recovered wallet, until the phone confirms the hardware wallet), `dailySpend`, `recoveryInProgress`, and `phoneSpending`, `network`, `npub`, `version`. |
+| `GET /api/status` | none | `GuardianStatus` or `PublicStatus` | Always available. Without a session (after setup) only `PublicStatus`: `authenticated: false`, `setupComplete`, `state`, `network`, `version`. With one (`authenticated: true`): `setupComplete`, `state` (`locked` or `unlocked`), `lockedAt` and `lockReason` (`restart`, `manual` from this UI, or `remote` from the paired phone's `guardian.lock`) while locked, `relays[]` (with live connection state), `chain` (`synced` once Electrs answers, `syncing` with `progress` when Bitcoin Core RPC reports initial block download, else `unavailable`; `height`), `wallets[]` (zero or one: the engine guards one active wallet), `retiredWallets[]` (wallets it guarded before, read-only history: `reason` `recovered` with the `successorId` it guards now, or `retired`), `hardwareConfirmRequired` (after the guardian took over a recovered wallet, until the phone confirms the hardware wallet), `dailySpend`, `recoveryInProgress`, and `phoneSpending`, `network`, `npub`, `version`, `warnings?` (`no_alert_contacts`: a recovery would be announced only to the paired phone; mainnet guardians refuse that, test networks warn). |
+| `POST /api/session` | `{ passphrase, unlock? }` | `GuardianStatus` | Signs the browser in (sets the session cookie). With `unlock: true` a locked guardian is unlocked by the same passphrase (that attempt counts against the unlock's rate limit). `401 bad_passphrase`, `429 rate_limited`: sign-in has its own rate limit (exponential backoff after 3 failures, persisted), which neither the unlock, the reset nor the phone's `guardian.unlock` shares. |
+| `DELETE /api/session` | `{}` | `PublicStatus` | Signs the browser out (clears the cookie). |
 | `GET /api/setup/preflight` | none | `SetupPreflight` | First run only. `electrs` is `found` when Electrs answers; `node` is `found` when Bitcoin Core RPC answers (or, without RPC settings, when Electrs does). The relay choices to offer. |
 | `POST /api/setup` | `{ passphrase, relays: string[] }` | `GuardianStatus` | First run only. Creates key 3 (a fresh BIP39 seed; the BIP48 account key), encrypts it under an Argon2id key from the passphrase, connects the chosen relays. The guardian ends up unlocked. `400 invalid` if `relays` is empty, has more than 8 entries or a URL that is not `wss://` (or `ws://` on a local host), or the passphrase has fewer than 12 characters. There is no backup of key 3, by design. |
-| `POST /api/unlock` | `{ passphrase }` | `GuardianStatus` | `401 bad_passphrase` on a wrong passphrase (with `retryAfterSeconds` once the next try has to wait). Rate limited with exponential backoff after 3 failures (`429 rate_limited`); the count survives restarts and is shared with the phone's `guardian.unlock`. Unlocking takes a few seconds on a Raspberry Pi (Argon2id). |
+| `POST /api/unlock` | `{ passphrase }` | `GuardianStatus` | `401 bad_passphrase` on a wrong passphrase (with `retryAfterSeconds` once the next try has to wait). Rate limited with exponential backoff after 3 failures (`429 rate_limited`); the count survives restarts. The phone's `guardian.unlock`, the reset and the sign-in each have their own count, so a stolen phone guessing away never delays this UI (security review 2026-10, finding 4). Unlocking takes a few seconds on a Raspberry Pi (Argon2id). |
 | `POST /api/lock` | `{}` | `GuardianStatus` | Drops key 3 from memory and invalidates a pairing code in progress. The phone gets a `guardian_locked` alert. |
 | `POST /api/reset` | `{ passphrase, confirm }` | `GuardianStatus` | "Reset guardian", see below. Works locked or unlocked and ends unlocked. |
 
@@ -80,9 +92,9 @@ limit records, and **creates a new key 3**; the old key 3 is destroyed (the keys
 replaced, the one exception to "never overwritten"). The nostr identity, the relays, the unlock
 passphrase and the service log stay. `confirm` must be exactly `RESET GUARDIAN`
 (`RESET_CONFIRMATION` in `src/api/types.ts`), else `400 invalid`; the passphrase is checked like
-an unlock and shares its rate limit (`401 bad_passphrase`, `429 rate_limited`). Refused with
+an unlock, with a rate limit of its own (`401 bad_passphrase`, `429 rate_limited`). It ends every web session (the browser that reset is signed in again). Refused with
 `409 recovery_pending` while a recovery is pending or ready (it would make a running recovery
-disappear), and with `409 sweep_pending` while a co-signed sweep has not been broadcast yet (its
+disappear), and with `409 sweep_pending` while a co-signed sweep has not been broadcast yet and still can be (its
 signature would be lost with key 3). The paired phone gets a `wallet_retired` alert (reason
 `reset`) first. Why a new key 3 rather than keeping it: with the old key and no wallet state,
 anyone holding this UI, the passphrase and a stolen hardware wallet could pair the user's own
@@ -123,7 +135,7 @@ payments", which the engine cannot do safely.)
 
 | Method and path | Response | Notes |
 |---|---|---|
-| `GET /api/recovery-code` | `RecoveryCode` | Unlocked only. The permanent "Recover on a new phone" code for a phone that has neither the old phone nor its backup: `uri` (`trikey://recover?v=1&npub=…&relay=…&net=…`, PROTOCOL.md section 6) is what the QR code encodes. It carries **no secret** and does not expire (the hardware wallet's `recovery.access` signature is what lets a phone in), so the page offers to print it. `404 not_found` while no wallet is paired. |
+| `GET /api/recovery-code` | `RecoveryCode` | Unlocked only. The permanent "Recover on a new phone" code for a phone that has neither the old phone nor its backup: `uri` (`trikey://recover?v=1&npub=…&relay=…&net=…&wallet=…`, PROTOCOL.md section 6; `wallet` lets the phone sign the wallet-bound `recovery.access` text) is what the QR code encodes. It carries **no secret** and does not expire (the hardware wallet's `recovery.access` signature is what lets a phone in), so the page offers to print it. `404 not_found` while no wallet is paired. |
 
 ### Pairing
 
@@ -166,6 +178,7 @@ The mock keeps state in memory (a reload starts over). Pick the starting state w
 | `/?mock=recovery` | A Delay & Notify recovery is running |
 | `/?mock=unpaired` | Set up, no phone paired yet |
 | `/?mock=syncing` | Unlocked, node still syncing, one relay down |
+| `/?mock=signedout` | Set up and locked, this browser not signed in: the sign-in screen |
 
 In the mock any unlock passphrase works except the literal `wrong` (also for the reset). In dev, run
 `trikeyMock.completePairing()` in the browser console to pretend a phone scanned

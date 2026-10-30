@@ -30,8 +30,9 @@ import type {
   WalletState,
 } from './types';
 import type { RecoveryKeyActions } from './rk-actions';
+import type { SilentPaymentActions } from './sp-actions';
 
-export type { RecoveryKeyActions };
+export type { RecoveryKeyActions, SilentPaymentActions };
 
 export interface ReceiveAddress {
   address: string;
@@ -156,6 +157,12 @@ export interface WalletService {
    */
   readonly rk?: RecoveryKeyActions;
   /**
+   * Silent payments (BIP 352): turning them on and off, the address and its labels, the helper coin's address, checking for
+   * payments and moving what was received into the vault. The guardian mode's wallet and the demo have them; Recovery Key mode
+   * sends them through `quoteSend`/`sendPayment` like any payment and cannot receive them yet (`state.silentPayments.support`).
+   */
+  readonly silentPayments?: SilentPaymentActions;
+  /**
    * Makes a quote exact when the wallet needs the chain for it (Recovery Key mode picks the coins). Optional: the
    * quote `quoteSend` gave stays valid, with `estimate: true`. Screens that show the final fee call it.
    */
@@ -186,6 +193,10 @@ export interface WalletService {
     restartOnboarding?(): void;
     /** The demo's Recovery Key home shows what it does when a refill this phone did not send appears, and when one is stuck. */
     simulateRecoveryKeyAlerts?(): void;
+    /** The demo's guardian has its node's RPC (or not: receiving silent payments is then paused, as on a guardian answering 1700). */
+    setNodeRpc?(available: boolean): void;
+    /** The demo's helper coin is funded, or not yet. */
+    setHelperFunded?(funded: boolean): void;
     /** Removes the wallet's keys and data from this phone (this mode and network only). */
     forgetWallet?(): Promise<void>;
     /** Facts about the setup, for the developer ("device fingerprint ..."). */

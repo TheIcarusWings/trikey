@@ -386,9 +386,9 @@ export class ChainService {
    * history with net amounts, the tip, and the next unused address on each chain.
    * Amounts are bigints here; the RPC handler puts them on the wire.
    */
-  async walletSync(wallet: AddressSource, opts: { historyLimit?: number; maxUtxos?: number } = {}): Promise<WalletSync> {
+  async walletSync(wallet: AddressSource, opts: { historyLimit?: number; maxUtxos?: number; minIndex?: Partial<Record<0 | 1, number>> } = {}): Promise<WalletSync> {
     const tip = await this.tip();
-    const scan = await this.scanWallet(wallet);
+    const scan = await this.scanWallet(wallet, { minIndex: opts.minIndex });
     const utxos = await this.unspentOf(scan);
     // A coin at a height past our (slightly stale) tip is confirmed all the same.
     const confirmations = (height: number) => (height > 0 ? Math.max(1, tip.height - height + 1) : 0);
@@ -481,9 +481,9 @@ export class ChainService {
    * reach it. Previous transactions are only fetched for inputs whose txid is
    * in the wallet's history, so a foreign transaction costs one scan.
    */
-  async spendsWalletCoin(wallet: AddressSource, txHex: string): Promise<boolean> {
+  async spendsWalletCoin(wallet: AddressSource, txHex: string, opts: { minIndex?: Partial<Record<0 | 1, number>> } = {}): Promise<boolean> {
     const tx = parseRawTx(txHex);
-    const scan = await this.scanWallet(wallet);
+    const scan = await this.scanWallet(wallet, { minIndex: opts.minIndex });
     const ours = new Set<string>();
     for (const chain of [0, 1] as const) for (const u of scan.chains[chain].used) for (const h of u.history) ours.add(h.tx_hash);
     const candidates = tx.inputs.filter((i) => ours.has(i.txid));
@@ -653,6 +653,23 @@ export class ChainService {
       if (!(err instanceof ElectrumError)) throw err;
     }
     return { estimates, minRelaySatPerVb: Math.max(minRelay ?? 1, 0.001) };
+  }
+
+  /**
+   * A confirmed transaction other than `exceptTxid` that spends the outpoint `txid:vout`, with its
+   * confirmations, if Electrs knows one (looked up through the history of the output's script).
+   * Undefined when the outpoint is unspent, spent only in the mempool, or spent by `exceptTxid`.
+   */
+  async spentElsewhere(txid: string, vout: number, exceptTxid: string): Promise<{ txid: string; confirmations: number } | undefined> {
+    const prev = parseRawTx(await this.getTransaction(txid)).outputs[vout];
+    if (!prev) return undefined;
+    const tip = await this.tip();
+    for (const h of await this.history(prev.script)) {
+      if (h.tx_hash === exceptTxid || h.tx_hash === txid || h.height <= 0) continue;
+      const spender = parseRawTx(await this.getTransaction(h.tx_hash));
+      if (spender.inputs.some((i) => i.txid === txid && i.vout === vout)) return { txid: h.tx_hash, confirmations: Math.max(1, tip.height - h.height + 1) };
+    }
+    return undefined;
   }
 
   /** True if Electrs knows the transaction (mempool or chain). */

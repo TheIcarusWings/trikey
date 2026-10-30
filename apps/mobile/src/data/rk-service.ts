@@ -40,6 +40,7 @@ import { DevicePromptStore, compositeProvider, ledgerHint, withDevicePrompts } f
 import { WalletServiceError, notAvailableYet } from './errors';
 import { SIMULATED_OPTION, hardwareBrandOf, hardwareOptionTable, type UiOs } from './hardware-options';
 import { mapRkError, kitNetworkError } from './rk-errors';
+import { emptySilentPayments } from './sp-empty';
 import { GENESIS_HASHES, defaultServerUrl, parseServerUrl } from './rk-server';
 import type { RecoveryKeyActions } from './rk-actions';
 import type { ReceiveAddress, WalletService } from './service';
@@ -579,6 +580,7 @@ class Service implements RkWalletService {
       oldWallets: [],
       walletRetired: null,
       finishedRecovery: null,
+      silentPayments: emptySilentPayments('send_only'),
     };
   }
 
@@ -803,10 +805,19 @@ class Service implements RkWalletService {
     if (request.amountSats <= 0) return { ok: false, problem: 'amount_too_small', message: 'Enter an amount.' };
     if (BigInt(request.amountSats) < MIN_PAYMENT_SATS) return { ok: false, problem: 'amount_too_small', message: "That's too small to send. The smallest payment is 546 sats." };
     const rate = this.rateFor(request.speed);
-    const spendFee = Math.ceil(rate * estimateVsize({ wpkhInputs: 1, outputScriptLengths: [22, 22] }));
+    // A silent payment's output is a taproot output (34-byte script), and it can only come from the spending balance:
+    // BIP 352 needs single-key inputs, and the vault's multisig coins have none.
+    const silent = code.silentPayment === true;
+    const spendFee = Math.ceil(rate * estimateVsize({ wpkhInputs: 1, outputScriptLengths: [silent ? 34 : 22, 22] }));
     const vaultFee = Math.ceil(rate * estimateVsize({ multisigInputs: 1, outputScriptLengths: [22, 34] }));
     const spending = h.spending.totalSats;
     const viaVault = request.signer === 'hardware' || request.amountSats + spendFee > spending;
+    if (silent && viaVault)
+      return {
+        ok: false,
+        problem: 'other',
+        message: request.signer === 'hardware' ? "A silent payment can't come from the vault. Pay it from your spending balance." : "A silent payment can only come from your spending balance, and it doesn't hold enough for this. Add to it first.",
+      };
     const fee = viaVault ? vaultFee : spendFee;
     const total = request.amountSats + fee;
     if (viaVault && total > h.vault.confirmedSats) return { ok: false, problem: 'insufficient_funds', message: "There isn't enough bitcoin for that and the network fee." };
@@ -821,6 +832,7 @@ class Service implements RkWalletService {
         remainingAfterSats: viaVault ? spending : Math.max(0, spending - total),
         feeRateSatPerVb: rate,
         estimate: true,
+        ...(silent ? { silentPayment: {} } : {}),
         ...(warning ? { warning } : {}),
       },
     };

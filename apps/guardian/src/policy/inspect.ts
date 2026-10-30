@@ -11,7 +11,7 @@ import {
   sighashAll,
 } from '@trikey/core';
 import { CosignerSigner } from './signer.js';
-import { Refusal } from './types.js';
+import { HighWater, Refusal } from './types.js';
 
 /**
  * Highest address index accepted as "our own" change. Outputs at higher
@@ -19,6 +19,18 @@ import { Refusal } from './types.js';
  * find them, so a thief could otherwise park funds out of sight for free.
  */
 export const MAX_SELF_INDEX = 100_000;
+
+/**
+ * How far past a chain's high-water mark (the highest index seen used on chain, or co-signed) an output
+ * may still count as change. Equal to the address scan's gap limit (chain.ts, `DEFAULT_GAP_LIMIT`), so
+ * anything co-signed as change is within the range the next scan covers: the scans start from the
+ * marks (`HighWater`), and the marks rise with every co-signed change output.
+ */
+export const CHANGE_WINDOW = 20;
+
+export const NO_HIGH_WATER: HighWater = { receive: -1, change: -1 };
+
+export const maxHighWater = (a: HighWater, b: HighWater): HighWater => ({ receive: Math.max(a.receive, b.receive), change: Math.max(a.change, b.change) });
 
 /** Does the PSBT pay a taproot (P2TR) output? Every silent payment does. */
 export function hasTaprootOutput(tx: btc.Transaction): boolean {
@@ -35,6 +47,12 @@ export interface InspectOptions {
    * function accepts. Only offered for PSBTs with a taproot output (`hasTaprootOutput`).
    */
   helper?: (candidate: HelperInputCandidate) => boolean;
+  /**
+   * Highest index per chain an output may have and still count as paying the target (change): the
+   * high-water marks plus `CHANGE_WINDOW`. Outputs past it count as leaving the wallet. Default:
+   * `MAX_SELF_INDEX` (a recovery's destination, which has no history here).
+   */
+  selfLimit?: HighWater;
 }
 
 export interface Inspection {
@@ -49,6 +67,8 @@ export interface Inspection {
    * address of the target wallet, so a helper output is never change. Never negative.
    */
   outflow: bigint;
+  /** Per chain, the highest index of an output counted as paying the target (-1 for none). */
+  selfIndexes: HighWater;
 }
 
 function mapPsbtError(e: unknown): Refusal {
@@ -75,17 +95,21 @@ function mapPsbtError(e: unknown): Refusal {
   }
 }
 
-/** Does output `o` pay exactly `wallet.derive(chain, index)` for the chain/index its BIP32 metadata claims? */
-function paysDerivedAddress(wallet: MultisigWallet, o: ReturnType<btc.Transaction['getOutput']>): boolean {
-  if (!o.script) return false;
+/**
+ * The chain and index of `wallet.derive(chain, index)` that output `o` pays exactly, for a chain/index
+ * its BIP32 metadata claims within `limit`, else undefined.
+ */
+function paysDerivedAddress(wallet: MultisigWallet, o: ReturnType<btc.Transaction['getOutput']>, limit?: HighWater): { chain: 0 | 1; index: number } | undefined {
+  if (!o.script) return undefined;
   for (const [, { path }] of o.bip32Derivation ?? []) {
     if (path.length < 2) continue;
     const chain = path[path.length - 2];
     const index = path[path.length - 1];
     if ((chain !== 0 && chain !== 1) || index < 0 || index > MAX_SELF_INDEX) continue;
-    if (compareBytes(wallet.derive(chain, index).script, o.script) === 0) return true;
+    if (limit && index > (chain === 0 ? limit.receive : limit.change)) continue;
+    if (compareBytes(wallet.derive(chain, index).script, o.script) === 0) return { chain, index };
   }
-  return false;
+  return undefined;
 }
 
 /**
@@ -112,10 +136,13 @@ export function inspectPsbt(
   }
   if (!analysis.inputs.length) return { ok: false, refusal: { reason: 'invalid_psbt', detail: 'no inputs' } };
   if (!analysis.outputs.length) return { ok: false, refusal: { reason: 'invalid_psbt', detail: 'no outputs' } };
-  const toTarget = analysis.outputs.map((_, i) => paysDerivedAddress(target, tx.getOutput(i)));
+  const paid = analysis.outputs.map((_, i) => paysDerivedAddress(target, tx.getOutput(i), opts.selfLimit));
+  const toTarget = paid.map((p) => !!p);
   const targetOut = analysis.outputs.reduce((s, o, i) => (toTarget[i] ? s + o.amount : s), 0n);
   const vaultIn = analysis.vaultIn ?? analysis.totalIn;
-  return { ok: true, inspection: { analysis, toTarget, targetOut, outflow: vaultIn > targetOut ? vaultIn - targetOut : 0n } };
+  const selfIndexes = { ...NO_HIGH_WATER };
+  for (const p of paid) if (p) selfIndexes[p.chain === 0 ? 'receive' : 'change'] = Math.max(selfIndexes[p.chain === 0 ? 'receive' : 'change'], p.index);
+  return { ok: true, inspection: { analysis, toTarget, targetOut, outflow: vaultIn > targetOut ? vaultIn - targetOut : 0n, selfIndexes } };
 }
 
 /** Adds key 3's SIGHASH_ALL signature to every input and returns the new PSBT. */

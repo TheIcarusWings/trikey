@@ -39,7 +39,7 @@ rumor  kind 21420, unsigned, authored by the sender          <- carries the JSON
 
 The rumor `content` is the JSON message (section 3), at most 200,000 characters. The rumor `id` must be correct and `rumor.pubkey` must equal `seal.pubkey`.
 
-**PSBT hash rule.** A message carries a PSBT when it is a `sign` request (`params.psbt`), a `recovery.start` request (`params.sweepPsbt`), or a success response whose `result.psbt` is a string. Such a message MUST have a `psbt` tag equal to the lowercase-hex SHA-256 of the base64-decoded PSBT, and a message without a PSBT MUST NOT have one. At most one PSBT per message.
+**PSBT hash rule.** A message carries a PSBT when it is a `sign` request (`params.psbt`), a `recovery.start` or `recovery.update` request (`params.sweepPsbt`), or a success response whose `result.psbt` is a string. Such a message MUST have a `psbt` tag equal to the lowercase-hex SHA-256 of the base64-decoded PSBT, and a message without a PSBT MUST NOT have one. At most one PSBT per message.
 
 ## 3. Messages (JSON, no `jsonrpc` field)
 
@@ -75,14 +75,15 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `pair.prepare` | `pairingSecret`, `network`, `entropy?: Hex32` (the phone's contribution to key 3, see "Key 3 from both sides") | `guardianKey: KeyOrigin`, `guardianVersion`, `key3Mixed?: boolean` |
 | `pair` | `pairingSecret`, `deviceName` (1-64), `network` (`bitcoin`\|`testnet`\|`signet`\|`regtest`), `phoneKey: KeyOrigin`, `descriptor`, `phoneNostrPubkey: Hex32`, `hardwareAuth: { pubkey, path }`, `hardwareAuthProof`, `rules: Policy`, `replacesWalletId?: WalletId`, `replacesDescriptor?` (needs `replacesWalletId`; see "Replacing the guardian") | `guardianKey: KeyOrigin`, `descriptor`, `walletId`, `guardianVersion`, `key3Mixed?: boolean` |
 | `sign` | `psbt`, `memo?` | `psbt` (with the guardian's partial signatures) |
-| `policy.get` | `{}` | `policy`, `nextHardwareSequence`, `policyHash` |
+| `policy.get` | `{}` | `policy`, `nextHardwareSequence`, `policyHash`, `warnings?` (`["no_alert_contacts"]`: no alert contact, so a recovery is announced only to the paired phone; mainnet guardians refuse such a policy, test networks warn) |
 | `policy.update` | `policy`, `approval?` | `policy`, `nextHardwareSequence`, `policyHash` |
 | `recovery.start` | `sweepPsbt`, `newDescriptor` | `recovery` |
+| `recovery.update` | `recoveryId`, `sweepPsbt` | `recovery` (same id and `readyAt`, the new `sweepTxid`, `amountSats` and `feeSats`) |
 | `recovery.cancel` | `recoveryId`, `approval?` | `recovery`, `contested: boolean` |
 | `recovery.status` | `recoveryId?` (default: the active one) | `recovery` (or `null`), `psbt?` (the signed sweep, once the guardian has co-signed it) |
 | `phone.resume` | `approval` | `phoneSpending: "enabled"` |
-| `guardian.unlock` | `{kind:"passphrase", passphrase}` or `{kind:"hardware", secret: hex}` | `unlocked: boolean` |
-| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time`, `atMs?` (the guardian's clock in milliseconds when it answered, see "Time"), `dailyLimit?: { limitSats, usedSats, availableSats }`, `walletId?`, `hardwareConfirmRequired?`, `watchedWalletId?` (the replaced wallet the guardian watches, if any), `key3Mixed?` (while paired: key 3 was made with the phone's `entropy`) |
+| `guardian.unlock` | `{kind:"passphrase", passphrase}` or `{kind:"hardware", secret: hex}` | `unlocked: boolean` (`1101` with `data.reason` `phone_unlock_disabled` after 5 wrong passphrases in a row until the web UI unlocks, or `recovery_pending` while a recovery the phone did not start runs; the phone's attempts have their own rate limit) |
+| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time`, `atMs?` (the guardian's clock in milliseconds when it answered, see "Time"), `dailyLimit?: { limitSats, usedSats, availableSats }`, `walletId?`, `hardwareConfirmRequired?`, `watchedWalletId?` (the replaced wallet the guardian watches, if any), `key3Mixed?` (while paired: key 3 was made with the phone's `entropy`), `warnings?` (as `policy.get`'s) |
 | `guardian.lock` | `{}` | `state: "locked"` (see "Locking from the phone") |
 | `wallet.sync` | `historyLimit?` (1-500, default 100), `wallet?` (`"replaced"`, `"helper"` or a `WalletId`; default the paired wallet) | `walletId?`, `tipHeight`, `tipHash`, `utxos`, `utxosTruncated`, `balance: { confirmedSats, unconfirmedSats }`, `history`, `historyTruncated`, `nextReceiveIndex`, `nextChangeIndex`, `gapLimit`, `coins?` (`"helper"` only) (see "Chain data", "Silent payments") |
 | `tx.get` | `txid: Hex32`, `witness?: boolean` (default `true`) | `txHex` |
@@ -134,7 +135,7 @@ The guardian never parses text from the phone. It rebuilds the text from the req
 | `resume-phone` | `Trikey resume-phone v1 wallet=<walletId> seq=<n> expires=<ISO>` |
 | `retire-wallet` | `Trikey retire-wallet v1 wallet=<walletId> seq=<n> expires=<ISO>` |
 | pairing proof | `Trikey pair v1 wallet=<walletId> guardian=<cosignerAccountPubkey hex>` |
-| recovery access | `Trikey recovery-access v1 guardian=<guardian nostr pubkey hex> phone=<new phone's nostr pubkey hex> expires=<ISO>` (no wallet id and no sequence: see "Recovery access") |
+| recovery access | `Trikey recovery-access v2 wallet=<walletId> guardian=<guardian nostr pubkey hex> phone=<new phone's nostr pubkey hex> expires=<ISO>` when the phone knows the wallet id (from the recovery code, or when renewing), else `Trikey recovery-access v1 guardian=... phone=... expires=<ISO>` (no wallet id and no sequence: see "Recovery access") |
 
 Example: `Trikey resume-phone v1 wallet=0123456789abcdef seq=4 expires=2030-03-17T17:46:40Z`. `walletId` is the `walletId` of the `pair` result (the engine's descriptor fingerprint); `expires` is `expiresAt` as `YYYY-MM-DDTHH:MM:SSZ`.
 
@@ -198,9 +199,10 @@ A `Recovery` object (the engine's `RecoveryView`, with times in seconds):
 | `startedAt`, `readyAt` | when it started, and when the delay ends and the guardian may co-sign |
 | `delayDays` | 7, 14 or 30, snapshotted at start (later policy changes do not affect a running recovery) |
 | `sweepTxid`, `destinationWalletId`, `amountSats`, `feeSats` | what the sweep does |
-| `cancelledAt?`, `cancelledBy?`, `completedAt?` | `cancelledBy` is `app` \| `contact` \| `hardware` |
+| `cancelledAt?`, `cancelledBy?`, `completedAt?` | `cancelledBy` is `app` \| `contact` \| `hardware` \| `superseded` (closed by the guardian when another, completed recovery of the same wallet swept it and the wallet rotated) |
 
-* **`recovery.start`**: the sweep PSBT must be signed on every input by **one** surviving key, either the phone's or the hardware wallet's. The guardian reads which from the signatures. `newDescriptor` must keep the surviving key and drop the other user key. The fee must not exceed `sweepFeeCapSats`. Alerts go to the paired phone and every alert contact.
+* **`recovery.start`**: the sweep PSBT must be signed on every input by **one** surviving key, either the phone's or the hardware wallet's. The guardian reads which from the signatures. `newDescriptor` must keep the surviving key and drop the other user key. The fee must not exceed `sweepFeeCapSats`. Alerts go to the paired phone and every alert contact. The guardian needs its chain data to start one (`1501` `chain_unavailable` without it): the delay counts from the later of its clock and the chain's median time past (`readyAt`), and completes only when its clock, the median time past and the block count since the start (144 per day of delay; 1 on regtest) all agree. Refused `sign`, `recovery.start` and `recovery.update` requests are rate limited per sender (30 per 10 minutes, then `1500` RateLimited).
+* **`recovery.update`**: for coins that arrived after the start (a sweep must move every coin of the wallet, so even dust blocks the completion). The surviving key signs a new sweep that spends every input of the current one plus the new coins, to the same destination; the guardian swaps it in **without restarting the delay** if it pays only `newDescriptor` of the running recovery, every input is the wallet's and is signed by the same surviving key alone, it spends a superset of the current sweep's inputs, and the fee is within the cap (the smaller of the cap at the start and now). Everything is checked again at completion. Who may call it: whoever may call `recovery.start`. Errors as for `recovery.start`; `1300`/`1302` when `recoveryId` is not the running recovery.
 * **`recovery.cancel`** may be sent by the paired phone or an alert contact (the guardian authenticates the sender's nostr key; it must let contacts through its peer check for this method) without `approval`, or with an `approval` of `cancel-recovery` for the hardware wallet. `contested` is true unless the canceller holds the key that started the recovery (the phone cancelling a phone-started recovery, or the hardware wallet cancelling a hardware-started one); a contested cancel pauses phone payments (`phoneSpending: paused_contested`) until `phone.resume`.
 * **`phone.resume`** needs an approval of `resume-phone` and only works when phone payments are paused by a contested cancel and no recovery is running.
 * **`recovery.status`**: the engine marks a recovery `completed` when it co-signs the sweep, not when the sweep confirms. `psbt` is that co-signed sweep; broadcasting it is up to the phone or the guardian service.
@@ -280,8 +282,8 @@ BIP 352 silent payments (DESIGN.md, "Silent payments"). The vault's `wsh(sortedm
 
 "Lost phone, no backup": the user has a new phone, the hardware wallet and the guardian. The new phone has a fresh nostr key that the guardian does not know, and it knows neither the descriptor nor the guardian's key, only the guardian's `npub` and relays (the web UI's "Recover on a new phone" code, section 6). `recovery.access` lets the hardware wallet vouch for it:
 
-1. The phone asks the device for the authorization key (the same path the wallet used at pairing; it is derived the same way on every phone, see the guardian README) and has it BIP 137-sign `recoveryAccessMessage({ guardianPubkey, phonePubkey, expiresAt })`, with `expiresAt` at most 24 h ahead.
-2. **`recovery.access`** from any sender, once a wallet is paired. The guardian rebuilds the text with *its own* nostr key and the *sender's* key, so the signature is no use to another phone or against another guardian, and verifies it against the paired `hardwareAuth`. Wrong signature `1202`, expired `1203`, too far ahead `1206`. It does not consume a hardware sequence number.
+1. The phone asks the device for the authorization key (the same path the wallet used at pairing; it is derived the same way on every phone, see the guardian README) and has it BIP 137-sign `recoveryAccessMessage({ guardianPubkey, phonePubkey, expiresAt, walletId? })`, with `expiresAt` at most 24 h ahead. With `walletId` (the recovery code carries it since the 2026-10 security review; a phone renewing its access knows it) the text is version 2 and binds the wallet too; without it, version 1.
+2. **`recovery.access`** from any sender, once a wallet is paired. The guardian rebuilds the text with *its own* nostr key and the *sender's* key, so the signature is no use to another phone or against another guardian, and verifies it against the paired `hardwareAuth`. Wrong signature `1202`, expired `1203`, too far ahead `1206`. It does not consume a hardware sequence number. Both versions are accepted; a version-1 signature whose grant a wallet rotation or retirement revoked is refused until it expires (`1202`, `data.reason: "approval_revoked"`), whatever its encoding, so the next wallet does not honour it. BIP 137 signatures with a high S are refused (signers only make low-S ones).
 3. The sender may then, until `accessExpiresAt` (durably, across guardian restarts), call `guardian.status`, `wallet.sync`, `tx.get`, `fees.estimate`, `recovery.start`, `recovery.status`, `recovery.cancel` (only with a hardware approval) and `recovery.access` again. Not `sign`, `policy.*`, `tx.broadcast`, `phone.resume` or `guardian.unlock`. The result gives the phone everything it needs to sweep: the descriptor, the wallet id, the guardian's key and the rules (for the sweep fee cap).
 
 Anyone holding the hardware wallet can thus start a recovery from any phone, which is the design: a recovery is announced to the paired phone and every alert contact, and any of them can cancel it (DESIGN.md, threat model). The web UI's activity log shows every access grant. While its access lasts, a phone with recovery access also gets the protocol alerts (best effort; it is not one of the recovery's recorded recipients), and it can poll `recovery.status`.
@@ -356,9 +358,9 @@ The guardian service maps the engine's `Refusal.reason` to an error code and put
 | `not_registered`, `not_authorized` | 1001 |
 | `already_registered` | 1003 |
 | `invalid_registration`, `invalid_rules` | -32602 (InvalidParams) |
-| `over_daily_limit`, `not_signed_by_app`, `signature_count`, `hardware_signed_outside_recovery`, `sweep_fee_exceeds_cap`, `delay_not_elapsed`, `recovery_signers`, `invalid_destination`, `destination_drops_surviving_key`, `destination_keeps_lost_key`, `sweep_not_to_destination` | 1200 |
+| `over_daily_limit`, `not_signed_by_app`, `signature_count`, `hardware_signed_outside_recovery`, `sweep_fee_exceeds_cap`, `delay_not_elapsed` (`waitingFor: "chain_time" \| "blocks"` when the clock says the delay is over but the chain does not), `recovery_signers`, `invalid_destination`, `destination_drops_surviving_key`, `destination_keeps_lost_key`, `sweep_not_to_destination`, `invalid_recovery_update` | 1200 |
 | `hardware_approval_required` | 1201 |
-| `approval_invalid_signature`, `unsupported_approval` | 1202 |
+| `approval_invalid_signature`, `unsupported_approval`, `approval_revoked` | 1202 |
 | `approval_expired` | 1203 |
 | `approval_stale_sequence` | 1204 |
 | `approval_sequence_too_far` | 1205 |
@@ -370,6 +372,7 @@ The guardian service maps the engine's `Refusal.reason` to an error code and put
 | `no_recovery` | 1302 (1300 when a specific `recoveryId` is unknown) |
 | `recovery_in_progress` | 1301 |
 | `invalid_psbt`, `invalid_helper_input`, `foreign_input`, `missing_non_witness_utxo`, `non_witness_utxo_mismatch`, `invalid_signature` | 1400 |
+| `chain_unavailable` (no chain data: a recovery cannot start or complete, nor a co-signature once the last chain observation is old), `clock_ahead_of_chain` (the guardian's clock is more than 3 h ahead of the chain's median time past: it co-signs nothing) | 1501 |
 
 ## 4. Validation, expiry and replay
 
@@ -434,10 +437,10 @@ The phone scans it, derives its key, and sends `pair.prepare` and then `pair` (s
 For a new phone without the old one or its backup, the guardian's web UI shows a second, permanent QR code with only where to find the guardian:
 
 ```
-trikey://recover?v=1&npub=<npub1...>&relay=<url>[&relay=<url>...]&net=<bitcoin|testnet|signet|regtest>[&label=<text>]
+trikey://recover?v=1&npub=<npub1...>&relay=<url>[&relay=<url>...]&net=<bitcoin|testnet|signet|regtest>[&label=<text>][&wallet=<walletId>]
 ```
 
-It carries **no secret and no expiry**: the npub and relays are not secret, and what admits the phone is the hardware wallet's `recovery.access` signature (section 3, "Recovery access"), not this code. `relay` and `label` follow the pairing rules; `net` tells the phone which network to create its wallet on. A decoder MUST refuse a recovery code that carries a `secret`, and the two codes are never interchangeable (`decodeRecoveryUri` refuses a pairing code and vice versa; `decodeTrikeyUri` tells them apart).
+It carries **no secret and no expiry**: the npub and relays are not secret, and what admits the phone is the hardware wallet's `recovery.access` signature (section 3, "Recovery access"), not this code. `relay` and `label` follow the pairing rules; `net` tells the phone which network to create its wallet on. A decoder MUST refuse a recovery code that carries a `secret`, and the two codes are never interchangeable (`decodeRecoveryUri` refuses a pairing code and vice versa; `decodeTrikeyUri` tells them apart). `wallet` (optional; older guardians omit it) is the wallet id the guardian guards, for the version-2 `recovery.access` text.
 
 ## 7. Compatibility notes
 

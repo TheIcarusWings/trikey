@@ -81,11 +81,33 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
         sats: sats(e.amountSats),
         result: 'ok',
       };
+    case 'recovery_updated':
+      return {
+        ...base,
+        kind: 'recovery',
+        event: `Recovery ${e.recoveryId}: the sweep now also moves ${e.addedInputs} coin${e.addedInputs === 1 ? '' : 's'} that arrived after the start (the waiting period runs on)`,
+        summary: 'Recovery sweep updated',
+        signedBy: null,
+        sats: Number(e.amountSats),
+        result: 'ok',
+      };
+    case 'recovery_update_refused':
+      return { ...base, kind: 'recovery', event: `Recovery sweep update refused: ${refusalText(e.refusal)}`, signedBy: null, sats: null, result: 'refused' };
     case 'recovery_start_refused':
       return { ...base, kind: 'recovery', event: `Recovery refused: ${refusalText(e.refusal)}`, signedBy: null, sats: null, result: 'refused' };
     case 'recovery_ready':
       return { ...base, kind: 'recovery', event: `Recovery ${e.recoveryId}: waiting period over`, signedBy: null, sats: null, result: 'ok' };
     case 'recovery_cancelled': {
+      if (e.by.kind === 'superseded')
+        return {
+          ...base,
+          kind: 'recovery',
+          event: `Recovery ${e.recoveryId} closed: recovery ${e.by.recoveryId} already swept the wallet`,
+          summary: 'Recovery closed',
+          signedBy: null,
+          sats: null,
+          result: 'ok',
+        };
       const who = e.by.kind === 'app' ? 'the phone' : e.by.kind === 'contact' ? `contact ${shortNpub(e.by.pubkey)}` : 'the hardware wallet';
       return {
         ...base,
@@ -222,6 +244,8 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
       };
     case 'sweep_broadcast_failed':
       return { ...base, kind: 'recovery', event: `Broadcast of ${shortTx(e.txid)} failed, will retry: ${e.detail}`, signedBy: null, sats: null, result: 'refused' };
+    case 'sweep_dead':
+      return { ...base, kind: 'recovery', event: `Recovery ${e.recoveryId} sweep ${shortTx(e.txid)} can never be broadcast; no longer retried: ${e.detail}`, summary: 'Sweep given up', signedBy: null, sats: null, result: 'refused' };
     case 'recovery_waiting':
       return { ...base, kind: 'recovery', event: `Recovery ${e.recoveryId} waiting: ${e.detail}`, summary: 'Recovery waiting', signedBy: null, sats: null, result: 'refused' };
     case 'cancel_by_dm':

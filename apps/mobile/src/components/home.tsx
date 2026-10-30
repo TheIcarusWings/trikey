@@ -116,6 +116,33 @@ export function LimitCard() {
 }
 
 /**
+ * Received silent payments wait in their own balance (single-key coins of this phone) until they are moved into the vault. A
+ * small row appears while there is something to move; the move itself is one tap on the next screen, with its fees shown.
+ */
+export function SilentPaymentsRow() {
+  const router = useRouter();
+  const { silentPayments: sp, mode, unit } = useWallet();
+  if (mode === 'recoveryKey' || sp.balance.sats <= 0) return null;
+  const count = sp.coins.length;
+  return (
+    <Card className="gap-3 px-4 py-3.5">
+      <View className="flex-row items-center justify-between gap-3" accessible accessibilityLabel={`Silent payments: ${formatAmount(sp.balance.sats, unit)} ${unit === 'btc' ? 'bitcoin' : 'sats'} waiting`}>
+        <View className="flex-1">
+          <Text className={pick('text-[15px] leading-5', 'text-sm leading-5')}>Silent payments</Text>
+          <Text className={cn('text-muted-foreground', pick('text-[13px] leading-[18px]', 'text-xs leading-4'))}>
+            {count} {count === 1 ? 'payment' : 'payments'} waiting{sp.balance.unconfirmedSats > 0 ? ', some unconfirmed' : ''}
+          </Text>
+        </View>
+        <Text className={cn('tabular-nums', pick('text-[17px] font-semibold', 'text-base font-medium'))}>
+          {formatAmount(sp.balance.sats, unit)} <Text className="text-muted-foreground text-sm font-normal">{unit === 'btc' ? 'BTC' : 'sats'}</Text>
+        </Text>
+      </View>
+      <AppButton title="Move into your vault" variant="secondary" onPress={() => router.push('/silent/move')} />
+    </Card>
+  );
+}
+
+/**
  * Guardian locked (after a restart) or offline: phone-only payments wait. A locked guardian takes its passphrase here;
  * the hardware wallet can still pay in the meantime.
  */

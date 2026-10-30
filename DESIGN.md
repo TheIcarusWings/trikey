@@ -86,20 +86,26 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
    - **Hardware signature:** only accepted as part of a recovery.
 3. **Daily limit.** The guardian counts `Σinputs − Σchange` (the fee included) over a rolling 24 hours, keyed by outpoint:
    - a replayed transaction is never counted twice;
-   - an RBF replacement counts as the larger of the old and new amounts.
-4. **Loosening the rules needs the hardware wallet.** That covers raising the limit, shortening the delay, changing the sweep fee cap, and adding or removing alert contacts. The phone alone can only tighten: lower the limit or lengthen the delay.
+   - an RBF replacement counts as the larger of the old and new amounts;
+   - **change is only change within reach of a scan:** an output counts as change only if it pays the wallet's own derived address at an index no more than 20 (the gap limit) past that chain's *high-water mark*, the highest index seen used on chain or co-signed. Anything further out counts as leaving the wallet. The marks are persisted, rise with every co-signed change output and with what `wallet.sync` finds (a payment to a fresh receive address), and every scan of the wallet (coverage before a recovery completes, `wallet.sync`, the broadcast relay check) reaches at least them, so no coin key 3 co-signed is ever out of sight;
+   - **the window's clock is checked against the chain:** the guardian refuses to co-sign while the system clock is more than 3 hours ahead of the chain's median time past (`clock_ahead_of_chain`), and the time it counts the window with never goes backwards (persisted), so stepping the clock forward or back cannot open a fresh window.
+4. **Loosening the rules needs the hardware wallet.** That covers raising the limit, shortening the delay, changing the sweep fee cap, and adding or removing alert contacts. The phone alone can only tighten: lower the limit or lengthen the delay, **also while a recovery runs** (tightening never helps a thief; a running recovery keeps the delay and fee cap it started with). On mainnet the rules must name at least one alert contact: a pairing without one, or any change that removes the last one, is refused even with a hardware approval; test networks allow it and report `warnings: ['no_alert_contacts']`.
    - **How the hardware wallet approves:** a BIP137 `signmessage` signature from a single-sig key recorded at pairing. Ledger, Trezor and Coldcard all support it. The signed text is one line that shows the new values in clear, so the user checks them on the device screen:
      `Trikey policy v1 wallet=<id> seq=<n> limit=<sats> delay=<d>d feecap=<sats> contacts=<k> hash=<policyHash> expires=<ISO8601Z>`
    - The guardian rebuilds this text from the request and never trusts text from the phone. The sequence number must increase (by at most 1000), and an approval is valid for at most 24 hours.
    - The wallet id in the text stops an approval from being replayed against another wallet that uses the same hardware key.
-   - No rule changes are accepted while a recovery is running.
+   - The authorization key must be a non-hardened child of the hardware wallet's multisig account (the wallet uses `<account>/0/0`, e.g. `m/48'/0'/0'/2'/0/0`): the guardian derives it from the hardware xpub itself, so only the holder of the hardware account can pair or approve. Any other path is refused. BIP137 signatures with a high S are refused.
+   - No rule changes that need the hardware wallet are accepted while a recovery is running (only the phone's tightening, above).
 5. **Delay & Notify (7, 14 or 30 days, as in Bitkey):**
-   1. A recovery starts with a sweep signed by the surviving key, going to a new wallet that keeps that key.
+   1. A recovery starts with a sweep signed by the surviving key, going to a new wallet that keeps that key. **It needs the chain tip:** the delay counts from the later of the system clock and the chain's median time past, and the start height is recorded. No chain data, no start.
    2. Starting it pauses phone-only payments.
    3. The guardian then sends daily nostr DM alerts to every registered device and contact.
    4. Any of them can cancel. If the cancel comes from someone other than the holder of the key that started the recovery (a "contested" cancel), phone-only payments stay paused until the hardware wallet signs a `resume-phone` approval.
-   5. After the delay, the guardian co-signs the sweep and broadcasts it.
+   5. After the delay, the guardian co-signs the sweep and broadcasts it, once **three clocks agree**: the system clock and the chain's median time past are both past the end of the delay, and the chain has grown by the delay's blocks since the start (144 per day on public networks; 1 per day on regtest, where blocks are mined on demand). Blocks slower than 10 minutes can make the wait a little longer than the nominal delay, never shorter.
+   6. Coins that arrive after the start (dust, a late deposit) do not block it: `recovery.update` lets the surviving key re-sign the sweep to include them, to the same destination, as a superset of the original inputs, with the fee within the cap, **without restarting the delay**.
+   7. A sweep that can never be broadcast (its coins spent by another transaction 6 blocks deep, a later recovery's sweep broadcast instead) is given up and no longer blocks a reset.
 6. **Sweep fee cap.** Recoveries can't burn funds through fees.
+7. **The same keys are the same wallet.** Wallets are compared by their set of account pubkeys, not by descriptor: key 3 signs by account pubkeys and the tweaks the PSBT delegates, so another descriptor for the same keys (other origins, chaincodes or role order) is the same wallet. A retired key set is never paired again or swept to.
 
 ## Protocol (nostr)
 
@@ -116,9 +122,10 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
   | `policy.get` | Read the current rules |
   | `policy.update` | Change the rules (loosening needs a hardware approval) |
   | `recovery.start` | Start a recovery |
+  | `recovery.update` | Add coins that arrived after the start to the running recovery's sweep (same destination and surviving key, a superset of its inputs, fee within the cap), without restarting the delay |
   | `recovery.cancel` | Cancel a recovery (phone, alert contact, or hardware approval) |
   | `recovery.status` | Check a recovery |
-  | `recovery.access` | Let a new phone with no backup reach the guardian for 24 h, signed by the hardware wallet |
+  | `recovery.access` | Let a new phone with no backup reach the guardian for 24 h, signed by the hardware wallet (bound to the wallet id when the phone knows it) |
   | `phone.resume` | Turn phone payments back on after a contested cancel (hardware approval) |
   | `hardware.confirm` | Confirm the hardware wallet's key after the guardian adopts a recovered wallet |
   | `wallet.retire` | Stop guarding this wallet, e.g. before moving to a new guardian (hardware approval) |
@@ -127,15 +134,15 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
   | `singlekey.register` | Register the phone's single-key coins (public data only): the helper coin's account (`m/84'/c'/1'` xpub) and coins by outpoint and script. Then `sign` accepts the helper input, `wallet.sync` with `wallet: 'helper'` serves them and `tx.broadcast` relays their sweeps into the vault |
   | `sp.register`, `sp.unregister` | Hand the guardian the silent payment scan key (with `B_spend`, labels and birth height) so it scans the node's blocks; take it back |
   | `sp.scan` | The payments the scanner found (`sp_received` alerts announce new ones) |
-  | `guardian.unlock` | Unlock after a restart |
+  | `guardian.unlock` | Unlock after a restart (refused after 5 failed tries in a row until the web UI unlocks, and while a recovery the phone did not start runs) |
   | `guardian.lock` | Lock the guardian remotely |
-  | `guardian.status` | Read guardian state |
+  | `guardian.status` | Read guardian state (with `warnings`, e.g. `no_alert_contacts`) |
 
 - **Every request carries:**
   - an id, so retries are idempotent;
   - a NIP-40 expiry;
   - the hash of the PSBT it refers to.
-- **Replay protection:** old rumors are dropped.
+- **Replay protection:** old rumors are dropped. Strangers (senders that are not the paired phone, an alert contact or a phone with recovery access) get their own small replay cache and seen-wrap set, so they cannot push a peer's entries out; refused `sign` / `recovery.start` / `recovery.update` are rate limited per sender, and repeated identical refusals are one log entry with a count.
 - **Relays:** several, with the user's own relay optional (Umbrel has a Nostr Relay app).
 - **No public standard exists** for PSBT exchange over nostr, so this is our own spec. Publish it as a NIP draft once it's stable.
 
@@ -168,7 +175,9 @@ retires the old wallet:
   would be left without co-signing (or CPFP through the guardian) for hours.
 - **What carries over:** the rules and the hardware approval counter. The limit window starts empty
   (phone payments were paused for the whole delay). Recovery access grants of the old wallet are
-  revoked.
+  revoked (and their signatures stay refused until they expire). Any other recovery of the swept
+  wallet still pending (one started between the completion and the rotation) is closed
+  (`cancelledBy: superseded`): the running recovery is always one of the active wallet.
 - **The paired phone** becomes the phone that sent `recovery.start`: the surviving phone, or the new
   phone the hardware wallet let in with `recovery.access`.
 - **The hardware authorization key** carries over when the hardware wallet survived, or is derived at
@@ -184,7 +193,8 @@ key 3, so a new descriptor and wallet id.
 
 **Reset guardian** (web UI): forgets every wallet and creates a **new key 3**, keeping the nostr
 identity, relays and passphrase. It needs the passphrase again and a typed confirmation, and is
-refused while a recovery is pending or ready, or while a co-signed sweep waits to be broadcast. Key 3
+refused while a recovery is pending or ready, or while a co-signed sweep waits to be broadcast (and
+still can be: a sweep that never can is given up, see rule 5). It ends every web session. Key 3
 is rotated rather than kept so that a reset can never be used to re-pair the user's wallet with a
 different phone (see the threat model).
 
@@ -194,7 +204,9 @@ printed and kept with the hardware wallet.
 
 ## Threat model
 
-- **Stolen phone:** the thief can spend at most the daily limit. They can't raise it, because that needs the hardware wallet. A recovery they start triggers the alerts.
+- **Stolen phone:** the thief can spend at most the daily limit. They can't raise it, because that needs the hardware wallet. A recovery they start triggers the alerts. They cannot hide the vault from a later recovery either: change past the gap limit counts against the limit (rule 3). They cannot starve the owner's unlock: the phone's `guardian.unlock` has its own throttle, stops after 5 failures until the web UI unlocks, and is refused while a recovery the phone did not start runs.
+- **Alert contacts are what makes Delay & Notify work.** Without one, a recovery is announced only to the paired phone, which may be the thief's: a phone-only thief could then sweep the whole vault to a wallet of its own (keeping key 2, adding its own "hardware" key) and nobody would hear of it. So **on mainnet the guardian requires at least one alert contact**, at pairing and for every rule change. **A contact can be the user's own nostr app on another device** (a laptop, a tablet, a second phone): it only needs a nostr key that can receive NIP-17 DMs and reply `CANCEL <id>`. Test networks allow zero contacts and say so (`warnings: ['no_alert_contacts']` in `policy.get`, `guardian.status` and the web UI).
+- **Contested recovery stalemate (by design).** A stolen phone can cancel every recovery the hardware wallet starts, and the hardware wallet can cancel every recovery the phone starts. Each contested cancel pauses phone payments until the hardware wallet resumes them. So if the phone is stolen and the user has **no backup of key 2**, the thief and the owner block each other: **the vault is frozen, not lost**. Nobody can take the funds (the thief holds one key, the owner one key, the guardian co-signs only within the rules), and the owner gets out by restoring key 2 from its backup (then phone + hardware spend directly, no guardian needed) or, failing that, by waiting the thief out. This is the price of letting any key holder cancel; the alternative (letting one side's cancels win) would let that side's thief win.
 - **Burglary (phone + home server):**
   - An unplugged guardian is locked, so the burglar holds one usable key.
   - If the thief keeps the guardian powered, they can only reach the daily limit, and any recovery triggers the 7-day alerts.
@@ -203,19 +215,20 @@ printed and kept with the hardware wallet.
 - **Malicious relays** can drop messages but can't read or forge them.
 - **Contested recovery** (a thief cancels a genuine recovery): phone-only spending stays paused, so the thief can't drain either. Same as Bitkey.
 - **After a recovery the guardian trusts its outcome:** the phone that started it becomes the new wallet's paired phone. That is what the Delay & Notify period protects; a thief who gets that far already holds the new wallet's keys. The hardware wallet must re-prove its authorization key for the new wallet before it can loosen anything, and the old wallet's recovery access grants are revoked.
-- **Retired wallets are dead to the guardian:** no co-signing, no recovery, no re-pairing of the same descriptor. Coins sent to a retired wallet's address later can only move with two of its own keys.
+- **Retired wallets are dead to the guardian:** no co-signing, no recovery, no re-pairing of the same key set, under any descriptor (another origin fingerprint, chaincode or role order is the same keys to key 3). The hardware authorization key must derive from the hardware account, so a phone thief cannot pair a retired (or any) key set with an authorization key of its own. Coins sent to a retired wallet's address later can only move with two of its own keys.
 - **Retiring needs the phone and the hardware wallet together** (the paired phone's nostr key plus a `retire-wallet` approval) and is refused during a recovery, so a hardware-held thief cannot end the guardian's protection in the middle of its own recovery.
 - **Reset rotates key 3.** With the old key 3 and no wallet state, anyone holding the web UI, the passphrase and a stolen hardware wallet could pair the user's own wallet again with their own phone and no alert contacts, then run a recovery nobody else hears about. A new key 3 cannot co-sign the old wallet at all (its funds stay with the phone and the hardware wallet), so a reset can only lose the guardian's help, never the user's money to a thief. Reset is refused while a recovery runs or a sweep awaits broadcast.
 - **Remote lock** is allowed for the paired phone at any time and for nobody else; it only removes capability. A thief with the phone can lock the guardian (a nuisance: unlock needs the passphrase), but could not have done more with it than the daily limit anyway.
-- **The recovery code holds no secret.** The guardian's npub and relays are visible on the relays anyway; what lets a new phone in is the hardware wallet's `recovery.access` signature, bound to that phone's nostr key.
-- **The guardian's clock:** a recovery only completes once both the system clock and the chain's median time past have passed the end of the delay, so a clock pushed forward alone can't shorten it.
-- **The web UI has no login of its own.** It relies on the platform's app proxy (Umbrel's `app_proxy`, Start9's interfaces) to authenticate, so the guardian's port must never be exposed beyond it.
+- **The recovery code holds no secret.** The guardian's npub and relays are visible on the relays anyway; what lets a new phone in is the hardware wallet's `recovery.access` signature, bound to that phone's nostr key and (version 2, when the code carries the wallet id) to the wallet. A version-1 signature whose grant a rotation or retirement revoked is refused until it expires.
+- **The guardian's clock is not trusted alone.** An attacker who controls the box's NTP can move the system clock: a recovery's delay counts from the later of the clock and the chain's median time past at the start (a clock set back cannot shorten it), and completes only when the clock, the median time past and the block count all agree (a clock pushed forward cannot either). The daily limit's window is not opened by stepping the clock: the guardian refuses to co-sign while the clock is more than 3 hours ahead of the chain, and its window time never goes backwards. Without chain data a recovery does not start, and co-signing stops once the last chain observation is 3 hours old.
+- **The web UI has its own sessions.** Every API call needs a session (the unlock passphrase signs a browser in; an HttpOnly, SameSite=Strict cookie, idle-expiring, in memory), except the reduced status and first-run setup until it completes, because other apps' containers on the box can likely reach the guardian without going through the platform's proxy. Still keep the port behind the proxy (Umbrel's `app_proxy`, Start9's interfaces), which also stops DNS rebinding.
 - **The guardian's nostr key is stored unencrypted** (mode 0600), so a locked guardian can still answer the phone and receive an unlock. It can't sign transactions.
 - **Electrs and the node are trusted** for chain data; headers are checked to link up but not for proof of work.
 - **Nuisances, not thefts:**
-  - Anyone who knows a wallet address can send a coin after a recovery starts. That blocks completion, because the sweep must spend every coin, until the user starts the recovery again.
-  - Anyone who sees the guardian's npub on a relay can burn a 5-minute pairing code with wrong attempts.
-  - Anyone with web access can delay unlocks through the rate limit.
+  - Anyone who knows a wallet address can send a coin after a recovery starts. That blocks completion, because the sweep must spend every coin, until the surviving key adds it with `recovery.update` (the delay runs on).
+  - Anyone who sees the guardian's npub on a relay can burn a 5-minute pairing code with wrong attempts (at no disk write: a wrong secret is refused before anything is recorded).
+  - Anyone with a web session can delay unlocks through the web throttle; without one, only sign-ins, which have their own throttle. A stolen phone's guesses never delay the web UI.
+  - A flood of refused requests costs no state write and only pushes out older refusals in the activity log, never co-signatures or other entries.
 
 ## Entropy
 

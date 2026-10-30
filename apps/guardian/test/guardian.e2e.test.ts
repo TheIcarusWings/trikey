@@ -88,14 +88,27 @@ async function restart(): Promise<void> {
   await openGuardian();
 }
 
+/** The browser's web session cookie (the API needs a session since the 2026-10 security review). */
+let cookie: string | undefined;
+
+/** Same-origin JSON like the browser, with the session cookie; signed out, it signs in with the passphrase first. */
 async function api(method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> {
-  const res = await fetch(`${base}${path}`, {
-    method,
-    headers: method === 'GET' ? {} : { 'content-type': 'application/json' },
-    body: method === 'GET' ? undefined : JSON.stringify(body ?? {}),
-  });
-  const text = await res.text();
-  return { status: res.status, body: text ? JSON.parse(text) : undefined };
+  const send = async (m: string, p: string, b?: unknown) => {
+    const res = await fetch(`${base}${p}`, {
+      method: m,
+      headers: { ...(m === 'GET' ? {} : { 'content-type': 'application/json' }), ...(cookie ? { cookie } : {}) },
+      body: m === 'GET' ? undefined : JSON.stringify(b ?? {}),
+    });
+    const set = res.headers.get('set-cookie');
+    if (set) cookie = /Max-Age=0/i.test(set) ? undefined : set.split(';')[0];
+    const text = await res.text();
+    return { status: res.status, body: text ? JSON.parse(text) : undefined };
+  };
+  const r = await send(method, path, body);
+  const signedOut = (r.status === 401 && r.body?.error?.code === 'unauthenticated') || (path === '/status' && r.body?.authenticated === false);
+  if (!signedOut) return r;
+  const signIn = await send('POST', '/session', { passphrase: PASS });
+  return signIn.status === 200 ? send(method, path, body) : r;
 }
 
 // The phone
@@ -189,7 +202,8 @@ describe('Trikey Guardian service, end to end', { timeout: 30_000 }, () => {
     expect((await api('POST', '/setup', { passphrase: 'too short', relays: [relayA.url] })).body.error.code).toBe('invalid');
     expect((await api('POST', '/setup', { passphrase: PASS, relays: [] })).status).toBe(400);
     expect((await api('POST', '/setup', { passphrase: PASS, relays: ['http://example.com'] })).status).toBe(400);
-    expect((await api('GET', '/activity')).body.error.code).toBe('setup_required');
+    // Before setup only the status, the preflight and setup itself are open (no session can exist yet).
+    expect((await api('GET', '/activity')).body.error.code).toBe('unauthenticated');
 
     r = await api('POST', '/setup', { passphrase: PASS, relays: [relayA.url, relayB.url] });
     expect(r.status).toBe(200);

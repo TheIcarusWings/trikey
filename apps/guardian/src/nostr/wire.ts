@@ -74,8 +74,10 @@ const CODES: Record<RefusalReason, number> = {
   destination_drops_surviving_key: ErrorCode.PolicyViolation,
   destination_keeps_lost_key: ErrorCode.PolicyViolation,
   sweep_not_to_destination: ErrorCode.PolicyViolation,
+  invalid_recovery_update: ErrorCode.PolicyViolation,
   hardware_approval_required: ErrorCode.ApprovalRequired,
   approval_invalid_signature: ErrorCode.ApprovalInvalid,
+  approval_revoked: ErrorCode.ApprovalInvalid,
   unsupported_approval: ErrorCode.ApprovalInvalid,
   approval_expired: ErrorCode.ApprovalExpired,
   approval_stale_sequence: ErrorCode.StaleSequence,
@@ -93,6 +95,8 @@ const CODES: Record<RefusalReason, number> = {
   invalid_signature: ErrorCode.PsbtInvalid,
   wallet_retired: ErrorCode.WalletRetired,
   hardware_auth_unconfirmed: ErrorCode.HardwareAuthUnconfirmed,
+  chain_unavailable: ErrorCode.Unavailable,
+  clock_ahead_of_chain: ErrorCode.Unavailable,
   // Internal to the service (markAlertSent, rotateAfterSweep); never sent to a peer in practice.
   unknown_alert: ErrorCode.InternalError,
   not_adoptable: ErrorCode.InternalError,
@@ -137,7 +141,13 @@ export function refusalText(r: Refusal): string {
     case 'sweep_fee_exceeds_cap':
       return `The sweep fee (${sats(r.fee)}) is over the cap (${sats(r.cap)})`;
     case 'delay_not_elapsed':
+      if (r.waitingFor === 'blocks') return `The recovery delay has not elapsed on the chain yet: block ${r.height} of ${r.heightNeeded}`;
+      if (r.waitingFor === 'chain_time') return `The recovery delay has not elapsed by the chain's time yet (ready at ${new Date(r.readyAt).toISOString()})`;
       return `The recovery delay has not elapsed (ready at ${new Date(r.readyAt).toISOString()})`;
+    case 'chain_unavailable':
+      return `No chain data: ${r.detail}`;
+    case 'clock_ahead_of_chain':
+      return `The guardian's clock (${new Date(r.systemTime).toISOString()}) is ahead of the chain (${new Date(r.chainTime).toISOString()}); it co-signs nothing until they agree`;
     case 'recovery_signers':
       return `Recovery signatures: ${r.detail}`;
     case 'invalid_destination':
@@ -148,10 +158,14 @@ export function refusalText(r: Refusal): string {
       return 'The new wallet must not keep the lost key';
     case 'sweep_not_to_destination':
       return `Output ${r.output} does not pay the new wallet`;
+    case 'invalid_recovery_update':
+      return `The updated sweep is not acceptable: ${r.detail}`;
     case 'hardware_approval_required':
       return `Hardware wallet approval required (${r.detail})`;
     case 'approval_invalid_signature':
       return 'The hardware approval signature is not valid';
+    case 'approval_revoked':
+      return 'This recovery access was revoked when the guardian moved to another wallet; sign a new one';
     case 'unsupported_approval':
       return `Unsupported approval kind: ${r.kind}`;
     case 'approval_expired':

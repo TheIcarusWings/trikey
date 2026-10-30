@@ -140,7 +140,7 @@ export interface Contact {
 // ---------------------------------------------------------------- activity
 
 export type TxStatus = 'pending' | 'confirmed';
-export type TxKind = 'sent' | 'received' | 'refill' | 'speed_up';
+export type TxKind = 'sent' | 'received' | 'refill' | 'speed_up' | 'silent_received' | 'silent_sweep';
 export type TxSigners = 'phone+guardian' | 'phone+hardware' | 'hardware+guardian' | 'phone';
 
 export interface Transaction {
@@ -160,6 +160,10 @@ export interface Transaction {
   refillIndex?: number;
   /** Recovery Key mode: paid from the vault (phone + hardware wallet) rather than the spending balance. */
   fromVault?: boolean;
+  /** `sent` to a silent payment address: the plain taproot address the payment went to (`address` is the `sp1…` one). */
+  silentOutputAddress?: string;
+  /** `silent_received`: the label of the address it paid, when it was a labelled one. */
+  silentLabel?: number;
 }
 
 export type SecurityEvent = { id: string; at: IsoDate } & (
@@ -191,6 +195,7 @@ export type ActivityItem =
 export type FeeSpeed = 'slow' | 'normal' | 'fast';
 
 export interface SendRequest {
+  /** A bitcoin address, or a silent payment address (`sp1…`, `tsp1…`). */
   address: string;
   amountSats: Sats;
   speed: FeeSpeed;
@@ -229,6 +234,12 @@ export interface SendQuote {
   warning?: string;
   /** The fee is an estimate until `refineQuote` has run (Recovery Key mode). */
   estimate?: boolean;
+  /**
+   * A payment to a silent payment address (`request.address` is the `sp1…` one). `outputAddress` is the plain taproot
+   * address the payment really goes to, which a hardware wallet shows instead (it cannot show `sp1…`); Recovery Key mode
+   * makes it only when it signs, so it is missing there. `helperFeeSats` is the part of the fee the helper coin pays.
+   */
+  silentPayment?: { outputAddress?: string; helperFeeSats?: Sats };
 }
 
 /** Why no quote could be made. The amount screen turns these into the line under the amount. */
@@ -239,6 +250,8 @@ export type QuoteProblem =
   | 'not_synced'
   | 'not_ready'
   | 'no_fee_estimate'
+  /** A silent payment needs the helper coin (none, or too small): the screen offers to fund it. */
+  | 'needs_helper'
   | 'other';
 
 export type QuoteOutcome = { ok: true; quote: SendQuote } | { ok: false; problem: QuoteProblem; message: string };
@@ -283,7 +296,7 @@ export interface GuardianAddress {
 export type ScannedCode =
   | { kind: 'pairing'; uri: string; guardianNpub: string; relays: string[]; label?: string; expiresAt: number }
   | { kind: 'recovery'; uri: string; guardian: GuardianAddress; network: NetworkName; label?: string }
-  | { kind: 'address'; address: string; network: NetworkName; amountSats?: Sats; label?: string; message?: string }
+  | { kind: 'address'; address: string; network: NetworkName; amountSats?: Sats; label?: string; message?: string; silentPayment?: true }
   | { kind: 'psbt'; psbtBase64: string }
   | { kind: 'contact'; npub: string; pubkey: string }
   | { kind: 'unknown'; text: string; reason: string };
@@ -502,6 +515,69 @@ export interface ServerCheck {
   message: string;
 }
 
+// ---------------------------------------------------------------- silent payments
+
+/**
+ * What the scan for received silent payments is doing. `off`: receiving is turned off. `needs_node_rpc`: the guardian has no
+ * RPC access to the user's node (Umbrel and Start9 give it one), so receiving is paused. `unreachable`: the guardian does
+ * not answer. `unsupported`: an older guardian.
+ */
+export type SilentPaymentScanState = 'off' | 'pending' | 'ok' | 'scanning' | 'needs_node_rpc' | 'unreachable' | 'unsupported' | 'error';
+
+/** A received silent payment that waits in the phone's own balance until it is moved into the vault. */
+export interface SilentPaymentCoin {
+  id: string;
+  txid: string;
+  valueSats: Sats;
+  /** The label of the address it paid, if it paid a labelled one. */
+  label?: number;
+  confirmed: boolean;
+  foundAt: IsoDate;
+}
+
+export interface SilentPaymentsState {
+  /**
+   * `full`: sends and receives (guardian mode). `send_only`: sends from the spending balance; receiving needs a public
+   * scanning server, which Recovery Key mode does not have yet ("coming later").
+   */
+  support: 'full' | 'send_only';
+  /** The keys exist on this phone (turned on at least once). */
+  setUp: boolean;
+  /** Receiving is on: someone looks for payments to the address. */
+  receiving: boolean;
+  scan: {
+    state: SilentPaymentScanState;
+    /** Who scanned last: the guardian, or this phone itself (the fallback when the guardian cannot). */
+    source: 'guardian' | 'local' | 'none';
+    /** The last block scanned. */
+    scannedHeight: number;
+    /** The scanner's tip when it last answered. */
+    tipHeight?: number;
+    checkedAt?: IsoDate;
+    /** When the newest payment was found. */
+    lastMatchAt?: IsoDate;
+    /** What the scanner said, in words (for `needs_node_rpc`: the settings it needs). */
+    message?: string;
+    /** What the guardian itself said last, when this phone scanned instead. */
+    guardian?: { state: SilentPaymentScanState; message?: string };
+  };
+  /** Labels handed out (1, 2, ...). The change label 0 is never one. */
+  labels: number[];
+  /** The helper coin: a small coin of this phone's own that every payment to a silent payment address spends. */
+  helper: { sats: Sats; unconfirmedSats: Sats; funded: boolean; viaGuardian: boolean };
+  /** Received and not yet moved into the vault. */
+  balance: { sats: Sats; unconfirmedSats: Sats };
+  coins: SilentPaymentCoin[];
+  /** What "Move into your vault" would do now: one transaction per coin, each with its own fee. */
+  move: {
+    feeRateSatPerVb: number;
+    ready: number;
+    totalFeeSats: Sats;
+    totalNetSats: Sats;
+    coins: { id: string; valueSats: Sats; feeSats: Sats; netSats: Sats; waiting: boolean }[];
+  };
+}
+
 // ---------------------------------------------------------------- everything
 
 /** What the wallet behind the screens cannot do yet. The screens say so politely instead of pretending. */
@@ -574,4 +650,5 @@ export interface WalletState {
   walletRetired: null | { reason: 'retired' | 'recovered' | 'reset' };
   /** The last recovery finished into the wallet this phone holds now (`recoveryOutcome` is `finished`). */
   finishedRecovery: null | { lostKey: LostKey; movedSats: Sats };
+  silentPayments: SilentPaymentsState;
 }
