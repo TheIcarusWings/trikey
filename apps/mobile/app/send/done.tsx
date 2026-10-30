@@ -33,6 +33,8 @@ export default function SendDone() {
   return (
     <Screen
       bare
+      // The payment is sent: back goes Home, as Done does, never to the amount still typed in.
+      holdBack={() => router.dismissTo('/home')}
       scrollable={false}
       gap={12}
       footer={

@@ -3,7 +3,7 @@ import { Pressable, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { Check, Clock, Coins, TriangleAlert } from '@/components/icons';
+import { Check, ChevronLeft, Clock, Coins, TriangleAlert } from '@/components/icons';
 import { Notice } from '@/components/panels';
 import { ProgressBar } from '@/components/progress';
 import { Screen } from '@/components/screen';
@@ -113,13 +113,31 @@ export default function RecoverWaiting() {
     </Pressable>
   );
   const ready = recovery.state === 'ready';
+  // Opened from Home (this phone is set up): back goes Home, never to the screen that started the recovery. A new phone
+  // recovering has nowhere to go back to, so it stays here.
+  const goHome = () => router.dismissTo('/home');
+  const homeLink = (
+    <Pressable role="link" accessibilityLabel="Back to Home" hitSlop={8} onPress={goHome} className="h-11 flex-row items-center pr-3 active:opacity-60">
+      <Icon as={ChevronLeft} size={24} className="text-foreground" strokeWidth={2} />
+      <Text className="text-[17px] leading-[22px]">Home</Text>
+    </Pressable>
+  );
 
   return (
     <Screen
       title="Recovery in progress"
       androidTitle="Recovery"
-      noBack
-      beforeTitle={IS_IOS ? <View className="flex-row justify-end">{cancelLink}</View> : undefined}
+      noBack={!onboarded || IS_IOS}
+      onBack={goHome}
+      holdBack={onboarded ? goHome : true}
+      beforeTitle={
+        IS_IOS ? (
+          <View className={cn('flex-row items-center', onboarded ? 'justify-between' : 'justify-end')}>
+            {onboarded ? homeLink : null}
+            {cancelLink}
+          </View>
+        ) : undefined
+      }
       titleAccessory={IS_IOS ? undefined : cancelLink}
       gap={20}
       footer={
