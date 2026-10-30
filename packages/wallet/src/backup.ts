@@ -34,6 +34,7 @@ import { Network, Policy } from '@trikey/protocol';
 import { WalletError } from './errors.js';
 import { GuardianRecord, HardwareRecord, RetiredWallet, SendLogEntry } from './state.js';
 import { secureRandomBytes } from '@trikey/core/random';
+import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 
 export const BACKUP_MAGIC = utf8ToBytes('TKBK');
 export const BACKUP_VERSION = 1;
@@ -162,6 +163,7 @@ function checkChar(data: string): string {
 
 /** A fresh recovery code: 120 random bits, `XXXXX-XXXXX-XXXXX-XXXXX-XXXXX` (the last character is a check). */
 export function generateRecoveryCode(): string {
+  assertRandomSourceHealthy('new recovery code');
   const bytes = secureRandomBytes(15);
   let bits = 0;
   let acc = 0;
@@ -227,6 +229,7 @@ export interface SealedBackup {
 
 /** Encrypts `payload` under a fresh data key and wraps that key in every slot. */
 export async function sealBackup(payload: BackupPayload, slots: SlotInput[], opts: { now: number }): Promise<SealedBackup> {
+  assertRandomSourceHealthy('new backup');
   if (!slots.length) throw new WalletError('backup_unavailable', 'A backup needs at least one way to open it.');
   const p = BackupPayload.parse(payload);
   const id = bytesToHex(secureRandomBytes(16));

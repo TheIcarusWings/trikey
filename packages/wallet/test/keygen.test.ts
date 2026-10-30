@@ -7,7 +7,8 @@ import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { deterministicRandom, installRandomSource } from '@trikey/core/testing/random';
 import { describe, expect, it } from 'vitest';
 import { ManualClock } from '@trikey/guardian/policy';
-import { TrikeyWallet, WalletError, mnemonicFromEntropy, newMnemonic } from '../src/index.js';
+import { RandomSourceError } from '@trikey/core/random';
+import { TrikeyWallet, WalletError, generateRecoveryCode, mnemonicFromEntropy, newMnemonic, sealBackup } from '../src/index.js';
 import { MemoryCloudBackupStore, MemoryPasskeyPrf } from '../src/testing/index.js';
 import { phone } from './helpers.js';
 
@@ -55,5 +56,53 @@ describe('key 2 generation', () => {
     } finally {
       src.restore();
     }
+  });
+
+  // A source that cycles (A, B, A, B) passes every per-call check of secureRandomBytes: only the start-up health test
+  // (packages/core/src/random-health.ts), run before each new key, notices.
+  describe('a source that cycles', () => {
+    const cycling = () => {
+      const blocks = [7, 9].map((m) => Uint8Array.from({ length: 32 }, (_, i) => (i * 61 + m * 17) & 255));
+      let n = 0;
+      return installRandomSource((buf) => {
+        for (let o = 0; o < buf.length; o += 32) buf.set(blocks[n++ % 2]!.subarray(0, Math.min(32, buf.length - o)), o);
+      }, 'cycling');
+    };
+
+    it('makes no wallet and stores nothing', async () => {
+      const src = cycling();
+      try {
+        const p = newPhone();
+        const e = await TrikeyWallet.create(p.deps).catch((x: unknown) => x);
+        expect(e).toBeInstanceOf(WalletError);
+        expect((e as WalletError).code).toBe('random_source_failed');
+        expect(((e as WalletError).cause as RandomSourceError).code).toBe('health');
+        expect(p.secure.items.size).toBe(0);
+        expect(await TrikeyWallet.open(p.deps)).toBeUndefined();
+      } finally {
+        src.restore();
+      }
+    });
+
+    it('makes no mnemonic, no recovery code and no backup', async () => {
+      const src = cycling();
+      try {
+        expect(() => newMnemonic()).toThrow(RandomSourceError);
+      } finally {
+        src.restore();
+      }
+      const src2 = cycling();
+      try {
+        expect(() => generateRecoveryCode()).toThrow(RandomSourceError);
+      } finally {
+        src2.restore();
+      }
+      const src3 = cycling();
+      try {
+        await expect(sealBackup({} as never, [], { now: 0 })).rejects.toBeInstanceOf(RandomSourceError);
+      } finally {
+        src3.restore();
+      }
+    });
   });
 });

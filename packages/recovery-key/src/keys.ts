@@ -20,6 +20,7 @@ import { entropyToMnemonic, mnemonicToEntropy, mnemonicToSeedSync, validateMnemo
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { bip48Path, keyExpressionFromMaster, type KeyExpression, type Network } from '@trikey/core';
 import { secureRandomBytes } from '@trikey/core/random';
+import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 
 export { wordlist as BIP39_WORDLIST };
 
@@ -34,6 +35,7 @@ export const entropyFromMnemonic = (m: string) => mnemonicToEntropy(m, wordlist)
 
 /** A fresh 24-word key 2: 32 bytes from `secureRandomBytes`. */
 export function newPhoneMnemonic(): string {
+  assertRandomSourceHealthy('new phone key');
   const e = secureRandomBytes(32);
   try {
     return mnemonicFromEntropy(e);
@@ -44,6 +46,7 @@ export function newPhoneMnemonic(): string {
 
 /** 16 bytes of fresh entropy from `secureRandomBytes`: a 12-word Recovery Key. The caller wipes it. */
 export function newRecoveryKeyEntropy(): Uint8Array {
+  assertRandomSourceHealthy('new Recovery Key');
   return secureRandomBytes(16);
 }
 

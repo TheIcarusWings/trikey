@@ -84,6 +84,13 @@ export const isServiceError = (e: unknown): e is WalletServiceError => e instanc
 export const NODE_RPC_TEXT =
   "Your guardian can't look for silent payments because it has no access to your node's RPC. Umbrel and Start9 give it one with the Bitcoin Core app; on another setup, give the guardian its node's RPC settings. Until then receiving is paused.";
 
+/**
+ * What to tell a person whose phone failed its random-number or crypto safety test (`RandomSourceError`, see
+ * platform/rng-startup.ts). No key was made. Restarting repeats the test; a real fault needs an update or support.
+ */
+export const RNG_REFUSED_TEXT =
+  "This phone's random number generator failed a safety check, so Trikey did not make any keys. Nothing was changed. Close and reopen Trikey to try again. If it keeps happening, update Trikey, or contact support before you use this phone for bitcoin.";
+
 /** The polite "not yet" for a feature without wallet code behind it. */
 export function notAvailableYet(what: string, instead?: string): WalletServiceError {
   return new WalletServiceError('not_available', `${what} isn't available yet.${instead ? ` ${instead}` : ''}`);
