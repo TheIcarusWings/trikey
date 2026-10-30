@@ -761,6 +761,10 @@ class Service implements RkWalletService {
     return Promise.reject(notAvailableYet('Pairing a guardian', 'This wallet has no home server.'));
   }
 
+  setOnboardingContacts(): void {
+    throw notAvailableYet('Alert contacts', 'Recovery Key mode has no guardian to send alerts.');
+  }
+
   async setUpRules(): Promise<void> {
     throw notAvailableYet('A daily limit', 'Recovery Key mode limits the phone with its refills instead.');
   }

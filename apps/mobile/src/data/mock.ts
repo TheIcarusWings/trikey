@@ -272,6 +272,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     update((s) => ({ activity: [security(event), ...s.activity] }));
   }
 
+  let pendingContacts: Contact[] = [];
   function nextId(prefix: string): string {
     counter += 1;
     return `${prefix}-${counter}`;
@@ -325,8 +326,17 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
       update({ guardian });
       return guardian;
     },
+    setOnboardingContacts(contacts: { name: string; npub: string }[]) {
+      for (const c of contacts) if (!/^npub1[02-9ac-hj-np-z]{58}$/.test(c.npub.trim())) throw new WalletServiceError('invalid_input', "That doesn't look like a nostr public key (npub…).");
+      pendingContacts = contacts.map((c, i) => ({ id: nextId('c') + `-${i}`, name: c.name.trim(), npub: c.npub.trim() }));
+    },
     async setUpRules(limitSats: Sats, delayDays: RecoveryDelayDays) {
       await wait(deviceDelay);
+      if (pendingContacts.length) {
+        const added = pendingContacts;
+        pendingContacts = [];
+        update((s) => ({ contacts: [...s.contacts.filter((c) => !added.some((a) => a.npub === c.npub)), ...added] }));
+      }
       update((s) => ({
         recoveryDelayDays: delayDays,
         dailyLimit: { ...s.dailyLimit, limitSats, usedSats: 0, cosignedCount: 0 },

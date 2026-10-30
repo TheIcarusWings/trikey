@@ -15,7 +15,7 @@
  * Modes keep their data apart: the wallet's state lives under `trikey.wallet.<mode>.<network>` in the key-value store
  * and its secrets under random ids in the secure store.
  */
-import { npubEncode } from 'nostr-tools/nip19';
+import { decode as nip19Decode, npubEncode } from 'nostr-tools/nip19';
 import {
   BACKUP_FILE_PREFIX,
   BACKUP_FILE_SUFFIX,
@@ -84,6 +84,15 @@ import {
 } from './types';
 
 /** What the real wallet needs from the phone. `createPlatform()` fits; tests pass the in-memory stand-ins. */
+
+/** An npub (or 64-character hex key) as lowercase hex; throws for anything else. */
+function npubToHex(npubOrHex: string): string {
+  const v = npubOrHex.trim();
+  if (/^[0-9a-fA-F]{64}$/.test(v)) return v.toLowerCase();
+  const d = nip19Decode(v);
+  if (d.type !== 'npub') throw new Error('not an npub');
+  return d.data;
+}
 export interface PlatformLike {
   os: UiOs;
   isSecure: boolean;
@@ -747,6 +756,25 @@ class Service implements RealWalletService {
     });
   }
 
+  private onboardingContacts: { name: string; npub: string; pubkey: string }[] = [];
+
+  setOnboardingContacts(contacts: { name: string; npub: string }[]): void {
+    const seen = new Set<string>();
+    const out: { name: string; npub: string; pubkey: string }[] = [];
+    for (const c of contacts) {
+      let pubkey: string;
+      try {
+        pubkey = npubToHex(c.npub);
+      } catch {
+        throw new WalletServiceError('invalid_input', "That doesn't look like a nostr public key (npub…).");
+      }
+      if (seen.has(pubkey)) continue;
+      seen.add(pubkey);
+      out.push({ name: c.name.trim(), npub: c.npub.trim(), pubkey });
+    }
+    this.onboardingContacts = out;
+  }
+
   setUpRules(limitSats: Sats, delayDays: RecoveryDelayDays): Promise<void> {
     return this.exclusive(() =>
       this.guarded(async () => {
@@ -755,11 +783,19 @@ class Service implements RealWalletService {
         if (!preview) throw new WalletServiceError('wrong_state', 'Scan the guardian first.');
         if (Math.floor(this.clock.now() / 1000) >= preview.expiresAt)
           throw new WalletServiceError('pairing_expired', 'The pairing code ran out (they last 5 minutes). Open a fresh one on your guardian and scan it again.');
-        const rules: Policy = { dailyLimitSats: limitSats, recoveryDelayDays: delayDays, alertContacts: [], sweepFeeCapSats: DEFAULT_SWEEP_FEE_CAP_SATS };
+        const contacts = this.onboardingContacts;
+        const rules: Policy = {
+          dailyLimitSats: limitSats,
+          recoveryDelayDays: delayDays,
+          alertContacts: contacts.map((c) => c.pubkey),
+          sweepFeeCapSats: DEFAULT_SWEEP_FEE_CAP_SATS,
+        };
         this.setProgress('Pairing: approve on your hardware wallet');
         try {
           await w.pair({ rules, deviceName: this.deps.deviceName });
           this.preview = undefined;
+          for (const c of contacts) if (c.name) await w.nameAlertContact(c.pubkey, c.name);
+          this.onboardingContacts = [];
         } finally {
           this.setProgress(null);
         }

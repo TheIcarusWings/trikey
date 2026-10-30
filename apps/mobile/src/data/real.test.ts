@@ -482,6 +482,34 @@ describe('the real wallet service: finishing a recovery, replacing the guardian,
     return p;
   }
 
+  it('onboarding contacts chosen before pairing go to the guardian with the first rules, with their names on the phone', async () => {
+    // Its own guardian and its own device: the shared ones are paired and registered by the tests below.
+    const own3 = await GuardianRig.start();
+    const ownDevice = new SoftwareHardwareProvider(new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware2, network: 'regtest', kind: 'ledger' }));
+    const p = await phone({ clock: own3.clock, hardware: ownDevice });
+    const ana = npubEncode(bytesToHex(secp256k1.getPublicKey(new Uint8Array(32).fill(11), true).slice(1)));
+    const own = npubEncode(bytesToHex(secp256k1.getPublicKey(new Uint8Array(32).fill(12), true).slice(1)));
+    expect(() => p.svc.setOnboardingContacts([{ name: 'Nope', npub: 'npub1nothing' }])).toThrow(WalletServiceError);
+    p.svc.setOnboardingContacts([
+      { name: 'Ana', npub: ana },
+      { name: 'My other phone', npub: own },
+      { name: 'Ana again', npub: ana }, // duplicates are dropped
+    ]);
+    await p.svc.connectHardware('simulated');
+    await p.svc.pairGuardian(own3.pairingUri());
+    await p.svc.setUpRules(100_000, 7);
+    const pubkeys = (await p.svc.wallet!.getRules()).policy.alertContacts;
+    expect(pubkeys).toHaveLength(2);
+    expect(p.svc.getState().contacts.map((c) => ({ name: c.name, npub: c.npub }))).toEqual(
+      expect.arrayContaining([
+        { name: 'Ana', npub: ana },
+        { name: 'My other phone', npub: own },
+      ]),
+    );
+    await p.svc.close();
+    await own3.stop();
+  });
+
   it('reads every kind of code through the wallet, checked against the network', async () => {
     const p = await phone({ clock: R1.clock, hardware: hw });
     const recover = encodeRecoveryUri({ guardianPubkey: R1.pubkey, relays: R1.relayUrls, network: 'regtest', label: 'Umbrel' });
