@@ -1,4 +1,4 @@
-import { useRouter, type Href } from 'expo-router';
+import { usePreventRemove, useRouter, type Href } from 'expo-router';
 import { useCallback, useState, type ReactNode } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -6,6 +6,7 @@ import { ArrowLeft, ChevronLeft } from '@/components/icons';
 import { FLOATING_TAB_BAR_SPACE } from '@/components/tab-bar';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
+import { backDecision, type BackHold } from '@/lib/back';
 import { IS_ANDROID, IS_IOS, IS_WEB, pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -34,6 +35,19 @@ export function useGoBack(fallback: Href = '/home') {
   };
 }
 
+/**
+ * Holds the screen against going back (see `backDecision`): the Android back button and the iOS swipe do nothing, or
+ * call `hold` when it is a function (with `leave` to go back after all). Native only: on the web it would also stop a
+ * page reload.
+ */
+export function useHoldBack(hold: BackHold) {
+  usePreventRemove(!IS_WEB && !!hold, ({ data, repeat }) => {
+    const decision = backDecision(data.action.type, hold);
+    if (decision === 'proceed') repeat();
+    else if (decision === 'redirect' && typeof hold === 'function') hold(repeat);
+  });
+}
+
 type ScreenProps = {
   children?: ReactNode;
   /** Pinned under the scrolling content: the screen's buttons. */
@@ -56,8 +70,13 @@ type ScreenProps = {
   hideIosTitle?: boolean;
   /** iOS: extra classes for the large title (a smaller size, for long titles). */
   iosTitleClass?: string;
-  /** Hide the back control (first screen of a flow). */
+  /** Hide the back control (first screen of a flow). Also holds the screen against going back, unless `holdBack` says otherwise. */
   noBack?: boolean;
+  /**
+   * The Android back button and the iOS swipe: `true` does nothing, a function is called instead (it gets `leave`),
+   * `false` goes back as usual. Defaults to `noBack`.
+   */
+  holdBack?: BackHold;
   onBack?: () => void;
   /** Tab roots: no back control, large title (iOS) or plain top bar (Android). */
   tab?: boolean;
@@ -89,6 +108,7 @@ export function Screen({
   hideIosTitle,
   iosTitleClass,
   noBack,
+  holdBack = noBack ?? false,
   onBack,
   tab,
   untitled,
@@ -116,6 +136,7 @@ export function Screen({
       setRefreshing(false);
     }
   }, [onRefresh]);
+  useHoldBack(holdBack);
   const goBack = useGoBack();
   const insets = useScreenInsets();
   const back = onBack ?? goBack;

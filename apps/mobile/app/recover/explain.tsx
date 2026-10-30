@@ -27,7 +27,7 @@ export default function RecoverExplain() {
       return;
     }
     const r = await run(wallet.startRecovery(lost));
-    if (r.ok) router.push('/recover/waiting');
+    if (r.ok) router.replace('/recover/waiting');
   };
 
   return (

@@ -91,6 +91,15 @@ export default function SendHardware() {
       title={`Approve on your ${brand}`}
       androidTitleBelow
       backLabel="Back"
+      // While the device is asked, going back is Cancel: the prompt on the device is closed before the screen goes.
+      holdBack={
+        busy
+          ? (leave) => {
+              wallet.cancelDevicePrompt();
+              leave();
+            }
+          : false
+      }
       footer={
         <>
           <ActionNotice message={message} error={error} />
