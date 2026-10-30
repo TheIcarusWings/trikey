@@ -13,14 +13,17 @@ import { entropyToMnemonic, mnemonicToEntropy, mnemonicToSeedSync, validateMnemo
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { bip48Path, keyExpressionFromMaster, type KeyExpression, type Network } from '@trikey/core';
 import { secureRandomBytes } from '@trikey/core/random';
+import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 import { identityFromSeed, type KeyOrigin, type NostrIdentity } from '@trikey/protocol';
 
 /**
  * A fresh 24-word BIP 39 mnemonic: 32 bytes from `secureRandomBytes` (the OS generator, checked on every
- * call; packages/core/src/random.ts), then `entropyToMnemonic`. Throws `RandomSourceError` if the source
- * fails a check; it never falls back to anything else.
+ * call; packages/core/src/random.ts), then `entropyToMnemonic`. First the source must pass the start-up
+ * health test and the crypto its known answers (packages/core/src/random-health.ts). Throws `RandomSourceError`
+ * if the source fails a check; it never falls back to anything else.
  */
 export function newMnemonic(): string {
+  assertRandomSourceHealthy('new phone key');
   const entropy = secureRandomBytes(32);
   try {
     return entropyToMnemonic(entropy, wordlist);

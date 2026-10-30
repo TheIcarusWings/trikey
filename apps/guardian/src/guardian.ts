@@ -26,6 +26,7 @@ import { hex } from '@scure/base';
 import { SimplePool } from 'nostr-tools/pool';
 import { normalizeURL } from 'nostr-tools/utils';
 import { RpcServer, SimplePoolRelayPool, normalizeRelayUrl, type Alert, type MethodName } from '@trikey/protocol';
+import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 import { ChainService } from './chain/chain.js';
 import { BitcoinRpc } from './chain/bitcoind.js';
 import { ElectrumClient, type ElectrumClientOptions } from './chain/electrum.js';
@@ -269,6 +270,8 @@ export class Guardian {
 
   /** Loads all state from the data directory. Refuses to run on the wrong network. */
   static async open(opts: GuardianOptions): Promise<Guardian> {
+    // No key is made or unlocked from a random source or a crypto library that fails its start-up tests.
+    assertRandomSourceHealthy('guardian start');
     const g = new Guardian(opts);
     await ensureDataDir(g.config.dataDir);
     g.keystore = await readKeystore(g.path('keystore'));

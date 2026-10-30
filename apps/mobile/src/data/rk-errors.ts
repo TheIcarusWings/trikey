@@ -4,7 +4,7 @@
  * get it here. Anything else (the hardware adapters, secure storage) goes through the guardian mode's mapper.
  */
 import { RecoveryKeyError } from '@trikey/recovery-key';
-import { WalletServiceError } from './errors';
+import { RNG_REFUSED_TEXT, WalletServiceError } from './errors';
 import { mapError } from './real-errors';
 import { networkLabel } from './format';
 
@@ -67,6 +67,8 @@ export function mapRkError(e: unknown): WalletServiceError {
         return make('wrong_state', 'A refill is on its way. Approve new refills once it has confirmed.');
       case 'nothing_to_bump':
         return make('wrong_state', 'No refill is waiting for a faster fee.');
+      case 'random_source_failed':
+        return make('refused', RNG_REFUSED_TEXT);
       case 'wrong_state':
         return make('wrong_state');
       case 'chain_invalid':

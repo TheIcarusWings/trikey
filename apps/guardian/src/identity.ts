@@ -19,6 +19,7 @@
 import { hex } from '@scure/base';
 import { getPublicKey } from 'nostr-tools/pure';
 import { randomSecretKey } from '@trikey/core/random';
+import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 import { npubEncode } from 'nostr-tools/nip19';
 import { readJsonFile, writeFileAtomic } from './files.js';
 
@@ -53,6 +54,7 @@ export async function loadOrCreateIdentity(path: string): Promise<GuardianIdenti
   const existing = await loadIdentity(path);
   if (existing) return existing;
   // 32 bytes from the checked OS generator, used only if a valid secp256k1 scalar.
+  assertRandomSourceHealthy('new guardian identity');
   const secretKey = randomSecretKey();
   const file: IdentityFile = { version: 1, secretKey: hex.encode(secretKey), createdAt: new Date().toISOString() };
   try {

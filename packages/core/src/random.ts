@@ -21,7 +21,9 @@
  * output, however long, can prove it is unpredictable; a generator seeded with 32 known bytes passes
  * every statistical test. These checks only catch gross failures: a missing or broken polyfill, a
  * buffer left zero-filled, a stuck source, a source swapped out after start-up. They are cheap enough
- * to run on every call. Against a subtly weak generator the defences are elsewhere: the guardian mixing
+ * to run on every call. A start-up health test and known-answer tests of the crypto (random-health.ts) add the
+ * patterns these cannot see: a cycling or counting source, bias, a broken crypto library. Against a subtly
+ * weak generator the defences are elsewhere: the guardian mixing
  * the setup browser's (and the platform's) entropy into its seed and the phone's contribution into key 3
  * (generators on other machines), and the 2-of-3 structure, in which one weak key alone cannot move
  * money (DESIGN.md, "Entropy").
@@ -57,7 +59,11 @@ export type RandomSourceErrorCode =
   /** `n` was not an integer from 1 to 65536. */
   | 'bad_length'
   /** The source threw, or a key could not be made from its output. */
-  | 'failed';
+  | 'failed'
+  /** The start-up health test (random-health.ts) found a pattern in a few throwaway blocks: cycling, constant steps, bias. */
+  | 'health'
+  /** A known-answer test of the crypto primitives (random-health.ts) gave the wrong answer: a broken or patched crypto library. */
+  | 'known_answer';
 
 export class RandomSourceError extends Error {
   readonly code: RandomSourceErrorCode;
@@ -163,6 +169,14 @@ export function assertRandomSourcePinned(context: string): void {
 function latch(e: RandomSourceError): RandomSourceError {
   failed = e;
   return e;
+}
+
+/**
+ * Latches `e` like the per-call checks do: every later `secureRandomBytes` throws it until the source is
+ * pinned again. For the start-up health test (random-health.ts), which finds failures one call cannot.
+ */
+export function latchRandomSourceFailure(e: RandomSourceError): RandomSourceError {
+  return latch(e);
 }
 
 function blockTag(block: Uint8Array): Uint8Array {

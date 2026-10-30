@@ -22,11 +22,27 @@ rumor  kind 21420, unsigned, authored by the sender          <- carries the JSON
 ```
 
 * **Rumor kind `21420`** is Trikey's RPC kind. It sits in the ephemeral range (20000-29999) so a rumor leaked onto a relay by mistake would not be stored. Rumors are never published.
-* **Seal** and **wrap** are exactly as in NIP-59 (NIP-44 v2 encryption; the wrap is encrypted with the throwaway key's conversation key with the recipient). Their `created_at` is randomised up to 2 days into the past, as NIP-59 recommends.
-* **Wrap tags:** `["p", <recipient pubkey>]` and `["expiration", <unix seconds>]` (same value as the rumor's, so relays can purge it).
+* **Seal** and **wrap** are exactly as in NIP-59 (NIP-44 v2 encryption; the wrap is encrypted with the throwaway key's conversation key with the recipient). Their `created_at` is randomised up to 2 days into the past, as NIP-59 recommends. The rumor's `created_at` is the real send time and stays inside the encryption.
+* **Wrap tags:** `["p", <recipient pubkey>]` and `["expiration", <unix seconds>]`, so relays can purge it. The wrap's `expiration` is **not** the rumor's: it is cleartext, and `rumor expiration - TTL` would be the send time, which the back-dating exists to hide. See "Wrap timestamps" below.
 * The wrap is the only thing published. Publish it to every relay in the shared relay list; a message needs to reach just one.
 * **Subscribing:** `{"kinds":[1059], "#p":[<own pubkey>], "since": now - 2 days - 10 min}`. The look-back is needed because wrap timestamps are back-dated; staleness is judged on the rumor (section 4), never on the wrap.
 * **Implementation note (reference code).** The seal layer is encrypted with the conversation key of the two static keys, which never change between a phone and its guardian, so `@trikey/protocol` caches it per (secret key, peer) (`ConversationKeyCache`); only the wrap layer's ECDH with the throwaway key is done per message. The guardian opens each incoming wrap once (`openGiftWrap`) and routes the rumor by kind: 21420 to the RPC server, 14 (NIP-17 DMs from alert contacts) to the DM handler. Neither changes anything on the wire.
+
+### Wrap timestamps
+
+Let `W` = 172,800 s (2 days, the back-dating window) and `M` = the largest TTL the message's class allows (section 4: 3,600 s for requests and responses, 604,800 s for alerts). The sender draws `r` uniformly from the integers `0..W` with the checked random source (`secureRandomInt`) and sets, on the wrap:
+
+```
+created_at = floor(now) - r
+expiration = created_at + W + M          (= now + M + (W - r), in [now + M, now + M + W])
+```
+
+* **No send time on the wrap.** The expiration is a function of the wrap's own `created_at` only, and so reveals nothing about `now` that `created_at` does not already: both come from the one draw `r`, and neither depends on the message's TTL. (An independent jitter of the same width would let a watcher intersect the two windows and narrow the send time down.) A relay still sees *when an event arrives*, so this hides the send time from anyone reading stored events later, not from the relay while it receives them.
+* **Never in the past.** `created_at + W >= now`, so `expiration >= now + M`, at least one hour ahead when published, whatever the clock rounding.
+* **Receivers still accept fresh messages.** Receivers judge freshness on the *rumor's* exact `expiration` (section 4), which is inside the encryption; they never read the wrap's tag. The wrap's expiration is always at or after the rumor's (a message's TTL is at most `M`, and a sender whose own rumor expiration were later would publish that value instead), so a relay never purges a wrap a receiver would still accept.
+* **Not the TTL.** The wrap uses the class maximum `M`, not the message's own TTL, so a 30 s status call and a 1 h call look the same; only the class (alert or not) shows.
+* **Cost.** A relay may keep a request's wrap for up to `W + M` (about 2 days) instead of minutes. Replay protection is unaffected: it uses the rumor's `created_at` and `expiration` only (section 4), never the wrap's tag, and wrap event ids are deduplicated separately.
+* NIP-17 direct messages to alert contacts (`wrapDirectMessage`) carry no `expiration` tag; their seal and wrap `created_at` are back-dated the same way.
 
 ### Rumor tags
 
@@ -34,7 +50,7 @@ rumor  kind 21420, unsigned, authored by the sender          <- carries the JSON
 |---|---|---|
 | `["p", <recipient>]` | yes, exactly one | must equal the receiving pubkey |
 | `["trikey", "1"]` | yes, exactly one | protocol version; anything else is rejected |
-| `["expiration", <unix seconds>]` | yes, exactly one | NIP-40 expiry; the message is void from this second on |
+| `["expiration", <unix seconds>]` | yes, exactly one | the exact expiry, `created_at + TTL`; the message is void from this second on. Only the receiver sees it (the wrap's public `expiration` is different, see "Wrap timestamps") |
 | `["psbt", <hex sha256>]` | iff the message carries a PSBT | sha256 of the *decoded* PSBT bytes; see below |
 
 The rumor `content` is the JSON message (section 3), at most 200,000 characters. The rumor `id` must be correct and `rumor.pubkey` must equal `seal.pubkey`.
@@ -382,7 +398,7 @@ A receiver MUST, in this order, silently drop (no reply, so nothing can be probe
 2. **Decryption:** NIP-44 wrap -> seal (kind 13, valid signature) -> rumor; `rumor.pubkey == seal.pubkey`; rumor `id` correct.
 3. **Peer:** the seal's author is the expected peer. The phone expects exactly the guardian. The guardian accepts its paired phones, alert contacts for `recovery.cancel`, phones holding recovery access for the recovery methods, and any sender only for `pair.prepare` / `pair` (around a pairing session) and `recovery.access`.
 4. **Envelope:** rumor kind 21420, tags as in section 2, JSON valid against the schemas, PSBT hash matches.
-5. **Time**, using the rumor's `created_at` and `expiration` and the receiver's clock:
+5. **Time**, using the rumor's `created_at` and `expiration` (not the wrap's) and the receiver's clock:
 
    | Check | Requests and responses | Alerts |
    |---|---|---|
@@ -400,14 +416,14 @@ Also drop a wrap *event id* seen before (the same event arrives from several rel
 
 If no response arrives, the phone MAY re-send the same request: same `id`, same rumor `created_at` and `expiration`, in a new gift wrap. The guardian runs a request's handler **at most once** per `(sender, id)`. On a duplicate it re-sends the response it computed the first time (it keeps recent responses), or does nothing if the handler is still running. A response is matched to its call by `id`; responses with an unknown `id` are ignored.
 
-A phone that restarts while a request is unanswered can re-send it with the same `id` once it is subscribed again. The relays may then replay the guardian's original answer (it is stored until its expiration), which the phone receives before it re-sends; the reference client keeps recent answers that matched no call and resolves a call that re-uses their `id` with them (its replay guard would otherwise drop the fresh answer for that `id` as a duplicate).
+A phone that restarts while a request is unanswered can re-send it with the same `id` once it is subscribed again. The relays may then replay the guardian's original answer (it is stored until the wrap's expiration, which is later than the rumor's), which the phone receives before it re-sends; the reference client keeps recent answers that matched no call and resolves a call that re-uses their `id` with them (its replay guard would otherwise drop the fresh answer for that `id` as a duplicate).
 
 For state-changing methods (`guardian.unlock`, `guardian.lock`, `pair`, `policy.update`, `recovery.start`, `recovery.cancel`, `phone.resume`, `hardware.confirm`, `wallet.retire`, `wallet.unwatch`, `singlekey.register`, `sp.register`, `sp.unregister`) the guardian remembers handled ids **across restarts**. A retry of a request it handled before restarting gets `1501 Unavailable` instead of running again, because its cached response was lost. The phone should then check the state (`guardian.status`, `recovery.status`, `policy.get`) and, if needed, send a new request with a new `id`.
 
 ## 5. Relays
 
 * The relay list comes from the pairing URI. Both sides use the same list; publish to all, subscribe on all.
-* A relay must accept kind 1059 and honour `#p` filters. Relays that implement NIP-40 will purge wraps at their expiration.
+* A relay must accept kind 1059 and honour `#p` filters. Relays that implement NIP-40 will purge wraps at their (randomised, later) wrap expiration; see "Wrap timestamps".
 * PSBT messages are large after two layers of base64 (roughly 1.8x the PSBT's base64 size); choose relays that accept events of a few hundred KB.
 * A hostile relay can drop, delay or replay events. It cannot read or alter them (altered ciphertext fails the MAC; a re-signed wrap fails to decrypt) and replays are caught by section 4.
 

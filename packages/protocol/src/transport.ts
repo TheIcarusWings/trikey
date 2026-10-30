@@ -14,6 +14,7 @@ import {
   EnvelopeError,
   TAG_EXPIRATION,
   buildRumorTemplate,
+  classOf,
   checkFreshness,
   nowSeconds,
   parseRumor,
@@ -129,7 +130,9 @@ export interface WrappedMessage {
   wrap: NostrEvent;
   /** The unsigned inner event (never published). */
   rumorId: string;
+  /** The rumor's `created_at` (the real send time; inside the encryption). */
   createdAt: number;
+  /** The rumor's exact expiration (inside the encryption). The wrap's public `expiration` tag is later and randomised, see `wrapTimestamps`. */
   expiration: number;
 }
 
@@ -141,13 +144,43 @@ export interface WrappedMessage {
  */
 const backdated = (now: number) => Math.round(now) - secureRandomInt(WRAP_BACKDATE_SEC + 1);
 
+/**
+ * The public timestamps of a gift wrap: the back-dated `created_at` and the cleartext NIP-40 `expiration`.
+ *
+ * Back-dating only hides the send time if nothing else on the wrap gives it away. An expiration of
+ * `now + ttl` (what the rumor carries) would do exactly that: `expiration - ttl` is the send time. So the
+ * wrap's expiration is not derived from the send time at all, only from the wrap's own back-dated
+ * `created_at`:
+ *
+ *     expiration = createdAt + WRAP_BACKDATE_SEC + maxTtlSec
+ *
+ * With `createdAt = now - r`, `r` uniform in `0..WRAP_BACKDATE_SEC`, that is uniform over
+ * `[now + maxTtlSec, now + maxTtlSec + WRAP_BACKDATE_SEC]`: the jitter is as wide as the back-dating
+ * window and it is the same random number, so the expiration is a function of a value the relay
+ * already sees and tells an observer nothing more about `now` than `created_at` does. (An independent
+ * jitter of the same width would let an observer intersect the two windows and narrow the send time.)
+ *
+ * - Never in the past: `createdAt + WRAP_BACKDATE_SEC >= now`, so `expiration >= now + maxTtlSec`.
+ * - Never before the message's own expiry: the exact one is inside the rumor (checked by receivers,
+ *   section 4 of PROTOCOL.md), and a message is never created with a TTL above `maxTtlSec`, so the relay
+ *   keeps the wrap at least as long as a receiver would accept it.
+ * - It does not reveal the TTL either: it uses the class maximum (`maxTtlSec`), not the message's own
+ *   TTL, so a 5-minute status call and a 1-hour call look the same.
+ */
+export function wrapTimestamps(now: number, maxTtlSec: number): { createdAt: number; expiration: number } {
+  if (!Number.isInteger(maxTtlSec) || maxTtlSec <= 0) throw new RangeError('maxTtlSec must be a positive integer');
+  const createdAt = backdated(now);
+  return { createdAt, expiration: createdAt + WRAP_BACKDATE_SEC + maxTtlSec };
+}
+
 /** NIP-44 nonces from the checked source too (nostr-tools would draw its own). */
 const nonce = () => secureRandomBytes(32);
 
 /**
  * Wrap a message as rumor (kind 21420) -> seal (kind 13) -> gift wrap (kind 1059), NIP-44
  * encrypted to `recipient`. The gift wrap is signed by a throwaway key and carries `p` and
- * `expiration` tags so relays can route it and purge it.
+ * `expiration` tags so relays can route it and purge it. The wrap's expiration is not the rumor's (that
+ * would give away the send time): see `wrapTimestamps`.
  */
 export function wrapMessage(message: Message, opts: WrapOptions): WrappedMessage {
   const keys = keySource(opts.conversationKeys);
@@ -168,14 +201,18 @@ export function wrapMessage(message: Message, opts: WrapOptions): WrappedMessage
   // A throwaway key per wrap: a valid secp256k1 scalar from the checked source.
   const wrapKey = randomSecretKey();
   const expiration = Number(template.tags.find((t) => t[0] === TAG_EXPIRATION)![1]);
+  const limits = opts.limits ?? DEFAULT_LIMITS;
+  const times = wrapTimestamps(now, limits[classOf(message)].maxTtlSec);
+  // Relays must never purge a wrap while the receiver would still accept its rumor.
+  const wrapExpiration = Math.max(times.expiration, expiration);
   const wrap = finalizeEvent(
     {
       kind: GiftWrap,
       content: nip44.encrypt(JSON.stringify(seal), nip44.getConversationKey(wrapKey, opts.recipient), nonce()),
-      created_at: backdated(now),
+      created_at: times.createdAt,
       tags: [
         ['p', opts.recipient],
-        [TAG_EXPIRATION, String(expiration)],
+        [TAG_EXPIRATION, String(wrapExpiration)],
       ],
     },
     wrapKey,

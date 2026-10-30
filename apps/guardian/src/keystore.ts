@@ -100,6 +100,7 @@ import { entropyToMnemonic, mnemonicToSeedSync } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { bip48Path, getNetwork, tweakPrivateKey, type NetworkName } from '@trikey/core';
 import { secureRandomBytes } from '@trikey/core/random';
+import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 import { writeFileAtomic } from './files.js';
 import type { CosignerSigner, Key3Mix } from './policy/index.js';
 
@@ -244,6 +245,7 @@ export function generateSeed(inputs: SetupEntropy = {}): Uint8Array {
   // Sizes first, so a bad input is refused before anything is drawn.
   checkInput('the browser entropy', inputs.browser);
   checkInput('the extra entropy', inputs.extra);
+  assertRandomSourceHealthy('new guardian key');
   const os = secureRandomBytes(SETUP_ENTROPY_BYTES);
   let entropy: Uint8Array | undefined;
   try {

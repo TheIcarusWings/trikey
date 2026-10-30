@@ -5,16 +5,21 @@
  * and the service state in TRIKEY_DATA_DIR, starts HTTP on PORT, nostr and
  * Electrs, and shuts down cleanly on SIGTERM / SIGINT. The guardian always
  * starts locked. One log line per event on stdout; no secrets, no bodies.
+ * Before it opens anything it tests the random source and the crypto (rng-check.ts) and exits 70 if either fails.
  */
 // First: pin the random source before any module can draw from or replace it.
 import './pin-random.js';
 import { loadConfig } from './config.js';
 import { Guardian } from './guardian.js';
 import { createLogger, errorText } from './log.js';
+import { EXIT_RNG, checkRandomSource } from './rng-check.js';
 
 const log = createLogger({ level: process.env['TRIKEY_LOG_LEVEL'] === 'debug' ? 'debug' : 'info' });
 
 async function main(): Promise<void> {
+  // Before anything is opened, made or unlocked: the random source and the crypto must pass their start-up tests.
+  if (!checkRandomSource(log)) process.exit(EXIT_RNG);
+
   let config;
   try {
     config = loadConfig(process.env);
