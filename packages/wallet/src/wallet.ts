@@ -1992,10 +1992,14 @@ export class TrikeyWallet {
     await this.update((s) => {
       if (!recovery && !extra.destination) return;
       const same = s.recovery && (!recovery || !s.recovery.recovery || s.recovery.recovery.recoveryId === recovery.recoveryId);
+      const prev = same ? s.recovery! : undefined;
       s.recovery = {
-        role: extra.role ?? (same ? s.recovery!.role : 'observer'),
+        role: extra.role ?? prev?.role ?? 'observer',
         recovery: recovery ?? s.recovery?.recovery,
-        destination: extra.destination ?? (same ? s.recovery!.destination : undefined),
+        destination: extra.destination ?? prev?.destination,
+        ...((extra.sweepInputs ?? prev?.sweepInputs) ? { sweepInputs: extra.sweepInputs ?? prev!.sweepInputs } : {}),
+        ...((extra.feeCapSats ?? prev?.feeCapSats) !== undefined ? { feeCapSats: extra.feeCapSats ?? prev!.feeCapSats } : {}),
+        ...(prev?.sweepUpdate ? { sweepUpdate: prev.sweepUpdate } : {}),
         updatedAt: this.now(),
       };
     });
@@ -2008,13 +2012,151 @@ export class TrikeyWallet {
     if (!id) return;
     const st = await this.call('recovery.status', { recoveryId: id });
     await this.storeRecovery(st.recovery);
+    // The wallet was just read: coins that arrived since the sweep was made are in it.
+    await this.noticeRecoveryCoins(this.s.chain?.utxos);
   }
 
-  /** The guardian's view of a recovery (default: the active one). */
+  /**
+   * The guardian's view of a recovery (default: the active one). For a recovery this phone started it also reads the
+   * wallet, to see coins that arrived since the sweep was made (`recovery.update`, see `updateRecoverySweep`).
+   */
   async recoveryStatus(recoveryId?: string): Promise<Recovery | null> {
     const st = await this.call('recovery.status', recoveryId ? { recoveryId } : {});
     if (st.recovery) await this.storeRecovery(st.recovery);
+    if (st.recovery && this.recoveryUpdatable()) {
+      const snap = await this.chain.sync().catch(() => undefined);
+      if (snap) {
+        await this.update((s) => void (s.chain = { ...snap, syncedAt: this.now() }));
+        await this.noticeRecoveryCoins(snap.utxos);
+      }
+    }
     return st.recovery;
+  }
+
+  // -- coins that arrive during a recovery (`recovery.update`)
+
+  private updatingSweep?: Promise<unknown>;
+
+  /** A running recovery this phone started (so it holds the destination and built the sweep): the one it may re-sign with `recovery.update`. */
+  private recoveryUpdatable(): boolean {
+    const rec = this.s.recovery;
+    const state = rec?.recovery?.state;
+    return rec?.role === 'initiator' && !!rec.destination && (state === 'pending' || state === 'ready') && (this.s.stage === 'paired' || this.s.stage === 'recovering');
+  }
+
+  /**
+   * Looks for coins of the swept wallet that the guardian's sweep does not spend (`sweepUpdate.pendingCoins` in the
+   * state) and, if there are any, starts the update in the background: a sweep must move every coin, so one dust output
+   * would hold the whole recovery up. It is not awaited (the phone key's prompt or the hardware wallet's can wait for a
+   * person, and a refresh must not); a failure is recorded in the state (`sweepUpdate.refused`) and not tried again by
+   * itself for the same coins: `updateRecoverySweep()` tries again.
+   */
+  private async noticeRecoveryCoins(utxos: ChainSnapshot['utxos'] | undefined): Promise<void> {
+    const rec = this.s.recovery;
+    if (!utxos || !rec?.recovery || !this.recoveryUpdatable()) return;
+    const fresh = this.coinsMissingFromSweep(utxos);
+    if (fresh.length !== (rec.sweepUpdate?.pendingCoins ?? 0)) await this.update((s) => void (s.recovery!.sweepUpdate = { ...s.recovery!.sweepUpdate, pendingCoins: fresh.length }));
+    if (!fresh.length || this.updatingSweep) return;
+    const refused = rec.sweepUpdate?.refused;
+    // The same coins are not tried again by themselves, except after a while when the cause was the person's (a cancelled
+    // prompt, a device that was not there).
+    if (refused?.forCoins === coinsKey(fresh) && !(USER_RETRIES.has(refused.code as WalletError['code']) && this.now() - refused.at >= RETRY_AFTER_MS)) return;
+    void this.updateRecoverySweep().catch(() => undefined); // a failure is recorded in the state
+  }
+
+  /** The wallet's coins the guardian's current sweep does not spend. */
+  private coinsMissingFromSweep(utxos: ChainSnapshot['utxos']): ChainSnapshot['utxos'] {
+    const rec = this.s.recovery!;
+    if (rec.sweepInputs) {
+      const known = new Set(rec.sweepInputs);
+      return utxos.filter((u) => !known.has(`${u.txid}:${u.vout}`));
+    }
+    // A recovery from before the sweep's coins were kept: the guardian's amounts say whether the wallet holds more than the sweep moves.
+    const r = rec.recovery!;
+    return utxos.reduce((sum, u) => sum + u.valueSats, 0) > r.amountSats + r.feeSats ? utxos.slice(0, 1) : [];
+  }
+
+  /**
+   * Coins arrived in the swept wallet after the recovery started (even dust: a sweep must move every coin). Signs a new
+   * sweep of all the wallet's coins with the key that survives (the phone's, or the hardware wallet's) to the same
+   * destination, and sends it with `recovery.update`: the delay does not restart, and the fee stays within the sweep fee
+   * cap (the smaller of the cap at the start and now). `sync` and `recoveryStatus` call it in the background when they
+   * see new coins; call it to try again after it was refused or cancelled.
+   *
+   * Returns `updated: false` when there is nothing to add. Throws `no_recovery` (none running), `wrong_state` (this phone
+   * did not start it), `recovery_update_refused` (a rule of the guardian failed: `reason`, and for the cap `feeSats` and
+   * `capSats`; the running sweep is unchanged), `fee_cap_too_low`, `key_unavailable`, a hardware error, or
+   * `guardian_refused` when the guardian did not answer.
+   */
+  async updateRecoverySweep(): Promise<{ updated: boolean; addedCoins: number; recovery: Recovery }> {
+    while (this.updatingSweep) await this.updatingSweep.catch(() => undefined);
+    const run = this.updateRecoverySweepNow();
+    this.updatingSweep = run.catch(() => undefined).finally(() => (this.updatingSweep = undefined));
+    return run;
+  }
+
+  private async updateRecoverySweepNow(): Promise<{ updated: boolean; addedCoins: number; recovery: Recovery }> {
+    const id = this.s.recovery?.recovery?.recoveryId;
+    if (!id) throw new WalletError('no_recovery', 'No recovery is running.');
+    const st = await this.call('recovery.status', { recoveryId: id });
+    await this.storeRecovery(st.recovery);
+    const current = st.recovery;
+    if (!current || (current.state !== 'pending' && current.state !== 'ready')) throw new WalletError('no_recovery', 'No recovery is running.');
+    const rec = this.s.recovery!;
+    if (rec.role !== 'initiator' || !rec.destination) throw new WalletError('wrong_state', 'This phone did not start the recovery, so it cannot change what it moves.');
+    const destination = MultisigWallet.fromDescriptor(rec.destination.descriptor, this.network);
+    const from = this.multisig();
+    let feeCap = this.s.rules?.policy.sweepFeeCapSats ?? rec.feeCapSats;
+    // A paired phone may read the rules (a recovering one may not: it keeps the ones it got with its access).
+    if (this.s.stage === 'paired') feeCap = (await this.getRules().catch(() => undefined))?.policy.sweepFeeCapSats ?? feeCap;
+    if (feeCap === undefined) throw new WalletError('internal', 'The sweep fee cap is not known.');
+    // The guardian keeps the smaller of the cap at the start and the cap now.
+    if (rec.feeCapSats !== undefined) feeCap = Math.min(feeCap, rec.feeCapSats);
+    try {
+      const sweep = await this.buildSweepPsbt(destination, feeCap);
+      const inputs = outpointsOf(sweep);
+      const known = new Set(rec.sweepInputs ?? []);
+      const added = inputs.filter((o) => !known.has(o)).length;
+      const nothingNew = rec.sweepInputs ? added === 0 : (this.s.chain?.utxos ?? []).reduce((sum, u) => sum + u.valueSats, 0) <= current.amountSats + current.feeSats;
+      if (nothingNew) {
+        await this.update((s) => void (s.recovery!.sweepUpdate = { ...s.recovery!.sweepUpdate, pendingCoins: 0 }));
+        return { updated: false, addedCoins: 0, recovery: current };
+      }
+      const signed = await this.signRecoverySweep(sweep, current.survivingRole, from);
+      let res: Result<'recovery.update'>;
+      try {
+        res = await this.call('recovery.update', { recoveryId: id, sweepPsbt: base64.encode(signed) });
+      } catch (e) {
+        throw recoveryUpdateError(e);
+      }
+      const addedCoins = rec.sweepInputs ? added : 1;
+      await this.storeRecovery(res.recovery, { sweepInputs: inputs, feeCapSats: feeCap });
+      await this.update((s) => void (s.recovery!.sweepUpdate = { pendingCoins: 0, lastAdded: { coins: addedCoins, at: this.now() } }));
+      return { updated: true, addedCoins, recovery: res.recovery };
+    } catch (e) {
+      // What will come again for the same coins is kept, so it is not tried again by itself; an answer that did not come is not.
+      if (e instanceof WalletError && UPDATE_REFUSALS.has(e.code))
+        await this.update((s) => {
+          const u = s.recovery?.sweepUpdate;
+          const missing = this.s.chain ? this.coinsMissingFromSweep(this.s.chain.utxos) : [];
+          s.recovery!.sweepUpdate = {
+            pendingCoins: u?.pendingCoins ?? missing.length,
+            ...(u?.lastAdded ? { lastAdded: u.lastAdded } : {}),
+            refused: { code: e.code, message: e.message, ...(e.reason ? { reason: e.reason } : {}), at: this.now(), forCoins: coinsKey(missing) },
+          };
+        });
+      throw e;
+    }
+  }
+
+  /** Signs a sweep with the key that survives: the phone's (the biometric prompt) or the hardware wallet's; nothing else may have signed it. */
+  private async signRecoverySweep(sweep: Uint8Array, surviving: 'app' | 'hardware', wallet: MultisigWallet): Promise<Uint8Array> {
+    if (surviving === 'app') return this.withKey2('Add the new coins to your recovery', async (m) => new SoftwareSigner('app', m).signPsbt(sweep, this.network));
+    this.emit({ type: 'hardware_prompt', purpose: 'recovery-sweep', text: 'Add the coins that arrived to the recovery: move every coin of the wallet to the new wallet' });
+    const signed = await this.withHardware((hw, rec) => this.hardwareSignPsbt(hw, sweep, wallet, this.devicePolicy(rec)));
+    const a = analyzePsbt(signed, wallet.accountPubkeys(), this.network);
+    if (a.inputs.some((i) => i.signedBy.length !== 1 || i.signedBy[0] !== 'hardware')) throw new WalletError('hardware_invalid_response', "The sweep must carry the hardware wallet's signature alone.");
+    return signed;
   }
 
   /**
@@ -2044,7 +2186,7 @@ export class TrikeyWallet {
     return plan.psbt;
   }
 
-  private async startWithSweep(sweep: Uint8Array, destination: MultisigWallet, extra: Partial<RecoveryRecord>): Promise<Recovery> {
+  private async startWithSweep(sweep: Uint8Array, destination: MultisigWallet, extra: Partial<RecoveryRecord>, feeCapSats: number): Promise<Recovery> {
     const txid = parsePsbt(sweep).id;
     const res = await this.callChanging(
       'recovery.start',
@@ -2056,7 +2198,12 @@ export class TrikeyWallet {
         },
       },
     );
-    await this.storeRecovery(res.recovery, { role: 'initiator', destination: { descriptor: destination.descriptor(), walletId: destination.fingerprint(), ...extra.destination } });
+    await this.storeRecovery(res.recovery, {
+      role: 'initiator',
+      destination: { descriptor: destination.descriptor(), walletId: destination.fingerprint(), ...extra.destination },
+      sweepInputs: outpointsOf(sweep),
+      feeCapSats,
+    });
     await this.refreshStatus().catch(() => undefined);
     return res.recovery;
   }
@@ -2084,7 +2231,7 @@ export class TrikeyWallet {
     const { policy } = await this.getRules();
     const sweep = await this.buildSweepPsbt(destination, policy.sweepFeeCapSats);
     const signed = await this.withKey2('Approve the recovery', async (m) => new SoftwareSigner('app', m).signPsbt(sweep, this.network));
-    return this.startWithSweep(signed, destination, { destination: { descriptor: destination.descriptor(), walletId: destination.fingerprint(), hardware: rec } });
+    return this.startWithSweep(signed, destination, { destination: { descriptor: destination.descriptor(), walletId: destination.fingerprint(), hardware: rec } }, policy.sweepFeeCapSats);
   }
 
   /**
@@ -2166,7 +2313,7 @@ export class TrikeyWallet {
       const a = analyzePsbt(signed, old.accountPubkeys(), this.network);
       if (a.inputs.some((i) => i.signedBy.length !== 1 || i.signedBy[0] !== 'hardware'))
         throw new WalletError('hardware_invalid_response', 'The sweep must carry the hardware wallet\'s signature alone.');
-      return await this.startWithSweep(signed, destination, {});
+      return await this.startWithSweep(signed, destination, {}, access.policy.sweepFeeCapSats);
     } finally {
       const hw = this.hwSession;
       this.hwSession = undefined;
@@ -3093,6 +3240,8 @@ export class TrikeyWallet {
         `${why} Paying a silent payment address needs Trikey's helper coin: your vault's coins cannot make one on their own. ` +
           `Send a small amount (10,000 to 50,000 sats) to your helper address${h ? ` ${this.helperAddress(0, h.nextReceiveIndex).address}` : ' (Settings, Silent payments)'}, wait for it to confirm, and try again.`,
       );
+    // A send max with nothing to send says so before it talks about the helper.
+    if (opts.max && !c.utxos.length) throw new WalletError('nothing_to_send', 'The wallet has no coins to send.');
     if (!h) throw fundIt('There is no helper coin yet.');
     const coin = [...h.utxos].sort((a, b) => Number(b.confirmations > 0) - Number(a.confirmations > 0) || b.valueSats - a.valueSats)[0];
     if (!coin) throw fundIt('There is no helper coin.');
@@ -3140,6 +3289,7 @@ export class TrikeyWallet {
         outputAddress: taprootAddress(output.outputKey, this.network),
         helper: { txid: coin.txid, vout: coin.vout, valueSats: coin.valueSats, chain: coin.chain, index: coin.index, feeSats: helperFee, changeSats: helperChange, changeIndex: h.nextChangeIndex },
       },
+      ...(opts.max ? { sendMax: true as const } : {}),
     };
   }
 
@@ -3232,12 +3382,11 @@ export class TrikeyWallet {
     const live = new Set(this.s.chain!.utxos.map((u) => `${u.txid}:${u.vout}`));
     const helperLive = this.s.helper?.utxos.some((u) => u.txid === sp.helper.txid && u.vout === sp.helper.vout);
     if (quote.inputs.some((u) => !live.has(`${u.txid}:${u.vout}`)) || !helperLive) throw new WalletError('quote_stale', "The wallet's coins changed since this quote; quote the payment again.");
+    if (quote.sendMax) this.checkSendMaxStillMax(quote);
     const { wallet, psbt, helperOutpoint } = await this.buildSilentPayment(quote);
     const allowHelper = (f: { outpoint: string }) => f.outpoint === helperOutpoint;
     const signed = await this.withKey2('Approve the payment', async (m) => {
       const out = await new SoftwareSigner('app', m).signPsbt(psbt, this.network);
-    // A send max with nothing to send says so before it talks about the helper.
-    if (opts.max && !c.utxos.length) throw new WalletError('nothing_to_send', 'The wallet has no coins to send.');
       return finalizeForeign(out, allowHelper, wallet);
     });
 
@@ -3289,7 +3438,6 @@ export class TrikeyWallet {
     }
 
     const tx = parsePsbt(final);
-      ...(opts.max ? { sendMax: true as const } : {}),
     for (let i = 0; i < tx.inputsLength; i++) if (!tx.getInput(i).finalScriptWitness) tx.finalizeIdx(i);
     const txHex = hex.encode(tx.extract());
     const txid = tx.id;
@@ -3382,7 +3530,6 @@ export class TrikeyWallet {
     } finally {
       if (this.hwSession === hw) this.hwSession = undefined;
       await hw.close().catch(() => {});
-    if (quote.sendMax) this.checkSendMaxStillMax(quote);
     }
   }
 
@@ -4205,6 +4352,67 @@ function selfCheck<T>(fn: () => T): T {
     if (e instanceof PsbtError || (e instanceof Error && /witnessUtxo/.test(e.message)))
       throw new WalletError('guardian_mismatch', `The guardian's chain data does not match the wallet: ${e.message}`, { cause: e });
     throw e;
+  }
+}
+
+/** The outpoints (`txid:vout`) a PSBT spends. */
+function outpointsOf(psbt: Uint8Array): string[] {
+  const tx = parsePsbt(psbt);
+  const out: string[] = [];
+  for (let i = 0; i < tx.inputsLength; i++) {
+    const inp = tx.getInput(i);
+    out.push(`${hex.encode(inp.txid!)}:${inp.index}`);
+  }
+  return out;
+}
+
+/** Names a set of coins (to remember which an update was refused for). */
+const coinsKey = (coins: { txid: string; vout: number }[]) => coins.map((u) => `${u.txid}:${u.vout}`).sort().join(',');
+
+/** Why a `recovery.update` fails the same way again for the same coins. */
+const UPDATE_REFUSALS = new Set<WalletError['code']>(['recovery_update_refused', 'fee_cap_too_low', 'key_unavailable', 'hardware_invalid_response', 'hardware_unavailable', 'hardware_mismatch']);
+
+/** Failures of an update that the person can fix (the phone key's prompt cancelled, the hardware wallet not there): tried again after `RETRY_AFTER_MS`. */
+const USER_RETRIES = new Set<WalletError['code']>(['key_unavailable', 'hardware_unavailable', 'hardware_mismatch']);
+const RETRY_AFTER_MS = 10 * 60_000;
+
+/**
+ * The guardian's answer to `recovery.update` as a typed error: a rule that failed is `recovery_update_refused` (with the
+ * cap's `feeSats` and `capSats`); an answer that did not come stays a plain guardian error.
+ */
+function recoveryUpdateError(e: unknown): unknown {
+  const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
+  if (!refusal) return e;
+  const cause = e instanceof WalletError ? (e.cause ?? e) : e;
+  const goesOn = 'The recovery still moves the coins it had, but it cannot finish until the new ones are added.';
+  switch (refusal.kind) {
+    case 'policy_violation': {
+      const { reason, feeSats, capSats } = refusal;
+      const what =
+        reason === 'sweep_fee_exceeds_cap'
+          ? `The new move would cost more in network fees than the sweep fee cap allows${feeSats !== undefined && capSats !== undefined ? ` (${feeSats} sats against ${capSats})` : ''}.`
+          : reason === 'invalid_recovery_update'
+            ? 'The guardian will not take this change: it must still move every coin the first move did.'
+            : `The guardian's rules refuse this change${reason ? ` (${reason.replace(/_/g, ' ')})` : ''}.`;
+      return new WalletError('recovery_update_refused', `${what} ${goesOn}`, {
+        refusal,
+        cause,
+        ...(reason ? { reason } : {}),
+        ...(feeSats !== undefined ? { feeSats } : {}),
+        ...(capSats !== undefined ? { capSats } : {}),
+      });
+    }
+    case 'psbt_rejected':
+      return new WalletError('recovery_update_refused', `The guardian did not accept the new move${refusal.reason ? ` (${refusal.reason.replace(/_/g, ' ')})` : ''}. ${goesOn}`, {
+        refusal,
+        cause,
+        ...(refusal.reason ? { reason: refusal.reason } : {}),
+      });
+    case 'recovery_not_found':
+    case 'recovery_not_active':
+      return new WalletError('no_recovery', 'No recovery is running.', { refusal, cause });
+    default:
+      return e;
   }
 }
 

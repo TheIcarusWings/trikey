@@ -180,6 +180,13 @@ export type WalletErrorCode =
   | 'fee_cap_too_low'
   | 'invalid_rules'
   | 'no_recovery'
+  /**
+   * The guardian refused `recovery.update` (a coin that arrived during a recovery): `reason` names its rule
+   * (`invalid_recovery_update`, `sweep_fee_exceeds_cap`, `recovery_signers`, ...); for the cap `feeSats` and `capSats`
+   * say by how much. The running sweep is unchanged, so the recovery goes on without the new coin (it then cannot
+   * complete until a later update takes it).
+   */
+  | 'recovery_update_refused'
   | 'backup_unavailable'
   | 'backup_not_found'
   /** Not a Trikey backup, an unknown version, or damaged (authentication failed). */
