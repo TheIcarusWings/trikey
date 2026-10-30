@@ -6,7 +6,7 @@ tagline: Key 3 of your 2-of-3 bitcoin wallet, on your own node
 # TODO(verify): the icon is a placeholder (the web UI favicon). Replace with a proper icon URL.
 icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/guardian-web/public/favicon.svg
 category: bitcoin
-version: "0.1.0-alpha"
+version: "0.1.1-alpha"
 # TODO(verify): host-facing port for the app_proxy. Pick one that no other app in the store uses.
 port: 3010
 description: >-
@@ -25,8 +25,9 @@ repo: https://github.com/TheIcarusWings/trikey
 support: https://github.com/TheIcarusWings/trikey/issues
 # TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
 gallery: []
-# Empty for a new package.
-releaseNotes: ""
+releaseNotes: >-
+  Pre-alpha. Mainnet is allowed in guardian mode at your own risk (small amounts only); silent
+  payment scanning uses several CPU cores (SP_SCAN_THREADS).
 dependencies:
   - bitcoin
   - electrs
