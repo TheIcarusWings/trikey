@@ -1,37 +1,40 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Clock, LayoutGrid, List, LogOut, Menu, QrCode, Shield, Smartphone, UserPlus, X } from 'lucide-react';
+import { Clock, House, List, LogOut, Menu, Settings, SlidersHorizontal, Smartphone, UserPlus, X } from 'lucide-react';
 import { api, usingMockApi } from '@/api';
 import { useGuardian } from '@/components/guardian-provider';
 import { Logo } from '@/components/logo';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { features } from '@/lib/features';
 import { cn } from '@/lib/utils';
 
 interface NavItem {
   to: string;
   label: string;
-  Icon: typeof LayoutGrid;
+  Icon: typeof House;
   end?: boolean;
   tone?: 'warn';
 }
 
 function useNavItems(): NavItem[] {
   const { status } = useGuardian();
-  const items: NavItem[] = [{ to: '/', label: 'Dashboard', Icon: LayoutGrid, end: true }];
+  const items: NavItem[] = [];
+  // While a recovery runs it comes first: it is the one thing that needs a look.
   if (status?.recoveryInProgress) items.push({ to: '/recovery', label: 'Recovery', Icon: Clock, tone: 'warn' });
   items.push(
+    { to: '/', label: 'Home', Icon: House, end: true },
     { to: '/activity', label: 'Activity', Icon: List },
-    { to: '/rules', label: 'Rules', Icon: Shield },
-    { to: '/pair', label: 'Pair a phone', Icon: QrCode },
-    { to: '/recover-phone', label: 'Recover on a new phone', Icon: Smartphone },
-    { to: '/host', label: 'Host for someone', Icon: UserPlus },
+    { to: '/rules', label: 'Rules', Icon: SlidersHorizontal },
+    { to: '/phones', label: 'Phones', Icon: Smartphone },
   );
+  if (features.hostForSomeone) items.push({ to: '/host', label: 'Host for someone', Icon: UserPlus });
+  items.push({ to: '/settings', label: 'Settings', Icon: Settings });
   return items;
 }
 
 function NavList({ items, onNavigate }: { items: NavItem[]; onNavigate?: () => void }) {
   return (
-    <nav aria-label="Guardian">
+    <nav aria-label="Main">
       <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
         {items.map(({ to, label, Icon, end, tone }) => (
           <li key={to}>
@@ -41,13 +44,15 @@ function NavList({ items, onNavigate }: { items: NavItem[]; onNavigate?: () => v
               onClick={onNavigate}
               className={({ isActive }) =>
                 cn(
-                  'flex h-9 items-center gap-2.5 rounded-md px-2.5 text-sm font-medium text-sidebar-foreground no-underline outline-none transition-colors',
+                  'flex h-10 items-center gap-2.5 rounded-lg px-3 text-sm no-underline outline-none transition-colors',
                   'focus-visible:ring-2 focus-visible:ring-ring',
-                  isActive ? (tone === 'warn' ? 'bg-warn-soft' : 'bg-accent') : 'hover:bg-accent/60',
+                  isActive
+                    ? cn('font-semibold text-foreground', tone === 'warn' ? 'bg-warn-soft' : 'bg-accent')
+                    : 'font-medium text-muted-foreground hover:bg-accent/60 hover:text-foreground',
                 )
               }
             >
-              <Icon className={cn('size-4 shrink-0', tone === 'warn' && 'text-warn')} aria-hidden="true" />
+              <Icon className={cn('size-[18px] shrink-0', tone === 'warn' && 'text-warn')} aria-hidden="true" />
               {label}
             </NavLink>
           </li>
@@ -69,15 +74,19 @@ function SidebarFooter() {
   return (
     <div className="flex flex-col gap-2">
       {usingMockApi && (
-        <p className="m-0 px-2.5 text-xs leading-4 text-muted-foreground">Demo data. No guardian is connected.</p>
+        <p className="m-0 px-3 text-xs leading-4 text-muted-foreground">Demo data. No guardian is connected.</p>
       )}
-      <div className="flex items-center justify-between gap-2 px-1.5">
+      <div className="px-2.5">
         <ThemeToggle />
-        <button type="button" onClick={signOut} className="flex h-8 items-center gap-1.5 rounded-md px-2 text-[13px] text-muted-foreground hover:bg-accent/60">
-          <LogOut className="size-3.5" aria-hidden="true" />
-          Sign out
-        </button>
       </div>
+      <button
+        type="button"
+        onClick={signOut}
+        className="flex h-10 items-center gap-2.5 rounded-lg px-3 text-sm text-muted-foreground outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <LogOut className="size-[18px]" aria-hidden="true" />
+        Sign out
+      </button>
     </div>
   );
 }
@@ -100,7 +109,7 @@ export function Shell() {
   }, [open]);
 
   return (
-    <div className="min-h-screen bg-background md:flex">
+    <div className="min-h-screen bg-background md:flex print:bg-white">
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-primary-foreground"
@@ -109,10 +118,10 @@ export function Shell() {
       </a>
 
       {/* Wide screens */}
-      <aside className="sticky top-0 hidden h-screen w-[220px] shrink-0 flex-col justify-between gap-5 border-r bg-sidebar px-3 py-5 md:flex">
-        <div className="flex flex-col gap-5">
-          <div className="px-2.5">
-            <Logo />
+      <aside className="sticky top-0 hidden h-screen w-[220px] shrink-0 flex-col justify-between gap-5 border-r px-3.5 py-5 md:flex print:hidden">
+        <div className="flex flex-col gap-[18px]">
+          <div className="px-2">
+            <Logo size={28} />
           </div>
           <NavList items={items} />
         </div>
@@ -120,28 +129,30 @@ export function Shell() {
       </aside>
 
       {/* Narrow screens */}
-      <header className="border-b bg-sidebar md:hidden">
-        <div className="flex h-14 items-center justify-between px-4">
-          <Logo />
+      <header className="md:hidden print:hidden">
+        <div className="flex h-14 items-center justify-between pr-2 pl-5">
+          <Logo size={28} />
           <button
             type="button"
             aria-expanded={open}
             aria-controls="mobile-nav"
-            aria-label={open ? 'Close menu' : 'Open menu'}
+            aria-label="Menu"
             onClick={() => setOpen((v) => !v)}
-            className="inline-flex size-9 items-center justify-center rounded-md border bg-background outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex size-11 items-center justify-center rounded-lg outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring"
           >
-            {open ? <X className="size-4" aria-hidden="true" /> : <Menu className="size-4" aria-hidden="true" />}
+            {open ? <X className="size-[22px]" aria-hidden="true" /> : <Menu className="size-[22px]" aria-hidden="true" />}
           </button>
         </div>
-        <div id="mobile-nav" hidden={!open} className="flex flex-col gap-4 border-t px-3 py-3">
+        <div id="mobile-nav" hidden={!open} className="flex flex-col gap-4 border-y px-3.5 py-3">
           <NavList items={items} onNavigate={() => setOpen(false)} />
           <SidebarFooter />
         </div>
       </header>
 
-      <main id="main" tabIndex={-1} className="min-w-0 flex-1 px-4 py-6 outline-none sm:p-8">
-        <Outlet />
+      <main id="main" tabIndex={-1} className="min-w-0 flex-1 px-5 pt-2 pb-10 outline-none md:px-12 md:py-8 print:p-0">
+        <div className="mx-auto flex w-full max-w-[884px] flex-col gap-4 md:gap-6">
+          <Outlet />
+        </div>
       </main>
     </div>
   );

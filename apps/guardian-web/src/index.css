@@ -161,3 +161,68 @@
     }
   }
 }
+
+/*
+ * The "Recover on a new phone" sheet (pages/phones.tsx). Hidden on screen; when printing it is all
+ * that shows (the rest of the page is `print:hidden`). Fixed colors: a dark theme still prints
+ * black on white. Sizes are the design's sheet (420 x 594) scaled up for A4.
+ */
+.print-sheet {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 16mm;
+  }
+  html,
+  body {
+    background: #ffffff !important;
+    color: #09090b !important;
+  }
+  .print-sheet {
+    display: flex;
+    flex-direction: column;
+    gap: 26px;
+    max-width: 170mm;
+    margin: 0 auto;
+    color: #09090b;
+    font-family: var(--font-sans);
+  }
+  .print-sheet-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 16px;
+  }
+  .print-sheet-brand {
+    font-size: 28px;
+    font-weight: 700;
+  }
+  .print-sheet-meta {
+    font-size: 18px;
+    color: #52525b;
+  }
+  .print-sheet-title {
+    margin: 0;
+    font-size: 40px;
+    line-height: 1.2;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .print-sheet-qr {
+    align-self: center;
+  }
+  .print-sheet-notes {
+    margin: 0;
+    padding-left: 30px;
+    list-style: disc;
+    display: block;
+    font-size: 21px;
+    line-height: 1.5;
+    color: #27272a;
+  }
+  .print-sheet-notes li + li {
+    margin-top: 12px;
+  }
+}
