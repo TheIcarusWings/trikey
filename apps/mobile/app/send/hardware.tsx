@@ -4,9 +4,8 @@ import { View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { DeviceMock } from '@/components/device-mock';
-import { explainHardware } from '@/components/hardware-reason';
 import { Info, TriangleAlert } from '@/components/icons';
-import { Notice } from '@/components/panels';
+import { Body, Notice } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import {
@@ -17,7 +16,6 @@ import {
   useWallet,
   useWalletService,
   type FeeSpeed,
-  type HardwareReason,
   type QuoteOutcome,
 } from '@/data';
 import { useAction } from '@/lib/use-action';
@@ -50,7 +48,6 @@ export default function SendHardware() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wallet, address, amount, feeSpeed, signer]);
   const quote = outcome.ok ? outcome.quote : null;
-  const reason: HardwareReason = quote?.plan.signer === 'hardware' ? quote.plan.reason : 'requested';
   const brand = state.hardware.brand;
 
   // The device's own approval is what the person waits for; sendPayment resolves when it comes.
@@ -117,9 +114,8 @@ export default function SendHardware() {
           />
         </>
       }>
-      <Notice icon={TriangleAlert} iconClass="text-warn" tone="warn-outline">
-        {explainHardware(reason, quote.request.amountSats, state)}
-      </Notice>
+      {/* Why the hardware wallet signs was said on Review; here it is only what to do. */}
+      <Body>Unlock it, open the Bitcoin app and approve the payment there.</Body>
       {quote.warning ? (
         <Notice icon={TriangleAlert} iconClass="text-destructive" tone="warn-outline" title="This ends your refills">
           {quote.warning}

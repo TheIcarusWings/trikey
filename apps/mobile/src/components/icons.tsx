@@ -9,6 +9,7 @@ export {
   Check,
   ChevronLeft,
   ChevronRight,
+  ClipboardPaste,
   Clock,
   Cloud,
   Copy,

@@ -116,7 +116,7 @@ export function SendReceiveButtons({ sendEmphasis = true }: { sendEmphasis?: boo
   );
   return (
     <View className="flex-row justify-center gap-12">
-      {button('Send', ArrowUpRight, sendEmphasis, () => router.push('/send/amount'))}
+      {button('Send', ArrowUpRight, sendEmphasis, () => router.push('/send/to'))}
       {button('Receive', ArrowDownLeft, false, () => router.push('/receive'))}
     </View>
   );
