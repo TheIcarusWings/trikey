@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { TriangleAlert } from 'lucide-react';
 import { api, ApiError, RESET_CONFIRMATION } from '@/api';
 import { useGuardian } from '@/components/guardian-provider';
+import { ManagerUsername } from '@/components/manager-username';
 import { PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -84,6 +85,7 @@ export function ResetPage() {
       </p>
 
       <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
+        <ManagerUsername />
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="reset-pass">Passphrase</Label>
           <Input

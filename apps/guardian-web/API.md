@@ -53,6 +53,13 @@ when the guardian restarts. Without one, everything else answers `401 unauthenti
   redirect to `/phones`; `/host` exists only in a build with `VITE_FEATURE_HOST_FOR_SOMEONE=true`). The guardian serves
   `index.html` for every non-`/api` path that is not a file in `dist/` (a missing
   file under `/assets/` is a `404`).
+- **Password managers.** The passphrase works with them (Proton Pass, 1Password, Bitwarden,
+  iCloud Keychain, Google): set-up, unlock, sign-in and reset are real `<form>`s with a submit
+  button, the passphrase fields say `current-password` or `new-password`, and each form carries
+  the same fixed user name (`username`, "Trikey Guardian", off-screen and out of the tab order) so
+  one saved entry fills them all. Set-up's two `new-password` fields carry a `passwordrules` hint
+  (at least 12 characters, any printable), so a generated passphrase fills both. Passkeys need HTTPS:
+  WebAuthn does not run on a plain-HTTP address other than `localhost`.
 - A strict CSP works: the app has no inline scripts and loads all fonts and scripts
   from its own origin. QR codes are drawn locally. If a build ever adds an inline
   script to `index.html`, the guardian allows exactly that script by its hash.

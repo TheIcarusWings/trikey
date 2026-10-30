@@ -4,12 +4,14 @@ import { Check, TriangleAlert } from 'lucide-react';
 import { api, ApiError, type SetupPreflight } from '@/api';
 import { useGuardian } from '@/components/guardian-provider';
 import { AuthCard, AuthHeader } from '@/components/layout/centered';
+import { ManagerUsername } from '@/components/manager-username';
 import { ErrorState, PageSkeleton } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useApi, usePageTitle } from '@/hooks/use-api';
+import { passwordRules } from '@/lib/password-manager';
 import { cn } from '@/lib/utils';
 
 const MIN_PASSPHRASE = 12;
@@ -94,6 +96,7 @@ export function FirstRunPage() {
     <AuthCard>
       <AuthHeader title="Set up your guardian" />
       <form onSubmit={onSubmit} noValidate className="flex flex-col gap-5">
+        <ManagerUsername />
         <p className="m-0 text-sm leading-5 text-muted-foreground">
           Choose the passphrase that unlocks the guardian after a restart. Keep it somewhere safe; there is no way to reset it. This box
           will hold key 3 of your Trikey wallet.
@@ -106,6 +109,7 @@ export function FirstRunPage() {
             name="new-passphrase"
             type="password"
             autoComplete="new-password"
+            {...{ passwordrules: passwordRules(MIN_PASSPHRASE) }}
             value={passphrase}
             onChange={(e) => setPassphrase(e.target.value)}
             aria-invalid={errors.passphrase ? true : undefined}
@@ -130,6 +134,7 @@ export function FirstRunPage() {
             name="confirm-passphrase"
             type="password"
             autoComplete="new-password"
+            {...{ passwordrules: passwordRules(MIN_PASSPHRASE) }}
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
             aria-invalid={errors.confirm ? true : undefined}
