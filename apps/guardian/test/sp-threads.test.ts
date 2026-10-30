@@ -3,7 +3,8 @@
  * exactly what it gives in one thread: the same matches, byte for byte and in the same order, with the
  * same stats, on every receiving case of BIP 352's test vectors and on synthetic blocks; and through the
  * service, the same stored state and announcements over a chain with labels and a reorg. `sp.unregister`
- * and `stop()` in the middle of a scan end the workers at once and leave no error behind. Throwaway
+ * and `stop()` in the middle of a scan end the workers at once and leave no error behind; workers that
+ * fail hand the scan back to the main thread. Throwaway
  * keys, regtest only.
  */
 import { readFileSync } from 'node:fs';
@@ -214,6 +215,38 @@ describe('silent payment scanning on worker threads', () => {
     expect(m.matches.map((x) => x.height)).toEqual([4, 6, 6, 8, 9]);
     expect(m.matches.filter((x) => x.label === 3)).toHaveLength(2);
     expect(a.alerts).toHaveLength(5);
+  });
+
+  it('falls back to one thread when the workers fail, for that block and every run after it', { timeout: 120_000 }, async () => {
+    const r = receiver();
+    const plain = receiverAddress(r, 'regtest');
+    const filler = syntheticBlock(30, { taprootShare: 0.5 }).tx.slice(1);
+    const chain = new Chain();
+    for (let h = 0; h <= 2; h++) chain.put(h, filler);
+    chain.put(3, [syntheticTx(7001, { recipients: [plain] }), ...filler]);
+    chain.put(4, filler);
+    const warnings: string[] = [];
+    const log: Logger = { debug() {}, info() {}, warn: (e) => warnings.push(e), error: (e) => warnings.push(e) };
+    const one = await service(chain, 1);
+    const many = await service(chain, 3, log);
+    // Workers that die on their first block (as they would where they cannot load their code).
+    const failing = vi.spyOn(SilentPaymentScanPool.prototype, 'scanBlock').mockRejectedValue(new Error('a silent payment scan worker stopped (exit code 1)'));
+    try {
+      for (const { sp } of [one, many]) await sp.register({ phone: PHONE, ...r, labels: [0], birthHeight: 1 });
+      for (const { sp } of [one, many]) await sp.run();
+      expect(failing).toHaveBeenCalledTimes(1);
+      expect(warnings).toEqual(['sp.scan_threads_failed']);
+      chain.put(5, [syntheticTx(7002, { recipients: [plain] }), ...filler]);
+      for (const { sp } of [one, many]) await sp.run();
+      expect(failing).toHaveBeenCalledTimes(1); // no pool again in this process
+    } finally {
+      failing.mockRestore();
+    }
+    expect(many.sp.lastError).toBeUndefined();
+    expect(many.sp.workerThreads).toBe(0);
+    expect(JSON.stringify(await many.sp.matches())).toBe(JSON.stringify(await one.sp.matches()));
+    expect((await many.sp.matches()).matches.map((x) => x.height)).toEqual([3, 5]);
+    expect(JSON.stringify(many.alerts)).toBe(JSON.stringify(one.alerts));
   });
 
   it('sp.unregister and stop() in the middle of a scan end the workers at once', { timeout: 120_000 }, async () => {

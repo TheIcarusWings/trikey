@@ -139,6 +139,8 @@ export class SilentPaymentService {
   /** The worker threads of the run in flight (with `scanThreads` above 1). */
   private pool?: SilentPaymentScanPool;
   private stopped = false;
+  /** The worker threads failed (they could not start, or one died): this process scans in its own thread from then on. */
+  private threadsFailed = false;
   private readonly mutex = new Mutex();
   private running?: Promise<void>;
   private again = false;
@@ -432,7 +434,7 @@ export class SilentPaymentService {
       return p;
     };
     let pool: SilentPaymentScanPool | undefined;
-    if ((this.opts.scanThreads ?? 1) > 1 && start <= tip && gen === this.generation) {
+    if ((this.opts.scanThreads ?? 1) > 1 && !this.threadsFailed && start <= tip && gen === this.generation) {
       const scanPrivateKey = await this.decrypt(reg);
       try {
         pool = this.pool = new SilentPaymentScanPool(this.opts.scanThreads!, { scanPrivateKey, spendPublicKey: hex.decode(reg.spendPublicKey), labels: reg.labels });
@@ -451,14 +453,24 @@ export class SilentPaymentService {
           const got = await next!;
           next = h < tip ? prefetch(h + 1) : undefined;
           hash = got.hash;
+          const counted = { ...stats };
           try {
             found = await pool.scanBlock(got.block, stats);
           } catch (e) {
             if (gen !== this.generation) return; // the pool was closed by sp.unregister, a new registration or stop()
-            throw e;
+            // The workers failed, not the block: scan it, and every block after it, in this thread.
+            this.threadsFailed = true;
+            this.log.warn('sp.scan_threads_failed', { error: errorText(e) });
+            if (this.pool === pool) this.pool = undefined;
+            await pool.close();
+            pool = undefined;
+            Object.assign(stats, counted); // the block is counted once, by the scan that finishes it
+            found = scanner.scanBlock(got.block, stats);
           }
         } else {
-          const got = await fetchBlock(h);
+          // `next` holds the block prefetched before the workers failed.
+          const got = await (next ?? fetchBlock(h));
+          next = undefined;
           hash = got.hash;
           found = scanner.scanBlock(got.block, stats);
         }
