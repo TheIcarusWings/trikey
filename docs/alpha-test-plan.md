@@ -1,11 +1,13 @@
-# Trikey alpha test plan: guardian mode on signet or testnet4
+# Trikey alpha test plan: guardian mode on mainnet or a test network
 
 A checklist for the first hands-on test, written for the owner of the Umbrel. It covers **guardian mode only**,
 with an **Android phone**, a **Ledger (Bluetooth) or Trezor (through Trezor Suite Lite)** and the **Umbrel** as the
-guardian's box. Everything uses test coins.
+guardian's box. You choose one of two paths: **mainnet** on your everyday node, with a small amount of real bitcoin, or a
+**test network** (signet or testnet4), with test coins. "Before you start" explains both.
 
 Plan on two sittings: one evening for "Before you start", then an afternoon for steps 1 to 11 and 14. Steps 12 and 13 are
-separate, and step 12 takes a week if you let it finish.
+separate, and step 12 takes a week if you let it finish. On mainnet, add the time Electrs needs to index the chain if it is
+not indexed yet, which can be a day or more on a fresh install.
 
 How to read it. Each step says what you do, **what you should see**, and **if it goes wrong, collect**: what to write down and
 send me. "Settings" means the gear on Home, or the Settings tab in older builds. "Guardian page" means the guardian's web
@@ -15,33 +17,60 @@ page, opened from the Umbrel dashboard. Keep a notes file open and paste into it
 
 ## Before you start
 
+### Pick your path: mainnet or a test network
+
+Trikey is **pre-alpha and not audited**. Both paths test the same things; they differ in what is at risk and in what you
+have to do to the Umbrel. **The phone's network must match the node's.** It is chosen once: a wallet is made on one network
+and cannot change networks later, and the guardian remembers the network of its wallet and refuses to start on another.
+
+**Path A: mainnet, on your everyday node.** You keep the node as it is. Nothing to switch.
+
+- **Real bitcoin is at risk.** Use only an amount you can afford to lose. The app makes you accept a warning to that effect
+  before it lets you go on (see the first screen under "The steps").
+- **At least one alert contact is required.** On mainnet the guardian will not pair without one, and the app does not let you
+  skip that step (step 4).
+- **Electrs must be fully indexed before chain data shows.** The guardian's **Create guardian** button stays disabled until it
+  finds the node and Electrs, and the wallet shows no chain data until Electrs has caught up. If Electrs already runs on your
+  Umbrel and says it is synced, you are fine. On a fresh install the index can take a day or more.
+- **What looks different on mainnet.** There is no coloured network strip across the top of the app, and the first screen's pill
+  says "Pre-alpha · not audited" instead of "Pre-alpha · test network". The Ledger needs the **Bitcoin** app, not "Bitcoin Test".
+  Addresses start with `bc1`.
+- You fund the wallet with a small amount sent from your own wallet (step 6), and your test payments go to your own wallet too.
+
+**Path B: a test network (signet or testnet4).** No real money, but the Umbrel's node has to run that network (see "Signet or
+testnet4 on the Umbrel").
+
+- A coloured strip across the top of every screen says "Signet · pre-alpha · coins here have no value" (or Testnet).
+- The Ledger needs the **Bitcoin Test** app. Addresses start with `tb1`.
+- An alert contact is optional on a test network (the guardian then warns that none is set), but this plan adds one in step 4 anyway.
+- You fund the wallet from a faucet (step 6).
+
+**Signet is the easier test choice.** It is small, quick to sync, and its coins are easier to get. Testnet4 works the same way in
+the app. In the app the picker says **Testnet** for testnet4; it uses the same address and key formats (`tb1...`). The guardian
+maps Umbrel's `testnet4` to the same thing, so the app cannot tell testnet4 from the old testnet3. **Be sure the node and the
+faucet are both testnet4** (or both signet, which has its own picker entry and no ambiguity).
+
 ### What you need
 
 - The Android phone (Android 7 or newer), with the camera, Bluetooth and "Nearby devices" permissions allowed when the app asks.
-- The Ledger (Nano X, Stax or Flex: the ones with Bluetooth) **with the "Bitcoin Test" app installed**, or a Trezor with Trezor Suite
-  Lite on the phone.
-  - Ledger: the test networks use a separate app, "Bitcoin Test", not "Bitcoin". Install it from Ledger Live. It may only show up
-    in the catalogue once Developer mode is switched on in Ledger Live's settings.
+- The Ledger (Nano X, Stax or Flex: the ones with Bluetooth) **with the right Bitcoin app installed**, or a Trezor with Trezor
+  Suite Lite on the phone.
+  - Ledger: mainnet uses the **"Bitcoin"** app; the test networks use a separate app, **"Bitcoin Test"**. Install the one for your
+    path from Ledger Live. "Bitcoin Test" may only show up in the catalogue once Developer mode is switched on in Ledger Live's settings.
   - Trezor: the phone talks to the Trezor through Trezor Suite Lite (Trikey hands the request over and gets the answer back). Install
-    Suite Lite first and open it once. If Suite Lite will not show test coins, stop and tell me: that is a finding.
+    Suite Lite first and open it once. On a test network, if Suite Lite will not show test coins, stop and tell me: that is a finding.
 - Updated firmware on the hardware wallet. Note the model and firmware version now; the bug reports ask for them.
 - A nostr app on your phone or computer with an account whose **npub** you know (Damus, Amethyst or Primal). You will add that npub as an
   alert contact and the guardian will send it direct messages. In that app, check that it has a DM (inbox) relay list set; the
   guardian delivers alerts to it.
 - Paper and a pen. The recovery code is shown once.
-- A second signet or testnet4 wallet to send coins to (Sparrow, Electrum or anything else with tb1 addresses). Returning coins to
-  the faucet's address also works.
+- Another wallet of yours to send coins to, on the same network as the Trikey wallet (Sparrow, Electrum or anything else). Its
+  addresses start with `bc1` on mainnet and `tb1` on a test network. On a test network, returning coins to the faucet's address also works.
+- Mainnet only: a small amount of bitcoin in that other wallet, to fund the Trikey wallet with.
 
-### Pick the network: signet or testnet4
+### Signet or testnet4 on the Umbrel (Path B only)
 
-**Signet is the easier choice.** It is small, quick to sync, and its coins are easier to get. Testnet4 works the same way in the
-app. A test wallet is made on one network and cannot change networks later.
-
-In the app the picker says **Testnet** for testnet4; it uses the same address and key formats (`tb1...`). The guardian maps
-Umbrel's `testnet4` to the same thing, so the app cannot tell testnet4 from the old testnet3. **Be sure the node and the faucet are both
-testnet4** (or both signet, which has its own picker entry and no ambiguity).
-
-### Signet or testnet4 on the Umbrel
+On Path A, skip this section and go to "Electrs and the node".
 
 What I could confirm, and what I could not.
 
@@ -55,76 +84,79 @@ What I could confirm, and what I could not.
 - **One network at a time.** The node runs one chain. While it is on signet, anything else on the box that needs the mainnet node
   (Lightning, mempool, other wallets) is down or confused, and Electrs has to build its index for the new network. Mainnet data
   is kept on disk, so switching back later resumes it. If the Umbrel is your everyday node, think about whether that is
-  acceptable, or use a spare box.
-- Whether Electrs v0.11 indexes testnet4 cleanly is something I have not seen. Signet is the safer bet. Either way, wait for
-  Electrs to finish syncing before the guardian's setup page will let you continue.
+  acceptable, or use Path A, or a spare box.
+- Whether Electrs v0.11 indexes testnet4 cleanly is something I have not seen. Signet is the safer bet.
 
 Do this:
 
 1. In the Bitcoin Node app, switch the network to **signet** (or testnet4) and restart the node. Let it sync.
 2. Install **Electrs** if it is not installed. Open it and wait until it says it is synced.
-   - **Versions:** Electrs 0.12 needs a recent Bitcoin Core (one with the `/rest/spenttxouts` REST endpoint,
-     bitcoin/bitcoin#33657) and the node's REST interface turned on. Trikey's CI tests against Bitcoin Core 32.1 with
-     Electrs 0.12.0. If Electrs keeps restarting with "failed to open index … http status: 404", the node is too old
-     or REST is off; Umbrel's own apps normally pair matching versions, so update both from the App Store first.
-3. Check the node and Electrs both say the new network. A quick check on the box:
-   `sudo docker ps` should show both running, and the guardian's first-run page (below) reports whether it found them.
+3. Check the node and Electrs both say the new network.
+
+### Electrs and the node (both paths)
+
+Wait for Electrs to finish syncing before the guardian's setup page will let you continue.
+
+- **Versions:** Electrs 0.12 needs a recent Bitcoin Core (one with the `/rest/spenttxouts` REST endpoint,
+  bitcoin/bitcoin#33657) and the node's REST interface turned on. Trikey's CI tests against Bitcoin Core 32.1 with
+  Electrs 0.12.0. If Electrs keeps restarting with "failed to open index … http status: 404", the node is too old
+  or REST is off; Umbrel's own apps normally pair matching versions, so update both from the App Store first.
+- A quick check on the box: `sudo docker ps` should show both running, and the guardian's first-run page (below) reports
+  whether it found them.
 
 ### Install the guardian on the Umbrel
 
-There is no published release yet, so the image `ghcr.io/theicaruswings/trikey-guardian:0.1.0` that the compose file names does
-not exist to pull. Two routes.
+Each release publishes a public, multi-arch image, `ghcr.io/theicaruswings/trikey-guardian:<version>`, and a community app
+store, `https://github.com/TheIcarusWings/trikey-umbrel-store`, that installs it. The store pins the image by digest. It
+currently carries version 0.1.1-alpha. Nothing to build, and no SSH needed.
 
-**Route A: the future route (a community app store, once there is a release).** On a release tag the CI builds and publishes the
-image and copies the app into a separate store repository (`packaging/README.md`). You add that repository's URL in Umbrel: App
-Store, Community App Stores. Nothing to build. Not available today.
+1. In Umbrel, open the **App Store**, then the **⋯** menu, then **Community App Stores**.
+2. Paste exactly `https://github.com/TheIcarusWings/trikey-umbrel-store` and press **Add**. Copy and paste it rather than
+   typing it: a typo shows "HTTP Error: 401 Unauthorized", because GitHub answers an unknown repository with a login request.
+3. Open the **Trikey** store that now appears, and install **Trikey Guardian**. It needs Bitcoin Node and Electrs; Umbrel installs
+   them if they are missing.
+4. Open **Trikey Guardian** from the Umbrel home screen. Do not type `umbrel.local:3010` into the browser: Umbrel's login
+   protects the app, and only the home-screen icon goes through it. The guardian has no password of its own, so never publish
+   its port on your network or the internet.
 
-**Route B: today. Build the image on the box and sideload the app.** This follows `packaging/README.md`. I have not run it on
-a real Umbrel, so treat each step as "check, then continue".
+You should see: the guardian's "Set up your guardian" page (step 1).
 
-1. SSH into the Umbrel and get the source at the same commit as the APK you will install (the APK's file name or release
-   notes say which):
-   ```sh
-   git clone https://github.com/TheIcarusWings/trikey.git
-   cd trikey
-   git checkout <the commit or tag of your APK>
-   ```
-2. Build the image on the box (so it matches the box's CPU, Intel or Raspberry Pi). It runs `npm ci` and builds the web UI, so
-   give it a few minutes, and more on a Pi:
-   ```sh
-   sudo docker build -f packaging/docker/Dockerfile -t trikey-guardian:local .
-   ```
-3. Make a copy of the Umbrel app folder that uses that image instead of the one on GHCR:
-   ```sh
-   cp -r packaging/umbrel/trikey-guardian ~/trikey-guardian-app
-   sed -i 's#image: ghcr.io/theicaruswings/trikey-guardian:0.1.0#image: trikey-guardian:local#' ~/trikey-guardian-app/docker-compose.yml
-   grep -n "image:" ~/trikey-guardian-app/docker-compose.yml     # should say trikey-guardian:local
-   ```
-   Leave the rest of the compose file alone. It already points Electrs and Bitcoin Core in and sets the network from the node.
-4. Put the folder where Umbrel looks for apps and install it. Umbrel's own app-store developer notes do it this way: copy the
-   folder into a store directory under `~/umbrel/app-stores/` and install by id. Look at what is there first
-   (`ls ~/umbrel/app-stores/`) and use the official store's folder; the exact name differs per box.
-   ```sh
-   cp -r ~/trikey-guardian-app ~/umbrel/app-stores/<the official store folder>/trikey-guardian
-   sudo umbreld client appStore.registry.query                       # should list trikey-guardian
-   sudo umbreld client apps.install.mutate --appId trikey-guardian
-   ```
-   Umbrel may refresh that store folder on its own and remove a folder it does not know. If the app disappears from the
-   dashboard after an Umbrel update, repeat this step; the guardian's data lives in the app's own data folder, not here.
-5. Open **Trikey Guardian** from the Umbrel dashboard. Umbrel's login protects it: the guardian has no password of its own, so
-   never publish its port on your network or the internet.
+**To update to a newer release:** in the App Store, refresh the Trikey store, then update the app (or reinstall it).
 
-Logs for any problem here:
+**Logs.** In Umbrel: Settings, Troubleshoot, then the app. Over SSH:
 ```sh
 sudo umbreld client apps.logs.query --appId trikey-guardian
 sudo docker logs --tail 300 trikey-guardian_server_1      # same, from Docker
 ```
 Guardian log lines have one event per line and carry no keys or request bodies, so they are fine to send.
 
+**If the install does not work:**
+
+- **"HTTP Error: 401 Unauthorized" when adding the store.** The address is not exactly the one above. Paste it again.
+- **"Refused to connect" on the app's port.** The app is not running at all: the install has not finished, or it failed. Check the
+  App Store entry and the logs. It is not a guardian problem yet.
+- **The guardian exits at once, and the log says "/data is not writable by this process (uid 1000; the folder belongs to uid 0)".**
+  Its data folder was created by Docker as root. From 0.1.1-alpha the store ships the data folder, so a new install is fine.
+  On an older install, uninstall the app and install it again. (That deletes the guardian's data, so do it before you have a wallet on it.)
+
+**From source (developers).** To test a commit that is not released, build the image on the box and install a copy of the app that
+uses it. This follows `packaging/README.md`. I have not run it on a real Umbrel, so treat each step as "check, then continue".
+
+1. SSH in and get the source at the commit you want to test: `git clone https://github.com/TheIcarusWings/trikey.git`, then
+   `git checkout <commit or tag>`.
+2. Build the image on the box, so it matches the CPU (Intel or Raspberry Pi). It takes a few minutes, and more on a Pi:
+   `sudo docker build -f packaging/docker/Dockerfile -t trikey-guardian:local .`
+3. Copy `packaging/umbrel/trikey-guardian` to `~/trikey-guardian-app`, and change `image:` in its `docker-compose.yml` to
+   `trikey-guardian:local`. Leave the rest alone.
+4. Copy that folder into the official store's folder under `~/umbrel/app-stores/` (run `ls ~/umbrel/app-stores/` first; the name
+   differs per box), check that `sudo umbreld client appStore.registry.query` lists `trikey-guardian`, then run
+   `sudo umbreld client apps.install.mutate --appId trikey-guardian`. Umbrel may remove a folder it does not know after an
+   update; repeat this step if the app disappears. The guardian's data lives in the app's own data folder.
+5. Open it from the home screen, as above. Uninstall it before you install from the store, so there is only one Trikey Guardian.
+
 **Start9 variant.** The steps in the app are the same, but the Start9 package cannot be used for this round: it is written for
 Start9's Bitcoin package, which runs mainnet only, and `packaging/start9/startos/main.ts` hard-codes `BITCOIN_NETWORK: 'bitcoin'`.
-The app offers mainnet in guardian mode, but this round tests on test networks. To test on Start9 someone would first need a
-node there on a test network and a package built for it. Out of this round.
+It has not been tried for this round, and Start9 is out of it (see "Known limits").
 
 ### The guardian needs a node and Electrs that are ready
 
@@ -132,17 +164,22 @@ The guardian's first screen ("Set up your guardian") shows whether it found the 
 stays disabled until both are found. If it will not enable, your Electrs is probably still syncing or on a different network from
 the node. Do not make a guardian on the wrong network: the guardian remembers the network of its wallet and refuses to start on another.
 
-### A faucet
+### Coins and limits
 
-Faucets change, rate-limit and run dry; check the current limits before relying on one.
+Get your first coins sent to an address from the app (step 6), not to a different wallet. Choose the daily limit to match what you have.
+
+**Path A, mainnet.** Decide the amount now, and make it small enough to lose. Network fees on mainnet are real money too, so
+count them in. For example, with 60,000 sats: set the limit to 20,000, pay 5,000 (inside the limit), pay 25,000 (over it),
+raise the limit to 50,000. No faucet is involved: you fund the wallet from your own wallet in step 6.
+
+**Path B, a test network.** Faucets change, rate-limit and run dry; check the current limits before relying on one.
 
 - Signet: signetfaucet.com is the usual one (it pays small amounts, on the order of a few thousand sats a request, once a
   day per address and per IP). Others exist; ask in a signet chat if it is empty.
 - Testnet4: mempool.space has a testnet4 faucet; testnet.help and CypherFaucet were also listed as working recently.
 
-Because faucet amounts are small, **choose the daily limit to match what you have.** For example, with 60,000 sats: set the
-limit to 20,000, pay 5,000 (inside the limit), pay 25,000 (over it), raise the limit to 50,000. Get your first coins sent to an
-address from the app (step 6), not to a different wallet.
+Because faucet amounts are small, the same example applies: with 60,000 sats, set the limit to 20,000, pay 5,000 (inside the
+limit), pay 25,000 (over it), raise the limit to 50,000.
 
 ### Install the APK
 
@@ -171,9 +208,14 @@ In the app, setting up a wallet is one flow in this order: **hardware wallet, th
 period (approved on the hardware wallet), then backup.** Steps 1 to 5 below follow that flow, with the guardian's own setup first.
 The guardian's pairing code lasts 5 minutes and works once, so only make one when the app is on the scan screen.
 
-Open Trikey. The first screen should say "Pre-alpha · test network" with a small **wallet mode** link under the buttons.
-**Network**: pick Signet (or Testnet for testnet4) here before "Create a wallet"; it cannot be changed afterwards. Mainnet is
-also offered (see "Known limits"); picking it shows a warning that has to be accepted before the buttons work.
+Open Trikey. The first screen has a **Network** picker, and a small **wallet mode** link under the buttons. Pick the network of
+your path here, before "Create a wallet"; it must match the node's, and it cannot be changed afterwards.
+
+- **Path B:** pick Signet (or Testnet for testnet4). The pill says "Pre-alpha · test network".
+- **Path A:** pick Mainnet. The pill changes to "Pre-alpha · not audited", and a warning appears, "Mainnet means real bitcoin":
+  Trikey is pre-alpha and has not been audited, a bug could lose what you put in, use only an amount you can afford to lose.
+  Switch on **I understand, and I'll use a small amount**. Until you do, "Create a wallet" and "I already have a Trikey
+  wallet" stay disabled. Mainnet is offered in guardian mode only.
 
 ### 1. Guardian setup and passphrase
 
@@ -192,7 +234,7 @@ after every start the guardian is locked until you unlock it.
 If it goes wrong, collect:
 
 - A screenshot of the setup page and of the Dashboard.
-- The guardian log (`sudo docker logs --tail 300 trikey-guardian_server_1`), and `sudo docker ps` output.
+- The guardian log (Umbrel Settings, Troubleshoot, or `sudo docker logs --tail 300 trikey-guardian_server_1`), and `sudo docker ps` output.
 - Which network the node says it is on, and the Electrs sync state.
 - Do not send the passphrase.
 
@@ -218,8 +260,9 @@ If it goes wrong, collect:
 
 Do:
 
-- In the app, "Create a wallet", **Continue**, then pick your device. Ledger: unlock it, open **Bitcoin Test**, keep Bluetooth on,
-  approve sharing the public key. Trezor: unlock it, keep it connected; Suite Lite opens and returns you to Trikey.
+- In the app, "Create a wallet", **Continue**, then pick your device. Ledger: unlock it, open **Bitcoin** (mainnet) or
+  **Bitcoin Test** (test networks), keep Bluetooth on, approve sharing the public key. Trezor: unlock it, keep it connected;
+  Suite Lite opens and returns you to Trikey.
 - During setup the device asks you to approve the new 2-of-3 wallet (the app's checklist for your device lists it; it may come
   at the connect screen or at "Approve on Ledger" once you set the limit in step 4). **Read the device's screen**: it should say
   Trikey and 2 of 3.
@@ -231,20 +274,22 @@ address on the device with the one on the phone yourself**, at least the first a
 
 If it goes wrong, collect:
 
-- Device model and firmware, Ledger "Bitcoin Test" app version (or Suite Lite version), the phone's Android version.
+- Device model and firmware, Ledger app version ("Bitcoin" or "Bitcoin Test"; or the Suite Lite version), the phone's Android version.
 - The exact message shown ("Couldn't connect", "wrong network", "address mismatch").
 - Whether the device screen showed anything at the moment of the failure, and what.
-- If the app says the Ledger returned a key for the wrong network, you probably opened "Bitcoin" instead of "Bitcoin Test".
+- If the app says the Ledger returned a key for the wrong network, you probably opened the wrong Ledger app: "Bitcoin Test" on
+  mainnet, or "Bitcoin" on a test network.
 - **If the two addresses differ, stop and report it before using the wallet.**
 
 ### 4. Rules and contacts
 
 Do:
 
-- During setup, "Set your daily limit": pick a limit that fits your faucet coins (use Custom) and the waiting period (7 days
-  is the shortest). The button "Approve on Ledger" has the device approve the rules.
+- During setup, "Set your daily limit": pick a limit that fits the coins you will fund the wallet with (use Custom) and the waiting
+  period (7 days is the shortest). The button "Approve on Ledger" has the device approve the rules.
 - Then in Settings, **Alert contacts**, **Add contact**: name it "Me", paste **your own npub** (or scan it), and approve on the
-  device. Adding a contact needs the hardware wallet; that is on purpose.
+  device. Adding a contact needs the hardware wallet; that is on purpose. **On mainnet this step cannot be skipped.** On a
+  test network the app would let you skip it, but do it anyway, because step 12 needs the contact.
 
 You should see: after approval, the Alert contacts list shows "Me" with the shortened npub, next to "This phone, always
 included". On the Guardian page, **Rules** shows the same daily limit, waiting period and the contact, and Activity lists the rule changes.
@@ -273,25 +318,26 @@ If it goes wrong, collect:
 
 - The message shown, and whether the share sheet opened.
 - Whether the backup option says the phone has nowhere to keep a backup.
-- **Never send me the recovery code, and never send the backup file and the code together.** For the test networks it would be
-  harmless, but build the habit: say "I have both" instead.
+- **Never send me the recovery code, and never send the backup file and the code together.** On a test network it would be
+  harmless, but on mainnet it is not, so build the habit on both: say "I have both" instead.
 
-### 6. Funding from a faucet
+### 6. Funding the wallet
 
 Do:
 
-- On Home, **Receive**. Copy the address (or show it as a QR code) and request coins from the faucet to it.
-- Optionally check it on the device first (step 3).
+- On Home, **Receive**. Copy the address (or show it as a QR code).
+- Path B: request coins from the faucet to it.
+- Path A: send a small amount to it from your own wallet. Check the address on the device first (step 3), and mind the network fee.
 - Pull down on Home to refresh while you wait.
 
 You should see: the balance appears as soon as the guardian's Electrs sees the transaction, and an incoming entry on the
-Activity tab (unconfirmed, then confirmed after a block, which can take a few minutes on signet or longer on testnet4). The
-guardian's Dashboard stays online.
+Activity tab (unconfirmed, then confirmed after a block: a few minutes on signet, longer on testnet4, about ten minutes on
+mainnet). The guardian's Dashboard stays online. On mainnet, if nothing shows up, Electrs may still be indexing; check its sync state.
 
 If it goes wrong, collect:
 
-- The faucet transaction id and the address, and a look at the address on a public block explorer for your network
-  (mempool.space has signet and testnet4). If the explorer shows it and the app does not, the guardian's node or Electrs is the suspect.
+- The funding transaction id and the address, and a look at the address on a public block explorer for your network
+  (mempool.space has mainnet, signet and testnet4). If the explorer shows it and the app does not, the guardian's node or Electrs is the suspect.
 - The guardian log and Electrs's own log in Umbrel.
 - The guardian's Dashboard, "Chain data" line.
 
@@ -388,7 +434,7 @@ If it goes wrong, collect:
 **The shortest delay is 7 days, and it cannot be shortened for a real test.** I checked: the guardian accepts only 7, 14 or 30
 (`RECOVERY_DELAYS` in `apps/guardian/src/policy/types.ts`; the same three values in the wire schema, and in the app's two
 pickers). The guardian also finishes a recovery only when both its own clock and the chain's median time have passed the end of the
-delay (DESIGN.md, "Threat model"), so moving the Umbrel's clock forward does nothing. On signet or testnet4 you therefore choose
+delay (DESIGN.md, "Threat model"), so moving the Umbrel's clock forward does nothing. On a real network you therefore choose
 between two things:
 
 - **12a, the part you can do in an afternoon:** start the recovery, check everything *around* the wait, and cancel it.
@@ -436,18 +482,23 @@ If it goes wrong, collect:
 
 ### 13. Replace guardian (optional)
 
-You need a second guardian to replace the first with. The simplest on one box is a second container from the same local image,
-on the Umbrel's app network with its own data folder, reached only through an SSH tunnel (never publish its port). I have not
-tested this; adapt the network and Electrs names to what `sudo docker ps` and `sudo docker network ls` show on your box.
+You need a second guardian to replace the first with. The simplest on one box is a second container from the same image
+(the published `ghcr.io/theicaruswings/trikey-guardian:<version>`, or `trikey-guardian:local` if you built from source), on the
+Umbrel's app network with its own data folder, reached only through an SSH tunnel (never publish its port). Make the data
+folder yourself first, as the user you log in as: a folder that Docker creates belongs to root, and the guardian could not
+write to it (see "If the install does not work"). I have not tested this; adapt the network and Electrs names to what
+`sudo docker ps` and `sudo docker network ls` show on your box, and set `BITCOIN_NETWORK` to the node's network (`bitcoin`
+for mainnet).
 
 ```sh
+mkdir -p "$HOME/trikey-guardian-2"
 sudo docker run -d --name trikey-guardian-2 --init --restart on-failure \
   --network umbrel_main_network \
   -v "$HOME/trikey-guardian-2:/data" -p 127.0.0.1:3011:3000 \
   -e PORT=3000 -e TRIKEY_DATA_DIR=/data \
   -e ELECTRUM_HOST=<electrs container address> -e ELECTRUM_PORT=50001 \
   -e BITCOIN_NETWORK=signet \
-  trikey-guardian:local
+  trikey-guardian:local          # or ghcr.io/theicaruswings/trikey-guardian:<version>
 ssh -L 3011:127.0.0.1:3011 umbrel@umbrel.local     # then open http://127.0.0.1:3011
 ```
 
@@ -472,18 +523,18 @@ listed under the row.
 If it goes wrong, collect: a screenshot including the failing steps, and the phone model and Android version.
 
 Also in Developer, look but do not change anything yet: the **Wallet mode** switcher (Demo, Simulator, Real) and the Network line
-(for example "Signet · chosen when the wallet was created"). Switching modes restarts the app on another wallet and deletes nothing, but
+(for example "Signet · chosen when the wallet was created", or "Mainnet" on Path A). Switching modes restarts the app on another wallet and deletes nothing, but
 Simulator is regtest only.
 
 ---
 
 ## Known limits of this round
 
-- **Pre-alpha and not audited.** This round is for test coins, on signet or testnet4, and nothing here should be taken as a
-  statement about what is safe with real money.
+- **Pre-alpha and not audited.** Nothing here should be taken as a statement about what is safe with real money. The test
+  networks (signet, testnet4) are the safe way to run this plan; mainnet is there for a tester who accepts the risk.
 - **Mainnet is allowed in guardian mode, at your own risk.** The network picker offers it, with a warning to accept first
   (pre-alpha, not audited, only an amount you can afford to lose). It is there for a tester whose node runs mainnet and stays
-  there. Use a small amount. On mainnet the guardian will not pair without at least one alert contact, so the app does not let
+  there (Path A). Use a small amount. On mainnet the guardian will not pair without at least one alert contact, so the app does not let
   you skip that step. Recovery Key mode stays on test networks only.
 - **Out of this round:** Recovery Key mode ("No home server?"), passkeys, iCloud and Google Drive backup (the backup
   is a recovery code plus a backup file), QR-based devices (Coldcard Q, Keystone, Passport, Jade, SeedSigner), BitBox02, the
@@ -496,15 +547,15 @@ Simulator is regtest only.
 - **Public relays.** The phone and the guardian talk through public nostr relays. They can drop or delay messages. A flaky
   relay shows up as a timeout, not as a wrong answer. Report which relays you used.
 - **Alerts reach you through nostr direct messages**, so they need a nostr app with working DM relays. That is part of what is being tested.
-- **One network at a time on the Umbrel.** See "Before you start".
-- **This workflow and the sideload route are untested on real hardware.** If a command here does not match what you see on your
+- **One network at a time on the Umbrel.** On Path A the node stays on mainnet; on Path B it is switched. See "Before you start".
+- **The from-source route and this workflow are untested on real hardware.** If a command here does not match what you see on your
   box, trust what you see and tell me.
 
 ---
 
 ## What to keep out of bug reports
 
-- The **recovery code**, the **backup file**, the guardian's **passphrase** and any **seed words**, even for test coins.
+- The **recovery code**, the **backup file**, the guardian's **passphrase** and any **seed words**, even on a test network.
 - Everything else is fine to send: screenshots, guardian log lines (they hold no keys or request bodies), npubs, addresses,
   transaction ids, relay URLs.
 
@@ -533,9 +584,9 @@ Setup
   App build: <APK file name / commit / draft release tag>
   Phone: <model, Android version>
   Hardware wallet: <Ledger Nano X / Stax / Flex or Trezor model>, firmware <version>,
-                   <Ledger "Bitcoin Test" app version | Trezor Suite Lite version>
-  Network: <signet | testnet4 (shown as Testnet in the app)>
-  Guardian: <Umbrel version>, Trikey image built from <commit>, Bitcoin Node app <version>, Electrs <version>
+                   <Ledger "Bitcoin" or "Bitcoin Test" app version | Trezor Suite Lite version>
+  Network: <mainnet | signet | testnet4 (shown as Testnet in the app)>
+  Guardian: <Umbrel version>, Trikey Guardian <store version, e.g. 0.1.1-alpha | image built from commit>, Bitcoin Node app <version>, Electrs <version>
   Relays in use: <the three defaults | others>
   Guardian state when it happened: <Unlocked | Locked | Offline>, recovery running: <yes | no>
   Limit and what was already spent today:
@@ -543,7 +594,7 @@ Setup
 What I collected
   [ ] Screenshots of the phone screens (including the exact message)
   [ ] Screenshot of the guardian's Dashboard and Activity page
-  [ ] Guardian log (last 300 lines around the time): sudo docker logs --tail 300 trikey-guardian_server_1
+  [ ] Guardian log (last 300 lines around the time): Umbrel Settings, Troubleshoot, or sudo docker logs --tail 300 trikey-guardian_server_1
   [ ] Transaction id(s) and address(es), if a payment was involved
   [ ] Phone log (adb logcat -d), if the app crashed
   [ ] Device screen photo, if the hardware wallet showed something unexpected
