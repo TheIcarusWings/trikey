@@ -1,5 +1,6 @@
 import type {
   BackupOptions,
+  FeeSpeed,
   Contact,
   CloudProvider,
   Guardian,
@@ -89,6 +90,15 @@ export interface WalletService {
   // -- sending and receiving -------------------------------------------
   /** From the last sync; no I/O. */
   quoteSend(request: SendRequest): QuoteOutcome;
+  /**
+   * "Send max": the most that can be sent to `address` at `speed` (the confirmed balance minus the fee), from the last
+   * sync, with no I/O. On success the quote carries the amount in `request.amountSats` and `max: true`, and goes to
+   * `sendPayment` like any quote: it spends every coin, with no change, signed by the keys its `plan` names.
+   * Fails with `amount_too_small` when the balance minus the fee is below the smallest payment, `insufficient_funds`
+   * when there is nothing to send, `needs_helper` for a silent payment address when the helper coin is missing, and
+   * `other` where it is not available yet (Recovery Key mode).
+   */
+  quoteSendMax(request: { address: string; speed: FeeSpeed }): QuoteOutcome;
   /** Signs with whichever keys the quote's plan names, then broadcasts. */
   sendPayment(quote: SendQuote): Promise<Transaction>;
   /** The next unused address. With `verifyOnDevice` the hardware wallet shows it too and it must match. */
@@ -192,6 +202,8 @@ export interface WalletService {
   dev?: {
     setGuardianStatus?(status: GuardianStatus): void;
     simulateRecoveryFromElsewhere?(): void;
+    /** The demo's recovery (started on this phone) gets a coin in the old wallet: the move grows and `recovery.sweepUpdate` says so. */
+    simulateRecoveryCoin?(): void;
     /** The demo's recovery ends now: the guardian takes the new wallet over. */
     finishRecovery?(): void;
     /** Simulator: swaps the simulated hardware wallet for a new one (to try "Lost my hardware wallet"). Returns its fingerprint. */

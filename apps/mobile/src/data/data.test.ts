@@ -11,7 +11,7 @@ import { WalletServiceError } from './errors';
 import { GuardianAddressError, parseGuardianAddress } from './guardian-address';
 import { mapError, refusalToError } from './real-errors';
 import { createMockWalletService } from './mock';
-import { looksLikeBitcoinAddress, quoteSend as mockQuote } from './rules';
+import { looksLikeBitcoinAddress, quoteSend as mockQuote, quoteSendMax as mockQuoteMax } from './rules';
 import { DEMO_SP_RECIPIENT, DEMO_TAPROOT_OUTPUT } from './sp-mock';
 import { looksLikeSilentPaymentAddress } from './sp-empty';
 
@@ -248,6 +248,54 @@ describe('activity of silent payments', () => {
     expect(pays.find((t) => t.kind === 'silent_sweep')).toMatchObject({ amountSats: 29_556, feeSats: 444, status: 'confirmed' });
     expect(pays.find((t) => t.kind === 'silent_received')).toMatchObject({ amountSats: 30_000, silentLabel: 2, status: 'confirmed' });
     expect(pays.find((t) => t.kind === 'sent')).toMatchObject({ address: DEMO_SP_RECIPIENT, silentOutputAddress: DEMO_TAPROOT_OUTPUT, signedBy: 'phone+guardian' });
+  });
+});
+
+describe('the demo wallet\'s send max', () => {
+  const fresh = () => createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0 });
+
+  it('quotes the whole balance minus the fee at each speed, and sends it', async () => {
+    const w = fresh();
+    const balance = w.getState().balanceSats;
+    const fees = { slow: 210, normal: 420, fast: 840 };
+    for (const speed of ['slow', 'normal', 'fast'] as const) {
+      const q = w.quoteSendMax({ address: 'bc1qxyz', speed });
+      expect(q).toMatchObject({ ok: true, quote: { max: true, feeSats: fees[speed], totalSats: balance, request: { address: 'bc1qxyz', speed, amountSats: balance - fees[speed] } } });
+    }
+    const q = w.quoteSendMax({ address: 'bc1qxyz', speed: 'normal' });
+    if (!q.ok) throw new Error(q.message);
+    // The demo balance is far over the daily limit: the hardware wallet signs it.
+    expect(q.quote.plan).toEqual({ signer: 'hardware', reason: 'over-limit' });
+    const tx = await w.sendPayment(q.quote);
+    expect(tx).toMatchObject({ kind: 'sent', amountSats: balance - 420, feeSats: 420, signedBy: 'phone+hardware' });
+    expect(w.getState().balanceSats).toBe(0);
+    // Nothing left: the same words as the real wallet.
+    expect(w.quoteSendMax({ address: 'bc1qxyz', speed: 'normal' })).toMatchObject({ ok: false, problem: 'insufficient_funds' });
+  });
+
+  it('refuses a balance the fee leaves below dust, a silent payment address without a helper, and Recovery Key mode', () => {
+    const w = fresh();
+    w.setMode('recoveryKey');
+    expect(w.quoteSendMax({ address: 'bc1qxyz', speed: 'normal' })).toMatchObject({ ok: false, problem: 'other', message: expect.stringContaining('Recovery Key mode') });
+    w.setMode('guardian');
+    expect(mockQuoteMax({ ...w.getState(), balanceSats: 700 }, { address: 'bc1qxyz', speed: 'normal' })).toMatchObject({ ok: false, problem: 'amount_too_small' });
+    expect(mockQuoteMax({ ...w.getState(), balanceSats: 966 }, { address: 'bc1qxyz', speed: 'normal' })).toMatchObject({ ok: true, quote: { request: { amountSats: 546 } } });
+    const sp = w.quoteSendMax({ address: DEMO_SP_RECIPIENT, speed: 'normal' });
+    expect(sp).toMatchObject({ ok: true, quote: { max: true, totalSats: w.getState().balanceSats, silentPayment: { outputAddress: DEMO_TAPROOT_OUTPUT, helperFeeSats: 396 } } });
+    if (sp.ok) expect(sp.quote.feeSats).toBe(420 + 396);
+    w.dev!.setHelperFunded!(false);
+    expect(w.quoteSendMax({ address: DEMO_SP_RECIPIENT, speed: 'normal' })).toMatchObject({ ok: false, problem: 'needs_helper' });
+  });
+
+  it('shows a coin added to the recovery, for the waiting screen', async () => {
+    const w = fresh();
+    await w.startRecovery('hardware');
+    const before = w.getState().recovery!;
+    expect(before.sweepUpdate).toBeUndefined();
+    w.dev!.simulateRecoveryCoin!();
+    expect(w.getState().recovery).toMatchObject({ movingSats: before.movingSats + 4_200, sweepUpdate: { status: 'added', coins: 1, text: '1 new coin was added to your recovery' } });
+    w.dev!.simulateRecoveryCoin!();
+    expect(w.getState().recovery!.sweepUpdate).toMatchObject({ coins: 2, text: '2 new coins were added to your recovery' });
   });
 });
 

@@ -276,6 +276,13 @@ describe('home, the scheduler and sending (RK-Home)', () => {
     expect(q(externalAddress(), 90_000_000)).toMatchObject({ ok: false, problem: 'insufficient_funds' });
   }, 60_000);
 
+  it('has no send max yet, and says so in words instead of guessing an amount', async () => {
+    const w = world();
+    const { p } = await setUp(w);
+    await p.svc.sync();
+    expect(p.svc.quoteSendMax({ address: externalAddress(), speed: 'normal' })).toEqual({ ok: false, problem: 'other', message: "Send max isn't available yet in Recovery Key mode." });
+  }, 60_000);
+
   it('pays a silent payment address from the spending balance, with the phone alone; the vault cannot, and receiving is for later', async () => {
     const w = world();
     const { p } = await setUp(w);

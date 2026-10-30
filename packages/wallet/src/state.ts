@@ -102,6 +102,21 @@ export const RecoveryRecord = z.object({
       hardware: HardwareRecord.optional(),
     })
     .optional(),
+  /** The coins of the swept wallet that the guardian's current sweep spends (`txid:vout`), when this phone built it. */
+  sweepInputs: z.array(z.string()).optional(),
+  /** The sweep fee cap (sats) the sweep was built under; the guardian keeps the smaller of it and the cap now for `recovery.update`. */
+  feeCapSats: z.number().optional(),
+  /** Coins that arrived after the start (`recovery.update`): waiting, added, or refused. */
+  sweepUpdate: z
+    .object({
+      /** Coins of the swept wallet the current sweep does not spend yet, as of the last look. */
+      pendingCoins: z.number(),
+      /** What the last accepted update added (`at` is ms, the phone's clock). */
+      lastAdded: z.object({ coins: z.number(), at: z.number() }).optional(),
+      /** The last update was refused (or could not be signed); the sweep is unchanged. `forCoins` says which coins it was for. */
+      refused: z.object({ code: z.string(), message: z.string(), reason: z.string().optional(), at: z.number(), forCoins: z.string() }).optional(),
+    })
+    .optional(),
   updatedAt: z.number(),
 });
 export type RecoveryRecord = z.infer<typeof RecoveryRecord>;

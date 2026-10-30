@@ -240,6 +240,11 @@ export interface SendQuote {
    * makes it only when it signs, so it is missing there. `helperFeeSats` is the part of the fee the helper coin pays.
    */
   silentPayment?: { outputAddress?: string; helperFeeSats?: Sats };
+  /**
+   * Made by `quoteSendMax`: `request.amountSats` is everything that can be sent to the address (the confirmed balance minus
+   * the fee), `totalSats` is that whole balance, and nothing is left in the vault. Pass the whole quote to `sendPayment`.
+   */
+  max?: true;
 }
 
 /** Why no quote could be made. The amount screen turns these into the line under the amount. */
@@ -275,6 +280,25 @@ export interface RecoveryInProgress {
   movingSats: Sats;
   /** `pending` while the wait runs, `ready` once the guardian may co-sign the move. */
   state?: 'pending' | 'ready';
+  /**
+   * Coins that arrived in the old wallet after the recovery started. The move has to include every coin, so the phone
+   * signs a new one with the same destination and the same wait (`recovery.update`). The waiting screen shows `text`
+   * under the move's amount; `movingSats` already includes what was added. Missing while no coin arrived.
+   */
+  sweepUpdate?: RecoverySweepUpdate;
+}
+
+export interface RecoverySweepUpdate {
+  /**
+   * `waiting`: new coins were seen and are being added (the phone key or the hardware wallet is asked to approve);
+   * `added`: they were ("1 new coin was added to your recovery"); `refused`: they could not be added and the move
+   * goes on without them, so the recovery cannot finish until they are (`text` says why).
+   */
+  status: 'waiting' | 'added' | 'refused';
+  /** How many coins the line is about. */
+  coins: number;
+  /** A sentence for the person. */
+  text: string;
 }
 
 /**

@@ -774,3 +774,189 @@ describe('the real wallet service: silent payments', { timeout: 120_000 }, () =>
     await R.stop();
   });
 });
+
+describe('the real wallet service: send max, and coins that arrive while a recovery waits', { timeout: 180_000 }, () => {
+  // Its own guardian and its own devices: the shared ones are paired and registered by the tests above.
+  const ownDevice = new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware, network: 'regtest', kind: 'ledger' });
+  const ownProvider = new SoftwareHardwareProvider(ownDevice);
+  const newDevice = new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware2, network: 'regtest', kind: 'trezor' });
+  let G: GuardianRig;
+  let P: Phone;
+  const fund = (index: number, sats: number) => G.fund(P.svc.wallet!.multisig().derive(0, index).script, BigInt(sats));
+  const scriptHash = (script: Uint8Array) => hex.encode(sha256(script).reverse());
+  const to = externalAddress(6);
+
+  beforeAll(async () => {
+    // The phones of the tests above are done, and some of their guardians are stopped: a phone left open would keep
+    // knocking on a relay that is gone (and nostr-tools' pool fails badly at that, long after its own test).
+    for (const s of opened) await s.close();
+    G = await GuardianRig.start();
+    P = await phone({ clock: G.clock, hardware: ownProvider });
+    await P.svc.connectHardware('simulated');
+    await P.svc.pairGuardian(G.pairingUri());
+    await P.svc.setUpRules(100_000, 7);
+  }, 60_000);
+
+  afterAll(async () => {
+    await P?.svc.close();
+    await G?.stop();
+  });
+
+  const quoted = (address: string, speed: 'slow' | 'normal' | 'fast') => {
+    const out = P.svc.quoteSendMax({ address, speed });
+    if (!out.ok) throw new Error(out.message);
+    return out.quote;
+  };
+
+  it('quotes the whole balance minus the fee at each speed, with the amount filled in, and gives the same quote for the same coins', async () => {
+    fund(0, 40_000);
+    fund(1, 15_000);
+    await P.svc.sync();
+    const fees: number[] = [];
+    for (const speed of ['slow', 'normal', 'fast'] as const) {
+      const q = quoted(to, speed);
+      expect(q).toMatchObject({ max: true, totalSats: 55_000, request: { address: to, speed, amountSats: 55_000 - q.feeSats }, plan: { signer: 'phone+guardian' }, ref: expect.any(String) });
+      expect(q.feeRateSatPerVb).toBeGreaterThan(0);
+      fees.push(q.feeSats);
+    }
+    expect(fees[0]).toBeLessThan(fees[1]!);
+    expect(fees[1]).toBeLessThan(fees[2]!);
+    const a = P.svc.quoteSendMax({ address: to, speed: 'normal' });
+    expect(P.svc.quoteSendMax({ address: to, speed: 'normal' })).toBe(a); // nothing changed: nothing is made again
+    // An ordinary quote of the same address is a different thing, and is not a send max.
+    const ordinary = P.svc.quoteSend({ address: to, amountSats: 10_000, speed: 'normal' });
+    expect(ordinary).not.toBe(a);
+    expect(ordinary.ok && ordinary.quote.max).toBeFalsy();
+  });
+
+  it('sends it with the phone and the guardian: every coin goes, the vault is empty, and the guardian counted what left', async () => {
+    const q = quoted(to, 'normal');
+    const used = G.guardian.engine.status().dailyLimit!.used;
+    const tx = await P.svc.sendPayment(q);
+    expect(tx).toMatchObject({ kind: 'sent', address: to, amountSats: q.request.amountSats, feeSats: q.feeSats, signedBy: 'phone+guardian' });
+    expect(G.guardian.engine.status().dailyLimit!.used - used).toBe(55_000n);
+    await G.mine(1);
+    await P.svc.sync();
+    expect(P.svc.getState().balanceSats).toBe(0);
+    expect(P.svc.wallet!.snapshot()!.utxos).toEqual([]);
+    expect(P.svc.getState().activity.find((i) => i.type === 'payment' && i.tx.id === tx.id)).toMatchObject({ tx: { amountSats: q.request.amountSats, signedBy: 'phone+guardian' } });
+  });
+
+  it('plans the hardware wallet over the limit, and signs it there', async () => {
+    fund(2, 120_000);
+    fund(3, 30_000);
+    await P.svc.sync();
+    const q = quoted(to, 'fast');
+    expect(q).toMatchObject({ totalSats: 150_000, plan: { signer: 'hardware', reason: 'over-limit' } });
+    const prompts = P.prompts.length;
+    const tx = await P.svc.sendPayment(q);
+    expect(tx).toMatchObject({ amountSats: 150_000 - q.feeSats, signedBy: 'phone+hardware' });
+    expect(P.prompts.length).toBeGreaterThan(prompts);
+    await G.mine(1);
+    await P.svc.sync();
+    expect(P.svc.getState().balanceSats).toBe(0);
+  });
+
+  it('is stale when the coins changed, and never sends from a quote the wallet no longer holds', async () => {
+    fund(4, 20_000);
+    await P.svc.sync();
+    const q = quoted(to, 'normal');
+    expect(await failure(P.svc.sendPayment({ ...q, ref: undefined }))).toMatchObject({ kind: 'quote_stale' });
+    fund(5, 5_000); // a coin arrives: this quote would leave it behind
+    await P.svc.sync();
+    expect(await failure(P.svc.sendPayment(q))).toMatchObject({ kind: 'quote_stale' });
+    const again = quoted(to, 'normal');
+    expect(again.totalSats).toBe(25_000);
+    await P.svc.sendPayment(again);
+    await G.mine(1);
+    await P.svc.sync();
+    expect(P.svc.getState().balanceSats).toBe(0);
+  });
+
+  it('says in words why there is no send max: nothing to send, a bad address, a silent payment address without a helper, less than dust', async () => {
+    expect(P.svc.quoteSendMax({ address: to, speed: 'normal' })).toMatchObject({ ok: false, problem: 'insufficient_funds', message: expect.stringContaining('nothing to send') });
+    const sp = receiverAddress(silentPaymentKeysFromSeed(sha256(new TextEncoder().encode('someone else')), { coinType: 1 }), 'regtest');
+    fund(6, 30_000);
+    await P.svc.sync();
+    expect(P.svc.quoteSendMax({ address: 'nonsense', speed: 'normal' })).toMatchObject({ ok: false, problem: 'invalid_address' });
+    expect(P.svc.quoteSendMax({ address: sp, speed: 'normal' })).toMatchObject({ ok: false, problem: 'needs_helper', message: expect.stringContaining('helper') });
+    await P.svc.sendPayment(quoted(to, 'normal'));
+    await G.mine(1);
+    await P.svc.sync();
+    // 700 sats: the fee of one input at the slow rate (about 735) eats it whole.
+    fund(7, 700);
+    await P.svc.sync();
+    expect(P.svc.quoteSendMax({ address: to, speed: 'slow' })).toMatchObject({ ok: false, problem: 'amount_too_small', message: expect.stringMatching(/smallest payment/) });
+  });
+
+  describe('a recovery with coins arriving', () => {
+    let oldWallet: NonNullable<RealWalletService['wallet']> extends { multisig(): infer M } ? M : never;
+    const update = () => P.svc.getState().recovery?.sweepUpdate;
+    const moving = () => {
+      const r = P.svc.wallet!.state.recovery!.recovery!;
+      return r.amountSats + r.feeSats;
+    };
+
+    it('starts it with a new hardware wallet and moves the whole vault, dust included', async () => {
+      fund(8, 200_000);
+      await P.svc.sync();
+      oldWallet = P.svc.wallet!.multisig();
+      ownProvider.device = newDevice;
+      const r = await P.svc.startRecovery('hardware', { hardwareKind: 'simulated' });
+      ownProvider.device = ownDevice;
+      expect(r).toMatchObject({ origin: 'this-phone', lostKey: 'hardware', state: 'pending' });
+      expect(moving()).toBe(200_700);
+      expect(r.sweepUpdate).toBeUndefined();
+    });
+
+    it('a coin that cannot be added shows as waiting and then as refused, in words, when the phone key is not unlocked', async () => {
+      const seen: (string | undefined)[] = [];
+      const stop = P.svc.subscribe(() => seen.push(update()?.status));
+      P.secure.cancelNextPrompt = true; // the person cancels the fingerprint prompt
+      fund(9, 900);
+      await P.svc.sync();
+      const refused = await waitFor(() => (update()?.status === 'refused' ? update() : undefined), 'the refusal in the state');
+      stop();
+      expect(seen).toContain('waiting');
+      expect(refused).toMatchObject({ coins: 1, text: expect.stringContaining('1 new coin arrived but could not be added to your recovery') });
+      expect(refused.text).toMatch(/phone key couldn't be unlocked/);
+      expect(refused.text).toMatch(/can't finish until it is added/);
+      expect(moving()).toBe(200_700); // the move is as it was
+    });
+
+    it('is tried again after a while, and then says that the coin was added', async () => {
+      await P.svc.sync();
+      expect(update()?.status).toBe('refused'); // not at once: the person just said no
+      G.clock.advance(11 * 60_000);
+      await P.svc.sync();
+      const added = await waitFor(() => (update()?.status === 'added' ? update() : undefined), 'the coin to be added');
+      expect(added).toEqual({ status: 'added', coins: 1, text: '1 new coin was added to your recovery' });
+      expect(moving()).toBe(201_600);
+    });
+
+    it('another coin adds itself on the next refresh, and the wait is the one it started with', async () => {
+      const started = P.svc.getState().recovery!;
+      fund(10, 33_000);
+      await P.svc.sync();
+      await waitFor(() => (moving() === 234_600 ? true : undefined), 'the second update');
+      const s = P.svc.getState().recovery!;
+      expect(s.sweepUpdate).toEqual({ status: 'added', coins: 1, text: '1 new coin was added to your recovery' });
+      expect(s).toMatchObject({ id: started.id, startedAt: started.startedAt, completesAt: started.completesAt });
+      expect(s.movingSats).toBeGreaterThan(started.movingSats + 30_000);
+    });
+
+    it('finishes: everything moved to the new wallet, nothing left in the old one', async () => {
+      const r = P.svc.getState().recovery!;
+      G.clock.set(new Date(r.completesAt).getTime() + 2 * HOUR);
+      await G.mine(11);
+      await G.guardian.tick();
+      await waitFor(() => (P.svc.getState().recoveryOutcome === 'finished' ? true : undefined), 'the switch to the new wallet', 20_000);
+      const left: string[] = [];
+      for (const chain of [0, 1]) for (let i = 0; i < 14; i++) for (const u of G.electrs.unspent.get(scriptHash(oldWallet.derive(chain, i).script)) ?? []) left.push(`${u.txid}:${u.vout}`);
+      expect(left).toEqual([]);
+      const moved = P.svc.getState().finishedRecovery!.movedSats;
+      await waitFor(() => (P.svc.getState().balanceSats === moved ? true : undefined), 'the new wallet to hold it');
+      expect(moved).toBeGreaterThan(234_600 - 20_000);
+    });
+  });
+});
