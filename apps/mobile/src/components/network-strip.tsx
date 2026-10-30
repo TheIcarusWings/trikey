@@ -28,7 +28,7 @@ export function NetworkStrip() {
         role="button"
         accessibilityLabel={`${text}. Tap for more.`}
         onPress={() => setOpen(true)}
-        className="bg-warn-soft min-h-8 flex-row items-center justify-center gap-1.5 px-4 py-1.5 active:opacity-80">
+        className="bg-warn-soft min-h-11 flex-row items-center justify-center gap-1.5 px-4 py-2 active:opacity-80">
         <View className="bg-warn size-1.5 rounded-full" />
         <Text className="text-foreground text-xs font-semibold leading-4">{text}</Text>
         <Icon as={Info} size={14} strokeWidth={2.2} className="text-foreground" />

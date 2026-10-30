@@ -211,7 +211,8 @@ export function Notice({
       {icon ? <Icon as={icon} size={20} className={cn('mt-px', iconClass)} strokeWidth={1.8} /> : null}
       <View className="flex-1 gap-1">
         {title ? <Text className="text-[15px] font-semibold leading-5">{title}</Text> : null}
-        <Text className={cn('text-sm leading-5', title && 'text-muted-foreground')}>{children}</Text>
+        {/* Muted body text only on the plain outline: on the tinted tones it would fall below AA contrast. */}
+        <Text className={cn('text-sm leading-5', title && tone === 'outline' && 'text-muted-foreground')}>{children}</Text>
       </View>
     </View>
   );
