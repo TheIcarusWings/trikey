@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils';
 export default function AllSet() {
   const router = useRouter();
   const wallet = useWalletService();
-  const { hardware, backup, guardian, dailyLimit, recoveryDelayDays } = useWallet();
+  const { hardware, backup, guardian, dailyLimit, recoveryDelayDays, contacts } = useWallet();
 
   const enter = (next: '/home' | '/receive') => {
     wallet.finishOnboarding();
@@ -47,8 +47,9 @@ export default function AllSet() {
         <SummaryRow label="Hardware wallet" value={hardware.model} />
         <SummaryRow label="This phone" value={backup ? `Backed up to ${cloudLabel(backup.provider)}` : 'Not backed up yet'} />
         <SummaryRow label="Guardian" value={`${guardianBox(guardian)} · ${guardian.status}`} tone={guardian.status === 'online' ? 'good' : 'warn'} />
+        <SummaryRow label="Alert contacts" value={contacts.length === 0 ? 'None yet' : String(contacts.length)} tone={contacts.length === 0 ? 'warn' : 'muted'} />
         <SummaryRow label="Daily limit" value={`${formatSats(dailyLimit.limitSats)} sats`} tabular />
-        <SummaryRow label="Recovery wait" value={`${recoveryDelayDays} days`} />
+        <SummaryRow label="Security waiting period" value={`${recoveryDelayDays} days`} />
       </ListGroup>
       {guardian.key3Note ? <Footnote className="text-center">{guardian.key3Note}</Footnote> : null}
     </Screen>

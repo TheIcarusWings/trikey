@@ -72,7 +72,7 @@ export default function ConfirmDevice() {
   return (
     <Screen
       title={`Check your ${name}`}
-      step={{ n: 1, total: 4 }}
+      step={{ n: 1, total: params.flow === 'rk' ? 4 : 5 }}
       backLabel="Back"
       footer={
         <>
@@ -86,7 +86,7 @@ export default function ConfirmDevice() {
           {problem ? (
             <AppButton title="Try again" size="hero" onPress={() => setAttempt((a) => a + 1)} />
           ) : (
-            <AppButton title="Continue" size="hero" disabled={!connected} onPress={() => router.push(params.flow === 'rk' ? '/rk/create' : '/scan-guardian')} />
+            <AppButton title="Continue" size="hero" disabled={!connected} onPress={() => router.push(params.flow === 'rk' ? '/rk/create' : '/alert-contacts')} />
           )}
         </>
       }>

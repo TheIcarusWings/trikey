@@ -5,6 +5,7 @@ import { AppButton } from '@/components/app-button';
 import { Logo } from '@/components/icons';
 import { ModeSwitcher } from '@/components/mode-switcher';
 import { NetworkPicker } from '@/components/network-picker';
+import { Pill } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import { useWallet } from '@/data';
@@ -21,6 +22,12 @@ export default function Welcome() {
       scrollable={false}
       footer={
         <>
+          {/* Honest from the first screen: what kind of build this is. */}
+          <View className="flex-row justify-center pb-1">
+            <Pill dot="warn" strong>
+              {backing === 'demo' ? 'Demo · sample data' : 'Pre-alpha · test networks only'}
+            </Pill>
+          </View>
           {backing === 'real' ? <NetworkPicker /> : null}
           <AppButton title="Create a wallet" size="hero" onPress={() => router.push('/how-it-works')} />
           <AppButton
@@ -35,7 +42,7 @@ export default function Welcome() {
               role="link"
               onPress={() => setShowMode((v) => !v)}
               className="text-muted-foreground text-center text-[13px] leading-[18px] underline underline-offset-[3px]">
-              {backing === 'simulator' ? 'Simulator mode (regtest)' : 'Pre-alpha, test networks only'} · wallet mode
+              {backing === 'simulator' ? 'Simulator mode (regtest)' : 'Real mode'} · change wallet mode
             </Text>
           )}
           {showMode ? <ModeSwitcher /> : null}

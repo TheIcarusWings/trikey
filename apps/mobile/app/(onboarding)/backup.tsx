@@ -1,10 +1,12 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
+import { View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { RadioRow } from '@/components/choice';
-import { Lock } from '@/components/icons';
-import { Body, Footnote, ListGroup, Notice } from '@/components/panels';
+import { KeyRound, LockKeyhole } from '@/components/icons';
+import { Sheet } from '@/components/sheet';
+import { Body, Footnote, Notice, PointRow, QuietLink } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { RadioGroup } from '@/components/ui/radio-group';
 import { useWallet, useWalletService, type BackupOptions, type CloudProvider } from '@/data';
@@ -17,6 +19,7 @@ export default function Backup() {
   const { again } = useLocalSearchParams<{ again?: string }>();
   const [options, setOptions] = useState<BackupOptions | null>(null);
   const [provider, setProvider] = useState<CloudProvider | null>(null);
+  const [choosing, setChoosing] = useState(false);
   const { busy, run, message, error } = useAction();
 
   useEffect(() => {
@@ -52,53 +55,58 @@ export default function Backup() {
   };
 
   const withCode = options && !options.passkey && backing !== 'demo';
+  const file = chosen?.provider === 'file';
+  const buttonTitle = busy
+    ? (progress ?? 'Creating backup…')
+    : !chosen
+      ? 'Back up'
+      : file
+        ? 'Create a backup file'
+        : `Back up to ${chosen.label}`;
 
   return (
     <Screen
       title="Back up this phone"
-      step={again === '1' ? undefined : { n: 4, total: 4 }}
+      step={again === '1' ? undefined : { n: 5, total: 5 }}
       backLabel="Back"
       footer={
         <>
           <ActionNotice message={message} error={error} />
-          <AppButton
-            title={busy ? (progress ?? 'Creating backup…') : options?.passkey === false && backing !== 'demo' ? 'Create backup with a recovery code' : 'Create backup with a passkey'}
-            size="hero"
-            busy={busy}
-            disabled={!provider}
-            onPress={create}
-          />
-          <AppButton title={again === '1' ? 'Not now' : 'Skip for now'} variant="ghost" size="hero" disabled={busy} onPress={finish} />
+          <AppButton title={buttonTitle} size="hero" busy={busy} disabled={!provider} onPress={create} />
+          <View className="flex-row justify-center gap-4">
+            {available.length > 1 ? <QuietLink title="Other ways to back up" disabled={busy} onPress={() => setChoosing(true)} /> : null}
+            <QuietLink title={again === '1' ? 'Not now' : 'Skip for now'} disabled={busy} onPress={finish} />
+          </View>
         </>
       }>
-      <Body>If you lose this phone, the backup gets you going again in minutes instead of waiting 7 days.</Body>
+      <Body>Lose this phone and the backup gets you going again in minutes, instead of waiting through the security waiting period.</Body>
       {options === null ? <Body>Looking for where this phone can keep a backup…</Body> : null}
-      {available.length > 0 ? (
-        <RadioGroup value={provider ?? ''} onValueChange={(v) => setProvider(v as CloudProvider)} aria-label="Where to keep the backup" className="gap-0">
-          <ListGroup>
-            {available.map((p) => (
-              <RadioRow key={p.provider} value={p.provider} title={p.label} description={p.detail} selected={provider === p.provider} />
-            ))}
-          </ListGroup>
-        </RadioGroup>
-      ) : null}
       {options && available.length === 0 ? <Notice tone="fill">This phone has nowhere to keep a backup right now.</Notice> : null}
-      {chosen?.provider === 'file' ? (
-        <Notice icon={Lock} iconClass="text-foreground">
-          The backup is a file, encrypted on this phone. Next you get a recovery code and can save the file to Files, AirDrop it or email it to
-          yourself. The file alone is useless without the code, and the code alone is useless without the file. Keep them apart.
-        </Notice>
-      ) : (
-        <Notice icon={Lock} iconClass="text-foreground">
-          {withCode
-            ? 'Encrypted on this phone before upload. A recovery code you write down unlocks it, so the cloud provider can\'t read it.'
-            : 'Encrypted on this phone before upload. A passkey unlocks it, so the cloud provider can\'t read it.'}
-        </Notice>
-      )}
+      {chosen ? (
+        <View className="gap-4 pt-1">
+          <PointRow icon={LockKeyhole} title="Encrypted on this phone">
+            {file ? 'You save the file wherever you like: Files, AirDrop or an email to yourself.' : `${chosen.label} only ever sees a locked file.`}
+          </PointRow>
+          <PointRow icon={KeyRound} title={withCode || file ? 'Unlocked with a recovery code' : 'Unlocked with a passkey'}>
+            {withCode || file
+              ? 'You write the code down once. The file alone is useless without it, and the code without the file. Keep them apart.'
+              : 'Your passkey opens it on a new phone. Nothing else to remember.'}
+          </PointRow>
+        </View>
+      ) : null}
       {later.length > 0 && backing !== 'demo' ? (
         <Footnote>{later.map((p) => p.label).join(' and ')}: coming later. They need accounts this build doesn't have yet.</Footnote>
       ) : null}
       {busy ? <Footnote>Encrypting takes a few seconds. Keep the app open.</Footnote> : null}
+
+      <Sheet visible={choosing} title="Where to keep the backup" onClose={() => setChoosing(false)}>
+        <RadioGroup value={provider ?? ''} onValueChange={(v) => setProvider(v as CloudProvider)} aria-label="Where to keep the backup" className="gap-2">
+          {available.map((p) => (
+            <RadioRow key={p.provider} value={p.provider} variant="card" title={p.label} description={p.detail} selected={provider === p.provider} />
+          ))}
+        </RadioGroup>
+        <AppButton title="Done" onPress={() => setChoosing(false)} />
+      </Sheet>
     </Screen>
   );
 }
