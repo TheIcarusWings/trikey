@@ -504,6 +504,14 @@ code,
   display: inline-block;
 }
 
+.hero-sub {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: clamp(1.125rem, 2.6vw, 1.5rem);
+  letter-spacing: -0.02em;
+  margin-top: -0.5rem;
+}
+
 .hero .lead {
   max-width: 38rem;
 }
