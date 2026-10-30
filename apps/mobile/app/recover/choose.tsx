@@ -3,7 +3,7 @@ import { useRouter } from 'expo-router';
 import { Pressable, View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { ChevronRight, Cloud, FileText, HardwareWallet, Smartphone } from '@/components/icons';
-import { Body } from '@/components/panels';
+import { Body, Pill } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Card } from '@/components/ui/card';
 import { Icon } from '@/components/ui/icon';
@@ -17,22 +17,30 @@ function Option({
   icon,
   title,
   description,
+  tag,
   onPress,
   disabled,
 }: {
   icon: LucideIcon;
   title: string;
   description: string;
+  /** What it costs in time: "Right away", "7-day security waiting period". */
+  tag?: string;
   onPress: () => void;
   disabled?: boolean;
 }) {
   return (
-    <Pressable role="button" accessibilityLabel={`${title}. ${description}`} disabled={disabled} onPress={onPress} className={cn('active:opacity-70', disabled && 'opacity-60')}>
+    <Pressable role="button" accessibilityLabel={`${title}. ${description}${tag ? ` ${tag}.` : ''}`} disabled={disabled} onPress={onPress} className={cn('active:opacity-70', disabled && 'opacity-60')}>
       <Card className={cn('flex-row items-start p-4', pick('gap-3.5', 'gap-4'))}>
         <Icon as={icon} size={22} className="text-foreground mt-px" strokeWidth={1.8} />
         <View className="flex-1 gap-1">
           <Text className={cn('font-semibold', pick('text-base leading-[22px]', 'text-base leading-6'))}>{title}</Text>
           <Text className="text-muted-foreground text-sm leading-5">{description}</Text>
+          {tag ? (
+            <View className="mt-1 flex-row">
+              <Pill strong>{tag}</Pill>
+            </View>
+          ) : null}
         </View>
         {IS_IOS ? <Icon as={ChevronRight} size={18} className="text-chevron mt-0.5" strokeWidth={2} /> : null}
       </Card>
@@ -53,18 +61,14 @@ export default function RecoverChoose() {
 
   // The demo starts the recovery straight away, as the designs do; the real wallet first needs the guardian's address and a device.
   const startRecovery = async (lostKey: LostKey) => {
-    if (!demo) {
-      router.push(lostKey === 'phone' ? '/recover/guardian' : '/recover/new-hardware');
-      return;
-    }
-    const r = await run(wallet.startRecovery(lostKey));
-    if (r.ok) router.push('/recover/waiting');
+    // First the three points (the wait, cancelling, the fee); that screen starts it.
+    router.push({ pathname: '/recover/explain', params: { lost: lostKey } });
   };
 
   // A Recovery Key wallet on this phone: its recoveries are the kit's (no guardian, no waiting).
   if (mode === 'recoveryKey' && onboarded) {
     return (
-      <Screen title="What happened?" androidTitleBelow backLabel="Back">
+      <Screen title="What did you lose?" androidTitleBelow backLabel="Back">
         <Body>Any two of your three keys can get your money back, right away. Pick what you lost.</Body>
         <Option icon={FileText} title="Lost my Recovery Kit" description="Or it may have been seen. This phone and your hardware wallet move everything to a new vault with a new kit." onPress={() => router.push('/rk/replace')} />
         <Option
@@ -79,7 +83,7 @@ export default function RecoverChoose() {
   }
 
   return (
-    <Screen title="What happened?" androidTitleBelow backLabel="Back">
+    <Screen title="What did you lose?" androidTitleBelow backLabel="Back">
       <Body>
         {onboarded
           ? 'Your phone is fine, but your hardware wallet is gone. This phone and the guardian can move your money to a new one.'
@@ -89,14 +93,16 @@ export default function RecoverChoose() {
         <>
           <Option
             icon={Cloud}
-            title="New phone, backup still there"
-            description="Restore from your backup. Takes a minute."
+            title="My phone, but I have its backup"
+            description="Restore it on this new phone."
+            tag="Right away"
             onPress={() => router.push('/recover/backup')}
           />
           <Option
             icon={Smartphone}
-            title="Lost my phone and the backup"
-            description={`Scan your guardian's recovery code, then use your hardware wallet. Takes ${recoveryDelayDays} days, with alerts.`}
+            title="My phone and its backup"
+            description="Your hardware wallet and your guardian move your money to a new wallet."
+            tag={`${recoveryDelayDays}-day security waiting period`}
             disabled={busy}
             onPress={() => startRecovery('phone')}
           />
@@ -105,8 +111,9 @@ export default function RecoverChoose() {
       {onboarded || demo ? (
         <Option
           icon={HardwareWallet}
-          title="Lost my hardware wallet"
-          description={`Restore its seed words on a new device right away, or use this phone and the guardian (${recoveryDelayDays} days).`}
+          title="My hardware wallet"
+          description="Restore its seed words on a new device, or let this phone and your guardian move your money."
+          tag={`Right away, or ${recoveryDelayDays} days`}
           disabled={busy}
           onPress={() => startRecovery('hardware')}
         />
@@ -115,7 +122,8 @@ export default function RecoverChoose() {
         <Option
           icon={FileText}
           title="I have a Recovery Kit"
-          description="No home server? Scan your kit and use the device you still have. No waiting."
+          description="No home server? Scan your kit and use the device you still have."
+          tag="Right away"
           onPress={() => router.push('/recover/kit')}
         />
       )}

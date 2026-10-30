@@ -33,7 +33,7 @@ export default function RecoveryKeyCreate() {
 
   return (
     <Screen
-      title="Make your Recovery Key"
+      title="Your third key"
       backLabel="Back"
       footer={kind === 'paper' ? <AppButton title="Continue" onPress={() => router.push('/rk/kit')} /> : undefined}>
       <Body>Without a home server, your third key stays offline. You'll use it only if you lose your phone or your {hardware.brand}.</Body>

@@ -1,5 +1,6 @@
 import { Redirect, useRouter } from 'expo-router';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
+import Svg, { Circle } from 'react-native-svg';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { Check, Clock } from '@/components/icons';
@@ -10,7 +11,8 @@ import { Card } from '@/components/ui/card';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { formatCountdown, formatDateTime24, useNow, useWallet, useWalletService } from '@/data';
-import { pick } from '@/lib/platform';
+import { IS_IOS, pick } from '@/lib/platform';
+import { useTheme } from '@/theme/use-theme';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
 
@@ -103,10 +105,22 @@ export default function RecoverWaiting() {
     }
   };
 
+  // Cancel stays in reach the whole time: in the header, outside the scrolling content (iOS above the title, Android in
+  // the top bar).
+  const cancelLink = (
+    <Pressable role="button" accessibilityLabel="Cancel recovery" disabled={busy} onPress={() => void cancel()} className="min-h-11 justify-center px-1 active:opacity-60">
+      <Text className="text-destructive text-base font-semibold">{busy ? 'Cancelling…' : 'Cancel recovery'}</Text>
+    </Pressable>
+  );
+  const ready = recovery.state === 'ready';
+
   return (
     <Screen
-      bare
-      bareTop={pick(10, 32)}
+      title="Recovery in progress"
+      androidTitle="Recovery"
+      noBack
+      beforeTitle={IS_IOS ? <View className="flex-row justify-end">{cancelLink}</View> : undefined}
+      titleAccessory={IS_IOS ? undefined : cancelLink}
       gap={20}
       footer={
         <>
@@ -120,40 +134,53 @@ export default function RecoverWaiting() {
               onPress={() => void renew.run(wallet.renewRecoveryAccess())}
             />
           ) : null}
-          <AppButton title="Cancel recovery" variant="outline" danger busy={busy} onPress={cancel} />
         </>
       }>
-      <Text
-        role="heading"
-        aria-level={1}
-        className={cn(pick('text-[32px] font-semibold leading-[38px] tracking-[-0.64px]', 'text-[28px] font-semibold leading-9 tracking-[-0.56px]'))}>
-        Recovery in progress
+      <CountdownRing fraction={fraction} label={ready ? 'Any moment' : formatCountdown(remaining)} sub={ready ? 'the wait is over' : 'left'} />
+      <Text className={cn('text-muted-foreground -mt-2 text-center', pick('text-[15px] leading-[21px]', 'text-sm leading-5'))}>
+        Phone-only payments are paused until then. Your {hardware.brand} can still approve payments.
       </Text>
-      <Card className="gap-3 p-4">
-        <Text className="text-4xl font-semibold leading-[44px] tracking-[-0.72px] tabular-nums">{formatCountdown(remaining)}</Text>
-        <Text className="text-muted-foreground text-sm leading-5">
-          {recovery.state === 'ready' ? 'The wait is over: the guardian co-signs the move any moment now' : 'until your money moves to the new wallet'}
-        </Text>
-        <ProgressBar
-          thick
-          fraction={Math.max(fraction, 0.02)}
-          label={`${Math.round(fraction * 100)} percent of the waiting period has passed`}
-          fillClassName="bg-foreground"
-          trackClassName="bg-secondary"
-        />
-      </Card>
+      {/* The main session adds a line here for coins that arrived after the recovery started ("N new coins were added"). */}
       <View className="gap-4">
         <Step
           done
-          title={recovery.origin === 'this-phone' ? `Started with your ${hardware.brand}` : 'Started from another device'}
+          title={recovery.origin === 'this-phone' ? `Recovery started with your ${hardware.brand}` : 'Recovery started from another device'}
           detail={formatDateTime24(recovery.startedAt)}
         />
-        <Step done title="Alerts sent" detail={`${joinNames(recovery.alertRecipients)}, daily`} />
-        <Step done={false} title="Guardian co-signs the move" detail={formatDateTime24(recovery.completesAt)} />
+        <Step done title="Alerts sent" detail={`${joinNames(recovery.alertRecipients)} · every day until it ends`} />
+        <Step done={ready} title="Your money moves to your new wallet" detail={`${formatDateTime24(recovery.completesAt)}, if nobody cancels`} />
       </View>
-      <Notice icon={Clock} tone="fill">
-        Phone-only payments are paused until this finishes. This wait protects you if someone else started it.
-      </Notice>
     </Screen>
+  );
+}
+
+/** The waiting period as a ring that fills, with the time left in the middle. */
+function CountdownRing({ fraction, label, sub }: { fraction: number; label: string; sub: string }) {
+  const { colors } = useTheme();
+  const size = 200;
+  const stroke = 10;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const done = Math.min(Math.max(fraction, 0.02), 1);
+  return (
+    <View className="items-center justify-center self-center" style={{ width: size, height: size }} accessible accessibilityLabel={`${label} ${sub}. ${Math.round(fraction * 100)} percent of the waiting period has passed`}>
+      <Svg width={size} height={size} style={{ position: 'absolute' }}>
+        <Circle cx={size / 2} cy={size / 2} r={r} stroke={colors.line} strokeWidth={stroke} fill="none" />
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          stroke={colors.warn}
+          strokeWidth={stroke}
+          fill="none"
+          strokeLinecap="round"
+          strokeDasharray={`${c} ${c}`}
+          strokeDashoffset={c * (1 - done)}
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        />
+      </Svg>
+      <Text className="px-6 text-center text-[26px] font-semibold leading-8 tabular-nums">{label}</Text>
+      <Text className="text-muted-foreground text-sm leading-5">{sub}</Text>
+    </View>
   );
 }

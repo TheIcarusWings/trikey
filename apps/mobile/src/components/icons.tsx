@@ -13,6 +13,7 @@ export {
   ClipboardPaste,
   Clock,
   Cloud,
+  Coins,
   CloudUpload,
   Copy,
   Delete,
