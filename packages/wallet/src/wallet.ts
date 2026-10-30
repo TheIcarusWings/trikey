@@ -1824,6 +1824,16 @@ export class TrikeyWallet {
     return r;
   }
 
+  /** Gives an alert contact a name on this phone only (no rules change, nothing sent to the guardian). */
+  async nameAlertContact(npubOrHex: string, name: string): Promise<void> {
+    const pubkey = nostrHex(npubOrHex);
+    const trimmed = name.trim();
+    await this.update((s) => {
+      if (trimmed) s.contactNames[pubkey] = trimmed;
+      else delete s.contactNames[pubkey];
+    });
+  }
+
   /** Removes an alert contact (hardware-approved). */
   async removeAlertContact(npubOrHex: string) {
     const pubkey = nostrHex(npubOrHex);

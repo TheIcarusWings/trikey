@@ -69,7 +69,13 @@ export interface WalletService {
   connectHardware(kind: HardwareKind): Promise<HardwareWallet>;
   /** Called with whatever the pairing QR code contained. */
   pairGuardian(pairingCode: string): Promise<Guardian>;
-  /** Registers the daily limit and recovery wait with the guardian; hardware-approved. Must follow `pairGuardian` within the code's lifetime. */
+  /**
+   * The alert contacts chosen during onboarding, before pairing. Kept on the phone until `setUpRules`, which sends
+   * them with the first rules (the guardian refuses pairing without one on mainnet). Replaces any earlier list;
+   * `[]` clears it. Throws `invalid_input` for a key that is not an npub.
+   */
+  setOnboardingContacts(contacts: { name: string; npub: string }[]): void;
+  /** Registers the daily limit, recovery wait and onboarding contacts with the guardian; hardware-approved. Must follow `pairGuardian` within the code's lifetime. */
   setUpRules(limitSats: Sats, delayDays: RecoveryDelayDays): Promise<void>;
   getBackupOptions(): Promise<BackupOptions>;
   createBackup(provider: CloudProvider): Promise<PhoneBackup>;
