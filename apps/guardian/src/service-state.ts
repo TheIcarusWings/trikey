@@ -1,6 +1,7 @@
 /**
- * What the service keeps next to the policy engine's state: the relays chosen
- * at setup, the paired phone's name, co-signed sweeps waiting to be (or that
+ * What the service keeps next to the policy engine's state: the relays (chosen
+ * at setup, changed in the web UI) and the ones still watched after a change,
+ * the paired phone's name, co-signed sweeps waiting to be (or that
  * were) broadcast, and a log of service events (unlocks, broadcasts, ...) that
  * the engine's activity log does not cover. One JSON file, written atomically.
  */
@@ -53,13 +54,34 @@ export type ServiceEvent =
   | { type: 'recovery_waiting'; recoveryId: string; reason: string; detail: string }
   | { type: 'cancel_by_dm'; recoveryId: string; contact: string; ok: boolean; detail?: string }
   | { type: 'clock_skew'; systemTime: number; chainTime: number }
-  | { type: 'recovery_access'; phone: string; until: number };
+  | { type: 'recovery_access'; phone: string; until: number }
+  /** `PUT /api/relays`: a security event (the relays decide whether the phone can reach the guardian). */
+  | { type: 'relays_changed'; from: string[]; to: string[]; retiringUntil: number }
+  /** The paired phone confirmed it uses the new relays (`relays.ack`). */
+  | { type: 'relays_confirmed'; relays: string[] }
+  /** The grace period of relays removed by a change ended: the guardian no longer watches them. */
+  | { type: 'relays_retired'; relays: string[] };
+
+/** A relay removed from `relays` that the guardian still watches (listens and publishes on) until `until` (ms). */
+export interface RetiringRelay {
+  url: string;
+  until: number;
+}
 
 export type ServiceActivity = { id: number; at: number } & ServiceEvent;
 
 export interface ServiceStateData {
   version: 1;
+  /** The relays in use: in the pairing and recovery codes, listened and published on. */
   relays: string[];
+  /**
+   * Relays a change removed, still listened and published on until each one's `until`, so a phone, a phone
+   * restored from an older backup or a recovery from an older recovery code that only knows them still gets
+   * through (DESIGN.md, "Changing relays"). Absent in files from before relay changes.
+   */
+  retiringRelays: RetiringRelay[];
+  /** The last relay change (ms), and when the paired phone confirmed it (`relays.ack`). */
+  relaysChange?: { at: number; confirmedAt?: number };
   setupAt?: number;
   phones: PairedPhoneRecord[];
   sweeps: SweepRecord[];
@@ -78,7 +100,7 @@ const MAX_ACTIVITY = 2000;
 const MAX_REQUESTS = 4096;
 
 export function emptyServiceState(): ServiceStateData {
-  return { version: 1, relays: [], phones: [], sweeps: [], activity: [], nextActivityId: 1, requests: [], recoveryPeers: [] };
+  return { version: 1, relays: [], retiringRelays: [], phones: [], sweeps: [], activity: [], nextActivityId: 1, requests: [], recoveryPeers: [] };
 }
 
 export class ServiceState {

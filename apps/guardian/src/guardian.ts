@@ -13,7 +13,8 @@
  *   keystore.json        key 3, encrypted (keystore.ts)
  *   nostr-identity.json  the guardian's nostr key, unencrypted (identity.ts)
  *   guardian-state.json  the policy engine's state
- *   service.json         relays, paired phone, co-signed sweeps, service log
+ *   service.json         relays (and those still watched after a change), paired
+ *                        phone, co-signed sweeps, service log
  *   unlock-throttle.json unlock rate limit
  *   silent-payments.json, silent-payments-key.json
  *                        the silent payment scanner (silent/service.ts): its
@@ -25,7 +26,7 @@ import type { Server } from 'node:http';
 import { hex } from '@scure/base';
 import type { SimplePool } from 'nostr-tools/pool';
 import { normalizeURL } from 'nostr-tools/utils';
-import { RpcServer, SimplePoolRelayPool, createSimplePool, normalizeRelayUrl, type Alert, type MethodName } from '@trikey/protocol';
+import { RpcServer, SimplePoolRelayPool, checkRelayList, createSimplePool, sameRelays, type Alert, type MethodName } from '@trikey/protocol';
 import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 import { ChainService } from './chain/chain.js';
 import { BitcoinRpc } from './chain/bitcoind.js';
@@ -55,8 +56,8 @@ import {
 import { errorText, silentLogger, type Logger } from './log.js';
 import { ObservedStore } from './observed-store.js';
 import { PairingSessions } from './pairing.js';
-import { JsonFileStore, PolicyEngine, systemClock, type Clock, type RecoveryRecord, type StateStore } from './policy/index.js';
-import { ServiceState, type ServiceEvent } from './service-state.js';
+import { DAY, JsonFileStore, PolicyEngine, systemClock, type Clock, type RecoveryRecord, type StateStore } from './policy/index.js';
+import { ServiceState, type RetiringRelay, type ServiceEvent } from './service-state.js';
 import { UnlockThrottle, type ThrottleOptions } from './unlock-throttle.js';
 import { DirectMessages } from './nostr/dm.js';
 import { Inbox } from './nostr/inbox.js';
@@ -115,6 +116,23 @@ export type UnlockOutcome =
   | { ok: false; code: 'setup_required' | 'invalid' | 'phone_unlock_disabled' | 'recovery_pending'; message: string };
 
 export type SetupOutcome = { ok: true } | { ok: false; code: 'invalid' | 'already_setup'; message: string };
+
+export type RelayChangeOutcome = { ok: true; changed: boolean } | { ok: false; code: 'invalid' | 'setup_required'; message: string };
+
+/**
+ * How long relays removed by a change are still listened and published on (DESIGN.md, "Changing relays"): a
+ * phone that missed the change, a phone restored from a backup made before it and a recovery started from a
+ * recovery code printed before it all still reach the guardian meanwhile.
+ */
+export const RELAY_GRACE_MS = 30 * DAY;
+/** At most this many retiring relays are kept (several changes in a row); those that would end first go first. */
+export const MAX_RETIRING_RELAYS = 16;
+
+/** The relay list of a setup or a relay change: 1 to 8 entries, normalised, duplicates dropped (protocol `checkRelayList`). */
+export function parseRelayList(input: unknown): { ok: true; relays: string[] } | { ok: false; message: string } {
+  const r = checkRelayList(input);
+  return 'error' in r ? { ok: false, message: r.error } : { ok: true, relays: r.relays };
+}
 
 export type ResetOutcome =
   | { ok: true; forgotten: string[] }
@@ -429,7 +447,7 @@ export class Guardian {
       this.log.error('nostr.identity_missing', { file: FILES.identity });
       return;
     }
-    const relays = this.service.get().relays;
+    const relays = this.watchedRelays();
     if (!relays.length) {
       this.log.error('nostr.no_relays');
       return;
@@ -542,8 +560,131 @@ export class Guardian {
 
   /** Relay URLs and whether the pool currently holds an open connection to each. */
   relayStatus(): { url: string; connected: boolean }[] {
-    const status = this.simplePool?.listConnectionStatus();
-    return this.service.get().relays.map((url) => ({ url, connected: !!status?.get(normalizeURL(url)) }));
+    return this.service.get().relays.map((url) => ({ url, connected: this.relayConnected(url) }));
+  }
+
+  /** Relays a change removed that are still watched, with whether each is connected. */
+  retiringRelayStatus(): (RetiringRelay & { connected: boolean })[] {
+    const now = this.clock.now();
+    return this.service
+      .get()
+      .retiringRelays.filter((r) => r.until > now)
+      .map((r) => ({ ...r, connected: this.relayConnected(r.url) }));
+  }
+
+  private relayConnected(url: string): boolean {
+    return !!this.simplePool?.listConnectionStatus().get(normalizeURL(url));
+  }
+
+  /**
+   * Every relay the guardian listens and publishes on: the current ones, then those a change removed whose grace
+   * period has not ended. Publishing on the old ones too is what keeps a phone that has not switched (an older
+   * app, one that was offline, one restored from an older backup, or a new phone recovering from an older
+   * recovery code) working: it listens only there, so answers sent only to the new relays would never reach it.
+   */
+  watchedRelays(): string[] {
+    const d = this.service.get();
+    const now = this.clock.now();
+    return [...new Set([...d.relays, ...d.retiringRelays.filter((r) => r.until > now).map((r) => r.url)])];
+  }
+
+  /** Points the RPC server, the DM handler and the inbox at `watchedRelays()` (after a change or an expiry). */
+  private applyRelays(): void {
+    const relays = this.watchedRelays();
+    if (!relays.length) return;
+    this.rpc?.setRelays(relays);
+    this.dm?.setRelays(relays);
+    this.inbox?.setRelays(relays);
+  }
+
+  private readonly relaysMutex = new Mutex();
+
+  /**
+   * The web UI's relay change (`PUT /api/relays`), with the setup's rules (1 to 8, `wss://` or `ws://` on a local
+   * host, normalised, duplicates dropped). The guardian listens and publishes on the new relays at once, keeps the
+   * removed ones for `RELAY_GRACE_MS` (`retiringRelays`), tells the paired phone (`relays_changed`, over old and
+   * new relays) and logs a security event. Pairing and recovery codes carry the new list from now on.
+   */
+  changeRelays(input: unknown): Promise<RelayChangeOutcome> {
+    return this.relaysMutex.run(async (): Promise<RelayChangeOutcome> => {
+      if (!this.setupComplete) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
+      const parsed = parseRelayList(input);
+      if (!parsed.ok) return { ok: false, code: 'invalid', message: parsed.message };
+      const next = parsed.relays;
+      const now = this.clock.now();
+      const before = this.service.get();
+      if (sameRelays(before.relays, next)) {
+        if (before.relays.join() !== next.join()) await this.service.update((d) => void (d.relays = next)); // only the order changed
+        return { ok: true, changed: false };
+      }
+      const until = now + RELAY_GRACE_MS;
+      await this.service.update((d) => {
+        const kept = d.retiringRelays.filter((r) => r.until > now && !next.includes(r.url));
+        const removed = d.relays.filter((url) => !next.includes(url) && !kept.some((r) => r.url === url));
+        d.retiringRelays = [...kept, ...removed.map((url) => ({ url, until }))].sort((a, b) => b.until - a.until).slice(0, MAX_RETIRING_RELAYS);
+        d.relays = next;
+        d.relaysChange = { at: now };
+      });
+      await this.logEvent({ type: 'relays_changed', from: [...before.relays], to: next, retiringUntil: until });
+      this.log.warn('relays.changed', { from: before.relays.length, to: next.length, retiring: this.service.get().retiringRelays.length });
+      this.applyRelays();
+      await this.announceRelays();
+      return { ok: true, changed: true };
+    });
+  }
+
+  /** Tells the paired phone (and phones with recovery access) the current relays, over every watched relay. */
+  private async announceRelays(): Promise<void> {
+    const reg = this.engine.registration();
+    const alert: Alert = {
+      type: 'relays_changed',
+      relays: [...this.service.get().relays],
+      ...this.stampNow(),
+      message: 'Your guardian moved to other relays. The app switches by itself; the old ones keep working for 30 days.',
+    };
+    const to = new Set([...(reg ? [reg.appNostrPubkey] : []), ...this.recoveryPeers()]);
+    for (const peer of to) await this.notifyPeer(peer, alert);
+  }
+
+  /**
+   * `relays.ack` from the paired phone: it uses `relays` now. When that is the current list, the change is recorded
+   * as confirmed (once). Nothing changes on the wire: the removed relays stay watched for the whole grace period,
+   * for backups and recovery codes made before the change.
+   */
+  confirmRelays(relays: string[]): Promise<{ current: boolean; relays: string[] }> {
+    return this.relaysMutex.run(async () => {
+      const d = this.service.get();
+      const current = sameRelays(relays, d.relays);
+      if (current && d.relaysChange && d.relaysChange.confirmedAt === undefined) {
+        const at = this.clock.now();
+        await this.service.update((x) => void (x.relaysChange = { ...x.relaysChange!, confirmedAt: at }));
+        await this.logEvent({ type: 'relays_confirmed', relays: [...d.relays] });
+        this.log.info('relays.confirmed_by_phone');
+      }
+      return { current, relays: [...this.service.get().relays] };
+    });
+  }
+
+  /** A new pairing used the current relays (from the pairing code): nothing is left for a phone to confirm. */
+  async relaysKnownByNewPhone(): Promise<void> {
+    await this.relaysMutex.run(async () => {
+      const c = this.service.get().relaysChange;
+      if (c && c.confirmedAt === undefined) await this.service.update((x) => void (x.relaysChange = { ...x.relaysChange!, confirmedAt: this.clock.now() }));
+    });
+  }
+
+  /** Drops retiring relays whose grace period is over, and stops watching them (from `tick`). */
+  async expireRetiringRelays(): Promise<void> {
+    const now = this.clock.now();
+    if (!this.service.get().retiringRelays.some((r) => r.until <= now)) return;
+    await this.relaysMutex.run(async () => {
+      const ended = this.service.get().retiringRelays.filter((r) => r.until <= now);
+      if (!ended.length) return;
+      await this.service.update((d) => void (d.retiringRelays = d.retiringRelays.filter((r) => r.until > now)));
+      await this.logEvent({ type: 'relays_retired', relays: ended.map((r) => r.url) });
+      this.log.info('relays.retired', { count: ended.length });
+      this.applyRelays();
+    });
   }
 
   /** Sends a protocol alert to the paired phone. Returns true if at least one relay took it. */
@@ -639,6 +780,7 @@ export class Guardian {
       do {
         this.tickAgain = false;
         try {
+          await this.expireRetiringRelays();
           await this.engine.tick();
           await this.recovery.run();
           await this.alerts.run();
@@ -669,14 +811,9 @@ export class Guardian {
       if (bad) return { ok: false, code: 'invalid', message: `Passphrase: ${bad}.` };
       if (!browserEntropyOk(input.entropy)) return { ok: false, code: 'invalid', message: BAD_ENTROPY };
       const passphrase = input.passphrase as string;
-      if (!Array.isArray(input.relays) || input.relays.length < 1 || input.relays.length > 8)
-        return { ok: false, code: 'invalid', message: 'Choose between 1 and 8 relays.' };
-      let relays: string[];
-      try {
-        relays = [...new Set(input.relays.map((r) => normalizeRelayUrl(String(r))))];
-      } catch (e) {
-        return { ok: false, code: 'invalid', message: errorText(e) };
-      }
+      const parsed = parseRelayList(input.relays);
+      if (!parsed.ok) return { ok: false, code: 'invalid', message: parsed.message };
+      const relays = parsed.relays;
 
       this.identity = await loadOrCreateIdentity(this.path('identity'));
       const seed = this.newSeed(input.entropy);

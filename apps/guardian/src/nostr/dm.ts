@@ -62,8 +62,17 @@ export class DirectMessages {
   private readonly relayCache = new Map<string, { at: number; relays: string[] }>();
   private readonly log: Logger;
 
+  /** The guardian's relays (`setRelays` after a change). */
+  private relays: string[];
+
   constructor(private readonly o: DirectMessagesOptions) {
     this.log = o.log ?? silentLogger;
+    this.relays = [...o.relays];
+  }
+
+  /** Sends to, and looks DM relay lists up on, `relays` from now on (a relay change). */
+  setRelays(relays: string[]): void {
+    this.relays = [...relays];
   }
 
   private now(): number {
@@ -73,7 +82,7 @@ export class DirectMessages {
   start(): void {
     if (this.sub || this.o.listen === false) return;
     this.sub = this.o.pool.subscribe(
-      this.o.relays,
+      this.relays,
       { kinds: [1059], '#p': [this.o.identity.pubkey], since: this.now() - SUBSCRIPTION_LOOKBACK_SEC },
       { onevent: (e) => this.onWrap(e) },
     );
@@ -115,7 +124,7 @@ export class DirectMessages {
   }
 
   private async relaysFor(pubkey: string): Promise<string[]> {
-    const own = [...this.o.relays];
+    const own = [...this.relays];
     if (this.o.discoverRelays === false) return own;
     const cached = this.relayCache.get(pubkey);
     let theirs: string[];
@@ -152,7 +161,7 @@ export class DirectMessages {
       };
       const timer = setTimeout(finish, timeoutMs);
       sub = this.o.pool.subscribe(
-        this.o.relays,
+        this.relays,
         { kinds: [DM_RELAY_LIST_KIND], authors: [pubkey], limit: 1 },
         {
           onevent: (e) => {

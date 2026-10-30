@@ -15,6 +15,7 @@ export type {
   RecoveryCode,
   RecoveryInProgress,
   RelayOption,
+  RelaySettings,
   RetiredWalletSummary,
   Rules,
   SetupPreflight,
