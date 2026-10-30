@@ -1,73 +1,72 @@
 import type { ReactNode } from 'react';
-import { Smartphone } from 'lucide-react';
 import { api } from '@/api';
+import { useGuardian } from '@/components/guardian-provider';
 import { PageHeader } from '@/components/page-header';
 import { ErrorState, PageSkeleton } from '@/components/states';
-import { Card } from '@/components/ui/card';
 import { useApi, usePageTitle } from '@/hooks/use-api';
 import { formatSats } from '@/lib/format';
 
-function RuleRow({ title, hint, value }: { title: string; hint: string; value: ReactNode }) {
+function RuleRow({ title, value, children }: { title: string; value: ReactNode; children: ReactNode }) {
   return (
-    <li className="flex flex-wrap justify-between gap-x-6 gap-y-2 border-b px-5 py-4 last:border-b-0">
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-sm leading-5 font-medium">{title}</span>
-        <span className="text-[13px] leading-[18px] text-muted-foreground">{hint}</span>
+    <li className="flex flex-col gap-1 border-t py-3.5 first:border-t-0 first:pt-0">
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="text-[15px] leading-5 font-semibold">{title}</span>
+        <span className="text-[15px] leading-5 tabular-nums">{value}</span>
       </div>
-      <div className="text-sm font-semibold">{value}</div>
+      <span className="text-[13px] leading-[18px] text-muted-foreground">{children}</span>
     </li>
   );
 }
 
 export function RulesPage() {
   usePageTitle('Rules');
+  const { status } = useGuardian();
   const { data: rules, error, loading, reload } = useApi(() => api.getRules());
 
+  const used = status?.dailySpend.usedSats;
+  const contacts = rules?.contacts.filter((c) => c.kind === 'contact') ?? [];
+  const phoneToo = rules?.contacts.some((c) => c.kind === 'paired-phone');
+
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader title="Rules" description={`What this guardian will and won't co-sign for the ${rules?.walletName ?? 'Main'} wallet.`} />
+    <div className="flex flex-col gap-5 md:gap-6">
+      <PageHeader title="Rules" />
       {loading ? (
         <PageSkeleton rows={2} />
       ) : !rules ? (
-        <ErrorState error={error!} onRetry={reload} title="Couldn't load the rules" />
+        error?.code === 'not_found' ? (
+          <p className="m-0 text-sm leading-5 text-muted-foreground">
+            There are no rules yet: they belong to a wallet, and no phone is paired. Pair one under Phones.
+          </p>
+        ) : (
+          <ErrorState error={error!} onRetry={reload} title="Couldn't load the rules" />
+        )
       ) : (
         <>
-          <Card className="max-w-[720px]">
-            <ul className="m-0 flex list-none flex-col p-0">
-              <RuleRow
-                title="Daily limit"
-                hint="Phone-only payments in any 24 hours, fees included"
-                value={<span className="tabular-nums">{formatSats(rules.dailyLimitSats)} sats</span>}
-              />
-              <RuleRow
-                title="Recovery waiting period"
-                hint="How long a lost-device recovery waits, with daily alerts"
-                value={`${rules.recoveryDelayDays} days`}
-              />
-              <RuleRow
-                title="Who gets alerts and can cancel"
-                hint={rules.contacts.map((c) => c.name).join(', ')}
-                value={rules.contacts.length}
-              />
-              <RuleRow
-                title="Recovery fee cap"
-                hint="A recovery can't spend more than this on fees"
-                value={<span className="tabular-nums">{formatSats(rules.sweepFeeCapSats)} sats</span>}
-              />
-              <RuleRow
-                title="Hardware wallet payments"
-                hint="Phone + hardware don't need this guardian"
-                value="Any amount"
-              />
-            </ul>
-          </Card>
-          <div className="flex max-w-[720px] items-start gap-3 rounded-xl border px-4 py-3.5">
-            <Smartphone className="mt-px size-[18px] shrink-0" aria-hidden="true" />
-            <p className="m-0 text-sm leading-5">
-              Change rules from the Trikey app. The guardian only accepts changes that loosen a rule when they're signed by your
-              hardware wallet, so nothing on this page can be edited here.
-            </p>
-          </div>
+          <ul className="m-0 list-none p-0">
+            <RuleRow title="Daily limit" value={`${formatSats(rules.dailyLimitSats)} sats`}>
+              {used !== undefined && <>{formatSats(used)} used. </>}
+              Phone-only payments above it need the hardware wallet.
+            </RuleRow>
+            <RuleRow title="Security waiting period" value={`${rules.recoveryDelayDays} days`}>
+              How long a recovery waits, sending alerts every day.
+            </RuleRow>
+            <RuleRow title="Alert contacts" value={contacts.length}>
+              Who gets the daily recovery alerts
+              {contacts.length > 0 && (
+                <>
+                  : {contacts.map((c) => c.name).join(', ')}
+                  {phoneToo ? ', and the paired phone' : ''}
+                </>
+              )}
+              .
+            </RuleRow>
+            <RuleRow title="Sweep fee cap" value={`${formatSats(rules.sweepFeeCapSats)} sats`}>
+              A recovery can't spend more than this on fees.
+            </RuleRow>
+          </ul>
+          <p className="m-0 text-sm leading-5 text-muted-foreground">
+            Change these in the Trikey app. Loosening a rule needs your hardware wallet.
+          </p>
         </>
       )}
     </div>

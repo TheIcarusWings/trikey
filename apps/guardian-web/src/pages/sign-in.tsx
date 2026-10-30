@@ -1,10 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { KeyRound } from 'lucide-react';
 import { api, ApiError } from '@/api';
 import { useGuardian } from '@/components/guardian-provider';
+import { AuthCard, AuthHeader } from '@/components/layout/centered';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { usePageTitle } from '@/hooks/use-api';
@@ -53,48 +52,41 @@ export function SignInPage() {
   };
 
   return (
-    <>
-      <Card className="gap-5 p-6">
-        <span className="flex size-11 items-center justify-center rounded-[10px] bg-muted">
-          <KeyRound className="size-[22px] text-muted-foreground" aria-hidden="true" />
-        </span>
+    <AuthCard>
+      <AuthHeader title="Trikey Guardian" />
+      {locked && (
+        <p className="m-0 text-center text-sm leading-5 text-muted-foreground">
+          The guardian is locked. Your unlock passphrase signs you in and unlocks it.
+        </p>
+      )}
+
+      <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-2xl leading-8 font-semibold tracking-[-0.01em]">Sign in</h1>
-          <p className="m-0 text-sm leading-5 text-muted-foreground">
-            {locked
-              ? 'The guardian is locked. Your unlock passphrase signs you in and unlocks it.'
-              : 'Enter the unlock passphrase to open this guardian’s web UI.'}
+          <Label htmlFor="signin-pass">Unlock passphrase</Label>
+          <Input
+            id="signin-pass"
+            name="passphrase"
+            type="password"
+            autoComplete="current-password"
+            autoFocus
+            value={passphrase}
+            onChange={(e) => setPassphrase(e.target.value)}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? 'signin-error' : undefined}
+            disabled={busy}
+            className="h-11"
+          />
+          <p id="signin-error" role="alert" className="m-0 text-[13px] leading-[18px] text-bad">
+            {error}
           </p>
         </div>
-
-        <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="signin-pass">Unlock passphrase</Label>
-            <Input
-              id="signin-pass"
-              name="passphrase"
-              type="password"
-              placeholder="Passphrase"
-              autoComplete="current-password"
-              autoFocus
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? 'signin-error' : undefined}
-              disabled={busy}
-            />
-            <p id="signin-error" role="alert" className="m-0 text-[13px] leading-[18px] text-bad">
-              {error}
-            </p>
-          </div>
-          <Button type="submit" disabled={busy} className="w-full">
-            {busy ? 'Signing in…' : locked ? 'Sign in and unlock' : 'Sign in'}
-          </Button>
-        </form>
-      </Card>
+        <Button type="submit" size="lg" disabled={busy} className="h-12 w-full">
+          {busy ? 'Signing in…' : locked ? 'Sign in and unlock' : 'Sign in'}
+        </Button>
+      </form>
       <p className="m-0 text-center text-[13px] leading-[18px] text-muted-foreground">
-        You stay signed in on this browser until you are idle for 30 minutes or the box restarts.
+        You stay signed in on this browser until it has been idle for 30 minutes. Signing out doesn't lock the guardian.
       </p>
-    </>
+    </AuthCard>
   );
 }

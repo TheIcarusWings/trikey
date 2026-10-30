@@ -16,11 +16,13 @@ function dayDiff(a: Date, now: Date): number {
   return Math.round((startOfDay(now) - startOfDay(a)) / 86_400_000);
 }
 
-/** "Today 14:20", "Oct 28 18:30". */
+/** "Today 14:20", "Yesterday 18:30", "Oct 27 08:11". */
 export function formatWhen(iso: string, now = new Date()): string {
   const d = new Date(iso);
   const hhmm = time.format(d);
-  return dayDiff(d, now) === 0 ? `Today ${hhmm}` : `${monthDay.format(d)} ${hhmm}`;
+  const diff = dayDiff(d, now);
+  if (diff === 0) return `Today ${hhmm}`;
+  return diff === 1 ? `Yesterday ${hhmm}` : `${monthDay.format(d)} ${hhmm}`;
 }
 
 /** Dashboard style: "14:20" today, "Yesterday", else "Oct 21". */
@@ -93,6 +95,24 @@ export function formatCountdown(ms: number): string {
 export function formatShortRemaining(ms: number): string {
   const minutes = Math.max(0, Math.ceil(ms / 60_000));
   if (minutes >= 60) return `${Math.floor(minutes / 60)} h`;
+  return `${minutes} min`;
+}
+
+const dateWithYear = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+/** "Oct 30, 2026". */
+export function formatDateYear(date: Date | string): string {
+  return dateWithYear.format(typeof date === 'string' ? new Date(date) : date);
+}
+
+/** "5 days 13 h", "3 h 20 min", "12 min": the big countdown on the recovery page. */
+export function formatCountdownLong(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 60_000));
+  const days = Math.floor(total / 1440);
+  const hours = Math.floor((total % 1440) / 60);
+  const minutes = total % 60;
+  if (days > 0) return `${plural(days, 'day')} ${hours} h`;
+  if (hours > 0) return `${hours} h ${minutes} min`;
   return `${minutes} min`;
 }
 

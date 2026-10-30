@@ -20,6 +20,7 @@ import type {
  *   firstrun   brand-new box: setup wizard first
  *   locked     the box just restarted
  *   recovery   a Delay & Notify recovery is running
+ *   recoveryready  the recovery's waiting period is over and the guardian has not completed it yet
  *   unpaired   set up, but no phone paired yet
  *   syncing    unlocked while the node is still catching up, one relay down
  *   signedout  set up and locked, this browser not signed in yet (the sign-in screen)
@@ -28,7 +29,15 @@ import type {
  * mock, any unlock passphrase works except the literal `wrong`, which is
  * rejected so the error state can be tried. Passphrases are never kept.
  */
-export type MockScenario = 'default' | 'firstrun' | 'locked' | 'recovery' | 'unpaired' | 'syncing' | 'signedout';
+export type MockScenario =
+  | 'default'
+  | 'firstrun'
+  | 'locked'
+  | 'recovery'
+  | 'recoveryready'
+  | 'unpaired'
+  | 'syncing'
+  | 'signedout';
 
 const LATENCY_MS = 120;
 const HOUR = 3_600_000;
@@ -92,13 +101,13 @@ function demoActivity(): ActivityEntry[] {
   ];
 }
 
-function demoRecovery(): RecoveryInProgress {
-  const endsAt = Date.now() + 5 * DAY + 14 * HOUR;
+function demoRecovery(ready = false): RecoveryInProgress {
+  const endsAt = ready ? Date.now() - 2 * HOUR : Date.now() + 5 * DAY + 14 * HOUR;
   const startedAt = endsAt - 7 * DAY;
   const sent = [startedAt, startedAt + DAY].filter((t) => t <= Date.now()).map((t) => new Date(t).toISOString());
   return {
     id: '1-3f2a9c41d07e',
-    state: 'pending',
+    state: ready ? 'ready' : 'pending',
     startedAt: new Date(startedAt).toISOString(),
     endsAt: new Date(endsAt).toISOString(),
     lostKey: 'phone',
@@ -109,12 +118,13 @@ function demoRecovery(): RecoveryInProgress {
     feeSats: 1_200,
     feeCapSats: 42_088,
     alertsSent: ['Paired phone', 'Maria', 'Tom'].map((recipient) => ({ recipient, sentAt: sent })),
+    ...(ready ? { waitingFor: 'The Bitcoin Node is still catching up: the guardian completes the move once the chain is past the end of the waiting period.' } : {}),
   };
 }
 
 export function readScenario(search: string): MockScenario {
   const value = new URLSearchParams(search).get('mock');
-  const known: MockScenario[] = ['firstrun', 'locked', 'recovery', 'unpaired', 'syncing', 'signedout'];
+  const known: MockScenario[] = ['firstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout'];
   return known.find((s) => s === value) ?? 'default';
 }
 
@@ -128,7 +138,8 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       ? []
       : [{ id: 'ph_1', name: 'Pixel 8', pairedAt: localAt(9, '16:44') }];
   let activity: ActivityEntry[] = setupDone ? demoActivity() : [];
-  let recovery: RecoveryInProgress | null = scenario === 'recovery' ? demoRecovery() : null;
+  let recovery: RecoveryInProgress | null =
+    scenario === 'recovery' ? demoRecovery() : scenario === 'recoveryready' ? demoRecovery(true) : null;
   let walletIds = scenario === 'unpaired' || scenario === 'firstrun' ? [] : ['3a7f09c2d41e8b65'];
   let pairing: PairingSession | null = null;
   let relayUrls = RELAYS.map((r) => r.url);
@@ -146,7 +157,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       { id: 'c_maria', name: 'Maria', kind: 'contact' },
       { id: 'c_tom', name: 'Tom', kind: 'contact' },
     ],
-    sweepFeeCapSats: 20_000,
+    sweepFeeCapSats: 50_000,
     hardwarePayments: 'any-amount',
   };
 
@@ -188,13 +199,16 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       wallets: setupDone || setupFinished ? walletIds.map((id) => ({ id, name: 'Main', phonesPaired: phones.length })) : [],
       dailySpend: { usedSats: 70_420, limitSats: rules.dailyLimitSats },
       recoveryInProgress: recovery !== null,
+      network: 'signet',
+      npub: DEMO_NPUB,
+      version: '0.1.0',
     };
   };
 
   const api: GuardianApi = {
     async getStatus() {
       await wait();
-      if (!signedIn && (setupDone || setupFinished)) return { authenticated: false, setupComplete: true, state: locked ? 'locked' : 'unlocked', network: 'bitcoin' };
+      if (!signedIn && (setupDone || setupFinished)) return { authenticated: false, setupComplete: true, state: locked ? 'locked' : 'unlocked', network: 'signet', version: '0.1.0' };
       return status();
     },
 
@@ -213,7 +227,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
     async signOut() {
       await wait();
       signedIn = false;
-      return { authenticated: false, setupComplete: setupDone || setupFinished, state: locked ? 'locked' : 'unlocked', network: 'bitcoin' };
+      return { authenticated: false, setupComplete: setupDone || setupFinished, state: locked ? 'locked' : 'unlocked', network: 'signet', version: '0.1.0' };
     },
 
     async getSetupPreflight() {
@@ -278,8 +292,8 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       params.set('v', '1');
       params.set('npub', DEMO_NPUB);
       for (const url of relayUrls) params.append('relay', url);
-      params.set('net', 'bitcoin');
-      return { uri: `trikey://recover?${params.toString()}`, npub: DEMO_NPUB, relays: [...relayUrls], network: 'bitcoin', walletId };
+      params.set('net', 'signet');
+      return { uri: `trikey://recover?${params.toString()}`, npub: DEMO_NPUB, relays: [...relayUrls], network: 'signet', walletId };
     },
 
     async resetGuardian(input) {

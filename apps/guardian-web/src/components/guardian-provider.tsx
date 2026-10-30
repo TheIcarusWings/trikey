@@ -62,6 +62,12 @@ export function GuardianProvider({ children }: { children: ReactNode }) {
   return <GuardianContext.Provider value={value}>{children}</GuardianContext.Provider>;
 }
 
+/** The bitcoin network from `/api/status`, signed in or not. */
+export function useNetwork(): string | undefined {
+  const { status, signedOut } = useGuardian();
+  return status?.network ?? signedOut?.network;
+}
+
 export function useGuardian(): GuardianContextValue {
   const ctx = useContext(GuardianContext);
   if (!ctx) throw new Error('useGuardian must be used inside GuardianProvider');

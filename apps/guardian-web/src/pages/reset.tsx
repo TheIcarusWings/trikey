@@ -1,12 +1,10 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { AlertTriangle } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { TriangleAlert } from 'lucide-react';
 import { api, ApiError, RESET_CONFIRMATION } from '@/api';
 import { useGuardian } from '@/components/guardian-provider';
 import { PageHeader } from '@/components/page-header';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { usePageTitle } from '@/hooks/use-api';
@@ -27,7 +25,8 @@ function messageFor(err: unknown): string {
 /**
  * Reset the guardian: forget the wallet and create a new key 3. The old key 3 is destroyed, so
  * the old wallet can never be co-signed here again (its phone and hardware wallet still move its
- * funds together). The guardian refuses while a recovery runs.
+ * funds together). The guardian refuses while a recovery runs. The reset needs the passphrase and
+ * the words `RESET GUARDIAN` typed out.
  */
 export function ResetPage() {
   usePageTitle('Reset guardian');
@@ -38,7 +37,6 @@ export function ResetPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const ready = confirm === RESET_CONFIRMATION && passphrase.length > 0;
-  const paired = (status?.wallets.length ?? 0) > 0;
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -48,8 +46,8 @@ export function ResetPage() {
     try {
       // The passphrase lives only in this component's state and is cleared as soon as the request settles.
       const next = await api.resetGuardian({ passphrase, confirm });
-      setStatus(next, '/pair');
-      navigate('/pair');
+      setStatus(next, '/phones');
+      navigate('/phones');
     } catch (err) {
       setError(messageFor(err));
     } finally {
@@ -59,77 +57,76 @@ export function ResetPage() {
   };
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="Reset guardian"
-        description="Start over on this box: forget the wallet, its rules and history, and create a new key 3. The guardian keeps its nostr address, relays and unlock passphrase."
-      />
+    <div className="flex max-w-[560px] flex-col gap-5 md:gap-6">
+      <PageHeader title="Reset guardian" />
 
       {status?.recoveryInProgress && (
-        <Alert variant="warning" className="max-w-[720px]">
-          <AlertTriangle aria-hidden="true" />
-          <div className="flex flex-col gap-1">
-            <AlertTitle>A recovery is in progress</AlertTitle>
-            <AlertDescription>The guardian can't be reset until it is cancelled or completed.</AlertDescription>
-          </div>
-        </Alert>
+        <div role="status" className="flex items-start gap-3 rounded-xl border border-warn/40 bg-warn-soft px-4 py-3.5 text-sm leading-5">
+          <TriangleAlert className="mt-0.5 size-5 shrink-0 text-warn" aria-hidden="true" />
+          <p className="m-0">
+            <span className="font-semibold">A recovery is in progress.</span> The guardian can't be reset until it is cancelled or
+            completed.
+          </p>
+        </div>
       )}
 
-      <Alert variant="destructive" className="max-w-[720px]">
-        <AlertTriangle aria-hidden="true" />
-        <div className="flex flex-col gap-1">
-          <AlertTitle>This destroys key 3</AlertTitle>
-          <AlertDescription>
-            {paired
-              ? 'Move your funds first. After a reset this guardian can never co-sign for the current wallet again: only your phone and hardware wallet together can move its coins. There is no backup of key 3.'
-              : 'There is no backup of key 3. A wallet that still uses it could then only be spent with its phone and hardware wallet together.'}
-          </AlertDescription>
-        </div>
-      </Alert>
+      <dl className="m-0 flex flex-col gap-2 rounded-xl bg-warn-soft px-4 py-3.5 text-sm leading-5">
+        <dt className="font-semibold">Forgotten</dt>
+        <dd className="m-0">
+          Every wallet it guards, its rules and history. Key 3 is replaced, so it can never co-sign those wallets again.
+        </dd>
+        <dt className="mt-1 font-semibold">Kept</dt>
+        <dd className="m-0">Its identity, relays and passphrase.</dd>
+      </dl>
 
-      <Card className="max-w-[720px] p-6">
-        <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="reset-pass">Unlock passphrase</Label>
-            <Input
-              id="reset-pass"
-              name="passphrase"
-              type="password"
-              autoComplete="current-password"
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
-              disabled={busy}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="reset-confirm">
-              Type <span className="font-mono">{RESET_CONFIRMATION}</span> to confirm
-            </Label>
-            <Input
-              id="reset-confirm"
-              name="confirm"
-              autoComplete="off"
-              spellCheck={false}
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? 'reset-error' : undefined}
-              disabled={busy}
-            />
-            <p id="reset-error" role="alert" className="m-0 text-[13px] leading-[18px] text-bad">
-              {error}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="submit" variant="destructive" disabled={busy || !ready}>
-              {busy ? 'Resetting…' : 'Reset guardian'}
-            </Button>
-            <Button type="button" variant="link" onClick={() => navigate('/')}>
-              Cancel
-            </Button>
-          </div>
-        </form>
-      </Card>
+      <p className="m-0 text-sm leading-5 text-muted-foreground">
+        Your money stays safe: your phone and hardware wallet can still move it. There is no backup of key 3.
+      </p>
+
+      <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="reset-pass">Passphrase</Label>
+          <Input
+            id="reset-pass"
+            name="passphrase"
+            type="password"
+            autoComplete="current-password"
+            value={passphrase}
+            onChange={(e) => setPassphrase(e.target.value)}
+            disabled={busy}
+            className="h-11"
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="reset-confirm">
+            Type <span className="font-mono">{RESET_CONFIRMATION}</span> to confirm
+          </Label>
+          <Input
+            id="reset-confirm"
+            name="confirm"
+            placeholder={RESET_CONFIRMATION}
+            autoComplete="off"
+            spellCheck={false}
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? 'reset-error' : undefined}
+            disabled={busy}
+            className="h-11"
+          />
+          <p id="reset-error" role="alert" className="m-0 text-[13px] leading-[18px] text-bad">
+            {error}
+          </p>
+        </div>
+        <div className="flex flex-col gap-2 pt-2">
+          <Button type="submit" variant="destructive" size="lg" disabled={busy || !ready} className="h-12 w-full disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100">
+            {busy ? 'Resetting…' : 'Reset guardian'}
+          </Button>
+          <Button asChild variant="link" className="self-center">
+            <Link to="/settings">Cancel</Link>
+          </Button>
+        </div>
+      </form>
     </div>
   );
 }

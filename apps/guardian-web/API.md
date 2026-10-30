@@ -48,8 +48,9 @@ when the guardian restarts. Without one, everything else answers `401 unauthenti
   send; anything else is `415`), and must be same-origin: the guardian checks
   `Sec-Fetch-Site: same-origin` when the browser sends it, else `Origin` against
   `Host` / `X-Forwarded-Host` (`403 forbidden`). Bodies are limited to 16 KiB.
-- The UI is a single-page app with client-side routes (`/`, `/setup`, `/sign-in`, `/locked`,
-  `/activity`, `/rules`, `/recovery`, `/pair`, `/recover-phone`, `/reset`, `/host`). The guardian serves
+- The UI is a single-page app with client-side routes (`/` Home, `/setup`, `/sign-in`, `/locked`,
+  `/activity`, `/rules`, `/recovery`, `/phones`, `/settings`, `/reset`; `/pair` and `/recover-phone`
+  redirect to `/phones`; `/host` exists only in a build with `VITE_FEATURE_HOST_FOR_SOMEONE=true`). The guardian serves
   `index.html` for every non-`/api` path that is not a file in `dist/` (a missing
   file under `/assets/` is a `404`).
 - A strict CSP works: the app has no inline scripts and loads all fonts and scripts
@@ -147,6 +148,9 @@ payments", which the engine cannot do safely.)
 
 ### Hosting for family (later feature)
 
+The UI hides "Host for someone" (no navigation entry, no route) until this works: build with
+`VITE_FEATURE_HOST_FOR_SOMEONE=true` to see it.
+
 The engine holds a single wallet, so hosting is not available yet.
 
 | Method and path | Request | Response | Notes |
@@ -176,6 +180,7 @@ The mock keeps state in memory (a reload starts over). Pick the starting state w
 | `/?mock=firstrun` | Brand-new box, setup wizard first |
 | `/?mock=locked` | The box just restarted |
 | `/?mock=recovery` | A Delay & Notify recovery is running |
+| `/?mock=recoveryready` | The recovery's waiting period is over, but the guardian cannot complete it yet (`waitingFor`) |
 | `/?mock=unpaired` | Set up, no phone paired yet |
 | `/?mock=syncing` | Unlocked, node still syncing, one relay down |
 | `/?mock=signedout` | Set up and locked, this browser not signed in: the sign-in screen |

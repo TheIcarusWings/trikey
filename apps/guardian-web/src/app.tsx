@@ -7,17 +7,18 @@ import { ThemeProvider } from '@/components/theme-provider';
 import { ErrorState } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { usePageTitle } from '@/hooks/use-api';
+import { features } from '@/lib/features';
 import { ActivityPage } from '@/pages/activity';
-import { DashboardPage } from '@/pages/dashboard';
 import { FirstRunPage } from '@/pages/first-run';
+import { HomePage } from '@/pages/home';
 import { HostPage } from '@/pages/host';
 import { LockedPage } from '@/pages/locked';
-import { SignInPage } from '@/pages/sign-in';
-import { PairPage } from '@/pages/pair';
+import { PhonesPage } from '@/pages/phones';
 import { RecoveryPage } from '@/pages/recovery';
-import { RecoverPhonePage } from '@/pages/recover-phone';
 import { ResetPage } from '@/pages/reset';
 import { RulesPage } from '@/pages/rules';
+import { SettingsPage } from '@/pages/settings';
+import { SignInPage } from '@/pages/sign-in';
 
 type Phase = 'setup' | 'signin' | 'locked' | 'ready';
 
@@ -69,7 +70,7 @@ function NotFound() {
       <h1 className="text-2xl leading-8 font-semibold tracking-[-0.01em]">Page not found</h1>
       <p className="m-0 text-sm text-muted-foreground">There is nothing at this address.</p>
       <Button asChild variant="outline">
-        <Link to="/">Back to the dashboard</Link>
+        <Link to="/">Back to Home</Link>
       </Button>
     </div>
   );
@@ -98,14 +99,17 @@ export function App() {
             </Route>
             <Route element={<GatedOutlet phase="ready" />}>
               <Route element={<Shell />}>
-                <Route index element={<DashboardPage />} />
+                <Route index element={<HomePage />} />
                 <Route path="/activity" element={<ActivityPage />} />
                 <Route path="/rules" element={<RulesPage />} />
                 <Route path="/recovery" element={<RecoveryPage />} />
-                <Route path="/pair" element={<PairPage />} />
-                <Route path="/recover-phone" element={<RecoverPhonePage />} />
+                <Route path="/phones" element={<PhonesPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/reset" element={<ResetPage />} />
-                <Route path="/host" element={<HostPage />} />
+                {features.hostForSomeone && <Route path="/host" element={<HostPage />} />}
+                {/* Earlier addresses of the pages that became Phones, Home and Settings. */}
+                <Route path="/pair" element={<Navigate to="/phones" replace />} />
+                <Route path="/recover-phone" element={<Navigate to="/phones" replace />} />
                 <Route path="*" element={<NotFound />} />
               </Route>
             </Route>

@@ -10,7 +10,7 @@ export function LogoMark({ className, size = 24 }: { className?: string; size?: 
       aria-hidden="true"
       className={cn('shrink-0', className)}
     >
-      <path d="M44 14 L16 62 L72 62 Z" fill="none" stroke="var(--foreground)" strokeWidth="6" strokeLinejoin="round" />
+      <path d="M44 14 L16 62 L72 62 Z" fill="none" stroke="var(--foreground)" strokeWidth="5" strokeLinejoin="round" />
       <circle cx="44" cy="14" r="12" fill="var(--brand)" />
       <circle cx="16" cy="62" r="12" fill="var(--foreground)" />
       <circle cx="72" cy="62" r="12" fill="var(--foreground)" />
