@@ -15,6 +15,9 @@ services:
     init: true
     restart: on-failure
     volumes:
+      # data/ ships in the app folder (data/.gitkeep), so Umbrel creates it owned by its user (1000), the
+      # user the image runs as. A folder Docker made on its own would be root's, and the guardian could not
+      # write its state.
       - ${APP_DATA_DIR}/data:/data
     environment:
       PORT: 3000
