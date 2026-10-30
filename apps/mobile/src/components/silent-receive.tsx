@@ -112,19 +112,3 @@ export function SilentReceiveScreen({ kindControl }: { kindControl: ReactNode })
     </Screen>
   );
 }
-
-/** The "Address | Silent payment" choice at the top of Receive. */
-export function ReceiveKind({ value, onChange }: { value: 'address' | 'silent'; onChange: (v: 'address' | 'silent') => void }) {
-  return (
-    <Segmented<'address' | 'silent'>
-      accessibilityLabel="What to receive with"
-      options={[
-        { value: 'address', label: 'Address' },
-        { value: 'silent', label: 'Silent payment' },
-      ]}
-      value={value}
-      onChange={onChange}
-      mutedUnselected
-    />
-  );
-}
