@@ -10,7 +10,7 @@ import { Screen } from '@/components/screen';
 import { Card } from '@/components/ui/card';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
-import { formatCountdown, formatDateTime24, useNow, useWallet, useWalletService } from '@/data';
+import { formatCountdown, formatDateTime24, formatTime, useNow, useWallet, useWalletService } from '@/data';
 import { IS_IOS, pick } from '@/lib/platform';
 import { useTheme } from '@/theme/use-theme';
 import { useAction } from '@/lib/use-action';
@@ -115,6 +115,16 @@ export default function RecoverWaiting() {
     </Pressable>
   );
   const ready = recovery.state === 'ready';
+  // The new phone's access to the guardian lasts 12 hours at a time; once it has run out the guardian ignores this phone
+  // (the recovery goes on there), so the button that asks the hardware wallet again becomes the main action.
+  const accessEnds = recovering && recovery.accessExpiresAt ? new Date(recovery.accessExpiresAt) : undefined;
+  const accessLapsed = recovering && (!!recovery.accessExpired || (!!accessEnds && now.getTime() >= accessEnds.getTime()));
+  const followingUntil =
+    accessEnds && !accessLapsed
+      ? accessEnds.toDateString() === now.toDateString()
+        ? formatTime(recovery.accessExpiresAt!, '24h')
+        : formatDateTime24(recovery.accessExpiresAt!)
+      : undefined;
   // Opened from Home (this phone is set up): back goes Home, never to the screen that started the recovery. A new phone
   // recovering has nowhere to go back to, so it stays here.
   const goHome = () => router.dismissTo('/home');
@@ -146,10 +156,11 @@ export default function RecoverWaiting() {
         <>
           <ActionNotice message={message} error={error} />
           <ActionNotice message={renew.message} error={renew.error} />
+          {followingUntil ? <Text className="text-muted-foreground text-center text-[13px] leading-[18px]">Following until {followingUntil}</Text> : null}
           {recovering ? (
             <AppButton
               title={renew.busy ? `Waiting for your ${hardware.brand}…` : `Keep following with ${hardware.brand}`}
-              variant="outline"
+              variant={accessLapsed ? 'primary' : 'outline'}
               busy={renew.busy}
               onPress={() => void renew.run(wallet.renewRecoveryAccess())}
             />
@@ -160,6 +171,11 @@ export default function RecoverWaiting() {
       <Text className={cn('text-muted-foreground -mt-2 text-center', pick('text-[15px] leading-[21px]', 'text-sm leading-5'))}>
         Phone-only payments are paused until then. Your {hardware.brand} can still approve payments.
       </Text>
+      {accessLapsed ? (
+        <Notice icon={TriangleAlert} iconClass="text-warn" tone="warn">
+          The recovery continues at your guardian. To see its progress here, approve again with your {hardware.brand}: access lasts 12 hours at a time.
+        </Notice>
+      ) : null}
       {recovery.sweepUpdate ? (
         recovery.sweepUpdate.status === 'refused' ? (
           <Notice icon={TriangleAlert} iconClass="text-warn" tone="warn">

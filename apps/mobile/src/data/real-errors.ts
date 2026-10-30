@@ -143,6 +143,8 @@ export function mapError(e: unknown): WalletServiceError {
         return make('wrong_state', e.message);
       case 'wallet_exists':
         return make('wallet_exists', 'This phone already has a Trikey wallet.');
+      case 'recovery_access_expired':
+        return make('recovery_access_expired', "This phone's access to the guardian has run out. The recovery continues at your guardian. To see its progress here, approve again with your hardware wallet.");
       case 'network_mismatch':
         return e.backupNetwork
           ? new WalletServiceError('network_mismatch', `That backup is for ${networkLabel(e.backupNetwork)}, not the network this phone is set to.`, { network: e.backupNetwork, cause: e })
