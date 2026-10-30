@@ -215,7 +215,7 @@ describe('pairing without the contribution (older phones)', { timeout: 60_000 },
   it('keeps the guardian\'s own key, as before; the last pair.prepare of the session counts', async () => {
     const phone = phoneOn(rig);
     // A contribution first, then none: the session uses the guardian's own key.
-    const out = await pair(rig, phone, ['22'.repeat(32), undefined]);
+    const out = await pair(rig, phone, ['2233'.repeat(16), undefined]);
     const own = rig.guardian.keystore!.public;
     expect(out.prep.key3Mixed).toBe(false);
     expect(out.res.key3Mixed).toBe(false);
@@ -236,15 +236,37 @@ describe('a different contribution on a fresh pairing', { timeout: 60_000 }, () 
     rigs.push(rig);
     const phone = phoneOn(rig);
     const p = decodePairingUri(rig.pairingUri(), rig.nowSec());
-    const a = await phone.rpc.call('pair.prepare', { pairingSecret: p.secret, network: 'regtest', entropy: '01'.repeat(32) });
-    const b = await phone.rpc.call('pair.prepare', { pairingSecret: p.secret, network: 'regtest', entropy: '02'.repeat(32) });
+    const a = await phone.rpc.call('pair.prepare', { pairingSecret: p.secret, network: 'regtest', entropy: '0102'.repeat(16) });
+    const b = await phone.rpc.call('pair.prepare', { pairingSecret: p.secret, network: 'regtest', entropy: '0203'.repeat(16) });
     const none = await phone.rpc.call('pair.prepare', { pairingSecret: p.secret, network: 'regtest' });
-    const again = await phone.rpc.call('pair.prepare', { pairingSecret: p.secret, network: 'regtest', entropy: '01'.repeat(32) });
+    const again = await phone.rpc.call('pair.prepare', { pairingSecret: p.secret, network: 'regtest', entropy: '0102'.repeat(16) });
     expect(new Set([a.guardianKey.xpub, b.guardianKey.xpub, none.guardianKey.xpub]).size).toBe(3);
     expect(again.guardianKey).toEqual(a.guardianKey); // same session, same phone, same contribution
     // A new pairing session with the same contribution: another key (the context binds the pairing).
     const p2 = decodePairingUri(rig.pairingUri(), rig.nowSec());
-    const next = await phone.rpc.call('pair.prepare', { pairingSecret: p2.secret, network: 'regtest', entropy: '01'.repeat(32) });
+    const next = await phone.rpc.call('pair.prepare', { pairingSecret: p2.secret, network: 'regtest', entropy: '0102'.repeat(16) });
     expect(next.guardianKey.xpub).not.toBe(a.guardianKey.xpub);
+  });
+});
+
+describe('a contribution that cannot come from a working generator (entropy review I3)', { timeout: 60_000 }, () => {
+  let rig: GuardianRig;
+
+  beforeAll(async () => {
+    rig = await GuardianRig.start();
+    rigs.push(rig);
+  }, 30_000);
+
+  it('refuses one byte repeated (all zeros included) and registers nothing; a good one then pairs', async () => {
+    const phone = phoneOn(rig);
+    const p = decodePairingUri(rig.pairingUri(), rig.nowSec());
+    for (const entropy of ['00'.repeat(32), 'ff'.repeat(32), '5a'.repeat(32)]) {
+      await expect(phone.rpc.call('pair.prepare', { pairingSecret: p.secret, network: 'regtest', entropy })).rejects.toThrow(/one byte repeated/);
+    }
+    expect(rig.guardian.engine.registration()).toBeUndefined();
+    // Not a byte repeated, though low in entropy: accepted (the guardian's seed keeps the mix strong).
+    const ok = await pair(rig, phone, ['0001'.repeat(16)]);
+    expect(ok.res.guardianKey).toBeDefined();
+    expect(rig.guardian.engine.registration()).toBeDefined();
   });
 });

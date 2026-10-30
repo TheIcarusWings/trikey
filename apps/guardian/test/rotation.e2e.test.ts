@@ -191,8 +191,8 @@ describe('lost phone, no backup: recovery ends with the new phone co-signing fro
     rig = await startRig();
     oldPhone = phoneOn(rig);
     // Key 3 made from the guardian's seed and the phone's contribution: a rotation must keep it.
-    ({ wallet: old, walletId: oldId } = await pair(rig, oldPhone, { entropy: 'c3'.repeat(32) }));
-    expect(rig.guardian.engine.registration()!.key3Mix?.entropy).toBe('c3'.repeat(32));
+    ({ wallet: old, walletId: oldId } = await pair(rig, oldPhone, { entropy: 'c3d4'.repeat(16) }));
+    expect(rig.guardian.engine.registration()!.key3Mix?.entropy).toBe('c3d4'.repeat(16));
   }, 30_000);
 
   it('shows a recovery code with the npub, relays, network and wallet id (no secret)', async () => {
