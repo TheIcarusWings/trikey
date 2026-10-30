@@ -63,6 +63,8 @@ export interface MockOptions {
 const NOW = new Date('2026-10-29T15:20:00');
 const RECOVERY_STARTED = '2026-10-29T14:05:00';
 const DAY = 24 * 60 * 60 * 1000;
+/** "1 new coin", "2 new coins": the recovery's sweep line, worded as the real wallet words it. */
+const newCoins = (n: number) => `${n} new coin${n === 1 ? '' : 's'}`;
 
 const HARDWARE: Record<HardwareKind, HardwareWallet> = {
   simulated: { kind: 'simulated', brand: 'simulated device', model: 'Simulated device' },
@@ -652,17 +654,30 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
         addSecurityEvent({ id: nextId('ev'), kind: 'recovery-finished', movedSats: r.movingSats - 1_200, at: NOW.toISOString() });
       },
       simulateRecoveryCoin() {
+        // Steps through the waiting screen's three lines, as the real wallet would show them: a coin arrives and is
+        // being added, it is added (only then does the move grow), the next one is refused, then it is retried.
         update((s) => {
           const r = s.recovery;
           if (!r || r.origin !== 'this-phone') return {};
-          const coins = (r.sweepUpdate?.status === 'added' ? r.sweepUpdate.coins : 0) + 1;
-          return {
-            recovery: {
-              ...r,
-              movingSats: r.movingSats + 4_200,
-              sweepUpdate: { status: 'added', coins, text: `${coins} new coin${coins === 1 ? ' was' : 's were'} added to your recovery` },
-            },
-          };
+          const status = r.sweepUpdate?.status;
+          if (status === 'waiting') {
+            const n = r.sweepUpdate!.coins;
+            return { recovery: { ...r, movingSats: r.movingSats + n * 4_200, sweepUpdate: { status: 'added', coins: n, text: `${newCoins(n)} ${n === 1 ? 'was' : 'were'} added to your recovery` } } };
+          }
+          if (status === 'added') {
+            return {
+              recovery: {
+                ...r,
+                sweepUpdate: {
+                  status: 'refused',
+                  coins: 1,
+                  text: `${newCoins(1)} arrived but could not be added to your recovery. Your hardware wallet didn't approve it. Connect it and refresh to try again. Your recovery can't finish until it is added.`,
+                },
+              },
+            };
+          }
+          const n = status === 'refused' ? r.sweepUpdate!.coins : 1;
+          return { recovery: { ...r, sweepUpdate: { status: 'waiting', coins: n, text: `${newCoins(n)} arrived. Adding ${n === 1 ? 'it' : 'them'} to your recovery…` } } };
         });
       },
       simulateRecoveryFromElsewhere() {

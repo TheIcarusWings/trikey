@@ -293,15 +293,22 @@ describe('the demo wallet\'s send max', () => {
     expect(w.quoteSendMax({ address: DEMO_SP_RECIPIENT, speed: 'normal' })).toMatchObject({ ok: false, problem: 'needs_helper' });
   });
 
-  it('shows a coin added to the recovery, for the waiting screen', async () => {
+  it('steps a coin through the recovery\'s sweep line: being added, added, refused, retried', async () => {
     const w = fresh();
     await w.startRecovery('hardware');
     const before = w.getState().recovery!;
     expect(before.sweepUpdate).toBeUndefined();
-    w.dev!.simulateRecoveryCoin!();
-    expect(w.getState().recovery).toMatchObject({ movingSats: before.movingSats + 4_200, sweepUpdate: { status: 'added', coins: 1, text: '1 new coin was added to your recovery' } });
-    w.dev!.simulateRecoveryCoin!();
-    expect(w.getState().recovery!.sweepUpdate).toMatchObject({ coins: 2, text: '2 new coins were added to your recovery' });
+    const step = () => {
+      w.dev!.simulateRecoveryCoin!();
+      return w.getState().recovery!;
+    };
+    expect(step()).toMatchObject({ movingSats: before.movingSats, sweepUpdate: { status: 'waiting', coins: 1, text: '1 new coin arrived. Adding it to your recovery…' } });
+    expect(step()).toMatchObject({ movingSats: before.movingSats + 4_200, sweepUpdate: { status: 'added', coins: 1, text: '1 new coin was added to your recovery' } });
+    const refused = step();
+    expect(refused).toMatchObject({ movingSats: before.movingSats + 4_200, sweepUpdate: { status: 'refused', coins: 1 } });
+    expect(refused.sweepUpdate!.text).toMatch(/^1 new coin arrived but could not be added .* can't finish until it is added\.$/);
+    expect(step()).toMatchObject({ movingSats: before.movingSats + 4_200, sweepUpdate: { status: 'waiting', coins: 1 } });
+    expect(step()).toMatchObject({ movingSats: before.movingSats + 8_400, sweepUpdate: { status: 'added', coins: 1 } });
   });
 });
 
