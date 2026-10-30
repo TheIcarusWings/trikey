@@ -9,7 +9,7 @@ import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { npubEncode } from 'nostr-tools/nip19';
 import { NETWORKS } from '@trikey/core';
-import { encodeRecoveryUri } from '@trikey/protocol';
+import { SimplePoolRelayPool, encodeRecoveryUri, type RelayPool } from '@trikey/protocol';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hex } from '@scure/base';
 import { TX_OPTS } from '@trikey/core';
@@ -69,6 +69,36 @@ const where = (svc: { getState(): WalletState }) => () => {
   };
 };
 
+/**
+ * Relay pools for a phone whose next publish can be held back, as a relay that swallowed a request would: the call it
+ * carries is still waiting when the test moves on, and fails (no relay took it) when the test lets go of it.
+ */
+function relayGate() {
+  const held: (() => void)[] = [];
+  let toHold = 0;
+  return {
+    held,
+    holdNext(n = 1) {
+      toHold = n;
+    },
+    failHeld() {
+      for (const fail of held.splice(0)) fail();
+    },
+    pool: (): RelayPool => {
+      const inner = new SimplePoolRelayPool();
+      return {
+        publish(relays, event) {
+          if (toHold === 0) return inner.publish(relays, event);
+          toHold--;
+          return new Promise((resolve) => held.push(() => resolve(relays.map((relay) => ({ relay, ok: false, reason: 'held back by the test' })))));
+        },
+        subscribe: (relays, filter, handlers) => inner.subscribe(relays, filter, handlers),
+        close: () => inner.close(),
+      };
+    },
+  };
+}
+
 async function failure(p: Promise<unknown>): Promise<WalletServiceError> {
   try {
     await p;
@@ -105,6 +135,7 @@ async function phone(
     mode?: 'simulator' | 'real';
     network?: 'testnet' | 'signet' | 'regtest';
     rpcTimeoutMs?: number;
+    relayPool?: () => RelayPool;
   } = {},
 ): Promise<Phone> {
   const secure = opts.secure ?? new MemorySecureKeyStore();
@@ -117,6 +148,7 @@ async function phone(
     platform: { os: 'ios', isSecure: true, secureKeys: secure, kv, cloudBackups: [cloud], passkeys: passkey },
     hardware: () => [opts.hardware ?? provider],
     clock: opts.clock ?? rig.clock,
+    ...(opts.relayPool ? { relayPool: opts.relayPool } : {}),
     rpcTimeoutMs: opts.rpcTimeoutMs ?? 5000,
     rpcRetryIntervalMs: 0,
     syncIntervalMs: 0,
@@ -611,6 +643,57 @@ describe('the real wallet service: finishing a recovery, replacing the guardian,
       tx: { kind: 'sent', signedBy: 'phone+guardian', address: externalAddress() },
     });
     await old.svc.close();
+  });
+
+  it('lost phone: a sync under way when the guardian takes the new wallet over fails late; the new wallet still syncs and shows the guardian online', async () => {
+    // Its own guardian and device: the shared ones carry on with P below. The phone's calls wait long enough for the
+    // test, not the clock, to decide when the held one fails.
+    const own = await GuardianRig.start();
+    const ownDevice = new SoftwareHardwareProvider(new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware2, network: 'regtest', kind: 'ledger' }));
+    const old = await onboarded(own, ownDevice);
+    own.fund(old.svc.wallet!.multisig().derive(0, 0).script, 300_000n);
+    await old.svc.sync();
+    await old.svc.close();
+
+    const gate = relayGate();
+    const N = await phone({ clock: own.clock, hardware: ownDevice, relayPool: gate.pool, rpcTimeoutMs: 20_000 });
+    let syncs = 0;
+    let wasSyncing = false;
+    N.svc.subscribe(() => {
+      const now = N.svc.getState().syncing;
+      if (now && !wasSyncing) syncs++;
+      wasSyncing = now;
+    });
+    const code = N.svc.readCode(encodeRecoveryUri({ guardianPubkey: own.pubkey, relays: own.relayUrls, network: 'regtest' }));
+    if (code.kind !== 'recovery') throw new Error('not a recovery code');
+    const started = await N.svc.startRecovery('phone', { guardian: code.guardian, hardwareKind: 'simulated' });
+    await waitFor(() => (syncs >= 1 && !N.svc.getState().syncing) || undefined, 'the sync after starting the recovery', where(N.svc));
+    // The refreshes after the "recovery started" alert settle too: a message on its way while the clock jumps a week
+    // would expire on the relays, and its call would only end at its timeout.
+    await sleep(500);
+
+    // The delay passes. The access the hardware wallet gave this phone (half a day) is renewed, so the guardian answers
+    // it right up to the switch.
+    own.clock.set(new Date(started.completesAt).getTime() + 2 * HOUR);
+    await N.svc.renewRecoveryAccess();
+
+    // A sync starts just before the guardian takes the new wallet over; its request is lost on the way.
+    gate.holdNext();
+    const stale = N.svc.sync();
+    await waitFor(() => gate.held.length === 1 || undefined, 'the sync request held back');
+    await own.mine(11);
+    await own.guardian.tick();
+    await waitFor(() => N.svc.getState().recoveryOutcome === 'finished' || undefined, 'the switch to the new wallet', where(N.svc));
+    const moved = N.svc.getState().finishedRecovery!.movedSats;
+    expect(moved).toBeGreaterThan(290_000);
+
+    // Only now does the old sync fail. The switch asked for a sync of the new wallet: it must still run.
+    gate.failHeld();
+    await stale;
+    await waitFor(() => (N.svc.getState().balanceSats === moved && N.svc.getState().guardian.status === 'online') || undefined, 'the new wallet synced', where(N.svc), 10_000);
+    expect(N.svc.getState()).toMatchObject({ synced: true, onboarded: true, guardian: { status: 'online' } });
+    await N.svc.close();
+    await own.stop();
   });
 
   it('locks the guardian from the phone, shows it, and unlocks it with the passphrase', async () => {

@@ -238,6 +238,9 @@ class Service implements RealWalletService {
   private prefs: { unit: AmountUnit; theme: ThemePreference } = { unit: 'sats', theme: 'system' };
   private progress: string | null = null;
   private syncing = false;
+  /** The sync under way, and whether another was asked for while it ran (see `sync`). */
+  private syncRun?: Promise<void>;
+  private syncAgain = false;
   private reachable = true;
   private preview?: { guardianNpub: string; label?: string; relays: string[]; expiresAt: number };
   private recoveryCodeValue: string | null = null;
@@ -714,12 +717,40 @@ class Service implements RealWalletService {
   // ===========================================================================
   // Sync
 
-  async sync(): Promise<void> {
+  /**
+   * One sync at a time, and none is lost: a sync asked for while one runs (the switch to the wallet a recovery made, the
+   * timer, a pull to refresh) runs again as soon as that one ends, and the caller waits for it. The running sync may
+   * have started before the wallet changed, so its answer, or its failure, is about what was. (Dropping the request
+   * left the phone showing the guardian offline and no balance right after a recovery finished, until the next timer:
+   * the sync begun while recovering failed after the switch, and the switch's own sync had been dropped.)
+   */
+  sync(): Promise<void> {
+    if (this.syncRun) {
+      this.syncAgain = true;
+      return this.syncRun;
+    }
     const w = this.w;
-    if (!w || w.stage === 'new' || this.closed) return;
-    if (this.syncing) return;
+    if (!w || w.stage === 'new' || this.closed) return Promise.resolve();
     this.syncing = true;
     this.refresh();
+    this.syncRun = (async () => {
+      try {
+        do {
+          this.syncAgain = false;
+          await this.syncOnce();
+        } while (this.syncAgain && !this.closed);
+      } finally {
+        this.syncing = false;
+        this.syncRun = undefined;
+        this.refresh();
+      }
+    })();
+    return this.syncRun;
+  }
+
+  private async syncOnce(): Promise<void> {
+    const w = this.w;
+    if (!w || w.stage === 'new' || this.closed) return;
     try {
       // A recovering phone follows its recovery; the guardian's status says when it took the new wallet over.
       if (w.stage === 'recovering') await w.refreshStatus().then(() => w.recoveryStatus());
@@ -732,11 +763,10 @@ class Service implements RealWalletService {
       }
       this.reachable = true;
     } catch (e) {
-      this.noteGuardianResult(e);
-    } finally {
-      this.syncing = false;
-      this.refresh();
+      // Another sync is due right after this one, and only its outcome says whether the guardian answers now.
+      if (!this.syncAgain) this.noteGuardianResult(e);
     }
+    this.refresh();
   }
 
   // ===========================================================================
