@@ -37,8 +37,8 @@ export default function SettingsScreen() {
   const state = useWallet();
   const rk = state.mode === 'recoveryKey';
   const silentValue = silentPaymentsSummary(state);
-  // The descriptor export appears once the wallet offers it.
-  const hasWalletDetails = typeof (useWalletService() as { getWalletDetails?: unknown }).getWalletDetails === 'function';
+  // Recovery Key mode has no descriptor to export (getWalletDetails gives null there).
+  const hasWalletDetails = !rk;
 
   return (
     <Screen title="Settings" backLabel="Home" gap={pick(12, 0)}>

@@ -1,5 +1,4 @@
 import * as Clipboard from 'expo-clipboard';
-import { Redirect } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Platform, Share, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
@@ -11,14 +10,6 @@ import { Text } from '@/components/ui/text';
 import { useWalletService, type NetworkName } from '@/data';
 import { pick } from '@/lib/platform';
 
-/** What the wallet hands over for an export (the main session's `getWalletDetails`). */
-type WalletDetails = {
-  descriptor: string;
-  network: NetworkName;
-  fingerprints: { phone: string; hardware: string; guardian: string };
-  walletId: string;
-};
-
 const NETWORK: Record<NetworkName, string> = { bitcoin: 'Bitcoin', testnet: 'Testnet', signet: 'Signet', regtest: 'Regtest' };
 
 /**
@@ -27,14 +18,11 @@ const NETWORK: Record<NetworkName, string> = { bitcoin: 'Bitcoin', testnet: 'Tes
  */
 export default function WalletDetailsScreen() {
   const wallet = useWalletService();
-  const get = (wallet as { getWalletDetails?: () => WalletDetails | null }).getWalletDetails;
-  const [details] = useState(() => (get ? get.call(wallet) : null));
+  const [details] = useState(() => wallet.getWalletDetails());
   const [shown, setShown] = useState(false);
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
-
-  if (!get) return <Redirect href="/settings" />;
 
   const copy = async () => {
     if (!details) return;
