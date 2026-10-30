@@ -2,13 +2,14 @@
  * Synthetic transactions and blocks for the silent payment scanner's tests: P2WPKH-funded
  * transactions paying taproot outputs (silent payments to a receiver, or random keys), in the shape
  * of `getblock <hash> 3`. Signatures are dummies: BIP 352 reads only the public keys, and nothing
- * here is checked by a node. Throwaway keys, regtest only.
+ * here is checked by a node. Throwaway keys, regtest only. Also the receiving cases of BIP 352's test
+ * vectors as transactions of such a block (`vectorTx`).
  */
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hex } from '@scure/base';
 import * as btc from '@scure/btc-signer';
-import { createOutputs } from '@trikey/silent-payments';
+import { createOutputs, parseSerializedWitness } from '@trikey/silent-payments';
 import type { VerboseBlock, VerboseTx } from '../../src/chain/bitcoind.js';
 
 const rawTxid = (raw: Uint8Array) => {
@@ -61,6 +62,38 @@ export function syntheticTx(seed: number, opts: { inputs?: number; taprootOutput
 export function legacyTx(seed: number): VerboseTx {
   const tx = syntheticTx(seed, { taprootOutputs: 0 });
   return tx;
+}
+
+/** An input of a BIP 352 test vector's receiving case (`given.vin`). */
+export interface VectorVin {
+  txid: string;
+  vout: number;
+  scriptSig: string;
+  txinwitness: string;
+  prevout: { scriptPubKey: { hex: string } };
+}
+
+/**
+ * A receiving case of BIP 352's test vectors as a transaction of `getblock <hash> 3`: its inputs as given
+ * (scriptSig, witness, prevout) and one taproot output per given output key (x-only).
+ */
+export function vectorTx(vin: VectorVin[], outputKeys: string[]): VerboseTx {
+  const witnesses = vin.map((v) => parseSerializedWitness(v.txinwitness));
+  const segwit = witnesses.some((w) => w.length > 0);
+  const raw = btc.RawTx.encode({
+    version: 2,
+    segwitFlag: segwit,
+    inputs: vin.map((v) => ({ txid: hex.decode(v.txid), index: v.vout, finalScriptSig: hex.decode(v.scriptSig), sequence: 0xfffffffd })),
+    outputs: outputKeys.map((k) => ({ script: hex.decode(`5120${k}`), amount: 20_000n })),
+    witnesses: segwit ? witnesses : undefined,
+    lockTime: 0,
+  });
+  return {
+    txid: rawTxid(raw),
+    hex: hex.encode(raw),
+    vin: vin.map((v) => ({ txid: v.txid, vout: v.vout, prevout: { value: 0.001, scriptPubKey: { hex: v.prevout.scriptPubKey.hex } } })),
+    vout: outputKeys.map((k, n) => ({ value: 0.0002, n, scriptPubKey: { hex: `5120${k}` } })),
+  };
 }
 
 /** A block of `n` transactions, `taprootShare` of them with a taproot output, plus `extra` at the end. */

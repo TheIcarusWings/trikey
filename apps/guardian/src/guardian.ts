@@ -233,6 +233,7 @@ export class Guardian {
       pairedPhone: () => this.engine?.registration()?.appNostrPubkey,
       notify: (alert) => this.notifyPhone(alert),
       stamp: () => this.stampNow(),
+      scanThreads: opts.config.spScanThreads,
     });
     this.alerts = new Alerter(this);
     this.recovery = new RecoveryRunner(this);
@@ -378,6 +379,7 @@ export class Guardian {
     this.stopped = true;
     clearInterval(this.timer);
     await this.ticking?.catch(() => {});
+    await this.sp.stop();
     this.inbox?.close();
     await this.inbox?.drain();
     this.rpc?.close();

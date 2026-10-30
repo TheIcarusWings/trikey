@@ -12,7 +12,11 @@
  *                     and for the silent payment scanner (blocks with prevouts)
  *   BITCOIN_NETWORK   bitcoin|testnet|signet|regtest, plus the names Umbrel and
  *                     others use (mainnet, main, testnet3, testnet4, test)
+ *   SP_SCAN_THREADS   optional: worker threads for the silent payment scanner (1 to 64;
+ *                     default one less than the CPU cores, at least 1). 1 scans in the
+ *                     main thread, without workers
  */
+import { availableParallelism } from 'node:os';
 import type { NetworkName } from '@trikey/core';
 import { DEFAULT_KDF, type KdfParams } from './keystore.js';
 
@@ -41,6 +45,8 @@ export interface GuardianConfig {
   kdf: KdfParams;
   /** Relays the first-run screen offers. */
   relayOptions: { url: string; label?: string; defaultSelected: boolean }[];
+  /** Worker threads for the silent payment scanner (silent/scan-pool.ts). Unset or 1: the main thread scans. */
+  spScanThreads?: number;
 }
 
 const NETWORK_ALIASES: Record<string, NetworkName> = {
@@ -68,6 +74,14 @@ function parsePort(name: string, value: string | undefined, fallback?: number): 
   if (!/^\d{1,5}$/.test(value.trim())) throw new Error(`${name} must be a port number`);
   const n = Number(value);
   if (n < 1 || n > 65535) throw new Error(`${name} must be between 1 and 65535`);
+  return n;
+}
+
+/** SP_SCAN_THREADS, or by default one thread less than the cores Node may use (the main thread fetches the blocks), at least 1. */
+export function parseScanThreads(value: string | undefined, cores = availableParallelism()): number {
+  if (value === undefined || value.trim() === '') return Math.max(1, cores - 1);
+  const n = Number(value.trim());
+  if (!/^\d{1,2}$/.test(value.trim()) || n < 1 || n > 64) throw new Error('SP_SCAN_THREADS must be a whole number from 1 to 64');
   return n;
 }
 
@@ -103,5 +117,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GuardianConfig
     bitcoinRpc,
     kdf: DEFAULT_KDF,
     relayOptions: DEFAULT_RELAY_OPTIONS,
+    spScanThreads: parseScanThreads(env['SP_SCAN_THREADS']),
   };
 }

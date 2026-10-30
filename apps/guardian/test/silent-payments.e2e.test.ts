@@ -158,7 +158,8 @@ function phoneDeps(): WalletDeps {
 }
 
 beforeAll(async () => {
-  rig = await GuardianRig.start({ bitcoind: true });
+  // The scanner runs on two worker threads here (SP_SCAN_THREADS=2); test/sp-threads.test.ts checks they find what one thread finds.
+  rig = await GuardianRig.start({ bitcoind: true, spScanThreads: 2 });
   raw = client(identityFromMnemonic(PHONE).secretKey);
   raw.onAlert((a) => alerts.push(a));
   A = await TrikeyWallet.create(phoneDeps(), { deviceName: 'Silent phone', mnemonic: PHONE });
