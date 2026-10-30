@@ -12,7 +12,7 @@ import { Icon } from '@/components/ui/icon';
 import { Input } from '@/components/ui/input';
 import { RadioGroup } from '@/components/ui/radio-group';
 import { Text } from '@/components/ui/text';
-import { WalletServiceError, formatSats, networkLabel, useWallet, useWalletService, type KitInfo, type KitRecoveryResult, type NetworkName } from '@/data';
+import { RK_NETWORKS, WalletServiceError, formatSats, networkLabel, useWallet, useWalletService, type KitInfo, type KitRecoveryResult, type NetworkName } from '@/data';
 import { QrScanner } from '@/hardware/ui';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
@@ -63,7 +63,9 @@ export default function RecoverWithKit() {
   const hardwareBlocked = onboarded; // this phone already holds a Recovery Key wallet
   const phoneBlocked = !info?.matchesThisPhone;
   const addressOk = wallet.readCode(address.trim()).kind === 'address';
-  const mismatch = reading.error instanceof WalletServiceError && reading.error.kind === 'network_mismatch' ? reading.error.network : undefined;
+  // Recovery Key mode can switch to another test network; a kit for any other network gets no offer to switch.
+  const kitNetwork = reading.error instanceof WalletServiceError && reading.error.kind === 'network_mismatch' ? reading.error.network : undefined;
+  const mismatch = kitNetwork && RK_NETWORKS.includes(kitNetwork as NetworkName) ? kitNetwork : undefined;
 
   const read = async (input: string) => {
     const r = await reading.run(rk.readKit(input));

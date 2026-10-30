@@ -39,13 +39,13 @@ import { parseScannedCode } from '@trikey/wallet/scan';
 import { DevicePromptStore, compositeProvider, ledgerHint, withDevicePrompts } from './device';
 import { WalletServiceError, notAvailableYet } from './errors';
 import { SIMULATED_OPTION, hardwareBrandOf, hardwareOptionTable, type UiOs } from './hardware-options';
-import { mapRkError, kitNetworkError } from './rk-errors';
+import { RK_MAINNET_REFUSED, mapRkError, kitNetworkError } from './rk-errors';
 import { emptySilentPayments } from './sp-empty';
 import { GENESIS_HASHES, defaultServerUrl, parseServerUrl } from './rk-server';
 import type { RecoveryKeyActions } from './rk-actions';
 import type { ReceiveAddress, WalletService } from './service';
 import {
-  SELECTABLE_NETWORKS,
+  RK_NETWORKS,
   type ActivityItem,
   type AmountUnit,
   type FeeSpeed,
@@ -260,7 +260,7 @@ class Service implements RkWalletService {
     }
 
     // The network: the wallet that exists on this phone (in this mode) wins, then the choice made last time.
-    const candidates: NetworkName[] = this.mode === 'simulator' ? ['regtest'] : SELECTABLE_NETWORKS;
+    const candidates: NetworkName[] = this.mode === 'simulator' ? ['regtest'] : RK_NETWORKS;
     let found: NetworkName | undefined;
     for (const n of candidates) {
       if ((await kv.get(rkWalletKey(this.mode, n)).catch(() => null)) !== null) {
@@ -271,9 +271,10 @@ class Service implements RkWalletService {
     if (this.mode === 'simulator') this.network = 'regtest';
     else {
       const saved = (await kv.get(networkPrefKey(this.mode)).catch(() => null)) as NetworkName | null;
-      this.network = found ?? (saved && SELECTABLE_NETWORKS.includes(saved) ? saved : (this.deps.network ?? 'testnet'));
-      // Whatever was asked for, mainnet is not an option while the project is pre-alpha (and the app never sets allowMainnet).
-      if (!SELECTABLE_NETWORKS.includes(this.network)) this.network = 'testnet';
+      this.network = found ?? (saved && RK_NETWORKS.includes(saved) ? saved : (this.deps.network ?? 'testnet'));
+      // Whatever was asked for (the guardian mode may have saved mainnet), Recovery Key mode stays on the test networks
+      // while the project is pre-alpha (and the app never sets allowMainnet).
+      if (!RK_NETWORKS.includes(this.network)) this.network = 'testnet';
     }
 
     await this.buildHardware();
@@ -289,7 +290,7 @@ class Service implements RkWalletService {
 
   /** Whether a wallet of this kind exists for this mode on any network (before it is opened). */
   static async exists(kv: KeyValueStore, mode: 'simulator' | 'real'): Promise<boolean> {
-    for (const n of mode === 'simulator' ? (['regtest'] as NetworkName[]) : SELECTABLE_NETWORKS) {
+    for (const n of mode === 'simulator' ? (['regtest'] as NetworkName[]) : RK_NETWORKS) {
       if ((await kv.get(rkWalletKey(mode, n)).catch(() => null)) !== null) return true;
     }
     return false;
@@ -551,6 +552,7 @@ class Service implements RkWalletService {
     return {
       backing: this.mode,
       network: this.network,
+      mainnetRiskAccepted: false,
       capabilities: { lockGuardian: false, replaceGuardian: false, recoveryKey: true },
       progress: this.progress,
       devicePrompt: this.prompts.getSnapshot(),
@@ -723,12 +725,15 @@ class Service implements RkWalletService {
   setNetwork(network: NetworkName): void {
     if (this.w) throw new WalletServiceError('wrong_state', "This wallet's network can't change.");
     if (this.mode === 'simulator' && network !== 'regtest') throw new WalletServiceError('invalid_input', 'The simulator works on regtest only.');
-    if (!SELECTABLE_NETWORKS.includes(network)) throw new WalletServiceError('invalid_input', "Mainnet isn't available yet.");
+    if (!RK_NETWORKS.includes(network)) throw new WalletServiceError('invalid_input', RK_MAINNET_REFUSED);
     this.network = network;
     void this.deps.platform.kv.set(networkPrefKey(this.mode), network).catch(() => {});
     void this.buildHardware().then(() => this.loadDoc()).then(() => this.refresh());
     this.refresh();
   }
+
+  /** Nothing to accept: Recovery Key mode never runs on mainnet. */
+  acceptMainnetRisk(): void {}
 
   async getHardwareOptions(): Promise<HardwareOption[]> {
     if (this.mode === 'simulator') return [{ ...SIMULATED_OPTION, available: true }];

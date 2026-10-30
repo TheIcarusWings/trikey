@@ -50,7 +50,7 @@ import type { ReceiveAddress, WalletService } from './service';
 import type { SilentPaymentActions } from './sp-actions';
 import { emptySilentPayments } from './sp-empty';
 import {
-  SELECTABLE_NETWORKS,
+  GUARDIAN_NETWORKS,
   type WalletDetails,
   type AmountUnit,
   type BackupOptions,
@@ -253,6 +253,10 @@ class Service implements RealWalletService {
   private readonly clock: { now(): number };
   private replacePlan: ReplaceGuardianPlan | null = null;
   private replaceStep: ReplaceStep | null = null;
+  /** The person accepted the mainnet warning (see `acceptMainnetRisk`). Cleared when the network changes. */
+  private mainnetRiskAccepted = false;
+  /** The hardware providers for the network `setNetwork` picked last are ready (Ledger's app, Trezor's coin follow it). */
+  private networkReady: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: RealServiceDeps) {
     this.clock = deps.clock ?? { now: () => Date.now() };
@@ -298,7 +302,7 @@ class Service implements RealWalletService {
     }
 
     // The network: the wallet that exists on this phone (in this mode) wins, then the choice made last time.
-    const candidates: NetworkName[] = this.mode === 'simulator' ? ['regtest'] : SELECTABLE_NETWORKS;
+    const candidates: NetworkName[] = this.mode === 'simulator' ? ['regtest'] : GUARDIAN_NETWORKS;
     let found: NetworkName | undefined;
     for (const n of candidates) {
       if ((await kv.get(walletKey(this.mode, n)).catch(() => null)) !== null) {
@@ -308,8 +312,10 @@ class Service implements RealWalletService {
     }
     if (this.mode === 'simulator') this.network = 'regtest';
     else {
+      // Without a wallet, never mainnet by itself: the person picks it again, and accepts its warning again.
+      const startable = (n: NetworkName | null | undefined): n is NetworkName => !!n && n !== 'bitcoin' && GUARDIAN_NETWORKS.includes(n);
       const saved = (await kv.get(networkPrefKey(this.mode)).catch(() => null)) as NetworkName | null;
-      this.network = found ?? (saved && SELECTABLE_NETWORKS.includes(saved) ? saved : this.deps.network ?? 'testnet');
+      this.network = found ?? (startable(saved) ? saved : startable(this.deps.network) ? this.deps.network : 'testnet');
     }
 
     await this.buildHardware();
@@ -516,6 +522,7 @@ class Service implements RealWalletService {
     return {
       backing: this.mode,
       network: this.network,
+      mainnetRiskAccepted: this.mainnetRiskAccepted,
       capabilities: { lockGuardian: true, replaceGuardian: true, recoveryKey: true },
       progress: this.progress,
       devicePrompt: this.prompts.getSnapshot(),
@@ -689,6 +696,9 @@ class Service implements RealWalletService {
 
   private async ensureWallet(): Promise<TrikeyWallet> {
     if (this.w) return this.w;
+    this.requireMainnetConsent();
+    // A wallet made right after a network change uses that network's hardware providers, not the last ones.
+    await this.networkReady;
     this.setProgress('Creating your phone key');
     try {
       await this.yieldToUi();
@@ -735,11 +745,26 @@ class Service implements RealWalletService {
   setNetwork(network: NetworkName): void {
     if (this.w) throw new WalletServiceError('wrong_state', "This wallet's network can't change.");
     if (this.mode === 'simulator' && network !== 'regtest') throw new WalletServiceError('invalid_input', 'The simulator works on regtest only.');
-    if (!SELECTABLE_NETWORKS.includes(network)) throw new WalletServiceError('invalid_input', "Mainnet isn't available yet.");
+    if (!GUARDIAN_NETWORKS.includes(network)) throw new WalletServiceError('invalid_input', `Trikey doesn't know the network "${network}".`);
+    if (network !== this.network) this.mainnetRiskAccepted = false;
     this.network = network;
     void this.deps.platform.kv.set(networkPrefKey(this.mode), network).catch(() => {});
-    void this.buildHardware().then(() => this.loadLogFor()).then(() => this.refresh());
+    this.networkReady = this.buildHardware()
+      .then(() => this.loadLogFor())
+      .then(() => this.refresh())
+      .catch(() => {});
     this.refresh();
+  }
+
+  acceptMainnetRisk(accepted: boolean): void {
+    this.mainnetRiskAccepted = accepted;
+    this.refresh();
+  }
+
+  /** No wallet is made on mainnet (created, recovered or restored) before the person accepted the warning. */
+  private requireMainnetConsent(network: NetworkName = this.network): void {
+    if (network === 'bitcoin' && !this.mainnetRiskAccepted)
+      throw new WalletServiceError('wrong_state', 'Read the mainnet warning and accept it first: Trikey is pre-alpha and not audited.');
   }
 
   private async loadLogFor(): Promise<void> {
@@ -1349,7 +1374,7 @@ class Service implements RealWalletService {
   /** Points the phone at another network before anything exists on it (a backup for that network). */
   private async switchNetworkTo(network: NetworkName): Promise<void> {
     if (this.mode === 'simulator' && network !== 'regtest') throw new WalletServiceError('network_mismatch', 'The simulator works on regtest only.', { network });
-    if (!SELECTABLE_NETWORKS.includes(network)) throw new WalletServiceError('network_mismatch', "That backup is for mainnet, which isn't available yet.", { network });
+    if (!GUARDIAN_NETWORKS.includes(network)) throw new WalletServiceError('network_mismatch', `That backup is for a network Trikey doesn't know ("${network}").`, { network });
     this.network = network;
     await this.deps.platform.kv.set(networkPrefKey(this.mode), network).catch(() => {});
     await this.buildHardware();
@@ -1361,9 +1386,12 @@ class Service implements RealWalletService {
       this.guarded(async () => {
         if (!unlock) throw new WalletServiceError('invalid_input', 'Choose how to unlock the backup.');
         if (this.w) throw new WalletServiceError('wallet_exists', 'This phone already has a Trikey wallet.');
+        await this.networkReady;
         const hit = await this.locate(provider);
         if (!hit) throw new WalletServiceError('backup_not_found', `No Trikey backup for ${this.network} was found.`);
         // The backup says which network it is for. Another one than the phone's only when the person said so.
+        const target = opts.switchNetwork ? hit.found.network : this.network;
+        if (hit.found.network === target) this.requireMainnetConsent(target);
         if (opts.switchNetwork && hit.found.network !== this.network) await this.switchNetworkTo(hit.found.network);
         this.setProgress('Unlocking your backup');
         try {

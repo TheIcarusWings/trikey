@@ -12,8 +12,9 @@ We'll acknowledge a report within a few days and keep you updated until it's fix
 
 ## Status
 
-Trikey is pre-alpha. It has not been audited. Don't use it with mainnet funds;
-use testnet, signet or regtest.
+Trikey is pre-alpha. It has not been audited. Use testnet, signet or regtest.
+The app offers mainnet in guardian mode, behind a warning, for testing at your
+own risk: put in only an amount you can afford to lose.
 
 ## Scope
 

@@ -188,6 +188,7 @@ export function createDemoState(platform: 'ios' | 'android' = 'ios'): WalletStat
   return {
     backing: 'demo',
     network: null,
+    mainnetRiskAccepted: false,
     capabilities: { lockGuardian: true, replaceGuardian: true, recoveryKey: true },
     progress: null,
     devicePrompt: null,
@@ -322,7 +323,9 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     },
 
     // -- onboarding ---------------------------------------------------
+    // The demo has no network to pick, so no mainnet warning either.
     setNetwork() {},
+    acceptMainnetRisk() {},
     async getHardwareOptions() {
       return hardwareOptionTable(platform as UiOs).map((o) => ({ ...o, available: true }));
     },

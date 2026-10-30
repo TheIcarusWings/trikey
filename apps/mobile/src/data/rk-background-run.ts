@@ -12,7 +12,7 @@ import { EsploraClient, RecoveryKeyWallet, type FetchLike } from '@trikey/recove
 import type { KeyValueStore, SecureKeyStore } from '@trikey/wallet';
 import { rkWalletKey } from './rk-service';
 import { defaultServerUrl } from './rk-server';
-import { SELECTABLE_NETWORKS, type NetworkName } from './types';
+import { RK_NETWORKS, type NetworkName } from './types';
 
 export const MODE_KEY = 'trikey.app.mode';
 /** The background task's name. */
@@ -29,7 +29,7 @@ export type BackgroundRun =
 export async function runRkSchedulerOnce(deps: { kv: KeyValueStore; secureKeys: SecureKeyStore; fetch?: FetchLike; clock?: { now(): number } }): Promise<BackgroundRun> {
   const mode = await deps.kv.get(MODE_KEY).catch(() => null);
   if (mode !== 'real') return { ran: false, reason: 'not-real-mode' };
-  for (const network of SELECTABLE_NETWORKS) {
+  for (const network of RK_NETWORKS) {
     const key = rkWalletKey('real', network);
     if ((await deps.kv.get(key).catch(() => null)) === null) continue;
     let w: RecoveryKeyWallet | undefined;
