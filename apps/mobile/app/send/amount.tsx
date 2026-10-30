@@ -100,8 +100,8 @@ export default function SendAmount() {
       return;
     }
     const params = { address: address.trim(), amount: String(amountSats), ...(fromVault ? { signer: 'hardware' } : {}) };
-    if (outcome.quote.plan.signer === 'hardware') router.push({ pathname: '/send/hardware', params });
-    else router.push({ pathname: '/send/review', params });
+    // Every payment stops on Review first, the ones the hardware wallet signs included.
+    router.push({ pathname: '/send/review', params });
   };
 
   const primary = btcView ? (amountSats / SATS_PER_BTC).toFixed(8) : formatSats(amountSats);

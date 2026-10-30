@@ -1,9 +1,10 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { Info, ShieldCheck } from '@/components/icons';
+import { HardwareWallet, Info, ShieldCheck } from '@/components/icons';
+import { explainHardware } from '@/components/hardware-reason';
 import { InfoRow, Notice, Panel } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Segmented } from '@/components/segmented';
@@ -17,21 +18,20 @@ export default function SendReview() {
   const router = useRouter();
   const wallet = useWalletService();
   const state = useWallet();
-  const { address = '', amount = '0' } = useLocalSearchParams<{ address?: string; amount?: string }>();
+  const { address = '', amount = '0', signer } = useLocalSearchParams<{ address?: string; amount?: string; signer?: string }>();
   const [speed, setSpeed] = useState<FeeSpeed>('normal');
   const { busy, run, message, error } = useAction();
   // Once signing starts the wallet state changes (limit used), and the quote must not flip under us.
   const sending = useRef(false);
 
   // Re-quoted when the speed or what the plan depends on changes (the daily limit may have moved).
-  const { outcome } = useQuote({ address, amountSats: Number(amount), speed }, 0, { exact: true });
+  const { outcome } = useQuote({ address, amountSats: Number(amount), speed, ...(signer === 'hardware' ? { signer: 'hardware' as const } : {}) }, 0, { exact: true });
   const quote = outcome.ok ? outcome.quote : null;
   const hardware = quote?.plan.signer === 'hardware';
 
-  // A higher fee can push the payment over the limit; hand over to the hardware wallet then.
-  useEffect(() => {
-    if (hardware && !sending.current) router.replace({ pathname: '/send/hardware', params: { address, amount, speed } });
-  }, [hardware, router, address, amount, speed]);
+  // The hardware wallet signs this one (over the limit, guardian away, from the vault): Review says why, then hands over.
+  const reviewOnDevice = () =>
+    router.push({ pathname: '/send/hardware', params: { address, amount, speed, ...(signer === 'hardware' ? { signer } : {}) } });
 
   if (!quote) {
     return (
@@ -57,7 +57,9 @@ export default function SendReview() {
       footer={
         <>
           <ActionNotice message={message} error={error} />
-          {offerHardware ? (
+          {hardware ? (
+            <AppButton title={`Review on ${state.hardware.brand}`} onPress={reviewOnDevice} />
+          ) : offerHardware ? (
             <AppButton
               title={`Approve with your ${state.hardware.brand} instead`}
               onPress={() => router.replace({ pathname: '/send/hardware', params: { address, amount, speed, signer: 'hardware' } })}
@@ -95,11 +97,17 @@ export default function SendReview() {
           mutedUnselected
         />
       </View>
-      <Notice icon={ShieldCheck} iconClass="text-good" tone="fill">
-        {quote.plan.signer === 'phone'
-          ? `Signed by this phone alone, from your spending balance. No ${state.hardware.brand} needed.`
-          : "Signed by this phone and your guardian. Within today's limit, so no hardware wallet needed."}
-      </Notice>
+      {quote.plan.signer === 'hardware' ? (
+        <Notice icon={HardwareWallet} iconClass="text-warn" tone="warn-outline">
+          {explainHardware(quote.plan.reason, quote.request.amountSats, state)}
+        </Notice>
+      ) : (
+        <Notice icon={ShieldCheck} iconClass="text-good" tone="fill">
+          {quote.plan.signer === 'phone'
+            ? `Signed by this phone alone, from your spending balance. No ${state.hardware.brand} needed.`
+            : "Signed by this phone and your guardian. Within today's limit, so no hardware wallet needed."}
+        </Notice>
+      )}
     </Screen>
   );
 }
