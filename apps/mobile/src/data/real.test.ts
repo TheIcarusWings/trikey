@@ -483,8 +483,10 @@ describe('the real wallet service: finishing a recovery, replacing the guardian,
   }
 
   it('onboarding contacts chosen before pairing go to the guardian with the first rules, with their names on the phone', async () => {
-    const own3 = await GuardianRig.start(); // its own guardian: the shared ones are paired by the tests below
-    const p = await phone({ clock: own3.clock, hardware: hw });
+    // Its own guardian and its own device: the shared ones are paired and registered by the tests below.
+    const own3 = await GuardianRig.start();
+    const ownDevice = new SoftwareHardwareProvider(new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware2, network: 'regtest', kind: 'ledger' }));
+    const p = await phone({ clock: own3.clock, hardware: ownDevice });
     const ana = npubEncode(bytesToHex(secp256k1.getPublicKey(new Uint8Array(32).fill(11), true).slice(1)));
     const own = npubEncode(bytesToHex(secp256k1.getPublicKey(new Uint8Array(32).fill(12), true).slice(1)));
     expect(() => p.svc.setOnboardingContacts([{ name: 'Nope', npub: 'npub1nothing' }])).toThrow(WalletServiceError);
