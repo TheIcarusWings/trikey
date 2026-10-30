@@ -40,6 +40,43 @@ export interface SimplePoolOptions {
   maxWaitMs?: number;
 }
 
+/**
+ * The platform's `WebSocket`, with a `close()` that runs once.
+ *
+ * nostr-tools' relay (2.25) calls `ws.close()` from inside its own `error` handler, before it detaches
+ * that handler. Node's built-in WebSocket dispatches `error` again, synchronously, when `close()` is
+ * called on a socket whose connection failed, so one unreachable relay recursed until the stack
+ * overflowed and the process died ("Maximum call stack size exceeded" in pool.js's `reject("connection
+ * failed")`). A second `close()` on the same socket is a no-op here, which ends the loop; nostr-tools then
+ * reports the relay as failed, as it should. Undefined where the platform has no `WebSocket`.
+ */
+export function onceCloseWebSocket(): typeof WebSocket | undefined {
+  const Base = globalThis.WebSocket;
+  if (!Base) return undefined;
+  if (onceClose?.base === Base) return onceClose.cls;
+  class OnceCloseWebSocket extends Base {
+    #closing = false;
+    override close(code?: number, reason?: string): void {
+      if (this.#closing) return;
+      this.#closing = true;
+      try {
+        super.close(code, reason);
+      } catch {
+        // Closing a socket that never opened can throw on some platforms; it is closed either way.
+      }
+    }
+  }
+  onceClose = { base: Base, cls: OnceCloseWebSocket };
+  return OnceCloseWebSocket;
+}
+let onceClose: { base: typeof WebSocket; cls: typeof WebSocket } | undefined;
+
+/** A nostr-tools `SimplePool` on `onceCloseWebSocket` (see there). Every pool in Trikey is made here. */
+export function createSimplePool(opts: { enableReconnect?: boolean; enablePing?: boolean } = {}): SimplePool {
+  const websocketImplementation = onceCloseWebSocket();
+  return new SimplePool({ ...opts, ...(websocketImplementation ? { websocketImplementation } : {}) });
+}
+
 /** A `RelayPool` backed by nostr-tools' `SimplePool`. */
 export class SimplePoolRelayPool implements RelayPool {
   private readonly pool: SimplePool;
@@ -47,7 +84,7 @@ export class SimplePoolRelayPool implements RelayPool {
   private closed = false;
 
   constructor(opts: SimplePoolOptions = {}) {
-    this.pool = opts.pool ?? new SimplePool({ enableReconnect: true });
+    this.pool = opts.pool ?? createSimplePool({ enableReconnect: true });
     this.maxWaitMs = opts.maxWaitMs ?? 5000;
   }
 

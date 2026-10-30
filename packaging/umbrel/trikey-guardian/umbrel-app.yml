@@ -6,7 +6,7 @@ tagline: Key 3 of your 2-of-3 bitcoin wallet, on your own node
 # TODO(verify): the icon is a placeholder (the web UI favicon). Replace with a proper icon URL.
 icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/guardian-web/public/favicon.svg
 category: bitcoin
-version: "0.1.2-alpha"
+version: "0.1.3-alpha"
 # TODO(verify): host-facing port for the app_proxy. Pick one that no other app in the store uses.
 port: 3010
 description: >-
@@ -26,8 +26,8 @@ support: https://github.com/TheIcarusWings/trikey/issues
 # TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
 gallery: []
 releaseNotes: >-
-  Fixes the guardian not starting ("Cannot find package 'zod'"): 0.1.0-alpha and 0.1.1-alpha left a
-  dependency out of the image. Also: clearer errors, randomness hardening.
+  Fixes the guardian stopping right after setup ("Maximum call stack size exceeded") when a nostr relay
+  could not be reached. The guardian web page also works with password managers.
 dependencies:
   - bitcoin
   - electrs

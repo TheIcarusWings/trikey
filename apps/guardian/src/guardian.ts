@@ -23,9 +23,9 @@
 import { join } from 'node:path';
 import type { Server } from 'node:http';
 import { hex } from '@scure/base';
-import { SimplePool } from 'nostr-tools/pool';
+import type { SimplePool } from 'nostr-tools/pool';
 import { normalizeURL } from 'nostr-tools/utils';
-import { RpcServer, SimplePoolRelayPool, normalizeRelayUrl, type Alert, type MethodName } from '@trikey/protocol';
+import { RpcServer, SimplePoolRelayPool, createSimplePool, normalizeRelayUrl, type Alert, type MethodName } from '@trikey/protocol';
 import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 import { ChainService } from './chain/chain.js';
 import { BitcoinRpc } from './chain/bitcoind.js';
@@ -434,7 +434,7 @@ export class Guardian {
       this.log.error('nostr.no_relays');
       return;
     }
-    this.simplePool = new SimplePool({ enableReconnect: true, enablePing: true });
+    this.simplePool = createSimplePool({ enableReconnect: true, enablePing: true });
     this.pool = new SimplePoolRelayPool({ pool: this.simplePool });
     this.rpc = new RpcServer({
       pool: this.pool,
