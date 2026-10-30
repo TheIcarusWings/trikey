@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Trikey: passkey test</title>
+<meta name="description" content="Checks whether your password manager's passkeys support the PRF extension, which a passkey needs to unlock a Trikey guardian. Nothing leaves this page.">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="passkey-test.css">
+<script src="js/passkey-test.js" defer></script>
+</head>
+<body>
+<main>
+  <h1>Passkey test</h1>
+  <p class="lead">Does your password manager's passkey support <strong>PRF</strong>? A Trikey guardian needs it for a passkey that
+    unlocks key 3 after a restart (the design: <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/design/passkey-unlock.md">passkey-unlock.md</a>).
+    Without it, a passkey could only sign you in.</p>
+
+  <ol class="steps">
+    <li>
+      <p><strong>Make a test passkey.</strong> Your browser or password manager (Proton Pass, 1Password, iCloud, Google…) asks where to
+        save it. Pick the one you want to test. It is named “Trikey passkey test” and is only for this page.</p>
+      <button id="create" type="button">Make a test passkey</button>
+    </li>
+    <li>
+      <p><strong>Use it.</strong> Sign in with the passkey you just made. This is where PRF either answers or not.</p>
+      <button id="use" type="button" disabled>Use the test passkey</button>
+    </li>
+  </ol>
+
+  <section id="result" hidden>
+    <h2 id="verdict"></h2>
+    <p id="explain"></p>
+    <table id="details"></table>
+    <button id="copy" type="button" class="secondary">Copy the results</button>
+  </section>
+
+  <p id="error" class="error" role="alert" hidden></p>
+
+  <p class="small">Nothing is sent anywhere: the page has no server, and the passkey's secret output is never shown, only whether it came
+    back and how long it is. Afterwards you can delete “Trikey passkey test” from your password manager. Run it once per device and
+    password manager you might use.</p>
+</main>
+</body>
+</html>
