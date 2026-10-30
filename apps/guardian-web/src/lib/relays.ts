@@ -54,6 +54,15 @@ export function relayListError(list: readonly string[]): string | undefined {
   return undefined;
 }
 
+/**
+ * How many old relays the guardian would watch after changing from `current` to `next`: the ones it watches already
+ * (`old`) and the ones removed now, minus any that come back. The guardian refuses a change over its limit
+ * (`maxRetiring`), so the editor says so before anything is sent.
+ */
+export function oldRelaysAfterChange(old: readonly string[], current: readonly string[], next: readonly string[]): number {
+  return new Set([...old, ...current].filter((url) => !next.includes(url))).size;
+}
+
 /** True when `a` and `b` hold the same relays, in any order. */
 export function sameRelayList(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((url) => b.includes(url));

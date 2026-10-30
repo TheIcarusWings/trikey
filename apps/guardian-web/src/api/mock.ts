@@ -28,6 +28,7 @@ import { relayListError } from '../lib/relays';
  *   unpaired   set up, but no phone paired yet
  *   syncing    unlocked while the node is still catching up, one relay down
  *   signedout  set up and locked, this browser not signed in yet (the sign-in screen)
+ *   oldrelays  two old relays from a change months ago, still watched; the phone switched
  *
  * State lives in memory only, so a page reload starts the scenario over. In the
  * mock, any unlock passphrase works except the literal `wrong`, which is
@@ -41,7 +42,8 @@ export type MockScenario =
   | 'recoveryready'
   | 'unpaired'
   | 'syncing'
-  | 'signedout';
+  | 'signedout'
+  | 'oldrelays';
 
 const LATENCY_MS = 120;
 const HOUR = 3_600_000;
@@ -128,7 +130,7 @@ function demoRecovery(ready = false): RecoveryInProgress {
 
 export function readScenario(search: string): MockScenario {
   const value = new URLSearchParams(search).get('mock');
-  const known: MockScenario[] = ['firstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout'];
+  const known: MockScenario[] = ['firstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout', 'oldrelays'];
   return known.find((s) => s === value) ?? 'default';
 }
 
@@ -149,6 +151,14 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
   let relayUrls = RELAYS.map((r) => r.url);
   let retiring: RetiringRelay[] = [];
   let relaysChange: RelaySettings['lastChange'];
+  if (scenario === 'oldrelays') {
+    const at = new Date(Date.now() - 120 * DAY).toISOString();
+    retiring = [
+      { url: 'wss://relay.old-example.net', connected: true, since: at },
+      { url: 'wss://nostr.gone-example.org', connected: false, since: new Date(Date.now() - 300 * DAY).toISOString() },
+    ];
+    relaysChange = { at, phoneConfirmedAt: new Date(Date.now() - 120 * DAY + HOUR).toISOString() };
+  }
   const syncing = scenario === 'syncing';
   let setupFinished = false;
   // `?mock=signedout`: the browser has no session yet (the sign-in screen first).
@@ -194,13 +204,13 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
   };
 
   const relaySettings = (): RelaySettings => {
-    retiring = retiring.filter((r) => Date.parse(r.until) > Date.now());
     return {
       relays: relayUrls.map(relayStatus),
       retiring: clone(retiring),
       options: clone(RELAYS),
       ...(relaysChange ? { lastChange: clone(relaysChange) } : {}),
       max: 8,
+      maxRetiring: 16,
     };
   };
 
@@ -329,8 +339,11 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       const next = [...input.relays];
       const removed = relayUrls.filter((u) => !next.includes(u));
       if (removed.length || next.some((u) => !relayUrls.includes(u))) {
-        const until = new Date(Date.now() + 30 * DAY).toISOString();
-        retiring = [...retiring.filter((r) => !next.includes(r.url) && !removed.includes(r.url)), ...removed.map((url) => ({ ...relayStatus(url), until }))];
+        const since = new Date().toISOString();
+        const kept = retiring.filter((r) => !next.includes(r.url) && !removed.includes(r.url));
+        if (kept.length + removed.length > 16)
+          throw new ApiError('retiring_full', `This change would leave ${kept.length + removed.length} old relays watched, and 16 is the most. Stop watching some old relays first.`, 409);
+        retiring = [...removed.map((url) => ({ ...relayStatus(url), since })), ...kept];
         relaysChange = { at: new Date().toISOString() };
         pushActivity({ kind: 'system', event: 'Relays changed on this box. The paired phone was told.', summary: 'Relays changed', signedBy: null, sats: null, result: 'ok' });
         // The phone confirms a moment later, as a real one would.
@@ -340,6 +353,25 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
           }, 4000);
       }
       relayUrls = next;
+      return relaySettings();
+    },
+
+    async stopWatchingRelays(url) {
+      await wait(300);
+      if (locked) throw new ApiError('locked', 'The guardian is locked. Unlock it first.', 409);
+      const dropped = url === undefined ? retiring : retiring.filter((r) => r.url === url);
+      if (url !== undefined && !dropped.length) throw new ApiError('not_found', 'That is not one of the old relays.', 404);
+      if (dropped.length) {
+        retiring = retiring.filter((r) => !dropped.includes(r));
+        pushActivity({
+          kind: 'system',
+          event: `Stopped watching ${dropped.length === 1 ? '1 old relay' : `${dropped.length} old relays`} at your request.`,
+          summary: 'Old relays dropped',
+          signedBy: null,
+          sats: null,
+          result: 'ok',
+        });
+      }
       return relaySettings();
     },
 

@@ -146,12 +146,16 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
 - **Relays:** several, with the user's own relay optional (Umbrel has a Nostr Relay app).
 - **Changing relays** (web UI, Settings; `PUT /api/relays`, PROTOCOL.md "Changing relays"). The phone, its backups
   and printed recovery sheets all carry the list from pairing, so a change must never cut any of them off. The guardian
-  listens *and publishes* on the new relays and on the removed ones at once, and keeps the removed ones for 30 days
-  (publishing only on the new ones would leave a phone that has not switched hearing nothing). It tells the paired
+  listens *and publishes* on the new relays and on the removed ones at once, and keeps watching the removed ones
+  until the owner stops them in Settings (publishing only on the new ones would leave a phone that has not switched
+  hearing nothing). There is no timer: printed recovery sheets carry the relay list and are kept for years, and an old
+  sheet must keep working. Stopping is explicit, asks first (what stops working: sheets and backups from before the
+  change, phones that have not switched) and is logged; at most 16 old relays are watched, and a change over that is
+  refused rather than silently dropping the oldest, which are the oldest sheets. It tells the paired
   phone (`relays_changed`, and `guardian.status.relays` for one that missed the alert); the phone takes a list only
   from its paired guardian, with the pairing code's rules, and moves only after the guardian answered its
   `relays.ack` over the new relays alone, so a list it cannot reach (a relay that is down, a typo) leaves it where it
-  works. The ack is recorded and shown, but does not end the 30 days: it proves the phone moved, not that the backups
+  works. The ack is recorded and shown, but does not end the watching: it proves the phone moved, not that the backups
   and sheets made before did. Pairing and recovery codes carry the new list at once; the web UI asks for a new
   recovery sheet. The change is logged as a security event: someone with the web UI could point the phone at relays
   they run, but relays only carry gift wraps, so the most that buys is dropping messages (availability), which a
@@ -224,7 +228,7 @@ printed and kept with the hardware wallet.
   - If the thief keeps the guardian powered, they can only reach the daily limit, and any recovery triggers the 7-day alerts.
   - Tell users to keep the hardware wallet's seed words outside the home.
 - **Remote compromise of the home server** gives up one key of three. That's the same exposure as Bitkey's server being breached.
-- **Malicious relays** can drop messages but can't read or forge them. A relay change from the web UI (a security event in the activity log) can at worst move the phone to relays that drop everything; the old relays stay watched for 30 days and the phone moves only to relays the guardian answered it over.
+- **Malicious relays** can drop messages but can't read or forge them. A relay change from the web UI (a security event in the activity log) can at worst move the phone to relays that drop everything; the old relays stay watched until the owner stops them and the phone moves only to relays the guardian answered it over.
 - **Contested recovery** (a thief cancels a genuine recovery): phone-only spending stays paused, so the thief can't drain either. Same as Bitkey.
 - **After a recovery the guardian trusts its outcome:** the phone that started it becomes the new wallet's paired phone. That is what the Delay & Notify period protects; a thief who gets that far already holds the new wallet's keys. The hardware wallet must re-prove its authorization key for the new wallet before it can loosen anything, and the old wallet's recovery access grants are revoked.
 - **Retired wallets are dead to the guardian:** no co-signing, no recovery, no re-pairing of the same key set, under any descriptor (another origin fingerprint, chaincode or role order is the same keys to key 3). The hardware authorization key must derive from the hardware account, so a phone thief cannot pair a retired (or any) key set with an authorization key of its own. Coins sent to a retired wallet's address later can only move with two of its own keys.

@@ -8,6 +8,16 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 
 ## Unreleased
 
+- **Guardian: old relays stay watched until you stop them.** After you change relays, the guardian no longer drops
+  the removed ones after 30 days: printed recovery sheets (which carry the relay list) are kept for years and an old
+  sheet must keep working. This replaces the 30 days of the change-relays entry below. Settings, Relays lists the old
+  relays (still watched since the change, and whether your phone confirmed it switched) with "Stop watching", for
+  one or all of them, after a confirmation that says what stops working: recovery sheets and phone backups made
+  before the change, and phones that have not switched yet. It is logged ("Old relays dropped"). At most 16 old
+  relays are watched: a change that would leave more is refused until you stop some, and nothing is dropped on its
+  own. An existing `service.json` loads as before (its end dates are ignored and the relays kept). New:
+  `DELETE /api/relays/retiring` and `/api/relays/retiring/:url`; `GET`/`PUT /api/relays` give each old relay `since`
+  instead of `until`, and `maxRetiring`; `PUT` can answer `409 retiring_full`.
 - **Guardian: change relays** in Settings, for when a relay disappears or you want your own. The guardian moves at
   once and keeps listening and publishing on the old relays for 30 days, so nothing that still knows only them (the
   phone, an older backup, a printed recovery sheet) is cut off meanwhile. The phone is told (`relays_changed`, and

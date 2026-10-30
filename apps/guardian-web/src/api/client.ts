@@ -32,6 +32,7 @@ export type ApiErrorCode =
   | 'forbidden'
   | 'not_found'
   | 'invalid'
+  | 'retiring_full'
   | 'recovery_pending'
   | 'sweep_pending'
   | 'network'
@@ -95,9 +96,15 @@ export interface GuardianApi {
   getRelays(): Promise<RelaySettings>;
   /**
    * Replaces the relay list (1 to 8). The guardian moves at once, tells the paired phone, and keeps watching the
-   * removed relays for 30 days. Rejects with `invalid` for a list it refuses.
+   * removed relays until the owner stops them (`stopWatchingRelays`). Rejects with `invalid` for a list it
+   * refuses and `retiring_full` when too many old relays are watched already.
    */
   setRelays(input: RelaysInput): Promise<RelaySettings>;
+  /**
+   * Stops watching the old relays: the one at `url`, or all of them. Recovery sheets, phone backups and phones that
+   * only know them stop reaching this guardian. Rejects with `not_found` for a relay that is not an old one.
+   */
+  stopWatchingRelays(url?: string): Promise<RelaySettings>;
 
   /**
    * Forgets every wallet and creates a new key 3 (the old one is destroyed). Needs the passphrase and

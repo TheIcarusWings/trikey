@@ -56,16 +56,44 @@ export type ServiceEvent =
   | { type: 'clock_skew'; systemTime: number; chainTime: number }
   | { type: 'recovery_access'; phone: string; until: number }
   /** `PUT /api/relays`: a security event (the relays decide whether the phone can reach the guardian). */
-  | { type: 'relays_changed'; from: string[]; to: string[]; retiringUntil: number }
+  | { type: 'relays_changed'; from: string[]; to: string[]; /** Logged before 0.1.5: the end of the old 30-day watch, no longer used. */ retiringUntil?: number }
   /** The paired phone confirmed it uses the new relays (`relays.ack`). */
   | { type: 'relays_confirmed'; relays: string[] }
-  /** The grace period of relays removed by a change ended: the guardian no longer watches them. */
-  | { type: 'relays_retired'; relays: string[] };
+  /**
+   * The guardian stopped watching old relays: the owner said so (`by: 'owner'`, web UI), or, in entries logged
+   * before old relays stayed watched indefinitely, their 30 days were over (`by` absent).
+   */
+  | { type: 'relays_retired'; relays: string[]; by?: 'owner' };
 
-/** A relay removed from `relays` that the guardian still watches (listens and publishes on) until `until` (ms). */
+/** A relay removed from `relays` that the guardian still watches (listens and publishes on) until the owner stops it. */
 export interface RetiringRelay {
   url: string;
-  until: number;
+  /** When the change that removed it happened (ms). */
+  since: number;
+}
+
+/** The 30 days an old relay was kept before old relays stayed watched until the owner stops them. */
+const LEGACY_RETIRING_MS = 30 * 24 * 3_600_000;
+
+/**
+ * Old relays as service.json from before relays stayed watched indefinitely stored them: `{ url, until }`, `until`
+ * being 30 days after the change. They are kept (an old recovery sheet must keep working, even when the guardian
+ * was off past `until`) and get `since = until - 30 days`; the end date is dropped. Anything else is ignored.
+ */
+export function normalizeRetiringRelays(raw: unknown, fallbackSince: number): RetiringRelay[] {
+  if (!Array.isArray(raw)) return [];
+  const out: RetiringRelay[] = [];
+  for (const r of raw as { url?: unknown; since?: unknown; until?: unknown }[]) {
+    if (!r || typeof r.url !== 'string' || out.some((o) => o.url === r.url)) continue;
+    const since =
+      typeof r.since === 'number' && Number.isFinite(r.since)
+        ? r.since
+        : typeof r.until === 'number' && Number.isFinite(r.until)
+          ? r.until - LEGACY_RETIRING_MS
+          : fallbackSince;
+    out.push({ url: r.url, since });
+  }
+  return out;
 }
 
 export type ServiceActivity = { id: number; at: number } & ServiceEvent;
@@ -75,9 +103,10 @@ export interface ServiceStateData {
   /** The relays in use: in the pairing and recovery codes, listened and published on. */
   relays: string[];
   /**
-   * Relays a change removed, still listened and published on until each one's `until`, so a phone, a phone
-   * restored from an older backup or a recovery from an older recovery code that only knows them still gets
-   * through (DESIGN.md, "Changing relays"). Absent in files from before relay changes.
+   * Relays a change removed, still listened and published on until the owner stops watching them, so a phone, a
+   * phone restored from an older backup or a recovery from an older recovery code or printed sheet that only knows
+   * them still gets through (DESIGN.md, "Changing relays"). Absent in files from before relay changes; files from
+   * before they stayed watched indefinitely hold `until` instead of `since` (`normalizeRetiringRelays`).
    */
   retiringRelays: RetiringRelay[];
   /** The last relay change (ms), and when the paired phone confirmed it (`relays.ack`). */
@@ -113,7 +142,7 @@ export class ServiceState {
     const raw = (await readJsonFile(this.path)) as ServiceStateData | undefined;
     if (raw === undefined) return;
     if (raw.version !== 1 || !Array.isArray(raw.relays) || !Array.isArray(raw.activity)) throw new Error('unsupported service state file');
-    this.data = { ...emptyServiceState(), ...raw };
+    this.data = { ...emptyServiceState(), ...raw, retiringRelays: normalizeRetiringRelays(raw.retiringRelays, raw.relaysChange?.at ?? raw.setupAt ?? 0) };
   }
 
   get(): Readonly<ServiceStateData> {

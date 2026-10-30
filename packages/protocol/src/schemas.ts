@@ -929,9 +929,9 @@ export const Alert = z.discriminatedUnion('type', [
     ...alertBase,
     /**
      * The guardian's relays changed (its web UI). `relays` is the new list; the guardian sends this over the old
-     * and the new relays and keeps watching the old ones for a grace period. The phone takes the list only from
+     * and the new relays and keeps watching the old ones until its owner stops them. The phone takes the list only from
      * its paired guardian, connects to it and confirms with `relays.ack`. Phones before this alert drop it as
-     * malformed (an unknown `type`), and keep working over the old relays during the grace period.
+     * malformed (an unknown `type`), and keep working over the old relays while they are watched.
      */
     type: z.literal('relays_changed'),
     relays: RelayList,
