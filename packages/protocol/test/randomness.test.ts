@@ -7,7 +7,7 @@ import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 import { RandomSourceError } from '@trikey/core/random';
 import { installRandomSource } from '@trikey/core/testing/random';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { WRAP_BACKDATE_SEC, generateMessageId, generatePairingSecret, unwrapMessage, wrapDirectMessage, wrapMessage } from '../src/index.js';
+import { DEFAULT_LIMITS, WRAP_BACKDATE_SEC, generateMessageId, generatePairingSecret, unwrapMessage, wrapDirectMessage, wrapMessage, wrapTimestamps } from '../src/index.js';
 
 const alice = generateSecretKey();
 const bob = generateSecretKey();
@@ -34,6 +34,84 @@ describe('randomness in the transport', () => {
       seen.add(wrap.created_at);
     }
     expect(seen.size).toBeGreaterThan(35);
+  });
+
+  describe('wrap expiration (L2)', () => {
+    const exp = (wrap: { tags: string[][] }) => Number(wrap.tags.find((t) => t[0] === 'expiration')![1]);
+    const status = () => ({ id: generateMessageId(), method: 'guardian.status' as const, params: {} });
+    const MAX = DEFAULT_LIMITS.request.maxTtlSec;
+
+    it('wrapTimestamps: always in the future, within the documented bounds, tied to created_at', () => {
+      for (let i = 0; i < 300; i++) {
+        const t = wrapTimestamps(NOW, MAX);
+        expect(t.expiration).toBeGreaterThan(NOW);
+        expect(t.expiration).toBeGreaterThanOrEqual(NOW + MAX);
+        expect(t.expiration).toBeLessThanOrEqual(NOW + MAX + WRAP_BACKDATE_SEC);
+        expect(t.createdAt).toBeLessThanOrEqual(NOW);
+        expect(t.createdAt).toBeGreaterThanOrEqual(NOW - WRAP_BACKDATE_SEC);
+        // Adds nothing to what created_at already shows.
+        expect(t.expiration - t.createdAt).toBe(WRAP_BACKDATE_SEC + MAX);
+      }
+      expect(() => wrapTimestamps(NOW, 0)).toThrow(RangeError);
+      // A fractional clock still gives a future expiration.
+      expect(wrapTimestamps(NOW + 0.4, 1).expiration).toBeGreaterThan(NOW + 0.4);
+    });
+
+    it('wrapTimestamps: many draws at one `now` spread across the whole window (not a function of the send time)', () => {
+      const seen = new Set<number>();
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let i = 0; i < 2000; i++) {
+        const e = wrapTimestamps(NOW, MAX).expiration - (NOW + MAX);
+        seen.add(e);
+        lo = Math.min(lo, e);
+        hi = Math.max(hi, e);
+      }
+      expect(seen.size).toBeGreaterThan(1900);
+      expect(lo).toBeLessThan(0.05 * WRAP_BACKDATE_SEC);
+      expect(hi).toBeGreaterThan(0.95 * WRAP_BACKDATE_SEC);
+    });
+
+    it('wrapMessage: the public tag is never `send time + ttl`, never in the past, never before the rumor expiry', () => {
+      const exps = new Set<number>();
+      for (let i = 0; i < 100; i++) {
+        const m = wrapMessage(status(), { senderSecretKey: alice, recipient: getPublicKey(bob), now: NOW });
+        const e = exp(m.wrap);
+        expect(e).toBeGreaterThanOrEqual(NOW + MAX);
+        expect(e).toBeLessThanOrEqual(NOW + MAX + WRAP_BACKDATE_SEC);
+        expect(e).toBeGreaterThanOrEqual(m.expiration); // rumor expiry is NOW + 300, inside
+        expect(m.expiration).toBe(NOW + 300);
+        // The wrap's expiry gives no more than its created_at: both come from one draw.
+        expect(e - m.wrap.created_at).toBe(WRAP_BACKDATE_SEC + MAX);
+        exps.add(e);
+      }
+      expect(exps.size).toBeGreaterThan(90);
+    });
+
+    it('wrapMessage: the receiver still accepts it, judging only the rumor expiry', () => {
+      const { wrap } = wrapMessage(status(), { senderSecretKey: alice, recipient: getPublicKey(bob), now: NOW });
+      const ok = unwrapMessage(wrap, { recipientSecretKey: bob, expectedPeer: getPublicKey(alice), now: NOW + 299 });
+      expect(ok.meta.expiration).toBe(NOW + 300);
+      // Past the rumor's expiry it is refused even though the wrap's public expiration is still ahead.
+      expect(() => unwrapMessage(wrap, { recipientSecretKey: bob, expectedPeer: getPublicKey(alice), now: NOW + 301 })).toThrow();
+    });
+
+    it('wrapMessage: alerts use the alert class ceiling, and a retry with an old createdAt stays valid', () => {
+      const alert = { id: generateMessageId(), method: 'alert' as const, params: { type: 'guardian_locked' as const, at: NOW } };
+      const a = wrapMessage(alert, { senderSecretKey: alice, recipient: getPublicKey(bob), now: NOW });
+      const ae = exp(a.wrap);
+      expect(ae).toBeGreaterThanOrEqual(NOW + DEFAULT_LIMITS.alert.maxTtlSec);
+      expect(ae).toBeLessThanOrEqual(NOW + DEFAULT_LIMITS.alert.maxTtlSec + WRAP_BACKDATE_SEC);
+      expect(ae).toBeGreaterThanOrEqual(a.expiration);
+      const retry = wrapMessage(status(), { senderSecretKey: alice, recipient: getPublicKey(bob), now: NOW, createdAt: NOW - 100 });
+      expect(exp(retry.wrap)).toBeGreaterThan(NOW);
+      expect(exp(retry.wrap)).toBeGreaterThanOrEqual(retry.expiration);
+    });
+
+    it('wrapDirectMessage adds no expiration tag at all', () => {
+      const w = wrapDirectMessage('hi', { senderSecretKey: alice, recipient: getPublicKey(bob), now: NOW });
+      expect(w.tags).toEqual([['p', getPublicKey(bob)]]);
+    });
   });
 
   it('refuses to wrap, or to make an id or a pairing secret, when the source is stuck', () => {
