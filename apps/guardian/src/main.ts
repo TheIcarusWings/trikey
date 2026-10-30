@@ -40,17 +40,19 @@ async function main(): Promise<void> {
   }
 
   let stopping = false;
-  const shutdown = (signal: string) => {
+  // `code` is the exit code after a clean stop: 0 when asked to stop (SIGTERM, SIGINT), 1 after a crash,
+  // so a supervisor that restarts on failure (Umbrel: `restart: on-failure`) brings the guardian back.
+  const shutdown = (signal: string, code = 0) => {
     if (stopping) return;
     stopping = true;
-    log.info('guardian.shutdown', { signal });
+    log.info('guardian.shutdown', { signal, exitCode: code });
     const force = setTimeout(() => {
       log.error('guardian.shutdown_timeout');
       process.exit(1);
     }, 10_000);
     force.unref();
     guardian.stop().then(
-      () => process.exit(0),
+      () => process.exit(code),
       (e: unknown) => {
         log.error('guardian.shutdown_failed', { error: errorText(e) });
         process.exit(1);
@@ -62,7 +64,7 @@ async function main(): Promise<void> {
   process.on('unhandledRejection', (e) => log.error('unhandled_rejection', { error: errorText(e) }));
   process.on('uncaughtException', (e) => {
     log.error('uncaught_exception', { error: errorText(e) });
-    shutdown('uncaughtException');
+    shutdown('uncaughtException', 1);
   });
 }
 
