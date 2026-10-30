@@ -38,6 +38,7 @@ import type {
   Transaction,
   WalletMode,
   WalletState,
+  WalletDetails,
 } from './types';
 
 /**
@@ -377,6 +378,18 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     // -- sending ------------------------------------------------------
     quoteSend: (request) => quoteSendMock(request),
     quoteSendMax: (request) => quoteSendMaxMock(request),
+    getWalletDetails(): WalletDetails | null {
+      if (!state.onboarded) return null;
+      return {
+        descriptor:
+          "wsh(sortedmulti(2,[c0ffee01/48h/1h/0h/2h]tpubDEMOphoneKEYxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/<0;1>/*,[" +
+          DEMO_FINGERPRINT +
+          "/48h/1h/0h/2h]tpubDEMOhardwareKEYxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/<0;1>/*,[9a3f02bd/48h/1h/0h/2h]tpubDEMOguardianKEYxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/<0;1>/*))#demo0000",
+        network: state.network ?? 'testnet',
+        fingerprints: { phone: 'c0ffee01', hardware: DEMO_FINGERPRINT, guardian: '9a3f02bd' },
+        walletId: 'demo-wallet',
+      };
+    },
     async receiveAddress(opts) {
       if (opts?.verifyOnDevice) await wait(deviceDelay);
       return { address: state.receiveAddress, verifiedOnDevice: !!opts?.verifyOnDevice };

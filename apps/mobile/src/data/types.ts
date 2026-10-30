@@ -26,6 +26,19 @@ export type AppMode = 'demo' | 'simulator' | 'real';
 /** Networks the app can use. `bitcoin` (mainnet) is not selectable while the project is pre-alpha. */
 export type NetworkName = 'bitcoin' | 'testnet' | 'signet' | 'regtest';
 export const SELECTABLE_NETWORKS: NetworkName[] = ['testnet', 'signet', 'regtest'];
+
+/**
+ * What another multisig wallet (Sparrow, Nunchuk…) needs to watch this wallet and, with any two of the three keys,
+ * recover it without Trikey. Private: it reveals every address, so the balance and history, but moves nothing.
+ */
+export interface WalletDetails {
+  /** `wsh(sortedmulti(2,…))` with key origins and `/<0;1>/*`, checksummed. */
+  descriptor: string;
+  network: NetworkName;
+  /** Master key fingerprints (8 hex characters) of the three keys. */
+  fingerprints: { phone: string; hardware: string; guardian: string };
+  walletId: string;
+}
 export type AmountUnit = 'sats' | 'btc';
 export type ThemePreference = 'system' | 'light' | 'dark';
 

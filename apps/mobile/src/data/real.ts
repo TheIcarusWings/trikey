@@ -51,6 +51,7 @@ import type { SilentPaymentActions } from './sp-actions';
 import { emptySilentPayments } from './sp-empty';
 import {
   SELECTABLE_NETWORKS,
+  type WalletDetails,
   type AmountUnit,
   type BackupOptions,
   type CloudProvider,
@@ -912,6 +913,19 @@ class Service implements RealWalletService {
   }
 
   /** The whole vault to `address`: the wallet's `quoteSendMax` (every coin, one output, no change). */
+  getWalletDetails(): WalletDetails | null {
+    const w = this.wallet;
+    const rec = w?.state.wallet;
+    if (!w || !rec) return null;
+    const keys = w.multisig().keys;
+    return {
+      descriptor: rec.descriptor,
+      network: this.network,
+      fingerprints: { phone: keys.app.fingerprint, hardware: keys.hardware.fingerprint, guardian: keys.cosigner.fingerprint },
+      walletId: rec.walletId,
+    };
+  }
+
   quoteSendMax(request: { address: string; speed: FeeSpeed }): QuoteOutcome {
     return this.quoted({ address: request.address, speed: request.speed, amountSats: 0 }, true);
   }

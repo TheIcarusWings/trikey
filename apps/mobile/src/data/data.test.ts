@@ -254,6 +254,12 @@ describe('activity of silent payments', () => {
 describe('the demo wallet\'s send max', () => {
   const fresh = () => createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0 });
 
+  it('gives demo wallet details with three fingerprints', () => {
+    const d = fresh().getWalletDetails()!;
+    expect(d.descriptor).toMatch(/^wsh\(sortedmulti\(2,/);
+    expect(Object.keys(d.fingerprints)).toEqual(['phone', 'hardware', 'guardian']);
+  });
+
   it('quotes the whole balance minus the fee at each speed, and sends it', async () => {
     const w = fresh();
     const balance = w.getState().balanceSats;

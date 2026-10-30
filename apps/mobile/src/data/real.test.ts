@@ -482,6 +482,25 @@ describe('the real wallet service: finishing a recovery, replacing the guardian,
     return p;
   }
 
+  it('wallet details: the descriptor and the three fingerprints, for recovering in another wallet', async () => {
+    const own4 = await GuardianRig.start();
+    const ownDevice = new SoftwareHardwareProvider(new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware2, network: 'regtest', kind: 'ledger' }));
+    const p = await phone({ clock: own4.clock, hardware: ownDevice });
+    expect(p.svc.getWalletDetails()).toBeNull();
+    await p.svc.connectHardware('simulated');
+    await p.svc.pairGuardian(own4.pairingUri());
+    await p.svc.setUpRules(100_000, 7);
+    const d = p.svc.getWalletDetails()!;
+    const keys = p.svc.wallet!.multisig().keys;
+    expect(d).toMatchObject({ network: 'regtest', walletId: p.svc.wallet!.state.wallet!.walletId });
+    expect(d.descriptor).toMatch(/^wsh\(sortedmulti\(2,/);
+    expect(d.descriptor).toMatch(/#[a-z0-9]{8}$/);
+    expect(d.fingerprints).toEqual({ phone: keys.app.fingerprint, hardware: keys.hardware.fingerprint, guardian: keys.cosigner.fingerprint });
+    for (const fp of Object.values(d.fingerprints)) expect(fp).toMatch(/^[0-9a-f]{8}$/);
+    await p.svc.close();
+    await own4.stop();
+  });
+
   it('onboarding contacts chosen before pairing go to the guardian with the first rules, with their names on the phone', async () => {
     // Its own guardian and its own device: the shared ones are paired and registered by the tests below.
     const own3 = await GuardianRig.start();

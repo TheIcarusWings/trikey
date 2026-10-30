@@ -846,6 +846,11 @@ class Service implements RkWalletService {
    * "Send max" from the spending balance needs a send-max transaction in the Recovery Key wallet (every coin, one output,
    * and the refills' own bookkeeping around a payment from the vault), which is not there yet.
    */
+  getWalletDetails(): null {
+    // Recovery Key mode's vault descriptor is on the printed kit; showing it here comes later.
+    return null;
+  }
+
   quoteSendMax(_request: { address: string; speed: FeeSpeed }): QuoteOutcome {
     return { ok: false, problem: 'other', message: "Send max isn't available yet in Recovery Key mode." };
   }

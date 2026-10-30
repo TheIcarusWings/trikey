@@ -1,4 +1,5 @@
 import type {
+  WalletDetails,
   BackupOptions,
   FeeSpeed,
   Contact,
@@ -99,6 +100,8 @@ export interface WalletService {
    * `other` where it is not available yet (Recovery Key mode).
    */
   quoteSendMax(request: { address: string; speed: FeeSpeed }): QuoteOutcome;
+  /** The wallet descriptor and key fingerprints, to recover in another wallet; `null` until the wallet is set up. */
+  getWalletDetails(): WalletDetails | null;
   /** Signs with whichever keys the quote's plan names, then broadcasts. */
   sendPayment(quote: SendQuote): Promise<Transaction>;
   /** The next unused address. With `verifyOnDevice` the hardware wallet shows it too and it must match. */
