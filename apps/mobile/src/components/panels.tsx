@@ -276,6 +276,30 @@ export function Pill({
   );
 }
 
+/** One short point before a step: an icon, a title and one line ("Works from anywhere: …"). */
+export function PointRow({ icon, title, children }: { icon: LucideIcon; title: string; children: ReactNode }) {
+  return (
+    <View className="flex-row items-start gap-3.5">
+      <View className={cn('bg-secondary size-10 items-center justify-center', pick('rounded-xl', 'rounded-full'))}>
+        <Icon as={icon} size={22} className="text-foreground" strokeWidth={1.8} />
+      </View>
+      <View className="flex-1 gap-0.5">
+        <Text className={cn('font-semibold', pick('text-base leading-[21px]', 'text-base font-medium leading-6'))}>{title}</Text>
+        <Text className={cn('text-muted-foreground', pick('text-sm leading-5', 'text-sm leading-5'))}>{children}</Text>
+      </View>
+    </View>
+  );
+}
+
+/** A quiet text link under a screen's buttons ("Skip for now", "Other ways to back up"). 44 pt tall. */
+export function QuietLink({ title, onPress, disabled }: { title: string; onPress: () => void; disabled?: boolean }) {
+  return (
+    <Pressable role="button" onPress={onPress} disabled={disabled} className="min-h-11 items-center justify-center self-center px-3 active:opacity-60">
+      <Text className={cn('text-muted-foreground font-medium underline', pick('text-[15px]', 'text-sm'))}>{title}</Text>
+    </Pressable>
+  );
+}
+
 /** Body copy under a title: 15/21 on iOS, 14/20 on Android, muted. */
 export function Body({ children, className }: { children: ReactNode; className?: string }) {
   return <Text className={cn('text-muted-foreground', pick('text-[15px] leading-[21px]', 'text-sm leading-5'), className)}>{children}</Text>;

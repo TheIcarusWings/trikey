@@ -5,7 +5,8 @@ import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { QuestionHeading } from '@/components/choice';
 import { Check } from '@/components/icons';
-import { Body } from '@/components/panels';
+import { Body, QuietLink } from '@/components/panels';
+import { Card } from '@/components/ui/card';
 import { Screen } from '@/components/screen';
 import { Segmented } from '@/components/segmented';
 import { Icon } from '@/components/ui/icon';
@@ -33,6 +34,8 @@ export default function SetLimit() {
   const [preset, setPreset] = useState<Preset>('200000');
   const [custom, setCustom] = useState('');
   const [days, setDays] = useState<RecoveryDelayDays>(7);
+  // The recommended rules are shown as they are; "Change" opens the two choices.
+  const [changing, setChanging] = useState(false);
   const { busy, run, message, error } = useAction();
 
   const limit = preset === 'custom' ? Number(custom.replace(/\D/g, '')) : Number(preset);
@@ -48,8 +51,8 @@ export default function SetLimit() {
 
   return (
     <Screen
-      title="Set your daily limit"
-      step={{ n: 3, total: 4 }}
+      title="Your protection"
+      step={{ n: 4, total: 5 }}
       backLabel="Back"
       beforeTitle={
         <View
@@ -79,44 +82,53 @@ export default function SetLimit() {
           )}
         </>
       }>
-      <Body>You can pay up to this much in 24 hours with just your phone. Anything more needs your hardware wallet.</Body>
-      <Text
-        accessibilityLabel={`Daily limit: ${formatSats(limit)} sats`}
-        className={cn('tabular-nums', pick('text-[40px] font-semibold leading-12 tracking-[-0.8px]', 'text-[40px] font-medium leading-12'))}>
-        {formatSats(limit)} <Text className="text-muted-foreground text-xl font-semibold">sats</Text>
-      </Text>
-      <Segmented
-        accessibilityLabel="Daily limit"
-        options={PRESETS}
-        value={preset}
-        onChange={setPreset}
-        android="outlined"
-        boldSelected
-      />
-      {preset === 'custom' ? (
-        <Input
-          accessibilityLabel="Custom daily limit in sats"
-          keyboardType="number-pad"
-          placeholder="Amount in sats"
-          value={custom ? formatSats(Number(custom.replace(/\D/g, ''))) : ''}
-          onChangeText={setCustom}
-          className="tabular-nums"
-        />
-      ) : null}
-      <QuestionHeading title="Recovery waiting period">
-        <Body>If you lose a device, the guardian waits this long and alerts you before helping anyone recover.</Body>
-      </QuestionHeading>
-      <Segmented
-        accessibilityLabel="Recovery waiting period"
-        options={DELAY_OPTIONS.map((d) => ({ value: d, label: `${d} days` }))}
-        value={days}
-        onChange={setDays}
-        android="outlined"
-        boldSelected
-      />
-      <Body className="text-[13px] leading-[18px]">
-        The guardian's pairing code lasts 5 minutes. If it runs out before you approve, scan a fresh one.
+      <Body>
+        Bigger payments, and any change to these rules, need your {hardware.brand}. If a device is lost, recovery waits and alerts you and your
+        contacts every day.
       </Body>
+      <Card className={cn('gap-3.5 p-4', !changing && 'border-foreground')}>
+        <View className="flex-row items-center justify-between">
+          <Text className="text-[17px] font-semibold leading-[22px]">{changing ? 'Your choice' : 'Recommended'}</Text>
+          {changing ? null : <Icon as={Check} size={20} strokeWidth={2.4} className="text-good" />}
+        </View>
+        <View className="gap-2.5">
+          <View className="flex-row justify-between gap-3" accessible accessibilityLabel={`Phone-only payments up to ${formatSats(limit)} sats a day`}>
+            <Text className="text-muted-foreground text-[15px] leading-5">Daily limit, phone only</Text>
+            <Text className="text-[15px] font-medium leading-5 tabular-nums">{formatSats(limit)} sats</Text>
+          </View>
+          <View className="flex-row justify-between gap-3" accessible accessibilityLabel={`Security waiting period ${days} days`}>
+            <Text className="text-muted-foreground text-[15px] leading-5">Security waiting period</Text>
+            <Text className="text-[15px] font-medium leading-5">{days} days</Text>
+          </View>
+        </View>
+      </Card>
+      {changing ? (
+        <>
+          <QuestionHeading title="Daily limit" />
+          <Segmented accessibilityLabel="Daily limit" options={PRESETS} value={preset} onChange={setPreset} android="outlined" boldSelected />
+          {preset === 'custom' ? (
+            <Input
+              accessibilityLabel="Custom daily limit in sats"
+              keyboardType="number-pad"
+              placeholder="Amount in sats"
+              value={custom ? formatSats(Number(custom.replace(/\D/g, ''))) : ''}
+              onChangeText={setCustom}
+              className="tabular-nums"
+            />
+          ) : null}
+          <QuestionHeading title="Security waiting period" />
+          <Segmented
+            accessibilityLabel="Security waiting period"
+            options={DELAY_OPTIONS.map((d) => ({ value: d, label: `${d} days` }))}
+            value={days}
+            onChange={setDays}
+            android="outlined"
+            boldSelected
+          />
+        </>
+      ) : (
+        <QuietLink title="Change" onPress={() => setChanging(true)} />
+      )}
     </Screen>
   );
 }

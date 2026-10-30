@@ -3,15 +3,14 @@ import { useRef, useState } from 'react';
 import { Linking, View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { Body, FieldLabel } from '@/components/panels';
+import { Body, FieldLabel, PointRow } from '@/components/panels';
+import { HouseWifi, LockKeyhole } from '@/components/icons';
 import { Screen } from '@/components/screen';
 import { ScanViewfinder } from '@/components/qr';
-import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Text } from '@/components/ui/text';
 import { useWallet, useWalletService } from '@/data';
 import { QrScanner } from '@/hardware/ui';
-import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 
 /** Where "How to install Trikey Guardian" points until the Umbrel and Start9 listings exist. */
@@ -66,7 +65,7 @@ export default function ScanGuardian() {
   return (
     <Screen
       title={replacing ? 'Scan new guardian' : 'Pair your guardian'}
-      step={replacing ? undefined : { n: 2, total: 4 }}
+      step={replacing ? undefined : { n: 3, total: 5 }}
       backLabel="Back"
       footer={
         replacing ? null : (
@@ -106,12 +105,14 @@ export default function ScanGuardian() {
           <AppButton title="Pair with this code" variant="outline" busy={busy} disabled={pasted.trim().length === 0} onPress={() => void submit(pasted.trim())} />
         </View>
       )}
-      <Card className="px-4 py-3.5">
-        <Text className={pick('text-[15px] leading-[21px]', 'text-sm leading-5')}>
-          The phone and the guardian talk through encrypted nostr relays. They don't need to be on the same Wi-Fi, and nothing at home is
-          opened to the internet.
-        </Text>
-      </Card>
+      <View className="gap-4">
+        <PointRow icon={HouseWifi} title="Works from anywhere">
+          Your phone reaches the guardian without being on your home Wi-Fi.
+        </PointRow>
+        <PointRow icon={LockKeyhole} title="Nothing opened at home">
+          No ports, no accounts. Messages are end-to-end encrypted.
+        </PointRow>
+      </View>
     </Screen>
   );
 }
