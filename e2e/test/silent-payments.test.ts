@@ -126,7 +126,9 @@ describeE2e('silent payments on a real chain', () => {
   });
 
   it('the wallet takes the guardian\'s matches, checks each against its spend key, and sweeps them into the vault through the guardian', async () => {
-    const found = (await A.scanSilentPayments()).found;
+    // The wallet scans on its own when sp_received arrives, so check what it holds, not only this scan's new finds.
+    await A.scanSilentPayments();
+    const found = A.state.silentPayments!.coins;
     expect(found.map((c) => c.txid).sort()).toEqual(payments.map((p) => p.txid).sort());
     expect(found.find((c) => c.txid === payments[1]!.txid)!.label).toBe(1);
     const before = (await A.sync()).balance.totalSats;
