@@ -43,7 +43,7 @@ const caps = captions([
   { a: 6.6, b: 9.8, main: 'All of them yours.' },
   { a: 9.8, b: 13.2, main: 'Any two move your money.' },
   { a: 13.2, b: 16.8, main: 'Lose one? <br>You still have the other two.' },
-  { a: 16.8, b: 20.0, main: 'Feels like Bitkey. <br>Nobody in the middle.' },
+  { a: 16.8, b: 20.0, main: 'Easy to use. <br>Nobody in the middle.' },
 ]);
 
 // The logo, scaled up: same proportions as the 88×80 mark (side 56, dot r 12, stroke 6).
@@ -105,7 +105,7 @@ window.update = t => {
     edges.forEach(e => (e.style.opacity = 1));
   }
 
-  // Feels like Bitkey: the full logo returns and breathes.
+  // Easy to use: the full logo returns and breathes.
   const s = t >= 16.8 ? 1 + 0.03 * Math.sin((t - 16.8) * 1.8) : 1;
   $('.art').style.transform = `scale(${s})`;
 
