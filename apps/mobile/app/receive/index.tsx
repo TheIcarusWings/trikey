@@ -3,14 +3,14 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, Share, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
-import { Check, Copy } from '@/components/icons';
+import { Check, Copy, Share2 } from '@/components/icons';
 import { Card } from '@/components/ui/card';
 import { AddressQr } from '@/components/qr';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import { groupAddress, useWallet, useWalletService } from '@/data';
-import { NetworkPill, Notice, networkLabel } from '@/components/panels';
-import { ReceiveKind, SilentReceiveScreen } from '@/components/silent-receive';
+import { ListGroup, NetworkPill, Notice, SettingsRow, networkLabel } from '@/components/panels';
+import { SilentReceiveScreen } from '@/components/silent-receive';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -56,8 +56,13 @@ export default function Receive() {
 
   // iOS: filled buttons. Android: outlined, accent-colored labels.
   const variant = pick('secondary', 'outline') as 'secondary' | 'outline';
-  const kindControl = toVault ? null : <ReceiveKind value={kind} onChange={setKind} />;
-  if (kind === 'silent' && !toVault) return <SilentReceiveScreen kindControl={kindControl} />;
+  // The reusable (silent payment) address is one quiet link away, not a second tab.
+  const switchKind = (to: 'address' | 'silent', title: string) => (
+    <Pressable role="button" onPress={() => setKind(to)} className="min-h-11 items-center justify-center self-center px-3 active:opacity-60">
+      <Text className={cn('text-muted-foreground font-medium underline', pick('text-[15px]', 'text-sm'))}>{title}</Text>
+    </Pressable>
+  );
+  if (kind === 'silent' && !toVault) return <SilentReceiveScreen kindControl={switchKind('address', 'Use a regular address')} />;
 
   return (
     <Screen
@@ -74,20 +79,8 @@ export default function Receive() {
               <Text className={cn('text-primary', pick('text-[15px] font-semibold leading-[21px]', 'text-sm font-medium leading-5'))}>Add to vault</Text>
             </Pressable>
           </Card>
-        ) : (
-        <Card className="gap-2 px-4 py-3.5">
-          <Text className={pick('text-[15px] leading-[21px]', 'text-sm leading-5')}>
-            For larger amounts, check that your {hardware.brand} shows the same address.
-          </Text>
-          <Pressable role="link" onPress={() => router.push(toVault ? { pathname: '/receive/verify', params: { to: 'vault' } } : '/receive/verify')} hitSlop={{ top: 8, bottom: 8 }} accessibilityLabel={`Verify on ${hardware.brand}`}>
-            <Text className={cn('text-primary', pick('text-[15px] font-semibold leading-[21px]', 'text-sm font-medium leading-5'))}>
-              Verify on {hardware.brand}
-            </Text>
-          </Pressable>
-        </Card>
-        )
+        ) : undefined
       }>
-      {kindControl}
       {receiveAddress ? (
         <View className="mt-1 items-center gap-4">
           <AddressQr address={receiveAddress} />
@@ -117,8 +110,18 @@ export default function Receive() {
           disabled={!receiveAddress}
           accessibilityLabel={copied ? 'Address copied' : 'Copy address'}
         />
-        <AppButton title="Share" variant={variant} className="flex-1 self-auto" onPress={share} disabled={!receiveAddress} accessibilityLabel="Share address" />
+        <AppButton title="Share" icon={Share2} variant={variant} className="flex-1 self-auto" onPress={share} disabled={!receiveAddress} accessibilityLabel="Share address" />
       </View>
+      {rkMode && !toVault ? null : (
+        <ListGroup>
+          <SettingsRow
+            title={`Check on your ${hardware.brand}`}
+            subtitle="Do this before receiving a large amount"
+            onPress={() => router.push(toVault ? { pathname: '/receive/verify', params: { to: 'vault' } } : '/receive/verify')}
+          />
+        </ListGroup>
+      )}
+      {toVault ? null : switchKind('silent', 'Use a reusable address instead')}
     </Screen>
   );
 }
