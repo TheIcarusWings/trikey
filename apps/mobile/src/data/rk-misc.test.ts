@@ -133,6 +133,7 @@ function member(state: Partial<WalletState>) {
     setUnit: (u: string) => void calls.push(`unit:${u}`),
     setTheme: (t: string) => void calls.push(`theme:${t}`),
     sync: async () => void calls.push('sync'),
+    quoteSendMax: (r: { address: string }) => (calls.push(`max:${r.address}`), { ok: false, problem: 'other', message: `from the ${state.mode} wallet` }),
     close: async () => void calls.push('close'),
     rk: state.mode === 'recoveryKey' ? { vaultAddress: () => 'bcrt1qvault' } : undefined,
     set(patch: Partial<WalletState>) {
@@ -177,9 +178,15 @@ describe('routing between a guardian wallet and a Recovery Key wallet', () => {
     expect(recoveryKey.calls).toContain('sync');
     expect(guardian.calls).not.toContain('sync');
 
+    // "Send max" goes to the kind in use, like any quote.
+    expect(routed.quoteSendMax({ address: 'bcrt1qwhere', speed: 'normal' })).toMatchObject({ message: 'from the recoveryKey wallet' });
+    expect(recoveryKey.calls).toContain('max:bcrt1qwhere');
+    expect(guardian.calls).not.toContain('max:bcrt1qwhere');
+
     // Back out to the guardian path.
     routed.setMode('guardian');
     expect(routed.getState().mode).toBe('guardian');
+    expect(routed.quoteSendMax({ address: 'bcrt1qthere', speed: 'fast' })).toMatchObject({ message: 'from the guardian wallet' });
 
     // Preferences and the network go to both: either may be the one in use after a restart.
     routed.setUnit('btc');

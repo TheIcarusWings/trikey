@@ -1,7 +1,7 @@
 import { parseScannedCode } from '@trikey/wallet/scan';
 import { NODE_RPC_TEXT, WalletServiceError } from './errors';
 import { SIMULATED_OPTION, hardwareOptionTable, type UiOs } from './hardware-options';
-import { buildRefillSchedule, limitChangeNeedsHardware, quoteSend as quoteSendRule } from './rules';
+import { buildRefillSchedule, limitChangeNeedsHardware, quoteSend as quoteSendRule, quoteSendMax as quoteSendMaxRule } from './rules';
 import { emptyRecoveryKeyState } from './rk-empty';
 import { DEMO_FINGERPRINT, createMockRecoveryKey } from './rk-mock';
 import { looksLikeSilentPaymentAddress } from './sp-empty';
@@ -15,6 +15,7 @@ import type {
   Contact,
   Guardian,
   GuardianStatus,
+  FeeSpeed,
   FoundBackup,
   QuoteOutcome,
   SendRequest,
@@ -280,8 +281,16 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
 
   /** A payment's quote. To a silent payment address the helper coin pays its share of the fee, and the vault cannot make one. */
   function quoteSendMock(request: SendRequest): QuoteOutcome {
-    const base = quoteSendRule(state, request);
-    if (!looksLikeSilentPaymentAddress(request.address) || !base.ok) return base;
+    return withSilentPayment(request.address, quoteSendRule(state, request));
+  }
+
+  /** "Send max" to the same places: the helper coin's share comes on top of the vault's fee, and what leaves the vault stays the whole balance. */
+  function quoteSendMaxMock(request: { address: string; speed: FeeSpeed }): QuoteOutcome {
+    return withSilentPayment(request.address, quoteSendMaxRule(state, request));
+  }
+
+  function withSilentPayment(address: string, base: QuoteOutcome): QuoteOutcome {
+    if (!looksLikeSilentPaymentAddress(address) || !base.ok) return base;
     const q = base.quote;
     if (state.mode === 'recoveryKey') {
       if (q.plan.signer === 'hardware')
@@ -367,6 +376,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
 
     // -- sending ------------------------------------------------------
     quoteSend: (request) => quoteSendMock(request),
+    quoteSendMax: (request) => quoteSendMaxMock(request),
     async receiveAddress(opts) {
       if (opts?.verifyOnDevice) await wait(deviceDelay);
       return { address: state.receiveAddress, verifiedOnDevice: !!opts?.verifyOnDevice };
@@ -627,6 +637,20 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
           dailyLimit: { ...s.dailyLimit, usedSats: 0, cosignedCount: 0 },
         }));
         addSecurityEvent({ id: nextId('ev'), kind: 'recovery-finished', movedSats: r.movingSats - 1_200, at: NOW.toISOString() });
+      },
+      simulateRecoveryCoin() {
+        update((s) => {
+          const r = s.recovery;
+          if (!r || r.origin !== 'this-phone') return {};
+          const coins = (r.sweepUpdate?.status === 'added' ? r.sweepUpdate.coins : 0) + 1;
+          return {
+            recovery: {
+              ...r,
+              movingSats: r.movingSats + 4_200,
+              sweepUpdate: { status: 'added', coins, text: `${coins} new coin${coins === 1 ? ' was' : 's were'} added to your recovery` },
+            },
+          };
+        });
       },
       simulateRecoveryFromElsewhere() {
         update((s) => ({

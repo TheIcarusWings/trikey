@@ -71,6 +71,20 @@ export function quoteSend(state: WalletState, request: SendRequest): QuoteOutcom
   return { ok: true, quote };
 }
 
+/** The smallest payment, as in the wallet (the P2PKH dust limit). */
+export const MIN_PAYMENT_SATS = 546;
+
+/** Demo "Send max": the whole guardian-mode balance minus the demo fee. Recovery Key mode has none yet, like the real wallet. */
+export function quoteSendMax(state: WalletState, request: { address: string; speed: FeeSpeed }): QuoteOutcome {
+  if (state.mode === 'recoveryKey') return { ok: false, problem: 'other', message: "Send max isn't available yet in Recovery Key mode." };
+  if (state.balanceSats <= 0) return { ok: false, problem: 'insufficient_funds', message: 'There is nothing to send.' };
+  const amountSats = state.balanceSats - FEE_SATS[request.speed];
+  if (amountSats < MIN_PAYMENT_SATS)
+    return { ok: false, problem: 'amount_too_small', message: `After the network fee, what is left is less than the smallest payment (${MIN_PAYMENT_SATS} sats).` };
+  const q = quoteSend(state, { address: request.address, speed: request.speed, amountSats });
+  return q.ok ? { ok: true, quote: { ...q.quote, max: true } } : q;
+}
+
 export function limitChangeNeedsHardware(current: Sats, next: Sats): boolean {
   return next > current;
 }

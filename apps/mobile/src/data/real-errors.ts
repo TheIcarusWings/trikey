@@ -163,6 +163,12 @@ export function mapError(e: unknown): WalletServiceError {
         return make('invalid_input', e.message);
       case 'insufficient_funds':
         return make('insufficient_funds', "There isn't enough bitcoin for that and the network fee.");
+      case 'nothing_to_send':
+        return make('insufficient_funds', 'There is nothing to send.');
+      case 'send_max_too_small':
+        return make('invalid_input', e.message);
+      case 'recovery_update_refused':
+        return make('refused', e.message);
       case 'silent_payment_needs_helper':
         return make('silent_payment_needs_helper', e.message);
       case 'silent_payments_unavailable':

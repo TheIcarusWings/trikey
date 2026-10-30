@@ -29,6 +29,7 @@ import {
   type HardwareProvider,
   type KeyValueStore,
   type PasskeyPrf,
+  type RecoveryRecord,
   type SecureKeyStore,
   type ReplacePlan,
   type ReplaceStep,
@@ -54,6 +55,7 @@ import {
   type BackupOptions,
   type CloudProvider,
   type Contact,
+  type FeeSpeed,
   type FoundBackup,
   type Guardian,
   type GuardianAddress,
@@ -69,6 +71,7 @@ import {
   type RecoveryDelayDays,
   type RecoveryInProgress,
   type RecoveryKeyKind,
+  type RecoverySweepUpdate,
   type ReplaceGuardianPlan,
   type ReplaceGuardianResult,
   type RestoreUnlock,
@@ -162,7 +165,10 @@ function describeProblem(e: WalletError): { problem: QuoteProblem; message: stri
     case 'amount_too_small':
       return { problem: 'amount_too_small', message };
     case 'insufficient_funds':
+    case 'nothing_to_send':
       return { problem: 'insufficient_funds', message };
+    case 'send_max_too_small':
+      return { problem: 'amount_too_small', message };
     case 'no_chain_data':
       return { problem: 'not_synced', message };
     case 'no_fee_estimate':
@@ -172,6 +178,29 @@ function describeProblem(e: WalletError): { problem: QuoteProblem; message: stri
     default:
       return { problem: 'other', message };
   }
+}
+
+const newCoins = (n: number) => `${n} new coin${n === 1 ? '' : 's'}`;
+
+/**
+ * Coins that arrived in the old wallet while a recovery waits, as the waiting screen's line: being added, added, or
+ * refused (and why). The wallet adds them by itself (`recovery.update`); a recovery cannot finish with a coin left out.
+ */
+function sweepUpdateView(u: RecoveryRecord['sweepUpdate']): RecoverySweepUpdate | undefined {
+  if (!u) return undefined;
+  const n = u.pendingCoins;
+  if (n > 0 && u.refused) {
+    const why =
+      u.refused.code === 'key_unavailable'
+        ? "Your phone key couldn't be unlocked to approve it. Refresh to try again."
+        : u.refused.code.startsWith('hardware_')
+          ? "Your hardware wallet didn't approve it. Connect it and refresh to try again."
+          : u.refused.message;
+    return { status: 'refused', coins: n, text: `${newCoins(n)} arrived but could not be added to your recovery. ${why} Your recovery can't finish until ${n === 1 ? 'it is' : 'they are'} added.` };
+  }
+  if (n > 0) return { status: 'waiting', coins: n, text: `${newCoins(n)} arrived. Adding ${n === 1 ? 'it' : 'them'} to your recovery…` };
+  if (u.lastAdded) return { status: 'added', coins: u.lastAdded.coins, text: `${newCoins(u.lastAdded.coins)} ${u.lastAdded.coins === 1 ? 'was' : 'were'} added to your recovery` };
+  return undefined;
 }
 
 /** What each step of "Replace guardian" looks like on the progress line. */
@@ -452,6 +481,7 @@ class Service implements RealWalletService {
     // Completed: the guardian co-signed the move. Finished: it took the new wallet over and this phone switched to it.
     if (r.state === 'completed') return { recovery: null, outcome: rec.destination && this.w?.state.wallet?.walletId === rec.destination.walletId ? 'finished' : 'completed' };
     const initiator = rec.role === 'initiator';
+    const sweepUpdate = initiator ? sweepUpdateView(rec.sweepUpdate) : undefined;
     const names = (this.w?.alertContacts() ?? []).map((c) => c.name ?? c.npub.slice(0, 12));
     return {
       outcome: null,
@@ -465,6 +495,7 @@ class Service implements RealWalletService {
         acknowledged: initiator || this.log.acknowledged.includes(r.recoveryId),
         movingSats: r.amountSats,
         state: r.state,
+        ...(sweepUpdate ? { sweepUpdate } : {}),
       },
     };
   }
@@ -877,15 +908,27 @@ class Service implements RealWalletService {
   private lastQuote?: { key: string; outcome: QuoteOutcome };
 
   quoteSend(request: SendRequest): QuoteOutcome {
+    return this.quoted(request, false);
+  }
+
+  /** The whole vault to `address`: the wallet's `quoteSendMax` (every coin, one output, no change). */
+  quoteSendMax(request: { address: string; speed: FeeSpeed }): QuoteOutcome {
+    return this.quoted({ address: request.address, speed: request.speed, amountSats: 0 }, true);
+  }
+
+  private quoted(request: SendRequest, max: boolean): QuoteOutcome {
     const w = this.w;
     if (!w || w.stage !== 'paired') return { ok: false, problem: 'not_ready', message: 'The wallet is not set up yet.' };
     const st = w.state;
     const key = JSON.stringify([
+      max,
       request.address,
       request.amountSats,
       request.speed,
       request.signer ?? 'auto',
       st.chain?.syncedAt,
+      // the coins themselves: a send max is made of all of them, and a clock that does not move would hide a sync
+      st.chain?.utxos.map((u) => `${u.txid}:${u.vout}`).join(','),
       st.guardianStatus?.checkedAt,
       st.guardianStatus?.state,
       st.guardianStatus?.phoneSpending,
@@ -898,30 +941,28 @@ class Service implements RealWalletService {
       Math.floor(this.clock.now() / 60_000), // the daily limit window moves
     ]);
     if (this.lastQuote?.key === key) return this.lastQuote.outcome;
-    const outcome = this.makeQuote(w, request);
+    const outcome = this.makeQuote(w, request, max);
     this.lastQuote = { key, outcome };
     return outcome;
   }
 
-  private makeQuote(w: TrikeyWallet, request: SendRequest): QuoteOutcome {
+  private makeQuote(w: TrikeyWallet, request: SendRequest, max: boolean): QuoteOutcome {
     try {
-      const q = w.quoteSend({
-        address: request.address,
-        amountSats: request.amountSats,
-        speed: request.speed,
-        ...(request.signer === 'hardware' ? { signer: 'hardware' as const } : {}),
-      });
+      const asked = { address: request.address, speed: request.speed, ...(request.signer === 'hardware' ? { signer: 'hardware' as const } : {}) };
+      const q = max ? w.quoteSendMax(asked) : w.quoteSend({ ...asked, amountSats: request.amountSats });
       const ref = `q${++this.quoteCounter}`;
       this.quotes.set(ref, q);
       if (this.quotes.size > 20) this.quotes.delete(this.quotes.keys().next().value!);
       const quote: SendQuote = {
-        request: { ...request },
+        // A send max asks for no amount: the wallet's is what the quote is for.
+        request: { ...request, amountSats: q.request.amountSats },
         feeSats: q.feeSats,
         totalSats: q.totalSats,
         plan: q.plan.signer === 'phone+guardian' ? { signer: 'phone+guardian' } : { signer: 'hardware', reason: q.plan.reason },
         remainingAfterSats: q.remainingAfterSats,
         feeRateSatPerVb: q.feeRate,
         ref,
+        ...(q.sendMax ? { max: true as const } : {}),
         ...(q.silentPayment ? { silentPayment: { outputAddress: q.silentPayment.outputAddress, helperFeeSats: q.silentPayment.helper.feeSats } } : {}),
       };
       return { ok: true, quote };
@@ -937,6 +978,8 @@ class Service implements RealWalletService {
         const w = this.requireWallet();
         const real = quote.ref ? this.quotes.get(quote.ref) : undefined;
         if (quote.plan.signer === 'phone') throw notAvailableYet('Paying from a spending balance', 'It belongs to Recovery Key mode.');
+        // A send max is only that for the coins it was made from: with no wallet quote behind it, quoting again is the way.
+        if (quote.max && !real) throw new WalletServiceError('quote_stale', 'Your coins changed since the payment was prepared. Go back and review it again.');
         // What the person saw (the keys it names) is what happens, even if the wallet would plan it differently now.
         const plan: WalletQuote['plan'] = quote.plan.signer === 'phone+guardian' ? { signer: 'phone+guardian' } : { signer: 'phone+hardware', reason: quote.plan.reason as never };
         const input: WalletQuote | { address: string; amountSats: number; speed: SendRequest['speed']; signer?: 'hardware' } = real
