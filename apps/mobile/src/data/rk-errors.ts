@@ -8,6 +8,9 @@ import { WalletServiceError } from './errors';
 import { mapError } from './real-errors';
 import { networkLabel } from './format';
 
+/** Why Recovery Key mode says no to mainnet, in the words the screens show. */
+export const RK_MAINNET_REFUSED = "Mainnet isn't available in Recovery Key mode: it works on test networks only.";
+
 export function mapRkError(e: unknown): WalletServiceError {
   if (e instanceof WalletServiceError) return e;
   if (e instanceof RecoveryKeyError) {
@@ -17,7 +20,7 @@ export function mapRkError(e: unknown): WalletServiceError {
     const make = (kind: WalletServiceError['kind'], message = e.message) => new WalletServiceError(kind, message, { cause: e });
     switch (e.code) {
       case 'mainnet_refused':
-        return make('invalid_input', "Mainnet isn't available yet: Recovery Key mode works on test networks only.");
+        return make('invalid_input', RK_MAINNET_REFUSED);
       case 'network_mismatch':
         return make('network_mismatch');
       case 'wallet_exists':

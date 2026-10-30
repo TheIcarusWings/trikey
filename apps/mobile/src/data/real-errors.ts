@@ -80,6 +80,12 @@ export function refusalToError(r: GuardianRefusal): WalletServiceError {
     case 'pairing_rejected':
       return new WalletServiceError('pairing_expired', 'The guardian turned the pairing code down. Open a fresh one on the guardian and scan it again.');
     case 'invalid_params':
+      // A guardian on mainnet will not pair (or drop the last contact) without someone else to hear about a recovery.
+      if (/alert contact/i.test(r.message))
+        return new WalletServiceError(
+          'refused',
+          'On mainnet your guardian needs at least one alert contact, so a recovery is never announced only to this phone. Add one (your own nostr app on another device works) and try again.',
+        );
       return new WalletServiceError('invalid_input', "The guardian didn't understand that request.");
     case 'unlock_failed':
       return new WalletServiceError('unlock_failed', `That passphrase didn't work.${wait(r.retryAfterSeconds)}`, opts(false, r.retryAfterSeconds));

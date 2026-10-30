@@ -23,9 +23,16 @@ export type WalletMode = 'guardian' | 'recoveryKey';
  */
 export type AppMode = 'demo' | 'simulator' | 'real';
 
-/** Networks the app can use. `bitcoin` (mainnet) is not selectable while the project is pre-alpha. */
+/** Networks the app knows. Which ones a wallet may use depends on its kind: see the two lists below. */
 export type NetworkName = 'bitcoin' | 'testnet' | 'signet' | 'regtest';
-export const SELECTABLE_NETWORKS: NetworkName[] = ['testnet', 'signet', 'regtest'];
+/**
+ * Networks a guardian wallet may be made on. Mainnet is offered while the project is pre-alpha, at the person's own risk:
+ * the onboarding shows a warning they have to accept first. Testnet stays the default, and a phone never lands on
+ * mainnet by itself: only an existing mainnet wallet, or the person picking it, puts it there.
+ */
+export const GUARDIAN_NETWORKS: NetworkName[] = ['bitcoin', 'testnet', 'signet', 'regtest'];
+/** Networks a Recovery Key wallet may be made on: test networks only while the project is pre-alpha. */
+export const RK_NETWORKS: NetworkName[] = ['testnet', 'signet', 'regtest'];
 
 /**
  * What another multisig wallet (Sparrow, Nunchuk…) needs to watch this wallet and, with any two of the three keys,
@@ -642,6 +649,11 @@ export interface WalletState {
   backing: AppMode;
   /** The network of the wallet (or the one picked for the next one). Null in the demo. */
   network: NetworkName | null;
+  /**
+   * The person read the mainnet warning and accepted it (`acceptMainnetRisk`). Kept by the service until the network
+   * changes. A guardian wallet is made, recovered or restored on mainnet only after this.
+   */
+  mainnetRiskAccepted: boolean;
   capabilities: WalletCapabilities;
   /** A long step that is running, in words ("Creating your phone key"). */
   progress: string | null;

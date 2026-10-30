@@ -64,8 +64,16 @@ export interface WalletService {
   sync(): Promise<void>;
 
   // -- onboarding ------------------------------------------------------
-  /** Picks the network of the wallet to be created. Only before the wallet exists. */
+  /**
+   * Picks the network of the wallet to be created. Only before the wallet exists. Mainnet only in guardian mode; another
+   * network than before clears `mainnetRiskAccepted`.
+   */
   setNetwork(network: NetworkName): void;
+  /**
+   * The person ticked (or unticked) "I understand" under the mainnet warning. Until it is ticked, the guardian mode makes
+   * no wallet on mainnet: `connectHardware`, a recovery and a restore fail with kind `wrong_state`.
+   */
+  acceptMainnetRisk(accepted: boolean): void;
   /** The hardware wallets this phone can talk to. */
   getHardwareOptions(): Promise<HardwareOption[]>;
   connectHardware(kind: HardwareKind): Promise<HardwareWallet>;

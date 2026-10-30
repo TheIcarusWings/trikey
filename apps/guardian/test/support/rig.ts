@@ -3,8 +3,9 @@
  * packages (`@trikey/guardian/testing`): a temp data directory, in-memory nostr
  * relays (`DevRelay`), a fake Electrs over TCP, optionally a fake Bitcoin Core
  * RPC (`bitcoind: true`, for the silent payment scanner) and a hand-moved
- * clock. Regtest only. Key 3 is generated fresh for every rig; nothing here is
- * a real secret.
+ * clock. Regtest unless `network` says otherwise; on any network the chain is
+ * the fake one, so nothing reaches a real network. Key 3 is generated fresh for
+ * every rig; nothing here is a real secret.
  */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -15,6 +16,7 @@ import { randomBytes } from '@noble/hashes/utils.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { encodePairingUri } from '@trikey/protocol';
 import { DevRelay } from '@trikey/protocol/dev/relay';
+import type { NetworkName } from '@trikey/core';
 import type { GuardianConfig } from '../../src/config.js';
 import { Guardian } from '../../src/guardian.js';
 import type { RateLimitOptions } from '../../src/rate-limit.js';
@@ -44,6 +46,11 @@ export interface GuardianRigOptions {
    * mempool into the next block of both. Default false (the guardian then has no node RPC).
    */
   bitcoind?: boolean;
+  /**
+   * The guardian's BITCOIN_NETWORK (default regtest). Another network changes the keys, addresses and rules (mainnet
+   * needs an alert contact) but not the chain: Electrs and the node stay the in-memory fakes.
+   */
+  network?: NetworkName;
 }
 
 export interface FundedOutput {
@@ -110,7 +117,7 @@ export class GuardianRig {
       port: 0,
       host: '127.0.0.1',
       dataDir: this.dir,
-      network: 'regtest',
+      network: this.opts.network ?? 'regtest',
       electrum: { host: '127.0.0.1', port: this.electrs.port },
       ...(this.bitcoind ? { bitcoinRpc: { host: '127.0.0.1', port: this.bitcoind.port, user: this.bitcoind.user, pass: this.bitcoind.pass } } : {}),
       kdf: { t: 1, m: 64, p: 1 }, // cheap Argon2 for tests only

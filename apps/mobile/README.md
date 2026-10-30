@@ -35,7 +35,7 @@ and data) or from the small "wallet mode" link on the first screen.
 |---|---|---|
 | **Demo** | Sample data and timers (`src/data/mock.ts`) | development builds and the web |
 | **Simulator** | The real wallet with a software "hardware wallet" and throwaway keys, on regtest: guardian mode (`src/data/real.ts` on `@trikey/wallet`) against a guardian you run on your computer, Recovery Key mode (`src/data/rk-service.ts` on `@trikey/recovery-key`) against the simulated chain from `npm run rk-sim` | |
-| **Real** | The real wallet (either kind) with Ledger, Trezor and QR devices, this phone's secure storage and a test network chosen at onboarding (testnet, signet, regtest; "Mainnet (not yet)") | release builds on a phone |
+| **Real** | The real wallet (either kind) with Ledger, Trezor and QR devices, this phone's secure storage and the network chosen at onboarding: testnet (the default), signet or regtest, or mainnet in guardian mode only, behind a pre-alpha warning the person accepts | release builds on a phone |
 
 Real needs secure key storage, so the browser preview offers Demo and Simulator only. In the browser the simulator
 keeps everything in memory (a reload starts over).
@@ -62,7 +62,9 @@ phone spends from a small balance that pre-signed, timelocked refills top up (`D
   Printers, print queues and wherever a PDF goes may keep a copy, and the screen says so.
 - **Chain server.** The default is a public Esplora (mempool.space on testnet4 and signet), which sees every address and the phone's
   IP address; Settings, Chain server takes your own (tried with a real request, and checked for the right network, before it is used).
-- **Test networks only.** The app never passes `allowMainnet`; testnet, signet and regtest are offered.
+- **Test networks only.** The app never passes `allowMainnet`; testnet, signet and regtest are offered (`RK_NETWORKS`). Mainnet
+  is the guardian mode's only (`GUARDIAN_NETWORKS`): picking it at onboarding while this mode was chosen moves the phone back to
+  the guardian mode.
 
 ### Refill scheduler
 

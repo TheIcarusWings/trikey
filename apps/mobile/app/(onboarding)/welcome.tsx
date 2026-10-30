@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import { AppButton } from '@/components/app-button';
 import { Logo } from '@/components/icons';
 import { ModeSwitcher } from '@/components/mode-switcher';
-import { NetworkPicker } from '@/components/network-picker';
+import { NetworkPicker, mainnetBlocked } from '@/components/network-picker';
 import { Pill } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
@@ -14,27 +14,33 @@ import { cn } from '@/lib/utils';
 
 export default function Welcome() {
   const router = useRouter();
-  const { backing } = useWallet();
+  const state = useWallet();
+  const { backing } = state;
   const [showMode, setShowMode] = useState(false);
+  const mainnet = backing === 'real' && state.network === 'bitcoin';
+  // On mainnet, nothing goes on until the person has accepted the warning under the picker.
+  const blocked = backing === 'real' && mainnetBlocked(state);
   return (
     <Screen
       bare
-      scrollable={false}
+      // The mainnet warning makes the footer tall: on a small phone the logo scrolls under it.
+      scrollable={mainnet}
       footer={
         <>
           {/* Honest from the first screen: what kind of build this is. */}
           <View className="flex-row justify-center pb-1">
             <Pill dot="warn" strong>
-              {backing === 'demo' ? 'Demo · sample data' : 'Pre-alpha · test networks only'}
+              {backing === 'demo' ? 'Demo · sample data' : mainnet ? 'Pre-alpha · not audited' : 'Pre-alpha · test network'}
             </Pill>
           </View>
           {backing === 'real' ? <NetworkPicker /> : null}
-          <AppButton title="Create a wallet" size="hero" onPress={() => router.push('/how-it-works')} />
+          <AppButton title="Create a wallet" size="hero" disabled={blocked} onPress={() => router.push('/how-it-works')} />
           <AppButton
             title="I already have a Trikey wallet"
             variant="ghost"
             size="hero"
             className={pick('', 'rounded-[10px]')}
+            disabled={blocked}
             onPress={() => router.push('/recover/choose')}
           />
           {backing === 'demo' ? null : (

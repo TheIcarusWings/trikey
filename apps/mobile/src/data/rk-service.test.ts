@@ -10,7 +10,7 @@ import { receiverAddress, silentPaymentKeysFromSeed } from '@trikey/silent-payme
 import { simFetch } from '@trikey/recovery-key/testing';
 import { WalletServiceError } from './errors';
 import { MemoryKeyValueStore, MemorySecureKeyStore, SoftwareHardwareSigner } from '@trikey/wallet/testing';
-import { createRkWalletService } from './rk-service';
+import { createRkWalletService, networkPrefKey } from './rk-service';
 import { HARDWARE, PERIOD, closeServicesAfterAll, externalAddress, failure, setUp, wordsProof, world } from './rk-test-support';
 
 closeServicesAfterAll();
@@ -121,14 +121,29 @@ describe('creating the wallet (RK-Create)', () => {
     expect(await svc.rk!.verifyVaultAddress()).toMatchObject({ verifiedOnDevice: true });
   });
 
-  it('never leaves the test networks', async () => {
+  it('never leaves the test networks, even where the guardian mode may use mainnet', async () => {
     const w = world();
     const { svc } = await w.phone();
     expect(() => svc.setNetwork('bitcoin')).toThrow(WalletServiceError);
     expect(svc.getState().network).toBe('regtest');
-    // Asked to start on mainnet, a real-mode service starts on testnet instead.
-    const real = await createRkWalletService({ mode: 'real', platform: { os: 'ios', isSecure: true, secureKeys: new MemorySecureKeyStore(), kv: new MemoryKeyValueStore() }, hardware: () => [], network: 'bitcoin', syncIntervalMs: 0 });
-    expect(real.getState().network).toBe('testnet');
+    // Asked to start on mainnet, with mainnet saved as the last pick (the guardian mode shares that setting), a
+    // real-mode service starts on testnet instead.
+    const kv = new MemoryKeyValueStore();
+    await kv.set(networkPrefKey('real'), 'bitcoin');
+    const real = await createRkWalletService({ mode: 'real', platform: { os: 'ios', isSecure: true, secureKeys: new MemorySecureKeyStore(), kv }, hardware: () => [], network: 'bitcoin', syncIntervalMs: 0 });
+    expect(real.getState()).toMatchObject({ network: 'testnet', mainnetRiskAccepted: false });
+    // Picking mainnet is refused in its own words; accepting the mainnet warning changes nothing here.
+    let refused: unknown;
+    try {
+      real.setNetwork('bitcoin');
+    } catch (e) {
+      refused = e;
+    }
+    expect(refused).toMatchObject({ kind: 'invalid_input', message: expect.stringMatching(/Recovery Key mode: it works on test networks only/) });
+    real.acceptMainnetRisk(true);
+    expect(real.getState()).toMatchObject({ network: 'testnet', mainnetRiskAccepted: false });
+    real.setNetwork('signet');
+    expect(real.getState().network).toBe('signet');
     await real.close();
   });
 

@@ -121,7 +121,7 @@ describe('DevicePromptStore: a series of confirmations', () => {
 });
 
 /** A stand-in for one kind of wallet: just what the routing looks at. */
-function member(state: Partial<WalletState>) {
+function member(state: Partial<WalletState>, opts: { refuse?: (network: string) => WalletServiceError | undefined } = {}) {
   const calls: string[] = [];
   let current = { onboarded: false, recovering: false, mode: 'guardian', network: 'testnet', ...state } as WalletState;
   const listeners = new Set<() => void>();
@@ -129,7 +129,12 @@ function member(state: Partial<WalletState>) {
     calls,
     getState: () => current,
     subscribe: (l: () => void) => (listeners.add(l), () => listeners.delete(l)),
-    setNetwork: (n: string) => void calls.push(`network:${n}`),
+    setNetwork: (n: string) => {
+      const no = opts.refuse?.(n);
+      if (no) throw no;
+      calls.push(`network:${n}`);
+    },
+    acceptMainnetRisk: (a: boolean) => void calls.push(`accept:${a}`),
     setUnit: (u: string) => void calls.push(`unit:${u}`),
     setTheme: (t: string) => void calls.push(`theme:${t}`),
     sync: async () => void calls.push('sync'),
@@ -202,6 +207,35 @@ describe('routing between a guardian wallet and a Recovery Key wallet', () => {
     await routed.close();
     expect(guardian.calls).toContain('close');
     expect(recoveryKey.calls).toContain('close');
+  });
+
+  it('mainnet is the guardian mode’s only: picking it moves an unstarted phone there, and Recovery Key mode stays on its test network', async () => {
+    const kv = new MemoryKeyValueStore();
+    const noMainnet = (n: string) => (n === 'bitcoin' ? new WalletServiceError('invalid_input', 'test networks only') : undefined);
+    const guardian = member({ mode: 'guardian' });
+    const recoveryKey = member({ mode: 'recoveryKey' }, { refuse: noMainnet });
+    const routed = createRoutedWalletService({ mode: 'real', kv, guardian, recoveryKey, initial: 'recoveryKey' });
+
+    routed.setNetwork('bitcoin');
+    expect(routed.getState().mode).toBe('guardian');
+    expect(await kv.get(kindPrefKey('real'))).toBe('guardian');
+    expect(guardian.calls).toContain('network:bitcoin');
+    expect(recoveryKey.calls).not.toContain('network:bitcoin');
+    // On the guardian path the refusal of the other kind is quiet.
+    routed.setNetwork('bitcoin');
+    expect(routed.getState().mode).toBe('guardian');
+    // The answer to the mainnet warning goes to both kinds (Recovery Key mode ignores it).
+    routed.acceptMainnetRisk(true);
+    expect(guardian.calls).toContain('accept:true');
+    expect(recoveryKey.calls).toContain('accept:true');
+
+    // A refusal for another reason (Recovery Key mode has a wallet in the making) is not a reason to change kinds.
+    const busy = member({ mode: 'recoveryKey' }, { refuse: () => new WalletServiceError('wrong_state', "This wallet's network can't change.") });
+    const other = createRoutedWalletService({ mode: 'real', kv: new MemoryKeyValueStore(), guardian: member({ mode: 'guardian' }), recoveryKey: busy, initial: 'recoveryKey' });
+    expect(() => other.setNetwork('bitcoin')).toThrow(/can't change/);
+    expect(other.getState().mode).toBe('recoveryKey');
+    await routed.close();
+    await other.close();
   });
 });
 
