@@ -234,7 +234,36 @@ an own domain as the supported paths, and offer passkeys only when the page is a
 Version 2 slots also prepare the ground for the hardware-wallet unlock (Open question 1 in DESIGN.md),
 which would be one more slot type.
 
-## Open questions for the owner
+## Decisions (30 October 2026)
+
+The owner asked for the open questions to be decided, and agreed with these answers. Each holds unless the phase 0
+test says otherwise.
+
+1. **HTTPS path: Tailscale first.** Tailscale Serve (`<box>.<tailnet>.ts.net`) is the supported path: Umbrel already
+   has a Tailscale app, it needs no domain or port forwarding, and the certificate is a real one. An own domain behind
+   a reverse proxy is documented as the second path. Umbrel's local CA is not pursued (Chrome reportedly refuses
+   `.local` RP IDs), and Tor and SSH tunnels are not passkey paths. A passkey working only at the address it was made
+   at is accepted: the guardian lists each passkey with the address it belongs to.
+2. **Both levels, chosen by the provider.** Passkey sign-in works with any provider. A passkey unlocks key 3 only where
+   the provider returns PRF; where it does not, the guardian says so at registration and keeps it as sign-in only.
+   Whether Proton Pass is one or the other is what the phase 0 test page (`trikey.app/passkey-test`) answers on the
+   owner's devices.
+3. **Synced passkeys are allowed, with a plain warning.** Registering an unlock passkey says that unlocking then is as
+   strong as the password manager account (and its recovery). The passphrase stays as a mandatory slot either way, and
+   a device-bound passkey (a security key) is suggested for anyone who prefers it. No provider is refused.
+4. **`@simplewebauthn/server`, pinned exactly.** Parsing CBOR, COSE keys and attestation by hand is where verification
+   bugs live; a well-tested library is the smaller risk. It is pinned to an exact version in the lockfile, so the
+   reproducible image is unaffected, and the guardian's own tests cover every path that uses it.
+5. **No Tailscale sidecar in the package.** It would need an auth key in the app's settings and couple the guardian to
+   one VPN. The docs explain how to point Umbrel's Tailscale app at the guardian instead.
+6. **Change passphrase ships with keystore v2.** It is a re-wrap of one slot once v2 exists, and owners asked for it
+   less than they will need it.
+
+Order: phase 0 (the test page) first; then the HTTPS docs; then passkey sign-in; then keystore v2 with the PRF unlock
+slot and passphrase change. Nothing past phase 0 is built until the test results are in.
+
+## Open questions (answered above)
+
 
 1. **Which HTTPS path will you use:** Tailscale, an own domain, or Umbrel's local CA if it passes the
    spike? Is it acceptable that a passkey works only at the address it was made at?
