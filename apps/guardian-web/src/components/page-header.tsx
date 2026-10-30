@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { NetworkPill } from '@/components/network-pill';
 
-/** Page title. `pill` adds the network pill ("Signet · pre-alpha") next to it, on Home and Recovery. */
+/** Page title. `pill` adds the network pill ("Mainnet · pre-alpha") next to it, on Home and Recovery; test networks get the strip instead. */
 export function PageHeader({ title, pill, description }: { title: string; pill?: boolean; description?: ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">

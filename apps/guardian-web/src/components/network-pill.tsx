@@ -19,12 +19,39 @@ export function networkName(network: string): string {
   return NAMES[key] ?? network;
 }
 
+const TEST_NETWORKS = new Set(['testnet', 'testnet3', 'test', 'testnet4', 'signet', 'regtest']);
+
+/** A network whose coins have no value: these get the strip across the page instead of the pill. */
+export function isTestNetwork(network: string | undefined): network is string {
+  return !!network && TEST_NETWORKS.has(network.toLowerCase());
+}
+
 /**
- * "Signet · pre-alpha": which bitcoin network this guardian is on (from `/api/status`) and the
- * project's stage. Without a network (an older guardian) only the stage shows.
+ * The strip across the top of every page on a test network, so test coins are never mistaken for
+ * real ones: "Signet · pre-alpha · coins here have no value". Nothing on mainnet.
+ */
+export function NetworkStrip() {
+  const network = useNetwork();
+  if (!isTestNetwork(network)) return null;
+  return (
+    <div
+      role="note"
+      className="flex min-h-8 items-center justify-center gap-1.5 bg-warn-soft px-4 py-1.5 text-center text-xs leading-4 font-semibold text-foreground print:hidden"
+    >
+      <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-warn" />
+      {networkName(network)} · pre-alpha · coins here have no value
+    </div>
+  );
+}
+
+/**
+ * "Mainnet · pre-alpha": which bitcoin network this guardian is on (from `/api/status`) and the
+ * project's stage, next to the page title. Without a network (an older guardian) only the stage
+ * shows. On a test network the strip says it instead.
  */
 export function NetworkPill({ className }: { className?: string }) {
   const network = useNetwork();
+  if (isTestNetwork(network)) return null;
   return (
     <span
       className={cn(

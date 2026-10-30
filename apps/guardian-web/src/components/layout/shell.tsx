@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { Clock, House, List, LogOut, Menu, Settings, SlidersHorizontal, Smartphone, UserPlus, X } from 'lucide-react';
 import { api, usingMockApi } from '@/api';
-import { useGuardian } from '@/components/guardian-provider';
+import { useGuardian, useNetwork } from '@/components/guardian-provider';
 import { Logo } from '@/components/logo';
+import { NetworkStrip, isTestNetwork } from '@/components/network-pill';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { features } from '@/lib/features';
 import { cn } from '@/lib/utils';
@@ -96,6 +97,8 @@ export function Shell() {
   const items = useNavItems();
   const [open, setOpen] = useState(false);
   const location = useLocation();
+  // On a test network the strip sits above everything, so the sticky sidebar is that much shorter.
+  const strip = isTestNetwork(useNetwork());
 
   useEffect(() => setOpen(false), [location.pathname]);
 
@@ -109,7 +112,7 @@ export function Shell() {
   }, [open]);
 
   return (
-    <div className="min-h-screen bg-background md:flex print:bg-white">
+    <div className="min-h-screen bg-background print:bg-white">
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-primary-foreground"
@@ -117,43 +120,53 @@ export function Shell() {
         Skip to content
       </a>
 
-      {/* Wide screens */}
-      <aside className="sticky top-0 hidden h-screen w-[220px] shrink-0 flex-col justify-between gap-5 border-r px-3.5 py-5 md:flex print:hidden">
-        <div className="flex flex-col gap-[18px]">
-          <div className="px-2">
-            <Logo size={28} />
+      <div className="sticky top-0 z-30">
+        <NetworkStrip />
+      </div>
+      <div className="md:flex">
+        {/* Wide screens */}
+        <aside
+          className={cn(
+            'sticky hidden w-[220px] shrink-0 flex-col justify-between gap-5 border-r px-3.5 py-5 md:flex print:hidden',
+            strip ? 'top-8 h-[calc(100vh-2rem)]' : 'top-0 h-screen',
+          )}
+        >
+          <div className="flex flex-col gap-[18px]">
+            <div className="px-2">
+              <Logo size={28} />
+            </div>
+            <NavList items={items} />
           </div>
-          <NavList items={items} />
-        </div>
-        <SidebarFooter />
-      </aside>
-
-      {/* Narrow screens */}
-      <header className="md:hidden print:hidden">
-        <div className="flex h-14 items-center justify-between pr-2 pl-5">
-          <Logo size={28} />
-          <button
-            type="button"
-            aria-expanded={open}
-            aria-controls="mobile-nav"
-            aria-label="Menu"
-            onClick={() => setOpen((v) => !v)}
-            className="inline-flex size-11 items-center justify-center rounded-lg outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            {open ? <X className="size-[22px]" aria-hidden="true" /> : <Menu className="size-[22px]" aria-hidden="true" />}
-          </button>
-        </div>
-        <div id="mobile-nav" hidden={!open} className="flex flex-col gap-4 border-y px-3.5 py-3">
-          <NavList items={items} onNavigate={() => setOpen(false)} />
           <SidebarFooter />
-        </div>
-      </header>
+        </aside>
 
-      <main id="main" tabIndex={-1} className="min-w-0 flex-1 px-5 pt-2 pb-10 outline-none md:px-12 md:py-8 print:p-0">
-        <div className="mx-auto flex w-full max-w-[884px] flex-col gap-4 md:gap-6">
-          <Outlet />
-        </div>
-      </main>
+        {/* Narrow screens */}
+        <header className="md:hidden print:hidden">
+          <div className="flex h-14 items-center justify-between pr-2 pl-5">
+            <Logo size={28} />
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-controls="mobile-nav"
+              aria-label="Menu"
+              onClick={() => setOpen((v) => !v)}
+              className="inline-flex size-11 items-center justify-center rounded-lg outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {open ? <X className="size-[22px]" aria-hidden="true" /> : <Menu className="size-[22px]" aria-hidden="true" />}
+            </button>
+          </div>
+          <div id="mobile-nav" hidden={!open} className="flex flex-col gap-4 border-y px-3.5 py-3">
+            <NavList items={items} onNavigate={() => setOpen(false)} />
+            <SidebarFooter />
+          </div>
+        </header>
+
+        <main id="main" tabIndex={-1} className="min-w-0 flex-1 px-5 pt-2 pb-10 outline-none md:px-12 md:py-8 print:p-0">
+          <div className="mx-auto flex w-full max-w-[884px] flex-col gap-4 md:gap-6">
+            <Outlet />
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
