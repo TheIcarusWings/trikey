@@ -104,11 +104,12 @@ export async function runCryptoSelfTest(): Promise<SelfTestReport> {
     await runStep('NIP-44 encrypt and decrypt', async () => {
       const nip44 = await import('nostr-tools/nip44');
       const { getPublicKey } = await import('nostr-tools/pure');
-      const { randomSecretKey } = await import('@trikey/core/random');
+      const { randomSecretKey, secureRandomBytes } = await import('@trikey/core/random');
       const alice = randomSecretKey();
       const bob = randomSecretKey();
       const plaintext = 'sign this ₿ 🔑';
-      const sealed = nip44.encrypt(plaintext, nip44.getConversationKey(alice, getPublicKey(bob)));
+      // The nonce from the checked source, as the transport does (nostr-tools would draw its own).
+      const sealed = nip44.encrypt(plaintext, nip44.getConversationKey(alice, getPublicKey(bob)), secureRandomBytes(32));
       expect(sealed !== plaintext, 'not encrypted');
       expect(nip44.decrypt(sealed, nip44.getConversationKey(bob, getPublicKey(alice))) === plaintext, 'decrypt mismatch');
       let rejected = false;
