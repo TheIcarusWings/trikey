@@ -208,6 +208,16 @@ function DeveloperSection() {
             }}
           />
         ) : null}
+        {dev?.simulateRecoveryCoin && state.recovery?.origin === 'this-phone' && !rk ? (
+          <AppButton
+            title="Simulate a coin arriving during the recovery"
+            variant="outline"
+            onPress={() => {
+              dev.simulateRecoveryCoin!();
+              router.push('/recover/waiting');
+            }}
+          />
+        ) : null}
         {dev?.finishRecovery && state.recovery && !rk ? (
           <AppButton
             title="Finish the recovery now"
