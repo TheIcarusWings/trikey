@@ -121,6 +121,8 @@ currently carries version 0.1.1-alpha. Nothing to build, and no SSH needed.
 
 You should see: the guardian's "Set up your guardian" page (step 1).
 
+Optional, for passkeys later: to reach the guardian over HTTPS (Tailscale first, or your own domain), see `docs/https-access.md`. It is not needed for this test.
+
 **To update to a newer release:** in the App Store, refresh the Trikey store, then update the app (or reinstall it).
 
 **Logs.** In Umbrel: Settings, Troubleshoot, then the app. Over SSH:

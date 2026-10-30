@@ -226,7 +226,7 @@ an own domain as the supported paths, and offer passkeys only when the page is a
 | Phase | Work | Size |
 |---|---|---|
 | 0. Spike | A throwaway HTTPS test page (create, get, PRF) run on the owner's devices: Proton Pass on each platform, the chosen access path, and `umbrel.local` with Umbrel's CA. Fill in the unconfirmed cells above. | 1-2 days |
-| 1. Access path | Docs for Tailscale Serve and a reverse proxy; check that `checkOrigin` and the `Secure` cookie behave behind each; the UI hides passkey options outside a secure context. Optional: a Tailscale sidecar in the Umbrel package for a dedicated host name. | S (2-3 days) |
+| 1. Access path | Docs for Tailscale Serve and a reverse proxy ([`../https-access.md`](../https-access.md)); check that `checkOrigin` and the `Secure` cookie behave behind each; the UI hides passkey options outside a secure context. Optional: a Tailscale sidecar in the Umbrel package for a dedicated host name. | S (2-3 days) |
 | 2. Sign-in (a) | WebAuthn registration and assertion verification on the guardian (ES256, Ed25519, RS256), credential storage, Settings > Passkeys (add, list, remove), sign-in button, tests with recorded vectors. | M (about 1 week) |
 | 3. Unlock (b) | Keystore version 2 with migration, PRF slot, unlock endpoint, test vectors checked against node:crypto, DESIGN.md (keystore, threat model, Entropy table), API.md. | M-L (1-2 weeks) |
 | 4. Review | Security review of phases 2 and 3 before it reaches mainnet users. | — |
