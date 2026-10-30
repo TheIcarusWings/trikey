@@ -132,8 +132,9 @@ export function RecoveryPage() {
         </p>
         <p
           className={cn(
-            'm-0 leading-[1.05] font-semibold tracking-[-0.03em] tabular-nums',
-            done ? 'text-[32px] sm:text-[40px]' : 'text-[44px] sm:text-[56px]',
+            'm-0 font-semibold tracking-[-0.03em] tabular-nums',
+            // Size and line height together: tailwind-merge drops a separate leading-* when a text-[size] follows it.
+            done ? 'text-[32px]/[1.1] sm:text-[40px]/[1.1]' : 'text-[44px]/[1.05] sm:text-[56px]/[1.05]',
           )}
         >
           {done ? 'Waiting period over' : <time dateTime={recovery.endsAt}>{formatCountdownLong(remainingMs)}</time>}
