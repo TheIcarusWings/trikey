@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api, ApiError } from '@/api';
 import { useGuardian } from '@/components/guardian-provider';
 import { AuthCard, AuthHeader } from '@/components/layout/centered';
+import { ManagerUsername } from '@/components/manager-username';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -88,6 +89,7 @@ export function LockedPage() {
       </div>
 
       <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
+        <ManagerUsername />
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="unlock-pass">Unlock passphrase</Label>
           <Input
