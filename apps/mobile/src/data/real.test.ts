@@ -25,7 +25,7 @@ import {
 } from '@trikey/wallet/testing';
 import { WalletServiceError } from './errors';
 import { createRealWalletService, type RealWalletService } from './real';
-import type { DevicePrompt } from './types';
+import type { DevicePrompt, WalletState } from './types';
 
 const MNEMONICS = {
   hardware: 'legal winner thank year wave sausage worth useful legal winner thank yellow',
@@ -35,15 +35,39 @@ const externalAddress = (seed = 2) => btc.p2wpkh(secp256k1.getPublicKey(new Uint
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Generous: the guardian rig and the wallet share one machine with the other test files, and a busy one is slow.
-async function waitFor<T>(fn: () => T | undefined | false, what: string, timeoutMs = 30_000): Promise<T> {
+// `detail` says what was there instead, so a timeout in CI (where only the message is kept) shows why.
+async function waitFor<T>(fn: () => T | undefined | false, what: string, detail?: () => unknown, timeoutMs = 30_000): Promise<T> {
   const start = Date.now();
   for (;;) {
     const v = fn();
     if (v) return v;
-    if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for ${what}`);
+    if (Date.now() - start > timeoutMs) {
+      let seen = '';
+      try {
+        seen = detail ? `; instead: ${JSON.stringify(detail(), (_k, x) => (typeof x === 'bigint' ? x.toString() : x))}` : '';
+      } catch (e) {
+        seen = `; (detail failed: ${String(e)})`;
+      }
+      throw new Error(`timed out waiting for ${what}${seen}`);
+    }
     await sleep(20);
   }
 }
+
+/** The parts of a phone's state that say where a flow stands, for `waitFor`'s timeout message. */
+const where = (svc: { getState(): WalletState }) => () => {
+  const s = svc.getState();
+  return {
+    onboarded: s.onboarded,
+    recovering: s.recovering,
+    recoveryOutcome: s.recoveryOutcome,
+    synced: s.synced,
+    balanceSats: s.balanceSats,
+    guardian: s.guardian.status,
+    progress: s.progress,
+    finishedRecovery: s.finishedRecovery ? { movedSats: s.finishedRecovery.movedSats } : null,
+  };
+};
 
 async function failure(p: Promise<unknown>): Promise<WalletServiceError> {
   try {
@@ -323,13 +347,13 @@ describe('the real wallet service', { timeout: 60_000 }, () => {
     expect(B.svc.getState()).toMatchObject({ recovering: true, onboarded: false });
     expect(B.svc.getState().recovery).toMatchObject({ id: started.id });
 
-    const alert = await waitFor(() => A.svc.getState().recovery, 'A hears of the recovery');
+    const alert = await waitFor(() => A.svc.getState().recovery, 'A hears of the recovery', where(A.svc));
     expect(alert).toMatchObject({ id: started.id, origin: 'someone-else', acknowledged: false, lostKey: 'phone' });
     A.svc.acknowledgeRecovery();
     expect(A.svc.getState().recovery?.acknowledged).toBe(true);
 
     await A.svc.cancelRecovery();
-    await waitFor(() => A.svc.getState().phoneSpending === 'paused_contested' || undefined, 'contested');
+    await waitFor(() => A.svc.getState().phoneSpending === 'paused_contested' || undefined, 'contested', where(A.svc));
     expect(A.svc.getState().recoveryOutcome).toBe('cancelled');
     const q = A.svc.quoteSend({ address: externalAddress(), amountSats: 1_000, speed: 'normal' });
     expect(q).toMatchObject({ ok: true, quote: { plan: { signer: 'hardware', reason: 'phone-spending-paused' } } });
@@ -388,7 +412,7 @@ describe('the real wallet service', { timeout: 60_000 }, () => {
     expect(s.onboarded).toBe(true);
     expect(P.svc.wallet!.state.wallet!.walletId).toBe(walletId);
     expect(s.guardian.npub).toBe(npubEncode(rig.pubkey));
-    await waitFor(() => P.svc.getState().synced || undefined, 'the restored phone syncs');
+    await waitFor(() => P.svc.getState().synced || undefined, 'the restored phone syncs', where(P.svc));
     expect(P.svc.getState().balanceSats).toBeGreaterThan(0);
     for (const [k, v] of emptyCloudBackup) cloud.files.set(k, v);
     await P.svc.close();
@@ -565,11 +589,11 @@ describe('the real wallet service: finishing a recovery, replacing the guardian,
     R1.clock.set(new Date(started.completesAt).getTime() + 2 * HOUR);
     await R1.mine(11);
     await R1.guardian.tick();
-    await waitFor(() => P.svc.getState().recoveryOutcome === 'finished' || undefined, 'the switch to the new wallet');
+    await waitFor(() => P.svc.getState().recoveryOutcome === 'finished' || undefined, 'the switch to the new wallet', where(P.svc));
     const s = P.svc.getState();
     expect(s).toMatchObject({ recovering: false, onboarded: true, recovery: null, hardwareConfirmRequired: true, finishedRecovery: { lostKey: 'phone' } });
     expect(s.finishedRecovery!.movedSats).toBeGreaterThan(290_000);
-    await waitFor(() => P.svc.getState().balanceSats === s.finishedRecovery!.movedSats || undefined, 'the new wallet synced');
+    await waitFor(() => P.svc.getState().balanceSats === s.finishedRecovery!.movedSats || undefined, 'the new wallet synced', where(P.svc));
     expect(eventKinds(P)).toContain('recovery-finished');
     expect(s.receiveAddress).toBe(''); // until the hardware wallet has seen the new wallet
 
@@ -593,7 +617,7 @@ describe('the real wallet service: finishing a recovery, replacing the guardian,
     await P.svc.lockGuardian();
     expect(R1.guardian.locked).toBe(true);
     expect(P.svc.getState().guardian.status).toBe('locked');
-    await waitFor(() => P.svc.getState().activity.find((i) => i.type === 'security' && i.event.kind === 'guardian-locked' && i.event.byPhone), 'the lock in the activity');
+    await waitFor(() => P.svc.getState().activity.find((i) => i.type === 'security' && i.event.kind === 'guardian-locked' && i.event.byPhone), 'the lock in the activity', where(P.svc));
     await P.svc.unlockGuardian(R1.passphrase);
     expect(P.svc.getState().guardian.status).toBe('online');
     expect(R1.guardian.locked).toBe(false);
@@ -612,7 +636,7 @@ describe('the real wallet service: finishing a recovery, replacing the guardian,
     expect(N.svc.getState()).toMatchObject({ onboarded: true, network: 'regtest' });
     expect(N.svc.wallet!.state.wallet!.walletId).toBe(P.svc.wallet!.state.wallet!.walletId);
     // The send log came along in the backup.
-    await waitFor(() => N.svc.getState().synced || undefined, 'the restored phone syncs');
+    await waitFor(() => N.svc.getState().synced || undefined, 'the restored phone syncs', where(N.svc));
     expect(N.svc.getState().activity.some((i) => i.type === 'payment' && i.tx.signedBy === 'phone+guardian' && i.tx.address === externalAddress())).toBe(true);
     await N.svc.close();
   });
@@ -644,7 +668,7 @@ describe('the real wallet service: finishing a recovery, replacing the guardian,
     expect(s.walletRetired).toBeNull(); // the alert was about the old wallet, not this one
     expect(eventKinds(Q)).toContain('guardian-replaced');
     await waitFor(() => eventKinds(Q).includes('wallet-retired') || undefined, "the old guardian's wallet_retired alert");
-    await waitFor(() => Q.svc.getState().balanceSats === (out.status === 'done' ? out.movedSats : -1) || undefined, 'the new wallet synced');
+    await waitFor(() => Q.svc.getState().balanceSats === (out.status === 'done' ? out.movedSats : -1) || undefined, 'the new wallet synced', where(Q.svc));
     expect(Q.svc.quoteSend({ address: externalAddress(), amountSats: 10_000, speed: 'normal' })).toMatchObject({ ok: true, quote: { plan: { signer: 'phone+guardian' } } });
     // The old wallet stays listed; its stray coins need something that can read it.
     // The new guardian watches the old wallet, so stray coins can still be found and moved through it.
