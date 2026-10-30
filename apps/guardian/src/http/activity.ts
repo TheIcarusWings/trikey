@@ -281,7 +281,7 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
     case 'relays_changed': {
       const added = e.to.filter((r) => !e.from.includes(r));
       const removed = e.from.filter((r) => !e.to.includes(r));
-      const parts = [added.length ? `added ${added.join(', ')}` : '', removed.length ? `removed ${removed.join(', ')} (still watched until ${formatWhen(e.retiringUntil)})` : ''];
+      const parts = [added.length ? `added ${added.join(', ')}` : '', removed.length ? `removed ${removed.join(', ')} (still watched until you stop them)` : ''];
       return {
         ...base,
         kind: 'system',
@@ -295,6 +295,16 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
     case 'relays_confirmed':
       return { ...base, kind: 'system', event: `The paired phone switched to the new relays (${e.relays.join(', ')})`, summary: 'Phone switched relays', signedBy: 'Phone', sats: null, result: 'ok' };
     case 'relays_retired':
-      return { ...base, kind: 'system', event: `Stopped watching the old relays ${e.relays.join(', ')}: their 30 days are over`, summary: 'Old relays dropped', signedBy: null, sats: null, result: 'ok' };
+      return {
+        ...base,
+        kind: 'system',
+        event: e.by
+          ? `Stopped watching ${e.relays.length === 1 ? '1 old relay' : `${e.relays.length} old relays`} (${e.relays.join(', ')}) at your request: recovery sheets, backups and phones that only know ${e.relays.length === 1 ? 'it' : 'them'} no longer reach this box`
+          : `Stopped watching the old relays ${e.relays.join(', ')}: their 30 days were over`,
+        summary: 'Old relays dropped',
+        signedBy: null,
+        sats: null,
+        result: 'ok',
+      };
   }
 }

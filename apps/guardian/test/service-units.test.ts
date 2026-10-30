@@ -9,6 +9,7 @@ import { PAIRING_MAX_FAILURES, PAIRING_TTL_MS, PairingSessions } from '../src/pa
 import { recoveryToWire, refusalCode, refusalData, refusalError, toSeconds } from '../src/nostr/wire.js';
 import { formatBtc, formatWhen } from '../src/alerts.js';
 import { createLogger } from '../src/log.js';
+import { normalizeRetiringRelays } from '../src/service-state.js';
 import type { RecoveryView } from '../src/policy/index.js';
 
 describe('pairing sessions', () => {
@@ -170,5 +171,27 @@ describe('the shared inbox', () => {
     expect(inbox.opened).toBe(2); // duplicates from other relays are not decrypted again; garbage never opens
     expect(rpc.map((o) => o.sender)).toEqual([getPublicKey(phone)]);
     expect(dms.map((o) => o.rumor.content)).toEqual(['CANCEL 1-0123456789ab']);
+  });
+});
+
+describe('old relays in service.json', () => {
+  const DAY = 86_400_000;
+
+  it('keeps `since`, turns a legacy `until` into since = until - 30 days, drops the end date, duplicates and junk', () => {
+    expect(
+      normalizeRetiringRelays(
+        [{ url: 'wss://a.example', since: 5 }, { url: 'wss://b.example', until: 40 * DAY }, { url: 'wss://a.example', until: 1 }, { url: 'wss://c.example' }, { until: 3 }, null, 'wss://d.example'],
+        7,
+      ),
+    ).toEqual([
+      { url: 'wss://a.example', since: 5 },
+      { url: 'wss://b.example', since: 10 * DAY },
+      { url: 'wss://c.example', since: 7 },
+    ]);
+  });
+
+  it('is empty for files from before relay changes', () => {
+    expect(normalizeRetiringRelays(undefined, 0)).toEqual([]);
+    expect(normalizeRetiringRelays('wss://a.example', 0)).toEqual([]);
   });
 });

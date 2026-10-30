@@ -14,7 +14,7 @@ import * as btc from '@scure/btc-signer';
 import { base64 } from '@scure/base';
 import { getNetwork, parsePsbt } from '@trikey/core';
 import { MAX_RELAYS, encodePairingUri, encodeRecoveryUri } from '@trikey/protocol';
-import type { Guardian } from '../guardian.js';
+import { MAX_RETIRING_RELAYS, type Guardian } from '../guardian.js';
 import type { RecoveryRecord } from '../policy/index.js';
 import { engineEntry, serviceEntry, shortNpub } from './activity.js';
 import { HttpError, type Route, type RouteResult } from './server.js';
@@ -165,10 +165,11 @@ export function relaySettings(g: Guardian): RelaySettings {
   const change = g.service.get().relaysChange;
   return {
     relays: g.relayStatus(),
-    retiring: g.retiringRelayStatus().map((r) => ({ url: r.url, connected: r.connected, until: iso(r.until) })),
+    retiring: g.retiringRelayStatus().map((r) => ({ url: r.url, connected: r.connected, since: iso(r.since) })),
     options: g.config.relayOptions.map((r) => ({ ...r })),
     ...(change ? { lastChange: { at: iso(change.at), ...(change.confirmedAt !== undefined ? { phoneConfirmedAt: iso(change.confirmedAt) } : {}) } } : {}),
     max: MAX_RELAYS,
+    maxRetiring: MAX_RETIRING_RELAYS,
   };
 }
 
@@ -307,14 +308,36 @@ export function buildRoutes(g: Guardian): Route[] {
       },
     },
 
-    // Changing relays: the guardian moves at once, keeps the old ones for 30 days and tells the phone (guardian.ts).
+    // Changing relays: the guardian moves at once, keeps the old ones until the owner stops them and tells the phone (guardian.ts).
     {
       method: 'PUT',
       path: '/relays',
       handler: async ({ body }) => {
         requireUnlocked(g);
         const r = await g.changeRelays((body as { relays?: unknown } | undefined)?.relays);
+        if (!r.ok) throw new HttpError(r.code === 'invalid' ? 400 : 409, r.code, r.message);
+        return ok(relaySettings(g));
+      },
+    },
+
+    // Stop watching the old relays: all of them, or one (its URL, percent-encoded). Same checks as PUT /relays.
+    {
+      method: 'DELETE',
+      path: '/relays/retiring',
+      handler: async () => {
+        requireUnlocked(g);
+        const r = await g.stopWatchingRelays();
         if (!r.ok) throw new HttpError(r.code === 'setup_required' ? 409 : 400, r.code, r.message);
+        return ok(relaySettings(g));
+      },
+    },
+    {
+      method: 'DELETE',
+      path: '/relays/retiring/:url',
+      handler: async ({ params }) => {
+        requireUnlocked(g);
+        const r = await g.stopWatchingRelays(params.url);
+        if (!r.ok) throw new HttpError(r.code === 'not_found' ? 404 : r.code === 'setup_required' ? 409 : 400, r.code, r.message);
         return ok(relaySettings(g));
       },
     },

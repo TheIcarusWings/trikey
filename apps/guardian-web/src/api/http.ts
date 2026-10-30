@@ -117,6 +117,7 @@ export function createHttpApi(base = ''): GuardianApi {
     getRecoveryCode: () => request<RecoveryCode>('GET', '/recovery-code'),
     getRelays: () => request<RelaySettings>('GET', '/relays'),
     setRelays: (input) => request<RelaySettings>('PUT', '/relays', input),
+    stopWatchingRelays: (url) => request<RelaySettings>('DELETE', url === undefined ? '/relays/retiring' : `/relays/retiring/${encodeURIComponent(url)}`),
     resetGuardian: async (input) => request<GuardianStatus>('POST', '/reset', withBrowserEntropy(input)),
 
     startPairing: () => request<PairingSession>('POST', '/pairing'),

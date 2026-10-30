@@ -5,13 +5,23 @@ import { api, ApiError, type GuardianStatus, type RelaySettings } from '@/api';
 import { useGuardian } from '@/components/guardian-provider';
 import { PageHeader } from '@/components/page-header';
 import { ErrorState, PageSkeleton } from '@/components/states';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useApi, usePageTitle } from '@/hooks/use-api';
-import { formatDate, shortenMiddle } from '@/lib/format';
-import { addRelay, relayListError, sameRelayList } from '@/lib/relays';
+import { formatDateYear, shortenMiddle } from '@/lib/format';
+import { addRelay, oldRelaysAfterChange, relayListError, sameRelayList } from '@/lib/relays';
 import { cn } from '@/lib/utils';
 
 function InfoRow({ label, children }: { label: string; children: ReactNode }) {
@@ -34,16 +44,78 @@ function RelayState({ connected }: { connected: boolean }) {
   return <span className={cn('shrink-0 text-[13px]', connected ? 'text-good' : 'text-muted-foreground')}>{connected ? 'Connected' : 'Not connected'}</span>;
 }
 
-/** The note under the list: whether the phone switched, and how long the old relays are still watched. */
-function ChangeNote({ settings, paired }: { settings: RelaySettings; paired: boolean }) {
-  if (!settings.retiring.length) return null;
-  const until = settings.retiring.reduce((a, r) => (r.until > a ? r.until : a), settings.retiring[0]!.until);
+/** Whether the paired phone switched to the latest list: when it is safe to say the phone no longer needs the old relays. */
+function phoneNote(settings: RelaySettings, paired: boolean): string {
+  if (!paired || !settings.lastChange) return '';
+  const confirmed = settings.lastChange.phoneConfirmedAt;
+  return confirmed
+    ? `Your phone switched on ${formatDateYear(confirmed)}, so it no longer needs them. `
+    : 'Your phone has not confirmed that it switched yet; it was told automatically and still needs them. ';
+}
+
+/** Asks before the guardian stops watching old relays: `url` for one, nothing for all of them. */
+function StopWatchingDialog({
+  target,
+  settings,
+  paired,
+  stopping,
+  error,
+  onConfirm,
+  onClose,
+}: {
+  target: { url?: string } | undefined;
+  settings: RelaySettings;
+  paired: boolean;
+  stopping: boolean;
+  error: string | undefined;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const url = target?.url;
+  const one = url !== undefined;
   const confirmed = settings.lastChange?.phoneConfirmedAt;
   return (
-    <p role="status" className="m-0 max-w-[60ch] text-[13px] leading-[18px] text-muted-foreground">
-      {paired ? (confirmed ? `Your phone switched on ${formatDate(confirmed)}. ` : 'Waiting for your phone to confirm it switched; it was told automatically. ') : ''}
-      The old relays are still watched until {formatDate(until)}, so an older phone backup or recovery sheet keeps working until then.
-    </p>
+    <AlertDialog open={target !== undefined} onOpenChange={(open) => !open && !stopping && onClose()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{one ? 'Stop watching this old relay?' : 'Stop watching all old relays?'}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {one ? (
+              <>
+                This guardian will stop listening and answering on <span className="font-mono break-all">{url}</span>.
+              </>
+            ) : (
+              `This guardian will stop listening and answering on ${settings.retiring.length} old relays.`
+            )}{' '}
+            To watch again, add it back as a relay. These will stop reaching this guardian:
+          </AlertDialogDescription>
+          <ul className="m-0 flex list-disc flex-col gap-1 pl-5 text-sm text-muted-foreground">
+            <li>"Recover on a new phone" sheets and phone backups made before the change that only know {one ? 'it' : 'them'}.</li>
+            <li>
+              Phones that have not switched to the new relays yet.
+              {paired && (confirmed ? ' Your phone has switched.' : ' Your phone has not confirmed that it switched.')}
+            </li>
+          </ul>
+        </AlertDialogHeader>
+        {error && (
+          <p role="alert" className="m-0 text-[13px] leading-[18px] text-bad">
+            {error}
+          </p>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={stopping}>Keep watching</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={stopping}
+            onClick={(e) => {
+              e.preventDefault();
+              onConfirm();
+            }}
+          >
+            {stopping ? 'Stopping…' : 'Stop watching'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -57,6 +129,9 @@ function RelaysSection({ paired, onSaved }: { paired: boolean; onSaved: () => vo
   const [typed, setTyped] = useState('');
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
+  const [stopTarget, setStopTarget] = useState<{ url?: string }>();
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState<string>();
 
   if (settings.loading && !settings.data) return <Skeleton className="h-24 w-full" />;
   if (!settings.data) return <ErrorState error={settings.error!} onRetry={settings.reload} title="Couldn't load the relays" className="max-w-none" />;
@@ -101,6 +176,11 @@ function RelaysSection({ paired, onSaved }: { paired: boolean; onSaved: () => vo
       setError(problem);
       return;
     }
+    const old = oldRelaysAfterChange(data.retiring.map((r) => r.url), current, draft);
+    if (old > data.maxRetiring) {
+      setError(`This would leave ${old} old relays watched, and ${data.maxRetiring} is the most. Stop watching some old relays first.`);
+      return;
+    }
     setSaving(true);
     setError(undefined);
     try {
@@ -111,6 +191,24 @@ function RelaysSection({ paired, onSaved }: { paired: boolean; onSaved: () => vo
       setError(e instanceof ApiError ? e.message : 'Could not change the relays.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const askToStop = (url?: string) => {
+    setStopTarget(url === undefined ? {} : { url });
+    setStopError(undefined);
+  };
+  const stopWatching = async () => {
+    if (!stopTarget) return;
+    setStopping(true);
+    setStopError(undefined);
+    try {
+      settings.set(await api.stopWatchingRelays(stopTarget.url));
+      setStopTarget(undefined);
+    } catch (e) {
+      setStopError(e instanceof ApiError ? e.message : 'Could not stop watching the old relays.');
+    } finally {
+      setStopping(false);
     }
   };
 
@@ -142,14 +240,50 @@ function RelaysSection({ paired, onSaved }: { paired: boolean; onSaved: () => vo
                 <RelayState connected={r.connected} />
               </li>
             ))}
-            {data.retiring.map((r) => (
-              <li key={r.url} className="flex min-h-12 items-center justify-between gap-4 border-t py-2 text-muted-foreground">
-                <span className="min-w-0 font-mono text-[13px] break-all line-through decoration-muted-foreground/50">{label(r.url) ?? r.url}</span>
-                <span className="shrink-0 text-[13px]">Old, watched until {formatDate(r.until)}</span>
-              </li>
-            ))}
           </ul>
-          <ChangeNote settings={data} paired={paired} />
+          {data.retiring.length > 0 && (
+            <div className="flex flex-col gap-2 pt-1">
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                <h3 id="old-relays-heading" className="m-0 text-sm leading-5 font-medium">
+                  Old relays
+                </h3>
+                {data.retiring.length > 1 && (
+                  <Button variant="outline-destructive" size="sm" onClick={() => askToStop()}>
+                    Stop watching all
+                  </Button>
+                )}
+              </div>
+              <p role="status" className="m-0 max-w-[60ch] text-[13px] leading-[18px] text-muted-foreground">
+                Still watched, so older recovery sheets and backups keep working. {phoneNote(data, paired)}
+                Stop watching them once nothing made before the change is needed any more.
+              </p>
+              <ul className="m-0 list-none p-0" aria-labelledby="old-relays-heading">
+                {data.retiring.map((r) => (
+                  <li key={r.url} className="flex min-h-12 items-center justify-between gap-4 border-t py-2 first:border-t-0">
+                    <div className="flex min-w-0 flex-col">
+                      <span className={cn('break-all text-[15px] leading-5', !label(r.url) && 'font-mono text-[13px]')}>{label(r.url) ?? r.url}</span>
+                      <span className="text-[13px] leading-[18px] text-muted-foreground">
+                        Old since {formatDateYear(r.since)}
+                        {r.connected ? '' : ', not connected'}
+                      </span>
+                    </div>
+                    <Button variant="outline-destructive" size="sm" onClick={() => askToStop(r.url)} aria-label={`Stop watching ${r.url}`}>
+                      Stop watching
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <StopWatchingDialog
+            target={stopTarget}
+            settings={data}
+            paired={paired}
+            stopping={stopping}
+            error={stopError}
+            onConfirm={stopWatching}
+            onClose={() => setStopTarget(undefined)}
+          />
         </>
       ) : (
         <div className="flex flex-col gap-4">
@@ -210,8 +344,8 @@ function RelaysSection({ paired, onSaved }: { paired: boolean; onSaved: () => vo
 
           <p className="m-0 max-w-[60ch] text-[13px] leading-[18px] text-muted-foreground">
             {paired ? 'Your phone is told automatically and switches by itself. ' : ''}
-            The guardian keeps watching the relays you remove for 30 days, so a phone that was off, a phone restored from an older backup
-            and an older "Recover on a new phone" sheet keep working meanwhile. Print a new sheet on the Phones page after you save.
+            The guardian keeps watching the relays you remove, so a phone that was off, a phone restored from an older backup and an older
+            "Recover on a new phone" sheet keep working until you stop watching them. Print a new sheet on the Phones page after you save.
           </p>
 
           <div className="flex flex-wrap items-center gap-2">

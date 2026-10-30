@@ -155,9 +155,13 @@ export interface ResetInput {
 
 // --- relays -------------------------------------------------------------
 
-/** A relay a change removed: the guardian still listens and publishes there until `until`. */
+/**
+ * A relay a change removed: the guardian still listens and publishes there, with no end date, until the owner
+ * stops watching it (`DELETE /api/relays/retiring`).
+ */
 export interface RetiringRelay extends RelayStatus {
-  until: ISODate;
+  /** When the change that removed it happened. */
+  since: ISODate;
 }
 
 /** `GET /api/relays` and `PUT /api/relays`: the relays the phone reaches this guardian through. */
@@ -165,8 +169,9 @@ export interface RelaySettings {
   /** In use now; the pairing and recovery codes carry these. */
   relays: RelayStatus[];
   /**
-   * Removed by a change, still watched until `until` (30 days after the change) so a phone that has not
-   * switched yet, a phone restored from an older backup and an older recovery sheet keep working.
+   * Removed by a change and still watched, newest change first, until the owner stops them: so a phone that has
+   * not switched yet, a phone restored from an older backup and an older recovery sheet (printed sheets are kept
+   * for years) keep working.
    */
   retiring: RetiringRelay[];
   /** Suggestions for the editor (the relays offered at setup). */
@@ -175,6 +180,8 @@ export interface RelaySettings {
   lastChange?: { at: ISODate; phoneConfirmedAt?: ISODate };
   /** Most relays the list may hold. */
   max: number;
+  /** Most old relays the guardian watches at once; a change that would exceed it is refused (`retiring_full`) until some are stopped. */
+  maxRetiring: number;
 }
 
 export interface RelaysInput {
