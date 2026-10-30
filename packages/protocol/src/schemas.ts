@@ -1,5 +1,6 @@
 import { base64 } from '@scure/base';
 import { z } from 'zod';
+import { MAX_RELAYS, isNormalizedRelayUrl } from './relay-url.js';
 
 /* -------------------------------------------------------------------------- */
 /* Primitives                                                                 */
@@ -90,6 +91,18 @@ export const KeyOrigin = z.strictObject({
 });
 
 const Descriptor = z.string().min(10).max(2000);
+
+/**
+ * A relay URL exactly as `normalizeRelayUrl` writes it: `wss://`, or `ws://` on a local or `.onion` host, no
+ * credentials or fragment (the pairing code's rules).
+ */
+export const RelayUrl = z.string().max(512).refine(isNormalizedRelayUrl, 'not a normalized relay URL');
+/** The guardian's relay list: 1 to 8 distinct `RelayUrl`s. */
+export const RelayList = z
+  .array(RelayUrl)
+  .min(1)
+  .max(MAX_RELAYS)
+  .refine((l) => new Set(l).size === l.length, 'relays must be distinct');
 
 /* -------------------------------------------------------------------------- */
 /* Domain objects                                                             */
@@ -436,6 +449,12 @@ export const GuardianStatusResult = z
     watchedWalletId: WalletId.optional(),
     /** As `policy.get`'s: weak spots of the paired wallet's policy. Absent when there are none. */
     warnings: z.array(PolicyWarning).max(8).optional(),
+    /**
+     * The relays the guardian uses now (the ones its pairing and recovery codes carry). A phone whose stored list
+     * differs takes this one, as for a `relays_changed` alert (PROTOCOL.md, "Changing relays"). Absent from
+     * guardians before relay changes.
+     */
+    relays: RelayList.optional(),
   })
   .refine((r) => sameMoment(r.time, r.atMs), { message: SAME_MOMENT, path: ['atMs'] });
 
@@ -752,6 +771,26 @@ export const RecoveryAccessResult = z.object({
   accessExpiresAt: UnixSeconds,
 });
 
+/* -------------------------------------------------------------------------- */
+/* Relay changes                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The paired phone confirms it switched to the guardian's new relays (after a `relays_changed` alert, or a
+ * `guardian.status` naming other relays than it had). Only the paired phone; it changes nothing but the record
+ * the web UI shows. Guardians before relay changes answer `-32601`.
+ */
+export const RelaysAckParams = z.strictObject({
+  /** The relays the phone uses now. */
+  relays: RelayList,
+});
+export const RelaysAckResult = z.object({
+  /** True when `relays` is the guardian's current list (in any order): the change is confirmed. */
+  current: z.boolean(),
+  /** The guardian's current list. */
+  relays: RelayList,
+});
+
 /** The method table: one params schema and one result schema per method. */
 export const methods = {
   'pair.prepare': { params: PairPrepareParams, result: PairPrepareResult },
@@ -779,6 +818,7 @@ export const methods = {
   'sp.register': { params: SpRegisterParams, result: SpRegisterResult },
   'sp.unregister': { params: SpUnregisterParams, result: SpUnregisterResult },
   'sp.scan': { params: SpScanParams, result: SpScanResult },
+  'relays.ack': { params: RelaysAckParams, result: RelaysAckResult },
 } as const;
 
 export type MethodName = keyof typeof methods;
@@ -820,7 +860,7 @@ const recoveryAlert = {
 /**
  * Alert types mirror the engine's `AlertKind` (`recovery_started`, `recovery_reminder`, `recovery_ready`,
  * `recovery_cancelled`, `recovery_completed`), plus what the service raises itself: `guardian_locked`,
- * `wallet_adopted`, `wallet_retired` and `sp_received`.
+ * `wallet_adopted`, `wallet_retired`, `sp_received` and `relays_changed`.
  */
 export const Alert = z.discriminatedUnion('type', [
   stamped({ ...alertBase, type: z.literal('recovery_started'), ...recoveryAlert }),
@@ -885,6 +925,17 @@ export const Alert = z.discriminatedUnion('type', [
     height: Height,
     label: SpLabel.optional(),
   }),
+  stamped({
+    ...alertBase,
+    /**
+     * The guardian's relays changed (its web UI). `relays` is the new list; the guardian sends this over the old
+     * and the new relays and keeps watching the old ones for a grace period. The phone takes the list only from
+     * its paired guardian, connects to it and confirms with `relays.ack`. Phones before this alert drop it as
+     * malformed (an unknown `type`), and keep working over the old relays during the grace period.
+     */
+    type: z.literal('relays_changed'),
+    relays: RelayList,
+  }),
 ]);
 
 export type AlertType = z.infer<typeof Alert>['type'];
@@ -924,6 +975,7 @@ export const RequestSchema = z.discriminatedUnion('method', [
   requestOf('sp.register', SpRegisterParams),
   requestOf('sp.unregister', SpUnregisterParams),
   requestOf('sp.scan', SpScanParams),
+  requestOf('relays.ack', RelaysAckParams),
 ]);
 export type Request = z.infer<typeof RequestSchema>;
 

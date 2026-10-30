@@ -281,6 +281,8 @@ export function buildHandlers(g: Guardian): Handlers {
         ...(s.warnings.length ? { warnings: s.warnings } : {}),
         ...(s.walletId ? { walletId: s.walletId, hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
         ...(s.registered ? { key3Mixed: !!g.engine.registration()?.key3Mix } : {}),
+        // A phone that missed a `relays_changed` alert catches up here (PROTOCOL.md, "Changing relays").
+        ...(g.service.get().relays.length ? { relays: [...g.service.get().relays] } : {}),
         ...(s.dailyLimit
           ? {
               dailyLimit: {
@@ -321,6 +323,16 @@ export function buildHandlers(g: Guardian): Handlers {
       if (g.engine.registration()) throw new RpcError(ErrorCode.AlreadyPaired);
       if (params.network !== g.config.network)
         throw new RpcError(ErrorCode.InvalidParams, `This guardian runs on ${g.config.network}, not ${params.network}.`);
+      // A contribution that is one byte value repeated (all zeros included) cannot come from a working generator,
+      // and the phone's generator also made key 2: refuse, so the owner learns it now (entropy review I3). The mix
+      // itself would stay as strong as the guardian's seed either way.
+      if (params.entropy !== undefined && /^([0-9a-f]{2})\1*$/i.test(params.entropy)) {
+        g.log.warn('pair.degenerate_entropy', {});
+        throw new RpcError(
+          ErrorCode.InvalidParams,
+          "The phone's random contribution is one byte repeated, so its random generator looks broken. Pairing refused; nothing was registered.",
+        );
+      }
       // The phone's contribution to key 3, if any: `pair` registers the key derived from the last one sent.
       const session = check.session;
       session.key3Entropy = params.entropy;
@@ -389,6 +401,8 @@ export function buildHandlers(g: Guardian): Handlers {
           d.phones = [{ pubkey: ctx.sender, name: params.deviceName, pairedAt: now }];
         });
         await g.logEvent({ type: 'paired', name: params.deviceName });
+        // The pairing code carried the current relays: no relay change is left for a phone to confirm.
+        await g.relaysKnownByNewPhone();
         g.log.info('guardian.paired', { walletId: res.walletId, key3Mixed: !!key.mix });
         return {
           guardianKey: originOf(key.pub),
@@ -585,6 +599,9 @@ export function buildHandlers(g: Guardian): Handlers {
       }),
 
     'sp.unregister': () => spCall(async () => ({ unregistered: await g.sp.unregister() })),
+
+    // Only the paired phone gets here (`Guardian.authorize`); it changes the record the web UI shows, nothing else.
+    'relays.ack': (params) => g.confirmRelays(params.relays),
 
     'sp.scan': (params) =>
       spCall(async () => {

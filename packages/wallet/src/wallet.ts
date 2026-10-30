@@ -45,6 +45,7 @@ import {
   RpcError,
   RpcTimeoutError,
   approvalMessage,
+  checkRelayList,
   decodePairingUri,
   decodeRecoveryUri,
   generateMessageId,
@@ -53,6 +54,7 @@ import {
   pairingMessage,
   policyHash,
   recoveryAccessMessage,
+  sameRelays,
   type Alert,
   type HardwareAction,
   type HardwareApproval,
@@ -473,6 +475,10 @@ const ACCESS_TTL_SEC = 12 * 3600;
 const PENDING_RESEND_MS = 50 * 60_000;
 const STATE_CHANGING = new Set<MethodName>(['policy.update', 'recovery.start', 'recovery.cancel', 'phone.resume', 'hardware.confirm']);
 const MAX_SEND_LOG = 500;
+/** How long the phone waits for the guardian over relays it was told to move to, before staying where it is. */
+const RELAY_PROBE_TIMEOUT_MS = 10_000;
+/** A list the guardian did not answer over is tried again at most this often (alerts and status reads bring it again). */
+const RELAY_PROBE_RETRY_MS = 5 * 60_000;
 const policyNameOf = (walletId: string) => `Trikey ${walletId.slice(0, 4)}`;
 
 /** `wallet_retired` in words for the person. */
@@ -548,6 +554,14 @@ export class TrikeyWallet {
   private walletCache?: { descriptor: string; wallet: MultisigWallet };
   /** The new guardian's connection while "Replace guardian" runs. */
   private replaceRpc?: { rpc: GuardianRpc; pool: RelayPool };
+  /** Connections to the guardian's old relays after it moved, kept open until calls already sent on them are answered. */
+  private readonly oldConnections = new Set<{ rpc: GuardianRpc; pool: RelayPool; timer: ReturnType<typeof setTimeout> }>();
+  /** Relay changes are taken one at a time (an alert and a status read can bring the same one). */
+  private relayFollow: Promise<unknown> = Promise.resolve();
+  /** The last list tried and not (yet) answered over, and when (ms). */
+  private relayProbe?: { key: string; at: number };
+  /** Bumped when the wallet closes its connections, so a relay switch finishing afterwards does not open one again. */
+  private connections = 0;
   private adopting?: Promise<boolean>;
   /** The helper account's private key and the silent payment scan key, loaded without biometrics (see `secrets`). */
   private helperKey?: HDKey;
@@ -695,6 +709,7 @@ export class TrikeyWallet {
     this.pool?.close();
     this.rpc = undefined;
     this.pool = undefined;
+    this.closeOldConnections();
     this.chainSource = undefined;
     this.pairing?.rpc.close();
     this.pairing?.pool.close();
@@ -765,7 +780,7 @@ export class TrikeyWallet {
     };
     const rpc = this.deps.createRpc ? this.deps.createRpc(opts) : new RpcClient(opts);
     // The client keeps the key for as long as it runs; it is not zeroed here.
-    if (how.routeAlerts !== false) rpc.onAlert((alert, meta) => void this.onAlert(alert, meta));
+    if (how.routeAlerts !== false) rpc.onAlert((alert, meta) => void this.onAlert(alert, meta, peer));
     await rpc.start();
     return { rpc, pool };
   }
@@ -1304,8 +1319,98 @@ export class TrikeyWallet {
     if (this.recoveredElsewhere && this.s.guardianStatus) return this.s.guardianStatus; // the guardian does not answer this phone any more
     const st = await this.call('guardian.status', {});
     await this.storeStatus(st);
+    await this.followGuardianRelays(st.relays, this.s.guardian?.pubkey);
     await this.followGuardianWallet(st.walletId);
     return this.s.guardianStatus!;
+  }
+
+  // ===========================================================================
+  // The guardian's relays (PROTOCOL.md, "Changing relays")
+
+  /**
+   * The paired guardian moved to `list` (its `relays_changed` alert, or a `guardian.status` naming other relays than
+   * the phone has: an alert it missed). Taken only from that guardian (`from` is the peer of the connection it came
+   * over, whose key the client checked) and only with the pairing code's rules. Runs in the background: it never
+   * holds up the caller.
+   */
+  private followGuardianRelays(list: readonly string[] | undefined, from: string | undefined): Promise<void> {
+    const g = this.s.guardian;
+    if (!list || !g || !from || from !== g.pubkey || this.recoveredElsewhere) return Promise.resolve();
+    const checked = checkRelayList(list);
+    if ('error' in checked || sameRelays(checked.relays, g.relays)) return Promise.resolve();
+    this.relayFollow = this.relayFollow.then(() => this.switchRelays(checked.relays, from)).catch(() => undefined);
+    return Promise.resolve();
+  }
+
+  /**
+   * Switches to `relays` only once the guardian has answered over them alone: `relays.ack` (which also tells it the
+   * phone switched), or `guardian.status` for a phone that is only recovering. Until then the phone stays on the
+   * relays it has, which the guardian keeps watching for 30 days, so a new list the phone cannot reach (a relay that is
+   * down, a typo in the web UI) never cuts it off; it tries again at the next alert or status read, at most every
+   * `RELAY_PROBE_RETRY_MS` for the same list. Then it stores the list (the next backup has it) and moves its
+   * connection; calls already sent on the old one are answered there.
+   */
+  private async switchRelays(relays: string[], from: string): Promise<void> {
+    const g = this.s.guardian;
+    if (!g || g.pubkey !== from || sameRelays(relays, g.relays) || this.recoveredElsewhere) return;
+    const key = relays.join(' ');
+    if (this.relayProbe?.key === key && this.now() - this.relayProbe.at < RELAY_PROBE_RETRY_MS) return;
+    this.relayProbe = { key, at: this.now() };
+    const generation = this.connections;
+    const next = await this.connect(from, relays);
+    let moved: Result<'relays.ack'> | undefined;
+    let answered = false;
+    try {
+      if (this.s.stage === 'paired') moved = await next.rpc.call('relays.ack', { relays }, { timeoutMs: this.relayProbeTimeoutMs });
+      else await next.rpc.call('guardian.status', {}, { timeoutMs: this.relayProbeTimeoutMs });
+      answered = true;
+    } catch (e) {
+      answered = e instanceof RpcError; // a refusal is an answer too: the guardian is reachable there
+    }
+    if (!answered || generation !== this.connections || this.s.guardian?.pubkey !== from) {
+      next.rpc.close();
+      next.pool.close();
+      return;
+    }
+    await this.update((s) => {
+      if (s.guardian?.pubkey === from) s.guardian = { ...s.guardian, relays };
+    });
+    this.relayProbe = undefined;
+    this.useConnection(next);
+    // It moved again meanwhile: follow its current list (this answer came from it, over the new relays).
+    if (moved && !moved.current) void this.followGuardianRelays(moved.relays, from);
+  }
+
+  /** Makes `next` the guardian connection. The old one stays open until calls already sent on it are answered (or time out). */
+  private useConnection(next: { rpc: GuardianRpc; pool: RelayPool }): void {
+    const old = this.rpc && this.pool ? { rpc: this.rpc, pool: this.pool } : undefined;
+    this.rpc = next.rpc;
+    this.pool = next.pool;
+    if (!old) return;
+    const entry = {
+      ...old,
+      timer: setTimeout(() => {
+        this.oldConnections.delete(entry);
+        old.rpc.close();
+        old.pool.close();
+      }, (this.deps.rpcTimeoutMs ?? 30_000) + 5_000),
+    };
+    (entry.timer as { unref?: () => void }).unref?.();
+    this.oldConnections.add(entry);
+  }
+
+  private closeOldConnections(): void {
+    this.connections++;
+    for (const c of this.oldConnections) {
+      clearTimeout(c.timer);
+      c.rpc.close();
+      c.pool.close();
+    }
+    this.oldConnections.clear();
+  }
+
+  private get relayProbeTimeoutMs(): number {
+    return Math.min(RELAY_PROBE_TIMEOUT_MS, this.deps.rpcTimeoutMs ?? 30_000);
   }
 
   /**
@@ -2379,7 +2484,7 @@ export class TrikeyWallet {
    * phone subscribes, so alerts already seen (persisted ids) are ignored, and
    * the follow-up reads of the guardian's state are coalesced into one.
    */
-  private async onAlert(alert: Alert, meta: { id: string; at: number }): Promise<void> {
+  private async onAlert(alert: Alert, meta: { id: string; at: number }, from?: string): Promise<void> {
     if (this.s.seenAlerts.includes(meta.id)) return;
     await this.update((s) => void (s.seenAlerts = [...s.seenAlerts, meta.id].slice(-MAX_SEEN_ALERTS)));
     const alertMs = alertTimeMs(alert);
@@ -2399,6 +2504,10 @@ export class TrikeyWallet {
         if (gs && newer) await this.update((s) => void (s.guardianStatus = { ...s.guardianStatus!, state: 'locked' }));
         break;
       }
+      case 'relays_changed':
+        // Only from the paired guardian (`from`: the connection's peer, whose key the client checked).
+        await this.followGuardianRelays(alert.relays, from);
+        return;
       case 'sp_received': {
         // A payment reached the address. Look it up now (no prompt: the scan key is on the phone); moving it into the
         // vault needs the biometric prompt, so that is the person's tap (`sweepSilentPayments`), not something to
@@ -2446,6 +2555,7 @@ export class TrikeyWallet {
 
   /** Closes the connection to the guardian; `client()` refuses to open another while the wallet is recovered elsewhere. */
   private stopTalkingToGuardian(): void {
+    this.closeOldConnections();
     this.rpc?.close();
     this.pool?.close();
     this.rpc = undefined;

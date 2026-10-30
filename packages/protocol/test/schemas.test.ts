@@ -80,6 +80,7 @@ describe('request schemas', () => {
     'sp.register': spRegister,
     'sp.unregister': {},
     'sp.scan': { fromHeight: 800_000 },
+    'relays.ack': { relays: ['wss://relay.example.com', 'ws://umbrel.local:4848'] },
   };
 
   it('has a sample for every method', () => {
@@ -474,6 +475,7 @@ describe('responses and alerts', () => {
       { type: 'wallet_adopted', walletId: WALLET_ID, previousWalletId: 'fedcba9876543210', recoveryId: 'rec-1', hardwareConfirmRequired: true, at },
       { type: 'wallet_retired', walletId: WALLET_ID, reason: 'recovered', successorWalletId: 'fedcba9876543210', at },
       { type: 'wallet_retired', walletId: WALLET_ID, reason: 'reset', at },
+      { type: 'relays_changed', relays: ['wss://relay.example.com'], at },
     ];
     for (const a of alerts) {
       expect(Alert.safeParse(a).success, a.type).toBe(true);

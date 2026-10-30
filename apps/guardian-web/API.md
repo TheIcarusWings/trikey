@@ -43,7 +43,7 @@ when the guardian restarts. Without one, everything else answers `401 unauthenti
 - Every response sends `Cache-Control: no-store` (API) and security headers: a CSP
   with `default-src 'self'` and no `'unsafe-inline'`, `X-Frame-Options: DENY`,
   `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`.
-- **State-changing requests** (`POST`, `DELETE`) must carry a JSON body with
+- **State-changing requests** (`POST`, `PUT`, `DELETE`) must carry a JSON body with
   `Content-Type: application/json` (the client sends `{}` when it has nothing to
   send; anything else is `415`), and must be same-origin: the guardian checks
   `Sec-Fetch-Site: same-origin` when the browser sends it, else `Origin` against
@@ -97,8 +97,8 @@ the sign-in screen. The guardian is locked after every start of its process.
 
 **Reset guardian.** Forgets every wallet (active and retired), its rules, recoveries and
 limit records, and **creates a new key 3**; the old key 3 is destroyed (the keystore file is
-replaced, the one exception to "never overwritten"). The nostr identity, the relays, the unlock
-passphrase and the service log stay. `confirm` must be exactly `RESET GUARDIAN`
+replaced, the one exception to "never overwritten"). The nostr identity, the relays (change them with
+`PUT /api/relays`), the unlock passphrase and the service log stay. `confirm` must be exactly `RESET GUARDIAN`
 (`RESET_CONFIRMATION` in `src/api/types.ts`), else `400 invalid`; the passphrase is checked like
 an unlock, with a rate limit of its own (`401 bad_passphrase`, `429 rate_limited`). It ends every web session (the browser that reset is signed in again). Refused with
 `409 recovery_pending` while a recovery is pending or ready (it would make a running recovery
@@ -139,11 +139,22 @@ wallet (a signed `cancel-recovery` approval). The box's web UI is none of these.
 (An earlier draft had `POST /api/recovery/:id/cancel` "re-enabling phone-only
 payments", which the engine cannot do safely.)
 
+### Relays
+
+| Method and path | Request | Response | Notes |
+|---|---|---|---|
+| `GET /api/relays` | none | `RelaySettings` | Unlocked only. `relays[]`: in use now, each with its live connection state (the pairing and recovery codes carry these). `retiring[]`: relays a change removed that the guardian still listens and publishes on, each `until` (30 days after the change). `options[]`: the relays offered at setup, as suggestions. `lastChange`: the latest change and, once the paired phone said it switched (`relays.ack`), `phoneConfirmedAt`. `max`: 8. |
+| `PUT /api/relays` | `{ relays: string[] }` | `RelaySettings` | Unlocked only. Replaces the list, with the setup's rules: `400 invalid` if it is empty, has more than 8 entries or a URL that is not `wss://` (or `ws://` on a local or `.onion` host), or carries credentials or a fragment; URLs are normalised and duplicates dropped. The same relays in another order change nothing. Otherwise, at once: the guardian listens and publishes on the new relays and on the removed ones (`retiring`, for 30 days whether or not the phone confirms), sends the paired phone a `relays_changed` alert over both, and logs a "Relays changed" security event. The phone moves once the guardian answers it over the new relays (PROTOCOL.md, "Changing relays"). Print a new recovery sheet afterwards: an older one only works during the 30 days. |
+
+There is no undo endpoint: put the old list back with another `PUT` (the phone, still on relays that work, follows
+again). A change can only cost availability, not funds: relays carry nothing but encrypted gift wraps, and the phone moves
+only to relays the guardian answered it over.
+
 ### Recovery code
 
 | Method and path | Response | Notes |
 |---|---|---|
-| `GET /api/recovery-code` | `RecoveryCode` | Unlocked only. The permanent "Recover on a new phone" code for a phone that has neither the old phone nor its backup: `uri` (`trikey://recover?v=1&npub=…&relay=…&net=…&wallet=…`, PROTOCOL.md section 6; `wallet` lets the phone sign the wallet-bound `recovery.access` text) is what the QR code encodes. It carries **no secret** and does not expire (the hardware wallet's `recovery.access` signature is what lets a phone in), so the page offers to print it. `404 not_found` while no wallet is paired. |
+| `GET /api/recovery-code` | `RecoveryCode` | Unlocked only. The permanent "Recover on a new phone" code (with the current relays: after a relay change, print it again) for a phone that has neither the old phone nor its backup: `uri` (`trikey://recover?v=1&npub=…&relay=…&net=…&wallet=…`, PROTOCOL.md section 6; `wallet` lets the phone sign the wallet-bound `recovery.access` text) is what the QR code encodes. It carries **no secret** and does not expire (the hardware wallet's `recovery.access` signature is what lets a phone in), so the page offers to print it. `404 not_found` while no wallet is paired. |
 
 ### Pairing
 

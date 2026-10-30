@@ -5,7 +5,7 @@
  *   without a session: GET /status (reduced: `PublicStatus`), POST /session, DELETE /session,
  *                      and before setup GET /setup/preflight, POST /setup (which signs the browser in)
  *   locked:            GET /status, POST /unlock, POST /reset
- *   unlocked:          everything
+ *   unlocked:          everything (GET and PUT /relays included)
  *
  * Without a session anything else answers 401 `unauthenticated`; with one, 409 `setup_required` or
  * `locked` as before (security review 2026-10, finding 10b).
@@ -13,12 +13,12 @@
 import * as btc from '@scure/btc-signer';
 import { base64 } from '@scure/base';
 import { getNetwork, parsePsbt } from '@trikey/core';
-import { encodePairingUri, encodeRecoveryUri } from '@trikey/protocol';
+import { MAX_RELAYS, encodePairingUri, encodeRecoveryUri } from '@trikey/protocol';
 import type { Guardian } from '../guardian.js';
 import type { RecoveryRecord } from '../policy/index.js';
 import { engineEntry, serviceEntry, shortNpub } from './activity.js';
 import { HttpError, type Route, type RouteResult } from './server.js';
-import type { ActivityEntry, GuardianStatus, PairingSession, PublicStatus, RecoveryCode, RecoveryInProgress, Rules, SetupPreflight } from './types.js';
+import type { ActivityEntry, GuardianStatus, PairingSession, PublicStatus, RecoveryCode, RecoveryInProgress, RelaySettings, Rules, SetupPreflight } from './types.js';
 import { sessionCookie } from './sessions.js';
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -160,6 +160,18 @@ export function activity(g: Guardian, limit: number): ActivityEntry[] {
     .map((x) => x.entry);
 }
 
+/** `GET` and `PUT /api/relays`. */
+export function relaySettings(g: Guardian): RelaySettings {
+  const change = g.service.get().relaysChange;
+  return {
+    relays: g.relayStatus(),
+    retiring: g.retiringRelayStatus().map((r) => ({ url: r.url, connected: r.connected, until: iso(r.until) })),
+    options: g.config.relayOptions.map((r) => ({ ...r })),
+    ...(change ? { lastChange: { at: iso(change.at), ...(change.confirmedAt !== undefined ? { phoneConfirmedAt: iso(change.confirmedAt) } : {}) } } : {}),
+    max: MAX_RELAYS,
+  };
+}
+
 function pairingSessionBody(g: Guardian, id: string): PairingSession {
   const s = g.pairing.get(id, g.clock.now());
   if (!s) throw new HttpError(404, 'not_found', 'No such pairing session.');
@@ -283,6 +295,27 @@ export function buildRoutes(g: Guardian): Route[] {
       handler: () => {
         requireUnlocked(g);
         return ok({ recovery: recoveryInProgress(g) });
+      },
+    },
+
+    {
+      method: 'GET',
+      path: '/relays',
+      handler: () => {
+        requireUnlocked(g);
+        return ok(relaySettings(g));
+      },
+    },
+
+    // Changing relays: the guardian moves at once, keeps the old ones for 30 days and tells the phone (guardian.ts).
+    {
+      method: 'PUT',
+      path: '/relays',
+      handler: async ({ body }) => {
+        requireUnlocked(g);
+        const r = await g.changeRelays((body as { relays?: unknown } | undefined)?.relays);
+        if (!r.ok) throw new HttpError(r.code === 'setup_required' ? 409 : 400, r.code, r.message);
+        return ok(relaySettings(g));
       },
     },
 

@@ -51,27 +51,43 @@ export class Inbox {
   /** Wraps opened (each at most once), for tests and diagnostics. */
   opened = 0;
 
+  private relays: string[];
+
   constructor(private readonly o: InboxOptions) {
     this.log = o.log ?? silentLogger;
+    this.relays = [...new Set(o.relays)];
   }
 
   /** Subscribes; resolves once the relays reply with EOSE (or after 3 s). */
   start(): Promise<void> {
     this.starting ??= new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, 3000);
-      this.sub = this.o.pool.subscribe(
-        this.o.relays,
-        { kinds: [1059], '#p': [this.o.pubkey], since: this.o.now() - SUBSCRIPTION_LOOKBACK_SEC },
-        {
-          onevent: (e) => this.onWrap(e),
-          oneose: () => {
-            clearTimeout(timer);
-            resolve();
-          },
-        },
-      );
+      this.sub = this.subscribe(() => {
+        clearTimeout(timer);
+        resolve();
+      });
     });
     return this.starting;
+  }
+
+  /**
+   * Listens on `relays` from now on (a relay change): the new subscription is open before the old one closes, so
+   * nothing addressed to the guardian is missed in between. Wraps the relays deliver again are dropped by id.
+   */
+  setRelays(relays: string[]): void {
+    this.relays = [...new Set(relays)];
+    if (this.closed || !this.sub) return;
+    const old = this.sub;
+    this.sub = this.subscribe(() => {});
+    old.close();
+  }
+
+  private subscribe(oneose: () => void): Subscription {
+    return this.o.pool.subscribe(
+      this.relays,
+      { kinds: [1059], '#p': [this.o.pubkey], since: this.o.now() - SUBSCRIPTION_LOOKBACK_SEC },
+      { onevent: (e) => this.onWrap(e), oneose },
+    );
   }
 
   close(): void {

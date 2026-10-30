@@ -1,0 +1,91 @@
+name: Android launch check
+
+# Builds the Android test APK for x86_64 (the same release build, Hermes bundle and one-off signing as the
+# testers' arm64-v8a APK: android-build.yml), installs it in an Android emulator, opens it, and fails if the
+# app is not running 25 seconds later or its log shows a crash. Catches an APK that installs but closes
+# straight away, which no unit test or bundler run sees.
+#
+# What it reports (CI log downloads are blocked for us; annotations can be read through the checks API):
+# - failed: `::error` annotations with the lines that say why, most telling first: the FATAL EXCEPTION
+#   block, the JavaScript error and its stack, the native abort message and backtrace, the exit reason;
+# - passed: one `::notice` with the first JavaScript log lines.
+# The full logcat, the app's own lines, a screenshot and any tombstones are in the `android-launch-logcat`
+# artifact. The scripts are .github/scripts/android-launch.sh (drives the emulator) and
+# .github/scripts/android-launch-report.py (judges and reports); both run locally against any emulator.
+
+on:
+  pull_request:
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/**'
+      - 'package-lock.json'
+      - '.github/workflows/android-launch.yml'
+      - '.github/workflows/android-apk.yml'
+      - '.github/workflows/android-build.yml'
+      - '.github/scripts/android-launch*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-launch-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/android-build.yml
+    with:
+      architectures: x86_64
+      artifact-name: trikey-android-apk-x86_64
+
+  launch:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      APP_ID: ${{ needs.build.outputs.application-id }}
+      APK: apk/${{ needs.build.outputs.apk-name }}.apk
+      OUT: launch-out
+      WAIT_SECONDS: '25'
+    steps:
+      - uses: actions/checkout@v4.4.0
+        with:
+          sparse-checkout: .github
+
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          name: trikey-android-apk-x86_64
+          path: apk
+
+      # The emulator needs hardware acceleration: let the runner user open /dev/kvm.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Launch the APK in an emulator
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          ram-size: 4096M
+          disk-size: 6000M
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none -camera-front none
+          disable-animations: true
+          script: bash .github/scripts/android-launch.sh
+
+      - name: Report
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/android-launch-report.py "${OUT}"
+
+      - uses: actions/upload-artifact@v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: android-launch-logcat
+          path: launch-out/
+          if-no-files-found: warn
+          retention-days: 14

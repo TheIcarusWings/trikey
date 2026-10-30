@@ -8,4 +8,5 @@ export * from './pool.js';
 export * from './client.js';
 export * from './server.js';
 export * from './pairing.js';
+export * from './relay-url.js';
 export * from './identity.js';
