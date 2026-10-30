@@ -83,7 +83,7 @@ import { scanAccount, type EsploraClient, type ScanResult } from './esplora.js';
 import { DEFAULT_SWEEP_FEE_CAP_SATS, buildVaultSweep, gatherVaultCoins, signVaultTx, type VaultSigner } from './recovery.js';
 import { decodeRawTx, vsizeOf } from './script-verify.js';
 import { StateStore, type HardwareRecord, type RkAlert, type RkConfig, type RkState } from './state.js';
-import { secureRandomBytes } from '@trikey/core/random';
+import { secureRandomBytes, secureRandomInt } from '@trikey/core/random';
 
 export interface Clock {
   now(): number;
@@ -253,12 +253,19 @@ function wordMatches(typed: string, word: string): boolean {
   return hits.length === 1 && hits[0] === word;
 }
 
-function randomPositions(n: number, of: number): number[] {
-  const picked = new Set<number>();
-  const r = secureRandomBytes(32);
-  let i = 0;
-  while (picked.size < n) picked.add((r[i++ % 32]! + i) % of + 1);
-  return [...picked].sort((a, b) => a - b);
+/**
+ * `n` distinct word positions out of `of` (1-based, ascending), uniformly at random: a partial Fisher-Yates
+ * shuffle on `secureRandomInt`, so every set of `n` positions is equally likely (entropy review I4: the
+ * earlier version had a small modulo bias and reused its bytes).
+ */
+export function randomPositions(n: number, of: number): number[] {
+  if (!Number.isInteger(n) || !Number.isInteger(of) || n < 0 || n > of) throw new RangeError(`cannot pick ${n} of ${of} positions`);
+  const pool = Array.from({ length: of }, (_, i) => i + 1);
+  for (let i = 0; i < n; i++) {
+    const j = i + secureRandomInt(of - i);
+    [pool[i], pool[j]] = [pool[j]!, pool[i]!];
+  }
+  return pool.slice(0, n).sort((a, b) => a - b);
 }
 
 /** Connects through `provider` and checks the device is `fingerprint`. */
