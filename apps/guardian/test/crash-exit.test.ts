@@ -29,9 +29,14 @@ async function runMain(dir: string, opts: { preload?: string; sigtermAfterStart?
     env: { PATH: process.env.PATH ?? '', TRIKEY_DATA_DIR: join(dir, 'data'), BITCOIN_NETWORK: 'regtest', PORT: String(await freePort()) },
   });
   let out = '';
+  let sent = false;
   child.stdout.on('data', (d) => {
     out += String(d);
-    if (opts.sigtermAfterStart && out.includes('guardian.started')) child.kill('SIGTERM');
+    // main.ts installs its signal handlers right after `guardian.started` is logged: give it a moment.
+    if (opts.sigtermAfterStart && !sent && out.includes('guardian.started')) {
+      sent = true;
+      setTimeout(() => child.kill('SIGTERM'), 500);
+    }
   });
   child.stderr.on('data', (d) => (out += String(d)));
   const code = await new Promise<number | null>((resolve) => child.on('exit', (c) => resolve(c)));
