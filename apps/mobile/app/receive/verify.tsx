@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { DeviceMock } from '@/components/device-mock';
-import { TriangleAlert } from '@/components/icons';
+import { ShieldCheck, TriangleAlert } from '@/components/icons';
 import { Body, Notice } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Card } from '@/components/ui/card';
@@ -74,8 +74,8 @@ export default function ReceiveVerify() {
         Your {hardware.brand} works out the address on its own from all three keys. If both screens match, the address is really yours.
       </Body>
       <DeviceMock
-        width={240}
-        height={150}
+        width={220}
+        height={120}
         lineHeight={15}
         label={`${hardware.brand} screen showing the receiving address`}
         lines={['Trikey · receive', ...deviceLines(receiveAddress)]}
@@ -93,8 +93,8 @@ export default function ReceiveVerify() {
         </Text>
       </Card>
       {verified ? (
-        <Notice tone="fill" title="Your device agrees">
-          The address your {hardware.brand} showed is the one on this phone. Check the screens match too before you rely on it.
+        <Notice icon={ShieldCheck} iconClass="text-good" tone="fill" title="Your device agrees">
+          Your {hardware.brand} showed this same address. Check the two screens match too.
         </Notice>
       ) : null}
       {hardMismatch ? (

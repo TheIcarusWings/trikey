@@ -1,11 +1,11 @@
 import { useRouter } from 'expo-router';
+import { useSyncExternalStore } from 'react';
 import { Pressable, View } from 'react-native';
 import { ActivityRow } from '@/components/activity-row';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { ArrowDownLeft, ArrowUpRight, Clock, HardwareWallet, Lock, TriangleAlert } from '@/components/icons';
-import { Notice } from '@/components/panels';
-import { ProgressBar } from '@/components/progress';
+import { ArrowDownLeft, ArrowUpRight, Clock, Eye, EyeOff, HardwareWallet, Lock, Settings, TriangleAlert } from '@/components/icons';
+import { NetworkPill, Notice } from '@/components/panels';
 import { Card } from '@/components/ui/card';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
@@ -23,12 +23,46 @@ import {
   type Sats,
 } from '@/data';
 import { guardianBox } from '@/lib/labels';
-import { UnlockForm } from '@/components/unlock-form';
 import { useAction } from '@/lib/use-action';
 import { IS_IOS, pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
-/** The big number. Sats by default, BTC when the user switched units. */
+/** Tap-to-hide for the balance: remembered while the app runs, so Home and its states agree. */
+let balanceHidden = false;
+const hiddenListeners = new Set<() => void>();
+function useBalanceHidden(): [boolean, () => void] {
+  const hidden = useSyncExternalStore(
+    (listener) => {
+      hiddenListeners.add(listener);
+      return () => hiddenListeners.delete(listener);
+    },
+    () => balanceHidden
+  );
+  const toggle = () => {
+    balanceHidden = !balanceHidden;
+    hiddenListeners.forEach((listener) => listener());
+  };
+  return [hidden, toggle];
+}
+
+/** The top of a tab root: the network chip and the way to Settings (iOS in the content, Android in the top bar). */
+export function HomeTopActions() {
+  const router = useRouter();
+  return (
+    <View className={cn('flex-row items-center', IS_IOS ? 'h-11 justify-between' : 'gap-1')}>
+      <NetworkPill />
+      <Pressable
+        role="link"
+        accessibilityLabel="Settings"
+        onPress={() => router.push('/settings')}
+        className="size-11 items-center justify-center rounded-full active:bg-accent">
+        <Icon as={Settings} size={22} strokeWidth={1.8} className="text-foreground" />
+      </Pressable>
+    </View>
+  );
+}
+
+/** The big number, centred. Sats by default, BTC when the user switched units; tap it to hide it. */
 export function BalanceHeader({
   label,
   sats,
@@ -40,74 +74,79 @@ export function BalanceHeader({
   caption?: string;
 }) {
   const { unit, synced, syncing, backing } = useWallet();
+  const [hidden, toggle] = useBalanceHidden();
   const waiting = backing !== 'demo' && !synced ? (syncing ? 'Syncing with your guardian…' : 'Not synced yet. Pull down to refresh.') : undefined;
   const main = formatAmount(sats, unit);
   const unitText = unit === 'btc' ? 'BTC' : 'sats';
-  const secondary = unit === 'btc' ? `${formatSats(sats)} sats` : `${formatBtc(sats)} BTC`;
+  const secondary = unit === 'btc' ? `BTC · ${formatSats(sats)} sats` : `sats · ${formatBtc(sats)} BTC`;
   return (
-    <View className="gap-1" accessible accessibilityLabel={`${label}: ${main} ${unitText}`}>
-      <Text className={cn('text-muted-foreground', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{label}</Text>
+    <Pressable
+      role="button"
+      onPress={toggle}
+      accessibilityLabel={hidden ? `${label} hidden. Tap to show` : `${label}: ${main} ${unitText}. Tap to hide`}
+      className="items-center gap-0.5 pt-2">
       <Text
         className={cn(
           'tabular-nums',
-          pick('text-[44px] font-semibold leading-[52px] tracking-[-1.32px]', 'text-[44px] font-normal leading-[52px]')
+          pick('text-[56px] font-semibold leading-[64px] tracking-[-2.2px]', 'text-[56px] font-normal leading-[64px] tracking-[-1.1px]')
         )}>
-        {main} <Text className={cn('text-muted-foreground text-[22px]', IS_IOS ? 'font-semibold' : 'font-normal')}>{unitText}</Text>
+        {hidden ? '••••••' : main}
       </Text>
-      <Text className={cn('text-muted-foreground tabular-nums', pick('text-[15px] leading-5', 'text-sm leading-5'))}>
-        {caption ?? waiting ?? secondary}
-      </Text>
-    </View>
+      <View className="flex-row items-center gap-1.5">
+        <Text className={cn('text-muted-foreground tabular-nums', pick('text-[15px] leading-5', 'text-sm leading-5'))}>
+          {hidden ? 'Balance hidden' : (waiting ?? secondary)}
+        </Text>
+        <Icon as={hidden ? EyeOff : Eye} size={16} strokeWidth={2} className="text-muted-foreground" />
+      </View>
+      {caption ? <Text className={cn('text-muted-foreground text-center', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{caption}</Text> : null}
+    </Pressable>
   );
 }
 
-/** Send and Receive, side by side. */
+/** Send and Receive as two round buttons with their names under them. */
 export function SendReceiveButtons({ sendEmphasis = true }: { sendEmphasis?: boolean }) {
   const router = useRouter();
+  const button = (title: string, icon: typeof ArrowUpRight, primary: boolean, onPress: () => void) => (
+    <Pressable role="button" accessibilityLabel={title} onPress={onPress} className="items-center gap-2 active:opacity-70">
+      <View className={cn('size-16 items-center justify-center rounded-full', primary ? 'bg-primary' : 'bg-secondary')}>
+        <Icon as={icon} size={26} strokeWidth={2} className={primary ? 'text-primary-foreground' : 'text-foreground'} />
+      </View>
+      <Text className="text-sm font-medium leading-5">{title}</Text>
+    </Pressable>
+  );
   return (
-    <View className="flex-row gap-3">
-      <AppButton
-        title="Send"
-        icon={ArrowUpRight}
-        size="hero"
-        variant={sendEmphasis ? 'primary' : 'secondary'}
-        className="flex-1 self-auto"
-        onPress={() => router.push('/send/amount')}
-      />
-      <AppButton
-        title="Receive"
-        icon={ArrowDownLeft}
-        size="hero"
-        variant="secondary"
-        className="flex-1 self-auto"
-        onPress={() => router.push('/receive')}
-      />
+    <View className="flex-row justify-center gap-12">
+      {button('Send', ArrowUpRight, sendEmphasis, () => router.push('/send/to'))}
+      {button('Receive', ArrowDownLeft, false, () => router.push('/receive'))}
     </View>
   );
 }
 
-/** "Phone-only today": how much of the daily limit is left, and the guardian's state. */
-export function LimitCard() {
+/** One line under the balance: what the phone can still pay today without the hardware wallet. Opens the limit. */
+export function LimitLine() {
+  const router = useRouter();
   const state = useWallet();
   const left = remainingToday(state);
   const { limitSats } = state.dailyLimit;
-  const { guardian } = state;
+  const brand = state.hardware.brand;
+  const low = limitSats > 0 && left < limitSats * 0.1;
+  const text = low ? `${formatSats(left)} sats left today. Bigger payments need your ${brand}.` : `${formatSats(left)} sats left today without your ${brand}`;
+  return <StatusLine tone={low ? 'warn' : 'good'} text={text} onPress={() => router.push('/settings/limit')} />;
+}
+
+/** A dot and a short sentence, centred under the balance. */
+export function StatusLine({ tone, text, onPress }: { tone: 'good' | 'warn'; text: string; onPress?: () => void }) {
+  const body = (
+    <View className="min-h-11 flex-row items-center justify-center gap-2 px-2">
+      <View className={cn('size-2 rounded-full', tone === 'good' ? 'bg-good' : 'bg-warn')} />
+      <Text className={cn('text-muted-foreground shrink text-center tabular-nums', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{text}</Text>
+    </View>
+  );
+  if (!onPress) return body;
   return (
-    <Card className="gap-2.5 px-4 py-3.5">
-      <View className="flex-row justify-between">
-        <Text className={pick('text-[15px] leading-5', 'text-sm leading-5')}>Phone-only today</Text>
-        <Text className={cn('text-muted-foreground tabular-nums', pick('text-[15px] leading-5', 'text-sm leading-5'))}>
-          {formatSats(left)} of {formatSats(limitSats)} left
-        </Text>
-      </View>
-      <ProgressBar fraction={limitSats > 0 ? left / limitSats : 0} label={`${formatSats(left)} of ${formatSats(limitSats)} sats left today`} />
-      <View className="flex-row items-center gap-2">
-        <View className="bg-good size-2 rounded-full" />
-        <Text className={cn('text-muted-foreground', pick('text-[13px] leading-[18px]', 'text-xs leading-4'))}>
-          Guardian online {'·'} {guardianBox(guardian)}
-        </Text>
-      </View>
-    </Card>
+    <Pressable role="link" accessibilityLabel={text} onPress={onPress} className="-mt-3 active:opacity-70">
+      {body}
+    </Pressable>
   );
 }
 
@@ -139,36 +178,40 @@ export function SilentPaymentsRow() {
 }
 
 /**
- * Guardian locked (after a restart) or offline: phone-only payments wait. A locked guardian takes its passphrase here;
- * the hardware wallet can still pay in the meantime.
+ * Guardian locked (after a restart) or offline: phone-only payments wait, the hardware wallet can still pay. A locked
+ * guardian is unlocked with its passphrase on the guardian's page.
  */
 export function GuardianDownNotice() {
-  const { guardian } = useWallet();
+  const router = useRouter();
+  const { guardian, hardware } = useWallet();
   const locked = guardian.status === 'locked';
   const host = guardianBox(guardian);
 
   return (
-    <View className={cn('bg-warn-soft gap-3 p-4', pick('rounded-[10px]', 'rounded-xl'))}>
+    <View className={cn('bg-warn-soft gap-1 px-4 pt-3.5', locked ? 'pb-1.5' : 'pb-3.5', pick('rounded-[10px]', 'rounded-xl'))}>
       <View className="flex-row items-start gap-3">
-        <Icon as={locked ? Lock : TriangleAlert} size={22} className="text-warn mt-0.5" strokeWidth={1.8} />
-        <View className="flex-1 gap-1">
-          <Text className={cn('font-semibold', pick('text-[17px] leading-[22px]', 'text-base font-medium leading-6'))}>
-            {locked ? 'Guardian locked' : 'Guardian offline'}
-          </Text>
-          <Text className={cn(pick('text-[15px] leading-[21px]', 'text-sm leading-5'), 'text-foreground')}>
+        <Icon as={locked ? Lock : TriangleAlert} size={20} className="text-warn mt-px" strokeWidth={2} />
+        <View className="flex-1 gap-0.5">
+          <Text className="text-[15px] font-semibold leading-5">{locked ? 'Guardian locked' : 'Guardian offline'}</Text>
+          <Text className="text-sm leading-5">
             {locked
-              ? `Your ${host} restarted, so the guardian locked itself. Phone-only payments are paused until you unlock it with its passphrase.`
-              : `Trikey can't reach your ${host}. Phone-only payments are paused until it is back.`}
+              ? `Your ${host} restarted. Phone-only payments wait until you unlock it; your ${hardware.brand} can still pay.`
+              : `Trikey can't reach your ${host}. Phone-only payments wait until it's back; your ${hardware.brand} can still pay.`}
           </Text>
+          {locked ? (
+            <Pressable role="link" onPress={() => router.push('/settings/guardian')} className="min-h-11 justify-center self-start active:opacity-60">
+              <Text className="text-[15px] font-semibold leading-5">Unlock with passphrase</Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
-      {locked ? <UnlockForm /> : null}
     </View>
   );
 }
 
 /** The latest few items under "Activity" on the home tab. */
 export function ActivityPreview({ limit }: { limit: number }) {
+  const router = useRouter();
   const state = useWallet();
   const now = useNow();
   const items = useActivity()
@@ -177,11 +220,14 @@ export function ActivityPreview({ limit }: { limit: number }) {
   const ctx = { now, unit: state.unit, hardwareBrand: state.hardware.brand };
   return (
     <View>
-      <Text
-        role="heading"
-        className={cn(pick('pb-2 text-xl font-bold leading-[26px]', 'pb-1 text-base font-medium leading-6'))}>
-        Activity
-      </Text>
+      <View className="flex-row items-center justify-between">
+        <Text role="heading" className={pick('text-xl font-bold leading-[26px]', 'text-base font-medium leading-6')}>
+          Recent
+        </Text>
+        <Pressable role="link" onPress={() => router.push('/activity')} className="min-h-11 justify-center pl-4 active:opacity-60">
+          <Text className={cn('text-muted-foreground font-medium', pick('text-[15px]', 'text-sm'))}>See all</Text>
+        </Pressable>
+      </View>
       {items.length === 0 ? <Text className="text-muted-foreground py-4 text-[15px] leading-5">No payments yet.</Text> : null}
       {items.map((item, i) => (
         <ActivityRow key={item.tx.id} item={item} variant="home" last={i === items.length - 1} ctx={ctx} />

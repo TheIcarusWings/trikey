@@ -8,6 +8,7 @@ import { Icon } from '@/components/ui/icon';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Text } from '@/components/ui/text';
+import { useWallet, type AppMode, type NetworkName } from '@/data';
 import { IS_IOS, pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -124,6 +125,7 @@ export function SectionLabel({ children, first }: { children: string; first?: bo
 export function SettingsRow({
   title,
   value,
+  subtitle,
   dot,
   onPress,
   tabular,
@@ -131,6 +133,8 @@ export function SettingsRow({
 }: {
   title: string;
   value?: string;
+  /** A second line under the title, on both platforms ("Takes its passphrase to unlock"). */
+  subtitle?: string;
   /** A status dot before the value. */
   dot?: 'good' | 'warn' | 'bad';
   onPress?: () => void;
@@ -139,8 +143,15 @@ export function SettingsRow({
 }) {
   const dotClass = dot === 'good' ? 'bg-good' : dot === 'warn' ? 'bg-warn' : 'bg-destructive';
   const content = IS_IOS ? (
-    <View className="min-h-[52px] flex-row items-center gap-3 px-4">
-      <Text className="flex-1 text-base">{title}</Text>
+    <View className={cn('min-h-[52px] flex-row items-center gap-3 px-4', subtitle && 'py-3')}>
+      {subtitle ? (
+        <View className="flex-1 gap-0.5">
+          <Text className="text-base">{title}</Text>
+          <Text className="text-muted-foreground text-[13px] leading-[18px]">{subtitle}</Text>
+        </View>
+      ) : (
+        <Text className="flex-1 text-base">{title}</Text>
+      )}
       {value ? (
         <View className="flex-row items-center gap-1.5">
           {dot ? <View className={cn('size-[7px] rounded-full', dotClass)} /> : null}
@@ -152,6 +163,7 @@ export function SettingsRow({
   ) : (
     <View className="min-h-16 justify-center">
       <Text className="text-base leading-6">{title}</Text>
+      {subtitle ? <Text className="text-muted-foreground text-sm leading-5">{subtitle}</Text> : null}
       {value ? (
         <View className="flex-row items-center gap-1.5">
           {dot ? <View className={cn('size-[7px] rounded-full', dotClass)} /> : null}
@@ -165,7 +177,7 @@ export function SettingsRow({
     <Pressable
       onPress={onPress}
       role="link"
-      accessibilityLabel={value ? `${title}, ${value}` : title}
+      accessibilityLabel={[title, subtitle, value].filter(Boolean).join(', ')}
       accessibilityHint={accessibilityHint}
       className="active:bg-accent">
       {content}
@@ -201,6 +213,35 @@ export function Notice({
         {title ? <Text className="text-[15px] font-semibold leading-5">{title}</Text> : null}
         <Text className={cn('text-sm leading-5', title && 'text-muted-foreground')}>{children}</Text>
       </View>
+    </View>
+  );
+}
+
+/** Which network the wallet is on, for test networks and the demo: "Testnet", "Signet", "Regtest", "Demo". Nothing on mainnet. */
+export function networkLabel(backing: AppMode, network: NetworkName | null): string | null {
+  if (backing === 'demo') return 'Demo';
+  switch (network) {
+    case 'testnet':
+      return 'Testnet';
+    case 'signet':
+      return 'Signet';
+    case 'regtest':
+      return 'Regtest';
+    default:
+      return null;
+  }
+}
+
+/** The network chip on Home and Receive, so test coins are never mistaken for real ones. */
+export function NetworkPill() {
+  const { backing, network } = useWallet();
+  const label = networkLabel(backing, network);
+  if (!label) return null;
+  return (
+    <View accessible accessibilityLabel={backing === 'demo' ? 'Demo mode, sample data' : `${label} wallet, test bitcoin only`}>
+      <Pill dot="warn" strong>
+        {label}
+      </Pill>
     </View>
   );
 }

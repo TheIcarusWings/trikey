@@ -1,7 +1,7 @@
 import type { BottomTabBarProps } from 'expo-router/js-tabs';
 import type { LucideIcon } from 'lucide-react-native';
 import { Pressable, View } from 'react-native';
-import { House, List, SlidersHorizontal } from '@/components/icons';
+import { House, Shield } from '@/components/icons';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { IS_IOS, IS_WEB } from '@/lib/platform';
@@ -9,65 +9,85 @@ import { cn } from '@/lib/utils';
 
 const TABS: Record<string, { label: string; icon: LucideIcon }> = {
   home: { label: 'Home', icon: House },
-  activity: { label: 'Activity', icon: List },
-  settings: { label: 'Settings', icon: SlidersHorizontal },
+  security: { label: 'Security', icon: Shield },
 };
 
+/** Height the floating iOS bar takes from the bottom of a tab screen, so the last content can scroll clear of it. */
+export const FLOATING_TAB_BAR_SPACE = 104;
+
 /**
- * Bottom navigation in each platform's design: a plain tab bar on iOS, and a
- * Material 3 navigation bar on Android with the active pill behind the icon.
+ * Bottom navigation in each platform's design: on iOS a floating, translucent pill over the content (as iOS 26 tab bars
+ * float), on Android a Material 3 navigation bar with the active pill behind the icon.
  */
 export function TabBar({ state, emitter, navigateToTab, insets }: BottomTabBarProps) {
   const bottom = IS_WEB ? (IS_IOS ? 30 : 16) : IS_IOS ? Math.max(insets.bottom - 4, 8) : Math.max(insets.bottom, 16);
+
+  const tabs = state.routes.map((route, index) => {
+    const tab = TABS[route.name];
+    if (!tab) return null;
+    const focused = state.index === index;
+
+    const onPress = () => {
+      const event = emitter.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
+      if (!focused && !event.defaultPrevented) navigateToTab(route.key);
+    };
+
+    if (IS_IOS) {
+      return (
+        <Pressable
+          key={route.key}
+          role="tab"
+          aria-selected={focused}
+          accessibilityLabel={tab.label}
+          onPress={onPress}
+          className={cn('min-h-[52px] flex-1 items-center justify-center gap-px rounded-full', focused && 'bg-foreground/10')}>
+          <Icon as={tab.icon} size={24} strokeWidth={1.8} className={focused ? 'text-foreground' : 'text-muted-foreground'} />
+          <Text className={cn('text-[10px] leading-3', focused ? 'text-foreground font-semibold' : 'text-muted-foreground font-medium')}>{tab.label}</Text>
+        </Pressable>
+      );
+    }
+
+    return (
+      <Pressable
+        key={route.key}
+        role="tab"
+        aria-selected={focused}
+        accessibilityLabel={tab.label}
+        onPress={onPress}
+        className="min-h-[52px] flex-1 items-center gap-1">
+        <View className={cn('h-8 w-16 items-center justify-center rounded-2xl', focused && 'bg-accent')}>
+          <Icon as={tab.icon} size={24} strokeWidth={1.8} className={focused ? 'text-accent-foreground' : 'text-muted-foreground'} />
+        </View>
+        <Text className={cn('text-xs font-medium', focused ? 'text-foreground' : 'text-muted-foreground')}>{tab.label}</Text>
+      </Pressable>
+    );
+  });
+
+  if (IS_IOS) {
+    return (
+      <View pointerEvents="box-none" className="absolute inset-x-0 bottom-0 items-center" style={{ paddingBottom: bottom - 6 }}>
+        <View
+          role="tablist"
+          accessibilityLabel="Main"
+          className="bg-background/80 border-foreground/10 w-[200px] flex-row gap-1 rounded-full border p-1"
+          style={[
+            { shadowColor: '#000', shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 8 }, elevation: 6 },
+            // A real blur where the platform can draw one cheaply; elsewhere the 80% fill stands in for it.
+            IS_WEB ? ({ backdropFilter: 'blur(24px) saturate(180%)', WebkitBackdropFilter: 'blur(24px) saturate(180%)' } as object) : null,
+          ]}>
+          {tabs}
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View
       role="tablist"
       accessibilityLabel="Main"
       className="bg-background border-border flex-row border-t"
-      style={IS_IOS ? { paddingTop: 8, paddingHorizontal: 24, paddingBottom: bottom } : { paddingTop: 12, paddingHorizontal: 8, paddingBottom: bottom }}>
-      {state.routes.map((route, index) => {
-        const tab = TABS[route.name];
-        if (!tab) return null;
-        const focused = state.index === index;
-
-        const onPress = () => {
-          const event = emitter.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-          if (!focused && !event.defaultPrevented) navigateToTab(route.key);
-        };
-
-        return (
-          <Pressable
-            key={route.key}
-            role="tab"
-            aria-selected={focused}
-            accessibilityLabel={tab.label}
-            onPress={onPress}
-            className={cn('flex-1 items-center', IS_IOS ? 'min-h-11 gap-[3px]' : 'min-h-[52px] gap-1')}>
-            {IS_IOS ? (
-              <Icon as={tab.icon} size={26} strokeWidth={1.8} className={focused ? 'text-primary' : 'text-muted-foreground'} />
-            ) : (
-              <View className={cn('h-8 w-16 items-center justify-center rounded-2xl', focused && 'bg-accent')}>
-                <Icon
-                  as={tab.icon}
-                  size={24}
-                  strokeWidth={1.8}
-                  className={focused ? 'text-accent-foreground' : 'text-muted-foreground'}
-                />
-              </View>
-            )}
-            <Text
-              className={cn(
-                IS_IOS ? 'text-[10px]' : 'text-xs',
-                IS_IOS && focused ? 'text-primary font-semibold' : 'font-medium',
-                !IS_IOS && focused ? 'text-foreground' : null,
-                !focused && 'text-muted-foreground'
-              )}>
-              {tab.label}
-            </Text>
-          </Pressable>
-        );
-      })}
+      style={{ paddingTop: 12, paddingHorizontal: 8, paddingBottom: bottom }}>
+      {tabs}
     </View>
   );
 }

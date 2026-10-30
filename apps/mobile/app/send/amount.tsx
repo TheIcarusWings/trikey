@@ -1,31 +1,26 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
-import { Delete, QrCode } from '@/components/icons';
-import { FieldLabel, Pill } from '@/components/panels';
+import { Delete } from '@/components/icons';
+import { StatusLine } from '@/components/home';
 import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
-import { Input } from '@/components/ui/input';
 import { Text } from '@/components/ui/text';
 import {
   SATS_PER_BTC,
   formatBtc,
   formatSats,
   looksLikeBitcoinAddress,
-  looksLikeSilentPaymentAddress,
   remainingToday,
+  shorten,
   useWallet,
   useWalletService,
   type QuoteOutcome,
 } from '@/data';
 import { useQuote } from '@/data/use-quote';
-import { QrScanner } from '@/hardware/ui';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
-
-/** Demo address the mock "scanner" returns until the camera is wired up. */
-const DEMO_ADDRESS = 'bc1q9d4xe8w2m5ka3hq7l0pz6vtrc2yn7kmr';
 
 const MAX_DIGITS = 10;
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'] as const;
@@ -70,25 +65,33 @@ export default function SendAmount() {
   const router = useRouter();
   const state = useWallet();
   const wallet = useWalletService();
-  const [scanProblem, setScanProblem] = useState<string | null>(null);
-  const [address, setAddress] = useState('');
-  const [digits, setDigits] = useState('');
+  const params = useLocalSearchParams<{ address?: string; amount?: string; vault?: string }>();
+  const address = (params.address ?? '').trim();
+  const [digits, setDigits] = useState(() => (params.amount ? String(params.amount).slice(0, MAX_DIGITS) : ''));
   const [btcView, setBtcView] = useState(false);
-  const [scanning, setScanning] = useState(false);
   // Recovery Key mode, "Pay from vault": the hardware wallet signs this one, whatever the spending balance holds.
-  const fromVault = useLocalSearchParams<{ vault?: string }>().vault === '1';
+  const fromVault = params.vault === '1';
 
   const amountSats = digits ? Number(digits) : 0;
-  const addressOk = looksLikeBitcoinAddress(address);
-  const addressBad = address.trim().length > 0 && !addressOk;
   const tooMuch = amountSats > state.balanceSats;
   // Planning a payment is real work: quote once the form has been still for a moment, not on every digit.
-  const { outcome, pending } = useQuote({ address: address.trim(), amountSats, speed: 'normal', ...(fromVault ? { signer: 'hardware' as const } : {}) }, state.backing === 'demo' ? 0 : 250);
+  const { outcome, pending } = useQuote({ address, amountSats, speed: 'normal', ...(fromVault ? { signer: 'hardware' as const } : {}) }, state.backing === 'demo' ? 0 : 250);
+  // Opened without a recipient (an old link, a back gesture): ask who it goes to first.
+  if (!looksLikeBitcoinAddress(address)) return <Redirect href={{ pathname: '/send/to', params: fromVault ? { vault: '1' } : {} }} />;
+
   const pill = limitPill(outcome, state, amountSats);
   const needsHelper = !outcome.ok && outcome.problem === 'needs_helper';
-  const silent = looksLikeSilentPaymentAddress(address);
-  const canReview = addressOk && amountSats > 0 && !tooMuch && (outcome.ok || needsHelper) && !pending;
-  const addressRejected = !outcome.ok && outcome.problem === 'invalid_address' && address.trim().length > 0 && addressOk;
+  const canReview = amountSats > 0 && !tooMuch && (outcome.ok || needsHelper) && !pending;
+
+  // "Send max": everything the wallet can send to this address at the standard speed, after its fee. Shown once the
+  // wallet offers it (quoteSendMax); the quote says how much that is.
+  const quoteMax = (wallet as { quoteSendMax?: (r: { address: string; speed: 'normal' }) => QuoteOutcome }).quoteSendMax;
+  const sendMax = quoteMax
+    ? () => {
+        const q = quoteMax.call(wallet, { address, speed: 'normal' });
+        if (q.ok) setDigits(String(q.quote.request.amountSats).slice(0, MAX_DIGITS));
+      }
+    : undefined;
 
   const press = (digit: string) => setDigits((d) => (d.length >= MAX_DIGITS ? d : d === '' && digit === '0' ? '' : d + digit));
   const erase = () => setDigits((d) => d.slice(0, -1));
@@ -96,12 +99,12 @@ export default function SendAmount() {
   const review = () => {
     // A silent payment needs the helper coin: one screen says so and leads to funding it.
     if (!outcome.ok) {
-      if (needsHelper) router.push({ pathname: '/send/helper', params: { address: address.trim(), amount: String(amountSats), why: outcome.message } });
+      if (needsHelper) router.push({ pathname: '/send/helper', params: { address, amount: String(amountSats), why: outcome.message } });
       return;
     }
-    const params = { address: address.trim(), amount: String(amountSats), ...(fromVault ? { signer: 'hardware' } : {}) };
-    if (outcome.quote.plan.signer === 'hardware') router.push({ pathname: '/send/hardware', params });
-    else router.push({ pathname: '/send/review', params });
+    const next = { address, amount: String(amountSats), ...(fromVault ? { signer: 'hardware' } : {}) };
+    // Every payment stops on Review first, the ones the hardware wallet signs included.
+    router.push({ pathname: '/send/review', params: next });
   };
 
   const primary = btcView ? (amountSats / SATS_PER_BTC).toFixed(8) : formatSats(amountSats);
@@ -110,68 +113,24 @@ export default function SendAmount() {
 
   return (
     <Screen
-      title={fromVault ? 'Pay from vault' : 'Send'}
-      backLabel="Home"
+      title={fromVault ? 'Pay from vault' : 'Amount'}
+      hideIosTitle
+      androidTitle={fromVault ? 'Pay from vault' : 'Amount'}
+      backLabel="Back"
       gap={16}
-      footer={
-        <AppButton
-          title={tooMuch ? 'Not enough bitcoin' : needsHelper ? 'Continue' : 'Review'}
-          disabled={!canReview}
-          onPress={review}
-        />
-      }>
-      <View className="gap-1.5">
-        <FieldLabel nativeID="send-to">To</FieldLabel>
-        <View className="flex-row gap-2">
-          <Input
-            aria-labelledby="send-to"
-            accessibilityLabel="Bitcoin address"
-            placeholder="Bitcoin or silent payment address"
-            value={address}
-            onChangeText={setAddress}
-            autoCapitalize="none"
-            autoCorrect={false}
-            spellCheck={false}
-            className={cn('flex-1 font-mono', pick('h-11', 'h-12'), addressBad && 'border-destructive')}
-          />
-          <Pressable
-            role="button"
-            accessibilityLabel="Scan a QR code"
-            onPress={() => (state.backing === 'demo' ? setAddress(DEMO_ADDRESS) : setScanning((v) => !v))}
-            className={cn('border-border items-center justify-center rounded-[10px] border active:bg-accent', pick('size-11', 'size-12'))}>
-            <Icon as={QrCode} size={20} className="text-foreground" strokeWidth={2} />
-          </Pressable>
-        </View>
-        {addressBad || addressRejected ? (
-          <Text className="text-destructive text-[13px] leading-[18px]">That doesn't look like a bitcoin address{addressRejected ? ' on this network' : ''}.</Text>
-        ) : null}
-        {silent && !addressBad ? <Text className="text-muted-foreground text-[13px] leading-[18px]">Silent payment address: a small helper coin of this phone pays part of the fee.</Text> : null}
-        {scanning ? (
-          <View className="mt-2 gap-2">
-            <QrScanner
-              size={220}
-              onFrame={(data) => {
-                // A plain address or a BIP 21 link (with its amount); anything else says what it is.
-                const code = wallet.readCode(data);
-                if (code.kind === 'address') {
-                  setAddress(code.address);
-                  if (code.amountSats) setDigits(String(code.amountSats).slice(0, MAX_DIGITS));
-                  setScanProblem(null);
-                  setScanning(false);
-                } else setScanProblem(code.kind === 'unknown' ? code.reason : "That code isn't a bitcoin or silent payment address.");
-              }}
-            />
-            {scanProblem ? <Text className="text-destructive text-[13px] leading-[18px]">{scanProblem}</Text> : null}
-            <AppButton title="Close camera" variant="ghost" onPress={() => setScanning(false)} />
-          </View>
-        ) : null}
-      </View>
-
-      <View className={cn('items-center gap-2', pick('py-3', 'py-4'))} accessible accessibilityLabel={`Amount: ${primary} ${btcView ? 'bitcoin' : 'sats'}`}>
-        <Text className="text-[52px] font-semibold leading-[60px] tracking-[-1.56px] tabular-nums">{primary}</Text>
+      footer={<AppButton title={tooMuch ? 'Not enough bitcoin' : 'Continue'} disabled={!canReview} onPress={review} />}>
+      <View className={cn('items-center gap-1', pick('pt-2', 'pt-4'))} accessible accessibilityLabel={`Amount: ${primary} ${btcView ? 'bitcoin' : 'sats'}, to ${address}`}>
+        <Text className="text-muted-foreground font-mono text-[13px] leading-[18px]">To {shorten(address)}</Text>
+        <Text className={cn('tabular-nums', pick('text-[56px] font-semibold leading-[64px] tracking-[-2.2px]', 'text-[56px] font-normal leading-[64px] tracking-[-1.1px]'))}>{primary}</Text>
         <Text className={cn('text-muted-foreground', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{secondary}</Text>
-        <Pill dot={pill.dot}>{tooMuch ? "That's more than your balance" : pending ? 'Checking…' : pill.text}</Pill>
       </View>
+      <StatusLine tone={pill.dot} text={tooMuch ? "That's more than your balance" : pending ? 'Checking…' : pill.text} />
+      {sendMax ? (
+        <Pressable role="button" onPress={sendMax} className="-mt-3 min-h-11 items-center justify-center self-center px-3 active:opacity-60">
+          <Text className="text-muted-foreground text-sm font-medium underline">Send max</Text>
+        </Pressable>
+      ) : null}
+      <View className="flex-1" />
 
       <View className="gap-1">
         {[KEYS.slice(0, 3), KEYS.slice(3, 6), KEYS.slice(6, 9)].map((row) => (

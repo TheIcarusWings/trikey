@@ -39,7 +39,7 @@ function LockGuardian() {
   return (
     <View className="gap-3">
       <ListGroup>
-        <SettingsRow title="Lock guardian" value={asking ? undefined : 'Takes its passphrase to unlock'} onPress={asking ? undefined : () => setAsking(true)} />
+        <SettingsRow title="Lock guardian" subtitle={asking ? undefined : 'Takes its passphrase to unlock'} onPress={asking ? undefined : () => setAsking(true)} />
       </ListGroup>
       {asking ? (
         <View className="gap-3">

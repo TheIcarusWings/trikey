@@ -61,7 +61,7 @@ export function VaultCard() {
       <View className="bg-border h-px" />
       <View className="flex-row gap-3">
         <AppButton title="Add to vault" icon={ArrowDownLeft} variant="outline" size="compact" className="flex-1 self-auto" onPress={() => router.push({ pathname: '/receive', params: { to: 'vault' } })} />
-        <AppButton title="Pay from vault" icon={ArrowUpRight} variant="outline" size="compact" className="flex-1 self-auto" onPress={() => router.push({ pathname: '/send/amount', params: { vault: '1' } })} />
+        <AppButton title="Pay from vault" icon={ArrowUpRight} variant="outline" size="compact" className="flex-1 self-auto" onPress={() => router.push({ pathname: '/send/to', params: { vault: '1' } })} />
       </View>
     </Card>
   );
