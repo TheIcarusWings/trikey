@@ -11,6 +11,7 @@ import { Card } from '@/components/ui/card';
 import { Text } from '@/components/ui/text';
 import { WalletServiceError, groupAddress, useWallet, useWalletService } from '@/data';
 import { useAction } from '@/lib/use-action';
+import { haptic } from '@/lib/haptics';
 
 /** Splits "bc1qxh7u3m0k…" into the lines a hardware wallet shows. */
 function deviceLines(address: string): string[] {
@@ -65,9 +66,20 @@ export default function ReceiveVerify() {
             title={busy ? `Waiting for your ${hardware.brand}…` : 'They match'}
             busy={busy}
             disabled={!verified}
-            onPress={() => router.back()}
+            onPress={() => {
+              haptic('success');
+              router.back();
+            }}
           />
-          <AppButton title="They don't match" variant="outline" danger onPress={() => setMismatch(true)} />
+          <AppButton
+            title="They don't match"
+            variant="outline"
+            danger
+            onPress={() => {
+              haptic('error');
+              setMismatch(true);
+            }}
+          />
         </>
       }>
       <Body>

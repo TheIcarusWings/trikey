@@ -9,6 +9,7 @@ import { Text } from '@/components/ui/text';
 import { NODE_RPC_TEXT, formatSats, groupAddress, useWallet, useWalletService, type SilentPaymentScanState, type SilentPaymentsState } from '@/data';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
+import { haptic } from '@/lib/haptics';
 
 /** The silent payment state and whether this wallet can turn them on and receive them (not Recovery Key mode: "coming later"). */
 export function useSilentPayments() {
@@ -83,6 +84,7 @@ export function AddressBlock({ address, qr = true, label }: { address: string; q
 
   const copy = async () => {
     await Clipboard.setStringAsync(address);
+    haptic('light');
     setCopied(true);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setCopied(false), 2000);

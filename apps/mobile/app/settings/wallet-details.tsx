@@ -9,6 +9,7 @@ import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import { useWalletService, type NetworkName } from '@/data';
 import { pick } from '@/lib/platform';
+import { haptic } from '@/lib/haptics';
 
 const NETWORK: Record<NetworkName, string> = { bitcoin: 'Bitcoin', testnet: 'Testnet', signet: 'Signet', regtest: 'Regtest' };
 
@@ -27,6 +28,7 @@ export default function WalletDetailsScreen() {
   const copy = async () => {
     if (!details) return;
     await Clipboard.setStringAsync(details.descriptor);
+    haptic('light');
     setCopied(true);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setCopied(false), 2000);

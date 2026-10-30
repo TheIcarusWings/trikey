@@ -23,6 +23,7 @@ import {
 } from '@/data';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
+import { haptic } from '@/lib/haptics';
 
 /** Esplora's API lives at <site>/api; the site shows the transaction. Only for a server that has a public site. */
 function explorerOf(serverUrl: string): string | undefined {
@@ -73,6 +74,7 @@ export default function TransactionDetail() {
 
   const copy = async () => {
     await Clipboard.setStringAsync(tx.txid);
+    haptic('light');
     setCopied(true);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setCopied(false), 2000);

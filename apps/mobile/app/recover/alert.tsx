@@ -11,6 +11,7 @@ import { formatDateTime24, useWallet, useWalletService } from '@/data';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
+import { haptic, useHapticOnce } from '@/lib/haptics';
 
 /** What a guardian alert opens: someone, maybe not the owner, started a recovery. */
 export default function RecoverAlert() {
@@ -18,12 +19,15 @@ export default function RecoverAlert() {
   const wallet = useWalletService();
   const { recovery, hardware } = useWallet();
   const { busy, run, message, error } = useAction();
+  // Someone started a recovery: felt once when the alert opens.
+  useHapticOnce('warning', !!recovery, recovery?.id);
 
   if (!recovery) return <Redirect href="/home" />;
 
   const cancel = async () => {
     const r = await run(wallet.cancelRecovery());
     if (!r.ok) return;
+    haptic('success');
     router.dismissAll();
     router.replace('/home');
   };

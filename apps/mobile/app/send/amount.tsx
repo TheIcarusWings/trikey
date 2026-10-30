@@ -21,6 +21,7 @@ import {
 import { useQuote } from '@/data/use-quote';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
+import { haptic } from '@/lib/haptics';
 
 const MAX_DIGITS = 10;
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'] as const;
@@ -95,6 +96,7 @@ export default function SendAmount() {
         if (q.ok) {
           setDigits(String(q.quote.request.amountSats).slice(0, MAX_DIGITS));
           setMax(true);
+          haptic('light');
         } else setMaxProblem(q.message);
       };
 
@@ -193,7 +195,10 @@ function Key({
     <Pressable
       role="button"
       accessibilityLabel={accessibilityLabel ?? label}
-      onPress={onPress}
+      onPress={() => {
+        haptic('tick');
+        onPress();
+      }}
       onLongPress={onLongPress}
       className={cn('flex-1 items-center justify-center rounded-[10px] active:bg-accent', height)}>
       {icon ? (

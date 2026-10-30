@@ -3,6 +3,7 @@ import { Linking, Platform, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
 import { hardwareFix, type HardwareFix } from '@/components/hardware-fix';
 import { Clock, Settings, TriangleAlert } from '@/components/icons';
+import { useHapticOnce } from '@/lib/haptics';
 import { Notice } from '@/components/panels';
 import { WalletServiceError } from '@/data/errors';
 
@@ -12,8 +13,10 @@ import { WalletServiceError } from '@/data/errors';
  * phone (Bluetooth off, permission refused) gets a button to that setting. Renders nothing without a message.
  */
 export function ActionNotice({ message, error, children }: { message: string | null; error?: Error | null; children?: ReactNode }) {
-  if (!message) return null;
   const later = error instanceof WalletServiceError && error.kind === 'not_available';
+  // A new error is felt once (a "coming later" note is not an error).
+  useHapticOnce('error', !!message && !later, message);
+  if (!message) return null;
   return (
     <View accessibilityLiveRegion="assertive" className="gap-3">
       <Notice icon={later ? Clock : TriangleAlert} iconClass={later ? 'text-foreground' : 'text-destructive'} tone={later ? 'fill' : 'warn-outline'} title={later ? 'Coming later' : undefined}>
