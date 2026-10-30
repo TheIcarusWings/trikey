@@ -1364,8 +1364,8 @@ export class TrikeyWallet {
   /**
    * Switches to `relays` only once the guardian has answered over them alone: `relays.ack` (which also tells it the
    * phone switched), or `guardian.status` for a phone that is only recovering. Until then the phone stays on the
-   * relays it has, which the guardian keeps watching for 30 days, so a new list the phone cannot reach (a relay that is
-   * down, a typo in the web UI) never cuts it off; it tries again at the next alert or status read, at most every
+   * relays it has, which the guardian keeps watching until the owner stops them, so a new list the phone cannot
+   * reach (a relay that is down, a typo in the web UI) never cuts it off; it tries again at the next alert or status read, at most every
    * `RELAY_PROBE_RETRY_MS` for the same list. Then it stores the list (the next backup has it) and moves its
    * connection; calls already sent on the old one are answered there.
    */
