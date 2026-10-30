@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Outlet } from 'react-router-dom';
 import { LogoMark } from '@/components/logo';
-import { NetworkPill } from '@/components/network-pill';
+import { NetworkPill, NetworkStrip } from '@/components/network-pill';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { cn } from '@/lib/utils';
 
@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 export function Centered({ width }: { width: 'narrow' | 'wide' }) {
   return (
     <div className="min-h-screen bg-background text-foreground sm:bg-ground">
+      <NetworkStrip />
       <div className="flex justify-end px-4 pt-4 sm:px-6">
         <ThemeToggle />
       </div>
