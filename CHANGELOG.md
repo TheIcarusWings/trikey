@@ -8,8 +8,16 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 
 ## Unreleased
 
+## 0.1.4-alpha (2026-10-30)
+
+- **App: fixes the Android APK closing as soon as it opens** (every APK from 0.1.0). The Trezor link loads
+  `@sinclair/typebox`, whose ES build declares a top-level `var Object` that breaks once Metro turns it into
+  CommonJS; the app now uses typebox's CommonJS build (#34).
+- CI opens every PR's APK in an Android emulator and fails on a crash at start, with the crash log on the PR
+  (#34).
 - Guardian: after a crash the process exits with 1, not 0, so Umbrel's `restart: on-failure` brings it back
-  instead of leaving the app at 502.
+  instead of leaving the app at 502 (#30).
+- Recovery Key: the kit's word-check positions are picked uniformly (entropy review I4, #33).
 
 ## 0.1.3-alpha (2026-10-30)
 
