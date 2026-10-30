@@ -342,6 +342,11 @@ export const WalletState = z.object({
   /** Spends the guardian co-signed, for the local "spent today" estimate (ms, sats). */
   spends: z.array(z.object({ txid: z.string(), at: z.number(), outflowSats: z.number() })).default([]),
   recovery: RecoveryRecord.optional(),
+  /**
+   * A recovering phone: when the guardian's `recovery.access` grant ends (unix seconds, the guardian's `accessExpiresAt`).
+   * Absent when it is not known (a phone restored from a backup): requests are then sent as before.
+   */
+  recoveryAccessExpiresAt: z.number().optional(),
   pending: PendingRequest.optional(),
   backup: BackupRecord.optional(),
   /** Alert contacts' display names, by pubkey (the guardian knows only pubkeys). */
