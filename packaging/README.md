@@ -27,6 +27,8 @@ Then open http://localhost:3000. Persistent state goes in `/data`. Never pass re
 or credentials on the command line or bake them into the image. The environment variables
 are listed in `apps/guardian/README.md`. For silent payments the guardian also needs
 `BITCOIN_RPC_HOST`, `BITCOIN_RPC_PORT`, `BITCOIN_RPC_USER` and `BITCOIN_RPC_PASS` (all four).
+`SP_SCAN_THREADS` (optional) sets how many worker threads scan for silent payments; by default one
+less than the CPU cores. The Umbrel and Start9 packages leave it at the default.
 
 A plain `docker build` is fine for trying things out. A *release* image is built with a fixed
 build time and a pinned BuildKit so that anyone can reproduce it: `VERIFY.md` has the exact
