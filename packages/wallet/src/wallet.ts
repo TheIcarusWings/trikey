@@ -1065,8 +1065,12 @@ export class TrikeyWallet {
    *
    * Key 3 contribution: `pair.prepare` carries `entropy`, 32 fresh bytes from `secureRandomBytes`. The
    * guardian derives this wallet's key 3 from its own seed and these bytes (HMAC-SHA512,
-   * apps/guardian/src/keystore.ts), so a weak generator on the guardian alone does not make a guessable key 3. The bytes are not secret on their own: without the guardian's seed
-   * they say nothing about key 3, and the phone never learns key 3. The phone always sends it: a guardian from
+   * apps/guardian/src/keystore.ts), so the guardian's seed known on its own (leaked, or weak seed generation alone)
+   * does not give key 3. It does not help against a guardian whose whole generator is predictable to someone who
+   * reads the relays: these bytes travel in a gift wrap to the guardian's nostr key, from that same generator
+   * (entropy review 2026-10, M1). The guardian covers that at setup instead, mixing in the browser's and the
+   * platform's entropy, which never cross a relay (`trikey/guardian-seed/v1`). The bytes are not secret on their own:
+   * without the guardian's seed they say nothing about key 3, and the phone never learns key 3. The phone always sends it: a guardian from
    * before this parameter drops the request as malformed (its schema is strict), so pairing needs a guardian
    * that knows it. A guardian that takes it but does not answer `key3Mixed: true` is reported as not mixed.
    */

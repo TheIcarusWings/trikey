@@ -53,6 +53,10 @@ export interface GuardianRigOptions {
    * needs an alert contact) but not the chain: Electrs and the node stay the in-memory fakes.
    */
   network?: NetworkName;
+  /** Set the guardian up at start (default true). `false` leaves it at first run, for the web UI's setup. */
+  setup?: boolean;
+  /** The guardian's TRIKEY_EXTRA_ENTROPY (32 bytes), as the config would carry it. Default none. */
+  extraEntropy?: Uint8Array;
 }
 
 export interface FundedOutput {
@@ -96,6 +100,7 @@ export class GuardianRig {
       await rig.bitcoind.start();
     }
     await rig.open();
+    if (opts.setup === false) return rig;
     const res = await rig.guardian.setup({ passphrase: rig.passphrase, relays: rig.relayUrls });
     if (!res.ok) throw new Error(`guardian setup failed: ${res.message}`);
     return rig;
@@ -125,6 +130,7 @@ export class GuardianRig {
       kdf: { t: 1, m: 64, p: 1 }, // cheap Argon2 for tests only
       relayOptions: this.relayUrls.map((url) => ({ url, defaultSelected: true })),
       ...(this.opts.spScanThreads ? { spScanThreads: this.opts.spScanThreads } : {}),
+      ...(this.opts.extraEntropy ? { extraEntropy: this.opts.extraEntropy } : {}),
     };
     this.guardian = await Guardian.open({
       config,

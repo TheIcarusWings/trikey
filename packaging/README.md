@@ -60,6 +60,15 @@ bump both before tagging.
 The compose file passes the node's Bitcoin RPC details (`BITCOIN_RPC_*`) from the variables Umbrel
 exports for the `bitcoin` dependency, because the silent payment scanner needs them.
 
+It also sets `TRIKEY_EXTRA_ENTROPY: ${APP_SEED}`. umbrelOS gives every app an `APP_SEED`: the hex
+HMAC-SHA256 of the Umbrel's own seed and the app id (64 hex characters, the same on every start). The
+guardian mixes it into every new setup seed, next to its OS draw and the browser's 32 bytes
+(DESIGN.md, "Entropy", `trikey/guardian-seed/v1`), so a guardian whose generator turns out predictable
+still gets a seed nobody can guess from relay traffic. It changes nothing for a guardian already set
+up. If a future umbrelOS passed `APP_SEED` in another format, the guardian hashes it to 32 bytes with
+SHA-256 and carries on: it never stops starting over this value. The Start9 package sets nothing; StartOS has
+no per-service seed we could confirm.
+
 ## Build and sideload the Start9 package
 
 See `start9/README.md`. In short, with `start-cli`, Docker, `make`, `jq` and Node.js installed

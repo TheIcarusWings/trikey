@@ -226,8 +226,9 @@ export function buildRoutes(g: Guardian): Route[] {
       public: () => !g.setupComplete,
       handler: async ({ body, session }) => {
         requireNotSetUp(g);
-        const input = (body ?? {}) as { passphrase?: unknown; relays?: unknown };
-        const r = await g.setup({ passphrase: input.passphrase, relays: input.relays });
+        // `entropy`: 32 bytes from the browser's generator (hex), mixed into the new seed; never logged or kept.
+        const input = (body ?? {}) as { passphrase?: unknown; relays?: unknown; entropy?: unknown };
+        const r = await g.setup({ passphrase: input.passphrase, relays: input.relays, entropy: input.entropy });
         if (!r.ok) throw new HttpError(r.code === 'already_setup' ? 409 : 400, r.code, r.message);
         // The browser that set the guardian up is signed in.
         return { status: 200, body: await guardianStatus(g), headers: signedIn(g, session.secure) };
@@ -310,8 +311,8 @@ export function buildRoutes(g: Guardian): Route[] {
       path: '/reset',
       handler: async ({ body, session }) => {
         if (!g.setupComplete) throw new HttpError(409, 'setup_required', 'Set up the guardian first.');
-        const input = (body ?? {}) as { passphrase?: unknown; confirm?: unknown };
-        const r = await g.reset({ passphrase: input.passphrase, confirm: input.confirm });
+        const input = (body ?? {}) as { passphrase?: unknown; confirm?: unknown; entropy?: unknown };
+        const r = await g.reset({ passphrase: input.passphrase, confirm: input.confirm, entropy: input.entropy });
         // A reset ends every session; the browser that did it (with the passphrase) is signed in again.
         if (r.ok) return { status: 200, body: await guardianStatus(g), headers: signedIn(g, session.secure) };
         if (r.code === 'bad_passphrase') throw new HttpError(401, 'bad_passphrase', 'That passphrase is not right.', r.retryAfterSeconds);

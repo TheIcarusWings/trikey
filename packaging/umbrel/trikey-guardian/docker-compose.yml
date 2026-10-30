@@ -38,3 +38,7 @@ services:
       # The guardian accepts all five (apps/guardian/src/config.ts maps mainnet to bitcoin and
       # testnet4 to testnet), so no mapping is needed.
       BITCOIN_NETWORK: ${APP_BITCOIN_NETWORK}
+      # umbrelOS's per-app seed (hex HMAC-SHA256 of the Umbrel's seed and the app id, 64 characters),
+      # mixed into every new key-3 setup seed next to the guardian's OS draw and the browser's bytes
+      # (DESIGN.md "Entropy", trikey/guardian-seed/v1). Never logged; existing setups are unchanged.
+      TRIKEY_EXTRA_ENTROPY: ${APP_SEED}

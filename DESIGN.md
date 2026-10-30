@@ -29,7 +29,7 @@ Visual walkthrough (private canvas): https://claude.ai/artifact/NV7SCZja8ik9LAvu
 | First client | React Native mobile app | Ledger Bluetooth and Trezor Connect have JS SDKs |
 | UI kit | shadcn/ui: react-native-reusables + NativeWind in the app, shadcn/ui + Tailwind in the guardian web UI. Zinc neutrals, Geist type, light and dark themes. | One set of tokens and components across the phone and the home server |
 | Transport | Nostr: NIP-44 encryption inside NIP-59 gift wraps | Outbound-only connections, no accounts, relays see ciphertext |
-| Entropy | Every key from one checked function on the OS CSPRNG; key 3 mixes in the phone's randomness; no dice | See "Entropy": guards catch gross failures, the key-3 mix and 2-of-3 cover subtle ones |
+| Entropy | Every key from one checked function on the OS CSPRNG; the guardian's seed mixes in the browser's (and on Umbrel the platform's) randomness, key 3 the phone's; no dice | See "Entropy": guards catch gross failures, the setup mix, the key-3 mix and 2-of-3 cover subtle ones |
 | Later | Guardian for family (invite-only hosting) | See the end of this document |
 
 Options considered and dropped, with research in the earlier pages under `docs/`:
@@ -241,7 +241,7 @@ Guessable keys would lose money silently, so where each key's randomness comes f
 | Key 2, guardian mode (24 words) | `packages/wallet` `newMnemonic` | 32 bytes from `secureRandomBytes`, then `entropyToMnemonic`. On the phone that is `expo-crypto`: `SecRandomCopyBytes` on iOS, `SecureRandom` on Android. |
 | Key 2, Recovery Key mode (24 words) | `packages/recovery-key` `newPhoneMnemonic` | Same. |
 | Recovery Kit key (12 words) | `packages/recovery-key` `newRecoveryKeyEntropy` | 16 bytes from `secureRandomBytes` on the same phone. |
-| Key 3, guardian mode | `apps/guardian` `generateSeed`, then `trikey/key3/v1` | 32 bytes from `secureRandomBytes` (Node's webcrypto, Linux `getrandom`) at setup, mixed with the phone's contribution at pairing (below). |
+| Key 3, guardian mode | `apps/guardian` `generateSeed` (`trikey/guardian-seed/v1`), then `trikey/key3/v1` | 32 bytes from `secureRandomBytes` (Node's webcrypto, Linux `getrandom`) at setup or reset, mixed with 32 bytes from the setup browser's `crypto.getRandomValues` and, on Umbrel, the app's `APP_SEED` (below); then mixed with the phone's contribution at pairing (below). |
 | Key 1, the hardware wallet | The device | The device's own generator, outside Trikey's control. Trikey only ever sees its xpub. |
 | Guardian nostr key, NIP-59 wrap keys | `identity.ts`, `transport.ts` | `randomSecretKey`: 32 bytes from `secureRandomBytes`, drawn again only if they are not a valid secp256k1 scalar. |
 | Backup data key, nonces, salts, recovery code, passkey PRF salt | `packages/wallet/src/backup.ts`, `wallet.ts` | `secureRandomBytes`. |
@@ -261,7 +261,7 @@ Guessable keys would lose money silently, so where each key's randomness comes f
 
 It never retries silently and never falls back to anything weaker. A source caught stuck, repeating or replaced stays refused until the process restarts. The wallets turn the error into `random_source_failed` before anything is stored.
 
-**What the guards cannot do.** The OS generator's output is already conditioned, so it looks uniformly random whether it was seeded well or not. A generator seeded from 32 known bytes passes every statistical test, and no test on its output can prove it unpredictable. These checks catch gross failures only: a broken or missing polyfill, a buffer that was never filled, a stuck source, a source swapped out after start-up. The defences against a subtly weak generator are the key-3 mix and the 2-of-3 structure below.
+**What the guards cannot do.** The OS generator's output is already conditioned, so it looks uniformly random whether it was seeded well or not. A generator seeded from 32 known bytes passes every statistical test, and no test on its output can prove it unpredictable. These checks catch gross failures only: a broken or missing polyfill, a buffer that was never filled, a stuck source, a source swapped out after start-up. The defences against a subtly weak generator are the setup mix and the key-3 mix (two and three machines' generators), and the 2-of-3 structure below.
 
 **Start-up health test and known answers.** One shared function ([`packages/core/src/random-health.ts`](packages/core/src/random-health.ts), `@trikey/core/random-health`) runs before any key is made: the guardian runs it in `main.ts` before it opens anything (exit code 70 and a `rng.selftest_failed` line if it fails, so Umbrel shows the app as failing) and in `Guardian.open`; the phone runs it once at start in `bootWallet` and again before key 2, the Recovery Key, the recovery code, the backup and the key-3 contribution. It draws 16 blocks of 32 throwaway bytes, each in its own call, and refuses on a constant block, two equal blocks (a cycle), the same XOR or difference between neighbouring blocks (a counter), 8 equal bytes in a row, one byte value 26 or more times in 512, a block with fewer than 64 or more than 192 one bits of 256, or a total outside 1,792 to 2,304 of 4,096 (8 sigma each; the false-alarm rate is below 10^-13 per run). It also checks known answers for HMAC-SHA512, SHA-256, secp256k1, BIP 39 and BIP 32, so a broken or patched crypto library is caught. A failure is latched like the per-call checks and never retried. Like them it proves nothing about unpredictability; a seeded or `Math.random`-backed generator still passes.
 
@@ -272,6 +272,23 @@ It never retries silently and never falls back to anything weaker. A source caug
 - **The guardian.** `main.ts` first imports `pin-random.ts`, which pins `node:crypto`'s `webcrypto.getRandomValues`.
 
 Pinning catches accidents, not code already running inside the process, which could do anything anyway. The app's crypto self-test (Settings, Developer) also checks that the source is pinned.
+
+**The guardian's seed from more than one machine (`trikey/guardian-seed/v1`).** The setup seed (and the new seed a reset makes) does not rest on the guardian's generator alone:
+
+```
+entropy = HMAC-SHA512(key  = os (32 bytes from secureRandomBytes on the guardian),
+                      data = "trikey/guardian-seed/v1" || u32be(len) || browser || u32be(len) || extra)
+          truncated to 32 bytes, then BIP 39 (24 words) and the 64-byte seed as before
+```
+
+- **`browser`:** 32 bytes from the browser's `crypto.getRandomValues` (`apps/guardian-web/src/lib/random.ts`), sent as `entropy` with `POST /api/setup` and `POST /api/reset`. Another machine's generator, over the local HTTP path, which no nostr relay ever sees. The web UI always sends it.
+- **`extra`:** `TRIKEY_EXTRA_ENTROPY`, 32 bytes as hex. The Umbrel package sets it to the app's `APP_SEED`, which umbrelOS derives from the Umbrel's own seed and the app id (HMAC-SHA256), so it comes from another moment of the box's life (the Umbrel's setup). The Start9 package sets nothing.
+- **Both optional, strictly sized:** absent is length 0; present must be exactly 32 bytes (the guardian refuses the request, or refuses to start, otherwise). A setup without a browser (tests, a script) still works.
+- **Why this shape.** `os` is the HMAC key, so the result is a PRF output under a secret key: never weaker than the plain OS draw it replaced, whatever the other inputs are, even chosen by an attacker. If `os` is predictable, the result is HMAC with a known key over 256 bits the attacker does not know (HKDF-Extract with a known salt), so it is as strong as the browser's or the platform's input. The tag and the length prefixes keep every input in its own field.
+- **Hygiene.** The inputs are never logged or stored; the guardian zeroes its copies. `TRIKEY_EXTRA_ENTROPY` is removed from the process environment once read.
+- **Existing guardians** keep their seed: only new seeds (setup, reset) are made this way. Nothing on disk or on the wire changed format; `entropy` is an extra, optional field of two HTTP requests, which an older guardian ignores.
+- **What it does not cover:** code already running on the guardian, or an attacker who also sees the setup browser's traffic to the box. Neither input needs to be secret from the user.
+- Vectors are in `apps/guardian/test/setup-entropy.test.ts`, checked against node:crypto's HMAC.
 
 **Key 3 from both sides (`trikey/key3/v1`).** At pairing the phone sends `c`, 32 fresh bytes from its own `secureRandomBytes`, in `pair.prepare` (`entropy`). The guardian makes the wallet's key 3 from its setup seed and `c`:
 
@@ -285,7 +302,11 @@ key 3 = BIP 32 master of seed3, account m/48'/<coin>'/0'/2'
 - **Storage.** The guardian stores `c` and the context with the registration. They are not secret: without the seed they say nothing about key 3. It derives key 3 again at every unlock, and keeps the setup seed in memory only while unlocked.
 - **Lifecycle.** A wallet rotation keeps the same key 3 and the same record. A reset makes a new seed. A new pairing gets a new `c`.
 - **The phone never learns key 3,** only its xpub. It shows "Your guardian's key was made with randomness from both this phone and your guardian" when the guardian answers `key3Mixed: true`.
-- **What this is for.** It protects against a weak generator on the guardian: a guessable setup seed alone no longer gives key 3. It does not protect against a dishonest guardian, which could ignore `c`, and that cannot be proven without revealing key 3.
+- **What this is for, and what it is not (entropy review 2026-10, M1).**
+  - It protects against the guardian's setup seed being known **on its own**: a seed that leaked without the guardian's nostr traffic, or a flaw in seed generation alone. Such a seed no longer gives key 3.
+  - It does **not** protect against a guardian whose whole generator output is predictable to someone who can read the relays (a VM restored from a snapshot, a badly seeded kernel). `c` reaches the guardian in `pair.prepare`, a gift wrap on public relays encrypted to the guardian's nostr key, and that key, like the pairing id in the context, comes from the same generator as the seed. Whoever predicts the generator opens the stored wrap, reads `c` and derives key 3. No transport change fixes that: anything the guardian computes from its own generator and relay traffic, the observer can compute too.
+  - That case is covered at setup instead, by `trikey/guardian-seed/v1` above: the browser's and the platform's inputs never cross a relay.
+  - It does not protect against a dishonest guardian either, which could ignore `c`, and that cannot be proven without revealing key 3.
 - **Compatibility.** A guardian without `entropy` support refuses such a request (its schema is strict), so the app needs a guardian of this version or later. A guardian receiving no `entropy` keeps its own key, as before.
 - Vectors are in `apps/guardian/test/key3-mix.e2e.test.ts`, checked against node:crypto's HMAC.
 

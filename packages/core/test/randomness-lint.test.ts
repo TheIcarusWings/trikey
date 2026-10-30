@@ -43,7 +43,7 @@ const ALLOW: Record<string, { rules: RuleName[]; why: string }> = {
   'apps/guardian/src/pin-random.ts': { rules: ['random-member', 'global-crypto'], why: 'pins node:crypto webcrypto.getRandomValues as the source (getrandom)' },
   'apps/mobile/src/platform/polyfills.ts': { rules: ['random-import'], why: 'imports expo-crypto getRandomValues to install it as the source, then pins it' },
   'apps/mobile/src/platform/polyfill-install.ts': { rules: ['random-member'], why: 'installs and wraps crypto.getRandomValues / randomUUID on runtimes that lack them' },
-  'apps/guardian-web/src/api/mock.ts': { rules: ['random-member'], why: 'mock API data for the web UI demo: makes no keys or secrets' },
+  'apps/guardian-web/src/lib/random.ts': { rules: ['random-member'], why: "the web UI's one wrapper around the browser's crypto.getRandomValues (setup and reset entropy, the mock's demo codes); refuses a missing or constant source" },
 };
 
 function* files(path: string): Generator<string> {

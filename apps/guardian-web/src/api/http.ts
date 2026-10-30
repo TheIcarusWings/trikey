@@ -1,3 +1,4 @@
+import { BrowserRandomError, browserRandomHex } from '../lib/random';
 import { ApiError, type GuardianApi } from './client';
 import type {
   ActivityEntry,
@@ -19,6 +20,26 @@ interface ErrorBody {
 
 /** Dispatched on `window` when the guardian answers 401 `unauthenticated` (the provider re-reads the status). */
 export const SIGNED_OUT_EVENT = 'trikey:signed-out';
+
+/** Bytes of browser randomness sent with setup and reset (the guardian requires exactly this many). */
+export const SETUP_ENTROPY_BYTES = 32;
+
+/**
+ * `input` plus `entropy`: 32 fresh bytes from this browser's `crypto.getRandomValues`, as hex. The guardian
+ * mixes them into the seed it makes for key 3 (apps/guardian/src/keystore.ts, `trikey/guardian-seed/v1`),
+ * so that seed does not rest on the guardian's generator alone. They travel only over this local
+ * connection, never over a nostr relay, and this module keeps no copy.
+ */
+export function withBrowserEntropy<T extends object>(input: T): T & { entropy: string } {
+  let entropy: string;
+  try {
+    entropy = browserRandomHex(SETUP_ENTROPY_BYTES);
+  } catch (e) {
+    if (e instanceof BrowserRandomError) throw new ApiError('internal', e.message);
+    throw e;
+  }
+  return { ...input, entropy };
+}
 
 /**
  * Talks to the guardian's own HTTP API. Endpoints are documented in API.md.
@@ -74,7 +95,8 @@ export function createHttpApi(base = ''): GuardianApi {
     signOut: () => request<PublicStatus>('DELETE', '/session'),
 
     getSetupPreflight: () => request<SetupPreflight>('GET', '/setup/preflight'),
-    completeSetup: (input) => request<GuardianStatus>('POST', '/setup', input),
+    // Both make a new key 3, so each sends fresh browser randomness for its seed (async: a failed draw rejects).
+    completeSetup: async (input) => request<GuardianStatus>('POST', '/setup', withBrowserEntropy(input)),
 
     unlock: (input) => request<GuardianStatus>('POST', '/unlock', input),
     lock: () => request<GuardianStatus>('POST', '/lock'),
@@ -92,7 +114,7 @@ export function createHttpApi(base = ''): GuardianApi {
     },
 
     getRecoveryCode: () => request<RecoveryCode>('GET', '/recovery-code'),
-    resetGuardian: (input) => request<GuardianStatus>('POST', '/reset', input),
+    resetGuardian: async (input) => request<GuardianStatus>('POST', '/reset', withBrowserEntropy(input)),
 
     startPairing: () => request<PairingSession>('POST', '/pairing'),
     getPairingSession: (id) => request<PairingSession>('GET', `/pairing/${encodeURIComponent(id)}`),

@@ -22,6 +22,7 @@
  */
 import { join } from 'node:path';
 import type { Server } from 'node:http';
+import { hex } from '@scure/base';
 import { SimplePool } from 'nostr-tools/pool';
 import { normalizeURL } from 'nostr-tools/utils';
 import { RpcServer, SimplePoolRelayPool, normalizeRelayUrl, type Alert, type MethodName } from '@trikey/protocol';
@@ -36,6 +37,7 @@ import {
   BadPassphraseError,
   GuardianSeed,
   MAX_PASSPHRASE_LENGTH,
+  SETUP_ENTROPY_BYTES,
   checkPassphrase,
   generateSeed,
   key3Context,
@@ -144,6 +146,26 @@ export const RECOVERY_PEER_METHODS: ReadonlySet<MethodName> = new Set<MethodName
 ]);
 /** What the web UI's reset must be confirmed with, typed exactly. */
 export const RESET_CONFIRMATION = 'RESET GUARDIAN';
+
+/**
+ * `entropy` of the web UI's setup and reset requests: optional, but exactly 32 bytes as 64 lowercase hex
+ * characters when present (keystore.ts `trikey/guardian-seed/v1`). `undefined` when absent, `false` when
+ * malformed. The caller zeroes the bytes.
+ */
+export function parseBrowserEntropy(v: unknown): Uint8Array | undefined | false {
+  if (v === undefined) return undefined;
+  if (!browserEntropyOk(v)) return false;
+  return hex.decode(v as string);
+}
+
+const ENTROPY_HEX = new RegExp(`^[0-9a-f]{${SETUP_ENTROPY_BYTES * 2}}$`);
+
+/** True when `entropy` is absent or well formed: the check before anything changes, without decoding it. */
+function browserEntropyOk(v: unknown): boolean {
+  return v === undefined || (typeof v === 'string' && ENTROPY_HEX.test(v));
+}
+
+const BAD_ENTROPY = `entropy must be ${SETUP_ENTROPY_BYTES} random bytes as ${SETUP_ENTROPY_BYTES * 2} lowercase hex characters.`;
 
 /** The running (pending or ready) recovery of wallet `walletId` (the active one) in the engine's state, if any. */
 export function activeRecovery(recoveries: readonly RecoveryRecord[] | undefined, walletId: string | undefined): RecoveryRecord | undefined {
@@ -635,12 +657,17 @@ export class Guardian {
   // ---------------------------------------------------------------------------
   // Key 3
 
-  /** First run: creates key 3 under `passphrase`, records the relays, and ends up unlocked. */
-  setup(input: { passphrase?: unknown; relays?: unknown }): Promise<SetupOutcome> {
+  /**
+   * First run: creates key 3 under `passphrase`, records the relays, and ends up unlocked. `entropy` (the web
+   * UI always sends it; optional for other callers): 32 bytes from the browser, mixed into the new seed with
+   * the OS draw and `TRIKEY_EXTRA_ENTROPY` (keystore.ts, `trikey/guardian-seed/v1`). Never logged or stored.
+   */
+  setup(input: { passphrase?: unknown; relays?: unknown; entropy?: unknown }): Promise<SetupOutcome> {
     return this.setupMutex.run(async () => {
       if (this.keystore) return { ok: false, code: 'already_setup', message: 'This guardian is already set up.' };
       const bad = checkPassphrase(input.passphrase);
       if (bad) return { ok: false, code: 'invalid', message: `Passphrase: ${bad}.` };
+      if (!browserEntropyOk(input.entropy)) return { ok: false, code: 'invalid', message: BAD_ENTROPY };
       const passphrase = input.passphrase as string;
       if (!Array.isArray(input.relays) || input.relays.length < 1 || input.relays.length > 8)
         return { ok: false, code: 'invalid', message: 'Choose between 1 and 8 relays.' };
@@ -652,7 +679,7 @@ export class Guardian {
       }
 
       this.identity = await loadOrCreateIdentity(this.path('identity'));
-      const seed = generateSeed();
+      const seed = this.newSeed(input.entropy);
       let file: KeystoreFile;
       let signer: KeystoreSigner;
       const held = new GuardianSeed(seed);
@@ -686,6 +713,17 @@ export class Guardian {
       await this.startNostr();
       return { ok: true };
     });
+  }
+
+  /** A new setup seed from the OS draw, the browser's `entropy` (already checked) and TRIKEY_EXTRA_ENTROPY. The caller zeroes it. */
+  private newSeed(entropy: unknown): Uint8Array {
+    const browser = parseBrowserEntropy(entropy);
+    if (browser === false) throw new Error(BAD_ENTROPY);
+    try {
+      return generateSeed({ browser, extra: this.config.extraEntropy });
+    } finally {
+      browser?.fill(0);
+    }
   }
 
   private installSigner(signer: KeystoreSigner, seed: GuardianSeed): void {
@@ -873,13 +911,14 @@ export class Guardian {
    * so a crash in between leaves a guardian with no wallet and the old key 3, and another reset
    * finishes the job (never a wallet paired to a key the keystore does not hold).
    */
-  reset(input: { passphrase?: unknown; confirm?: unknown }): Promise<ResetOutcome> {
+  reset(input: { passphrase?: unknown; confirm?: unknown; entropy?: unknown }): Promise<ResetOutcome> {
     return this.unlockMutex.run(() =>
       this.recoveryMutex.run(() =>
         this.pairMutex.run(async (): Promise<ResetOutcome> => {
           const file = this.keystore;
           if (!file) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
           if (input.confirm !== RESET_CONFIRMATION) return { ok: false, code: 'invalid', message: `Type ${RESET_CONFIRMATION} to confirm.` };
+          if (!browserEntropyOk(input.entropy)) return { ok: false, code: 'invalid', message: BAD_ENTROPY };
           const passphrase = input.passphrase;
           if (typeof passphrase !== 'string' || passphrase.length === 0 || passphrase.length > 4 * MAX_PASSPHRASE_LENGTH)
             return { ok: false, code: 'invalid', message: 'Enter the unlock passphrase.' };
@@ -911,7 +950,7 @@ export class Guardian {
           const reg = this.engine.registration();
           if (reg) await this.notifyPhone({ type: 'wallet_retired', walletId: reg.walletId, reason: 'reset', ...this.stampNow() });
 
-          const seed = generateSeed();
+          const seed = this.newSeed(input.entropy);
           let next: KeystoreFile;
           let signer: KeystoreSigner;
           const held = new GuardianSeed(seed);
