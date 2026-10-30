@@ -17,10 +17,6 @@ const TABS: Record<string, { label: string; icon: LucideIcon }> = {
 /** Height the floating iOS bar takes from the bottom of a tab screen, so the last content can scroll clear of it. */
 export const FLOATING_TAB_BAR_SPACE = 104;
 
-/**
- * Bottom navigation in each platform's design: on iOS a floating, translucent pill over the content (as iOS 26 tab bars
- * float), on Android a Material 3 navigation bar with the active pill behind the icon.
- */
 /** iOS "Reduce Transparency": when it is on, nothing on screen is see-through. */
 function useReduceTransparency(): boolean {
   const [on, setOn] = useState(false);
@@ -37,6 +33,10 @@ function useReduceTransparency(): boolean {
   return on;
 }
 
+/**
+ * Bottom navigation in each platform's design: on iOS a floating, translucent pill over the content (as iOS 26 tab bars
+ * float), on Android a Material 3 navigation bar with the active pill behind the icon.
+ */
 export function TabBar({ state, emitter, navigateToTab, insets }: BottomTabBarProps) {
   const reduceTransparency = useReduceTransparency();
   const bottom = IS_WEB ? (IS_IOS ? 30 : 16) : IS_IOS ? Math.max(insets.bottom - 4, 8) : Math.max(insets.bottom, 16);

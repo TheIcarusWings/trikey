@@ -105,6 +105,7 @@ export default function SendAmount() {
   };
   const erase = () => {
     setMax(false);
+    setMaxProblem(null);
     setDigits((d) => d.slice(0, -1));
   };
 
