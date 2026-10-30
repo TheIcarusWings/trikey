@@ -9,7 +9,7 @@ import { AddressQr } from '@/components/qr';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import { groupAddress, useWallet, useWalletService } from '@/data';
-import { ListGroup, NetworkPill, Notice, SettingsRow, networkLabel } from '@/components/panels';
+import { ListGroup, Notice, SettingsRow, networkLabel } from '@/components/panels';
 import { SilentReceiveScreen } from '@/components/silent-receive';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
@@ -57,7 +57,6 @@ export default function Receive() {
   };
 
   // iOS: filled buttons. Android: outlined, accent-colored labels.
-  const variant = pick('secondary', 'outline') as 'secondary' | 'outline';
   // The reusable (silent payment) address is one quiet link away, not a second tab.
   const switchKind = (to: 'address' | 'silent', title: string) => (
     <Pressable role="button" onPress={() => setKind(to)} className="min-h-11 items-center justify-center self-center px-3 active:opacity-60">
@@ -69,7 +68,6 @@ export default function Receive() {
   return (
     <Screen
       title={toVault ? 'Add to vault' : 'Receive'}
-      titleAccessory={<NetworkPill />}
       backLabel="Home"
       footer={
         rkMode && !toVault ? (
@@ -91,9 +89,13 @@ export default function Receive() {
               {groupAddress(receiveAddress)}
             </Text>
             {testNetwork ? (
-              <Text className="text-muted-foreground text-center text-[13px] leading-[18px]">
-                {state.backing === 'demo' ? 'Sample address. Demo mode moves no bitcoin.' : `${testNetwork} address. Only send test bitcoin to it.`}
-              </Text>
+              // Right at the address, where the mistake would happen.
+              <View className="bg-warn-soft flex-row items-center gap-2 self-center rounded-lg px-3 py-2">
+                <View className="bg-warn size-1.5 rounded-full" />
+                <Text className="text-foreground shrink text-[13px] font-medium leading-[18px]">
+                  {state.backing === 'demo' ? 'Sample address. Demo mode moves no bitcoin.' : `${testNetwork} address. Bitcoin sent from a real wallet is lost.`}
+                </Text>
+              </View>
             ) : null}
           </View>
         </View>
@@ -106,13 +108,13 @@ export default function Receive() {
         <AppButton
           title={copied ? 'Copied' : 'Copy'}
           icon={copied ? Check : Copy}
-          variant={variant}
+          // Copying is what most people do here: it is the main button, Share the second.
           className="flex-1 self-auto"
           onPress={copy}
           disabled={!receiveAddress}
           accessibilityLabel={copied ? 'Address copied' : 'Copy address'}
         />
-        <AppButton title="Share" icon={Share2} variant={variant} className="flex-1 self-auto" onPress={share} disabled={!receiveAddress} accessibilityLabel="Share address" />
+        <AppButton title="Share" icon={Share2} variant="outline" className="flex-1 self-auto" onPress={share} disabled={!receiveAddress} accessibilityLabel="Share address" />
       </View>
       {rkMode && !toVault ? null : (
         <ListGroup>

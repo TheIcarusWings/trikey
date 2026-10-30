@@ -8,7 +8,7 @@ import { Icon } from '@/components/ui/icon';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Text } from '@/components/ui/text';
-import { useWallet, type AppMode, type NetworkName } from '@/data';
+import type { AppMode, NetworkName } from '@/data';
 import { IS_IOS, pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -230,20 +230,6 @@ export function networkLabel(backing: AppMode, network: NetworkName | null): str
     default:
       return null;
   }
-}
-
-/** The network chip on Home and Receive, so test coins are never mistaken for real ones. */
-export function NetworkPill() {
-  const { backing, network } = useWallet();
-  const label = networkLabel(backing, network);
-  if (!label) return null;
-  return (
-    <View accessible accessibilityLabel={backing === 'demo' ? 'Demo mode, sample data' : `${label} wallet, test bitcoin only`}>
-      <Pill dot="warn" strong>
-        {label}
-      </Pill>
-    </View>
-  );
 }
 
 /** Small rounded status chip: "Confirmed", "Within today's limit". */

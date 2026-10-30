@@ -133,7 +133,7 @@ export default function SendAmount() {
       androidTitle={fromVault ? 'Pay from vault' : 'Amount'}
       backLabel="Back"
       gap={16}
-      footer={<AppButton title={tooMuch ? 'Not enough bitcoin' : 'Continue'} disabled={!canReview} onPress={review} />}>
+      footer={<AppButton title={tooMuch ? 'Not enough bitcoin' : 'Review'} disabled={!canReview} onPress={review} />}>
       <View className={cn('items-center gap-1', pick('pt-2', 'pt-4'))} accessible accessibilityLabel={`Amount: ${primary} ${btcView ? 'bitcoin' : 'sats'}, to ${address}`}>
         <Text className="text-muted-foreground font-mono text-[13px] leading-[18px]">To {shorten(address)}</Text>
         <Text className={cn('tabular-nums', pick('text-[56px] font-semibold leading-[64px] tracking-[-2.2px]', 'text-[56px] font-normal leading-[64px] tracking-[-1.1px]'))}>{primary}</Text>

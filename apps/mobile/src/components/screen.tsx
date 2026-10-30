@@ -3,6 +3,7 @@ import { useCallback, useState, type ReactNode } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, ChevronLeft } from '@/components/icons';
+import { NetworkStrip } from '@/components/network-strip';
 import { FLOATING_TAB_BAR_SPACE } from '@/components/tab-bar';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
@@ -243,7 +244,9 @@ export function Screen({
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       className="bg-background flex-1"
-      style={{ paddingTop: insets.top + (bare ? bareTop : 0) }}>
+      style={{ paddingTop: insets.top }}>
+      <NetworkStrip />
+      {bare ? <View style={{ height: bareTop }} /> : null}
       {header}
       {body}
       {footer ? (
