@@ -18,6 +18,8 @@ async function main(): Promise<void> {
   let config;
   try {
     config = loadConfig(process.env);
+    // Read once into the config; worker threads (the silent payment scanner) need not inherit it.
+    delete process.env['TRIKEY_EXTRA_ENTROPY'];
   } catch (e) {
     log.error('config.invalid', { error: errorText(e) });
     process.exit(78); // EX_CONFIG

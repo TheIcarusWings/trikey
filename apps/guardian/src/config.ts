@@ -15,10 +15,14 @@
  *   SP_SCAN_THREADS   optional: worker threads for the silent payment scanner (1 to 64;
  *                     default one less than the CPU cores, at least 1). 1 scans in the
  *                     main thread, without workers
+ *   TRIKEY_EXTRA_ENTROPY optional: 32 bytes as 64 hex characters (on Umbrel, the app's
+ *                     APP_SEED), mixed into every new setup seed (keystore.ts,
+ *                     `trikey/guardian-seed/v1`). Anything else refuses to start. Never logged
  */
 import { availableParallelism } from 'node:os';
 import type { NetworkName } from '@trikey/core';
-import { DEFAULT_KDF, type KdfParams } from './keystore.js';
+import { hex } from '@scure/base';
+import { DEFAULT_KDF, SETUP_ENTROPY_BYTES, type KdfParams } from './keystore.js';
 
 export interface ElectrumConfig {
   host: string;
@@ -47,6 +51,11 @@ export interface GuardianConfig {
   relayOptions: { url: string; label?: string; defaultSelected: boolean }[];
   /** Worker threads for the silent payment scanner (silent/scan-pool.ts). Unset or 1: the main thread scans. */
   spScanThreads?: number;
+  /**
+   * TRIKEY_EXTRA_ENTROPY: 32 bytes mixed into every new setup seed (keystore.ts `setupSeedEntropy`).
+   * Secret-ish: never logged, never written anywhere.
+   */
+  extraEntropy?: Uint8Array;
 }
 
 const NETWORK_ALIASES: Record<string, NetworkName> = {
@@ -85,6 +94,18 @@ export function parseScanThreads(value: string | undefined, cores = availablePar
   return n;
 }
 
+/**
+ * TRIKEY_EXTRA_ENTROPY: unset or empty means none; otherwise exactly 32 bytes as hex (Umbrel's APP_SEED is
+ * the hex HMAC-SHA256 of its seed and the app id: 64 characters). The error never echoes the value.
+ */
+export function parseExtraEntropy(value: string | undefined): Uint8Array | undefined {
+  if (value === undefined || value.trim() === '') return undefined;
+  const v = value.trim();
+  if (!new RegExp(`^[0-9a-fA-F]{${SETUP_ENTROPY_BYTES * 2}}$`).test(v))
+    throw new Error(`TRIKEY_EXTRA_ENTROPY must be exactly ${SETUP_ENTROPY_BYTES} bytes as ${SETUP_ENTROPY_BYTES * 2} hex characters`);
+  return hex.decode(v.toLowerCase());
+}
+
 export const DEFAULT_RELAY_OPTIONS: GuardianConfig['relayOptions'] = [
   { url: 'wss://relay.damus.io', defaultSelected: true },
   { url: 'wss://nos.lol', defaultSelected: true },
@@ -118,5 +139,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GuardianConfig
     kdf: DEFAULT_KDF,
     relayOptions: DEFAULT_RELAY_OPTIONS,
     spScanThreads: parseScanThreads(env['SP_SCAN_THREADS']),
+    extraEntropy: parseExtraEntropy(env['TRIKEY_EXTRA_ENTROPY']),
   };
 }

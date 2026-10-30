@@ -1,11 +1,33 @@
 /**
  * Key 3 at rest.
  *
- * Setup creates a fresh BIP39 seed (256 bits of entropy from `secureRandomBytes`,
- * i.e. the checked `getrandom(2)` behind Node's webcrypto). The guardian's own key
+ * Setup (and the web UI's reset) creates a fresh BIP39 seed. The guardian's own key
  * is the BIP48 P2WSH account key of that seed, `m/48'/<coin>'/0'/2'`. There is no
  * backup of key 3, by design (DESIGN.md: if the box dies, phone + hardware sweep
  * to a new wallet), so the mnemonic is never shown or stored.
+ *
+ * The seed's 256 bits of BIP39 entropy (`trikey/guardian-seed/v1`):
+ *
+ *     entropy = HMAC-SHA512(key = os, data = "trikey/guardian-seed/v1"
+ *                                          || u32be(len) || browser
+ *                                          || u32be(len) || extra)[0..32]
+ *
+ * - `os`: 32 bytes from `secureRandomBytes` (the checked `getrandom(2)` behind
+ *   Node's webcrypto).
+ * - `browser`: 32 bytes from the browser's `crypto.getRandomValues`, sent with the
+ *   web UI's `POST /api/setup` or `/api/reset` (`entropy`). Another machine's
+ *   generator, over the local HTTP path, which never crosses a nostr relay.
+ * - `extra`: 32 bytes from `TRIKEY_EXTRA_ENTROPY` (on Umbrel the per-app `APP_SEED`,
+ *   derived from the Umbrel's own seed, made at another time).
+ * - An absent input is length 0; a present one must be exactly 32 bytes.
+ *
+ * Why this shape. With `os` as the HMAC key the result is a PRF output under a
+ * secret key, so it is never weaker than the plain OS draw it replaces, whatever
+ * the other inputs are (absent, constant or chosen by an attacker). If `os` is
+ * predictable, it is HMAC with a known key over a message holding 256 unknown bits
+ * (HKDF-Extract with a known salt), so the seed is as strong as the browser or extra
+ * input. The tag and the length prefixes keep every input in its own field.
+ * This is what covers a guardian whose whole generator is predictable: see below.
  *
  * Key 3 from both sides (`trikey/key3/v1`). When the phone sends a contribution
  * `c` (32 random bytes) at pairing, the wallet's key 3 is not the guardian's own
@@ -23,9 +45,21 @@
  * stored, unencrypted, with the wallet's registration (they are not secret: without
  * the guardian's seed they say nothing about key 3) and key 3 is derived again at
  * every unlock. The phone never learns key 3: it only ever sees the account xpub.
- * This protects against a weak random generator on the guardian (a guessable seed
- * alone no longer gives key 3), not against a dishonest guardian, which could ignore
- * `c`; that cannot be proven without revealing key 3.
+ *
+ * What the phone's mix protects against, and what it does not (entropy review 2026-10, M1):
+ * - It protects against the guardian's setup seed being known on its own: a seed
+ *   leaked without the guardian's nostr traffic, a flaw in seed generation alone.
+ *   Such a seed no longer gives key 3.
+ * - It does NOT protect against a guardian whose whole generator output is
+ *   predictable to someone who can read the relays. `c` reaches the guardian in
+ *   `pair.prepare`, a gift wrap on public relays encrypted to the guardian's nostr
+ *   key, and that key (like the pairing id in the context) comes from the same
+ *   generator as the seed. Whoever predicts the generator opens the stored wrap,
+ *   reads `c` and derives key 3. No transport change fixes that.
+ * - That case is covered at setup instead: the seed mixes in the browser's and the
+ *   platform's entropy (`trikey/guardian-seed/v1` above), which never cross a relay.
+ * - Nor does it protect against a dishonest guardian, which could ignore `c`; that
+ *   cannot be proven without revealing key 3.
  *
  * The 64-byte BIP39 seed is encrypted with XChaCha20-Poly1305 under a key from
  * Argon2id(passphrase, random 16-byte salt). The file also carries, in clear,
@@ -138,14 +172,87 @@ export function checkPassphrase(passphrase: unknown): string | undefined {
   return undefined;
 }
 
-/** A fresh BIP39 seed (24 words of entropy from `secureRandomBytes`, no BIP39 passphrase). The caller zeroes it. */
-export function generateSeed(): Uint8Array {
-  const entropy = secureRandomBytes(32);
+function u32be(n: number): Uint8Array {
+  return Uint8Array.of((n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff);
+}
+
+function concat(parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
+}
+
+// -----------------------------------------------------------------------------
+// The setup seed (`trikey/guardian-seed/v1`, see the file comment)
+
+export const SETUP_SEED_FORMAT = 'trikey/guardian-seed/v1';
+const SETUP_SEED_TAG = utf8ToBytes(SETUP_SEED_FORMAT);
+/** Size of the OS draw, of each optional input, and of the BIP39 entropy (24 words). */
+export const SETUP_ENTROPY_BYTES = 32;
+
+/**
+ * Inputs to a new setup seed from outside this machine's generator. Both optional; each exactly 32 bytes
+ * when present. Never logged or stored; the caller owns (and zeroes) its buffers.
+ */
+export interface SetupEntropy {
+  /** 32 bytes from the browser's `crypto.getRandomValues`, sent with the web UI's setup or reset request. */
+  browser?: Uint8Array;
+  /** 32 bytes from `TRIKEY_EXTRA_ENTROPY` (Umbrel's per-app `APP_SEED`), read at start-up. */
+  extra?: Uint8Array;
+}
+
+function checkInput(name: string, v: Uint8Array | undefined): Uint8Array {
+  if (v === undefined) return new Uint8Array(0);
+  if (!(v instanceof Uint8Array) || v.length !== SETUP_ENTROPY_BYTES) throw new Error(`${name} must be exactly ${SETUP_ENTROPY_BYTES} bytes`);
+  return v;
+}
+
+/**
+ * The BIP39 entropy of a new setup seed:
+ *
+ *     HMAC-SHA512(key = os (32 bytes from secureRandomBytes),
+ *                 data = "trikey/guardian-seed/v1"
+ *                     || u32be(len) || browser   (len 0 when absent, else 32)
+ *                     || u32be(len) || extra)    (len 0 when absent, else 32)
+ *
+ * truncated to its first 32 bytes. Pure (the caller draws `os`); the result is 32 bytes and the caller
+ * zeroes it. Does not keep or zero the inputs.
+ */
+export function setupSeedEntropy(os: Uint8Array, inputs: SetupEntropy = {}): Uint8Array {
+  if (!(os instanceof Uint8Array) || os.length !== SETUP_ENTROPY_BYTES) throw new Error(`the OS entropy must be exactly ${SETUP_ENTROPY_BYTES} bytes`);
+  const browser = checkInput('the browser entropy', inputs.browser);
+  const extra = checkInput('the extra entropy', inputs.extra);
+  const data = concat([SETUP_SEED_TAG, u32be(browser.length), browser, u32be(extra.length), extra]);
+  const mac = hmac(sha512, os, data);
   try {
+    return mac.slice(0, SETUP_ENTROPY_BYTES);
+  } finally {
+    mac.fill(0);
+    data.fill(0);
+  }
+}
+
+/**
+ * A fresh BIP39 seed (no BIP39 passphrase): 24 words of entropy from `setupSeedEntropy` over 32 bytes of
+ * `secureRandomBytes` and the optional `inputs`. The caller zeroes the 64-byte result.
+ */
+export function generateSeed(inputs: SetupEntropy = {}): Uint8Array {
+  // Sizes first, so a bad input is refused before anything is drawn.
+  checkInput('the browser entropy', inputs.browser);
+  checkInput('the extra entropy', inputs.extra);
+  const os = secureRandomBytes(SETUP_ENTROPY_BYTES);
+  let entropy: Uint8Array | undefined;
+  try {
+    entropy = setupSeedEntropy(os, inputs);
     // The mnemonic only exists as an intermediate string; it is never shown or stored.
     return mnemonicToSeedSync(entropyToMnemonic(entropy, wordlist));
   } finally {
-    entropy.fill(0);
+    os.fill(0);
+    entropy?.fill(0);
   }
 }
 
@@ -215,20 +322,6 @@ const KEY3_TAG = utf8ToBytes(KEY3_MIX_FORMAT);
 /** What the registration keeps to derive a wallet's key 3 again (policy/types.ts): not secret on its own. */
 export type { Key3Mix };
 
-function u32be(n: number): Uint8Array {
-  return Uint8Array.of((n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff);
-}
-
-function concat(parts: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-  let o = 0;
-  for (const p of parts) {
-    out.set(p, o);
-    o += p.length;
-  }
-  return out;
-}
-
 /** `walletContext` of `trikey/key3/v1`: the network, the pairing session and the phone's nostr key, each length-prefixed. */
 export function key3Context(i: { network: NetworkName; pairingId: string; phonePubkey: string }): Uint8Array {
   getNetwork(i.network);
@@ -251,7 +344,11 @@ export function isKey3Mix(v: unknown): v is Key3Mix {
   return !!m && typeof m === 'object' && m.version === 1 && typeof m.entropy === 'string' && /^[0-9a-f]{64}$/.test(m.entropy) && typeof m.context === 'string' && /^([0-9a-f]{2}){12,256}$/.test(m.context);
 }
 
-/** `seed3` = HMAC-SHA512(guardianSeed, "trikey/key3/v1" || walletContext || c). 64 bytes; the caller zeroes it. */
+/**
+ * `seed3` = HMAC-SHA512(guardianSeed, "trikey/key3/v1" || walletContext || c). 64 bytes; the caller zeroes it.
+ * Covers a setup seed known on its own, not a guardian generator predictable to a relay reader (`c` is
+ * readable with the guardian's nostr key): `trikey/guardian-seed/v1` covers that (file comment).
+ */
 export function mixedKey3Seed(guardianSeed: Uint8Array, mix: Key3Mix): Uint8Array {
   if (guardianSeed.length !== 64) throw new Error('the guardian seed must be 64 bytes');
   if (!isKey3Mix(mix)) throw new Error('invalid key 3 mix record');

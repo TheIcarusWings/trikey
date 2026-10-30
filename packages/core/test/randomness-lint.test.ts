@@ -8,7 +8,9 @@
  * - `generateSecretKey(` (nostr-tools draws its own; use `randomSecretKey`);
  * - `randomBytes` imported from `@noble/hashes` or `node:crypto` (unchecked; use `secureRandomBytes`).
  *
- * The allowlist names each exception and why. `apps/guardian-web` makes no keys and is not scanned.
+ * The allowlist names each exception and why. `apps/guardian-web` makes no keys and is not scanned: its only
+ * randomness is the browser's `crypto.getRandomValues`, through `src/lib/random.ts` (the setup and reset
+ * entropy the guardian mixes into its seed, and the mock's demo codes).
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';

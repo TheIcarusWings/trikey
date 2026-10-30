@@ -1,3 +1,4 @@
+import { browserRandomBytes } from '../lib/random';
 import { ApiError, type GuardianApi } from './client';
 import { RESET_CONFIRMATION } from './types';
 import type {
@@ -64,7 +65,7 @@ function localAt(daysAgo: number, hhmm: string): string {
 
 function randomCode(length: number): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  const bytes = browserRandomBytes(length);
   return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
 }
 

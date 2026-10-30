@@ -167,7 +167,7 @@ Pairing is two requests, both allowed from an unpaired sender:
 
 ### Key 3 from both sides
 
-So that a weak random generator on the guardian alone cannot make a guessable key 3, the phone contributes to it. Format **`trikey/key3/v1`**:
+So that a guardian setup seed known on its own does not give key 3, the phone contributes to it. Format **`trikey/key3/v1`**:
 
 * **`entropy`** on `pair.prepare`: `c`, 32 fresh random bytes from the phone's checked generator, lowercase hex. The app always sends it. It is not secret: without the guardian's seed it says nothing about key 3.
 * The guardian derives the wallet's key 3 as
@@ -184,7 +184,7 @@ So that a weak random generator on the guardian alone cannot make a guessable ke
   The context binds the network, this pairing session and this phone, so the same `c` sent again (to a new pairing, by another phone, on another network) gives another key.
 * A guardian that knows `entropy` MUST use it and answers `key3Mixed: true` on `pair.prepare`, on `pair` and (while that wallet is paired) on `guardian.status`. Without `entropy` it uses its own key (the account of its setup seed), as before, and answers `key3Mixed: false`.
 * The guardian keeps `c` and `walletContext` with the wallet's registration and derives key 3 again at every unlock. A wallet rotation (the guardian adopting a recovery's destination wallet) keeps the same key 3, and so the same record; a reset makes a new setup seed; a new pairing gets a new `c`.
-* The phone never learns key 3: it sees only the account xpub. What this protects against is a weak generator on the guardian, not a dishonest guardian: one could ignore `c`, and that cannot be proven without revealing key 3.
+* The phone never learns key 3: it sees only the account xpub. What this protects against is a guardian seed known on its own (leaked, or weak seed generation alone). Not against a guardian whose whole generator is predictable to someone who reads the relays: `c` travels in this gift wrap, encrypted to the guardian's nostr key, which comes from that same generator. The guardian covers that case at setup, by mixing in entropy that never crosses a relay (DESIGN.md, "Entropy", `trikey/guardian-seed/v1`). Nor against a dishonest guardian: one could ignore `c`, and that cannot be proven without revealing key 3.
 * Compatibility: a guardian from before this member has a strict `pair.prepare` schema and drops a request that carries `entropy` as malformed (it answers no unpaired sender), so the phone needs a guardian of this version or later to pair. Phones from before this member send no `entropy` and get the old behaviour.
 
 ### Recovery

@@ -37,6 +37,7 @@ node --import tsx apps/guardian/src/main.ts
 | `BITCOIN_RPC_HOST`, `_PORT`, `_USER`, `_PASS` | none | Optional: sync progress, a broadcast fallback, and the silent payment scanner (`getblock <hash> 3`; without them `sp.*` answers `1700`) |
 | `BITCOIN_NETWORK` | `bitcoin` | `bitcoin`, `testnet`, `signet`, `regtest`; also `mainnet`, `main`, `testnet3`, `testnet4`, `test` |
 | `TRIKEY_LOG_LEVEL` | `info` | `debug` for more |
+| `TRIKEY_EXTRA_ENTROPY` | none | Optional: 32 bytes as 64 hex characters, mixed into every new setup seed with the OS draw and the browser's entropy (`trikey/guardian-seed/v1`, DESIGN.md "Entropy"). The Umbrel package sets it to the app's `APP_SEED`. Anything else non-empty refuses to start. Never logged; removed from the process environment once read. |
 | `SP_SCAN_THREADS` | cores - 1, at least 1 | Worker threads for the silent payment scanner, 1 to 64. `1` scans in the main thread, without workers. Lower it to leave more of the box to Bitcoin Core during a first scan. |
 
 For the web UI's dev server (`VITE_API=http`), run the guardian with `PORT=8787` or
@@ -51,7 +52,7 @@ All files in `TRIKEY_DATA_DIR` are mode 0600 and written atomically.
 
 | File | Holds |
 |---|---|
-| `keystore.json` | The setup seed key 3 comes from: a BIP39 seed encrypted with XChaCha20-Poly1305 under Argon2id(passphrase), m = 64 MiB, t = 3, p = 1. A wallet paired with the phone's contribution (`pair.prepare` `entropy`) gets key 3 from this seed and that contribution (`trikey/key3/v1`, `src/keystore.ts`); the contribution is kept with the registration in `guardian-state.json`. Never overwritten, except by the web UI's reset, which replaces key 3 on purpose. There is no backup, by design. |
+| `keystore.json` | The setup seed key 3 comes from (made from the OS draw, the setup browser's entropy and `TRIKEY_EXTRA_ENTROPY`: `trikey/guardian-seed/v1`): a BIP39 seed encrypted with XChaCha20-Poly1305 under Argon2id(passphrase), m = 64 MiB, t = 3, p = 1. A wallet paired with the phone's contribution (`pair.prepare` `entropy`) gets key 3 from this seed and that contribution (`trikey/key3/v1`, `src/keystore.ts`); the contribution is kept with the registration in `guardian-state.json`. Never overwritten, except by the web UI's reset, which replaces key 3 on purpose. There is no backup, by design. |
 | `nostr-identity.json` | The guardian's nostr key, **unencrypted** so a locked guardian can still answer the phone and send alerts (trade-off in `src/identity.ts`). |
 | `guardian-state.json` | The policy engine, format version 2: the active wallet (registration, rules, limit accounting, recovery access grants), retired wallets, recoveries, activity. A version-1 file (one wallet) is migrated when it is loaded and written back as version 2. |
 | `service.json` | Relays, the paired phone's name, co-signed sweeps and their broadcast state, the service log, recently handled request ids. (Recovery access grants used to live here; they are moved into the engine on start.) |

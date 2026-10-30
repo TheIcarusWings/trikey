@@ -22,8 +22,9 @@
  * every statistical test. These checks only catch gross failures: a missing or broken polyfill, a
  * buffer left zero-filled, a stuck source, a source swapped out after start-up. They are cheap enough
  * to run on every call. Against a subtly weak generator the defences are elsewhere: the guardian mixing
- * the phone's contribution into key 3 (two generators, on two machines), and the 2-of-3 structure, in
- * which one weak key alone cannot move money (DESIGN.md, "Entropy").
+ * the setup browser's (and the platform's) entropy into its seed and the phone's contribution into key 3
+ * (generators on other machines), and the 2-of-3 structure, in which one weak key alone cannot move
+ * money (DESIGN.md, "Entropy").
  *
  * On failure it throws `RandomSourceError`. It never retries and never falls back to a weaker source.
  * A source caught stuck, repeating or replaced stays refused (every later call throws the same error)
