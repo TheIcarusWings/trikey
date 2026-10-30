@@ -34,7 +34,7 @@ function KeyExplainer({ icon, title, children, tinted }: { icon: LucideIcon; tit
 export default function HowItWorks() {
   const router = useRouter();
   const wallet = useWalletService();
-  const { backing } = useWallet();
+  const { backing, network } = useWallet();
   return (
     <Screen
       title="Three keys, all yours"
@@ -52,7 +52,8 @@ export default function HowItWorks() {
                 router.push(backing === 'demo' ? '/rk/create' : { pathname: '/connect-hardware', params: { flow: 'rk' } });
               }}
               className={cn('text-foreground font-medium underline underline-offset-[3px]', pick('text-[13px]', 'text-xs'))}>
-              No home server?
+              {/* Recovery Key mode stays on the test networks: from mainnet it starts on testnet. */}
+              {network === 'bitcoin' ? 'No home server? (test networks only)' : 'No home server?'}
             </Text>
           </Text>
           <AppButton

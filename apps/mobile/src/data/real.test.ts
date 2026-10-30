@@ -425,9 +425,13 @@ describe('the real wallet service', { timeout: 60_000 }, () => {
     opened.push(real);
     expect(real.getState()).toMatchObject({ backing: 'real', onboarded: false, network: 'regtest' });
     expect(await real.getHardwareOptions()).toEqual([]);
-    expect(() => real.setNetwork('bitcoin')).toThrow(/Mainnet/);
+    // Mainnet is the person's pick in real mode (see real-mainnet.test.ts); its warning's answer goes when the network changes.
+    real.setNetwork('bitcoin');
+    expect(real.getState()).toMatchObject({ network: 'bitcoin', mainnetRiskAccepted: false });
+    real.acceptMainnetRisk(true);
+    expect(real.getState().mainnetRiskAccepted).toBe(true);
     real.setNetwork('signet');
-    expect(real.getState().network).toBe('signet');
+    expect(real.getState()).toMatchObject({ network: 'signet', mainnetRiskAccepted: false });
     expect(A.svc.getState().onboarded).toBe(true);
   });
 });

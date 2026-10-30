@@ -123,8 +123,8 @@ Guardian log lines have one event per line and carry no keys or request bodies, 
 
 **Start9 variant.** The steps in the app are the same, but the Start9 package cannot be used for this round: it is written for
 Start9's Bitcoin package, which runs mainnet only, and `packaging/start9/startos/main.ts` hard-codes `BITCOIN_NETWORK: 'bitcoin'`.
-The app does not offer mainnet. To test on Start9 someone would first need a node there on a test network and a package built
-for it. Out of this round.
+The app offers mainnet in guardian mode, but this round tests on test networks. To test on Start9 someone would first need a
+node there on a test network and a package built for it. Out of this round.
 
 ### The guardian needs a node and Electrs that are ready
 
@@ -171,8 +171,9 @@ In the app, setting up a wallet is one flow in this order: **hardware wallet, th
 period (approved on the hardware wallet), then backup.** Steps 1 to 5 below follow that flow, with the guardian's own setup first.
 The guardian's pairing code lasts 5 minutes and works once, so only make one when the app is on the scan screen.
 
-Open Trikey. The first screen should say "Pre-alpha, test networks only" with a small **wallet mode** link under the buttons.
-**Network**: pick Signet (or Testnet for testnet4) here before "Create a wallet"; it cannot be changed afterwards.
+Open Trikey. The first screen should say "Pre-alpha · test network" with a small **wallet mode** link under the buttons.
+**Network**: pick Signet (or Testnet for testnet4) here before "Create a wallet"; it cannot be changed afterwards. Mainnet is
+also offered (see "Known limits"); picking it shows a warning that has to be accepted before the buttons work.
 
 ### 1. Guardian setup and passphrase
 
@@ -478,9 +479,13 @@ Simulator is regtest only.
 
 ## Known limits of this round
 
-- **Pre-alpha and not audited.** Test coins only, on signet or testnet4. The app does not offer mainnet, and nothing here should be
-  taken as a statement about what is safe with real money.
-- **Out of this round:** Recovery Key mode ("No home server?"), mainnet, passkeys, iCloud and Google Drive backup (the backup
+- **Pre-alpha and not audited.** This round is for test coins, on signet or testnet4, and nothing here should be taken as a
+  statement about what is safe with real money.
+- **Mainnet is allowed in guardian mode, at your own risk.** The network picker offers it, with a warning to accept first
+  (pre-alpha, not audited, only an amount you can afford to lose). It is there for a tester whose node runs mainnet and stays
+  there. Use a small amount. On mainnet the guardian will not pair without at least one alert contact, so the app does not let
+  you skip that step. Recovery Key mode stays on test networks only.
+- **Out of this round:** Recovery Key mode ("No home server?"), passkeys, iCloud and Google Drive backup (the backup
   is a recovery code plus a backup file), QR-based devices (Coldcard Q, Keystone, Passport, Jade, SeedSigner), BitBox02, the
   "I have an invite" screen (a fixed demo; family hosting comes later), silent payments, Start9, and iOS.
 - **iOS** builds from a free Apple ID last **7 days**: after that the app stops opening until you build and install it again

@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { Cloud } from '@/components/icons';
+import { MainnetWarning } from '@/components/network-picker';
 import { Footnote, InfoRow, Notice, Panel } from '@/components/panels';
 import { Body, FieldLabel } from '@/components/panels';
 import { Screen } from '@/components/screen';
@@ -23,7 +24,7 @@ import { useAction } from '@/lib/use-action';
 export default function RecoverBackup() {
   const router = useRouter();
   const wallet = useWalletService();
-  const { backup, hardware, guardian, progress, backing } = useWallet();
+  const { backup, hardware, guardian, progress, backing, mainnetRiskAccepted } = useWallet();
   const [found, setFound] = useState<FoundBackup | null | undefined>(undefined);
   const [passkeyOk, setPasskeyOk] = useState(false);
   const [code, setCode] = useState('');
@@ -59,6 +60,8 @@ export default function RecoverBackup() {
   };
 
   const provider = found?.provider ?? backup?.provider ?? pick('icloud', 'google-drive');
+  // A backup for another network: the phone can switch to it. To mainnet only once the person accepted its warning.
+  const otherNetwork = restoring.error instanceof WalletServiceError && restoring.error.kind === 'network_mismatch' ? restoring.error.network : undefined;
   const canPasskey = !!found?.unlockedBy.includes('passkey') && (passkeyOk || demo);
   const canCode = !found || found.unlockedBy.includes('recovery-code');
 
@@ -69,12 +72,16 @@ export default function RecoverBackup() {
       footer={
         <>
           <ActionNotice message={restoring.message} error={restoring.error} />
-          {restoring.error instanceof WalletServiceError && restoring.error.kind === 'network_mismatch' && restoring.error.network && lastUnlock ? (
-            <AppButton
-              title={`Switch to ${networkLabel(restoring.error.network)} and restore`}
-              busy={restoring.busy}
-              onPress={() => void restore(lastUnlock, true)}
-            />
+          {otherNetwork && lastUnlock ? (
+            <>
+              {otherNetwork === 'bitcoin' ? <MainnetWarning /> : null}
+              <AppButton
+                title={`Switch to ${networkLabel(otherNetwork)} and restore`}
+                busy={restoring.busy}
+                disabled={otherNetwork === 'bitcoin' && !mainnetRiskAccepted}
+                onPress={() => void restore(lastUnlock, true)}
+              />
+            </>
           ) : null}
           {found && canPasskey ? <AppButton title="Unlock with passkey" busy={restoring.busy} onPress={() => void restore({ passkey: true })} /> : null}
           {found && canCode && !demo ? (

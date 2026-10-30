@@ -16,7 +16,7 @@ const ABOUT: Record<AppMode, string> = {
   demo: 'Sample data and timers. Nothing here is real.',
   simulator:
     'The real wallet with a software hardware wallet, on regtest, against a guardian you run on your computer (see docs/dev-regtest.md).',
-  real: 'Real hardware wallets, this phone\'s secure storage and a test network (testnet, signet or regtest). Mainnet (not yet).',
+  real: "Real hardware wallets, this phone's secure storage and the network picked at onboarding: testnet, signet or regtest, or mainnet at your own risk (guardian mode only).",
 };
 
 /**

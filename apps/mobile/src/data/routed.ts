@@ -11,8 +11,12 @@
  *
  * While neither wallet is finished, `setMode` switches between them (onboarding's two paths). Once a wallet is there it
  * does nothing: a phone does not run two wallets at once, and removing the wallet is how it starts over.
+ *
+ * Mainnet is the guardian mode's only. Picking it while Recovery Key mode is the one in use, before anything is set up,
+ * moves the phone to the guardian mode; Recovery Key mode keeps its test network.
  */
 import type { KeyValueStore } from '@trikey/wallet';
+import { WalletServiceError } from './errors';
 import type { WalletService } from './service';
 import type { AmountUnit, NetworkName, ThemePreference, WalletMode } from './types';
 
@@ -50,6 +54,13 @@ export function createRoutedWalletService(opts: { mode: string; kv: KeyValueStor
     const s = m.getState();
     return s.onboarded || s.recovering;
   };
+  const switchTo = (mode: WalletMode) => {
+    // The demo's mock shows either home; a real phone only chooses before it has a wallet.
+    if (finished(current()) || mode === active) return;
+    active = mode;
+    void opts.kv.set(kindPrefKey(opts.mode), mode).catch(() => undefined);
+    notify();
+  };
 
   const own = {
     get kind(): WalletMode {
@@ -65,14 +76,24 @@ export function createRoutedWalletService(opts: { mode: string; kv: KeyValueStor
     setNetwork(network: NetworkName) {
       // The network is chosen before the wallet exists, and both kinds start on it.
       // A kind that already has an unfinished wallet keeps its network; only the one in use may refuse.
+      let refused: unknown;
+      let other: Member | undefined;
       for (const m of members) {
         if (finished(m)) continue;
         try {
           m.setNetwork(network);
+          if (m !== current()) other = m;
         } catch (e) {
-          if (m === current()) throw e;
+          if (m === current()) refused = e;
         }
       }
+      if (refused === undefined) return;
+      // Recovery Key mode said no to the network itself (mainnet) and the guardian mode took it: that is the mode for it.
+      if (other === opts.guardian && refused instanceof WalletServiceError && refused.kind === 'invalid_input') return switchTo('guardian');
+      throw refused;
+    },
+    acceptMainnetRisk(accepted: boolean) {
+      for (const m of members) m.acceptMainnetRisk(accepted);
     },
     setUnit(unit: AmountUnit) {
       for (const m of members) m.setUnit(unit);
@@ -81,11 +102,7 @@ export function createRoutedWalletService(opts: { mode: string; kv: KeyValueStor
       for (const m of members) m.setTheme(theme);
     },
     setMode(mode: WalletMode) {
-      // The demo's mock shows either home; a real phone only chooses before it has a wallet.
-      if (finished(current()) || mode === active) return;
-      active = mode;
-      void opts.kv.set(kindPrefKey(opts.mode), mode).catch(() => undefined);
-      notify();
+      switchTo(mode);
     },
     async close() {
       await Promise.all(members.map((m) => m.close?.().catch(() => undefined)));

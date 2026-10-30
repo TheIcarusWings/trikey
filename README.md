@@ -17,7 +17,9 @@ No home server? **Recovery Key mode** keeps key 3 offline (a printed kit, an NFC
 card or a second hardware wallet) and gives the phone a small spending balance
 refilled by pre-signed, timelocked refills.
 
-> **Status: pre-alpha.** Not audited. Use testnet, signet or regtest only.
+> **Status: pre-alpha.** Not audited. Use testnet, signet or regtest. The app also
+> offers mainnet in guardian mode, behind a warning, for testing at your own risk with
+> an amount you can afford to lose; Recovery Key mode is test networks only.
 
 ## How it works
 
