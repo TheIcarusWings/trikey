@@ -6,7 +6,7 @@
  * writes are atomic (temp file in the same directory, fsync, rename or link,
  * fsync the directory) and created with mode 0600.
  */
-import { chmod, link, mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises';
+import { access, chmod, constants, link, mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { secureRandomBytes } from '@trikey/core/random';
 import { hex } from '@scure/base';
@@ -98,6 +98,14 @@ export async function ensureDataDir(dir: string): Promise<void> {
   if ((st.mode & 0o077) !== 0 && typeof process.getuid === 'function' && st.uid === process.getuid()) {
     // Best effort: a volume mounted by the platform may not let us change it.
     await chmod(dir, 0o700).catch(() => {});
+  }
+  // Say so at once, rather than at the first write deep inside start-up: the usual cause is a folder the
+  // platform created for another user (Docker makes a missing bind-mount folder root's).
+  try {
+    await access(dir, constants.W_OK | constants.X_OK);
+  } catch {
+    const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
+    throw new Error(`${dir} is not writable by this process (uid ${uid ?? '?'}; the folder belongs to uid ${st.uid}). Give it to uid ${uid ?? '?'}, or recreate it empty.`);
   }
 }
 
