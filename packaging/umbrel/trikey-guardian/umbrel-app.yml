@@ -26,8 +26,9 @@ support: https://github.com/TheIcarusWings/trikey/issues
 # TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
 gallery: []
 releaseNotes: >-
-  Change the guardian's relays in Settings; your phone follows automatically. After a crash the
-  guardian restarts by itself instead of staying at 502. The Android test APK opens again.
+  Change the guardian's relays in Settings; your phone follows automatically, and old relays stay
+  watched until you stop them, so older recovery sheets keep working. After a crash the guardian
+  restarts by itself. The Android test APK opens again.
 dependencies:
   - bitcoin
   - electrs
