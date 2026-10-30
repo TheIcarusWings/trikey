@@ -1,0 +1,217 @@
+name: Android APK build
+
+# The build half of the Android test APK, as a reusable workflow so the release build and the launch check
+# make the APK with the very same steps:
+#
+# - android-apk.yml (tags and manual dispatch) calls it for arm64-v8a, the phones testers use, and publishes
+#   the result as a draft release;
+# - android-launch.yml (pull requests) calls it for x86_64, the emulator's ABI, and opens the APK in an
+#   Android emulator to check it starts.
+#
+# The build is in its own file, not a `workflow_call` trigger on android-apk.yml, because a called workflow
+# cannot ask for more than its caller has: android-apk.yml's release job needs `contents: write`, which a
+# pull-request check must not hand out.
+#
+# Release, not debug. A debug build loads its JavaScript from Metro on a computer and starts in Demo
+# mode (`__DEV__`); a release build has the Hermes bundle embedded, needs nothing running next to it
+# and starts in Real mode, which is what a tester wants. Settings, Developer (wallet mode, crypto
+# self-test) is an ordinary screen of the app, not part of React Native's dev menu, so it is there in
+# a release build too.
+#
+# Signing. The repository holds no release key (and must not). Expo's generated project signs release
+# builds with its public debug keystore, so the job re-signs the APK with a throwaway key made in the
+# job (keytool, random password, deleted at the end, never uploaded). Every build therefore has a
+# different signature: Android refuses to install one over another, so an update needs an uninstall,
+# which deletes the wallet on that phone (back it up first). The release notes say so.
+#
+# Cleartext: not allowed. Android 9+ blocks plain http:// and ws:// for a release build unless the
+# manifest asks for it, and real mode on signet or testnet4 uses public wss:// relays. A relay on a
+# home network (ws://192.168...) is only for the regtest simulator; see docs/alpha-test-plan.md.
+#
+# Native identifiers come from the environment, as in apps/mobile/README.md ("Publishing your own
+# build"): iCloud off, passkeys off (no EXPO_PUBLIC_PASSKEY_RP_ID), Google Drive backup off (no
+# EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID). Backup is the recovery code plus a backup file.
+#
+# No secrets, and only read access.
+
+on:
+  workflow_call:
+    inputs:
+      architectures:
+        description: 'CPU architectures to build, comma separated (arm64-v8a for phones, x86_64 for an emulator).'
+        required: false
+        default: 'arm64-v8a'
+        type: string
+      artifact-name:
+        description: 'Name of the uploaded artifact (the APK, its .sha256 file and the release notes).'
+        required: false
+        default: 'trikey-android-apk'
+        type: string
+    outputs:
+      apk-name:
+        description: 'File name of the signed APK in the artifact, without .apk'
+        value: ${{ jobs.apk.outputs.apk-name }}
+      application-id:
+        description: 'The Android application id (android.package in the Expo config)'
+        value: ${{ jobs.apk.outputs.application-id }}
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    outputs:
+      apk-name: ${{ steps.sign.outputs.name }}
+      application-id: ${{ steps.config.outputs.application-id }}
+    env:
+      # Expo reads these when it generates the native project. Empty on purpose: see the header.
+      TRIKEY_DISABLE_ICLOUD: '1'
+      EXPO_PUBLIC_PASSKEY_RP_ID: ''
+      EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID: ''
+      # Through the environment, not spliced into a script.
+      ARCHITECTURES: ${{ inputs.architectures || 'arm64-v8a' }}
+    steps:
+      - uses: actions/checkout@v4.4.0
+
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - uses: actions/setup-java@v4.9.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Command-line tools and licences. Gradle then fetches the platform, build tools, NDK and CMake
+      # that this React Native version asks for.
+      - uses: android-actions/setup-android@v4.0.4
+
+      - run: npm ci
+
+      # The application id the build will have: android.package from app.json, as app.config.ts resolves it
+      # (TRIKEY_ANDROID_PACKAGE overrides it for a fork). The APK is checked against it below, and the launch
+      # check starts the app by it.
+      - name: Read the application id from the Expo config
+        id: config
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          id="$(npx expo config --type public --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const p=JSON.parse(s).android?.package;if(!p)process.exit(1);process.stdout.write(p)})')"
+          [[ "${id}" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] || { echo "::error::Unexpected android.package: ${id}"; exit 1; }
+          echo "Application id: ${id}"
+          echo "application-id=${id}" >> "${GITHUB_OUTPUT}"
+
+      - name: Generate the Android project
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform android --no-install
+
+      # After the prebuild, so the cache key sees the generated Gradle files.
+      # Write the cache on any ref (the default only writes on the default branch): tags never are.
+      - uses: gradle/actions/setup-gradle@v4.4.4
+        with:
+          cache-read-only: false
+
+      - name: Build the release APK
+        working-directory: apps/mobile/android
+        run: |
+          [[ "${ARCHITECTURES}" =~ ^[a-z0-9_,-]+$ ]] || { echo "::error::Unexpected architectures: ${ARCHITECTURES}"; exit 1; }
+          # Minifying (R8) is switched off for a test build: it shrinks nothing a tester needs, and a
+          # stripped class in a crypto or Bluetooth library would look like a wallet bug.
+          ./gradlew assembleRelease --no-daemon --stacktrace \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" \
+            -PreactNativeArchitectures="${ARCHITECTURES}" \
+            -Pandroid.enableMinifyInReleaseBuilds=false
+
+      - name: Sign with a one-off key and check the result
+        id: sign
+        env:
+          UNSIGNED: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          APPLICATION_ID: ${{ steps.config.outputs.application-id }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          bt="$(ls -d "${ANDROID_HOME}"/build-tools/*/ | sort -V | tail -n 1)"
+          bt="${bt%/}"
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            name="trikey-alpha-${GITHUB_REF_NAME}"
+          else
+            name="trikey-alpha-0.1.0-${GITHUB_SHA::7}"
+          fi
+
+          # A key that exists for this job only: random password (masked), never written to the repository,
+          # the artifact or a secret store, and deleted below.
+          keystore="${RUNNER_TEMP}/one-off.jks"
+          KS_PASS="$(openssl rand -hex 24)"
+          echo "::add-mask::${KS_PASS}"
+          export KS_PASS
+          keytool -genkeypair -keystore "${keystore}" -storetype PKCS12 \
+            -alias trikey-test -keyalg RSA -keysize 3072 -validity 3650 \
+            -dname "CN=Trikey one-off test key, O=Trikey alpha test build" \
+            -storepass:env KS_PASS -keypass:env KS_PASS
+
+          # apksigner replaces the debug signature Gradle put on the APK.
+          "${bt}/apksigner" sign --ks "${keystore}" --ks-key-alias trikey-test \
+            --ks-pass env:KS_PASS --key-pass env:KS_PASS \
+            --out "dist/${name}.apk" "${UNSIGNED}"
+          rm -f "${keystore}"
+          unset KS_PASS
+
+          # Checks: aligned, signed by the one-off key and not the public debug key, the right app, the
+          # native code for every architecture asked for, and a JavaScript bundle inside (so it runs
+          # without Metro).
+          "${bt}/zipalign" -c 4 "dist/${name}.apk"
+          certs="$("${bt}/apksigner" verify --verbose --print-certs "dist/${name}.apk")"
+          echo "${certs}"
+          if grep -qi 'Android Debug' <<<"${certs}"; then echo "::error::The APK is still signed with the debug key"; exit 1; fi
+          grep -q 'Trikey one-off test key' <<<"${certs}" || { echo "::error::The APK is not signed with the one-off key"; exit 1; }
+          # (Captured first: a pipe into grep -q would end the writer early and trip pipefail.)
+          badging="$("${bt}/aapt2" dump badging "dist/${name}.apk")"
+          grep -qF "package: name='${APPLICATION_ID}'" <<<"${badging}" \
+            || { echo "::error::Unexpected package name (expected ${APPLICATION_ID})"; exit 1; }
+          listing="$(unzip -l "dist/${name}.apk")"
+          grep -q 'assets/index.android.bundle' <<<"${listing}" \
+            || { echo "::error::No embedded JavaScript bundle: this build would need Metro"; exit 1; }
+          IFS=',' read -ra abis <<<"${ARCHITECTURES}"
+          for abi in "${abis[@]}"; do
+            grep -q "lib/${abi}/" <<<"${listing}" ||{ echo "::error::No native libraries for ${abi} in the APK"; exit 1; }
+          done
+
+          (cd dist && sha256sum "${name}.apk" > "${name}.apk.sha256")
+          echo "name=${name}" >> "${GITHUB_OUTPUT}"
+          echo "sha256=$(cut -d' ' -f1 "dist/${name}.apk.sha256")" >> "${GITHUB_OUTPUT}"
+
+      - name: Release notes
+        env:
+          NAME: ${{ steps.sign.outputs.name }}
+          SHA256: ${{ steps.sign.outputs.sha256 }}
+        run: |
+          cat > dist/release-notes.md <<EOF
+          ## Trikey alpha test build (Android)
+
+          **This is a test build, signed with a one-off key made by the build job.** The key is thrown away
+          after the build, so every build has a different signature and Android will not install one over
+          another: to move to a newer build, uninstall the old one first. Uninstalling deletes the wallet on
+          that phone, so make a backup (recovery code and backup file) before you do.
+
+          - Pre-alpha, not audited. Test networks only (signet, testnet4). Never put real bitcoin in it.
+          - Install: download \`${NAME}.apk\` on the phone, open it, and allow installing from this source when Android asks.
+          - Built for: ${ARCHITECTURES} (built from commit ${GITHUB_SHA::12}).
+          - Check the download: SHA-256 \`${SHA256}\`.
+          - Passkeys and Google Drive backup are not in this build; the backup is a recovery code plus a backup file.
+          - How to test it: docs/alpha-test-plan.md in the repository.
+          EOF
+          cp dist/release-notes.md "${GITHUB_STEP_SUMMARY}"
+
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: ${{ inputs.artifact-name || 'trikey-android-apk' }}
+          path: |
+            dist/*.apk
+            dist/*.apk.sha256
+            dist/release-notes.md
+          if-no-files-found: error
+          retention-days: 30
