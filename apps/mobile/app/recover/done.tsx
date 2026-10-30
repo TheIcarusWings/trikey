@@ -35,6 +35,8 @@ export default function RecoverDone() {
   return (
     <Screen
       bare
+      // The recovery is over: back goes Home (held while the hardware wallet is asked), never into the recovery screens.
+      holdBack={confirm.busy ? true : home}
       scrollable={false}
       gap={16}
       footer={

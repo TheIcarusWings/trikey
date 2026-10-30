@@ -27,6 +27,8 @@ export default function AllSet() {
   return (
     <Screen
       bare
+      // The wallet is set up: back goes Home, as "Go to home" does, never into the setup screens.
+      holdBack={() => enter('/home')}
       gap={20}
       footer={
         <>
