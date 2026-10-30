@@ -1,11 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock } from 'lucide-react';
 import { api, ApiError } from '@/api';
 import { useGuardian } from '@/components/guardian-provider';
+import { AuthCard, AuthHeader } from '@/components/layout/centered';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { usePageTitle } from '@/hooks/use-api';
@@ -69,59 +68,52 @@ export function LockedPage() {
         : 'Key 3 is encrypted until you unlock it.';
 
   return (
-    <>
-      <Card className="gap-5 p-6">
-        <span className="flex size-11 items-center justify-center rounded-[10px] bg-warn-soft">
-          <Lock className="size-[22px] text-warn" aria-hidden="true" />
+    <AuthCard>
+      <AuthHeader title="Guardian locked" />
+      <p className="m-0 text-center text-sm leading-5 text-muted-foreground">{cause} Phone-only payments wait until then.</p>
+
+      <div className="flex flex-col gap-1 rounded-[10px] border px-4 py-3.5">
+        <span className="flex flex-wrap items-center gap-2 text-sm leading-5 font-medium">
+          Unlock from the Trikey app <Badge variant="outline">Recommended</Badge>
         </span>
+        <span className="text-[13px] leading-[18px] text-muted-foreground">
+          Your phone shows a Guardian locked card. Approve it with your hardware wallet.
+        </span>
+      </div>
+
+      <div className="flex items-center gap-3 text-xs text-muted-foreground" aria-hidden="true">
+        <span className="h-px grow bg-border" />
+        OR
+        <span className="h-px grow bg-border" />
+      </div>
+
+      <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-2xl leading-8 font-semibold tracking-[-0.01em]">Guardian locked</h1>
-          <p className="m-0 text-sm leading-5 text-muted-foreground">{cause} Phone-only payments wait until then.</p>
+          <Label htmlFor="unlock-pass">Unlock passphrase</Label>
+          <Input
+            id="unlock-pass"
+            name="passphrase"
+            type="password"
+            autoComplete="current-password"
+            autoFocus
+            value={passphrase}
+            onChange={(e) => setPassphrase(e.target.value)}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? 'unlock-error' : undefined}
+            disabled={busy}
+            className="h-11"
+          />
+          <p id="unlock-error" role="alert" className="m-0 text-[13px] leading-[18px] text-bad">
+            {error}
+          </p>
         </div>
-
-        <div className="flex flex-col gap-1 rounded-[10px] border px-4 py-3.5">
-          <span className="flex flex-wrap items-center gap-2 text-sm leading-5 font-medium">
-            Unlock from the Trikey app <Badge variant="outline">Recommended</Badge>
-          </span>
-          <span className="text-[13px] leading-[18px] text-muted-foreground">
-            Your phone shows a Guardian locked card. Approve it with your hardware wallet.
-          </span>
-        </div>
-
-        <div className="flex items-center gap-3 text-xs text-muted-foreground" aria-hidden="true">
-          <span className="h-px grow bg-border" />
-          OR
-          <span className="h-px grow bg-border" />
-        </div>
-
-        <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="unlock-pass">Unlock passphrase</Label>
-            <Input
-              id="unlock-pass"
-              name="passphrase"
-              type="password"
-              placeholder="Passphrase"
-              autoComplete="current-password"
-              autoFocus
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? 'unlock-error' : undefined}
-              disabled={busy}
-            />
-            <p id="unlock-error" role="alert" className="m-0 text-[13px] leading-[18px] text-bad">
-              {error}
-            </p>
-          </div>
-          <Button type="submit" disabled={busy} className="w-full">
-            {busy ? 'Unlocking…' : 'Unlock'}
-          </Button>
-        </form>
-      </Card>
+        <Button type="submit" size="lg" disabled={busy} className="h-12 w-full">
+          {busy ? 'Unlocking…' : 'Unlock'}
+        </Button>
+      </form>
       <p className="m-0 text-center text-[13px] leading-[18px] text-muted-foreground">
         Locking after every restart means a stolen box is useless.
       </p>
-    </>
+    </AuthCard>
   );
 }
