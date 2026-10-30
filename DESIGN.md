@@ -420,4 +420,4 @@ Someone who runs a guardian can host one for a person they know.
    - home, send and receive;
    - recovery flows;
    - settings (limit, delay, contacts).
-4. **Testnet and signet beta,** then an independent security review before mainnet.
+4. **Testnet and signet beta,** then an independent security review before mainnet. Until then the app offers mainnet in guardian mode only, behind a pre-alpha warning the person accepts, for testing at their own risk with a small amount; Recovery Key mode stays on test networks.
