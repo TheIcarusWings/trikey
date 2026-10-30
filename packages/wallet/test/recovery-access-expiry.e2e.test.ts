@@ -155,3 +155,51 @@ describe('lost phone: the recovery access runs out, then is renewed', { timeout:
     expect((await B.sync()).walletId).toBe(dest.walletId);
   });
 });
+
+describe('lost phone: the adoption alert was missed while the access had run out', { timeout: 120_000 }, () => {
+  let rig: GuardianRig;
+  const device = new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware, network: 'regtest', kind: 'ledger' });
+  const provider = new SoftwareHardwareProvider(device);
+  const opened: TrikeyWallet[] = [];
+
+  beforeAll(async () => {
+    rig = await GuardianRig.start();
+    const A = await TrikeyWallet.create(phone({ clock: rig.clock, hardware: provider, cloud: new MemoryCloudBackupStore(), passkey: new MemoryPasskeyPrf() }).deps, { deviceName: 'Old phone' });
+    opened.push(A);
+    await A.onboard({ pairingUri: rig.pairingUri(), rules: RULES });
+    rig.fund(A.multisig().derive(0, 0).script, 300_000n);
+    await A.sync();
+  }, 30_000);
+
+  afterAll(async () => {
+    for (const w of opened) await w.close();
+    await rig?.stop();
+  });
+
+  it('"Keep following" then follows the wallet the guardian adopted, instead of saying it holds another wallet', async () => {
+    const C = await TrikeyWallet.create(phone({ clock: rig.clock, hardware: provider, cloud: new MemoryCloudBackupStore(), passkey: new MemoryPasskeyPrf(), rpcTimeoutMs: RPC_TIMEOUT_MS }).deps, { deviceName: 'New phone' });
+    opened.push(C);
+    const uri = encodeRecoveryUri({ guardianPubkey: rig.pubkey, relays: rig.relayUrls, network: 'regtest', label: 'Test Guardian' });
+    await C.recoverWithHardware({ guardian: uri });
+    const dest = C.state.recovery!.destination!;
+    const r = (await C.recoveryStatus())!;
+    // This phone misses the alerts that say the guardian adopted the new wallet.
+    const real = (C as unknown as { onAlert: (a: Alert, m: unknown, f?: string) => Promise<void> }).onAlert.bind(C);
+    (C as unknown as { onAlert: unknown }).onAlert = async (a: Alert, m: unknown, f?: string) => {
+      if (a.type === 'wallet_adopted' || a.type === 'recovery_completed') return;
+      return real(a, m, f);
+    };
+    rig.clock.set(r.readyAt * 1000 + 2 * HOUR);
+    await rig.mine(11);
+    await rig.guardian.tick();
+    await sleep(300);
+    expect(C.stage).toBe('recovering');
+    expect(C.recoveryAccess?.expired).toBe(true);
+
+    // The guardian refuses an approval for the old wallet, then answers this phone as its paired phone.
+    expect(await C.renewRecoveryAccess()).toEqual({ adopted: true });
+    expect(C.stage).toBe('paired');
+    expect(C.state.wallet!.walletId).toBe(dest.walletId);
+    expect(C.recoveryAccess).toBeUndefined();
+  });
+});

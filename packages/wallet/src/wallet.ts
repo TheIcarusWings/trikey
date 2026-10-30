@@ -2482,14 +2482,36 @@ export class TrikeyWallet {
    * A recovering phone's access (`recovery.access`) lasts at most a day: the
    * hardware wallet signs a new one to keep following the recovery.
    */
-  async renewRecoveryAccess(): Promise<{ accessExpiresAt: number }> {
+  /** After a refused or surprising `recovery.access`: whether the guardian adopted this phone's recovery meanwhile (and the phone followed). */
+  private async adoptedMeanwhile(): Promise<boolean> {
+    try {
+      await this.readStatus({ viaAlert: true });
+    } catch {
+      return false;
+    }
+    return this.s.stage === 'paired'; // it was recovering: paired now means the guardian adopted its wallet
+  }
+
+  async renewRecoveryAccess(): Promise<{ accessExpiresAt?: number; adopted?: true }> {
     if (this.s.stage !== 'recovering' || !this.s.guardian) throw new WalletError('wrong_state', 'Only a recovering phone has recovery access.');
     const guardianPubkey = this.s.guardian.pubkey;
     const expiresAt = this.nowSec() + ACCESS_TTL_SEC;
     const text = recoveryAccessMessage({ guardianPubkey, phonePubkey: this.s.nostrPubkey, expiresAt, ...(this.s.wallet?.walletId ? { walletId: this.s.wallet.walletId } : {}) });
     const signature = await this.withHardware((hw, rec) => this.signWithAuthKey(hw, rec, text, 'recovery-access'));
-    const access = await this.call('recovery.access', { approval: { kind: 'bip137', expiresAt, signature } });
-    if (access.walletId !== this.s.wallet?.walletId) throw new WalletError('guardian_mismatch', 'The guardian holds another wallet now.');
+    let access: Result<'recovery.access'>;
+    try {
+      access = await this.call('recovery.access', { approval: { kind: 'bip137', expiresAt, signature } });
+    } catch (e) {
+      // The recovery may have finished while this phone missed the alert (its access had lapsed): the guardian then
+      // holds the wallet this phone built, refuses an approval for the old one, and answers this phone as its paired
+      // phone. `readStatus` follows that wallet (adoptRecovered checks every part of it); otherwise the refusal stands.
+      if (await this.adoptedMeanwhile()) return { adopted: true };
+      throw e;
+    }
+    if (access.walletId !== this.s.wallet?.walletId) {
+      if (await this.adoptedMeanwhile()) return { adopted: true };
+      throw new WalletError('guardian_mismatch', 'The guardian holds another wallet now.');
+    }
     await this.update((s) => void (s.recoveryAccessExpiresAt = access.accessExpiresAt));
     await this.refreshStatus().catch(() => undefined);
     return { accessExpiresAt: access.accessExpiresAt };
