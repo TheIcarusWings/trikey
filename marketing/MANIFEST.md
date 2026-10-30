@@ -23,12 +23,12 @@ All are H.264 High + AAC 48 kHz, 30 fps, captions burned in.
 | `trikey-e3-home-server-169.mp4` | 16:9 | 31.0 s | 13.1 MB | music only | `3a7a07619b23181f` |
 | `trikey-e3-home-server-916-vo.mp4` | 9:16 | 31.0 s | 12.8 MB | voiceover + music | `7000e124703a3089` |
 | `trikey-e3-home-server-916.mp4` | 9:16 | 31.0 s | 12.8 MB | music only | `7f126f543c04e671` |
-| `trikey-f1-nobody-in-the-middle-11-vo.mp4` | 1:1 | 73.6 s | 19.9 MB | voiceover + music | `9214e20ff53a967a` |
-| `trikey-f1-nobody-in-the-middle-11.mp4` | 1:1 | 73.6 s | 19.9 MB | music only | `13b07be7ea318fee` |
-| `trikey-f1-nobody-in-the-middle-169-vo.mp4` | 16:9 | 73.6 s | 32.1 MB | voiceover + music | `cb04bfa9cfe6a301` |
-| `trikey-f1-nobody-in-the-middle-169.mp4` | 16:9 | 73.6 s | 32.1 MB | music only | `5c0d04a4ad00ff64` |
-| `trikey-f1-nobody-in-the-middle-916-vo.mp4` | 9:16 | 73.6 s | 32.0 MB | voiceover + music | `609fcbde7ce5fe0d` |
-| `trikey-f1-nobody-in-the-middle-916.mp4` | 9:16 | 73.6 s | 32.0 MB | music only | `4de61c377a8e05cc` |
+| `trikey-f1-nobody-in-the-middle-11-vo.mp4` | 1:1 | 73.6 s | 19.9 MB | voiceover + music | `dad9abdc8a578439` |
+| `trikey-f1-nobody-in-the-middle-11.mp4` | 1:1 | 73.6 s | 19.9 MB | music only | `c5797c274fffe2aa` |
+| `trikey-f1-nobody-in-the-middle-169-vo.mp4` | 16:9 | 73.6 s | 32.1 MB | voiceover + music | `b66fe4d06e7c514b` |
+| `trikey-f1-nobody-in-the-middle-169.mp4` | 16:9 | 73.6 s | 32.1 MB | music only | `4e9d52cbbf641159` |
+| `trikey-f1-nobody-in-the-middle-916-vo.mp4` | 9:16 | 73.6 s | 32.0 MB | voiceover + music | `e3703154acef8a80` |
+| `trikey-f1-nobody-in-the-middle-916.mp4` | 9:16 | 73.6 s | 32.0 MB | music only | `93266b0f041fb055` |
 | `trikey-v1-three-keys-11-vo.mp4` | 1:1 | 35.4 s | 1.6 MB | voiceover + music | `593acccb53a7a96c` |
 | `trikey-v1-three-keys-11.mp4` | 1:1 | 35.4 s | 1.6 MB | music only | `063c30425cae3204` |
 | `trikey-v1-three-keys-169-vo.mp4` | 16:9 | 35.4 s | 1.8 MB | voiceover + music | `a14469f17fbdfe11` |
@@ -38,15 +38,15 @@ All are H.264 High + AAC 48 kHz, 30 fps, captions burned in.
 | `trikey-v1b-brand-11.mp4` | 1:1 | 25.0 s | 1.2 MB | music only | `6947584f38875dc2` |
 | `trikey-v1b-brand-169.mp4` | 16:9 | 25.0 s | 1.3 MB | music only | `f506340798daf9bc` |
 | `trikey-v1b-brand-916.mp4` | 9:16 | 25.0 s | 1.4 MB | music only | `6ee5fd096922ba9d` |
-| `trikey-v2-stolen-phone-11-vo.mp4` | 1:1 | 29.6 s | 2.5 MB | voiceover + music | `45c7f34a5a41b9f5` |
-| `trikey-v2-stolen-phone-11.mp4` | 1:1 | 29.6 s | 2.5 MB | music only | `d231cac6fdd543c4` |
-| `trikey-v2-stolen-phone-169-vo.mp4` | 16:9 | 29.6 s | 2.1 MB | voiceover + music | `cec3a8c7ad1678a7` |
-| `trikey-v2-stolen-phone-169.mp4` | 16:9 | 29.6 s | 2.1 MB | music only | `a64fd52cdec13687` |
-| `trikey-v2-stolen-phone-916-vo.mp4` | 9:16 | 29.6 s | 3.3 MB | voiceover + music | `7db46aa9f525281a` |
-| `trikey-v2-stolen-phone-916.mp4` | 9:16 | 29.6 s | 3.3 MB | music only | `4f7d5305c1693b7e` |
-| `trikey-v3-lost-phone-11-vo.mp4` | 1:1 | 32.6 s | 2.9 MB | voiceover + music | `b09f8849d9f5eced` |
-| `trikey-v3-lost-phone-11.mp4` | 1:1 | 32.6 s | 2.9 MB | music only | `c154936f32aa3c03` |
-| `trikey-v3-lost-phone-169-vo.mp4` | 16:9 | 32.6 s | 2.3 MB | voiceover + music | `524f35d4476852dd` |
-| `trikey-v3-lost-phone-169.mp4` | 16:9 | 32.6 s | 2.4 MB | music only | `0b5d0aa5870c7b77` |
-| `trikey-v3-lost-phone-916-vo.mp4` | 9:16 | 32.6 s | 4.0 MB | voiceover + music | `01729d47b44e3cc0` |
-| `trikey-v3-lost-phone-916.mp4` | 9:16 | 32.6 s | 4.0 MB | music only | `03ee5af4b68eb152` |
+| `trikey-v2-stolen-phone-11-vo.mp4` | 1:1 | 29.6 s | 2.5 MB | voiceover + music | `b959e8f844560512` |
+| `trikey-v2-stolen-phone-11.mp4` | 1:1 | 29.6 s | 2.5 MB | music only | `aa0aae44b1c506eb` |
+| `trikey-v2-stolen-phone-169-vo.mp4` | 16:9 | 29.6 s | 2.1 MB | voiceover + music | `6e89c3b404aaa994` |
+| `trikey-v2-stolen-phone-169.mp4` | 16:9 | 29.6 s | 2.1 MB | music only | `4f430f761fce757b` |
+| `trikey-v2-stolen-phone-916-vo.mp4` | 9:16 | 29.6 s | 3.3 MB | voiceover + music | `2173096aa6c95cc7` |
+| `trikey-v2-stolen-phone-916.mp4` | 9:16 | 29.6 s | 3.3 MB | music only | `7817a769763fade7` |
+| `trikey-v3-lost-phone-11-vo.mp4` | 1:1 | 32.6 s | 2.9 MB | voiceover + music | `dfb8e62f8a18eb98` |
+| `trikey-v3-lost-phone-11.mp4` | 1:1 | 32.6 s | 2.9 MB | music only | `a0d4146b4f07b03d` |
+| `trikey-v3-lost-phone-169-vo.mp4` | 16:9 | 32.6 s | 2.4 MB | voiceover + music | `acd4f920afba53f2` |
+| `trikey-v3-lost-phone-169.mp4` | 16:9 | 32.6 s | 2.4 MB | music only | `793189dc40a9f2de` |
+| `trikey-v3-lost-phone-916-vo.mp4` | 9:16 | 32.6 s | 4.0 MB | voiceover + music | `ad0404ddf7136c34` |
+| `trikey-v3-lost-phone-916.mp4` | 9:16 | 32.6 s | 4.0 MB | music only | `59773e51533fc9c0` |
