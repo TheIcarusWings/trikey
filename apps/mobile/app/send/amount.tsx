@@ -64,6 +64,7 @@ function limitPill(outcome: QuoteOutcome, state: ReturnType<typeof useWallet>, a
 export default function SendAmount() {
   const router = useRouter();
   const state = useWallet();
+  const wallet = useWalletService();
   const params = useLocalSearchParams<{ address?: string; amount?: string; vault?: string }>();
   const address = (params.address ?? '').trim();
   const [digits, setDigits] = useState(() => (params.amount ? String(params.amount).slice(0, MAX_DIGITS) : ''));
@@ -81,6 +82,16 @@ export default function SendAmount() {
   const pill = limitPill(outcome, state, amountSats);
   const needsHelper = !outcome.ok && outcome.problem === 'needs_helper';
   const canReview = amountSats > 0 && !tooMuch && (outcome.ok || needsHelper) && !pending;
+
+  // "Send max": everything the wallet can send to this address at the standard speed, after its fee. Shown once the
+  // wallet offers it (quoteSendMax); the quote says how much that is.
+  const quoteMax = (wallet as { quoteSendMax?: (r: { address: string; speed: 'normal' }) => QuoteOutcome }).quoteSendMax;
+  const sendMax = quoteMax
+    ? () => {
+        const q = quoteMax.call(wallet, { address, speed: 'normal' });
+        if (q.ok) setDigits(String(q.quote.request.amountSats).slice(0, MAX_DIGITS));
+      }
+    : undefined;
 
   const press = (digit: string) => setDigits((d) => (d.length >= MAX_DIGITS ? d : d === '' && digit === '0' ? '' : d + digit));
   const erase = () => setDigits((d) => d.slice(0, -1));
@@ -114,6 +125,11 @@ export default function SendAmount() {
         <Text className={cn('text-muted-foreground', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{secondary}</Text>
       </View>
       <StatusLine tone={pill.dot} text={tooMuch ? "That's more than your balance" : pending ? 'Checking…' : pill.text} />
+      {sendMax ? (
+        <Pressable role="button" onPress={sendMax} className="-mt-3 min-h-11 items-center justify-center self-center px-3 active:opacity-60">
+          <Text className="text-muted-foreground text-sm font-medium underline">Send max</Text>
+        </Pressable>
+      ) : null}
       <View className="flex-1" />
 
       <View className="gap-1">
