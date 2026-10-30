@@ -105,3 +105,5 @@ jobs:
             echo
             echo "Rebuild it from this commit and compare: see packaging/VERIFY.md."
           } >> "$GITHUB_STEP_SUMMARY"
+          # Also as an annotation, which the checks API returns (the summary is only on the web page).
+          echo "::notice title=Published image::${IMAGE}@${DIGEST}"
