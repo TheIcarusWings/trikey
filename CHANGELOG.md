@@ -21,6 +21,11 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
   refused before the Ledger refuses them. A Trezor failure or cancellation now shows its reason, instead of "Trezor
   error". New tests run the real Ledger signer kit against a scripted Bitcoin app, and the Trezor signer through the
   real connect-mobile client (#59).
+- App: a Trezor signs Trikey's messages (pairing and hardware approvals) with the script type it would infer anyway,
+  stated explicitly, which firmware 2.13.0 and later accept without a warning. On older firmware and the Model One the
+  device warns about the path first, then signs; the app's prompt and the test plan now say that is expected. Checked
+  against the firmware sources: no Trezor refuses that path ([docs/design/hardware-auth-path.md](docs/design/hardware-auth-path.md),
+  #61, #62).
 
 ## 0.1.5-alpha (2026-10-31)
 
