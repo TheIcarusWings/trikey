@@ -232,7 +232,9 @@ will ever be), and a hardware approval can set it today. "Off" is that value. No
 - **Turning it back on is tightening:** any value lower than off, from the phone alone, at once.
 - **Recovery and rotation.** A completed recovery means a key was lost or taken. The adopted wallet therefore starts
   with the limit **on**, at the value it had just before it was turned off (recorded as `limitBeforeOff` with the
-  approval). The owner can turn it off again with the hardware wallet after `hardware.confirm`. "Replace
+  approval). When that value is not known (only a limit raised to the maximum before the `limit_off` feature, never
+  turned off with it), it comes back as 0: the phone spends nothing alone until the hardware wallet approves a limit
+  (owner's decision, 2026-10-31). The owner can turn it off again with the hardware wallet after `hardware.confirm`. "Replace
   guardian" pairs a new guardian, so the limit is on there until approved again.
 - **Shown everywhere.** `guardian.status.dailyLimit` gains `off: true` (result members are lenient). Home:
   "No daily limit. Your phone and guardian can send everything" (warning tone). Settings > Daily limit: "Off", with
@@ -344,4 +346,5 @@ documented later option, behind the phase 4a test, for owners on Ledger, BitBox0
 5. **Limit off:** tell the alert contacts too (recommended: it is rare, and contacts exist to notice what the owner
    did not do), or only the paired phone?
 6. **Limit off and Savings:** only recommend Savings when the limit is turned off, or require it?
-7. **After a recovery:** turn the limit back on at its last value (proposed), or keep the owner's choice?
+7. **After a recovery:** turn the limit back on at its last value (proposed), or keep the owner's choice? Decided: its last value, and 0 when that is not known (not the 100,000-sat preset). The "Turn off the daily
+   limit" link stays a small link under Settings > Daily limit.
