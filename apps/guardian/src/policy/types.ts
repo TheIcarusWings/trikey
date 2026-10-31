@@ -292,11 +292,23 @@ export type ActivityEvent =
   | { type: 'phone_spending_resumed'; sequence: number }
   | { type: 'phone_spending_resume_refused'; refusal: Refusal }
   | { type: 'alert_sent'; alertId: string; recipients: string[] }
+  /** A `limit_off` / `limit_on` notice reached `recipients` (`LimitNotice`). */
+  | { type: 'limit_alert_sent'; noticeId: string; kind: LimitNotice['kind']; recipients: string[] }
   /**
    * After a recovery's sweep was accepted by a node: `fromWalletId` retired, and `toWalletId` (the
    * destination) adopted when it keeps this guardian's key. `revokedGrants`: recovery access grants dropped.
+   * `limitRestoredSats`: the swept wallet had no daily limit, and the adopted one starts with this one.
    */
-  | { type: 'wallet_rotated'; recoveryId: string; fromWalletId: string; toWalletId?: string; phone?: string; detail?: string; revokedGrants: number }
+  | {
+      type: 'wallet_rotated';
+      recoveryId: string;
+      fromWalletId: string;
+      toWalletId?: string;
+      phone?: string;
+      detail?: string;
+      revokedGrants: number;
+      limitRestoredSats?: bigint;
+    }
   | { type: 'wallet_retired'; walletId: string; sequence: number; revokedGrants: number }
   | { type: 'wallet_retire_refused'; refusal: Refusal }
   | { type: 'hardware_auth_confirmed'; walletId: string }
@@ -335,6 +347,37 @@ export interface GuardedWallet {
   watched?: WatchedWallet;
   /** The paired phone's single-key coins (`registerSingleKey`). */
   singleKey?: SingleKeyRegistration;
+  /**
+   * While the daily limit is off (`isLimitOff(rules)`): the limit it had just before a hardware approval turned it off.
+   * A recovery's new wallet starts with it (the limit back on); turning the limit on again drops it. Absent for a limit
+   * that was set to the maximum before the guardian knew "off" (a recovery then restores 0, "never", until approved).
+   */
+  limitBeforeOff?: bigint;
+}
+
+/**
+ * A limit change the service must tell people about (`limit_off` to the paired phone and the alert contacts,
+ * `limit_on` to the paired phone), delivered like the recovery alerts: `dueNotices()` lists what is owed,
+ * `markNoticeSent` records each delivery, and a notice no one could be reached for is retried until it is
+ * `NOTICE_TTL_MS` old.
+ */
+export interface LimitNotice {
+  /** `limit-<n>`, unique (the activity id of the change). */
+  id: string;
+  kind: 'limit_off' | 'limit_on';
+  walletId: string;
+  /** ms */
+  at: number;
+  /** `limit_off`: the hardware approval's sequence. */
+  sequence?: number;
+  /** `limit_off`: the limit before (absent when unknown); `limit_on`: the new limit. */
+  limitSats?: bigint;
+  /** `limit_on`: who turned it on. */
+  reason?: 'phone' | 'hardware' | 'recovery';
+  /** The paired phone first, then the contacts (nostr pubkeys). */
+  recipients: string[];
+  /** Recipients it reached. */
+  sent: string[];
 }
 
 export type Retirement =
@@ -365,6 +408,8 @@ export interface GuardianState {
   recoveries: RecoveryRecord[];
   activity: ActivityEntry[];
   nextActivityId: number;
+  /** Limit changes still owed to someone (`LimitNotice`). Absent in files from before "no daily limit". */
+  notices?: LimitNotice[];
   /** The latest chain tip the engine saw (`ChainTime` plus when, on the system clock). */
   chainSeen?: { height: number; medianTimePastMs: number; at: number };
   /**

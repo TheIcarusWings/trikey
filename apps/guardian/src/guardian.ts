@@ -26,7 +26,7 @@ import type { Server } from 'node:http';
 import { hex } from '@scure/base';
 import type { SimplePool } from 'nostr-tools/pool';
 import { normalizeURL } from 'nostr-tools/utils';
-import { RpcServer, SimplePoolRelayPool, checkRelayList, checkRelayUrl, createSimplePool, sameRelays, type Alert, type MethodName } from '@trikey/protocol';
+import { GUARDIAN_FEATURES, RpcServer, SimplePoolRelayPool, checkRelayList, checkRelayUrl, createSimplePool, sameRelays, type Alert, type MethodName } from '@trikey/protocol';
 import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 import { ChainService } from './chain/chain.js';
 import { BitcoinRpc } from './chain/bitcoind.js';
@@ -350,6 +350,12 @@ export class Guardian {
   get version(): string {
     return GUARDIAN_VERSION;
   }
+
+  /**
+   * What `guardian.status.features` reports (`GUARDIAN_FEATURES`): the phone offers "no daily limit" only when it lists
+   * `limit_off`. Tests clear it to see how a phone treats a guardian from before a feature.
+   */
+  features: string[] = [GUARDIAN_FEATURES.limitOff];
 
   nowSec(): number {
     return toSeconds(this.clock.now());

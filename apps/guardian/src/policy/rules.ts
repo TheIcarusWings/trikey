@@ -4,7 +4,19 @@ import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { RECOVERY_DELAYS, RecoveryDelayDays, Rules } from './types.js';
 
 const MAX_SATS = 21_000_000n * 100_000_000n;
+/**
+ * "No daily limit" (DESIGN.md, rule 3): the largest limit there is, all bitcoin there will ever be. Not a rule of its
+ * own, so `policyHash` is unchanged; what changes is the approval text (`Trikey policy v2 ... limit=off`, authorizer.ts),
+ * that pairing refuses it, and that a recovery's new wallet starts with the limit back on (`GuardedWallet.limitBeforeOff`).
+ * The same value as @trikey/protocol's `LIMIT_OFF_SATS`.
+ */
+export const LIMIT_OFF_SATS = MAX_SATS;
 export const MAX_ALERT_CONTACTS = 20;
+
+/** True when the rules have no daily limit. */
+export function isLimitOff(r: Pick<Rules, 'dailyLimitSats'>): boolean {
+  return r.dailyLimitSats >= LIMIT_OFF_SATS;
+}
 const NOSTR_PUBKEY_RE = /^[0-9a-f]{64}$/;
 
 export function isNostrPubkey(s: string): boolean {

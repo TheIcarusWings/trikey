@@ -12,13 +12,15 @@
  * device (Coldcard has the tightest limits) can sign and display it. The key
  * values of a rule change (limit, delay, fee cap, number of contacts) are in
  * clear text so the user can check them on the device screen; the hash
- * commits to the complete rules, including the contact list.
+ * commits to the complete rules, including the contact list. Rules with no
+ * daily limit have the version-2 policy text, `limit=off` in place of the
+ * number.
  */
 import { hex } from '@scure/base';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { parseBip137Signature, verifyMessageWithPubkey } from './bip137.js';
-import { normalizeRules, policyHash } from './rules.js';
+import { isLimitOff, normalizeRules, policyHash } from './rules.js';
 import { HardwareAuthKey, Rules } from './types.js';
 
 export const MAX_MESSAGE_LENGTH = 240;
@@ -56,10 +58,13 @@ export function approvalMessage(action: HardwareAction, ctx: ApprovalContext): s
   switch (action.action) {
     case 'policy': {
       const r = normalizeRules(action.rules);
+      // No daily limit: version 2 says so in words ("limit=off"), so the device screen shows it plainly. Guardians
+      // before it rebuild only version 1, so they refuse such a signature (the phone does not offer "off" to them).
+      const off = isLimitOff(r);
       return line([
-        'Trikey policy v1',
+        off ? 'Trikey policy v2' : 'Trikey policy v1',
         ...head,
-        `limit=${r.dailyLimitSats}`,
+        off ? 'limit=off' : `limit=${r.dailyLimitSats}`,
         `delay=${r.recoveryDelayDays}d`,
         `feecap=${r.sweepFeeCapSats}`,
         `contacts=${r.alertContacts.length}`,

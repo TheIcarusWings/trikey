@@ -15,7 +15,7 @@ import { base64 } from '@scure/base';
 import { getNetwork, parsePsbt } from '@trikey/core';
 import { MAX_RELAYS, encodePairingUri, encodeRecoveryUri } from '@trikey/protocol';
 import { MAX_RETIRING_RELAYS, type Guardian } from '../guardian.js';
-import type { RecoveryRecord } from '../policy/index.js';
+import { isLimitOff, type RecoveryRecord } from '../policy/index.js';
 import { engineEntry, serviceEntry, shortNpub } from './activity.js';
 import { HttpError, type Route, type RouteResult } from './server.js';
 import type { ActivityEntry, GuardianStatus, PairingSession, PublicStatus, RecoveryCode, RecoveryInProgress, RelaySettings, Rules, SetupPreflight } from './types.js';
@@ -63,7 +63,7 @@ export async function guardianStatus(g: Guardian): Promise<GuardianStatus> {
       ...(r.retirement.reason === 'recovered' && r.retirement.successorWalletId ? { successorId: r.retirement.successorWalletId } : {}),
     })),
     ...(reg ? { hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
-    dailySpend: { usedSats: Number(s.dailyLimit?.used ?? 0n), limitSats: Number(s.dailyLimit?.limit ?? 0n) },
+    dailySpend: { usedSats: Number(s.dailyLimit?.used ?? 0n), limitSats: Number(s.dailyLimit?.limit ?? 0n), ...(s.dailyLimit?.off ? { limitOff: true as const } : {}) },
     recoveryInProgress: s.recoveryStatus !== 'none',
     ...(reg ? { phoneSpending: s.phoneSpending } : {}),
     network: g.config.network,
@@ -88,6 +88,7 @@ function rules(g: Guardian): Rules {
   return {
     walletName: 'Main',
     dailyLimitSats: Number(r.dailyLimitSats),
+    ...(isLimitOff(r) ? { dailyLimitOff: true as const } : {}),
     recoveryDelayDays: r.recoveryDelayDays,
     contacts: [
       { id: reg.appNostrPubkey, name: phoneName(g), kind: 'paired-phone' },

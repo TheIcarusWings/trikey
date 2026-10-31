@@ -41,7 +41,7 @@ import {
 import { ChainTime, ChainTimeSource, Clock, DAY, HOUR, systemClock } from './clock.js';
 import { CHANGE_WINDOW, MAX_SELF_INDEX, NO_HIGH_WATER, addCosignerSignatures, inspectPsbt, maxHighWater } from './inspect.js';
 import { pruneSpends, splitOutflow, usageWith, windowUsage } from './limit.js';
-import { isNostrPubkey, normalizeRules, phoneMayApply } from './rules.js';
+import { isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from './rules.js';
 import { CosignerSigner } from './signer.js';
 import { StateStore, deserializeState, serializeState } from './storage.js';
 import {
@@ -55,6 +55,7 @@ import {
   HardwareApproval,
   HardwareAuthKey,
   HighWater,
+  LimitNotice,
   RecoveryDelayDays,
   RecoveryRecord,
   RecoveryStatus,
@@ -101,6 +102,13 @@ export const BLOCKS_PER_DAY: Record<NetworkName, number> = { bitcoin: 144, testn
 /** Mainnet policies must name an alert contact (it may be the owner's own nostr app on another device). */
 export const MAINNET_CONTACT_REQUIRED =
   'on mainnet at least one alert contact is required (it can be your own nostr app on another device), so a recovery is never announced only to a phone a thief may hold';
+
+/** Why pairing refuses a policy with no daily limit. */
+export const LIMIT_OFF_AT_PAIRING = 'a wallet cannot be paired with the daily limit off; pair with a limit, then turn it off with the hardware wallet';
+/** How long a `limit_off` / `limit_on` notice is retried for someone it has not reached (the alerts' TTL). */
+export const NOTICE_TTL_MS = 7 * DAY;
+/** Notices kept (the oldest dropped first). */
+const MAX_NOTICES = 32;
 
 /** Weak spots of a policy the phone and the web UI should show. */
 export type PolicyWarning = 'no_alert_contacts';
@@ -191,7 +199,8 @@ export interface GuardianStatus {
   recovery?: RecoveryView;
   /** The next hardware approval must use a sequence number at least this. */
   nextHardwareSequence: number;
-  dailyLimit?: { limit: bigint; used: bigint; available: bigint };
+  /** `off`: no daily limit (`limit` is `LIMIT_OFF_SATS`); `limitBeforeOff`: the limit a recovery would bring back. */
+  dailyLimit?: { limit: bigint; used: bigint; available: bigint; off?: true; limitBeforeOff?: bigint };
   /** True after a rotation until the hardware authorization key is confirmed for the active wallet. */
   hardwareConfirmRequired: boolean;
   /** How many wallets this guardian retired. */
@@ -408,7 +417,15 @@ export class PolicyEngine {
       recoveryStatus: active ? viewOf(active, now).status : 'none',
       recovery: last ? viewOf(last, now) : undefined,
       nextHardwareSequence: s.hardwareSequence + 1,
-      dailyLimit: rules ? { limit: rules.dailyLimitSats, used, available: rules.dailyLimitSats > used ? rules.dailyLimitSats - used : 0n } : undefined,
+      dailyLimit: rules
+        ? {
+            limit: rules.dailyLimitSats,
+            used,
+            available: rules.dailyLimitSats > used ? rules.dailyLimitSats - used : 0n,
+            ...(isLimitOff(rules) ? { off: true as const } : {}),
+            ...(isLimitOff(rules) && w?.limitBeforeOff !== undefined ? { limitBeforeOff: w.limitBeforeOff } : {}),
+          }
+        : undefined,
       hardwareConfirmRequired: !!reg && !reg.hardwareAuthConfirmed,
       retiredWallets: s.retired.length,
       warnings: policyWarnings(rules),
@@ -446,6 +463,15 @@ export class PolicyEngine {
   /** Alerts the service should send now (nostr DMs), with the recipients still owed each one. */
   dueAlerts(): DueAlert[] {
     return computeDueAlerts(this.state.recoveries, this.clock.now());
+  }
+
+  /** Limit changes (`limit_off`, `limit_on`) still owed to someone, oldest first, with the recipients not reached yet. */
+  dueNotices(): (LimitNotice & { recipients: string[] })[] {
+    const now = this.clock.now();
+    return (this.state.notices ?? [])
+      .filter((n) => n.at > now - NOTICE_TTL_MS)
+      .map((n) => ({ ...n, recipients: n.recipients.filter((r) => !n.sent.includes(r)) }))
+      .filter((n) => n.recipients.length > 0);
   }
 
   /** True while `pubkey` holds an unexpired `recovery.access` grant for the active wallet. */
@@ -541,6 +567,12 @@ export class PolicyEngine {
     if (rec.startHeight === undefined) return undefined;
     const reg = this.walletById(rec.walletId);
     return rec.startHeight + rec.delayDays * this.blocksPerDay(reg?.network ?? 'bitcoin');
+  }
+
+  /** Queues a limit notice for the service to deliver; drops ones that are done or too old. */
+  private addNotice(draft: GuardianState, now: number, notice: LimitNotice): void {
+    const live = (draft.notices ?? []).filter((n) => n.at > now - NOTICE_TTL_MS && n.sent.length < n.recipients.length);
+    draft.notices = [...live, notice].slice(-MAX_NOTICES);
   }
 
   /** Appends to the activity log. A refusal identical to the entry before it is counted there instead (`count`, `lastAt`). */
@@ -670,6 +702,8 @@ export class PolicyEngine {
       }
       // Without a contact, a recovery's alerts reach only the paired phone, which a thief may hold.
       if (network.name === 'bitcoin' && !rules.alertContacts.length) return bad(`rules: ${MAINNET_CONTACT_REQUIRED}`);
+      // Pairing rules are not hardware-approved (only the pairing proof is), so they cannot loosen as far as "off".
+      if (isLimitOff(rules)) return bad(`rules: ${LIMIT_OFF_AT_PAIRING}`);
       const checked = this.checkAuthKey(input.hardwareAuth);
       if (!checked.ok) return bad(checked.detail);
       const hwKey = checked.key;
@@ -972,6 +1006,38 @@ export class PolicyEngine {
         sequence = auth.approval.sequence;
       } else {
         return refuse({ reason: 'not_authorized' });
+      }
+      // No daily limit (DESIGN.md, rule 3): only ever reached through the hardware branch above (it is a raise), so a
+      // recovery is not running. Remember the limit it had, for the wallet a later recovery adopts, and tell the phone
+      // and every alert contact, old and new: contacts exist to notice what the owner did not do.
+      const wasOff = isLimitOff(current);
+      const nowOff = isLimitOff(rules);
+      const noticeId = `limit-${draft.nextActivityId}`;
+      if (nowOff && !wasOff) {
+        w.limitBeforeOff = current.dailyLimitSats;
+        const contacts = [...new Set([...current.alertContacts, ...rules.alertContacts])];
+        this.addNotice(draft, now, {
+          id: noticeId,
+          kind: 'limit_off',
+          walletId: w.registration.walletId,
+          at: now,
+          sequence,
+          limitSats: current.dailyLimitSats,
+          recipients: [w.registration.appNostrPubkey, ...contacts.filter((c) => c !== w.registration.appNostrPubkey)],
+          sent: [],
+        });
+      } else if (wasOff && !nowOff) {
+        delete w.limitBeforeOff;
+        this.addNotice(draft, now, {
+          id: noticeId,
+          kind: 'limit_on',
+          walletId: w.registration.walletId,
+          at: now,
+          limitSats: rules.dailyLimitSats,
+          reason: by === 'hardware' ? 'hardware' : 'phone',
+          recipients: [w.registration.appNostrPubkey],
+          sent: [],
+        });
       }
       w.rules = rules;
       this.log(draft, now, { type: 'rules_changed', by, sequence, from: current, to: rules });
@@ -1369,7 +1435,11 @@ export class PolicyEngine {
         detail = `the new wallet's descriptor does not parse (${(e as Error).message})`;
       }
 
-      const rules = w.rules;
+      // A completed recovery means a key was lost or taken: the adopted wallet starts with the daily limit ON, at the
+      // value it had before it was turned off (0, "never", when that is not known), until the hardware wallet confirms
+      // the new wallet and turns it off again.
+      const limitRestored = isLimitOff(w.rules) ? (w.limitBeforeOff ?? 0n) : undefined;
+      const rules = limitRestored !== undefined ? { ...w.rules, dailyLimitSats: limitRestored } : w.rules;
       // Any other recovery of the swept wallet (one started between this one's completion and now, by
       // whoever holds a key of it) is closed: it can never complete against a retired wallet, and must
       // not stay "running" against the wallet adopted next.
@@ -1385,6 +1455,17 @@ export class PolicyEngine {
       // so none of the old wallet's spends is still inside the 24 h window.
       if (next) draft.active = { registration: next, rules, spends: [], phoneSpending: { state: 'enabled' }, accessGrants: [], ...(nextMarks ? { highWater: nextMarks } : {}) };
       rec.rotatedAt = now;
+      if (next && limitRestored !== undefined)
+        this.addNotice(draft, now, {
+          id: `limit-${draft.nextActivityId}`,
+          kind: 'limit_on',
+          walletId: next.walletId,
+          at: now,
+          limitSats: limitRestored,
+          reason: 'recovery',
+          recipients: [next.appNostrPubkey],
+          sent: [],
+        });
       this.log(draft, now, {
         type: 'wallet_rotated',
         recoveryId: rec.id,
@@ -1392,6 +1473,7 @@ export class PolicyEngine {
         ...(next ? { toWalletId: next.walletId, phone: next.appNostrPubkey } : {}),
         ...(detail ? { detail } : {}),
         revokedGrants,
+        ...(next && limitRestored !== undefined ? { limitRestoredSats: limitRestored } : {}),
       });
       return { ok: true as const, retiredWalletId: old.walletId, ...(next ? { adopted: next } : {}), ...(detail ? { detail } : {}), revokedGrants };
     });
@@ -1471,6 +1553,18 @@ export class PolicyEngine {
       for (const r of added) sent.add(r);
       rec.alertsSent[alertId] = [...sent];
       if (added.length) this.log(draft, now, { type: 'alert_sent', alertId, recipients: added });
+      return { ok: true as const };
+    });
+  }
+
+  /** Records that the service delivered limit notice `noticeId` to `recipients`. */
+  async markNoticeSent(noticeId: string, recipients: string[]): Promise<Result<{}>> {
+    return this.mutate((draft, now) => {
+      const n = draft.notices?.find((x) => x.id === noticeId);
+      if (!n) return refused({ reason: 'unknown_alert', alertId: noticeId });
+      const added = [...new Set(recipients.map((r) => r.toLowerCase()))].filter((r) => n.recipients.includes(r) && !n.sent.includes(r));
+      n.sent.push(...added);
+      if (added.length) this.log(draft, now, { type: 'limit_alert_sent', noticeId, kind: n.kind, recipients: added });
       return { ok: true as const };
     });
   }
