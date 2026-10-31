@@ -154,7 +154,8 @@ tags:
     text: Settings
     label: Open Settings
 - extendedWaitUntil:
-    visible: Appearance
+    # iOS reads a row with a value as one label ("Appearance, System"); Android keeps them apart.
+    visible: Appearance.*
     timeout: 20000
     label: Wait for Settings
 - tapOn:
