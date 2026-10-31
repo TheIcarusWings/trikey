@@ -1,6 +1,6 @@
 {
   "name": "@trikey/guardian",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Trikey Guardian: the key-3 cosigner that enforces the daily limit and Delay & Notify recovery",
   "license": "MIT",
   "private": true,

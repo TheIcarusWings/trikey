@@ -6,7 +6,7 @@ tagline: Key 3 of your 2-of-3 bitcoin wallet, on your own node
 # TODO(verify): the icon is a placeholder (the web UI favicon). Replace with a proper icon URL.
 icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/guardian-web/public/favicon.svg
 category: bitcoin
-version: "0.1.4-alpha"
+version: "0.1.5-alpha"
 # TODO(verify): host-facing port for the app_proxy. Pick one that no other app in the store uses.
 port: 3010
 description: >-
@@ -26,9 +26,8 @@ support: https://github.com/TheIcarusWings/trikey/issues
 # TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
 gallery: []
 releaseNotes: >-
-  Change the guardian's relays in Settings; your phone follows automatically, and old relays stay
-  watched until you stop them, so older recovery sheets keep working. After a crash the guardian
-  restarts by itself. The Android test APK opens again.
+  You can now turn the daily limit off, with your hardware wallet. Your phone and your alert contacts
+  are told, and a recovery turns the limit back on. Small fixes in Settings, Relays.
 dependencies:
   - bitcoin
   - electrs

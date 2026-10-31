@@ -1,6 +1,6 @@
 {
   "name": "@trikey/mobile",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "The Trikey phone app: key 2 of your 2-of-3 bitcoin wallet",
   "license": "MIT",
   "private": true,

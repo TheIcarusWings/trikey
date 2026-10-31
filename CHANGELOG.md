@@ -8,15 +8,38 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 
 ## Unreleased
 
+## 0.1.5-alpha (2026-10-31)
+
+- **You can turn the daily limit off, with your hardware wallet.** It is an option for people who do not want a
+  limit: Settings, Daily limit, "Turn off the daily limit". The hardware wallet must approve it, and its screen says
+  `limit=off` in words (the version-2 policy text, `Trikey policy v2 ... limit=off ...`). It is refused at pairing and
+  while a recovery runs. The app says plainly what it means: whoever holds your phone and your guardian together can
+  then spend everything at once. Your phone and every alert contact (including any removed in the same change) are
+  told, and the alert is retried for 7 days. Your phone alone can turn the limit back on, since that only tightens.
+  After a recovery, the new wallet starts with the limit back on at its last value (0 when that is not known), until
+  your hardware wallet turns it off again. Phones offer it only to a guardian that reports the `limit_off` feature
+  (`guardian.status.features`); older guardians keep refusing it. The guardian web page shows "No daily limit" on
+  Home and Rules (#53).
+- **App: a new wallet leads with Receive.** Right after setup, Home showed 0 and an active Send that only failed two
+  screens later. While a wallet has no balance and no payments, Receive is the main button, and Send opens a sheet
+  that explains how to receive first (#46).
+- Guardian web: Settings, Relays says "add it back" or "add them back" to match how many relays you stop watching,
+  and its remove buttons are larger touch targets (#48).
 - CI also opens every PR's app in the iOS Simulator (a Release build for the simulator, no signing and no Apple
   account) and fails on a crash at start, with the crash report and the app's log lines in the check's annotations
-  (`ios-launch.yml`). The iOS build instructions now build Release, so the app runs without Metro.
-- Design proposal for an optional Savings wallet that phone + guardian cannot spend, and for turning the daily
-  limit off with a hardware approval: [docs/design/savings-and-limit-off.md](docs/design/savings-and-limit-off.md).
+  (`ios-launch.yml`). The iOS build instructions now build Release, so the app runs without Metro (#49).
 - CI also walks through the demo after the launch check, on the Android emulator and in the iOS Simulator, with Maestro
   (`apps/mobile/.maestro/demo-walk.yaml`: Welcome into Demo mode, Home, Send to the amount, Receive, Settings, Activity),
-  and fails the pull request when a step fails or the app crashes on the way, with the failing step, Maestro's error and
-  the app's log lines in the check's annotations and the screenshots in an artifact.
+  and fails the pull request when a step fails or the app crashes on the way, with the failing step, Maestro's error,
+  what was on screen and the app's log lines in the check's annotations (#51).
+- Docs: the test plan installs the APK from the Releases page and explains testing on an iPhone from your own Mac
+  (#52); [docs/https-access.md](docs/https-access.md) explains reaching the guardian over HTTPS (Tailscale first, your
+  own domain second), which passkeys will need (#47); design proposal for an optional Savings wallet that phone and
+  guardian cannot spend, and for turning the limit off:
+  [docs/design/savings-and-limit-off.md](docs/design/savings-and-limit-off.md) (#50); decisions for passkey unlock
+  (#44).
+- Site: `trikey.app/passkey-test` checks whether your password manager supports the passkey PRF extension that
+  passkey unlock will need (#43).
 
 ## 0.1.4-alpha (2026-10-30)
 

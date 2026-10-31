@@ -1,6 +1,6 @@
 {
   "name": "trikey",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "A 2-of-3 bitcoin wallet: any hardware wallet, your phone, and a guardian on your own Umbrel or Start9",
   "license": "MIT",
   "private": true,
