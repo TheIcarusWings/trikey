@@ -145,9 +145,21 @@ describe('lost phone: the recovery access runs out, then is renewed', { timeout:
     const r = (await B.recoveryStatus())!;
     rig.clock.set(r.readyAt * 1000 + 2 * HOUR); // well past the renewed access, too
     expect(B.recoveryAccess?.expired).toBe(true);
+    // The guardian tells the phone that started the recovery `recovery_completed` before it has broadcast the sweep and
+    // adopted the wallet: the read that alert sets off can reach it first, and is dropped unanswered (no access, not
+    // paired yet). Have it arrive that early every time, not only when the timing happens to say so.
+    const rpc = (B as unknown as { rpc: { call: (...a: unknown[]) => Promise<unknown> } }).rpc;
+    const sent = vi.spyOn(rpc, 'call');
+    const at = Math.floor(rig.clock.now() / 1000);
+    const early: Alert = { type: 'recovery_completed', recoveryId: r.recoveryId, at, atMs: at * 1000, message: 'completed' } as Alert;
+    await (B as unknown as { onAlert(a: Alert, m: { id: string; at: number }): Promise<void> }).onAlert(early, { id: 'completed-early', at });
+    await waitFor(() => sent.mock.calls.some((c) => c[0] === 'guardian.status'), 'the read the early alert sets off');
+    sent.mockRestore();
+    expect(rig.guardian.hasRecoveryAccess(B.state.nostrPubkey)).toBe(false); // so the guardian drops it
     await rig.mine(11);
     await rig.guardian.tick();
-    await waitFor(() => B.stage === 'paired', 'the switch on the alert, with the access expired');
+    // The guardian's `wallet_adopted` switches the phone at once: not after the dropped read's timeout.
+    await waitFor(() => B.stage === 'paired', 'the switch on the alert, with the access expired', RPC_TIMEOUT_MS / 4);
     expect(eventsB).toContainEqual(expect.objectContaining({ type: 'wallet_switched', walletId: dest.walletId, reason: 'recovery' }));
     // Nothing is left to renew: this phone is the guardian's paired phone.
     expect(B.recoveryAccess).toBeUndefined();
