@@ -44,7 +44,8 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
   them (the phone, an older backup, a printed recovery sheet) is cut off. The phone is told (`relays_changed`, and
   `guardian.status.relays`) and switches by itself, but only once the guardian has answered it over the new relays
   (`relays.ack`), so an unreachable or mistyped relay never strands it. The change is a security event in the activity
-  log; pairing and recovery codes carry the new list. Phones from before this keep working over the old relays. New: `GET`/`PUT /api/relays`; protocol: the `relays_changed` alert, `relays.ack`, `guardian.status.relays`
+  log; pairing and recovery codes carry the new list. Phones from before this keep working over the old relays. New:
+  `GET`/`PUT /api/relays`; protocol: the `relays_changed` alert, `relays.ack`, `guardian.status.relays`
   (#37).
 - Guardian: refuses to pair a phone whose random contribution is one byte repeated: its generator is broken
   (entropy review I3, #36).
