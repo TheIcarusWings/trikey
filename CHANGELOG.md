@@ -8,6 +8,13 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 
 ## Unreleased
 
+## 0.1.6-alpha (2026-10-31)
+
+- **App: fixes connecting a Ledger** ("Ledger error: invalid number provided"; every Ledger, from 0.1.0). The app
+  gave Ledger's signer kit key paths with a leading `m/` (`m/48'/0'/0'/2'`), which it reads as a number and refuses;
+  it now passes `48'/0'/0'/2'`. A test builds the Ledger Bitcoin app's real commands from those paths. No guardian
+  or protocol change (#56).
+
 ## 0.1.5-alpha (2026-10-31)
 
 - **You can turn the daily limit off, with your hardware wallet.** It is an option for people who do not want a
