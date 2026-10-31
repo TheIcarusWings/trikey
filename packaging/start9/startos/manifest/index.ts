@@ -17,7 +17,7 @@ export const manifest = setupManifest({
     // The image built and published by .github/workflows/docker.yml, reproducible per
     // packaging/VERIFY.md. Keep this tag equal to the version in startos/versions/current.ts.
     guardian: {
-      source: { dockerTag: 'ghcr.io/theicaruswings/trikey-guardian:0.1.5-alpha' },
+      source: { dockerTag: 'ghcr.io/theicaruswings/trikey-guardian:0.1.6-alpha' },
       arch: ['x86_64', 'aarch64'],
       emulateMissing: false,
     },
