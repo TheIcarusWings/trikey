@@ -17,6 +17,16 @@ function validRpId(raw: string | undefined): string | null {
 
 const env = (name: string): string | undefined => process.env[name]?.trim() || undefined;
 
+/**
+ * Android's versionCode from the app version: 0.1.6 is 106, 1.2.3 is 10203. Android installs an update only over a
+ * lower or equal code, and update tools (Obtainium) compare it, so it must grow with every release.
+ */
+export function androidVersionCode(version: string | undefined): number {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(version ?? '');
+  if (!m || Number(m[2]) > 99 || Number(m[3]) > 99) throw new Error(`app.json version must be x.y.z with y and z below 100, not ${version}`);
+  return Number(m[1]) * 10_000 + Number(m[2]) * 100 + Number(m[3]);
+}
+
 type PluginEntry = string | [string, Record<string, unknown>];
 const pluginName = (p: PluginEntry) => (Array.isArray(p) ? p[0] : p);
 
@@ -70,6 +80,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     android: {
       ...config.android,
       package: androidPackage,
+      versionCode: config.android?.versionCode ?? androidVersionCode(config.version),
     },
     plugins: [...existing, ...plugins.filter((p) => !have.has(pluginName(p)))],
   };
