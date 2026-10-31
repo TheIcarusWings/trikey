@@ -15,6 +15,8 @@ import {
   formatBtc,
   formatCountdown,
   formatSats,
+  LIMIT_OFF_LINE,
+  limitIsOff,
   remainingToday,
   useActivity,
   useNow,
@@ -162,6 +164,8 @@ export function LimitLine({ newWallet = false }: { newWallet?: boolean }) {
   const left = remainingToday(state);
   const { limitSats } = state.dailyLimit;
   const brand = state.hardware.brand;
+  // No daily limit: say so, in the warning tone, whatever has been sent.
+  if (limitIsOff(state)) return <StatusLine tone="warn" text={LIMIT_OFF_LINE} onPress={() => router.push('/settings/limit')} />;
   // Nothing to count yet: say what the limit is, not how much of it is left.
   if (newWallet) return <StatusLine text={`Daily limit ${formatSats(limitSats)} sats, without your ${brand}`} onPress={() => router.push('/settings/limit')} />;
   const low = limitSats > 0 && left < limitSats * 0.1;

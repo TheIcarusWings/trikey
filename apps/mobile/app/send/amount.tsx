@@ -12,6 +12,7 @@ import {
   formatBtc,
   formatSats,
   looksLikeBitcoinAddress,
+  limitIsOff,
   remainingToday,
   shorten,
   useWallet,
@@ -39,6 +40,7 @@ function limitPill(outcome: QuoteOutcome, state: ReturnType<typeof useWallet>, a
   }
   const plan = outcome.quote.plan;
   if (plan.signer === 'phone+guardian') {
+    if (limitIsOff(state)) return { text: 'No daily limit', dot: 'warn' };
     return { text: `Within today's limit · ${formatSats(remainingToday(state))} left`, dot: 'good' };
   }
   if (plan.signer === 'phone') {

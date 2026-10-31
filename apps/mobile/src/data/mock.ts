@@ -1,7 +1,7 @@
 import { parseScannedCode } from '@trikey/wallet/scan';
 import { NODE_RPC_TEXT, WalletServiceError } from './errors';
 import { SIMULATED_OPTION, hardwareOptionTable, type UiOs } from './hardware-options';
-import { buildRefillSchedule, limitChangeNeedsHardware, quoteSend as quoteSendRule, quoteSendMax as quoteSendMaxRule } from './rules';
+import { LIMIT_OFF_SATS, buildRefillSchedule, limitChangeNeedsHardware, quoteSend as quoteSendRule, quoteSendMax as quoteSendMaxRule } from './rules';
 import { emptyRecoveryKeyState } from './rk-empty';
 import { DEMO_FINGERPRINT, createMockRecoveryKey } from './rk-mock';
 import { looksLikeSilentPaymentAddress } from './sp-empty';
@@ -222,7 +222,7 @@ export function createDemoState(platform: 'ios' | 'android' = 'ios'): WalletStat
       key3Note: "Your guardian's key was made with randomness from both this phone and your guardian.",
     },
     recoveryDelayDays: 7,
-    dailyLimit: { limitSats: 200_000, usedSats: 20_000, cosignedCount: 1 },
+    dailyLimit: { limitSats: 200_000, usedSats: 20_000, cosignedCount: 1, canTurnOff: true },
     contacts: [MARIA, TOM],
 
     balanceSats: 4_210_000,
@@ -535,10 +535,14 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
 
     // -- rules --------------------------------------------------------
     async setDailyLimit(limitSats: Sats) {
-      const needsHardware = limitChangeNeedsHardware(state.dailyLimit.limitSats, limitSats);
+      if (limitSats >= LIMIT_OFF_SATS) return this.turnLimitOff();
+      // With the limit off, any limit turns it back on: tightening, from the phone alone.
+      const wasOff = !!state.dailyLimit.off;
+      const needsHardware = !wasOff && limitChangeNeedsHardware(state.dailyLimit.limitSats, limitSats);
       await wait(needsHardware ? deviceDelay : networkDelay);
       const direction = needsHardware ? 'raised' : 'lowered';
-      update((s) => ({ dailyLimit: { ...s.dailyLimit, limitSats } }));
+      update((s) => ({ dailyLimit: { limitSats, usedSats: s.dailyLimit.usedSats, cosignedCount: s.dailyLimit.cosignedCount, canTurnOff: s.dailyLimit.canTurnOff } }));
+      if (wasOff) return addSecurityEvent({ id: nextId('ev'), kind: 'limit-on', limitSats, at: NOW.toISOString() });
       addSecurityEvent({
         id: nextId('ev'),
         kind: 'limit-changed',
@@ -547,6 +551,13 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
         approvedOn: needsHardware ? 'hardware' : 'phone',
         at: NOW.toISOString(),
       });
+    },
+    async turnLimitOff() {
+      if (state.dailyLimit.off) return;
+      if (state.recovery) throw new WalletServiceError('recovery_in_progress', "The daily limit can't be turned off while a recovery is running.");
+      await wait(deviceDelay);
+      update((s) => ({ dailyLimit: { ...s.dailyLimit, limitSats: LIMIT_OFF_SATS, off: true, limitBeforeOffSats: s.dailyLimit.limitSats } }));
+      addSecurityEvent({ id: nextId('ev'), kind: 'limit-off', at: NOW.toISOString() });
     },
     async setRecoveryDelay(days: RecoveryDelayDays) {
       await wait(days < state.recoveryDelayDays ? deviceDelay : networkDelay);

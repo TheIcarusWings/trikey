@@ -144,8 +144,14 @@ export interface WalletService {
   readCode(text: string): ScannedCode;
 
   // -- rules (the guardian enforces them) ------------------------------
-  /** Raising the limit needs the hardware wallet, lowering it does not. */
+  /** Raising the limit needs the hardware wallet, lowering it does not. With the limit off, any limit turns it back on from the phone alone. */
   setDailyLimit(limitSats: Sats): Promise<void>;
+  /**
+   * No daily limit: the phone and the guardian together can then send everything. Needs the hardware wallet (it signs a
+   * text that says `limit=off`), and a guardian that supports it (`dailyLimit.canTurnOff`); refused during a recovery.
+   * The guardian tells this phone and every alert contact.
+   */
+  turnLimitOff(): Promise<void>;
   /** Lengthening the wait works from the phone, shortening it needs the hardware wallet. */
   setRecoveryDelay(days: RecoveryDelayDays): Promise<void>;
   /** Needs the hardware wallet. */

@@ -148,6 +148,15 @@ export interface DailyLimit {
   usedSats: Sats;
   /** Co-signatures the guardian gave inside the window, when known. */
   cosignedCount?: number;
+  /**
+   * True while there is no daily limit: the hardware wallet turned it off, so the phone and the guardian together can
+   * send everything. `limitSats` is then the protocol maximum (`LIMIT_OFF_SATS`) and is never shown as a number.
+   */
+  off?: boolean;
+  /** While off: the limit it had before, offered when turning it back on (a recovery brings it back too). */
+  limitBeforeOffSats?: Sats;
+  /** The guardian can turn the limit off (it says so); only then does the app offer it. Absent: it can't. */
+  canTurnOff?: boolean;
 }
 
 export interface Contact {
@@ -201,6 +210,10 @@ export type SecurityEvent = { id: string; at: IsoDate } & (
   /** Coins sent to an old wallet were moved into this one. */
   | { kind: 'stray-coins-moved'; movedSats: Sats }
   | { kind: 'limit-changed'; limitSats: Sats; direction: 'raised' | 'lowered'; approvedOn: 'hardware' | 'phone' }
+  /** The daily limit was turned off (always approved on the hardware wallet). */
+  | { kind: 'limit-off' }
+  /** The daily limit is on again at `limitSats` (from this phone). */
+  | { kind: 'limit-on'; limitSats: Sats }
   | { kind: 'delay-changed'; days: RecoveryDelayDays; approvedOn?: 'hardware' | 'phone' }
   | { kind: 'contact-added'; name: string }
   | { kind: 'contact-removed'; name: string }

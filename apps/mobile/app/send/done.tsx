@@ -6,7 +6,7 @@ import { Pill } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
-import { formatSats, remainingToday, shorten, useActivity, useWallet, type FeeSpeed } from '@/data';
+import { formatSats, limitIsOff, remainingToday, shorten, useActivity, useWallet, type FeeSpeed } from '@/data';
 import { useHapticOnce } from '@/lib/haptics';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
@@ -31,7 +31,9 @@ export default function SendDone() {
   const left = state.mode === 'recoveryKey' ? state.recoveryKey.spendingSats : remainingToday(state);
   const pill = viaHardware
     ? undefined
-    : `${state.mode === 'recoveryKey' ? 'Spending balance' : 'Phone-only today'} · ${formatSats(left)} left`;
+    : limitIsOff(state)
+      ? 'No daily limit'
+      : `${state.mode === 'recoveryKey' ? 'Spending balance' : 'Phone-only today'} · ${formatSats(left)} left`;
 
   return (
     <Screen
