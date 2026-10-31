@@ -47,9 +47,10 @@ python3 render/audio/prep_vo.py build/tut/vo build/tut/vo-proc render/audio/tut-
 
 for v in ${@:-t1}; do
   id=${PAGE[$v]}
-  dur=$(node -e "const s=require('fs').readFileSync('render/videos/$id.html','utf8');console.log(s.match(/duration: ([\d.]+)/)[1])")
-  python3 render/audio/music.py calm "$dur" "${SEED[$v]}" "build/audio/music-$v.wav" >/dev/null
+  # The page computes its own length (it depends on the footage and the presenter clips): render first, then read it.
   node render/lib/render.js "render/videos/$id.html" 169 "build/silent/$id-169.mp4" >/dev/null
+  dur=$(python3 -c "import json;print(json.load(open('build/silent/$id-169.spec.json'))['duration'])")
+  python3 render/audio/music.py calm "$dur" "${SEED[$v]}" "build/audio/music-$v.wav" >/dev/null
   python3 render/audio/mix.py "build/silent/$id-169.mp4" "build/audio/music-$v.wav" "out/trikey-$id.mp4" --vo build/tut/vo-proc
   echo "out/trikey-$id.mp4"
 done
