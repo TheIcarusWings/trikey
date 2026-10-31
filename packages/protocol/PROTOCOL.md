@@ -99,7 +99,7 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `recovery.status` | `recoveryId?` (default: the active one) | `recovery` (or `null`), `psbt?` (the signed sweep, once the guardian has co-signed it) |
 | `phone.resume` | `approval` | `phoneSpending: "enabled"` |
 | `guardian.unlock` | `{kind:"passphrase", passphrase}` or `{kind:"hardware", secret: hex}` | `unlocked: boolean` (`1101` with `data.reason` `phone_unlock_disabled` after 5 wrong passphrases in a row until the web UI unlocks, or `recovery_pending` while a recovery the phone did not start runs; the phone's attempts have their own rate limit) |
-| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time`, `atMs?` (the guardian's clock in milliseconds when it answered, see "Time"), `dailyLimit?: { limitSats, usedSats, availableSats }`, `walletId?`, `hardwareConfirmRequired?`, `watchedWalletId?` (the replaced wallet the guardian watches, if any), `key3Mixed?` (while paired: key 3 was made with the phone's `entropy`), `warnings?` (as `policy.get`'s), `relays?` (the guardian's current relays, section 5 "Changing relays") |
+| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time`, `atMs?` (the guardian's clock in milliseconds when it answered, see "Time"), `dailyLimit?: { limitSats, usedSats, availableSats, off?: true, limitBeforeOffSats? }` (`off` while there is no daily limit; `limitBeforeOffSats` the limit before it was turned off, when known), `features?` (what the guardian can do beyond the base protocol, see "No daily limit"; unknown names are ignored), `walletId?`, `hardwareConfirmRequired?`, `watchedWalletId?` (the replaced wallet the guardian watches, if any), `key3Mixed?` (while paired: key 3 was made with the phone's `entropy`), `warnings?` (as `policy.get`'s), `relays?` (the guardian's current relays, section 5 "Changing relays") |
 | `guardian.lock` | `{}` | `state: "locked"` (see "Locking from the phone") |
 | `wallet.sync` | `historyLimit?` (1-500, default 100), `wallet?` (`"replaced"`, `"helper"` or a `WalletId`; default the paired wallet) | `walletId?`, `tipHeight`, `tipHash`, `utxos`, `utxosTruncated`, `balance: { confirmedSats, unconfirmedSats }`, `history`, `historyTruncated`, `nextReceiveIndex`, `nextChangeIndex`, `gapLimit`, `coins?` (`"helper"` only) (see "Chain data", "Silent payments") |
 | `tx.get` | `txid: Hex32`, `witness?: boolean` (default `true`) | `txHex` |
@@ -119,7 +119,7 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 
 | Member | Rule |
 |---|---|
-| `dailyLimitSats` | most the phone + guardian may spend in any rolling 24 h (`Sats`; 0 means never) |
+| `dailyLimitSats` | most the phone + guardian may spend in any rolling 24 h (`Sats`; 0 means never; the largest `Sats`, `LIMIT_OFF_SATS`, means no daily limit, see below) |
 | `recoveryDelayDays` | Delay & Notify period: **7, 14 or 30** |
 | `alertContacts` | up to 20 nostr pubkeys (`Hex32`, lowercase) that receive recovery alerts and may cancel a recovery |
 | `sweepFeeCapSats` | highest absolute fee a recovery sweep may pay (`Sats`, at least 1) |
@@ -133,6 +133,15 @@ The schema is **strict**: any other member (the old `perTxLimitSats` and `allowl
 This is byte for byte the engine's `policyHash(rules)` (a test compares them). The guardian stores and returns the normalized policy.
 
 **Which changes need the hardware wallet.** The phone alone may only *tighten*: lower `dailyLimitSats` and/or raise `recoveryDelayDays`, nothing else changing. Raising the limit, shortening the delay, changing the fee cap (a lower cap could block a genuine recovery, so it is not a safe direction) or the contacts needs `approval`. Without it the guardian answers `ApprovalRequired`. While a recovery is running, hardware-approved policy changes are refused (`RecoveryAlreadyActive`).
+
+**No daily limit.** `dailyLimitSats` = `LIMIT_OFF_SATS` (2,100,000,000,000,000, all bitcoin there will ever be) means there is no cap on what the phone + guardian co-sign. It is not a new `Policy` member, so `policyHash` and the protocol version are unchanged; every other rule still applies, and the guardian still counts what it co-signs (`dailyLimit.usedSats`). Only guardians that list `limit_off` in `guardian.status.features` (`GUARDIAN_FEATURES.limitOff`) know it, and only to them does a phone offer it. Such a guardian:
+
+* accepts it only as a loosening: a fresh hardware approval over the **version-2 policy text** (below), which says `limit=off` in words; refused during a recovery (`RecoveryAlreadyActive`) like every hardware-approved change, and **refused in `pair`** (`-32602`, the engine's `invalid_registration`), whose rules are not hardware-approved: the phone turns it off after pairing;
+* lets the phone alone turn it back on: any lower limit is a tightening;
+* remembers the limit it had (`dailyLimit.limitBeforeOffSats`), and when a completed recovery makes it adopt the destination wallet, starts that wallet with the limit **on** at that value (0, "never", when it is not known: a maximum limit set before the guardian knew "off"). "Replace guardian" pairs a new guardian, so the phone pairs it with that limit too;
+* alerts: `limit_off` to the paired phone and a NIP-17 DM to every alert contact (old and new, when the same change edits them) when it is turned off; `limit_on` to the paired phone when it is on again (also after a recovery). It retries an undelivered one for 7 days, as recovery alerts.
+
+An older guardian rebuilds the version-1 text for that value and so answers `1202` (ApprovalInvalid) to a version-2 signature: it refuses cleanly, never with a limit the device did not show. A phone talking to a guardian without the feature signs the version-1 text for every policy (`approvalMessage` with `legacyPolicyText`), so any other change keeps working.
 
 ### Hardware approvals
 
@@ -148,6 +157,7 @@ The guardian never parses text from the phone. It rebuilds the text from the req
 | Action | Text |
 |---|---|
 | `policy` | `Trikey policy v1 wallet=<walletId> seq=<n> limit=<sats> delay=<days>d feecap=<sats> contacts=<count> hash=<policyHash> expires=<ISO 8601 UTC, seconds>` (of the *new* policy) |
+| `policy` with no daily limit (`dailyLimitSats` = `LIMIT_OFF_SATS`; guardians with `limit_off`) | `Trikey policy v2 wallet=<walletId> seq=<n> limit=off delay=<days>d feecap=<sats> contacts=<count> hash=<policyHash> expires=<ISO>` (the hash is the same `policyHash`; at most 216 characters) |
 | `cancel-recovery` | `Trikey cancel-recovery v1 wallet=<walletId> seq=<n> recovery=<recoveryId> expires=<ISO>` |
 | `resume-phone` | `Trikey resume-phone v1 wallet=<walletId> seq=<n> expires=<ISO>` |
 | `retire-wallet` | `Trikey retire-wallet v1 wallet=<walletId> seq=<n> expires=<ISO>` |
@@ -319,6 +329,8 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 | `guardian_locked` | `reason?` (`restart`\|`manual`\|`remote`\|`tamper`); `remote` = `guardian.lock` from the phone |
 | `wallet_adopted` | `walletId`, `previousWalletId`, `recoveryId`, `hardwareConfirmRequired` (see "Wallet rotation") |
 | `sp_received` | `txid`, `vout`, `valueSats`, `height`, `label?`: the silent payment scanner found a payment in a new block (see "Silent payments"); `sp.scan` has its tweak |
+| `limit_off` | `sequence` (the hardware approval's), `limitBeforeSats?`: the daily limit was turned off. To the paired phone; alert contacts get a NIP-17 DM saying so in words. See "No daily limit" |
+| `limit_on` | `limitSats`, `reason` (`phone`\|`hardware`\|`recovery`): the daily limit is on again; `recovery`: the wallet a recovery adopted starts with it. To the paired phone |
 | `relays_changed` | `relays` (`RelayList`): the guardian moved to these relays (its web UI). Sent to the paired phone (and phones with recovery access) over the old and the new relays. See section 5, "Changing relays" |
 | `wallet_retired` | `walletId`, `reason` (`retired`\|`recovered`\|`reset`), `successorWalletId?`. Sent to the phone that was paired to the wallet: `retired` after `wallet.retire`; `reset` after the web UI's reset; `recovered` when a recovery swept the wallet and the phone paired to the new wallet is a different one (a lost phone's replacement), or the guardian adopted none (`successorWalletId` is the adopted wallet when there is one). The phone that started the recovery and is adopted gets `wallet_adopted` instead |
 
@@ -476,5 +488,6 @@ It carries **no secret and no expiry**: the npub and relays are not secret, and 
 
 * Add new methods or optional result members freely; never change the meaning of an existing error code or field. A breaking envelope change bumps the `trikey` tag value.
 * A new alert `type` is dropped by phones that do not know it (the alert schema is a closed union, and a malformed message is dropped silently, section 4), and a new method is answered `-32601` by guardians that do not know it. So a new alert may only add something an older phone can do without (`relays_changed`: an older phone keeps the old relays, which the guardian watches until its owner stops them), and a phone sends a new method only to a guardian that showed it knows it.
+* A capability that changes what the phone may ask (rather than adding a method) is announced in `guardian.status.features`; the phone acts on it only when listed (`limit_off`: "No daily limit"). A new approval text gets a new version word (`Trikey policy v2`), so an older guardian refuses it with `1202` rather than misreading it.
 * Hardware approvals are an `approval` object with a `kind`. Only `bip137` exists. If the project settles on a PSBT-based approval (see DESIGN.md, open question 1), it will be a new `kind`, not a change to `bip137`.
 * The policy is deliberately closed: a new rule means a new engine rule first, then a new `Policy` member and a new `policyHash` input (which changes every hash, so it needs a protocol version bump).
