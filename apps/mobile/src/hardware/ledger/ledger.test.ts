@@ -9,7 +9,7 @@ import { ledgerSignatureToBase64 } from './signature';
 import { mapLedgerError } from './errors';
 import { appForCoinType, LedgerSigner, type LedgerApp, type LedgerBackend } from './signer';
 import { runDeviceAction, type DeviceActionLike, type DeviceActionStateLike } from './device-action';
-import { DmkLedgerBackend, ecdsaSignatures, withSighashByte } from './dmk-backend';
+import { DmkLedgerBackend, ecdsaSignatures, signerKitPath, withSighashByte } from './dmk-backend';
 import type { PartialSignature } from '../common/psbt';
 import type { LedgerMessageSignature } from './signature';
 
@@ -430,9 +430,10 @@ describe('DmkLedgerBackend', () => {
 
     expect(await backend.getMasterFingerprint()).toBe('b8688df1');
     expect(await backend.getExtendedPublicKey("m/48'/1'/0'/2'")).toBe('tpubX');
-    expect(calls.find((c) => c.name === 'xpub')!.args).toEqual(["m/48'/1'/0'/2'", { skipOpenApp: true, checkOnDevice: false }]);
+    // The signer kit wants the path without "m/" (it throws "invalid number provided" on the "m").
+    expect(calls.find((c) => c.name === 'xpub')!.args).toEqual(["48'/1'/0'/2'", { skipOpenApp: true, checkOnDevice: false }]);
     await backend.signMessage("m/84'/1'/0'/0/0", 'hi');
-    expect(calls.find((c) => c.name === 'signMessage')!.args[2]).toEqual({ skipOpenApp: true });
+    expect(calls.find((c) => c.name === 'signMessage')!.args).toEqual(["84'/1'/0'/0/0", 'hi', { skipOpenApp: true }]);
   });
 
   it('passes the wallet as policy + HMAC and the PSBT as bytes', async () => {
@@ -469,6 +470,22 @@ describe('DmkLedgerBackend', () => {
 // ---------------------------------------------------------------------------------- the real Ledger SDK, offline
 
 describe('Ledger Device Management Kit compatibility (offline)', () => {
+  it('builds the Bitcoin app commands from the paths the backend passes (no "m/")', async () => {
+    const { GetExtendedPublicKeyCommand } = await import('@ledgerhq/device-signer-kit-bitcoin/internal/app-binder/command/GetExtendedPublicKeyCommand.js');
+    const { SignMessageCommand } = await import('@ledgerhq/device-signer-kit-bitcoin/internal/app-binder/command/SignMessageCommand.js');
+    const H = 0x80000000;
+    // The APDU data: [checkOnDevice], the number of steps, then each step as a 32-bit big-endian number.
+    const steps = (data: Uint8Array, from: number) =>
+      Array.from({ length: data[from]! }, (_, i) => new DataView(data.buffer, data.byteOffset + from + 1 + 4 * i, 4).getUint32(0));
+
+    const xpub = new GetExtendedPublicKeyCommand({ derivationPath: signerKitPath("m/48'/0'/0'/2'"), checkOnDevice: false }).getApdu();
+    expect(steps(xpub.data, 1)).toEqual([48 + H, 0 + H, 0 + H, 2 + H]);
+    const msg = new SignMessageCommand({ derivationPath: signerKitPath("m/48'/1'/0'/2'/0/0"), messageLength: 2, messageMerkleRoot: new Uint8Array(32) }).getApdu();
+    expect(steps(msg.data, 0)).toEqual([48 + H, 1 + H, 0 + H, 2 + H, 0, 0]);
+    // What the Ledger reported on a phone before the fix.
+    expect(() => new GetExtendedPublicKeyCommand({ derivationPath: "m/48'/0'/0'/2'", checkOnDevice: false }).getApdu()).toThrow('invalid number provided');
+  });
+
   it('maps our BIP174 v0 PSBT through the signer kit\'s PSBT pipeline, and accepts our wallet policy', async () => {
     const { makeContainer } = await import('@ledgerhq/device-signer-kit-bitcoin/internal/di.js');
     const { psbtTypes } = await import('@ledgerhq/device-signer-kit-bitcoin/internal/psbt/di/psbtTypes.js');

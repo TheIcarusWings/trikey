@@ -17,6 +17,14 @@ import type { LedgerMessageSignature } from './signature';
 
 const SKIP = { skipOpenApp: true } as const;
 
+/**
+ * The signer kit takes a derivation path without the leading `m/` ("48'/0'/0'/2'"): it parses every step as a number
+ * and throws "invalid number provided" on the `m`. Our paths come from `formatPath`, which writes the `m/`.
+ */
+export function signerKitPath(path: string): string {
+  return path.replace(/^m\//, '');
+}
+
 /** What the UI may want to tell the user while a call waits for the device ("Confirm on your Ledger"). */
 export type LedgerInteraction = string;
 
@@ -80,7 +88,7 @@ export class DmkLedgerBackend implements LedgerBackend {
   }
 
   async getExtendedPublicKey(path: string): Promise<string> {
-    const out = await this.run(this.signer.getExtendedPublicKey(path, { ...SKIP, checkOnDevice: false }) as unknown as DeviceActionLike<{ extendedPublicKey: string }, unknown>);
+    const out = await this.run(this.signer.getExtendedPublicKey(signerKitPath(path), { ...SKIP, checkOnDevice: false }) as unknown as DeviceActionLike<{ extendedPublicKey: string }, unknown>);
     return out.extendedPublicKey;
   }
 
@@ -105,7 +113,7 @@ export class DmkLedgerBackend implements LedgerBackend {
   }
 
   async signMessage(path: string, message: string): Promise<LedgerMessageSignature> {
-    return this.run(this.signer.signMessage(path, message, SKIP) as unknown as DeviceActionLike<LedgerMessageSignature, unknown>);
+    return this.run(this.signer.signMessage(signerKitPath(path), message, SKIP) as unknown as DeviceActionLike<LedgerMessageSignature, unknown>);
   }
 
   async close(): Promise<void> {
