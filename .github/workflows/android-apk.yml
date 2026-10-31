@@ -1,14 +1,16 @@
 name: Android test APK
 
 # Builds an installable Android APK of apps/mobile for alpha testers: no Play Store, no Google or
-# Apple account, no secrets. Runs on a manual dispatch and on release tags (v*), never on every push.
+# Apple account. Runs on a manual dispatch and on release tags (v*), never on every push. A tag's APK is
+# signed with the project's release key (the ANDROID_RELEASE_KEYSTORE secrets, docs/android-signing.md),
+# so releases update each other; a manual run gets a one-off key.
 # The test plan that goes with it is docs/alpha-test-plan.md.
 #
-# The build itself (release build, Hermes bundle, the one-off signing key, the checks on the APK) is in
+# The build itself (release build, Hermes bundle, signing, the checks on the APK) is in
 # android-build.yml, shared with android-launch.yml, which opens an x86_64 build of the same APK in an
 # emulator on every pull request that touches the app. Read that file's header for how and why.
 #
-# Only GITHUB_TOKEN is used, and only the release job gets write access.
+# Secrets: GITHUB_TOKEN, and the release key for the build job on tags. Only the release job gets write access.
 
 on:
   push:
@@ -34,6 +36,11 @@ jobs:
     with:
       architectures: ${{ inputs.architectures || 'arm64-v8a' }}
       artifact-name: trikey-android-apk
+      signing: ${{ github.ref_type == 'tag' && 'release' || 'one-off' }}
+    secrets:
+      ANDROID_RELEASE_KEYSTORE: ${{ secrets.ANDROID_RELEASE_KEYSTORE }}
+      ANDROID_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+      ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
 
   # A draft prerelease: nothing is public until the owner looks at it and publishes it.
   release:
