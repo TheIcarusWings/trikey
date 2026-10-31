@@ -1,4 +1,4 @@
-import { normalizePolicy, policyHash } from './policy.js';
+import { isLimitOff, normalizePolicy, policyHash } from './policy.js';
 import type { Policy } from './schemas.js';
 
 /**
@@ -10,6 +10,11 @@ import type { Policy } from './schemas.js';
  * ASCII, one line, at most 240 characters, so every device (Coldcard has the tightest limits) can show
  * and sign it. The key values of a policy change are in clear text for the user to check on the device;
  * the hash commits to the complete policy, including the contact list.
+ *
+ * A policy with no daily limit (`dailyLimitSats` = `LIMIT_OFF_SATS`) has the version-2 policy text: the same members,
+ * with `limit=off` in place of the number, so the device screen says it in words:
+ *
+ * `Trikey policy v2 wallet=<id> seq=<n> limit=off delay=<d>d feecap=<sats> contacts=<k> hash=<policyHash> expires=<ISO>`
  */
 export const MAX_APPROVAL_MESSAGE_LENGTH = 240;
 
@@ -26,6 +31,12 @@ export interface ApprovalContext {
   sequence: number;
   /** Unix SECONDS, at most 24 h ahead of the guardian's clock. */
   expiresAt: number;
+  /**
+   * For a guardian that does not report the `limit_off` feature: always the version-1 policy text, the only one it
+   * rebuilds (also for a limit of `LIMIT_OFF_SATS`, which such a guardian can only have been given before the feature
+   * existed). The phone never offers "off" to such a guardian.
+   */
+  legacyPolicyText?: boolean;
 }
 
 function isoSeconds(unixSeconds: number): string {
@@ -48,10 +59,12 @@ export function approvalMessage(action: HardwareAction, ctx: ApprovalContext): s
   switch (action.action) {
     case 'policy': {
       const p = normalizePolicy(action.policy);
+      // No daily limit: version 2, which says so in words on the device screen.
+      const off = isLimitOff(p.dailyLimitSats) && !ctx.legacyPolicyText;
       return line([
-        'Trikey policy v1',
+        off ? 'Trikey policy v2' : 'Trikey policy v1',
         ...head,
-        `limit=${p.dailyLimitSats}`,
+        off ? 'limit=off' : `limit=${p.dailyLimitSats}`,
         `delay=${p.recoveryDelayDays}d`,
         `feecap=${p.sweepFeeCapSats}`,
         `contacts=${p.alertContacts.length}`,

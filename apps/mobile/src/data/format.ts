@@ -17,6 +17,14 @@ const MONTHS_LONG = [
   'December',
 ];
 
+/** Home's limit line while there is no daily limit (in the warning tone). */
+export const LIMIT_OFF_LINE = 'No daily limit. Your phone and guardian can send everything.';
+
+/** "No daily limit", or "100,000 sats". Never the 21 million BTC that "off" is stored as. */
+export function formatDailyLimit(limit: { limitSats: Sats; off?: boolean }): string {
+  return limit.off ? 'No daily limit' : `${formatSats(limit.limitSats)} sats`;
+}
+
 /** 4210000 -> "4,210,000" */
 export function formatSats(sats: Sats): string {
   const sign = sats < 0 ? '-' : '';

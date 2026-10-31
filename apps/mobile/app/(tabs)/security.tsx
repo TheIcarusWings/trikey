@@ -103,7 +103,13 @@ export default function SecurityScreen() {
         </ListGroup>
       ) : (
         <ListGroup>
-          <SettingsRow title="Daily limit" value={`${formatSats(state.dailyLimit.limitSats)} sats`} tabular onPress={() => router.push('/settings/limit')} />
+          <SettingsRow
+            title="Daily limit"
+            value={state.dailyLimit.off ? 'Off' : `${formatSats(state.dailyLimit.limitSats)} sats`}
+            dot={state.dailyLimit.off ? 'warn' : undefined}
+            tabular
+            onPress={() => router.push('/settings/limit')}
+          />
           <SettingsRow title="Security waiting period" value={`${state.recoveryDelayDays} days`} onPress={() => router.push('/settings/delay')} />
           <SettingsRow
             title="Alert contacts"

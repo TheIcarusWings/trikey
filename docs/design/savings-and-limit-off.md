@@ -1,7 +1,9 @@
 # Savings and turning the limit off: design proposal
 
-Status: proposal, not built. Written 2026-10-31, against `main` after 0.1.4-alpha. Device support checked the same
-day; see section 3.
+Status: proposal. Written 2026-10-31, against `main` after 0.1.4-alpha. Device support checked the same
+day; see section 3. **Section 4 (turning the limit off) is built** (phase 1), with the owner's answers to open questions 5
+(the alert contacts are told too) and 7 (after a recovery the limit comes back at its last value); DESIGN.md (rules 3
+and 4) and PROTOCOL.md ("No daily limit") describe it as built. Savings is not built.
 
 The owner raised a concern, and it holds: **the daily limit exists only in the guardian's code.** Today's wallet is
 `wsh(sortedmulti(2, phone, hardware, guardian))`. Any two keys satisfy the script, so whoever controls the guardian

@@ -41,6 +41,7 @@ import {
 import { parseScannedCode } from '@trikey/wallet/scan';
 import { SimplePoolRelayPool, type Policy, type RelayPool } from '@trikey/protocol';
 import { addEvent, buildActivity, emptyLog, hostFromLabel, loadLog, saveLog, takeLegacySends, type AppLog } from './app-log';
+import { LIMIT_OFF_SATS } from './rules';
 import { DevicePromptStore, compositeProvider, ledgerHint, withDevicePrompts } from './device';
 import { WalletServiceError, notAvailableYet } from './errors';
 import { SIMULATED_OPTION, hardwareBrandOf, hardwareOptionTable, type UiOs } from './hardware-options';
@@ -551,7 +552,15 @@ class Service implements RealWalletService {
         : null,
       guardian: this.guardianView(snap),
       recoveryDelayDays: rules?.recoveryDelayDays ?? 7,
-      dailyLimit: { limitSats: limit, usedSats: used, ...(s ? { cosignedCount: s.spends.filter((x) => x.at > now - 86_400_000).length } : {}) },
+      dailyLimit: {
+        limitSats: limit,
+        usedSats: used,
+        ...(s ? { cosignedCount: s.spends.filter((x) => x.at > now - 86_400_000).length } : {}),
+        // No daily limit (the hardware wallet turned it off): shown in words, never as the number it is stored as.
+        ...(limit >= LIMIT_OFF_SATS ? { off: true } : {}),
+        ...(limit >= LIMIT_OFF_SATS && this.w?.limitBeforeOff !== undefined ? { limitBeforeOffSats: this.w.limitBeforeOff } : {}),
+        ...(this.w?.limitOffSupported ? { canTurnOff: true } : {}),
+      },
       contacts,
       balanceSats: snap?.balance.totalSats ?? 0,
       receiveAddress: this.receiveAddressNow(),
@@ -692,6 +701,10 @@ class Service implements RealWalletService {
           void this.saveLogNow();
         } else if (a.type === 'wallet_retired') {
           addEvent(this.log, { kind: 'wallet-retired', reason: a.reason, at: e.atMs });
+          void this.saveLogNow();
+        } else if (a.type === 'limit_on' && a.reason === 'recovery') {
+          // The guardian turned the limit back on for the recovered wallet (this phone logs its own changes itself).
+          addEvent(this.log, { kind: 'limit-on', limitSats: a.limitSats, at: e.atMs });
           void this.saveLogNow();
         } else this.refresh();
         break;
@@ -1320,11 +1333,21 @@ class Service implements RealWalletService {
   }
 
   setDailyLimit(limitSats: Sats): Promise<void> {
+    if (limitSats >= LIMIT_OFF_SATS) return this.turnLimitOff();
     const before = this.w?.state.rules?.policy.dailyLimitSats ?? 0;
     return this.rulesChange(
       () => this.requireWallet().setDailyLimit(limitSats),
       (r, at) =>
-        addEvent(this.log, { kind: 'limit-changed', limitSats, direction: limitSats > before ? 'raised' : 'lowered', approvedOn: r.approvedBy === 'hardware' ? 'hardware' : 'phone', at }),
+        before >= LIMIT_OFF_SATS
+          ? addEvent(this.log, { kind: 'limit-on', limitSats, at })
+          : addEvent(this.log, { kind: 'limit-changed', limitSats, direction: limitSats > before ? 'raised' : 'lowered', approvedOn: r.approvedBy === 'hardware' ? 'hardware' : 'phone', at }),
+    );
+  }
+
+  turnLimitOff(): Promise<void> {
+    return this.rulesChange(
+      () => this.requireWallet().turnLimitOff(),
+      (_r, at) => addEvent(this.log, { kind: 'limit-off', at }),
     );
   }
 

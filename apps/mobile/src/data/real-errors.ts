@@ -163,6 +163,8 @@ export function mapError(e: unknown): WalletServiceError {
         return make('pairing_invalid', e.message);
       case 'guardian_mismatch':
         return make('refused', `The guardian's answer doesn't match this wallet, so nothing was changed. ${e.message}`);
+      case 'guardian_unsupported':
+        return make('not_available', e.message);
       case 'guardian_refused':
         return make('refused', e.message);
       case 'key_unavailable':

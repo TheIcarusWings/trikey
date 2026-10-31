@@ -89,6 +89,33 @@ export function limitChangeNeedsHardware(current: Sats, next: Sats): boolean {
   return next > current;
 }
 
+/**
+ * "No daily limit" as the guardian stores it: the protocol's largest amount (all bitcoin there will ever be). The same
+ * value as @trikey/protocol's `LIMIT_OFF_SATS` (a test checks); kept here so the demo needs no protocol code.
+ */
+export const LIMIT_OFF_SATS: Sats = 2_100_000_000_000_000;
+
+/** The limit to offer when turning it back on when nothing better is known. */
+export const DEFAULT_LIMIT_SATS: Sats = LIMIT_PRESETS[0]!;
+
+/** There is no daily limit right now (guardian mode only). */
+export function limitIsOff(state: Pick<WalletState, 'mode' | 'dailyLimit'>): boolean {
+  return state.mode !== 'recoveryKey' && !!state.dailyLimit.off;
+}
+
+/**
+ * The app may offer "No daily limit": the guardian says it can, the limit is on, and nothing stands in the way the
+ * guardian would refuse anyway (a recovery running, the hardware wallet still to confirm a recovered wallet).
+ */
+export function canOfferLimitOff(state: Pick<WalletState, 'mode' | 'dailyLimit' | 'recovery' | 'hardwareConfirmRequired'>): boolean {
+  return state.mode === 'guardian' && !!state.dailyLimit.canTurnOff && !state.dailyLimit.off && !state.recovery && !state.hardwareConfirmRequired;
+}
+
+/** What to fill in when turning the limit back on: the limit it had before it was turned off, else the first preset. */
+export function limitToRestore(limit: Pick<WalletState['dailyLimit'], 'limitBeforeOffSats'>): Sats {
+  return limit.limitBeforeOffSats && limit.limitBeforeOffSats > 0 ? limit.limitBeforeOffSats : DEFAULT_LIMIT_SATS;
+}
+
 export function delayChangeNeedsHardware(current: RecoveryDelayDays, next: RecoveryDelayDays): boolean {
   return next < current;
 }

@@ -50,6 +50,8 @@ export interface DailySpend {
   /** Phone-only sats counted over the rolling 24 hours, fees included. */
   usedSats: number;
   limitSats: number;
+  /** True while there is no daily limit (`limitSats` is then the protocol maximum: do not show it as a number). */
+  limitOff?: true;
 }
 
 /**
@@ -244,6 +246,11 @@ export interface Rules {
   walletName: string;
   /** Phone-only payments allowed in any rolling 24 hours, fees included. */
   dailyLimitSats: number;
+  /**
+   * True while there is no daily limit: the owner turned it off with a hardware approval, so the phone and this
+   * guardian together can send everything. `dailyLimitSats` is then the protocol maximum.
+   */
+  dailyLimitOff?: true;
   recoveryDelayDays: RecoveryDelayDays;
   /** Everyone who gets daily recovery alerts and can cancel. */
   contacts: AlertContact[];

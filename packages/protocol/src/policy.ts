@@ -1,6 +1,28 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
-import { Policy as PolicySchema, type Policy } from './schemas.js';
+import { MAX_SATS, Policy as PolicySchema, type Policy } from './schemas.js';
+
+/**
+ * "No daily limit": the protocol's largest `Sats` (all bitcoin there will ever be) as `dailyLimitSats`. It is not a new
+ * `Policy` member, so `policyHash` and the protocol version stay as they are. A guardian that reports the `limit_off`
+ * feature (`guardian.status.features`) has the hardware wallet sign the version-2 policy text for it, which says
+ * `limit=off` in words (`approvalMessage`); the phone offers "off" only to such a guardian.
+ */
+export const LIMIT_OFF_SATS = MAX_SATS;
+
+/** True when `dailyLimitSats` means "no daily limit" (`LIMIT_OFF_SATS`). */
+export function isLimitOff(dailyLimitSats: number): boolean {
+  return dailyLimitSats >= LIMIT_OFF_SATS;
+}
+
+/**
+ * What a guardian may list in `guardian.status.features` (unknown names are ignored). `limit_off`: it builds the
+ * version-2 policy text for a policy with no daily limit, refuses "off" at pairing and during a recovery, alerts the
+ * paired phone and the alert contacts when the limit is turned off, and turns it back on at its last value after a
+ * recovery.
+ */
+export const GUARDIAN_FEATURES = { limitOff: 'limit_off' } as const;
+export type GuardianFeature = (typeof GUARDIAN_FEATURES)[keyof typeof GUARDIAN_FEATURES];
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 

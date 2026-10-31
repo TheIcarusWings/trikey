@@ -15,7 +15,7 @@
 import type { Alert } from '@trikey/protocol';
 import type { Guardian } from './guardian.js';
 import { errorText } from './log.js';
-import type { DueAlert, RecoveryRecord } from './policy/index.js';
+import type { DueAlert, LimitNotice, RecoveryRecord } from './policy/index.js';
 import { stampOf, toSeconds } from './nostr/wire.js';
 
 export function formatBtc(sats: bigint | number): string {
@@ -133,6 +133,44 @@ export function alertText(g: Guardian, a: DueAlert, rec: RecoveryRecord | undefi
   }
 }
 
+const satsText = (sats: bigint | number) => `${BigInt(sats).toLocaleString('en-US')} sats`;
+
+/** The wire alert of a limit change, for the paired phone. */
+export function noticeToWire(n: LimitNotice): Alert {
+  const stamp = stampOf(n.at);
+  if (n.kind === 'limit_off')
+    return {
+      type: 'limit_off',
+      ...stamp,
+      sequence: n.sequence ?? 1,
+      ...(n.limitSats !== undefined ? { limitBeforeSats: Number(n.limitSats) } : {}),
+      message: 'The daily limit is off, approved on your hardware wallet. Your phone and your guardian together can now send everything.',
+    };
+  const limit = n.limitSats ?? 0n;
+  return {
+    type: 'limit_on',
+    ...stamp,
+    limitSats: Number(limit),
+    reason: n.reason ?? 'phone',
+    message:
+      n.reason === 'recovery'
+        ? `After the recovery the daily limit is back on, at ${satsText(limit)}. Your hardware wallet can turn it off again once it has confirmed the new wallet.`
+        : `The daily limit is back on: ${satsText(limit)} in 24 hours without your hardware wallet.`,
+  };
+}
+
+/** The NIP-17 DM to an alert contact (only `limit_off` goes to contacts). */
+export function noticeText(n: LimitNotice): string {
+  if (n.kind === 'limit_on') return `Trikey: the daily limit of the wallet you help protect is back on (${satsText(n.limitSats ?? 0n)} in 24 hours).`;
+  return [
+    'Trikey alert: the daily limit of the bitcoin wallet you help protect was turned off.',
+    '',
+    `What happened: on ${formatWhen(n.at)}, the owner's hardware wallet approved turning off the daily limit${n.limitSats !== undefined ? ` (it was ${formatBtc(n.limitSats)})` : ''}. From now on, their phone and their Trikey Guardian together can send everything in the wallet at once.`,
+    '',
+    'If the owner did not mean to do this, or you are not sure, talk to them now. They can turn the limit back on from their phone alone.',
+  ].join('\n');
+}
+
 export class Alerter {
   private running?: Promise<void>;
   private again = false;
@@ -160,13 +198,40 @@ export class Alerter {
     return this.running;
   }
 
+  /**
+   * Limit changes (`limit_off`, `limit_on`): a protocol alert to the phone among the recipients (the wallet's paired
+   * phone), a NIP-17 DM to the alert contacts. Undelivered ones are retried at the next pass, as recovery alerts are.
+   */
+  private async sendNotices(): Promise<void> {
+    const g = this.g;
+    for (const n of g.engine.dueNotices()) {
+      const phone = g.engine.walletById(n.walletId)?.appNostrPubkey;
+      const delivered: string[] = [];
+      for (const to of n.recipients) {
+        try {
+          const ok = to === phone ? await g.notifyPeer(to, noticeToWire(n)) : (await g.dm!.send(to, noticeText(n))).some((o) => o.ok);
+          if (ok) delivered.push(to);
+          else g.log.warn('alert.not_delivered', { alertId: n.id, to: to === phone ? 'phone' : 'contact' });
+        } catch (e) {
+          g.log.warn('alert.send_failed', { alertId: n.id, error: errorText(e) });
+        }
+      }
+      if (delivered.length) {
+        const res = await g.engine.markNoticeSent(n.id, delivered);
+        if (res.ok) g.log.info('alert.sent', { alertId: n.id, kind: n.kind, recipients: delivered.length });
+      }
+    }
+  }
+
   /** `${alertId}:${pubkey}` already sent to a phone with recovery access (not tracked by the engine). */
   private readonly sentToPeers = new Set<string>();
 
   private async once(): Promise<void> {
     const g = this.g;
     const due = g.engine.dueAlerts();
-    if (!due.length || !g.rpc || !g.dm) return;
+    if (!g.rpc || !g.dm) return;
+    await this.sendNotices();
+    if (!due.length) return;
     const current = g.engine.registration()?.appNostrPubkey;
     for (const a of due) {
       const rec = g.records.find((r) => r.id === a.recoveryId);

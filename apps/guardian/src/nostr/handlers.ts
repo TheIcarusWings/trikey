@@ -28,7 +28,7 @@ import {
 import { ElectrumError } from '../chain/electrum.js';
 import type { Guardian } from '../guardian.js';
 import { errorText } from '../log.js';
-import { policyHash, type CancelActor, type RecoveryRecord, type WatchedWallet } from '../policy/index.js';
+import { isLimitOff, policyHash, type CancelActor, type RecoveryRecord, type WatchedWallet } from '../policy/index.js';
 import { helperAccount } from '../singlekey.js';
 import { NodeRpcRequiredError, NotRegisteredError } from '../silent/service.js';
 import { policyToWire, recoveryToWire, refusalError, rulesFromPolicy } from './wire.js';
@@ -289,9 +289,13 @@ export function buildHandlers(g: Guardian): Handlers {
                 limitSats: Number(s.dailyLimit.limit),
                 usedSats: Number(s.dailyLimit.used),
                 availableSats: Number(s.dailyLimit.available),
+                ...(s.dailyLimit.off ? { off: true as const } : {}),
+                ...(s.dailyLimit.off && s.dailyLimit.limitBeforeOff !== undefined ? { limitBeforeOffSats: Number(s.dailyLimit.limitBeforeOff) } : {}),
               },
             }
           : {}),
+        // What this guardian can do beyond the base protocol: the phone offers "no daily limit" only when it sees `limit_off`.
+        ...(g.features.length ? { features: [...g.features] } : {}),
       };
     },
 
@@ -433,9 +437,17 @@ export function buildHandlers(g: Guardian): Handlers {
 
     'policy.update': async (params) => {
       const auth = params.approval ? { authenticatedBy: 'hardware' as const, approval: params.approval } : { authenticatedBy: 'app' as const };
+      const wasOff = isLimitOff(g.engine.status().rules ?? { dailyLimitSats: 0n });
       const res = await g.engine.changeRules(rulesFromPolicy(params.policy), auth);
       if (!res.ok) throw refusalError(res.refusal);
       g.log.info('rules.changed', { by: auth.authenticatedBy });
+      // A security event: from now on phone + guardian can send everything (or no longer can).
+      if (isLimitOff(res.rules) !== wasOff) {
+        if (wasOff) g.log.info('rules.limit_on', { by: auth.authenticatedBy, limitSats: Number(res.rules.dailyLimitSats) });
+        else g.log.warn('rules.limit_off', { by: auth.authenticatedBy, sequence: params.approval?.sequence });
+        // The engine queued the alerts (the phone, and for "off" every alert contact): send them now.
+        void g.alerts.run();
+      }
       return {
         policy: policyToWire(res.rules),
         nextHardwareSequence: g.engine.status().nextHardwareSequence,

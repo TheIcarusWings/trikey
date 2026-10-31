@@ -1,6 +1,6 @@
 /** Engine and service log entries as the web UI's `ActivityEntry`. */
 import { npubEncode } from 'nostr-tools/nip19';
-import type { ActivityEntry as EngineEntry } from '../policy/index.js';
+import { isLimitOff, type ActivityEntry as EngineEntry } from '../policy/index.js';
 import type { ServiceActivity } from '../service-state.js';
 import { refusalText } from '../nostr/wire.js';
 import { formatWhen } from '../alerts.js';
@@ -19,6 +19,7 @@ export function shortNpub(pubkey: string): string {
 }
 
 const sats = (v: bigint) => Number(v);
+const formatSatsText = (v: bigint) => `${v.toLocaleString('en-US')} sats`;
 
 export function engineEntry(e: EngineEntry): ActivityEntry {
   const base = { id: `e${e.id}`, at: iso(e.at) };
@@ -55,14 +56,40 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
       };
     case 'rules_changed': {
       const parts: string[] = [];
-      if (e.from.dailyLimitSats !== e.to.dailyLimitSats) parts.push(`daily limit ${e.from.dailyLimitSats} → ${e.to.dailyLimitSats} sats`);
+      const wasOff = isLimitOff(e.from);
+      const nowOff = isLimitOff(e.to);
       if (e.from.recoveryDelayDays !== e.to.recoveryDelayDays) parts.push(`delay ${e.from.recoveryDelayDays} → ${e.to.recoveryDelayDays} days`);
       if (e.from.sweepFeeCapSats !== e.to.sweepFeeCapSats) parts.push(`fee cap ${e.from.sweepFeeCapSats} → ${e.to.sweepFeeCapSats} sats`);
       if (e.from.alertContacts.join() !== e.to.alertContacts.join()) parts.push(`alert contacts ${e.from.alertContacts.length} → ${e.to.alertContacts.length}`);
+      // No daily limit: said in words, never as 21 million BTC.
+      if (nowOff && !wasOff) {
+        const how = e.by === 'hardware' && e.sequence !== undefined ? ` (hardware approval #${e.sequence})` : '';
+        return {
+          ...base,
+          kind: 'rules',
+          event: `Daily limit turned off${how}: the phone and this guardian together can now send everything${parts.length ? `. Also: ${parts.join(', ')}` : ''}`,
+          summary: 'Daily limit turned off',
+          signedBy: e.by === 'hardware' ? 'Hardware wallet' : 'Phone',
+          sats: null,
+          result: 'rule-changed',
+        };
+      }
+      if (wasOff && !nowOff) {
+        return {
+          ...base,
+          kind: 'rules',
+          event: `Daily limit turned back on: ${formatSatsText(e.to.dailyLimitSats)}${parts.length ? `. Also: ${parts.join(', ')}` : ''}`,
+          summary: 'Daily limit back on',
+          signedBy: e.by === 'hardware' ? 'Hardware wallet' : 'Phone',
+          sats: null,
+          result: 'rule-changed',
+        };
+      }
+      if (e.from.dailyLimitSats !== e.to.dailyLimitSats) parts.unshift(`daily limit ${e.from.dailyLimitSats} → ${e.to.dailyLimitSats} sats`);
       return {
         ...base,
         kind: 'rules',
-        event: `Rules changed${parts.length ? `: ${parts.join(', ')}` : ''}`,
+        event: `Rules changed${parts.length ? `: ${parts.join(', ')}` : ''}${nowOff ? ' (no daily limit)' : ''}`,
         summary: 'Rules changed',
         signedBy: e.by === 'hardware' ? 'Hardware wallet' : 'Phone',
         sats: null,
@@ -139,8 +166,23 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
         sats: null,
         result: 'ok',
       };
+    case 'limit_alert_sent':
+      return {
+        ...base,
+        kind: 'rules',
+        event:
+          e.kind === 'limit_off'
+            ? `"Daily limit turned off" alert sent to ${e.recipients.length} recipient${e.recipients.length === 1 ? '' : 's'}`
+            : `"Daily limit back on" alert sent to the phone`,
+        summary: e.kind === 'limit_off' ? 'Limit-off alert sent' : 'Limit-on alert sent',
+        signedBy: null,
+        sats: null,
+        result: 'ok',
+      };
     case 'wallet_rotated': {
-      const grants = e.revokedGrants ? ` ${e.revokedGrants} recovery access grant${e.revokedGrants === 1 ? '' : 's'} revoked.` : '';
+      const grants =
+        (e.revokedGrants ? ` ${e.revokedGrants} recovery access grant${e.revokedGrants === 1 ? '' : 's'} revoked.` : '') +
+        (e.limitRestoredSats !== undefined ? ` The daily limit is back on for the new wallet, at ${formatSatsText(e.limitRestoredSats)}.` : '');
       return e.toWalletId
         ? {
             ...base,

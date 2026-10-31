@@ -8,6 +8,28 @@ export function formatSats(sats: number): string {
   return sats.toLocaleString('en-US');
 }
 
+/**
+ * The daily limit in words. With no daily limit (the owner turned it off with a hardware approval) the number is the
+ * protocol maximum, 21 million BTC, and is never shown: "Off".
+ */
+export function dailyLimitText(rules: { dailyLimitSats: number; dailyLimitOff?: boolean }): string {
+  return rules.dailyLimitOff ? 'Off' : `${formatSats(rules.dailyLimitSats)} sats`;
+}
+
+/**
+ * Home's line under "You're all set": what the phone sent today, against the limit when there is one. `pct` is the
+ * share of the limit used, for the bar; null with no daily limit (no bar then).
+ */
+export function dailySpendSummary(spend: { usedSats: number; limitSats: number; limitOff?: boolean }, wallet: string): { text: string; pct: number | null } {
+  if (spend.limitOff) return { text: `Guarding ${wallet} wallet · ${formatSats(spend.usedSats)} sats sent from the phone today · No daily limit`, pct: null };
+  const pct = spend.limitSats > 0 ? Math.min(100, Math.round((spend.usedSats / spend.limitSats) * 100)) : 0;
+  return { text: `Guarding ${wallet} wallet · ${formatSats(spend.usedSats)} of ${formatSats(spend.limitSats)} sats sent from the phone today`, pct };
+}
+
+/** What having no daily limit means, in the guardian's words (Home and Rules). */
+export const LIMIT_OFF_TEXT =
+  'No daily limit: the phone and this guardian together can send everything in the wallet at once. Turn it back on in the Trikey app; that works from the phone alone.';
+
 function startOfDay(d: Date): number {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }

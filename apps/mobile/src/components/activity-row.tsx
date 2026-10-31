@@ -155,6 +155,22 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
         icon: Shield,
         iconTone: 'fill',
       };
+    case 'limit-off':
+      return {
+        title: 'Daily limit turned off',
+        subtitle: `${when} · approved on ${ctx.hardwareBrand}`,
+        subtitleTone: 'warn',
+        icon: Shield,
+        iconTone: 'warn',
+      };
+    case 'limit-on':
+      return {
+        title: `Daily limit back on at ${formatSats(event.limitSats)}`,
+        subtitle: when,
+        subtitleTone: 'muted',
+        icon: Shield,
+        iconTone: 'fill',
+      };
     case 'delay-changed':
       return {
         title: `Recovery wait set to ${event.days} days`,

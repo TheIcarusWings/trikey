@@ -43,7 +43,8 @@ function registration(ctx: Ctx, wallet: MultisigWallet, opts: { path?: string; m
     network: 'regtest',
     descriptor: wallet.descriptor(),
     cosignerAccountPubkey: cosigner,
-    rules: { ...DEFAULT_RULES, dailyLimitSats: 2_100_000_000_000_000n, ...opts.rules },
+    // The highest limit pairing accepts ("no daily limit" itself is refused at pairing, rules.test.ts).
+    rules: { ...DEFAULT_RULES, dailyLimitSats: 2_100_000_000_000_000n - 1n, ...opts.rules },
     hardwareAuth: { kind: 'bip137', pubkey: hex.encode(secp256k1.getPublicKey(priv, true)), path },
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), cosigner), priv),
     appNostrPubkey: nostrKey(99),

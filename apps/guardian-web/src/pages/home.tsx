@@ -8,7 +8,7 @@ import { PageHeader } from '@/components/page-header';
 import { ErrorState, PageSkeleton } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { useApi, usePageTitle } from '@/hooks/use-api';
-import { formatSats } from '@/lib/format';
+import { LIMIT_OFF_TEXT, dailySpendSummary } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 interface Issue {
@@ -86,30 +86,35 @@ function StatusCard({ status }: { status: GuardianStatus }) {
   const actions = issues.filter((i) => i.kind === 'action');
 
   if (issues.length === 0) {
-    const { usedSats, limitSats } = status.dailySpend;
-    const pct = limitSats > 0 ? Math.min(100, Math.round((usedSats / limitSats) * 100)) : 0;
     const wallet = status.wallets[0]?.name ?? 'Main';
+    const { text, pct } = dailySpendSummary(status.dailySpend, wallet);
     return (
       <section aria-label="Status" className="flex flex-col gap-3.5 rounded-[14px] bg-good-soft px-5 py-5 sm:px-6 sm:py-[22px]">
         <div className="flex items-center gap-3.5">
           <Check className="size-7 shrink-0 text-good" strokeWidth={2.2} aria-hidden="true" />
           <div className="flex min-w-0 flex-col gap-0.5">
             <h2 className="m-0 text-xl leading-[26px] font-semibold">You're all set</h2>
-            <p className="m-0 text-sm leading-5">
-              Guarding {wallet} wallet · {formatSats(usedSats)} of {formatSats(limitSats)} sats sent from the phone today
-            </p>
+            <p className="m-0 text-sm leading-5">{text}</p>
           </div>
         </div>
-        <div
-          role="progressbar"
-          aria-label="Share of the daily limit used"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={pct}
-          className="h-1.5 overflow-hidden rounded-[3px] bg-border"
-        >
-          <div className="h-1.5 bg-good" style={{ width: `${pct}%` }} />
-        </div>
+        {pct === null ? (
+          // No daily limit: no bar to fill, and the owner should see what that means.
+          <p className="m-0 flex items-start gap-2 rounded-[10px] bg-warn-soft px-3 py-2.5 text-sm leading-5">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warn" strokeWidth={2} aria-hidden="true" />
+            <span>{LIMIT_OFF_TEXT}</span>
+          </p>
+        ) : (
+          <div
+            role="progressbar"
+            aria-label="Share of the daily limit used"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={pct}
+            className="h-1.5 overflow-hidden rounded-[3px] bg-border"
+          >
+            <div className="h-1.5 bg-good" style={{ width: `${pct}%` }} />
+          </div>
+        )}
       </section>
     );
   }

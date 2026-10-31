@@ -23,6 +23,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import {
   HardwareApproval,
+  LIMIT_OFF_SATS,
   MAX_ALERT_CONTACTS,
   MAX_APPROVAL_MESSAGE_LENGTH,
   Policy,
@@ -174,5 +175,32 @@ describe('protocol vs guardian engine: hardware approval texts', () => {
       // the same signature does not approve a different action or sequence
       expect(bip137Authorizer.verify(approvalMessage({ action: 'resume-phone' }, { ...ctx, sequence: 8 }), approval.signature, key)).toBe(false);
     }
+  });
+});
+
+describe('no daily limit across versions', () => {
+  const off: PolicyType = { ...policy, dailyLimitSats: LIMIT_OFF_SATS };
+  const ctx = { walletId: WALLET_ID, sequence: 9, expiresAt: 1_900_000_000 };
+  const priv = new Uint8Array(32).fill(6);
+
+  it('this guardian and the phone build the version-2 text; an older guardian (the version-1 text) refuses its signature', () => {
+    const v2 = approvalMessage({ action: 'policy', policy: off }, ctx);
+    expect(v2).toBe(engineApprovalMessage({ action: 'policy', rules: toRules(off) }, ctx));
+    expect(v2).toMatch(/^Trikey policy v2 wallet=0123456789abcdef seq=9 limit=off delay=7d /);
+    // What a guardian from before rebuilds for the same request: the version-1 text, the number in place of "off".
+    const old = approvalMessage({ action: 'policy', policy: off }, { ...ctx, legacyPolicyText: true });
+    expect(old).toBe(`Trikey policy v1 wallet=${WALLET_ID} seq=9 limit=${LIMIT_OFF_SATS} delay=7d feecap=50000 contacts=2 hash=${policyHash(off)} expires=2030-03-17T17:46:40Z`);
+    const signature = signMessage(v2, priv);
+    const key = { kind: 'bip137' as const, pubkey: hex.encode(recoverMessageSigner(v2, signature).publicKey), path: "m/48'/1'/0'/2'/0/0" };
+    expect(bip137Authorizer.verify(v2, signature, key)).toBe(true);
+    // ...so it answers 1202 (ApprovalInvalid) and changes nothing: a clean refusal.
+    expect(bip137Authorizer.verify(old, signature, key)).toBe(false);
+    // The hash is the same for both: "off" is no new rule.
+    expect(enginePolicyHash(toRules(off))).toBe(policyHash(off));
+  });
+
+  it('the legacy flag changes nothing for any limit below "off"', () => {
+    for (const p of policies.filter((x) => x.dailyLimitSats < LIMIT_OFF_SATS))
+      expect(approvalMessage({ action: 'policy', policy: p }, { ...ctx, legacyPolicyText: true })).toBe(approvalMessage({ action: 'policy', policy: p }, ctx));
   });
 });

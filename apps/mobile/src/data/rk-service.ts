@@ -962,6 +962,9 @@ class Service implements RkWalletService {
   setDailyLimit(): Promise<void> {
     return Promise.reject(notAvailableYet('A daily limit', 'Recovery Key mode limits the phone with its refills instead.'));
   }
+  turnLimitOff(): Promise<void> {
+    return Promise.reject(notAvailableYet('A daily limit', 'Recovery Key mode limits the phone with its refills instead.'));
+  }
   setRecoveryDelay(): Promise<void> {
     return Promise.reject(notAvailableYet('A recovery wait', 'Recovery with your Recovery Kit is immediate.'));
   }
