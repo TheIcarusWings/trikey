@@ -212,6 +212,16 @@ What kind of build it is:
 To install: check the file against the `.sha256`, copy the APK to the phone, open it, and allow installing from that source
 when Android asks. Play Protect may warn about an unknown app; that is expected for a sideloaded test build.
 
+**Updating the app.** A newer release installs over the installed one and keeps the wallet (both are signed with the Trikey
+release key). Three ways, pick one:
+
+- In the app: **Settings → About → Check for updates**. It asks GitHub only when you tap it, says whether a newer version
+  exists, and **Download** hands the APK to Android's installer. Check the SHA-256 it shows against the release's `.sha256`.
+- Obtainium, which watches the repository's releases for you: see [docs/android-signing.md](android-signing.md).
+- By hand, from the Releases page, as above.
+
+Note in the report which way you used, and that the wallet was still there after the update.
+
 ### Or on an iPhone (a Mac is needed)
 
 There is no TestFlight build in this round (that needs a paid Apple Developer account), so an iPhone gets the app from your
