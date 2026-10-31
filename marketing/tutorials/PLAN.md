@@ -52,7 +52,8 @@ segment and nothing else. Video 1 also covers the troubleshooting cards most tes
 2. **Install the app.** Three parts, each a separate script file and composition, joined at render time:
    - `intro` (version-free): the app is key 2; pick your phone below; get it from the latest release.
    - `android` (swappable): download the Android app from the latest release (and check its checksum) → allow
-     installs from that source → the unknown-app warning is expected → later updates: check for updates in Settings.
+     installs from that source → the unknown-app warning is expected → staying up to date: the app's check for updates
+     in Settings, or Obtainium with the repository as its source (prereleases included).
    - `ios` (swappable): how to get it on an iPhone today (built from a Mac with a free Apple ID; the install has to be
      renewed every few days), pointing to the test plan for the commands. When TestFlight or the App Store arrives,
      only this segment is rewritten and re-rendered.
@@ -98,13 +99,20 @@ Everything that can be regenerated from code is:
    makes those steps succeed with fake data would let Maestro record them.
 2. **Stable testIDs** on the onboarding screens, the send flow's limit and hardware-approval screens, and the
    recovery screens, so the flows don't depend on wording.
-3. **Fixed demo data**: the same balance, addresses and contacts every run, so re-renders match.
+3. **Fixed demo data**: confirmed. Balance, addresses, contacts and amounts are constants. Times are relative to
+   "now", so clock times and dates are cropped or covered in every shot.
+
+Confirmed by the controller: Demo mode runs the real onboarding screens with every step faked (hardware, pairing,
+rules, backup), and the scan screen takes a tap instead of the camera. Hardware approvals show the app's own
+"confirm on your device" prompt; the device itself is illustrated. The testIDs come in one app PR from the
+controller, from a list I send (screen → element → ID).
 
 ## Where things live
 
 - `marketing/tutorials/`: this plan, one script file per video (steps, captions, timing), and the illustrations.
 - `apps/mobile/.maestro/tutorials/*.yaml` and `.github/workflows/tutorials-record.yml`: app recording (through a
-  PR the controller reviews).
+  PR the controller reviews). The workflow runs only on manual dispatch, uses no secrets and has read-only
+  permissions.
 - `marketing/render/videos/t1-…t6-….html`: the compositions. `marketing/render/make.sh t1` re-renders one.
 - Outputs (git-ignored): `marketing/out/trikey-t<n>-<name>.mp4`.
 - Website: 720p web cuts in `site/media/tutorials/` and a **trikey.app/setup** page that lists them in order next to
