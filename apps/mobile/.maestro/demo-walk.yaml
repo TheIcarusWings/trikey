@@ -22,12 +22,28 @@ tags:
     clearState: true
     stopApp: true
 
-# A fresh install opens on Welcome (Real mode in a Release build); a phone already in the demo opens on Home.
+# A fresh install opens on Welcome (Real mode in a Release build); a phone already in the demo opens on Home. A cold
+# start after clearState has once taken longer than 90 s on a loaded CI emulator: then relaunch once (keeping what the
+# first start set up) and wait again, so only an app that never shows its first screen fails here.
 - extendedWaitUntil:
     visible:
       id: 'welcome-change-mode|home-balance'
     timeout: 90000
+    optional: true
     label: Wait for the first screen (Welcome or Home)
+- runFlow:
+    when:
+      notVisible:
+        id: 'welcome-change-mode|home-balance'
+    label: The first screen is late, relaunch once
+    commands:
+      - launchApp:
+          stopApp: true
+      - extendedWaitUntil:
+          visible:
+            id: 'welcome-change-mode|home-balance'
+          timeout: 90000
+          label: Wait for the first screen after the relaunch
 
 # Welcome: "Real mode · change wallet mode", then Demo in the wallet mode picker, then "Switch to Demo".
 - runFlow:

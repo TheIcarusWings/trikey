@@ -111,6 +111,12 @@ status walk_seconds "$(($(date +%s) - start))"
 status walk ran
 echo "Maestro exited ${rc} after $(($(date +%s) - start)) s"
 
+# On a failure, what was on screen (the reporter posts it; the screenshots are only in the artifact).
+if [ "${rc}" != 0 ]; then
+  with_timeout 90 maestro --device "${UDID}" hierarchy > "${WALK_OUT}/hierarchy.json" 2>/dev/null || true
+  [ -s "${WALK_OUT}/hierarchy.json" ] || rm -f "${WALK_OUT}/hierarchy.json"
+fi
+
 final_pid="$(xcrun simctl spawn "${UDID}" launchctl list 2>/dev/null \
   | awk -v id="UIKitApplication:${BUNDLE_ID}[" 'index($3, id) == 1 && $1 ~ /^[0-9]+$/ { print $1; exit }')"
 status final_pid "${final_pid}"

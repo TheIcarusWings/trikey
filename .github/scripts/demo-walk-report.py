@@ -279,6 +279,36 @@ def write_summary(heading: str, intro: str, report: list[str]) -> None:
         f.write("```\n" + "\n".join(report).replace("```", "'''") + "\n```\n")
 
 
+def on_screen(walk: Path) -> list[str]:
+    """The texts, ids and accessibility labels on screen when the walk failed (`maestro hierarchy`), in screen order."""
+    raw = read(walk / "hierarchy.json")
+    if not raw.strip():
+        return []
+    try:
+        tree = json.loads(raw[raw.find("{"):])
+    except ValueError:
+        return []
+    out: list[str] = []
+
+    def visit(node: object) -> None:
+        if not isinstance(node, dict):
+            return
+        attrs = node.get("attributes") or {}
+        if isinstance(attrs, dict):
+            parts = []
+            for key, label in (("resource-id", "id"), ("text", "text"), ("accessibilityText", "label"), ("hintText", "hint")):
+                value = str(attrs.get(key) or "").strip()
+                if value and f'"{value}"' not in " ".join(parts):
+                    parts.append(f'{label} "{value}"')
+            if parts:
+                out.append(clip(" · ".join(parts)))
+        for child in node.get("children") or []:
+            visit(child)
+
+    visit(tree)
+    return list(dict.fromkeys(out))
+
+
 def main(argv: list[str]) -> int:
     walk = Path(argv[1] if len(argv) > 1 else "walk-out")
     launch = Path(argv[2]) if len(argv) > 2 else None
@@ -384,6 +414,9 @@ def main(argv: list[str]) -> int:
         annotate("error", f"{title} steps", step_lines[:LINES_PER_ANNOTATION])
     if detail:
         annotate("error", f"{title} Maestro detail", detail)
+    screen = on_screen(walk)
+    if screen:
+        annotate("error", f"{title} on screen", ["What was on screen when it failed (maestro hierarchy):", *screen[:LINES_PER_ANNOTATION - 1]])
     log_chunks = chunks(log.lines)
     for n, chunk in enumerate(log_chunks, 1):
         annotate("error", f"{title} app log {n} of {len(log_chunks)}", chunk)

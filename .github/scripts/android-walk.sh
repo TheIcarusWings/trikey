@@ -87,6 +87,13 @@ status walk_seconds "$(($(date +%s) - start))"
 status walk ran
 echo "Maestro exited ${rc} after $(($(date +%s) - start)) s"
 
+# On a failure, what was on screen (texts, ids, accessibility labels): the reporter posts it, since the screenshots are
+# only in the artifact, which cannot be read from the check's annotations.
+if [ "${rc}" != 0 ]; then
+  timeout 90 maestro "${device[@]}" hierarchy > "${WALK_OUT}/hierarchy.json" 2>/dev/null || true
+  [ -s "${WALK_OUT}/hierarchy.json" ] || rm -f "${WALK_OUT}/hierarchy.json"
+fi
+
 final_pid="$(sh_ pidof "${APP_ID}")"
 status final_pid "${final_pid}"
 status alive "$([ -n "${final_pid}" ] && echo yes || echo no)"
