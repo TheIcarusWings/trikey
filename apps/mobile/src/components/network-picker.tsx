@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { View } from 'react-native';
 import { TriangleAlert } from '@/components/icons';
 import { Notice } from '@/components/panels';
@@ -18,6 +19,17 @@ const LABEL: Record<NetworkName, string> = { bitcoin: 'Mainnet', testnet: 'Testn
 export function NetworkPicker() {
   const wallet = useWalletService();
   const { network } = useWallet();
+  const [problem, setProblem] = useState<string | null>(null);
+  // `setNetwork` refuses (it throws) once a wallet exists, or a network the mode does not run on. Thrown out of a press
+  // handler, that closes a release build at once, so it is caught here and said in words.
+  const choose = (n: NetworkName) => {
+    try {
+      wallet.setNetwork(n);
+      setProblem(null);
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : String(e));
+    }
+  };
   return (
     <View className="gap-2 self-stretch">
       <Text className={cn('text-muted-foreground text-center', pick('text-[13px] leading-[18px]', 'text-xs leading-4'))}>
@@ -27,8 +39,13 @@ export function NetworkPicker() {
         accessibilityLabel="Network"
         options={GUARDIAN_NETWORKS.map((n) => ({ value: n, label: LABEL[n] }))}
         value={network ?? 'testnet'}
-        onChange={(n) => wallet.setNetwork(n)}
+        onChange={choose}
       />
+      {problem ? (
+        <Text accessibilityRole="alert" className="text-destructive text-center text-[13px] leading-[18px]">
+          {problem}
+        </Text>
+      ) : null}
       {network === 'bitcoin' ? <MainnetWarning /> : null}
     </View>
   );
