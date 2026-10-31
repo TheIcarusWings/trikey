@@ -104,6 +104,7 @@ const LEDGER_HINTS: Record<string, string> = {
   'sign-transaction': 'Review the payment on your Ledger and approve it.',
   'sign-personal-message': 'Review the message on your Ledger and approve it.',
   'verify-address': 'Compare the address on your Ledger and approve it.',
+  'register-wallet': 'Review the wallet on your Ledger and approve it.',
 };
 
 /** Words for a Ledger `requiredUserInteraction`; undefined when there is nothing to tell the person. */

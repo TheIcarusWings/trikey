@@ -28,8 +28,11 @@ export interface LedgerRegisteredWallet extends LedgerWalletPolicy {
 
 export function toLedgerPolicy(wallet: HardwareWalletPolicy): LedgerWalletPolicy {
   const parsed = parseWalletPolicy(wallet, 'ledger');
+  // The Bitcoin app also refuses a name that starts or ends with a space (`is_policy_name_acceptable`, status 6a80).
+  if (/^ | $/.test(wallet.name)) throw new HardwareError('invalid-request', 'A Ledger wallet name cannot start or end with a space.', { kind: 'ledger' });
   const keys = parsed.keys.map((k) => {
-    // The Bitcoin app writes hardened steps with an apostrophe. A key with no origin path (the guardian's
+    // The Bitcoin app's key parser takes hardened steps with an apostrophe only (not `h`) and the fingerprint in
+    // lowercase hex (core's descriptor parser lowercases it). A key with no origin path (the guardian's
     // depth-0 key) is `[fingerprint]xpub`.
     const origin = k.origin.length ? `${k.fingerprint}${formatPath(k.origin).slice(1)}` : k.fingerprint;
     return `[${origin}]${k.xpub}`;

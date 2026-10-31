@@ -11,7 +11,7 @@ import { coinTypeOf, formatPath, parsePath } from '../common/path';
 import { normalizeXpub, xpubFamily } from '../common/xpub';
 import { assertDeviceSignedAll, decodePsbtBase64, encodePsbtBase64 } from '../common/psbt';
 import { coinForNetwork, devicePathAt, mergeTrezorSignatures, multisigAt, psbtToTrezorRequest } from './convert';
-import { mapTrezorError } from './errors';
+import { TREZOR_CANCEL_REASONS, mapTrezorError, trezorFailure } from './errors';
 import type { TrezorCoin, TrezorConnectLike, TrezorResponse } from './types';
 
 export class TrezorSigner implements HardwareSigner {
@@ -41,7 +41,7 @@ export class TrezorSigner implements HardwareSigner {
       } catch (e) {
         throw mapTrezorError(e);
       }
-      if (!res.success) throw mapTrezorError(res.payload);
+      if (res.success !== true) throw mapTrezorError(trezorFailure(res));
       return res.payload;
     });
   }
@@ -131,7 +131,7 @@ export class TrezorSigner implements HardwareSigner {
 
   async close(): Promise<void> {
     try {
-      this.connect.cancel?.('closed');
+      this.connect.cancel?.(TREZOR_CANCEL_REASONS.closed);
     } catch {
       // Best effort.
     }

@@ -464,10 +464,66 @@ describe('mapTrezorError', () => {
     ['deep link with no response', { error: 'The provided url is missing `response` parameter.' }, 'unavailable'],
     ['unknown', { error: 'kaboom', code: 'Weird' }, 'device-error'],
     ['a thrown Error', new Error('timed out'), 'timeout'],
+    ['our own cancel(reason)', { success: false, error: 'closed' }, 'cancelled'],
+    ['a callback URL that does not parse (Error object)', { success: false, error: new TypeError('Invalid URL') }, 'device-error'],
   ];
   it.each(cases)('%s', (_n, input, code) => {
     const e = mapTrezorError(input);
     expect(e.code).toBe(code);
     expect(e.kind).toBe('trezor');
+  });
+});
+
+// ------------------------------------------------------------------ the real @trezor/connect-mobile deep-link client
+
+describe('TrezorSigner over the real connect-mobile deep-link client (offline)', () => {
+  // What Trezor Suite Lite would do: read the request from the deep link, then open our callback URL with the result.
+  async function realConnect() {
+    const { default: TrezorConnect } = await import('@trezor/connect-mobile');
+    const opened: string[] = [];
+    await TrezorConnect.init({
+      manifest: { appName: 'Trikey', appUrl: 'https://example.invalid', email: 'dev@example.invalid' },
+      deeplinkOpen: (url: string) => void opened.push(url),
+      deeplinkCallbackUrl: 'trikey://trezor-callback',
+    });
+    const request = () => {
+      const url = new URL(opened.at(-1)!);
+      const callback = new URL(url.searchParams.get('callback')!);
+      return { method: url.searchParams.get('method'), params: JSON.parse(url.searchParams.get('params')!), callback };
+    };
+    const answer = (response?: unknown) => {
+      const { callback } = request();
+      if (response !== undefined) callback.searchParams.set('response', JSON.stringify(response));
+      TrezorConnect.handleDeeplink(callback.toString());
+    };
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    return { connect: TrezorConnect as unknown as TrezorConnectLike, request, answer, tick };
+  }
+
+  it('sends our parameters through the deep link and reads the answer', async () => {
+    const f = await makeFixture();
+    const { connect, request, answer, tick } = await realConnect();
+    const signer = new TrezorSigner({ kind: 'trezor', fingerprint: f.hardwareFingerprint }, connect, { network: 'regtest' });
+    const p = signer.getXpub("m/48'/1'/0'/2'");
+    await tick();
+    expect(request()).toMatchObject({ method: 'getPublicKey', params: { path: "m/48'/1'/0'/2'", coin: 'regtest', showOnTrezor: false } });
+    answer({ success: true, payload: { xpub: f.hardwareXpub, path: [48 + H, 1 + H, H, 2 + H], fingerprint: 1, depth: 4 } });
+    expect(await p).toBe(f.hardwareXpub);
+  });
+
+  it('reports a callback without a result, and its own cancellation, as typed errors', async () => {
+    const f = await makeFixture();
+    const { connect, answer, tick } = await realConnect();
+    const signer = new TrezorSigner({ kind: 'trezor', fingerprint: f.hardwareFingerprint }, connect, { network: 'regtest' });
+    // connect-mobile resolves this one as { success: false, error } with no payload.
+    const missing = signer.getXpub("m/48'/1'/0'/2'");
+    await tick();
+    answer();
+    await expect(missing).rejects.toMatchObject({ code: 'unavailable', message: expect.stringContaining('`response`') });
+    // And a call cut short by cancel(reason) as { payload: { success: false, error: reason } }.
+    const closed = signer.getXpub("m/48'/1'/0'/2'");
+    await tick();
+    await signer.close();
+    await expect(closed).rejects.toMatchObject({ code: 'cancelled' });
   });
 });

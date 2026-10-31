@@ -13,7 +13,7 @@ import { normalizeXpub } from '../common/xpub';
 import { HardwareError, throwIfAborted } from '../errors';
 import { TREZOR_MANIFEST_DEFAULTS, type HardwareProviderOptions } from '../options';
 import { coinForNetwork } from './convert';
-import { mapTrezorError } from './errors';
+import { TREZOR_CANCEL_REASONS, mapTrezorError, trezorFailure } from './errors';
 import { TrezorSigner } from './signer';
 import type { TrezorConnectLike } from './types';
 
@@ -36,7 +36,15 @@ export class TrezorProvider implements HardwareProvider {
       const manifest = { ...TREZOR_MANIFEST_DEFAULTS, ...this.options.trezor?.manifest };
       this.subscription = Linking.addEventListener('url', ({ url }) => {
         // Only our callback goes to Connect; other deep links are the router's business.
-        if (url.startsWith(callback.split('?')[0]!)) TrezorConnect.handleDeeplink(url);
+        // connect-mobile throws (after failing the call in flight) on a callback whose result is not JSON; an exception
+        // in this listener would take the app down.
+        if (url.startsWith(callback.split('?')[0]!)) {
+          try {
+            TrezorConnect.handleDeeplink(url);
+          } catch {
+            // The call has already been failed with "Error parsing deeplink params."
+          }
+        }
       });
       await TrezorConnect.init({
         manifest,
@@ -64,13 +72,13 @@ export class TrezorProvider implements HardwareProvider {
     const network = this.options.network ?? 'bitcoin';
     await this.ensureInit();
     const connect = TrezorConnect as unknown as TrezorConnectLike;
-    const onAbort = () => connect.cancel?.('aborted');
+    const onAbort = () => connect.cancel?.(TREZOR_CANCEL_REASONS.aborted);
     opts.signal?.addEventListener('abort', onAbort, { once: true });
     try {
       // One round trip gets both the account key and the master fingerprint (`rootFingerprint`).
       const path = `m/48'/${network === 'bitcoin' ? 0 : 1}'/0'/2'`;
       const res = await connect.getPublicKey({ path, coin: coinForNetwork(network), showOnTrezor: false });
-      if (!res.success) throw mapTrezorError(res.payload);
+      if (res.success !== true) throw mapTrezorError(trezorFailure(res));
       if (res.payload.rootFingerprint === undefined)
         throw new HardwareError('device-error', 'This Trezor firmware does not report its master fingerprint. Update it in Trezor Suite.', { kind: 'trezor' });
       const fingerprint = (res.payload.rootFingerprint >>> 0).toString(16).padStart(8, '0');

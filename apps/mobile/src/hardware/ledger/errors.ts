@@ -34,7 +34,9 @@ const TAG_MAP: Record<string, { code: HardwareErrorCode; message: string }> = {
   DeviceConnectionNotFound: { code: 'disconnected', message: 'The Ledger disconnected.' },
   ReconnectionFailedError: { code: 'disconnected', message: 'The Ledger disconnected and could not be reached again.' },
   PeerRemovedPairingError: { code: 'disconnected', message: 'The Ledger forgot this phone. Remove it in the phone Bluetooth settings and pair again.' },
-  OpeningConnectionError: { code: 'disconnected', message: 'Could not open a Bluetooth connection to the Ledger.' },
+  DeviceSessionNotFound: { code: 'disconnected', message: 'The Ledger disconnected.' },
+  // The DMK class is `OpeningConnectionError`, but its tag is `ConnectionOpeningError`.
+  ConnectionOpeningError: { code: 'disconnected', message: 'Could not open a Bluetooth connection to the Ledger.' },
   SendApduTimeoutError: { code: 'timeout', message: 'The Ledger did not respond in time.' },
   SendCommandTimeoutError: { code: 'timeout', message: 'The Ledger did not respond in time.' },
   InvalidArgumentError: { code: 'invalid-request', message: 'The Ledger rejected the request as malformed.' },
@@ -64,7 +66,9 @@ export function mapLedgerError(e: unknown): HardwareError {
   const dmk = asDmk(e);
   const tag = typeof dmk?._tag === 'string' ? dmk._tag : undefined;
   const sw = typeof dmk?.errorCode === 'string' ? dmk.errorCode.toLowerCase() : undefined;
-  const text = e instanceof Error ? e.message : typeof dmk?.message === 'string' ? dmk.message : undefined;
+  // Most DMK errors carry no `message` of their own: the text is in `originalError` (an Error).
+  const wrappedText = dmk?.originalError instanceof Error ? dmk.originalError.message : undefined;
+  const text = e instanceof Error ? e.message : typeof dmk?.message === 'string' ? dmk.message : wrappedText;
 
   // An error that wraps another one (the DMK puts the real cause in `originalError`).
   if (tag && !TAG_MAP[tag] && !(sw && STATUS_WORD_MAP[sw]) && dmk?.originalError && dmk.originalError !== e) {

@@ -36,11 +36,23 @@ export interface TrezorFailure {
   code?: string;
 }
 
+/** The reasons Trikey passes to `TrezorConnect.cancel`; connect-mobile resolves the call in flight with the reason as its error. */
+export const TREZOR_CANCEL_REASONS = { aborted: 'aborted', closed: 'closed' } as const;
+const OUR_CANCEL_REASONS = new Set<string>(Object.values(TREZOR_CANCEL_REASONS));
+
+/** The failure inside a response that is not a success, whichever of connect-mobile's shapes it has (see `TrezorResponse`). */
+export function trezorFailure(res: { payload?: unknown }): unknown {
+  return res.payload ?? res;
+}
+
 export function mapTrezorError(failure: TrezorFailure | unknown): HardwareError {
   if (failure instanceof HardwareError) return failure;
   const f = (typeof failure === 'object' && failure !== null ? failure : {}) as { error?: unknown; code?: unknown; message?: unknown };
-  const text = typeof f.error === 'string' ? f.error : typeof f.message === 'string' ? f.message : typeof failure === 'string' ? failure : undefined;
+  // connect-mobile passes a broken callback URL's parse error on as an Error object, not text.
+  const error = f.error instanceof Error ? f.error.message : f.error;
+  const text = typeof error === 'string' ? error : typeof f.message === 'string' ? f.message : typeof failure === 'string' ? failure : undefined;
   const code = typeof f.code === 'string' ? f.code : undefined;
+  if (!code && text && OUR_CANCEL_REASONS.has(text)) return new HardwareError('cancelled', 'Cancelled.', { kind: 'trezor', detail: failure });
 
   const known = code ? CODE_MAP[code] : undefined;
   if (known) return new HardwareError(known.code, text && known.code === 'invalid-request' ? `${known.message} ${text}` : known.message, { kind: 'trezor', detail: failure });
