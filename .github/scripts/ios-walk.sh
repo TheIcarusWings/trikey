@@ -97,13 +97,36 @@ status started_at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 echo "Running ${FLOW} with Maestro on ${UDID} (at most ${WALK_TIMEOUT} s)"
 # The driver can take a while to start on a fresh simulator.
 export MAESTRO_DRIVER_STARTUP_TIMEOUT="${MAESTRO_DRIVER_STARTUP_TIMEOUT:-180000}"
-with_timeout "${WALK_TIMEOUT}" \
-  maestro --device "${UDID}" test --no-ansi \
-    --format junit --output "${WALK_OUT}/maestro/report.xml" \
-    --debug-output "${WALK_OUT}/maestro/debug" --flatten-debug-output \
-    --test-output-dir "${WALK_OUT}/maestro/output" \
-    "${flow}" > "${WALK_OUT}/maestro-console.txt" 2>&1
+walk() {
+  with_timeout "$1" \
+    maestro --device "${UDID}" test --no-ansi \
+      --format junit --output "${WALK_OUT}/maestro/report.xml" \
+      --debug-output "${WALK_OUT}/maestro/debug" --flatten-debug-output \
+      --test-output-dir "${WALK_OUT}/maestro/output" \
+      "${flow}" > "${WALK_OUT}/maestro-console.txt" 2>&1
+}
+walk "${WALK_TIMEOUT}"
 rc=$?
+# Maestro's XCUITest driver on the simulator can stop answering in the middle of a walk ("xcTestDriverStatusCheck:
+# [Failed] ... ConnectException" in maestro.log after the flow's commands started; the same lines while the driver
+# starts up do not count); the step then fails with the app on the right screen. That is the tool, not the app: walk
+# once more, from the start, with what is left of the time. Any other failure, or a second one, stands.
+driver_lost() {
+  find "${WALK_OUT}/maestro" -name maestro.log -print0 2>/dev/null | xargs -0 -r awk '
+    /maestro\.orchestra\.Orchestra/ { running = 1 }
+    running && /xcTestDriverStatusCheck: \[Failed\].*ConnectException/ { lost = 1 }
+    END { exit lost ? 0 : 1 }'
+}
+left=$((WALK_TIMEOUT - ($(date +%s) - start)))
+if [ "${rc}" != 0 ] && [ "${rc}" != 124 ] && [ "${left}" -ge 120 ] && driver_lost; then
+  echo "Maestro's driver lost its connection during the walk; walking again (${left} s left)"
+  mv "${WALK_OUT}/maestro" "${WALK_OUT}/maestro-first-try"
+  mv "${WALK_OUT}/maestro-console.txt" "${WALK_OUT}/maestro-first-try/maestro-console.txt"
+  mkdir -p "${WALK_OUT}/maestro"
+  status retried_after_driver_lost yes
+  walk "${left}"
+  rc=$?
+fi
 cat "${WALK_OUT}/maestro-console.txt"
 status maestro_exit "${rc}"
 status timed_out "$([ "${rc}" = 124 ] && echo yes || echo no)"
