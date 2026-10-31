@@ -49,6 +49,9 @@ import {
   decodePairingUri,
   decodeRecoveryUri,
   generateMessageId,
+  GUARDIAN_FEATURES,
+  isLimitOff,
+  LIMIT_OFF_SATS,
   normalizePolicy,
   normalizeRelayUrl,
   pairingMessage,
@@ -356,8 +359,8 @@ export interface WalletSnapshot {
   watchedWalletId?: string;
   /** The guardian stopped guarding this wallet (`wallet_retired`); for `recovered` see `WalletRetiredView.recoveredElsewhere`. History stays readable. */
   walletRetired?: WalletRetiredView;
-  /** The phone's estimate of the guardian's 24 h count, and the limit. */
-  dailyLimit?: { limitSats: number; spentEstimateSats: number; remainingSats: number };
+  /** The phone's estimate of the guardian's 24 h count, and the limit. `off`: there is no daily limit (`limitSats` is `LIMIT_OFF_SATS`). */
+  dailyLimit?: { limitSats: number; spentEstimateSats: number; remainingSats: number; off: boolean };
   /** After a recovery moved the wallet: the hardware wallet must register it and confirm its key (`confirmHardware`). */
   hardwareConfirmRequired: boolean;
   /** A recovering phone whose access end is known: see `TrikeyWallet.recoveryAccess`. */
@@ -1200,6 +1203,8 @@ export class TrikeyWallet {
     } catch (e) {
       throw new WalletError('invalid_rules', `Invalid rules: ${(e as Error).message}`, { cause: e });
     }
+    // Pairing rules are not hardware-approved: the guardian refuses "no daily limit" here (turn it off after pairing).
+    if (isLimitOff(rules.dailyLimitSats)) throw new WalletError('invalid_rules', 'A wallet is paired with a daily limit. You can turn it off afterwards, with your hardware wallet.');
     const { wallet } = session;
     const walletId = wallet.fingerprint();
     const descriptor = wallet.descriptor();
@@ -1317,6 +1322,7 @@ export class TrikeyWallet {
       activeRecoveryId: st.activeRecoveryId,
       nextHardwareSequence: st.nextHardwareSequence,
       dailyLimit: st.dailyLimit,
+      ...(st.features ? { features: [...st.features] } : {}),
       skewSec: st.time - this.nowSec(),
       ...(st.walletId ? { walletId: st.walletId } : {}),
       ...(st.hardwareConfirmRequired !== undefined ? { hardwareConfirmRequired: st.hardwareConfirmRequired } : {}),
@@ -1490,6 +1496,8 @@ export class TrikeyWallet {
     });
     await this.txs.keepOnly(new Set());
     this.emit({ type: 'wallet_switched', walletId, previousWalletId, reason: 'recovery', hardwareConfirmRequired: true });
+    // The new wallet's rules: with the daily limit back on if it was off (the guardian restores the last value).
+    await this.getRules().catch(() => undefined);
     return true;
   }
 
@@ -1615,7 +1623,7 @@ export class TrikeyWallet {
       guardian: this.s.guardianStatus,
       ...(this.s.guardianStatus?.watchedWalletId ? { watchedWalletId: this.s.guardianStatus.watchedWalletId } : {}),
       ...(this.walletRetired ? { walletRetired: this.walletRetired } : {}),
-      dailyLimit: limit === undefined ? undefined : { limitSats: limit, spentEstimateSats: spent, remainingSats: Math.max(0, limit - spent) },
+      dailyLimit: limit === undefined ? undefined : { limitSats: limit, spentEstimateSats: spent, remainingSats: Math.max(0, limit - spent), off: isLimitOff(limit) },
       hardwareConfirmRequired: this.hardwareConfirmRequired,
       ...(this.recoveryAccess ? { recoveryAccess: this.recoveryAccess } : {}),
       ...this.singleKeySnapshot(),
@@ -1937,7 +1945,17 @@ export class TrikeyWallet {
       s.rules = { policy: r.policy, policyHash: r.policyHash, nextHardwareSequence: r.nextHardwareSequence, fetchedAt: this.now() };
       // The cached guardian count carries the limit too, and quotes prefer it: it must not keep the old one.
       const dl = s.guardianStatus?.dailyLimit;
-      if (dl) s.guardianStatus!.dailyLimit = { ...dl, limitSats: r.policy.dailyLimitSats, availableSats: Math.max(0, r.policy.dailyLimitSats - dl.usedSats) };
+      if (dl) {
+        const off = isLimitOff(r.policy.dailyLimitSats);
+        const { off: _off, limitBeforeOffSats, ...rest } = dl;
+        s.guardianStatus!.dailyLimit = {
+          ...rest,
+          limitSats: r.policy.dailyLimitSats,
+          availableSats: Math.max(0, r.policy.dailyLimitSats - dl.usedSats),
+          ...(off ? { off: true } : {}),
+          ...(off && limitBeforeOffSats !== undefined ? { limitBeforeOffSats } : {}),
+        };
+      }
     });
     return { policy: r.policy, policyHash: r.policyHash, nextHardwareSequence: r.nextHardwareSequence };
   }
@@ -1960,7 +1978,8 @@ export class TrikeyWallet {
     if (!walletId) throw new WalletError('wrong_state', 'The wallet is not paired yet.');
     const sequence = opts.sequence ?? (await this.nextSequence());
     const expiresAt = this.nowSec() + APPROVAL_TTL_SEC;
-    const text = approvalMessage(action, { walletId, sequence, expiresAt });
+    // A guardian without "no daily limit" rebuilds only the version-1 policy text (PROTOCOL.md, "Hardware approvals").
+    const text = approvalMessage(action, { walletId, sequence, expiresAt, ...(this.limitOffSupported ? {} : { legacyPolicyText: true }) });
     const signature = await this.withHardware((hw, rec) => this.signWithAuthKey(hw, rec, text, 'approval'));
     return { kind: 'bip137', sequence, expiresAt, signature };
   }
@@ -1990,6 +2009,7 @@ export class TrikeyWallet {
     }
     const current = await this.getRules();
     if (current.policyHash === policyHash(policy)) return { ...current, approvedBy: 'unchanged' };
+    if (isLimitOff(policy.dailyLimitSats) && !isLimitOff(current.policy.dailyLimitSats)) await this.requireLimitOffAllowed();
     const verify = async () => {
       const got = await this.call('policy.get', {});
       return got.policyHash === policyHash(policy) ? got : undefined;
@@ -2016,6 +2036,52 @@ export class TrikeyWallet {
   async setDailyLimit(sats: number) {
     const { policy } = await this.getRules();
     return this.updateRules({ ...policy, dailyLimitSats: sats });
+  }
+
+  /**
+   * The guardian knows "no daily limit" (`limit_off` in `guardian.status.features`, as last read): only then may the
+   * app offer it. An older guardian would rebuild the version-1 text and refuse the device's signature.
+   */
+  get limitOffSupported(): boolean {
+    return !!this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.limitOff);
+  }
+
+  /** There is no daily limit now (as the guardian last said). */
+  get limitOff(): boolean {
+    const limit = this.s.guardianStatus?.dailyLimit?.limitSats ?? this.s.rules?.policy.dailyLimitSats;
+    return limit !== undefined && isLimitOff(limit);
+  }
+
+  /**
+   * The limit that comes back when the limit is on again without the owner choosing one (after a recovery, or at a new
+   * guardian): what the guardian recorded when it was turned off. Undefined while the limit is on, or when not known.
+   */
+  get limitBeforeOff(): number | undefined {
+    return this.limitOff ? this.s.guardianStatus?.dailyLimit?.limitBeforeOffSats : undefined;
+  }
+
+  /** Refuses (before the hardware wallet is asked) to turn the limit off where the guardian would refuse it. */
+  private async requireLimitOffAllowed(): Promise<void> {
+    const st = await this.refreshStatus();
+    if (!st.features?.includes(GUARDIAN_FEATURES.limitOff))
+      throw new WalletError('guardian_unsupported', "Your guardian can't turn the daily limit off yet. Update the guardian first.");
+    if (st.activeRecoveryId)
+      throw new WalletError('wrong_state', "The daily limit can't be turned off while a recovery is running.", {
+        refusal: { kind: 'recovery_in_progress', recoveryId: st.activeRecoveryId, message: 'A recovery is running.' },
+      });
+    if (st.hardwareConfirmRequired) throw new WalletError('hardware_unconfirmed', 'Confirm your hardware wallet for this wallet first.');
+  }
+
+  /**
+   * Turns the daily limit off: phone + guardian can then send everything. A loosening, so the hardware wallet approves
+   * it, on a text that says `limit=off` (`Trikey policy v2 ...`). Refused by the wallet before anything is signed when
+   * the guardian does not support it, a recovery is running or the hardware wallet still has to confirm the wallet.
+   * The guardian alerts this phone and every alert contact. Turn it back on with `setDailyLimit` (the phone alone).
+   */
+  async turnLimitOff() {
+    const { policy } = await this.getRules();
+    // `updateRules` checks what the guardian supports before the hardware wallet is asked.
+    return this.updateRules({ ...policy, dailyLimitSats: LIMIT_OFF_SATS });
   }
 
   async setRecoveryDelay(days: Policy['recoveryDelayDays']) {
@@ -2604,6 +2670,11 @@ export class TrikeyWallet {
         this.alertMayAdopt = true;
         if ('recoveryId' in alert) this.alertRecoveryId = alert.recoveryId;
         break;
+      case 'limit_off':
+      case 'limit_on':
+        // The rules changed (possibly not from this phone, or this phone missed the answer): read them again.
+        this.alertRules = true;
+        break;
       default:
         if ('recoveryId' in alert) this.alertRecoveryId = alert.recoveryId;
     }
@@ -2639,6 +2710,7 @@ export class TrikeyWallet {
   private alertAgain = false;
   private alertRecoveryId?: string;
   private alertMayAdopt = false;
+  private alertRules = false;
 
   private refreshAfterAlerts(): void {
     if (this.alertRefresh) {
@@ -2659,6 +2731,10 @@ export class TrikeyWallet {
           const st = await this.readStatus({ viaAlert });
           const id = st.activeRecoveryId ?? this.alertRecoveryId;
           if (id) await this.recoveryStatus(id);
+          // A `limit_off` / `limit_on` alert about the wallet this phone holds: its rules changed.
+          const rules = this.alertRules;
+          this.alertRules = false;
+          if (rules && this.s.stage === 'paired' && st.walletId === this.s.wallet?.walletId) await this.getRules();
         } catch {
           /* the alert was delivered; refreshing is best effort */
         }
@@ -3863,7 +3939,10 @@ export class TrikeyWallet {
     const descriptor = wallet.descriptor();
     const cosignerPub = hex.encode(wallet.accountPubkeys().cosigner);
     const name = policyNameOf(walletId);
-    const rules = normalizePolicy(this.s.rules!.policy);
+    const current = normalizePolicy(this.s.rules!.policy);
+    // A new guardian is paired with the limit on (pairing refuses "off"): the one it had before it was turned off
+    // (0, "never", when that is not known), until the hardware wallet turns it off there again.
+    const rules = isLimitOff(current.dailyLimitSats) ? { ...current, dailyLimitSats: this.s.guardianStatus?.dailyLimit?.limitBeforeOffSats ?? 0 } : current;
     this.emitStep('pair');
     const { proof, hmac } = await this.withHardware(async (hw, rec) => {
       const reg = await hw.registerWallet({ name, descriptor });

@@ -185,6 +185,11 @@ export type WalletErrorCode =
   /** The sweep fee cap is too low for even the minimum relay fee. */
   | 'fee_cap_too_low'
   | 'invalid_rules'
+  /**
+   * The guardian cannot do what was asked: it does not report the feature (`guardian.status.features`), e.g.
+   * `limit_off` for "no daily limit". Nothing was sent and the hardware wallet was not asked; update the guardian.
+   */
+  | 'guardian_unsupported'
   | 'no_recovery'
   /**
    * The guardian refused `recovery.update` (a coin that arrived during a recovery): `reason` names its rule
