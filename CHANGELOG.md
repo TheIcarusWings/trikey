@@ -27,6 +27,9 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
   "recovering" for 10 to 30 seconds after the guardian had taken the new wallet over: its status check could reach the
   guardian just before the takeover and go unanswered. It now acts on the guardian's "wallet adopted" alert directly,
   with the same checks of the new wallet as before (#66).
+- **App: the Network picker no longer closes the app.** On the first screen, picking a network while a wallet already
+  existed threw an error out of the tap, which closes a release build; the picker now says why the network can't change
+  (#71). Found on an iPhone.
 - CI: the demo walk is walked again once when Maestro's iOS driver loses its connection mid-walk (#64), and other apps'
   "isn't responding" dialogs on the Android emulator no longer hide the app from it (#67).
 
