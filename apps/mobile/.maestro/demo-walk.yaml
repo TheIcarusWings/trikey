@@ -1,0 +1,190 @@
+# A short walk through the demo: the first screen, into Demo mode, Home, Send (to the amount), Receive, Settings and
+# Activity, back to Home each time. It catches a screen that crashes or renders nothing when it is opened, which the
+# launch checks (the app is still running 25 s after it starts) cannot see.
+#
+# CI runs it after the launch check, on the Android emulator (.github/workflows/android-launch.yml) and in the iOS
+# Simulator (.github/workflows/ios-launch.yml). Locally, against an emulator or a simulator with the app installed (a
+# Release build, which starts in Real mode, or a debug build, which starts in Demo):
+#
+#   maestro test apps/mobile/.maestro/demo-walk.yaml
+#
+# What it taps: accessibility labels the screens already have ("Send", "Receive", "Settings", the keypad's digits) and a
+# few testIDs (welcome-change-mode, home-balance, home-see-all, receive-address, screen-back). Text selectors are
+# regular expressions that must match the whole label; a "." stands in for the "·" of the app's labels. No sleeps and
+# no coordinates: every screen is awaited with extendedWaitUntil. The labels are the same on both platforms, so there
+# is no platform-specific branch.
+appId: app.trikey.wallet
+name: Demo walk
+tags:
+  - ci
+---
+- launchApp:
+    clearState: true
+    stopApp: true
+
+# A fresh install opens on Welcome (Real mode in a Release build); a phone already in the demo opens on Home.
+- extendedWaitUntil:
+    visible:
+      id: 'welcome-change-mode|home-balance'
+    timeout: 90000
+    label: Wait for the first screen (Welcome or Home)
+
+# Welcome: "Real mode · change wallet mode", then Demo in the wallet mode picker, then "Switch to Demo".
+- runFlow:
+    label: Switch Welcome to Demo mode
+    when:
+      visible:
+        id: welcome-change-mode
+    commands:
+      - tapOn:
+          id: welcome-change-mode
+          label: Open the wallet mode picker
+      - tapOn:
+          text: Demo
+          label: Pick Demo
+      - tapOn:
+          text: Switch to Demo
+          label: Tap "Switch to Demo"
+      # The wallet restarts in Demo: on Home ("Balance: … Tap to hide"), or on Welcome again with its "Demo · sample
+      # data" pill, depending on where the navigator lands.
+      - extendedWaitUntil:
+          visible: 'Demo . sample data|Balance: .*'
+          timeout: 30000
+          label: Wait for the demo wallet (Welcome in Demo or Home)
+      # Still on Welcome: start the app again. It opens in the saved mode, and the demo wallet is set up, so on Home.
+      - runFlow:
+          label: Reopen the app in Demo mode
+          when:
+            visible: 'Demo . sample data'
+          commands:
+            - launchApp:
+                stopApp: true
+
+# Home: a balance (its label is "Balance: 4,210,000 sats. Tap to hide").
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 60000
+    label: Wait for Home
+- assertVisible:
+    text: 'Balance: .*[0-9].*'
+    label: Home shows a balance
+
+# Send: the demo's "Scan QR code" fills in a sample address, Continue opens the amount, the keypad types 5000.
+- tapOn:
+    text: Send
+    label: Open Send
+- extendedWaitUntil:
+    visible: Scan QR code
+    timeout: 20000
+    label: Wait for "Send to"
+- tapOn:
+    text: Scan QR code
+    label: Fill in the demo address
+- tapOn:
+    text: Continue
+    label: Continue to the amount
+# The amount reads out as "Amount: 0 sats, to tb1q…".
+- extendedWaitUntil:
+    visible: 'Amount: 0 sats, to .*'
+    timeout: 20000
+    label: Wait for the amount screen
+- tapOn:
+    text: '5'
+    label: Type 5
+- tapOn:
+    text: '0'
+    label: Type 0
+- tapOn:
+    text: '0'
+    label: Type 0
+- tapOn:
+    text: '0'
+    label: Type 0
+- extendedWaitUntil:
+    visible: 'Amount: 5,000 sats, to .*'
+    timeout: 20000
+    label: The amount reads 5,000 sats
+# The demo plans the payment: the phone and the guardian, within today's limit.
+- assertVisible:
+    text: "Within today's limit.*"
+    label: The amount is quoted within today's limit
+- tapOn:
+    id: screen-back
+    label: Back to "Send to"
+- extendedWaitUntil:
+    visible: Scan QR code
+    timeout: 20000
+    label: Wait for "Send to"
+- tapOn:
+    id: screen-back
+    label: Back to Home
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 20000
+    label: Wait for Home
+
+# Receive: the address and its QR code.
+- tapOn:
+    text: Receive
+    label: Open Receive
+- extendedWaitUntil:
+    visible:
+      id: receive-address
+    timeout: 20000
+    label: Wait for the receive address
+- assertVisible:
+    text: 'QR code for .*'
+    label: Receive shows a QR code
+- assertVisible:
+    text: 'Sample address. Demo mode moves no bitcoin.'
+    label: Receive says the address is a sample
+- tapOn:
+    id: screen-back
+    label: Back to Home
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 20000
+    label: Wait for Home
+
+# Settings.
+- tapOn:
+    text: Settings
+    label: Open Settings
+- extendedWaitUntil:
+    visible: Appearance
+    timeout: 20000
+    label: Wait for Settings
+- tapOn:
+    id: screen-back
+    label: Back to Home
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 20000
+    label: Wait for Home
+
+# Activity, through "See all" under Recent.
+- scrollUntilVisible:
+    element:
+      id: home-see-all
+    direction: DOWN
+    timeout: 15000
+    label: Find "See all" under Recent
+- tapOn:
+    id: home-see-all
+    label: Open Activity
+- extendedWaitUntil:
+    visible: Activity
+    timeout: 20000
+    label: Wait for Activity
+- tapOn:
+    id: screen-back
+    label: Back to Home
+- extendedWaitUntil:
+    visible:
+      id: home-balance
+    timeout: 20000
+    label: Back on Home at the end
