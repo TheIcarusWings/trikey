@@ -41,6 +41,19 @@ export interface HardwareSigner {
   close(): Promise<void>;
 }
 
+/**
+ * True when `e`, or an error it wraps (`cause`), says the device's connection is gone: an error named `HardwareError` with
+ * `code: 'disconnected'`, as the app's Ledger and Trezor signers throw. The wallet then drops a connection it was holding
+ * and connects again.
+ */
+export function isHardwareDisconnect(e: unknown): boolean {
+  for (let x = e, depth = 0; x && typeof x === 'object' && depth < 5; x = (x as { cause?: unknown }).cause, depth++) {
+    const { name, code } = x as { name?: unknown; code?: unknown };
+    if (name === 'HardwareError' && code === 'disconnected') return true;
+  }
+  return false;
+}
+
 /** Finds and connects hardware wallets. One implementation per transport. */
 export interface HardwareProvider {
   readonly kinds: readonly HardwareKind[];

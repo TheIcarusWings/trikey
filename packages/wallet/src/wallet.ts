@@ -96,7 +96,7 @@ import {
   mnemonicFromEntropy,
   newMnemonic,
 } from './keys.js';
-import type { CloudBackupStore, HardwareKind, HardwareProvider, HardwareSigner, HardwareWalletPolicy, KeyValueStore, PasskeyPrf, SecureKeyStore } from './platform.js';
+import { isHardwareDisconnect, type CloudBackupStore, type HardwareKind, type HardwareProvider, type HardwareSigner, type HardwareWalletPolicy, type KeyValueStore, type PasskeyPrf, type SecureKeyStore } from './platform.js';
 import { GuardianSilentPaymentScanner, GuardianSingleKeyChain } from './guardian-sp.js';
 import { TxCache } from './txcache.js';
 import { parseScannedCode, type ScannedCode } from './scan.js';
@@ -556,6 +556,8 @@ export class TrikeyWallet {
   private rpc?: GuardianRpc;
   private pool?: RelayPool;
   private hwSession?: HardwareSigner;
+  /** A held connection that went stale, and the one `withHardware` replaced it with (so its holder closes that one). */
+  private readonly hwReplaced = new WeakMap<HardwareSigner, HardwareSigner>();
   private pairing?: PairingSession;
   private chainSource?: ChainSource;
   private fees?: FeeEstimates;
@@ -974,18 +976,42 @@ export class TrikeyWallet {
     return this.deps.hardware;
   }
 
-  /** Connects the wallet's hardware wallet (checking it is the same device), runs `fn`, disconnects. */
+  /**
+   * Connects the wallet's hardware wallet (checking it is the same device), runs `fn`, disconnects. A connection held
+   * from an earlier step (`hwSession`) is used instead; if it turns out to be gone (a Ledger drops Bluetooth while the
+   * phone does something else, like scanning the guardian's code), it is replaced by a fresh one and `fn` runs again.
+   */
   private async withHardware<T>(fn: (hw: HardwareSigner, rec: HardwareRecord) => Promise<T>, rec: HardwareRecord | undefined = this.s.hardware): Promise<T> {
     if (!rec) throw new WalletError('wrong_state', 'No hardware wallet is set up.');
     const reuse = this.hwSession && this.hwSession.info.fingerprint === rec.fingerprint ? this.hwSession : undefined;
-    const hw = reuse ?? (await this.hardwareProvider().connect({ kind: rec.kind }));
+    if (reuse) {
+      try {
+        return await fn(reuse, rec);
+      } catch (e) {
+        if (!isHardwareDisconnect(e) || this.hwSession !== reuse) throw e;
+        const fresh = await this.connectSame(rec);
+        this.hwSession = fresh;
+        this.hwReplaced.set(reuse, fresh);
+        await reuse.close().catch(() => {});
+        return await fn(fresh, rec);
+      }
+    }
+    const hw = await this.connectSame(rec);
     try {
-      if (hw.info.fingerprint !== rec.fingerprint)
-        throw new WalletError('hardware_mismatch', `Connect the wallet's hardware wallet (fingerprint ${rec.fingerprint}), not ${hw.info.fingerprint}.`);
       return await fn(hw, rec);
     } finally {
-      if (!reuse) await hw.close().catch(() => {});
+      await hw.close().catch(() => {});
     }
+  }
+
+  /** Connects a hardware wallet and checks it is the wallet's own (`rec`). */
+  private async connectSame(rec: HardwareRecord): Promise<HardwareSigner> {
+    const hw = await this.hardwareProvider().connect({ kind: rec.kind });
+    if (hw.info.fingerprint !== rec.fingerprint) {
+      await hw.close().catch(() => {});
+      throw new WalletError('hardware_mismatch', `Connect the wallet's hardware wallet (fingerprint ${rec.fingerprint}), not ${hw.info.fingerprint}.`);
+    }
+    return hw;
   }
 
   /** The wallet as the device should see it. */
@@ -2665,10 +2691,19 @@ export class TrikeyWallet {
         return; // the guardian no longer answers for it: nothing to re-read
       }
       case 'wallet_adopted':
-      case 'recovery_completed':
-        // The guardian may have taken this phone over (a recovery it started): ask it even if the access has run out.
+        // The guardian sends this once it guards the recovery's destination with this phone as its paired phone, so it
+        // answers this phone now, access or not: switch at once. Not only through the coalesced refresh below: that may
+        // be held up until the RPC timeout by a read `recovery_completed` set off, which comes before the guardian has
+        // broadcast the sweep and adopted the wallet, and which it drops unanswered while this phone's access has run
+        // out. `adoptRecovered` still checks the wallet and the guardian's record of the recovery.
+        if (from && from === this.s.guardian?.pubkey && !this.recoveredElsewhere) void this.followGuardianWallet(alert.walletId).catch(() => undefined);
         this.alertMayAdopt = true;
-        if ('recoveryId' in alert) this.alertRecoveryId = alert.recoveryId;
+        this.alertRecoveryId = alert.recoveryId;
+        break;
+      case 'recovery_completed':
+        // The guardian may be about to take this phone over (a recovery it started): ask it even if the access has run out.
+        this.alertMayAdopt = true;
+        this.alertRecoveryId = alert.recoveryId;
         break;
       case 'limit_off':
       case 'limit_on':
@@ -2718,30 +2753,34 @@ export class TrikeyWallet {
       return;
     }
     this.alertRefresh = (async () => {
-      do {
-        this.alertAgain = false;
-        await new Promise((r) => setTimeout(r, ALERT_COALESCE_MS)); // let a burst of replayed alerts arrive
-        if (!this.rpc) return;
-        // A phone whose recovery access ran out is only answered once the guardian adopted it: an alert about the
-        // recovery's progress changes nothing it could read, so only the ones that may mean "adopted" ask.
-        const viaAlert = this.alertMayAdopt;
-        this.alertMayAdopt = false;
-        if (this.recoveryAccess?.expired && !viaAlert) continue;
-        try {
-          const st = await this.readStatus({ viaAlert });
-          const id = st.activeRecoveryId ?? this.alertRecoveryId;
-          if (id) await this.recoveryStatus(id);
-          // A `limit_off` / `limit_on` alert about the wallet this phone holds: its rules changed.
-          const rules = this.alertRules;
-          this.alertRules = false;
-          if (rules && this.s.stage === 'paired' && st.walletId === this.s.wallet?.walletId) await this.getRules();
-        } catch {
-          /* the alert was delivered; refreshing is best effort */
-        }
-      } while (this.alertAgain && this.rpc);
-    })().finally(() => {
-      this.alertRefresh = undefined;
-    });
+      try {
+        do {
+          this.alertAgain = false;
+          await new Promise((r) => setTimeout(r, ALERT_COALESCE_MS)); // let a burst of replayed alerts arrive
+          if (!this.rpc) return;
+          // A phone whose recovery access ran out is only answered once the guardian adopted it: an alert about the
+          // recovery's progress changes nothing it could read, so only the ones that may mean "adopted" ask.
+          const viaAlert = this.alertMayAdopt;
+          this.alertMayAdopt = false;
+          if (this.recoveryAccess?.expired && !viaAlert) continue;
+          try {
+            const st = await this.readStatus({ viaAlert });
+            const id = st.activeRecoveryId ?? this.alertRecoveryId;
+            if (id) await this.recoveryStatus(id);
+            // A `limit_off` / `limit_on` alert about the wallet this phone holds: its rules changed.
+            const rules = this.alertRules;
+            this.alertRules = false;
+            if (rules && this.s.stage === 'paired' && st.walletId === this.s.wallet?.walletId) await this.getRules();
+          } catch {
+            /* the alert was delivered; refreshing is best effort */
+          }
+        } while (this.alertAgain && this.rpc);
+      } finally {
+        // Cleared as the loop ends, not a microtask later: an alert landing in between would set `alertAgain` on a
+        // loop that no longer looks at it, and its refresh would be lost.
+        this.alertRefresh = undefined;
+      }
+    })();
   }
 
   // ===========================================================================
@@ -3798,8 +3837,11 @@ export class TrikeyWallet {
     try {
       return await fn();
     } finally {
-      if (this.hwSession === hw) this.hwSession = undefined;
+      let held = hw;
+      for (let next = this.hwReplaced.get(held); next; next = this.hwReplaced.get(held)) held = next;
+      if (this.hwSession === held) this.hwSession = undefined;
       await hw.close().catch(() => {});
+      if (held !== hw) await held.close().catch(() => {});
     }
   }
 

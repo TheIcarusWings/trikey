@@ -12,6 +12,7 @@ import { SelfTestRow } from '@/components/self-test-row';
 import { Segmented } from '@/components/segmented';
 import { Switch } from '@/components/ui/switch';
 import { Text } from '@/components/ui/text';
+import { CAN_CHECK_FOR_UPDATES, UpdateCheck } from '@/components/update-check';
 import { formatSats, serverHost, useWallet, useWalletService, type GuardianStatus, type ThemePreference } from '@/data';
 import { IS_IOS, pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
@@ -87,6 +88,7 @@ export default function SettingsScreen() {
       <SectionLabel>About</SectionLabel>
       <ListGroup>
         <SettingsRow title="Trikey" value={`${Constants.expoConfig?.version ?? ''} · pre-alpha`} />
+        {CAN_CHECK_FOR_UPDATES ? <UpdateCheck /> : null}
         <SettingsRow title="Report a problem" subtitle="Opens a public GitHub issue" onPress={() => router.push('/settings/report')} />
       </ListGroup>
     </Screen>

@@ -355,6 +355,10 @@ def main(argv: list[str]) -> int:
         lines = [f"The demo walk passed on {device}: {len(done)} steps in {seconds} s "
                  f"(Welcome to Demo mode, Home, Send to an amount, Receive, Settings, Activity; Maestro {status.get('maestro_version', '?')})."]
         annotate("notice", title, lines)
+        if status.get("retried_after_driver_lost") == "yes":
+            annotate("warning", f"{title} retried",
+                     ["Maestro's driver lost its connection to the simulator during the first walk, so the walk ran again and "
+                      "passed. The first try's output is in `maestro-first-try/` in the artifact."])
         if log.js:
             annotate("warning", f"{title} JavaScript errors",
                      ["The walk passed, but the app logged JavaScript errors on the way:", *log.js[:LINES_PER_ANNOTATION - 1]])
