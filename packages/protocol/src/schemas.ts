@@ -430,7 +430,22 @@ export const GuardianStatusResult = z
         limitSats: Sats,
         usedSats: Sats,
         availableSats: Sats,
+        /**
+         * True while there is no daily limit (`limitSats` is `LIMIT_OFF_SATS`). Absent otherwise, and from guardians
+         * without the `limit_off` feature.
+         */
+        off: z.literal(true).optional(),
+        /** While off: the limit it had before it was turned off, which comes back after a recovery (when known). */
+        limitBeforeOffSats: Sats.optional(),
       })
+      .optional(),
+    /**
+     * What this guardian can do beyond the base protocol (`GUARDIAN_FEATURES`; `limit_off`: no daily limit with the
+     * version-2 policy text). Names it does not know a phone ignores. Absent from guardians before features.
+     */
+    features: z
+      .array(z.string().regex(/^[a-z0-9_]{1,32}$/))
+      .max(32)
       .optional(),
     /** The wallet the guardian guards now. It changes when the guardian adopts a recovery's destination wallet. */
     walletId: WalletId.optional(),
@@ -860,7 +875,8 @@ const recoveryAlert = {
 /**
  * Alert types mirror the engine's `AlertKind` (`recovery_started`, `recovery_reminder`, `recovery_ready`,
  * `recovery_cancelled`, `recovery_completed`), plus what the service raises itself: `guardian_locked`,
- * `wallet_adopted`, `wallet_retired`, `sp_received` and `relays_changed`.
+ * `wallet_adopted`, `wallet_retired`, `sp_received` and `relays_changed`; and `limit_off` / `limit_on`, which the
+ * engine records and the service delivers like the recovery alerts.
  */
 export const Alert = z.discriminatedUnion('type', [
   stamped({ ...alertBase, type: z.literal('recovery_started'), ...recoveryAlert }),
@@ -935,6 +951,27 @@ export const Alert = z.discriminatedUnion('type', [
      */
     type: z.literal('relays_changed'),
     relays: RelayList,
+  }),
+  stamped({
+    ...alertBase,
+    /**
+     * The daily limit was turned off with a hardware approval: phone + guardian can now send everything. Sent to the
+     * paired phone; alert contacts get it as a NIP-17 DM. `limitBeforeSats`: the limit before (absent when it was off
+     * already). Phones before this alert drop it (an unknown `type`) and read the limit from `guardian.status`.
+     */
+    type: z.literal('limit_off'),
+    sequence: z.int().min(1),
+    limitBeforeSats: Sats.optional(),
+  }),
+  stamped({
+    ...alertBase,
+    /**
+     * The daily limit is on again at `limitSats`: the phone set it (tightening), a hardware approval did, or a recovery
+     * completed (`reason: "recovery"`, the new wallet starts with the limit it had before it was turned off).
+     */
+    type: z.literal('limit_on'),
+    limitSats: Sats,
+    reason: z.enum(['phone', 'hardware', 'recovery']),
   }),
 ]);
 
