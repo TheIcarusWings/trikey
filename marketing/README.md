@@ -33,3 +33,23 @@ How it's made:
 
 Rules the videos follow: pre-alpha and not audited is stated on every end card; demo balances and
 addresses only; no competitor is named, and hardware wallet makers appear in text only, with no logos.
+
+## Setup tutorials
+
+Step-by-step videos for testers, 16:9 only. The plan is in [tutorials/PLAN.md](tutorials/PLAN.md).
+
+```sh
+npm ci -w @trikey/guardian-web   # once, from the repo root
+cd marketing
+render/tutorials.sh              # or: render/tutorials.sh t1
+```
+
+- `render/capture/guardian.js` records the guardian's web pages from `apps/guardian-web`'s mock scenarios (the script
+  starts and stops a vite dev server for it), with a fixed clock so re-renders match.
+- `render/lib/tutorial.js` + `tutorial.css` lay out each video: the browser window, the step panel, the chapters, and
+  the title and end cards. The end card's status line is set there once for every tutorial.
+- `render/videos/t<n>-*.html` hold each tutorial's steps and timing. Umbrel, hardware wallets and system screens are
+  drawn as illustrations (marked "Illustration" in the window), with no logos.
+- Nothing names a version or a date, so a release only needs a re-render when a screen shown in a video changes.
+
+Output: `out/trikey-t<n>-<name>.mp4`, 1920×1080, H.264 + AAC with a quiet music bed.
