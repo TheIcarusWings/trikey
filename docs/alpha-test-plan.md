@@ -300,7 +300,9 @@ Do:
 
 - In the app, "Create a wallet", **Continue**, then pick your device. Ledger: unlock it, open **Bitcoin** (mainnet) or
   **Bitcoin Test** (test networks), keep Bluetooth on, approve sharing the public key. Trezor: unlock it, keep it connected;
-  Suite Lite opens and returns you to Trikey.
+  Suite Lite opens and returns you to Trikey. When the Trezor signs Trikey's messages (pairing, and every hardware approval
+  later), firmware before 2.13.0 and the Model One first warn about the path ("Unknown derivation path" or "Wrong address
+  path for selected coin"): that is expected, continue. Note in the report which one you saw, with the firmware version.
 - During setup the device asks you to approve the new 2-of-3 wallet (the app's checklist for your device lists it; it may come
   at the connect screen or at "Approve on Ledger" once you set the limit in step 4). **Read the device's screen**: it should say
   Trikey and 2 of 3.
