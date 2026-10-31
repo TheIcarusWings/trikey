@@ -11,6 +11,8 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 - CI also opens every PR's app in the iOS Simulator (a Release build for the simulator, no signing and no Apple
   account) and fails on a crash at start, with the crash report and the app's log lines in the check's annotations
   (`ios-launch.yml`). The iOS build instructions now build Release, so the app runs without Metro.
+- Design proposal for an optional Savings wallet that phone + guardian cannot spend, and for turning the daily
+  limit off with a hardware approval: [docs/design/savings-and-limit-off.md](docs/design/savings-and-limit-off.md).
 - CI also walks through the demo after the launch check, on the Android emulator and in the iOS Simulator, with Maestro
   (`apps/mobile/.maestro/demo-walk.yaml`: Welcome into Demo mode, Home, Send to the amount, Receive, Settings, Activity),
   and fails the pull request when a step fails or the app crashes on the way, with the failing step, Maestro's error and
