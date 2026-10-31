@@ -102,11 +102,13 @@ the phone unless you send it.
 2. Leave `EXPO_PUBLIC_PASSKEY_RP_ID` **unset** (it adds the Associated Domains capability, which a free account cannot sign) and
    build **without iCloud**: `TRIKEY_DISABLE_ICLOUD=1` (see `.env.example`). Nothing in the app or in `app.config.ts` then asks
    for the iCloud or associated-domains entitlements.
-3. Build a development client straight onto your phone (USB, or Wi-Fi after the first time):
+3. Build the app straight onto your phone (USB, or Wi-Fi after the first time). `--configuration Release` puts the
+   JavaScript inside the app, so it opens without Metro running on your computer (leave it out for a development client
+   that loads the JavaScript from `npx expo start --dev-client`):
 
    ```sh
    cd apps/mobile
-   TRIKEY_DISABLE_ICLOUD=1 npx expo run:ios --device
+   TRIKEY_DISABLE_ICLOUD=1 npx expo run:ios --device --configuration Release
    ```
 
    Pick your Apple ID as the team if Xcode asks, and trust the developer profile on the phone (Settings, General, VPN &
@@ -114,6 +116,10 @@ the phone unless you send it.
    `com.yourname.trikey`) if `app.trikey.wallet` is refused.
 4. A free provisioning profile lasts **7 days**: after that the app stops opening until you run the same command again. The
    wallet's data stays on the phone, so a reinstall over it keeps your wallet, but make a backup first.
+
+CI builds the same Release app for the iOS Simulator (no signing, no Apple account) and opens it in a simulator on every pull
+request that touches the app: `.github/workflows/ios-launch.yml` fails if the app is not running 25 seconds later or crashed,
+with the crash report and log lines in the check's annotations.
 
 ### Android
 
