@@ -204,8 +204,10 @@ does not reach a release. A local build is in `apps/mobile/README.md`, "Android"
 What kind of build it is:
 
 - A **release build** with the app's code inside it. Nothing needs to run on a computer, and it starts in **Real** mode.
-- Signed with a **one-off key** made during the build and thrown away. Android will not update one such build with another:
-  to install a newer build, **uninstall the old one first, which deletes the wallet on that phone**. Back up first.
+- From 0.1.6-alpha, signed with the **Trikey release key**: a newer release installs over the older one and the wallet on the
+  phone stays. To get updates without downloading by hand, use Obtainium ([docs/android-signing.md](android-signing.md)).
+  Builds up to 0.1.5-alpha had a one-off key each: to move from one of those, **uninstall it first, which deletes the wallet
+  on that phone**. Back up first.
 - No passkeys and no Google Drive or iCloud backup in this build. The backup is a recovery code plus a backup file.
 - Built for 64-bit phones by default (every phone from the last several years).
 
