@@ -9,6 +9,7 @@ import {
   SendReceiveButtons,
   SilentPaymentsRow,
   StatusLine,
+  useNewWallet,
 } from '@/components/home';
 import { RecoveryKeyNotices, VaultCard } from '@/components/home-rk';
 import { Screen } from '@/components/screen';
@@ -20,11 +21,12 @@ import { IS_IOS, pick } from '@/lib/platform';
  * centred with one line under it, Send and Receive, then what needs attention and the latest payments.
  *  - Recovery Key mode: spending balance, vault and refills (RK-Home)
  *  - guardian mode, guardian locked or offline: phone-only payments paused (Home-Locked)
- *  - guardian mode, guardian online: what the phone can still pay today (Home)
+ *  - guardian mode, guardian online: what the phone can still pay today (Home); a new wallet leads with Receive
  */
 export default function HomeScreen() {
   const state = useWallet();
   const wallet = useWalletService();
+  const newWallet = useNewWallet();
   const refresh = () => wallet.sync();
   // Android shows the network and the gear in its top bar; iOS has no bar on Home, so they lead the content.
   const screen = { tab: true, untitled: true, title: 'Trikey', titleAccessory: IS_IOS ? undefined : <HomeTopActions />, androidTitleWeight: 'normal' as const, gap: 20, onRefresh: refresh };
@@ -56,13 +58,13 @@ export default function HomeScreen() {
     <Screen {...screen}>
       {top}
       <BalanceHeader label="Balance" sats={state.balanceSats} />
-      {paused ? <StatusLine tone="warn" text={state.recovery ? 'Phone-only payments paused during recovery' : 'Phone-only payments paused'} /> : <LimitLine />}
-      <SendReceiveButtons />
+      {paused ? <StatusLine tone="warn" text={state.recovery ? 'Phone-only payments paused during recovery' : 'Phone-only payments paused'} /> : <LimitLine newWallet={newWallet} />}
+      <SendReceiveButtons newWallet={newWallet} />
       <RecoveryBanner />
       <HardwareConfirmCard />
       {down ? <GuardianDownNotice /> : null}
       <SilentPaymentsRow />
-      <ActivityPreview limit={3} />
+      <ActivityPreview limit={3} newWallet={newWallet} />
     </Screen>
   );
 }

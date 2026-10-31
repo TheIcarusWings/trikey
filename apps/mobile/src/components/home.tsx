@@ -1,11 +1,12 @@
 import { useRouter } from 'expo-router';
-import { useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { Pressable, View } from 'react-native';
 import { ActivityRow } from '@/components/activity-row';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { ArrowDownLeft, ArrowUpRight, Clock, Eye, EyeOff, HardwareWallet, Lock, Settings, TriangleAlert } from '@/components/icons';
 import { Notice } from '@/components/panels';
+import { Sheet } from '@/components/sheet';
 import { Card } from '@/components/ui/card';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
@@ -102,42 +103,77 @@ export function BalanceHeader({
   );
 }
 
-/** Send and Receive as two round buttons with their names under them. */
-export function SendReceiveButtons({ sendEmphasis = true }: { sendEmphasis?: boolean }) {
+/**
+ * A wallet that has never had bitcoin: nothing in it, no payment in its history (one still arriving counts as a payment)
+ * and no silent payment waiting. Home then leads with Receive; it all goes back to normal with the first payment.
+ */
+export function useNewWallet(): boolean {
+  const state = useWallet();
+  const hasPayment = useActivity().some((item) => item.type === 'payment');
+  const sp = state.silentPayments.balance;
+  return state.balanceSats === 0 && !hasPayment && sp.sats + sp.unconfirmedSats === 0;
+}
+
+/**
+ * Send and Receive as two round buttons with their names under them. In a new wallet Receive leads and Send is greyed,
+ * but still a button: it explains there is nothing to send yet and offers the address.
+ */
+export function SendReceiveButtons({ sendEmphasis = true, newWallet = false }: { sendEmphasis?: boolean; newWallet?: boolean }) {
   const router = useRouter();
-  const button = (title: string, icon: typeof ArrowUpRight, primary: boolean, onPress: () => void) => (
-    <Pressable role="button" accessibilityLabel={title} onPress={onPress} className="items-center gap-2 active:opacity-70">
-      <View className={cn('size-16 items-center justify-center rounded-full', primary ? 'bg-primary' : 'bg-secondary')}>
-        <Icon as={icon} size={26} strokeWidth={2} className={primary ? 'text-primary-foreground' : 'text-foreground'} />
+  const [nothingToSend, setNothingToSend] = useState(false);
+  const button = (title: string, icon: typeof ArrowUpRight, look: 'primary' | 'secondary' | 'quiet', onPress: () => void, hint?: string) => (
+    <Pressable role="button" accessibilityLabel={title} accessibilityHint={hint} onPress={onPress} className="items-center gap-2 active:opacity-70">
+      <View className={cn('size-16 items-center justify-center rounded-full', look === 'primary' ? 'bg-primary' : 'bg-secondary')}>
+        <Icon
+          as={icon}
+          size={26}
+          strokeWidth={2}
+          className={look === 'primary' ? 'text-primary-foreground' : look === 'quiet' ? 'text-muted-foreground' : 'text-foreground'}
+        />
       </View>
-      <Text className="text-sm font-medium leading-5">{title}</Text>
+      <Text className={cn('text-sm font-medium leading-5', look === 'quiet' && 'text-muted-foreground')}>{title}</Text>
     </Pressable>
   );
+  const showAddress = () => {
+    setNothingToSend(false);
+    router.push('/receive');
+  };
   return (
     <View className="flex-row justify-center gap-12">
-      {button('Send', ArrowUpRight, sendEmphasis, () => router.push('/send/to'))}
-      {button('Receive', ArrowDownLeft, false, () => router.push('/receive'))}
+      {newWallet
+        ? button('Send', ArrowUpRight, 'quiet', () => setNothingToSend(true), 'Nothing to send yet. Shows how to receive bitcoin.')
+        : button('Send', ArrowUpRight, sendEmphasis ? 'primary' : 'secondary', () => router.push('/send/to'))}
+      {button('Receive', ArrowDownLeft, newWallet ? 'primary' : 'secondary', () => router.push('/receive'))}
+      <Sheet visible={nothingToSend} title="Nothing to send yet" onClose={() => setNothingToSend(false)}>
+        <Text className={cn('text-muted-foreground', pick('text-[15px] leading-[22px]', 'text-sm leading-5'))}>
+          Your wallet is empty. Once bitcoin arrives, Send works from here.
+        </Text>
+        <AppButton title="Show my address" onPress={showAddress} />
+        <AppButton title="Close" variant="ghost" onPress={() => setNothingToSend(false)} />
+      </Sheet>
     </View>
   );
 }
 
 /** One line under the balance: what the phone can still pay today without the hardware wallet. Opens the limit. */
-export function LimitLine() {
+export function LimitLine({ newWallet = false }: { newWallet?: boolean }) {
   const router = useRouter();
   const state = useWallet();
   const left = remainingToday(state);
   const { limitSats } = state.dailyLimit;
   const brand = state.hardware.brand;
+  // Nothing to count yet: say what the limit is, not how much of it is left.
+  if (newWallet) return <StatusLine text={`Daily limit ${formatSats(limitSats)} sats, without your ${brand}`} onPress={() => router.push('/settings/limit')} />;
   const low = limitSats > 0 && left < limitSats * 0.1;
   const text = low ? `${formatSats(left)} sats left today. Bigger payments need your ${brand}.` : `${formatSats(left)} sats left today without your ${brand}`;
   return <StatusLine tone={low ? 'warn' : 'good'} text={text} onPress={() => router.push('/settings/limit')} />;
 }
 
 /** A dot and a short sentence, centred under the balance. */
-export function StatusLine({ tone, text, onPress }: { tone: 'good' | 'warn'; text: string; onPress?: () => void }) {
+export function StatusLine({ tone, text, onPress }: { tone?: 'good' | 'warn'; text: string; onPress?: () => void }) {
   const body = (
     <View className="min-h-11 flex-row items-center justify-center gap-2 px-2">
-      <View className={cn('size-2 rounded-full', tone === 'good' ? 'bg-good' : 'bg-warn')} />
+      {tone ? <View className={cn('size-2 rounded-full', tone === 'good' ? 'bg-good' : 'bg-warn')} /> : null}
       <Text className={cn('text-muted-foreground shrink text-center tabular-nums', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{text}</Text>
     </View>
   );
@@ -209,7 +245,7 @@ export function GuardianDownNotice() {
 }
 
 /** The latest few items under "Activity" on the home tab. */
-export function ActivityPreview({ limit }: { limit: number }) {
+export function ActivityPreview({ limit, newWallet = false }: { limit: number; newWallet?: boolean }) {
   const router = useRouter();
   const state = useWallet();
   const now = useNow();
@@ -227,11 +263,28 @@ export function ActivityPreview({ limit }: { limit: number }) {
           <Text className={cn('text-muted-foreground font-medium', pick('text-[15px]', 'text-sm'))}>See all</Text>
         </Pressable>
       </View>
-      {items.length === 0 ? <Text className="text-muted-foreground py-4 text-[15px] leading-5">No payments yet.</Text> : null}
+      {items.length === 0 ? newWallet ? <FirstPaymentCard /> : <Text className="text-muted-foreground py-4 text-[15px] leading-5">No payments yet.</Text> : null}
       {items.map((item, i) => (
         <ActivityRow key={item.tx.id} item={item} variant="home" last={i === items.length - 1} ctx={ctx} />
       ))}
     </View>
+  );
+}
+
+/** A new wallet's Recent: one card that leads to the address, in place of an empty list. */
+function FirstPaymentCard() {
+  const router = useRouter();
+  return (
+    <Card className="mt-2 items-center gap-2.5 px-5 py-6">
+      <View className="bg-secondary size-11 items-center justify-center rounded-full">
+        <Icon as={ArrowDownLeft} size={22} strokeWidth={2} className="text-foreground" />
+      </View>
+      <Text role="heading" aria-level={2} className={cn('text-center font-semibold', pick('text-[17px] leading-[22px]', 'text-base leading-[22px]'))}>
+        Receive your first bitcoin
+      </Text>
+      <Text className="text-muted-foreground text-center text-sm leading-5">Share your address or QR code. Payments show up here.</Text>
+      <AppButton title="Show my address" className="mt-1 self-center px-5" onPress={() => router.push('/receive')} />
+    </Card>
   );
 }
 

@@ -4,7 +4,7 @@ import { ActivityRow } from '@/components/activity-row';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import { groupLabel, useActivity, useNow, useWallet, useWalletService, type ActivityItem } from '@/data';
-import { IS_IOS } from '@/lib/platform';
+import { IS_IOS, pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
 export default function ActivityScreen() {
@@ -29,7 +29,14 @@ export default function ActivityScreen() {
   return (
     <Screen title="Activity" backLabel="Home" gap={14} onRefresh={() => wallet.sync()}>
       {sections.length === 0 ? (
-        <Text className="text-muted-foreground py-8 text-center text-[15px]">Nothing here yet.</Text>
+        <View className="items-center gap-2 px-6 py-16">
+          <Text role="heading" aria-level={2} className={cn('text-center font-semibold', pick('text-[17px] leading-[22px]', 'text-base leading-[22px]'))}>
+            No payments yet
+          </Text>
+          <Text className={cn('text-muted-foreground text-center', pick('text-[15px] leading-[21px]', 'text-sm leading-5'))}>
+            Payments you send and receive show up here.
+          </Text>
+        </View>
       ) : null}
       {sections.map((section) => (
         <View key={section.label}>
