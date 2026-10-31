@@ -82,6 +82,7 @@ export function BalanceHeader({
   return (
     <Pressable
       role="button"
+      testID="home-balance"
       onPress={toggle}
       accessibilityLabel={hidden ? `${label} hidden. Tap to show` : `${label}: ${main} ${unitText}. Tap to hide`}
       className="items-center gap-0.5 pt-2">
@@ -259,7 +260,7 @@ export function ActivityPreview({ limit, newWallet = false }: { limit: number; n
         <Text role="heading" className={pick('text-xl font-bold leading-[26px]', 'text-base font-medium leading-6')}>
           Recent
         </Text>
-        <Pressable role="link" onPress={() => router.push('/activity')} className="min-h-11 justify-center pl-4 active:opacity-60">
+        <Pressable role="link" testID="home-see-all" onPress={() => router.push('/activity')} className="min-h-11 justify-center pl-4 active:opacity-60">
           <Text className={cn('text-muted-foreground font-medium', pick('text-[15px]', 'text-sm'))}>See all</Text>
         </Pressable>
       </View>

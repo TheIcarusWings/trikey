@@ -156,6 +156,7 @@ export function Screen({
         <Pressable
           onPress={back}
           role="link"
+          testID="screen-back"
           accessibilityLabel={backLabel === 'Back' ? 'Back' : `Back to ${backLabel}`}
           hitSlop={8}
           className="h-11 flex-row items-center self-start pr-3 active:opacity-60">
@@ -190,6 +191,7 @@ export function Screen({
           <Pressable
             onPress={back}
             role="link"
+            testID="screen-back"
             accessibilityLabel="Back"
             className="size-12 items-center justify-center rounded-full active:bg-accent">
             <Icon as={ArrowLeft} size={24} className="text-foreground" strokeWidth={2} />

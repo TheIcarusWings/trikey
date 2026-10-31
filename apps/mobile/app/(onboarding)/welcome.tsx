@@ -46,6 +46,7 @@ export default function Welcome() {
           {backing === 'demo' ? null : (
             <Text
               role="link"
+              testID="welcome-change-mode"
               onPress={() => setShowMode((v) => !v)}
               className="text-muted-foreground text-center text-[13px] leading-[18px] underline underline-offset-[3px]">
               {backing === 'simulator' ? 'Simulator mode (regtest)' : 'Real mode'} · change wallet mode
