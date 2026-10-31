@@ -1,0 +1,76 @@
+/* Setup tutorials: 16:9 only. A browser window on the left, the step panel on the right, chapters along the bottom. */
+:root {
+  --t-ground: #F4F4F5;
+  --t-ink: #09090B;
+  --t-muted: #52525B;
+  --t-dim: #A1A1AA;
+  --t-line: #E4E4E7;
+  --t-card: #FFFFFF;
+  --t-brand: #EA580C;
+  --t-warn-bg: #FFFBEB;
+  --t-warn-line: #FDE68A;
+  --t-warn-ink: #92400E;
+}
+html, body { background: var(--t-ground); }
+#stage.tut { width: 1920px; height: 1080px; background: var(--t-ground); color: var(--t-ink); }
+
+/* Header: the series and this video. */
+.t-head { position: absolute; left: 64px; top: 30px; display: flex; align-items: center; gap: 14px; font-size: 24px; color: var(--t-muted); }
+.t-head svg { width: 34px; }
+.t-head b { color: var(--t-ink); font-weight: 600; }
+
+/* The window that holds the footage: content is a 1280×800 page shown at 0.95. */
+.t-win { position: absolute; left: 64px; top: 96px; width: 1216px; height: 800px; border-radius: 14px; overflow: hidden;
+         background: var(--t-card); box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 24px 60px rgba(0,0,0,.12); border: 1px solid var(--t-line); }
+.t-bar { height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 16px; background: #FAFAFA; border-bottom: 1px solid var(--t-line);
+         font-size: 17px; color: var(--t-muted); position: relative; z-index: 3; }
+.t-bar i { width: 12px; height: 12px; border-radius: 50%; background: #D4D4D8; display: block; }
+.t-bar .addr { margin-left: 18px; flex: 1; }
+.t-bar .tag { font-size: 14px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--t-line); color: var(--t-muted); opacity: 0; }
+.t-view { position: absolute; left: 0; top: 40px; width: 1216px; height: 760px; overflow: hidden; }
+.t-page { position: absolute; left: 0; top: 0; width: 1280px; height: 800px; transform-origin: 0 0; }
+.t-layer { position: absolute; inset: 0; opacity: 0; }
+.t-layer > img { width: 1280px; height: 800px; display: block; }
+
+/* Cursor and click ripple, in page coordinates. */
+.t-cursor { position: absolute; left: 0; top: 0; width: 26px; z-index: 20; filter: drop-shadow(0 2px 3px rgba(0,0,0,.3)); }
+.t-ripple { position: absolute; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; z-index: 19;
+            border: 3px solid var(--t-brand); opacity: 0; }
+
+/* Step panel. */
+.t-panel { position: absolute; left: 1344px; top: 96px; width: 512px; height: 800px; }
+.t-step { position: absolute; inset: 0; opacity: 0; }
+.t-step .n { display: inline-flex; align-items: center; justify-content: center; width: 52px; height: 52px; border-radius: 50%;
+             background: var(--t-ink); color: #fff; font-size: 26px; font-weight: 600; }
+.t-step h2 { font-size: 46px; line-height: 1.08; letter-spacing: -0.03em; font-weight: 600; margin: 22px 0 18px; text-wrap: balance; }
+.t-step p { font-size: 27px; line-height: 1.38; color: var(--t-muted); margin: 0 0 18px; text-wrap: pretty; }
+.t-step p b { color: var(--t-ink); font-weight: 600; }
+.t-step .mono { font-size: 22px; color: var(--t-ink); background: var(--t-card); border: 1px solid var(--t-line); border-radius: 10px;
+                padding: 12px 14px; display: block; word-break: break-all; line-height: 1.35; }
+.t-step ul { list-style: none; padding: 0; margin: 0; }
+.t-step li { font-size: 27px; line-height: 1.35; color: var(--t-muted); padding-left: 44px; position: relative; margin-bottom: 18px; }
+.t-step li::before { content: ''; position: absolute; left: 4px; top: 8px; width: 18px; height: 10px; border-left: 3px solid #16A34A;
+                     border-bottom: 3px solid #16A34A; transform: rotate(-45deg); }
+.t-step li b { color: var(--t-ink); font-weight: 600; }
+.t-note { position: absolute; left: 0; right: 0; opacity: 0; font-size: 24px; line-height: 1.38; padding: 18px 20px; border-radius: 12px;
+          background: var(--t-warn-bg); border: 1px solid var(--t-warn-line); color: var(--t-warn-ink); text-wrap: pretty; }
+.t-note.tip { background: var(--t-card); border-color: var(--t-line); color: var(--t-muted); }
+.t-note b { font-weight: 600; }
+
+/* Chapters along the bottom. */
+.t-chapters { position: absolute; left: 64px; right: 64px; top: 936px; display: flex; gap: 10px; }
+.t-chapters div { flex: 1; font-size: 19px; color: var(--t-dim); padding-top: 14px; border-top: 4px solid var(--t-line); position: relative; }
+.t-chapters div span { position: absolute; left: 0; top: -4px; height: 4px; background: var(--t-ink); width: 0; }
+.t-chapters div.on { color: var(--t-ink); font-weight: 500; }
+
+/* Title and end cards. */
+.t-card { position: absolute; inset: 0; z-index: 30; background: var(--t-ground); display: flex; flex-direction: column;
+          align-items: center; justify-content: center; text-align: center; opacity: 0; }
+.t-card svg { width: 150px; }
+.t-card .kicker { font-size: 30px; color: var(--t-muted); margin-top: 34px; }
+.t-card h1 { font-size: 92px; letter-spacing: -0.04em; font-weight: 600; margin: 14px 0 0; line-height: 1.04; }
+.t-card .sub { font-size: 32px; color: var(--t-muted); margin-top: 22px; }
+.t-card .meta { margin-top: 60px; display: flex; flex-direction: column; align-items: center; gap: 14px; font-size: 26px; color: var(--t-muted); }
+.t-card .pill { border: 1px solid var(--t-line); border-radius: 999px; padding: 10px 24px; color: var(--t-ink); display: inline-flex; gap: 12px; align-items: center; background: var(--t-card); }
+.t-card .pill b { width: 11px; height: 11px; border-radius: 50%; background: #B45309; display: block; }
+.t-card .site { font-size: 36px; font-weight: 600; color: var(--t-ink); letter-spacing: -0.02em; }

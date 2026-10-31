@@ -1,8 +1,8 @@
 """Adds audio to a silent render.
 
-Usage: python3 mix.py <silent.mp4> <music.wav> <out.mp4> [--vo <vo_dir>]
+Usage: python3 mix.py <silent.mp4> <music.wav> <out.mp4> [--vo <vo_dir>] [--quiet]
 
-Without --vo: music only, normalized to -18 LUFS (sound is a bonus; captions carry the story).
+Without --vo: music only, normalized to -18 LUFS (sound is a bonus; captions carry the story), or -26 with --quiet.
 With --vo:    voiceover lines placed at SPEC.vo[].at (from <silent>.spec.json, files <vo_dir>/<id>.wav),
               music ducked under the voice, normalized to -16 LUFS.
 """
@@ -19,7 +19,9 @@ def main():
 
     inputs = ['-i', silent, '-i', music]
     if not vo_dir:
-        graph = f'[1:a]atrim=0:{dur},loudnorm=I=-18:TP=-1.5:LRA=11[a]'
+        # --quiet: a soft bed for the tutorials, which people read while it plays.
+        level = -26 if '--quiet' in sys.argv else -18
+        graph = f'[1:a]atrim=0:{dur},loudnorm=I={level}:TP=-1.5:LRA=11[a]'
     else:
         parts = []
         for i, line in enumerate(spec['vo']):
