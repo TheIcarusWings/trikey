@@ -48,7 +48,8 @@ export const entropyFromMnemonic = (mnemonic: string) => mnemonicToEntropy(mnemo
  * pairing that the key derives from the hardware xpub in the descriptor (the
  * engine does this for any path below the account), and the same on every
  * phone, so a new phone without a backup knows where to ask (recovery access).
- * Devices may warn about an unusual path when signing a message with it.
+ * Ledger signs a message with it without a warning; Trezor firmware before 2.13.0 and the Model One show a path
+ * warning first, then sign (never "Forbidden key path"): docs/design/hardware-auth-path.md.
  */
 export function authKeyPath(network: Network, account = 0): string {
   return `${bip48Path(network, account)}/0/0`;

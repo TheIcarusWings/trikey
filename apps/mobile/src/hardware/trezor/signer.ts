@@ -118,7 +118,9 @@ export class TrezorSigner implements HardwareSigner {
     if (numbers.length === 0) throw new HardwareError('invalid-request', 'A message must be signed with a key below the master key.', { kind: 'trezor' });
     if (!/^[\x20-\x7e]+$/.test(message)) throw new HardwareError('invalid-request', 'Only printable ASCII messages can be signed on the device.', { kind: 'trezor' });
     const coin = this.coinFor(coinTypeOf(numbers));
-    const res = await this.call(() => this.connect.signMessage({ path: formatPath(numbers), coin, message }));
+    // SPENDWITNESS, said explicitly: what Connect would infer for our auth key's BIP48 path anyway, and the one script
+    // type firmware 2.13.0+ signs at that path without an unusual-path warning (docs/design/hardware-auth-path.md).
+    const res = await this.call(() => this.connect.signMessage({ path: formatPath(numbers), coin, message, scriptType: 'SPENDWITNESS' }));
     let bytes: Uint8Array;
     try {
       bytes = base64.decode(res.signature);

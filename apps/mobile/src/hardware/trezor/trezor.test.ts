@@ -422,7 +422,7 @@ describe('TrezorSigner', () => {
     const { connect, signer } = await setupSigner('signet');
     const sig = await signer.signMessage("m/84'/1'/0'/0/0", 'Trikey pair v1');
     expect(base64.decode(sig)).toHaveLength(65);
-    expect(connect.calls[0]).toEqual({ method: 'signMessage', params: { path: "m/84'/1'/0'/0/0", coin: 'test', message: 'Trikey pair v1' } });
+    expect(connect.calls[0]).toEqual({ method: 'signMessage', params: { path: "m/84'/1'/0'/0/0", coin: 'test', message: 'Trikey pair v1', scriptType: 'SPENDWITNESS' } });
     connect.signature = base64.encode(new Uint8Array(65).fill(1));
     await expect(signer.signMessage("m/84'/1'/0'/0/0", 'x')).rejects.toMatchObject({ code: 'invalid-response' });
     connect.signature = base64.encode(new Uint8Array(10));

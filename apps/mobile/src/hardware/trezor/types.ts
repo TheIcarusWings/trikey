@@ -80,7 +80,7 @@ export interface TrezorConnectLike {
     showOnTrezor: boolean;
   }): Promise<TrezorResponse<{ address: string; path: number[] }>>;
   signTransaction(params: TrezorSignTransactionParams): Promise<TrezorResponse<{ signatures: string[] }>>;
-  signMessage(params: { path: string | number[]; coin: TrezorCoin; message: string }): Promise<TrezorResponse<{ address: string; signature: string }>>;
+  signMessage(params: { path: string | number[]; coin: TrezorCoin; message: string; scriptType?: 'SPENDADDRESS' | 'SPENDP2SHWITNESS' | 'SPENDWITNESS' }): Promise<TrezorResponse<{ address: string; signature: string }>>;
   /** Abandons the call in flight (the user went back, or the screen closed). */
   cancel?(reason?: string): void;
   dispose?(): Promise<unknown> | unknown;

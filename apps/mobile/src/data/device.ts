@@ -188,7 +188,13 @@ class PromptingSigner implements HardwareSigner {
 
   signMessage(path: string, message: string) {
     this.store.pendingDetail = undefined;
-    return this.run('Confirm on your device', `Check that the device shows exactly this text:\n${message}`, () => this.inner.signMessage(path, message));
+    // Trezor firmware before 2.13.0, and every Model One, warn about the auth key's path (a key of the 2-of-3 account,
+    // used here for a message) and sign once the user goes on: docs/design/hardware-auth-path.md.
+    const trezorNote =
+      this.inner.info.kind === 'trezor' && path.startsWith("m/48'")
+        ? '\n\nYour Trezor may first warn about an unusual or wrong path. That is expected for this key: continue.'
+        : '';
+    return this.run('Confirm on your device', `Check that the device shows exactly this text:\n${message}${trezorNote}`, () => this.inner.signMessage(path, message));
   }
 
   close() {
