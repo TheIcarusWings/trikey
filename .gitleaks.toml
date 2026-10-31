@@ -16,4 +16,7 @@ regexes = [
   # BIP 32 test vector 1: master and m/0'/1 extended private keys, wherever they are quoted.
   '''xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi''',
   '''xprv9wTYmMFdV23N2TdNG573QoEsfRrWKQgWeibmLntzniatZvR9BmLnvSxqu53Kw1UmYPxLgboyZQaXwTCg8MSY3H2EU4pWcQDnRnrVA1xe8fs''',
+  # The placeholder wallet id of the approval-text tests: "Trikey policy ... wallet=0123456789abcdef" reads to the
+  # generic-api-key rule as a key ("Tri-key") with a value.
+  '''^0123456789abcdef$''',
 ]
