@@ -57,7 +57,16 @@ export interface TrezorSignTransactionParams {
   push: false;
 }
 
-export type TrezorResponse<T> = { success: true; payload: T } | { success: false; payload: { error: string; code?: string } };
+/**
+ * What a call resolves with. Besides Connect's own `{ success, payload }`, `@trezor/connect-mobile` resolves a call whose
+ * callback URL has no result with `{ success: false, error }` (no payload), and the calls `cancel(reason)` cuts short
+ * with `{ payload: { success: false, error: reason } }` (no `success`). `trezorFailure` finds the failure in each.
+ */
+export type TrezorResponse<T> =
+  | { success: true; payload: T }
+  | { success: false; payload: { error: string; code?: string } }
+  | { success: false; error: unknown; payload?: undefined }
+  | { success?: undefined; payload: { success: false; error: unknown } };
 
 export interface TrezorConnectLike {
   getPublicKey(params: { path: string | number[]; coin: TrezorCoin; showOnTrezor?: boolean }): Promise<

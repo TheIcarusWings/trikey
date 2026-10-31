@@ -3,6 +3,7 @@ import { base64, hex } from '@scure/base';
 import { addChecksum, analyzePsbt, parsePsbt, stripChecksum } from '@trikey/core';
 import { HardwareError, HardwareNotSupportedError } from '../errors';
 import { decodePsbtBase64 } from '../common/psbt';
+import { parseWalletPolicy, walletScriptsAt } from '../common/wallet';
 import { makeFixture, deviceSignatures, network, type Fixture } from '../test/fixtures';
 import { LEDGER_DESCRIPTOR_TEMPLATE, hmacFromHex, hmacToHex, toLedgerPolicy, toRegisteredLedgerWallet, type LedgerRegisteredWallet, type LedgerWalletPolicy } from './policy';
 import { ledgerSignatureToBase64 } from './signature';
@@ -12,6 +13,13 @@ import { runDeviceAction, type DeviceActionLike, type DeviceActionStateLike } fr
 import { DmkLedgerBackend, ecdsaSignatures, signerKitPath, withSighashByte } from './dmk-backend';
 import type { PartialSignature } from '../common/psbt';
 import type { LedgerMessageSignature } from './signature';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { bip48Path } from '@trikey/core';
+import { messageHash as bip137Hash, verifyBip137Message } from '@trikey/wallet';
+import { verifyMessageWithPubkey } from '@trikey/guardian/policy';
+import { hwSigner } from '../../../../../packages/core/test/helpers';
+import { formatPath } from '../common/path';
 
 // A known answer: the descriptor of the throwaway test wallet and the wallet policy a Ledger needs for it.
 const KAT_DESCRIPTOR =
@@ -35,6 +43,9 @@ describe('descriptor to Ledger wallet policy', () => {
     const { keys } = toLedgerPolicy({ name: 'x', descriptor: KAT_DESCRIPTOR });
     for (const k of keys) expect(k).not.toMatch(/\dh/);
     expect(keys[2]).toMatch(/^\[f92b4e64\]tpub/);
+    // What the app's key parser takes: a lowercase fingerprint, steps below 2^31 with `'`, then the base58 key.
+    const upper = KAT_DESCRIPTOR.replace('73c5da0a', '73C5DA0A').replace(/#.*$/, '');
+    for (const k of toLedgerPolicy({ name: 'x', descriptor: upper }).keys) expect(k).toMatch(/^\[[0-9a-f]{8}(\/\d{1,10}'?)*\][1-9A-HJ-NP-Za-km-z]{111,112}$/);
     // No /<0;1>/* suffix on the key info: the template carries it as `/**`.
     for (const k of keys) expect(k).not.toContain('<');
   });
@@ -62,7 +73,8 @@ describe('descriptor to Ledger wallet policy', () => {
   });
 
   it('checks the wallet name (1 to 16 printable ASCII characters)', () => {
-    for (const name of ['', 'x'.repeat(17), 'Trikey ₿', 'tab\there']) {
+    // The Bitcoin app also refuses a leading or trailing space.
+    for (const name of ['', 'x'.repeat(17), 'Trikey ₿', 'tab\there', ' Trikey', 'Trikey ']) {
       expect(() => toLedgerPolicy({ name, descriptor: KAT_DESCRIPTOR })).toThrowError(/name/);
     }
     expect(toLedgerPolicy({ name: 'x'.repeat(16), descriptor: KAT_DESCRIPTOR }).name).toHaveLength(16);
@@ -137,7 +149,8 @@ async function setup(network_: 'regtest' | 'bitcoin' = 'regtest') {
   const f = await makeFixture();
   const backend = new FakeLedger();
   backend.xpub = f.hardwareXpub;
-  backend.addressOf = (change, index) => f.wallet.derive(change ? 1 : 0, index).address;
+  // What the Bitcoin Test app shows: it has no regtest build, so a regtest address comes in testnet's spelling ("tb1...").
+  backend.addressOf = (change, index) => walletScriptsAt(parseWalletPolicy(f.policy), change ? 1 : 0, index, 'testnet').address;
   const signer = new LedgerSigner({ kind: 'ledger', model: 'Nano X', fingerprint: f.hardwareFingerprint }, backend, { network: network_ });
   const registered = { ...f.policy, registration: { hmac: HMAC_HEX } };
   return { f, backend, signer, registered };
@@ -188,7 +201,12 @@ describe('LedgerSigner', () => {
       { change: false, index: 5, display: true },
       { change: true, index: 2, display: true },
     ]);
-    backend.addressOverride = f.wallet.derive(0, 6).address;
+    // On regtest the app hands back our own spelling ("bcrt1..."), and the device's "tb1..." is the same script.
+    expect(f.wallet.derive(0, 5).address).toMatch(/^bcrt1/);
+    expect(backend.addressOf(false, 5)).toMatch(/^tb1/);
+    backend.addressOverride = f.wallet.derive(0, 5).address;
+    await expect(signer.displayAddress(registered, 0, 5)).rejects.toMatchObject({ code: 'invalid-response' });
+    backend.addressOverride = backend.addressOf(false, 6);
     await expect(signer.displayAddress(registered, 0, 5)).rejects.toMatchObject({ code: 'invalid-response' });
     await expect(signer.displayAddress(f.policy, 0, 5)).rejects.toMatchObject({ code: 'wallet-not-registered' });
     await expect(signer.displayAddress(registered, 2 as 0, 5)).rejects.toMatchObject({ code: 'invalid-request' });
@@ -340,6 +358,20 @@ describe('mapLedgerError', () => {
     expect(mapLedgerError(wrapped).code).toBe('device-locked');
     const raw = { _tag: 'WhateverError' };
     expect(mapLedgerError(raw).detail).toBe(raw);
+  });
+
+  it("maps the DMK's own error objects by their real tags, and keeps the text they carry in originalError", async () => {
+    const { OpeningConnectionError, UnknownDAError, GlobalCommandErrorHandler, ApduResponse } = await import('@ledgerhq/device-management-kit');
+    // The class is OpeningConnectionError; its tag is ConnectionOpeningError.
+    const opening = mapLedgerError(new OpeningConnectionError(new Error('GATT error 133')));
+    expect([opening.code, opening.message]).toEqual(['disconnected', 'Could not open a Bluetooth connection to the Ledger.']);
+    expect(mapLedgerError({ _tag: 'DeviceSessionNotFound' }).code).toBe('disconnected');
+    expect(mapLedgerError(new UnknownDAError('No error in final state')).message).toBe('Ledger error (UnknownDAError): No error in final state');
+    // A status word no command knows: the DMK nests it in originalError.
+    const unknown = GlobalCommandErrorHandler.handle(new ApduResponse({ statusCode: new Uint8Array([0x55, 0x15]), data: new Uint8Array() }));
+    expect(mapLedgerError(unknown).code).toBe('device-locked');
+    const nested = GlobalCommandErrorHandler.handle(new ApduResponse({ statusCode: new Uint8Array([0x6a, 0x80]), data: new Uint8Array() }));
+    expect(mapLedgerError(nested).code).toBe('invalid-request');
   });
 
   it('passes HardwareErrors through and reports unsupported requests as such', () => {
@@ -523,5 +555,173 @@ describe('Ledger Device Management Kit compatibility (offline)', () => {
     // The wallet id does not depend on the HMAC, but it does depend on the key order.
     const reversed = walletBuilder.fromRegisteredWallet(new RegisteredWallet(policy.name, policy.descriptorTemplate, [...policy.keys].reverse(), policy.hmac));
     expect(serializer.getId(reversed)).not.toEqual(serializer.getId(built));
+  });
+});
+
+// ------------------------------------------------------------------- the real Ledger SDK against a scripted Bitcoin app
+
+/**
+ * Plays the Bitcoin Test app (app-bitcoin-new) at the APDU level for the throwaway hardware key: just enough of each
+ * command for the signer kit's real tasks to run, with the app's own answer formats. It does not fetch the policy, PSBT
+ * or message through the client commands (GET_PREIMAGE...): it checks what the commands carry and answers from the fixture.
+ */
+class ScriptedBitcoinApp {
+  readonly master = hwSigner().master(network);
+  readonly seen: Array<{ ins: number; data: Uint8Array }> = [];
+  /** wallet id (hex) -> HMAC, as REGISTER_WALLET made them. */
+  readonly registered = new Map<string, Uint8Array>();
+  /** The message SIGN_MESSAGE signs (the real app reads it through GET_PREIMAGE). */
+  message = '';
+  /** What SIGN_PSBT yields, one partial signature per YIELD. */
+  psbtSignatures: PartialSignature[] = [];
+  /** The address GET_WALLET_ADDRESS returns for (change, index). */
+  addressOf: (change: boolean, index: number) => string = () => '';
+  private yields: Uint8Array[] = [];
+
+  constructor(private readonly ApduResponse: new (a: { statusCode: Uint8Array; data: Uint8Array }) => unknown) {}
+
+  private reply(data: Uint8Array | string, sw = 0x9000) {
+    return new this.ApduResponse({ statusCode: new Uint8Array([sw >> 8, sw & 0xff]), data: typeof data === 'string' ? new TextEncoder().encode(data) : data });
+  }
+
+  private path(data: Uint8Array, from: number): number[] {
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    return Array.from({ length: data[from]! }, (_, i) => view.getUint32(from + 1 + 4 * i));
+  }
+
+  answer(apdu: { cla: number; ins: number; data: Uint8Array }) {
+    this.seen.push({ ins: apdu.cla === 0xf8 ? 0xf8 : apdu.ins, data: apdu.data });
+    const { data } = apdu;
+    if (apdu.cla === 0xf8) {
+      // CONTINUE after a client command: the next YIELD, or done.
+      const next = this.yields.shift();
+      return next ? this.reply(new Uint8Array([0x10, ...next]), 0xe000) : this.reply(new Uint8Array());
+    }
+    switch (apdu.ins) {
+      case 0x05: // GET_MASTER_FINGERPRINT
+        return this.reply(hex.decode(this.master.fingerprint.toString(16).padStart(8, '0')));
+      case 0x00: // GET_EXTENDED_PUBKEY: display, path
+        return this.reply(this.master.derive(formatPath(this.path(data, 1))).publicExtendedKey);
+      case 0x02: {
+        // REGISTER_WALLET: the serialised policy, length-prefixed. Answers wallet id || HMAC.
+        const policy = data.slice(1, 1 + data[0]!);
+        const id = sha256(policy);
+        const hmac = sha256(new Uint8Array([...new TextEncoder().encode('fake hmac key'), ...id]));
+        this.registered.set(hex.encode(id), hmac);
+        return this.reply(new Uint8Array([...id, ...hmac]));
+      }
+      case 0x03: {
+        // GET_WALLET_ADDRESS: display, wallet id, HMAC, change, index
+        const hmac = this.registered.get(hex.encode(data.slice(1, 33)));
+        if (!hmac || hex.encode(hmac) !== hex.encode(data.slice(33, 65))) return this.reply(new Uint8Array(), 0xb008);
+        const index = new DataView(data.buffer, data.byteOffset + 66, 4).getUint32(0);
+        return this.reply(this.addressOf(data[65] === 1, index));
+      }
+      case 0x04: {
+        // SIGN_PSBT: ..., wallet id, HMAC (the last 64 bytes). Yields one signature at a time: input index (varint),
+        // pubkey length, pubkey, DER signature with the sighash byte appended.
+        const hmac = this.registered.get(hex.encode(data.slice(-64, -32)));
+        if (!hmac || hex.encode(hmac) !== hex.encode(data.slice(-32))) return this.reply(new Uint8Array(), 0xb008);
+        this.yields = this.psbtSignatures.map((s) => new Uint8Array([s.inputIndex, s.pubkey.length, ...s.pubkey, ...s.signature]));
+        return this.reply(new Uint8Array([0x10, ...this.yields.shift()!]), 0xe000);
+      }
+      case 0x10: {
+        // SIGN_MESSAGE: path, message length (varint), Merkle root of the message chunks
+        const path = this.path(data, 0);
+        expect(data[1 + 4 * path.length]).toBe(this.message.length);
+        const priv = this.master.derive(formatPath(path)).privateKey!;
+        const rec = secp256k1.sign(bip137Hash(this.message), priv, { prehash: false, lowS: true, format: 'recovered' });
+        // sign_message.c: result[0] = 27 + 4 + (parity odd ? 1 : 0), then r and s.
+        return this.reply(new Uint8Array([27 + 4 + rec[0]!, ...rec.subarray(1)]));
+      }
+      default:
+        return this.reply(new Uint8Array(), 0x6d00);
+    }
+  }
+}
+
+describe('the real Ledger signer kit against a scripted Bitcoin app (offline)', () => {
+  async function connectScripted() {
+    const { ApduResponse, OpenAppDeviceAction } = await import('@ledgerhq/device-management-kit');
+    const { SignerBtcBuilder } = await import('@ledgerhq/device-signer-kit-bitcoin');
+    const app = new ScriptedBitcoinApp(ApduResponse);
+    const logger = { debug() {}, info() {}, warn() {}, error() {}, subscribers: [] };
+    // What the DMK does for a command: build the APDU, send it, let the command parse the answer.
+    const api = {
+      sendCommand: async (command: { getApdu(): { cla: number; ins: number; data: Uint8Array }; parseResponse(r: unknown): unknown }) =>
+        command.parseResponse(app.answer(command.getApdu())),
+      loggerFactory: () => logger,
+    };
+    const opened: string[] = [];
+    const dmk = {
+      getLoggerFactory: () => () => logger,
+      executeDeviceAction: ({ deviceAction }: { deviceAction: { _execute(api: unknown): unknown } }) => {
+        // Opening the app is the OS's business (its own device action); here it just succeeds.
+        if (deviceAction instanceof OpenAppDeviceAction) {
+          opened.push(deviceAction.input.appName);
+          return fakeAction([{ status: 'completed', output: undefined }]);
+        }
+        return deviceAction._execute(api);
+      },
+      disconnect: async () => {},
+    };
+    const kit = new SignerBtcBuilder({ dmk: dmk as never, sessionId: 'session' }).build();
+    const backend = new DmkLedgerBackend(dmk as never, 'session', kit);
+    const f = await makeFixture();
+    const signer = new LedgerSigner({ kind: 'ledger', model: 'Flex', fingerprint: await backend.getMasterFingerprint() }, backend, { network: 'regtest' });
+    return { app, opened, signer, f };
+  }
+
+  it('reads the fingerprint and the BIP48 account key', async () => {
+    const { app, opened, signer, f } = await connectScripted();
+    expect(signer.info.fingerprint).toBe(f.hardwareFingerprint);
+    expect(await signer.getXpub(bip48Path(network))).toBe(f.hardwareXpub);
+    expect(opened).toEqual(['Bitcoin Test']);
+    expect(app.seen.map((s) => s.ins)).toEqual([0x05, 0x00]);
+  });
+
+  it("registers the wallet, shows an address with the HMAC it got back, and maps the app's refusal of a wrong HMAC", async () => {
+    const { app, signer, f } = await connectScripted();
+    const reg = await signer.registerWallet(f.policy);
+    expect(reg.hmac).toMatch(/^[0-9a-f]{64}$/);
+    expect([...app.registered.values()].map((h) => hex.encode(h))).toEqual([reg.hmac]);
+    // The serialised policy (wallet.md): version 2, the name, the template's length and hash, 3 keys and their Merkle root.
+    const policy = app.seen.find((s) => s.ins === 0x02)!.data.slice(1);
+    const name = new TextDecoder().decode(policy.slice(2, 2 + policy[1]!));
+    expect([policy[0], name]).toEqual([2, 'Trikey test']);
+    const at = 2 + name.length;
+    expect(policy[at]).toBe(LEDGER_DESCRIPTOR_TEMPLATE.length);
+    expect(hex.encode(policy.slice(at + 1, at + 33))).toBe(hex.encode(sha256(new TextEncoder().encode(LEDGER_DESCRIPTOR_TEMPLATE))));
+    expect(policy[at + 33]).toBe(3);
+
+    // The Bitcoin Test app shows a regtest address in testnet's spelling.
+    app.addressOf = (change, index) => walletScriptsAt(parseWalletPolicy(f.policy), change ? 1 : 0, index, 'testnet').address;
+    const registered = { ...f.policy, registration: { hmac: reg.hmac! } };
+    expect(await signer.displayAddress(registered, 0, 5)).toBe(f.wallet.derive(0, 5).address);
+    const ask = app.seen.find((s) => s.ins === 0x03)!.data;
+    expect([ask[0], ask[65], new DataView(ask.buffer, ask.byteOffset + 66, 4).getUint32(0)]).toEqual([1, 0, 5]);
+
+    await expect(signer.displayAddress({ ...f.policy, registration: { hmac: HMAC_HEX } }, 0, 5)).rejects.toMatchObject({ code: 'wallet-not-registered' });
+  });
+
+  it("signs a PSBT: the kit's decoded signatures merge into our PSBT", async () => {
+    const { app, signer, f } = await connectScripted();
+    const reg = await signer.registerWallet(f.policy);
+    app.psbtSignatures = await deviceSignatures(f.psbt);
+    expect(app.psbtSignatures).toHaveLength(1);
+    const out = await signer.signPsbt(base64.encode(f.psbtAppSigned), { ...f.policy, registration: { hmac: reg.hmac! } });
+    expect(parsePsbt(base64.decode(out)).getInput(0).partialSig).toHaveLength(2);
+    expect(app.seen.filter((s) => s.ins === 0xf8)).toHaveLength(1);
+  });
+
+  it('signs the pairing message with the authorization key, in a form the guardian accepts', async () => {
+    const { app, signer } = await connectScripted();
+    const path = `${bip48Path(network)}/0/0`;
+    app.message = `Trikey pair v1 wallet=0123456789abcdef guardian=${'02'.repeat(33)}`;
+    const sig = await signer.signMessage(path, app.message);
+    expect([31, 32]).toContain(base64.decode(sig)[0]);
+    const pubkey = app.master.derive(path).publicKey!;
+    expect(verifyMessageWithPubkey(app.message, pubkey, sig)).toBe(true);
+    expect(verifyBip137Message(app.message, pubkey, sig)).toBe(true);
   });
 });

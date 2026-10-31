@@ -97,10 +97,12 @@ export class LedgerSigner implements HardwareSigner {
     const registered = toRegisteredLedgerWallet(wallet);
     const address = await this.run(this.appFor(), () => this.backend.getWalletAddress(registered, chain === 1, index, true));
     // Defence in depth: the user compares the address on the device screen, and we also compare it with the one we derive ourselves.
-    const expected = walletScriptsAt(parsed, chain, index, this.opts.network).address;
+    // The Bitcoin Test app has no regtest build: it writes every test network's address with testnet's prefix ("tb1..."),
+    // so on regtest we compare with the testnet spelling of the same script and hand back our own ("bcrt1...").
+    const expected = walletScriptsAt(parsed, chain, index, this.opts.network === 'regtest' ? 'testnet' : this.opts.network).address;
     if (address !== expected)
       throw new HardwareError('invalid-response', `The Ledger shows a different address than this wallet derives (${address} instead of ${expected}). Do not use it.`, { kind: 'ledger' });
-    return address;
+    return this.opts.network === 'regtest' ? walletScriptsAt(parsed, chain, index, 'regtest').address : address;
   }
 
   async signPsbt(psbtBase64: string, wallet: HardwareWalletPolicy): Promise<string> {

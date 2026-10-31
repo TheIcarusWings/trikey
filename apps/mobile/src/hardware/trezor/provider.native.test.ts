@@ -85,6 +85,11 @@ describe('TrezorProvider (native glue)', () => {
     h.listeners[0]!({ url: 'trikey://settings/limit' });
     expect(h.connect.handleDeeplink).toHaveBeenCalledTimes(1);
     expect(h.connect.handleDeeplink).toHaveBeenCalledWith('trikey://trezor-callback?id=abc&response=%7B%7D');
+    // connect-mobile throws on a result that is not JSON (after failing the call); the listener must not.
+    h.connect.handleDeeplink.mockImplementationOnce(() => {
+      throw new TypeError("Cannot destructure property 'success' of 'parsedParams' as it is undefined.");
+    });
+    expect(() => h.listeners[0]!({ url: 'trikey://trezor-callback?id=abc&response=nope' })).not.toThrow();
   });
 
   it('connects with one round trip: account key and master fingerprint, from the right path and coin', async () => {
@@ -133,7 +138,8 @@ describe('TrezorProvider (native glue)', () => {
     await new Promise((r) => setTimeout(r, 0));
     ac.abort();
     expect(h.connect.cancel).toHaveBeenCalledWith('aborted');
-    release({ success: false, payload: { error: 'Interrupted', code: 'Method_Interrupted' } });
+    // What connect-mobile's cancel(reason) resolves the call in flight with: no `success`, the reason as the error.
+    release({ payload: { success: false, error: 'aborted' } });
     await expect(p).rejects.toMatchObject({ code: 'cancelled' });
   });
 });

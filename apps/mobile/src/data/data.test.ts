@@ -87,6 +87,7 @@ describe('DevicePromptStore and withDevicePrompts', () => {
 
   it('maps Ledger interactions to words and routes connect() by kind', async () => {
     expect(ledgerHint('unlock-device')).toMatch(/PIN/);
+    expect(ledgerHint('register-wallet')).toMatch(/wallet/);
     expect(ledgerHint('nonsense')).toBeUndefined();
     const a = new SoftwareHardwareProvider(device);
     const b = { kinds: ['trezor' as const], isAvailable: async () => false, connect: async () => device };
