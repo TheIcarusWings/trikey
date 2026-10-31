@@ -18,11 +18,15 @@ name: Android APK build
 # self-test) is an ordinary screen of the app, not part of React Native's dev menu, so it is there in
 # a release build too.
 #
-# Signing. The repository holds no release key (and must not). Expo's generated project signs release
-# builds with its public debug keystore, so the job re-signs the APK with a throwaway key made in the
-# job (keytool, random password, deleted at the end, never uploaded). Every build therefore has a
-# different signature: Android refuses to install one over another, so an update needs an uninstall,
-# which deletes the wallet on that phone (back it up first). The release notes say so.
+# Signing. Expo's generated project signs release builds with its public debug keystore, so the job
+# re-signs the APK, in one of two ways (`signing`):
+#
+# - `release` (release tags): with the project's release key, from the ANDROID_RELEASE_KEYSTORE secrets
+#   (docs/android-signing.md). Every release has the same signature, so Android installs one over the
+#   other and the wallet on the phone stays. The key never is in the repository; its certificate's
+#   SHA-256 is, in packaging/android/release-cert.sha256, and the job refuses an APK signed by anything else.
+# - `one-off` (pull requests, manual runs): with a throwaway key made in the job (keytool, random password,
+#   deleted at the end, never uploaded). Such a build cannot update, or be updated by, any other build.
 #
 # Cleartext: not allowed. Android 9+ blocks plain http:// and ws:// for a release build unless the
 # manifest asks for it, and real mode on signet or testnet4 uses public wss:// relays. A relay on a
@@ -32,7 +36,7 @@ name: Android APK build
 # build"): iCloud off, passkeys off (no EXPO_PUBLIC_PASSKEY_RP_ID), Google Drive backup off (no
 # EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID). Backup is the recovery code plus a backup file.
 #
-# No secrets, and only read access.
+# Only read access. Secrets: the release key, and only when the caller passes it (android-apk.yml, on tags).
 
 on:
   workflow_call:
@@ -47,6 +51,21 @@ on:
         required: false
         default: 'trikey-android-apk'
         type: string
+      signing:
+        description: "'release' (the project's release key, from the secrets below) or 'one-off' (a throwaway key)."
+        required: false
+        default: 'one-off'
+        type: string
+    secrets:
+      ANDROID_RELEASE_KEYSTORE:
+        description: 'The release keystore (PKCS12), base64. Needed for signing: release.'
+        required: false
+      ANDROID_RELEASE_KEYSTORE_PASSWORD:
+        description: 'Its password (the key has the same one).'
+        required: false
+      ANDROID_RELEASE_KEY_ALIAS:
+        description: "The key's alias in the keystore. Default: trikey."
+        required: false
     outputs:
       apk-name:
         description: 'File name of the signed APK in the artifact, without .apk'
@@ -125,11 +144,15 @@ jobs:
             -PreactNativeArchitectures="${ARCHITECTURES}" \
             -Pandroid.enableMinifyInReleaseBuilds=false
 
-      - name: Sign with a one-off key and check the result
+      - name: Sign and check the result
         id: sign
         env:
           UNSIGNED: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
           APPLICATION_ID: ${{ steps.config.outputs.application-id }}
+          SIGNING: ${{ inputs.signing || 'one-off' }}
+          RELEASE_KEYSTORE: ${{ secrets.ANDROID_RELEASE_KEYSTORE }}
+          RELEASE_PASS: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -142,32 +165,59 @@ jobs:
             name="trikey-alpha-0.1.0-${GITHUB_SHA::7}"
           fi
 
-          # A key that exists for this job only: random password (masked), never written to the repository,
-          # the artifact or a secret store, and deleted below.
-          keystore="${RUNNER_TEMP}/one-off.jks"
-          KS_PASS="$(openssl rand -hex 24)"
-          echo "::add-mask::${KS_PASS}"
+          keystore="${RUNNER_TEMP}/signing.p12"
+          case "${SIGNING}" in
+            release)
+              # The project's release key. A release is never signed with anything else: without the secrets,
+              # or without the pinned certificate, the job stops instead of falling back to a one-off key.
+              [ -n "${RELEASE_KEYSTORE}" ] && [ -n "${RELEASE_PASS}" ] \
+                || { echo "::error::signing: release, but the ANDROID_RELEASE_KEYSTORE secrets are not set (docs/android-signing.md)"; exit 1; }
+              [ -s packaging/android/release-cert.sha256 ] \
+                || { echo "::error::signing: release, but packaging/android/release-cert.sha256 is missing"; exit 1; }
+              base64 -d <<<"${RELEASE_KEYSTORE}" > "${keystore}" \
+                || { echo "::error::ANDROID_RELEASE_KEYSTORE is not valid base64"; exit 1; }
+              KS_PASS="${RELEASE_PASS}"
+              alias="${RELEASE_ALIAS:-trikey}"
+              ;;
+            one-off)
+              # A key that exists for this job only: random password (masked), never written to the repository,
+              # the artifact or a secret store, and deleted below.
+              KS_PASS="$(openssl rand -hex 24)"
+              echo "::add-mask::${KS_PASS}"
+              alias=trikey-test
+              keytool -genkeypair -keystore "${keystore}" -storetype PKCS12 \
+                -alias "${alias}" -keyalg RSA -keysize 3072 -validity 3650 \
+                -dname "CN=Trikey one-off test key, O=Trikey alpha test build" \
+                -storepass "${KS_PASS}" -keypass "${KS_PASS}"
+              ;;
+            *) echo "::error::Unknown signing: ${SIGNING}"; exit 1 ;;
+          esac
           export KS_PASS
-          keytool -genkeypair -keystore "${keystore}" -storetype PKCS12 \
-            -alias trikey-test -keyalg RSA -keysize 3072 -validity 3650 \
-            -dname "CN=Trikey one-off test key, O=Trikey alpha test build" \
-            -storepass:env KS_PASS -keypass:env KS_PASS
 
           # apksigner replaces the debug signature Gradle put on the APK.
-          "${bt}/apksigner" sign --ks "${keystore}" --ks-key-alias trikey-test \
+          "${bt}/apksigner" sign --ks "${keystore}" --ks-type PKCS12 --ks-key-alias "${alias}" \
             --ks-pass env:KS_PASS --key-pass env:KS_PASS \
             --out "dist/${name}.apk" "${UNSIGNED}"
           rm -f "${keystore}"
-          unset KS_PASS
+          unset KS_PASS RELEASE_PASS RELEASE_KEYSTORE
 
-          # Checks: aligned, signed by the one-off key and not the public debug key, the right app, the
+          # Checks: aligned, signed by the expected key and not the public debug key, the right app, the
           # native code for every architecture asked for, and a JavaScript bundle inside (so it runs
           # without Metro).
           "${bt}/zipalign" -c 4 "dist/${name}.apk"
           certs="$("${bt}/apksigner" verify --verbose --print-certs "dist/${name}.apk")"
           echo "${certs}"
           if grep -qi 'Android Debug' <<<"${certs}"; then echo "::error::The APK is still signed with the debug key"; exit 1; fi
-          grep -q 'Trikey one-off test key' <<<"${certs}" || { echo "::error::The APK is not signed with the one-off key"; exit 1; }
+          signer="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"${certs}" | tr -d ' :' | tr 'A-F' 'a-f')"
+          if [ "${SIGNING}" = release ]; then
+            pinned="$(grep -v '^#' packaging/android/release-cert.sha256 | tr -d ' :\n\r' | tr 'A-F' 'a-f')"
+            [[ "${pinned}" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::packaging/android/release-cert.sha256 does not hold a SHA-256"; exit 1; }
+            [ "${signer}" = "${pinned}" ] \
+              || { echo "::error::The APK is signed by ${signer}, not by the release key ${pinned} (packaging/android/release-cert.sha256)"; exit 1; }
+          else
+            grep -q 'Trikey one-off test key' <<<"${certs}" || { echo "::error::The APK is not signed with the one-off key"; exit 1; }
+          fi
+          echo "signer=${signer}" >> "${GITHUB_OUTPUT}"
           # (Captured first: a pipe into grep -q would end the writer early and trip pipefail.)
           badging="$("${bt}/aapt2" dump badging "dist/${name}.apk")"
           grep -qF "package: name='${APPLICATION_ID}'" <<<"${badging}" \
@@ -188,14 +238,24 @@ jobs:
         env:
           NAME: ${{ steps.sign.outputs.name }}
           SHA256: ${{ steps.sign.outputs.sha256 }}
+          SIGNER: ${{ steps.sign.outputs.signer }}
+          SIGNING: ${{ inputs.signing || 'one-off' }}
         run: |
+          if [ "${SIGNING}" = release ]; then
+            signing_note="**Signed with the Trikey release key** (certificate SHA-256 \`${SIGNER}\`, also in
+          packaging/android/release-cert.sha256). Every release from 0.1.6-alpha on has this signature, so it installs over
+          the previous one and the wallet on the phone stays. Builds up to 0.1.5-alpha had one-off keys: moving from one of
+          those needs a last uninstall, which deletes the wallet on that phone, so make a backup (recovery code and backup
+          file) first. To get updates without downloading by hand, see docs/android-signing.md (Obtainium)."
+          else
+            signing_note="**This is a test build, signed with a one-off key made by the build job.** The key is thrown away
+          after the build, so Android will not install this build over another one, or another over it: uninstall first.
+          Uninstalling deletes the wallet on that phone, so make a backup (recovery code and backup file) before you do."
+          fi
           cat > dist/release-notes.md <<EOF
           ## Trikey alpha test build (Android)
 
-          **This is a test build, signed with a one-off key made by the build job.** The key is thrown away
-          after the build, so every build has a different signature and Android will not install one over
-          another: to move to a newer build, uninstall the old one first. Uninstalling deletes the wallet on
-          that phone, so make a backup (recovery code and backup file) before you do.
+          ${signing_note}
 
           - Pre-alpha, not audited. Test networks only (signet, testnet4). Never put real bitcoin in it.
           - Install: download \`${NAME}.apk\` on the phone, open it, and allow installing from this source when Android asks.
