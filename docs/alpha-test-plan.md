@@ -229,6 +229,9 @@ own Mac, signed with a free Apple ID.
    ```
 4. On the iPhone: Settings, General, VPN & Device Management, trust your developer profile. Then open Trikey.
 
+If the build stops with an error, `apps/mobile/README.md` ("iOS (free Apple ID)") lists the snags met on a first build and their
+fixes (UTF-8 shell for CocoaPods, the device UDID, the iOS platform download, opening Xcode once for the signing profile).
+
 You should see: the same first screen as on Android. The steps below are the same; where they name an Android screen or
 setting, use the iPhone's equivalent and note any difference in the report.
 
