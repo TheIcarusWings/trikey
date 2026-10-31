@@ -1,0 +1,222 @@
+name: iOS launch check
+
+# Builds the app for the iOS Simulator (Release: the Hermes bundle embedded, no Metro), opens it in a clean
+# iPhone simulator, and fails if the app is not running 25 seconds later, left a crash report, or its log
+# shows a fatal error. The iOS twin of android-launch.yml: the same JavaScript bundle runs on iOS Hermes, so a
+# start-up crash in the shared code shows on both, and one in an iOS native module only here.
+#
+# No Apple account, no signing, no secrets: a simulator build needs no certificate or provisioning profile, so
+# it is built with CODE_SIGNING_ALLOWED=NO. The native identifiers are the same as the Android build's
+# (android-build.yml): iCloud off (TRIKEY_DISABLE_ICLOUD=1), passkeys off (no EXPO_PUBLIC_PASSKEY_RP_ID),
+# Google Drive backup off, the bundle id from app.json (no TRIKEY_IOS_BUNDLE_ID). One difference from a phone:
+# an unsigned simulator app may be refused by the Keychain (-34018, errSecMissingEntitlement); the report
+# says so when the log shows it. If that ever gets in the way, drop CODE_SIGNING_ALLOWED=NO: Xcode then signs
+# the simulator build ad hoc ("Sign to Run Locally"), which still needs no account.
+#
+# What it reports (CI log downloads are blocked for us; annotations can be read through the checks API):
+# - build failed: `::error` annotations with the `error:` lines of the failing step's log (expo prebuild,
+#   pod install or xcodebuild), then its last 60 lines; the logs are in the `ios-build-logs` artifact;
+# - launch failed: `::error` annotations with the lines that say why, most telling first: the crash report's
+#   exception, reason (an uncaught JavaScript error shows here as RCTFatal's "Unhandled JS Exception") and
+#   top frames, then the JavaScript error and the app's log;
+# - passed: one `::notice` with the first JavaScript log lines.
+# The app's log, the whole simulator log, a screenshot and any crash reports are in the `ios-launch-logs`
+# artifact. The scripts are .github/scripts/ios-launch.sh (drives the simulator) and
+# .github/scripts/ios-launch-report.py (judges and reports); both run on any Mac with Xcode.
+#
+# Runner: macos-26 (Apple silicon), free for a public repository. Its image has Xcode 26.0.1 to 26.6 and the
+# iOS 26.2, 26.4 and 26.5 simulator runtimes (actions/runner-images, images/macos/macos-26-arm64-Readme.md);
+# Xcode 26.5 is chosen because its own runtime, iOS 26.5, is on the image. If an image update removes it, the
+# job warns and uses the image's default Xcode.
+
+on:
+  pull_request:
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/**'
+      - 'package-lock.json'
+      - '.github/workflows/ios-launch.yml'
+      - '.github/scripts/ios-launch*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-launch-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  launch:
+    runs-on: macos-26
+    timeout-minutes: 100
+    env:
+      # Expo reads these when it generates the native project and when it bundles the JavaScript. Empty on
+      # purpose: see the header.
+      TRIKEY_DISABLE_ICLOUD: '1'
+      EXPO_PUBLIC_PASSKEY_RP_ID: ''
+      EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID: ''
+      XCODE_VERSION: '26.5'
+      LOGS: ${{ github.workspace }}/build-logs
+      DERIVED_DATA: ${{ github.workspace }}/DerivedData
+      OUT: launch-out
+      WAIT_SECONDS: '25'
+      COCOAPODS_DISABLE_STATS: 'true'
+    steps:
+      - uses: actions/checkout@v4.4.0
+
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          want="/Applications/Xcode_${XCODE_VERSION}.app"
+          if [ -d "${want}" ]; then
+            sudo xcode-select -s "${want}/Contents/Developer"
+          else
+            echo "::warning title=Xcode::Xcode ${XCODE_VERSION} is not on this runner image; using its default, $(xcode-select -p). Update XCODE_VERSION in ios-launch.yml."
+          fi
+          xcodebuild -version
+          xcrun simctl list runtimes available
+
+      - run: npm ci
+
+      # The bundle id the build will have: ios.bundleIdentifier from app.json, as app.config.ts resolves it. The
+      # built app is checked against it below.
+      - name: Read the bundle id from the Expo config
+        id: config
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          id="$(npx expo config --type public --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const p=JSON.parse(s).ios?.bundleIdentifier;if(!p)process.exit(1);process.stdout.write(p)})')"
+          [[ "${id}" =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$ ]] || { echo "::error::Unexpected ios.bundleIdentifier: ${id}"; exit 1; }
+          echo "Bundle id: ${id}"
+          echo "bundle-id=${id}" >> "${GITHUB_OUTPUT}"
+
+      - name: Generate the iOS project (expo prebuild)
+        id: prebuild
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          mkdir -p "${LOGS}"
+          npx expo prebuild --platform ios --no-install 2>&1 | tee "${LOGS}/prebuild.log"
+          # No entitlement a free account could not sign: no iCloud container, no associated domains.
+          if grep -rlE 'com\.apple\.developer\.(icloud|ubiquity|associated-domains)' ios --include='*.entitlements'; then
+            echo "::error title=iOS build::The generated project asks for iCloud or associated-domains entitlements; TRIKEY_DISABLE_ICLOUD=1 and an empty EXPO_PUBLIC_PASSKEY_RP_ID should leave them out"
+            exit 1
+          fi
+
+      # CocoaPods' download cache (pod sources and the prebuilt React Native and Hermes frameworks), not Pods/:
+      # a cache miss or a stale entry only costs download time, never a broken build.
+      - uses: actions/cache@v4.3.0
+        with:
+          path: ~/Library/Caches/CocoaPods
+          key: ios-cocoapods-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ios-cocoapods-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install CocoaPods
+        id: pods
+        working-directory: apps/mobile/ios
+        run: |
+          set -euo pipefail
+          pod --version
+          pod install 2>&1 | tee "${LOGS}/pod-install.log"
+
+      - name: Build the app for the iOS Simulator (Release)
+        id: build
+        working-directory: apps/mobile/ios
+        env:
+          BUNDLE_ID: ${{ steps.config.outputs.bundle-id }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          workspaces=( *.xcworkspace )
+          [ "${#workspaces[@]}" -eq 1 ] || { echo "::error title=iOS build::Expected one .xcworkspace in apps/mobile/ios, found: ${workspaces[*]:-none}"; exit 1; }
+          workspace="${workspaces[0]}"
+          name="${workspace%.xcworkspace}"
+          # Expo names the app's scheme after the project; take it from the workspace's list to be sure.
+          xcodebuild -list -json -workspace "${workspace}" > "${LOGS}/xcodebuild-list.json"
+          scheme="$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1]))["workspace"]["schemes"]; n=sys.argv[2]; print(n if n in s else next((x for x in s if not x.startswith("Pods") and x not in ("React", "hermes-engine")), ""))' "${LOGS}/xcodebuild-list.json" "${name}")"
+          [ -n "${scheme}" ] || { echo "::error title=iOS build::No app scheme in ${workspace}"; cat "${LOGS}/xcodebuild-list.json"; exit 1; }
+          echo "Workspace ${workspace}, scheme ${scheme}"
+
+          # Release for the simulator, for this runner's architecture only; no signing (see the header). The log
+          # goes to a file (the failure report reads it); a line a minute says how far it got.
+          log="${LOGS}/xcodebuild.log"
+          set +e
+          xcodebuild build \
+            -workspace "${workspace}" -scheme "${scheme}" \
+            -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "${DERIVED_DATA}" -hideShellScriptEnvironment \
+            ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
+            > "${log}" 2>&1 &
+          pid=$!
+          while kill -0 "${pid}" 2>/dev/null; do
+            sleep 60
+            last="$(grep -E '^(CompileC|CompileSwift|SwiftCompile|SwiftDriver|Ld|PhaseScriptExecution|CodeSign|ProcessInfoPlistFile|CompileAssetCatalog)' "${log}" | tail -n 1 | cut -c1-150)"
+            echo "... $(wc -l < "${log}" | tr -d ' ') log lines; last: ${last}"
+          done
+          wait "${pid}"
+          rc=$?
+          set -e
+          grep -E '^\*\* BUILD' "${log}" || true
+          [ "${rc}" -eq 0 ] || { echo "xcodebuild exited ${rc}"; exit "${rc}"; }
+
+          products="${DERIVED_DATA}/Build/Products/Release-iphonesimulator"
+          apps=( "${products}"/*.app )
+          [ "${#apps[@]}" -eq 1 ] || { echo "::error title=iOS build::Expected one .app in ${products}, found: ${apps[*]:-none}"; exit 1; }
+          app="${apps[0]}"
+          # Checks: the right app, built for the simulator, with the JavaScript bundle inside (so it runs
+          # without Metro).
+          built_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${app}/Info.plist")"
+          [ "${built_id}" = "${BUNDLE_ID}" ] || { echo "::error title=iOS build::Unexpected bundle id ${built_id} (expected ${BUNDLE_ID})"; exit 1; }
+          platform="$(/usr/libexec/PlistBuddy -c 'Print :DTPlatformName' "${app}/Info.plist")"
+          [ "${platform}" = "iphonesimulator" ] || { echo "::error title=iOS build::Built for ${platform}, not the simulator"; exit 1; }
+          [ -f "${app}/main.jsbundle" ] || { echo "::error title=iOS build::No main.jsbundle in ${app##*/}: this build would need Metro"; exit 1; }
+          du -sh "${app}"
+          echo "app=${app}" >> "${GITHUB_OUTPUT}"
+
+      - name: Report a build failure
+        if: ${{ failure() && (steps.prebuild.outcome == 'failure' || steps.pods.outcome == 'failure' || steps.build.outcome == 'failure') }}
+        env:
+          PREBUILD: ${{ steps.prebuild.outcome }}
+          PODS: ${{ steps.pods.outcome }}
+        run: |
+          if [ "${PREBUILD}" = failure ]; then
+            python3 .github/scripts/ios-launch-report.py --build-log "${LOGS}/prebuild.log" --step "expo prebuild --platform ios"
+          elif [ "${PODS}" = failure ]; then
+            python3 .github/scripts/ios-launch-report.py --build-log "${LOGS}/pod-install.log" --step "pod install"
+          else
+            python3 .github/scripts/ios-launch-report.py --build-log "${LOGS}/xcodebuild.log" --step "xcodebuild (Release, iOS Simulator)"
+          fi
+
+      - name: Launch in the iOS Simulator
+        if: ${{ steps.build.outcome == 'success' }}
+        timeout-minutes: 20
+        env:
+          APP: ${{ steps.build.outputs.app }}
+        run: bash .github/scripts/ios-launch.sh
+
+      - name: Report
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 .github/scripts/ios-launch-report.py "${OUT}"
+
+      - uses: actions/upload-artifact@v4.6.2
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        with:
+          name: ios-launch-logs
+          path: launch-out/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: ios-build-logs
+          path: build-logs/
+          if-no-files-found: ignore
+          retention-days: 14
