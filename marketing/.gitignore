@@ -1,3 +1,0 @@
-# Large binaries stay out of git; see MANIFEST.md
-build/
-out/
