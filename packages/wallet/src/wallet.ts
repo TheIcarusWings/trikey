@@ -96,7 +96,7 @@ import {
   mnemonicFromEntropy,
   newMnemonic,
 } from './keys.js';
-import type { CloudBackupStore, HardwareKind, HardwareProvider, HardwareSigner, HardwareWalletPolicy, KeyValueStore, PasskeyPrf, SecureKeyStore } from './platform.js';
+import { isHardwareDisconnect, type CloudBackupStore, type HardwareKind, type HardwareProvider, type HardwareSigner, type HardwareWalletPolicy, type KeyValueStore, type PasskeyPrf, type SecureKeyStore } from './platform.js';
 import { GuardianSilentPaymentScanner, GuardianSingleKeyChain } from './guardian-sp.js';
 import { TxCache } from './txcache.js';
 import { parseScannedCode, type ScannedCode } from './scan.js';
@@ -556,6 +556,8 @@ export class TrikeyWallet {
   private rpc?: GuardianRpc;
   private pool?: RelayPool;
   private hwSession?: HardwareSigner;
+  /** A held connection that went stale, and the one `withHardware` replaced it with (so its holder closes that one). */
+  private readonly hwReplaced = new WeakMap<HardwareSigner, HardwareSigner>();
   private pairing?: PairingSession;
   private chainSource?: ChainSource;
   private fees?: FeeEstimates;
@@ -974,18 +976,42 @@ export class TrikeyWallet {
     return this.deps.hardware;
   }
 
-  /** Connects the wallet's hardware wallet (checking it is the same device), runs `fn`, disconnects. */
+  /**
+   * Connects the wallet's hardware wallet (checking it is the same device), runs `fn`, disconnects. A connection held
+   * from an earlier step (`hwSession`) is used instead; if it turns out to be gone (a Ledger drops Bluetooth while the
+   * phone does something else, like scanning the guardian's code), it is replaced by a fresh one and `fn` runs again.
+   */
   private async withHardware<T>(fn: (hw: HardwareSigner, rec: HardwareRecord) => Promise<T>, rec: HardwareRecord | undefined = this.s.hardware): Promise<T> {
     if (!rec) throw new WalletError('wrong_state', 'No hardware wallet is set up.');
     const reuse = this.hwSession && this.hwSession.info.fingerprint === rec.fingerprint ? this.hwSession : undefined;
-    const hw = reuse ?? (await this.hardwareProvider().connect({ kind: rec.kind }));
+    if (reuse) {
+      try {
+        return await fn(reuse, rec);
+      } catch (e) {
+        if (!isHardwareDisconnect(e) || this.hwSession !== reuse) throw e;
+        const fresh = await this.connectSame(rec);
+        this.hwSession = fresh;
+        this.hwReplaced.set(reuse, fresh);
+        await reuse.close().catch(() => {});
+        return await fn(fresh, rec);
+      }
+    }
+    const hw = await this.connectSame(rec);
     try {
-      if (hw.info.fingerprint !== rec.fingerprint)
-        throw new WalletError('hardware_mismatch', `Connect the wallet's hardware wallet (fingerprint ${rec.fingerprint}), not ${hw.info.fingerprint}.`);
       return await fn(hw, rec);
     } finally {
-      if (!reuse) await hw.close().catch(() => {});
+      await hw.close().catch(() => {});
     }
+  }
+
+  /** Connects a hardware wallet and checks it is the wallet's own (`rec`). */
+  private async connectSame(rec: HardwareRecord): Promise<HardwareSigner> {
+    const hw = await this.hardwareProvider().connect({ kind: rec.kind });
+    if (hw.info.fingerprint !== rec.fingerprint) {
+      await hw.close().catch(() => {});
+      throw new WalletError('hardware_mismatch', `Connect the wallet's hardware wallet (fingerprint ${rec.fingerprint}), not ${hw.info.fingerprint}.`);
+    }
+    return hw;
   }
 
   /** The wallet as the device should see it. */
@@ -3811,8 +3837,11 @@ export class TrikeyWallet {
     try {
       return await fn();
     } finally {
-      if (this.hwSession === hw) this.hwSession = undefined;
+      let held = hw;
+      for (let next = this.hwReplaced.get(held); next; next = this.hwReplaced.get(held)) held = next;
+      if (this.hwSession === held) this.hwSession = undefined;
       await hw.close().catch(() => {});
+      if (held !== hw) await held.close().catch(() => {});
     }
   }
 
