@@ -16,8 +16,12 @@ Status: **plan, waiting for the owner's go-ahead.** Nothing is produced yet.
   hostnames. Recovery codes on screen are visibly fake (the demo's).
 - **No third-party logos.** Umbrel, Ledger, Trezor and GitHub are named in text. Their screens are shown as clean
   illustrations, or as real screen recordings the owner provides.
-- **Honest status.** Every video opens with the release it was made for ("Trikey 0.1.7-alpha · signet") and ends
-  with "Pre-alpha · not audited".
+- **Future-proof: nothing tied to a version.** No version numbers, dates, release file names, release-specific steps
+  or screenshots of a particular release page, in captions, voice or footage. Say "the latest release", "download the
+  Android app", "check for updates in Settings". Where a screen may change, the caption describes the step ("approve
+  on your hardware wallet") instead of quoting the exact label.
+- **Honest status.** Every video ends with "Pre-alpha · not audited", which stays true until it isn't, and then the
+  end card changes in one place (`render/lib/tutorial.js`) for all six.
 
 ## The videos
 
@@ -27,13 +31,14 @@ step captions and a WebVTT file. The list follows the controller's suggestion, r
 | # | Video | Follows | Length | Footage |
 |---|---|---|---|---|
 | 1 | **Install the guardian on Umbrel** | "Install the guardian on the Umbrel", step 1 | ~2:00 | Umbrel steps: illustration (or owner's recording). Guardian: web UI mocks |
-| 2 | **Install the app** | "Install the APK", "Or on an iPhone" | ~1:30 | GitHub release page, Android install prompts: illustration. 0.1.7 "Check for updates" row: app |
+| 2 | **Install the app** | "Install the APK", "Or on an iPhone" | ~1:30 | Platform segments: illustration. "Check for updates" in Settings: app |
 | 3 | **Create your wallet** | Steps 2 to 5 | ~3:00 | App + guardian web mocks side by side; hardware wallet: illustration |
 | 4 | **Receive and send** | Steps 6 to 8 | ~2:00 | App; hardware approval: illustration |
 | 5 | **Lock, unlock and change your limit** | Steps 9 and 10 | ~1:30 | App + guardian web (`locked`, `limitoff`) |
 | 6 | **Lost your phone?** | Steps 11 and 12 | ~2:30 | App (restore, recovery) + guardian web (`recovery`, `recoveryready`) |
 
-Video 1 also covers the troubleshooting cards most testers hit: the "401" when the store address is mistyped, and
+Video 2 is built from swappable segments (see "Install the app" below), so a new way to get the app replaces one
+segment and nothing else. Video 1 also covers the troubleshooting cards most testers hit: the "401" when the store address is mistyped, and
 "Create guardian" staying disabled while Electrs syncs. Replace guardian (step 13) and the developer self-test
 (step 14) are left out: too niche for video.
 
@@ -44,10 +49,16 @@ Video 1 also covers the troubleshooting cards most testers hit: the "401" when t
    Electrs if missing) → open it from the home screen, not by port → "Set up your guardian": node and Electrs found,
    network shown → choose a passphrase → relays → "Create guardian" → after a restart: unlock (from the phone or the
    page). Card: "Create guardian stays grey? Electrs is still syncing."
-2. **Install the app.** Android: the newest pre-release on GitHub Releases → download the APK (check the
-   `.sha256`) → allow installs from this source → Play Protect warning is expected. From 0.1.7: updates install over
-   the old app; Settings › About › Check for updates (and Obtainium, if the controller confirms the setup). iPhone:
-   one card with the Mac + free Apple ID route and the 7-day limit, pointing to the test plan.
+2. **Install the app.** Three parts, each a separate script file and composition, joined at render time:
+   - `intro` (version-free): the app is key 2; pick your phone below; get it from the latest release.
+   - `android` (swappable): download the Android app from the latest release (and check its checksum) → allow
+     installs from that source → the unknown-app warning is expected → later updates: check for updates in Settings.
+   - `ios` (swappable): how to get it on an iPhone today (built from a Mac with a free Apple ID; the install has to be
+     renewed every few days), pointing to the test plan for the commands. When TestFlight or the App Store arrives,
+     only this segment is rewritten and re-rendered.
+   - `outro` (version-free): open Trikey; next video, create your wallet.
+   The render produces the full video plus each platform on its own (intro + android + outro, intro + ios + outro),
+   so the website can show only the part a visitor needs.
 3. **Create your wallet.** First screen: network picker (signet), the pill → connect the hardware wallet (Ledger:
    the "Bitcoin Test" app; Trezor: Suite Lite) → verify the first address on the device → on the guardian page,
    make a pairing code (lasts 5 minutes, works once) → scan it → protection: daily limit, waiting period, alert
@@ -106,4 +117,5 @@ Everything that can be regenerated from code is:
    before the rest are made.
 3. The Maestro recording workflow and flows, once the controller confirms what Demo mode can show.
 4. Videos 2 to 6, then the /setup page.
-5. Re-render after each release that changes a screen shown in a video.
+5. Re-render when a screen shown in a video changes. Because nothing names a version, a release that changes no
+   shown screen needs no re-render.
