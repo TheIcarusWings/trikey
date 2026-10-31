@@ -66,12 +66,32 @@
 <script src="../lib/tutorial.js"></script>
 <script src="../../build/tut/guardian/timelines.js"></script>
 <script>
-window.SPEC = { id: 't1-guardian-on-umbrel', duration: 96.5, vo: [] };
 
 // When the guardian footage starts (the setup page, then after a restart) and its events, from the capture timelines.
 const G0 = 48.0, L0 = 74.0;
 const GSET = G0 + TL.setup.cursor[4].t;          // "Set up" clicked: the pairing page opens
 const END = L0 + TL.locked.duration + 0.4;
+
+// The page is authored in its own time (above, and every time below). SPEC.retime maps it to the output: it stretches
+// each step to fit its voiceover line and holds still while the presenter talks ([authored, output] pairs).
+// Presenter clips and voiceover lines are placed in output time.
+const PRES = [
+  { a: 3.0, name: 'tp701', d: 8.25 },    // "Hi! Let's set up the Trikey Guardian…"
+  { a: 60.4, name: 'tp702', d: 9.92 },   // "One thing to get right: your passphrase…"
+  { a: 0, name: 'tp703', d: 6.08 },      // "That's it, your guardian is ready…" (placed below, at the end)
+];
+const OUT_GSET = 70.4 + (GSET - G0), OUT_L0 = OUT_GSET + (L0 - GSET), OUT_END = OUT_L0 + (END - L0);
+PRES[2].a = OUT_END;
+window.SPEC = {
+  id: 't1-guardian-on-umbrel',
+  duration: OUT_END + PRES[2].d + 5.5,
+  retime: [[0, 0], [5, 3], [5, 11.4], [14, 24.4], [28.2, 38.6], [42.2, 52.6], [G0, 60.4], [G0, 70.4],
+    [GSET, OUT_GSET], [L0, OUT_L0], [END - 0.01, OUT_END], [END - 0.01, OUT_END + PRES[2].d + 0.1], [END + 1, OUT_END + PRES[2].d + 1.1]],
+  vo: [
+    [3.0, 701], [11.8, 711], [24.8, 712], [39.0, 713], [52.9, 714], [60.4, 702], [70.9, 715],
+    [OUT_GSET + 0.6, 716], [OUT_L0 + 0.5, 717], [OUT_END, 703],
+  ].map(([at, id]) => ({ at, id })),
+};
 
 const STORE = 'github.com/TheIcarusWings/trikey-umbrel-store';
 const LOGO_INK = LOGO('#09090B', '#EA580C');
@@ -177,6 +197,21 @@ const update = tutorial({
   intro: [0, 5],
   outro: { at: END, next: 'Install the app' },
 });
+
+// The presenter, in output time: over the window, with the step panel hidden.
+const pres = h('div', { class: 't-pres' }, '<span class="ai">AI presenter</span>');
+$('#stage').append(pres);
+for (const p of PRES) p.el = clip(p.name, pres);
+let REAL = 0;
+window.seek = async t => {
+  REAL = t;
+  window.update(remap(t));
+  let e = 0;
+  for (const p of PRES) e = Math.max(e, setClip(p.el, t, p.a, p.a + p.d, { frames: Math.round(p.d * 30), fi: 0.3, fo: 0.3 }));
+  pres.style.opacity = e;
+  $('.t-panel').style.opacity = 1 - e;
+  await Promise.all(pending.splice(0));
+};
 
 // Illustration states that change within a scene.
 window.update = t => {

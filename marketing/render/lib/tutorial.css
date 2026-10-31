@@ -74,3 +74,11 @@ html, body { background: var(--t-ground); }
 .t-card .pill { border: 1px solid var(--t-line); border-radius: 999px; padding: 10px 24px; color: var(--t-ink); display: inline-flex; gap: 12px; align-items: center; background: var(--t-card); }
 .t-card .pill b { width: 11px; height: 11px; border-radius: 50%; background: #B45309; display: block; }
 .t-card .site { font-size: 36px; font-weight: 600; color: var(--t-ink); letter-spacing: -0.02em; }
+
+/* The presenter, over the window. */
+.t-pres { position: absolute; left: 64px; top: 96px; width: 1216px; height: 800px; border-radius: 14px; overflow: hidden; z-index: 10;
+          opacity: 0; background: #E4E4E7; box-shadow: 0 24px 60px rgba(0,0,0,.12); }
+.t-pres .clip { position: absolute; inset: 0; opacity: 0; }
+.t-pres .clip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.t-pres .ai { position: absolute; right: 16px; top: 14px; z-index: 2; font-size: 15px; padding: 5px 12px; border-radius: 999px;
+              background: rgba(9,9,11,.55); color: #fff; }
