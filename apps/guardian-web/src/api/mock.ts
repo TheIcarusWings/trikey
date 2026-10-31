@@ -29,6 +29,7 @@ import { relayListError } from '../lib/relays';
  *   syncing    unlocked while the node is still catching up, one relay down
  *   signedout  set up and locked, this browser not signed in yet (the sign-in screen)
  *   oldrelays  two old relays from a change months ago, still watched; the phone switched
+ *   limitoff   the owner turned the daily limit off with the hardware wallet yesterday
  *
  * State lives in memory only, so a page reload starts the scenario over. In the
  * mock, any unlock passphrase works except the literal `wrong`, which is
@@ -43,7 +44,8 @@ export type MockScenario =
   | 'unpaired'
   | 'syncing'
   | 'signedout'
-  | 'oldrelays';
+  | 'oldrelays'
+  | 'limitoff';
 
 const LATENCY_MS = 120;
 const HOUR = 3_600_000;
@@ -130,7 +132,7 @@ function demoRecovery(ready = false): RecoveryInProgress {
 
 export function readScenario(search: string): MockScenario {
   const value = new URLSearchParams(search).get('mock');
-  const known: MockScenario[] = ['firstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout', 'oldrelays'];
+  const known: MockScenario[] = ['firstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout', 'oldrelays', 'limitoff'];
   return known.find((s) => s === value) ?? 'default';
 }
 
@@ -144,6 +146,22 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       ? []
       : [{ id: 'ph_1', name: 'Pixel 8', pairedAt: localAt(9, '16:44') }];
   let activity: ActivityEntry[] = setupDone ? demoActivity() : [];
+  // `?mock=limitoff`: turned off yesterday, with the alert the guardian sent about it (apps/guardian/src/http/activity.ts).
+  const limitOff = scenario === 'limitoff';
+  if (limitOff)
+    activity = [
+      ...activity.filter((a) => a.at > localAt(0, '00:00')),
+      {
+        id: 'a_off_alert', at: localAt(1, '20:16'), kind: 'rules', event: '"Daily limit turned off" alert sent to 3 recipients',
+        summary: 'Limit-off alert sent', signedBy: null, sats: null, result: 'ok',
+      },
+      {
+        id: 'a_off', at: localAt(1, '20:15'), kind: 'rules',
+        event: 'Daily limit turned off (hardware approval #12): the phone and this guardian together can now send everything',
+        summary: 'Daily limit turned off', signedBy: 'Hardware wallet', sats: null, result: 'rule-changed',
+      },
+      ...activity.filter((a) => a.at <= localAt(0, '00:00')),
+    ];
   let recovery: RecoveryInProgress | null =
     scenario === 'recovery' ? demoRecovery() : scenario === 'recoveryready' ? demoRecovery(true) : null;
   let walletIds = scenario === 'unpaired' || scenario === 'firstrun' ? [] : ['3a7f09c2d41e8b65'];
@@ -166,7 +184,8 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
 
   const rules: Rules = {
     walletName: 'Main',
-    dailyLimitSats: 200_000,
+    // No daily limit: the protocol maximum, never shown as a number.
+    ...(limitOff ? { dailyLimitSats: 2_100_000_000_000_000, dailyLimitOff: true as const } : { dailyLimitSats: 200_000 }),
     recoveryDelayDays: 7,
     contacts: [
       { id: 'c_phone', name: 'Paired phone', kind: 'paired-phone' },
@@ -226,7 +245,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
         ? { state: 'syncing', progress: 0.87, source: 'Bitcoin Node + Electrs' }
         : { state: 'synced', source: 'Bitcoin Node + Electrs' },
       wallets: setupDone || setupFinished ? walletIds.map((id) => ({ id, name: 'Main', phonesPaired: phones.length })) : [],
-      dailySpend: { usedSats: 70_420, limitSats: rules.dailyLimitSats },
+      dailySpend: { usedSats: 70_420, limitSats: rules.dailyLimitSats, ...(rules.dailyLimitOff ? { limitOff: true as const } : {}) },
       recoveryInProgress: recovery !== null,
       network: 'signet',
       npub: DEMO_NPUB,
