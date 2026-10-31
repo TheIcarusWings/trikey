@@ -87,7 +87,7 @@ function StopWatchingDialog({
             ) : (
               `This guardian will stop listening and answering on ${settings.retiring.length} old relays.`
             )}{' '}
-            To watch again, add it back as a relay. These will stop reaching this guardian:
+            To watch {one ? 'it' : 'them'} again, add {one ? 'it' : 'them'} back as a relay. These will stop reaching this guardian:
           </AlertDialogDescription>
           <ul className="m-0 flex list-disc flex-col gap-1 pl-5 text-sm text-muted-foreground">
             <li>"Recover on a new phone" sheets and phone backups made before the change that only know {one ? 'it' : 'them'}.</li>
@@ -291,7 +291,7 @@ function RelaysSection({ paired, onSaved }: { paired: boolean; onSaved: () => vo
             {draft.map((url) => (
               <li key={url} className="flex min-h-12 items-center justify-between gap-4 border-t py-1.5 first:border-t-0">
                 <span className={cn('min-w-0 break-all text-[15px] leading-5', !label(url) && 'font-mono text-[13px]')}>{label(url) ?? url}</span>
-                <Button variant="ghost" size="icon" onClick={() => remove(url)} disabled={saving} aria-label={`Remove ${url}`} className="size-8">
+                <Button variant="ghost" size="icon" onClick={() => remove(url)} disabled={saving} aria-label={`Remove ${url}`} className="size-11">
                   <X aria-hidden="true" />
                 </Button>
               </li>
