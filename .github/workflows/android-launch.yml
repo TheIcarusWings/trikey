@@ -12,6 +12,16 @@ name: Android launch check
 # The full logcat, the app's own lines, a screenshot and any tombstones are in the `android-launch-logcat`
 # artifact. The scripts are .github/scripts/android-launch.sh (drives the emulator) and
 # .github/scripts/android-launch-report.py (judges and reports); both run locally against any emulator.
+#
+# Then, in the same emulator and only if the app was running, a short walk through the demo with Maestro
+# (apps/mobile/.maestro/demo-walk.yaml): Welcome into Demo mode, Home and its balance, Send to the amount, Receive,
+# Settings and Activity, back to Home each time. It fails the job when a step fails (a screen that crashes or shows
+# nothing when it is opened) or the app crashes during it. .github/scripts/android-walk.sh runs it and collects the
+# walk's logcat; .github/scripts/demo-walk-report.py posts the failing step, Maestro's error, the steps before it and
+# the app's log lines of the walk as `::error` annotations (one `::notice` when it passes). Maestro's screenshots,
+# JUnit report and debug output, and the walk's logcat, are in the `android-demo-walk` artifact. Maestro is installed
+# from its GitHub release by .github/scripts/install-maestro.sh, pinned by version and SHA-256. The emulator is a
+# Pixel 6 profile, tall enough for the Welcome screen's wallet mode picker.
 
 on:
   pull_request:
@@ -23,6 +33,9 @@ on:
       - '.github/workflows/android-apk.yml'
       - '.github/workflows/android-build.yml'
       - '.github/scripts/android-launch*'
+      - '.github/scripts/android-walk.sh'
+      - '.github/scripts/demo-walk-report.py'
+      - '.github/scripts/install-maestro.sh'
   workflow_dispatch:
 
 permissions:
@@ -48,15 +61,35 @@ jobs:
       APK: apk/${{ needs.build.outputs.apk-name }}.apk
       OUT: launch-out
       WAIT_SECONDS: '25'
+      WALK_OUT: walk-out
+      WALK_TIMEOUT: '480'
     steps:
       - uses: actions/checkout@v4.4.0
         with:
-          sparse-checkout: .github
+          sparse-checkout: |
+            .github
+            apps/mobile/.maestro
 
       - uses: actions/download-artifact@v4.3.0
         with:
           name: trikey-android-apk-x86_64
           path: apk
+
+      # Maestro (the demo walk) runs on Java 17 or newer.
+      - uses: actions/setup-java@v4.9.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/cache@v4.3.0
+        with:
+          path: ~/.maestro-cli
+          key: maestro-${{ runner.os }}-${{ hashFiles('.github/scripts/install-maestro.sh') }}
+
+      # A failed install does not stop the launch check: the walk then reports that it could not run.
+      - name: Install Maestro
+        continue-on-error: true
+        run: bash .github/scripts/install-maestro.sh
 
       # The emulator needs hardware acceleration: let the runner user open /dev/kvm.
       - name: Enable KVM
@@ -71,12 +104,16 @@ jobs:
           api-level: 34
           target: google_apis
           arch: x86_64
+          profile: pixel_6
           ram-size: 4096M
           disk-size: 6000M
           emulator-boot-timeout: 900
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none -camera-front none
           disable-animations: true
-          script: bash .github/scripts/android-launch.sh
+          # The launch check first, as it was; then the demo walk (it skips itself if the app was not running).
+          script: |
+            bash .github/scripts/android-launch.sh
+            bash .github/scripts/android-walk.sh
 
       - name: Report
         if: ${{ !cancelled() }}
@@ -88,4 +125,16 @@ jobs:
           name: android-launch-logcat
           path: launch-out/
           if-no-files-found: warn
+          retention-days: 14
+
+      - name: Report the demo walk
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/demo-walk-report.py "${WALK_OUT}" "${OUT}"
+
+      - uses: actions/upload-artifact@v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: android-demo-walk
+          path: walk-out/
+          if-no-files-found: ignore
           retention-days: 14

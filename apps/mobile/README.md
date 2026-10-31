@@ -133,6 +133,19 @@ npx expo prebuild --platform android && (cd android && ./gradlew assembleRelease
 A debug or locally signed build installs without any store account. (Google Drive backup stays "coming later"; the backup file
 works as on iOS.)
 
+### The demo walk (Maestro)
+
+After the launch check, CI walks through the demo on both platforms with [Maestro](https://maestro.dev): from the first
+screen into Demo mode, Home and its balance, Send to the amount screen, Receive, Settings and Activity, back to Home each
+time, so a screen that crashes or shows nothing when it is opened fails the pull request
+(`.maestro/demo-walk.yaml`; the failing step, Maestro's error and the app's log lines are in the check's annotations, the
+screenshots in the `android-demo-walk` / `ios-demo-walk` artifact). To run it yourself, install the Maestro CLI
+(`.github/scripts/install-maestro.sh` installs the version CI uses; it needs Java 17), start an Android emulator or an iOS
+Simulator with the app installed (a Release build starts on Welcome in Real mode, a debug build in Demo; the flow handles
+both), and from the repository root run `maestro test apps/mobile/.maestro/demo-walk.yaml` (add `--device <id>` when more
+than one is running). The flow taps accessibility labels and a few `testID`s (`welcome-change-mode`, `home-balance`,
+`home-see-all`, `receive-address`, `screen-back`): keep them when you change those screens, or update the flow with them.
+
 ## Platform layer: `src/platform/`
 
 `createPlatform()` returns what `@trikey/wallet` needs from the phone (the interfaces are in

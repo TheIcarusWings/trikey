@@ -85,7 +85,7 @@ export default function Receive() {
         <View className="mt-1 items-center gap-4">
           <AddressQr address={receiveAddress} />
           <View className="gap-1.5">
-            <Text className="text-foreground px-3 text-center font-mono text-[15px] leading-6" selectable>
+            <Text testID="receive-address" className="text-foreground px-3 text-center font-mono text-[15px] leading-6" selectable>
               {groupAddress(receiveAddress)}
             </Text>
             {testNetwork ? (

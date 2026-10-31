@@ -24,6 +24,16 @@ name: iOS launch check
 # artifact. The scripts are .github/scripts/ios-launch.sh (drives the simulator) and
 # .github/scripts/ios-launch-report.py (judges and reports); both run on any Mac with Xcode.
 #
+# Then, in the same simulator and only if the app was running, a short walk through the demo with Maestro
+# (apps/mobile/.maestro/demo-walk.yaml, the same flow as on Android): Welcome into Demo mode, Home and its balance,
+# Send to the amount, Receive, Settings and Activity, back to Home each time. It fails the job when a step fails (a
+# screen that crashes or shows nothing when it is opened) or the app crashes during it. .github/scripts/ios-walk.sh
+# runs it and collects the app's log and crash reports of the walk; .github/scripts/demo-walk-report.py posts the
+# failing step, Maestro's error, the steps before it and the app's log lines as `::error` annotations (one `::notice`
+# when it passes). Maestro's screenshots, JUnit report and debug output, and the walk's logs, are in the
+# `ios-demo-walk` artifact. Maestro is installed from its GitHub release by .github/scripts/install-maestro.sh,
+# pinned by version and SHA-256.
+#
 # Runner: macos-26 (Apple silicon), free for a public repository. Its image has Xcode 26.0.1 to 26.6 and the
 # iOS 26.2, 26.4 and 26.5 simulator runtimes (actions/runner-images, images/macos/macos-26-arm64-Readme.md);
 # Xcode 26.5 is chosen because its own runtime, iOS 26.5, is on the image. If an image update removes it, the
@@ -37,6 +47,9 @@ on:
       - 'package-lock.json'
       - '.github/workflows/ios-launch.yml'
       - '.github/scripts/ios-launch*'
+      - '.github/scripts/ios-walk.sh'
+      - '.github/scripts/demo-walk-report.py'
+      - '.github/scripts/install-maestro.sh'
   workflow_dispatch:
 
 permissions:
@@ -61,6 +74,8 @@ jobs:
       DERIVED_DATA: ${{ github.workspace }}/DerivedData
       OUT: launch-out
       WAIT_SECONDS: '25'
+      WALK_OUT: walk-out
+      WALK_TIMEOUT: '600'
       COCOAPODS_DISABLE_STATS: 'true'
     steps:
       - uses: actions/checkout@v4.4.0
@@ -194,6 +209,25 @@ jobs:
             python3 .github/scripts/ios-launch-report.py --build-log "${LOGS}/xcodebuild.log" --step "xcodebuild (Release, iOS Simulator)"
           fi
 
+      # Maestro (the demo walk) runs on Java 17 or newer.
+      - uses: actions/setup-java@v4.9.1
+        if: ${{ steps.build.outcome == 'success' }}
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/cache@v4.3.0
+        if: ${{ steps.build.outcome == 'success' }}
+        with:
+          path: ~/.maestro-cli
+          key: maestro-${{ runner.os }}-${{ hashFiles('.github/scripts/install-maestro.sh') }}
+
+      # A failed install does not stop the launch check: the walk then reports that it could not run.
+      - name: Install Maestro
+        if: ${{ steps.build.outcome == 'success' }}
+        continue-on-error: true
+        run: bash .github/scripts/install-maestro.sh
+
       - name: Launch in the iOS Simulator
         if: ${{ steps.build.outcome == 'success' }}
         timeout-minutes: 20
@@ -201,9 +235,19 @@ jobs:
           APP: ${{ steps.build.outputs.app }}
         run: bash .github/scripts/ios-launch.sh
 
+      # In the simulator the launch check left booted, with the app running; it skips itself if the app was not running.
+      - name: Walk through the demo (Maestro)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 15
+        run: bash .github/scripts/ios-walk.sh
+
       - name: Report
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python3 .github/scripts/ios-launch-report.py "${OUT}"
+
+      - name: Report the demo walk
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 .github/scripts/demo-walk-report.py "${WALK_OUT}" "${OUT}"
 
       - uses: actions/upload-artifact@v4.6.2
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -211,6 +255,14 @@ jobs:
           name: ios-launch-logs
           path: launch-out/
           if-no-files-found: warn
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4.6.2
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        with:
+          name: ios-demo-walk
+          path: walk-out/
+          if-no-files-found: ignore
           retention-days: 14
 
       - uses: actions/upload-artifact@v4.6.2
