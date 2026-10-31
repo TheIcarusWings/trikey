@@ -195,11 +195,11 @@ limit), pay 25,000 (over it), raise the limit to 50,000.
 
 ### Install the APK
 
-Where it comes from: the **Android test APK** workflow (`.github/workflows/android-apk.yml`). Run it from GitHub's Actions tab
-(Run workflow) and download the `trikey-android-apk` artifact, which is a zip with the APK, a `.sha256` file and the release
-notes. On a version tag the same workflow also attaches it to a draft prerelease. The workflow has not been run yet: the first
-run may fail on something small. If it does, send me the log and fall back to a local build (`apps/mobile/README.md`, "Android":
-`TRIKEY_DISABLE_ICLOUD=1 npx expo prebuild --platform android` then `./gradlew assembleRelease`, which needs the Android SDK).
+Where it comes from: every release on [GitHub's Releases page](https://github.com/TheIcarusWings/trikey/releases) has
+`trikey-alpha-v<version>.apk` and its `.apk.sha256`, built by the **Android test APK** workflow
+(`.github/workflows/android-apk.yml`). Take the newest pre-release. Before a release is made, every pull request that touches
+the app already builds it and opens it in an Android emulator (and in the iOS Simulator), so a build that crashes at start
+does not reach a release. A local build is in `apps/mobile/README.md`, "Android".
 
 What kind of build it is:
 
@@ -211,6 +211,32 @@ What kind of build it is:
 
 To install: check the file against the `.sha256`, copy the APK to the phone, open it, and allow installing from that source
 when Android asks. Play Protect may warn about an unknown app; that is expected for a sideloaded test build.
+
+### Or on an iPhone (a Mac is needed)
+
+There is no TestFlight build in this round (that needs a paid Apple Developer account), so an iPhone gets the app from your
+own Mac, signed with a free Apple ID.
+
+1. On the Mac: Xcode, signed in with your Apple ID (Xcode, Settings, Accounts). A free account is enough.
+2. Get the code at the release you are testing and install its packages:
+   `git clone https://github.com/TheIcarusWings/trikey.git`, `cd trikey`, `git checkout v<version>`, `npm ci`.
+3. Plug the iPhone in and build a Release build onto it (it runs on its own, without the Mac):
+   ```sh
+   cd apps/mobile
+   TRIKEY_DISABLE_ICLOUD=1 TRIKEY_IOS_BUNDLE_ID=com.<yourname>.trikey npx expo run:ios --device --configuration Release
+   ```
+4. On the iPhone: Settings, General, VPN & Device Management, trust your developer profile. Then open Trikey.
+
+You should see: the same first screen as on Android. The steps below are the same; where they name an Android screen or
+setting, use the iPhone's equivalent and note any difference in the report.
+
+Things to know:
+
+- A free Apple ID's install lasts **7 days**. After that the app stops opening until you run step 3 again. The wallet stays on
+  the phone, but make a backup first anyway.
+- No iCloud backup and no passkeys in this build (a free Apple ID cannot sign them); the backup is a recovery code plus a
+  backup file, as on Android.
+- Ledger over Bluetooth works the same way; iOS asks for Bluetooth permission the first time.
 
 ---
 
@@ -550,9 +576,9 @@ Simulator is regtest only.
   you skip that step. Recovery Key mode stays on test networks only.
 - **Out of this round:** Recovery Key mode ("No home server?"), passkeys, iCloud and Google Drive backup (the backup
   is a recovery code plus a backup file), QR-based devices (Coldcard Q, Keystone, Passport, Jade, SeedSigner), BitBox02, the
-  "I have an invite" screen (a fixed demo; family hosting comes later), silent payments, Start9, and iOS.
-- **iOS** builds from a free Apple ID last **7 days**: after that the app stops opening until you build and install it again
-  (the wallet data stays; make a backup first). That is why this round is Android.
+  "I have an invite" screen (a fixed demo; family hosting comes later), silent payments and Start9.
+- **iOS** is possible from your own Mac only ("Or on an iPhone"): a free Apple ID's install lasts **7 days**, and nobody has
+  run it on a real iPhone yet, so report anything iOS-specific. Android stays the main platform of this round.
 - **The APK is signed with a one-off key.** To move to a newer build you uninstall first, which wipes the wallet from that phone.
   Back up before every update.
 - **The recovery wait is 7 days at the shortest** and cannot be sped up on a real network (step 12).
