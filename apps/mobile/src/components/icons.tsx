@@ -17,6 +17,8 @@ export {
   CloudUpload,
   Copy,
   Delete,
+  Download,
+  ExternalLink,
   Eye,
   EyeOff,
   FileText,

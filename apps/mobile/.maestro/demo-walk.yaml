@@ -31,6 +31,19 @@ tags:
     timeout: 90000
     optional: true
     label: Wait for the first screen (Welcome or Home)
+
+# A loaded CI emulator can show Android's own "Pixel Launcher isn't responding" over the app, and the walk then sees
+# nothing of Trikey (on PR #65, even after the relaunch). Close such a dialog when it is about another app; one that
+# says Trikey isn't responding is the app's own failure and stays. (android-walk.sh also asks the emulator to hide them.)
+- runFlow:
+    label: Close another app's "isn't responding" dialog
+    when:
+      visible: '.* isn.t responding'
+      notVisible: 'Trikey isn.t responding'
+    commands:
+      - tapOn:
+          id: 'android:id/aerr_close'
+          label: Close the unresponsive app (not Trikey)
 - runFlow:
     when:
       notVisible:
@@ -43,7 +56,22 @@ tags:
           visible:
             id: 'welcome-change-mode|home-balance'
           timeout: 90000
+          optional: true
           label: Wait for the first screen after the relaunch
+      - runFlow:
+          label: Close another app's "isn't responding" dialog again
+          when:
+            visible: '.* isn.t responding'
+            notVisible: 'Trikey isn.t responding'
+          commands:
+            - tapOn:
+                id: 'android:id/aerr_close'
+                label: Close the unresponsive app (not Trikey)
+      - extendedWaitUntil:
+          visible:
+            id: 'welcome-change-mode|home-balance'
+          timeout: 30000
+          label: The first screen is there
 
 # Welcome: "Real mode · change wallet mode", then Demo in the wallet mode picker, then "Switch to Demo".
 - runFlow:

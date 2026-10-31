@@ -2691,10 +2691,19 @@ export class TrikeyWallet {
         return; // the guardian no longer answers for it: nothing to re-read
       }
       case 'wallet_adopted':
-      case 'recovery_completed':
-        // The guardian may have taken this phone over (a recovery it started): ask it even if the access has run out.
+        // The guardian sends this once it guards the recovery's destination with this phone as its paired phone, so it
+        // answers this phone now, access or not: switch at once. Not only through the coalesced refresh below: that may
+        // be held up until the RPC timeout by a read `recovery_completed` set off, which comes before the guardian has
+        // broadcast the sweep and adopted the wallet, and which it drops unanswered while this phone's access has run
+        // out. `adoptRecovered` still checks the wallet and the guardian's record of the recovery.
+        if (from && from === this.s.guardian?.pubkey && !this.recoveredElsewhere) void this.followGuardianWallet(alert.walletId).catch(() => undefined);
         this.alertMayAdopt = true;
-        if ('recoveryId' in alert) this.alertRecoveryId = alert.recoveryId;
+        this.alertRecoveryId = alert.recoveryId;
+        break;
+      case 'recovery_completed':
+        // The guardian may be about to take this phone over (a recovery it started): ask it even if the access has run out.
+        this.alertMayAdopt = true;
+        this.alertRecoveryId = alert.recoveryId;
         break;
       case 'limit_off':
       case 'limit_on':
@@ -2744,30 +2753,34 @@ export class TrikeyWallet {
       return;
     }
     this.alertRefresh = (async () => {
-      do {
-        this.alertAgain = false;
-        await new Promise((r) => setTimeout(r, ALERT_COALESCE_MS)); // let a burst of replayed alerts arrive
-        if (!this.rpc) return;
-        // A phone whose recovery access ran out is only answered once the guardian adopted it: an alert about the
-        // recovery's progress changes nothing it could read, so only the ones that may mean "adopted" ask.
-        const viaAlert = this.alertMayAdopt;
-        this.alertMayAdopt = false;
-        if (this.recoveryAccess?.expired && !viaAlert) continue;
-        try {
-          const st = await this.readStatus({ viaAlert });
-          const id = st.activeRecoveryId ?? this.alertRecoveryId;
-          if (id) await this.recoveryStatus(id);
-          // A `limit_off` / `limit_on` alert about the wallet this phone holds: its rules changed.
-          const rules = this.alertRules;
-          this.alertRules = false;
-          if (rules && this.s.stage === 'paired' && st.walletId === this.s.wallet?.walletId) await this.getRules();
-        } catch {
-          /* the alert was delivered; refreshing is best effort */
-        }
-      } while (this.alertAgain && this.rpc);
-    })().finally(() => {
-      this.alertRefresh = undefined;
-    });
+      try {
+        do {
+          this.alertAgain = false;
+          await new Promise((r) => setTimeout(r, ALERT_COALESCE_MS)); // let a burst of replayed alerts arrive
+          if (!this.rpc) return;
+          // A phone whose recovery access ran out is only answered once the guardian adopted it: an alert about the
+          // recovery's progress changes nothing it could read, so only the ones that may mean "adopted" ask.
+          const viaAlert = this.alertMayAdopt;
+          this.alertMayAdopt = false;
+          if (this.recoveryAccess?.expired && !viaAlert) continue;
+          try {
+            const st = await this.readStatus({ viaAlert });
+            const id = st.activeRecoveryId ?? this.alertRecoveryId;
+            if (id) await this.recoveryStatus(id);
+            // A `limit_off` / `limit_on` alert about the wallet this phone holds: its rules changed.
+            const rules = this.alertRules;
+            this.alertRules = false;
+            if (rules && this.s.stage === 'paired' && st.walletId === this.s.wallet?.walletId) await this.getRules();
+          } catch {
+            /* the alert was delivered; refreshing is best effort */
+          }
+        } while (this.alertAgain && this.rpc);
+      } finally {
+        // Cleared as the loop ends, not a microtask later: an alert landing in between would set `alertAgain` on a
+        // loop that no longer looks at it, and its refresh would be lost.
+        this.alertRefresh = undefined;
+      }
+    })();
   }
 
   // ===========================================================================
