@@ -4,7 +4,7 @@ import { useGuardian } from '@/components/guardian-provider';
 import { PageHeader } from '@/components/page-header';
 import { ErrorState, PageSkeleton } from '@/components/states';
 import { useApi, usePageTitle } from '@/hooks/use-api';
-import { formatSats } from '@/lib/format';
+import { LIMIT_OFF_TEXT, dailyLimitText, formatSats } from '@/lib/format';
 
 function RuleRow({ title, value, children }: { title: string; value: ReactNode; children: ReactNode }) {
   return (
@@ -43,10 +43,17 @@ export function RulesPage() {
       ) : (
         <>
           <ul className="m-0 list-none p-0">
-            <RuleRow title="Daily limit" value={`${formatSats(rules.dailyLimitSats)} sats`}>
-              {used !== undefined && <>{formatSats(used)} used. </>}
-              Phone-only payments above it need the hardware wallet.
-            </RuleRow>
+            {rules.dailyLimitOff ? (
+              <RuleRow title="Daily limit" value={<span className="font-semibold text-warn">{dailyLimitText(rules)}</span>}>
+                {used !== undefined && <>{formatSats(used)} sats sent from the phone today. </>}
+                {LIMIT_OFF_TEXT}
+              </RuleRow>
+            ) : (
+              <RuleRow title="Daily limit" value={dailyLimitText(rules)}>
+                {used !== undefined && <>{formatSats(used)} used. </>}
+                Phone-only payments above it need the hardware wallet.
+              </RuleRow>
+            )}
             <RuleRow title="Security waiting period" value={`${rules.recoveryDelayDays} days`}>
               How long a recovery waits, sending alerts every day.
             </RuleRow>
