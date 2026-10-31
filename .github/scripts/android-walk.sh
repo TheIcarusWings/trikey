@@ -64,6 +64,12 @@ mkdir -p "${flow_dir}"
 flow="${flow_dir}/$(basename "${FLOW}")"
 sed -E "s/^appId: .*/appId: ${APP_ID}/" "${FLOW}" > "${flow}"
 
+# No "<app> isn't responding" dialogs from other apps (a loaded CI emulator's launcher can stall and cover the app with
+# one): hide error dialogs, and background ANRs. Best effort: the flow also closes one about another app, and Trikey's
+# own crashes and ANRs are still in the log and the crash buffer, which the report reads.
+sh_ settings put global hide_error_dialogs 1 >/dev/null || true
+sh_ settings put secure anr_show_background 0 >/dev/null || true
+
 # The log of the walk only, in big buffers.
 adb logcat -G 16M >/dev/null 2>&1 || true
 adb logcat -b all -c || adb logcat -c || true
