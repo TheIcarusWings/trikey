@@ -44,6 +44,9 @@ The full design, threat model and open questions are in [DESIGN.md](DESIGN.md).
 | `packaging/` | Docker image, Umbrel app and Start9 package |
 | `tools/consensus-verify` | Checks transactions with Bitcoin Core's script verifier |
 
+Marketing and brand material (social videos, setup tutorials) lives in a separate repository,
+`TheIcarusWings/trikey-marketing`. This one holds the product only.
+
 ## Development
 
 ```sh
