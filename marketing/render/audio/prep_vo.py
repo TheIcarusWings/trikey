@@ -8,11 +8,15 @@
   speech is never cut.
 - The line is sped up 6 % (atempo keeps pitch).
 
+- A line can also be cut short at an end time (third column), for stray speech after the line.
+
 Usage: python3 prep_vo.py   (from anywhere; prints each line's length)
+       python3 prep_vo.py <src_dir> <dst_dir> <trims.tsv>   (other sets, e.g. the tutorials)
 """
 import glob
 import os
 import subprocess
+import sys
 
 import numpy as np
 
@@ -88,19 +92,25 @@ def shorten_pauses(x):
 
 
 def main():
-    trims = {}
-    for line in open(os.path.join(ROOT, 'render/audio/vo-trims.tsv')):
+    src, dst, tsv = (sys.argv[1:4] if len(sys.argv) > 3 else
+                     [os.path.join(ROOT, p) for p in ('build/vo', 'build/vo-proc', 'render/audio/vo-trims.tsv')])
+    trims, ends = {}, {}
+    for line in open(tsv):
         if line.strip() and not line.startswith('#'):
-            vid, t = line.split('\t')[:2]
-            trims[vid] = float(t)
-    os.makedirs(os.path.join(ROOT, 'build/vo-proc'), exist_ok=True)
-    for path in sorted(glob.glob(os.path.join(ROOT, 'build/vo/*.wav'))):
+            cols = line.rstrip('\n').split('\t')
+            trims[cols[0]] = float(cols[1])
+            if len(cols) > 3 and cols[2]:
+                ends[cols[0]] = float(cols[2])
+    os.makedirs(dst, exist_ok=True)
+    for path in sorted(glob.glob(os.path.join(src, '*.wav'))):
         vid = os.path.basename(path)[:-4]
         x = load(path)
-        if vid in trims:
+        if vid in ends:
+            x = x[:int(ends[vid] * SR)]
+        if trims.get(vid):
             x = cut_stray_opening(x, trims[vid])
         x = shorten_pauses(trim_ends(x))
-        out = os.path.join(ROOT, 'build/vo-proc', vid + '.wav')
+        out = os.path.join(dst, vid + '.wav')
         pcm = (np.clip(x, -1, 1) * 32767).astype('<i2').tobytes()
         subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 's16le', '-ar', str(SR), '-ac', '1', '-i', '-',
                         '-af', 'atempo=1.06', out], input=pcm, check=True)

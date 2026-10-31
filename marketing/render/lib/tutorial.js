@@ -108,12 +108,13 @@ function tutorial({ series, title, address, scenes, cursor = [], zoom = [], step
   };
 }
 
-// Footage recorded by render/capture/guardian.js: shows the newest frame at or before t - a.
-// TL is the shot's timeline ({frames: [{t, f}], cursor}); dir is where its PNGs are.
-function recorded(dir, TL) {
+// Footage recorded by render/capture/guardian.js (or in the same format): el.at(local) shows the newest frame at or
+// before local × speed. TL is the shot's timeline ({frames: [{t, f}], cursor}); dir is where its PNGs are.
+function recorded(dir, TL, speed = 1) {
   const el = h('div', {}, '<img>');
   const img = $('img', el);
-  el.at = local => {
+  el.at = t => {
+    const local = t * speed;
     let f = TL.frames[0];
     for (const fr of TL.frames) if (fr.t <= local) f = fr;
     const src = `${dir}/${f.f}`;
@@ -121,5 +122,6 @@ function recorded(dir, TL) {
   };
   return el;
 }
-// The shot's cursor keyframes, shifted to start at a (both the footage and the cursor live in page coordinates).
-const shiftCursor = (TL, a) => TL.cursor.map(c => ({ ...c, t: c.t + a }));
+// The shot's cursor keyframes, shifted to start at a and played at the same speed as the footage (both live in page
+// coordinates).
+const shiftCursor = (TL, a, speed = 1) => TL.cursor.map(c => ({ ...c, t: a + c.t / speed }));

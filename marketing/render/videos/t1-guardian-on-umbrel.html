@@ -6,156 +6,101 @@
 <link rel="stylesheet" href="../lib/stage.css">
 <link rel="stylesheet" href="../lib/tutorial.css">
 <style>
-/* Umbrel, drawn as a plain illustration (no logos), in page coordinates (1280×800). */
-.u-home { background: linear-gradient(160deg, #DCE3EE 0%, #E9E4EF 55%, #F1E9E1 100%); }
-.u-home .hi { position: absolute; top: 150px; width: 100%; text-align: center; font-size: 38px; font-weight: 600; letter-spacing: -0.02em; color: #18181B; }
-.u-app { position: absolute; width: 96px; text-align: center; font-size: 15px; color: #27272A; }
-.u-app .ic { width: 96px; height: 96px; border-radius: 24px; display: flex; align-items: center; justify-content: center;
-             font-size: 46px; font-weight: 700; color: #fff; box-shadow: 0 6px 18px rgba(0,0,0,.12); margin-bottom: 10px; }
-.u-app .ic svg { width: 62px; }
-.u-ring { position: absolute; width: 120px; height: 120px; margin: -12px 0 0 -12px; border-radius: 30px; border: 4px solid #EA580C; opacity: 0; }
-.u-dock { position: absolute; left: 480px; top: 680px; width: 320px; height: 84px; border-radius: 26px; background: rgba(255,255,255,.62);
-          box-shadow: 0 8px 30px rgba(0,0,0,.1); }
-.u-dock i { position: absolute; top: 14px; width: 56px; height: 56px; border-radius: 16px; background: #fff; display: flex; align-items: center;
-            justify-content: center; font-style: normal; font-size: 26px; color: #3F3F46; box-shadow: 0 2px 6px rgba(0,0,0,.08); }
-.u-tip { position: absolute; left: 548px; top: 630px; width: 100px; text-align: center; font-size: 15px; padding: 6px 0; border-radius: 8px;
-         background: #18181B; color: #fff; opacity: 0; }
-.u-sheet { background: #FAFAFA; }
-.u-sheet .top { height: 72px; display: flex; align-items: center; padding: 0 40px; border-bottom: 1px solid #E4E4E7; background: #fff;
-                font-size: 26px; font-weight: 600; letter-spacing: -0.02em; }
-.u-sheet .top small { font-size: 17px; font-weight: 400; color: #71717A; margin-left: 14px; }
-.u-more { position: absolute; left: 1200px; top: 16px; width: 40px; height: 40px; border-radius: 10px; border: 1px solid #E4E4E7; background: #fff;
-          display: flex; align-items: center; justify-content: center; font-size: 22px; letter-spacing: 1px; color: #3F3F46; }
-.u-grid { position: absolute; left: 40px; top: 120px; display: grid; grid-template-columns: repeat(3, 380px); gap: 20px; }
-.u-grid div { height: 150px; border-radius: 16px; background: #fff; border: 1px solid #E4E4E7; }
-.u-grid div::before { content: ''; display: block; margin: 24px; width: 64px; height: 64px; border-radius: 16px; background: #E4E4E7; }
-.u-h { position: absolute; left: 40px; top: 90px; font-size: 18px; color: #71717A; }
-.u-menu { position: absolute; left: 990px; top: 62px; width: 260px; border-radius: 12px; background: #fff; border: 1px solid #E4E4E7;
-          box-shadow: 0 12px 30px rgba(0,0,0,.12); padding: 6px; opacity: 0; font-size: 17px; }
-.u-menu div { padding: 12px 14px; border-radius: 8px; color: #3F3F46; }
-.u-menu div.hl { background: #F4F4F5; color: #09090B; }
-.u-veil { position: absolute; inset: 0; background: rgba(9,9,11,.35); opacity: 0; }
-.u-dlg { position: absolute; left: 320px; top: 200px; width: 640px; height: 330px; border-radius: 18px; background: #fff;
-         box-shadow: 0 24px 60px rgba(0,0,0,.25); padding: 30px 32px; opacity: 0; }
-.u-dlg h3 { margin: 0 0 6px; font-size: 26px; letter-spacing: -0.02em; }
-.u-dlg p { margin: 0 0 22px; font-size: 17px; color: #71717A; }
-.u-in { position: absolute; left: 32px; top: 120px; width: 470px; height: 52px; border-radius: 10px; border: 1px solid #D4D4D8; font-size: 15px;
-        padding: 0 14px; display: flex; align-items: center; font-family: 'Geist Mono', monospace; color: #09090B; white-space: nowrap; overflow: hidden; }
-.u-in span { padding: 2px 0; }
-.u-add { position: absolute; left: 516px; top: 120px; width: 92px; height: 52px; border-radius: 10px; background: #18181B; color: #fff;
-         font-size: 18px; display: flex; align-items: center; justify-content: center; }
-.u-row { position: absolute; left: 32px; right: 32px; top: 205px; height: 90px; border-radius: 12px; border: 1px solid #E4E4E7; padding: 16px 18px;
-         opacity: 0; }
-.u-row b { font-size: 20px; display: block; }
-.u-row span { font-size: 14px; color: #71717A; font-family: 'Geist Mono', monospace; }
-.u-row i { position: absolute; right: 18px; top: 24px; font-style: normal; font-size: 17px; padding: 10px 18px; border-radius: 10px; border: 1px solid #D4D4D8; }
-.u-card { position: absolute; left: 40px; top: 120px; width: 600px; height: 220px; border-radius: 18px; background: #fff; border: 1px solid #E4E4E7; padding: 28px; }
-.u-card .ic { position: absolute; left: 28px; top: 28px; width: 88px; height: 88px; border-radius: 22px; background: #fff; border: 1px solid #E4E4E7;
-              display: flex; align-items: center; justify-content: center; }
-.u-card .ic svg { width: 58px; }
-.u-card h4 { position: absolute; left: 140px; top: 30px; margin: 0; font-size: 26px; letter-spacing: -0.02em; }
-.u-card p { position: absolute; left: 140px; top: 70px; margin: 0; font-size: 17px; color: #71717A; width: 420px; line-height: 1.4; }
-.u-btn { position: absolute; left: 440px; top: 150px; width: 132px; height: 46px; border-radius: 10px; background: #18181B; color: #fff;
-         font-size: 18px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-.u-btn .fill { position: absolute; left: 0; top: 0; bottom: 0; background: #52525B; width: 0; }
-.u-btn span { position: relative; }
+/* Rings that point at Bitcoin Node and Electrs on the Umbrel home screen (page coordinates). */
+.u-ring { position: absolute; width: 96px; height: 96px; margin: -48px 0 0 -48px; border-radius: 26px; border: 4px solid #EA580C; opacity: 0; }
 </style>
 </head>
 <body>
 <script src="../lib/stage.js"></script>
 <script src="../lib/tutorial.js"></script>
 <script src="../../build/tut/guardian/timelines.js"></script>
+<script src="../../build/tut/umbrel/timelines.js"></script>
 <script>
-
-// When the guardian footage starts (the setup page, then after a restart) and its events, from the capture timelines.
-const G0 = 48.0, L0 = 74.0;
-const GSET = G0 + TL.setup.cursor[4].t;          // "Set up" clicked: the pairing page opens
+// Footage: the owner's Umbrel (build/tut/umbrel, recorded on their machine; see render/capture/umbrel_mask.py), then
+// the guardian's own pages from its mock scenarios (build/tut/guardian). Times below are authored times.
+const INSTALL_SPEED = 1.6;                         // the install's wait, sped up
+const OPEN_END = 3.35;                             // the open shot stops on the pressed icon, before the guardian's page
+const T_HOME = 14, T_STORE = T_HOME + UTL.home.duration, T_INST = T_STORE + UTL.store.duration;
+const T_OPEN = T_INST + UTL.install.duration / INSTALL_SPEED;
+const G0 = T_OPEN + OPEN_END + 0.25;               // the guardian's setup page
+const GSET = G0 + TL.setup.cursor[4].t;            // "Set up" clicked: the pairing page opens
+const L0 = GSET + 9.6;                             // after a restart: the locked page
 const END = L0 + TL.locked.duration + 0.4;
 
-// The page is authored in its own time (above, and every time below). SPEC.retime maps it to the output: it stretches
-// each step to fit its voiceover line and holds still while the presenter talks ([authored, output] pairs).
-// Presenter clips and voiceover lines are placed in output time.
+// SPEC.retime maps authored time to the output ([authored, output] pairs): it stretches each step to fit its
+// voiceover line and holds still while the presenter talks. Presenter clips and voiceover lines are in output time;
+// the presenter's own audio is the clip's soundtrack (build/tut/vo-proc/80x.wav, taken from the clip).
 const PRES = [
-  { a: 3.0, name: 'tp701', d: 8.25 },    // "Hi! Let's set up the Trikey Guardian…"
-  { a: 60.4, name: 'tp702', d: 9.92 },   // "One thing to get right: your passphrase…"
-  { a: 0, name: 'tp703', d: 6.08 },      // "That's it, your guardian is ready…" (placed below, at the end)
+  { name: 'tp801', d: 8.05 },   // "Hi! Let's set up the Trikey Guardian…"
+  { name: 'tp802', d: 8.2 },    // "One thing to get right: your passphrase…"
+  { name: 'tp803', d: 9.05 },   // "That's it, your guardian is ready…"
 ];
-const OUT_GSET = 70.4 + (GSET - G0), OUT_L0 = OUT_GSET + (L0 - GSET), OUT_END = OUT_L0 + (END - L0);
-PRES[2].a = OUT_END;
+PRES[0].a = 3.0;
+const O_HOME = PRES[0].a + PRES[0].d + 0.35 + (T_HOME - 5);      // "Before you start" plays 1:1 after the intro
+const O_OPEN = O_HOME + (T_OPEN - T_HOME);
+const O_OPEN_END = O_OPEN + 7.8;                                  // the open step, stretched to fit its line
+PRES[1].a = O_OPEN_END;
+const O_G0 = PRES[1].a + PRES[1].d + 0.1;
+const O_GSET = O_G0 + (GSET - G0), O_L0 = O_GSET + (L0 - GSET), O_END = O_L0 + (END - L0);
+PRES[2].a = O_END;
 window.SPEC = {
   id: 't1-guardian-on-umbrel',
-  duration: OUT_END + PRES[2].d + 5.5,
-  retime: [[0, 0], [5, 3], [5, 11.4], [14, 24.4], [28.2, 38.6], [42.2, 52.6], [G0, 60.4], [G0, 70.4],
-    [GSET, OUT_GSET], [L0, OUT_L0], [END - 0.01, OUT_END], [END - 0.01, OUT_END + PRES[2].d + 0.1], [END + 1, OUT_END + PRES[2].d + 1.1]],
+  duration: O_END + PRES[2].d + 5.5,
+  retime: [[0, 0], [5, 3], [5, PRES[0].a + PRES[0].d + 0.35], [T_HOME, O_HOME], [T_OPEN, O_OPEN], [G0, O_OPEN_END],
+    [G0, O_G0], [GSET, O_GSET], [L0, O_L0], [END - 0.01, O_END], [END - 0.01, O_END + PRES[2].d + 0.1],
+    [END + 1, O_END + PRES[2].d + 1.1]],
   vo: [
-    [3.0, 701], [11.8, 711], [24.8, 712], [39.0, 713], [52.9, 714], [60.4, 702], [70.9, 715],
-    [OUT_GSET + 0.6, 716], [OUT_L0 + 0.5, 717], [OUT_END, 703],
+    [PRES[0].a, 801], [PRES[0].a + PRES[0].d + 0.6, 811], [O_HOME + 0.4, 812], [O_HOME + (T_INST - T_HOME) + 0.4, 813],
+    [O_OPEN + 0.3, 814], [PRES[1].a, 802], [O_G0 + 0.5, 815], [O_GSET + 0.6, 816], [O_L0 + 0.5, 817], [PRES[2].a, 803],
   ].map(([at, id]) => ({ at, id })),
 };
 
 const STORE = 'github.com/TheIcarusWings/trikey-umbrel-store';
-const LOGO_INK = LOGO('#09090B', '#EA580C');
-
-function home(withGuardian) {
-  const el = h('div', { class: 'u-home' }, `
-    <div class="hi">Your home server</div>
-    <div class="u-app" style="left:412px; top:290px"><div class="ic" style="background:#F7931A">₿</div>Bitcoin Node</div>
-    <div class="u-app" style="left:552px; top:290px"><div class="ic" style="background:#3F3F46">E</div>Electrs</div>
-    <div class="u-app guardian" style="left:692px; top:290px; opacity:${withGuardian ? 1 : 0}"><div class="ic" style="background:#fff">${LOGO_INK}</div>Trikey Guardian</div>
-    <div class="u-ring r1" style="left:412px; top:290px"></div><div class="u-ring r2" style="left:552px; top:290px"></div>
-    <div class="u-dock"><i style="left:14px">⌂</i><i style="left:90px">▦</i><i style="left:166px">▤</i><i style="left:242px">⚙</i></div>
-    <div class="u-tip">App Store</div>`);
-  return el;
-}
-const home1 = home(false), home2 = home(true);
-
-const store = h('div', { class: 'u-sheet' }, `
-  <div class="top">App Store</div><div class="u-more">···</div>
-  <div class="u-h">Discover</div><div class="u-grid">${'<div></div>'.repeat(6)}</div>
-  <div class="u-menu"><div>Updates</div><div class="cas">Community App Stores</div></div>
-  <div class="u-veil"></div>
-  <div class="u-dlg"><h3>Community App Stores</h3><p>Add a community app store by its address.</p>
-    <div class="u-in"><span></span></div><div class="u-add">Add</div>
-    <div class="u-row"><b>Trikey</b><span>${STORE}</span><i>Open</i></div></div>`);
-
-const tstore = h('div', { class: 'u-sheet' }, `
-  <div class="top">Trikey <small>Community app store</small></div>
-  <div class="u-card"><div class="ic">${LOGO_INK}</div><h4>Trikey Guardian</h4>
-    <p>Key 3 of your Trikey wallet, on your own node. Needs Bitcoin Node and Electrs.</p>
-    <div class="u-btn"><div class="fill"></div><span>Install</span></div></div>`);
-
-const gSetup = recorded('../../build/tut/guardian/setup', TL.setup);
-const gLocked = recorded('../../build/tut/guardian/locked', TL.locked);
+const U = '../../build/tut/umbrel', G = '../../build/tut/guardian';
+const uHome = recorded(`${U}/home`, UTL.home);
+uHome.insertAdjacentHTML('beforeend', '<div class="u-ring" style="left:564px; top:414px"></div><div class="u-ring" style="left:864px; top:414px"></div>');
+const uStore = recorded(`${U}/store`, UTL.store);
+const uInstall = recorded(`${U}/install`, UTL.install, INSTALL_SPEED);
+const uOpen = recorded(`${U}/open`, UTL.open);
+const gSetup = recorded(`${G}/setup`, TL.setup);
+const gLocked = recorded(`${G}/locked`, TL.locked);
+const SHOTS = [
+  { a: 5, b: T_HOME, el: uHome, at: () => 0 },
+  { a: T_HOME, b: T_STORE, el: uHome, at: t => t - T_HOME },
+  { a: T_STORE, b: T_INST, el: uStore, at: t => t - T_STORE },
+  { a: T_INST, b: T_OPEN, el: uInstall, at: t => t - T_INST },
+  { a: T_OPEN, b: G0, el: uOpen, at: t => Math.min(t - T_OPEN, OPEN_END - 0.01) },
+  { a: G0, b: L0, el: gSetup, at: t => t - G0 },
+  { a: L0, b: 1e9, el: gLocked, at: t => t - L0 },
+];
 
 const update = tutorial({
   series: 'Setup · 1 of 6',
   title: 'Install the guardian on Umbrel',
   address: t => (t < G0 - 0.2 ? 'umbrel.local' : 'umbrel.local · Trikey Guardian'),
   scenes: [
-    { a: 5, b: 16.4, el: home1, tag: true },
-    { a: 16.4, b: 28.2, el: store, tag: true },
-    { a: 28.2, b: 42.2, el: tstore, tag: true },
-    { a: 42.2, b: G0 + 0.2, el: home2, tag: true },
+    { a: 5, b: T_STORE + 0.2, el: uHome },
+    { a: T_STORE, b: T_INST + 0.2, el: uStore },
+    { a: T_INST, b: T_OPEN + 0.2, el: uInstall },
+    { a: T_OPEN, b: G0 + 0.2, el: uOpen },
     { a: G0, b: L0 + 0.2, el: gSetup },
     { a: L0, b: 1e9, el: gLocked },
   ],
   cursor: [
-    { t: 13.2, x: 1000, y: 560 },
-    { t: 15.6, x: 598, y: 722, click: true },
-    { t: 17.6, x: 1220, y: 36, click: true },
-    { t: 19.4, x: 1110, y: 112, click: true },
-    { t: 21.0, x: 587, y: 346, click: true },
-    { t: 25.3, x: 882, y: 346, click: true },
-    { t: 27.4, x: 860, y: 450, click: true },
-    { t: 30.0, x: 540, y: 293, click: true },
-    { t: 38.0, x: 560, y: 300 },
-    { t: 44.6, x: 740, y: 338, click: true },
-    { t: 46.6, x: null },
+    ...shiftCursor(UTL.home, T_HOME),
+    ...shiftCursor(UTL.store, T_STORE).slice(1),
+    ...shiftCursor(UTL.install, T_INST, INSTALL_SPEED).slice(1),
+    // The open shot's own cursor track points off-page; these follow its frames: next page, then the icon.
+    { t: T_OPEN + 2.6, x: 1128, y: 388, click: true },
+    { t: T_OPEN + 3.25, x: 566, y: 470, click: true },
+    { t: G0 - 0.01, x: null },
     ...shiftCursor(TL.setup, G0),
     { t: L0 - 0.01, x: null },
     ...shiftCursor(TL.locked, L0),
   ],
   zoom: [
+    { t: T_STORE + 9.0, s: 1, x: 640, y: 400 }, { t: T_STORE + 9.9, s: 1.45, x: 720, y: 300 },
+    { t: T_STORE + 18.6, s: 1.45, x: 720, y: 300 }, { t: T_INST + 0.4, s: 1, x: 640, y: 400 },
     { t: G0 + 2.6, s: 1, x: 640, y: 400 }, { t: G0 + 3.5, s: 1.4, x: 640, y: 520 },
     { t: G0 + 9.2, s: 1.4, x: 640, y: 520 }, { t: G0 + 10.1, s: 1, x: 640, y: 400 },
     { t: GSET + 1.0, s: 1, x: 640, y: 400 }, { t: GSET + 1.9, s: 1.2, x: 700, y: 250 },
@@ -164,19 +109,19 @@ const update = tutorial({
     { t: L0 + 8.9, s: 1.35, x: 640, y: 560 }, { t: L0 + 9.8, s: 1, x: 640, y: 400 },
   ],
   steps: [
-    { a: 5, b: 14, n: 'i', title: 'Before you start', html: `<ul>
+    { a: 5, b: T_HOME, n: 'i', title: 'Before you start', html: `<ul>
         <li><b>An Umbrel</b> with Bitcoin Node and Electrs.</li>
         <li>Both on <b>the network you'll test on</b>. Signet is the easiest: its coins have no value.</li>
         <li><b>Electrs fully synced.</b> On a new install that can take a day or more.</li></ul>` },
-    { a: 14, b: 28.2, n: 1, title: 'Add the Trikey app store',
+    { a: T_HOME, b: T_INST, n: 1, title: 'Add the Trikey app store',
       html: `<p>In the App Store, open the <b>···</b> menu, then <b>Community App Stores</b>, and add:</p><span class="mono">${STORE}</span>`,
-      notes: [{ a: 21.6, html: '<b>Paste it, don’t type it.</b> A typo shows “401 Unauthorized”.', y: 430 }] },
-    { a: 28.2, b: 42.2, n: 2, title: 'Install Trikey Guardian',
+      notes: [{ a: T_STORE + 6, html: '<b>Paste it, don’t type it.</b> A typo shows “401 Unauthorized”.', y: 430 }] },
+    { a: T_INST, b: T_OPEN, n: 2, title: 'Install Trikey Guardian',
       html: '<p>Open the Trikey store and install <b>Trikey Guardian</b>.</p>',
-      notes: [{ a: 31, html: 'It needs Bitcoin Node and Electrs. Umbrel installs them too if they’re missing.', tip: true, y: 250 }] },
-    { a: 42.2, b: G0, n: 3, title: 'Open it from the home screen',
+      notes: [{ a: T_INST + 3, html: 'It needs Bitcoin Node and Electrs. Umbrel installs them too if they’re missing.', tip: true, y: 250 }] },
+    { a: T_OPEN, b: G0, n: 3, title: 'Open it from the home screen',
       html: '<p>Click its icon on your Umbrel’s home screen.</p>',
-      notes: [{ a: 43.4, html: '<b>Always open it this way</b>, not by typing an address and port. The icon goes through Umbrel’s login; the guardian has no password of its own.', y: 300 }] },
+      notes: [{ a: T_OPEN + 0.8, html: '<b>Always open it this way</b>, not by typing an address and port. The icon goes through Umbrel’s login; the guardian has no password of its own.', y: 300 }] },
     { a: G0, b: GSET, n: 4, title: 'Choose a passphrase',
       html: '<p>It unlocks the guardian after every restart. <b>There’s no way to reset it</b>, so write it down and keep it safe.</p>',
       notes: [
@@ -191,20 +136,18 @@ const update = tutorial({
       notes: [{ a: L0 + 2.5, html: 'Unlock it from the Trikey app with your hardware wallet (recommended), or type your passphrase here.', tip: true, y: 300 }] },
   ],
   chapters: [
-    { a: 5, label: 'Before you start' }, { a: 14, label: 'Add the store' }, { a: 28.2, label: 'Install' },
-    { a: 42.2, label: 'Open' }, { a: G0, label: 'Passphrase' }, { a: GSET, label: 'Ready' }, { a: L0, label: 'Unlock' },
+    { a: 5, label: 'Before you start' }, { a: T_HOME, label: 'Add the store' }, { a: T_INST, label: 'Install' },
+    { a: T_OPEN, label: 'Open' }, { a: G0, label: 'Passphrase' }, { a: GSET, label: 'Ready' }, { a: L0, label: 'Unlock' },
   ],
   intro: [0, 5],
   outro: { at: END, next: 'Install the app' },
 });
 
 // The presenter, in output time: over the window, with the step panel hidden.
-const pres = h('div', { class: 't-pres' }, '<span class="ai">AI presenter</span>');
+const pres = h('div', { class: 't-pres' }, '<span class="ai">AI avatar of the founder</span>');
 $('#stage').append(pres);
 for (const p of PRES) p.el = clip(p.name, pres);
-let REAL = 0;
 window.seek = async t => {
-  REAL = t;
   window.update(remap(t));
   let e = 0;
   for (const p of PRES) e = Math.max(e, setClip(p.el, t, p.a, p.a + p.d, { frames: Math.round(p.d * 30), fi: 0.3, fo: 0.3 }));
@@ -213,32 +156,11 @@ window.seek = async t => {
   await Promise.all(pending.splice(0));
 };
 
-// Illustration states that change within a scene.
 window.update = t => {
   update(t);
-  for (const el of [home1, home2]) {
-    const ring = env(t, 6.5, 13.5, 0.4, 0.4);
-    $('.r1', el).style.opacity = el === home1 ? ring : 0;
-    $('.r2', el).style.opacity = el === home1 ? ring : 0;
-    $('.u-tip', el).style.opacity = el === home1 ? env(t, 15.0, 16.4, 0.2, 0.1) : 0;
-  }
-  const g = $('.guardian', home2);
-  g.style.transform = `scale(${0.6 + 0.4 * prog(t, 42.4, 43.2)})`;
-  g.style.opacity = prog(t, 42.4, 43.0);
-  $('.u-menu', store).style.opacity = env(t, 17.8, 19.7, 0.15, 0.15);
-  $('.cas', store).classList.toggle('hl', t > 18.9);
-  $('.u-veil', store).style.opacity = prog(t, 19.6, 19.9);
-  $('.u-dlg', store).style.opacity = prog(t, 19.6, 19.9);
-  const pasted = t > 21.5;
-  const span = $('.u-in span', store);
-  span.textContent = pasted ? STORE : '';
-  span.style.background = env(t, 21.5, 22.4, 0, 0.5) ? `rgba(234,88,12,${0.18 * env(t, 21.5, 22.4, 0, 0.5)})` : 'none';
-  $('.u-row', store).style.opacity = prog(t, 25.6, 26.0);
-  const fill = prog(t, 30.3, 36.0, x => x);
-  $('.u-btn .fill', tstore).style.width = t > 30.2 && t < 36.2 ? `${100 * fill}%` : '0';
-  $('.u-btn span', tstore).textContent = t < 30.2 ? 'Install' : t < 36.2 ? 'Installing…' : 'Open';
-  if (t >= G0 && t <= L0 + 0.2) gSetup.at(t - G0);
-  if (t >= L0) gLocked.at(t - L0);
+  const ring = env(t, 6.5, 13.5, 0.4, 0.4);
+  uHome.querySelectorAll('.u-ring').forEach(r => (r.style.opacity = ring));
+  for (const s of SHOTS) if (t >= s.a && t < s.b) s.el.at(s.at(t));
 };
 </script>
 </body>
