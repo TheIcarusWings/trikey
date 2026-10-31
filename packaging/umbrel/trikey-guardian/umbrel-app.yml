@@ -6,7 +6,7 @@ tagline: Key 3 of your 2-of-3 bitcoin wallet, on your own node
 # TODO(verify): the icon is a placeholder (the web UI favicon). Replace with a proper icon URL.
 icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/guardian-web/public/favicon.svg
 category: bitcoin
-version: "0.1.6-alpha"
+version: "0.1.7-alpha"
 # TODO(verify): host-facing port for the app_proxy. Pick one that no other app in the store uses.
 port: 3010
 description: >-
@@ -26,8 +26,8 @@ support: https://github.com/TheIcarusWings/trikey/issues
 # TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
 gallery: []
 releaseNotes: >-
-  No guardian changes. This release fixes connecting a Ledger in the Trikey app ("invalid number
-  provided").
+  No guardian changes. The Trikey app reconnects a Ledger that dropped Bluetooth, switches to the new
+  wallet at once after a recovery, and from now on updates in place on Android.
 dependencies:
   - bitcoin
   - electrs

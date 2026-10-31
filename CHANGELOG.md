@@ -8,6 +8,28 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 
 ## Unreleased
 
+## 0.1.7-alpha (2026-11-01)
+
+- **Android: releases now update in place.** Every release APK from this one on is signed with the Trikey release key
+  (certificate SHA-256 in `packaging/android/release-cert.sha256`), so a newer release installs over the older one and
+  the wallet on the phone stays. Builds up to 0.1.6-alpha had a one-off key each: moving from one of those to 0.1.7-alpha
+  needs a last uninstall, which deletes the wallet on that phone, so back up first. The release build refuses to publish
+  an APK signed by any other key. Android's version code now follows the version (0.1.7 is 107). How to check an APK and
+  how to get updates with Obtainium: [docs/android-signing.md](docs/android-signing.md) (#60).
+- **App: Check for updates** (Android, Settings > About). Asks GitHub for the newest release only when you tap it, and
+  offers the APK with its SHA-256; Android's installer takes it from there. It only opens downloads from Trikey's own
+  releases (#68).
+- **App: a Ledger that dropped Bluetooth is reconnected.** During setup the app kept the Ledger's connection from the
+  connect step; a Flex dropped it while the phone scanned the guardian's code, and the protection screen then failed with
+  "The device disconnected" on every try. A held connection that turns out to be gone is now replaced by a fresh one and
+  the step runs again, once (#65).
+- **App: after a recovery, a phone whose access ran out switches to the new wallet at once.** It could keep showing
+  "recovering" for 10 to 30 seconds after the guardian had taken the new wallet over: its status check could reach the
+  guardian just before the takeover and go unanswered. It now acts on the guardian's "wallet adopted" alert directly,
+  with the same checks of the new wallet as before (#66).
+- CI: the demo walk is walked again once when Maestro's iOS driver loses its connection mid-walk (#64), and other apps'
+  "isn't responding" dialogs on the Android emulator no longer hide the app from it (#67).
+
 ## 0.1.6-alpha (2026-10-31)
 
 - **App: fixes connecting a Ledger** ("Ledger error: invalid number provided"; every Ledger, from 0.1.0). The app
