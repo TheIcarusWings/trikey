@@ -8,6 +8,9 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 
 ## Unreleased
 
+- Design proposal for an optional Savings wallet that phone + guardian cannot spend, and for turning the daily
+  limit off with a hardware approval: [docs/design/savings-and-limit-off.md](docs/design/savings-and-limit-off.md).
+
 ## 0.1.4-alpha (2026-10-30)
 
 - **App: a lost-phone recovery no longer shows the guardian offline for most of the wait.** The new phone's access to
