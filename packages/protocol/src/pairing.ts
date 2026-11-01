@@ -140,6 +140,11 @@ export interface RecoveryPayload {
    * signs the version-2 `recoveryAccessMessage`, bound to this wallet.
    */
   walletId?: string;
+  /**
+   * A guest's hosted wallet (docs/design/family-hosting.md): the new phone asks `hosted.access` instead of
+   * `recovery.access` and rebuilds the descriptor from the encrypted wallet map. Encoded as `hosted=1`.
+   */
+  hosted?: true;
 }
 
 function validateRecovery(p: RecoveryPayload): void {
@@ -165,6 +170,7 @@ export function encodeRecoveryUri(p: RecoveryPayload): string {
   q.set('net', p.network);
   if (p.label !== undefined) q.set('label', p.label);
   if (p.walletId !== undefined) q.set('wallet', p.walletId);
+  if (p.hosted) q.set('hosted', '1');
   return `${PAIRING_SCHEME}//recover?${q.toString()}`;
 }
 
@@ -209,6 +215,7 @@ export function decodeRecoveryUri(uri: string): RecoveryPayload {
   if (label !== null) payload.label = label;
   const walletId = q.get('wallet');
   if (walletId !== null) payload.walletId = walletId;
+  if (q.get('hosted') === '1') payload.hosted = true;
   validateRecovery(payload);
   return payload;
 }

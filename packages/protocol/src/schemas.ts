@@ -852,17 +852,11 @@ export const AccessApproval = z.strictObject({
 
 export const RecoveryAccessParams = z.strictObject({ approval: AccessApproval });
 export const RecoveryAccessResult = z.object({
-  /** The paired wallet: everything a new phone needs to rebuild it and sweep it. Absent for a hosted wallet (`hosted`). */
-  descriptor: Descriptor.optional(),
+  /** The paired wallet: everything a new phone needs to rebuild it and sweep it. */
+  descriptor: Descriptor,
   walletId: WalletId,
   network: Network,
-  /** Absent for a hosted wallet: its key 3 chaincode is the phone's; the descriptor comes from the wallet map. */
-  guardianKey: KeyOrigin.optional(),
-  /**
-   * A guest's hosted wallet (guardians with `family_hosting`): the guardian knows only its account pubkeys. The new
-   * phone fetches the encrypted wallet map (`hosted.map.get`) and the co-signed coins (`hosted.coins`).
-   */
-  hosted: z.object({ accountPubkeys: AccountPubkeys }).optional(),
+  guardianKey: KeyOrigin,
   hardwareAuth: HardwareAuthKey,
   policy: Policy,
   nextHardwareSequence: z.int().min(1),
@@ -988,6 +982,25 @@ export const HostedCoinsResult = z.object({
   nextOffset: z.int().min(0).optional(),
 });
 
+/**
+ * `recovery.access` for a guest's hosted wallet (a new phone without the old one or its backup): the same hardware
+ * signature, but only the version-2 text (bound to the wallet's key-set id). The guardian tries it against every guest
+ * slot. The answer carries the account pubkeys instead of a descriptor (the host never had one): the new phone rebuilds
+ * the descriptor from the encrypted wallet map (`hosted.map.get`) and finds the co-signed coins with `hosted.coins`.
+ */
+export const HostedAccessParams = z.strictObject({ approval: AccessApproval });
+export const HostedAccessResult = z.object({
+  walletId: WalletId,
+  network: Network,
+  accountPubkeys: AccountPubkeys,
+  hardwareAuth: HardwareAuthKey,
+  policy: Policy,
+  nextHardwareSequence: z.int().min(1),
+  phoneSpending: PhoneSpendingState,
+  activeRecoveryId: z.string().nullable(),
+  accessExpiresAt: UnixSeconds,
+});
+
 /** The encrypted wallet map the slot keeps (the current wallet's, or `walletId`'s: a running recovery's destination). */
 export const HostedMapGetParams = z.strictObject({ walletId: WalletId.optional() });
 export const HostedMapGetResult = z.object({ walletId: WalletId, map: WalletMap.nullable() });
@@ -1047,6 +1060,7 @@ export const methods = {
   'hosted.pair': { params: HostedPairParams, result: HostedPairResult },
   'hosted.coins': { params: HostedCoinsParams, result: HostedCoinsResult },
   'hosted.map.get': { params: HostedMapGetParams, result: HostedMapGetResult },
+  'hosted.access': { params: HostedAccessParams, result: HostedAccessResult },
 } as const;
 
 export type MethodName = keyof typeof methods;
@@ -1278,6 +1292,7 @@ export const RequestSchema = z.discriminatedUnion('method', [
   requestOf('hosted.pair', HostedPairParams),
   requestOf('hosted.coins', HostedCoinsParams),
   requestOf('hosted.map.get', HostedMapGetParams),
+  requestOf('hosted.access', HostedAccessParams),
 ]);
 export type Request = z.infer<typeof RequestSchema>;
 

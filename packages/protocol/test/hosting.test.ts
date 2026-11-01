@@ -14,8 +14,10 @@ import {
   PairingUriError,
   RecoveryAccessResult,
   decodeInviteUri,
+  decodeRecoveryUri,
   decodeTrikeyUri,
   encodeInviteUri,
+  encodeRecoveryUri,
   encodePairingUri,
   generatePairingSecret,
   methods,
@@ -155,7 +157,7 @@ describe('optional members for hosted wallets; the host forms unchanged', () => 
     expect(methods.pair.params.safeParse({ ...pairParams, walletMap: 'AbC' }).success).toBe(false);
   });
 
-  it('recovery.access: a hosted answer carries account pubkeys instead of a descriptor', () => {
+  it('recovery.access keeps its shape; hosted.access answers account pubkeys instead of a descriptor', () => {
     const base = {
       walletId: '0123456789abcdef',
       network: 'signet',
@@ -166,8 +168,17 @@ describe('optional members for hosted wallets; the host forms unchanged', () => 
       activeRecoveryId: null,
       accessExpiresAt: NOW,
     };
-    expect(RecoveryAccessResult.safeParse({ ...base, hosted: { accountPubkeys: keys } }).success).toBe(true);
+    expect(RecoveryAccessResult.safeParse(base).success).toBe(false);
     expect(RecoveryAccessResult.safeParse({ ...base, descriptor: 'wsh(sortedmulti(2,A,B,C))', guardianKey: keyOrigin }).success).toBe(true);
+    expect(methods['hosted.access'].result.safeParse({ ...base, accountPubkeys: keys }).success).toBe(true);
+    expect(methods['hosted.access'].result.safeParse(base).success).toBe(false);
+  });
+
+  it('a recovery code can say the wallet is hosted', () => {
+    const uri = encodeRecoveryUri({ guardianPubkey: pubkey, relays: ['wss://relay.example.com'], network: 'signet', walletId: '0123456789abcdef', hosted: true });
+    expect(uri).toContain('hosted=1');
+    expect(decodeRecoveryUri(uri).hosted).toBe(true);
+    expect(decodeRecoveryUri(uri.replace('&hosted=1', '')).hosted).toBeUndefined();
   });
 });
 
