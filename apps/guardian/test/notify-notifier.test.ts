@@ -100,7 +100,7 @@ async function flush(): Promise<void> {
 }
 
 /** Drops the announcement of the setup itself, so a test sees only what it sends next. */
-async function configured(input = base()): Promise<void> {
+async function configured(input: unknown = base()): Promise<void> {
   const r = await n.update(input, { recoveryRunning: false });
   expect(r).toMatchObject({ ok: true, changed: true });
   await flush();

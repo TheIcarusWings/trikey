@@ -205,6 +205,23 @@ describe('addresses for ntfy and webhooks', () => {
     expect(classifyIp('not an ip')).toBe('refused');
   });
 
+  it('connects to the address it checked (no second lookup)', async () => {
+    const hook = await startHttp();
+    try {
+      let lookups = 0;
+      const resolve = async () => {
+        lookups++;
+        return [{ address: '127.0.0.1', family: 4 }];
+      };
+      await postChecked(`http://hooks.example.test:${hook.port}/x`, '{"a":1}', { 'Content-Type': 'application/json' }, { allowLoopback: true, resolve });
+      expect(lookups).toBe(1);
+      expect(hook.requests.at(-1)!.headers.host).toBe(`hooks.example.test:${hook.port}`);
+      expect(hook.requests.at(-1)!.body).toBe('{"a":1}');
+    } finally {
+      await hook.stop();
+    }
+  });
+
   it('checks what a name resolves to at send time: loopback, link-local, and http to a public address are refused', async () => {
     const to = (address: string) => ({ resolve: async () => [{ address, family: address.includes(':') ? 6 : 4 }] });
     await expect(postChecked('https://hooks.example.com/x', '{}', {}, to('127.0.0.1'))).rejects.toThrow(/guardian itself/);

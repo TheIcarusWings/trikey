@@ -653,6 +653,8 @@ export class Notifier {
             d.nextAt = r.at + RETRY_DELAYS_MS[Math.min(d.attempts - 1, RETRY_DELAYS_MS.length - 1)]!;
           }
           for (const k of r.healthKeys) {
+            // A removed channel's last message (its announcement) leaves no health record behind.
+            if (k !== 'smtp' && !draft.destinations.some((x) => x.id === k)) continue;
             const was = healthState(draft.health[k]);
             const h = (draft.health[k] ??= {});
             if (r.ok) h.lastOkAt = r.at;

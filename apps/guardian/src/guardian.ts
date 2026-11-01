@@ -474,7 +474,8 @@ export class Guardian {
     clearInterval(this.timer);
     await this.ticking?.catch(() => {});
     await this.sp.stop();
-    await this.notifier.idle();
+    // A send in flight may finish (its outcome is saved); a slow mail server does not hold the stop up for long.
+    await Promise.race([this.notifier.idle(), new Promise<void>((r) => setTimeout(r, 5000).unref?.())]);
     this.inbox?.close();
     await this.inbox?.drain();
     this.rpc?.close();
