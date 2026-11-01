@@ -1,7 +1,7 @@
 import '../global.css';
 
 import { PortalHost } from '@rn-primitives/portal';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useRootNavigationState, useRouter } from 'expo-router';
 import { ThemeProvider } from 'expo-router/react-navigation';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -62,10 +62,29 @@ function useWalletReactions() {
   }, [state, router]);
 }
 
-function Shell() {
+/**
+ * After a wallet mode switch (`restarts` > 0), start over from the entry screen, which picks Home, Welcome or the
+ * recovery for the wallet now behind the screens. Without it the screens of the old mode stayed: switching Demo back to
+ * Real from Home showed Home over a Real wallet that was not set up, and going back reached Welcome and its Network
+ * picker (reported from an iPhone).
+ */
+function useStartOverAfterSwitch(restarts: number) {
+  const router = useRouter();
+  const nav = useRootNavigationState();
+  const done = useRef(0);
+  useEffect(() => {
+    if (restarts === 0 || done.current === restarts || !nav?.key) return;
+    done.current = restarts;
+    if (router.canDismiss()) router.dismissAll();
+    router.replace('/');
+  }, [restarts, nav?.key, router]);
+}
+
+function Shell({ restarts }: { restarts: number }) {
   const { theme } = useWallet();
   useThemePreference(theme);
   useWalletReactions();
+  useStartOverAfterSwitch(restarts);
   const { scheme, colors } = useTheme();
 
   useEffect(() => {
@@ -180,7 +199,7 @@ export default function RootLayout() {
   return (
     <AppModeProvider value={control}>
       <WalletProvider service={booted.wallet}>
-        <Shell />
+        <Shell restarts={epoch} />
       </WalletProvider>
     </AppModeProvider>
   );

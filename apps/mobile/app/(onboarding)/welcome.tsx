@@ -1,5 +1,5 @@
-import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { View } from 'react-native';
 import { AppButton } from '@/components/app-button';
 import { Logo } from '@/components/icons';
@@ -20,6 +20,17 @@ export default function Welcome() {
   const mainnet = backing === 'real' && state.network === 'bitcoin';
   // On mainnet, nothing goes on until the person has accepted the warning under the picker.
   const blocked = backing === 'real' && mainnetBlocked(state);
+  // Welcome is only for a phone with no wallet yet. On an iPhone the end of setup (`dismissAll` then `replace('/home')`)
+  // once left the person here with a real wallet set up, and the Network picker then refused every tap. So when Welcome
+  // is the screen in front and the wallet is set up, it moves on to Home (or to a running recovery). Only while focused:
+  // Welcome stays mounted under the whole setup, and a real wallet counts as set up from pairing on, before the backup.
+  const { onboarded, recovering } = state;
+  useFocusEffect(
+    useCallback(() => {
+      if (onboarded) router.replace('/home');
+      else if (recovering) router.replace('/recover/waiting');
+    }, [onboarded, recovering, router]),
+  );
   return (
     <Screen
       bare
