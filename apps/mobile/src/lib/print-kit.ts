@@ -24,7 +24,12 @@ async function printNative(html: string): Promise<void> {
   }
 }
 
+/**
+ * Prints the Recovery Kit. On the web through a hidden frame like `printPage` (`expo-print` there prints the app's
+ * screen, not the kit): the page stays in memory, in a frame removed once the dialog closes.
+ */
 export async function printKit(html: string): Promise<void> {
+  if (IS_WEB && typeof document !== 'undefined') return printInBrowser(html);
   await printNative(html);
 }
 
