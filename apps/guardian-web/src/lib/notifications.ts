@@ -114,6 +114,51 @@ export interface SmtpDraft {
   from: string;
   /** Empty: keep the stored password. */
   password: string;
+  /** The server's certificate (PEM) or its SHA-256 fingerprint to pin. Empty: keep the stored pin, if any. */
+  pin?: string;
+  /** Remove the stored pin (back to the public certificate authorities). */
+  clearPin?: boolean;
+}
+
+/** How to get a server's SHA-256 fingerprint, for the page (STARTTLS; for TLS on 465 leave out `-starttls smtp`). */
+export const PIN_COMMAND = 'openssl s_client -connect HOST:PORT -starttls smtp </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256';
+
+/**
+ * The pinned certificate field: empty (no change), one PEM certificate, or a SHA-256 fingerprint (64 hex digits, colons
+ * and the `sha256 Fingerprint=` openssl prints allowed). The guardian reads the certificate itself; this only catches
+ * the usual slips (a private key, a SHA-1 fingerprint, several certificates).
+ */
+export function pinError(text: string): string | undefined {
+  const t = text.trim();
+  if (!t) return undefined;
+  if (/PRIVATE KEY/.test(t)) return 'That is a private key. Paste only the certificate (cert.pem), never the key.';
+  if (t.includes('-----BEGIN')) {
+    const blocks = t.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
+    if (blocks.length === 0) return 'Paste a certificate (-----BEGIN CERTIFICATE----- ... -----END CERTIFICATE-----) or its SHA-256 fingerprint.';
+    if (blocks.length > 1) return "Paste only the server's own certificate (the first BEGIN CERTIFICATE block).";
+    return undefined;
+  }
+  const hexText = t.replace(/^sha-?256(\s*fingerprint)?\s*[=:]?\s*/i, '').replace(/[\s:]/g, '');
+  if (/^[0-9a-f]{40}$/i.test(hexText)) return 'That is a SHA-1 fingerprint. Use the SHA-256 one (openssl x509 -fingerprint -sha256).';
+  if (!/^[0-9a-f]{64}$/i.test(hexText)) return 'Paste the certificate (PEM) or its SHA-256 fingerprint: 64 hex digits, colons allowed.';
+  return undefined;
+}
+
+/**
+ * While a recovery runs the guardian accepts only one change of the email account: a new app password, with the
+ * server, port, encryption, user name, From address and pinned certificate as they are. True when `draft` is that
+ * (or no change at all).
+ */
+export function passwordOnlyChange(stored: NonNullable<NotificationSettings['smtp']>, d: SmtpDraft): boolean {
+  return (
+    d.host.trim().toLowerCase() === stored.host &&
+    Number(d.port) === stored.port &&
+    d.security === stored.security &&
+    d.username.trim() === stored.username &&
+    d.from.trim().toLowerCase() === stored.from.toLowerCase() &&
+    !d.pin?.trim() &&
+    !(d.clearPin && stored.pin)
+  );
 }
 
 /** The body for `PUT /api/notifications` from the current settings and one change. */
@@ -133,6 +178,7 @@ export function settingsInput(
       username: change.smtp.username.trim(),
       from: change.smtp.from.trim(),
       ...(change.smtp.password ? { password: change.smtp.password } : {}),
+      ...(change.smtp.clearPin ? { pin: null } : change.smtp.pin?.trim() ? { pin: change.smtp.pin.trim() } : {}),
     };
   const destinations = s.destinations.filter((d) => d.id !== change.remove).map(keepDestination);
   if (change.add) destinations.push(change.add);
@@ -148,14 +194,26 @@ export function smtpError(d: SmtpDraft, hasPassword: boolean): string | undefine
   const from = emailError(d.from);
   if (from) return `From address: ${from}`;
   if (!d.password && !hasPassword) return 'Enter an app password (made in your email account for this; not your account password).';
+  const pin = d.clearPin ? undefined : pinError(d.pin ?? '');
+  if (pin) return `Pinned certificate: ${pin}`;
   return undefined;
 }
 
-/** Well-known providers' settings, filled in when the owner picks one. All need an app password (or a token). */
+/**
+ * Well-known providers' settings, filled in when the owner picks one. All need an app password (or a token). An empty
+ * `host` leaves the server field as it is (Proton Mail Bridge runs on the owner's own network).
+ */
 export const SMTP_PRESETS: { label: string; host: string; port: number; security: SmtpSecurity; note: string }[] = [
   { label: 'Gmail', host: 'smtp.gmail.com', port: 465, security: 'tls', note: 'Needs 2-Step Verification and an app password (Google Account, Security, App passwords).' },
   { label: 'Fastmail', host: 'smtp.fastmail.com', port: 465, security: 'tls', note: 'Make an app password with SMTP access (Settings, Privacy & Security, Manage app passwords).' },
-  { label: 'Proton Mail', host: 'smtp.protonmail.ch', port: 587, security: 'starttls', note: 'Needs a paid plan with a custom domain and an SMTP token (Settings, IMAP/SMTP, SMTP tokens). Proton Mail Bridge does not work from the guardian.' },
+  { label: 'Proton Mail', host: 'smtp.protonmail.ch', port: 587, security: 'starttls', note: 'Needs a paid plan with a custom domain and an SMTP token (Settings, IMAP/SMTP, SMTP tokens). Without one, use Proton Mail Bridge.' },
+  {
+    label: 'Proton Mail Bridge',
+    host: '',
+    port: 1025,
+    security: 'starttls',
+    note: "Enter the address of the machine running Bridge (reachable from the guardian), the user name and password Bridge shows (not your Proton password), and pin Bridge's certificate below: Bridge makes its own, which the guardian otherwise refuses.",
+  },
 ];
 
 /** Who a channel is for, in words. */

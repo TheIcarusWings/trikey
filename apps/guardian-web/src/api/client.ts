@@ -117,7 +117,8 @@ export interface GuardianApi {
   getNotifications(): Promise<NotificationSettings>;
   /**
    * Replaces them. Every change is announced on every channel, before and after, and to the paired phone. Rejects with
-   * `invalid`, `recovery_pending` (while a recovery runs only additions are accepted) and `rate_limited`.
+   * `invalid`, `recovery_pending` (while a recovery runs only additions are accepted, and a new app password for the
+   * same email account) and `rate_limited`.
    */
   setNotifications(input: NotificationSettingsInput): Promise<NotificationSettings>;
   /** "Send a test message" to one channel, or to the email account's own From address. Resolves with what happened. */
