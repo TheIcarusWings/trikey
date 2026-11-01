@@ -22,6 +22,7 @@ import { decode as nip19Decode, npubEncode } from 'nostr-tools/nip19';
 import {
   MultisigWallet,
   PsbtError,
+  SAVINGS_ACCOUNT,
   SoftwareSigner,
   TX_OPTS,
   analyzePsbt,
@@ -32,6 +33,7 @@ import {
   estimateVsize,
   finalizePsbt,
   getNetwork,
+  keyExpressionFromMaster,
   parsePsbt,
   type KeyExpression,
   type Network,
@@ -63,6 +65,7 @@ import {
   type HardwareAction,
   type HardwareApproval,
   type HistoryEntry,
+  type KeyOrigin,
   type MethodName,
   type Params,
   type PairingPayload,
@@ -152,6 +155,10 @@ import {
   type RecoveryRecord,
   type ReplaceRecord,
   type RetiredWallet,
+  type SavingsDevice,
+  type SavingsRecord,
+  type SavingsSendEntry,
+  type SavingsSigners,
   type SendLogEntry,
   type SilentPaymentCoin,
   type WalletState,
@@ -231,7 +238,7 @@ export type WalletEvent =
    */
   | { type: 'alert'; alert: Alert; id: string; atMs: number }
   /** The hardware wallet is about to be asked to sign this exact text: show it, so the user can compare it with the device screen. */
-  | { type: 'hardware_prompt'; purpose: 'pairing' | 'approval' | 'recovery-access' | 'payment' | 'recovery-sweep' | 'register'; text: string }
+  | { type: 'hardware_prompt'; purpose: 'pairing' | 'approval' | 'recovery-access' | 'payment' | 'recovery-sweep' | 'register' | 'savings'; text: string }
   /** A request left over from before the app restarted was settled (or given up). */
   | { type: 'pending_settled'; method: string; ok: boolean; refusal?: GuardianRefusal }
   /** A step of a long operation ("Replace guardian"), for a progress line. */
@@ -554,6 +561,104 @@ interface PairingSession {
   uri?: string;
 }
 
+/** The name Savings is registered under on the hardware wallets (16 characters at most). */
+export const SAVINGS_POLICY_NAME = 'Trikey savings';
+/** Devices that keep a multisig wallet registered (and, for Ledger, need its HMAC back to sign for it). */
+const REGISTERING_KINDS = new Set<HardwareKind>(['ledger', 'bitbox02', 'jade', 'coldcard']);
+
+/** A "Create Savings" in progress (in memory only: nothing is stored or registered with the guardian until it finishes). */
+interface SavingsDraft {
+  phone: KeyOrigin;
+  hardware?: SavingsDevice;
+  recoveryKey?: SavingsDevice;
+}
+
+/** What "Create Savings" has so far. `descriptor` once all three keys are in. */
+export interface SavingsDraftView {
+  phone: KeyOrigin;
+  hardware?: { kind: HardwareKind; fingerprint: string };
+  recoveryKey?: { kind: HardwareKind; model?: string; fingerprint: string };
+  descriptor?: string;
+}
+
+export interface SavingsHistoryEntry extends HistoryEntry {
+  /** From this phone's own log of Savings spends: */
+  sentAt?: number;
+  recipient?: string;
+  amountSats?: number;
+  label?: string;
+  signedBy?: SavingsSigners;
+  purpose?: SavingsSendEntry['purpose'];
+  /** Sent by this phone, not listed by the guardian yet. */
+  local?: true;
+}
+
+/** The Savings wallet as the screens show it (`savingsSnapshot`). */
+export interface SavingsSnapshot {
+  walletId: string;
+  descriptor: string;
+  createdAt: number;
+  balance: { confirmedSats: number; unconfirmedSats: number; totalSats: number };
+  /** Absent before the first sync. */
+  syncedAt?: number;
+  tipHeight?: number;
+  utxos: ChainSnapshot['utxos'];
+  history: SavingsHistoryEntry[];
+  hardware: { kind: HardwareKind; model?: string; fingerprint: string };
+  recoveryKey: { kind: HardwareKind; model?: string; fingerprint: string };
+  /** The paired guardian watches it (chain data and the `savings_moved` tripwire). */
+  watchedByGuardian: boolean;
+}
+
+export interface SavingsSendRequest {
+  address: string;
+  amountSats: number;
+  /** Default `slow` (the 6-block estimate). */
+  speed?: SendRequest['speed'];
+  feeRate?: number;
+  label?: string;
+}
+
+export interface SavingsQuote {
+  request: SavingsSendRequest;
+  feeRate: number;
+  feeRateSource: 'estimate' | 'relay-minimum' | 'caller';
+  feeSats: number;
+  totalSats: number;
+  changeSats: number;
+  changeIndex: number;
+  inputs: SendQuote['inputs'];
+  /** The address is this phone's own Spending wallet ("Move to Spending"): the device shows it as an outgoing payment. */
+  toSpending: boolean;
+  sendMax?: true;
+}
+
+export type SavingsSendResult =
+  | { ok: true; txid: string; txHex: string; amountSats: number; feeSats: number; signedBy: SavingsSigners }
+  | { ok: false; refusal: GuardianRefusal; signedTx?: { txid: string; txHex: string } };
+
+/** A lost Savings key was replaced: everything moved to the new Savings wallet `walletId`. */
+export interface SavingsKeyReplaced {
+  walletId: string;
+  previousWalletId: string;
+  /** The move (absent when the old Savings was empty). */
+  txid?: string;
+  movedSats: number;
+  feeSats: number;
+  watchedByGuardian: boolean;
+}
+
+/** The Savings wallet of three keys (phone, hardware wallet, Recovery Key, in that order). */
+function draftWallet(network: Network, phone: KeyOrigin, hardware: SavingsDevice, recoveryKey: SavingsDevice): MultisigWallet {
+  return new MultisigWallet(network, { app: keyExpressionOf(phone), hardware: keyExpressionOf(hardware.account), cosigner: keyExpressionOf(recoveryKey.account) });
+}
+
+/** The device record without its registration (to register a new Savings wallet on it). */
+function unregistered(dev: SavingsDevice): SavingsDevice {
+  const { registrationHmac: _hmac, ...rest } = dev;
+  return { ...rest, addressVerified: false };
+}
+
 export class TrikeyWallet {
   readonly network: Network;
   private readonly clock: Clock;
@@ -591,6 +696,10 @@ export class TrikeyWallet {
   /** Registrations with the guardian run one at a time. */
   private registering: Promise<unknown> = Promise.resolve();
   private scanRun?: Promise<{ found: SilentPaymentCoin[]; scannedHeight: number }>;
+  /** "Create Savings" in progress (`startSavings` .. `finishSavings`). */
+  private savingsDraft?: SavingsDraft;
+  /** `savingsWallet()` parses the Savings descriptor once per descriptor. */
+  private savingsCache?: { descriptor: string; wallet: MultisigWallet };
   private scanQueued?: Promise<{ found: SilentPaymentCoin[]; scannedHeight: number }>;
 
   private constructor(
@@ -1568,6 +1677,8 @@ export class TrikeyWallet {
     await this.prefetchPrevTxs(snap.utxos).catch(() => undefined);
     await this.trackRecovery(status.activeRecoveryId).catch(() => undefined);
     await this.syncSilentPayments();
+    // Savings (only a wallet that has it): best effort, it never holds up Spending's sync.
+    if (this.s.savings) await this.syncSavings().catch(() => undefined);
     return this.snapshot()!;
   }
 
@@ -1595,7 +1706,9 @@ export class TrikeyWallet {
     for (const t of want) if (!(await this.txs.has(t))) missing.push(t);
     const got = await Promise.all(missing.map(async (txid) => ({ txid, txHex: await source.getTransaction(txid).catch(() => '') })));
     await this.txs.put(got.filter((g) => g.txHex));
-    await this.txs.keepOnly(new Set(want));
+    // Spending's and Savings' coins share the cache: keep both.
+    const coins = [...(this.s.chain?.utxos ?? []), ...(this.s.savings?.chain?.utxos ?? [])];
+    await this.txs.keepOnly(new Set([...want, ...coins.map((u) => u.txid)]));
   }
 
   /** Each input's previous transaction: from the cache when it is there (checked), else from `source` (and cached). */
@@ -1939,6 +2052,7 @@ export class TrikeyWallet {
       feeSats: quote.feeSats,
       ...(label ? { label } : {}),
       signedBy: signedBy === 'phone+guardian' ? 'guardian' : 'hardware',
+      ...(this.isSavingsAddress(quote.request.address) ? { toSavings: true as const } : {}),
     });
     await this.sync().catch(() => undefined);
     return {
@@ -2732,6 +2846,10 @@ export class TrikeyWallet {
       case 'relays_changed':
         // Only from the paired guardian (`from`: the connection's peer, whose key the client checked).
         await this.followGuardianRelays(alert.relays, from);
+        return;
+      case 'savings_moved':
+        // The guardian saw a Savings coin move (this phone's own spend, or two keys in other hands): read Savings again.
+        void this.syncSavings().catch(() => undefined);
         return;
       case 'sp_received': {
         // A payment reached the address. Look it up now (no prompt: the scan key is on the phone); moving it into the
@@ -4438,6 +4556,616 @@ export class TrikeyWallet {
   }
 
   // ===========================================================================
+  // Savings (optional; docs/design/savings-and-limit-off.md, option K)
+  //
+  // A second wallet, `wsh(sortedmulti(2, phone, hardware, recoveryKey))` with every key at BIP 48 account 1': key 2's
+  // seed, the wallet's hardware wallet, and a second hardware wallet (the Recovery Key) of which only the xpub is kept.
+  // The guardian holds no key of it, so the phone and the guardian together cannot move it: every spend needs a key that
+  // is not online. The guardian only watches it (chain data, relaying, the `savings_moved` tripwire). Nothing here runs
+  // for a wallet without Savings: no step of onboarding, no rule, no policy hash or approval text changes.
+
+  /** The guardian can watch a Savings wallet (`savings` in `guardian.status.features`, as last read). */
+  get savingsSupported(): boolean {
+    return !!this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.savings);
+  }
+
+  /** The Savings wallet, as `MultisigWallet` (keys in phone, hardware, Recovery Key order). */
+  savingsWallet(): MultisigWallet | undefined {
+    const sv = this.s.savings;
+    if (!sv) return undefined;
+    if (this.savingsCache?.descriptor !== sv.descriptor) this.savingsCache = { descriptor: sv.descriptor, wallet: MultisigWallet.fromDescriptor(sv.descriptor, this.network) };
+    return this.savingsCache.wallet;
+  }
+
+  private requireSavings(): { record: SavingsRecord; wallet: MultisigWallet } {
+    this.requireNotRecoveredElsewhere();
+    const record = this.s.savings;
+    const wallet = this.savingsWallet();
+    if (!record || !wallet) throw new WalletError('no_savings', 'This wallet has no Savings.');
+    return { record, wallet };
+  }
+
+  /** What the Savings screens show, from the last sync; undefined without Savings. */
+  savingsSnapshot(): SavingsSnapshot | undefined {
+    const sv = this.s.savings;
+    if (!sv) return undefined;
+    const c = sv.chain;
+    const balance = c?.balance ?? { confirmedSats: 0, unconfirmedSats: 0 };
+    const log = new Map(sv.sendLog.map((e) => [e.txid, e]));
+    const listed = new Set<string>();
+    const history: SavingsHistoryEntry[] = (c?.history ?? []).map((h) => {
+      listed.add(h.txid);
+      const e = log.get(h.txid);
+      return e ? { ...h, sentAt: e.at, recipient: e.recipient, amountSats: e.amountSats, signedBy: e.signedBy, ...(e.purpose ? { purpose: e.purpose } : {}), ...(e.label ? { label: e.label } : {}) } : { ...h };
+    });
+    const unlisted = sv.sendLog
+      .filter((e) => !listed.has(e.txid) && e.at > (c?.syncedAt ?? 0) - 10 * 60_000)
+      .map((e): SavingsHistoryEntry => ({ txid: e.txid, height: 0, confirmations: 0, netSats: -(e.amountSats + e.feeSats), feeSats: e.feeSats, sentAt: e.at, recipient: e.recipient, amountSats: e.amountSats, signedBy: e.signedBy, ...(e.purpose ? { purpose: e.purpose } : {}), local: true }));
+    return {
+      walletId: sv.walletId,
+      descriptor: sv.descriptor,
+      createdAt: sv.createdAt,
+      balance: { ...balance, totalSats: balance.confirmedSats + balance.unconfirmedSats },
+      ...(c ? { syncedAt: c.syncedAt, tipHeight: c.tipHeight } : {}),
+      utxos: c?.utxos ?? [],
+      history: [...unlisted.reverse(), ...history],
+      hardware: { kind: sv.hardware.kind, ...(sv.hardware.model ? { model: sv.hardware.model } : {}), fingerprint: sv.hardware.fingerprint },
+      recoveryKey: { kind: sv.recoveryKey.kind, ...(sv.recoveryKey.model ? { model: sv.recoveryKey.model } : {}), fingerprint: sv.recoveryKey.fingerprint },
+      watchedByGuardian: !!sv.registration && sv.registration.walletId === sv.walletId && sv.registration.guardian === this.s.guardian?.pubkey,
+    };
+  }
+
+  /**
+   * Step 1 of "Create Savings": key 2's Savings key (`m/48'/<coin>'/1'/2'`), behind the biometric prompt. Only for a
+   * paired wallet whose guardian can watch Savings (`savingsSupported`: Savings' chain data comes from it), with the
+   * hardware wallet confirmed, and no Savings yet. Nothing is stored until `finishSavings`.
+   */
+  async startSavings(): Promise<SavingsDraftView> {
+    this.requirePaired();
+    if (this.s.savings) throw new WalletError('savings_exists', 'This wallet already has Savings.');
+    if (!this.savingsSupported) throw new WalletError('guardian_unsupported', 'Your guardian cannot watch a Savings wallet yet. Update the guardian app on your home server first.');
+    if (!this.s.hardware) throw new WalletError('wrong_state', 'No hardware wallet is set up.');
+    if (this.s.hardwareConfirm) throw new WalletError('hardware_unconfirmed', 'Confirm the new wallet on your hardware wallet first.');
+    const path = bip48Path(this.network, SAVINGS_ACCOUNT);
+    const phone = await this.withKey2('Set up Savings', async (m) => keyOriginOf(keyExpressionFromMaster(HDKey.fromMasterSeed(mnemonicToSeedSync(m), this.network.bip32), path)));
+    this.savingsDraft = { phone };
+    return this.draftView();
+  }
+
+  /** Step 2: the hardware wallet's Savings key (the wallet's own device, at account 1'). */
+  async savingsConnectHardware(): Promise<SavingsDraftView> {
+    const d = this.requireDraft();
+    const rec = this.s.hardware!;
+    const account = await this.withHardware((hw) => this.readSavingsKey(hw));
+    if (account.xpub === rec.account.xpub) throw new WalletError('hardware_invalid_response', 'The hardware wallet returned its Spending key for Savings.');
+    d.hardware = { kind: rec.kind, ...(rec.model ? { model: rec.model } : {}), fingerprint: rec.fingerprint, account, policyName: SAVINGS_POLICY_NAME, addressVerified: false };
+    return this.draftView();
+  }
+
+  /**
+   * Step 3: the Recovery Key, a second hardware wallet (not the wallet's own: that would put two of Savings' keys on one
+   * device). Its Savings key is read, Savings is registered on it (devices that need it: Ledger, Coldcard, Jade,
+   * BitBox02) and it shows Savings' first address, which must match.
+   */
+  async savingsConnectRecoveryKey(opts: { kind?: HardwareKind } = {}): Promise<SavingsDraftView> {
+    const d = this.requireDraft();
+    if (!d.hardware) throw new WalletError('wrong_state', 'Connect your hardware wallet first.');
+    const hw = await this.hardwareProvider().connect({ kind: opts.kind });
+    try {
+      if (hw.info.fingerprint === this.s.hardware!.fingerprint)
+        throw new WalletError('hardware_mismatch', 'This is your hardware wallet. The Recovery Key must be a second hardware wallet, with its own seed words.');
+      if (!/^[0-9a-f]{8}$/.test(hw.info.fingerprint)) throw new WalletError('hardware_invalid_response', 'The hardware wallet reported an invalid fingerprint.');
+      const account = await this.readSavingsKey(hw);
+      if (account.xpub === d.phone.xpub || account.xpub === d.hardware.account.xpub) throw new WalletError('hardware_invalid_response', 'The second hardware wallet returned a key Savings already has.');
+      const recoveryKey: SavingsDevice = { kind: hw.info.kind, ...(hw.info.model ? { model: hw.info.model } : {}), fingerprint: hw.info.fingerprint, account, policyName: SAVINGS_POLICY_NAME, addressVerified: false };
+      const wallet = draftWallet(this.network, d.phone, d.hardware, recoveryKey);
+      d.recoveryKey = await this.registerSavingsOn(hw, recoveryKey, wallet);
+      return this.draftView();
+    } finally {
+      await hw.close().catch(() => {});
+    }
+  }
+
+  /**
+   * Step 4: Savings is registered on the hardware wallet, which shows its first address (it must match), then saved on
+   * this phone and handed to the guardian to watch (best effort: an offline guardian is told at the next sync). Make a
+   * new backup afterwards: until then a restored phone does not know Savings (the guardian still does, `findSavings`).
+   */
+  async finishSavings(): Promise<{ walletId: string; descriptor: string; firstAddress: string; watchedByGuardian: boolean }> {
+    const d = this.requireDraft();
+    if (!d.hardware || !d.recoveryKey) throw new WalletError('wrong_state', 'Connect your hardware wallet and your Recovery Key first.');
+    const wallet = draftWallet(this.network, d.phone, d.hardware, d.recoveryKey);
+    const hardware = await this.withHardware((hw) => this.registerSavingsOn(hw, d.hardware!, wallet));
+    const record: SavingsRecord = {
+      descriptor: wallet.descriptor(),
+      walletId: wallet.fingerprint(),
+      createdAt: this.now(),
+      phone: d.phone,
+      hardware,
+      recoveryKey: d.recoveryKey,
+      nextReceiveIndex: 0,
+      nextChangeIndex: 0,
+      sendLog: [],
+      previous: [],
+    };
+    await this.update((s) => void (s.savings = record));
+    this.savingsDraft = undefined;
+    const watched = await this.registerSavingsWithGuardian().catch(() => false);
+    return { walletId: record.walletId, descriptor: record.descriptor, firstAddress: wallet.derive(0, 0).address, watchedByGuardian: watched };
+  }
+
+  /** Drops a "Create Savings" that was not finished (nothing was stored; the devices keep a registration they no longer need). */
+  abandonSavings(): void {
+    this.savingsDraft = undefined;
+  }
+
+  private requireDraft(): SavingsDraft {
+    this.requirePaired();
+    if (!this.savingsDraft) throw new WalletError('wrong_state', 'Start creating Savings first.');
+    if (this.s.savings) throw new WalletError('savings_exists', 'This wallet already has Savings.');
+    return this.savingsDraft;
+  }
+
+  private draftView(): SavingsDraftView {
+    const d = this.savingsDraft!;
+    return {
+      phone: d.phone,
+      ...(d.hardware ? { hardware: { kind: d.hardware.kind, fingerprint: d.hardware.fingerprint } } : {}),
+      ...(d.recoveryKey ? { recoveryKey: { kind: d.recoveryKey.kind, ...(d.recoveryKey.model ? { model: d.recoveryKey.model } : {}), fingerprint: d.recoveryKey.fingerprint } } : {}),
+      ...(d.hardware && d.recoveryKey ? { descriptor: draftWallet(this.network, d.phone, d.hardware, d.recoveryKey).descriptor() } : {}),
+    };
+  }
+
+  /** A device's key at account 1', checked to be a BIP 48 account key. */
+  private async readSavingsKey(hw: HardwareSigner): Promise<KeyOrigin> {
+    const path = bip48Path(this.network, SAVINGS_ACCOUNT);
+    this.emit({ type: 'hardware_prompt', purpose: 'savings', text: `Share the Savings key (${path})` });
+    try {
+      const xpub = await hw.getXpub(path);
+      const hd = HDKey.fromExtendedKey(xpub, this.network.bip32);
+      if (hd.depth !== 4) throw new Error(`the key at ${path} has depth ${hd.depth}`);
+      return { fingerprint: hw.info.fingerprint, path, xpub };
+    } catch (e) {
+      if (e instanceof WalletError || isHardwareDisconnect(e)) throw e;
+      throw new WalletError('hardware_invalid_response', `The hardware wallet returned an unusable key for ${path} on ${this.network.name}.`, { cause: e });
+    }
+  }
+
+  /** Registers Savings on `hw` (`dev` is its record) and has it show the first receive address, which must match. */
+  private async registerSavingsOn(hw: HardwareSigner, dev: SavingsDevice, wallet: MultisigWallet): Promise<SavingsDevice> {
+    this.emit({ type: 'hardware_prompt', purpose: 'register', text: `Register the 2-of-3 wallet "${dev.policyName}"` });
+    const reg = await hw.registerWallet({ name: dev.policyName, descriptor: wallet.descriptor() });
+    const next: SavingsDevice = { ...dev, kind: hw.info.kind, ...(hw.info.model ? { model: hw.info.model } : {}), ...(reg.hmac ? { registrationHmac: reg.hmac } : {}) };
+    const first = wallet.derive(0, 0).address;
+    const shown = await hw.displayAddress(this.savingsPolicy(next, wallet.descriptor()), 0, 0);
+    if (shown !== first) throw new WalletError('address_mismatch', `The hardware wallet shows ${shown}, but Savings' first address is ${first}. Do not use it.`);
+    return { ...next, addressVerified: true };
+  }
+
+  private savingsPolicy(dev: SavingsDevice, descriptor = this.s.savings?.descriptor): HardwareWalletPolicy {
+    if (!descriptor) throw new WalletError('no_savings', 'This wallet has no Savings.');
+    return { name: dev.policyName, descriptor, ...(dev.registrationHmac ? { registration: { hmac: dev.registrationHmac } } : {}) };
+  }
+
+  /** Connects the Savings device `dev` (checking it is that device), runs `fn`, disconnects (a held connection to it is reused). */
+  private async withSavingsDevice<T>(dev: Pick<SavingsDevice, 'kind' | 'fingerprint'>, fn: (hw: HardwareSigner) => Promise<T>): Promise<T> {
+    if (this.s.hardware && dev.fingerprint === this.s.hardware.fingerprint) return this.withHardware((hw) => fn(hw));
+    const hw = await this.hardwareProvider().connect({ kind: dev.kind });
+    try {
+      if (hw.info.fingerprint !== dev.fingerprint)
+        throw new WalletError('hardware_mismatch', `Connect your Recovery Key (fingerprint ${dev.fingerprint}), not ${hw.info.fingerprint}.`);
+      return await fn(hw);
+    } finally {
+      await hw.close().catch(() => {});
+    }
+  }
+
+  /** Tells the guardian to watch Savings (`savings.register`), if it can and was not told yet. True when it watches it. */
+  private async registerSavingsWithGuardian(opts: { force?: boolean } = {}): Promise<boolean> {
+    const sv = this.s.savings;
+    const g = this.s.guardian;
+    if (!sv || !g || !this.savingsSupported || this.s.stage !== 'paired' || this.recoveredElsewhere) return false;
+    if (!opts.force && sv.registration?.walletId === sv.walletId && sv.registration.guardian === g.pubkey) return true;
+    const r = await this.call('savings.register', { descriptor: sv.descriptor }, { timeoutMs: REGISTRATION_TIMEOUT_MS });
+    if (r.walletId !== sv.walletId) throw new WalletError('guardian_mismatch', `The guardian watches ${r.walletId} instead of Savings ${sv.walletId}.`);
+    await this.update((s) => {
+      if (s.savings?.walletId === r.walletId) s.savings.registration = { walletId: r.walletId, guardian: g.pubkey, at: this.now() };
+    });
+    return true;
+  }
+
+  /** Savings' chain data through the guardian (`wallet.sync` with `wallet: "savings"`, `tx.get`, `tx.broadcast`). */
+  private savingsChain(): ChainSource {
+    return new GuardianChainSource(() => {
+      if (!this.rpc) throw new WalletError('wrong_state', 'Not connected to the guardian; call start() first.');
+      return this.rpc;
+    }, { wallet: 'savings' });
+  }
+
+  /**
+   * Reads Savings' coins and history from the guardian (it registers Savings again first when the guardian does not
+   * know it: a new guardian, a reset, an offline one at creation). Part of `sync()`; no prompt.
+   */
+  async syncSavings(): Promise<SavingsSnapshot | undefined> {
+    const sv = this.s.savings;
+    if (!sv || this.s.stage !== 'paired' || this.recoveredElsewhere) return this.savingsSnapshot();
+    if (!this.savingsSupported) return this.savingsSnapshot();
+    await this.client();
+    await this.registerSavingsWithGuardian();
+    let snap: ChainSnapshot;
+    try {
+      snap = await this.savingsChain().sync({ historyLimit: this.deps.historyLimit });
+    } catch (e) {
+      // The guardian forgot it (reset, another guardian): tell it again, once.
+      if (!isWalletNotWatched(e)) throw e;
+      await this.registerSavingsWithGuardian({ force: true });
+      snap = await this.savingsChain().sync({ historyLimit: this.deps.historyLimit });
+    }
+    if (snap.walletId && snap.walletId !== sv.walletId) throw new WalletError('guardian_mismatch', `The guardian answered for ${snap.walletId}, not Savings ${sv.walletId}.`);
+    const now = this.now();
+    await this.update((s) => {
+      if (!s.savings || s.savings.walletId !== sv.walletId) return;
+      s.savings.chain = { ...snap, syncedAt: now };
+      s.savings.nextReceiveIndex = Math.max(s.savings.nextReceiveIndex, snap.nextReceiveIndex);
+      s.savings.nextChangeIndex = Math.max(s.savings.nextChangeIndex, snap.nextChangeIndex);
+    });
+    await this.prefetchPrevTxs(snap.utxos, this.savingsChain()).catch(() => undefined);
+    return this.savingsSnapshot();
+  }
+
+  /**
+   * The next unused Savings address. With `verifyOnDevice` the hardware wallet shows it too and it must match (what to
+   * do before a large deposit). "Add to Savings" pays it from Spending like any payment: it counts against the daily
+   * limit (the owner's decision), and over the limit the hardware wallet signs.
+   */
+  async savingsReceiveAddress(opts: { verifyOnDevice?: boolean } = {}): Promise<{ address: string; index: number; verifiedOnDevice: boolean }> {
+    const { record, wallet } = this.requireSavings();
+    const index = Math.max(record.chain?.nextReceiveIndex ?? 0, record.nextReceiveIndex);
+    const address = wallet.derive(0, index).address;
+    if (!opts.verifyOnDevice) return { address, index, verifiedOnDevice: false };
+    const dev = record.hardware;
+    const shown = await this.withSavingsDevice(dev, (hw) => hw.displayAddress(this.savingsPolicy(dev), 0, index));
+    if (shown !== address) throw new WalletError('address_mismatch', `The hardware wallet shows ${shown}, but Savings computed ${address}. Do not use it.`);
+    return { address, index, verifiedOnDevice: true };
+  }
+
+  /** True when `address` is one of Savings' own (receive or change, within the scanned range plus the gap). */
+  isSavingsAddress(address: string): boolean {
+    const wallet = this.savingsWallet();
+    const sv = this.s.savings;
+    if (!wallet || !sv) return false;
+    const reach = (next: number) => next + (sv.chain?.gapLimit ?? 20);
+    for (const [chain, next] of [[0, Math.max(sv.nextReceiveIndex, sv.chain?.nextReceiveIndex ?? 0)], [1, Math.max(sv.nextChangeIndex, sv.chain?.nextChangeIndex ?? 0)]] as const)
+      for (let i = 0; i < reach(next); i++) if (wallet.derive(chain, i).address === address) return true;
+    return false;
+  }
+
+  /** True when `address` is one of this phone's Spending addresses (receive chain, scanned range plus the gap). */
+  private isSpendingAddress(address: string): boolean {
+    if (!this.s.wallet) return false;
+    const wallet = this.multisig();
+    const reach = (this.s.chain?.nextReceiveIndex ?? 0) + (this.s.chain?.gapLimit ?? 20);
+    for (let i = 0; i < reach; i++) if (wallet.derive(0, i).address === address) return true;
+    return false;
+  }
+
+  /**
+   * Plans a payment out of Savings from the last sync (no I/O): coins, fee (at the 6-block estimate by default: Savings
+   * is not where urgent payments come from) and change back to Savings. `toSpending` says the address is this phone's
+   * own Spending wallet ("Move to Spending"). `sendFromSavings` carries it out with two keys, never the guardian.
+   */
+  quoteSavingsSpend(req: SavingsSendRequest): SavingsQuote {
+    const { wallet, chain, feeRate, feeRateSource } = this.savingsQuoteBasics(req);
+    if (looksLikeSilentPaymentAddress(req.address)) throw new WalletError('invalid_address', 'Savings cannot pay a silent payment address. Move the amount to Spending first.');
+    const sel = selectCoins({ wallet, utxos: chain.utxos, address: req.address, amountSats: req.amountSats, feeRate, changeIndex: chain.nextChangeIndex });
+    return {
+      request: req,
+      feeRate,
+      feeRateSource,
+      feeSats: sel.feeSats,
+      totalSats: req.amountSats + sel.feeSats,
+      changeSats: sel.changeSats,
+      changeIndex: chain.nextChangeIndex,
+      inputs: sel.inputs,
+      toSpending: this.isSpendingAddress(req.address),
+    };
+  }
+
+  /** "Move everything": every Savings coin to one address, no change. */
+  quoteSavingsSendMax(req: Omit<SavingsSendRequest, 'amountSats'>): SavingsQuote {
+    const { wallet, chain, feeRate, feeRateSource } = this.savingsQuoteBasics(req);
+    if (looksLikeSilentPaymentAddress(req.address)) throw new WalletError('invalid_address', 'Savings cannot pay a silent payment address. Move the amount to Spending first.');
+    const sel = selectAllCoins({ utxos: chain.utxos, outputScript: outputScriptOf(req.address, wallet), feeRate });
+    return {
+      request: { ...req, amountSats: sel.amountSats },
+      feeRate,
+      feeRateSource,
+      feeSats: sel.feeSats,
+      totalSats: sel.amountSats + sel.feeSats,
+      changeSats: 0,
+      changeIndex: chain.nextChangeIndex,
+      inputs: sel.inputs,
+      toSpending: this.isSpendingAddress(req.address),
+      sendMax: true,
+    };
+  }
+
+  private savingsQuoteBasics(req: { feeRate?: number; speed?: SendRequest['speed'] }) {
+    const { record, wallet } = this.requireSavings();
+    const chain = record.chain;
+    if (!chain) throw new WalletError('no_chain_data', 'Sync Savings first.');
+    const estimated = this.fees?.estimates.some((e) => e.satPerVb !== null) ?? false;
+    if (req.feeRate === undefined && !estimated && this.network.name === 'bitcoin')
+      throw new WalletError('no_fee_estimate', 'The node has no fee estimate right now; sync again or choose a fee rate.');
+    const feeRate = req.feeRate ?? pickFeeRate(this.fees, req.speed ?? 'slow');
+    const feeRateSource: SavingsQuote['feeRateSource'] = req.feeRate !== undefined ? 'caller' : estimated ? 'estimate' : 'relay-minimum';
+    return { record, wallet, chain, feeRate, feeRateSource };
+  }
+
+  /**
+   * Signs and broadcasts a Savings payment with two of its keys (`signers`, default the phone and the hardware wallet;
+   * `phone+recoveryKey` when the hardware wallet is lost, `hardware+recoveryKey` when the phone key is not usable). The
+   * guardian only relays it; it cannot sign, and it tells the phone and the alert contacts that Savings moved.
+   */
+  async sendFromSavings(quote: SavingsQuote, opts: { signers?: SavingsSigners } = {}): Promise<SavingsSendResult> {
+    const { record, wallet } = this.requireSavings();
+    const signers = opts.signers ?? 'phone+hardware';
+    const c = record.chain;
+    if (!c || this.now() - c.syncedAt > STALE_CHAIN_MS) await this.syncSavings();
+    const live = new Set((this.s.savings?.chain?.utxos ?? []).map((u) => `${u.txid}:${u.vout}`));
+    if (quote.inputs.some((u) => !live.has(`${u.txid}:${u.vout}`))) throw new WalletError('quote_stale', "Savings' coins changed since this quote; quote the payment again.");
+    const prevs = await this.prevTxs(quote.inputs.map((u) => u.txid), this.savingsChain());
+    const psbt = quote.sendMax
+      ? selfCheck(() => buildSendMaxPsbt({ wallet, inputs: quote.inputs, prevTxHexes: prevs, outputScript: outputScriptOf(quote.request.address, wallet), amountSats: quote.request.amountSats }))
+      : selfCheck(() =>
+          buildSpend({
+            wallet,
+            utxos: quote.inputs.map((u, i) => toCoreUtxo(u, prevs[i])),
+            recipients: [{ address: quote.request.address, amount: BigInt(quote.request.amountSats) }],
+            feeRate: quote.feeRate,
+            changeIndex: quote.changeIndex,
+          }).psbt,
+        );
+    const a = selfCheck(() => analyzePsbt(psbt, wallet.accountPubkeys(), this.network, { requireNonWitnessUtxo: true }));
+    if (a.inputs.length !== quote.inputs.length || a.externalOut !== BigInt(quote.request.amountSats) || a.fee !== BigInt(quote.feeSats) || a.selfOut !== BigInt(quote.changeSats))
+      throw new WalletError('internal', 'The payment does not match its quote; quote it again.');
+    const detail = `Send ${quote.request.amountSats} sats from Savings to ${quote.request.address}${quote.toSpending ? ' (your Spending wallet)' : ''}, fee ${quote.feeSats} sats`;
+    const final = await this.signSavings(psbt, wallet, record, signers, detail);
+    const { txHex, txid } = finalizePsbt(final);
+    try {
+      await this.savingsChain().broadcast(txHex);
+    } catch (e) {
+      const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
+      if (!refusal) throw e;
+      return { ok: false, refusal, signedTx: { txid, txHex } };
+    }
+    const label = quote.request.label?.trim().slice(0, 200);
+    await this.logSavingsSend({
+      txid,
+      at: this.now(),
+      recipient: quote.request.address,
+      amountSats: quote.request.amountSats,
+      feeSats: quote.feeSats,
+      ...(label ? { label } : {}),
+      signedBy: signers,
+      ...(quote.toSpending ? { purpose: 'to_spending' as const } : {}),
+    });
+    await this.syncSavings().catch(() => undefined);
+    if (quote.toSpending) await this.sync().catch(() => undefined);
+    return { ok: true, txid, txHex, amountSats: quote.request.amountSats, feeSats: quote.feeSats, signedBy: signers };
+  }
+
+  private async logSavingsSend(entry: SavingsSendEntry): Promise<void> {
+    await this.update((s) => {
+      if (s.savings) s.savings.sendLog = [...s.savings.sendLog.filter((e) => e.txid !== entry.txid), entry].slice(-MAX_SEND_LOG);
+    });
+  }
+
+  /**
+   * Adds the signatures of `signers` to a Savings PSBT and checks each: key 2 (biometric prompt) and/or the Savings
+   * devices (`devices` overrides the record's, for a move to a new Savings wallet signed with a replacement).
+   */
+  private async signSavings(
+    psbt: Uint8Array,
+    wallet: MultisigWallet,
+    record: SavingsRecord,
+    signers: SavingsSigners,
+    detail: string,
+    devices: { hardware?: SavingsDevice; recoveryKey?: SavingsDevice } = {},
+  ): Promise<Uint8Array> {
+    const parts = signers.split('+') as ('phone' | 'hardware' | 'recoveryKey')[];
+    let signed = psbt;
+    for (const who of parts) {
+      if (who === 'phone') {
+        const out = await this.withKey2('Approve the move out of Savings', async (m) => new SoftwareSigner('app', m).signPsbt(signed, this.network));
+        signed = checkSignedBy(signed, out, wallet, ['app'], 'hardware_invalid_response', 'The phone key is not a key of this Savings wallet.');
+        continue;
+      }
+      const dev = who === 'hardware' ? (devices.hardware ?? record.hardware) : (devices.recoveryKey ?? record.recoveryKey);
+      const role = who === 'hardware' ? 'hardware' : 'cosigner';
+      this.emit({ type: 'hardware_prompt', purpose: 'payment', text: detail });
+      const current = signed;
+      signed = await this.withSavingsDevice(dev, async (hw) => {
+        let out: Uint8Array;
+        try {
+          out = base64.decode(await hw.signPsbt(base64.encode(current), this.savingsPolicy(dev, wallet.descriptor())));
+        } catch (e) {
+          if (e instanceof WalletError || isHardwareDisconnect(e)) throw e;
+          throw new WalletError('hardware_invalid_response', `The hardware wallet did not sign: ${(e as Error).message}`, { cause: e });
+        }
+        return checkSignedBy(current, out, wallet, [role], 'hardware_invalid_response', `The ${who === 'hardware' ? 'hardware wallet' : 'Recovery Key'} did not sign every input.`);
+      });
+    }
+    return signed;
+  }
+
+  /**
+   * The Savings wallet the guardian watches (`savings.get`): how a new phone without a backup finds its Savings after the
+   * guardian adopted the recovered wallet. Undefined when it watches none (or cannot: an older guardian).
+   */
+  async findSavingsOnGuardian(): Promise<{ walletId: string; descriptor: string } | undefined> {
+    this.requirePaired();
+    if (!this.savingsSupported) return undefined;
+    const r = await this.call('savings.get', {});
+    return r.savings ? { walletId: r.savings.walletId, descriptor: r.savings.descriptor } : undefined;
+  }
+
+  /**
+   * A Savings key is lost (or seen): every Savings coin moves to a new Savings wallet that keeps the two other keys and
+   * replaces the lost one, signed by those two at once (no guardian, no waiting: the guardian has no part in Savings).
+   *
+   * - `recoveryKey`: the phone and the hardware wallet sign; connect a new second hardware wallet (`recoveryKeyKind`).
+   * - `hardware`: the phone and the Recovery Key sign; the new Savings uses the wallet's hardware wallet as it is now (a
+   *   lost hardware wallet's replacement, also the one a running recovery of Spending moves to).
+   * - `phone`: the hardware wallet and the Recovery Key sign; the new Savings uses this phone's key 2. On a new phone
+   *   without a backup Savings is not known here: `descriptor` (from the guardian, `findSavingsOnGuardian`, or the
+   *   descriptor the person saved) says which wallet it was. Its keys are checked against the devices.
+   *
+   * Every new key is registered on the devices that need it and the new Savings' first address is shown on each device.
+   * The guardian is told to watch the new Savings (it alerts on the move, which is right: Savings moved). Make a new
+   * backup afterwards.
+   */
+  async replaceSavingsKey(opts: { lost: 'phone' | 'hardware' | 'recoveryKey'; recoveryKeyKind?: HardwareKind; descriptor?: string }): Promise<SavingsKeyReplaced> {
+    this.requirePaired();
+    if (!this.savingsSupported) throw new WalletError('guardian_unsupported', 'Your guardian cannot watch a Savings wallet yet. Update the guardian app on your home server first.');
+    if (opts.lost !== 'phone' && !this.s.savings) throw new WalletError('no_savings', 'This wallet has no Savings.');
+    const old = await this.oldSavingsFor(opts);
+    const oldWallet = MultisigWallet.fromDescriptor(old.descriptor, this.network);
+    const path = bip48Path(this.network, SAVINGS_ACCOUNT);
+
+    // The keys of the new Savings: the two that survive, and the replacement.
+    let phone = old.phone;
+    let hardware: SavingsDevice = old.hardware;
+    let recoveryKey: SavingsDevice = old.recoveryKey;
+    if (opts.lost === 'phone') {
+      phone = await this.withKey2('Move Savings to this phone', async (m) => keyOriginOf(keyExpressionFromMaster(HDKey.fromMasterSeed(mnemonicToSeedSync(m), this.network.bip32), path)));
+      if (phone.xpub === old.phone.xpub) throw new WalletError('wrong_state', "This phone's key is already Savings' phone key: nothing was lost.");
+    } else if (opts.lost === 'hardware') {
+      const rec = this.s.recovery?.role === 'initiator' && this.s.recovery.destination?.hardware ? this.s.recovery.destination.hardware : this.s.hardware!;
+      if (rec.fingerprint === old.hardware.fingerprint)
+        throw new WalletError('wrong_state', 'Set up your new hardware wallet first ("Lost my hardware wallet"): Savings moves to that device.');
+      const account = await this.withSavingsDevice(rec, (hw) => this.readSavingsKey(hw));
+      hardware = { kind: rec.kind, ...(rec.model ? { model: rec.model } : {}), fingerprint: rec.fingerprint, account, policyName: SAVINGS_POLICY_NAME, addressVerified: false };
+    }
+    const signers: SavingsSigners = opts.lost === 'phone' ? 'hardware+recoveryKey' : opts.lost === 'hardware' ? 'phone+recoveryKey' : 'phone+hardware';
+
+    // The old wallet's coins (the guardian watches it: the old record, or the one a recovery carried over).
+    await this.client();
+    const snap = await this.savingsChain().sync({ historyLimit: this.deps.historyLimit });
+    if (snap.walletId && snap.walletId !== old.walletId) throw new WalletError('guardian_mismatch', `The guardian watches Savings ${snap.walletId}, not ${old.walletId}.`);
+    if (snap.utxosTruncated) throw new WalletError('utxos_truncated', 'The guardian listed only part of the Savings coins.');
+
+    // A new Recovery Key: connect it, read its key, register the new Savings on it.
+    let newRk: SavingsDevice | undefined;
+    if (opts.lost === 'recoveryKey') {
+      const hw = await this.hardwareProvider().connect({ kind: opts.recoveryKeyKind });
+      try {
+        if (hw.info.fingerprint === hardware.fingerprint || hw.info.fingerprint === old.recoveryKey.fingerprint)
+          throw new WalletError('hardware_mismatch', 'Connect a new second hardware wallet: not your hardware wallet, not the Recovery Key that was lost.');
+        const account = await this.readSavingsKey(hw);
+        const draft: SavingsDevice = { kind: hw.info.kind, ...(hw.info.model ? { model: hw.info.model } : {}), fingerprint: hw.info.fingerprint, account, policyName: SAVINGS_POLICY_NAME, addressVerified: false };
+        newRk = await this.registerSavingsOn(hw, draft, draftWallet(this.network, phone, hardware, draft));
+      } finally {
+        await hw.close().catch(() => {});
+      }
+      recoveryKey = newRk;
+    }
+    const next = draftWallet(this.network, phone, hardware, recoveryKey);
+    if (next.fingerprint() === old.walletId) throw new WalletError('internal', 'The new Savings wallet is the old one.');
+
+    // The surviving devices sign the old wallet: it must be registered on them (a new phone has no HMAC: register again).
+    const signing: { hardware?: SavingsDevice; recoveryKey?: SavingsDevice } = {};
+    for (const who of signers.split('+')) {
+      if (who === 'phone') continue;
+      const dev = who === 'hardware' ? old.hardware : old.recoveryKey;
+      const ready = dev.registrationHmac || !REGISTERING_KINDS.has(dev.kind) ? dev : await this.withSavingsDevice(dev, (hw) => this.registerSavingsOn(hw, dev, oldWallet));
+      if (who === 'hardware') signing.hardware = ready;
+      else {
+        signing.recoveryKey = ready;
+        // The device that answered is the Recovery Key: keep what it said it is.
+        recoveryKey = { ...recoveryKey, kind: ready.kind, ...(ready.model ? { model: ready.model } : {}) };
+      }
+    }
+
+    let sweep: { txid: string; txHex: string; amountSats: number; feeSats: number } | undefined;
+    if (snap.utxos.length) {
+      const feeRate = pickFeeRate(this.fees ?? (await this.chain.estimateFees(FEE_TARGETS).catch(() => undefined)), 'slow');
+      const utxos = snap.utxos.map((u) => ({ txid: u.txid, vout: u.vout, valueSats: u.valueSats, chain: u.chain, index: u.index }));
+      const prevs = await this.prevTxs(utxos.map((u) => u.txid), this.savingsChain());
+      const plan = selfCheck(() => buildSweep({ from: oldWallet, utxos: utxos.map((u, i) => toCoreUtxo(u, prevs[i])), destination: next, destinationIndex: 0, feeRate }));
+      const detail = `Move all of Savings (${utxos.reduce((a, u) => a + u.valueSats, 0)} sats) to your new Savings wallet, fee ${plan.fee} sats`;
+      const final = await this.signSavings(plan.psbt, oldWallet, old, signers, detail, signing);
+      const { txHex, txid } = finalizePsbt(final);
+      const total = utxos.reduce((a, u) => a + u.valueSats, 0);
+      sweep = { txid, txHex, amountSats: total - Number(plan.fee), feeSats: Number(plan.fee) };
+    }
+
+    // The hardware wallet and a Recovery Key that stays register the new Savings (a new Recovery Key did above).
+    const hw1 = unregistered(hardware);
+    hardware = await this.withSavingsDevice(hw1, (hw) => this.registerSavingsOn(hw, hw1, next));
+    if (opts.lost !== 'recoveryKey') {
+      const rk = unregistered(recoveryKey);
+      recoveryKey = await this.withSavingsDevice(rk, (hw) => this.registerSavingsOn(hw, rk, next));
+    }
+
+    if (sweep) await this.savingsChain().broadcast(sweep.txHex);
+    const record: SavingsRecord = {
+      descriptor: next.descriptor(),
+      walletId: next.fingerprint(),
+      createdAt: this.now(),
+      phone,
+      hardware,
+      recoveryKey,
+      nextReceiveIndex: 1,
+      nextChangeIndex: 0,
+      sendLog: sweep ? [{ txid: sweep.txid, at: this.now(), recipient: next.derive(0, 0).address, amountSats: sweep.amountSats, feeSats: sweep.feeSats, signedBy: signers, purpose: 'key_replacement' }] : [],
+      previous: [...(this.s.savings?.previous ?? []), { walletId: old.walletId, descriptor: old.descriptor, retiredAt: this.now(), ...(sweep ? { sweepTxid: sweep.txid } : {}) }].slice(-20),
+    };
+    await this.update((s) => void (s.savings = record));
+    const watched = await this.registerSavingsWithGuardian({ force: true }).catch(() => false);
+    await this.syncSavings().catch(() => undefined);
+    return { walletId: record.walletId, previousWalletId: old.walletId, ...(sweep ? { txid: sweep.txid, movedSats: sweep.amountSats, feeSats: sweep.feeSats } : { movedSats: 0, feeSats: 0 }), watchedByGuardian: watched };
+  }
+
+  /**
+   * The Savings wallet a key replacement moves from: this phone's (the usual case), or, on a phone that does not know
+   * it (a new phone, no backup), the one named by `descriptor` or the guardian. Its hardware key must be the wallet's
+   * hardware wallet at account 1' (read from the device), so a wrong or forged descriptor cannot make the devices sign.
+   */
+  private async oldSavingsFor(opts: { lost: 'phone' | 'hardware' | 'recoveryKey'; descriptor?: string; recoveryKeyKind?: HardwareKind }): Promise<SavingsRecord> {
+    if (this.s.savings) return this.s.savings;
+    if (opts.lost !== 'phone') throw new WalletError('no_savings', 'This wallet has no Savings.');
+    const descriptor = opts.descriptor ?? (await this.findSavingsOnGuardian())?.descriptor;
+    if (!descriptor) throw new WalletError('no_savings', 'Neither this phone nor your guardian knows a Savings wallet. Enter the Savings descriptor you saved.');
+    let wallet: MultisigWallet;
+    try {
+      wallet = MultisigWallet.fromDescriptor(descriptor, this.network);
+    } catch (e) {
+      throw new WalletError('invalid_rules', `That is not a Savings descriptor: ${(e as Error).message}`, { cause: e });
+    }
+    const rec = this.s.hardware!;
+    const account = await this.withHardware((hw) => this.readSavingsKey(hw));
+    // The descriptor keeps the order the app writes: phone, hardware wallet, Recovery Key.
+    const k = wallet.keys;
+    if (!sameKey(k.hardware, keyExpressionOf(account))) throw new WalletError('hardware_mismatch', "This Savings wallet does not hold your hardware wallet's Savings key.");
+    const asDev = (o: KeyOrigin, kind: HardwareKind): SavingsDevice => ({ kind, fingerprint: o.fingerprint, account: o, policyName: SAVINGS_POLICY_NAME, addressVerified: false });
+    return {
+      descriptor: wallet.descriptor(),
+      walletId: wallet.fingerprint(),
+      createdAt: this.now(),
+      phone: keyOriginOf(k.app),
+      hardware: { ...asDev(account, rec.kind), ...(rec.model ? { model: rec.model } : {}) },
+      // This phone does not know what kind of device the Recovery Key is: the one the person names now (or, by default,
+      // the same kind as the hardware wallet). Its fingerprint is checked when it connects.
+      recoveryKey: asDev(keyOriginOf(k.cosigner), opts.recoveryKeyKind ?? rec.kind),
+      nextReceiveIndex: 0,
+      nextChangeIndex: 0,
+      sendLog: [],
+      previous: [],
+    };
+  }
+
+  // ===========================================================================
   // Backup
 
   /**
@@ -4471,8 +5199,10 @@ export class TrikeyWallet {
 
     const sealed = await this.withKey2('Back up your phone key', async (mnemonic) => {
       const s = this.s;
+      const sv = s.savings;
       const payload: BackupPayload = {
-        v: 1,
+        // Version 2 only with Savings: everyone else's backup is byte for byte the format it always was.
+        v: sv ? 2 : 1,
         network: this.network.name,
         createdAt: this.nowSec(),
         mnemonic,
@@ -4489,6 +5219,21 @@ export class TrikeyWallet {
         ...(s.retiredWallets.length ? { retiredWallets: s.retiredWallets } : {}),
         ...(s.helper ? { helper: { nextReceiveIndex: s.helper.nextReceiveIndex, nextChangeIndex: s.helper.nextChangeIndex } } : {}),
         ...(s.silentPayments ? { silentPayments: { birthHeight: s.silentPayments.birthHeight, labels: s.silentPayments.labels } } : {}),
+        ...(sv
+          ? {
+              savings: {
+                descriptor: sv.descriptor,
+                walletId: sv.walletId,
+                account: SAVINGS_ACCOUNT as 1,
+                createdAt: Math.floor(sv.createdAt),
+                nextReceiveIndex: Math.max(sv.nextReceiveIndex, sv.chain?.nextReceiveIndex ?? 0),
+                nextChangeIndex: Math.max(sv.nextChangeIndex, sv.chain?.nextChangeIndex ?? 0),
+                hardware: sv.hardware,
+                recoveryKey: sv.recoveryKey,
+                ...(sv.sendLog.length ? { sendLog: sv.sendLog.slice(-MAX_SEND_LOG) } : {}),
+              },
+            }
+          : {}),
       };
       return sealBackup(payload, slots, { now: this.now() });
     });
@@ -4602,6 +5347,20 @@ export class TrikeyWallet {
       if (!sameKey(w.keys.hardware, keyExpressionOf(p.hardware.account)) || !sameKey(w.keys.cosigner, keyExpressionOf(p.guardian.key)))
         throw new WalletError('backup_invalid', 'The backup does not hold a consistent wallet.');
     }
+    if (p.savings) {
+      // Savings' phone key is key 2's seed at account 1', its hardware key the same device's, and its Recovery Key another
+      // device: anything else is not this wallet's Savings.
+      const sv = parse(p.savings.descriptor);
+      const phoneKey = keyExpressionFromMaster(HDKey.fromMasterSeed(mnemonicToSeedSync(p.mnemonic), network.bip32), bip48Path(network, SAVINGS_ACCOUNT));
+      const ok =
+        sv.fingerprint() === p.savings.walletId &&
+        sameKey(sv.keys.app, phoneKey) &&
+        sameKey(sv.keys.hardware, keyExpressionOf(p.savings.hardware.account)) &&
+        sameKey(sv.keys.cosigner, keyExpressionOf(p.savings.recoveryKey.account)) &&
+        (!p.hardware || p.savings.hardware.fingerprint === p.hardware.fingerprint) &&
+        p.savings.recoveryKey.fingerprint !== p.savings.hardware.fingerprint;
+      if (!ok) throw new WalletError('backup_invalid', 'The backup does not hold a consistent Savings wallet.');
+    }
 
     const wallet = await TrikeyWallet.create(deps, { mnemonic: p.mnemonic, deviceName: p.deviceName });
     key2.nostr.secretKey.fill(0);
@@ -4634,6 +5393,22 @@ export class TrikeyWallet {
       if (p.recoveryDestination) s.recovery = { role: 'initiator', destination: p.recoveryDestination, updatedAt: this.now() };
       s.sendLog = p.sendLog ?? [];
       s.retiredWallets = p.retiredWallets ?? [];
+      if (p.savings) {
+        const sv = p.savings;
+        const wallet = MultisigWallet.fromDescriptor(sv.descriptor, this.network);
+        s.savings = {
+          descriptor: sv.descriptor,
+          walletId: sv.walletId,
+          createdAt: sv.createdAt,
+          phone: keyOriginOf(wallet.keys.app),
+          hardware: sv.hardware,
+          recoveryKey: sv.recoveryKey,
+          nextReceiveIndex: sv.nextReceiveIndex,
+          nextChangeIndex: sv.nextChangeIndex,
+          sendLog: sv.sendLog ?? [],
+          previous: [],
+        };
+      }
     });
     // The helper and the silent payment keys derive from the mnemonic in hand: no extra prompt.
     if (p.helper || p.silentPayments) await this.setupSingleKey(p.mnemonic, { helper: p.helper, silentPayments: p.silentPayments });
