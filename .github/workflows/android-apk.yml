@@ -42,7 +42,9 @@ jobs:
       ANDROID_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
       ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
 
-  # A draft prerelease: nothing is public until the owner looks at it and publishes it.
+  # Attaches the APK to the tag's release. release.yml creates that release (published pre-release, notes from the
+  # CHANGELOG) before dispatching this build, so the APK's own notes (signing, checksum) are appended, not put in their
+  # place, and the release stays published. A tag pushed by hand with no release gets a published pre-release.
   release:
     if: github.ref_type == 'tag'
     needs: apk
@@ -58,9 +60,9 @@ jobs:
       - uses: softprops/action-gh-release@v3.0.3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          name: Trikey ${{ github.ref_name }} (alpha test build)
           body_path: dist/release-notes.md
-          draft: true
+          append_body: true
+          draft: false
           prerelease: true
           fail_on_unmatched_files: true
           files: |
