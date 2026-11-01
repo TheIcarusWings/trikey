@@ -251,6 +251,15 @@ export function createDemoState(platform: 'ios' | 'android' = 'ios'): WalletStat
     silentPayments: demoSilentPayments(),
     // Off, as for everyone until they turn it on; the demo guardian supports it.
     contactLock: { on: false, supported: true },
+    // Set up in the demo guardian's web page: the owner's email and ntfy, Maria's email, and Dad by email only.
+    alertChannels: {
+      you: [
+        { kind: 'email', hint: 'y…@example.com' },
+        { kind: 'ntfy', hint: '192.168.1.20:8080' },
+      ],
+      byContact: { [MARIA.id]: [{ kind: 'email', hint: 'm…@example.com' }] },
+      withoutNostr: [{ kind: 'email', hint: 'd…@example.org' }],
+    },
     // No Savings, as for everyone until they create one (it is strictly optional); the demo guardian can watch one.
     savings: emptySavings('available'),
   };

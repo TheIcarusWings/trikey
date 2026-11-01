@@ -422,6 +422,40 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
         sats: null,
         result: 'ok',
       };
+    case 'notifications_changed':
+      return {
+        ...base,
+        kind: 'system',
+        event: `Alert channels changed on this box: ${e.changes.join('; ')}. Every channel, before and after the change, and the paired phone are told.`,
+        summary: 'Alert channels changed',
+        signedBy: null,
+        sats: null,
+        result: 'ok',
+      };
+    case 'notification_failing':
+      return { ...base, kind: 'system', event: `Alerts to ${e.channel} are failing: ${e.error}. The guardian keeps retrying for 7 days.`, summary: 'Alert channel failing', signedBy: null, sats: null, result: 'refused' };
+    case 'notification_ok':
+      return { ...base, kind: 'system', event: `Alerts to ${e.channel} work again`, summary: 'Alert channel works again', signedBy: null, sats: null, result: 'ok' };
+    case 'notification_expired':
+      return {
+        ...base,
+        kind: 'system',
+        event: `A ${e.alert.replace(/_/g, ' ')} alert could not reach ${e.channel} within 7 days and was given up${e.error ? ` (${e.error})` : ''}`,
+        summary: 'Alert not delivered',
+        signedBy: null,
+        sats: null,
+        result: 'refused',
+      };
+    case 'notification_test':
+      return {
+        ...base,
+        kind: 'system',
+        event: e.ok ? `Test message sent to ${e.channel}` : `Test message to ${e.channel} failed: ${e.error ?? 'unknown error'}`,
+        summary: e.ok ? 'Test message sent' : 'Test message failed',
+        signedBy: null,
+        sats: null,
+        result: e.ok ? 'ok' : 'refused',
+      };
     default:
       return hostingEntry(base, e);
   }

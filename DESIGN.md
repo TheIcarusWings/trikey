@@ -30,6 +30,7 @@ Visual walkthrough (private canvas): https://claude.ai/artifact/NV7SCZja8ik9LAvu
 | First client | React Native mobile app | Ledger Bluetooth and Trezor Connect have JS SDKs |
 | UI kit | shadcn/ui: react-native-reusables + NativeWind in the app, shadcn/ui + Tailwind in the guardian web UI. Zinc neutrals, Geist type, light and dark themes. | One set of tokens and components across the phone and the home server |
 | Transport | Nostr: NIP-44 encryption inside NIP-59 gift wraps | Outbound-only connections, no accounts, relays see ciphertext |
+| Alerts beyond nostr | Email through the owner's own account (SMTP), ntfy and a webhook, all inside the guardian, notify-only; owner-side settings in the web UI, outside the policy, every change announced ("Alerts beyond nostr" below) | The phone may be the stolen one, and not every contact uses nostr; controls stay on signed nostr messages |
 | Entropy | Every key from one checked function on the OS CSPRNG; the guardian's seed mixes in the browser's (and on Umbrel the platform's) randomness, key 3 the phone's; no dice | See "Entropy": guards catch gross failures, the setup mix, the key-3 mix and 2-of-3 cover subtle ones |
 | Guardian for family | Invite-only hosting: a guardian holds key 3 for a person its owner knows, one engine per hosted wallet, BIP 89 delegation | See "Guardian for family"; phase 1 built (docs/design/family-hosting.md) |
 
@@ -46,7 +47,8 @@ Options considered and dropped, with research in the earlier pages under `docs/`
 ```
 Phone app (key 2) ──┐                           ┌── Trikey Guardian (key 3) ── Bitcoin Node + Electrs
                     ├── nostr relays (E2EE) ────┤        on the same Umbrel / Start9
-Hardware (key 1) ───┘   outbound only           └── alerts: nostr DMs to the user's devices and contacts
+Hardware (key 1) ───┘   outbound only           └── alerts: nostr DMs to the user's devices and contacts,
+                                                    plus email (owner's account), ntfy, webhook
 ```
 
 ### Mobile app (React Native)
@@ -69,7 +71,8 @@ Hardware (key 1) ───┘   outbound only           └── alerts: nostr 
   - status (locked or unlocked);
   - activity log;
   - current rules;
-  - recoveries in progress.
+  - recoveries in progress;
+  - notifications: email, ntfy and webhook alerts ("Alerts beyond nostr").
 - **Keeps key 3 only in memory.** On disk it is encrypted. After any restart the guardian is *locked* until the user unlocks it with:
   - **the hardware wallet:** a deterministic secret obtained over the phone. The mechanism is still open; see "Open questions".
   - **or a passphrase:** stretched with Argon2id.
@@ -174,6 +177,29 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
   reset with the same passphrase already allows.
 - **No public standard exists** for PSBT exchange over nostr, so this is our own spec. Publish it as a NIP draft once it's stable.
 
+## Alerts beyond nostr (email, ntfy, webhook)
+
+Besides the phone's protocol alerts and the contacts' NIP-17 DMs, the guardian can send its alerts by **email through the
+owner's own email account** (SMTP with an app password; TLS always), **ntfy** push and a **generic webhook** (a signed JSON
+payload for Home Assistant, Apprise, an SMS gateway). Design, payload and rejected alternatives:
+docs/design/notifications.md.
+
+- **Notify-only.** They carry the warnings of the matching nostr alert, never a control: cancelling a recovery and
+  locking the guardian stay NIP-17 DMs from the contacts in `alertContacts`. Plain text, no links, no buttons; nothing
+  beyond "contact the owner" or, for a contact with a nostr key, "reply CANCEL / LOCK to the guardian's nostr message".
+- **Who.** The owner's own channels (the phone may be in a thief's hands) get the phone's alerts; an alert contact may
+  have an email address and/or an ntfy topic next to their nostr key; someone without a nostr app can get warnings only.
+- **Owner-side settings, outside the policy.** Only the web UI changes them (signed in with the passphrase, unlocked),
+  never the phone, which sees them masked and read-only (`guardian.status.notifications`). `Policy`, `policyHash`, the
+  approval texts and rule 4 are unchanged: a channel adds warnings, never the power to cancel, and the mainnet minimum is
+  still one nostr contact. Every change is announced on **every channel, before and after it** (a removed channel over its
+  old address, a changed email account through the old account), to the paired phone (`notifications_changed`) and in the
+  activity log; while a recovery runs only additions are accepted. Why this and not hardware-approved channels: the
+  notifications design, "Who may change a contact's channels".
+- **Durable**, like the nostr notices: queued on disk, retried for 7 days, each alert once; per-channel failures in the
+  web UI and the activity log. **They work while the guardian is locked**: their secrets are sealed under a key file on
+  the box, not the passphrase (the nostr key's trade-off), so "recovery started" still goes out after a power cut.
+
 ## Recovery flows
 
 | Situation | Keys | What happens |
@@ -247,6 +273,15 @@ printed and kept with the hardware wallet.
   - Tell users to keep the hardware wallet's seed words outside the home.
 - **Remote compromise of the home server** gives up one key of three. That's the same exposure as Bitkey's server being breached.
 - **Savings (optional).** Phone + guardian, together or compromised, cannot move Savings: the guardian holds no Savings key. What can: the phone with the hardware wallet, or the Recovery Key with either of them. A burglar who finds the phone, a powered box and a Recovery Key kept at home takes Savings too, so the Recovery Key belongs away from home, apart from the hardware wallet's seed words. A compromised guardian can hide Savings' balance from the phone or stay silent when it moves (its tripwire), which costs nothing it was trusted with. Turning the Savings watch off or swapping it for another wallet (the paired phone alone can) is announced to the phone and every alert contact (`savings_unwatched`), so a phone thief cannot quietly blind the tripwire before moving Savings with a second key. The watched Savings record survives a recovery, so whoever completes one (normally the owner) can read Savings' descriptor and balance from the guardian; it moves nothing.
+- **Phishing that imitates an alert.** Trikey alerts never carry a link or a button and never ask anyone to sign in,
+  in nostr DMs, email, ntfy or webhooks alike (the guardian breaks anything link-like before sending, and its name in
+  messages may hold no dots); each message says so. A message with a link is not from the guardian. Email and ntfy are
+  not signed: an ntfy topic on a public server can be read and posted to by anyone who knows it, so a forged "all clear"
+  is possible there; the nostr messages, signed by the guardian's key, remain the reference, and controls exist only there.
+- **Silencing or redirecting the extra channels.** A phone thief cannot: no phone method changes them. Someone with
+  the web UI and the passphrase can, but every change is announced on every channel before and after it (removed ones
+  over their old address, a changed email account through the old one) and to the phone, and nothing can be removed
+  while a recovery runs. They could already reset the guardian; the nostr alerts and controls stay as they were.
 - **Malicious relays** can drop messages but can't read or forge them. A relay change from the web UI (a security event in the activity log) can at worst move the phone to relays that drop everything; the old relays stay watched until the owner stops them and the phone moves only to relays the guardian answered it over.
 - **Contested recovery** (a thief cancels a genuine recovery): phone-only spending stays paused, so the thief can't drain either. Same as Bitkey.
 - **After a recovery the guardian trusts its outcome:** the phone that started it becomes the new wallet's paired phone. That is what the Delay & Notify period protects; a thief who gets that far already holds the new wallet's keys. The hardware wallet must re-prove its authorization key for the new wallet before it can loosen anything, and the old wallet's recovery access grants are revoked.
@@ -537,7 +572,8 @@ are in docs/design/family-hosting.md.
 2. **Notifications when the phone app is asleep.**
    - Nostr DMs reach the user's regular nostr app (zero infrastructure).
    - Real push on iOS needs Apple's push service, called with credentials only the app's publisher holds. That means running a stateless "empty ping" bridge, which conflicts with "we run nothing".
-   - The guardian could also send email through the user's own SMTP settings.
+   - Built: the guardian also sends its alerts by email through the user's own account, ntfy and webhook
+     (docs/design/notifications.md); an ntfy app on the phone gives real push without anyone running a bridge.
 3. **Defaults:** daily limit, delay (7 days?), relays.
 4. **Start9 packaging details** (SDK version), and how the official Umbrel store submission works.
 
@@ -546,7 +582,7 @@ are in docs/design/family-hosting.md.
 - `packages/core/`: descriptors (BIP380 checksum, BIP389 multipath), BIP48 wallets, PSBT build, sign, analyze and finalize, software signer. `tweak.ts` holds the BIP 89 tweak math family hosting uses; `keySetId` names a hosted wallet.
 - `packages/protocol/`: the nostr RPC (schemas, gift-wrap transport with per-peer NIP-44 conversation key caching, replay guard, client and server, pairing and recovery URIs, NIP-06 phone identity, an in-memory relay for tests). Spec in `PROTOCOL.md`.
 - `packages/wallet/`: the phone's side (key 2, pairing, payments, rules, recovery, backup), platform-agnostic; the app supplies storage and hardware adapters. It finishes a recovery (switching to the adopted wallet after checking it, then `confirmHardware()`), replaces the guardian (pair the new one, sweep, retire the old wallet, sweep stray coins later), locks the guardian remotely, parses every Trikey QR (`parseScannedCode`), and keeps a send log that travels in the backup. Chain data comes from the guardian.
-- `apps/guardian/`: the guardian. `src/policy/` is the policy engine (spend checks, daily limit, rule changes with BIP137 approvals, Delay & Notify, wallet rotation with one active wallet plus retired ones, state format version 2 with migration from version 1). Around it: key storage (Argon2id, m=64 MiB, t=3, then XChaCha20-Poly1305), lock/unlock (also from the phone), reset, the nostr RPC server and NIP-17 alert DMs behind one shared inbox, an Electrum client (sweep completeness, broadcast, chain time) and the HTTP API for the web UI. `src/hosting/` hosts guests' wallets (family hosting): the slot registry and invites, one engine per hosted wallet, routing by sender, guests' alerts and recoveries. Entry point `src/main.ts`.
+- `apps/guardian/`: the guardian. `src/policy/` is the policy engine (spend checks, daily limit, rule changes with BIP137 approvals, Delay & Notify, wallet rotation with one active wallet plus retired ones, state format version 2 with migration from version 1). Around it: key storage (Argon2id, m=64 MiB, t=3, then XChaCha20-Poly1305), lock/unlock (also from the phone), reset, the nostr RPC server and NIP-17 alert DMs behind one shared inbox, email, ntfy and webhook alerts (`src/notify/`), an Electrum client (sweep completeness, broadcast, chain time) and the HTTP API for the web UI. `src/hosting/` hosts guests' wallets (family hosting): the slot registry and invites, one engine per hosted wallet, routing by sender, guests' alerts and recoveries. Entry point `src/main.ts`.
 - `apps/guardian-web/`: the guardian's web UI, including the recovery code and the reset. Its API is in `API.md`.
 - Savings (optional, docs/design/savings-and-limit-off.md): `SAVINGS_ACCOUNT` in core; `savings.*` in the protocol; the guardian's watch (`apps/guardian/src/savings.ts`); `TrikeyWallet.startSavings` ... `replaceSavingsKey` in `packages/wallet`; `apps/mobile/app/savings/`.
 - `packages/recovery-key/`: Recovery Key mode (no home server): the printed Recovery Kit, the chain of BIP 68 timelocked refills and its scheduler, the single-key spending balance with CPFP, an Esplora client, and recovery with any two keys.

@@ -6,6 +6,10 @@ import type {
   HostedWallet,
   HostingOverview,
   StopHostingInput,
+  NotificationSettings,
+  NotificationSettingsInput,
+  NotifyTestInput,
+  NotifyTestResult,
   PairedPhone,
   PairingSession,
   RecoveryCode,
@@ -111,6 +115,19 @@ export interface GuardianApi {
    * only know them stop reaching this guardian. Rejects with `not_found` for a relay that is not an old one.
    */
   stopWatchingRelays(url?: string): Promise<RelaySettings>;
+
+  /**
+   * The extra alert channels: the owner's email account (SMTP), and email, ntfy and webhook channels for the owner and
+   * the alert contacts. Secrets are write-only: only "set" and hints come back.
+   */
+  getNotifications(): Promise<NotificationSettings>;
+  /**
+   * Replaces them. Every change is announced on every channel, before and after, and to the paired phone. Rejects with
+   * `invalid`, `recovery_pending` (while a recovery runs only additions are accepted) and `rate_limited`.
+   */
+  setNotifications(input: NotificationSettingsInput): Promise<NotificationSettings>;
+  /** "Send a test message" to one channel, or to the email account's own From address. Resolves with what happened. */
+  testNotification(input: NotifyTestInput): Promise<NotifyTestResult>;
 
   /**
    * Forgets every wallet and creates a new key 3 (the old one is destroyed). Needs the passphrase and

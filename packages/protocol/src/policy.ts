@@ -27,8 +27,10 @@ export function isLimitOff(dailyLimitSats: number): boolean {
  * `family_hosting`: it hosts wallets for guests (`hosted.prepare`, `hosted.pair`, `hosted.coins`, `hosted.map.get`;
  * docs/design/family-hosting.md). Reported by `hosted.prepare` (an unpaired guest cannot call `guardian.status`) and in
  * `guardian.status`.
+ * `notifications`: it can also send alerts by email, ntfy and webhook (set up in its web UI, never by the phone), lists
+ * them masked in `guardian.status.notifications`, and raises `notifications_changed` when they change.
  */
-export const GUARDIAN_FEATURES = { limitOff: 'limit_off', contactLock: 'contact_lock', savings: 'savings', familyHosting: 'family_hosting' } as const;
+export const GUARDIAN_FEATURES = { limitOff: 'limit_off', contactLock: 'contact_lock', savings: 'savings', notifications: 'notifications', familyHosting: 'family_hosting' } as const;
 
 /** True when the alert contacts may lock the guardian (`Policy.contactLock`). */
 export function isContactLockOn(policy: Pick<Policy, 'contactLock'>): boolean {

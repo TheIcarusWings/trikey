@@ -288,6 +288,8 @@ export function buildHandlers(g: Guardian): Handlers {
         ...(s.registered ? { key3Mixed: !!g.engine.registration()?.key3Mix } : {}),
         // A phone that missed a `relays_changed` alert catches up here (PROTOCOL.md, "Changing relays").
         ...(g.service.get().relays.length ? { relays: [...g.service.get().relays] } : {}),
+        // The owner's extra alert channels, masked and read-only (PROTOCOL.md, "Extra alert channels").
+        ...(g.notifier.configured ? { notifications: { channels: g.notifier.summary() } } : {}),
         ...(s.dailyLimit
           ? {
               dailyLimit: {

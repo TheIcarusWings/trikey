@@ -576,7 +576,8 @@ map, guest chain data from Esplora, the host page live.
 ### Phase 2
 
 Limit off and contact lock for guests (per-slot pause), `guardian.lock` from a guest as a per-slot pause, the guest's
-"leave" screen, the host's view of a guest's recovery code in the web UI. (The second-server check before a sweep and
+"leave" screen, the host's view of a guest's recovery code in the web UI, and extra alert channels (email, ntfy, webhook)
+for guests and their contacts: each guest's own, never the host's (docs/design/notifications.md). (The second-server check before a sweep and
 mainnet came into phase 1: decisions 4 and 5.)
 
 ### Phase 3 and later
@@ -697,6 +698,18 @@ or status, or another guest's, and a guest's key 3 cannot sign for any other slo
 6. **A guest's own key 2 backup is enforced as "no receive address before a backup"** in the wallet.
 7. **The regtest stack has no Esplora endpoint:** the wallet's and the app's end-to-end tests use an in-process stand-in
    over the rig's chain; the real `EsploraChainSource` is covered by Recovery Key mode's tests and the factory's own.
+
+### Guests and the host's extra alert channels
+
+The host's email, ntfy and webhook channels (docs/design/notifications.md) are the host's: they carry the host's own
+wallet's alerts and host-level events (restarted and locked, relays changed, the channels changed) only. A guest's alerts
+(its recoveries, `hosting_ending`, the end of hosting) are sent by the hosted alerter (`src/hosting/alerts.ts`) to the
+guest's phone and the guest's own alert contacts as nostr DMs, and never enter the notifier, not even for a host contact
+who is also the guest's contact. Guests have no extra channels in phase 1 (phase 2). The guest's `guardian.status` does
+not show the host's channels. `test/hosting-notify.e2e.test.ts` checks that the host's channels receive no guest recovery
+id, wallet id, label, amount or alert type while a guest's recovery and Stop hosting run, that they still work for a
+host-level event, and that hosting and the notifier keep to their own files (`hosting.json`, `hosted/` against
+`notifications.json`, `notifications-key.json`).
 
 ### Key 3's shape (decision 11)
 

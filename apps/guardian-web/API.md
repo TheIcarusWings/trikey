@@ -153,6 +153,28 @@ again). Old relays are kept because printed recovery sheets, which carry the rel
 them is the owner's explicit choice, and the web UI asks first. A change can only cost availability, not funds: relays carry nothing but encrypted gift wraps, and the phone moves
 only to relays the guardian answered it over.
 
+### Notifications (email, ntfy, webhook)
+
+Extra, **notify-only** alert channels (docs/design/notifications.md): the same warnings as the nostr alerts, never a
+control (cancelling a recovery and `LOCK` stay nostr DMs), plain text without links. They are the owner's delivery
+settings, **outside the hardware-approved rules**: only this UI changes them (never the phone), and every change is
+announced on every channel before and after it (the removed ones, over the email account as it was before) and to the
+paired phone (`notifications_changed`). Types: `NotificationSettings`, `NotificationSettingsInput`,
+`NotifyDestination`, `NotifyTestInput`, `NotifyTestResult` in `src/api/types.ts`.
+
+| Method and path | Request | Response | Notes |
+|---|---|---|---|
+| `GET /api/notifications` | none | `NotificationSettings` | Unlocked only. `guardianName` (how messages name this guardian), `smtp?` (the owner's email account: host, port, `security` `tls`\|`starttls`, username, From address, `passwordSet`, `health`), `destinations[]` (each one channel: `audience` `owner`\|`contact`, `kind` `email`\|`ntfy`\|`webhook`, `contact?` the alert contact's pubkey with `contactNpub` and `contactInRules`, the address or hints, `health`), `contacts[]` (the rules' alert contacts, to attach a channel to), `recoveryRunning`, `pending` (messages still being retried), `defaultNtfyServer` (`https://ntfy.sh`), `limits`. **Secrets never come back**: not the app password, not an ntfy topic (only its first characters) or token, not a webhook URL (only its origin) or secret. `health.state` is `ok`, `failing` (with `lastError` in plain words and `lastErrorAt`) or `untested`. |
+| `PUT /api/notifications` | `NotificationSettingsInput` | `NotificationSettings` | Unlocked only. Replaces everything (as `PUT /api/relays` does). A channel with an `id` is a stored one: omit a secret to keep the stored one (`token: null` / `secret: null` clears an optional one); a channel without `id` is new. `smtp: null` removes the account (refused while an email channel needs it); `password` omitted keeps the stored one. Checks (`400 invalid`, in plain words): name (letters, digits, spaces, `-`, `'`, at most 32), email addresses, the account (TLS or STARTTLS only), ntfy topics (`[-_A-Za-z0-9]{1,64}`), ntfy and webhook URLs (`https://` anywhere, `http://` only on the local network: private IPv4 ranges, IPv6 ULA, `.local`, `.lan`, `.home.arpa`, `.internal`, `.home`, single-label names; never loopback, link-local, reserved or `.onion`; no credentials or `#`), webhook secrets (16 to 256 printable characters), webhooks for the owner only, and the caps: 24 channels, 3 of each kind for the owner, one email and one ntfy topic per alert contact, 10 contacts without a nostr key. `409 recovery_pending`: while a recovery runs, removing or changing a channel or the email account is refused (adding is allowed). `429 rate_limited`: more than 30 changes an hour. A change is logged ("Alert channels changed", listing it). |
+| `POST /api/notifications/test` | `{ destination }` or `{ smtp: true }` | `NotifyTestResult` | Unlocked only. Sends "Test message" now to one channel, or through the email account to its own From address, and records the result in its `health` and the activity log. A send that fails is still `200`, with `ok: false` and `error`. `404 not_found` for an unknown channel; `429 rate_limited` after 10 tests in 10 minutes. |
+
+**Delivery.** Every alert becomes one message per channel, kept on disk and retried (1, 2, 5, 10, 30 minutes, then
+hourly) for 7 days, as the nostr notices are; each alert goes once; a newer recovery reminder replaces an older one not
+yet delivered. A channel that starts failing, works again, or loses a message after 7 days is logged ("Alert channel
+failing", "Alert channel works again", "Alert not delivered"). Rate limits: 20 messages an hour per channel and 60 an
+hour through the email account (more wait, they are not dropped). Messages go out **while the guardian is locked**: the
+secrets are sealed under a key file on the box, not the unlock passphrase.
+
 ### Recovery code
 
 | Method and path | Response | Notes |
@@ -213,6 +235,7 @@ The mock keeps state in memory (a reload starts over). Pick the starting state w
 | `/?mock=syncing` | Unlocked, node still syncing, one relay down |
 | `/?mock=signedout` | Set up and locked, this browser not signed in: the sign-in screen |
 | `/?mock=oldrelays` | Two old relays still watched after a change months ago; the phone switched |
+| `/?mock=notify` | Email, ntfy and a webhook set up in Settings > Notifications; the webhook is failing |
 
 In the mock any unlock passphrase works except the literal `wrong` (also for the reset). In dev, run
 `trikeyMock.completePairing()` in the browser console to pretend a phone scanned

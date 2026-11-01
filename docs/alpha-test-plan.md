@@ -581,6 +581,60 @@ Also in Developer, look but do not change anything yet: the **Wallet mode** swit
 (for example "Signet · chosen when the wallet was created", or "Mainnet" on Path A). Switching modes restarts the app on another wallet and deletes nothing, but
 Simulator is regtest only.
 
+### 15. Email and push alerts (optional)
+
+The guardian can also send its alerts by email (through your own email account), ntfy push and a webhook
+(docs/design/notifications.md). They carry warnings only: cancelling a recovery and locking the guardian stay with nostr.
+Set them up on the Guardian page, **Settings**, **Notifications**.
+
+**Email.** You need an **app password**: a password your email provider makes for one app, which you can revoke. Never
+type your account password here. Pick your provider's button to fill in the server, then the user name (your address),
+the From address (usually the same) and the app password, and **Save email account**, then **Send a test message** (it goes
+to the From address).
+
+- **Gmail**: turn on 2-Step Verification, then Google Account, Security, **App passwords**, make one named "Trikey". Server
+  `smtp.gmail.com`, port 465, TLS. Paste the 16 letters with or without the spaces.
+- **Fastmail**: Settings, Privacy & Security, **Manage app passwords**, new password with access to SMTP. Server
+  `smtp.fastmail.com`, port 465, TLS.
+- **Proton Mail**: SMTP needs a paid plan with your own domain: Settings, IMAP/SMTP, **SMTP tokens**, make a token for an
+  address on that domain. Server `smtp.protonmail.ch`, port 587, STARTTLS, user name the address, password the token.
+  Proton Mail Bridge does not work: it runs on a computer, with a certificate the guardian refuses.
+
+**ntfy.** Install the ntfy app on your phone and subscribe to a topic.
+
+- **Your own server (recommended):** install **ntfy** from the Umbrel App Store, create a user and an access token there,
+  and in the guardian use the box's address, for example `http://192.168.1.20:<port>` (the `umbrel.local` name may not
+  work from inside the guardian), your topic, and the token. Plain `http://` is accepted only for addresses on your own
+  network.
+- **ntfy.sh:** leave the server as `https://ntfy.sh` and use a **long random topic** (20 characters or more): anyone who
+  knows a topic there can read it and send fake alerts to it. The page warns about short ones.
+
+**Webhook.** For Home Assistant: make an automation with a **Webhook** trigger, copy its URL
+(`http://homeassistant.local:8123/api/webhook/<id>`, or the box's address instead of `homeassistant.local`), add a
+notify action with `{{ trigger.json.title }}` and `{{ trigger.json.message }}`, and paste the URL in the guardian (a
+signing secret is optional; Home Assistant cannot check it). To see a payload without Home Assistant, run `nc -l 8099` on a computer in your network and
+use `http://<that computer's address>:8099/`: the request (headers and JSON) prints in the terminal; the test then reports
+a failure after 15 seconds, since `nc` does not answer.
+
+**Alert contacts.** Under **Add a channel**, pick an alert contact (by npub) and add their email or ntfy topic, or pick
+"Someone without a nostr app" for a person who only reads email. Each new address gets a welcome message, so tell them first.
+
+Do: set up one email channel for yourself and one ntfy topic, press **Send a test message** on each, then do step 9 again
+(lock from the phone) and restart the guardian app on the Umbrel.
+
+You should see:
+- The test messages arrive, named with the guardian's name you set, plain text, no links.
+- The phone's Settings, **Alert contacts** lists them under "Email and push alerts" (masked), and its Activity shows
+  "Email and push alerts changed" after each change.
+- "Guardian locked" (from the phone) and "Guardian restarted and is locked" arrive by email and ntfy, the second one while
+  the guardian is still locked.
+- Every change you make is announced on every channel; a channel you remove gets a last message saying so.
+- A wrong app password shows as **Failing** next to the email account with the server's answer, and in Activity as
+  "Alert channel failing"; fixing it shows "works again".
+
+If it goes wrong, collect: the error shown next to the channel, the guardian's Activity page and log lines starting with
+`notify.`, your provider, and the server, port and encryption you used (never the password or token).
+
 ---
 
 ### 15. Host a family member (optional; two phones and two hardware wallets)
@@ -640,6 +694,7 @@ If a device refuses it, say exactly what it showed: the fallback is a synthetic 
 - **Public relays.** The phone and the guardian talk through public nostr relays. They can drop or delay messages. A flaky
   relay shows up as a timeout, not as a wrong answer. Report which relays you used.
 - **Alerts reach you through nostr direct messages**, so they need a nostr app with working DM relays. That is part of what is being tested.
+  Email, ntfy and webhook alerts (step 15) are optional extras: warnings only, never a way to cancel or lock.
 - **One network at a time on the Umbrel.** On Path A the node stays on mainnet; on Path B it is switched. See "Before you start".
 - **The from-source route and this workflow are untested on real hardware.** If a command here does not match what you see on your
   box, trust what you see and tell me.
@@ -649,6 +704,8 @@ If a device refuses it, say exactly what it showed: the fallback is a synthetic 
 ## What to keep out of bug reports
 
 - The **recovery code**, the **backup file**, the guardian's **passphrase** and any **seed words**, even on a test network.
+- Your email **app password**, **ntfy access tokens**, **webhook URLs** (a Home Assistant webhook URL is itself a secret)
+  and **webhook secrets**.
 - Everything else is fine to send: screenshots, guardian log lines (they hold no keys or request bodies), npubs, addresses,
   transaction ids, relay URLs.
 

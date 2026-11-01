@@ -80,7 +80,16 @@ export type ServiceEvent =
   | { type: 'hosting_recovery'; name: string; recoveryId: string; state: 'started' | 'completed' | 'cancelled'; readyAt?: number }
   | { type: 'hosting_stopping'; name: string; endsAt: number }
   | { type: 'hosting_ended'; name: string; how: 'now' | 'notice' }
-  | { type: 'hosting_guest_left'; name: string };
+  | { type: 'hosting_guest_left'; name: string }
+  /** The web UI changed the extra alert channels (notify/notifier.ts): a security event, announced on every channel. */
+  | { type: 'notifications_changed'; changes: string[] }
+  /** An extra alert channel started failing (logged once until it works again), or works again. */
+  | { type: 'notification_failing'; channel: string; error: string }
+  | { type: 'notification_ok'; channel: string }
+  /** A message could not be delivered to `channel` within 7 days and was given up. */
+  | { type: 'notification_expired'; channel: string; alert: string; error?: string }
+  /** "Send a test message" in the web UI. */
+  | { type: 'notification_test'; channel: string; ok: boolean; error?: string };
 
 /** A relay removed from `relays` that the guardian still watches (listens and publishes on) until the owner stops it. */
 export interface RetiringRelay {

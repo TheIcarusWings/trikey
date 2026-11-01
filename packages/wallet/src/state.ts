@@ -128,6 +128,23 @@ export const GuardianStatusCache = z.object({
   hardwareConfirmRequired: z.boolean().optional(),
   /** The replaced wallet this guardian watches ("Replace guardian"): its coins can be read and swept through the guardian. */
   watchedWalletId: z.string().optional(),
+  /**
+   * The extra alert channels (email, ntfy, webhook) the owner set up in the guardian's web UI, masked
+   * (`guardian.status.notifications`). Read-only on the phone. Absent from older guardians and while there are none.
+   */
+  notifications: z
+    .object({
+      channels: z.array(
+        z.object({
+          kind: z.enum(['email', 'ntfy', 'webhook']),
+          audience: z.enum(['owner', 'contact']),
+          contact: z.string().optional(),
+          hint: z.string(),
+          failing: z.boolean().optional(),
+        }),
+      ),
+    })
+    .optional(),
 });
 export type GuardianStatusCache = z.infer<typeof GuardianStatusCache>;
 

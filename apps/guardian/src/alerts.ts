@@ -75,15 +75,31 @@ export function alertToWire(g: Guardian, a: DueAlert, rec: RecoveryRecord | unde
   }
 }
 
-/** Plain-language text: `long` for contacts' DMs, `short` (at most 500 chars) for the phone's `message`. */
-export function alertText(g: Guardian, a: DueAlert, rec: RecoveryRecord | undefined, form: 'long' | 'short' = 'long'): string {
+/**
+ * Where a contact reads an alert: `dm`, the NIP-17 DM itself (reply CANCEL / LOCK to it); `nostr`, an email or ntfy
+ * channel of a contact with a nostr key (reply on nostr, not here); `none`, a contact reachable only by email or ntfy
+ * (warnings only: contact the owner). notify/ renders the last two (docs/design/notifications.md, "Content").
+ */
+export type ContactReach = 'dm' | 'nostr' | 'none';
+
+/**
+ * Plain-language text: `long` for contacts' DMs, `short` (at most 500 chars) for the phone's `message`. `reach`: where
+ * a contact reads the long text (`ContactReach`); only the "how to stop it" part differs.
+ */
+export function alertText(g: Guardian, a: DueAlert, rec: RecoveryRecord | undefined, form: 'long' | 'short' = 'long', reach: ContactReach = 'dm'): string {
   const id = a.recoveryId;
   const amount = formatBtc(a.amountSats);
   const ends = formatWhen(a.readyAt);
   // While the rules let the contacts lock the guardian (rule 8), a running recovery's DMs say so too: locking does
   // not stop the recovery, but it stops the guardian co-signing anything, the recovery's sweep included.
-  const lockHint = g.engine.status().rules?.contactLock ? `\n\nCANCEL stops this recovery. ${LOCK_HINT}` : '';
-  const howToCancel = `To stop it, reply to this message with:\n\nCANCEL ${id}\n\nor cancel it in the Trikey app.${lockHint}`;
+  const canLock = !!g.engine.status().rules?.contactLock;
+  const lockHint = canLock ? `\n\nCANCEL stops this recovery. ${reach === 'nostr' ? LOCK_HINT_NOSTR : LOCK_HINT}` : '';
+  const howToCancel =
+    reach === 'dm'
+      ? `To stop it, reply to this message with:\n\nCANCEL ${id}\n\nor cancel it in the Trikey app.${lockHint}`
+      : reach === 'nostr'
+        ? `To stop it, reply to the guardian's nostr message about it, in your nostr app, with:\n\nCANCEL ${id}\n\nReplying here does nothing. You can also contact the owner.${lockHint}`
+        : 'Contact the owner: they, or an alert contact with a nostr app, can cancel it. Replying here does nothing.';
   if (form === 'short') {
     switch (a.kind) {
       case 'recovery_started':
@@ -106,7 +122,7 @@ export function alertText(g: Guardian, a: DueAlert, rec: RecoveryRecord | undefi
         `What happened: on ${formatWhen(rec?.startedAt ?? a.dueAt)}, the wallet's ${SURVIVOR[a.survivingRole]} asked the owner's Trikey Guardian to move ${amount} to a new wallet.`,
         `When it completes: ${ends} (in ${a.daysLeft} day${a.daysLeft === 1 ? '' : 's'}), unless someone cancels it.`,
         '',
-        'If the owner did not ask for this, or you are not sure, cancel it now and talk to them.',
+        reach === 'none' ? 'If the owner did not ask for this, or you are not sure, contact them now.' : 'If the owner did not ask for this, or you are not sure, cancel it now and talk to them.',
         howToCancel,
       ].join('\n');
     case 'recovery_reminder':
@@ -121,7 +137,7 @@ export function alertText(g: Guardian, a: DueAlert, rec: RecoveryRecord | undefi
         `Trikey alert: the waiting period of recovery ${id} ended on ${ends}.`,
         '',
         `The guardian will now co-sign and broadcast the move of ${amount} to the new wallet.`,
-        'If this is unexpected, cancel it right away.',
+        reach === 'none' ? 'If this is unexpected, contact the owner right away.' : 'If this is unexpected, cancel it right away.',
         howToCancel,
       ].join('\n');
     case 'recovery_cancelled': {
@@ -150,6 +166,9 @@ function npubOf(pubkey: string): string {
 
 /** What a contact can do while the rules let the contacts lock the guardian (rule 8): one line for their DMs. */
 export const LOCK_HINT = 'If something looks wrong and you cannot reach the owner, you can lock the guardian (it then co-signs nothing until the owner unlocks it) by replying with: LOCK';
+/** The same, on a contact's email or ntfy channel: the reply goes to the guardian's nostr message, not here. */
+export const LOCK_HINT_NOSTR =
+  "If something looks wrong and you cannot reach the owner, you can lock the guardian (it then co-signs nothing until the owner unlocks it) by replying LOCK to the guardian's nostr message, in your nostr app.";
 
 /** The wire alert of a limit change or a contact lock, for the paired phone (`undefined`: a notice for contacts only). */
 export function noticeToWire(n: LimitNotice): Alert | undefined {
@@ -211,7 +230,7 @@ export function noticeToWire(n: LimitNotice): Alert | undefined {
  * The NIP-17 DM to an alert contact (`limit_off`, `contact_lock`, `contact_lock_on` and `contact_lock_off` go to
  * contacts). `canLock`: the rules let the contacts lock the guardian now, so a `limit_off` DM says how.
  */
-export function noticeText(n: LimitNotice, canLock = false): string {
+export function noticeText(n: LimitNotice, canLock = false, reach: ContactReach = 'dm'): string {
   if (n.kind === 'savings_unwatched')
     return [
       n.replacedBy
@@ -263,7 +282,7 @@ export function noticeText(n: LimitNotice, canLock = false): string {
     `What happened: on ${formatWhen(n.at)}, the owner's hardware wallet approved turning off the daily limit${n.limitSats !== undefined ? ` (it was ${formatBtc(n.limitSats)})` : ''}. From now on, their phone and their Trikey Guardian together can send everything in the wallet at once.`,
     '',
     'If the owner did not mean to do this, or you are not sure, talk to them now. They can turn the limit back on from their phone alone.',
-    ...(canLock ? ['', LOCK_HINT] : []),
+    ...(canLock && reach !== 'none' ? ['', reach === 'nostr' ? LOCK_HINT_NOSTR : LOCK_HINT] : []),
   ].join('\n');
 }
 
@@ -302,6 +321,8 @@ export class Alerter {
     const g = this.g;
     const canLock = !!g.engine.status().rules?.contactLock;
     for (const n of g.engine.dueNotices()) {
+      await this.queueNotice(n, canLock);
+      if (!g.rpc || !g.dm) continue;
       const phone = g.engine.walletById(n.walletId)?.appNostrPubkey;
       const delivered: string[] = [];
       for (const to of n.recipients) {
@@ -324,11 +345,58 @@ export class Alerter {
   /** `${alertId}:${pubkey}` already sent to a phone with recovery access (not tracked by the engine). */
   private readonly sentToPeers = new Set<string>();
 
+  /**
+   * The extra channels (notify/notifier.ts) get the alert too, queued before the nostr sends so a notice the nostr
+   * side finishes in this pass is not missed: the owner's channels the phone's text, a contact's channels the
+   * contact's text, and only for contacts the nostr alert goes to. Queued once per alert id.
+   */
+  private async queueAlert(a: DueAlert, rec: RecoveryRecord | undefined): Promise<void> {
+    const g = this.g;
+    if (!g.notifier.configured) return;
+    try {
+      const queued = await g.notifier.enqueue({
+        id: a.id,
+        type: a.kind,
+        at: a.dueAt,
+        ...(rec ? { walletId: rec.walletId } : {}),
+        owner: alertText(g, a, rec, 'short'),
+        contacts: { text: (reach) => alertText(g, a, rec, 'long', reach), ...(rec ? { recipients: rec.recipients } : {}) },
+      });
+      if (queued) g.notifier.kick();
+    } catch (e) {
+      g.log.error('notify.enqueue_failed', { alertId: a.id, error: errorText(e) });
+    }
+  }
+
+  /** As `queueAlert`, for an engine notice. `contact_lock_on` / `_off` are about a nostr control: nostr DMs only. */
+  private async queueNotice(n: LimitNotice, canLock: boolean): Promise<void> {
+    const g = this.g;
+    if (!g.notifier.configured || n.kind === 'contact_lock_on' || n.kind === 'contact_lock_off') return;
+    // Who the notice is for, as queued (the due list holds only those not reached yet).
+    const all = g.store.state?.notices?.find((x) => x.id === n.id)?.recipients ?? n.recipients;
+    const phone = g.engine.walletById(n.walletId)?.appNostrPubkey;
+    const contacts = all.filter((r) => r !== phone && r !== n.contact);
+    try {
+      const queued = await g.notifier.enqueue({
+        id: n.id,
+        type: n.kind,
+        at: n.at,
+        walletId: n.kind === 'savings_moved' || n.kind === 'savings_unwatched' ? (n.savingsWalletId ?? n.walletId) : n.walletId,
+        ...(all.includes(phone ?? '') ? { owner: noticeToWire(n)?.message } : {}),
+        ...(contacts.length || n.kind !== 'limit_on' ? { contacts: { text: (reach) => noticeText(n, canLock, reach), recipients: contacts } } : {}),
+      });
+      if (queued) g.notifier.kick();
+    } catch (e) {
+      g.log.error('notify.enqueue_failed', { alertId: n.id, error: errorText(e) });
+    }
+  }
+
   private async once(): Promise<void> {
     const g = this.g;
     const due = g.engine.dueAlerts();
-    if (!g.rpc || !g.dm) return;
+    for (const a of due) await this.queueAlert(a, g.records.find((r) => r.id === a.recoveryId));
     await this.sendNotices();
+    if (!g.rpc || !g.dm) return;
     if (!due.length) return;
     const current = g.engine.registration()?.appNostrPubkey;
     for (const a of due) {

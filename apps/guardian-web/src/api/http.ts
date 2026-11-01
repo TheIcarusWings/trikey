@@ -6,6 +6,8 @@ import type {
   GuardianStatus,
   HostedWallet,
   HostingOverview,
+  NotificationSettings,
+  NotifyTestResult,
   PairedPhone,
   PairingSession,
   PublicStatus,
@@ -119,6 +121,9 @@ export function createHttpApi(base = ''): GuardianApi {
     getRelays: () => request<RelaySettings>('GET', '/relays'),
     setRelays: (input) => request<RelaySettings>('PUT', '/relays', input),
     stopWatchingRelays: (url) => request<RelaySettings>('DELETE', url === undefined ? '/relays/retiring' : `/relays/retiring/${encodeURIComponent(url)}`),
+    getNotifications: () => request<NotificationSettings>('GET', '/notifications'),
+    setNotifications: (input) => request<NotificationSettings>('PUT', '/notifications', input),
+    testNotification: (input) => request<NotifyTestResult>('POST', '/notifications/test', input),
     resetGuardian: async (input) => request<GuardianStatus>('POST', '/reset', withBrowserEntropy(input)),
 
     startPairing: () => request<PairingSession>('POST', '/pairing'),

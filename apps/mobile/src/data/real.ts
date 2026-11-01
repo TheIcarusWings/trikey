@@ -45,6 +45,7 @@ import { SimplePoolRelayPool, encodeRecoveryUri, type Policy, type RelayPool } f
 import { hostedChainFactory, publicServer } from './hosted';
 import { parseServerUrl } from './rk-server';
 import { addEvent, buildActivity, emptyLog, hostFromLabel, loadLog, saveLog, takeLegacySends, type AppLog } from './app-log';
+import { groupAlertChannels } from './alert-channels';
 import { LIMIT_OFF_SATS } from './rules';
 import { DevicePromptStore, compositeProvider, ledgerHint, withDevicePrompts } from './device';
 import { WalletServiceError, notAvailableYet } from './errors';
@@ -657,6 +658,8 @@ class Service implements RealWalletService {
       ...(this.invite ? { invite: { ...this.invite.view } } : {}),
       // Offered only where the guardian says it can (`contact_lock`); off for everyone until they turn it on.
       ...(this.w && s?.stage === 'paired' ? { contactLock: { on: this.w.contactLockOn, supported: this.w.contactLockSupported } } : {}),
+      // Email, ntfy and webhook alerts set up in the guardian's web page: shown, never changed, here.
+      ...(this.w && s?.stage === 'paired' && this.w.notificationsSupported ? { alertChannels: groupAlertChannels(this.w.notificationChannels) } : {}),
     };
   }
 
@@ -832,6 +835,11 @@ class Service implements RealWalletService {
           // pointed elsewhere. The wallet registers Savings again at the next sync.
           addEvent(this.log, { kind: 'savings-unwatched', replaced: !!a.replacedBy, at: e.atMs });
           void this.saveLogNow();
+        } else if (a.type === 'notifications_changed') {
+          // Changed in the guardian's web page (this phone cannot): worth a line, as a stolen-phone thief cannot do it.
+          addEvent(this.log, { kind: 'alert-channels-changed', at: e.atMs });
+          void this.saveLogNow();
+          this.refresh();
         } else if (a.type === 'limit_on' && a.reason === 'recovery') {
           // The guardian turned the limit back on for the recovered wallet (this phone logs its own changes itself).
           addEvent(this.log, { kind: 'limit-on', limitSats: a.limitSats, at: e.atMs });

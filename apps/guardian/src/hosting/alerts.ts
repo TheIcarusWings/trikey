@@ -4,6 +4,10 @@
  * the guest's phone, the NIP-17 `DirectMessages` for the guest's contacts). Kept apart from the host's `Alerter`
  * (alerts.ts): a guest's alert names the wallet by the label the guest chose, never the host's private name for them,
  * and says nothing of the host's wallet; the host's alerts are untouched.
+ *
+ * Never the notifier (notify/notifier.ts): the host's email, ntfy and webhook channels are the host's, for its own wallet
+ * and host-level events. A guest's alerts go to the guest's phone and the guest's own contacts as nostr DMs only, even
+ * to a contact who also has channels as one of the host's contacts (guests' own channels are phase 2).
  */
 import type { Alert } from '@trikey/protocol';
 import { formatBtc, formatWhen } from '../alerts.js';
