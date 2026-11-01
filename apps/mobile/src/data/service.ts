@@ -154,6 +154,12 @@ export interface WalletService {
   turnLimitOff(): Promise<void>;
   /** Lengthening the wait works from the phone, shortening it needs the hardware wallet. */
   setRecoveryDelay(days: RecoveryDelayDays): Promise<void>;
+  /**
+   * Lets the alert contacts lock the guardian (`true`: from this phone alone) or stops them (`false`: needs the hardware
+   * wallet, which signs a text that says `lock=off`). Only where `state.contactLock.supported`; otherwise it rejects with
+   * kind `not_available`. The guardian tells the contacts either way.
+   */
+  setContactLock(on: boolean): Promise<void>;
   /** Needs the hardware wallet. */
   addContact(name: string, npub: string): Promise<Contact>;
   removeContact(id: string): Promise<void>;
@@ -234,6 +240,8 @@ export interface WalletService {
     setNodeRpc?(available: boolean): void;
     /** The demo's helper coin is funded, or not yet. */
     setHelperFunded?(funded: boolean): void;
+    /** The demo: an alert contact (Maria) locks the guardian with LOCK, if the setting is on. */
+    simulateContactLock?(): void;
     /** Removes the wallet's keys and data from this phone (this mode and network only). */
     forgetWallet?(): Promise<void>;
     /** Facts about the setup, for the developer ("device fingerprint ..."). */
