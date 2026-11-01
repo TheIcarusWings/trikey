@@ -98,6 +98,17 @@ function npubToHex(npubOrHex: string): string {
   if (d.type !== 'npub') throw new Error('not an npub');
   return d.data;
 }
+
+/** A nostr key shortened for the screens (`npub1abcdefg…wxyz`). */
+function shortNpub(pubkey: string): string {
+  const n = npubEncode(pubkey);
+  return `${n.slice(0, 9)}…${n.slice(-4)}`;
+}
+
+/** An alert contact as the screens name it: the name this phone keeps for it, else its shortened npub. */
+function contactName(c: { npub: string; name?: string }): string {
+  return c.name ?? `${c.npub.slice(0, 9)}…${c.npub.slice(-4)}`;
+}
 export interface PlatformLike {
   os: UiOs;
   isSecure: boolean;
@@ -457,6 +468,8 @@ class Service implements RealWalletService {
     const relays = g?.relays ?? this.preview?.relays ?? [];
     const npub = g ? npubEncode(g.pubkey) : (this.preview?.guardianNpub ?? '');
     const status = !this.reachable ? 'offline' : gs?.state === 'locked' ? 'locked' : 'online';
+    // An alert contact locked it (LOCK over nostr): named as this phone knows them.
+    const lockedBy = status === 'locked' ? this.w?.guardianLock?.contact : undefined;
     return {
       host: hostFromLabel(label),
       ...(label ? { label } : {}),
@@ -466,6 +479,7 @@ class Service implements RealWalletService {
       chainData: 'your-node',
       npub,
       ...(g?.key3Mixed ? { key3Note: KEY3_MIXED_NOTE } : {}),
+      ...(lockedBy ? { lockedByContact: { name: contactName(lockedBy), npub: lockedBy.npub } } : {}),
     };
   }
 
@@ -521,7 +535,7 @@ class Service implements RealWalletService {
     const now = this.clock.now();
     const { recovery, outcome } = this.recoveryView();
     const backup = s?.backup;
-    const contacts: Contact[] = (this.w?.alertContacts() ?? []).map((c) => ({ id: c.pubkey, name: c.name ?? `${c.npub.slice(0, 9)}…${c.npub.slice(-4)}`, npub: c.npub }));
+    const contacts: Contact[] = (this.w?.alertContacts() ?? []).map((c) => ({ id: c.pubkey, name: contactName(c), npub: c.npub }));
     const limit = rules?.dailyLimitSats ?? snap?.dailyLimit?.limitSats ?? 0;
     const used = snap?.dailyLimit?.spentEstimateSats ?? 0;
     const hardware = this.hardwareView();
@@ -582,6 +596,8 @@ class Service implements RealWalletService {
           ? { lostKey: s.recovery.recovery.survivingRole === 'app' ? 'hardware' : 'phone', movedSats: s.recovery.recovery.amountSats }
           : null,
       silentPayments: this.silentView(),
+      // Offered only where the guardian says it can (`contact_lock`); off for everyone until they turn it on.
+      ...(this.w && s?.stage === 'paired' ? { contactLock: { on: this.w.contactLockOn, supported: this.w.contactLockSupported } } : {}),
     };
   }
 
@@ -697,7 +713,15 @@ class Service implements RealWalletService {
       case 'alert': {
         const a = e.alert;
         if (a.type === 'guardian_locked') {
-          addEvent(this.log, { kind: 'guardian-locked', host: hostFromLabel(this.w?.state.guardian?.label), ...(a.reason === 'remote' ? { byPhone: true } : {}), at: e.atMs });
+          const by = a.reason === 'contact' && a.contact ? this.w?.alertContacts().find((c) => c.pubkey === a.contact) : undefined;
+          const byContact = a.reason === 'contact' ? (by ? contactName(by) : a.contact ? shortNpub(a.contact) : 'An alert contact') : undefined;
+          addEvent(this.log, {
+            kind: 'guardian-locked',
+            host: hostFromLabel(this.w?.state.guardian?.label),
+            ...(a.reason === 'remote' ? { byPhone: true } : {}),
+            ...(byContact ? { byContact } : {}),
+            at: e.atMs,
+          });
           void this.saveLogNow();
         } else if (a.type === 'wallet_retired') {
           addEvent(this.log, { kind: 'wallet-retired', reason: a.reason, at: e.atMs });
@@ -1355,6 +1379,14 @@ class Service implements RealWalletService {
     return this.rulesChange(
       () => this.requireWallet().setRecoveryDelay(days),
       (r, at) => addEvent(this.log, { kind: 'delay-changed', days, approvedOn: r.approvedBy === 'hardware' ? 'hardware' : 'phone', at }),
+    );
+  }
+
+  setContactLock(on: boolean): Promise<void> {
+    // The wallet refuses it (before anything is signed or sent) where the guardian does not support it.
+    return this.rulesChange(
+      () => this.requireWallet().setContactLock(on),
+      (_r, at) => addEvent(this.log, { kind: on ? 'contact-lock-on' : 'contact-lock-off', at }),
     );
   }
 

@@ -26,6 +26,26 @@ export function formatDailyLimit(limit: { limitSats: Sats; off?: boolean }): str
 }
 
 /** 4210000 -> "4,210,000" */
+/** Settings > Alert contacts: the switch, and what it allows and does not, in words (the abuse case included). */
+export const CONTACT_LOCK = {
+  title: 'Contacts can lock the guardian',
+  short: 'If they see something you didn\'t do, they can stop your guardian.',
+  allows:
+    'If one of them sees something you didn\'t do, like a recovery starting or your limit turned off, they can send your guardian the word LOCK from their nostr app. It then co-signs nothing until you unlock it, and you and your other contacts are told who locked it.',
+  cannot: 'They can\'t unlock it, change your rules, see your balance or move money. Only you unlock it, with the passphrase.',
+  worst:
+    'The worst a contact, or someone who stole their nostr key, can do is lock it: a nuisance, never a loss. Unlock it, and turn this off with your hardware wallet if it happens again.',
+  offNeeds: (brand: string) => `Turning this off needs your ${brand}.`,
+  unsupported: 'Your guardian needs an update before contacts can lock it.',
+} as const;
+
+/** Home's "Guardian locked" card: why it is locked, when the guardian said so. */
+export function guardianLockedLine(guardian: { lockedByContact?: { name: string } }, host: string, hardwareBrand: string): string {
+  if (guardian.lockedByContact)
+    return `${guardian.lockedByContact.name} locked your guardian from their nostr app. Find out what they saw. Phone-only payments wait until you unlock it; your ${hardwareBrand} can still pay.`;
+  return `Your ${host} restarted. Phone-only payments wait until you unlock it; your ${hardwareBrand} can still pay.`;
+}
+
 export function formatSats(sats: Sats): string {
   const sign = sats < 0 ? '-' : '';
   return sign + Math.abs(Math.trunc(sats)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');

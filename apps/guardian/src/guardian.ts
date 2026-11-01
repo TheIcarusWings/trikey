@@ -63,7 +63,7 @@ import { DirectMessages } from './nostr/dm.js';
 import { Inbox } from './nostr/inbox.js';
 import { buildHandlers } from './nostr/handlers.js';
 import { stampOf, toSeconds } from './nostr/wire.js';
-import { DEFAULT_BROADCAST_LIMIT, DEFAULT_REFUSAL_LIMIT, SlidingWindowLimiter, type RateLimitOptions } from './rate-limit.js';
+import { DEFAULT_BROADCAST_LIMIT, DEFAULT_CONTACT_LOCK_LIMIT, DEFAULT_REFUSAL_LIMIT, SlidingWindowLimiter, type RateLimitOptions } from './rate-limit.js';
 import { Alerter } from './alerts.js';
 import { RecoveryRunner } from './recovery-runner.js';
 import { onContactDm } from './dm-cancel.js';
@@ -104,7 +104,12 @@ export interface GuardianOptions {
   broadcastLimit?: RateLimitOptions;
   /** Refused `sign` / `recovery.start` / `recovery.update` allowed per sender per window. Default 30 per 10 minutes. */
   refusalLimit?: RateLimitOptions;
+  /** `LOCK` DMs handled per alert contact per window (dm-lock.ts). Default 5 per hour. */
+  contactLockLimit?: RateLimitOptions;
 }
+
+/** What a `LOCK` DM from an alert contact did (`Guardian.lockByContact`). */
+export type ContactLockOutcome = 'locked' | 'already_locked' | 'not_allowed';
 
 export type UnlockOutcome =
   | { ok: true }
@@ -211,6 +216,8 @@ export class Guardian {
   readonly broadcastLimiter: SlidingWindowLimiter;
   /** Per sender: refused `sign` / `recovery.start` / `recovery.update` (a flood is stopped before the engine). */
   readonly refusalLimiter: SlidingWindowLimiter;
+  /** Per alert contact: `LOCK` DMs (dm-lock.ts), whatever they lead to. */
+  readonly contactLockLimiter: SlidingWindowLimiter;
   /** The silent payment scanner (needs the node RPC; works while locked). */
   readonly sp: SilentPaymentService;
 
@@ -237,7 +244,9 @@ export class Guardian {
 
   /** When and why the guardian last locked (undefined while unlocked). */
   lockedAt?: number = undefined;
-  lockReason?: 'restart' | 'manual' | 'remote' = undefined;
+  lockReason?: 'restart' | 'manual' | 'remote' | 'contact' = undefined;
+  /** `lockReason: 'contact'`: the alert contact who locked it (nostr pubkey). In memory: a restart says `restart`. */
+  lockedBy?: string = undefined;
 
   private signer?: KeystoreSigner;
   /** The setup seed while unlocked: every wallet's key 3 is derived from it (keystore.ts). Wiped on lock. */
@@ -284,6 +293,7 @@ export class Guardian {
     this.recovery = new RecoveryRunner(this);
     this.broadcastLimiter = new SlidingWindowLimiter(opts.broadcastLimit ?? DEFAULT_BROADCAST_LIMIT);
     this.refusalLimiter = new SlidingWindowLimiter(opts.refusalLimit ?? DEFAULT_REFUSAL_LIMIT);
+    this.contactLockLimiter = new SlidingWindowLimiter(opts.contactLockLimit ?? DEFAULT_CONTACT_LOCK_LIMIT);
   }
 
   private path(name: keyof typeof FILES): string {
@@ -352,10 +362,11 @@ export class Guardian {
   }
 
   /**
-   * What `guardian.status.features` reports (`GUARDIAN_FEATURES`): the phone offers "no daily limit" only when it lists
-   * `limit_off`. Tests clear it to see how a phone treats a guardian from before a feature.
+   * What `guardian.status.features` (and `pair.prepare`) report (`GUARDIAN_FEATURES`): the phone offers "no daily limit"
+   * only when it lists `limit_off`, and "alert contacts can lock the guardian" only when it lists `contact_lock`. Tests
+   * clear it to see how a phone treats a guardian from before a feature.
    */
-  features: string[] = [GUARDIAN_FEATURES.limitOff];
+  features: string[] = [GUARDIAN_FEATURES.limitOff, GUARDIAN_FEATURES.contactLock];
 
   nowSec(): number {
     return toSeconds(this.clock.now());
@@ -905,6 +916,7 @@ export class Guardian {
     this.signer = signer;
     this.lockedAt = undefined;
     this.lockReason = undefined;
+    this.lockedBy = undefined;
   }
 
   private dropSigner(): void {
@@ -1058,6 +1070,33 @@ export class Guardian {
       await this.logEvent({ type: 'locked', reason });
     });
     if (locked) await this.notifyPhone({ type: 'guardian_locked', reason, ...this.stampNow() });
+  }
+
+  /**
+   * An alert contact's `LOCK` DM (dm-lock.ts, which checked the sender is a current alert contact, the message is fresh,
+   * new and within the contact's rate limit). Locks exactly as `lock()` does (key 3 leaves memory; recoveries and their
+   * timers run on as on any locked guardian), but only while the active wallet's rules let the contacts lock it
+   * (`not_allowed` otherwise). `already_locked`: nothing changes and nobody is alerted. On `locked` the engine has
+   * logged it and queued the `contact_lock` notice (the paired phone and every other alert contact, retried until
+   * delivered); unlocking stays with the owner (web UI passphrase, or the phone's `guardian.unlock`).
+   */
+  async lockByContact(contact: string): Promise<ContactLockOutcome> {
+    const outcome = await this.unlockMutex.run(async (): Promise<ContactLockOutcome> => {
+      if (!this.engine.status().rules?.contactLock) return 'not_allowed';
+      if (this.locked) return 'already_locked';
+      const noted = await this.engine.noteContactLock(contact);
+      if (!noted.ok) return 'not_allowed';
+      this.dropSigner();
+      this.pairing.invalidate();
+      this.lockedAt = this.clock.now();
+      this.lockReason = 'contact';
+      this.lockedBy = contact;
+      this.log.warn('guardian.locked', { reason: 'contact' });
+      return 'locked';
+    });
+    // The paired phone and the other contacts learn it from the notice the engine queued.
+    if (outcome === 'locked') void this.alerts.run();
+    return outcome;
   }
 
   /**

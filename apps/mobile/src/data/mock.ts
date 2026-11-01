@@ -2,6 +2,7 @@ import { parseScannedCode } from '@trikey/wallet/scan';
 import { NODE_RPC_TEXT, WalletServiceError } from './errors';
 import { SIMULATED_OPTION, hardwareOptionTable, type UiOs } from './hardware-options';
 import { LIMIT_OFF_SATS, buildRefillSchedule, limitChangeNeedsHardware, quoteSend as quoteSendRule, quoteSendMax as quoteSendMaxRule } from './rules';
+import { CONTACT_LOCK } from './format';
 import { emptyRecoveryKeyState } from './rk-empty';
 import { DEMO_FINGERPRINT, createMockRecoveryKey } from './rk-mock';
 import { looksLikeSilentPaymentAddress } from './sp-empty';
@@ -246,6 +247,8 @@ export function createDemoState(platform: 'ios' | 'android' = 'ios'): WalletStat
     walletRetired: null,
     finishedRecovery: null,
     silentPayments: demoSilentPayments(),
+    // Off, as for everyone until they turn it on; the demo guardian supports it.
+    contactLock: { on: false, supported: true },
   };
 }
 
@@ -465,11 +468,17 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
       await wait(deviceDelay);
       // The demo accepts any passphrase except the word "wrong", so the error state can be seen.
       if (passphrase === 'wrong') throw new WalletServiceError('unlock_failed', "That passphrase didn't work. Try again.");
-      update((s) => ({ guardian: { ...s.guardian, status: 'online', lastSeenAt: NOW.toISOString() } }));
+      update((s) => {
+        const { lockedByContact: _gone, ...guardian } = s.guardian;
+        return { guardian: { ...guardian, status: 'online', lastSeenAt: NOW.toISOString() } };
+      });
     },
     async lockGuardian() {
       await wait(networkDelay);
-      update((s) => ({ guardian: { ...s.guardian, status: 'locked' } }));
+      update((s) => {
+        const { lockedByContact: _other, ...guardian } = s.guardian;
+        return { guardian: { ...guardian, status: 'locked' } };
+      });
       addSecurityEvent({ id: nextId('ev'), kind: 'guardian-locked', host: state.guardian.host, byPhone: true, at: NOW.toISOString() });
     },
     async previewReplaceGuardian(code: string): Promise<ReplaceGuardianPlan> {
@@ -584,6 +593,15 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
       update({ recoveryDelayDays: days });
       addSecurityEvent({ id: nextId('ev'), kind: 'delay-changed', days, at: NOW.toISOString() });
     },
+    async setContactLock(on: boolean) {
+      const current = state.contactLock;
+      if (state.mode !== 'guardian' || !current?.supported) throw new WalletServiceError('not_available', CONTACT_LOCK.unsupported);
+      if (current.on === on) return;
+      // On: tightening, the phone alone. Off: the hardware wallet.
+      await wait(on ? networkDelay : deviceDelay);
+      update({ contactLock: { ...current, on } });
+      addSecurityEvent({ id: nextId('ev'), kind: on ? 'contact-lock-on' : 'contact-lock-off', at: NOW.toISOString() });
+    },
     async addContact(name: string, npub: string) {
       await wait(deviceDelay);
       const contact: Contact = { id: nextId('c'), name: name.trim(), npub: npub.trim() };
@@ -668,6 +686,13 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
 
     // -- development --------------------------------------------------
     dev: {
+      simulateContactLock() {
+        // What the guardian does when an alert contact sends it LOCK: only while the setting is on, and only once.
+        const by = state.contacts[0];
+        if (!state.contactLock?.on || !by || state.guardian.status === 'locked') return;
+        update((s) => ({ guardian: { ...s.guardian, status: 'locked', lockedByContact: { name: by.name, npub: by.npub } } }));
+        addSecurityEvent({ id: nextId('ev'), kind: 'guardian-locked', host: state.guardian.host, byContact: by.name, at: NOW.toISOString() });
+      },
       setGuardianStatus(status: GuardianStatus) {
         update((s) => ({ guardian: { ...s.guardian, status } }));
         if (status === 'locked') {

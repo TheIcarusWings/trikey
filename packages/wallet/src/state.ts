@@ -80,8 +80,13 @@ export const GuardianStatusCache = z.object({
   dailyLimit: z
     .object({ limitSats: z.number(), usedSats: z.number(), availableSats: z.number(), off: z.boolean().optional(), limitBeforeOffSats: z.number().optional() })
     .optional(),
-  /** `guardian.status.features`: what the guardian can do beyond the base protocol (`limit_off`). Absent from older guardians. */
+  /** `guardian.status.features`: what the guardian can do beyond the base protocol (`limit_off`, `contact_lock`). Absent from older guardians. */
   features: z.array(z.string()).optional(),
+  /**
+   * While locked, why and since when (unix seconds, the guardian's clock); `contact`: the alert contact who locked it
+   * with a `LOCK` DM (`guardian.status.lock`, or a `guardian_locked` alert). Absent from older guardians.
+   */
+  lock: z.object({ reason: z.enum(['restart', 'manual', 'remote', 'contact']), at: z.number(), contact: z.string().optional() }).optional(),
   /** The guardian's clock minus ours, seconds. */
   skewSec: z.number().optional(),
   /** The wallet the guardian guards now (it changes when the guardian adopts a recovery's destination). */

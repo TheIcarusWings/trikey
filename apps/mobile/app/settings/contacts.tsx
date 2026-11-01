@@ -3,15 +3,79 @@ import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { Plus, Smartphone } from '@/components/icons';
-import { Body, Footnote, ListGroup } from '@/components/panels';
+import { Lock, Plus, Smartphone } from '@/components/icons';
+import { Body, Footnote, ListGroup, Notice, SectionLabel } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
+import { Switch } from '@/components/ui/switch';
 import { Text } from '@/components/ui/text';
-import { shorten, useWallet, useWalletService, type Contact } from '@/data';
+import { CONTACT_LOCK, canOfferContactLock, shorten, useWallet, useWalletService, type Contact } from '@/data';
 import { IS_IOS, pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
+
+/**
+ * "Contacts can lock the guardian": opt-in, shown only when the guardian supports it. On from this phone alone; off
+ * needs the hardware wallet, after saying what that gives up.
+ */
+function ContactLockSection() {
+  const wallet = useWalletService();
+  const state = useWallet();
+  const { hardware } = state;
+  const [asking, setAsking] = useState(false);
+  const toggle = useAction();
+  if (!canOfferContactLock(state)) return null;
+  const on = !!state.contactLock?.on;
+  const turnOff = async () => {
+    const r = await toggle.run(wallet.setContactLock(false));
+    if (r.ok) setAsking(false);
+  };
+  return (
+    <>
+      <SectionLabel>Locking</SectionLabel>
+      <View className="min-h-14 flex-row items-center justify-between gap-4">
+        <View className="flex-1">
+          <Text nativeID="contact-lock-label" className="text-base leading-6">
+            {CONTACT_LOCK.title}
+          </Text>
+          <Text className="text-muted-foreground text-sm leading-5">{CONTACT_LOCK.short}</Text>
+        </View>
+        <Switch
+          checked={on}
+          disabled={toggle.busy || asking}
+          onCheckedChange={(next) => {
+            if (next) void toggle.run(wallet.setContactLock(true));
+            else setAsking(true);
+          }}
+          aria-labelledby="contact-lock-label"
+          accessibilityLabel={CONTACT_LOCK.title}
+        />
+      </View>
+      {asking ? (
+        <View className="gap-3">
+          <Notice icon={Lock} tone="warn-outline" title="Stop contacts locking your guardian?">
+            {`They won't be able to stop your guardian any more, even if they see something you didn't do. They still hear about recoveries and can cancel one. ${CONTACT_LOCK.offNeeds(hardware.brand)}`}
+          </Notice>
+          <View className="flex-row gap-3">
+            <AppButton title="Keep" variant="outline" size="compact" className="flex-1 self-auto" disabled={toggle.busy} onPress={() => setAsking(false)} />
+            <AppButton
+              title={toggle.busy ? `Waiting for your ${hardware.brand}…` : `Turn off with ${hardware.brand}`}
+              variant="destructive"
+              size="compact"
+              className="flex-1 self-auto"
+              busy={toggle.busy}
+              onPress={() => void turnOff()}
+            />
+          </View>
+        </View>
+      ) : null}
+      <ActionNotice message={toggle.message} error={toggle.error} />
+      <Footnote>{CONTACT_LOCK.allows}</Footnote>
+      <Footnote>{CONTACT_LOCK.cannot}</Footnote>
+      <Footnote>{`${CONTACT_LOCK.worst}${on ? '' : ' Turning it on works from this phone alone.'}`}</Footnote>
+    </>
+  );
+}
 
 function Avatar({ children }: { children: React.ReactNode }) {
   return <View className="bg-secondary size-10 shrink-0 items-center justify-center rounded-full">{children}</View>;
@@ -98,6 +162,7 @@ export default function AlertContacts() {
         </View>
       </ListGroup>
       <Footnote>Alerts arrive as nostr messages, so contacts see them in any nostr app, like Damus or Amethyst.</Footnote>
+      <ContactLockSection />
     </Screen>
   );
 }

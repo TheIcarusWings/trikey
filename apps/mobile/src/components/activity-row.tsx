@@ -101,11 +101,27 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
       };
     case 'guardian-locked':
       return {
-        title: event.byPhone ? 'Guardian locked from this phone' : 'Guardian locked',
-        subtitle: `${hostLabel(event.host)} · ${when}`,
-        subtitleTone: 'muted',
+        title: event.byContact ? `Guardian locked by ${event.byContact}` : event.byPhone ? 'Guardian locked from this phone' : 'Guardian locked',
+        subtitle: event.byContact ? `${hostLabel(event.host)} · ${when} · from their nostr app` : `${hostLabel(event.host)} · ${when}`,
+        subtitleTone: event.byContact ? 'warn' : 'muted',
         icon: Lock,
         iconTone: 'warn',
+      };
+    case 'contact-lock-on':
+      return {
+        title: 'Contacts can lock your guardian',
+        subtitle: `${when} · from this phone`,
+        subtitleTone: 'muted',
+        icon: Lock,
+        iconTone: 'fill',
+      };
+    case 'contact-lock-off':
+      return {
+        title: 'Contacts can no longer lock your guardian',
+        subtitle: `${when} · approved on ${ctx.hardwareBrand}`,
+        subtitleTone: 'muted',
+        icon: Lock,
+        iconTone: 'fill',
       };
     case 'wallet-retired':
       return {

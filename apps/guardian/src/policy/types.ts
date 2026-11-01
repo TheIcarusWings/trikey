@@ -12,6 +12,12 @@ export interface Rules {
   alertContacts: string[];
   /** Max absolute fee (sats) a recovery sweep may pay. */
   sweepFeeCapSats: bigint;
+  /**
+   * Opt-in (DESIGN.md, rule 8; docs/design/contact-lock.md): the alert contacts may LOCK the guardian with a NIP-17 DM,
+   * nothing else. Absent (or false) means off, and is then not part of `policyHash`: a policy without it is exactly
+   * the policy from before the member existed. Turning it on is tightening (the phone alone); off needs the hardware.
+   */
+  contactLock?: boolean;
 }
 
 /** How the hardware wallet proves it approved something. Only BIP137 for now. */
@@ -292,7 +298,7 @@ export type ActivityEvent =
   | { type: 'phone_spending_resumed'; sequence: number }
   | { type: 'phone_spending_resume_refused'; refusal: Refusal }
   | { type: 'alert_sent'; alertId: string; recipients: string[] }
-  /** A `limit_off` / `limit_on` notice reached `recipients` (`LimitNotice`). */
+  /** A `limit_off` / `limit_on` / `contact_lock` notice reached `recipients` (`LimitNotice`). */
   | { type: 'limit_alert_sent'; noticeId: string; kind: LimitNotice['kind']; recipients: string[] }
   /**
    * After a recovery's sweep was accepted by a node: `fromWalletId` retired, and `toWalletId` (the
@@ -314,6 +320,8 @@ export type ActivityEvent =
   | { type: 'hardware_auth_confirmed'; walletId: string }
   | { type: 'hardware_auth_confirm_refused'; refusal: Refusal }
   | { type: 'recovery_access_granted'; phone: string; until: number }
+  /** Alert contact `contact` locked the guardian with a `LOCK` DM (`Rules.contactLock` on). */
+  | { type: 'contact_locked'; contact: string }
   | { type: 'guardian_reset' };
 
 /** `count`/`lastAt`: an identical refusal repeated right after this one is counted here instead of logged again. */
@@ -356,15 +364,17 @@ export interface GuardedWallet {
 }
 
 /**
- * A limit change the service must tell people about (`limit_off` to the paired phone and the alert contacts,
- * `limit_on` to the paired phone), delivered like the recovery alerts: `dueNotices()` lists what is owed,
+ * Something the service must tell people about, delivered like the recovery alerts: `dueNotices()` lists what is owed,
  * `markNoticeSent` records each delivery, and a notice no one could be reached for is retried until it is
- * `NOTICE_TTL_MS` old.
+ * `NOTICE_TTL_MS` old. `limit_off` goes to the paired phone and the alert contacts, `limit_on` to the paired phone;
+ * `contact_lock` (an alert contact locked the guardian with a `LOCK` DM) to the paired phone and every other alert
+ * contact (the one who locked it got the answer to its DM); `contact_lock_on` / `contact_lock_off` (the rules now let
+ * the contacts lock the guardian, or no longer do) to the alert contacts only, so they know whether `LOCK` works.
  */
 export interface LimitNotice {
-  /** `limit-<n>`, unique (the activity id of the change). */
+  /** `limit-<n>`, `lock-<n>` or `lockrule-<n>`, unique (the next activity id when it was queued). */
   id: string;
-  kind: 'limit_off' | 'limit_on';
+  kind: 'limit_off' | 'limit_on' | 'contact_lock' | 'contact_lock_on' | 'contact_lock_off';
   walletId: string;
   /** ms */
   at: number;
@@ -374,6 +384,8 @@ export interface LimitNotice {
   limitSats?: bigint;
   /** `limit_on`: who turned it on. */
   reason?: 'phone' | 'hardware' | 'recovery';
+  /** `contact_lock`: the alert contact who locked the guardian (nostr pubkey). */
+  contact?: string;
   /** The paired phone first, then the contacts (nostr pubkeys). */
   recipients: string[];
   /** Recipients it reached. */
@@ -408,7 +420,7 @@ export interface GuardianState {
   recoveries: RecoveryRecord[];
   activity: ActivityEntry[];
   nextActivityId: number;
-  /** Limit changes still owed to someone (`LimitNotice`). Absent in files from before "no daily limit". */
+  /** Limit changes and contact locks still owed to someone (`LimitNotice`). Absent in files from before "no daily limit". */
   notices?: LimitNotice[];
   /** The latest chain tip the engine saw (`ChainTime` plus when, on the system clock). */
   chainSeen?: { height: number; medianTimePastMs: number; at: number };

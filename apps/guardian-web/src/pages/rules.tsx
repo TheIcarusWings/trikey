@@ -4,7 +4,7 @@ import { useGuardian } from '@/components/guardian-provider';
 import { PageHeader } from '@/components/page-header';
 import { ErrorState, PageSkeleton } from '@/components/states';
 import { useApi, usePageTitle } from '@/hooks/use-api';
-import { LIMIT_OFF_TEXT, dailyLimitText, formatSats } from '@/lib/format';
+import { LIMIT_OFF_TEXT, contactLockDetail, contactLockText, dailyLimitText, formatSats } from '@/lib/format';
 
 function RuleRow({ title, value, children }: { title: string; value: ReactNode; children: ReactNode }) {
   return (
@@ -66,6 +66,9 @@ export function RulesPage() {
                 </>
               )}
               .
+            </RuleRow>
+            <RuleRow title="Contacts can lock the guardian" value={contactLockText(rules)}>
+              {contactLockDetail(rules)}
             </RuleRow>
             <RuleRow title="Sweep fee cap" value={`${formatSats(rules.sweepFeeCapSats)} sats`}>
               A recovery can't spend more than this on fees.

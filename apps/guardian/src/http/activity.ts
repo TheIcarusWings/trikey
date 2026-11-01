@@ -1,6 +1,6 @@
 /** Engine and service log entries as the web UI's `ActivityEntry`. */
 import { npubEncode } from 'nostr-tools/nip19';
-import { isLimitOff, type ActivityEntry as EngineEntry } from '../policy/index.js';
+import { isContactLockOn, isLimitOff, type ActivityEntry as EngineEntry } from '../policy/index.js';
 import type { ServiceActivity } from '../service-state.js';
 import { refusalText } from '../nostr/wire.js';
 import { formatWhen } from '../alerts.js';
@@ -8,6 +8,15 @@ import type { ActivityEntry } from './types.js';
 
 const iso = (ms: number) => new Date(ms).toISOString();
 const shortTx = (txid: string) => `${txid.slice(0, 8)}…${txid.slice(-6)}`;
+
+/** The whole npub (the contact's name lives on the phone only). */
+export function npubOrHex(pubkey: string): string {
+  try {
+    return npubEncode(pubkey);
+  } catch {
+    return pubkey;
+  }
+}
 
 export function shortNpub(pubkey: string): string {
   try {
@@ -61,6 +70,10 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
       if (e.from.recoveryDelayDays !== e.to.recoveryDelayDays) parts.push(`delay ${e.from.recoveryDelayDays} → ${e.to.recoveryDelayDays} days`);
       if (e.from.sweepFeeCapSats !== e.to.sweepFeeCapSats) parts.push(`fee cap ${e.from.sweepFeeCapSats} → ${e.to.sweepFeeCapSats} sats`);
       if (e.from.alertContacts.join() !== e.to.alertContacts.join()) parts.push(`alert contacts ${e.from.alertContacts.length} → ${e.to.alertContacts.length}`);
+      // Rule 8, opt-in: whether the alert contacts may lock this guardian, in words.
+      const lockWas = isContactLockOn(e.from);
+      const lockNow = isContactLockOn(e.to);
+      if (lockWas !== lockNow) parts.push(lockNow ? 'alert contacts may now lock this guardian (LOCK over nostr)' : 'alert contacts can no longer lock this guardian');
       // No daily limit: said in words, never as 21 million BTC.
       if (nowOff && !wasOff) {
         const how = e.by === 'hardware' && e.sequence !== undefined ? ` (hardware approval #${e.sequence})` : '';
@@ -86,11 +99,14 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
         };
       }
       if (e.from.dailyLimitSats !== e.to.dailyLimitSats) parts.unshift(`daily limit ${e.from.dailyLimitSats} → ${e.to.dailyLimitSats} sats`);
+      const onlyLock = lockWas !== lockNow && parts.length === 1;
       return {
         ...base,
         kind: 'rules',
-        event: `Rules changed${parts.length ? `: ${parts.join(', ')}` : ''}${nowOff ? ' (no daily limit)' : ''}`,
-        summary: 'Rules changed',
+        event: onlyLock
+          ? `${lockNow ? 'Alert contacts may now lock this guardian by sending it LOCK over nostr' : 'Alert contacts can no longer lock this guardian'}${e.by === 'hardware' && e.sequence !== undefined ? ` (hardware approval #${e.sequence})` : ''}`
+          : `Rules changed${parts.length ? `: ${parts.join(', ')}` : ''}${nowOff ? ' (no daily limit)' : ''}`,
+        summary: onlyLock ? (lockNow ? 'Contacts may lock the guardian' : 'Contacts can no longer lock') : 'Rules changed',
         signedBy: e.by === 'hardware' ? 'Hardware wallet' : 'Phone',
         sats: null,
         result: 'rule-changed',
@@ -166,18 +182,29 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
         sats: null,
         result: 'ok',
       };
-    case 'limit_alert_sent':
+    case 'limit_alert_sent': {
+      const n = `${e.recipients.length} recipient${e.recipients.length === 1 ? '' : 's'}`;
+      const [event, summary] =
+        e.kind === 'limit_off'
+          ? [`"Daily limit turned off" alert sent to ${n}`, 'Limit-off alert sent']
+          : e.kind === 'limit_on'
+            ? [`"Daily limit back on" alert sent to the phone`, 'Limit-on alert sent']
+            : e.kind === 'contact_lock'
+              ? [`"Locked by an alert contact" alert sent to ${n}`, 'Lock alert sent']
+              : e.kind === 'contact_lock_on'
+                ? [`"You may lock the guardian" message sent to ${n}`, 'Contacts told they may lock']
+                : [`"You can no longer lock the guardian" message sent to ${n}`, 'Contacts told they can no longer lock'];
+      return { ...base, kind: e.kind === 'contact_lock' ? 'system' : 'rules', event, summary, signedBy: null, sats: null, result: 'ok' };
+    }
+    case 'contact_locked':
       return {
         ...base,
-        kind: 'rules',
-        event:
-          e.kind === 'limit_off'
-            ? `"Daily limit turned off" alert sent to ${e.recipients.length} recipient${e.recipients.length === 1 ? '' : 's'}`
-            : `"Daily limit back on" alert sent to the phone`,
-        summary: e.kind === 'limit_off' ? 'Limit-off alert sent' : 'Limit-on alert sent',
-        signedBy: null,
+        kind: 'system',
+        event: `Locked by alert contact ${npubOrHex(e.contact)} via nostr (a LOCK message): nothing is co-signed until you unlock it. The phone and the other alert contacts are told.`,
+        summary: `Locked by contact ${shortNpub(e.contact)} via nostr`,
+        signedBy: 'Alert contact',
         sats: null,
-        result: 'ok',
+        result: 'locked',
       };
     case 'wallet_rotated': {
       const grants =
@@ -300,6 +327,19 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
         signedBy: 'Alert contact',
         sats: null,
         result: e.ok ? 'ok' : 'refused',
+      };
+    case 'contact_lock_request':
+      return {
+        ...base,
+        kind: 'system',
+        event:
+          e.outcome === 'already_locked'
+            ? `Alert contact ${shortNpub(e.contact)} sent LOCK; the guardian was already locked`
+            : `Alert contact ${shortNpub(e.contact)} sent LOCK, which the rules do not allow; nothing changed`,
+        summary: e.outcome === 'already_locked' ? 'LOCK from a contact (already locked)' : 'LOCK from a contact refused',
+        signedBy: 'Alert contact',
+        sats: null,
+        result: e.outcome === 'already_locked' ? 'ok' : 'refused',
       };
     case 'clock_skew':
       return {

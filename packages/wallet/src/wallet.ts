@@ -50,6 +50,7 @@ import {
   decodeRecoveryUri,
   generateMessageId,
   GUARDIAN_FEATURES,
+  isContactLockOn,
   isLimitOff,
   LIMIT_OFF_SATS,
   normalizePolicy,
@@ -520,7 +521,10 @@ function nostrHex(npubOrHex: string): string {
   throw new WalletError('invalid_rules', 'Not a nostr public key (npub).');
 }
 
-/** The phone alone may only lower the daily limit and/or lengthen the delay (PROTOCOL.md, "Which changes need the hardware wallet"). */
+/**
+ * The phone alone may only lower the daily limit, lengthen the delay and/or let the alert contacts lock the guardian
+ * (PROTOCOL.md, "Which changes need the hardware wallet"). Stopping the contacts from locking it takes a protection away.
+ */
 export function phoneMayApply(from: Policy, to: Policy): boolean {
   const a = normalizePolicy(from);
   const b = normalizePolicy(to);
@@ -528,7 +532,8 @@ export function phoneMayApply(from: Policy, to: Policy): boolean {
     b.dailyLimitSats <= a.dailyLimitSats &&
     b.recoveryDelayDays >= a.recoveryDelayDays &&
     b.sweepFeeCapSats === a.sweepFeeCapSats &&
-    a.alertContacts.join(',') === b.alertContacts.join(',')
+    a.alertContacts.join(',') === b.alertContacts.join(',') &&
+    (!isContactLockOn(a) || isContactLockOn(b))
   );
 }
 
@@ -540,6 +545,8 @@ interface PairingSession {
   guardianVersion: string;
   /** The guardian answered `key3Mixed: true` to this phone's `entropy`. */
   key3Mixed: boolean;
+  /** `pair.prepare.features`: what may go into `pair`'s rules (`contactLock` only with `contact_lock`). */
+  features: string[];
   wallet: MultisigWallet;
   /** `onboard`: the first guardian; `replace`: the new guardian of "Replace guardian". */
   purpose: 'onboard' | 'replace';
@@ -1176,7 +1183,7 @@ export class TrikeyWallet {
       const acct = wallet.accountPubkeys();
       if (new Set([hex.encode(acct.app), hex.encode(acct.hardware), hex.encode(acct.cosigner)]).size !== 3)
         throw new WalletError('guardian_mismatch', 'The three keys of the wallet must be different.');
-      const session: PairingSession = { payload, rpc, pool, guardianKey: prep.guardianKey, guardianVersion: prep.guardianVersion, key3Mixed, wallet, purpose };
+      const session: PairingSession = { payload, rpc, pool, guardianKey: prep.guardianKey, guardianVersion: prep.guardianVersion, key3Mixed, features: [...(prep.features ?? [])], wallet, purpose };
       this.pairing = session;
       return session;
     } catch (e) {
@@ -1231,6 +1238,10 @@ export class TrikeyWallet {
     }
     // Pairing rules are not hardware-approved: the guardian refuses "no daily limit" here (turn it off after pairing).
     if (isLimitOff(rules.dailyLimitSats)) throw new WalletError('invalid_rules', 'A wallet is paired with a daily limit. You can turn it off afterwards, with your hardware wallet.');
+    // Letting the contacts lock the guardian may be set at pairing (it only adds protection), but only where the guardian
+    // knows the rule: an older one refuses the member. Refused before the hardware wallet is asked anything.
+    if (isContactLockOn(rules) && !session.features.includes(GUARDIAN_FEATURES.contactLock))
+      throw new WalletError('guardian_unsupported', "Your guardian can't let your alert contacts lock it yet. Pair without it, or update the guardian first.");
     const { wallet } = session;
     const walletId = wallet.fingerprint();
     const descriptor = wallet.descriptor();
@@ -1349,6 +1360,7 @@ export class TrikeyWallet {
       nextHardwareSequence: st.nextHardwareSequence,
       dailyLimit: st.dailyLimit,
       ...(st.features ? { features: [...st.features] } : {}),
+      ...(st.lock ? { lock: { ...st.lock } } : {}),
       skewSec: st.time - this.nowSec(),
       ...(st.walletId ? { walletId: st.walletId } : {}),
       ...(st.hardwareConfirmRequired !== undefined ? { hardwareConfirmRequired: st.hardwareConfirmRequired } : {}),
@@ -2036,6 +2048,11 @@ export class TrikeyWallet {
     const current = await this.getRules();
     if (current.policyHash === policyHash(policy)) return { ...current, approvedBy: 'unchanged' };
     if (isLimitOff(policy.dailyLimitSats) && !isLimitOff(current.policy.dailyLimitSats)) await this.requireLimitOffAllowed();
+    // A guardian without "contacts can lock" refuses the rule (its schema is strict): never send it there.
+    if (isContactLockOn(policy) && !isContactLockOn(current.policy)) await this.requireContactLockAllowed();
+    // While the contacts may lock the guardian, every hardware-approved change is signed over the version-3 text, which
+    // says whether they still may afterwards (`lock=on` / `lock=off`).
+    const contactLockBefore = isContactLockOn(current.policy);
     const verify = async () => {
       const got = await this.call('policy.get', {});
       return got.policyHash === policyHash(policy) ? got : undefined;
@@ -2051,7 +2068,8 @@ export class TrikeyWallet {
       }
     }
     if (!out) {
-      const r = await this.withApproval({ action: 'policy', policy }, (approval) => this.callChanging('policy.update', { policy, approval }, { verify }));
+      const action: HardwareAction = { action: 'policy', policy, ...(contactLockBefore ? { contactLockBefore } : {}) };
+      const r = await this.withApproval(action, (approval) => this.callChanging('policy.update', { policy, approval }, { verify }));
       out = { ...(await this.storeRules(r)), approvedBy: 'hardware' };
     }
     // The guardian's own count is the truth for the limit: re-read it (best effort).
@@ -2108,6 +2126,49 @@ export class TrikeyWallet {
     const { policy } = await this.getRules();
     // `updateRules` checks what the guardian supports before the hardware wallet is asked.
     return this.updateRules({ ...policy, dailyLimitSats: LIMIT_OFF_SATS });
+  }
+
+  /**
+   * The guardian knows "alert contacts can lock the guardian" (`contact_lock` in `guardian.status.features`, as last
+   * read): only then may the app offer the switch. An older guardian refuses the rule.
+   */
+  get contactLockSupported(): boolean {
+    return !!this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.contactLock);
+  }
+
+  /** The alert contacts may lock the guardian now (the rules as last read). */
+  get contactLockOn(): boolean {
+    return !!this.s.rules && isContactLockOn(this.s.rules.policy);
+  }
+
+  /**
+   * Who locked the guardian and when, while it is locked and the guardian said so (`guardian.status.lock`, or the
+   * `guardian_locked` alert). `contact` (with a name when this phone has one for it): an alert contact sent `LOCK`.
+   */
+  get guardianLock(): { reason: 'restart' | 'manual' | 'remote' | 'contact'; at: number; contact?: AlertContact } | undefined {
+    const gs = this.s.guardianStatus;
+    if (!gs || gs.state !== 'locked' || !gs.lock) return undefined;
+    const c = gs.lock.contact;
+    return { reason: gs.lock.reason, at: gs.lock.at, ...(c ? { contact: { pubkey: c, npub: npubEncode(c), name: this.s.contactNames[c] } } : {}) };
+  }
+
+  /** Refuses (before anything is sent) to turn on a rule the guardian does not know. */
+  private async requireContactLockAllowed(): Promise<void> {
+    const st = await this.refreshStatus();
+    if (!st.features?.includes(GUARDIAN_FEATURES.contactLock))
+      throw new WalletError('guardian_unsupported', "Your guardian can't let your alert contacts lock it yet. Update the guardian first.");
+  }
+
+  /**
+   * Lets the alert contacts lock the guardian (`on`), or stops them (`off`). A contact then locks it by sending it the
+   * word `LOCK` from any nostr app: no co-signing until the owner unlocks it; a contact can never unlock it, change the
+   * rules or see the wallet. Turning it on only adds protection, so the phone does it alone (also during a recovery);
+   * turning it off takes it away, so the hardware wallet approves it, over a text that says `lock=off`. Refused before
+   * anything is signed or sent when the guardian does not support it. The guardian tells the contacts either way.
+   */
+  async setContactLock(on: boolean) {
+    const { policy } = await this.getRules();
+    return this.updateRules(normalizePolicy({ ...policy, contactLock: on }));
   }
 
   async setRecoveryDelay(days: Policy['recoveryDelayDays']) {
@@ -2659,7 +2720,13 @@ export class TrikeyWallet {
           if (alert.atMs !== undefined && gs.guardianTimeMs !== undefined) newer = alert.atMs >= gs.guardianTimeMs;
           else newer = alert.at >= (gs.guardianTime ?? Math.floor(gs.checkedAt / 1000) + (gs.skewSec ?? 0));
         }
-        if (gs && newer) await this.update((s) => void (s.guardianStatus = { ...s.guardianStatus!, state: 'locked' }));
+        if (gs && newer)
+          await this.update((s) => {
+            // Who locked it, as the alert says (an alert contact's `LOCK`: `reason: "contact"` and the contact).
+            const r = alert.reason;
+            const lock = r === 'restart' || r === 'manual' || r === 'remote' || r === 'contact' ? { reason: r, at: alert.at, ...(alert.contact ? { contact: alert.contact } : {}) } : undefined;
+            s.guardianStatus = { ...s.guardianStatus!, state: 'locked', ...(lock ? { lock } : {}) };
+          });
         break;
       }
       case 'relays_changed':
@@ -3984,7 +4051,10 @@ export class TrikeyWallet {
     const current = normalizePolicy(this.s.rules!.policy);
     // A new guardian is paired with the limit on (pairing refuses "off"): the one it had before it was turned off
     // (0, "never", when that is not known), until the hardware wallet turns it off there again.
-    const rules = isLimitOff(current.dailyLimitSats) ? { ...current, dailyLimitSats: this.s.guardianStatus?.dailyLimit?.limitBeforeOffSats ?? 0 } : current;
+    const limited = isLimitOff(current.dailyLimitSats) ? { ...current, dailyLimitSats: this.s.guardianStatus?.dailyLimit?.limitBeforeOffSats ?? 0 } : current;
+    // A new guardian that does not know "contacts can lock" would refuse the rule: it is paired without it (the owner can
+    // turn it on there once it is updated). One that knows it keeps it.
+    const rules = isContactLockOn(limited) && !session.features.includes(GUARDIAN_FEATURES.contactLock) ? normalizePolicy({ ...limited, contactLock: false }) : limited;
     this.emitStep('pair');
     const { proof, hmac } = await this.withHardware(async (hw, rec) => {
       const reg = await hw.registerWallet({ name, descriptor });

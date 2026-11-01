@@ -974,6 +974,9 @@ class Service implements RkWalletService {
   removeContact(): Promise<void> {
     return Promise.reject(notAvailableYet('Alert contacts', 'They belong to a guardian.'));
   }
+  setContactLock(): Promise<void> {
+    return Promise.reject(notAvailableYet('Letting contacts lock the guardian', 'There is no guardian in Recovery Key mode.'));
+  }
   async findBackup(): Promise<null> {
     return null;
   }

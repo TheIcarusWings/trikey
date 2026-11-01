@@ -53,6 +53,11 @@ export type ServiceEvent =
   | { type: 'sweep_dead'; recoveryId: string; txid: string; reason: 'inputs_spent' | 'superseded' | 'invalid'; detail: string }
   | { type: 'recovery_waiting'; recoveryId: string; reason: string; detail: string }
   | { type: 'cancel_by_dm'; recoveryId: string; contact: string; ok: boolean; detail?: string }
+  /**
+   * An alert contact's `LOCK` DM that did not lock (dm-lock.ts): the guardian was locked already, or the rules do not
+   * let the contacts lock it. A lock itself is in the engine's log (`contact_locked`).
+   */
+  | { type: 'contact_lock_request'; contact: string; outcome: 'already_locked' | 'not_allowed' }
   | { type: 'clock_skew'; systemTime: number; chainTime: number }
   | { type: 'recovery_access'; phone: string; until: number }
   /** `PUT /api/relays`: a security event (the relays decide whether the phone can reach the guardian). */
@@ -174,6 +179,11 @@ export class ServiceState {
    * that was cancelled. State-changing requests are therefore recorded here,
    * durably, before they run. Returns false if this (sender, id) already ran.
    */
+  /** Whether `rememberRequest(key, ...)` already ran and is still remembered at `now`, without writing anything. */
+  hasRequest(key: string, now: number): boolean {
+    return this.data.requests.some((r) => r.key === key && r.until > now);
+  }
+
   async rememberRequest(key: string, until: number, now: number): Promise<boolean> {
     if (this.data.requests.some((r) => r.key === key && r.until > now)) return false;
     let fresh = true;

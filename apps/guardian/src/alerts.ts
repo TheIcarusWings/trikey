@@ -17,6 +17,7 @@ import type { Guardian } from './guardian.js';
 import { errorText } from './log.js';
 import type { DueAlert, LimitNotice, RecoveryRecord } from './policy/index.js';
 import { stampOf, toSeconds } from './nostr/wire.js';
+import { npubEncode } from 'nostr-tools/nip19';
 
 export function formatBtc(sats: bigint | number): string {
   const s = BigInt(sats);
@@ -79,7 +80,10 @@ export function alertText(g: Guardian, a: DueAlert, rec: RecoveryRecord | undefi
   const id = a.recoveryId;
   const amount = formatBtc(a.amountSats);
   const ends = formatWhen(a.readyAt);
-  const howToCancel = `To stop it, reply to this message with:\n\nCANCEL ${id}\n\nor cancel it in the Trikey app.`;
+  // While the rules let the contacts lock the guardian (rule 8), a running recovery's DMs say so too: locking does
+  // not stop the recovery, but it stops the guardian co-signing anything, the recovery's sweep included.
+  const lockHint = g.engine.status().rules?.contactLock ? `\n\nCANCEL stops this recovery. ${LOCK_HINT}` : '';
+  const howToCancel = `To stop it, reply to this message with:\n\nCANCEL ${id}\n\nor cancel it in the Trikey app.${lockHint}`;
   if (form === 'short') {
     switch (a.kind) {
       case 'recovery_started':
@@ -135,9 +139,30 @@ export function alertText(g: Guardian, a: DueAlert, rec: RecoveryRecord | undefi
 
 const satsText = (sats: bigint | number) => `${BigInt(sats).toLocaleString('en-US')} sats`;
 
-/** The wire alert of a limit change, for the paired phone. */
-export function noticeToWire(n: LimitNotice): Alert {
+/** A contact as the alerts name it: its npub (the guardian knows no names; the phone shows its own). */
+function npubOf(pubkey: string): string {
+  try {
+    return npubEncode(pubkey);
+  } catch {
+    return pubkey;
+  }
+}
+
+/** What a contact can do while the rules let the contacts lock the guardian (rule 8): one line for their DMs. */
+export const LOCK_HINT = 'If something looks wrong and you cannot reach the owner, you can lock the guardian (it then co-signs nothing until the owner unlocks it) by replying with: LOCK';
+
+/** The wire alert of a limit change or a contact lock, for the paired phone (`undefined`: a notice for contacts only). */
+export function noticeToWire(n: LimitNotice): Alert | undefined {
   const stamp = stampOf(n.at);
+  if (n.kind === 'contact_lock_on' || n.kind === 'contact_lock_off') return undefined;
+  if (n.kind === 'contact_lock')
+    return {
+      type: 'guardian_locked',
+      ...stamp,
+      reason: 'contact',
+      ...(n.contact ? { contact: n.contact } : {}),
+      message: 'An alert contact locked your guardian: it co-signs nothing until you unlock it. If you did not expect this, check what they saw.',
+    };
   if (n.kind === 'limit_off')
     return {
       type: 'limit_off',
@@ -159,8 +184,32 @@ export function noticeToWire(n: LimitNotice): Alert {
   };
 }
 
-/** The NIP-17 DM to an alert contact (only `limit_off` goes to contacts). */
-export function noticeText(n: LimitNotice): string {
+/**
+ * The NIP-17 DM to an alert contact (`limit_off`, `contact_lock`, `contact_lock_on` and `contact_lock_off` go to
+ * contacts). `canLock`: the rules let the contacts lock the guardian now, so a `limit_off` DM says how.
+ */
+export function noticeText(n: LimitNotice, canLock = false): string {
+  if (n.kind === 'contact_lock_on')
+    return [
+      'Trikey: the owner of the bitcoin wallet you help protect now lets you lock their Trikey Guardian.',
+      '',
+      'If you ever see something they did not do (a recovery they did not start, their limit turned off, a message that looks wrong), you can send this guardian the single word:',
+      '',
+      'LOCK',
+      '',
+      'It then co-signs nothing until the owner unlocks it, and the owner and the other alert contacts are told it was you. You cannot unlock it, change its rules or see the wallet; locking moves no funds.',
+    ].join('\n');
+  if (n.kind === 'contact_lock_off')
+    return `Trikey: on ${formatWhen(n.at)} the owner's hardware wallet approved that alert contacts can no longer lock the guardian of the wallet you help protect. LOCK messages now do nothing. You still get its alerts and can still cancel a recovery. If the owner did not mean to do this, talk to them.`;
+  if (n.kind === 'contact_lock')
+    return [
+      'Trikey alert: the Trikey Guardian of the bitcoin wallet you help protect was locked by another alert contact.',
+      '',
+      `Who and when: ${n.contact ? npubOf(n.contact) : 'an alert contact'}, on ${formatWhen(n.at)}, by sending LOCK to the guardian.`,
+      'While it is locked the guardian co-signs nothing, so the owner can only pay with their hardware wallet. No funds moved. Only the owner can unlock it.',
+      '',
+      'If you know why, nothing else is needed. If not, talk to the owner.',
+    ].join('\n');
   if (n.kind === 'limit_on') return `Trikey: the daily limit of the wallet you help protect is back on (${satsText(n.limitSats ?? 0n)} in 24 hours).`;
   return [
     'Trikey alert: the daily limit of the bitcoin wallet you help protect was turned off.',
@@ -168,6 +217,7 @@ export function noticeText(n: LimitNotice): string {
     `What happened: on ${formatWhen(n.at)}, the owner's hardware wallet approved turning off the daily limit${n.limitSats !== undefined ? ` (it was ${formatBtc(n.limitSats)})` : ''}. From now on, their phone and their Trikey Guardian together can send everything in the wallet at once.`,
     '',
     'If the owner did not mean to do this, or you are not sure, talk to them now. They can turn the limit back on from their phone alone.',
+    ...(canLock ? ['', LOCK_HINT] : []),
   ].join('\n');
 }
 
@@ -204,12 +254,14 @@ export class Alerter {
    */
   private async sendNotices(): Promise<void> {
     const g = this.g;
+    const canLock = !!g.engine.status().rules?.contactLock;
     for (const n of g.engine.dueNotices()) {
       const phone = g.engine.walletById(n.walletId)?.appNostrPubkey;
       const delivered: string[] = [];
       for (const to of n.recipients) {
         try {
-          const ok = to === phone ? await g.notifyPeer(to, noticeToWire(n)) : (await g.dm!.send(to, noticeText(n))).some((o) => o.ok);
+          const wire = to === phone ? noticeToWire(n) : undefined;
+          const ok = to === phone ? !!wire && (await g.notifyPeer(to, wire)) : (await g.dm!.send(to, noticeText(n, canLock))).some((o) => o.ok);
           if (ok) delivered.push(to);
           else g.log.warn('alert.not_delivered', { alertId: n.id, to: to === phone ? 'phone' : 'contact' });
         } catch (e) {

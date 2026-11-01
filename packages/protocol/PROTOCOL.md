@@ -88,7 +88,7 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 
 | Method | Params | Result |
 |---|---|---|
-| `pair.prepare` | `pairingSecret`, `network`, `entropy?: Hex32` (the phone's contribution to key 3, see "Key 3 from both sides") | `guardianKey: KeyOrigin`, `guardianVersion`, `key3Mixed?: boolean` |
+| `pair.prepare` | `pairingSecret`, `network`, `entropy?: Hex32` (the phone's contribution to key 3, see "Key 3 from both sides") | `guardianKey: KeyOrigin`, `guardianVersion`, `key3Mixed?: boolean`, `features?` (as `guardian.status.features`, which an unpaired phone cannot call: the phone puts `contactLock` in `pair`'s rules only when it lists `contact_lock`) |
 | `pair` | `pairingSecret`, `deviceName` (1-64), `network` (`bitcoin`\|`testnet`\|`signet`\|`regtest`), `phoneKey: KeyOrigin`, `descriptor`, `phoneNostrPubkey: Hex32`, `hardwareAuth: { pubkey, path }`, `hardwareAuthProof`, `rules: Policy`, `replacesWalletId?: WalletId`, `replacesDescriptor?` (needs `replacesWalletId`; see "Replacing the guardian") | `guardianKey: KeyOrigin`, `descriptor`, `walletId`, `guardianVersion`, `key3Mixed?: boolean` |
 | `sign` | `psbt`, `memo?` | `psbt` (with the guardian's partial signatures) |
 | `policy.get` | `{}` | `policy`, `nextHardwareSequence`, `policyHash`, `warnings?` (`["no_alert_contacts"]`: no alert contact, so a recovery is announced only to the paired phone; mainnet guardians refuse such a policy, test networks warn) |
@@ -99,7 +99,7 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `recovery.status` | `recoveryId?` (default: the active one) | `recovery` (or `null`), `psbt?` (the signed sweep, once the guardian has co-signed it) |
 | `phone.resume` | `approval` | `phoneSpending: "enabled"` |
 | `guardian.unlock` | `{kind:"passphrase", passphrase}` or `{kind:"hardware", secret: hex}` | `unlocked: boolean` (`1101` with `data.reason` `phone_unlock_disabled` after 5 wrong passphrases in a row until the web UI unlocks, or `recovery_pending` while a recovery the phone did not start runs; the phone's attempts have their own rate limit) |
-| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time`, `atMs?` (the guardian's clock in milliseconds when it answered, see "Time"), `dailyLimit?: { limitSats, usedSats, availableSats, off?: true, limitBeforeOffSats? }` (`off` while there is no daily limit; `limitBeforeOffSats` the limit before it was turned off, when known), `features?` (what the guardian can do beyond the base protocol, see "No daily limit"; unknown names are ignored), `walletId?`, `hardwareConfirmRequired?`, `watchedWalletId?` (the replaced wallet the guardian watches, if any), `key3Mixed?` (while paired: key 3 was made with the phone's `entropy`), `warnings?` (as `policy.get`'s), `relays?` (the guardian's current relays, section 5 "Changing relays") |
+| `guardian.status` | `{}` | `state` (`locked`\|`unlocked`), `paired`, `nextHardwareSequence`, `phoneSpending` (`enabled`\|`paused_recovery`\|`paused_contested`\|`retired`), `activeRecoveryId`, `version`, `time`, `atMs?` (the guardian's clock in milliseconds when it answered, see "Time"), `dailyLimit?: { limitSats, usedSats, availableSats, off?: true, limitBeforeOffSats? }` (`off` while there is no daily limit; `limitBeforeOffSats` the limit before it was turned off, when known), `features?` (what the guardian can do beyond the base protocol, see "No daily limit"; unknown names are ignored), `walletId?`, `hardwareConfirmRequired?`, `watchedWalletId?` (the replaced wallet the guardian watches, if any), `key3Mixed?` (while paired: key 3 was made with the phone's `entropy`), `warnings?` (as `policy.get`'s), `relays?` (the guardian's current relays, section 5 "Changing relays"), `lock?: { reason, at, contact? }` (while locked, guardians with `contact_lock`: `reason` `restart`\|`manual`\|`remote`\|`contact`, `at` unix seconds, `contact` the alert contact who sent `LOCK`; see "Alert contacts can lock the guardian") |
 | `guardian.lock` | `{}` | `state: "locked"` (see "Locking from the phone") |
 | `wallet.sync` | `historyLimit?` (1-500, default 100), `wallet?` (`"replaced"`, `"helper"` or a `WalletId`; default the paired wallet) | `walletId?`, `tipHeight`, `tipHash`, `utxos`, `utxosTruncated`, `balance: { confirmedSats, unconfirmedSats }`, `history`, `historyTruncated`, `nextReceiveIndex`, `nextChangeIndex`, `gapLimit`, `coins?` (`"helper"` only) (see "Chain data", "Silent payments") |
 | `tx.get` | `txid: Hex32`, `witness?: boolean` (default `true`) | `txHex` |
@@ -115,7 +115,7 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `sp.scan` | `fromHeight?` | `tipHeight`, `birthHeight`, `scanning`, `matches: [{ txid, vout, valueSats, outputKey, tweak, label?, height }]` (at most 500, oldest first), `matchesTruncated` |
 | `relays.ack` | `relays: RelayList` (the relays the phone uses now) | `current: boolean` (they are the guardian's current list, in any order), `relays: RelayList` (the guardian's current list) (paired phone only; see section 5, "Changing relays") |
 
-**Policy** is exactly the four rules the guardian's policy engine enforces, and nothing else:
+**Policy** is exactly the rules the guardian's policy engine enforces, and nothing else: four always, and one opt-in rule that is present only when it is on:
 
 | Member | Rule |
 |---|---|
@@ -123,16 +123,20 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `recoveryDelayDays` | Delay & Notify period: **7, 14 or 30** |
 | `alertContacts` | up to 20 nostr pubkeys (`Hex32`, lowercase) that receive recovery alerts and may cancel a recovery |
 | `sweepFeeCapSats` | highest absolute fee a recovery sweep may pay (`Sats`, at least 1) |
+| `contactLock?` | `true`: the alert contacts may lock the guardian with a `LOCK` DM (opt-in, see "Alert contacts can lock the guardian"). Absent or `false` (normalized away): off, as it always was. Only guardians that report `contact_lock` know this member |
 
-The schema is **strict**: any other member (the old `perTxLimitSats` and `allowlist` included) is a validation error, not preserved or ignored, so the protocol never carries a rule the guardian does not enforce. `policyHash` = hex SHA-256 of the canonical JSON (keys sorted by UTF-16 code unit, no whitespace) of the *normalized* policy: `alertContacts` lowercased, deduplicated and sorted, and exactly the four members:
+The schema is **strict**: any other member (the old `perTxLimitSats` and `allowlist` included) is a validation error, not preserved or ignored, so the protocol never carries a rule the guardian does not enforce. `policyHash` = hex SHA-256 of the canonical JSON (keys sorted by UTF-16 code unit, no whitespace) of the *normalized* policy: `alertContacts` lowercased, deduplicated and sorted, and exactly the four members, plus `"contactLock":true` (sorted between `alertContacts` and `dailyLimitSats`) only when it is on:
 
 ```
 {"alertContacts":["<hex>",...],"dailyLimitSats":100000,"recoveryDelayDays":14,"sweepFeeCapSats":20000}
+{"alertContacts":["<hex>",...],"contactLock":true,"dailyLimitSats":100000,"recoveryDelayDays":14,"sweepFeeCapSats":20000}
 ```
+
+So a policy without the opt-in rule hashes exactly as it did before the member existed.
 
 This is byte for byte the engine's `policyHash(rules)` (a test compares them). The guardian stores and returns the normalized policy.
 
-**Which changes need the hardware wallet.** The phone alone may only *tighten*: lower `dailyLimitSats` and/or raise `recoveryDelayDays`, nothing else changing. Raising the limit, shortening the delay, changing the fee cap (a lower cap could block a genuine recovery, so it is not a safe direction) or the contacts needs `approval`. Without it the guardian answers `ApprovalRequired`. While a recovery is running, hardware-approved policy changes are refused (`RecoveryAlreadyActive`).
+**Which changes need the hardware wallet.** The phone alone may only *tighten*: lower `dailyLimitSats`, raise `recoveryDelayDays` and/or turn `contactLock` on, nothing else changing. Turning `contactLock` off takes a protection away and needs `approval`. Raising the limit, shortening the delay, changing the fee cap (a lower cap could block a genuine recovery, so it is not a safe direction) or the contacts needs `approval`. Without it the guardian answers `ApprovalRequired`. While a recovery is running, hardware-approved policy changes are refused (`RecoveryAlreadyActive`).
 
 **No daily limit.** `dailyLimitSats` = `LIMIT_OFF_SATS` (2,100,000,000,000,000, all bitcoin there will ever be) means there is no cap on what the phone + guardian co-sign. It is not a new `Policy` member, so `policyHash` and the protocol version are unchanged; every other rule still applies, and the guardian still counts what it co-signs (`dailyLimit.usedSats`). Only guardians that list `limit_off` in `guardian.status.features` (`GUARDIAN_FEATURES.limitOff`) know it, and only to them does a phone offer it. Such a guardian:
 
@@ -157,6 +161,7 @@ The guardian never parses text from the phone. It rebuilds the text from the req
 | Action | Text |
 |---|---|
 | `policy` | `Trikey policy v1 wallet=<walletId> seq=<n> limit=<sats> delay=<days>d feecap=<sats> contacts=<count> hash=<policyHash> expires=<ISO 8601 UTC, seconds>` (of the *new* policy) |
+| `policy` where the alert contacts may lock the guardian: the new policy has `contactLock`, or the current one has and the new one does not (guardians with `contact_lock`) | `Trikey policy v3 wallet=<walletId> seq=<n> limit=<sats\|off> delay=<days>d feecap=<sats> contacts=<count> lock=<on\|off> hash=<policyHash> expires=<ISO>` (`lock=` is the new policy's value, so turning it off says `lock=off`; the limit as in versions 1 and 2; at most 238 characters) |
 | `policy` with no daily limit (`dailyLimitSats` = `LIMIT_OFF_SATS`; guardians with `limit_off`) | `Trikey policy v2 wallet=<walletId> seq=<n> limit=off delay=<days>d feecap=<sats> contacts=<count> hash=<policyHash> expires=<ISO>` (the hash is the same `policyHash`; at most 216 characters) |
 | `cancel-recovery` | `Trikey cancel-recovery v1 wallet=<walletId> seq=<n> recovery=<recoveryId> expires=<ISO>` |
 | `resume-phone` | `Trikey resume-phone v1 wallet=<walletId> seq=<n> expires=<ISO>` |
@@ -271,6 +276,17 @@ It stores the descriptor as a **watched-only wallet** that belongs to the paired
 
 **`guardian.lock`** drops key 3 from the guardian's memory, as the web UI's Lock button does, for when the user thinks the box was physically compromised. Only the paired phone may send it (anyone else is dropped without an answer, section 4). It needs no approval because it only reduces what the guardian can do, and it is answered `{ state: "locked" }` even when the guardian already was. The phone (and the web UI) see a `guardian_locked` alert with `reason: "remote"`. Unlocking is unchanged: `guardian.unlock` or the web UI.
 
+### Alert contacts can lock the guardian
+
+Opt-in (`Policy.contactLock`, DESIGN.md rule 8, docs/design/contact-lock.md). Only guardians that list `contact_lock` in `guardian.status.features` (and in `pair.prepare.features`) know it, and only to them does a phone send it. While it is on, an **alert contact of the active wallet** can lock the guardian from an ordinary nostr app:
+
+* **The command** is a NIP-17 DM to the guardian whose text is the single word `LOCK` (case-insensitive, an optional trailing `.` or `!`, surrounding blank lines and quoted `>` lines ignored, so a reply quoting an alert works). Anything else is not the command (`don't lock it`, `lock?`, `LOCK 3-0123…`). It needs no code from an alert: a contact may lock on what they hear from the owner as much as on an alert, and a mistaken lock costs only an unlock.
+* **The effect** is exactly the locked state of `guardian.lock`: key 3 leaves memory, nothing is co-signed (phone-only payments get `1100`); recoveries, their timers and their alerts run on as on any locked guardian (a ready recovery is co-signed once the owner unlocks). Nothing else changes: not the rules, not a recovery. A contact can only lock: never unlock, change rules or read anything.
+* **Answers.** The contact gets one short DM: locked; already locked (nothing changed, nobody alerted); or not allowed (the setting is off, nothing changed). Anyone who is not an alert contact of the active wallet (a stranger, the paired phone's key, a running recovery's recipient no longer in the rules) gets **no answer at all**, so the command cannot be used to probe who is a contact or whether the setting is on. Only messages whose own timestamp is within 10 minutes of the guardian's clock count, each message once (remembered durably, as state-changing requests are: relays re-deliver old wraps after a restart), and at most 5 per contact per hour (more are dropped silently).
+* **Alerts.** A lock is logged (`Locked by alert contact npub… via nostr`) and alerts, retried for 7 days like `limit_off`: `guardian_locked` with `reason: "contact"` and `contact` to the paired phone, and a NIP-17 DM to every **other** alert contact saying who locked it and when. The guardian also DMs the alert contacts when the setting goes on (how to lock) or off (`LOCK` no longer works), and while it is on, its recovery and `limit_off` DMs end with how to lock.
+* **Unlocking** is unchanged: the owner's passphrase in the web UI, or the phone's `guardian.unlock` with its own throttle.
+* **The setting**: on is a tightening (the phone alone, also in `pair` and during a recovery); off needs a hardware approval over the version-3 text, `lock=off` (refused during a recovery, like every hardware-approved change). The rules, `contactLock` included, carry over to a wallet a recovery adopts.
+
 ### Chain data
 
 The guardian already has the wallet's descriptor and the user's own Electrs, so it serves the paired phone's chain data and broadcasts for it: the phone never asks a public server. `wallet.sync`, `tx.get`, `tx.broadcast` and `fees.estimate` need no key 3, so they **work while the guardian is locked**. Only the paired phone may call them (plus, for the reads, a phone with recovery access); requests from anyone else are dropped without an answer like every other unauthorized request. Amounts are `Sats` (JSON numbers); heights are 0 while unconfirmed.
@@ -326,7 +342,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 | `recovery_ready` | `recoveryId`, `readyAt`, `survivingRole`, `amountSats` (the delay has elapsed) |
 | `recovery_cancelled` | `recoveryId`, `cancelledBy` (`app`\|`contact`\|`hardware`), `contested?` |
 | `recovery_completed` | `recoveryId`, `txid?` |
-| `guardian_locked` | `reason?` (`restart`\|`manual`\|`remote`\|`tamper`); `remote` = `guardian.lock` from the phone |
+| `guardian_locked` | `reason?` (`restart`\|`manual`\|`remote`\|`tamper`\|`contact`), `contact?`; `remote` = `guardian.lock` from the phone; `contact` = the alert contact `contact` sent `LOCK` (see "Alert contacts can lock the guardian"; phones before it drop this alert and see the lock in `guardian.status`) |
 | `wallet_adopted` | `walletId`, `previousWalletId`, `recoveryId`, `hardwareConfirmRequired` (see "Wallet rotation") |
 | `sp_received` | `txid`, `vout`, `valueSats`, `height`, `label?`: the silent payment scanner found a payment in a new block (see "Silent payments"); `sp.scan` has its tweak |
 | `limit_off` | `sequence` (the hardware approval's), `limitBeforeSats?`: the daily limit was turned off. To the paired phone; alert contacts get a NIP-17 DM saying so in words. See "No daily limit" |
@@ -488,6 +504,6 @@ It carries **no secret and no expiry**: the npub and relays are not secret, and 
 
 * Add new methods or optional result members freely; never change the meaning of an existing error code or field. A breaking envelope change bumps the `trikey` tag value.
 * A new alert `type` is dropped by phones that do not know it (the alert schema is a closed union, and a malformed message is dropped silently, section 4), and a new method is answered `-32601` by guardians that do not know it. So a new alert may only add something an older phone can do without (`relays_changed`: an older phone keeps the old relays, which the guardian watches until its owner stops them), and a phone sends a new method only to a guardian that showed it knows it.
-* A capability that changes what the phone may ask (rather than adding a method) is announced in `guardian.status.features`; the phone acts on it only when listed (`limit_off`: "No daily limit"). A new approval text gets a new version word (`Trikey policy v2`), so an older guardian refuses it with `1202` rather than misreading it.
+* A capability that changes what the phone may ask (rather than adding a method) is announced in `guardian.status.features`; the phone acts on it only when listed (`limit_off`: "No daily limit"; `contact_lock`: "Alert contacts can lock the guardian"). A new approval text gets a new version word (`Trikey policy v2`, `v3`), so an older guardian refuses it with `1202` rather than misreading it.
 * Hardware approvals are an `approval` object with a `kind`. Only `bip137` exists. If the project settles on a PSBT-based approval (see DESIGN.md, open question 1), it will be a new `kind`, not a change to `bip137`.
-* The policy is deliberately closed: a new rule means a new engine rule first, then a new `Policy` member and a new `policyHash` input (which changes every hash, so it needs a protocol version bump).
+* The policy is deliberately closed: a new rule means a new engine rule first, then a new `Policy` member and a new `policyHash` input. A rule that is always present changes every hash and needs a protocol version bump. An **opt-in** rule (`contactLock`) can avoid that: it is present only when on, so every policy without it, and its hash and approval text, are exactly what they were; it is announced as a feature, sent only to guardians that list it (older ones refuse the member, the schema being strict), and approved over a new text version. A guardian downgraded below the feature ignores the member (it hashes and returns the policy without it, and LOCK messages do nothing).

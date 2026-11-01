@@ -211,6 +211,9 @@ function DeveloperSection() {
             }}
           />
         ) : null}
+        {dev?.simulateContactLock && state.contactLock?.on && state.guardian.status !== 'locked' && !rk ? (
+          <AppButton title="Simulate a contact locking the guardian" variant="outline" onPress={() => dev.simulateContactLock!()} />
+        ) : null}
         {dev?.simulateRecoveryCoin && state.recovery?.origin === 'this-phone' && !rk ? (
           <AppButton
             title="Simulate a coin arriving during the recovery"

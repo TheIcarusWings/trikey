@@ -137,6 +137,22 @@ export interface Guardian {
    * the sentence to show, "Your guardian's key was made with randomness from both this phone and your guardian."
    */
   key3Note?: string;
+  /**
+   * While locked: an alert contact locked it by sending it `LOCK` over nostr (`contactLock` on). `name` is the name this
+   * phone keeps for that contact, else its shortened npub.
+   */
+  lockedByContact?: { name: string; npub: string };
+}
+
+/**
+ * Whether the alert contacts may lock the guardian (opt-in). A contact then sends the guardian `LOCK` from any nostr
+ * app: it co-signs nothing until the owner unlocks it. A contact can never unlock it, change the rules or see the
+ * wallet. Turning it on works from the phone alone; turning it off needs the hardware wallet.
+ */
+export interface ContactLockSetting {
+  on: boolean;
+  /** The guardian supports it (it says so). Only then does the app offer the switch. */
+  supported: boolean;
 }
 
 /** The three recovery waiting periods Bitkey-style Delay & Notify offers. */
@@ -197,8 +213,11 @@ export interface Transaction {
 
 export type SecurityEvent = { id: string; at: IsoDate } & (
   | { kind: 'guardian-restarted'; host: GuardianHost }
-  /** `byPhone`: this phone locked it remotely. */
-  | { kind: 'guardian-locked'; host: GuardianHost; byPhone?: boolean }
+  /** `byPhone`: this phone locked it remotely; `byContact`: an alert contact did, by sending it LOCK (their name or npub). */
+  | { kind: 'guardian-locked'; host: GuardianHost; byPhone?: boolean; byContact?: string }
+  /** The alert contacts may now lock the guardian (from this phone), or no longer may (approved on the hardware wallet). */
+  | { kind: 'contact-lock-on' }
+  | { kind: 'contact-lock-off' }
   /** The guardian stopped guarding this phone's wallet: retired (Replace guardian), swept by a recovery, or reset. */
   | { kind: 'wallet-retired'; reason: 'retired' | 'recovered' | 'reset' }
   /** The wallet moved to a new guardian. */
@@ -723,4 +742,6 @@ export interface WalletState {
   /** The last recovery finished into the wallet this phone holds now (`recoveryOutcome` is `finished`). */
   finishedRecovery: null | { lostKey: LostKey; movedSats: Sats };
   silentPayments: SilentPaymentsState;
+  /** Guardian mode: whether the alert contacts may lock the guardian. Absent where it does not apply (Recovery Key mode). */
+  contactLock?: ContactLockSetting;
 }

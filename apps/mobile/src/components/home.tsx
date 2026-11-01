@@ -15,6 +15,7 @@ import {
   formatBtc,
   formatCountdown,
   formatSats,
+  guardianLockedLine,
   LIMIT_OFF_LINE,
   limitIsOff,
   remainingToday,
@@ -235,7 +236,7 @@ export function GuardianDownNotice() {
           <Text className="text-[15px] font-semibold leading-5">{locked ? 'Guardian locked' : 'Guardian offline'}</Text>
           <Text className="text-sm leading-5">
             {locked
-              ? `Your ${host} restarted. Phone-only payments wait until you unlock it; your ${hardware.brand} can still pay.`
+              ? guardianLockedLine(guardian, host, hardware.brand)
               : `Trikey can't reach your ${host}. Phone-only payments wait until it's back; your ${hardware.brand} can still pay.`}
           </Text>
           {locked ? (

@@ -30,6 +30,37 @@ export function dailySpendSummary(spend: { usedSats: number; limitSats: number; 
 export const LIMIT_OFF_TEXT =
   'No daily limit: the phone and this guardian together can send everything in the wallet at once. Turn it back on in the Trikey app; that works from the phone alone.';
 
+/**
+ * Why the guardian is locked, for the locked screen. `clock` formats a time. `contact`: an alert contact sent it `LOCK`
+ * over nostr (the owner allowed that); `lockedBy` is its npub (the guardian knows no names), shortened here.
+ */
+export function lockCause(status: { lockedAt?: string; lockReason?: string; lockedBy?: string } | undefined, clock: (iso: string) => string): string {
+  if (!status?.lockedAt) return 'Key 3 is encrypted until you unlock it.';
+  const at = clock(status.lockedAt);
+  switch (status.lockReason) {
+    case 'manual':
+      return `You locked this guardian at ${at}, so key 3 is encrypted until you unlock it.`;
+    case 'remote':
+      return `Your phone locked this guardian at ${at}. If you did not ask for this, check the box before unlocking it.`;
+    case 'contact':
+      return `Locked by ${status.lockedBy ? `alert contact ${shortenMiddle(status.lockedBy, 12, 6)}` : 'an alert contact'} via nostr at ${at}. They saw something that worried them: find out what before you unlock it.`;
+    default:
+      return `This box restarted at ${at}, so key 3 is encrypted until you unlock it.`;
+  }
+}
+
+/** Rules: whether the alert contacts may lock this guardian, in a word. */
+export function contactLockText(rules: { contactLock?: boolean }): string {
+  return rules.contactLock ? 'On' : 'Off';
+}
+
+/** Rules: what that setting means, both ways. */
+export function contactLockDetail(rules: { contactLock?: boolean }): string {
+  return rules.contactLock
+    ? 'Your alert contacts can lock this guardian by sending it LOCK over nostr. They cannot unlock it, change rules or see the wallet; the worst they can do is lock it. Only you unlock it. Turning this off needs your hardware wallet.'
+    : 'Only you and your phone can lock this guardian. You can let your alert contacts lock it too, in the Trikey app.';
+}
+
 function startOfDay(d: Date): number {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }

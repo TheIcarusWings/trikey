@@ -8,11 +8,13 @@
  * recovery must be the running one (the engine cancels whichever recovery is
  * running, so the id check is what keeps an old or replayed reply from
  * cancelling a newer recovery). Anything else is ignored without an answer,
- * except for a short reply to known contacts.
+ * except for a short reply to known contacts. A `LOCK` message goes to
+ * dm-lock.ts instead (opt-in: the alert contacts may lock the guardian).
  */
 import type { Guardian } from './guardian.js';
 import type { IncomingDm } from './nostr/dm.js';
 import { refusalText } from './nostr/wire.js';
+import { isLockCommand, onLockDm } from './dm-lock.js';
 
 const CANCEL_RE = /\bcancel\s+([0-9a-z]+-[0-9a-f]{12})\b/i;
 /** Only answer "no such recovery" to fresh messages, so old DMs re-delivered after a restart stay quiet. */
@@ -24,6 +26,7 @@ export function parseCancel(content: string): string | undefined {
 }
 
 export async function onContactDm(g: Guardian, dm: IncomingDm): Promise<void> {
+  if (isLockCommand(dm.content)) return onLockDm(g, dm);
   const id = parseCancel(dm.content);
   if (!id) return;
   const reply = async (text: string) => {

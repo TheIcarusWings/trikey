@@ -25,6 +25,7 @@ export function rulesFromPolicy(p: Policy): Rules {
     recoveryDelayDays: p.recoveryDelayDays,
     alertContacts: [...p.alertContacts],
     sweepFeeCapSats: BigInt(p.sweepFeeCapSats),
+    ...(p.contactLock === true ? { contactLock: true } : {}),
   };
 }
 

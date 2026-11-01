@@ -30,6 +30,7 @@ import { relayListError } from '../lib/relays';
  *   signedout  set up and locked, this browser not signed in yet (the sign-in screen)
  *   oldrelays  two old relays from a change months ago, still watched; the phone switched
  *   limitoff   the owner turned the daily limit off with the hardware wallet yesterday
+ *   contactlocked  the owner lets the alert contacts lock the guardian, and one of them just did (LOCK over nostr)
  *
  * State lives in memory only, so a page reload starts the scenario over. In the
  * mock, any unlock passphrase works except the literal `wrong`, which is
@@ -45,7 +46,11 @@ export type MockScenario =
   | 'syncing'
   | 'signedout'
   | 'oldrelays'
-  | 'limitoff';
+  | 'limitoff'
+  | 'contactlocked';
+
+/** A throwaway demo contact key (`1b` × 32), as the guardian names a contact: its npub. */
+const DEMO_CONTACT_NPUB = 'npub1rvd3kxcmrvd3kxcmrvd3kxcmrvd3kxcmrvd3kxcmrvd3kxcmrvdsca5nvq';
 
 const LATENCY_MS = 120;
 const HOUR = 3_600_000;
@@ -132,15 +137,17 @@ function demoRecovery(ready = false): RecoveryInProgress {
 
 export function readScenario(search: string): MockScenario {
   const value = new URLSearchParams(search).get('mock');
-  const known: MockScenario[] = ['firstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout', 'oldrelays', 'limitoff'];
+  const known: MockScenario[] = ['firstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout', 'oldrelays', 'limitoff', 'contactlocked'];
   return known.find((s) => s === value) ?? 'default';
 }
 
 export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
   const setupDone = scenario !== 'firstrun';
-  let locked = scenario === 'locked' || scenario === 'signedout';
+  const contactLocked = scenario === 'contactlocked';
+  let locked = scenario === 'locked' || scenario === 'signedout' || contactLocked;
   let lockedAt: string | undefined = locked ? localAt(0, '03:12') : undefined;
-  let lockReason: 'restart' | 'manual' | 'remote' | undefined = locked ? 'restart' : undefined;
+  let lockReason: 'restart' | 'manual' | 'remote' | 'contact' | undefined = locked ? (contactLocked ? 'contact' : 'restart') : undefined;
+  let lockedBy: string | undefined = contactLocked ? DEMO_CONTACT_NPUB : undefined;
   let phones: PairedPhone[] =
     scenario === 'unpaired' || scenario === 'firstrun'
       ? []
@@ -161,6 +168,20 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
         summary: 'Daily limit turned off', signedBy: 'Hardware wallet', sats: null, result: 'rule-changed',
       },
       ...activity.filter((a) => a.at <= localAt(0, '00:00')),
+    ];
+  // `?mock=contactlocked`: an alert contact sent LOCK this morning (apps/guardian/src/http/activity.ts words).
+  if (contactLocked)
+    activity = [
+      {
+        id: 'a_lock_alert', at: localAt(0, '03:13'), kind: 'system', event: '"Locked by an alert contact" alert sent to 2 recipients',
+        summary: 'Lock alert sent', signedBy: null, sats: null, result: 'ok',
+      },
+      {
+        id: 'a_lock', at: localAt(0, '03:12'), kind: 'system',
+        event: `Locked by alert contact ${DEMO_CONTACT_NPUB} via nostr (a LOCK message): nothing is co-signed until you unlock it. The phone and the other alert contacts are told.`,
+        summary: 'Locked by contact npub1rvd3kxc…ca5nvq via nostr', signedBy: 'Alert contact', sats: null, result: 'locked',
+      },
+      ...activity,
     ];
   let recovery: RecoveryInProgress | null =
     scenario === 'recovery' ? demoRecovery() : scenario === 'recoveryready' ? demoRecovery(true) : null;
@@ -193,6 +214,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       { id: 'c_tom', name: 'Tom', kind: 'contact' },
     ],
     sweepFeeCapSats: 50_000,
+    contactLock: contactLocked,
     hardwarePayments: 'any-amount',
   };
 
@@ -240,6 +262,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       state: locked ? 'locked' : 'unlocked',
       lockedAt: locked ? lockedAt : undefined,
       lockReason: locked ? lockReason : undefined,
+      ...(locked && lockReason === 'contact' && lockedBy ? { lockedBy } : {}),
       relays,
       chain: syncing
         ? { state: 'syncing', progress: 0.87, source: 'Bitcoin Node + Electrs' }
@@ -268,6 +291,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
         locked = false;
         lockedAt = undefined;
         lockReason = undefined;
+      lockedBy = undefined;
       }
       return status();
     },
@@ -301,6 +325,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       locked = false;
       lockedAt = undefined;
       lockReason = undefined;
+      lockedBy = undefined;
       pushActivity({
         kind: 'system', event: 'Guardian unlocked', summary: 'Unlocked with passphrase',
         signedBy: 'Passphrase', sats: null, result: 'ok',
@@ -313,6 +338,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       locked = true;
       lockedAt = new Date().toISOString();
       lockReason = 'manual';
+      lockedBy = undefined;
       pushActivity({ kind: 'system', event: 'Guardian locked from the web UI', signedBy: null, sats: null, result: 'locked' });
       return status();
     },
@@ -405,6 +431,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       locked = false;
       lockedAt = undefined;
       lockReason = undefined;
+      lockedBy = undefined;
       activity = [];
       pushActivity({ kind: 'system', event: 'Guardian reset on this box: a new key 3 was created and the old one destroyed', signedBy: null, sats: null, result: 'ok' });
       return status();

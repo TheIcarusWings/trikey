@@ -116,6 +116,16 @@ export function limitToRestore(limit: Pick<WalletState['dailyLimit'], 'limitBefo
   return limit.limitBeforeOffSats && limit.limitBeforeOffSats > 0 ? limit.limitBeforeOffSats : DEFAULT_LIMIT_SATS;
 }
 
+/** The app may show the "contacts can lock" switch: guardian mode, and the guardian says it supports it. */
+export function canOfferContactLock(state: Pick<WalletState, 'mode' | 'contactLock'>): boolean {
+  return state.mode === 'guardian' && !!state.contactLock?.supported;
+}
+
+/** Turning it off takes a protection away, so it needs the hardware wallet; turning it on does not. */
+export function contactLockChangeNeedsHardware(next: boolean): boolean {
+  return !next;
+}
+
 export function delayChangeNeedsHardware(current: RecoveryDelayDays, next: RecoveryDelayDays): boolean {
   return next < current;
 }

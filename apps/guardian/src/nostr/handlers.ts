@@ -28,7 +28,7 @@ import {
 import { ElectrumError } from '../chain/electrum.js';
 import type { Guardian } from '../guardian.js';
 import { errorText } from '../log.js';
-import { isLimitOff, policyHash, type CancelActor, type RecoveryRecord, type WatchedWallet } from '../policy/index.js';
+import { isContactLockOn, isLimitOff, policyHash, type CancelActor, type RecoveryRecord, type WatchedWallet } from '../policy/index.js';
 import { helperAccount } from '../singlekey.js';
 import { NodeRpcRequiredError, NotRegisteredError } from '../silent/service.js';
 import { policyToWire, recoveryToWire, refusalError, rulesFromPolicy } from './wire.js';
@@ -296,6 +296,10 @@ export function buildHandlers(g: Guardian): Handlers {
           : {}),
         // What this guardian can do beyond the base protocol: the phone offers "no daily limit" only when it sees `limit_off`.
         ...(g.features.length ? { features: [...g.features] } : {}),
+        // While locked: why, since when, and (an alert contact's `LOCK`) who.
+        ...(g.locked && g.lockedAt !== undefined && g.lockReason
+          ? { lock: { reason: g.lockReason, at: Math.floor(g.lockedAt / 1000), ...(g.lockReason === 'contact' && g.lockedBy ? { contact: g.lockedBy } : {}) } }
+          : {}),
       };
     },
 
@@ -342,7 +346,8 @@ export function buildHandlers(g: Guardian): Handlers {
       session.key3Entropy = params.entropy;
       const key = g.key3ForPairing({ entropy: params.entropy, pairingId: session.id, phonePubkey: ctx.sender });
       key.signer.wipe();
-      return { guardianKey: originOf(key.pub), guardianVersion: g.version, key3Mixed: !!key.mix };
+      // The features too: an unpaired phone cannot ask `guardian.status`, and puts `contactLock` in `pair` only when listed.
+      return { guardianKey: originOf(key.pub), guardianVersion: g.version, key3Mixed: !!key.mix, ...(g.features.length ? { features: [...g.features] } : {}) };
     },
 
     pair: (params, ctx) =>
@@ -437,10 +442,17 @@ export function buildHandlers(g: Guardian): Handlers {
 
     'policy.update': async (params) => {
       const auth = params.approval ? { authenticatedBy: 'hardware' as const, approval: params.approval } : { authenticatedBy: 'app' as const };
-      const wasOff = isLimitOff(g.engine.status().rules ?? { dailyLimitSats: 0n });
+      const before = g.engine.status().rules;
+      const wasOff = isLimitOff(before ?? { dailyLimitSats: 0n });
+      const lockWas = isContactLockOn(before ?? {});
       const res = await g.engine.changeRules(rulesFromPolicy(params.policy), auth);
       if (!res.ok) throw refusalError(res.refusal);
       g.log.info('rules.changed', { by: auth.authenticatedBy });
+      // The alert contacts may now lock the guardian, or no longer may: they are told (the engine queued it).
+      if (isContactLockOn(res.rules) !== lockWas) {
+        g.log.warn('rules.contact_lock', { on: !lockWas, by: auth.authenticatedBy, sequence: params.approval?.sequence });
+        void g.alerts.run();
+      }
       // A security event: from now on phone + guardian can send everything (or no longer can).
       if (isLimitOff(res.rules) !== wasOff) {
         if (wasOff) g.log.info('rules.limit_on', { by: auth.authenticatedBy, limitSats: Number(res.rules.dailyLimitSats) });

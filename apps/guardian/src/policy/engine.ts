@@ -41,7 +41,7 @@ import {
 import { ChainTime, ChainTimeSource, Clock, DAY, HOUR, systemClock } from './clock.js';
 import { CHANGE_WINDOW, MAX_SELF_INDEX, NO_HIGH_WATER, addCosignerSignatures, inspectPsbt, maxHighWater } from './inspect.js';
 import { pruneSpends, splitOutflow, usageWith, windowUsage } from './limit.js';
-import { isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from './rules.js';
+import { isContactLockOn, isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from './rules.js';
 import { CosignerSigner } from './signer.js';
 import { StateStore, deserializeState, serializeState } from './storage.js';
 import {
@@ -1001,7 +1001,8 @@ export class PolicyEngine {
         // A hardware-held thief must not be able to weaken the rules while its own recovery runs.
         const active = activeRecovery(draft);
         if (active) return refuse({ reason: 'recovery_in_progress', recoveryId: active.id });
-        const r = this.checkApproval(draft, now, auth.approval, { action: 'policy', rules });
+        // Version 3 of the text whenever the contacts may lock the guardian now (turning it off says `lock=off`).
+        const r = this.checkApproval(draft, now, auth.approval, { action: 'policy', rules, contactLockBefore: isContactLockOn(current) });
         if (r) return refuse(r);
         sequence = auth.approval.sequence;
       } else {
@@ -1039,9 +1040,61 @@ export class PolicyEngine {
           sent: [],
         });
       }
+      // The contacts may now lock the guardian, or no longer may (rule 8): tell them, so they know whether `LOCK`
+      // works; for "off", the contacts of the old rules too (as for "no daily limit": they notice what the owner did not do).
+      const lockWas = isContactLockOn(current);
+      const lockNow = isContactLockOn(rules);
+      if (lockWas !== lockNow) {
+        const phone = w.registration.appNostrPubkey;
+        const contacts = lockNow ? rules.alertContacts : [...new Set([...current.alertContacts, ...rules.alertContacts])];
+        const to = contacts.filter((c) => c !== phone);
+        if (to.length)
+          this.addNotice(draft, now, {
+            id: `lockrule-${draft.nextActivityId}`,
+            kind: lockNow ? 'contact_lock_on' : 'contact_lock_off',
+            walletId: w.registration.walletId,
+            at: now,
+            ...(sequence !== undefined ? { sequence } : {}),
+            recipients: to,
+            sent: [],
+          });
+      }
       w.rules = rules;
       this.log(draft, now, { type: 'rules_changed', by, sequence, from: current, to: rules });
       return { ok: true as const, rules };
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Alert contacts lock the guardian (DESIGN.md, rule 8; docs/design/contact-lock.md)
+
+  /**
+   * An alert contact asked to lock the guardian (a `LOCK` DM, dm-lock.ts): allowed only while the active wallet's rules
+   * let the contacts lock it (`contactLock`) and only for one of its alert contacts (`not_authorized` otherwise: not
+   * a recovery's snapshotted recipients, not the paired phone, nobody else). The service drops key 3 itself; this
+   * records it in the activity log and queues the `contact_lock` notice to the paired phone and every other alert
+   * contact, delivered and retried like the limit notices. It changes nothing else: rules, recoveries and their timers
+   * stay as they are.
+   */
+  async noteContactLock(contact: string): Promise<Result<{ noticeId: string }>> {
+    return this.mutate((draft, now) => {
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      const pubkey = String(contact).toLowerCase();
+      if (!isContactLockOn(w.rules) || !w.rules.alertContacts.includes(pubkey)) return refused({ reason: 'not_authorized' });
+      const phone = w.registration.appNostrPubkey;
+      const noticeId = `lock-${draft.nextActivityId}`;
+      this.addNotice(draft, now, {
+        id: noticeId,
+        kind: 'contact_lock',
+        walletId: w.registration.walletId,
+        at: now,
+        contact: pubkey,
+        recipients: [phone, ...w.rules.alertContacts.filter((c) => c !== pubkey && c !== phone)],
+        sent: [],
+      });
+      this.log(draft, now, { type: 'contact_locked', contact: pubkey });
+      return { ok: true as const, noticeId };
     });
   }
 
