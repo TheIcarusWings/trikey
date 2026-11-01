@@ -1,7 +1,9 @@
 # Guardian for family (hosting a guardian for someone): design proposal
 
-Status: proposal, not built. Written 2026-11-01 against `main` at `b8fd81c` (after Savings). DESIGN.md ("Later:
-guardian for family") states the goal; nothing below is in the code yet except the UI mockups listed in section 0.
+Status: **phase 1 built** (2026-11-01, branch `feature/family-hosting`). Written as a proposal the same day against
+`main` at `b8fd81c` (after Savings); the owner's decisions are recorded in section 14, and what was built, where it differs
+from the proposal and what is still open are in section 15. Sections 0 to 13 are the proposal as reviewed; where the
+build differs, section 15 says so.
 
 Someone who runs a Trikey Guardian (the **host**) holds key 3 for a person they know (the **guest**), who has no home
 server. The guest keeps key 1 (their own hardware wallet) and key 2 (their own phone). DESIGN.md fixes four things:
@@ -554,7 +556,7 @@ amounts or balances".
 
 ## 12. Phasing (question 10)
 
-### Phase 1: the smallest useful, safe slice (test networks only)
+### Phase 1: the smallest useful, safe slice (built; mainnet allowed, decision 5)
 
 Multi-wallet core, invites and pairing, co-signing under the limit, guest-built recovery with the ledger and the wallet
 map, guest chain data from Esplora, the host page live.
@@ -573,8 +575,9 @@ map, guest chain data from Esplora, the host page live.
 
 ### Phase 2
 
-Limit off and contact lock for guests (per-slot pause), `guardian.lock` from a guest as a per-slot pause, the
-second-server coverage check in the app, the guest's "leave" screen, mainnet (decision 5).
+Limit off and contact lock for guests (per-slot pause), `guardian.lock` from a guest as a per-slot pause, the guest's
+"leave" screen, the host's view of a guest's recovery code in the web UI. (The second-server check before a sweep and
+mainnet came into phase 1: decisions 4 and 5.)
 
 ### Phase 3 and later
 
@@ -634,3 +637,87 @@ or status, or another guest's, and a guest's key 3 cannot sign for any other slo
     watch are never served by the host.
 13. **`abandon` in recoveries.** Let a sweep leave named ledger coins behind, announced in the alerts.
     *Recommendation:* yes; without it one off-path coin blocks a hardware recovery for good.
+
+### The owner's decisions (2026-11-01)
+
+| # | Decision |
+|---|---|
+| 1 | Privacy: BIP 89 only in phase 1; a "shared" mode later, as an opt-in. **Yes.** |
+| 2 | Rule 3 for guests: change proven by tweaks plus the co-signed-coin ledger, and a key 2 backup **required**. **Yes.** |
+| 3 | Wallet map: required at pairing (encrypted, write-once on the host), plus an offer to print the descriptor. **Yes.** |
+| 4 | Chain data: the guest's own server, else a public Esplora, with a second-server check before sweeps. **Yes.** |
+| 5 | **Mainnet allowed from the start** (overriding the "test networks only" recommendation), behind the same pre-alpha / "not audited, open source" warning and consent the app uses for mainnet in guardian mode; every mainnet path for guests goes through it. |
+| 6 | One engine per hosted wallet; at most 8 hosted wallets and 4 pending invites; invites single use for 24 hours. **Yes.** |
+| 7 | The host sees guests' recoveries in the web UI without amounts, no DMs; the accept screen suggests adding the host as an alert contact. **Yes.** |
+| 8 | Stopping hosting: 30 days' notice by default; "stop now" behind a typed confirmation; refused while that wallet's recovery runs. **Yes.** |
+| 9 | Reset refused while hosting. **Yes.** |
+| 10 | Section 9's disclosure texts with a required "I understand" checkbox; the mockups and copy that overstated privacy updated. **Yes.** |
+| 11 | Key 3's shape: test the depth-0 xpub against a synthetic origin through every device integration in code, keep what all accept, and document what needs real devices. **Yes** (section 15: depth-0 kept). |
+| 12 | Guests in phase 1: limit, delay, fee cap, contacts, hardware-approved changes; limit off and contact lock in phase 2; never Savings watch, silent payments or the replaced-wallet watch. **Yes.** |
+| 13 | `abandon` in recoveries. **Yes.** |
+
+## 15. What phase 1 built
+
+### Per component
+
+| Where | What |
+|---|---|
+| `packages/core` | `keySetId(acct)` (`sha256("trikey/keyset/v1" || app || hardware || cosigner)[:16]`), a fixed vector; `syntheticCosignerKeyExpression` (the decision-11 alternative, for tests). |
+| `packages/protocol` | `trikey://invite` (`encodeInviteUri`, `decodeInviteUri`, in `decodeTrikeyUri`); `hosted.prepare`, `hosted.pair`, `hosted.coins`, `hosted.map.get`, `hosted.access`; the hosted form of `recovery.start` (a union with the descriptor form), `abandon` on `recovery.update`, `tweak` on `hardware.confirm`; the `hosting_ending` alert and `wallet_retired` reason `hosting_ended`; `guardian.status.hosting`; `GUARDIAN_FEATURES.familyHosting`; recovery codes' `hosted=1`. PROTOCOL.md "Family hosting". |
+| `apps/guardian` | `src/hosting/`: `registry.ts` (`hosting.json`, invites), `engine.ts` (`HostedEngine`, one per slot), `service.ts` (routing, key 3 per slot at unlock, stop hosting, reset refusal, background work), `handlers.ts` (guests' methods and the router in front of the host's), `recovery.ts`, `alerts.ts`, `dm-cancel.ts`, `http.ts`. `keystore.ts` gained `trikey/key3-hosted/v1`. The host's files are touched only to call into hosting (`guardian.ts`: authorize, known senders, signer install and drop, tick, reset refusal, `relays_changed` to guests; `nostr/handlers.ts`: the router; `dm-cancel.ts`: a guest id goes to its slot). `FAMILY_HOSTING=false` turns it off. |
+| `packages/wallet` | Hosted mode: `acceptInvite` (disclosure and mainnet consent required), `deps.hostedChain` (never the host's chain), PSBTs to the guardian without derivations, receiving only after a key 2 backup, `hostedCoins` (ledger classification), wallet map encrypt / decrypt / verify (`src/hosted.ts`), recovery with the hardware wallet lost (key 2 signs every coin by tweak, off-path ones included) and with the phone lost (`recoverHostedWithHardware`: `hosted.access`, the map, `abandon` for off-path coins), the second-server check before both, backup version 3, `hardware.confirm` with the tweak, invites and hosted recovery codes in `parseScannedCode`. |
+| `apps/mobile` | The invite screen (section 9 word for word, the checkbox, the mainnet warning, the contact suggestion), `readInvite` / `acknowledgeInvite` / `setUpRules` accepting the invite, the chain source (`src/data/hosted.ts`: Recovery Key mode's `EsploraChainSource` plus a look-up by script, the guest's server or the public one, a second public server for the check), Settings > Guardian "Hosted by", a chain-server screen, hosted recovery codes, the demo. |
+| `apps/guardian-web` | The host page on the real API (`available` replaces the build flag), states (`recovering`, `leaving`, `ended`, `left`), Stop hosting with notice and "stop now" with the typed confirmation, removal, the corrected disclosure, the Reset page's reason. API.md. |
+
+### How the host-unchanged guarantee and isolation are tested
+
+- Every existing guardian test passes untouched. A committed version-2 state file (`test/fixtures/guardian-state-v2.golden.json`)
+  loads and saves byte for byte; end to end, the host's `guardian-state.json` is byte for byte the same across two guests
+  pairing, paying, starting and cancelling recoveries, a relay change, a restart and stopping hosting, and the host's
+  `guardian.status` and `policy.get` answers are unchanged (`test/hosting.e2e.test.ts`).
+- Isolation: a guest's phone gets typed errors for `wallet.sync`, `tx.get`, Savings, silent payments, `guardian.lock` and
+  `guardian.unlock`; its status is its slot's; one guest cannot see or cancel another's recovery; a guest's contact
+  cannot cancel another slot's or the host's recovery ids; the host's phone never reaches a guest slot; a phone pubkey
+  belongs to one slot; `tx.broadcast` relays only what the slot co-signed.
+
+### Deviations from the proposal (the safest option was taken each time)
+
+1. **`hosted.access` instead of a looser `recovery.access`.** Answering a guest wallet through `recovery.access` would have
+   made its `descriptor` and `guardianKey` optional, changing the host's RPC shape. A new method keeps `recovery.access`
+   byte for byte; recovery codes of guest wallets say `hosted=1`.
+2. **Slot ids are 8 random bytes, recovery ids `<slotId>g<n>-<txid12>`.** 12 bytes and `<slotId>-<n>-<txid12>` would not fit
+   the protocol's `RecoveryId` (40 characters) nor the `CANCEL <id>` pattern; this form fits both, so no schema widens and
+   old contact apps still cancel. 64 bits of slot randomness are ample next to the phone's 32-byte contribution.
+3. **The ledger and the wallet maps live in `state.json`**, not `slot.json`, so a co-signature is never handed out before
+   the ledger entry is durable (the same write as the limit's record). `slot.json` keeps the co-signed sweeps.
+4. **The host's own `guardian.status` does not list `family_hosting`** (its answers stay as they were); guests see it in
+   their status and in `hosted.prepare`.
+5. **Strangers keep an answer for 10 minutes after an invite is used or ran out** (as for pairing codes), so a second
+   phone hears "already used" rather than a timeout.
+6. **A guest's own key 2 backup is enforced as "no receive address before a backup"** in the wallet.
+7. **The regtest stack has no Esplora endpoint:** the wallet's and the app's end-to-end tests use an in-process stand-in
+   over the rig's chain; the real `EsploraChainSource` is covered by Recovery Key mode's tests and the factory's own.
+
+### Key 3's shape (decision 11)
+
+Kept: **a depth-0 xpub with no origin** (`cosignerKeyExpression`, `[ownfp]xpub`). Through the integrations in code
+(`apps/mobile/src/hardware/common/key3-shape.test.ts`): Ledger's wallet policy key info is `[fp]xpub`, Trezor's multisig
+nodes carry the xpub with the `[chain, index]` suffix and no origin, the Coldcard file says `Derivation: m` with the key's
+own fingerprint, and the descriptor imports as is. A synthetic origin (`[fp/48'/c'/0'/2']`, the xpub serialized at depth
+4 with an invented parent) gives the same addresses and is accepted by the same code, but claims a derivation that does
+not exist, so it is only the fallback. Needs real devices (alpha test plan, step 15): Ledger's Bitcoin app with a no-origin
+external key, Coldcard's depth-0 fingerprint check, Trezor signing, Jade / Passport / Keystone descriptor import, BitBox02.
+
+### Open questions
+
+1. **Off-path coins on the phone side.** The phone finds ledger coins at no derivation path through the chain source's
+   look-up by script (`unspentByScript`); a public server that hides them makes a hardware-lost sweep leave them out (the
+   guardian then blocks the completion until they are swept or abandoned, so nothing is lost silently).
+2. **The second server is a fixed public one per network** (`SECOND_ESPLORA_URLS`). A guest with their own server still
+   asks a public one for the check; whether to let them name a second own server is open.
+3. **Printing the descriptor** (decision 3's offer) uses the existing wallet-details export; a dedicated "print your
+   wallet" step at acceptance is not built.
+4. **Guest wallets' recovery code in the host's web UI** (section 10) is not shown yet; the guest's own app makes it.
+5. **Per-slot `LOCK`** (phase 2): a host contact's `LOCK` still locks the whole box, guests included.
+6. **Alert-contact DMs of a guest's recovery come from the host's box**, which a dishonest host can keep silent (section
+   13); nothing in phase 1 changes that, by design.
