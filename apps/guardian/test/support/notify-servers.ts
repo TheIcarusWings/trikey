@@ -1,6 +1,6 @@
 /**
  * Local servers for the notification tests: an in-process SMTP server (smtp-server, with implicit TLS or STARTTLS and
- * its built-in self-signed test certificate) and a plain HTTP server standing in for ntfy and webhook receivers. They
+ * its built-in self-signed test certificate, or a throwaway one made at test time: self-signed.ts) and a plain HTTP server standing in for ntfy and webhook receivers. They
  * listen on 127.0.0.1 only; nothing leaves the machine. Throwaway credentials only.
  */
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
@@ -53,25 +53,33 @@ export interface TestSmtp {
   mails: ReceivedMail[];
   /** Refuse every login from now on (as after the owner revoked the app password). */
   failAuth: boolean;
+  /** Logins tried (a user name and password reached the server), right or wrong. */
+  logins: number;
+  /** The password it accepts; change it to stand for a revoked app password and the new one. */
+  pass: string;
   stop(): Promise<void>;
 }
 
 /** An SMTP server on 127.0.0.1: `secure` for implicit TLS, else STARTTLS (unless `noStartTls`). Accepts `user` / `pass`. */
-export async function startSmtp(opts: { secure?: boolean; noStartTls?: boolean; user?: string; pass?: string } = {}): Promise<TestSmtp> {
+export async function startSmtp(opts: { secure?: boolean; noStartTls?: boolean; user?: string; pass?: string; tls?: { key: string; cert: string } } = {}): Promise<TestSmtp> {
   const user = opts.user ?? 'owner@example.com';
   const pass = opts.pass ?? 'test app password';
   const state: TestSmtp = {
     port: 0,
     mails: [],
     failAuth: false,
+    logins: 0,
+    pass,
     stop: async () => {},
   };
   const server = new SMTPServer({
     secure: !!opts.secure,
+    ...(opts.tls ? { key: opts.tls.key, cert: opts.tls.cert } : {}),
     ...(opts.noStartTls ? { hideSTARTTLS: true, disabledCommands: ['STARTTLS'] } : {}),
     logger: false,
     onAuth(auth, _session, cb) {
-      if (!state.failAuth && auth.username === user && auth.password === pass) cb(null, { user });
+      state.logins += 1;
+      if (!state.failAuth && auth.username === user && auth.password === state.pass) cb(null, { user });
       else cb(new Error('Invalid username or password'));
     },
     onData(stream, session, cb) {

@@ -796,7 +796,7 @@ export class Guardian {
 
   /**
    * `PUT /api/notifications`: the owner's extra alert channels (notify/notifier.ts). While a recovery runs only additions
-   * are accepted. A change is announced on every channel (queued by the notifier) and to the paired phone.
+   * are accepted, and a new app password for the same email account. A change is announced on every channel (queued by the notifier) and to the paired phone.
    */
   async updateNotifications(input: unknown): Promise<UpdateOutcome> {
     if (!this.setupComplete) return { ok: false, code: 'invalid', message: 'Set up the guardian first.' };

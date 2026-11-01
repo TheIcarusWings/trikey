@@ -378,7 +378,8 @@ wire between phone and guardian except:
 **They are not in the policy.** Channels are the owner's delivery settings in the guardian, changed only in its web UI
 (a signed-in session with the unlock passphrase, on an unlocked guardian), never by any phone, so a stolen phone can
 neither remove nor redirect them; every change is announced on every channel before and after it (over the email
-account as it was before) and to the paired phone, and while a recovery runs only additions are accepted. The policy,
+account as it was before) and to the paired phone, and while a recovery runs only additions are accepted (and a new
+app password for the same email account). The policy,
 its hash and every approval text are unchanged, and the contacts who can cancel and lock are still exactly
 `Policy.alertContacts` (rule 4 unchanged, including the mainnet minimum of one).
 
