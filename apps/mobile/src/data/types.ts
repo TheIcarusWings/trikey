@@ -184,6 +184,28 @@ export interface Contact {
   npub: string;
 }
 
+/**
+ * One extra alert channel (email, ntfy push, webhook) the owner set up in the guardian's web page
+ * (docs/design/notifications.md). Masked and read-only on the phone: a stolen phone cannot silence or redirect them.
+ */
+export interface AlertChannel {
+  kind: 'email' | 'ntfy' | 'webhook';
+  /** `m…@example.com`, or the server's host name. */
+  hint: string;
+  /** The last message to it failed. */
+  failing?: boolean;
+}
+
+/** The extra alert channels, grouped the way Settings > Alert contacts shows them. */
+export interface AlertChannels {
+  /** The owner's own (they reach you even if this phone is lost). */
+  you: AlertChannel[];
+  /** By contact id (the contact's nostr pubkey, hex): channels next to the nostr key. */
+  byContact: Record<string, AlertChannel[]>;
+  /** People reachable only by email or ntfy: warnings, no cancel or lock. */
+  withoutNostr: AlertChannel[];
+}
+
 // ---------------------------------------------------------------- activity
 
 export type TxStatus = 'pending' | 'confirmed';
@@ -244,6 +266,8 @@ export type SecurityEvent = { id: string; at: IsoDate } & (
   | { kind: 'savings-key-replaced'; lostKey: 'phone' | 'hardware' | 'recoveryKey' }
   /** The guardian stopped watching Savings, or now watches another wallet instead (`replaced`), and this phone did not ask. */
   | { kind: 'savings-unwatched'; replaced: boolean }
+  /** The guardian's email, ntfy or webhook alerts were changed in its web page (never from this phone). */
+  | { kind: 'alert-channels-changed' }
 );
 
 export type ActivityItem =
@@ -752,6 +776,8 @@ export interface WalletState {
   silentPayments: SilentPaymentsState;
   /** Guardian mode: whether the alert contacts may lock the guardian. Absent where it does not apply (Recovery Key mode). */
   contactLock?: ContactLockSetting;
+  /** Guardian mode, with a guardian that sends email, ntfy or webhook alerts: what is set up there (read-only). */
+  alertChannels?: AlertChannels;
   /** The optional Savings wallet (docs/design/savings-and-limit-off.md). `status: 'available'` for everyone who has none. */
   savings: SavingsState;
 }
