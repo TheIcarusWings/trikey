@@ -212,6 +212,110 @@ export interface RelaysInput {
   relays: string[];
 }
 
+// --- notifications (email, ntfy, webhook) --------------------------------
+
+/**
+ * Extra alert channels besides nostr (docs/design/notifications.md). Notify-only: they carry warnings, never controls
+ * (`CANCEL` and `LOCK` stay nostr messages). Owner-side delivery settings, outside the hardware-approved rules: only this
+ * web UI changes them (never the phone), and every change is announced on every channel before and after it.
+ */
+export type NotifyChannelKind = 'email' | 'ntfy' | 'webhook';
+/** `owner`: the owner's own channels (the phone may be the stolen one); `contact`: an alert contact's. */
+export type NotifyAudience = 'owner' | 'contact';
+/** `tls`: implicit TLS (usually port 465); `starttls`: STARTTLS, required (usually port 587). No plain SMTP. */
+export type SmtpSecurity = 'tls' | 'starttls';
+
+/** How a channel did lately. `untested`: nothing was sent to it yet. */
+export interface ChannelHealth {
+  state: 'ok' | 'failing' | 'untested';
+  lastOkAt?: ISODate;
+  lastErrorAt?: ISODate;
+  /** Short, plain words; never a secret. */
+  lastError?: string;
+}
+
+/** The owner's email account, as the guardian sends with it. The password is never sent back. */
+export interface SmtpSettings {
+  host: string;
+  port: number;
+  security: SmtpSecurity;
+  username: string;
+  /** The From address (usually the account's own address). */
+  from: string;
+  passwordSet: true;
+  health: ChannelHealth;
+}
+
+/** One place alerts go. Secrets (ntfy topic and token, webhook URL and secret) are write-only: only hints come back. */
+export interface NotifyDestination {
+  id: string;
+  audience: NotifyAudience;
+  kind: NotifyChannelKind;
+  /**
+   * `audience: contact`: the alert contact (nostr pubkey, hex) this channel belongs to; absent for a contact reachable
+   * only by this channel (warnings, no controls).
+   */
+  contact?: string;
+  /** The contact's npub, for display. */
+  contactNpub?: string;
+  /** False when `contact` is no longer an alert contact in the rules: the channel then gets nothing. */
+  contactInRules?: boolean;
+  /** `kind: email`. */
+  email?: string;
+  /** `kind: ntfy`: the server, the topic's first characters, and whether an access token is set. */
+  ntfy?: { server: string; topicHint: string; tokenSet: boolean };
+  /** `kind: webhook`: where it posts (scheme, host and port only) and whether a signing secret is set. */
+  webhook?: { origin: string; secretSet: boolean };
+  health: ChannelHealth;
+}
+
+/** `GET` and `PUT /api/notifications`. */
+export interface NotificationSettings {
+  /** How every message names this guardian: letters, digits, spaces, `-` and `'`, at most 32. */
+  guardianName: string;
+  smtp?: SmtpSettings;
+  destinations: NotifyDestination[];
+  /** The alert contacts in the rules (hex pubkey and npub), to attach an email or ntfy topic to. */
+  contacts: { pubkey: string; npub: string }[];
+  /** While a recovery runs, removing or changing a channel or the email account is refused (adding is allowed). */
+  recoveryRunning: boolean;
+  /** Messages still waiting to go out (retried for up to 7 days). */
+  pending: number;
+  defaultNtfyServer: string;
+  limits: { destinations: number; ownerPerKind: number; contactOnly: number };
+}
+
+/** A channel in `PUT /api/notifications`. Omit a secret to keep the stored one (existing channels only); `null` clears an optional one. */
+export interface NotifyDestinationInput {
+  /** An existing channel's id; absent for a new one. */
+  id?: string;
+  audience: NotifyAudience;
+  kind: NotifyChannelKind;
+  contact?: string;
+  email?: string;
+  ntfy?: { server: string; topic?: string; token?: string | null };
+  webhook?: { url?: string; secret?: string | null };
+}
+
+export interface NotificationSettingsInput {
+  guardianName: string;
+  /** `null`: no email account. `password` omitted: keep the stored one. */
+  smtp: { host: string; port: number; security: SmtpSecurity; username: string; from: string; password?: string } | null;
+  destinations: NotifyDestinationInput[];
+}
+
+/** `POST /api/notifications/test`: one channel (`destination`), or the email account itself (`smtp: true`, sent to its From address). */
+export interface NotifyTestInput {
+  destination?: string;
+  smtp?: true;
+}
+
+export interface NotifyTestResult {
+  ok: boolean;
+  error?: string;
+  health: ChannelHealth;
+}
+
 // --- recovery code ------------------------------------------------------
 
 /**

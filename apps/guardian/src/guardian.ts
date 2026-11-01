@@ -20,6 +20,11 @@
  *                        the silent payment scanner (silent/service.ts): its
  *                        registration, matches, and the key its scan key is
  *                        encrypted under (so it scans while locked)
+ *   notifications.json, notifications-key.json
+ *                        extra alert channels (notify/notifier.ts): email,
+ *                        ntfy and webhook settings, their delivery outbox, and
+ *                        the key their secrets are sealed under (so alerts go
+ *                        out while locked)
  */
 import { join } from 'node:path';
 import type { Server } from 'node:http';
@@ -73,6 +78,9 @@ import { WebSessions } from './http/sessions.js';
 import { GUARDIAN_VERSION } from './version.js';
 import { SilentPaymentService } from './silent/service.js';
 import { SavingsMonitor } from './savings.js';
+import { Notifier, type NotifyEvent, type TestOutcome, type UpdateOutcome } from './notify/notifier.js';
+import type { NetPolicy } from './notify/net.js';
+import type { SmtpTestOptions } from './notify/channels.js';
 
 export const FILES = {
   keystore: 'keystore.json',
@@ -109,6 +117,8 @@ export interface GuardianOptions {
   contactLockLimit?: RateLimitOptions;
   /** How often the watched Savings wallet is scanned when no block came (savings.ts). Default 2 minutes. */
   savingsScanIntervalMs?: number;
+  /** Test seams for the extra alert channels (notify/): local test servers on 127.0.0.1, a self-signed SMTP server. */
+  notify?: { net?: NetPolicy; smtpTest?: SmtpTestOptions };
 }
 
 /** What a `LOCK` DM from an alert contact did (`Guardian.lockByContact`). */
@@ -225,6 +235,8 @@ export class Guardian {
   readonly sp: SilentPaymentService;
   /** Watches the phone's Savings wallet, if it registered one: chain data and the `savings_moved` tripwire (savings.ts). */
   readonly savingsWatch: SavingsMonitor;
+  /** Email, ntfy and webhook alerts (notify/notifier.ts): owner-side settings from the web UI; works while locked. */
+  readonly notifier: Notifier;
 
   engine!: PolicyEngine;
   store!: ObservedStore;
@@ -297,6 +309,15 @@ export class Guardian {
     this.alerts = new Alerter(this);
     this.recovery = new RecoveryRunner(this);
     this.savingsWatch = new SavingsMonitor(this, opts.savingsScanIntervalMs);
+    this.notifier = new Notifier({
+      dataDir: opts.config.dataDir,
+      now: () => this.clock.now(),
+      log: this.log,
+      logEvent: (e) => this.logEvent(e),
+      contacts: () => this.engine?.status().rules?.alertContacts ?? [],
+      net: opts.notify?.net,
+      smtpTest: opts.notify?.smtpTest,
+    });
     this.broadcastLimiter = new SlidingWindowLimiter(opts.broadcastLimit ?? DEFAULT_BROADCAST_LIMIT);
     this.refusalLimiter = new SlidingWindowLimiter(opts.refusalLimit ?? DEFAULT_REFUSAL_LIMIT);
     this.contactLockLimiter = new SlidingWindowLimiter(opts.contactLockLimit ?? DEFAULT_CONTACT_LOCK_LIMIT);
@@ -350,6 +371,7 @@ export class Guardian {
       });
     }
     await g.sp.load();
+    await g.notifier.load();
     g.lockedAt = g.clock.now();
     g.lockReason = 'restart';
     return g;
@@ -373,7 +395,7 @@ export class Guardian {
    * only when it lists `savings` (the guardian serves Savings' chain data). Tests clear it to see how a phone treats a
    * guardian from before a feature.
    */
-  features: string[] = [GUARDIAN_FEATURES.limitOff, GUARDIAN_FEATURES.contactLock, GUARDIAN_FEATURES.savings];
+  features: string[] = [GUARDIAN_FEATURES.limitOff, GUARDIAN_FEATURES.contactLock, GUARDIAN_FEATURES.savings, GUARDIAN_FEATURES.notifications];
 
   nowSec(): number {
     return toSeconds(this.clock.now());
@@ -428,6 +450,7 @@ export class Guardian {
     if (this.setupComplete) {
       await this.startNostr();
       await this.notifyPhone({ type: 'guardian_locked', reason: 'restart', ...this.stampNow() });
+      this.notifyOwner('guardian_locked', 'Your guardian restarted and is locked: it co-signs nothing until you unlock it. Recoveries, their timers and their alerts go on.');
     }
     await this.logEvent({ type: 'started' });
     // Silent payments are scanned whether or not key 3 is unlocked.
@@ -451,6 +474,7 @@ export class Guardian {
     clearInterval(this.timer);
     await this.ticking?.catch(() => {});
     await this.sp.stop();
+    await this.notifier.idle();
     this.inbox?.close();
     await this.inbox?.drain();
     this.rpc?.close();
@@ -679,6 +703,7 @@ export class Guardian {
     };
     const to = new Set([...(reg ? [reg.appNostrPubkey] : []), ...this.recoveryPeers()]);
     for (const peer of to) await this.notifyPeer(peer, alert);
+    this.notifyOwner('relays_changed', `${alert.message} If you did not change them in the guardian's web page, check the guardian now.`);
   }
 
   /**
@@ -755,6 +780,43 @@ export class Guardian {
   }
 
   /**
+   * Queues an alert for the owner's own email, ntfy and webhook channels (not the contacts'), the same words as the
+   * phone's alert, and starts delivering in the background. Durable and retried like the engine's alerts.
+   */
+  notifyOwner(type: string, text: string, walletId?: string): void {
+    if (!this.notifier.configured) return;
+    const at = this.clock.now();
+    const ev: NotifyEvent = { id: `${type}-${at}`, type, at, owner: text, ...(walletId ? { walletId } : {}) };
+    void this.notifier
+      .enqueue(ev)
+      .then((queued) => queued && this.notifier.kick())
+      .catch((e: unknown) => this.log.error('notify.enqueue_failed', { type, error: errorText(e) }));
+  }
+
+  /**
+   * `PUT /api/notifications`: the owner's extra alert channels (notify/notifier.ts). While a recovery runs only additions
+   * are accepted. A change is announced on every channel (queued by the notifier) and to the paired phone.
+   */
+  async updateNotifications(input: unknown): Promise<UpdateOutcome> {
+    if (!this.setupComplete) return { ok: false, code: 'invalid', message: 'Set up the guardian first.' };
+    const r = await this.notifier.update(input, { recoveryRunning: !!this.activeRecord() });
+    if (r.ok && r.changed) {
+      await this.notifyPhone({
+        type: 'notifications_changed',
+        ...this.stampNow(),
+        message: "Your guardian's email, ntfy or webhook alerts were changed in its web page. If you did not do this, check the guardian.",
+      });
+      this.notifier.kick();
+    }
+    return r;
+  }
+
+  /** "Send a test message" (`POST /api/notifications/test`). */
+  testNotification(input: unknown): Promise<TestOutcome> {
+    return this.notifier.test(input);
+  }
+
+  /**
    * Wallet rotation once a completed recovery's sweep has been accepted by a node (recovery-runner.ts
    * calls this after the broadcast). The engine retires the swept wallet and, when it can, adopts the
    * destination; this side swaps the paired phone and tells it.
@@ -776,6 +838,7 @@ export class Guardian {
     if (adopted) {
       this.rpc?.addPeer(adopted.appNostrPubkey);
       this.log.info('wallet.adopted', { recoveryId, from: res.retiredWalletId, to: adopted.walletId, revokedGrants: res.revokedGrants });
+      this.notifyOwner('wallet_adopted', `The guardian now protects the wallet recovery ${recoveryId} moved the funds to (${adopted.walletId}).`, adopted.walletId);
       await this.notifyPeer(adopted.appNostrPubkey, {
         type: 'wallet_adopted',
         walletId: adopted.walletId,
@@ -815,6 +878,7 @@ export class Guardian {
     });
     this.log.info('wallet.retired', { walletId });
     await this.notifyPeer(phone, { type: 'wallet_retired', walletId, reason: 'retired', ...this.stampNow() });
+    this.notifyOwner('wallet_retired', `Wallet ${walletId} was retired on your guardian with your phone and your hardware wallet ("Replace guardian"): it co-signs nothing for it any more.`, walletId);
   }
 
   /** Background work: time-based engine transitions, completing a ready recovery, broadcasts, alerts. Coalesces overlapping calls. */
@@ -833,6 +897,8 @@ export class Guardian {
           // Before the alerts, so a Savings spend found now is announced in the same pass.
           await this.savingsWatch.run();
           await this.alerts.run();
+          // Email, ntfy, webhook: in the background, so a slow mail server never holds back the tick.
+          this.notifier.kick();
           // In the background: a long catch-up must not hold back alerts or recoveries.
           this.sp.kick();
         } catch (e) {
@@ -1079,6 +1145,8 @@ export class Guardian {
       await this.logEvent({ type: 'locked', reason });
     });
     if (locked) await this.notifyPhone({ type: 'guardian_locked', reason, ...this.stampNow() });
+    // The owner's own channels hear of a lock from the phone (which may be in other hands); a lock at the box is their own.
+    if (locked && reason === 'remote') this.notifyOwner('guardian_locked', 'Your guardian was locked from your phone: it co-signs nothing until you unlock it with the passphrase.');
   }
 
   /**
@@ -1163,6 +1231,7 @@ export class Guardian {
           // Tell the paired phone while it is still a peer.
           const reg = this.engine.registration();
           if (reg) await this.notifyPhone({ type: 'wallet_retired', walletId: reg.walletId, reason: 'reset', ...this.stampNow() });
+          if (reg) this.notifyOwner('wallet_retired', `Your guardian was reset in its web page: it forgot wallet ${reg.walletId} and made a new key 3. That wallet stays spendable with your phone and your hardware wallet. If you did not do this, someone knows the guardian's passphrase.`, reg.walletId);
 
           const seed = this.newSeed(input.entropy);
           let next: KeystoreFile;

@@ -57,6 +57,11 @@ export interface GuardianRigOptions {
   setup?: boolean;
   /** The guardian's TRIKEY_EXTRA_ENTROPY (32 bytes), as the config would carry it. Default none. */
   extraEntropy?: Uint8Array;
+  /**
+   * Let the extra alert channels (notify/) reach local test servers: ntfy and webhook receivers on 127.0.0.1, and an
+   * SMTP server with a self-signed certificate. Test seams only; a real guardian refuses both. Default false.
+   */
+  notifyTestServers?: boolean;
 }
 
 export interface FundedOutput {
@@ -152,6 +157,7 @@ export class GuardianRig {
       electrum: { minBackoffMs: 20, maxBackoffMs: 100 },
       discoverDmRelays: false,
       broadcastLimit: this.opts.broadcastLimit,
+      ...(this.opts.notifyTestServers ? { notify: { net: { allowLoopback: true }, smtpTest: { tls: { rejectUnauthorized: false } } } } : {}),
     });
     await this.guardian.start(this.opts.http ? { port: 0, host: '127.0.0.1' } : false);
     await this.guardian.chain.electrum!.waitReady(3000);

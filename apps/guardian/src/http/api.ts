@@ -19,7 +19,22 @@ import { isContactLockOn, isLimitOff, type RecoveryRecord } from '../policy/inde
 import { npubEncode } from 'nostr-tools/nip19';
 import { engineEntry, serviceEntry, shortNpub } from './activity.js';
 import { HttpError, type Route, type RouteResult } from './server.js';
-import type { ActivityEntry, GuardianStatus, PairingSession, PublicStatus, RecoveryCode, RecoveryInProgress, RelaySettings, Rules, SavingsSummary, SetupPreflight } from './types.js';
+import type {
+  ActivityEntry,
+  ChannelHealth,
+  GuardianStatus,
+  NotificationSettings,
+  NotifyTestResult,
+  PairingSession,
+  PublicStatus,
+  RecoveryCode,
+  RecoveryInProgress,
+  RelaySettings,
+  Rules,
+  SavingsSummary,
+  SetupPreflight,
+} from './types.js';
+import type { Health, HealthState } from '../notify/notifier.js';
 import { sessionCookie } from './sessions.js';
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -192,6 +207,31 @@ export function relaySettings(g: Guardian): RelaySettings {
   };
 }
 
+function healthBody(h: Health & { state: HealthState }): ChannelHealth {
+  return {
+    state: h.state,
+    ...(h.lastOkAt !== undefined ? { lastOkAt: iso(h.lastOkAt) } : {}),
+    ...(h.lastErrorAt !== undefined ? { lastErrorAt: iso(h.lastErrorAt) } : {}),
+    ...(h.lastError ? { lastError: h.lastError } : {}),
+  };
+}
+
+/** `GET` and `PUT /api/notifications` (secrets never leave the guardian: only "set" and hints). */
+export function notificationSettings(g: Guardian): NotificationSettings {
+  const v = g.notifier.view();
+  const contacts = g.engine.status().rules?.alertContacts ?? [];
+  return {
+    guardianName: v.guardianName,
+    ...(v.smtp ? { smtp: { ...v.smtp, health: healthBody(v.smtp.health) } } : {}),
+    destinations: v.destinations.map((d) => ({ ...d, ...(d.contact ? { contactNpub: npubEncode(d.contact) } : {}), health: healthBody(d.health) })),
+    contacts: contacts.map((pubkey) => ({ pubkey, npub: npubEncode(pubkey) })),
+    recoveryRunning: !!g.activeRecord(),
+    pending: v.pending,
+    defaultNtfyServer: v.defaultNtfyServer,
+    limits: v.limits,
+  };
+}
+
 function pairingSessionBody(g: Guardian, id: string): PairingSession {
   const s = g.pairing.get(id, g.clock.now());
   if (!s) throw new HttpError(404, 'not_found', 'No such pairing session.');
@@ -358,6 +398,46 @@ export function buildRoutes(g: Guardian): Route[] {
         const r = await g.stopWatchingRelays(params.url);
         if (!r.ok) throw new HttpError(r.code === 'not_found' ? 404 : r.code === 'setup_required' ? 409 : 400, r.code, r.message);
         return ok(relaySettings(g));
+      },
+    },
+
+    // Extra alert channels: email (the owner's own account), ntfy, webhook. Unlocked only, like the relays.
+    {
+      method: 'GET',
+      path: '/notifications',
+      handler: () => {
+        requireUnlocked(g);
+        return ok(notificationSettings(g));
+      },
+    },
+    {
+      method: 'PUT',
+      path: '/notifications',
+      handler: async ({ body }) => {
+        requireUnlocked(g);
+        const r = await g.updateNotifications(body);
+        if (!r.ok) {
+          if (r.code === 'rate_limited') throw new HttpError(429, 'rate_limited', r.message, r.retryAfterSeconds);
+          throw new HttpError(r.code === 'invalid' ? 400 : 409, r.code, r.message);
+        }
+        return ok(notificationSettings(g));
+      },
+    },
+    {
+      method: 'POST',
+      path: '/notifications/test',
+      handler: async ({ body }) => {
+        requireUnlocked(g);
+        const r = await g.testNotification(body);
+        if (r.ok) {
+          const res: NotifyTestResult = { ok: true, health: healthBody(r.health) };
+          return ok(res);
+        }
+        if (r.code === 'not_found') throw new HttpError(404, 'not_found', r.message);
+        if (r.code === 'rate_limited') throw new HttpError(429, 'rate_limited', r.message, r.retryAfterSeconds);
+        // The send failed: an answer, not an error of the API (the page shows it next to the channel).
+        const res: NotifyTestResult = { ok: false, error: r.message, health: healthBody(r.health ?? { state: 'failing' }) };
+        return ok(res);
       },
     },
 
