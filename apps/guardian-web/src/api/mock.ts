@@ -250,10 +250,10 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
     },
     { id: 'hw_dad', name: 'Dad', state: 'invited', inviteId: 'inv_dad' },
   ];
+  // The guardian keeps only a hash of an invite's secret: its link exists only in the answer that created it.
   let invites: FamilyInvite[] = [
     {
       id: 'inv_dad', name: 'Dad', status: 'pending',
-      link: `trikey:invite?g=${DEMO_NPUB}&c=7Q2K`,
       createdAt: new Date(Date.now() - HOUR).toISOString(),
       expiresAt: new Date(Date.now() + 23 * HOUR).toISOString(),
     },
@@ -506,18 +506,25 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
     async getHosting() {
       await wait();
       const pending = invites.filter((i) => i.status === 'pending' && Date.parse(i.expiresAt) > Date.now());
-      return { wallets: clone(hostedWallets), pendingInvite: clone(pending.at(-1) ?? null) };
+      const latest = pending.at(-1);
+      return {
+        available: true,
+        wallets: clone(hostedWallets),
+        pendingInvite: latest ? clone({ ...latest, link: undefined }) : null,
+        limits: { maxWallets: 8, maxPendingInvites: 4 },
+      };
     },
 
     async createFamilyInvite({ name }) {
       await wait(300);
       const trimmed = name.trim();
       if (!trimmed) throw new ApiError('invalid', 'Add a name so you can tell invites apart.', 400);
+      if (invites.filter((i) => i.status === 'pending').length >= 4) throw new ApiError('too_many_invites', 'At most 4 invites can wait at once. Cancel one first.', 409);
       const invite: FamilyInvite = {
         id: `inv_${randomCode(6)}`,
         name: trimmed,
         status: 'pending',
-        link: `trikey:invite?g=${DEMO_NPUB}&c=${randomCode(4)}`,
+        link: `trikey://invite?v=1&npub=${DEMO_NPUB}&relay=wss%3A%2F%2Frelay.example.com&secret=${randomCode(43)}&exp=${Math.floor(Date.now() / 1000) + 86_400}&net=signet&label=Trikey+Guardian`,
         createdAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 24 * HOUR).toISOString(),
       };
@@ -530,6 +537,31 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       await wait();
       invites = invites.map((i) => (i.id === id ? { ...i, status: 'cancelled' } : i));
       hostedWallets = hostedWallets.filter((w) => w.inviteId !== id);
+    },
+
+    async stopHosting(id, input = {}) {
+      await wait();
+      const w = hostedWallets.find((x) => x.id === id);
+      if (!w) throw new ApiError('not_found', 'No such hosted wallet.', 404);
+      if (w.state === 'recovering') throw new ApiError('recovery_pending', 'A recovery of this wallet is running. Hosting cannot stop until it completes or is cancelled.', 409);
+      if (w.state !== 'active' && w.state !== 'leaving') throw new ApiError('not_hosting', 'This wallet is not hosted any more.', 409);
+      let next: HostedWallet;
+      if (input.now) {
+        if (input.confirm !== 'STOP HOSTING NOW') throw new ApiError('invalid', 'Type STOP HOSTING NOW to confirm.', 400);
+        next = { id: w.id, name: w.name, state: 'ended', ...(w.since ? { since: w.since } : {}), endedAt: new Date().toISOString() };
+      } else {
+        next = w.state === 'leaving' ? w : { ...w, state: 'leaving', endsAt: new Date(Date.now() + 30 * 24 * HOUR).toISOString() };
+      }
+      hostedWallets = hostedWallets.map((x) => (x.id === id ? next : x));
+      return clone(next);
+    },
+
+    async removeHostedWallet(id) {
+      await wait();
+      const w = hostedWallets.find((x) => x.id === id);
+      if (!w || (w.state !== 'ended' && w.state !== 'left')) throw new ApiError('still_hosted', 'Only an ended or left wallet can be removed from the list.', 409);
+      hostedWallets = hostedWallets.filter((x) => x.id !== id);
+      return this.getHosting();
     },
   };
 

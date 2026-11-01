@@ -7,7 +7,6 @@ import { ThemeProvider } from '@/components/theme-provider';
 import { ErrorState } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { usePageTitle } from '@/hooks/use-api';
-import { features } from '@/lib/features';
 import { ActivityPage } from '@/pages/activity';
 import { FirstRunPage } from '@/pages/first-run';
 import { HomePage } from '@/pages/home';
@@ -106,7 +105,7 @@ export function App() {
                 <Route path="/phones" element={<PhonesPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/reset" element={<ResetPage />} />
-                {features.hostForSomeone && <Route path="/host" element={<HostPage />} />}
+                <Route path="/host" element={<HostPage />} />
                 {/* Earlier addresses of the pages that became Phones, Home and Settings. */}
                 <Route path="/pair" element={<Navigate to="/phones" replace />} />
                 <Route path="/recover-phone" element={<Navigate to="/phones" replace />} />

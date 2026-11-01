@@ -3,7 +3,9 @@ import type {
   ActivityQuery,
   FamilyInvite,
   GuardianStatus,
+  HostedWallet,
   HostingOverview,
+  StopHostingInput,
   PairedPhone,
   PairingSession,
   RecoveryCode,
@@ -35,6 +37,10 @@ export type ApiErrorCode =
   | 'retiring_full'
   | 'recovery_pending'
   | 'sweep_pending'
+  | 'hosting_active'
+  | 'too_many_invites'
+  | 'too_many_wallets'
+  | 'still_hosted'
   | 'network'
   | 'internal';
 
@@ -119,6 +125,11 @@ export interface GuardianApi {
   listPairedPhones(): Promise<PairedPhone[]>;
 
   getHosting(): Promise<HostingOverview>;
+  /** The answer is the only time the invite's link exists (the guardian keeps a hash of its secret). */
   createFamilyInvite(input: { name: string }): Promise<FamilyInvite>;
   cancelFamilyInvite(id: string): Promise<void>;
+  /** 30 days' notice by default; `{ now: true, confirm: 'STOP HOSTING NOW' }` ends at once. Refused while their recovery runs. */
+  stopHosting(id: string, input?: StopHostingInput): Promise<HostedWallet>;
+  /** Removes an ended or left wallet from the list. */
+  removeHostedWallet(id: string): Promise<HostingOverview>;
 }

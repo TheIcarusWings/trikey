@@ -4,6 +4,7 @@ import type {
   ActivityEntry,
   FamilyInvite,
   GuardianStatus,
+  HostedWallet,
   HostingOverview,
   PairedPhone,
   PairingSession,
@@ -129,6 +130,10 @@ export function createHttpApi(base = ''): GuardianApi {
 
     getHosting: () => request<HostingOverview>('GET', '/hosting'),
     createFamilyInvite: (input) => request<FamilyInvite>('POST', '/hosting/invites', input),
-    cancelFamilyInvite: (id) => request<void>('DELETE', `/hosting/invites/${encodeURIComponent(id)}`),
+    cancelFamilyInvite: async (id) => {
+      await request<unknown>('DELETE', `/hosting/invites/${encodeURIComponent(id)}`);
+    },
+    stopHosting: (id, input) => request<HostedWallet>('POST', `/hosting/wallets/${encodeURIComponent(id)}/stop`, input ?? {}),
+    removeHostedWallet: (id) => request<HostingOverview>('DELETE', `/hosting/wallets/${encodeURIComponent(id)}`),
   };
 }
