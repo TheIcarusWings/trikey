@@ -84,7 +84,7 @@ export default function RecoverBackup() {
             </>
           ) : null}
           {found && canPasskey ? <AppButton title="Unlock with passkey" busy={restoring.busy} onPress={() => void restore({ passkey: true })} /> : null}
-          {found && canCode && !demo ? (
+          {found && canCode ? (
             <AppButton
               title={restoring.busy ? (progress ?? 'Unlocking…') : 'Restore with recovery code'}
               variant={canPasskey ? 'outline' : 'primary'}
@@ -119,7 +119,7 @@ export default function RecoverBackup() {
           {demo ? <InfoRow label="Guardian" value={guardianBox(guardian)} /> : null}
         </Panel>
       ) : null}
-      {found && canCode && !demo ? (
+      {found && canCode ? (
         <View className="gap-1.5">
           <FieldLabel nativeID="recovery-code">Recovery code</FieldLabel>
           <Input
@@ -143,13 +143,11 @@ export default function RecoverBackup() {
           {canPasskey ? `Your passkey unlocks the backup on this phone. ${cloudOperator(provider)} can't read it.` : `The backup is encrypted. ${cloudOperator(provider)} can't read it without your code.`}
         </Footnote>
       ) : null}
-      {demo ? null : (
-        <View className="gap-2">
-          <AppButton title="Open a backup file" variant="outline" busy={picking.busy} onPress={() => void openFile()} />
-          <Footnote>Saved the file from an earlier backup (Files, AirDrop, email)? Open it here, then enter your recovery code.</Footnote>
-          <ActionNotice message={picking.message} error={picking.error} />
-        </View>
-      )}
+      <View className="gap-2">
+        <AppButton title="Open a backup file" variant="outline" busy={picking.busy} onPress={() => void openFile()} />
+        <Footnote>Saved the file from an earlier backup (Files, AirDrop, email)? Open it here, then enter your recovery code.</Footnote>
+        <ActionNotice message={picking.message} error={picking.error} />
+      </View>
       {otherCloud ? <Notice tone="fill">Backups in other clouds will be listed here once the cloud providers are connected.</Notice> : null}
     </Screen>
   );

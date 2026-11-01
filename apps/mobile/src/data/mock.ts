@@ -603,6 +603,8 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     // -- recovery -----------------------------------------------------
     async findBackup(): Promise<FoundBackup | null> {
       await wait(networkDelay);
+      // A build without passkeys has no cloud backup to find (as a tester build): the backup file and its code are the way.
+      if (!passkeys) return null;
       return { provider: platform === 'ios' ? 'icloud' : 'google-drive', createdAt: '2026-10-27T20:00:00', unlockedBy: ['passkey', 'recovery-code'] };
     },
     async importBackupFile(): Promise<FoundBackup | null> {

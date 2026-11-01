@@ -181,6 +181,11 @@ describe('the demo wallet', () => {
     tester.dismissRecoveryCode();
     expect(tester.recoveryCode()).toBeNull();
 
+    // Restoring: no cloud backup to find, so the backup file and its code (any code; the demo has no real one).
+    expect(await tester.findBackup()).toBeNull();
+    expect(await tester.importBackupFile()).toMatchObject({ provider: 'file', unlockedBy: ['recovery-code'] });
+    expect(await withPasskeys.findBackup()).toMatchObject({ unlockedBy: ['passkey', 'recovery-code'] });
+
     tester.setNetwork('bitcoin');
     tester.acceptMainnetRisk(true);
     expect(tester.getState()).toMatchObject({ network: 'bitcoin', mainnetRiskAccepted: true });
