@@ -421,7 +421,12 @@ export function withHosting(g: Guardian, host: Handlers): Handlers {
           return fn(params, ctx, route);
         }
         if (method === 'hosted.prepare' || method === 'hosted.pair') {
-          if (method === 'hosted.pair') await once(method, ctx);
+          // A wrong invite costs no disk write: refused before the request is recorded (as the host's `pair`).
+          if (method === 'hosted.pair') {
+            const c = h.registry.check(String((params as { inviteSecret?: unknown })?.inviteSecret ?? ''), sender, g.clock.now());
+            if (!c.ok) throw new RpcError(ErrorCode.PairingRejected, INVITE_REJECTIONS[c.reason]);
+            await once(method, ctx);
+          }
           return (pairing[method] as (p: unknown, c: HandlerContext) => unknown)(params, ctx);
         }
         if (method === 'hosted.access') {

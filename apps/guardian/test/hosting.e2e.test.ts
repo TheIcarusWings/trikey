@@ -382,5 +382,11 @@ describe('family hosting, end to end', { timeout: 60_000 }, () => {
     expect(file.slots.find((s: { name: string }) => s.name === 'Ana').key3Mix).toBeUndefined();
     // Ana's phone is a stranger now.
     await expect(guests.ana.rpc.call('guardian.status', {}, { timeoutMs: 600 })).rejects.toThrow();
+    // And through all of it, the host's own state file did not change by a byte.
+    expect(await readFile(stateFile(), 'utf8')).toBe(hostBytes);
+    // The host's answers are the same too, but for the relays its owner changed above.
+    const { relays: _now, ...after } = stable(await host.call('guardian.status', {}));
+    const { relays: _before, ...before } = hostStatusBefore;
+    expect(after).toEqual(before);
   });
 });
