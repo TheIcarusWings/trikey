@@ -330,12 +330,45 @@ export const PolicyUpdateResult = z.object({
   policyHash: Hex32,
 });
 
-export const RecoveryStartParams = z.strictObject({
+/** An outpoint, `<txid>:<vout>`. */
+export const Outpoint = z.string().regex(/^[0-9a-f]{64}:\d{1,7}$/, 'expected <txid>:<vout>');
+
+/** A hosted wallet's three account pubkeys (raw, compressed): all the hosting guardian ever learns of a key. */
+export const AccountPubkeys = z.strictObject({ app: CompressedPubkey, hardware: CompressedPubkey, cosigner: CompressedPubkey });
+
+/** Most bytes of a hosted wallet's encrypted wallet map, once decoded. */
+export const MAX_WALLET_MAP_BYTES = 4096;
+/**
+ * A hosted wallet's encrypted wallet map (docs/design/family-hosting.md, "The wallet map"): XChaCha20-Poly1305 over
+ * `{ version, network, descriptor, birthHeight }` under a key from the hardware wallet's account chaincode, which the
+ * hosting guardian never sees. base64url, at most `MAX_WALLET_MAP_BYTES` once decoded. Write-once per wallet on the guardian.
+ */
+export const WalletMap = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]+$/, 'expected base64url')
+  .max(Math.ceil((MAX_WALLET_MAP_BYTES * 4) / 3) + 4);
+
+/** Most ledger outpoints a hosted recovery may leave behind on purpose (`abandon`). */
+export const MAX_ABANDON = 500;
+
+const RecoveryStartOwn = z.strictObject({
   /** The sweep transaction, signed on every input by ONE surviving key, the phone's or the hardware wallet's. */
   sweepPsbt: PsbtBase64,
   /** The descriptor of the new wallet the funds are swept to. It must keep the surviving key and drop the other user key. */
   newDescriptor: Descriptor,
 });
+/**
+ * A hosted wallet's recovery (guardians with `family_hosting`, for a guest's slot only): the destination by its account
+ * pubkeys (the host never sees a descriptor), its encrypted wallet map, and the ledger coins the sweep leaves behind on
+ * purpose (`abandon`: coins the hardware wallet cannot sign; the alerts name them).
+ */
+const RecoveryStartHosted = z.strictObject({
+  sweepPsbt: PsbtBase64,
+  destinationKeys: AccountPubkeys,
+  destinationMap: WalletMap,
+  abandon: z.array(Outpoint).max(MAX_ABANDON).optional(),
+});
+export const RecoveryStartParams = z.union([RecoveryStartOwn, RecoveryStartHosted]);
 export const RecoveryStartResult = z.object({ recovery: Recovery });
 
 /**
@@ -347,6 +380,8 @@ export const RecoveryStartResult = z.object({ recovery: Recovery });
 export const RecoveryUpdateParams = z.strictObject({
   recoveryId: RecoveryId,
   sweepPsbt: PsbtBase64,
+  /** Hosted wallets only: the ledger coins the new sweep leaves behind on purpose (replaces the list given before). */
+  abandon: z.array(Outpoint).max(MAX_ABANDON).optional(),
 });
 export const RecoveryUpdateResult = z.object({ recovery: Recovery });
 
@@ -410,7 +445,11 @@ export const WalletRetireResult = z.object({
  * BIP 137 signature over `pairingMessage(walletId, cosignerAccountPubkey)`, as at pairing.
  */
 export const HardwareConfirmParams = z.strictObject({
-  hardwareAuth: HardwareAuthKey,
+  /**
+   * `tweak`: hosted wallets only (the guardian never sees the hardware xpub): the hardware account key's BIP 32 tweak
+   * for `/0/0`, so the guardian checks `pubkey == hardware account key + tweak·G` (docs/design/family-hosting.md).
+   */
+  hardwareAuth: HardwareAuthKey.extend({ tweak: Hex32.optional() }),
   hardwareAuthProof: Bip137Signature,
 });
 export const HardwareConfirmResult = z.object({
@@ -502,6 +541,11 @@ export const GuardianStatusResult = z
      * guardians before relay changes.
      */
     relays: RelayList.optional(),
+    /**
+     * Only for a guest's hosted wallet (guardians with `family_hosting`): `leaving` once the host stopped hosting; the
+     * wallet's key 3 ends at `endsAt` (unix seconds). Move the wallet to another guardian before then (Replace guardian).
+     */
+    hosting: z.object({ state: z.enum(['active', 'leaving']), endsAt: UnixSeconds.optional() }).optional(),
   })
   .refine((r) => sameMoment(r.time, r.atMs), { message: SAME_MOMENT, path: ['atMs'] });
 
@@ -808,11 +852,17 @@ export const AccessApproval = z.strictObject({
 
 export const RecoveryAccessParams = z.strictObject({ approval: AccessApproval });
 export const RecoveryAccessResult = z.object({
-  /** The paired wallet: everything a new phone needs to rebuild it and sweep it. */
-  descriptor: Descriptor,
+  /** The paired wallet: everything a new phone needs to rebuild it and sweep it. Absent for a hosted wallet (`hosted`). */
+  descriptor: Descriptor.optional(),
   walletId: WalletId,
   network: Network,
-  guardianKey: KeyOrigin,
+  /** Absent for a hosted wallet: its key 3 chaincode is the phone's; the descriptor comes from the wallet map. */
+  guardianKey: KeyOrigin.optional(),
+  /**
+   * A guest's hosted wallet (guardians with `family_hosting`): the guardian knows only its account pubkeys. The new
+   * phone fetches the encrypted wallet map (`hosted.map.get`) and the co-signed coins (`hosted.coins`).
+   */
+  hosted: z.object({ accountPubkeys: AccountPubkeys }).optional(),
   hardwareAuth: HardwareAuthKey,
   policy: Policy,
   nextHardwareSequence: z.int().min(1),
@@ -857,6 +907,90 @@ export const SavingsGetParams = z.strictObject({});
 export const SavingsGetResult = z.object({
   savings: z.object({ walletId: WalletId, descriptor: Descriptor, since: UnixSeconds }).nullable(),
 });
+
+/* -------------------------------------------------------------------------- */
+/* Family hosting (docs/design/family-hosting.md)                             */
+/* -------------------------------------------------------------------------- */
+// A host's guardian holds key 3 for a guest's wallet in its own slot, knowing only the wallet's account pubkeys (BIP 89
+// delegation). New method names, so older guardians answer `-32601` and the host's own pairing is untouched.
+
+const InviteSecret = z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'invalid invite secret');
+
+/**
+ * Step 1 of accepting an invite. Checks the invite without using it up, binds it to this sender, derives the slot's
+ * key 3 (`trikey/key3-hosted/v1`, from the guardian's seed, the slot and the phone's `entropy`, which is required) and
+ * answers its account pubkey only: the phone chooses key 3's chaincode itself, so the guardian learns no address.
+ */
+export const HostedPrepareParams = z.strictObject({
+  inviteSecret: InviteSecret,
+  network: Network,
+  /** The phone's contribution to key 3: 32 fresh random bytes, hex. Required (a guest never gets the guardian's own key). */
+  entropy: Hex32,
+});
+export const HostedPrepareResult = z.object({
+  /** Key 3's account pubkey (compressed). No chaincode. */
+  cosignerAccountPubkey: CompressedPubkey,
+  guardianVersion: z.string().max(32),
+  features: z
+    .array(z.string().regex(/^[a-z0-9_]{1,32}$/))
+    .max(32)
+    .optional(),
+});
+
+/**
+ * Step 2: registers the hosted wallet by its account pubkeys and burns the invite. The guardian checks what `pair`
+ * checks (distinct keys, the cosigner slot, rules, a contact on mainnet, no "limit off" at pairing, no retired key set),
+ * the pairing proof over `pairingMessage(keySetId, cosignerAccountPubkey)`, and the authorization key as
+ * `hardware + tweak·G`. The wallet map is required and stored write-once.
+ */
+export const HostedPairParams = z.strictObject({
+  inviteSecret: InviteSecret,
+  deviceName: z.string().min(1).max(64),
+  /** The name the guest gives the wallet; the guardian names the wallet by it in alerts (never the host's name for them). */
+  walletLabel: z.string().min(1).max(64),
+  network: Network,
+  accountPubkeys: z.strictObject({ app: CompressedPubkey, hardware: CompressedPubkey }),
+  hardwareAuth: z.strictObject({ pubkey: CompressedPubkey, path: DerivationPath, tweak: Hex32 }),
+  hardwareAuthProof: Bip137Signature,
+  rules: Policy,
+  walletMap: WalletMap,
+  phoneNostrPubkey: NostrPubkey,
+});
+export const HostedPairResult = z.object({
+  /** The key-set id (`keySetId`), named by every hardware approval for this wallet. */
+  walletId: WalletId,
+  cosignerAccountPubkey: CompressedPubkey,
+  guardianVersion: z.string().max(32),
+});
+
+/** A coin key 3 co-signed into existence for a hosted wallet (the slot's ledger): what the phone needs to find it again. */
+export const LedgerCoin = z.object({
+  txid: Hex32,
+  vout: z.int().min(0).max(1_000_000),
+  valueSats: Sats,
+  /** scriptPubKey, hex. */
+  script: z.string().regex(/^0020[0-9a-f]{64}$/, 'expected a P2WSH script'),
+  /** The three tweaks the co-signed PSBT carried for it (hex, 32 bytes each). */
+  tweaks: z.object({ app: Hex32, hardware: Hex32, cosigner: Hex32 }),
+  /** When the guardian co-signed it (unix seconds). */
+  at: UnixSeconds,
+});
+export const MAX_LEDGER_PAGE = 100;
+/** The slot's ledger, a page at a time (the guest's phone and a phone with recovery access to the slot). */
+export const HostedCoinsParams = z.strictObject({
+  offset: z.int().min(0).max(100_000).optional(),
+  limit: z.int().min(1).max(MAX_LEDGER_PAGE).optional(),
+});
+export const HostedCoinsResult = z.object({
+  walletId: WalletId,
+  coins: z.array(LedgerCoin).max(MAX_LEDGER_PAGE),
+  total: z.int().min(0),
+  nextOffset: z.int().min(0).optional(),
+});
+
+/** The encrypted wallet map the slot keeps (the current wallet's, or `walletId`'s: a running recovery's destination). */
+export const HostedMapGetParams = z.strictObject({ walletId: WalletId.optional() });
+export const HostedMapGetResult = z.object({ walletId: WalletId, map: WalletMap.nullable() });
 
 /* -------------------------------------------------------------------------- */
 /* Relay changes                                                              */
@@ -909,6 +1043,10 @@ export const methods = {
   'savings.register': { params: SavingsRegisterParams, result: SavingsRegisterResult },
   'savings.unregister': { params: SavingsUnregisterParams, result: SavingsUnregisterResult },
   'savings.get': { params: SavingsGetParams, result: SavingsGetResult },
+  'hosted.prepare': { params: HostedPrepareParams, result: HostedPrepareResult },
+  'hosted.pair': { params: HostedPairParams, result: HostedPairResult },
+  'hosted.coins': { params: HostedCoinsParams, result: HostedCoinsResult },
+  'hosted.map.get': { params: HostedMapGetParams, result: HostedMapGetResult },
 } as const;
 
 export type MethodName = keyof typeof methods;
@@ -1005,8 +1143,11 @@ export const Alert = z.discriminatedUnion('type', [
     /** The wallet is retired on this guardian: nothing is co-signed for it any more. */
     type: z.literal('wallet_retired'),
     walletId: WalletId,
-    /** `retired`: `wallet.retire`; `recovered`: swept by a recovery; `reset`: the guardian was reset from its web UI. */
-    reason: z.enum(['retired', 'recovered', 'reset']),
+    /**
+     * `retired`: `wallet.retire`; `recovered`: swept by a recovery; `reset`: the guardian was reset from its web UI;
+     * `hosting_ended`: a hosted wallet whose host stopped hosting (its key 3 is gone).
+     */
+    reason: z.enum(['retired', 'recovered', 'reset', 'hosting_ended']),
     successorWalletId: WalletId.optional(),
   }),
   stamped({
@@ -1079,6 +1220,17 @@ export const Alert = z.discriminatedUnion('type', [
     walletId: WalletId,
     replacedBy: WalletId.optional(),
   }),
+  stamped({
+    ...alertBase,
+    /**
+     * A guest's hosted wallet: the host stopped hosting it. Key 3 keeps co-signing and running recoveries until `endsAt`
+     * (unix seconds), then the wallet is retired on that guardian (`wallet_retired`, `hosting_ended`). Move it with Replace
+     * guardian before then. Sent to the guest's phone; the guest's alert contacts get it as a NIP-17 DM.
+     */
+    type: z.literal('hosting_ending'),
+    walletId: WalletId,
+    endsAt: UnixSeconds,
+  }),
 ]);
 
 export type AlertType = z.infer<typeof Alert>['type'];
@@ -1122,6 +1274,10 @@ export const RequestSchema = z.discriminatedUnion('method', [
   requestOf('savings.register', SavingsRegisterParams),
   requestOf('savings.unregister', SavingsUnregisterParams),
   requestOf('savings.get', SavingsGetParams),
+  requestOf('hosted.prepare', HostedPrepareParams),
+  requestOf('hosted.pair', HostedPairParams),
+  requestOf('hosted.coins', HostedCoinsParams),
+  requestOf('hosted.map.get', HostedMapGetParams),
 ]);
 export type Request = z.infer<typeof RequestSchema>;
 

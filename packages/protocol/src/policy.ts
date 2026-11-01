@@ -24,8 +24,11 @@ export function isLimitOff(dailyLimitSats: number): boolean {
  * `savings`: it watches the phone's optional Savings wallet (`savings.register`, `savings.unregister`, `savings.get`,
  * `wallet.sync` with `wallet: "savings"`, its spends through `tx.broadcast`) and alerts when a Savings coin moves
  * (`savings_moved`). It holds no Savings key: the phone creates Savings only with such a guardian, for its chain data.
+ * `family_hosting`: it hosts wallets for guests (`hosted.prepare`, `hosted.pair`, `hosted.coins`, `hosted.map.get`;
+ * docs/design/family-hosting.md). Reported by `hosted.prepare` (an unpaired guest cannot call `guardian.status`) and in
+ * `guardian.status`.
  */
-export const GUARDIAN_FEATURES = { limitOff: 'limit_off', contactLock: 'contact_lock', savings: 'savings' } as const;
+export const GUARDIAN_FEATURES = { limitOff: 'limit_off', contactLock: 'contact_lock', savings: 'savings', familyHosting: 'family_hosting' } as const;
 
 /** True when the alert contacts may lock the guardian (`Policy.contactLock`). */
 export function isContactLockOn(policy: Pick<Policy, 'contactLock'>): boolean {

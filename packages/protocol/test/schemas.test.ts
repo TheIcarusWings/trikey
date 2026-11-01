@@ -84,6 +84,21 @@ describe('request schemas', () => {
     'savings.register': { descriptor: 'wsh(sortedmulti(2,A,B,C))' },
     'savings.unregister': {},
     'savings.get': {},
+    'hosted.prepare': { inviteSecret: 'A'.repeat(43), network: 'signet', entropy: '5a'.repeat(32) },
+    'hosted.pair': {
+      inviteSecret: 'A'.repeat(43),
+      deviceName: 'Ana phone',
+      walletLabel: 'Ana',
+      network: 'signet',
+      accountPubkeys: { app: `02${'11'.repeat(32)}`, hardware: `03${'22'.repeat(32)}` },
+      hardwareAuth: { pubkey: `02${'33'.repeat(32)}`, path: "m/48'/1'/0'/2'/0/0", tweak: '44'.repeat(32) },
+      hardwareAuthProof: pairParams.hardwareAuthProof,
+      rules: policy,
+      walletMap: 'AbC-_9'.repeat(10),
+      phoneNostrPubkey: 'ee'.repeat(32),
+    },
+    'hosted.coins': { offset: 0, limit: 50 },
+    'hosted.map.get': {},
   };
 
   it('has a sample for every method', () => {
