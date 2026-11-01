@@ -78,9 +78,9 @@ jobs:
       WALK_TIMEOUT: '600'
       COCOAPODS_DISABLE_STATS: 'true'
     steps:
-      - uses: actions/checkout@v4.4.0
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -126,7 +126,7 @@ jobs:
 
       # CocoaPods' download cache (pod sources and the prebuilt React Native and Hermes frameworks), not Pods/:
       # a cache miss or a stale entry only costs download time, never a broken build.
-      - uses: actions/cache@v4.3.0
+      - uses: actions/cache@v6.1.0
         with:
           path: ~/Library/Caches/CocoaPods
           key: ios-cocoapods-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
@@ -210,13 +210,13 @@ jobs:
           fi
 
       # Maestro (the demo walk) runs on Java 17 or newer.
-      - uses: actions/setup-java@v4.9.1
+      - uses: actions/setup-java@v6.1.0
         if: ${{ steps.build.outcome == 'success' }}
         with:
           distribution: temurin
           java-version: '17'
 
-      - uses: actions/cache@v4.3.0
+      - uses: actions/cache@v6.1.0
         if: ${{ steps.build.outcome == 'success' }}
         with:
           path: ~/.maestro-cli
@@ -249,7 +249,7 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python3 .github/scripts/demo-walk-report.py "${WALK_OUT}" "${OUT}"
 
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         with:
           name: ios-launch-logs
@@ -257,7 +257,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         with:
           name: ios-demo-walk
@@ -265,7 +265,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: ios-build-logs
