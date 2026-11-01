@@ -403,7 +403,7 @@ export interface GuardedWallet {
 export interface LimitNotice {
   /** `limit-<n>`, `lock-<n>` or `lockrule-<n>`, unique (the next activity id when it was queued). */
   id: string;
-  kind: 'limit_off' | 'limit_on' | 'contact_lock' | 'contact_lock_on' | 'contact_lock_off' | 'savings_moved';
+  kind: 'limit_off' | 'limit_on' | 'contact_lock' | 'contact_lock_on' | 'contact_lock_off' | 'savings_moved' | 'savings_unwatched';
   walletId: string;
   /** ms */
   at: number;
@@ -415,8 +415,12 @@ export interface LimitNotice {
   reason?: 'phone' | 'hardware' | 'recovery';
   /** `contact_lock`: the alert contact who locked the guardian (nostr pubkey). */
   contact?: string;
-  /** `savings_moved`: the Savings wallet, the spending transaction and what left Savings (sats, fee included). */
+  /**
+   * `savings_moved`: the Savings wallet, the spending transaction and what left Savings (sats, fee included).
+   * `savings_unwatched`: the Savings wallet no longer watched, and `replacedBy` the one watched instead (absent: none).
+   */
   savingsWalletId?: string;
+  replacedBy?: string;
   txid?: string;
   amountSats?: bigint;
   /** The paired phone first, then the contacts (nostr pubkeys). */

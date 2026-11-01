@@ -242,6 +242,8 @@ export type SecurityEvent = { id: string; at: IsoDate } & (
   | { kind: 'savings-created' }
   /** A lost Savings key was replaced: Savings moved to a new Savings wallet. */
   | { kind: 'savings-key-replaced'; lostKey: 'phone' | 'hardware' | 'recoveryKey' }
+  /** The guardian stopped watching Savings, or now watches another wallet instead (`replaced`), and this phone did not ask. */
+  | { kind: 'savings-unwatched'; replaced: boolean }
 );
 
 export type ActivityItem =

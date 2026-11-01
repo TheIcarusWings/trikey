@@ -804,6 +804,11 @@ class Service implements RealWalletService {
         } else if (a.type === 'wallet_retired') {
           addEvent(this.log, { kind: 'wallet-retired', reason: a.reason, at: e.atMs });
           void this.saveLogNow();
+        } else if (a.type === 'savings_unwatched' && a.replacedBy !== this.w?.state.savings?.walletId) {
+          // Not this phone's own key replacement (that leaves Savings on `replacedBy`): the tripwire was turned off or
+          // pointed elsewhere. The wallet registers Savings again at the next sync.
+          addEvent(this.log, { kind: 'savings-unwatched', replaced: !!a.replacedBy, at: e.atMs });
+          void this.saveLogNow();
         } else if (a.type === 'limit_on' && a.reason === 'recovery') {
           // The guardian turned the limit back on for the recovered wallet (this phone logs its own changes itself).
           addEvent(this.log, { kind: 'limit-on', limitSats: a.limitSats, at: e.atMs });

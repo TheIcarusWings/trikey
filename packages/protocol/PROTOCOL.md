@@ -341,6 +341,12 @@ know these methods, and only to them does a phone send them (an older one answer
   another replaces it (a Savings key was replaced). Answers `walletId` (`MultisigWallet.fingerprint()`) and `since` (unix
   seconds).
 * **`savings.unregister`** `{}`: stop watching (`unregistered: false` when nothing was watched).
+* **Turning the watch off or swapping it is announced.** Both need only the paired phone, so someone holding the phone
+  could otherwise blind the tripwire before moving Savings with a second key. A real `savings.unregister`, and a
+  `savings.register` that replaces a different watched wallet, raise `savings_unwatched` (`walletId`: the wallet no
+  longer watched; `replacedBy`: the one watched instead) to the paired phone and a NIP-17 DM to every alert contact,
+  durable and retried for 7 days like `savings_moved`. Registering the same wallet again changes nothing and says
+  nothing.
 * **`savings.get`** `{}`: `savings: { walletId, descriptor, since }` or `null`. How a new phone without a backup finds
   Savings again: the record belongs to the active wallet and **moves with it when the guardian adopts a recovery's
   destination** (retirement and reset drop it). The phone checks the descriptor against its hardware wallet before
@@ -382,6 +388,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 | `limit_off` | `sequence` (the hardware approval's), `limitBeforeSats?`: the daily limit was turned off. To the paired phone; alert contacts get a NIP-17 DM saying so in words. See "No daily limit" |
 | `limit_on` | `limitSats`, `reason` (`phone`\|`hardware`\|`recovery`): the daily limit is on again; `recovery`: the wallet a recovery adopted starts with it. To the paired phone |
 | `savings_moved` | `walletId` (the Savings wallet), `txid`, `amountSats` (what left Savings, fee included): a Savings coin was spent. To the paired phone; alert contacts get a NIP-17 DM. Guardians with `savings`; see "Savings" |
+| `savings_unwatched` | `walletId` (the Savings wallet no longer watched), `replacedBy?` (the one watched instead): `savings.unregister`, or `savings.register` with another wallet. To the paired phone; alert contacts get a NIP-17 DM. See "Savings" |
 | `relays_changed` | `relays` (`RelayList`): the guardian moved to these relays (its web UI). Sent to the paired phone (and phones with recovery access) over the old and the new relays. See section 5, "Changing relays" |
 | `wallet_retired` | `walletId`, `reason` (`retired`\|`recovered`\|`reset`), `successorWalletId?`. Sent to the phone that was paired to the wallet: `retired` after `wallet.retire`; `reset` after the web UI's reset; `recovered` when a recovery swept the wallet and the phone paired to the new wallet is a different one (a lost phone's replacement), or the guardian adopted none (`successorWalletId` is the adopted wallet when there is one). The phone that started the recovery and is adopted gets `wallet_adopted` instead |
 

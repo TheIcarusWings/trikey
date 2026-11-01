@@ -1067,6 +1067,18 @@ export const Alert = z.discriminatedUnion('type', [
     txid: Hex32,
     amountSats: Sats,
   }),
+  stamped({
+    ...alertBase,
+    /**
+     * The guardian stopped watching the Savings wallet `walletId` (`savings.unregister`), or now watches `replacedBy`
+     * instead (`savings.register` with another descriptor): its tripwire no longer covers `walletId`. Both need only the
+     * paired phone, so they are announced like a Savings move: to the paired phone, and to the alert contacts as a NIP-17
+     * DM. Phones before this alert drop it (an unknown `type`).
+     */
+    type: z.literal('savings_unwatched'),
+    walletId: WalletId,
+    replacedBy: WalletId.optional(),
+  }),
 ]);
 
 export type AlertType = z.infer<typeof Alert>['type'];

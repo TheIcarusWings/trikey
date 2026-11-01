@@ -121,6 +121,17 @@ describe('Savings in the app', { timeout: 120_000 }, () => {
     expect(s.savings.activity[0]).toMatchObject({ kind: 'to-spending', signedBy: 'phone+hardware', amountSats: 30_000 });
   });
 
+  it('the guardian stopping its watch behind the phone\'s back is in Activity, and the next sync registers Savings again', async () => {
+    expect((await rig.guardian.engine.unregisterSavings()).ok).toBe(true);
+    await rig.guardian.alerts.run();
+    const seen = () => svc.getState().activity.find((a) => a.type === 'security' && a.event.kind === 'savings-unwatched');
+    for (let i = 0; i < 200 && !seen(); i++) await new Promise((r) => setTimeout(r, 20));
+    expect(seen()).toMatchObject({ event: { kind: 'savings-unwatched', replaced: false } });
+    await svc.sync();
+    expect(svc.getState().savings.watchedByGuardian).toBe(true);
+    expect(rig.guardian.engine.savings()?.walletId).toBe(svc.getState().savings.walletId);
+  });
+
   it('a stale or foreign quote is refused before anything is signed', async () => {
     await expect(svc.savings!.send({ address: 'x', amountSats: 1, feeSats: 1, totalSats: 2, toSpending: false }, 'phone+hardware')).rejects.toMatchObject({ kind: 'quote_stale' });
   });

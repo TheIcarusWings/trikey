@@ -231,6 +231,20 @@ describe('moving money', { timeout: 90_000 }, () => {
   });
 });
 
+describe('the watch turned off behind the phone\'s back', { timeout: 60_000 }, () => {
+  it('the phone and the contact are told; the phone no longer trusts the watch and registers Savings again', async () => {
+    const id = w.state.savings!.walletId;
+    // As if someone holding the phone's nostr key had sent `savings.unregister`.
+    expect((await rig.guardian.engine.unregisterSavings()).ok).toBe(true);
+    await rig.guardian.alerts.run();
+    await waitFor(() => events.find((e) => e.type === 'alert' && e.alert.type === 'savings_unwatched' && e.alert.walletId === id), 'savings_unwatched');
+    await waitFor(() => contactInbox.find((m) => m.includes('stopped watching its Savings wallet')), 'the contact is told');
+    await w.sync();
+    expect(rig.guardian.engine.savings()?.walletId).toBe(id);
+    expect(w.savingsSnapshot()!.watchedByGuardian).toBe(true);
+  });
+});
+
 describe('backup and restore', { timeout: 90_000 }, () => {
   it('the backup holds Savings (version 2); a restored phone knows it and spends it', async () => {
     const b = await w.createBackup({ recoveryCode: true });

@@ -195,8 +195,10 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
                 ? [`"You may lock the guardian" message sent to ${n}`, 'Contacts told they may lock']
                 : e.kind === 'savings_moved'
                   ? [`"Savings moved" alert sent to ${n}`, 'Savings alert sent']
+                  : e.kind === 'savings_unwatched'
+                    ? [`"Savings no longer watched" alert sent to ${n}`, 'Savings alert sent']
                   : [`"You can no longer lock the guardian" message sent to ${n}`, 'Contacts told they can no longer lock'];
-      return { ...base, kind: e.kind === 'contact_lock' || e.kind === 'savings_moved' ? 'system' : 'rules', event, summary, signedBy: null, sats: null, result: 'ok' };
+      return { ...base, kind: e.kind === 'contact_lock' || e.kind === 'savings_moved' || e.kind === 'savings_unwatched' ? 'system' : 'rules', event, summary, signedBy: null, sats: null, result: 'ok' };
     }
     case 'contact_locked':
       return {
@@ -265,7 +267,15 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
         result: 'ok',
       };
     case 'savings_unregistered':
-      return { ...base, kind: 'system', event: `Stopped watching the Savings wallet ${e.walletId}`, summary: 'Stopped watching Savings', signedBy: 'Phone', sats: null, result: 'ok' };
+      return {
+        ...base,
+        kind: 'system',
+        event: `Stopped watching the Savings wallet ${e.walletId}, at the phone's request: this guardian no longer says when it moves. The phone and the alert contacts are told.`,
+        summary: 'Stopped watching Savings',
+        signedBy: 'Phone',
+        sats: null,
+        result: 'ok',
+      };
     case 'savings_moved':
       return {
         ...base,

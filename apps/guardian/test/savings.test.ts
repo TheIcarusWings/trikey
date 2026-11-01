@@ -254,3 +254,40 @@ describe('Savings goes with the active wallet', () => {
     expect(DEFAULT_RULES.dailyLimitSats).toBe(100_000n);
   });
 });
+
+describe('turning the Savings watch off, or swapping it, is announced like a Savings move', () => {
+  it('unregistering queues a durable notice to the phone and every alert contact', async () => {
+    const ctx = await setup({ rules: { alertContacts: [CONTACT_A] } });
+    const sv = await registered(ctx);
+    expect(ctx.engine.dueNotices()).toEqual([]);
+    await ctx.engine.unregisterSavings();
+    const n = ctx.engine.dueNotices();
+    expect(n).toHaveLength(1);
+    expect(n[0]).toMatchObject({ kind: 'savings_unwatched', savingsWalletId: sv.walletId, recipients: [APP_NOSTR, CONTACT_A] });
+    expect(n[0]!.replacedBy).toBeUndefined();
+    const wire = noticeToWire(n[0]!);
+    expect(wire).toMatchObject({ type: 'savings_unwatched', walletId: sv.walletId });
+    expect(wire!.message!.length).toBeLessThanOrEqual(500);
+    expect(noticeText(n[0]!)).toMatch(/stopped watching its Savings wallet/);
+    expect(noticeText(n[0]!)).toMatch(/move Savings unseen/);
+    expect(engineEntry(ctx.engine.activity({ limit: 1 })[0]!).event).toMatch(/The phone and the alert contacts are told/);
+    // Nothing watched: nothing to announce.
+    await ctx.engine.unregisterSavings();
+    expect(ctx.engine.dueNotices()).toHaveLength(1);
+  });
+
+  it('registering a different Savings wallet queues one, naming both; the same one again queues nothing', async () => {
+    const ctx = await setup({ rules: { alertContacts: [CONTACT_A] } });
+    const first = await registered(ctx);
+    await ctx.engine.registerSavings((await savingsWallet()).descriptor());
+    expect(ctx.engine.dueNotices()).toEqual([]);
+    const decoy = await savingsWallet(MNEMONICS.app2);
+    await ctx.engine.registerSavings(decoy.descriptor());
+    const n = ctx.engine.dueNotices();
+    expect(n).toHaveLength(1);
+    expect(n[0]).toMatchObject({ kind: 'savings_unwatched', savingsWalletId: first.walletId, replacedBy: decoy.fingerprint(), recipients: [APP_NOSTR, CONTACT_A] });
+    expect(noticeToWire(n[0]!)).toMatchObject({ type: 'savings_unwatched', walletId: first.walletId, replacedBy: decoy.fingerprint() });
+    expect(noticeText(n[0]!)).toMatch(/now watches a different Savings wallet/);
+    expect(noticeText(n[0]!)).toContain(decoy.fingerprint().slice(0, 8));
+  });
+});

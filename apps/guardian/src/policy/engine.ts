@@ -912,6 +912,8 @@ export class PolicyEngine {
       const next: SavingsWatch = { walletId, network: network.name, descriptor: wallet.descriptor(), since: now, baselined: false, seenSpends: [] };
       w.savings = next;
       this.log(draft, now, { type: 'savings_registered', walletId, ...(prev ? { replaced: prev.walletId } : {}) });
+      // Swapping the watched Savings wallet blinds the tripwire for the old one: announced like a Savings move.
+      if (prev) this.noteSavingsUnwatched(draft, now, w, prev.walletId, walletId);
       return { ok: true as const, savings: next, ...(prev ? { replaced: prev.walletId } : {}) };
     });
   }
@@ -925,7 +927,28 @@ export class PolicyEngine {
       const walletId = w.savings.walletId;
       delete w.savings;
       this.log(draft, now, { type: 'savings_unregistered', walletId });
+      // Turning the tripwire off is announced like a Savings move: someone holding the phone must not do it quietly.
+      this.noteSavingsUnwatched(draft, now, w, walletId);
       return { ok: true as const, unregistered: true, walletId };
+    });
+  }
+
+  /**
+   * The Savings watch was turned off (`savings.unregister`) or swapped for another wallet (`savings.register` with a
+   * different descriptor, `replacedBy`): a durable `savings_unwatched` notice to the paired phone and every alert contact,
+   * delivered and retried like `savings_moved`. Both need only the paired phone, so a phone thief could otherwise blind
+   * the tripwire before moving Savings with a second key.
+   */
+  private noteSavingsUnwatched(draft: GuardianState, now: number, w: GuardedWallet, walletId: string, replacedBy?: string): void {
+    this.addNotice(draft, now, {
+      id: `savings-${draft.nextActivityId}`,
+      kind: 'savings_unwatched',
+      walletId: w.registration.walletId,
+      at: now,
+      savingsWalletId: walletId,
+      ...(replacedBy ? { replacedBy } : {}),
+      recipients: [w.registration.appNostrPubkey, ...w.rules.alertContacts.filter((c) => c !== w.registration.appNostrPubkey)],
+      sent: [],
     });
   }
 

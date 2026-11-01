@@ -203,8 +203,34 @@ describe('the guardian watches Savings', { timeout: 60_000 }, () => {
     expect(e.code).toBe(ErrorCode.ForeignTransaction);
   });
 
-  it('unregistering stops watching; nothing of it is left in the status', async () => {
+  it('swapping the watched Savings wallet is announced to the phone and the contact; the same one again is not', async () => {
+    const decoy = new MultisigWallet(network, {
+      app: savings.keys.app,
+      hardware: savings.keys.hardware,
+      cosigner: await new SoftwareSigner('cosigner', 'vessel ladder alter error federal sibling chat ability sun glass valve picture').getKey(network, SAVINGS_ACCOUNT),
+    });
+    await phone.call('savings.register', { descriptor: decoy.descriptor() });
+    await rig.guardian.alerts.run();
+    const alert = await waitFor(() => phoneAlerts.find((a) => a.type === 'savings_unwatched' && a.walletId === savings.fingerprint()), 'savings_unwatched (replaced)');
+    expect(alert).toMatchObject({ replacedBy: decoy.fingerprint() });
+    await waitFor(() => contactInbox.find((m) => m.includes('now watches a different Savings wallet')), 'contact DM (replaced)');
+    // Back to the real one (announced too), then the same again: nothing more.
+    await phone.call('savings.register', { descriptor: savings.descriptor() });
+    await rig.guardian.alerts.run();
+    await waitFor(() => phoneAlerts.find((a) => a.type === 'savings_unwatched' && a.walletId === decoy.fingerprint()), 'savings_unwatched (back)');
+    const count = phoneAlerts.filter((a) => a.type === 'savings_unwatched').length;
+    await phone.call('savings.register', { descriptor: savings.descriptor() });
+    await rig.guardian.alerts.run();
+    await sleep(300);
+    expect(phoneAlerts.filter((a) => a.type === 'savings_unwatched').length).toBe(count);
+  });
+
+  it('unregistering stops watching, is announced to the phone and the contact, and nothing of it is left in the status', async () => {
     expect(await phone.call('savings.unregister', {})).toEqual({ unregistered: true, walletId: savings.fingerprint() });
+    await rig.guardian.alerts.run();
+    const alert = await waitFor(() => phoneAlerts.find((a) => a.type === 'savings_unwatched' && a.walletId === savings.fingerprint() && !a.replacedBy), 'savings_unwatched (off)');
+    expect(alert).toBeTruthy();
+    await waitFor(() => contactInbox.find((m) => m.includes('stopped watching its Savings wallet')), 'contact DM (off)');
     expect((await phone.call('guardian.status', {})).savingsWalletId).toBeUndefined();
     expect((await rpcError(phone.call('wallet.sync', { wallet: 'savings' }))).code).toBe(ErrorCode.WalletNotWatched);
     expect((await rig.api('GET', '/status')).body.savings).toBeUndefined();

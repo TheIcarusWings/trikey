@@ -68,6 +68,23 @@ describe('savings: the alert', () => {
   });
 });
 
+describe('savings: the watch turned off or swapped', () => {
+  it('savings_unwatched names the wallet no longer watched, and the one watched instead when swapped', () => {
+    const a = { type: 'savings_unwatched', walletId: SAVINGS_ID, at: 1_900_000_000, atMs: 1_900_000_000_100 };
+    expect(Alert.safeParse(a).success).toBe(true);
+    expect(Alert.safeParse({ ...a, replacedBy: 'bb22cc33dd44ee55' }).success).toBe(true);
+    expect(Alert.safeParse({ ...a, replacedBy: 'nope' }).success).toBe(false);
+    const { walletId: _w, ...noWallet } = a;
+    expect(Alert.safeParse(noWallet).success).toBe(false);
+  });
+
+  it('an alert type a phone does not know fails its schema, so the client drops it (older phones ignore new alerts)', () => {
+    // Phones before `savings_unwatched` (or `savings_moved`) have a closed `Alert` union: such a message fails
+    // `MessageSchema` in `parseRumor`, and `RpcClient` drops it without calling any alert handler.
+    expect(Alert.safeParse({ type: 'savings_something_later', walletId: SAVINGS_ID, at: 1_900_000_000 }).success).toBe(false);
+  });
+});
+
 describe('savings changes nothing in the policy', () => {
   it('the same rules hash and read on the device exactly as before', () => {
     const rules: Policy = { dailyLimitSats: 100_000, recoveryDelayDays: 14, alertContacts: [CONTACT_A], sweepFeeCapSats: 20_000 };

@@ -2851,6 +2851,17 @@ export class TrikeyWallet {
         // The guardian saw a Savings coin move (this phone's own spend, or two keys in other hands): read Savings again.
         void this.syncSavings().catch(() => undefined);
         return;
+      case 'savings_unwatched':
+        // The guardian stopped watching this phone's Savings (or swapped it for another wallet), and this phone did not
+        // ask for that (a key replacement leaves Savings on the new wallet, which the alert names as `replacedBy`).
+        // The watch is not trusted any more: the next sync registers Savings again, which the guardian announces too.
+        if (this.s.savings && alert.walletId === this.s.savings.walletId) {
+          await this.update((s) => {
+            if (s.savings?.walletId === alert.walletId) delete s.savings.registration;
+          });
+          void this.syncSavings().catch(() => undefined);
+        }
+        return;
       case 'sp_received': {
         // A payment reached the address. Look it up now (no prompt: the scan key is on the phone); moving it into the
         // vault needs the biometric prompt, so that is the person's tap (`sweepSilentPayments`), not something to
