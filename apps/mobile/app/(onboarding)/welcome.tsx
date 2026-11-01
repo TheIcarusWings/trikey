@@ -42,7 +42,7 @@ export default function Welcome() {
           {/* Honest from the first screen: what kind of build this is. */}
           <View className="flex-row justify-center pb-1">
             <Pill dot="warn" strong>
-              {backing === 'demo' ? 'Demo · sample data' : mainnet ? 'Pre-alpha · not audited' : 'Pre-alpha · test network'}
+              {backing === 'demo' ? 'Demo · sample data' : mainnet ? 'Pre-alpha · not audited · open source' : 'Pre-alpha · test network'}
             </Pill>
           </View>
           {picks ? <NetworkPicker /> : null}

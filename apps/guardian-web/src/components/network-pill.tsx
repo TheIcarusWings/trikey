@@ -45,7 +45,7 @@ export function NetworkStrip() {
 }
 
 /**
- * "Mainnet · pre-alpha": which bitcoin network this guardian is on (from `/api/status`) and the
+ * "Mainnet · pre-alpha · not audited · open source": which bitcoin network this guardian is on (from `/api/status`) and the
  * project's stage, next to the page title. Without a network (an older guardian) only the stage
  * shows. On a test network the strip says it instead.
  */
@@ -60,7 +60,7 @@ export function NetworkPill({ className }: { className?: string }) {
       )}
     >
       <span aria-hidden="true" className="size-1.5 rounded-full bg-warn" />
-      {network ? `${networkName(network)} · pre-alpha` : 'Pre-alpha'}
+      {network ? `${networkName(network)} · pre-alpha · not audited · open source` : 'Pre-alpha · not audited · open source'}
     </span>
   );
 }

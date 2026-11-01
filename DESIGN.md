@@ -468,6 +468,6 @@ Someone who runs a guardian can host one for a person they know.
    - settings (limit, delay, contacts).
 4. **Testnet and signet beta, tested by users in the wild:** the owner's friends first, then anyone. There is no budget
    for a paid security review (owner's decision, 2026-11-01): the code is open for anyone to review, and
-   `docs/security/review-brief.md` is where a reviewer starts. Without a review, the app keeps saying "not audited"
+   `docs/security/review-brief.md` is where a reviewer starts. Without a review, the app keeps saying "not audited, open source"
    wherever it offers mainnet, which it does in guardian mode only, behind a pre-alpha warning the person accepts, for
    use at their own risk with a small amount; Recovery Key mode stays on test networks.
