@@ -8,7 +8,8 @@ export type ISODate = string;
 
 // --- status -------------------------------------------------------------
 
-export type LockReason = 'restart' | 'manual' | 'remote';
+/** `contact`: an alert contact sent the guardian `LOCK` over nostr (only when the rules let the contacts lock it). */
+export type LockReason = 'restart' | 'manual' | 'remote' | 'contact';
 
 export interface RelayStatus {
   /** wss:// or ws:// URL. */
@@ -75,6 +76,8 @@ export interface GuardianStatus {
   /** Set while locked. */
   lockedAt?: ISODate;
   lockReason?: LockReason;
+  /** `lockReason: 'contact'`: the alert contact who locked it, as an npub (the guardian knows no names). */
+  lockedBy?: string;
   relays: RelayStatus[];
   chain: ChainStatus;
   wallets: WalletSummary[];
@@ -256,6 +259,11 @@ export interface Rules {
   contacts: AlertContact[];
   /** A recovery sweep can't pay more than this in fees (sats). The guardian enforces an absolute cap. */
   sweepFeeCapSats: number;
+  /**
+   * The alert contacts may lock this guardian with a `LOCK` message over nostr (opt-in; the owner turns it on in the
+   * app, and needs the hardware wallet to turn it off). Absent from guardians before the setting: off.
+   */
+  contactLock?: boolean;
   /** Phone + hardware don't need the guardian; shown for information. */
   hardwarePayments: 'any-amount';
 }

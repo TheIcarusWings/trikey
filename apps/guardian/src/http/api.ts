@@ -15,7 +15,8 @@ import { base64 } from '@scure/base';
 import { getNetwork, parsePsbt } from '@trikey/core';
 import { MAX_RELAYS, encodePairingUri, encodeRecoveryUri } from '@trikey/protocol';
 import { MAX_RETIRING_RELAYS, type Guardian } from '../guardian.js';
-import { isLimitOff, type RecoveryRecord } from '../policy/index.js';
+import { isContactLockOn, isLimitOff, type RecoveryRecord } from '../policy/index.js';
+import { npubEncode } from 'nostr-tools/nip19';
 import { engineEntry, serviceEntry, shortNpub } from './activity.js';
 import { HttpError, type Route, type RouteResult } from './server.js';
 import type { ActivityEntry, GuardianStatus, PairingSession, PublicStatus, RecoveryCode, RecoveryInProgress, RelaySettings, Rules, SetupPreflight } from './types.js';
@@ -53,6 +54,7 @@ export async function guardianStatus(g: Guardian): Promise<GuardianStatus> {
     setupComplete: g.setupComplete,
     state: locked ? 'locked' : 'unlocked',
     ...(locked && g.lockedAt !== undefined ? { lockedAt: iso(g.lockedAt), lockReason: g.lockReason } : {}),
+    ...(locked && g.lockReason === 'contact' && g.lockedBy ? { lockedBy: npubEncode(g.lockedBy) } : {}),
     relays: g.relayStatus(),
     chain: await g.chain.syncStatus(),
     wallets: reg ? [{ id: reg.walletId, name: 'Main', phonesPaired: 1 }] : [],
@@ -95,6 +97,7 @@ function rules(g: Guardian): Rules {
       ...r.alertContacts.map((pk) => ({ id: pk, name: shortNpub(pk), kind: 'contact' as const })),
     ],
     sweepFeeCapSats: Number(r.sweepFeeCapSats),
+    contactLock: isContactLockOn(r),
     hardwarePayments: 'any-amount',
   };
 }

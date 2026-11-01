@@ -14,19 +14,22 @@
  * clear text so the user can check them on the device screen; the hash
  * commits to the complete rules, including the contact list. Rules with no
  * daily limit have the version-2 policy text, `limit=off` in place of the
- * number.
+ * number. Rules where the alert contacts may lock the guardian, or a change
+ * from such rules to rules where they may not, have the version-3 text, which
+ * adds `lock=on` / `lock=off` after the contacts.
  */
 import { hex } from '@scure/base';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { parseBip137Signature, verifyMessageWithPubkey } from './bip137.js';
-import { isLimitOff, normalizeRules, policyHash } from './rules.js';
+import { isContactLockOn, isLimitOff, normalizeRules, policyHash } from './rules.js';
 import { HardwareAuthKey, Rules } from './types.js';
 
 export const MAX_MESSAGE_LENGTH = 240;
 
 export type HardwareAction =
-  | { action: 'policy'; rules: Rules }
+  /** `contactLockBefore`: the current rules let the contacts lock the guardian (so turning it off says `lock=off`). */
+  | { action: 'policy'; rules: Rules; contactLockBefore?: boolean }
   | { action: 'cancel-recovery'; recoveryId: string }
   | { action: 'resume-phone' }
   | { action: 'retire-wallet' };
@@ -61,13 +64,18 @@ export function approvalMessage(action: HardwareAction, ctx: ApprovalContext): s
       // No daily limit: version 2 says so in words ("limit=off"), so the device screen shows it plainly. Guardians
       // before it rebuild only version 1, so they refuse such a signature (the phone does not offer "off" to them).
       const off = isLimitOff(r);
+      // Contacts may lock the guardian, or may now and this takes it away: version 3 says which in words. Guardians
+      // before it never have such rules, and a phone only sends them to a guardian that reports `contact_lock`.
+      const lockOn = isContactLockOn(r);
+      const lock = lockOn || action.contactLockBefore === true;
       return line([
-        off ? 'Trikey policy v2' : 'Trikey policy v1',
+        lock ? 'Trikey policy v3' : off ? 'Trikey policy v2' : 'Trikey policy v1',
         ...head,
         off ? 'limit=off' : `limit=${r.dailyLimitSats}`,
         `delay=${r.recoveryDelayDays}d`,
         `feecap=${r.sweepFeeCapSats}`,
         `contacts=${r.alertContacts.length}`,
+        ...(lock ? [`lock=${lockOn ? 'on' : 'off'}`] : []),
         `hash=${policyHash(r)}`,
         tail,
       ]);

@@ -47,3 +47,9 @@ export const DEFAULT_REFUSAL_LIMIT: RateLimitOptions = { max: 30, windowMs: 10 *
 
 /** `tx.broadcast`: each call may scan the wallet(s) on Electrs, so it is limited per phone. */
 export const DEFAULT_BROADCAST_LIMIT: RateLimitOptions = { max: 20, windowMs: 10 * 60 * 1000 };
+
+/**
+ * `LOCK` DMs per alert contact (dm-lock.ts): each one may lock the guardian (and alert everyone) or be answered, so a
+ * contact (or someone with a contact's nostr key) cannot flood the guardian, the owner or the other contacts.
+ */
+export const DEFAULT_CONTACT_LOCK_LIMIT: RateLimitOptions = { max: 5, windowMs: 60 * 60 * 1000 };

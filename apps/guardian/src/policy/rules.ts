@@ -17,13 +17,20 @@ export const MAX_ALERT_CONTACTS = 20;
 export function isLimitOff(r: Pick<Rules, 'dailyLimitSats'>): boolean {
   return r.dailyLimitSats >= LIMIT_OFF_SATS;
 }
+/** True when the alert contacts may lock the guardian (`Rules.contactLock`, DESIGN.md rule 8). */
+export function isContactLockOn(r: Pick<Rules, 'contactLock'>): boolean {
+  return r.contactLock === true;
+}
 const NOSTR_PUBKEY_RE = /^[0-9a-f]{64}$/;
 
 export function isNostrPubkey(s: string): boolean {
   return NOSTR_PUBKEY_RE.test(s);
 }
 
-/** Validates and normalizes rules (contacts lowercased, deduplicated and sorted). Throws with a reason. */
+/**
+ * Validates and normalizes rules (contacts lowercased, deduplicated and sorted; `contactLock` kept only when on, so
+ * rules without it are exactly the rules from before it existed). Throws with a reason.
+ */
 export function normalizeRules(r: Rules): Rules {
   if (typeof r.dailyLimitSats !== 'bigint' || r.dailyLimitSats < 0n || r.dailyLimitSats > MAX_SATS)
     throw new Error('dailyLimitSats must be a bigint between 0 and 21M BTC');
@@ -35,11 +42,13 @@ export function normalizeRules(r: Rules): Rules {
   const contacts = [...new Set(r.alertContacts.map((c) => String(c).toLowerCase()))].sort();
   for (const c of contacts) if (!isNostrPubkey(c)) throw new Error(`invalid alert contact: ${c}`);
   if (contacts.length > MAX_ALERT_CONTACTS) throw new Error(`at most ${MAX_ALERT_CONTACTS} alert contacts`);
+  if (r.contactLock !== undefined && typeof r.contactLock !== 'boolean') throw new Error('contactLock must be a boolean');
   return {
     dailyLimitSats: r.dailyLimitSats,
     recoveryDelayDays: r.recoveryDelayDays,
     alertContacts: contacts,
     sweepFeeCapSats: r.sweepFeeCapSats,
+    ...(r.contactLock === true ? { contactLock: true } : {}),
   };
 }
 
@@ -54,9 +63,10 @@ export function normalizeRules(r: Rules): Rules {
  */
 export function canonicalRules(r: Rules): string {
   const n = normalizeRules(r);
-  // Keys in sorted order.
+  // Keys in sorted order; `contactLock` only when on (so the hash of rules without it never changed).
   return JSON.stringify({
     alertContacts: n.alertContacts,
+    ...(n.contactLock ? { contactLock: true } : {}),
     dailyLimitSats: Number(n.dailyLimitSats),
     recoveryDelayDays: n.recoveryDelayDays,
     sweepFeeCapSats: Number(n.sweepFeeCapSats),
@@ -67,6 +77,7 @@ export function canonicalRules(r: Rules): string {
 export function rulesToPolicyJson(r: Rules) {
   return JSON.parse(canonicalRules(r)) as {
     alertContacts: string[];
+    contactLock?: true;
     dailyLimitSats: number;
     recoveryDelayDays: number;
     sweepFeeCapSats: number;
@@ -78,10 +89,12 @@ export function policyHash(r: Rules): string {
 }
 
 /**
- * The phone alone may only tighten: lower the daily limit and/or lengthen the
- * delay, with everything else unchanged. Anything else needs the hardware.
- * (Fee cap changes need the hardware either way: a lower cap could block a
- * genuine recovery, so it is not a "safe" direction.)
+ * The phone alone may only tighten: lower the daily limit, lengthen the
+ * delay and/or let the alert contacts lock the guardian (`contactLock` on),
+ * with everything else unchanged. Anything else needs the hardware, turning
+ * `contactLock` off included: it takes a protection away. (Fee cap changes need
+ * the hardware either way: a lower cap could block a genuine recovery, so it is
+ * not a "safe" direction.)
  */
 export function phoneMayApply(from: Rules, to: Rules): { ok: true } | { ok: false; detail: string } {
   const a = normalizeRules(from);
@@ -90,6 +103,7 @@ export function phoneMayApply(from: Rules, to: Rules): { ok: true } | { ok: fals
   if (b.recoveryDelayDays < a.recoveryDelayDays) return { ok: false, detail: 'shortening the recovery delay' };
   if (b.sweepFeeCapSats !== a.sweepFeeCapSats) return { ok: false, detail: 'changing the sweep fee cap' };
   if (a.alertContacts.join(',') !== b.alertContacts.join(',')) return { ok: false, detail: 'changing alert contacts' };
+  if (isContactLockOn(a) && !isContactLockOn(b)) return { ok: false, detail: 'stopping alert contacts from locking the guardian' };
   return { ok: true };
 }
 
