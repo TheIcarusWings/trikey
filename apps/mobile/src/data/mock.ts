@@ -34,6 +34,7 @@ import type {
   ReplaceStep,
   Sats,
   ScannedCode,
+  InviteView,
   SecurityEvent,
   SendQuote,
   ThemePreference,
@@ -367,8 +368,36 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
       for (const c of contacts) if (!/^npub1[02-9ac-hj-np-z]{58}$/.test(c.npub.trim())) throw new WalletServiceError('invalid_input', "That doesn't look like a nostr public key (npub…).");
       pendingContacts = contacts.map((c, i) => ({ id: nextId('c') + `-${i}`, name: c.name.trim(), npub: c.npub.trim() }));
     },
+    // A host's invite, as the demo shows it (docs/design/family-hosting.md): Maria's box, on the demo's network.
+    readInvite(code: string): InviteView {
+      const parsed = parseScannedCode(code, { now: Math.floor(NOW.getTime() / 1000) });
+      const view: InviteView =
+        parsed.kind === 'invite'
+          ? { ...(parsed.label ? { hostLabel: parsed.label } : {}), npub: parsed.guardianNpub, network: parsed.network, expiresAt: new Date(parsed.expiresAt * 1000).toISOString(), mainnet: parsed.network === 'bitcoin', acknowledged: false }
+          : { hostLabel: "Maria's Umbrel", npub: NEW_GUARDIAN_NPUB, network: 'signet', expiresAt: new Date(NOW.getTime() + 23 * 3_600_000).toISOString(), mainnet: false, acknowledged: false };
+      update({ invite: view });
+      return view;
+    },
+    acknowledgeInvite(understood: boolean) {
+      if (!state.invite) throw new WalletServiceError('wrong_state', 'Scan the invite first.');
+      update((s) => ({ invite: { ...s.invite!, acknowledged: understood } }));
+    },
+    async setHostedChainServer(url: string | null) {
+      await wait(networkDelay);
+      if (!state.hosted) throw new WalletServiceError('wrong_state', 'Only a hosted wallet has a chain server setting.');
+      update((s) => ({ hosted: { ...s.hosted!, chainServer: url && url.trim() ? url.trim() : null } }));
+    },
     async setUpRules(limitSats: Sats, delayDays: RecoveryDelayDays) {
       await wait(deviceDelay);
+      if (state.invite) {
+        if (!state.invite.acknowledged) throw new WalletServiceError('wrong_state', 'Tick "I understand" first.');
+        const host = state.invite.hostLabel;
+        update((s) => ({
+          invite: undefined,
+          hosted: { ...(host ? { hostLabel: host } : {}), walletLabel: 'My wallet', chainServer: null, publicServer: 'https://mempool.space/signet/api' },
+          guardian: { ...s.guardian, status: 'online', ...(host ? { label: host } : {}), lastSeenAt: NOW.toISOString() },
+        }));
+      }
       if (pendingContacts.length) {
         const added = pendingContacts;
         pendingContacts = [];
@@ -566,6 +595,8 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
       addSecurityEvent({ id: nextId('ev'), kind: 'hardware-confirmed', at: NOW.toISOString() });
     },
     readCode(text: string): ScannedCode {
+      // The demo's invite link (Settings has none to scan): Maria's box.
+      if (text === 'demo-invite') return { kind: 'invite', uri: text, guardianNpub: NEW_GUARDIAN_NPUB, relays: ['wss://relay.damus.io'], network: 'signet', label: "Maria's Umbrel", expiresAt: NOW.getTime() / 1000 + 23 * 3600 };
       // The demo camera "scans" a placeholder pairing code.
       if (text === 'demo-pairing-code') return { kind: 'pairing', uri: text, guardianNpub: NEW_GUARDIAN_NPUB, relays: ['wss://relay.damus.io'], label: 'Start9', expiresAt: NOW.getTime() / 1000 + 300 };
       return parseScannedCode(text, { now: Math.floor(NOW.getTime() / 1000) });

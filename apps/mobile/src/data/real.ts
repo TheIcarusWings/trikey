@@ -41,7 +41,9 @@ import {
   type WalletSnapshot,
 } from '@trikey/wallet';
 import { parseScannedCode } from '@trikey/wallet/scan';
-import { SimplePoolRelayPool, type Policy, type RelayPool } from '@trikey/protocol';
+import { SimplePoolRelayPool, encodeRecoveryUri, type Policy, type RelayPool } from '@trikey/protocol';
+import { hostedChainFactory, publicServer } from './hosted';
+import { parseServerUrl } from './rk-server';
 import { addEvent, buildActivity, emptyLog, hostFromLabel, loadLog, saveLog, takeLegacySends, type AppLog } from './app-log';
 import { LIMIT_OFF_SATS } from './rules';
 import { DevicePromptStore, compositeProvider, ledgerHint, withDevicePrompts } from './device';
@@ -58,6 +60,7 @@ import { renderSavingsMap, savingsMapData } from './savings-map';
 import {
   GUARDIAN_NETWORKS,
   type WalletDetails,
+  type InviteView,
   type AmountUnit,
   type BackupOptions,
   type CloudProvider,
@@ -162,6 +165,12 @@ export interface RealServiceDeps {
    * its Recovery Key with this kind when the person picks the simulated device.
    */
   secondDeviceKind?: WalletHardwareKind;
+  /**
+   * Chain data for a wallet hosted on someone else's guardian (docs/design/family-hosting.md): the guest's own Esplora,
+   * else a public one, and a second public server for the check before a recovery sweep. Default: `hostedChainFactory()`
+   * (Recovery Key mode's Esplora client over `fetch`). Tests pass the rig's chain.
+   */
+  hostedChain?: WalletDeps['hostedChain'];
 }
 
 export interface RealWalletService extends WalletService {
@@ -406,6 +415,7 @@ class Service implements RealWalletService {
       recoveryCodeKdf: this.deps.recoveryCodeKdf,
       rpcTimeoutMs: this.deps.rpcTimeoutMs,
       rpcRetryIntervalMs: this.deps.rpcRetryIntervalMs,
+      hostedChain: this.deps.hostedChain ?? hostedChainFactory(),
     };
   }
 
@@ -633,6 +643,18 @@ class Service implements RealWalletService {
           : null,
       silentPayments: this.silentView(),
       savings: this.savingsView(),
+      ...(s?.guardian?.hosted
+        ? {
+            hosted: {
+              ...(s.guardian.hosted.hostLabel ? { hostLabel: s.guardian.hosted.hostLabel } : {}),
+              walletLabel: s.guardian.hosted.walletLabel,
+              chainServer: s.guardian.hosted.chainServer ?? null,
+              publicServer: publicServer(this.network),
+              ...(s.guardian.hosted.endsAt !== undefined ? { endsAt: this.iso(s.guardian.hosted.endsAt) } : {}),
+            },
+          }
+        : {}),
+      ...(this.invite ? { invite: { ...this.invite.view } } : {}),
       // Offered only where the guardian says it can (`contact_lock`); off for everyone until they turn it on.
       ...(this.w && s?.stage === 'paired' ? { contactLock: { on: this.w.contactLockOn, supported: this.w.contactLockSupported } } : {}),
     };
@@ -952,6 +974,43 @@ class Service implements RealWalletService {
     );
   }
 
+  /** A scanned host's invite, kept until `setUpRules` accepts it (docs/design/family-hosting.md). */
+  private invite?: { uri: string; view: InviteView };
+
+  readInvite(code: string): InviteView {
+    const c = this.readCode(code);
+    if (c.kind !== 'invite') throw new WalletServiceError('pairing_invalid', c.kind === 'unknown' ? c.reason : "That isn't an invite to someone's guardian.");
+    // On mainnet, the same pre-alpha warning and consent as guardian mode (checked again when the wallet is made).
+    this.requireMainnetConsent(c.network);
+    const view: InviteView = {
+      ...(c.label ? { hostLabel: c.label } : {}),
+      npub: c.guardianNpub,
+      network: c.network,
+      expiresAt: this.iso(c.expiresAt * 1000),
+      mainnet: c.network === 'bitcoin',
+      acknowledged: false,
+    };
+    this.invite = { uri: c.uri, view };
+    this.preview = undefined;
+    this.refresh();
+    return view;
+  }
+
+  acknowledgeInvite(understood: boolean): void {
+    if (!this.invite) throw new WalletServiceError('wrong_state', 'Scan the invite first.');
+    this.invite = { ...this.invite, view: { ...this.invite.view, acknowledged: understood } };
+    this.refresh();
+  }
+
+  setHostedChainServer(url: string | null): Promise<void> {
+    return this.guarded(async () => {
+      const w = this.requireWallet();
+      await w.setHostedChainServer(url === null || url.trim() === '' ? undefined : parseServerUrl(url));
+      this.refresh();
+      void this.sync();
+    });
+  }
+
   async pairGuardian(pairingCode: string): Promise<Guardian> {
     return this.guarded(async () => {
       const w = this.requireWallet();
@@ -964,6 +1023,31 @@ class Service implements RealWalletService {
       }
       return this.getState().guardian;
     });
+  }
+
+  /** `setUpRules` with a host's invite: the disclosure was acknowledged; on mainnet the warning was accepted too. */
+  private async acceptInvite(w: TrikeyWallet, limitSats: Sats, delayDays: RecoveryDelayDays): Promise<void> {
+    const invite = this.invite!;
+    if (!invite.view.acknowledged) throw new WalletServiceError('wrong_state', `Tick "I understand ${invite.view.hostLabel ?? 'the host'} could help a thief skip the wait" first.`);
+    this.requireMainnetConsent(invite.view.network);
+    const contacts = this.onboardingContacts;
+    const rules: Policy = { dailyLimitSats: limitSats, recoveryDelayDays: delayDays, alertContacts: contacts.map((c) => c.pubkey), sweepFeeCapSats: DEFAULT_SWEEP_FEE_CAP_SATS };
+    this.setProgress('Accepting the invite: approve on your hardware wallet');
+    try {
+      await w.acceptInvite({
+        inviteUri: invite.uri,
+        rules,
+        walletLabel: this.deps.deviceName ? `${this.deps.deviceName}`.slice(0, 64) : 'Trikey wallet',
+        understood: true,
+        mainnetConsent: this.mainnetRiskAccepted,
+        ...(this.deps.deviceName ? { deviceName: this.deps.deviceName } : {}),
+      });
+      this.invite = undefined;
+      for (const c of contacts) if (c.name) await w.nameAlertContact(c.pubkey, c.name);
+      this.onboardingContacts = [];
+    } finally {
+      this.setProgress(null);
+    }
   }
 
   private onboardingContacts: { name: string; npub: string; pubkey: string }[] = [];
@@ -989,6 +1073,7 @@ class Service implements RealWalletService {
     return this.exclusive(() =>
       this.guarded(async () => {
         const w = this.requireWallet();
+        if (this.invite) return this.acceptInvite(w, limitSats, delayDays);
         const preview = this.preview;
         if (!preview) throw new WalletServiceError('wrong_state', 'Scan the guardian first.');
         if (Math.floor(this.clock.now() / 1000) >= preview.expiresAt)
@@ -1773,7 +1858,15 @@ class Service implements RealWalletService {
         const w = await this.ensureWallet();
         this.setProgress('Starting the recovery: approve on your hardware wallet');
         try {
-          await w.recoverWithHardware({ guardian: opts.guardian, ...(opts.hardwareKind ? { hardwareKind: toWalletKind(opts.hardwareKind) } : {}) });
+          const g = opts.guardian;
+          // A wallet hosted on someone else's guardian: the descriptor comes back from its encrypted wallet map.
+          if (g.hosted && g.walletId)
+            await w.recoverHostedWithHardware({
+              code: encodeRecoveryUri({ guardianPubkey: npubToHex(g.npub), relays: g.relays, network: this.network, walletId: g.walletId, hosted: true }),
+              mainnetConsent: this.mainnetRiskAccepted,
+              ...(opts.hardwareKind ? { hardwareKind: toWalletKind(opts.hardwareKind) } : {}),
+            });
+          else await w.recoverWithHardware({ guardian: g, ...(opts.hardwareKind ? { hardwareKind: toWalletKind(opts.hardwareKind) } : {}) });
         } finally {
           this.setProgress(null);
         }

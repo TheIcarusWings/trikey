@@ -221,7 +221,7 @@ export type SecurityEvent = { id: string; at: IsoDate } & (
   | { kind: 'contact-lock-on' }
   | { kind: 'contact-lock-off' }
   /** The guardian stopped guarding this phone's wallet: retired (Replace guardian), swept by a recovery, or reset. */
-  | { kind: 'wallet-retired'; reason: 'retired' | 'recovered' | 'reset' }
+  | { kind: 'wallet-retired'; reason: 'retired' | 'recovered' | 'reset' | 'hosting_ended' }
   /** The wallet moved to a new guardian. */
   | { kind: 'guardian-replaced'; host: GuardianHost; movedSats: Sats }
   /** A recovery finished: the guardian took over the new wallet and this phone switched to it. */
@@ -382,6 +382,10 @@ export interface GuardianAddress {
   /** `npub1...` or hex. */
   npub: string;
   relays: string[];
+  /** The wallet the code names (recovery-access v2). */
+  walletId?: string;
+  /** The wallet is hosted on someone else's guardian (the code said `hosted=1`). */
+  hosted?: true;
 }
 
 // ---------------------------------------------------------------- scanning
@@ -389,7 +393,9 @@ export interface GuardianAddress {
 /** What a camera or a paste field read (the wallet's `parseScannedCode`). */
 export type ScannedCode =
   | { kind: 'pairing'; uri: string; guardianNpub: string; relays: string[]; label?: string; expiresAt: number }
-  | { kind: 'recovery'; uri: string; guardian: GuardianAddress; network: NetworkName; label?: string }
+  | { kind: 'recovery'; uri: string; guardian: GuardianAddress; network: NetworkName; label?: string; hosted?: true }
+  /** A host's invite to keep key 3 of this phone's wallet on their guardian (docs/design/family-hosting.md). */
+  | { kind: 'invite'; uri: string; guardianNpub: string; relays: string[]; network: NetworkName; label?: string; expiresAt: number }
   | { kind: 'address'; address: string; network: NetworkName; amountSats?: Sats; label?: string; message?: string; silentPayment?: true }
   | { kind: 'psbt'; psbtBase64: string }
   | { kind: 'contact'; npub: string; pubkey: string }
@@ -694,6 +700,29 @@ export interface DevicePrompt {
   hint?: string;
 }
 
+/** A wallet hosted on someone else's guardian: whose box, and where the app reads the chain. */
+export interface HostedWalletView {
+  /** The name the host's box gave itself in the invite. */
+  hostLabel?: string;
+  walletLabel: string;
+  /** The guest's own chain server, or null for the public one (`publicServer`). */
+  chainServer: string | null;
+  publicServer: string;
+  /** The host stopped hosting: key 3 ends then. */
+  endsAt?: IsoDate;
+}
+
+/** A scanned invite, before it is accepted. */
+export interface InviteView {
+  hostLabel?: string;
+  npub: string;
+  network: NetworkName;
+  expiresAt: IsoDate;
+  mainnet: boolean;
+  /** The person ticked "I understand <host> could help a thief skip the wait". */
+  acknowledged: boolean;
+}
+
 export interface WalletState {
   /** Which wallet is behind the screens. */
   backing: AppMode;
@@ -746,7 +775,11 @@ export interface WalletState {
   /** Wallets left behind by "Replace guardian". */
   oldWallets: OldWallet[];
   /** The guardian said it no longer guards this phone's wallet, and why. */
-  walletRetired: null | { reason: 'retired' | 'recovered' | 'reset' };
+  walletRetired: null | { reason: 'retired' | 'recovered' | 'reset' | 'hosting_ended' };
+  /** A wallet hosted on someone else's guardian (docs/design/family-hosting.md). Absent for everyone else. */
+  hosted?: HostedWalletView;
+  /** Onboarding with a host's invite: what it said, and whether the disclosure was acknowledged. */
+  invite?: InviteView;
   /** The last recovery finished into the wallet this phone holds now (`recoveryOutcome` is `finished`). */
   finishedRecovery: null | { lostKey: LostKey; movedSats: Sats };
   silentPayments: SilentPaymentsState;

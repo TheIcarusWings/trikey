@@ -9,7 +9,7 @@ import { Screen } from '@/components/screen';
 import { UnlockForm } from '@/components/unlock-form';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
-import { formatSats, shorten, useNow, useWallet, useWalletService } from '@/data';
+import { formatSats, serverHost, shorten, useNow, useWallet, useWalletService } from '@/data';
 import { guardianBox, hostLabel } from '@/lib/labels';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
@@ -102,7 +102,7 @@ function OldWallets() {
 export default function GuardianSettings() {
   const router = useRouter();
   const now = useNow();
-  const { guardian, dailyLimit, replace } = useWallet();
+  const { guardian, dailyLimit, replace, hosted } = useWallet();
   const host = guardianBox(guardian);
 
   const status =
@@ -148,9 +148,24 @@ export default function GuardianSettings() {
           tabular
         />
         <InfoRow label="Relays" value={guardian.relaysConnected === undefined ? `${guardian.relays.length}` : `${guardian.relaysConnected} connected`} />
-        <InfoRow label="Chain data" value="Your node" />
+        {hosted ? (
+          <>
+            {/* A wallet hosted on someone else's guardian: whose box, and where this phone reads the chain (never from the host). */}
+            <InfoRow label="Hosted by" value={hosted.hostLabel ?? 'Someone else'} />
+            <InfoRow label="Chain data" value={`${serverHost(hosted.chainServer ?? hosted.publicServer)}${hosted.chainServer ? '' : ' (public)'}`} />
+            {hosted.endsAt ? <InfoRow label="Hosting ends" value={new Date(hosted.endsAt).toLocaleDateString()} tone="warn" /> : null}
+          </>
+        ) : (
+          <InfoRow label="Chain data" value="Your node" />
+        )}
         <InfoRow label="Guardian ID" value={shorten(guardian.npub, 8, 4)} mono />
       </Panel>
+      {hosted ? <AppButton title="Chain server" variant="outline" onPress={() => router.push('/settings/hosted-server')} /> : null}
+      {hosted?.endsAt ? (
+        <Text className="text-warn text-sm leading-5">
+          Your host stopped hosting this wallet. Move it before {new Date(hosted.endsAt).toLocaleDateString()} with Replace guardian: your phone and hardware wallet can always move it.
+        </Text>
+      ) : null}
       <LockGuardian />
       <View className="gap-1.5">
         <Text className="text-sm font-medium leading-5">Guardian public key (npub)</Text>

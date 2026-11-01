@@ -22,6 +22,7 @@ import type {
   ReplaceGuardianResult,
   RestoreUnlock,
   ScannedCode,
+  InviteView,
   SendQuote,
   SendRequest,
   Sats,
@@ -80,6 +81,16 @@ export interface WalletService {
   connectHardware(kind: HardwareKind): Promise<HardwareWallet>;
   /** Called with whatever the pairing QR code contained. */
   pairGuardian(pairingCode: string): Promise<Guardian>;
+  /**
+   * A host's invite (docs/design/family-hosting.md): reads it and keeps it for onboarding (`state.invite`). Nothing is
+   * sent. Then `acknowledgeInvite(true)` once the person ticked the disclosure, and `setUpRules` accepts it with the rules.
+   * Guardian mode only (the others leave these out).
+   */
+  readInvite?(code: string): InviteView;
+  /** The person ticked (or unticked) "I understand <host> could help a thief skip the wait". */
+  acknowledgeInvite?(understood: boolean): void;
+  /** A hosted wallet's own chain server (an Esplora URL), or null for the public one. */
+  setHostedChainServer?(url: string | null): Promise<void>;
   /**
    * The alert contacts chosen during onboarding, before pairing. Kept on the phone until `setUpRules`, which sends
    * them with the first rules (the guardian refuses pairing without one on mainnet). Replaces any earlier list;
