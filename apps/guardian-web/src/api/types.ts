@@ -242,6 +242,12 @@ export interface SmtpSettings {
   username: string;
   /** The From address (usually the account's own address). */
   from: string;
+  /**
+   * A pinned certificate (Proton Mail Bridge and other servers with a self-signed one): TLS accepts exactly this
+   * certificate instead of the public CAs. `sha256` is its fingerprint (`AB:CD:...`); `certificate`: the certificate
+   * itself was pasted (else only its fingerprint). Absent: the server's certificate is checked against the public CAs.
+   */
+  pin?: { sha256: string; certificate: boolean };
   passwordSet: true;
   health: ChannelHealth;
 }
@@ -277,7 +283,10 @@ export interface NotificationSettings {
   destinations: NotifyDestination[];
   /** The alert contacts in the rules (hex pubkey and npub), to attach an email or ntfy topic to. */
   contacts: { pubkey: string; npub: string }[];
-  /** While a recovery runs, removing or changing a channel or the email account is refused (adding is allowed). */
+  /**
+   * While a recovery runs, removing or changing a channel or the email account is refused; adding is allowed, and so is
+   * a new app password for the same account (same server, user name, From address and pinned certificate).
+   */
   recoveryRunning: boolean;
   /** Messages still waiting to go out (retried for up to 7 days). */
   pending: number;
@@ -299,8 +308,11 @@ export interface NotifyDestinationInput {
 
 export interface NotificationSettingsInput {
   guardianName: string;
-  /** `null`: no email account. `password` omitted: keep the stored one. */
-  smtp: { host: string; port: number; security: SmtpSecurity; username: string; from: string; password?: string } | null;
+  /**
+   * `null`: no email account. `password` omitted: keep the stored one. `pin`: the server's certificate (PEM) or its
+   * SHA-256 fingerprint to pin; omitted keeps the stored pin, `null` removes it (public CAs again).
+   */
+  smtp: { host: string; port: number; security: SmtpSecurity; username: string; from: string; password?: string; pin?: string | null } | null;
   destinations: NotifyDestinationInput[];
 }
 
