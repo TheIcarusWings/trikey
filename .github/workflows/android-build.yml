@@ -267,7 +267,7 @@ jobs:
 
           ${signing_note}
 
-          - Pre-alpha, not audited. Test networks only (signet, testnet4). Never put real bitcoin in it.
+          - Pre-alpha, open source, not audited. Test networks only (signet, testnet4). Never put real bitcoin in it.
           - Install: download \`${NAME}.apk\` on the phone, open it, and allow installing from this source when Android asks.
           - Built for: ${ARCHITECTURES} (built from commit ${GITHUB_SHA::12}).
           - Check the download: SHA-256 \`${SHA256}\`.
