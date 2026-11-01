@@ -1,11 +1,14 @@
 # Savings and turning the limit off: design proposal
 
-Status: proposal. Written 2026-10-31, against `main` after 0.1.4-alpha. Device support checked the same
+Status: phases 1 and 2 built. Written 2026-10-31, against `main` after 0.1.4-alpha. Device support checked the same
 day; see section 3. **Section 4 (turning the limit off) is built** (phase 1), with the owner's answers to open questions 5
 (the alert contacts are told too) and 7 (after a recovery the limit comes back at its last value); DESIGN.md (rules 3
-and 4) and PROTOCOL.md ("No daily limit") describe it as built. **Savings: decided, not built yet** (owner's answers,
-2026-11-01, under "Open questions" below): option K, strictly optional; a wallet without Savings sets up and works
-exactly as today.
+and 4) and PROTOCOL.md ("No daily limit") describe it as built. **Savings, option K, is built** (phase 2, 2026-11-01),
+with the owner's answers (under "Open questions" below): option K, strictly optional (a wallet without Savings sets up
+and works exactly as today), the Recovery Key a second hardware wallet, transfers into Savings counted against the
+limit (so phase 3 is not built), and Savings recommended, not required, with the limit off. DESIGN.md ("Savings") and
+PROTOCOL.md ("Savings") describe it as built; "What was built" below lists where it differs from this proposal and the
+questions it left for the owner. Option T (phases 4a and 4b) is not built.
 
 The owner raised a concern, and it holds: **the daily limit exists only in the guardian's code.** Today's wallet is
 `wsh(sortedmulti(2, phone, hardware, guardian))`. Any two keys satisfy the script, so whoever controls the guardian
@@ -338,6 +341,37 @@ every supported device including Trezor, and needs no refresh. Recommend a secon
 Offer Savings in the "turn the limit off" flow. Keep T (hardware mandatory, timelocked phone + guardian path) as a
 documented later option, behind the phase 4a test, for owners on Ledger, BitBox02, Jade or Coldcard Edge.
 
+## What was built (phase 2, option K)
+
+| Part | What it does |
+|---|---|
+| Script | `wsh(sortedmulti(2, phone, hardware, recoveryKey))`, every key at BIP 48 account 1' (`SAVINGS_ACCOUNT`). Tests: each pair of keys signs (Bitcoin Core's verifier agrees), one key or the guardian never does (`packages/core/test/savings.test.ts`) |
+| Protocol | `savings.register` / `savings.unregister` / `savings.get`, `wallet.sync` with `wallet: "savings"`, `tx.broadcast` rule (d), `guardian.status.savingsWalletId`, the `savings_moved` alert; the `savings` feature. No policy member, hash or approval text changed |
+| Guardian | `GuardedWallet.savings` (descriptor, high-water marks, the spends already seen): refuses any wallet it could sign for, scans Savings on every block and every two minutes, a durable `savings_moved` notice to the phone and every alert contact; a "Savings (watched)" card in the web UI (`?mock=savings`) |
+| Wallet | `startSavings` → `savingsConnectHardware` → `savingsConnectRecoveryKey` → `finishSavings` (registration and the first address checked on both devices), `savingsReceiveAddress`, `quoteSavingsSpend` / `sendFromSavings` with any two of its keys, `replaceSavingsKey` (each lost key, also on a new phone without a backup), backup version 2 only with Savings |
+| App | Settings > Savings and Home's suggestion (limit off), the create flow, the Savings screen (balance, Add to Savings, Move to Spending, Send, Receive, activity, "Lost a Savings key?"), Home's Savings row, Receive's Spending / Savings choice, both descriptors in Wallet details, the Security tab's backup reminder; all of it in the demo |
+
+Where the build differs from the proposal above, and why:
+
+- **The Recovery Key is at account 1' too**, like the phone's and the hardware wallet's Savings keys. The proposal left
+  its path open (Recovery Key mode reads a second device at account 0'). One account for every Savings key means a second
+  device already used elsewhere at account 0' (as another Trikey wallet's key 1, say) never shares a key with Savings,
+  and anyone rebuilding Savings by hand looks at one path. Open question 8.
+- **The watched record carries over at a rotation** instead of waiting for the phone to send it again ("Recovery and
+  rotation" above). Savings' coins are still the owner's after a recovery, the tripwire keeps working, and a new phone
+  without a backup can read the descriptor back (`savings.get`), which it needs to move Savings to its new key. The cost:
+  whoever completes a recovery can read Savings' descriptor and balance. Open question 9.
+- **No printed Savings "wallet map".** The Recovery Kit format 1 could carry Savings (an xpub kit), but its printed page
+  and its recovery flow are Recovery Key mode's. The create flow shows the descriptor instead, to copy or share and keep
+  with the Recovery Key, and Wallet details shows it any time. Open question 10.
+- **No fee bump of a Savings spend yet.** It is sent at the 6-block estimate with RBF signalled; a stuck one can be
+  sped up by CPFP from Spending once it pays Spending, but the app has no "speed up" for it. Open question 11.
+- **Mainnet:** Savings is offered wherever the guardian mode is, mainnet included behind its pre-alpha warning, like
+  the guardian mode's other options. It is the Spending script at another account and needs nothing new from the
+  devices but a second registration; Recovery Key mode stays on test networks for what is its own (the refill chain, the
+  public chain server). The device test of section 7 (Ledger, Trezor, Coldcard and Jade signing a Savings PSBT) has not
+  been run on real devices. Open question 12.
+
 ## Open questions for the owner
 
 1. **K or T?** Is "every Savings spend needs a key that is not online (the hardware wallet or the Recovery Key)"
@@ -354,3 +388,25 @@ documented later option, behind the phase 4a test, for owners on Ledger, BitBox0
    only.
 7. **After a recovery:** turn the limit back on at its last value (proposed), or keep the owner's choice? Decided: its last value, and 0 when that is not known (not the 100,000-sat preset). The "Turn off the daily
    limit" link stays a small link under Settings > Daily limit.
+
+Left by the Savings build (2026-11-01); each is built the way described, the safest reasonable choice, until the owner
+decides otherwise:
+
+8. **The Recovery Key's path.** Built: account 1', like every Savings key. Alternative: account 0' on a device bought
+   only for this.
+9. **The watched record at a rotation.** Built: it carries over (the tripwire keeps working; a new phone finds Savings at
+   the guardian). Alternative: drop it at every rotation and let the new phone send the descriptor it has (from the
+   backup, or the copy the owner kept), at the cost of a new phone without either finding nothing.
+10. **A printed Savings sheet.** Built: the descriptor, shown at creation and in Wallet details, to copy or share. Should
+    the app also print a Savings wallet map (Recovery Kit format 1, an xpub kit at account 1') to keep with the Recovery
+    Key?
+11. **Speeding up a Savings spend.** Not built: re-signing with a higher fee (hardware wallet again). Needed before
+    Savings holds more than a test amount on mainnet?
+12. **Mainnet.** Built: offered wherever the guardian mode is. Keep it on test networks until the section 7 device test
+    (each supported device signs a Savings PSBT at account 1') has been run?
+13. **What the alert contacts learn.** Built as proposed: every Savings move, with its amount and txid, also the owner's
+    own moves. Should contacts get only "Savings moved" without the amount?
+14. **A phone key that was seen, not lost** (a stolen phone, the owner restored the backup): Savings keeps that key 2,
+    so the thief holds one of Savings' three keys until the owner moves Savings with a new phone key, which today means a
+    new key 2 and a new Spending wallet too. Worth a "new phone key for Savings" flow?
+

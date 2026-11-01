@@ -1059,7 +1059,7 @@ export const Alert = z.discriminatedUnion('type', [
     /**
      * A coin of the watched Savings wallet was spent (seen in the mempool or a block): a tripwire, sent once per
      * transaction to the paired phone, and to the alert contacts as a NIP-17 DM. `amountSats`: what left Savings,
-     * fee included (0 for a move between Savings addresses). The guardian cannot tell who signed it. Phones before
+     * fee included (only the fee for a move between Savings addresses). The guardian cannot tell who signed it. Phones before
      * this alert drop it (an unknown `type`).
      */
     type: z.literal('savings_moved'),
