@@ -3,7 +3,7 @@
  * guardian service (GuardianRig: temp data dir, in-memory relays, fake Electrs), a simulated phone over nostr RPC and
  * two alert contacts plus a stranger that only speak NIP-17 DMs, as Damus or Amethyst would.
  *
- * - Off (the default): a contact's LOCK is answered "not allowed" and changes nothing; a stranger gets no answer.
+ * - Off (the default): a contact's LOCK gets no answer and changes nothing, as from a stranger.
  * - The phone alone turns it on; the contacts are told how to lock.
  * - A contact's LOCK locks: it is answered, the phone gets `guardian_locked` naming the contact, the other contact a
  *   DM, `guardian.status` and the web UI say who locked it; co-signing stops.
@@ -142,16 +142,16 @@ describe('the LOCK command', () => {
 });
 
 describe('alert contacts lock the guardian', { timeout: 60_000 }, () => {
-  it('off by default: a contact is told it is not allowed and nothing changes; a stranger gets no answer', async () => {
+  it('off by default: a contact LOCK is not an option at all (no answer, no log, nothing changes), as from a stranger', async () => {
     expect(rig.guardian.engine.status().rules!.contactLock).toBeUndefined();
     expect((await phone.call('policy.get', {})).policy).not.toHaveProperty('contactLock');
     await dm(alice, 'LOCK');
-    await waitFor(() => alice.inbox.find((m) => m.includes('has not allowed alert contacts to lock')), 'not-allowed answer');
     await dm(stranger, 'LOCK');
     await settle();
     expect(rig.guardian.locked).toBe(false);
+    expect(alice.inbox).toEqual([]);
     expect(stranger.inbox).toEqual([]);
-    expect(rig.guardian.service.get().activity.find((e) => e.type === 'contact_lock_request')).toMatchObject({ contact: alice.pubkey, outcome: 'not_allowed' });
+    expect(rig.guardian.service.get().activity.find((e) => e.type === 'contact_lock_request')).toBeUndefined();
     expect((await rig.api('GET', '/rules')).body).toMatchObject({ contactLock: false });
   });
 
@@ -242,7 +242,26 @@ describe('alert contacts lock the guardian', { timeout: 60_000 }, () => {
     }
   });
 
-  it('turning it off needs the hardware wallet (version-3 text, lock=off); then a LOCK is "not allowed"', async () => {
+  it('a LOCK sent while the setting was off never counts, even handed over again once it is on', async () => {
+    const off = { createdAt: rig.nowSec(), rumorId: 'ef'.repeat(32) };
+    const on = rig.guardian.engine.status().rules!;
+    // Off for a moment (as if the owner had not turned it on yet): the LOCK does nothing and gets no answer.
+    const withOff = { ...on };
+    delete (withOff as { contactLock?: true }).contactLock;
+    const status = rig.guardian.engine.status.bind(rig.guardian.engine);
+    rig.guardian.engine.status = () => ({ ...status(), rules: withOff });
+    try {
+      await onContactDm(rig.guardian, { sender: alice.pubkey, content: 'LOCK', ...off });
+    } finally {
+      rig.guardian.engine.status = status;
+    }
+    expect(rig.guardian.locked).toBe(false);
+    // Now on: the same message, re-delivered by a relay, still does nothing.
+    await onContactDm(rig.guardian, { sender: alice.pubkey, content: 'LOCK', ...off });
+    expect(rig.guardian.locked).toBe(false);
+  });
+
+  it('turning it off needs the hardware wallet (version-3 text, lock=off); then a LOCK gets no answer', async () => {
     expect((await rpcError(phone.call('policy.update', { policy: RULES }))).code).toBe(ErrorCode.ApprovalRequired);
     const seq = (await phone.call('policy.get', {})).nextHardwareSequence;
     const res = await phone.call('policy.update', { policy: RULES, approval: approve(RULES, seq, true) });
@@ -250,7 +269,8 @@ describe('alert contacts lock the guardian', { timeout: 60_000 }, () => {
     await waitFor(() => bob.inbox.find((m) => m.includes('can no longer lock')), 'contact_lock_off DM');
     const before = bob.inbox.length;
     await dm(bob, 'LOCK');
-    await waitFor(() => bob.inbox.length > before && bob.inbox.at(-1)!.includes('has not allowed'), 'not-allowed answer');
+    await settle();
+    expect(bob.inbox.length).toBe(before);
     expect(rig.guardian.locked).toBe(false);
   });
 });

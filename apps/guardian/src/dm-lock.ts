@@ -7,8 +7,10 @@
  * A contact can only lock: never unlock, change rules or see anything.
  *
  * Who gets an answer:
- * - a current alert contact of the active wallet: one short DM (locked, already locked, or not allowed because the
- *   owner did not turn the setting on), for fresh messages only;
+ * - while the setting is on, a current alert contact of the active wallet: one short DM (locked, or already locked),
+ *   for fresh messages only;
+ * - while it is off, nobody (owner's decision, 2026-11-01): the command does not exist then, not even as a refusal,
+ *   and nothing is logged;
  * - anyone else (strangers, the paired phone, a running recovery's snapshotted recipients who are no longer contacts):
  *   nothing at all, so the command cannot be used to learn whether a key is a contact or whether the setting is on.
  *
@@ -67,6 +69,12 @@ export async function onLockDm(g: Guardian, dm: IncomingDm): Promise<void> {
   }
   const until = (Math.max(dm.createdAt, now) + LOCK_WINDOW_SEC) * 1000 + 120_000;
   if (!(await g.service.rememberRequest(key, until, g.clock.now()))) return;
+  // Setting off: as if the command did not exist, so no answer and nothing in the activity log. The message is still
+  // remembered (above): a relay handing it over again after the owner turned the setting on must not lock then.
+  if (!rules.contactLock) {
+    g.log.debug('dm.lock_ignored', { reason: 'setting off' });
+    return;
+  }
 
   const outcome = await g.lockByContact(dm.sender);
   const reply = async (text: string) => {
@@ -83,10 +91,8 @@ export async function onLockDm(g: Guardian, dm: IncomingDm): Promise<void> {
     );
     return;
   }
+  // `not_allowed` here means the owner turned the setting off a moment ago: silent, as above.
+  if (outcome !== 'already_locked') return;
   await g.logEvent({ type: 'contact_lock_request', contact: dm.sender, outcome });
-  if (outcome === 'already_locked') await reply(`Trikey: the guardian is already locked, so nothing changed.${cancelHint(g)}`);
-  else
-    await reply(
-      `Trikey: the owner has not allowed alert contacts to lock this guardian, so nothing changed. If something looks wrong, talk to the owner.${cancelHint(g)}`,
-    );
+  await reply(`Trikey: the guardian is already locked, so nothing changed.${cancelHint(g)}`);
 }
