@@ -58,7 +58,15 @@ export interface MockOptions {
   deviceDelayMs?: number;
   /** How long fake network steps take. */
   networkDelayMs?: number;
+  /**
+   * Whether the build has passkeys (default true, as the designs show). Without them the demo's backup is a backup file
+   * unlocked by a recovery code, shown once: a fake one, `DEMO_RECOVERY_CODE`.
+   */
+  passkeys?: boolean;
 }
+
+/** The demo's recovery code: the real format, but with letters a real code never has (O), so it can't pass for one. */
+export const DEMO_RECOVERY_CODE = 'DEMO0-DEMO0-DEMO0-DEMO0-DEMO0';
 
 const NOW = new Date('2026-10-29T15:20:00');
 const RECOVERY_STARTED = '2026-10-29T14:05:00';
@@ -251,6 +259,9 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
   const deviceDelay = options.deviceDelayMs ?? 1200;
   const networkDelay = options.networkDelayMs ?? 500;
   const platform = options.platform ?? 'ios';
+  const passkeys = options.passkeys ?? true;
+  /** The recovery code of the backup just made, until the person confirms they wrote it down. */
+  let shownCode: string | null = null;
 
   let state = createDemoState(platform);
   let counter = 100;
@@ -324,9 +335,13 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     },
 
     // -- onboarding ---------------------------------------------------
-    // The demo has no network to pick, so no mainnet warning either.
-    setNetwork() {},
-    acceptMainnetRisk() {},
+    // The network picker works on Welcome as in Real mode (the tutorials show it); the demo's data stays the same.
+    setNetwork(network) {
+      update((s) => ({ network, mainnetRiskAccepted: s.network === network ? s.mainnetRiskAccepted : false }));
+    },
+    acceptMainnetRisk(accepted) {
+      update({ mainnetRiskAccepted: accepted });
+    },
     async getHardwareOptions() {
       return hardwareOptionTable(platform as UiOs).map((o) => ({ ...o, available: true }));
     },
@@ -364,16 +379,21 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
         platform === 'ios'
           ? [label('icloud', 'iCloud Drive'), label('google-drive', 'Google Drive'), label('dropbox', 'Dropbox'), label('proton-drive', 'Proton Drive or another app')]
           : [label('google-drive', 'Google Drive'), label('dropbox', 'Dropbox'), label('proton-drive', 'Proton Drive'), label('other', 'Another app')];
+      // A build without passkeys backs up to a file, unlocked by a recovery code (real.ts offers what the phone has).
+      if (!passkeys) return { providers: [{ provider: 'file', label: 'A backup file', detail: 'Kept on this phone. Save a copy somewhere safe, like Files or an email to yourself.', available: true }], passkey: false };
       return { providers, passkey: true };
     },
     async createBackup(provider: CloudProvider): Promise<PhoneBackup> {
       await wait(networkDelay);
-      const backup: PhoneBackup = { provider, lastBackedUpAt: NOW.toISOString(), unlockedBy: ['passkey'] };
+      const backup: PhoneBackup = { provider, lastBackedUpAt: NOW.toISOString(), unlockedBy: passkeys ? ['passkey'] : ['recovery-code'] };
+      if (!passkeys) shownCode = DEMO_RECOVERY_CODE;
       update({ backup });
       return backup;
     },
-    recoveryCode: () => null,
-    dismissRecoveryCode() {},
+    recoveryCode: () => shownCode,
+    dismissRecoveryCode() {
+      shownCode = null;
+    },
     async exportBackupFile() {
       await wait(networkDelay);
     },

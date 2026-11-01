@@ -10,7 +10,7 @@ import { DevicePromptStore, compositeProvider, ledgerHint, withDevicePrompts } f
 import { WalletServiceError } from './errors';
 import { GuardianAddressError, parseGuardianAddress } from './guardian-address';
 import { mapError, refusalToError } from './real-errors';
-import { createMockWalletService } from './mock';
+import { DEMO_RECOVERY_CODE, createMockWalletService } from './mock';
 import { looksLikeBitcoinAddress, quoteSend as mockQuote, quoteSendMax as mockQuoteMax } from './rules';
 import { DEMO_SP_RECIPIENT, DEMO_TAPROOT_OUTPUT } from './sp-mock';
 import { looksLikeSilentPaymentAddress } from './sp-empty';
@@ -167,6 +167,27 @@ describe('app log and activity', () => {
 });
 
 describe('the demo wallet', () => {
+  it('backs up like the build it runs in, and lets Welcome pick a network', async () => {
+    const withPasskeys = createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0 });
+    expect((await withPasskeys.getBackupOptions()).passkey).toBe(true);
+    await withPasskeys.createBackup('icloud');
+    expect(withPasskeys.recoveryCode()).toBeNull();
+
+    // A tester build has no passkeys: a backup file, unlocked by a recovery code shown once (an obviously fake one).
+    const tester = createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0, passkeys: false });
+    expect(await tester.getBackupOptions()).toMatchObject({ passkey: false, providers: [{ provider: 'file', available: true }] });
+    expect((await tester.createBackup('file')).unlockedBy).toEqual(['recovery-code']);
+    expect(tester.recoveryCode()).toBe(DEMO_RECOVERY_CODE);
+    tester.dismissRecoveryCode();
+    expect(tester.recoveryCode()).toBeNull();
+
+    tester.setNetwork('bitcoin');
+    tester.acceptMainnetRisk(true);
+    expect(tester.getState()).toMatchObject({ network: 'bitcoin', mainnetRiskAccepted: true });
+    tester.setNetwork('signet'); // another network asks for the warning again
+    expect(tester.getState()).toMatchObject({ network: 'signet', mainnetRiskAccepted: false });
+  });
+
   it('still satisfies the interface: quotes, a wrong passphrase, and a recovery', async () => {
     const wallet = createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0 });
     const q = wallet.quoteSend({ address: 'bc1qxyz', amountSats: 10_000, speed: 'normal' });

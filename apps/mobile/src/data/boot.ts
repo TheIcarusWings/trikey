@@ -16,6 +16,7 @@ import type { HardwareKind, HardwareProvider, KeyValueStore } from '@trikey/wall
 import { createHardwareProviders } from '@/hardware';
 import { getPlatform, type TrikeyPlatform } from '@/platform';
 import { pickBackupFile, shareBackupFile } from '@/platform/backup-files';
+import { passkeyRpId } from '@/platform/config';
 import { runStartupRandomCheck } from '@/platform/rng-startup';
 import { createMemoryKeyValueStore } from '@/platform/memory';
 import { UI } from '@/lib/platform';
@@ -96,7 +97,9 @@ function sharedHardware() {
 
 /** Builds the wallet for `mode`. Rejects if the wallet's own storage cannot be read. */
 export async function bootWallet(mode: AppMode, platform: TrikeyPlatform = getPlatform()): Promise<BootedWallet> {
-  if (mode === 'demo') return createMockWalletService({ platform: UI });
+  // The demo backs up the way this build would: with a passkey only where the build has one (EXPO_PUBLIC_PASSKEY_RP_ID),
+  // else with a recovery code and a backup file, like every tester build.
+  if (mode === 'demo') return createMockWalletService({ platform: UI, passkeys: passkeyRpId() !== null });
 
   // The real and the simulated wallet make keys: test the random source and the crypto first. A failure is latched,
   // so no key is made and the screens show the error of the first attempt (platform/rng-startup.ts).

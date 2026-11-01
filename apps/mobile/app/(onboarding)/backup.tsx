@@ -54,7 +54,7 @@ export default function Backup() {
     else finish();
   };
 
-  const withCode = options && !options.passkey && backing !== 'demo';
+  const withCode = options && !options.passkey;
   const file = chosen?.provider === 'file';
   const buttonTitle = busy
     ? (progress ?? 'Creating backup…')

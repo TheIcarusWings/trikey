@@ -17,9 +17,10 @@ export default function Welcome() {
   const state = useWallet();
   const { backing } = state;
   const [showMode, setShowMode] = useState(false);
-  const mainnet = backing === 'real' && state.network === 'bitcoin';
+  const picks = backing === 'real' || backing === 'demo';
+  const mainnet = picks && state.network === 'bitcoin';
   // On mainnet, nothing goes on until the person has accepted the warning under the picker.
-  const blocked = backing === 'real' && mainnetBlocked(state);
+  const blocked = picks && mainnetBlocked(state);
   return (
     <Screen
       bare
@@ -33,7 +34,7 @@ export default function Welcome() {
               {backing === 'demo' ? 'Demo · sample data' : mainnet ? 'Pre-alpha · not audited' : 'Pre-alpha · test network'}
             </Pill>
           </View>
-          {backing === 'real' ? <NetworkPicker /> : null}
+          {picks ? <NetworkPicker /> : null}
           <AppButton title="Create a wallet" size="hero" disabled={blocked} onPress={() => router.push('/how-it-works')} />
           <AppButton
             title="I already have a Trikey wallet"
