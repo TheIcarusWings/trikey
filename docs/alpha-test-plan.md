@@ -6,7 +6,7 @@ guardian's box. You choose one of two paths: **mainnet** on your everyday node, 
 **test network** (signet or testnet4), with test coins. "Before you start" explains both.
 
 Plan on two sittings: one evening for "Before you start", then an afternoon for steps 1 to 11 and 14. Steps 12 and 13 are
-separate, and step 12 takes a week if you let it finish. On mainnet, add the time Electrs needs to index the chain if it is
+separate; 15 to 17 are optional and can come any time after step 11, and step 12 takes a week if you let it finish. On mainnet, add the time Electrs needs to index the chain if it is
 not indexed yet, which can be a day or more on a fresh install.
 
 How to read it. Each step says what you do, **what you should see**, and **if it goes wrong, collect**: what to write down and
@@ -650,6 +650,54 @@ If it goes wrong, collect: the error shown next to the channel, the guardian's A
 `notify.`, your provider, and the server, port and encryption you used, and with Bridge the pinned fingerprint (never
 the password or token).
 
+### 16. Alert contacts can lock the guardian (optional)
+
+You need a second nostr account that is an alert contact: a friend's, or a second account in your own nostr app (Amethyst,
+0xchat, Damus and Primal can hold more than one). Add it as in step 4. The contact sends the guardian the single word `LOCK`
+as a direct message, in the conversation where the guardian's alerts arrive (docs/design/contact-lock.md).
+
+Do:
+
+1. **While the setting is off** (the default): from the contact's account, send `LOCK`.
+   You should see: nothing at all. No answer to the contact, the guardian stays unlocked, Activity shows nothing.
+2. **Turn it on.** Settings, **Alert contacts**, **Contacts can lock the guardian**. The phone alone turns it on.
+   You should see: every alert contact told that it is on; the Guardian page's Rules showing "Contacts can lock the
+   guardian: On". The `LOCK` from step 1 must not lock the guardian now, even if a relay delivers it again.
+3. **Lock as the contact.** Send `LOCK` again.
+   You should see: the contact gets "locked" back; the guardian is locked (key out of memory, phone payments go to the
+   hardware wallet as in step 9); the phone's Home and Activity, the web page's Locked screen and every other contact name the
+   contact who did it. Sending `LOCK` once more answers "already locked". Email and ntfy (step 15) get it too.
+4. **Unlock** with the passphrase, from the phone or the web page. A contact can never unlock: send `UNLOCK` or anything else
+   from the contact and check that nothing happens.
+5. **Turn it off.** It needs a hardware approval. Then send `LOCK` from the contact once more: nothing, as in step 1.
+
+If it goes wrong, collect: the contact's npub (shortened), the exact text sent and the nostr app used, the time, the
+guardian's Activity page and the log lines starting with `dm.lock`, and which relays the contact's app uses.
+
+### 17. Savings (optional, needs a second hardware wallet)
+
+Savings is a separate 2-of-3 that the guardian holds no key in: your phone, your hardware wallet and a **Recovery Key**,
+which is a second hardware wallet (a Trezor beside a Ledger, for example) or, if you have none, a printed kit. Any two of
+the three move it; the guardian only watches it and warns everyone when money leaves (docs/design/savings-and-limit-off.md).
+
+Do:
+
+1. **Create it.** Settings, **Savings**, follow the screens: approve on the hardware wallet, then connect the Recovery Key.
+   Print the **Savings wallet map** and check it has no seed words or keys on it, only what is needed to find the wallet.
+   You should see: a Savings card on Home; the guardian's Activity shows Savings being watched.
+2. **Move money in.** From Spending, send a small amount to a Savings receive address (verify it on the device).
+   You should see: it counts against the daily limit like any payment (over the limit it goes to the hardware wallet, as in
+   step 8), and it shows in Savings once confirmed.
+3. **Move money out with phone + hardware wallet.** Savings, **Send**, a small amount back to Spending.
+   You should see: no guardian and no limit involved; once it is broadcast, the phone, every alert contact and the email and
+   ntfy channels get "Money moved out of Savings" with the amount.
+4. **Move money out with phone + Recovery Key** (the Ledger left aside). Same as 3, signed on the Recovery Key.
+5. **Restore** (step 11 again, after 1 to 4): the restored phone shows Savings with the right balance.
+6. **Turn the watch off** (or replace the Recovery Key). You should see the phone and every contact told about it.
+
+If it goes wrong, collect: which two keys signed, both devices' models and firmware, the transaction id, the screen and
+message, the guardian's Activity page and the log lines starting with `savings`.
+
 ---
 
 ## Known limits of this round
@@ -665,8 +713,8 @@ the password or token).
   "I have an invite" screen (a fixed demo; family hosting comes later), silent payments and Start9.
 - **iOS** is possible from your own Mac only ("Or on an iPhone"): a free Apple ID's install lasts **7 days**, and nobody has
   run it on a real iPhone yet, so report anything iOS-specific. Android stays the main platform of this round.
-- **The APK is signed with a one-off key.** To move to a newer build you uninstall first, which wipes the wallet from that phone.
-  Back up before every update.
+- **Updates keep the wallet from 0.1.7-alpha on** (the Trikey release key). Moving from 0.1.6-alpha or older still needs
+  one uninstall, which wipes the wallet from that phone. Back up before any update all the same.
 - **The recovery wait is 7 days at the shortest** and cannot be sped up on a real network (step 12).
 - **Public relays.** The phone and the guardian talk through public nostr relays. They can drop or delay messages. A flaky
   relay shows up as a timeout, not as a wrong answer. Report which relays you used.
