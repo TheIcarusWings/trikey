@@ -1,7 +1,9 @@
 # Email, ntfy and webhook alerts
 
-Status: built. Written 2026-11-01, against `main` after 0.1.7. DESIGN.md ("Alerts beyond nostr", threat model),
-PROTOCOL.md ("Extra alert channels") and `apps/guardian-web/API.md` ("Notifications") describe it as built.
+Status: built. Written 2026-11-01, against `main` after 0.1.7; the owner's answers to its open questions (same day) are
+built too: a pinned certificate for self-signed email servers and a password-only fix during a recovery ("Decisions"
+at the end). DESIGN.md ("Alerts beyond nostr", threat model), PROTOCOL.md ("Extra alert channels") and
+`apps/guardian-web/API.md` ("Notifications") describe it as built.
 
 Until now the guardian's alerts reached two places: the paired phone (nostr RPC) and the alert contacts (NIP-17 DMs).
 Both need a nostr app, and the phone may be the stolen one. The owner decided to add three channels, **all inside the
@@ -21,11 +23,11 @@ address and/or an ntfy topic next to a contact's nostr key, or a contact reachab
 | Part | What it does |
 |---|---|
 | Channels | Email (SMTP through the owner's account), ntfy, webhook. A flat list of destinations, each one channel for one audience: `owner`, `contact` with a nostr key (`contact`), or `contact` without one. Webhooks are for the owner only. |
-| Settings | Web UI, Settings > Notifications (`GET`/`PUT /api/notifications`, `POST /api/notifications/test`): the guardian's name in messages, the email account (host, port, TLS or STARTTLS, user name, app password, From), channels with their health and a test button. Unlocked and signed in only. |
+| Settings | Web UI, Settings > Notifications (`GET`/`PUT /api/notifications`, `POST /api/notifications/test`): the guardian's name in messages, the email account (host, port, TLS or STARTTLS, user name, app password, From, an optional pinned certificate), channels with their health and a test button. Unlocked and signed in only. |
 | Storage | `notifications.json`, every secret sealed (XChaCha20-Poly1305) under a random key in `notifications-key.json` (mode 0600). Works while the guardian is locked. Secrets are write-only over the API. |
 | Content | Plain text, no links, no buttons. The owner's channels get the phone's alert text; a contact's channels the contact's DM text, with "reply CANCEL / LOCK to the guardian's nostr message" (nostr contacts) or "contact the owner" (others). Named by the owner's short name for the guardian. |
 | Delivery | A durable outbox: one delivery per alert and channel, retried (1, 2, 5, 10, 30, 60 minutes, then hourly) for 7 days, each alert once, a newer recovery reminder replacing an older undelivered one. Per-channel health in the web UI; activity log entries when a channel starts failing, works again, or loses a message. |
-| Changes | Announced on every channel before and after (removed ones and the old email account included), to the paired phone (`notifications_changed`) and in the activity log. While a recovery runs only additions are accepted. |
+| Changes | Announced on every channel before and after (removed ones and the old email account included), to the paired phone (`notifications_changed`) and in the activity log. While a recovery runs only additions are accepted, and a new app password for the same email account. |
 | Phone | Read-only: `guardian.status.notifications` (masked), feature `notifications`; Settings > Alert contacts lists them next to each contact; an activity line when they change. No method changes them. |
 | Policy | Unchanged: `Policy`, `policyHash`, every approval text and rule 4 (who may cancel and lock, the mainnet minimum of one nostr contact) are exactly as before. |
 
@@ -66,7 +68,11 @@ honest about what it protects:
   (and only if that fails, through the new one, so an owner fixing a wrong password still hears it). The paired phone gets
   `notifications_changed`, the activity log names the change. Silencing a contact therefore always tells that contact.
 - **While a recovery runs, only additions are accepted**, the counterpart of "no hardware-approved rule changes during a
-  recovery": nobody can quietly drop a channel in the middle of the event it exists for.
+  recovery": nobody can quietly drop a channel in the middle of the event it exists for. The one exception is a **new
+  app password for the same email account** (same server, port, encryption, user name, From address and pinned
+  certificate): a revoked or expired app password must be fixable exactly when the warnings matter most, and a password
+  alone cannot send the mail anywhere else. It is announced like any change ("email account changed: app password"),
+  over the account as it was first, then with the new password.
 - **The controls stay where they were.** Cancelling and locking are nostr DMs from the contacts in `alertContacts`, which
   rule 4 still guards. Email and ntfy add warnings, never power. The mainnet minimum of one alert contact still means a
   nostr contact (one who can cancel): a contact reachable only by email cannot cancel, so it cannot stand in for one.
@@ -160,7 +166,39 @@ Inside the Umbrel's Docker network, `.local` names often do not resolve: use the
 (`http://192.168.1.20:8080`) or the other app's service name.
 
 The email server is the owner's provider; TLS is mandatory (implicit TLS, or STARTTLS that must succeed), certificates
-are verified (at least TLS 1.2). There is no plain SMTP option and no "accept any certificate" switch.
+are verified (at least TLS 1.2). There is no plain SMTP option and no "accept any certificate" switch; a server with a
+self-signed certificate is reached by pinning exactly that certificate (next section).
+
+## Pinned certificate (Proton Mail Bridge, self-hosted relays)
+
+Proton Mail Bridge and small self-hosted relays make their own self-signed certificate, which public CA verification
+refuses. The email account therefore has an optional **pinned certificate** (`smtp.pin` in `PUT /api/notifications`):
+
+- **What the owner pastes:** the server's certificate (one PEM block: Bridge exports it under Settings, Advanced
+  settings, Export TLS certificates, as `cert.pem`) or its **SHA-256 fingerprint** (64 hex digits, colons optional,
+  also as `openssl x509 -fingerprint -sha256` prints it). The web page shows how to read it from a computer on the
+  network: `openssl s_client -connect HOST:PORT -starttls smtp </dev/null 2>/dev/null | openssl x509 -noout -fingerprint
+  -sha256` (without `-starttls smtp` for TLS on 465). Refused: anything holding a private key (Bridge exports `key.pem`
+  next to it), several certificates, a SHA-1 fingerprint.
+- **What TLS then accepts: exactly that certificate.** The pinned certificate is the connection's only CA (the public
+  ones are not consulted), and the certificate the server shows must have the pinned SHA-256 (`checkServerIdentity`). The
+  host name is not matched against it: the exact certificate is a stronger match, and Bridge's certificate names
+  127.0.0.1 while the guardian reaches it by another address. Still at least TLS 1.2; an expired pinned certificate is
+  refused (pin the new one); a different certificate is refused before any login, so the app password never reaches it.
+- **A fingerprint alone** cannot be a CA, so before sending, the guardian opens one short connection that only reads the
+  certificate the server shows (for STARTTLS: greeting, `EHLO`, `STARTTLS`, handshake) and closes it, sending no user name
+  or password; when its SHA-256 matches the pin, the real connection trusts exactly that certificate as above (and it is
+  kept in memory, so later sends need no second connection). On a mismatch the error names the fingerprint the server
+  showed, so the owner can compare.
+- **Unset: unchanged**, public CA verification with the host name. There is never an "accept any certificate" mode.
+- **Part of the email account.** The pin is stored with the account (in clear: a certificate is public), shown in the web
+  UI (its fingerprint, and whether the certificate itself or only the fingerprint was pasted), and setting, changing or
+  removing it is a change of the account: announced on every channel (over the account as it was first, so pinning a
+  certificate to an attacker's server cannot go unannounced) and refused while a recovery runs. Pasting the same
+  certificate again, as PEM or fingerprint, is no change.
+- **Why pinning and not "trust on first use" or a CA upload:** the owner states which certificate is meant, compares it
+  with what Bridge shows, and nothing is learned silently from the network; a private CA would trust every certificate it
+  ever signs, a pin exactly one.
 
 ## Webhook payload
 
@@ -224,7 +262,9 @@ no link, and the guardian's nostr messages, which are signed, remain the referen
   SMTP transport is used, with file and URL access off.
 - **smtp-server 3.19.23** (dev only, pinned; its pair from the same author, depending on nodemailer 10.1.2 exactly): the
   in-process SMTP server the tests send to. Its built-in test certificate has expired, so the tests turn certificate
-  checks off through a test-only seam, and one test checks that the default refuses that certificate.
+  checks off through a test-only seam, and one test checks that the default refuses that certificate. The pinning tests
+  run without the seam, against throwaway self-signed certificates made at test time (`test/support/self-signed.ts`, a
+  P-256 certificate written in DER; no key is committed).
 - ntfy and webhooks use Node's own `http`/`https` (no client library): one small function with the address checks.
 
 ## Rejected alternatives
@@ -244,18 +284,20 @@ no link, and the guardian's nostr messages, which are signed, remain the referen
   signed nostr messages.
 - **Links in alerts** ("open the app", "see details"): exactly what phishing imitates. Trikey alerts never carry one.
 
-## Open questions for the owner
+## Decisions (owner, 2026-11-01)
 
-1. **Self-signed SMTP servers.** Proton Mail Bridge and some self-hosted relays use self-signed certificates, which the
-   guardian refuses. Should the web UI let the owner pin one certificate (by fingerprint)? Today: no; the docs point to
-   providers with real certificates.
-2. **Fixing a broken email account during a recovery.** While a recovery runs the account cannot be changed, also when
-   the owner only wants to fix a revoked app password. Allow changing only the password then (still announced over the
-   old account)?
-3. **Contacts and owner changes.** Every change is announced on every channel, so contacts also hear when the owner
-   adds their own channel (a generic line, no details). Keep it, or tell contacts only about changes to their own channel
-   and the email account?
-4. **The restart email.** The owner's channels hear "restarted and is locked" after every start of the guardian
-   (updates included). Keep it (a locked guardian co-signs nothing), or only when it stays locked for some time?
-5. **Contact channels on the phone.** The phone shows them read-only. Should the phone also be able to *add* a channel
-   for a contact (adding cannot silence anyone), which would need the web UI's email account and a new method?
+The note's open questions, answered by the owner:
+
+1. **Self-signed SMTP servers: allowed, by pinning one certificate.** Built as "Pinned certificate" above: the owner pastes
+   the certificate (PEM) or its SHA-256 fingerprint; TLS then accepts exactly that certificate instead of the public CAs;
+   unset, nothing changes; never "accept any certificate". The pin is part of the email account for the "every change is
+   announced" rule. (Before: refused; the docs pointed to providers with public certificates.)
+2. **Fixing the email account during a recovery: only the password.** While a recovery runs, the one change besides
+   additions is a new app password for the existing account (same server, port, encryption, user name, From address and
+   pin), announced like any change. Everything else stays add-only.
+3. **Contacts and owner changes: kept as built.** Every change is announced on every channel, contacts' included (a
+   generic line for them, without details).
+4. **The restart message: kept as built.** The owner's channels hear "restarted and is locked" after every start of the
+   guardian, updates included (a locked guardian co-signs nothing, and an unexpected restart is worth knowing about).
+5. **Contact channels on the phone: kept as built.** The phone shows them read-only and cannot add one; channels are
+   changed only in the web UI.
