@@ -13,8 +13,13 @@ import { SilentPaymentError, decodeSilentPaymentAddress, hrpFor, looksLikeSilent
 export type ScannedCode =
   /** `trikey://pair?...`: a guardian's one-time pairing code (onboarding, or "Replace guardian"). */
   | { kind: 'pairing'; uri: string; guardianNpub: string; relays: string[]; label?: string; expiresAt: number }
-  /** `trikey://recover?...`: where a guardian lives, for a new phone without the old one or a backup. */
-  | { kind: 'recovery'; uri: string; guardian: { npub: string; relays: string[] }; network: NetworkName; label?: string }
+  /**
+   * `trikey://recover?...`: where a guardian lives, for a new phone without the old one or a backup. `hosted`: the wallet
+   * is hosted on someone else's guardian (recover with `recoverHostedWithHardware`); `walletId` binds the access text.
+   */
+  | { kind: 'recovery'; uri: string; guardian: { npub: string; relays: string[]; walletId?: string }; network: NetworkName; label?: string; hosted?: true }
+  /** `trikey://invite?...`: a host's invite to keep key 3 of this phone's wallet on their guardian (`acceptInvite`). */
+  | { kind: 'invite'; uri: string; guardianNpub: string; relays: string[]; network: NetworkName; label?: string; expiresAt: number }
   /**
    * A bitcoin address, bare or as a BIP 21 URI (`bitcoin:<address>?amount=<BTC>&label=...`). A silent payment address
    * (`sp1…`/`tsp1…`, bare, as the URI's address or its `sp=` parameter) comes back here too with `silentPayment`:
@@ -158,17 +163,31 @@ export function parseScannedCode(input: string, opts: ScanOptions = {}): Scanned
       code = decodeTrikeyUri(text, opts.now ?? Math.floor(Date.now() / 1000));
     } catch (e) {
       const why = e instanceof Error ? e.message : String(e);
-      if (/expired/.test(why)) return { kind: 'unknown', text, reason: 'This pairing code has expired. Make a fresh one on your guardian.' };
+      if (/expired/.test(why))
+        return { kind: 'unknown', text, reason: /invite/i.test(text) ? 'This invite has expired. Ask for a new one.' : 'This pairing code has expired. Make a fresh one on your guardian.' };
       return { kind: 'unknown', text, reason: `This Trikey code can't be read (${why}).` };
     }
     if (code.kind === 'pair') {
       const p = code.payload;
       return { kind: 'pairing', uri: text, guardianNpub: npubEncode(p.guardianPubkey), relays: p.relays, ...(p.label ? { label: p.label } : {}), expiresAt: p.expiresAt };
     }
+    if (code.kind === 'invite') {
+      const i = code.payload;
+      if (opts.network && i.network !== opts.network)
+        return { kind: 'unknown', text, reason: `This invite is for ${NET_LABEL[i.network]}, but this phone is set to ${NET_LABEL[opts.network]}.` };
+      return { kind: 'invite', uri: text, guardianNpub: npubEncode(i.guardianPubkey), relays: i.relays, network: i.network, ...(i.label ? { label: i.label } : {}), expiresAt: i.expiresAt };
+    }
     const r = code.payload;
     if (opts.network && r.network !== opts.network)
       return { kind: 'unknown', text, reason: `This guardian runs on ${NET_LABEL[r.network]}, but this phone is set to ${NET_LABEL[opts.network]}.` };
-    return { kind: 'recovery', uri: text, guardian: { npub: npubEncode(r.guardianPubkey), relays: r.relays }, network: r.network, ...(r.label ? { label: r.label } : {}) };
+    return {
+      kind: 'recovery',
+      uri: text,
+      guardian: { npub: npubEncode(r.guardianPubkey), relays: r.relays, ...(r.walletId ? { walletId: r.walletId } : {}) },
+      network: r.network,
+      ...(r.label ? { label: r.label } : {}),
+      ...(r.hosted ? { hosted: true as const } : {}),
+    };
   }
 
   const psbt = asPsbt(text);

@@ -76,6 +76,7 @@ export function phone(opts: {
   pool?: () => RelayPool;
   rpcTimeoutMs?: number;
   standaloneChain?: WalletDeps['standaloneChain'];
+  hostedChain?: WalletDeps['hostedChain'];
 }): Phone {
   const secure = new MemorySecureKeyStore();
   const kv = new MemoryKeyValueStore();
@@ -101,6 +102,7 @@ export function phone(opts: {
       rpcRetryIntervalMs: 0, // relays here never drop; retries would only add traffic
       recoveryCodeKdf: { m: 64, t: 1, p: 1 }, // cheap Argon2 for tests only
       ...(opts.standaloneChain ? { standaloneChain: opts.standaloneChain } : {}),
+      ...(opts.hostedChain ? { hostedChain: opts.hostedChain } : {}),
     },
   };
 }
@@ -110,7 +112,7 @@ export function phone(opts: {
  * fake Electrs: unspent outputs by script with a gap limit, raw transactions, and broadcasts into its mempool.
  */
 export class FakeNodeChain implements ChainSource {
-  readonly kind = 'test-node';
+  readonly kind: string = 'test-node';
   readonly broadcasts: string[] = [];
 
   constructor(
@@ -190,5 +192,58 @@ export class FakeNodeChain implements ChainSource {
       ],
       minRelaySatPerVb: 1,
     };
+  }
+}
+
+/**
+ * The guest's chain server for a hosted wallet (`WalletDeps.hostedChain`), in process: an Esplora-like source over the
+ * rig's fake Electrs (the regtest stack has no Esplora endpoint), with what Recovery Key mode's `EsploraChainSource`
+ * offers plus `unspentByScript`. `hide` makes this server leave coins out (a dishonest or lagging public server);
+ * `down` makes it fail. `calls` counts the syncs.
+ */
+export class FakeEsplora extends FakeNodeChain {
+  override readonly kind: string = 'esplora';
+  hide = new Set<string>();
+  down = false;
+  calls = 0;
+
+  constructor(
+    private readonly e: FakeElectrum,
+    wallet: MultisigWallet,
+  ) {
+    super(e, wallet);
+  }
+
+  override async sync(): Promise<ChainSnapshot> {
+    this.calls++;
+    if (this.down) throw new Error('the server does not answer');
+    const s = await super.sync();
+    return { ...s, utxos: s.utxos.filter((u) => !this.hide.has(`${u.txid}:${u.vout}`)) };
+  }
+
+  async unspentByScript(scripts: string[]): Promise<{ script: string; txid: string; vout: number; valueSats: number; height: number; confirmations: number }[]> {
+    if (this.down) throw new Error('the server does not answer');
+    const tip = this.e.height;
+    return scripts.flatMap((script) =>
+      (this.e.unspent.get(hex.encode(sha256(hex.decode(script)).reverse())) ?? [])
+        .filter((u) => !this.hide.has(`${u.txid}:${u.vout}`))
+        .map((u) => ({ script, txid: u.txid, vout: u.vout, valueSats: u.value, height: Math.max(0, u.height), confirmations: u.height > 0 ? tip - u.height + 1 : 0 })),
+    );
+  }
+
+  /** A `hostedChain` factory: a primary and a check server per call, both over the same fake chain unless `check` says otherwise. */
+  static servers(e: FakeElectrum): { factory: NonNullable<WalletDeps['hostedChain']>; made: { role: string; server?: string; source: FakeEsplora }[]; check: { down: boolean; hide: Set<string> } } {
+    const made: { role: string; server?: string; source: FakeEsplora }[] = [];
+    const check = { down: false, hide: new Set<string>() };
+    const factory: NonNullable<WalletDeps['hostedChain']> = ({ wallet, role, server }) => {
+      const s = new FakeEsplora(e, wallet);
+      if (role === 'check') {
+        s.down = check.down;
+        s.hide = check.hide;
+      }
+      made.push({ role, ...(server ? { server } : {}), source: s });
+      return s;
+    };
+    return { factory, made, check };
   }
 }

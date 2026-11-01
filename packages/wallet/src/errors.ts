@@ -251,6 +251,27 @@ export type WalletErrorCode =
   | 'savings_exists'
   /** A Savings action on a wallet without Savings (or, on a new phone, none the guardian knows of either). */
   | 'no_savings'
+  /**
+   * Family hosting (docs/design/family-hosting.md). `consent_required`: the invite's disclosure was not acknowledged
+   * ("I understand <host> could help a thief skip the wait"); `mainnet_consent_required`: a hosted wallet on mainnet
+   * needs the same pre-alpha, not-audited consent as guardian mode on mainnet; `invite_invalid`: not a usable invite.
+   */
+  | 'consent_required'
+  | 'mainnet_consent_required'
+  | 'invite_invalid'
+  /** A hosted wallet must have a backup of the phone key before it receives (decision 2). */
+  | 'backup_required'
+  /** A hosted wallet reads chain data from the guest's server or a public Esplora: none is configured in this app. */
+  | 'chain_source_required'
+  /**
+   * Before a hosted wallet's recovery sweep, a second chain server is asked for the wallet's coins (decision 4): it did
+   * not answer (`second_server_unavailable`) or saw coins the first did not (`second_server_mismatch`, the sweep then
+   * takes them too when it can prove them).
+   */
+  | 'second_server_unavailable'
+  | 'second_server_mismatch'
+  /** A hosted wallet's encrypted wallet map is missing on the guardian, does not decrypt with this hardware wallet, or names other keys. */
+  | 'wallet_map_invalid'
   | 'internal';
 
 export class WalletError extends Error {

@@ -33,13 +33,46 @@ export const HardwareRecord = z.object({
 });
 export type HardwareRecord = z.infer<typeof HardwareRecord>;
 
+/**
+ * A wallet hosted on someone else's guardian (docs/design/family-hosting.md): the guardian knows only its account
+ * pubkeys; key 3's chaincode is this phone's (it is in the descriptor); chain data comes from the guest's own server or
+ * a public Esplora, never from the host.
+ */
+export const HostedRecord = z.object({
+  /** The label the host's invite showed. */
+  hostLabel: z.string().optional(),
+  /** This wallet's name, as the guardian's alerts call it. */
+  walletLabel: z.string(),
+  /** Key 3's account pubkey (compressed, hex). */
+  cosignerAccountPubkey: z.string().regex(/^0[23][0-9a-f]{64}$/),
+  /** The guest's own Esplora (base URL); absent: a public one. */
+  chainServer: z.string().optional(),
+  /** When the disclosure was acknowledged and the invite accepted (ms). */
+  acceptedAt: z.number(),
+  /** The host stopped hosting: key 3 ends then (ms). */
+  endsAt: z.number().optional(),
+});
+export type HostedRecord = z.infer<typeof HostedRecord>;
+
+/** `KeyOrigin`, also allowing path `m` (a depth-0 key: a hosted wallet's key 3). */
+export const GuardianKey = z.strictObject({
+  fingerprint: z.string().regex(/^[0-9a-f]{8}$/),
+  path: z.string().regex(/^m(\/\d+['h]?)*$/),
+  xpub: z.string().min(50).max(120),
+});
+
 export const GuardianRecord = z.object({
   /** Nostr pubkey, hex. */
   pubkey: Hex32,
   relays: z.array(z.string()).min(1).max(8),
   label: z.string().optional(),
-  /** Key 3 with origin, from `pair.prepare` (or `recovery.access`). */
-  key: KeyOrigin,
+  /**
+   * Key 3 with origin, from `pair.prepare` (or `recovery.access`). For a hosted wallet, key 3 as its descriptor holds it:
+   * a depth-0 xpub over the slot's account pubkey and this phone's chaincode, path `m`.
+   */
+  key: GuardianKey,
+  /** Hosted on someone else's guardian. */
+  hosted: HostedRecord.optional(),
   version: z.string().optional(),
   /**
    * The guardian said it made this wallet's key 3 from its own seed and this phone's contribution
