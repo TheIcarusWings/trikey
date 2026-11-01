@@ -117,6 +117,25 @@ the phone unless you send it.
 4. A free provisioning profile lasts **7 days**: after that the app stops opening until you run the same command again. The
    wallet's data stays on the phone, so a reinstall over it keeps your wallet, but make a backup first.
 
+If the build fails, these are the snags met on a first build from a Mac (Xcode 26.6, iOS 26.6):
+
+- **`pod install` fails with `Unicode Normalization not appropriate for ASCII-8BIT`**: CocoaPods needs a UTF-8 shell. Run
+  `export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8` first.
+- **`No device UDID or name matching ...`**: `--device` wants the phone's name or its hardware UDID
+  (`xcrun devicectl device info details --device <id>`, the `udid` field), not the CoreDevice identifier that
+  `xcrun devicectl list devices` prints.
+- **`iOS 26.5 is not installed. Please download and install the platform`**: install the iOS platform Xcode builds against
+  (`xcodebuild -downloadPlatform iOS`, several GB), and don't start a second download from Xcode's Components pane meanwhile.
+- **`No profiles for '<bundle id>' were found`** on the first build for a new bundle id: `expo run:ios` doesn't let Xcode create
+  a profile. Open `ios/Trikey.xcworkspace` in Xcode once, pick your Personal Team under Signing & Capabilities so Xcode makes
+  the profile, then run the command again.
+- **`No available simulator runtimes for platform iphonesimulator`** while compiling asset catalogs (even for a device build): the
+  simulator runtime is installed but not mounted (`xcrun simctl list runtimes` is empty). Quit Xcode and run
+  `sudo killall simdiskimaged`; check that `xcrun simctl list runtimes` lists it, then build again.
+- **The first run ends with `Unable to launch ... profile has not been explicitly trusted`**: the app is installed. Trust your
+  developer profile on the phone (Settings, General, VPN & Device Management; the entry appears once an app signed with your
+  Apple ID is on the phone) and open Trikey from the home screen.
+
 CI builds the same Release app for the iOS Simulator (no signing, no Apple account) and opens it in a simulator on every pull
 request that touches the app: `.github/workflows/ios-launch.yml` fails if the app is not running 25 seconds later or crashed,
 with the crash report and log lines in the check's annotations.

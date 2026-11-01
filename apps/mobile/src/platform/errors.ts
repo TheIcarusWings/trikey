@@ -82,7 +82,10 @@ export class CloudBackupError extends PlatformError<CloudBackupErrorCode> {
 }
 
 export const CLOUD_BACKUP_MESSAGES: Record<CloudBackupErrorCode, string> = {
-  unavailable: 'Cloud backup is not available on this phone. Check that you are signed in to your cloud account.',
+  // Also what a build made without iCloud (TRIKEY_DISABLE_ICLOUD=1, every free-Apple-ID build) reports, where signing
+  // in cannot help: so it names both causes and what works instead.
+  unavailable:
+    "Cloud backup isn't available here: the phone may be signed out of its cloud account, or this build of Trikey has no cloud backup. The recovery code and a backup file work instead.",
   cancelled: 'You cancelled the sign-in.',
   auth: 'Trikey is not signed in to your cloud account, or it was refused. Sign in again.',
   network: "Trikey couldn't reach your cloud account. Check your connection and try again.",
