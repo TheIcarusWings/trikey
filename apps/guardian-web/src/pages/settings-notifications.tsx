@@ -2,6 +2,7 @@ import { useState, type FormEvent, type ReactNode } from 'react';
 import { api, ApiError, type NotificationSettings, type NotifyChannelKind, type NotifyDestination, type NotifyDestinationInput } from '@/api';
 import { ErrorState } from '@/components/states';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -11,9 +12,11 @@ import {
   SMTP_PRESETS,
   audienceLabel,
   channelLabel,
+  PIN_COMMAND,
   emailError,
   guardianNameError,
   healthLabel,
+  passwordOnlyChange,
   settingsInput,
   smtpError,
   topicError,
@@ -52,19 +55,20 @@ function Problem({ id, text }: { id?: string; text: string | undefined }) {
 function EmailAccount({ data, busy, save, test }: { data: NotificationSettings; busy: boolean; save: (draft: SmtpDraft | null) => Promise<string | undefined>; test: () => Promise<string | undefined> }) {
   const s = data.smtp;
   const [editing, setEditing] = useState(!s);
-  const [draft, setDraft] = useState<SmtpDraft>(() => ({ host: s?.host ?? '', port: String(s?.port ?? 465), security: s?.security ?? 'tls', username: s?.username ?? '', from: s?.from ?? '', password: '' }));
+  const [draft, setDraft] = useState<SmtpDraft>(() => ({ host: s?.host ?? '', port: String(s?.port ?? 465), security: s?.security ?? 'tls', username: s?.username ?? '', from: s?.from ?? '', password: '', pin: '', clearPin: false }));
+  const [showPin, setShowPin] = useState(false);
   const [error, setError] = useState<string>();
   const [note, setNote] = useState<string>();
   const set = (patch: Partial<SmtpDraft>) => setDraft((d) => ({ ...d, ...patch }));
   const onSave = async (e: FormEvent) => {
     e.preventDefault();
-    const problem = smtpError(draft, !!s);
+    const problem = smtpError(draft, !!s) ?? (s && data.recoveryRunning && !passwordOnlyChange(s, draft) ? 'A recovery is running: only the app password can be changed until it ends.' : undefined);
     if (problem) return setError(problem);
     setError(undefined);
     const failed = await save(draft);
     if (failed) setError(failed);
     else {
-      setDraft((d) => ({ ...d, password: '' }));
+      setDraft((d) => ({ ...d, password: '', pin: '', clearPin: false }));
       setEditing(false);
     }
   };
@@ -76,6 +80,11 @@ function EmailAccount({ data, busy, save, test }: { data: NotificationSettings; 
           <p className="m-0 text-[15px] leading-5">
             {s.username} via <span className="font-mono text-[13px]">{s.host}:{s.port}</span> ({s.security === 'tls' ? 'TLS' : 'STARTTLS'}), from {s.from}
           </p>
+          {s.pin && (
+            <p className={hint}>
+              Pinned certificate{s.pin.certificate ? '' : ' (by fingerprint)'}: SHA-256 <span className="font-mono break-all">{s.pin.sha256}</span>
+            </p>
+          )}
           <p className={cn(hint, s.health.state === 'failing' && 'text-bad')}>{healthLabel(s.health, formatDateTime)}</p>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" disabled={busy} onClick={() => void test().then(setNote)}>
@@ -95,12 +104,23 @@ function EmailAccount({ data, busy, save, test }: { data: NotificationSettings; 
           </p>
           <div className="flex flex-wrap gap-2">
             {SMTP_PRESETS.map((p) => (
-              <Button key={p.label} type="button" variant="outline" size="sm" onClick={() => (set({ host: p.host, port: String(p.port), security: p.security }), setNote(p.note))}>
+              <Button
+                key={p.label}
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  set({ ...(p.host ? { host: p.host } : {}), port: String(p.port), security: p.security });
+                  setNote(p.note);
+                  if (!p.host) setShowPin(true);
+                }}
+              >
                 {p.label}
               </Button>
             ))}
           </div>
           {note && <p className={hint}>{note}</p>}
+          {s && data.recoveryRunning && <p className={cn(hint, 'text-warn')}>A recovery is running: only the app password can be changed until it ends (to fix a revoked one). The change is announced like any other.</p>}
           <div className="grid gap-3 sm:grid-cols-[1fr_7rem_9rem]">
             <Field id="smtp-host" label="Email server">
               <Input id="smtp-host" autoComplete="off" spellCheck={false} placeholder="smtp.example.com" value={draft.host} onChange={(e) => set({ host: e.target.value })} />
@@ -126,6 +146,48 @@ function EmailAccount({ data, busy, save, test }: { data: NotificationSettings; 
           <Field id="smtp-password" label="App password" note={s ? 'Leave empty to keep the one saved.' : undefined}>
             <Input id="smtp-password" type="password" autoComplete="new-password" value={draft.password} onChange={(e) => set({ password: e.target.value })} />
           </Field>
+          {s?.pin || showPin ? (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="smtp-pin">Pinned certificate (optional)</Label>
+              {s?.pin && (
+                <p className={hint}>
+                  Pinned now: SHA-256 <span className="font-mono break-all">{s.pin.sha256}</span>. Leave the field empty to keep it.
+                </p>
+              )}
+              <textarea
+                id="smtp-pin"
+                rows={3}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="-----BEGIN CERTIFICATE----- … or AB:CD:EF:…"
+                value={draft.pin ?? ''}
+                disabled={draft.clearPin}
+                onChange={(e) => set({ pin: e.target.value })}
+                className="min-h-16 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 font-mono text-[12px] leading-4 shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              />
+              <p className={hint}>
+                Only for a server with a self-signed certificate, such as Proton Mail Bridge: the guardian then accepts exactly this certificate and no other
+                (never &ldquo;any certificate&rdquo;). Paste the certificate (Bridge: Settings, Advanced settings, Export TLS certificates, then the contents of
+                cert.pem, never key.pem) or its SHA-256 fingerprint, which a computer on your network shows with:
+              </p>
+              <code className="block rounded-md bg-muted px-2 py-1.5 font-mono text-[12px] leading-4 break-all">{PIN_COMMAND}</code>
+              <p className={hint}>For TLS on port 465, leave out -starttls smtp. Compare the fingerprint with the one Bridge or your server shows before you save.</p>
+              {s?.pin && (
+                <div className="flex items-center gap-2">
+                  <Checkbox id="smtp-pin-clear" checked={!!draft.clearPin} onCheckedChange={(v) => set({ clearPin: v === true })} />
+                  <Label htmlFor="smtp-pin-clear" className="text-[13px] leading-[18px] font-normal">
+                    Remove the pin (check the certificate against the public authorities again)
+                  </Label>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setShowPin(true)}>
+                Pin a self-signed certificate (Proton Mail Bridge)…
+              </Button>
+            </div>
+          )}
           <Problem text={error} />
           <div className="flex flex-wrap gap-2">
             <Button type="submit" disabled={busy}>
@@ -281,7 +343,8 @@ function ChannelRow({ d, busy, test, remove, locked }: { d: NotifyDestination; b
 /**
  * Settings > Notifications: email (through the owner's own account), ntfy and webhook, for the owner and the alert
  * contacts. Notify-only: they carry warnings, never controls. Every change is announced on every channel and to the
- * phone; while a recovery runs, channels can be added but not removed.
+ * phone; while a recovery runs, channels can be added but not removed, and of the email account only the app password
+ * can be changed.
  */
 export function NotificationsSection() {
   const settings = useApi(() => api.getNotifications(), [], 30_000);
@@ -337,7 +400,9 @@ export function NotificationsSection() {
         change here is announced on every channel, before and after, and to your phone.
         {data.pending > 0 ? ` ${data.pending} message${data.pending === 1 ? '' : 's'} waiting to go out (retried for 7 days).` : ''}
       </p>
-      {data.recoveryRunning && <p className={cn(hint, 'text-warn')}>A recovery is running: you can add channels, but not remove or change them until it ends.</p>}
+      {data.recoveryRunning && (
+        <p className={cn(hint, 'text-warn')}>A recovery is running: you can add channels, but not remove or change them until it ends. Of the email account, only the app password can be changed.</p>
+      )}
 
       <form onSubmit={saveName} noValidate className="flex flex-col gap-1.5">
         <Label htmlFor="guardian-name">Name in messages</Label>

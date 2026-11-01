@@ -598,7 +598,14 @@ to the From address).
   `smtp.fastmail.com`, port 465, TLS.
 - **Proton Mail**: SMTP needs a paid plan with your own domain: Settings, IMAP/SMTP, **SMTP tokens**, make a token for an
   address on that domain. Server `smtp.protonmail.ch`, port 587, STARTTLS, user name the address, password the token.
-  Proton Mail Bridge does not work: it runs on a computer, with a certificate the guardian refuses.
+- **Proton Mail Bridge** (any paid Proton plan, no own domain needed): Bridge must run where the guardian can reach it on
+  your network (out of the box it listens only on its own computer, 127.0.0.1). Pick **Proton Mail Bridge** to fill in
+  port 1025 and STARTTLS, enter the address of the machine running Bridge, and as user name and password the ones Bridge
+  shows for your address (not your Proton password). Bridge makes its own self-signed certificate, so **pin it**: in
+  Bridge, Settings, Advanced settings, **Export TLS certificates**, then paste the contents of `cert.pem` (never
+  `key.pem`) into **Pinned certificate**; or, from a computer on your network, run
+  `openssl s_client -connect <bridge address>:1025 -starttls smtp </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256`
+  and paste the `sha256 Fingerprint=...` line. Save, then **Send a test message**.
 
 **ntfy.** Install the ntfy app on your phone and subscribe to a topic.
 
@@ -631,9 +638,17 @@ You should see:
 - Every change you make is announced on every channel; a channel you remove gets a last message saying so.
 - A wrong app password shows as **Failing** next to the email account with the server's answer, and in Activity as
   "Alert channel failing"; fixing it shows "works again".
+- With Proton Mail Bridge: without the pin the test fails with a certificate error; with it, the test arrives, and the
+  account shows "Pinned certificate: SHA-256 ..." matching what Bridge (or `openssl`) shows. Pinning another
+  certificate's fingerprint makes the test fail with "not the pinned one: it shows SHA-256 ...". Each pin change is
+  announced like any change.
+- During a recovery (step 12a, before you cancel it): the email account can still get a **new app password** (announced
+  as "email account changed: app password"), but changing its server or user name, removing a channel or the pin is
+  refused until the recovery ends.
 
 If it goes wrong, collect: the error shown next to the channel, the guardian's Activity page and log lines starting with
-`notify.`, your provider, and the server, port and encryption you used (never the password or token).
+`notify.`, your provider, and the server, port and encryption you used, and with Bridge the pinned fingerprint (never
+the password or token).
 
 ---
 

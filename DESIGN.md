@@ -194,7 +194,9 @@ docs/design/notifications.md.
   approval texts and rule 4 are unchanged: a channel adds warnings, never the power to cancel, and the mainnet minimum is
   still one nostr contact. Every change is announced on **every channel, before and after it** (a removed channel over its
   old address, a changed email account through the old account), to the paired phone (`notifications_changed`) and in the
-  activity log; while a recovery runs only additions are accepted. Why this and not hardware-approved channels: the
+  activity log; while a recovery runs only additions are accepted, and a new app password for the same email account.
+  Email always over TLS with verified certificates; a self-signed server (Proton Mail Bridge) only by pinning exactly its
+  certificate. Why this and not hardware-approved channels: the
   notifications design, "Who may change a contact's channels".
 - **Durable**, like the nostr notices: queued on disk, retried for 7 days, each alert once; per-channel failures in the
   web UI and the activity log. **They work while the guardian is locked**: their secrets are sealed under a key file on

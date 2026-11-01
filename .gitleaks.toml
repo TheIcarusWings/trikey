@@ -22,4 +22,7 @@ regexes = [
   # A made-up ntfy topic in the notifier's tests (apps/guardian/test/notify-notifier.test.ts): the generic-api-key rule
   # reads "secret of [..., 'owner-topic-x7f3k2'" as a secret with a value.
   '''^owner-topic-x7f3k2$''',
+  # The stub that tests refusing a pasted private key in the email certificate pin (guardian-web
+  # test/notifications.test.ts): "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----", not a key.
+  '''-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----''',
 ]

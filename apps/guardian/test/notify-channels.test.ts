@@ -1,6 +1,6 @@
 /**
  * The three senders against local servers (docs/design/notifications.md): email through an in-process SMTP server
- * (implicit TLS and STARTTLS, certificate checks, a wrong app password), ntfy and webhooks against local HTTP servers
+ * (implicit TLS and STARTTLS, certificate checks, a wrong app password, a pinned self-signed certificate), ntfy and webhooks against local HTTP servers
  * (the JSON body, the bearer token, the HMAC-SHA256 signature a receiver checks), and the address rules for ntfy and
  * webhook URLs (LAN allowed, loopback, link-local and plain http to the internet refused, redirects not followed).
  */
@@ -9,7 +9,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sendEmail, sendNtfy, sendWebhook, webhookSignature, type SmtpAccount, type WebhookPayload } from '../src/notify/channels.js';
 import { checkHttpUrl, classifyIp, postChecked } from '../src/notify/net.js';
 import { finish } from '../src/notify/render.js';
+import { checkPin, checkSmtp } from '../src/notify/settings.js';
 import { startHttp, startSmtp, type TestHttp, type TestSmtp } from './support/notify-servers.js';
+import { selfSignedCert, type TestCert } from './support/self-signed.js';
 
 const MSG = finish({ title: 'Recovery started', body: 'A recovery started with the phone. It moves 0.01000000 BTC (1,000,000 sats) on 2026-11-08 12:00 UTC unless cancelled.\nKeys: j…@e…', priority: 'urgent' }, 'Home vault');
 const TEST_TLS = { tls: { rejectUnauthorized: false } };
@@ -73,6 +75,108 @@ describe('email over SMTP', () => {
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toMatch(/refused the user name or app password/);
     expect((err as Error).message).not.toContain('wrong password');
+  });
+});
+
+describe('a pinned certificate (Proton Mail Bridge, self-hosted relays)', () => {
+  // Throwaway self-signed certificates made now, as such servers make their own; nothing is committed.
+  let implicitCert: TestCert;
+  let starttlsCert: TestCert;
+  let other: TestCert;
+  let implicit: TestSmtp;
+  let starttls: TestSmtp;
+  beforeAll(async () => {
+    implicitCert = selfSignedCert();
+    starttlsCert = selfSignedCert({ ca: false });
+    other = selfSignedCert();
+    implicit = await startSmtp({ secure: true, tls: implicitCert });
+    starttls = await startSmtp({ tls: starttlsCert });
+  });
+  afterAll(async () => {
+    await implicit.stop();
+    await starttls.stop();
+  });
+  const meta = { guardianName: 'Home vault', type: 'test' };
+
+  it('without a pin, a self-signed certificate is refused before any login', async () => {
+    await expect(sendEmail(account(implicit.port, 'tls'), 'maria@example.com', MSG, meta)).rejects.toThrow(/self-signed|certificate/i);
+    await expect(sendEmail(account(starttls.port, 'starttls'), 'maria@example.com', MSG, meta)).rejects.toThrow(/self-signed|certificate/i);
+    expect(implicit.logins + starttls.logins).toBe(0);
+    expect(implicit.mails.length + starttls.mails.length).toBe(0);
+  });
+
+  it('pinned as the certificate (PEM), it is accepted, over implicit TLS and STARTTLS', async () => {
+    await sendEmail({ ...account(implicit.port, 'tls'), pin: checkPin(implicitCert.cert) }, 'maria@example.com', MSG, meta);
+    expect(implicit.mails.at(-1)).toMatchObject({ secure: true, to: ['maria@example.com'] });
+    await sendEmail({ ...account(starttls.port, 'starttls'), pin: checkPin(starttlsCert.cert) }, 'tom@example.org', MSG, meta);
+    expect(starttls.mails.at(-1)).toMatchObject({ secure: true, to: ['tom@example.org'] });
+  });
+
+  it('pinned by its SHA-256 fingerprint, it is accepted, over implicit TLS and STARTTLS', async () => {
+    // Each server has its own certificate here, so neither send can reuse the other's.
+    const fresh = selfSignedCert();
+    const server = await startSmtp({ tls: fresh });
+    try {
+      await sendEmail({ ...account(server.port, 'starttls'), pin: checkPin(`sha256 Fingerprint=${fresh.fingerprint256}`) }, 'tom@example.org', MSG, meta);
+      expect(server.mails.at(-1)).toMatchObject({ secure: true, to: ['tom@example.org'] });
+    } finally {
+      await server.stop();
+    }
+    const freshTls = selfSignedCert();
+    const serverTls = await startSmtp({ secure: true, tls: freshTls });
+    try {
+      await sendEmail({ ...account(serverTls.port, 'tls'), pin: checkPin(freshTls.fingerprint256.replace(/:/g, '').toLowerCase()) }, 'maria@example.com', MSG, meta);
+      expect(serverTls.mails.at(-1)).toMatchObject({ secure: true, to: ['maria@example.com'] });
+    } finally {
+      await serverTls.stop();
+    }
+  });
+
+  it('a wrong pin is refused before any login, as a certificate and as a fingerprint', async () => {
+    const logins = implicit.logins + starttls.logins;
+    const mails = implicit.mails.length + starttls.mails.length;
+    await expect(sendEmail({ ...account(implicit.port, 'tls'), pin: checkPin(other.cert) }, 'maria@example.com', MSG, meta)).rejects.toThrow(/not the pinned one/);
+    await expect(sendEmail({ ...account(starttls.port, 'starttls'), pin: checkPin(other.cert) }, 'maria@example.com', MSG, meta)).rejects.toThrow(/not the pinned one/);
+    // A fingerprint-only pin names what the server shows, so the owner can compare.
+    const err = await sendEmail({ ...account(starttls.port, 'starttls'), pin: checkPin(other.fingerprint256) }, 'maria@example.com', MSG, meta).catch((e: Error) => e);
+    expect((err as Error).message).toMatch(/not the pinned one/);
+    expect((err as Error).message).toContain(starttlsCert.fingerprint256);
+    await expect(sendEmail({ ...account(implicit.port, 'tls'), pin: checkPin(other.fingerprint256) }, 'maria@example.com', MSG, meta)).rejects.toThrow(/not the pinned one/);
+    expect(implicit.logins + starttls.logins).toBe(logins);
+    expect(implicit.mails.length + starttls.mails.length).toBe(mails);
+  });
+
+  it('the pin of one server does not open another', async () => {
+    await expect(sendEmail({ ...account(starttls.port, 'starttls'), pin: checkPin(implicitCert.cert) }, 'maria@example.com', MSG, meta)).rejects.toThrow(/not the pinned one/);
+  });
+
+  it('an expired pinned certificate is refused, in words that say so', async () => {
+    const old = selfSignedCert({ expired: true });
+    const server = await startSmtp({ secure: true, tls: old });
+    try {
+      await expect(sendEmail({ ...account(server.port, 'tls'), pin: checkPin(old.cert) }, 'maria@example.com', MSG, meta)).rejects.toThrow(/pinned certificate has expired/);
+      expect(server.logins).toBe(0);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('reads what the owner pastes: one certificate, or a SHA-256 fingerprint in the usual spellings; never a key', () => {
+    const fp = implicitCert.fingerprint256;
+    expect(checkPin(implicitCert.cert)).toEqual({ sha256: fp, pem: expect.stringContaining('BEGIN CERTIFICATE') });
+    expect(checkPin(`\n  ${implicitCert.cert}  \n`).sha256).toBe(fp);
+    for (const text of [fp, fp.toLowerCase(), fp.replace(/:/g, ''), `sha256 Fingerprint=${fp}`, `SHA256 Fingerprint=${fp}`, `SHA-256: ${fp}`]) expect(checkPin(text), text).toEqual({ sha256: fp });
+    expect(() => checkPin(`${implicitCert.cert}\n${other.cert}`)).toThrow(/only the server's own certificate/);
+    expect(() => checkPin(`${implicitCert.cert}\n${implicitCert.key}`)).toThrow(/private key/);
+    expect(() => checkPin('-----BEGIN CERTIFICATE-----\nnot a certificate\n-----END CERTIFICATE-----')).toThrow(/not a readable certificate/);
+    expect(() => checkPin('AB:'.repeat(19) + 'AB')).toThrow(/SHA-1/);
+    expect(() => checkPin('not a fingerprint')).toThrow(/SHA-256 fingerprint/);
+    expect(() => checkPin('')).toThrow(/Pinned certificate/);
+    // In the account: absent keeps the stored pin, null removes it, text sets it.
+    const smtpBody = { host: 'bridge.lan', port: 1025, security: 'starttls', username: 'me@proton.me', from: 'me@proton.me', password: 'bridge password' };
+    expect(checkSmtp(smtpBody, false)).not.toHaveProperty('pin');
+    expect(checkSmtp({ ...smtpBody, pin: null }, false).pin).toBeNull();
+    expect(checkSmtp({ ...smtpBody, pin: fp }, false).pin).toEqual({ sha256: fp });
   });
 });
 
