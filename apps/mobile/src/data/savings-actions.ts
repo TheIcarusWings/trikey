@@ -1,5 +1,5 @@
 import type { ReceiveAddress } from './service';
-import type { HardwareKind, Sats, SavingsDevice, SavingsQuote, SavingsQuoteOutcome, SavingsSigners } from './types';
+import type { HardwareKind, Sats, SavingsDevice, SavingsQuote, SavingsQuoteOutcome, SavingsSigners, SavingsWalletMap } from './types';
 
 /**
  * What the Savings screens ask of the wallet (`WalletService.savings`; docs/design/savings-and-limit-off.md, option K).
@@ -46,4 +46,9 @@ export interface SavingsActions {
   replaceKey(lost: 'phone' | 'hardware' | 'recoveryKey', opts?: { recoveryKeyKind?: HardwareKind; descriptor?: string }): Promise<{ movedSats: Sats; feeSats: Sats }>;
   /** The Savings wallet the guardian watches, if this phone does not know it (a new phone without a backup). */
   findOnGuardian(): Promise<{ descriptor: string } | null>;
+  /**
+   * The printed Savings wallet map, made now (no I/O): the descriptor and its QR code, the three keys' fingerprints,
+   * paths and xpubs, the first receive address and how to recover. Public keys only. Null without Savings.
+   */
+  walletMap(): SavingsWalletMap | null;
 }

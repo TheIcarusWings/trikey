@@ -805,6 +805,41 @@ export interface SavingsState {
   creating: null | { phone: boolean; hardware: boolean; recoveryKey?: SavingsDevice };
 }
 
+/** One key of Savings on the printed wallet map: public only. */
+export interface SavingsMapKey {
+  role: 'phone' | 'hardware' | 'recoveryKey';
+  /** The device's model ("Ledger Nano S Plus"); none for this phone. */
+  model?: string;
+  /** Master key fingerprint, 8 hex characters. */
+  fingerprint: string;
+  /** "m/48'/1'/1'/2'". */
+  path: string;
+  /** The account's extended public key. */
+  xpub: string;
+}
+
+/** What the printed Savings wallet map shows (open question 10): everything public, nothing that can move money. */
+export interface SavingsMapData {
+  network: NetworkName;
+  walletId: string;
+  /** The checksummed `wsh(sortedmulti(2, …))` descriptor, also the QR code. */
+  descriptor: string;
+  /** This phone, the hardware wallet, the Recovery Key. */
+  keys: SavingsMapKey[];
+  /** Receive chain, index 0: to check an import against. */
+  firstAddress: string;
+  createdAt?: IsoDate;
+  /** Made-up data from the demo: the page says so. */
+  demo?: true;
+}
+
+/** The map ready to print: its page and the day it was made. */
+export interface SavingsWalletMap extends SavingsMapData {
+  html: string;
+  /** YYYY-MM-DD. */
+  date: string;
+}
+
 export interface SavingsQuote {
   /** The wallet's own handle for this quote. Pass the whole quote back to `savings.send`. */
   ref?: string;

@@ -6,9 +6,10 @@
  */
 import { WalletServiceError } from './errors';
 import { emptySavings } from './savings-empty';
+import { displayPath, renderSavingsMap } from './savings-map';
 import type { SavingsActions } from './savings-actions';
 import type { MockHooks } from './rk-mock';
-import type { HardwareKind, Sats, SavingsActivityItem, SavingsDevice, SavingsQuote, SavingsSigners, SavingsState } from './types';
+import type { HardwareKind, Sats, SavingsActivityItem, SavingsDevice, SavingsMapData, SavingsMapKey, SavingsQuote, SavingsSigners, SavingsState } from './types';
 
 /** The demo's Savings receive addresses (index 0, 1, ...): samples, not anyone's wallet. */
 export const DEMO_SAVINGS_ADDRESSES = [
@@ -18,6 +19,9 @@ export const DEMO_SAVINGS_ADDRESSES = [
 ];
 export const DEMO_SAVINGS_DESCRIPTOR =
   "wsh(sortedmulti(2,[c0ffee01/48h/1h/1h/2h]tpubDEMOphoneSAVINGSxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/<0;1>/*,[7c1e5a90/48h/1h/1h/2h]tpubDEMOhardwareSAVINGSxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/<0;1>/*,[5e7d2c4b/48h/1h/1h/2h]tpubDEMOrecoveryKEYxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/<0;1>/*))#demo5av1";
+
+/** The demo descriptor's keys, for the printed wallet map: obviously made up ("tpubDEMO…xxxx"). */
+const DEMO_SAVINGS_KEYS = [...DEMO_SAVINGS_DESCRIPTOR.matchAll(/\[([0-9a-f]{8})\/([^\]]+)\]([^/]+)\//g)].map((m) => ({ fingerprint: m[1]!, path: displayPath(m[2]!), xpub: m[3]! }));
 
 /** The demo's fee for a Savings payment (one 2-of-3 input, two outputs, at the slow rate). */
 const DEMO_SAVINGS_FEE: Sats = 640;
@@ -168,6 +172,22 @@ export function createMockSavings(h: MockHooks, nextId: (prefix: string) => stri
     async findOnGuardian() {
       await h.wait(h.networkDelay);
       return sv().descriptor ? { descriptor: sv().descriptor! } : null;
+    },
+    walletMap() {
+      const s = sv();
+      if (s.status !== 'active') return null;
+      const roles: SavingsMapKey['role'][] = ['phone', 'hardware', 'recoveryKey'];
+      const models = { phone: undefined, hardware: s.hardware?.model, recoveryKey: s.recoveryKey?.model };
+      const data: SavingsMapData = {
+        network: h.get().network ?? 'testnet',
+        walletId: s.walletId ?? 'd3m05av1n6s00001',
+        descriptor: DEMO_SAVINGS_DESCRIPTOR,
+        keys: DEMO_SAVINGS_KEYS.map((k, i) => ({ role: roles[i]!, ...(models[roles[i]!] ? { model: models[roles[i]!] } : {}), ...k })),
+        firstAddress: DEMO_SAVINGS_ADDRESSES[0]!,
+        ...(s.createdAt ? { createdAt: s.createdAt } : {}),
+        demo: true,
+      };
+      return { ...data, ...renderSavingsMap(data, { date: h.now }) };
     },
   };
 }

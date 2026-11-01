@@ -54,6 +54,7 @@ import type { SilentPaymentActions } from './sp-actions';
 import { emptySilentPayments } from './sp-empty';
 import type { SavingsActions } from './savings-actions';
 import { emptySavings } from './savings-empty';
+import { renderSavingsMap, savingsMapData } from './savings-map';
 import {
   GUARDIAN_NETWORKS,
   type WalletDetails,
@@ -1573,6 +1574,20 @@ class Service implements RealWalletService {
         const found = await this.requireWallet().findSavingsOnGuardian();
         return found ? { descriptor: found.descriptor } : null;
       }),
+    walletMap: () => {
+      const sv = this.w?.state.savings;
+      if (!sv) return null;
+      // The device names as the Savings screens show them; the keys, paths and first address from the descriptor itself.
+      const view = this.savingsView();
+      const data = savingsMapData({
+        descriptor: sv.descriptor,
+        network: this.network,
+        walletId: sv.walletId,
+        createdAt: this.iso(sv.createdAt),
+        models: { hardware: view.hardware?.model, recoveryKey: view.recoveryKey?.model },
+      });
+      return { ...data, ...renderSavingsMap(data, { date: new Date(this.clock.now()) }) };
+    },
   };
 
   // ===========================================================================
