@@ -24,6 +24,8 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
   (Gmail, Fastmail, Proton presets), ntfy push (your own server or ntfy.sh), or a signed webhook (Home Assistant, Apprise,
   an SMS gateway). For you and for each alert contact, also people without nostr. Plain text, never links. Changes are
   made only in the web UI and announced on every channel; alerts still go out while the guardian is locked (#91).
+  Proton Mail Bridge and other relays with a self-signed certificate work by pinning that certificate, and during a
+  recovery the email app password can still be replaced, so a revoked password can't silence the warnings (#93).
 - **App: never left on the first screen with a wallet set up.** After switching wallet mode, or at the end of a setup on
   an iPhone, the app could stay on Welcome over a set-up wallet (where the Network picker then refused every tap); it now
   starts from the entry screen after a switch, and Welcome moves on to Home when it is in front of a set-up wallet (#73).
