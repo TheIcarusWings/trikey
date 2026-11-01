@@ -3,7 +3,9 @@
 Status: proposal. Written 2026-10-31, against `main` after 0.1.4-alpha. Device support checked the same
 day; see section 3. **Section 4 (turning the limit off) is built** (phase 1), with the owner's answers to open questions 5
 (the alert contacts are told too) and 7 (after a recovery the limit comes back at its last value); DESIGN.md (rules 3
-and 4) and PROTOCOL.md ("No daily limit") describe it as built. Savings is not built.
+and 4) and PROTOCOL.md ("No daily limit") describe it as built. **Savings: decided, not built yet** (owner's answers,
+2026-11-01, under "Open questions" below): option K, strictly optional; a wallet without Savings sets up and works
+exactly as today.
 
 The owner raised a concern, and it holds: **the daily limit exists only in the guardian's code.** Today's wallet is
 `wsh(sortedmulti(2, phone, hardware, guardian))`. Any two keys satisfy the script, so whoever controls the guardian
@@ -340,11 +342,15 @@ documented later option, behind the phase 4a test, for owners on Ledger, BitBox0
 
 1. **K or T?** Is "every Savings spend needs a key that is not online (the hardware wallet or the Recovery Key)"
    enough, or is "the hardware wallet, always" worth losing Trezor and mainline Coldcard, plus a yearly refresh?
-2. **Recovery Key form.** A second hardware wallet (recommended), the printed kit, or both offered?
+   Decided: **K**, as an option on top of the normal setup, never part of it.
+2. **Recovery Key form.** A second hardware wallet (recommended), the printed kit, or both offered? Decided: a second
+   hardware wallet, as recommended.
 3. **Free transfers into Savings** (phase 3), or keep them counted against the limit (simpler, no new approval)?
-4. **T only:** `N` of about 6 months or about a year?
+   Decided: counted against the limit (the simpler one).
+4. **T only:** `N` of about 6 months or about a year? Not needed: K was chosen.
 5. **Limit off:** tell the alert contacts too (recommended: it is rare, and contacts exist to notice what the owner
    did not do), or only the paired phone?
-6. **Limit off and Savings:** only recommend Savings when the limit is turned off, or require it?
+6. **Limit off and Savings:** only recommend Savings when the limit is turned off, or require it? Decided: recommend
+   only.
 7. **After a recovery:** turn the limit back on at its last value (proposed), or keep the owner's choice? Decided: its last value, and 0 when that is not known (not the 100,000-sat preset). The "Turn off the daily
    limit" link stays a small link under Settings > Daily limit.
