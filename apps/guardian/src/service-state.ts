@@ -69,6 +69,18 @@ export type ServiceEvent =
    * before old relays stayed watched indefinitely, their 30 days were over (`by` absent).
    */
   | { type: 'relays_retired'; relays: string[]; by?: 'owner' }
+  /*
+   * Family hosting (docs/design/family-hosting.md): the host's own record of its guests. Names are the host's private
+   * names for the guests; no amounts, balances or addresses.
+   */
+  | { type: 'hosting_invite_created'; name: string; expiresAt: number }
+  | { type: 'hosting_invite_cancelled'; name: string }
+  | { type: 'hosting_accepted'; name: string }
+  | { type: 'hosting_pair_refused'; name: string; detail: string }
+  | { type: 'hosting_recovery'; name: string; recoveryId: string; state: 'started' | 'completed' | 'cancelled'; readyAt?: number }
+  | { type: 'hosting_stopping'; name: string; endsAt: number }
+  | { type: 'hosting_ended'; name: string; how: 'now' | 'notice' }
+  | { type: 'hosting_guest_left'; name: string }
   /** The web UI changed the extra alert channels (notify/notifier.ts): a security event, announced on every channel. */
   | { type: 'notifications_changed'; changes: string[] }
   /** An extra alert channel started failing (logged once until it works again), or works again. */

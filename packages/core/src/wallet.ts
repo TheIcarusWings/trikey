@@ -132,7 +132,12 @@ export function bareKeyExpression(hd: HDKey): KeyExpression {
   };
 }
 
-/** Builds the cosigner's depth-0 xpub from its raw account pubkey and an app-chosen chaincode. */
+/**
+ * Builds the cosigner's depth-0 xpub from its raw account pubkey and an app-chosen chaincode. This is key 3's shape in a
+ * hosted wallet's descriptor (docs/design/family-hosting.md, decision 11): `[<own fingerprint>]xpub` with no origin path,
+ * which every device integration in the app already takes for a cosigner (Ledger key info `[fp]xpub`, Trezor `multisig`
+ * nodes, the Coldcard file's `Derivation: m`).
+ */
 export function cosignerKeyExpression(accountPubkey: Uint8Array, chainCode: Uint8Array, network: Network): KeyExpression {
   const hd = new HDKey({ publicKey: accountPubkey, chainCode, versions: network.bip32 });
   return bareKeyExpression(hd);
@@ -149,4 +154,38 @@ export function keyExpressionFromMaster(master: HDKey, path: string): KeyExpress
     originPath: path.replace(/^m\//, '').replace(/'/g, 'h'),
     xpub: account.publicExtendedKey,
   };
+}
+
+/** Domain tag of `keySetId`. */
+export const KEYSET_ID_TAG = 'trikey/keyset/v1';
+
+/**
+ * The id of a wallet known only by its three account pubkeys (a hosted wallet: docs/design/family-hosting.md, "Wallet
+ * id"): sha256("trikey/keyset/v1" || app || hardware || cosigner), compressed pubkeys in role order, first 16 hex
+ * characters, the shape of `fingerprint()`. Both the phone and the hosting guardian compute it; it is what the approval
+ * texts, the pairing proof and the recovery-access text name for such a wallet.
+ */
+export function keySetId(acct: AccountPubkeys): string {
+  const tag = new TextEncoder().encode(KEYSET_ID_TAG);
+  const parts = [tag, ...ROLES.map((r) => acct[r])];
+  for (const r of ROLES) if (acct[r]?.length !== 33) throw new Error(`keySetId: the ${r} account pubkey must be 33 bytes`);
+  const buf = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0;
+  for (const p of parts) {
+    buf.set(p, o);
+    o += p.length;
+  }
+  return hex.encode(sha256(buf)).slice(0, 16);
+}
+
+/**
+ * The alternative shape for key 3 that decision 11 compared against `cosignerKeyExpression`: the same pubkey and
+ * chaincode under a synthetic BIP 48 origin `[fingerprint/48h/<coin>h/0h/2h]`, serialized at depth 4 with a made-up
+ * parent fingerprint so the xpub agrees with its origin. Kept for the device-format tests only: the depth-0 shape is
+ * the one the app uses, because it claims nothing that is not true.
+ */
+export function syntheticCosignerKeyExpression(accountPubkey: Uint8Array, chainCode: Uint8Array, network: Network, fingerprint: string): KeyExpression {
+  if (!/^[0-9a-f]{8}$/.test(fingerprint)) throw new Error('fingerprint must be 4 bytes of lowercase hex');
+  const hd = new HDKey({ publicKey: accountPubkey, chainCode, versions: network.bip32, depth: 4, index: 0x80000002, parentFingerprint: (parseInt(fingerprint, 16) ^ 0x5a5a5a5a) >>> 0 });
+  return { fingerprint, originPath: `48h/${network.coinType}h/0h/2h`, xpub: hd.publicExtendedKey };
 }

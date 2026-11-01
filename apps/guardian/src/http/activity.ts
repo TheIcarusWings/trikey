@@ -456,5 +456,35 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
         sats: null,
         result: e.ok ? 'ok' : 'refused',
       };
+    default:
+      return hostingEntry(base, e);
+  }
+}
+
+/** Family hosting's rows: names and dates only (the page never shows a guest's amounts, balances or addresses). */
+function hostingEntry(base: { id: string; at: string }, e: ServiceActivity): ActivityEntry {
+  const row = (event: string, summary: string, result: ActivityEntry['result'] = 'ok'): ActivityEntry => ({ ...base, kind: 'system', event, summary, signedBy: null, sats: null, result });
+  const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  switch (e.type) {
+    case 'hosting_invite_created':
+      return row(`Invite made for ${e.name} (works once, until ${day(e.expiresAt)})`, 'Hosting invite made');
+    case 'hosting_invite_cancelled':
+      return row(`Invite for ${e.name} cancelled`, 'Hosting invite cancelled');
+    case 'hosting_accepted':
+      return row(`${e.name} accepted your invite: this box now holds one key of their wallet`, 'Now hosting a wallet');
+    case 'hosting_pair_refused':
+      return row(`A phone using the invite for ${e.name} was refused: ${e.detail}`, 'Hosting pairing refused', 'refused');
+    case 'hosting_recovery':
+      return e.state === 'started'
+        ? row(`A recovery of ${e.name}'s wallet started${e.readyAt ? `: it waits until ${day(e.readyAt)}. Keep this box on and unlocked.` : '.'}`, 'Guest recovery started')
+        : row(`The recovery of ${e.name}'s wallet ${e.state === 'completed' ? 'completed' : 'was cancelled'}`, e.state === 'completed' ? 'Guest recovery completed' : 'Guest recovery cancelled');
+    case 'hosting_stopping':
+      return row(`You stopped hosting ${e.name}'s wallet: they have until ${day(e.endsAt)} to move it`, 'Stopping hosting');
+    case 'hosting_ended':
+      return row(e.how === 'now' ? `Hosting of ${e.name}'s wallet ended at once; its key here is gone` : `The notice for ${e.name}'s wallet ran out; its key here is gone`, 'Hosting ended');
+    case 'hosting_guest_left':
+      return row(`${e.name} moved their wallet away; its key here is gone`, 'Guest left');
+    default:
+      return row('Guardian event', 'Guardian event');
   }
 }

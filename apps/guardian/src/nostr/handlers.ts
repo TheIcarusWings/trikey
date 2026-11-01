@@ -33,6 +33,7 @@ import { helperAccount } from '../singlekey.js';
 import { NodeRpcRequiredError, NotRegisteredError } from '../silent/service.js';
 import { savingsWallet } from '../savings.js';
 import { policyToWire, recoveryToWire, refusalError, rulesFromPolicy } from './wire.js';
+import { withHosting } from '../hosting/handlers.js';
 
 const normPath = (p: string) => p.replace(/^m\//, '').replace(/'/g, 'h');
 const hexToBytes = (h: string) => hex.decode(h);
@@ -475,6 +476,8 @@ export function buildHandlers(g: Guardian): Handlers {
 
     'recovery.start': (params, ctx) =>
       g.recoveryMutex.run(async () => {
+        // The hosted form (destination by account pubkeys) is for guests' wallets only.
+        if (!('newDescriptor' in params)) throw new RpcError(ErrorCode.InvalidParams, 'newDescriptor is required.');
         // The sender becomes the new wallet's paired phone if the guardian adopts it after the sweep.
         const res = await refusable(g, ctx.sender, () => g.engine.startRecovery({ psbt: base64.decode(params.sweepPsbt), destinationDescriptor: params.newDescriptor, initiator: ctx.sender }));
         if (!res.ok) throw refusalError(res.refusal);
@@ -857,7 +860,8 @@ export function buildHandlers(g: Guardian): Handlers {
     };
   }
 
-  return runOnceAcrossRestarts(g, handlers);
+  // Guests' requests are routed to their own slots in front of these (hosting/handlers.ts); the host's are unchanged.
+  return withHosting(g, runOnceAcrossRestarts(g, handlers));
 }
 
 /**

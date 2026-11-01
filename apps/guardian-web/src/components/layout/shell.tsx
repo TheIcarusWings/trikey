@@ -6,7 +6,7 @@ import { useGuardian, useNetwork } from '@/components/guardian-provider';
 import { Logo } from '@/components/logo';
 import { NetworkStrip, isTestNetwork } from '@/components/network-pill';
 import { ThemeToggle } from '@/components/theme-toggle';
-import { features } from '@/lib/features';
+import { useApi } from '@/hooks/use-api';
 import { cn } from '@/lib/utils';
 
 interface NavItem {
@@ -17,8 +17,15 @@ interface NavItem {
   tone?: 'warn';
 }
 
+/** Whether this guardian hosts wallets for others (`GET /api/hosting`); hidden when it does not, or cannot say. */
+function useHostingAvailable(): boolean {
+  const hosting = useApi(() => api.getHosting(), [], 300_000);
+  return !!hosting.data?.available;
+}
+
 function useNavItems(): NavItem[] {
   const { status } = useGuardian();
+  const hosting = useHostingAvailable();
   const items: NavItem[] = [];
   // While a recovery runs it comes first: it is the one thing that needs a look.
   if (status?.recoveryInProgress) items.push({ to: '/recovery', label: 'Recovery', Icon: Clock, tone: 'warn' });
@@ -28,7 +35,7 @@ function useNavItems(): NavItem[] {
     { to: '/rules', label: 'Rules', Icon: SlidersHorizontal },
     { to: '/phones', label: 'Phones', Icon: Smartphone },
   );
-  if (features.hostForSomeone) items.push({ to: '/host', label: 'Host for someone', Icon: UserPlus });
+  if (hosting) items.push({ to: '/host', label: 'Host for someone', Icon: UserPlus });
   items.push({ to: '/settings', label: 'Settings', Icon: Settings });
   return items;
 }

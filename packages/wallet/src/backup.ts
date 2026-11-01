@@ -128,11 +128,11 @@ export type BackupSavings = z.infer<typeof BackupSavings>;
  * version-2 payload (its schema is strict and knows only 1), so it never restores a wallet half, without its Savings;
  * this app says "update the app" for any version it does not know (`backup_invalid`, reason `too_new`).
  */
-export const BACKUP_PAYLOAD_VERSION = 2;
+export const BACKUP_PAYLOAD_VERSION = 3;
 
 /** What the backup holds. */
 const BackupPayloadShape = z.strictObject({
-  v: z.union([z.literal(1), z.literal(2)]),
+  v: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   network: Network,
   createdAt: z.int(),
   /** Key 2. */
@@ -162,8 +162,13 @@ const BackupPayloadShape = z.strictObject({
   /** Version 2 only: the Savings wallet. */
   savings: BackupSavings.optional(),
 });
-export const BackupPayload = BackupPayloadShape.refine((p) => (p.v === 2) === (p.savings !== undefined), {
-  message: 'a version-2 backup payload holds Savings, and only a version-2 one does',
+/**
+ * Version 3 exactly when the wallet is hosted on someone else's guardian (`guardian.hosted`): the guardian record, the
+ * chain server setting and the descriptor with its key 3 chaincode. An app from before hosting refuses it (its schema
+ * knows 1 and 2), as for Savings' version 2. A hosted wallet has no Savings in phase 1.
+ */
+export const BackupPayload = BackupPayloadShape.refine((p) => (p.guardian?.hosted ? p.v === 3 && p.savings === undefined : p.v !== 3 && (p.v === 2) === (p.savings !== undefined)), {
+  message: 'version 3 is a hosted wallet and only that; version 2 holds Savings, and only it does',
   path: ['v'],
 });
 export type BackupPayload = z.infer<typeof BackupPayload>;

@@ -189,18 +189,25 @@ secrets are sealed under a key file on the box, not the unlock passphrase.
 | `GET /api/pairing/:id` | `PairingSession` | The UI polls this every 2 s while `status` is `waiting`. `status` moves to `paired` when a phone completes the `pair` method, or `expired` after `expiresAt` (or too many wrong attempts, or a lock). `404 not_found` for anything but the latest session. |
 | `GET /api/phones` | `{ "phones": PairedPhone[] }` | Phones paired to this guardian (zero or one). `name` is the `deviceName` the phone sent. |
 
-### Hosting for family (later feature)
+### Hosting for family
 
-The UI hides "Host for someone" (no navigation entry, no route) until this works: build with
-`VITE_FEATURE_HOST_FOR_SOMEONE=true` to see it.
-
-The engine holds a single wallet, so hosting is not available yet.
+The guardian holds key 3 for people its owner knows (docs/design/family-hosting.md). "Host for someone" shows when
+`GET /api/hosting` answers `available: true` (the old `VITE_FEATURE_HOST_FOR_SOMEONE` build flag is gone). The page
+shows guests' names (the host's private names), states, dates and a weekly count of co-signed payments: **never an
+amount, a balance or an address**, although the box stores the payments it co-signs for them (the disclosure says so).
+All of these need an unlocked guardian.
 
 | Method and path | Request | Response | Notes |
 |---|---|---|---|
-| `GET /api/hosting` | none | `HostingOverview` | Answers `{ "wallets": [], "pendingInvite": null }` for now. |
-| `POST /api/hosting/invites` | `{ name }` | `501 not_available` | When it exists: `FamilyInvite` (`201`); `name` is private to the host; the one-time link expires after 24 hours. |
-| `DELETE /api/hosting/invites/:id` | `{}` | `501 not_available` | When it exists: `204`, cancels a pending invite. |
+| `GET /api/hosting` | none | `HostingOverview` | `available` (false with `FAMILY_HOSTING=false`), `wallets` (`HostedWallet[]`: `invited`, `active`, `recovering` with `recoveryReadyAt`, `leaving` with `endsAt`, `ended`, `left`), `pendingInvite` (the latest, **without** its link), `limits` (8 hosted wallets, 4 pending invites). |
+| `POST /api/hosting/invites` | `{ name }` (1-64 characters) | `FamilyInvite` (`201`) | The only answer that carries the `trikey://invite?...` link: the guardian keeps a hash of its secret. Single use, 24 hours. `409 too_many_invites` (4 pending) or `too_many_wallets` (8). |
+| `DELETE /api/hosting/invites/:id` | `{}` | `HostingOverview` | Cancels a pending invite (by invite id). `404` if it was accepted or is unknown. |
+| `POST /api/hosting/wallets/:id/stop` | `{ now?: boolean, confirm?: string }` | `HostedWallet` | Without `now`: 30 days' notice (`leaving`, `endsAt`); the guest's phone and contacts are told (`hosting_ending`). With `now: true` and `confirm: "STOP HOSTING NOW"`: ends at once, the slot's key 3 is deleted (`ended`). `409 recovery_pending` while that wallet's recovery runs; `400 invalid` without the confirmation. |
+| `DELETE /api/hosting/wallets/:id` | `{}` | `HostingOverview` | Removes an `ended` or `left` wallet from the list (`409 still_hosted` otherwise). |
+
+`POST /api/reset` answers `409 hosting_active` while any guest wallet is hosted (a reset makes a new seed, so every
+guest's key 3 would vanish): stop hosting first. Hosting events (invite made or cancelled, accepted, a guest's recovery
+started, completed or cancelled, stopping, ended, a guest left) appear in `GET /api/activity`, by name and date only.
 
 ## Running the UI
 

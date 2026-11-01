@@ -125,7 +125,7 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
       };
     case 'wallet-retired':
       return {
-        title: event.reason === 'recovered' ? 'Wallet moved by a recovery' : event.reason === 'reset' ? 'Guardian was reset' : 'Old wallet retired on the guardian',
+        title: event.reason === 'recovered' ? 'Wallet moved by a recovery' : event.reason === 'reset' ? 'Guardian was reset' : event.reason === 'hosting_ended' ? 'Your host stopped hosting this wallet' : 'Old wallet retired on the guardian',
         subtitle: `${when} · the guardian co-signs nothing for it any more`,
         subtitleTone: 'warn',
         icon: Shield,

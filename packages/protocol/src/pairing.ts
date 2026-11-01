@@ -140,6 +140,11 @@ export interface RecoveryPayload {
    * signs the version-2 `recoveryAccessMessage`, bound to this wallet.
    */
   walletId?: string;
+  /**
+   * A guest's hosted wallet (docs/design/family-hosting.md): the new phone asks `hosted.access` instead of
+   * `recovery.access` and rebuilds the descriptor from the encrypted wallet map. Encoded as `hosted=1`.
+   */
+  hosted?: true;
 }
 
 function validateRecovery(p: RecoveryPayload): void {
@@ -165,6 +170,7 @@ export function encodeRecoveryUri(p: RecoveryPayload): string {
   q.set('net', p.network);
   if (p.label !== undefined) q.set('label', p.label);
   if (p.walletId !== undefined) q.set('wallet', p.walletId);
+  if (p.hosted) q.set('hosted', '1');
   return `${PAIRING_SCHEME}//recover?${q.toString()}`;
 }
 
@@ -209,17 +215,103 @@ export function decodeRecoveryUri(uri: string): RecoveryPayload {
   if (label !== null) payload.label = label;
   const walletId = q.get('wallet');
   if (walletId !== null) payload.walletId = walletId;
+  if (q.get('hosted') === '1') payload.hosted = true;
   validateRecovery(payload);
   return payload;
 }
 
-/** Any Trikey QR code: a one-time pairing code or a recovery code. Throws `PairingUriError`. */
+/* -------------------------------------------------------------------------- */
+/* Invite URI: "Host a guardian for someone" (docs/design/family-hosting.md)  */
+/* -------------------------------------------------------------------------- */
+
+export const INVITE_URI_VERSION = '1';
+
+/**
+ * A host's invite for a guest's wallet: the same rules as the pairing URI (a 32-byte secret, base64url; at most 24 h),
+ * plus the network, because the guest's phone creates the wallet on it. Single use; the guardian keeps only the
+ * secret's SHA-256. `label` is the name the host's box shows itself under (never the host's private name for the guest).
+ */
+export interface InvitePayload {
+  guardianPubkey: string;
+  relays: string[];
+  secret: string;
+  /** Unix seconds after which the invite is void. */
+  expiresAt: number;
+  network: GuardianNetwork;
+  label?: string;
+}
+
+/** Invite secrets are always the full 32 bytes (43 base64url characters): nobody types them. */
+const INVITE_SECRET_RE = /^[A-Za-z0-9_-]{43}$/;
+
+function validateInvite(p: InvitePayload, now: number, checkExpiry: boolean): void {
+  validate({ guardianPubkey: p.guardianPubkey, relays: p.relays, secret: p.secret, expiresAt: p.expiresAt, label: p.label }, now, checkExpiry);
+  if (!INVITE_SECRET_RE.test(p.secret)) throw new PairingUriError('an invite secret is 32 bytes, base64url');
+  if (!NETWORKS.includes(p.network)) throw new PairingUriError('invalid network');
+  if (checkExpiry && p.expiresAt <= now) throw new PairingUriError('this invite has expired');
+}
+
+/**
+ * Encode an invite:
+ *
+ *     trikey://invite?v=1&npub=<npub>&relay=<url>[&relay=<url>...]&secret=<b64url>&exp=<unix>&net=<network>[&label=<text>]
+ */
+export function encodeInviteUri(p: InvitePayload, now: number = nowSeconds()): string {
+  const relays = [...new Set(p.relays.map(normalizeRelayUrl))];
+  validateInvite({ ...p, relays }, now, false);
+  const q = new URLSearchParams();
+  q.set('v', INVITE_URI_VERSION);
+  q.set('npub', npubEncode(p.guardianPubkey));
+  for (const r of relays) q.append('relay', r);
+  q.set('secret', p.secret);
+  q.set('exp', String(p.expiresAt));
+  q.set('net', p.network);
+  if (p.label !== undefined) q.set('label', p.label);
+  return `${PAIRING_SCHEME}//invite?${q.toString()}`;
+}
+
+/** Decode and validate an invite URI. Throws `PairingUriError`; rejects expired invites. */
+export function decodeInviteUri(uri: string, now: number = nowSeconds()): InvitePayload {
+  const { action, query: q } = splitTrikeyUri(uri);
+  if (action !== 'invite') throw new PairingUriError(action === 'pair' ? 'this is a pairing code, not an invite' : 'unknown trikey: action');
+  if (q.get('v') !== INVITE_URI_VERSION) throw new PairingUriError('unsupported invite version');
+  const npub = q.get('npub');
+  if (!npub) throw new PairingUriError('missing npub');
+  let guardianPubkey: string;
+  try {
+    const d = nip19Decode(npub);
+    if (d.type !== 'npub') throw new Error('not an npub');
+    guardianPubkey = d.data;
+  } catch {
+    throw new PairingUriError('invalid npub');
+  }
+  const secret = q.get('secret');
+  if (!secret) throw new PairingUriError('missing secret');
+  const exp = q.get('exp');
+  if (!exp || !/^\d{1,11}$/.test(exp)) throw new PairingUriError('missing or invalid expiry');
+  const net = q.get('net');
+  if (!net || !NETWORKS.includes(net as GuardianNetwork)) throw new PairingUriError('missing or invalid network');
+  const payload: InvitePayload = {
+    guardianPubkey,
+    relays: [...new Set(q.getAll('relay').map(normalizeRelayUrl))],
+    secret,
+    expiresAt: Number(exp),
+    network: net as GuardianNetwork,
+  };
+  const label = q.get('label');
+  if (label !== null) payload.label = label;
+  validateInvite(payload, now, true);
+  return payload;
+}
+
+/** Any Trikey QR code: a one-time pairing code, a recovery code or a host's invite. Throws `PairingUriError`. */
 export function decodeTrikeyUri(
   uri: string,
   now: number = nowSeconds(),
-): { kind: 'pair'; payload: PairingPayload } | { kind: 'recover'; payload: RecoveryPayload } {
+): { kind: 'pair'; payload: PairingPayload } | { kind: 'recover'; payload: RecoveryPayload } | { kind: 'invite'; payload: InvitePayload } {
   const { action } = splitTrikeyUri(uri);
   if (action === 'pair') return { kind: 'pair', payload: decodePairingUri(uri, now) };
   if (action === 'recover') return { kind: 'recover', payload: decodeRecoveryUri(uri) };
+  if (action === 'invite') return { kind: 'invite', payload: decodeInviteUri(uri, now) };
   throw new PairingUriError('unknown trikey: action');
 }
