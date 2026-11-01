@@ -8,6 +8,37 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 
 ## Unreleased
 
+## 0.1.8-alpha (2026-11-01)
+
+- **Savings, an optional vault that phone + guardian can never spend** (option K). Settings > Savings: your hardware
+  wallet and a second hardware wallet as the Recovery Key; any two of phone, hardware wallet and Recovery Key move it,
+  the guardian holds no Savings key. Moving money in is a normal payment, counted against the daily limit. The guardian
+  watches it and tells your phone and every alert contact when money leaves it, and when the watch is turned off or
+  swapped. Backups include it, every lost-key case has a way back, and a one-page **Savings wallet map** can be printed
+  (no secrets on it). Wallets without Savings work exactly as before (#87, #88).
+- **Alert contacts can lock the guardian, if you allow it** (Settings > Alert contacts, off by default). A contact sends
+  the single word `LOCK` from any nostr app; the guardian locks as if you had, and you and every other contact are told
+  who did it. Contacts can never unlock or change anything. Turning it off needs the hardware wallet. While it is off a
+  contact's `LOCK` is not an option at all: no answer, and it never counts later (#85, #86).
+- **Alerts by email, ntfy and webhook** (guardian web UI, Settings > Notifications): email through your own account
+  (Gmail, Fastmail, Proton presets), ntfy push (your own server or ntfy.sh), or a signed webhook (Home Assistant, Apprise,
+  an SMS gateway). For you and for each alert contact, also people without nostr. Plain text, never links. Changes are
+  made only in the web UI and announced on every channel; alerts still go out while the guardian is locked (#91).
+  Proton Mail Bridge and other relays with a self-signed certificate work by pinning that certificate, and during a
+  recovery the email app password can still be replaced, so a revoked password can't silence the warnings (#93).
+- **App: never left on the first screen with a wallet set up.** After switching wallet mode, or at the end of a setup on
+  an iPhone, the app could stay on Welcome over a set-up wallet (where the Network picker then refused every tap); it now
+  starts from the entry screen after a switch, and Welcome moves on to Home when it is in front of a set-up wallet (#73).
+- App: an honest message when a build has no cloud backup, and the snags of a first iPhone build from a Mac in the README
+  (#74). The web build prints the Recovery Kit itself, not the app's screen (#90). Shared backup files no longer stay in
+  the app's cache (#83). "Not audited" now always comes with "open source" (#84).
+- Demo mode backs up and restores like the build it runs in (a backup file and a recovery code where there are no
+  passkeys) and shows the Network picker, for the setup tutorials (#79).
+- Docs: a security review brief for anyone reviewing Trikey (#77, #78, #82), the design for hosting a guardian for family
+  (#89, not built in this release), the owner's decisions of 1 November, and the first release-key build named right
+  (#80).
+- CI: every GitHub Action moved to its Node 24 release (#81).
+
 ## 0.1.7-alpha (2026-11-01)
 
 - **Android: releases now update in place.** Every release APK from this one on is signed with the Trikey release key
