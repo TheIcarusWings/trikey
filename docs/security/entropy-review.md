@@ -41,7 +41,7 @@ The other findings are Low or Informational:
 | I2 | Info | `pair.prepare` can be repeated without limit within a session, so a phone can choose among many key-3 xpubs | Confirmed, no direct impact |
 | I3 | Info | The guardian accepts a degenerate phone contribution (`c` all-zero or constant) without comment | Confirmed, no direct impact |
 | I4 | Info | `randomPositions` (Recovery Kit word challenge) has modulo bias and reuses its 32 bytes | Confirmed, negligible |
-| I5 | Info | Secret material that cannot be zeroed in JS (mnemonic strings, intermediate BIP 32 nodes); the backup file stays in the app cache | Confirmed, inherent |
+| I5 | Info | Secret material that cannot be zeroed in JS (mnemonic strings, intermediate BIP 32 nodes); the backup file stays in the app cache | Confirmed, inherent; the cached backup file is now cleared (see I5) |
 | S1 | Suspicion | `expo-print` on Android may write the kit page (key 3 in the clear) to a cache file | Not confirmed |
 | S2 | Suspicion | A second instance of `@trikey/core/random` in the Metro bundle would be pinned only on first use | Not confirmed |
 
@@ -310,6 +310,10 @@ The encrypted `.tkb` backup is written to the app cache (`apps/mobile/src/platfo
 and not deleted after the share sheet closes. It is encrypted under a 120-bit recovery code or a
 passkey PRF, so this is hygiene only. Recommendation: delete the cache file after `shareAsync`
 returns.
+
+**Fixed (2026-11-01):** the shared backup now goes into its own cache folder, emptied before each share and at every
+start of the app, so it lasts at most the rest of that session. Not right after `shareAsync`: on Android the app
+receiving the file may only read it after control returns. The document picker's cache copy is deleted once read.
 
 ---
 

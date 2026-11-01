@@ -15,7 +15,7 @@ import { Platform } from 'react-native';
 import type { HardwareKind, HardwareProvider, KeyValueStore } from '@trikey/wallet';
 import { createHardwareProviders } from '@/hardware';
 import { getPlatform, type TrikeyPlatform } from '@/platform';
-import { pickBackupFile, shareBackupFile } from '@/platform/backup-files';
+import { clearSharedBackups, pickBackupFile, shareBackupFile } from '@/platform/backup-files';
 import { passkeyRpId } from '@/platform/config';
 import { runStartupRandomCheck } from '@/platform/rng-startup';
 import { createMemoryKeyValueStore } from '@/platform/memory';
@@ -104,6 +104,8 @@ export async function bootWallet(mode: AppMode, platform: TrikeyPlatform = getPl
   // The real and the simulated wallet make keys: test the random source and the crypto first. A failure is latched,
   // so no key is made and the screens show the error of the first attempt (platform/rng-startup.ts).
   runStartupRandomCheck();
+  // Backup files shared in an earlier session are not kept (platform/backup-files.native.ts).
+  void clearSharedBackups();
 
   const [{ createRealWalletService }, { createRkWalletService }, { createRoutedWalletService, pickInitialKind }] = await Promise.all([
     import('./real'),
