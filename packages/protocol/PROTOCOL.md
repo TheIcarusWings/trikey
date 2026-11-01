@@ -361,6 +361,27 @@ know these methods, and only to them does a phone send them (an older one answer
   contact, retried for 7 days like `limit_off`. It cannot tell who signed it (the owner, or two keys in other hands); a
   compromised guardian could stay silent, which costs nothing it was trusted with.
 
+### Extra alert channels
+
+Guardians that list `notifications` in `guardian.status.features` can also send their alerts by **email** (through the
+owner's own email account, SMTP), **ntfy** and a **webhook** (docs/design/notifications.md). They are notify-only: the
+same warnings as the nostr alerts, never a control; `CANCEL` and `LOCK` stay NIP-17 DMs. Nothing about them is on the
+wire between phone and guardian except:
+
+* **`guardian.status.notifications`** `{ channels: [{ kind, audience, contact?, hint, failing? }] }`: what the owner set
+  up, read-only and **masked** (`hint` is `j…@example.com` or the server's host name, never an ntfy topic, a webhook URL
+  or a whole address: anyone who knows a topic on a public ntfy server can read it and post fake alerts to it).
+  `audience: "contact"` with `contact` (an alert contact's pubkey) is that contact's extra channel; without `contact`, a
+  contact reachable only by that channel. Absent while there are none, and from older guardians.
+* **`notifications_changed`** (alert, no extra members): the channels or the email account were changed in the web UI.
+
+**They are not in the policy.** Channels are the owner's delivery settings in the guardian, changed only in its web UI
+(a signed-in session with the unlock passphrase, on an unlocked guardian), never by any phone, so a stolen phone can
+neither remove nor redirect them; every change is announced on every channel before and after it (over the email
+account as it was before) and to the paired phone, and while a recovery runs only additions are accepted. The policy,
+its hash and every approval text are unchanged, and the contacts who can cancel and lock are still exactly
+`Policy.alertContacts` (rule 4 unchanged, including the mainnet minimum of one).
+
 ### Recovery access
 
 "Lost phone, no backup": the user has a new phone, the hardware wallet and the guardian. The new phone has a fresh nostr key that the guardian does not know, and it knows neither the descriptor nor the guardian's key, only the guardian's `npub` and relays (the web UI's "Recover on a new phone" code, section 6). `recovery.access` lets the hardware wallet vouch for it:
@@ -373,7 +394,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 
 ### Alerts
 
-`params` is `{ type, at, atMs?, message? , ...}` (`at` in unix seconds; `atMs` the same moment in unix milliseconds, sent on every alert, see "Time") with `type` one of the engine's alert kinds (`AlertKind`), plus `guardian_locked`, `wallet_adopted`, `wallet_retired`, `sp_received` and `relays_changed`, which the service raises itself. The `type` set is closed: a phone drops an alert whose `type` it does not know as malformed (section 4), so a new type reaches only phones that know it, and must never be needed by an older one to keep working:
+`params` is `{ type, at, atMs?, message? , ...}` (`at` in unix seconds; `atMs` the same moment in unix milliseconds, sent on every alert, see "Time") with `type` one of the engine's alert kinds (`AlertKind`), plus `guardian_locked`, `wallet_adopted`, `wallet_retired`, `sp_received`, `relays_changed` and `notifications_changed`, which the service raises itself. The `type` set is closed: a phone drops an alert whose `type` it does not know as malformed (section 4), so a new type reaches only phones that know it, and must never be needed by an older one to keep working:
 
 | `type` | extra members |
 |---|---|
@@ -390,6 +411,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 | `savings_moved` | `walletId` (the Savings wallet), `txid`, `amountSats` (what left Savings, fee included): a Savings coin was spent. To the paired phone; alert contacts get a NIP-17 DM. Guardians with `savings`; see "Savings" |
 | `savings_unwatched` | `walletId` (the Savings wallet no longer watched), `replacedBy?` (the one watched instead): `savings.unregister`, or `savings.register` with another wallet. To the paired phone; alert contacts get a NIP-17 DM. See "Savings" |
 | `relays_changed` | `relays` (`RelayList`): the guardian moved to these relays (its web UI). Sent to the paired phone (and phones with recovery access) over the old and the new relays. See section 5, "Changing relays" |
+| `notifications_changed` | none: the extra alert channels (email, ntfy, webhook) were changed in the guardian's web UI; read the new list from `guardian.status.notifications`. Guardians with `notifications`; see "Extra alert channels" |
 | `wallet_retired` | `walletId`, `reason` (`retired`\|`recovered`\|`reset`), `successorWalletId?`. Sent to the phone that was paired to the wallet: `retired` after `wallet.retire`; `reset` after the web UI's reset; `recovered` when a recovery swept the wallet and the phone paired to the new wallet is a different one (a lost phone's replacement), or the guardian adopted none (`successorWalletId` is the adopted wallet when there is one). The phone that started the recovery and is adopted gets `wallet_adopted` instead |
 
 Names match the engine (`daily_reminder` was renamed `recovery_reminder`; `daysRemaining` is now `daysLeft`, `executeAfter` is `readyAt`). The engine's `DueAlert` carries `dueAt` and `readyAt` in milliseconds; the service converts both to seconds (`at` and `readyAt`). `daysLeft` is already in days. The engine's due-alert record does not hold `cancelledBy`, the cancel's `contested` flag or the txid; the service reads them from the recovery record (`status().recovery`) when it builds those alerts.
@@ -546,6 +568,6 @@ It carries **no secret and no expiry**: the npub and relays are not secret, and 
 
 * Add new methods or optional result members freely; never change the meaning of an existing error code or field. A breaking envelope change bumps the `trikey` tag value.
 * A new alert `type` is dropped by phones that do not know it (the alert schema is a closed union, and a malformed message is dropped silently, section 4), and a new method is answered `-32601` by guardians that do not know it. So a new alert may only add something an older phone can do without (`relays_changed`: an older phone keeps the old relays, which the guardian watches until its owner stops them), and a phone sends a new method only to a guardian that showed it knows it.
-* A capability that changes what the phone may ask (rather than adding a method) is announced in `guardian.status.features`; the phone acts on it only when listed (`limit_off`: "No daily limit"; `contact_lock`: "Alert contacts can lock the guardian"; `savings`: the "Savings" methods, whose wallet's chain data comes from the guardian, so a phone makes Savings only with such a guardian). A new approval text gets a new version word (`Trikey policy v2`, `v3`), so an older guardian refuses it with `1202` rather than misreading it.
+* A capability that changes what the phone may ask (rather than adding a method) is announced in `guardian.status.features`; the phone acts on it only when listed (`limit_off`: "No daily limit"; `contact_lock`: "Alert contacts can lock the guardian"; `savings`: the "Savings" methods, whose wallet's chain data comes from the guardian, so a phone makes Savings only with such a guardian; `notifications`: `guardian.status.notifications` and the `notifications_changed` alert, read-only). A new approval text gets a new version word (`Trikey policy v2`, `v3`), so an older guardian refuses it with `1202` rather than misreading it.
 * Hardware approvals are an `approval` object with a `kind`. Only `bip137` exists. If the project settles on a PSBT-based approval (see DESIGN.md, open question 1), it will be a new `kind`, not a change to `bip137`.
 * The policy is deliberately closed: a new rule means a new engine rule first, then a new `Policy` member and a new `policyHash` input. A rule that is always present changes every hash and needs a protocol version bump. An **opt-in** rule (`contactLock`) can avoid that: it is present only when on, so every policy without it, and its hash and approval text, are exactly what they were; it is announced as a feature, sent only to guardians that list it (older ones refuse the member, the schema being strict), and approved over a new text version. A guardian downgraded below the feature ignores the member (it hashes and returns the policy without it, and LOCK messages do nothing).
