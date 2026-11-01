@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { Bell, HardwareWallet, Smartphone, TriangleAlert } from '@/components/icons';
+import { Bell, HardwareWallet, Smartphone, TriangleAlert, Vault } from '@/components/icons';
 import { Body, Notice } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { canOfferLimitOff, formatSats, useWallet, useWalletService } from '@/data';
@@ -56,6 +56,15 @@ export default function TurnLimitOff() {
         {pick('Face ID or your passcode', 'your fingerprint or screen lock')} can send everything at once, before you notice.
         Nothing waits, and your {brand} can't stop it.
       </Notice>
+      {state.savings.status === 'active' ? (
+        <Notice icon={Vault} title="Savings is not affected">
+          It always needs your {brand} or your Recovery Key. What is exposed is Spending: {formatSats(state.balanceSats)} sats can be sent without your {brand}.
+        </Notice>
+      ) : state.savings.status === 'available' ? (
+        <Notice icon={Vault} title="Consider Savings first">
+          Keep what you don't need this week in Savings, a second wallet your phone and guardian can't move. It's optional; you can turn off the limit either way.
+        </Notice>
+      ) : null}
       <Notice icon={HardwareWallet} title={`Your ${brand} will ask you to approve`}>
         Check that it says "limit=off" before you approve.
       </Notice>

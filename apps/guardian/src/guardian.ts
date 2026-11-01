@@ -72,6 +72,7 @@ import { buildRoutes } from './http/api.js';
 import { WebSessions } from './http/sessions.js';
 import { GUARDIAN_VERSION } from './version.js';
 import { SilentPaymentService } from './silent/service.js';
+import { SavingsMonitor } from './savings.js';
 
 export const FILES = {
   keystore: 'keystore.json',
@@ -106,6 +107,8 @@ export interface GuardianOptions {
   refusalLimit?: RateLimitOptions;
   /** `LOCK` DMs handled per alert contact per window (dm-lock.ts). Default 5 per hour. */
   contactLockLimit?: RateLimitOptions;
+  /** How often the watched Savings wallet is scanned when no block came (savings.ts). Default 2 minutes. */
+  savingsScanIntervalMs?: number;
 }
 
 /** What a `LOCK` DM from an alert contact did (`Guardian.lockByContact`). */
@@ -220,6 +223,8 @@ export class Guardian {
   readonly contactLockLimiter: SlidingWindowLimiter;
   /** The silent payment scanner (needs the node RPC; works while locked). */
   readonly sp: SilentPaymentService;
+  /** Watches the phone's Savings wallet, if it registered one: chain data and the `savings_moved` tripwire (savings.ts). */
+  readonly savingsWatch: SavingsMonitor;
 
   engine!: PolicyEngine;
   store!: ObservedStore;
@@ -291,6 +296,7 @@ export class Guardian {
     });
     this.alerts = new Alerter(this);
     this.recovery = new RecoveryRunner(this);
+    this.savingsWatch = new SavingsMonitor(this, opts.savingsScanIntervalMs);
     this.broadcastLimiter = new SlidingWindowLimiter(opts.broadcastLimit ?? DEFAULT_BROADCAST_LIMIT);
     this.refusalLimiter = new SlidingWindowLimiter(opts.refusalLimit ?? DEFAULT_REFUSAL_LIMIT);
     this.contactLockLimiter = new SlidingWindowLimiter(opts.contactLockLimit ?? DEFAULT_CONTACT_LOCK_LIMIT);
@@ -363,10 +369,11 @@ export class Guardian {
 
   /**
    * What `guardian.status.features` (and `pair.prepare`) report (`GUARDIAN_FEATURES`): the phone offers "no daily limit"
-   * only when it lists `limit_off`, and "alert contacts can lock the guardian" only when it lists `contact_lock`. Tests
-   * clear it to see how a phone treats a guardian from before a feature.
+   * only when it lists `limit_off`, "alert contacts can lock the guardian" only when it lists `contact_lock`, and Savings
+   * only when it lists `savings` (the guardian serves Savings' chain data). Tests clear it to see how a phone treats a
+   * guardian from before a feature.
    */
-  features: string[] = [GUARDIAN_FEATURES.limitOff, GUARDIAN_FEATURES.contactLock];
+  features: string[] = [GUARDIAN_FEATURES.limitOff, GUARDIAN_FEATURES.contactLock, GUARDIAN_FEATURES.savings];
 
   nowSec(): number {
     return toSeconds(this.clock.now());
@@ -823,6 +830,8 @@ export class Guardian {
         try {
           await this.engine.tick();
           await this.recovery.run();
+          // Before the alerts, so a Savings spend found now is announced in the same pass.
+          await this.savingsWatch.run();
           await this.alerts.run();
           // In the background: a long catch-up must not hold back alerts or recoveries.
           this.sp.kick();

@@ -81,6 +81,9 @@ describe('request schemas', () => {
     'sp.unregister': {},
     'sp.scan': { fromHeight: 800_000 },
     'relays.ack': { relays: ['wss://relay.example.com', 'ws://umbrel.local:4848'] },
+    'savings.register': { descriptor: 'wsh(sortedmulti(2,A,B,C))' },
+    'savings.unregister': {},
+    'savings.get': {},
   };
 
   it('has a sample for every method', () => {

@@ -41,6 +41,7 @@ import { WalletServiceError, notAvailableYet } from './errors';
 import { SIMULATED_OPTION, hardwareBrandOf, hardwareOptionTable, type UiOs } from './hardware-options';
 import { RK_MAINNET_REFUSED, mapRkError, kitNetworkError } from './rk-errors';
 import { emptySilentPayments } from './sp-empty';
+import { emptySavings } from './savings-empty';
 import { GENESIS_HASHES, defaultServerUrl, parseServerUrl } from './rk-server';
 import type { RecoveryKeyActions } from './rk-actions';
 import type { ReceiveAddress, WalletService } from './service';
@@ -583,6 +584,8 @@ class Service implements RkWalletService {
       walletRetired: null,
       finishedRecovery: null,
       silentPayments: emptySilentPayments('send_only'),
+      // Savings is a guardian-mode option (the guardian watches it); Recovery Key mode has none.
+      savings: emptySavings('not-available'),
     };
   }
 

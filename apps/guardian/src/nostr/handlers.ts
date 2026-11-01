@@ -31,6 +31,7 @@ import { errorText } from '../log.js';
 import { isContactLockOn, isLimitOff, policyHash, type CancelActor, type RecoveryRecord, type WatchedWallet } from '../policy/index.js';
 import { helperAccount } from '../singlekey.js';
 import { NodeRpcRequiredError, NotRegisteredError } from '../silent/service.js';
+import { savingsWallet } from '../savings.js';
 import { policyToWire, recoveryToWire, refusalError, rulesFromPolicy } from './wire.js';
 
 const normPath = (p: string) => p.replace(/^m\//, '').replace(/'/g, 'h');
@@ -230,6 +231,8 @@ const STATE_CHANGING: MethodName[] = [
   'hardware.confirm',
   'wallet.retire',
   'wallet.unwatch',
+  'savings.register',
+  'savings.unregister',
 ];
 /** How long a request id is remembered: the protocol's longest request TTL (1 h) plus clock skew. */
 const REMEMBER_MS = (3600 + 120) * 1000;
@@ -278,6 +281,7 @@ export function buildHandlers(g: Guardian): Handlers {
         time: stamp.at,
         atMs: stamp.atMs,
         ...(g.engine.watchedWallet() ? { watchedWalletId: g.engine.watchedWallet()!.walletId } : {}),
+        ...(g.engine.savings() ? { savingsWalletId: g.engine.savings()!.walletId } : {}),
         ...(s.warnings.length ? { warnings: s.warnings } : {}),
         ...(s.walletId ? { walletId: s.walletId, hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
         ...(s.registered ? { key3Mixed: !!g.engine.registration()?.key3Mix } : {}),
@@ -507,9 +511,16 @@ export function buildHandlers(g: Guardian): Handlers {
 
     // -- chain data: no key 3 needed, so these work while locked ----------------
 
-    'wallet.sync': (params) =>
+    'wallet.sync': (params, ctx) =>
       chainCall(g, 'wallet.sync', async () => {
         if (params.wallet === 'helper') return helperSync(params.historyLimit);
+        const sv = g.engine.savings();
+        if (params.wallet === 'savings' || (sv && params.wallet === sv.walletId)) {
+          // Savings is the paired phone's: a phone with recovery access (whoever holds the hardware wallet) reads the
+          // wallet it may recover, not Savings.
+          if (ctx.sender !== g.engine.registration()?.appNostrPubkey) throw new RpcError(ErrorCode.WalletNotWatched, 'Only the paired phone reads its Savings wallet.');
+          return savingsSync(params.historyLimit);
+        }
         const { wallet, walletId } = syncTarget(g, params.wallet);
         // The paired wallet's scan reaches its high-water marks, and raises them to what it finds.
         const paired = walletId === g.engine.registration()?.walletId;
@@ -571,7 +582,17 @@ export function buildHandlers(g: Guardian): Handlers {
         // Not an open relay: only a spend of this wallet's coins, a sweep of the phone's single-key coins
         // (silent payments, the helper coin) into it, or a sweep of the watched (replaced) wallet into it.
         let via = 'wallet';
+        const sv = g.engine.savings();
         if (!(await g.chain.spendsWalletCoin(wallet, params.txHex, { minIndex: g.scanFloor(g.engine.registration()!.walletId) }))) {
+          // (d) A spend of the watched Savings wallet: the guardian did not sign it and cannot; it only relays it, and
+          // its tripwire announces it like any other Savings spend.
+          if (sv && (await g.chain.spendsWalletCoin(savingsWallet(sv), params.txHex, { minIndex: g.savingsWatch.scanFloor(sv) }))) {
+            const r = await g.chain.broadcast(params.txHex);
+            if (r.txid !== txid) g.log.warn('tx.broadcast_txid_mismatch', { txid, reported: r.txid });
+            g.log.info('tx.broadcast', { txid, via: r.via, spends: 'savings' });
+            void g.savingsWatch.run({ force: true }).then(() => g.alerts.run());
+            return { txid };
+          }
           const single = await singleKeyRefusal(g, wallet, params.txHex);
           const refusal = single === 'not_applicable' ? await replacementRefusal(g, wallet, params.txHex) : single;
           if (refusal) {
@@ -623,6 +644,31 @@ export function buildHandlers(g: Guardian): Handlers {
       }),
 
     'sp.unregister': () => spCall(async () => ({ unregistered: await g.sp.unregister() })),
+
+    // -- Savings: watched only (docs/design/savings-and-limit-off.md, option K) ------------------
+    // Paired phone only (Guardian.authorize). No key 3 and no approval: watching changes no rule and signs nothing.
+
+    'savings.register': async (params) => {
+      const res = await g.engine.registerSavings(params.descriptor);
+      if (!res.ok) throw refusalError(res.refusal);
+      g.log.info('savings.registered', { walletId: res.savings.walletId, ...(res.replaced ? { replaced: res.replaced } : {}) });
+      // The first scan is the baseline: the coins and spends it finds are history, not news.
+      void g.savingsWatch.run({ force: true });
+      return { walletId: res.savings.walletId, since: Math.floor(res.savings.since / 1000) };
+    },
+
+    'savings.unregister': async () => {
+      const res = await g.engine.unregisterSavings();
+      if (!res.ok) throw refusalError(res.refusal);
+      if (res.unregistered) g.log.info('savings.unregistered', { walletId: res.walletId });
+      return { unregistered: res.unregistered, ...(res.walletId ? { walletId: res.walletId } : {}) };
+    },
+
+    'savings.get': () => {
+      if (!g.engine.registration()) throw refusalError({ reason: 'not_registered' });
+      const sv = g.engine.savings();
+      return { savings: sv ? { walletId: sv.walletId, descriptor: sv.descriptor, since: Math.floor(sv.since / 1000) } : null };
+    },
 
     // Only the paired phone gets here (`Guardian.authorize`); it changes the record the web UI shows, nothing else.
     'relays.ack': (params) => g.confirmRelays(params.relays),
@@ -773,6 +819,39 @@ export function buildHandlers(g: Guardian): Handlers {
       nextChangeIndex: r.nextChangeIndex,
       gapLimit: r.gapLimit,
       coins: coinsOut,
+    };
+  }
+
+  /** `wallet.sync` of the watched Savings wallet: scanned like a wallet, from its high-water marks; the tripwire sees it too. */
+  async function savingsSync(historyLimit: number | undefined) {
+    pairedWallet(g);
+    const sv = g.engine.savings();
+    if (!sv) throw new RpcError(ErrorCode.WalletNotWatched, 'This guardian watches no Savings wallet (savings.register).');
+    const r = await g.chain.walletSync(savingsWallet(sv), {
+      historyLimit: historyLimit ?? DEFAULT_SYNC_HISTORY,
+      maxUtxos: MAX_SYNC_UTXOS,
+      minIndex: g.savingsWatch.scanFloor(sv),
+    });
+    await g.savingsWatch.note(sv.walletId, r);
+    return {
+      walletId: sv.walletId,
+      tipHeight: r.tipHeight,
+      tipHash: r.tipHash,
+      utxos: r.utxos.map((u) => ({ txid: u.txid, vout: u.vout, valueSats: Number(u.value), height: u.height, confirmations: u.confirmations, chain: u.chain, index: u.index })),
+      utxosTruncated: r.utxosTruncated,
+      balance: { confirmedSats: Number(r.confirmedSats), unconfirmedSats: Number(r.unconfirmedSats) },
+      history: r.history.map((h) => ({
+        txid: h.txid,
+        height: h.height,
+        confirmations: h.confirmations,
+        ...(h.time !== undefined ? { time: h.time } : {}),
+        netSats: Number(h.net),
+        ...(h.fee !== undefined ? { feeSats: Number(h.fee) } : {}),
+      })),
+      historyTruncated: r.historyTruncated,
+      nextReceiveIndex: r.nextReceiveIndex,
+      nextChangeIndex: r.nextChangeIndex,
+      gapLimit: r.gapLimit,
     };
   }
 

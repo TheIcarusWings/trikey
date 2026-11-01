@@ -64,6 +64,7 @@ import {
   Result,
   RetiredWallet,
   Rules,
+  SavingsWatch,
   SingleKeyRegistration,
   SurvivingRole,
   WatchedWallet,
@@ -109,6 +110,8 @@ export const LIMIT_OFF_AT_PAIRING = 'a wallet cannot be paired with the daily li
 export const NOTICE_TTL_MS = 7 * DAY;
 /** Notices kept (the oldest dropped first). */
 const MAX_NOTICES = 32;
+/** Savings spends remembered as seen (`SavingsWatch.seenSpends`): more than one scan's history ever lists. */
+const MAX_SAVINGS_SPENDS = 500;
 
 /** Weak spots of a policy the phone and the web UI should show. */
 export type PolicyWarning = 'no_alert_contacts';
@@ -865,6 +868,145 @@ export class PolicyEngine {
     return this.state.active?.singleKey;
   }
 
+  // -------------------------------------------------------------------------
+  // Savings (watch-only; docs/design/savings-and-limit-off.md, option K)
+
+  /** The Savings wallet the guardian watches for the paired phone, if any (read-only). */
+  savings(): SavingsWatch | undefined {
+    return this.state.active?.savings;
+  }
+
+  /**
+   * Watch the phone's Savings wallet (`savings.register`): its chain data, its spends' relay and the `savings_moved`
+   * tripwire. Watch-only, so it needs no key 3 and no approval: it adds no rule, changes nothing the daily limit counts
+   * and gives nobody a signature. What it must never be is a wallet the guardian can sign for: a descriptor whose key
+   * set is the active, the watched or a retired wallet's, or that holds key 3 (of any wallet the guardian guards or
+   * guarded), is refused. A different Savings wallet replaces the one watched before (a key was replaced); the same one
+   * again changes nothing.
+   */
+  async registerSavings(descriptor: string): Promise<Result<{ savings: SavingsWatch; replaced?: string }>> {
+    return this.mutate((draft, now) => {
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      const bad = (detail: string) => refused({ reason: 'invalid_registration', detail });
+      const network = getNetwork(w.registration.network);
+      let wallet: MultisigWallet;
+      try {
+        wallet = MultisigWallet.fromDescriptor(String(descriptor), network);
+        wallet.derive(0, 0);
+      } catch (e) {
+        return bad(`the Savings descriptor does not parse on ${network.name} (${(e as Error).message})`);
+      }
+      const acct = wallet.accountPubkeys();
+      const keys = ROLES.map((r) => hex.encode(acct[r]));
+      if (new Set(keys).size !== 3) return bad('the Savings wallet does not have three distinct keys');
+      const ks = keySetOf(wallet);
+      if (ks === keySetOf(this.wallet(w.registration))) return bad('that is the wallet this guardian co-signs for, not a Savings wallet');
+      if (w.watched && ks === keySetOf(MultisigWallet.fromDescriptor(w.watched.descriptor, network))) return bad('that is the replaced wallet this guardian watches');
+      if (this.retiredKeySet(draft, wallet)) return bad('that is a wallet this guardian guarded before');
+      const key3s = new Set([w.registration.cosignerAccountPubkey, ...draft.retired.map((r) => r.registration.cosignerAccountPubkey)]);
+      if (keys.some((k) => key3s.has(k))) return bad("a Savings wallet cannot hold the guardian's key: the guardian must not be able to sign for it");
+      const walletId = wallet.fingerprint();
+      const prev = w.savings;
+      if (prev?.walletId === walletId) return { ok: true as const, savings: prev };
+      const next: SavingsWatch = { walletId, network: network.name, descriptor: wallet.descriptor(), since: now, baselined: false, seenSpends: [] };
+      w.savings = next;
+      this.log(draft, now, { type: 'savings_registered', walletId, ...(prev ? { replaced: prev.walletId } : {}) });
+      // Swapping the watched Savings wallet blinds the tripwire for the old one: announced like a Savings move.
+      if (prev) this.noteSavingsUnwatched(draft, now, w, prev.walletId, walletId);
+      return { ok: true as const, savings: next, ...(prev ? { replaced: prev.walletId } : {}) };
+    });
+  }
+
+  /** Stop watching the Savings wallet (`savings.unregister`). Nothing watched: nothing changes. */
+  async unregisterSavings(): Promise<Result<{ unregistered: boolean; walletId?: string }>> {
+    return this.mutate((draft, now) => {
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      if (!w.savings) return { ok: true as const, unregistered: false };
+      const walletId = w.savings.walletId;
+      delete w.savings;
+      this.log(draft, now, { type: 'savings_unregistered', walletId });
+      // Turning the tripwire off is announced like a Savings move: someone holding the phone must not do it quietly.
+      this.noteSavingsUnwatched(draft, now, w, walletId);
+      return { ok: true as const, unregistered: true, walletId };
+    });
+  }
+
+  /**
+   * The Savings watch was turned off (`savings.unregister`) or swapped for another wallet (`savings.register` with a
+   * different descriptor, `replacedBy`): a durable `savings_unwatched` notice to the paired phone and every alert contact,
+   * delivered and retried like `savings_moved`. Both need only the paired phone, so a phone thief could otherwise blind
+   * the tripwire before moving Savings with a second key.
+   */
+  private noteSavingsUnwatched(draft: GuardianState, now: number, w: GuardedWallet, walletId: string, replacedBy?: string): void {
+    this.addNotice(draft, now, {
+      id: `savings-${draft.nextActivityId}`,
+      kind: 'savings_unwatched',
+      walletId: w.registration.walletId,
+      at: now,
+      savingsWalletId: walletId,
+      ...(replacedBy ? { replacedBy } : {}),
+      recipients: [w.registration.appNostrPubkey, ...w.rules.alertContacts.filter((c) => c !== w.registration.appNostrPubkey)],
+      sent: [],
+    });
+  }
+
+  /**
+   * What a scan of the Savings wallet found: the indexes used (its high-water marks rise, never fall) and the
+   * transactions that spent its coins, newest first (`amountSats` what left Savings, fee included). The first scan after
+   * registration only records them (history, not news). Every later spend not seen before is logged and queued as a
+   * `savings_moved` notice for the paired phone and every alert contact, delivered and retried like the limit notices.
+   * Returns the newly announced spends. Writes nothing when nothing is new.
+   */
+  async noteSavingsScan(
+    walletId: string,
+    scan: { nextReceiveIndex: number; nextChangeIndex: number; spends: { txid: string; amountSats: bigint }[] },
+  ): Promise<{ txid: string; amountSats: bigint }[]> {
+    const used: HighWater = { receive: scan.nextReceiveIndex - 1, change: scan.nextChangeIndex - 1 };
+    const ok = (n: number) => Number.isSafeInteger(n) && n <= MAX_SELF_INDEX;
+    const pending = (st: GuardianState) => {
+      const sv = st.active?.savings;
+      if (!sv || sv.walletId !== walletId) return undefined;
+      const cur = sv.highWater ?? NO_HIGH_WATER;
+      const rises = (ok(used.receive) && used.receive > cur.receive) || (ok(used.change) && used.change > cur.change);
+      const fresh = scan.spends.filter((x) => /^[0-9a-f]{64}$/.test(x.txid) && !sv.seenSpends.includes(x.txid));
+      return rises || fresh.length || !sv.baselined ? { fresh } : undefined;
+    };
+    if (!pending(this.state)) return [];
+    return this.mutate((draft, now) => {
+      const p = pending(draft);
+      if (!p) return [];
+      const w = draft.active!;
+      const sv = w.savings!;
+      const clamp = (n: number) => (Number.isSafeInteger(n) ? Math.min(n, MAX_SELF_INDEX) : -1);
+      sv.highWater = maxHighWater(sv.highWater ?? NO_HIGH_WATER, { receive: clamp(used.receive), change: clamp(used.change) });
+      // Oldest first, so the log and the notices read in the order the coins moved.
+      const fresh = [...new Map(p.fresh.map((x) => [x.txid, x])).values()].reverse();
+      sv.seenSpends = [...sv.seenSpends, ...fresh.map((x) => x.txid)].slice(-MAX_SAVINGS_SPENDS);
+      if (!sv.baselined) {
+        sv.baselined = true;
+        return [];
+      }
+      const recipients = [w.registration.appNostrPubkey, ...w.rules.alertContacts.filter((c) => c !== w.registration.appNostrPubkey)];
+      for (const x of fresh) {
+        this.log(draft, now, { type: 'savings_moved', walletId, txid: x.txid, amountSats: x.amountSats });
+        this.addNotice(draft, now, {
+          id: `savings-${draft.nextActivityId}`,
+          kind: 'savings_moved',
+          walletId: w.registration.walletId,
+          at: now,
+          savingsWalletId: walletId,
+          txid: x.txid,
+          amountSats: x.amountSats,
+          recipients,
+          sent: [],
+        });
+      }
+      return fresh;
+    });
+  }
+
   /**
    * After a rotation, the hardware wallet proves again that it holds the authorization key, now for
    * the active wallet's id: a signature over `pairingMessage(walletId, cosignerAccountPubkey)`, as at
@@ -1506,7 +1648,19 @@ export class PolicyEngine {
       const revokedGrants = this.retireActive(draft, now, { reason: 'recovered', recoveryId: rec.id, ...(next ? { successorWalletId: next.walletId } : {}) });
       // The limit window starts empty: phone payments were paused for the whole delay (7 days at least),
       // so none of the old wallet's spends is still inside the 24 h window.
-      if (next) draft.active = { registration: next, rules, spends: [], phoneSpending: { state: 'enabled' }, accessGrants: [], ...(nextMarks ? { highWater: nextMarks } : {}) };
+      // The Savings wallet the phone had is still the owner's (the guardian holds no key of it): it stays watched, so the
+      // tripwire keeps working and a new phone without a backup finds it again (`savings.get`). The phone registers
+      // another one once it replaced a Savings key.
+      if (next)
+        draft.active = {
+          registration: next,
+          rules,
+          spends: [],
+          phoneSpending: { state: 'enabled' },
+          accessGrants: [],
+          ...(nextMarks ? { highWater: nextMarks } : {}),
+          ...(w.savings ? { savings: w.savings } : {}),
+        };
       rec.rotatedAt = now;
       if (next && limitRestored !== undefined)
         this.addNotice(draft, now, {

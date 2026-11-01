@@ -247,6 +247,10 @@ export type WalletErrorCode =
   | 'node_rpc_required'
   /** Silent payments are turned off on this phone: turn them on first (`enableSilentPayments`). */
   | 'silent_payments_off'
+  /** "Create Savings" on a wallet that has Savings already. */
+  | 'savings_exists'
+  /** A Savings action on a wallet without Savings (or, on a new phone, none the guardian knows of either). */
+  | 'no_savings'
   | 'internal';
 
 export class WalletError extends Error {

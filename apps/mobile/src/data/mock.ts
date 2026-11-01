@@ -7,6 +7,7 @@ import { emptyRecoveryKeyState } from './rk-empty';
 import { DEMO_FINGERPRINT, createMockRecoveryKey } from './rk-mock';
 import { looksLikeSilentPaymentAddress } from './sp-empty';
 import { DEMO_HELPER_FEE, DEMO_TAPROOT_OUTPUT, createMockSilentPayments, demoSilentActivity, demoSilentPayments, type MockSilentControl } from './sp-mock';
+import { DEMO_SAVINGS_DESCRIPTOR, createMockSavings, creditDemoSavings, demoFilledSavings, emptySavings, isDemoSavingsAddress } from './savings-mock';
 import type { WalletService } from './service';
 import type {
   ActivityItem,
@@ -249,6 +250,8 @@ export function createDemoState(platform: 'ios' | 'android' = 'ios'): WalletStat
     silentPayments: demoSilentPayments(),
     // Off, as for everyone until they turn it on; the demo guardian supports it.
     contactLock: { on: false, supported: true },
+    // No Savings, as for everyone until they create one (it is strictly optional); the demo guardian can watch one.
+    savings: emptySavings('available'),
   };
 }
 
@@ -417,6 +420,9 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
         network: state.network ?? 'testnet',
         fingerprints: { phone: 'c0ffee01', hardware: DEMO_FINGERPRINT, guardian: '9a3f02bd' },
         walletId: 'demo-wallet',
+        ...(state.savings.status === 'active'
+          ? { savings: { descriptor: state.savings.descriptor ?? DEMO_SAVINGS_DESCRIPTOR, walletId: state.savings.walletId ?? 'demo-savings', fingerprints: { phone: 'c0ffee01', hardware: '7c1e5a90', recoveryKey: state.savings.recoveryKey?.fingerprint ?? '5e7d2c4b' } } }
+          : {}),
       };
     },
     async receiveAddress(opts) {
@@ -443,6 +449,9 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
         ...(silent ? { silentOutputAddress: DEMO_TAPROOT_OUTPUT } : {}),
       };
       if (silent && state.mode === 'guardian') update((s) => ({ silentPayments: { ...s.silentPayments, helper: { ...s.silentPayments.helper, sats: Math.max(0, s.silentPayments.helper.sats - DEMO_HELPER_FEE) } } }));
+      // "Add to Savings": a payment like any other (it counted against the limit above), and it lands in Savings.
+      if (state.mode === 'guardian' && state.savings.status === 'active' && isDemoSavingsAddress(request.address))
+        update((s) => ({ savings: creditDemoSavings(s.savings, request.amountSats, tx.txid!, tx.at, nextId('sv')) }));
       addActivity({ type: 'payment', at: tx.at, tx });
       if (state.mode === 'recoveryKey') {
         update((s) =>
@@ -678,6 +687,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     },
     rk: createMockRecoveryKey({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }),
     silentPayments: createMockSilentPayments({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }, silentControl, nextId),
+    savings: createMockSavings({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }, nextId),
 
     // -- preferences --------------------------------------------------
     setUnit: (unit: AmountUnit) => update({ unit }),
@@ -686,6 +696,9 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
 
     // -- development --------------------------------------------------
     dev: {
+      setDemoSavings(on: boolean) {
+        update((s) => ({ savings: on ? demoFilledSavings(s.hardware) : emptySavings('available') }));
+      },
       simulateContactLock() {
         // What the guardian does when an alert contact sends it LOCK: only while the setting is on, and only once.
         const by = state.contacts[0];

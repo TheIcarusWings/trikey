@@ -31,6 +31,7 @@ import { relayListError } from '../lib/relays';
  *   oldrelays  two old relays from a change months ago, still watched; the phone switched
  *   limitoff   the owner turned the daily limit off with the hardware wallet yesterday
  *   contactlocked  the owner lets the alert contacts lock the guardian, and one of them just did (LOCK over nostr)
+ *   savings    the phone has a Savings wallet this guardian watches; some of it moved yesterday
  *
  * State lives in memory only, so a page reload starts the scenario over. In the
  * mock, any unlock passphrase works except the literal `wrong`, which is
@@ -47,7 +48,8 @@ export type MockScenario =
   | 'signedout'
   | 'oldrelays'
   | 'limitoff'
-  | 'contactlocked';
+  | 'contactlocked'
+  | 'savings';
 
 /** A throwaway demo contact key (`1b` × 32), as the guardian names a contact: its npub. */
 const DEMO_CONTACT_NPUB = 'npub1rvd3kxcmrvd3kxcmrvd3kxcmrvd3kxcmrvd3kxcmrvd3kxcmrvdsca5nvq';
@@ -137,7 +139,7 @@ function demoRecovery(ready = false): RecoveryInProgress {
 
 export function readScenario(search: string): MockScenario {
   const value = new URLSearchParams(search).get('mock');
-  const known: MockScenario[] = ['firstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout', 'oldrelays', 'limitoff', 'contactlocked'];
+  const known: MockScenario[] = ['firstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout', 'oldrelays', 'limitoff', 'contactlocked', 'savings'];
   return known.find((s) => s === value) ?? 'default';
 }
 
@@ -182,6 +184,29 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
         summary: 'Locked by contact npub1rvd3kxc…ca5nvq via nostr', signedBy: 'Alert contact', sats: null, result: 'locked',
       },
       ...activity,
+    ];
+  // `?mock=savings`: the phone's Savings wallet, watched; 0.02 BTC of it moved to the Spending wallet yesterday
+  // (apps/guardian/src/http/activity.ts words).
+  const savingsScenario = scenario === 'savings';
+  const SAVINGS_ID = '5a71e3c09b2d4f86';
+  const SAVINGS_TX = '9b2d4f86e1c05a71'.padEnd(64, 'c');
+  if (savingsScenario)
+    activity = [
+      {
+        id: 'a_sv_alert', at: localAt(1, '18:41'), kind: 'system', event: '"Savings moved" alert sent to 3 recipients',
+        summary: 'Savings alert sent', signedBy: null, sats: null, result: 'ok',
+      },
+      {
+        id: 'a_sv_moved', at: localAt(1, '18:40'), kind: 'system',
+        event: `Savings moved: 2,000,640 sats left the Savings wallet ${SAVINGS_ID} in ${SAVINGS_TX.slice(0, 8)}…${SAVINGS_TX.slice(-6)}. This guardian did not sign it (it cannot): it took the phone with the hardware wallet, or the Recovery Key. The phone and the alert contacts are told.`,
+        summary: 'Savings moved', signedBy: null, sats: 2_000_640, result: 'ok',
+      },
+      ...activity,
+      {
+        id: 'a_sv_reg', at: localAt(20, '10:02'), kind: 'system',
+        event: `Now watching the phone's Savings wallet ${SAVINGS_ID}. This guardian holds no Savings key and cannot sign for it: it only serves its coins and tells you when they move`,
+        summary: 'Watching Savings', signedBy: 'Phone', sats: null, result: 'ok',
+      },
     ];
   let recovery: RecoveryInProgress | null =
     scenario === 'recovery' ? demoRecovery() : scenario === 'recoveryready' ? demoRecovery(true) : null;
@@ -269,6 +294,18 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
         : { state: 'synced', source: 'Bitcoin Node + Electrs' },
       wallets: setupDone || setupFinished ? walletIds.map((id) => ({ id, name: 'Main', phonesPaired: phones.length })) : [],
       dailySpend: { usedSats: 70_420, limitSats: rules.dailyLimitSats, ...(rules.dailyLimitOff ? { limitOff: true as const } : {}) },
+      ...(savingsScenario
+        ? {
+            savings: {
+              id: SAVINGS_ID,
+              watchedSince: localAt(20, '10:02'),
+              balanceSats: 46_000_000,
+              unconfirmedSats: 0,
+              scannedAt: new Date(Date.now() - 60_000).toISOString(),
+              lastMoved: { at: localAt(1, '18:40'), sats: 2_000_640, txid: SAVINGS_TX },
+            },
+          }
+        : {}),
       recoveryInProgress: recovery !== null,
       network: 'signet',
       npub: DEMO_NPUB,

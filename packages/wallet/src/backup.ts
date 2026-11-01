@@ -32,7 +32,7 @@ import { base64, utf8 } from '@scure/base';
 import { z } from 'zod';
 import { Network, Policy } from '@trikey/protocol';
 import { WalletError } from './errors.js';
-import { GuardianRecord, HardwareRecord, RetiredWallet, SendLogEntry } from './state.js';
+import { GuardianRecord, HardwareRecord, RetiredWallet, SavingsDevice, SavingsSendEntry, SendLogEntry } from './state.js';
 import { secureRandomBytes } from '@trikey/core/random';
 import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 
@@ -103,9 +103,36 @@ export const BackupHeader = z.strictObject({
 });
 export type BackupHeader = z.infer<typeof BackupHeader>;
 
+/**
+ * The optional Savings wallet in a backup (docs/design/savings-and-limit-off.md): its descriptor and where it was, and
+ * the two devices' records (public: their account keys are in the descriptor; Ledger's registration HMAC is not a
+ * secret). No key: key 2's Savings key derives from the mnemonic, the others live on their hardware wallets.
+ */
+export const BackupSavings = z.strictObject({
+  descriptor: z.string().max(2000),
+  walletId: z.string().regex(/^[0-9a-f]{16}$/),
+  /** The BIP 48 account of every Savings key. */
+  account: z.literal(1),
+  /** ms */
+  createdAt: z.int().min(0),
+  nextReceiveIndex: z.int().min(0),
+  nextChangeIndex: z.int().min(0),
+  hardware: SavingsDevice,
+  recoveryKey: SavingsDevice,
+  sendLog: z.array(SavingsSendEntry).max(1000).optional(),
+});
+export type BackupSavings = z.infer<typeof BackupSavings>;
+
+/**
+ * Payload versions: 1, and 2 only when the wallet has Savings (`savings` present). An app from before Savings refuses a
+ * version-2 payload (its schema is strict and knows only 1), so it never restores a wallet half, without its Savings;
+ * this app says "update the app" for any version it does not know (`backup_invalid`, reason `too_new`).
+ */
+export const BACKUP_PAYLOAD_VERSION = 2;
+
 /** What the backup holds. */
-export const BackupPayload = z.strictObject({
-  v: z.literal(1),
+const BackupPayloadShape = z.strictObject({
+  v: z.union([z.literal(1), z.literal(2)]),
   network: Network,
   createdAt: z.int(),
   /** Key 2. */
@@ -132,6 +159,12 @@ export const BackupPayload = z.strictObject({
    * and spend keys derive from the mnemonic.
    */
   silentPayments: z.strictObject({ birthHeight: z.int().min(0), labels: z.array(z.int().min(1)).max(10_000) }).optional(),
+  /** Version 2 only: the Savings wallet. */
+  savings: BackupSavings.optional(),
+});
+export const BackupPayload = BackupPayloadShape.refine((p) => (p.v === 2) === (p.savings !== undefined), {
+  message: 'a version-2 backup payload holds Savings, and only a version-2 one does',
+  path: ['v'],
 });
 export type BackupPayload = z.infer<typeof BackupPayload>;
 
@@ -326,7 +359,11 @@ function decryptPayload(parsed: ParsedBackup, dataKey: Uint8Array): BackupPayloa
     throw new WalletError('backup_invalid', 'The backup is damaged or was altered (it does not authenticate).');
   }
   try {
-    const payload = BackupPayload.safeParse(JSON.parse(utf8.encode(plaintext)));
+    const json = JSON.parse(utf8.encode(plaintext)) as { v?: unknown };
+    // A payload from a newer app: say so, rather than "invalid".
+    if (typeof json?.v === 'number' && Number.isInteger(json.v) && json.v > BACKUP_PAYLOAD_VERSION)
+      throw new WalletError('backup_invalid', 'This backup was made by a newer version of Trikey. Update the app, then restore it.', { reason: 'too_new' });
+    const payload = BackupPayload.safeParse(json);
     if (!payload.success) throw new WalletError('backup_invalid', `The backup's contents are invalid: ${payload.error.issues[0]?.message}`);
     if (payload.data.network !== parsed.header.network) throw new WalletError('backup_invalid', 'The backup header and contents disagree on the network.');
     return payload.data;

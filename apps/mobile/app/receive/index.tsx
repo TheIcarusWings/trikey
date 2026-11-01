@@ -11,6 +11,7 @@ import { Text } from '@/components/ui/text';
 import { groupAddress, useWallet, useWalletService } from '@/data';
 import { ListGroup, Notice, SettingsRow, networkLabel } from '@/components/panels';
 import { SilentReceiveScreen } from '@/components/silent-receive';
+import { Segmented } from '@/components/segmented';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 import { haptic } from '@/lib/haptics';
@@ -81,6 +82,17 @@ export default function Receive() {
           </Card>
         ) : undefined
       }>
+      {!rkMode && state.savings.status === 'active' ? (
+        <Segmented<'spending' | 'savings'>
+          accessibilityLabel="Receive into"
+          value="spending"
+          onChange={(v) => v === 'savings' && router.replace('/savings/receive')}
+          options={[
+            { value: 'spending', label: 'Spending' },
+            { value: 'savings', label: 'Savings' },
+          ]}
+        />
+      ) : null}
       {receiveAddress ? (
         <View className="mt-1 items-center gap-4">
           <AddressQr address={receiveAddress} />

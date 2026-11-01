@@ -53,6 +53,28 @@ export interface WatchedWallet {
 }
 
 /**
+ * The phone's optional Savings wallet (docs/design/savings-and-limit-off.md, option K), WATCHED only: a
+ * `wsh(sortedmulti(2, phone, hardware, recoveryKey))` in which the guardian holds no key, so it never co-signs for it
+ * and no rule of the engine applies to it. The guardian serves its chain data, relays its spends and alerts when one of
+ * its coins moves (`savings_moved`), a tripwire. It belongs to the active wallet; a wallet rotation carries it to the
+ * adopted wallet (so a new phone without a backup can find its Savings again), retirement and reset drop it.
+ */
+export interface SavingsWatch {
+  /** `MultisigWallet.fingerprint()` of `descriptor`. */
+  walletId: string;
+  network: NetworkName;
+  descriptor: string;
+  /** ms */
+  since: number;
+  /** As the active wallet's: every scan of Savings reaches at least these, and they rise with what scans find used. */
+  highWater?: HighWater;
+  /** The first scan has run: spends seen then are history, not news. Spends after it are announced. */
+  baselined: boolean;
+  /** Txids of Savings spends already seen (announced, or history at the first scan), newest last, bounded. */
+  seenSpends: string[];
+}
+
+/**
  * The paired phone's single-key coins (DESIGN.md, "Silent payments"): public data only, so the guardian
  * can serve their chain data, accept the helper coin next to vault inputs when it co-signs a silent
  * payment, and relay a sweep of them into the vault. It belongs to the active wallet and its phone, and
@@ -271,6 +293,11 @@ export type Result<T> = ({ ok: true } & T) | { ok: false; refusal: Refusal };
 export type ActivityEvent =
   | { type: 'registered'; walletId: string; replacesWalletId?: string; watching?: boolean }
   | { type: 'wallet_unwatched'; walletId: string }
+  /** The phone asked the guardian to watch its Savings wallet (`replaced`: the Savings wallet it watched before). */
+  | { type: 'savings_registered'; walletId: string; replaced?: string }
+  | { type: 'savings_unregistered'; walletId: string }
+  /** A coin of the watched Savings wallet was spent (`amountSats`: what left Savings, fee included). The guardian did not sign it. */
+  | { type: 'savings_moved'; walletId: string; txid: string; amountSats: bigint }
   /** `helperInput`: the outpoint of the phone's helper coin that rode along (a silent payment). */
   | { type: 'cosign_signed'; txid: string; outflow: bigint; usedAfter: bigint; replay: boolean; helperInput?: string }
   | { type: 'single_key_registered'; helper: boolean; coins: number }
@@ -355,6 +382,8 @@ export interface GuardedWallet {
   watched?: WatchedWallet;
   /** The paired phone's single-key coins (`registerSingleKey`). */
   singleKey?: SingleKeyRegistration;
+  /** The phone's Savings wallet, watched only (`registerSavings`). Carried to a wallet a recovery adopts. */
+  savings?: SavingsWatch;
   /**
    * While the daily limit is off (`isLimitOff(rules)`): the limit it had just before a hardware approval turned it off.
    * A recovery's new wallet starts with it (the limit back on); turning the limit on again drops it. Absent for a limit
@@ -374,7 +403,7 @@ export interface GuardedWallet {
 export interface LimitNotice {
   /** `limit-<n>`, `lock-<n>` or `lockrule-<n>`, unique (the next activity id when it was queued). */
   id: string;
-  kind: 'limit_off' | 'limit_on' | 'contact_lock' | 'contact_lock_on' | 'contact_lock_off';
+  kind: 'limit_off' | 'limit_on' | 'contact_lock' | 'contact_lock_on' | 'contact_lock_off' | 'savings_moved' | 'savings_unwatched';
   walletId: string;
   /** ms */
   at: number;
@@ -386,6 +415,14 @@ export interface LimitNotice {
   reason?: 'phone' | 'hardware' | 'recovery';
   /** `contact_lock`: the alert contact who locked the guardian (nostr pubkey). */
   contact?: string;
+  /**
+   * `savings_moved`: the Savings wallet, the spending transaction and what left Savings (sats, fee included).
+   * `savings_unwatched`: the Savings wallet no longer watched, and `replacedBy` the one watched instead (absent: none).
+   */
+  savingsWalletId?: string;
+  replacedBy?: string;
+  txid?: string;
+  amountSats?: bigint;
   /** The paired phone first, then the contacts (nostr pubkeys). */
   recipients: string[];
   /** Recipients it reached. */

@@ -26,6 +26,7 @@ Visual walkthrough (private canvas): https://claude.ai/artifact/NV7SCZja8ik9LAvu
 | No home server | Recovery Key mode (below) | Same script; Bitcoin's timelock rules enforce the limit |
 | Key 2 backup | Encrypted cloud backup, unlocked by passkey | The user picks the cloud. Losing the backup is survivable: see the recovery flows. |
 | Optional extra | Timelocked heir/backstop path for miniscript-capable devices | Opt-in only, so the default stays universal |
+| Savings (optional) | A second wallet, `wsh(sortedmulti(2, phone, hardware, recoveryKey))` at BIP 48 account 1', the Recovery Key a second hardware wallet; the guardian only watches it ("Savings" below) | The daily limit lives in the guardian's code; only a script keeps phone + guardian away from money. Opt-in, never part of onboarding |
 | First client | React Native mobile app | Ledger Bluetooth and Trezor Connect have JS SDKs |
 | UI kit | shadcn/ui: react-native-reusables + NativeWind in the app, shadcn/ui + Tailwind in the guardian web UI. Zinc neutrals, Geist type, light and dark themes. | One set of tokens and components across the phone and the home server |
 | Transport | Nostr: NIP-44 encryption inside NIP-59 gift wraps | Outbound-only connections, no accounts, relays see ciphertext |
@@ -89,6 +90,7 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
    - an RBF replacement counts as the larger of the old and new amounts;
    - **change is only change within reach of a scan:** an output counts as change only if it pays the wallet's own derived address at an index no more than 20 (the gap limit) past that chain's *high-water mark*, the highest index seen used on chain or co-signed. Anything further out counts as leaving the wallet. The marks are persisted, rise with every co-signed change output and with what `wallet.sync` finds (a payment to a fresh receive address), and every scan of the wallet (coverage before a recovery completes, `wallet.sync`, the broadcast relay check) reaches at least them, so no coin key 3 co-signed is ever out of sight;
    - **the window's clock is checked against the chain:** the guardian refuses to co-sign while the system clock is more than 3 hours ahead of the chain's median time past (`clock_ahead_of_chain`), and the time it counts the window with never goes backwards (persisted), so stepping the clock forward or back cannot open a fresh window.
+   - **Payments into the optional Savings wallet count like any payment** (the owner's decision, 2026-11-01): the guardian is not told which wallet is Savings for this rule and counts an output to it as leaving the wallet. A phone thief registering their own wallet as "Savings" therefore gains nothing.
    - **The limit can be turned off** (strictly opt-in; docs/design/savings-and-limit-off.md, section 4). "Off" is the largest limit there is, all bitcoin there will ever be, so the policy and its hash are unchanged; every other rule stays, and the guardian still counts what it co-signs. It is a loosening: only with a fresh hardware approval whose text says it in words (`Trikey policy v2 ... limit=off ...`, rule 4), never at pairing and never while a recovery is pending or ready. Turning it back on is tightening: the phone alone, at once. The guardian alerts the paired phone (`limit_off`) and every alert contact (a NIP-17 DM) when it is turned off, logs it as a warning, and tells the phone when it is on again (`limit_on`). It remembers the limit before (`limitBeforeOff`): after a recovery the adopted wallet starts with the limit **on** at that value (rotation, below). The phone offers it only to a guardian that reports the `limit_off` feature. With the limit off the guardian is a second signature, not a brake: a thief who gets into the phone sends everything at once.
 4. **Loosening the rules needs the hardware wallet.** That covers raising the limit, shortening the delay, changing the sweep fee cap, adding or removing alert contacts, and stopping the alert contacts from locking the guardian (rule 8). The phone alone can only tighten: lower the limit, lengthen the delay or let the alert contacts lock the guardian, **also while a recovery runs** (tightening never helps a thief; a running recovery keeps the delay and fee cap it started with). On mainnet the rules must name at least one alert contact: a pairing without one, or any change that removes the last one, is refused even with a hardware approval; test networks allow it and report `warnings: ['no_alert_contacts']`.
    - **How the hardware wallet approves:** a BIP137 `signmessage` signature from a single-sig key recorded at pairing. Ledger, Trezor and Coldcard all support it. The signed text is one line that shows the new values in clear, so the user checks them on the device screen:
@@ -140,6 +142,7 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
   | `wallet.retire` | Stop guarding this wallet, e.g. before moving to a new guardian (hardware approval) |
   | `wallet.sync`, `tx.get`, `tx.broadcast`, `fees.estimate` | Chain data from the guardian's own node, so the phone needs no public servers. `wallet.sync` can read the replaced wallet and the phone's single-key coins (`wallet: 'helper'`), and `tx.broadcast` relays a sweep of either into the vault |
   | `wallet.unwatch` | Stop watching the replaced wallet |
+  | `savings.register`, `savings.unregister`, `savings.get` | Watch the phone's optional Savings wallet (watch-only, no approval: the guardian holds no Savings key), stop, read it back. Then `wallet.sync` with `wallet: 'savings'` serves its coins, `tx.broadcast` relays its spends, and a spent Savings coin raises `savings_moved` to the phone and the alert contacts |
   | `singlekey.register` | Register the phone's single-key coins (public data only): the helper coin's account (`m/84'/c'/1'` xpub) and coins by outpoint and script. Then `sign` accepts the helper input, `wallet.sync` with `wallet: 'helper'` serves them and `tx.broadcast` relays their sweeps into the vault |
   | `sp.register`, `sp.unregister` | Hand the guardian the silent payment scan key (with `B_spend`, labels and birth height) so it scans the node's blocks; take it back |
   | `sp.scan` | The payments the scanner found (`sp_received` alerts announce new ones) |
@@ -186,6 +189,8 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
 | A contact sees something the owner didn't do | none | With rule 8 on, the contact replies `LOCK`; the owner is told who, checks, and unlocks (or cancels the recovery) |
 | Guardian dies or is stolen | phone + hardware | "Replace guardian": sweep to a new wallet with a new guardian |
 | Guardian replaced, old box still running | phone + hardware | Also retire the wallet on the old box; it then co-signs nothing for it |
+| Savings: move money out | phone + hardware, or the Recovery Key + either | Never the guardian; no limit and no waiting. The guardian relays it and tells the phone and the contacts |
+| Savings: a key lost (phone without backup, hardware wallet and seed words, Recovery Key) | the other two | At once, to a new Savings wallet that keeps the two and replaces the lost one ("Savings" below) |
 
 **Wallet rotation.** The guardian guards one active wallet and keeps the ones it guarded before as
 retired, read-only history: it co-signs nothing for them, starts no recovery of them and never pairs
@@ -241,6 +246,7 @@ printed and kept with the hardware wallet.
   - If the thief keeps the guardian powered, they can only reach the daily limit, and any recovery triggers the 7-day alerts.
   - Tell users to keep the hardware wallet's seed words outside the home.
 - **Remote compromise of the home server** gives up one key of three. That's the same exposure as Bitkey's server being breached.
+- **Savings (optional).** Phone + guardian, together or compromised, cannot move Savings: the guardian holds no Savings key. What can: the phone with the hardware wallet, or the Recovery Key with either of them. A burglar who finds the phone, a powered box and a Recovery Key kept at home takes Savings too, so the Recovery Key belongs away from home, apart from the hardware wallet's seed words. A compromised guardian can hide Savings' balance from the phone or stay silent when it moves (its tripwire), which costs nothing it was trusted with. Turning the Savings watch off or swapping it for another wallet (the paired phone alone can) is announced to the phone and every alert contact (`savings_unwatched`), so a phone thief cannot quietly blind the tripwire before moving Savings with a second key. The watched Savings record survives a recovery, so whoever completes one (normally the owner) can read Savings' descriptor and balance from the guardian; it moves nothing.
 - **Malicious relays** can drop messages but can't read or forge them. A relay change from the web UI (a security event in the activity log) can at worst move the phone to relays that drop everything; the old relays stay watched until the owner stops them and the phone moves only to relays the guardian answered it over.
 - **Contested recovery** (a thief cancels a genuine recovery): phone-only spending stays paused, so the thief can't drain either. Same as Bitkey.
 - **After a recovery the guardian trusts its outcome:** the phone that started it becomes the new wallet's paired phone. That is what the Delay & Notify period protects; a thief who gets that far already holds the new wallet's keys. The hardware wallet must re-prove its authorization key for the new wallet before it can loosen anything, and the old wallet's recovery access grants are revoked.
@@ -433,6 +439,57 @@ Built in [`packages/silent-payments`](packages/silent-payments) (`@trikey/silent
   - Each sweep is a 1-input, 1-output transaction from a taproot coin into the vault's multisig, so the vault is linked to each received coin (but not the received coins to each other).
   - Recovery Key mode has a single-key spending balance (`m/84'/c'/0'`) whose coins are eligible inputs, so it could send silent payments from that balance without a helper; that is not built yet.
 
+## Savings (optional)
+
+Built from [docs/design/savings-and-limit-off.md](docs/design/savings-and-limit-off.md), option K (the owner's decision,
+2026-11-01): a second wallet for money the owner rarely touches, which the phone and the guardian cannot move, even
+together. Strictly optional: a wallet without Savings sets up and works exactly as before (no onboarding step, no rule,
+no policy hash or approval text changes, the same version-1 backup).
+
+- **Script and keys.** `wsh(sortedmulti(2, phone, hardware, recoveryKey))`, every key at BIP 48 account 1'
+  (`m/48'/<coin>'/1'/2'`, `SAVINGS_ACCOUNT` in `@trikey/core`): key 2's seed, the wallet's own hardware wallet, and a
+  **second hardware wallet as the Recovery Key** (the owner's answer to open question 2), of which only the xpub is kept.
+  Account 1' gives Savings its own keys and addresses, never Spending's. The guardian holds no Savings key, so no rule of
+  the guardian protects Savings: the script does. Every spend needs a key that is not online.
+- **Creating it** (Settings > Savings, or from Home's suggestion; never onboarding): key 2's Savings key (biometric
+  prompt), the hardware wallet's, the Recovery Key's (which must be another device); Savings is registered on both
+  devices (Ledger's HMAC is kept) and each shows its first address, which must match; then the guardian is told to watch
+  it. Only with a guardian that reports `savings`: Savings' chain data comes from it. The app then shows the descriptor
+  (to keep with the Recovery Key: with it, the two hardware wallets recover Savings in any multisig wallet) and asks for a
+  new backup.
+- **Moving money.** Into Savings: a normal payment from Spending to a Savings address, counted against the daily limit
+  like any other (owner's answer 3); over the limit the hardware wallet signs. Out of Savings: two of its keys (phone +
+  hardware wallet by default; phone + Recovery Key if the hardware wallet is lost; hardware wallet + Recovery Key if the
+  phone key is not usable), at the 6-block fee estimate, broadcast through the guardian. "Move to Spending" pays a
+  Spending address; the hardware wallet shows it as an outgoing payment and the app says so. Spending and Savings coins
+  are never mixed in one transaction.
+- **The guardian's part** (`apps/guardian/src/savings.ts`, `PolicyEngine.registerSavings`): it watches the descriptor
+  (`GuardedWallet.savings`), serves its chain data and relays its spends, and scans it on every block and every two
+  minutes. A spend after the first scan raises a durable `savings_moved` notice to the paired phone and every alert
+  contact (a tripwire: an honest guardian says Savings moved; a compromised one stays silent). Turning the watch off, or
+  swapping it for another Savings wallet, is announced to the phone and every contact the same way (`savings_unwatched`);
+  the phone, which did not ask for it, registers Savings again at its next sync. It refuses to watch any
+  wallet it could sign for (the guarded, watched or a retired key set, or one holding key 3). A rotation carries the
+  record to the adopted wallet; retirement and reset drop it. The web UI shows a "Savings (watched)" card.
+- **Backup and recovery.** The backup is version 2 only when Savings exists (`savings`: descriptor, wallet id, the two
+  devices' records, the send log; no key); an older app refuses it instead of restoring half a wallet. Lost phone with a
+  backup: restore key 2 (it holds the account-1' key). Lost phone, no backup: after the guardian's recovery of Spending,
+  the new phone reads Savings' descriptor from the guardian (`savings.get`, or the person pastes the copy they kept), checks
+  it holds the hardware wallet's account-1' key, and the hardware wallet + Recovery Key move everything to a new Savings
+  with the new phone's key. Lost hardware wallet and seed words: phone + Recovery Key move it to the wallet's new hardware
+  wallet. Lost Recovery Key: phone + hardware wallet move it to a new second hardware wallet. Each is one transaction, at
+  once (`TrikeyWallet.replaceSavingsKey`).
+- **Limit off.** The "Turn off the daily limit?" screen and Home recommend Savings when the limit is off; never required
+  (owner's answer 6).
+- **Mainnet.** Like the guardian mode's other options (no daily limit, contacts can lock, silent payments), Savings is
+  offered wherever the guardian mode is, mainnet included behind its pre-alpha warning: it uses the same script and the
+  same signing paths as Spending (checked by Bitcoin Core's verifier in `packages/core/test/savings.test.ts`) and needs
+  nothing new from the devices but a second registration. Recovery Key mode stays on test networks for what is its own
+  (the timelocked refill chain, the public chain server), none of which Savings uses.
+- **What it does not solve** (design note, section 6): the phone and the hardware wallet together still take everything;
+  coercion; Spending is as exposed as before; no restriction on where Savings can go; every transfer links the two wallets
+  on chain, and the guardian and the alert contacts learn of every Savings move.
+
 ## Later: guardian for family
 
 Someone who runs a guardian can host one for a person they know.
@@ -458,6 +515,7 @@ Someone who runs a guardian can host one for a person they know.
 - `packages/wallet/`: the phone's side (key 2, pairing, payments, rules, recovery, backup), platform-agnostic; the app supplies storage and hardware adapters. It finishes a recovery (switching to the adopted wallet after checking it, then `confirmHardware()`), replaces the guardian (pair the new one, sweep, retire the old wallet, sweep stray coins later), locks the guardian remotely, parses every Trikey QR (`parseScannedCode`), and keeps a send log that travels in the backup. Chain data comes from the guardian.
 - `apps/guardian/`: the guardian. `src/policy/` is the policy engine (spend checks, daily limit, rule changes with BIP137 approvals, Delay & Notify, wallet rotation with one active wallet plus retired ones, state format version 2 with migration from version 1). Around it: key storage (Argon2id, m=64 MiB, t=3, then XChaCha20-Poly1305), lock/unlock (also from the phone), reset, the nostr RPC server and NIP-17 alert DMs behind one shared inbox, an Electrum client (sweep completeness, broadcast, chain time) and the HTTP API for the web UI. Entry point `src/main.ts`.
 - `apps/guardian-web/`: the guardian's web UI, including the recovery code and the reset. Its API is in `API.md`.
+- Savings (optional, docs/design/savings-and-limit-off.md): `SAVINGS_ACCOUNT` in core; `savings.*` in the protocol; the guardian's watch (`apps/guardian/src/savings.ts`); `TrikeyWallet.startSavings` ... `replaceSavingsKey` in `packages/wallet`; `apps/mobile/app/savings/`.
 - `packages/recovery-key/`: Recovery Key mode (no home server): the printed Recovery Kit, the chain of BIP 68 timelocked refills and its scheduler, the single-key spending balance with CPFP, an Esplora client, and recovery with any two keys.
 - `apps/mobile/`: the React Native app (Expo). Demo, regtest-simulator and real modes; guardian mode runs on `@trikey/wallet` with Ledger, Trezor and QR adapters, secure key storage and a recovery-code backup file. Recovery Key mode runs on `@trikey/recovery-key` (`src/data/rk-service.ts`), on test networks only.
 - `packaging/`: Docker image, Umbrel community app store entry, Start9 package skeleton.

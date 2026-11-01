@@ -17,6 +17,7 @@ export type {
   RelayOption,
   RelaySettings,
   RetiredWalletSummary,
+  SavingsSummary,
   Rules,
   SetupPreflight,
 } from '../../../guardian-web/src/api/types.js';

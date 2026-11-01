@@ -19,7 +19,7 @@ import { isContactLockOn, isLimitOff, type RecoveryRecord } from '../policy/inde
 import { npubEncode } from 'nostr-tools/nip19';
 import { engineEntry, serviceEntry, shortNpub } from './activity.js';
 import { HttpError, type Route, type RouteResult } from './server.js';
-import type { ActivityEntry, GuardianStatus, PairingSession, PublicStatus, RecoveryCode, RecoveryInProgress, RelaySettings, Rules, SetupPreflight } from './types.js';
+import type { ActivityEntry, GuardianStatus, PairingSession, PublicStatus, RecoveryCode, RecoveryInProgress, RelaySettings, Rules, SavingsSummary, SetupPreflight } from './types.js';
 import { sessionCookie } from './sessions.js';
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -45,6 +45,20 @@ function signedIn(g: Guardian, secure: boolean): Record<string, string> {
   return { 'Set-Cookie': sessionCookie(g.sessions.create(g.clock.now()), secure) };
 }
 
+/** The watched Savings wallet for the web UI's card: the engine's record, the last scan, the last movement. */
+export function savingsSummary(g: Guardian): SavingsSummary | undefined {
+  const sv = g.engine.savings();
+  if (!sv) return undefined;
+  const last = g.savingsWatch.last?.walletId === sv.walletId ? g.savingsWatch.last : undefined;
+  const moved = g.engine.activity({ limit: 5000 }).find((e) => e.type === 'savings_moved' && e.walletId === sv.walletId);
+  return {
+    id: sv.walletId,
+    watchedSince: iso(sv.since),
+    ...(last ? { balanceSats: Number(last.confirmedSats + last.unconfirmedSats), unconfirmedSats: Number(last.unconfirmedSats), scannedAt: iso(last.at) } : {}),
+    ...(moved && moved.type === 'savings_moved' ? { lastMoved: { at: iso(moved.at), sats: Number(moved.amountSats), txid: moved.txid } } : {}),
+  };
+}
+
 export async function guardianStatus(g: Guardian): Promise<GuardianStatus> {
   const s = g.engine.status();
   const reg = g.engine.registration();
@@ -66,6 +80,7 @@ export async function guardianStatus(g: Guardian): Promise<GuardianStatus> {
     })),
     ...(reg ? { hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
     dailySpend: { usedSats: Number(s.dailyLimit?.used ?? 0n), limitSats: Number(s.dailyLimit?.limit ?? 0n), ...(s.dailyLimit?.off ? { limitOff: true as const } : {}) },
+    ...(reg && g.engine.savings() ? { savings: savingsSummary(g) } : {}),
     recoveryInProgress: s.recoveryStatus !== 'none',
     ...(reg ? { phoneSpending: s.phoneSpending } : {}),
     network: g.config.network,

@@ -153,6 +153,8 @@ export const SendLogEntry = z.object({
   signedBy: z.enum(['guardian', 'hardware']),
   /** Why it was sent, when it was not an ordinary payment. */
   purpose: z.enum(['payment', 'sweep']).optional(),
+  /** The recipient was this phone's own Savings wallet ("Add to Savings"): counted against the daily limit like any payment. */
+  toSavings: z.literal(true).optional(),
   /** A payment to a silent payment address (`recipient` is the `sp1…` address): the output it made. */
   silentPayment: z
     .object({
@@ -301,6 +303,70 @@ export const ReplaceRecord = z.object({
 });
 export type ReplaceRecord = z.infer<typeof ReplaceRecord>;
 
+/**
+ * A hardware wallet of the optional Savings wallet (docs/design/savings-and-limit-off.md, option K): key 1 (the same
+ * device as Spending's) or the Recovery Key (a second hardware wallet), each with its key at BIP 48 account 1'.
+ */
+export const SavingsDevice = z.object({
+  kind: HardwareRecord.shape.kind,
+  model: z.string().optional(),
+  fingerprint: z.string().regex(/^[0-9a-f]{8}$/),
+  /** Its key in Savings, `m/48'/<coin>'/1'/2'`. */
+  account: KeyOrigin,
+  /** The name Savings is registered under on the device ("Trikey savings"). */
+  policyName: z.string().min(1).max(16),
+  /** Ledger's registration HMAC, when the device returned one. */
+  registrationHmac: z.string().optional(),
+  /** The device showed Savings' first receive address and it matched. */
+  addressVerified: z.boolean().default(false),
+});
+export type SavingsDevice = z.infer<typeof SavingsDevice>;
+
+/** Which two keys signed a Savings spend: never the guardian, never one key alone. */
+export const SavingsSigners = z.enum(['phone+hardware', 'phone+recoveryKey', 'hardware+recoveryKey']);
+export type SavingsSigners = z.infer<typeof SavingsSigners>;
+
+/** A spend from Savings this phone made. */
+export const SavingsSendEntry = z.object({
+  txid: Hex32,
+  /** ms, the phone's clock */
+  at: z.number(),
+  recipient: z.string(),
+  amountSats: z.number(),
+  feeSats: z.number(),
+  label: z.string().max(200).optional(),
+  signedBy: SavingsSigners,
+  /** `to_spending`: back into this phone's own Spending wallet; `key_replacement`: the move to a new Savings wallet. */
+  purpose: z.enum(['payment', 'to_spending', 'key_replacement']).optional(),
+});
+export type SavingsSendEntry = z.infer<typeof SavingsSendEntry>;
+
+/**
+ * The optional Savings wallet: `wsh(sortedmulti(2, phone, hardware, recoveryKey))` at BIP 48 account 1', a second wallet
+ * the phone and the guardian cannot spend together (the guardian holds no key of it). Every key is public here; key 2's
+ * account-1' key derives from the mnemonic, the others live on their devices.
+ */
+export const SavingsRecord = z.object({
+  descriptor: z.string(),
+  walletId: z.string().regex(/^[0-9a-f]{16}$/),
+  /** ms */
+  createdAt: z.number(),
+  /** Key 2's seed at `m/48'/<coin>'/1'/2'`. */
+  phone: KeyOrigin,
+  hardware: SavingsDevice,
+  recoveryKey: SavingsDevice,
+  /** Where to look and receive before the first sync (a restored phone). */
+  nextReceiveIndex: z.number().int().min(0).default(0),
+  nextChangeIndex: z.number().int().min(0).default(0),
+  chain: ChainCache.optional(),
+  /** The guardian watches it (`savings.register` went through), and which guardian. */
+  registration: z.object({ walletId: z.string(), guardian: Hex32, at: z.number() }).optional(),
+  sendLog: z.array(SavingsSendEntry).default([]),
+  /** Savings wallets this one replaced (a lost key): swept into this one, kept for the history. */
+  previous: z.array(z.object({ walletId: z.string(), descriptor: z.string(), retiredAt: z.number(), sweepTxid: Hex32.optional() })).default([]),
+});
+export type SavingsRecord = z.infer<typeof SavingsRecord>;
+
 export const BackupRecord = z.object({
   name: z.string(),
   provider: z.string(),
@@ -374,6 +440,8 @@ export const WalletState = z.object({
   helper: HelperRecord.optional(),
   /** Received silent payments (set up on first use). */
   silentPayments: SilentPaymentsRecord.optional(),
+  /** The optional Savings wallet (absent for everyone who never creates one). */
+  savings: SavingsRecord.optional(),
   /** The guardian said it retired this phone's wallet (`wallet_retired`): it co-signs nothing for it any more. */
   retiredByGuardian: z.object({ walletId: z.string(), reason: z.enum(['retired', 'recovered', 'reset']), successorWalletId: z.string().optional(), at: z.number() }).optional(),
 });

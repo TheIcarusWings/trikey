@@ -45,6 +45,8 @@ export interface WalletDetails {
   /** Master key fingerprints (8 hex characters) of the three keys. */
   fingerprints: { phone: string; hardware: string; guardian: string };
   walletId: string;
+  /** The optional Savings wallet, when there is one: its own descriptor (keys at account 1'). */
+  savings?: { descriptor: string; walletId: string; fingerprints: { phone: string; hardware: string; recoveryKey: string } };
 }
 export type AmountUnit = 'sats' | 'btc';
 export type ThemePreference = 'system' | 'light' | 'dark';
@@ -236,6 +238,12 @@ export type SecurityEvent = { id: string; at: IsoDate } & (
   | { kind: 'delay-changed'; days: RecoveryDelayDays; approvedOn?: 'hardware' | 'phone' }
   | { kind: 'contact-added'; name: string }
   | { kind: 'contact-removed'; name: string }
+  /** Savings was created (its devices registered it, the guardian watches it). */
+  | { kind: 'savings-created' }
+  /** A lost Savings key was replaced: Savings moved to a new Savings wallet. */
+  | { kind: 'savings-key-replaced'; lostKey: 'phone' | 'hardware' | 'recoveryKey' }
+  /** The guardian stopped watching Savings, or now watches another wallet instead (`replaced`), and this phone did not ask. */
+  | { kind: 'savings-unwatched'; replaced: boolean }
 );
 
 export type ActivityItem =
@@ -744,4 +752,69 @@ export interface WalletState {
   silentPayments: SilentPaymentsState;
   /** Guardian mode: whether the alert contacts may lock the guardian. Absent where it does not apply (Recovery Key mode). */
   contactLock?: ContactLockSetting;
+  /** The optional Savings wallet (docs/design/savings-and-limit-off.md). `status: 'available'` for everyone who has none. */
+  savings: SavingsState;
 }
+
+// ---------------------------------------------------------------- Savings (optional)
+
+/**
+ * Which two keys sign a payment out of Savings. Never the guardian (it holds no Savings key), never one key alone: every
+ * way out needs a key that is not online.
+ */
+export type SavingsSigners = 'phone+hardware' | 'phone+recoveryKey' | 'hardware+recoveryKey';
+
+/** A hardware wallet of Savings, for display. */
+export interface SavingsDevice {
+  brand: string;
+  model: string;
+  fingerprint: string;
+}
+
+export interface SavingsActivityItem {
+  id: string;
+  txid: string;
+  /** `to-spending`: moved into this phone's Spending wallet; `key-replacement`: the move to a new Savings after a lost key. */
+  kind: 'received' | 'sent' | 'to-spending' | 'key-replacement';
+  amountSats: Sats;
+  feeSats?: Sats;
+  at: IsoDate;
+  status: 'pending' | 'confirmed';
+  address?: string;
+  signedBy?: SavingsSigners;
+}
+
+export interface SavingsState {
+  /**
+   * `active`: the wallet has Savings. `available`: none yet, and the guardian can watch one (Settings offers it).
+   * `guardian-update`: none, and the guardian cannot watch one yet (it needs updating first). `not-available`: this wallet
+   * cannot have one (Recovery Key mode, a wallet that is not set up, a phone that is recovering).
+   */
+  status: 'active' | 'available' | 'guardian-update' | 'not-available';
+  balanceSats: Sats;
+  unconfirmedSats: Sats;
+  walletId?: string;
+  descriptor?: string;
+  createdAt?: IsoDate;
+  hardware?: SavingsDevice;
+  recoveryKey?: SavingsDevice;
+  /** The guardian watches it: its coins come from there, and it tells you (and your alert contacts) when they move. */
+  watchedByGuardian: boolean;
+  activity: SavingsActivityItem[];
+  /** "Create Savings" in progress: what is done. */
+  creating: null | { phone: boolean; hardware: boolean; recoveryKey?: SavingsDevice };
+}
+
+export interface SavingsQuote {
+  /** The wallet's own handle for this quote. Pass the whole quote back to `savings.send`. */
+  ref?: string;
+  address: string;
+  amountSats: Sats;
+  feeSats: Sats;
+  totalSats: Sats;
+  /** The address is this phone's own Spending wallet. */
+  toSpending: boolean;
+  max?: true;
+}
+
+export type SavingsQuoteOutcome = { ok: true; quote: SavingsQuote } | { ok: false; problem: QuoteProblem; message: string };

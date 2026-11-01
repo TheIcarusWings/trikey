@@ -12,6 +12,7 @@ import {
   useNewWallet,
 } from '@/components/home';
 import { RecoveryKeyNotices, VaultCard } from '@/components/home-rk';
+import { SavingsRow, SavingsSuggestion } from '@/components/savings';
 import { Screen } from '@/components/screen';
 import { useWallet, useWalletService } from '@/data';
 import { IS_IOS, pick } from '@/lib/platform';
@@ -57,13 +58,16 @@ export default function HomeScreen() {
   return (
     <Screen {...screen}>
       {top}
-      <BalanceHeader label="Balance" sats={state.balanceSats} />
+      {/* With Savings, the main balance is Spending's; Savings has its own row below. */}
+      <BalanceHeader label={state.savings.status === 'active' ? 'Spending' : 'Balance'} sats={state.balanceSats} />
       {paused ? <StatusLine tone="warn" text={state.recovery ? 'Phone-only payments paused during recovery' : 'Phone-only payments paused'} /> : <LimitLine newWallet={newWallet} />}
       <SendReceiveButtons newWallet={newWallet} />
+      <SavingsRow />
       <RecoveryBanner />
       <HardwareConfirmCard />
       {down ? <GuardianDownNotice /> : null}
       <SilentPaymentsRow />
+      <SavingsSuggestion />
       <ActivityPreview limit={3} newWallet={newWallet} />
     </Screen>
   );

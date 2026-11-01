@@ -29,6 +29,13 @@ export function getNetwork(name: string): Network {
   return n;
 }
 
+/**
+ * The BIP 48 account of the optional Savings wallet (docs/design/savings-and-limit-off.md, option K): every Savings key
+ * (the phone's, the hardware wallet's and the Recovery Key's) sits at `m/48'/<coin>'/1'/2'`, so Savings has its own keys
+ * and addresses, never Spending's (account 0).
+ */
+export const SAVINGS_ACCOUNT = 1;
+
 /** BIP48 multisig account path for P2WSH (script type 2'). */
 export function bip48Path(network: Network, account = 0): string {
   return `m/48'/${network.coinType}'/${account}'/2'`;

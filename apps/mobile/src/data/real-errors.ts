@@ -210,7 +210,13 @@ export function mapError(e: unknown): WalletServiceError {
       case 'backup_not_found':
         return make('backup_not_found', 'No Trikey backup was found there.');
       case 'backup_invalid':
+        // A backup from a newer app (a version this one does not know): say so, rather than "damaged".
+        if (e.reason === 'too_new') return make('backup_invalid', 'That backup was made by a newer version of Trikey. Update the app, then restore it.');
         return make('backup_invalid', "That isn't a usable Trikey backup (it may be damaged).");
+      case 'savings_exists':
+        return make('wrong_state', 'This wallet already has Savings.');
+      case 'no_savings':
+        return make('wrong_state', e.message);
       case 'backup_wrong_secret':
         return make('backup_wrong_secret', "That didn't unlock the backup. Check the recovery code, or use the passkey you made it with.");
       case 'recovery_code_typo':

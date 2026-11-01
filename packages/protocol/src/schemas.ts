@@ -478,6 +478,11 @@ export const GuardianStatusResult = z
      * sweep of that wallet's coins into the paired wallet.
      */
     watchedWalletId: WalletId.optional(),
+    /**
+     * The optional Savings wallet this guardian watches for the paired phone (`savings.register`; guardians with the
+     * `savings` feature). Watch-only: the guardian holds no Savings key. Absent when there is none.
+     */
+    savingsWalletId: WalletId.optional(),
     /** As `policy.get`'s: weak spots of the paired wallet's policy. Absent when there are none. */
     warnings: z.array(PolicyWarning).max(8).optional(),
     /**
@@ -559,10 +564,12 @@ export const HistoryEntry = z.object({
 
 /**
  * Which wallet `wallet.sync` reads: the paired one (default), the one this guardian only WATCHES
- * because the paired wallet replaced it (`"replaced"`, or that wallet's id), or the phone's single-key
- * coins (`"helper"`: the helper coin's account and the registered silent payment coins).
+ * because the paired wallet replaced it (`"replaced"`, or that wallet's id), the phone's single-key
+ * coins (`"helper"`: the helper coin's account and the registered silent payment coins), or the
+ * watched Savings wallet (`"savings"`, guardians with the `savings` feature; older ones refuse the
+ * value, their schema being strict).
  */
-export const SyncWallet = z.union([z.literal('replaced'), z.literal('helper'), WalletId]);
+export const SyncWallet = z.union([z.literal('replaced'), z.literal('helper'), z.literal('savings'), WalletId]);
 
 /** A single-key output script, lowercase hex: P2TR (`5120…`, a received silent payment) or P2WPKH (`0014…`). */
 export const SingleKeyScript = z.string().regex(/^(?:5120[0-9a-f]{64}|0014[0-9a-f]{40})$/, 'expected a P2TR or P2WPKH script in lowercase hex');
@@ -586,8 +593,9 @@ export const WalletSyncParams = z.strictObject({
    * paired one replaced, for finding stray coins; no such wallet is watched: `1005 WalletNotWatched`.
    * `"helper"` reads the phone's single-key coins registered with `singlekey.register` (the helper
    * account's addresses, scanned like a wallet's, in `utxos`/`history`; registered coins and the silent
-   * payment scanner's matches in `coins`); nothing registered: `1005`. The id of the paired wallet
-   * itself is the same as omitting it.
+   * payment scanner's matches in `coins`); nothing registered: `1005`. `"savings"` (or the Savings
+   * wallet's id) reads the Savings wallet registered with `savings.register`, scanned like a wallet;
+   * none registered: `1005`. The id of the paired wallet itself is the same as omitting it.
    */
   wallet: SyncWallet.optional(),
 });
@@ -630,9 +638,10 @@ export const TxGetResult = z.object({ txHex: RawTxHex });
 export const TxBroadcastParams = z.strictObject({
   /**
    * A fully signed transaction. The guardian relays it only if it spends at least one of the paired
-   * wallet's coins, is a sweep of the watched (replaced) wallet's coins into the paired wallet, or a
+   * wallet's coins, is a sweep of the watched (replaced) wallet's coins into the paired wallet, a
    * sweep of the phone's single-key coins (silent payment matches, registered coins, the helper coin)
-   * into the paired wallet (PROTOCOL.md, "Chain data").
+   * into the paired wallet, or (guardians with `savings`) spends at least one coin of the watched
+   * Savings wallet (PROTOCOL.md, "Chain data").
    */
   txHex: RawTxHex,
 });
@@ -814,6 +823,42 @@ export const RecoveryAccessResult = z.object({
 });
 
 /* -------------------------------------------------------------------------- */
+/* Savings (optional): a second wallet the guardian only watches              */
+/* -------------------------------------------------------------------------- */
+// docs/design/savings-and-limit-off.md, option K: `wsh(sortedmulti(2, phone, hardware, recoveryKey))` at BIP 48
+// account 1'. The guardian holds no Savings key and never co-signs for it; it serves its chain data (`wallet.sync`
+// with `wallet: "savings"`), relays its spends (`tx.broadcast`) and alerts when a Savings coin moves (`savings_moved`).
+// Paired phone only, no approval: watching adds chain data and alerts, nothing else (it changes no rule and nothing
+// the daily limit counts). Only guardians that list `savings` in `guardian.status.features` know these methods.
+
+/**
+ * Watch this Savings wallet for the paired phone. Replaces a Savings wallet registered before (a new one after a key
+ * was replaced). Refused (`-32602`) when the descriptor is not a `wsh(sortedmulti(2,...))` of three keys on the
+ * guardian's network, is the paired wallet or a wallet the guardian guards or guarded (the same key set), the replaced
+ * wallet it watches, or holds the guardian's own key 3: a wallet the guardian can sign for is never "Savings".
+ */
+export const SavingsRegisterParams = z.strictObject({ descriptor: Descriptor });
+export const SavingsRegisterResult = z.object({
+  /** `MultisigWallet.fingerprint()` of the descriptor. */
+  walletId: WalletId,
+  /** When the guardian started watching it (unix seconds); kept when the same wallet is registered again. */
+  since: UnixSeconds,
+});
+
+/** Stop watching the Savings wallet. Nothing registered: `unregistered: false`. */
+export const SavingsUnregisterParams = z.strictObject({});
+export const SavingsUnregisterResult = z.object({ unregistered: z.boolean(), walletId: WalletId.optional() });
+
+/**
+ * The Savings wallet the guardian watches, if any, with its descriptor: how a new phone without a backup finds its
+ * Savings after a recovery (the record moves to a wallet the guardian adopts). Paired phone only.
+ */
+export const SavingsGetParams = z.strictObject({});
+export const SavingsGetResult = z.object({
+  savings: z.object({ walletId: WalletId, descriptor: Descriptor, since: UnixSeconds }).nullable(),
+});
+
+/* -------------------------------------------------------------------------- */
 /* Relay changes                                                              */
 /* -------------------------------------------------------------------------- */
 
@@ -861,6 +906,9 @@ export const methods = {
   'sp.unregister': { params: SpUnregisterParams, result: SpUnregisterResult },
   'sp.scan': { params: SpScanParams, result: SpScanResult },
   'relays.ack': { params: RelaysAckParams, result: RelaysAckResult },
+  'savings.register': { params: SavingsRegisterParams, result: SavingsRegisterResult },
+  'savings.unregister': { params: SavingsUnregisterParams, result: SavingsUnregisterResult },
+  'savings.get': { params: SavingsGetParams, result: SavingsGetResult },
 } as const;
 
 export type MethodName = keyof typeof methods;
@@ -902,8 +950,8 @@ const recoveryAlert = {
 /**
  * Alert types mirror the engine's `AlertKind` (`recovery_started`, `recovery_reminder`, `recovery_ready`,
  * `recovery_cancelled`, `recovery_completed`), plus what the service raises itself: `guardian_locked`,
- * `wallet_adopted`, `wallet_retired`, `sp_received` and `relays_changed`; and `limit_off` / `limit_on`, which the
- * engine records and the service delivers like the recovery alerts.
+ * `wallet_adopted`, `wallet_retired`, `sp_received` and `relays_changed`; and `limit_off` / `limit_on` and
+ * `savings_moved`, which the engine records and the service delivers like the recovery alerts.
  */
 export const Alert = z.discriminatedUnion('type', [
   stamped({ ...alertBase, type: z.literal('recovery_started'), ...recoveryAlert }),
@@ -1006,6 +1054,31 @@ export const Alert = z.discriminatedUnion('type', [
     limitSats: Sats,
     reason: z.enum(['phone', 'hardware', 'recovery']),
   }),
+  stamped({
+    ...alertBase,
+    /**
+     * A coin of the watched Savings wallet was spent (seen in the mempool or a block): a tripwire, sent once per
+     * transaction to the paired phone, and to the alert contacts as a NIP-17 DM. `amountSats`: what left Savings,
+     * fee included (only the fee for a move between Savings addresses). The guardian cannot tell who signed it. Phones before
+     * this alert drop it (an unknown `type`).
+     */
+    type: z.literal('savings_moved'),
+    walletId: WalletId,
+    txid: Hex32,
+    amountSats: Sats,
+  }),
+  stamped({
+    ...alertBase,
+    /**
+     * The guardian stopped watching the Savings wallet `walletId` (`savings.unregister`), or now watches `replacedBy`
+     * instead (`savings.register` with another descriptor): its tripwire no longer covers `walletId`. Both need only the
+     * paired phone, so they are announced like a Savings move: to the paired phone, and to the alert contacts as a NIP-17
+     * DM. Phones before this alert drop it (an unknown `type`).
+     */
+    type: z.literal('savings_unwatched'),
+    walletId: WalletId,
+    replacedBy: WalletId.optional(),
+  }),
 ]);
 
 export type AlertType = z.infer<typeof Alert>['type'];
@@ -1046,6 +1119,9 @@ export const RequestSchema = z.discriminatedUnion('method', [
   requestOf('sp.unregister', SpUnregisterParams),
   requestOf('sp.scan', SpScanParams),
   requestOf('relays.ack', RelaysAckParams),
+  requestOf('savings.register', SavingsRegisterParams),
+  requestOf('savings.unregister', SavingsUnregisterParams),
+  requestOf('savings.get', SavingsGetParams),
 ]);
 export type Request = z.infer<typeof RequestSchema>;
 

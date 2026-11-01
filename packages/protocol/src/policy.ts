@@ -21,8 +21,11 @@ export function isLimitOff(dailyLimitSats: number): boolean {
  * paired phone and the alert contacts when the limit is turned off, and turns it back on at its last value after a
  * recovery. `contact_lock`: it knows the policy's `contactLock` member (the alert contacts may lock it with a `LOCK`
  * DM), builds the version-3 policy text whenever that is or was on, and reports who locked it (`guardian.status.lock`).
+ * `savings`: it watches the phone's optional Savings wallet (`savings.register`, `savings.unregister`, `savings.get`,
+ * `wallet.sync` with `wallet: "savings"`, its spends through `tx.broadcast`) and alerts when a Savings coin moves
+ * (`savings_moved`). It holds no Savings key: the phone creates Savings only with such a guardian, for its chain data.
  */
-export const GUARDIAN_FEATURES = { limitOff: 'limit_off', contactLock: 'contact_lock' } as const;
+export const GUARDIAN_FEATURES = { limitOff: 'limit_off', contactLock: 'contact_lock', savings: 'savings' } as const;
 
 /** True when the alert contacts may lock the guardian (`Policy.contactLock`). */
 export function isContactLockOn(policy: Pick<Policy, 'contactLock'>): boolean {

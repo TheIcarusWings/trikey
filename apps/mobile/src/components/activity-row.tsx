@@ -179,6 +179,30 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
         icon: Shield,
         iconTone: 'warn',
       };
+    case 'savings-created':
+      return {
+        title: 'Savings created',
+        subtitle: `${when} · your phone and guardian can't move it`,
+        subtitleTone: 'muted',
+        icon: Shield,
+        iconTone: 'good',
+      };
+    case 'savings-unwatched':
+      return {
+        title: event.replaced ? 'Guardian now watches another Savings wallet' : 'Guardian stopped watching Savings',
+        subtitle: `${when} · it no longer says when your Savings moves. Your contacts were told`,
+        subtitleTone: 'warn',
+        icon: Shield,
+        iconTone: 'warn',
+      };
+    case 'savings-key-replaced':
+      return {
+        title: `Savings moved to a new ${event.lostKey === 'recoveryKey' ? 'Recovery Key' : event.lostKey === 'hardware' ? ctx.hardwareBrand : 'phone key'}`,
+        subtitle: `${when} · the lost key can no longer move it`,
+        subtitleTone: 'muted',
+        icon: Shield,
+        iconTone: 'fill',
+      };
     case 'limit-on':
       return {
         title: `Daily limit back on at ${formatSats(event.limitSats)}`,

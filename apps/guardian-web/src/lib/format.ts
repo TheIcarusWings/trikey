@@ -26,6 +26,25 @@ export function dailySpendSummary(spend: { usedSats: number; limitSats: number; 
   return { text: `Guarding ${wallet} wallet · ${formatSats(spend.usedSats)} of ${formatSats(spend.limitSats)} sats sent from the phone today`, pct };
 }
 
+/**
+ * The watched Savings wallet's card (Home): this guardian holds no Savings key (docs/design/savings-and-limit-off.md,
+ * option K), so the card says what it does and what it cannot do.
+ */
+export const SAVINGS_NOTE =
+  "Your guardian can't sign for Savings: moving it needs the owner's hardware wallet or Recovery Key. It only watches Savings, and tells the phone and the alert contacts when it moves.";
+
+/** "0.48000000 BTC" for the Savings card (the balance of a whole wallet reads better in BTC). */
+export function formatBtc(sats: number): string {
+  return `${(sats / 100_000_000).toFixed(8)} BTC`;
+}
+
+/** The Savings card's balance line: from the guardian's last scan, or that it has not scanned yet. */
+export function savingsBalanceText(savings: { balanceSats?: number; unconfirmedSats?: number }): string {
+  if (savings.balanceSats === undefined) return 'Balance after the next scan';
+  const pending = savings.unconfirmedSats ? ` (${formatSats(savings.unconfirmedSats)} sats unconfirmed)` : '';
+  return `${formatBtc(savings.balanceSats)}${pending}`;
+}
+
 /** What having no daily limit means, in the guardian's words (Home and Rules). */
 export const LIMIT_OFF_TEXT =
   'No daily limit: the phone and this guardian together can send everything in the wallet at once. Turn it back on in the Trikey app; that works from the phone alone.';

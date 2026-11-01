@@ -155,6 +155,29 @@ export const LOCK_HINT = 'If something looks wrong and you cannot reach the owne
 export function noticeToWire(n: LimitNotice): Alert | undefined {
   const stamp = stampOf(n.at);
   if (n.kind === 'contact_lock_on' || n.kind === 'contact_lock_off') return undefined;
+  if (n.kind === 'savings_unwatched')
+    return n.savingsWalletId
+      ? {
+          type: 'savings_unwatched',
+          ...stamp,
+          walletId: n.savingsWalletId,
+          ...(n.replacedBy ? { replacedBy: n.replacedBy } : {}),
+          message: n.replacedBy
+            ? `Your guardian now watches another Savings wallet (${n.replacedBy.slice(0, 8)}) instead of ${n.savingsWalletId.slice(0, 8)}: it no longer says when that one moves. If you did not replace a Savings key, act now.`
+            : `Your guardian no longer watches Savings (${n.savingsWalletId.slice(0, 8)}): it will not say when Savings moves. If you did not do this, act now.`,
+        }
+      : undefined;
+  if (n.kind === 'savings_moved')
+    return n.savingsWalletId && n.txid
+      ? {
+          type: 'savings_moved',
+          ...stamp,
+          walletId: n.savingsWalletId,
+          txid: n.txid,
+          amountSats: Number(n.amountSats ?? 0n),
+          message: `${satsText(n.amountSats ?? 0n)} moved out of Savings. That needs your hardware wallet or your Recovery Key with another key: if you did not do this, act now.`,
+        }
+      : undefined;
   if (n.kind === 'contact_lock')
     return {
       type: 'guardian_locked',
@@ -189,6 +212,29 @@ export function noticeToWire(n: LimitNotice): Alert | undefined {
  * contacts). `canLock`: the rules let the contacts lock the guardian now, so a `limit_off` DM says how.
  */
 export function noticeText(n: LimitNotice, canLock = false): string {
+  if (n.kind === 'savings_unwatched')
+    return [
+      n.replacedBy
+        ? 'Trikey alert: the guardian of the bitcoin wallet you help protect now watches a different Savings wallet.'
+        : 'Trikey alert: the guardian of the bitcoin wallet you help protect stopped watching its Savings wallet.',
+      '',
+      n.replacedBy
+        ? `What happened: on ${formatWhen(n.at)}, the owner's phone told the guardian to watch Savings wallet ${(n.replacedBy ?? '').slice(0, 8)} instead of ${(n.savingsWalletId ?? '').slice(0, 8)}. The guardian will no longer say when the old one moves.`
+        : `What happened: on ${formatWhen(n.at)}, the owner's phone told the guardian to stop watching Savings wallet ${(n.savingsWalletId ?? '').slice(0, 8)}. The guardian will no longer say when Savings moves.`,
+      '',
+      n.replacedBy
+        ? 'This is expected when the owner replaced a lost Savings key. If not, or you are not sure, call them now: someone with their phone may be about to move Savings unseen.'
+        : 'If the owner did not do this, or you are not sure, call them now: someone with their phone may be about to move Savings unseen.',
+    ].join('\n');
+  if (n.kind === 'savings_moved')
+    return [
+      "Trikey alert: money moved out of the Savings wallet of the bitcoin wallet you help protect.",
+      '',
+      `What happened: on ${formatWhen(n.at)}, ${formatBtc(n.amountSats ?? 0n)} left Savings in transaction ${n.txid ?? '(unknown)'}.`,
+      "The guardian cannot sign for Savings: this took two of the owner's other keys (their phone with their hardware wallet, or one of them with their Recovery Key).",
+      '',
+      'If the owner moved it, nothing else is needed. If not, or you are not sure, call them now: they may need to move what is left with their hardware wallet and Recovery Key.',
+    ].join('\n');
   if (n.kind === 'contact_lock_on')
     return [
       'Trikey: the owner of the bitcoin wallet you help protect now lets you lock their Trikey Guardian.',

@@ -30,6 +30,8 @@ import {
   type KeyValueStore,
   type PasskeyPrf,
   type RecoveryRecord,
+  type SavingsQuote as WalletSavingsQuote,
+  type SavingsSnapshot,
   type SecureKeyStore,
   type ReplacePlan,
   type ReplaceStep,
@@ -50,6 +52,8 @@ import { emptyRecoveryKeyState } from './rk-empty';
 import type { ReceiveAddress, WalletService } from './service';
 import type { SilentPaymentActions } from './sp-actions';
 import { emptySilentPayments } from './sp-empty';
+import type { SavingsActions } from './savings-actions';
+import { emptySavings } from './savings-empty';
 import {
   GUARDIAN_NETWORKS,
   type WalletDetails,
@@ -81,6 +85,10 @@ import {
   type ScannedCode,
   type SendQuote,
   type SendRequest,
+  type SavingsActivityItem,
+  type SavingsDevice,
+  type SavingsQuote,
+  type SavingsState,
   type SilentPaymentsState,
   type ThemePreference,
   type Transaction,
@@ -148,6 +156,11 @@ export interface RealServiceDeps {
   info?: () => string[];
   /** More Settings > Developer tools (the simulator's device swap). */
   devTools?: Pick<NonNullable<WalletService['dev']>, 'useNewSimulatedDevice'>;
+  /**
+   * The simulator's second device (what "a second hardware wallet" connects to), as Recovery Key mode's: Savings asks for
+   * its Recovery Key with this kind when the person picks the simulated device.
+   */
+  secondDeviceKind?: WalletHardwareKind;
 }
 
 export interface RealWalletService extends WalletService {
@@ -165,6 +178,25 @@ const networkPrefKey = (mode: string) => `trikey.app.network.${mode}`;
 const walletKey = (mode: string, network: NetworkName) => `trikey.wallet.${mode}.${network}`;
 
 const PLACEHOLDER_HARDWARE: HardwareWallet = { kind: 'ledger', brand: 'hardware wallet', model: 'Hardware wallet' };
+
+/** A hardware wallet's brand and model for display, from the wallet's record of it. */
+function deviceNames(kind: WalletHardwareKind, model: string | undefined): { brand: string; model: string } {
+  const m = model ?? '';
+  switch (kind) {
+    case 'ledger':
+      return { brand: 'Ledger', model: m ? `Ledger ${m}` : 'Ledger' };
+    case 'trezor':
+      return { brand: 'Trezor', model: m ? `Trezor ${m}` : 'Trezor' };
+    case 'bitbox02':
+      return { brand: 'BitBox02', model: 'BitBox02' };
+    case 'coldcard':
+      return { brand: 'Coldcard', model: m || 'Coldcard' };
+    case 'jade':
+      return { brand: 'Jade', model: m || 'Jade' };
+    default:
+      return { brand: 'signing device', model: m || 'Signing device' };
+  }
+}
 
 const toWalletKind = (kind: HardwareKind): WalletHardwareKind | undefined => (kind === 'simulated' ? undefined : kind);
 
@@ -272,6 +304,9 @@ class Service implements RealWalletService {
   private mainnetRiskAccepted = false;
   /** The hardware providers for the network `setNetwork` picked last are ready (Ledger's app, Trezor's coin follow it). */
   private networkReady: Promise<void> = Promise.resolve();
+  /** "Create Savings" in progress, as the screens show it. */
+  private savingsCreating: SavingsState['creating'] = null;
+  private readonly savingsQuotes = new Map<string, WalletSavingsQuote>();
 
   constructor(private readonly deps: RealServiceDeps) {
     this.clock = deps.clock ?? { now: () => Date.now() };
@@ -596,8 +631,51 @@ class Service implements RealWalletService {
           ? { lostKey: s.recovery.recovery.survivingRole === 'app' ? 'hardware' : 'phone', movedSats: s.recovery.recovery.amountSats }
           : null,
       silentPayments: this.silentView(),
+      savings: this.savingsView(),
       // Offered only where the guardian says it can (`contact_lock`); off for everyone until they turn it on.
       ...(this.w && s?.stage === 'paired' ? { contactLock: { on: this.w.contactLockOn, supported: this.w.contactLockSupported } } : {}),
+    };
+  }
+
+  /** The Savings part of the state: whether it can be had, and, once it exists, its balance, devices and activity. */
+  private savingsView(): SavingsState {
+    const w = this.w;
+    const s = w?.state;
+    if (!w || s?.stage !== 'paired' || w.recoveredElsewhere) return emptySavings('not-available');
+    const snap = w.savingsSnapshot();
+    if (!snap) {
+      // Not known yet (no answer from the guardian so far): offered; creating it says so if the guardian cannot.
+      const known = s.guardianStatus?.features !== undefined || !!s.guardianStatus;
+      const status = !known || w.savingsSupported ? 'available' : 'guardian-update';
+      return { ...emptySavings(status), creating: this.savingsCreating };
+    }
+    const dev = (d: SavingsSnapshot['hardware']): SavingsDevice => ({ ...deviceNames(d.kind, d.model), fingerprint: d.fingerprint });
+    return {
+      status: 'active',
+      balanceSats: snap.balance.totalSats,
+      unconfirmedSats: snap.balance.unconfirmedSats,
+      walletId: snap.walletId,
+      descriptor: snap.descriptor,
+      createdAt: this.iso(snap.createdAt),
+      hardware: this.mode === 'simulator' ? { brand: 'simulated device', model: 'Simulated device', fingerprint: snap.hardware.fingerprint } : dev(snap.hardware),
+      recoveryKey: this.mode === 'simulator' ? { brand: 'simulated device', model: 'Second simulated device', fingerprint: snap.recoveryKey.fingerprint } : dev(snap.recoveryKey),
+      watchedByGuardian: snap.watchedByGuardian,
+      activity: snap.history.map((h): SavingsActivityItem => {
+        const kind: SavingsActivityItem['kind'] = h.purpose === 'to_spending' ? 'to-spending' : h.purpose === 'key_replacement' ? 'key-replacement' : h.netSats > 0 ? 'received' : 'sent';
+        const at = h.time ? h.time * 1000 : (h.sentAt ?? this.clock.now());
+        return {
+          id: h.txid,
+          txid: h.txid,
+          kind,
+          amountSats: kind === 'received' ? h.netSats : (h.amountSats ?? Math.max(0, -h.netSats - (h.feeSats ?? 0))),
+          ...(h.feeSats !== undefined && kind !== 'received' ? { feeSats: h.feeSats } : {}),
+          at: this.iso(at),
+          status: h.confirmations > 0 ? 'confirmed' : 'pending',
+          ...(h.recipient ? { address: h.recipient } : {}),
+          ...(h.signedBy ? { signedBy: h.signedBy } : {}),
+        };
+      }),
+      creating: null,
     };
   }
 
@@ -725,6 +803,11 @@ class Service implements RealWalletService {
           void this.saveLogNow();
         } else if (a.type === 'wallet_retired') {
           addEvent(this.log, { kind: 'wallet-retired', reason: a.reason, at: e.atMs });
+          void this.saveLogNow();
+        } else if (a.type === 'savings_unwatched' && a.replacedBy !== this.w?.state.savings?.walletId) {
+          // Not this phone's own key replacement (that leaves Savings on `replacedBy`): the tripwire was turned off or
+          // pointed elsewhere. The wallet registers Savings again at the next sync.
+          addEvent(this.log, { kind: 'savings-unwatched', replaced: !!a.replacedBy, at: e.atMs });
           void this.saveLogNow();
         } else if (a.type === 'limit_on' && a.reason === 'recovery') {
           // The guardian turned the limit back on for the recovered wallet (this phone logs its own changes itself).
@@ -1017,6 +1100,15 @@ class Service implements RealWalletService {
       network: this.network,
       fingerprints: { phone: keys.app.fingerprint, hardware: keys.hardware.fingerprint, guardian: keys.cosigner.fingerprint },
       walletId: rec.walletId,
+      ...(w.state.savings
+        ? {
+            savings: {
+              descriptor: w.state.savings.descriptor,
+              walletId: w.state.savings.walletId,
+              fingerprints: { phone: w.state.savings.phone.fingerprint, hardware: w.state.savings.hardware.fingerprint, recoveryKey: w.state.savings.recoveryKey.fingerprint },
+            },
+          }
+        : {}),
     };
   }
 
@@ -1336,6 +1428,151 @@ class Service implements RealWalletService {
           }
         }),
       ),
+  };
+
+  // ===========================================================================
+  // Savings (optional; docs/design/savings-and-limit-off.md)
+
+  /** The wallet's kind for a device the person picked; the simulator's second device for "simulated". */
+  private secondKind(kind: HardwareKind): WalletHardwareKind | undefined {
+    return kind === 'simulated' ? (this.deps.secondDeviceKind ?? 'coldcard') : toWalletKind(kind);
+  }
+
+  readonly savings: SavingsActions = {
+    start: () =>
+      this.exclusive(() =>
+        this.guarded(async () => {
+          const w = this.requireWallet();
+          await w.startSavings();
+          this.savingsCreating = { phone: true, hardware: false };
+          this.refresh();
+        }),
+      ),
+    connectHardware: () =>
+      this.exclusive(() =>
+        this.guarded(async () => {
+          const w = this.requireWallet();
+          this.setProgress(`Connecting to your ${this.hardwareView().brand}`);
+          try {
+            await w.savingsConnectHardware();
+          } finally {
+            this.setProgress(null);
+          }
+          this.savingsCreating = { ...(this.savingsCreating ?? { phone: true }), hardware: true };
+          this.refresh();
+        }),
+      ),
+    connectRecoveryKey: (kind) =>
+      this.exclusive(() =>
+        this.guarded(async () => {
+          const w = this.requireWallet();
+          this.setProgress('Connecting to your Recovery Key');
+          let draft;
+          try {
+            draft = await w.savingsConnectRecoveryKey({ kind: this.secondKind(kind) });
+          } finally {
+            this.setProgress(null);
+          }
+          const rk = draft.recoveryKey!;
+          const device: SavingsDevice =
+            this.mode === 'simulator' ? { brand: 'simulated device', model: 'Second simulated device', fingerprint: rk.fingerprint } : { ...deviceNames(rk.kind, rk.model), fingerprint: rk.fingerprint };
+          this.savingsCreating = { phone: true, hardware: true, recoveryKey: device };
+          this.refresh();
+          return device;
+        }),
+      ),
+    finish: () =>
+      this.exclusive(() =>
+        this.guarded(async () => {
+          const w = this.requireWallet();
+          this.setProgress(`Registering Savings on your ${this.hardwareView().brand}`);
+          try {
+            const r = await w.finishSavings();
+            this.savingsCreating = null;
+            addEvent(this.log, { kind: 'savings-created', at: this.clock.now() });
+            await this.saveLogNow();
+            void w.syncSavings().then(() => this.refresh(), () => undefined);
+            return { descriptor: r.descriptor, firstAddress: r.firstAddress, watchedByGuardian: r.watchedByGuardian };
+          } finally {
+            this.setProgress(null);
+          }
+        }),
+      ),
+    cancelCreate: () => {
+      this.w?.abandonSavings();
+      this.savingsCreating = null;
+      this.refresh();
+    },
+    receiveAddress: (opts = {}) => {
+      const run = () =>
+        this.guarded(async () => {
+          const r = await this.requireWallet().savingsReceiveAddress(opts);
+          return { address: r.address, verifiedOnDevice: r.verifiedOnDevice };
+        });
+      return opts.verifyOnDevice ? this.exclusive(run) : run();
+    },
+    quote: ({ address, amountSats, max }) => {
+      const w = this.w;
+      if (!w?.state.savings) return { ok: false, problem: 'not_ready', message: 'Set up Savings first.' };
+      try {
+        const q = max ? w.quoteSavingsSendMax({ address: address.trim() }) : w.quoteSavingsSpend({ address: address.trim(), amountSats });
+        const ref = `s${++this.quoteCounter}`;
+        this.savingsQuotes.set(ref, q);
+        if (this.savingsQuotes.size > 20) this.savingsQuotes.delete(this.savingsQuotes.keys().next().value!);
+        const quote: SavingsQuote = {
+          ref,
+          address: q.request.address,
+          amountSats: q.request.amountSats,
+          feeSats: q.feeSats,
+          totalSats: q.totalSats,
+          toSpending: q.toSpending,
+          ...(q.sendMax ? { max: true as const } : {}),
+        };
+        return { ok: true, quote };
+      } catch (e) {
+        if (e instanceof WalletError) return { ok: false, ...describeProblem(e) };
+        throw e;
+      }
+    },
+    send: (quote, signers) =>
+      this.exclusive(() =>
+        this.guarded(async () => {
+          const w = this.requireWallet();
+          const q = quote.ref ? this.savingsQuotes.get(quote.ref) : undefined;
+          if (!q) throw new WalletServiceError('quote_stale', 'This payment needs a fresh quote. Go back and check it again.');
+          const res = await w.sendFromSavings(q, { signers });
+          if (!res.ok) {
+            if (res.signedTx) throw refusalToError(res.refusal.kind === 'broadcast_rejected' ? res.refusal : { kind: 'broadcast_rejected', reason: res.refusal.message, message: res.refusal.message });
+            throw refusalToError(res.refusal);
+          }
+          this.refresh();
+          return { txid: res.txid, amountSats: res.amountSats, feeSats: res.feeSats };
+        }),
+      ),
+    replaceKey: (lost, opts = {}) =>
+      this.exclusive(() =>
+        this.guarded(async () => {
+          const w = this.requireWallet();
+          this.setProgress('Moving Savings to a new Savings wallet');
+          try {
+            const r = await w.replaceSavingsKey({
+              lost,
+              ...(opts.recoveryKeyKind ? { recoveryKeyKind: this.secondKind(opts.recoveryKeyKind) } : {}),
+              ...(opts.descriptor ? { descriptor: opts.descriptor.trim() } : {}),
+            });
+            addEvent(this.log, { kind: 'savings-key-replaced', lostKey: lost, at: this.clock.now() });
+            await this.saveLogNow();
+            return { movedSats: r.movedSats, feeSats: r.feeSats };
+          } finally {
+            this.setProgress(null);
+          }
+        }),
+      ),
+    findOnGuardian: () =>
+      this.guarded(async () => {
+        const found = await this.requireWallet().findSavingsOnGuardian();
+        return found ? { descriptor: found.descriptor } : null;
+      }),
   };
 
   // ===========================================================================

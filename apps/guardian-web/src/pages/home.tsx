@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, Clock, TriangleAlert } from 'lucide-react';
+import { Check, Clock, TriangleAlert, Vault } from 'lucide-react';
 import { api, type GuardianStatus } from '@/api';
 import { ActivityRow } from '@/components/activity-row';
 import { useGuardian } from '@/components/guardian-provider';
@@ -8,7 +8,7 @@ import { PageHeader } from '@/components/page-header';
 import { ErrorState, PageSkeleton } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { useApi, usePageTitle } from '@/hooks/use-api';
-import { LIMIT_OFF_TEXT, dailySpendSummary } from '@/lib/format';
+import { LIMIT_OFF_TEXT, SAVINGS_NOTE, dailySpendSummary, formatSats, formatShortWhen, savingsBalanceText } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 interface Issue {
@@ -159,6 +159,30 @@ function StatusCard({ status }: { status: GuardianStatus }) {
   );
 }
 
+/**
+ * "Savings (watched)": the phone's optional Savings wallet, which this guardian only watches (it holds no Savings key).
+ * Its balance from the last scan, the last time it moved, and what the guardian can and cannot do for it.
+ */
+function SavingsCard({ savings }: { savings: NonNullable<GuardianStatus['savings']> }) {
+  return (
+    <section aria-labelledby="savings-heading" className="flex flex-col gap-2.5 rounded-[14px] border border-border px-5 py-4 sm:px-6">
+      <div className="flex items-center gap-3">
+        <Vault className="size-5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+        <h2 id="savings-heading" className="m-0 text-base leading-[22px] font-semibold">
+          Savings (watched)
+        </h2>
+        <span className="ml-auto text-sm tabular-nums">{savingsBalanceText(savings)}</span>
+      </div>
+      <p className="m-0 text-sm leading-5 text-muted-foreground">{SAVINGS_NOTE}</p>
+      <p className="m-0 text-sm leading-5">
+        {savings.lastMoved
+          ? `Last moved ${formatShortWhen(savings.lastMoved.at)}: ${formatSats(savings.lastMoved.sats)} sats left Savings.`
+          : 'Nothing has moved out of Savings since this guardian started watching it.'}
+      </p>
+    </section>
+  );
+}
+
 export function HomePage() {
   usePageTitle('Home');
   const { status, error, loading, refresh } = useGuardian();
@@ -172,6 +196,8 @@ export function HomePage() {
       <PageHeader title="Home" pill />
 
       <StatusCard status={status} />
+
+      {status.savings ? <SavingsCard savings={status.savings} /> : null}
 
       <section aria-labelledby="recent-heading" className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
