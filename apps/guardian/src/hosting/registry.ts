@@ -23,6 +23,9 @@ import {
   type SlotRecord,
 } from './types.js';
 
+/** After an invite is used or runs out, strangers' requests for it still get an answer this long. */
+export const INVITE_ANSWER_WINDOW_MS = 10 * 60_000;
+
 const digest = (s: string) => createHash('sha256').update(s, 'utf8').digest();
 
 export type InviteCheck =
@@ -71,9 +74,14 @@ export class HostingRegistry {
     return this.file.slots.filter((s) => s.state === 'active' || s.state === 'leaving');
   }
 
-  /** Whether strangers' `hosted.prepare` / `hosted.pair` deserve an answer: some invite can still be accepted. */
+  /**
+   * Whether strangers' `hosted.prepare` / `hosted.pair` deserve an answer: some invite can still be accepted, or one
+   * was used or ran out less than `INVITE_ANSWER_WINDOW_MS` ago (so a second phone hears "already used" rather than
+   * nothing, as for the host's pairing codes). Otherwise they are dropped like any stranger's request.
+   */
   answering(now: number): boolean {
-    return this.pending(now).length > 0;
+    if (this.pending(now).length > 0) return true;
+    return this.file.slots.some((s) => s.invite && now < Math.max(s.invite.expiresAt <= now ? s.invite.expiresAt : 0, s.acceptedAt ?? 0) + INVITE_ANSWER_WINDOW_MS);
   }
 
   /** A new invite: a fresh slot id and a 32-byte secret (returned once, stored as its hash). */
@@ -131,9 +139,9 @@ export class HostingRegistry {
   }
 
   /**
-   * Checks an invite secret (constant time) for `sender`, without using it up. A right secret binds an unbound invite to
-   * `sender`; a right secret from another sender than the bound one, or a wrong secret close to... nothing: a wrong
-   * secret matches no invite, so it cannot be counted against one (it is only rate limited per sender upstream).
+   * Checks an invite secret (constant time against every stored hash) for `sender`, without using it up or binding it
+   * (`bind` does). A wrong secret matches no invite, so it cannot be counted against one; strangers' refused requests
+   * are bounded upstream (the answer window and the relays' own limits).
    */
   check(secret: string, sender: string, now: number): InviteCheck {
     const want = digest(String(secret));
