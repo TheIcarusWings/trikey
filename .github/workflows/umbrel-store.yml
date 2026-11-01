@@ -33,7 +33,7 @@ jobs:
             echo "::notice title=Umbrel store not updated::The UMBREL_STORE_TOKEN secret is not set, so ${GITHUB_REF_NAME} was not copied to ${STORE_REPO}. See packaging/README.md."
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         if: env.HAS_TOKEN == 'true'
 
       - name: Check that the app matches the tag
@@ -48,7 +48,7 @@ jobs:
 
       - name: Log in to GHCR
         if: env.HAS_TOKEN == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -74,7 +74,7 @@ jobs:
 
       - name: Check out the store repository
         if: env.HAS_TOKEN == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           repository: ${{ env.STORE_REPO }}
           token: ${{ secrets.UMBREL_STORE_TOKEN }}
