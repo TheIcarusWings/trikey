@@ -176,7 +176,9 @@ jobs:
                 || { echo "::error::signing: release, but packaging/android/release-cert.sha256 is missing"; exit 1; }
               base64 -d <<<"${RELEASE_KEYSTORE}" > "${keystore}" \
                 || { echo "::error::ANDROID_RELEASE_KEYSTORE is not valid base64"; exit 1; }
-              KS_PASS="${RELEASE_PASS}"
+              # A secret set from a pipe (`security find-generic-password -w | gh secret set ...`) can keep the
+              # line break the command printed at the end: it is not part of the password.
+              KS_PASS="${RELEASE_PASS%%[$'\r\n']*}"
               alias="${RELEASE_ALIAS:-trikey}"
               ;;
             one-off)
