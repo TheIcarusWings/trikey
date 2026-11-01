@@ -511,11 +511,16 @@ export function buildHandlers(g: Guardian): Handlers {
 
     // -- chain data: no key 3 needed, so these work while locked ----------------
 
-    'wallet.sync': (params) =>
+    'wallet.sync': (params, ctx) =>
       chainCall(g, 'wallet.sync', async () => {
         if (params.wallet === 'helper') return helperSync(params.historyLimit);
         const sv = g.engine.savings();
-        if (params.wallet === 'savings' || (sv && params.wallet === sv.walletId)) return savingsSync(params.historyLimit);
+        if (params.wallet === 'savings' || (sv && params.wallet === sv.walletId)) {
+          // Savings is the paired phone's: a phone with recovery access (whoever holds the hardware wallet) reads the
+          // wallet it may recover, not Savings.
+          if (ctx.sender !== g.engine.registration()?.appNostrPubkey) throw new RpcError(ErrorCode.WalletNotWatched, 'Only the paired phone reads its Savings wallet.');
+          return savingsSync(params.historyLimit);
+        }
         const { wallet, walletId } = syncTarget(g, params.wallet);
         // The paired wallet's scan reaches its high-water marks, and raises them to what it finds.
         const paired = walletId === g.engine.registration()?.walletId;
