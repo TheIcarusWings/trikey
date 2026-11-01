@@ -253,8 +253,8 @@ jobs:
         run: |
           if [ "${SIGNING}" = release ]; then
             signing_note="**Signed with the Trikey release key** (certificate SHA-256 \`${SIGNER}\`, also in
-          packaging/android/release-cert.sha256). Every release from 0.1.6-alpha on has this signature, so it installs over
-          the previous one and the wallet on the phone stays. Builds up to 0.1.5-alpha had one-off keys: moving from one of
+          packaging/android/release-cert.sha256). Every release from 0.1.7-alpha on has this signature, so it installs over
+          the previous one and the wallet on the phone stays. Builds up to 0.1.6-alpha had one-off keys: moving from one of
           those needs a last uninstall, which deletes the wallet on that phone, so make a backup (recovery code and backup
           file) first. To get updates without downloading by hand, see docs/android-signing.md (Obtainium)."
           else
