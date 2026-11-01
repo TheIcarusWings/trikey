@@ -33,8 +33,9 @@ import type {
 } from './types';
 import type { RecoveryKeyActions } from './rk-actions';
 import type { SilentPaymentActions } from './sp-actions';
+import type { SavingsActions } from './savings-actions';
 
-export type { RecoveryKeyActions, SilentPaymentActions };
+export type { RecoveryKeyActions, SilentPaymentActions, SavingsActions };
 
 export interface ReceiveAddress {
   address: string;
@@ -202,6 +203,12 @@ export interface WalletService {
    */
   readonly silentPayments?: SilentPaymentActions;
   /**
+   * The optional Savings wallet (docs/design/savings-and-limit-off.md): create it, receive, move money out with two of
+   * its keys, replace a lost key. The guardian mode's wallet and the demo have it (`state.savings.status` says whether it
+   * can be used now); Recovery Key mode does not.
+   */
+  readonly savings?: SavingsActions;
+  /**
    * Makes a quote exact when the wallet needs the chain for it (Recovery Key mode picks the coins). Optional: the
    * quote `quoteSend` gave stays valid, with `estimate: true`. Screens that show the final fee call it.
    */
@@ -242,6 +249,8 @@ export interface WalletService {
     setHelperFunded?(funded: boolean): void;
     /** The demo: an alert contact (Maria) locks the guardian with LOCK, if the setting is on. */
     simulateContactLock?(): void;
+    /** The demo: Savings set up and holding money (`true`), or no Savings at all (`false`), to look at either Home. */
+    setDemoSavings?(on: boolean): void;
     /** Removes the wallet's keys and data from this phone (this mode and network only). */
     forgetWallet?(): Promise<void>;
     /** Facts about the setup, for the developer ("device fingerprint ..."). */

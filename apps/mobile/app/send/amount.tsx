@@ -68,7 +68,9 @@ export default function SendAmount() {
   const router = useRouter();
   const state = useWallet();
   const wallet = useWalletService();
-  const params = useLocalSearchParams<{ address?: string; amount?: string; vault?: string }>();
+  const params = useLocalSearchParams<{ address?: string; amount?: string; vault?: string; savings?: string }>();
+  // "Add to Savings": the address is this wallet's own Savings; the payment counts against the daily limit like any other.
+  const toSavings = params.savings === '1';
   const address = (params.address ?? '').trim();
   const [digits, setDigits] = useState(() => (params.amount ? String(params.amount).slice(0, MAX_DIGITS) : ''));
   const [btcView, setBtcView] = useState(false);
@@ -119,7 +121,7 @@ export default function SendAmount() {
       if (needsHelper) router.push({ pathname: '/send/helper', params: { address, amount: String(amountSats), why: outcome.message } });
       return;
     }
-    const next = { address, amount: String(amountSats), ...(fromVault ? { signer: 'hardware' } : {}), ...(max ? { max: '1' } : {}) };
+    const next = { address, amount: String(amountSats), ...(fromVault ? { signer: 'hardware' } : {}), ...(max ? { max: '1' } : {}), ...(toSavings ? { savings: '1' } : {}) };
     // Every payment stops on Review first, the ones the hardware wallet signs included.
     router.push({ pathname: '/send/review', params: next });
   };
@@ -130,14 +132,14 @@ export default function SendAmount() {
 
   return (
     <Screen
-      title={fromVault ? 'Pay from vault' : 'Amount'}
+      title={fromVault ? 'Pay from vault' : toSavings ? 'Add to Savings' : 'Amount'}
       hideIosTitle
-      androidTitle={fromVault ? 'Pay from vault' : 'Amount'}
+      androidTitle={fromVault ? 'Pay from vault' : toSavings ? 'Add to Savings' : 'Amount'}
       backLabel="Back"
       gap={16}
       footer={<AppButton title={tooMuch ? 'Not enough bitcoin' : 'Review'} disabled={!canReview} onPress={review} />}>
       <View className={cn('items-center gap-1', pick('pt-2', 'pt-4'))} accessible accessibilityLabel={`Amount: ${primary} ${btcView ? 'bitcoin' : 'sats'}, to ${address}`}>
-        <Text className="text-muted-foreground font-mono text-[13px] leading-[18px]">To {shorten(address)}</Text>
+        <Text className="text-muted-foreground font-mono text-[13px] leading-[18px]">{toSavings ? `To your Savings · ${shorten(address)}` : `To ${shorten(address)}`}</Text>
         <Text className={cn('tabular-nums', pick('text-[56px] font-semibold leading-[64px] tracking-[-2.2px]', 'text-[56px] font-normal leading-[64px] tracking-[-1.1px]'))}>{primary}</Text>
         <Text className={cn('text-muted-foreground', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{secondary}</Text>
       </View>

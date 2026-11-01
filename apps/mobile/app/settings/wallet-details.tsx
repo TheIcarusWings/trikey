@@ -6,6 +6,7 @@ import { Check, Copy, Eye, Share2 } from '@/components/icons';
 import { Body, Footnote, InfoRow, Notice, Panel, QuietLink } from '@/components/panels';
 import { AddressQr } from '@/components/qr';
 import { Screen } from '@/components/screen';
+import { Segmented } from '@/components/segmented';
 import { Text } from '@/components/ui/text';
 import { useWalletService, type NetworkName } from '@/data';
 import { pick } from '@/lib/platform';
@@ -16,11 +17,16 @@ const NETWORK: Record<NetworkName, string> = { bitcoin: 'Bitcoin', testnet: 'Tes
 /**
  * Settings > Advanced > Wallet details: the wallet's descriptor, so any multisig wallet can recover the money without
  * Trikey. It moves nothing, but it shows every address and the balance, so the screen says so and keeps it one tap away.
+ * With Savings there are two wallets, each with its own descriptor: "Spending" and "Savings".
  */
 export default function WalletDetailsScreen() {
   const wallet = useWalletService();
-  const [details] = useState(() => wallet.getWalletDetails());
+  const [all] = useState(() => wallet.getWalletDetails());
+  const [which, setWhich] = useState<'spending' | 'savings'>('spending');
   const [shown, setShown] = useState(false);
+  const savings = all?.savings;
+  // The one shown: Spending's, or Savings' (its own keys at account 1': this phone's, the hardware wallet's, the Recovery Key's).
+  const details = all && which === 'savings' && savings ? { ...all, descriptor: savings.descriptor, walletId: savings.walletId } : all;
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -46,6 +52,17 @@ export default function WalletDetailsScreen() {
   return (
     <Screen title="Wallet details" backLabel="Settings">
       <Body>With this and any two of your three keys, any multisig wallet like Sparrow can recover your money, without Trikey.</Body>
+      {savings ? (
+        <Segmented<'spending' | 'savings'>
+          accessibilityLabel="Which wallet"
+          value={which}
+          onChange={setWhich}
+          options={[
+            { value: 'spending', label: 'Spending' },
+            { value: 'savings', label: 'Savings' },
+          ]}
+        />
+      ) : null}
       <Notice icon={Eye} iconClass="text-warn" tone="warn-outline" title="Private, though it can't move money">
         It shows every address of this wallet and so its balance and history. Share it only with wallet software you trust.
       </Notice>
@@ -57,15 +74,19 @@ export default function WalletDetailsScreen() {
         <>
           <Panel>
             <InfoRow label="Network" value={NETWORK[details.network]} />
-            <InfoRow label="This phone" value={details.fingerprints.phone} mono />
-            <InfoRow label="Hardware wallet" value={details.fingerprints.hardware} mono />
-            <InfoRow label="Guardian" value={details.fingerprints.guardian} mono />
+            <InfoRow label="This phone" value={which === 'savings' && savings ? savings.fingerprints.phone : details.fingerprints.phone} mono />
+            <InfoRow label="Hardware wallet" value={which === 'savings' && savings ? savings.fingerprints.hardware : details.fingerprints.hardware} mono />
+            {which === 'savings' && savings ? (
+              <InfoRow label="Recovery Key" value={savings.fingerprints.recoveryKey} mono />
+            ) : (
+              <InfoRow label="Guardian" value={details.fingerprints.guardian} mono />
+            )}
           </Panel>
           <View className="items-center">
             <AddressQr address={details.descriptor} uri={details.descriptor} label="the wallet descriptor" />
           </View>
           <View className="gap-1.5">
-            <Text className="text-sm font-medium leading-5">Descriptor</Text>
+            <Text className="text-sm font-medium leading-5">{savings ? (which === 'savings' ? 'Savings descriptor' : 'Spending descriptor') : 'Descriptor'}</Text>
             <Text selectable className="text-muted-foreground font-mono text-[13px] leading-5">
               {details.descriptor}
             </Text>

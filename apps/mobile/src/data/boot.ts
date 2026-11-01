@@ -161,6 +161,8 @@ export async function bootWallet(mode: AppMode, platform: TrikeyPlatform = getPl
       pickBackupFile,
       info,
       devTools,
+      // Savings' Recovery Key is the second simulated device, as Recovery Key mode's.
+      secondDeviceKind: 'coldcard',
     });
     const recoveryKey = await createRkWalletService({
       mode: 'simulator',

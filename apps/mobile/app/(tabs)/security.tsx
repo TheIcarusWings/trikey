@@ -30,6 +30,9 @@ function needsYou(state: WalletState): string[] {
   if (state.guardian.status === 'locked') out.push('Your guardian is locked, so phone-only payments are paused.');
   if (state.guardian.status === 'offline') out.push("Your guardian can't be reached, so phone-only payments are paused.");
   if (!state.backup) out.push('This phone is not backed up.');
+  // A backup made before Savings existed does not know it.
+  else if (state.savings.status === 'active' && state.savings.createdAt && state.backup.lastBackedUpAt < state.savings.createdAt)
+    out.push("Your backup doesn't include Savings yet. Back up this phone again.");
   if (state.contacts.length === 0) out.push('Nobody would be alerted about a recovery. Add an alert contact.');
   return out;
 }
@@ -128,7 +131,11 @@ export default function SecurityScreen() {
             <SettingsRow title="Lost your hardware wallet?" onPress={() => router.push({ pathname: '/recover/kit', params: { with: 'phone' } })} />
           </>
         ) : (
-          <SettingsRow title="Lost a phone or hardware wallet?" onPress={() => router.push('/recover/choose')} />
+          <>
+            <SettingsRow title="Lost a phone or hardware wallet?" onPress={() => router.push('/recover/choose')} />
+            {/* Savings: a new phone without a backup finds it at the guardian, so the row is there whenever Savings can be had. */}
+            {state.savings.status !== 'not-available' ? <SettingsRow title="Lost a Savings key?" onPress={() => router.push('/savings/replace')} /> : null}
+          </>
         )}
       </ListGroup>
     </Screen>

@@ -31,7 +31,9 @@ export default function SendReview() {
   const router = useRouter();
   const wallet = useWalletService();
   const state = useWallet();
-  const { address = '', amount = '0', signer, max } = useLocalSearchParams<{ address?: string; amount?: string; signer?: string; max?: string }>();
+  const { address = '', amount = '0', signer, max, savings } = useLocalSearchParams<{ address?: string; amount?: string; signer?: string; max?: string; savings?: string }>();
+  // "Add to Savings": a payment from Spending like any other, so it counts toward today's limit (the owner's decision).
+  const toSavings = savings === '1';
   const sendMax = max === '1';
   const [speed, setSpeed] = useState<FeeSpeed>('normal');
   const [choosingSpeed, setChoosingSpeed] = useState(false);
@@ -76,11 +78,11 @@ export default function SendReview() {
   const send = async () => {
     sending.current = true;
     const r = await run(wallet.sendPayment(quote));
-    if (r.ok) router.replace({ pathname: '/send/done', params: { id: r.value.id, speed } });
+    if (r.ok) router.replace({ pathname: '/send/done', params: { id: r.value.id, speed, ...(toSavings ? { savings: '1' } : {}) } });
   };
 
   // The hardware wallet signs this one (over the limit, guardian away, from the vault): Review says why, then hands over.
-  const reviewOnDevice = () => router.push({ pathname: '/send/hardware', params: { address, amount, speed, ...forced } });
+  const reviewOnDevice = () => router.push({ pathname: '/send/hardware', params: { address, amount, speed, ...forced, ...(toSavings ? { savings: '1' } : {}) } });
 
   // The guardian said no (over the limit, locked, away, a recovery, paused): the hardware wallet can still approve it.
   const offerHardware = error instanceof WalletServiceError && error.suggestsHardware;
@@ -90,7 +92,7 @@ export default function SendReview() {
 
   return (
     <Screen
-      title={silent ? 'Send to a silent payment address' : 'Send your payment'}
+      title={silent ? 'Send to a silent payment address' : toSavings ? 'Add to Savings' : 'Send your payment'}
       androidTitle="Review"
       backLabel="Back"
       footer={
@@ -131,9 +133,11 @@ export default function SendReview() {
               {silent ? shorten(address, 12) : groupAddress(address)}
             </Text>
             {silent ? <Text className="text-muted-foreground text-[13px] leading-[18px]">Silent payment</Text> : null}
+            {toSavings ? <Text className="text-muted-foreground text-[13px] leading-[18px]">Your Savings</Text> : null}
           </View>
         </View>
         <InfoRow label={quote.max ? 'Amount (everything)' : 'Amount'} value={`${formatSats(quote.request.amountSats)} sats`} tabular />
+        {toSavings ? <InfoRow label="From Spending to Savings" value="Counts toward today's limit" /> : null}
         <View className={cn('flex-row items-center justify-between gap-4 px-4', pick('py-2', 'py-2.5'))}>
           <Pressable
             role="button"

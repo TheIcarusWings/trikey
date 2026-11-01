@@ -23,6 +23,14 @@ const THEME_LABEL: Record<ThemePreference, string> = {
   dark: 'Dark',
 };
 
+/** The Savings row's value: its balance once it exists, else whether it can be set up. */
+function savingsSummary(state: ReturnType<typeof useWallet>): string {
+  const s = state.savings;
+  if (s.status === 'active') return `${formatSats(s.balanceSats)} sats`;
+  if (s.status === 'guardian-update') return 'Update guardian';
+  return 'Off';
+}
+
 /** The one-word state of silent payments for the Settings list. */
 function silentPaymentsSummary(state: ReturnType<typeof useWallet>): { text: string; dot?: 'good' | 'warn' | 'bad' } {
   const sp = state.silentPayments;
@@ -58,6 +66,15 @@ export default function SettingsScreen() {
           onPress={() => router.push('/settings/silent-payments')}
           accessibilityHint="Your reusable address, scanning and the helper coin"
         />
+        {!rk && state.savings.status !== 'not-available' ? (
+          <SettingsRow
+            title="Savings"
+            value={savingsSummary(state)}
+            subtitle="Money your phone and guardian can't move"
+            onPress={() => router.push('/savings')}
+            accessibilityHint="A second wallet that needs your hardware wallet or your Recovery Key"
+          />
+        ) : null}
       </ListGroup>
 
       {rk ? (
@@ -181,6 +198,22 @@ function DeveloperSection() {
               </View>
             ) : null}
           </>
+        ) : null}
+        {dev?.setDemoSavings && !rk ? (
+          <View className="min-h-16 flex-row items-center justify-between gap-4 px-4">
+            <View className="flex-1">
+              <Text nativeID="demo-savings-label" className="text-base leading-6">
+                Savings with money in it
+              </Text>
+              <Text className="text-muted-foreground text-sm leading-5">Off: no Savings, as for everyone who never sets it up.</Text>
+            </View>
+            <Switch
+              checked={state.savings.status === 'active'}
+              onCheckedChange={(on) => dev.setDemoSavings!(on)}
+              aria-labelledby="demo-savings-label"
+              accessibilityLabel="Savings with money in it"
+            />
+          </View>
         ) : null}
         {dev?.setGuardianStatus && !rk ? (
           <View className="gap-2 px-4 py-3">
