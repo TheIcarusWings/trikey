@@ -1,8 +1,9 @@
 import * as Clipboard from 'expo-clipboard';
+import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Platform, Share, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
-import { Check, Copy, Eye, Share2 } from '@/components/icons';
+import { Check, Copy, Eye, FileText, Share2 } from '@/components/icons';
 import { Body, Footnote, InfoRow, Notice, Panel, QuietLink } from '@/components/panels';
 import { AddressQr } from '@/components/qr';
 import { Screen } from '@/components/screen';
@@ -20,6 +21,7 @@ const NETWORK: Record<NetworkName, string> = { bitcoin: 'Bitcoin', testnet: 'Tes
  * With Savings there are two wallets, each with its own descriptor: "Spending" and "Savings".
  */
 export default function WalletDetailsScreen() {
+  const router = useRouter();
   const wallet = useWalletService();
   const [all] = useState(() => wallet.getWalletDetails());
   const [which, setWhich] = useState<'spending' | 'savings'>('spending');
@@ -96,6 +98,9 @@ export default function WalletDetailsScreen() {
             <AppButton title="Share" icon={Share2} variant={pick('secondary', 'outline')} className="flex-1 self-auto" onPress={() => void share()} />
           </View>
           <Footnote>Too long to scan? Copy or share it instead; wallets that import descriptors take the text as it is.</Footnote>
+          {which === 'savings' && savings ? (
+            <AppButton title="Print the Savings wallet map" icon={FileText} variant="outline" onPress={() => router.push('/savings/map')} />
+          ) : null}
           <QuietLink title="Hide" onPress={() => setShown(false)} />
         </>
       )}

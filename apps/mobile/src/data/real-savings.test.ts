@@ -91,6 +91,28 @@ describe('Savings in the app', { timeout: 120_000 }, () => {
     expect(svc.getState().activity.some((a) => a.type === 'security' && a.event.kind === 'savings-created')).toBe(true);
   });
 
+  it('prints a wallet map: the descriptor, the three keys at account 1\', the first address the devices checked; no private key', async () => {
+    const s = svc.getState().savings;
+    const map = svc.savings!.walletMap()!;
+    expect(map.descriptor).toBe(s.descriptor);
+    expect(map.walletId).toBe(s.walletId);
+    expect(map.network).toBe('regtest');
+    expect(map.demo).toBeUndefined();
+    expect(map.keys.map((k) => [k.role, k.fingerprint])).toEqual([
+      ['phone', svc.getWalletDetails()!.savings!.fingerprints.phone],
+      ['hardware', key1.info.fingerprint],
+      ['recoveryKey', second.info.fingerprint],
+    ]);
+    expect(map.keys.every((k) => k.path === "m/48'/1'/1'/2'" && k.xpub.startsWith('tpub') && map.descriptor.includes(k.xpub))).toBe(true);
+    expect(map.keys[2]!.model).toBe('Second simulated device');
+    // The first receive address, as the wallet itself computes it (and both devices showed at creation).
+    expect(map.firstAddress).toBe(svc.wallet!.savingsWallet()!.derive(0, 0).address);
+    expect(map.firstAddress).toMatch(/^bcrt1q/);
+    expect(map.html).toContain(map.firstAddress);
+    expect(map.html).toContain('Trikey Savings — wallet map');
+    expect(map.html).not.toMatch(/[xtuvyzUVYZ]prv/);
+  });
+
   it('"Add to Savings" is an ordinary payment within the daily limit; Savings shows it', async () => {
     const { address } = await svc.savings!.receiveAddress();
     const q = svc.quoteSend({ address, amountSats: 80_000, speed: 'normal' });

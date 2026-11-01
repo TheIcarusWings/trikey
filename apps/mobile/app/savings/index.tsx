@@ -104,6 +104,7 @@ export default function SavingsScreen() {
         <SettingsRow title="Recovery Key" value={savings.recoveryKey ? pick(savings.recoveryKey.model, `${savings.recoveryKey.model} · ${savings.recoveryKey.fingerprint}`) : '—'} />
         <SettingsRow title="Lost a Savings key?" subtitle="Move Savings to a new set of keys" onPress={() => router.push('/savings/replace')} />
         <SettingsRow title="Savings descriptor" subtitle="To recover Savings in another wallet" onPress={() => router.push('/settings/wallet-details')} />
+        <SettingsRow title="Print the Savings wallet map" subtitle="One page to keep with your Recovery Key" onPress={() => router.push('/savings/map')} />
       </ListGroup>
       <SavingsLimits brand={brand} />
     </Screen>

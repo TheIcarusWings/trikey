@@ -11,6 +11,7 @@ export type { RecoveryKeyActions } from './rk-actions';
 export type { SilentPaymentActions } from './sp-actions';
 export type { SavingsActions } from './savings-actions';
 export { emptySavings, suggestSavings } from './savings-empty';
+export { groupWalletId } from './savings-map';
 export { emptySilentPayments, looksLikeSilentPaymentAddress } from './sp-empty';
 export { WalletProvider, useWallet, useWalletService, useNow, useActivity } from './provider';
 // The mock is exported for the app root only. Screens must go through useWallet().

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Platform, Share, View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { Check, Cloud, Copy, HardwareWallet, KeyRound, Share2, Smartphone, TriangleAlert } from '@/components/icons';
+import { Check, Cloud, Copy, FileText, HardwareWallet, KeyRound, Share2, Smartphone, TriangleAlert } from '@/components/icons';
 import { HardwareList } from '@/components/hardware-list';
 import { Body, Footnote, ListGroup, Notice, QuietLink } from '@/components/panels';
 import { SavingsExplainer, SavingsLimits } from '@/components/savings';
@@ -106,7 +106,8 @@ export default function CreateSavings() {
         </Notice>
         <Notice icon={KeyRound} tone="fill" title="Keep a copy of the Savings descriptor">
           It holds no key, so it can't move money, but it shows Savings' balance. With it, your {brand} and your Recovery Key can recover Savings in Sparrow or any
-          multisig wallet, even without this phone or its backup. Keep it with your Recovery Key.
+          multisig wallet, even without this phone or its backup. Keep it with your Recovery Key, or print the Savings wallet map: the descriptor, its QR code and the
+          three keys on one page.
         </Notice>
         <Text selectable className="text-muted-foreground font-mono text-[12px] leading-[18px]">
           {result.descriptor}
@@ -115,7 +116,8 @@ export default function CreateSavings() {
           <AppButton title={copied ? 'Copied' : 'Copy'} icon={copied ? Check : Copy} variant={pick('secondary', 'outline')} className="flex-1 self-auto" onPress={() => void copy()} />
           <AppButton title="Share" icon={Share2} variant={pick('secondary', 'outline')} className="flex-1 self-auto" onPress={() => void share()} />
         </View>
-        <Footnote>You find it again any time in Settings, Wallet details.</Footnote>
+        <AppButton title="Print the Savings wallet map" icon={FileText} variant="outline" onPress={() => router.push('/savings/map')} />
+        <Footnote>You find them again any time: the descriptor in Settings, Wallet details, and the map on the Savings screen.</Footnote>
       </Screen>
     );
   }
