@@ -19,6 +19,9 @@ export async function shareBackupFile(name: string, bytes: Uint8Array): Promise<
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
+/** Nothing to clear on the web: the browser hands the file straight to its downloads (see the native version). */
+export async function clearSharedBackups(): Promise<void> {}
+
 /** Lets the person choose a backup file; null if they closed the chooser. */
 export function pickBackupFile(): Promise<PickedFile | null> {
   return new Promise((resolve) => {
