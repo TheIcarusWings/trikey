@@ -8,7 +8,8 @@ with the owner's answers (under "Open questions" below): option K, strictly opti
 and works exactly as today), the Recovery Key a second hardware wallet, transfers into Savings counted against the
 limit (so phase 3 is not built), and Savings recommended, not required, with the limit off. DESIGN.md ("Savings") and
 PROTOCOL.md ("Savings") describe it as built; "What was built" below lists where it differs from this proposal and the
-questions it left for the owner. Option T (phases 4a and 4b) is not built.
+questions it left for the owner, answered 2026-11-01 (open questions 8 to 14): the printed Savings wallet map (10) is
+built since. Option T (phases 4a and 4b) is not built.
 
 The owner raised a concern, and it holds: **the daily limit exists only in the guardian's code.** Today's wallet is
 `wsh(sortedmulti(2, phone, hardware, guardian))`. Any two keys satisfy the script, so whoever controls the guardian
@@ -349,7 +350,7 @@ documented later option, behind the phase 4a test, for owners on Ledger, BitBox0
 | Protocol | `savings.register` / `savings.unregister` / `savings.get`, `wallet.sync` with `wallet: "savings"`, `tx.broadcast` rule (d), `guardian.status.savingsWalletId`, the `savings_moved` alert; the `savings` feature. No policy member, hash or approval text changed |
 | Guardian | `GuardedWallet.savings` (descriptor, high-water marks, the spends already seen): refuses any wallet it could sign for, scans Savings on every block and every two minutes, a durable `savings_moved` notice to the phone and every alert contact; turning the Savings watch off or swapping it is announced to the phone and every contact the same way (`savings_unwatched`), since both need only the phone; a "Savings (watched)" card in the web UI (`?mock=savings`) |
 | Wallet | `startSavings` → `savingsConnectHardware` → `savingsConnectRecoveryKey` → `finishSavings` (registration and the first address checked on both devices), `savingsReceiveAddress`, `quoteSavingsSpend` / `sendFromSavings` with any two of its keys, `replaceSavingsKey` (each lost key, also on a new phone without a backup), backup version 2 only with Savings |
-| App | Settings > Savings and Home's suggestion (limit off), the create flow, the Savings screen (balance, Add to Savings, Move to Spending, Send, Receive, activity, "Lost a Savings key?"), Home's Savings row, Receive's Spending / Savings choice, both descriptors in Wallet details, the Security tab's backup reminder; all of it in the demo |
+| App | Settings > Savings and Home's suggestion (limit off), the create flow, the Savings screen (balance, Add to Savings, Move to Spending, Send, Receive, activity, "Lost a Savings key?"), Home's Savings row, Receive's Spending / Savings choice, both descriptors in Wallet details, the printed Savings wallet map (end of creation, Savings screen, Wallet details), the Security tab's backup reminder; all of it in the demo |
 
 Where the build differs from the proposal above, and why:
 
@@ -361,9 +362,20 @@ Where the build differs from the proposal above, and why:
   rotation" above). Savings' coins are still the owner's after a recovery, the tripwire keeps working, and a new phone
   without a backup can read the descriptor back (`savings.get`), which it needs to move Savings to its new key. The cost:
   whoever completes a recovery can read Savings' descriptor and balance. Open question 9.
-- **No printed Savings "wallet map".** The Recovery Kit format 1 could carry Savings (an xpub kit), but its printed page
-  and its recovery flow are Recovery Key mode's. The create flow shows the descriptor instead, to copy or share and keep
-  with the Recovery Key, and Wallet details shows it any time. Open question 10.
+- **The printed Savings wallet map is its own page, not Recovery Kit format 1** (built after the owner's answer 10). The
+  kit's xpub format, its map words and its "Recover with your Recovery Kit" flow are Recovery Key mode's. Savings' map
+  (`apps/mobile/src/data/savings-map.ts`, screen `app/savings/map.tsx`) is meant for any descriptor-capable wallet
+  instead: the network, the date made, the wallet id, the checksummed descriptor as text and as one QR code, the three
+  keys (role and device, master fingerprint, `m/48'/<coin>'/1'/2'`, xpub), the first receive address to check an import
+  against, and plain instructions (not a key; any two keys move the money; the phone's key comes from the phone backup;
+  keep it with the Recovery Key or your papers). It holds no secret: the page is built from public fields only and refuses
+  a private extended key. It is private all the same (it shows Savings' balance and history), and both the page and the
+  screen before printing say so. The QR code: a byte-mode code (the descriptor has lowercase letters), about 460
+  characters, so version 17 at "medium" error correction (85 modules), printed 80 mm wide (about 0.95 mm a module, as
+  the kit's); "quartile" would need 97 modules, harder for a laptop camera, and the text is printed below as the fallback.
+  One static code, not a split or animated UR: paper can't animate, and wallets import a descriptor from one plain-text
+  code. Printing goes through `expo-print` in memory, as the kit does, so the app writes no file and has no print cache to
+  clear; on the web the page prints from a hidden frame (`expo-print` there would print the app's own screen).
 - **No fee bump of a Savings spend yet.** It is sent at the 6-block estimate with RBF signalled; a stuck one can be
   sped up by CPFP from Spending once it pays Spending, but the app has no "speed up" for it. Open question 11.
 - **Mainnet:** Savings is offered wherever the guardian mode is, mainnet included behind its pre-alpha warning, like
@@ -389,24 +401,26 @@ Where the build differs from the proposal above, and why:
 7. **After a recovery:** turn the limit back on at its last value (proposed), or keep the owner's choice? Decided: its last value, and 0 when that is not known (not the 100,000-sat preset). The "Turn off the daily
    limit" link stays a small link under Settings > Daily limit.
 
-Left by the Savings build (2026-11-01); each is built the way described, the safest reasonable choice, until the owner
-decides otherwise:
+Left by the Savings build (2026-11-01), each built the way described; the owner's answers (2026-11-01):
 
 8. **The Recovery Key's path.** Built: account 1', like every Savings key. Alternative: account 0' on a device bought
-   only for this.
+   only for this. Decided: **account 1' kept.**
 9. **The watched record at a rotation.** Built: it carries over (the tripwire keeps working; a new phone finds Savings at
    the guardian). Alternative: drop it at every rotation and let the new phone send the descriptor it has (from the
-   backup, or the copy the owner kept), at the cost of a new phone without either finding nothing.
+   backup, or the copy the owner kept), at the cost of a new phone without either finding nothing. Decided: **carried
+   over at recovery, kept.**
 10. **A printed Savings sheet.** Built: the descriptor, shown at creation and in Wallet details, to copy or share. Should
     the app also print a Savings wallet map (Recovery Kit format 1, an xpub kit at account 1') to keep with the Recovery
-    Key?
+    Key? Decided: **yes, also a printed map. Built** (its own page, not kit format 1: "What was built" above), offered at
+    the end of creation, on the Savings screen and in Wallet details.
 11. **Speeding up a Savings spend.** Not built: re-signing with a higher fee (hardware wallet again). Needed before
-    Savings holds more than a test amount on mainnet?
+    Savings holds more than a test amount on mainnet? Decided: **later.**
 12. **Mainnet.** Built: offered wherever the guardian mode is. Keep it on test networks until the section 7 device test
-    (each supported device signs a Savings PSBT at account 1') has been run?
+    (each supported device signs a Savings PSBT at account 1') has been run? Decided: **mainnet allowed**, behind the
+    existing pre-alpha warning, as built.
 13. **What the alert contacts learn.** Built as proposed: every Savings move, with its amount and txid, also the owner's
-    own moves. Should contacts get only "Savings moved" without the amount?
+    own moves. Should contacts get only "Savings moved" without the amount? Decided: **amount and txid, kept.**
 14. **A phone key that was seen, not lost** (a stolen phone, the owner restored the backup): Savings keeps that key 2,
     so the thief holds one of Savings' three keys until the owner moves Savings with a new phone key, which today means a
-    new key 2 and a new Spending wallet too. Worth a "new phone key for Savings" flow?
-
+    new key 2 and a new Spending wallet too. Worth a "new phone key for Savings" flow? Decided: **accepted for now**: the
+    stolen phone keeps its Savings key until Savings is moved.

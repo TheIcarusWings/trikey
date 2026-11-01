@@ -455,8 +455,15 @@ no policy hash or approval text changes, the same version-1 backup).
   prompt), the hardware wallet's, the Recovery Key's (which must be another device); Savings is registered on both
   devices (Ledger's HMAC is kept) and each shows its first address, which must match; then the guardian is told to watch
   it. Only with a guardian that reports `savings`: Savings' chain data comes from it. The app then shows the descriptor
-  (to keep with the Recovery Key: with it, the two hardware wallets recover Savings in any multisig wallet) and asks for a
-  new backup.
+  (to keep with the Recovery Key: with it, the two hardware wallets recover Savings in any multisig wallet), offers the
+  printed Savings wallet map, and asks for a new backup.
+- **The Savings wallet map** (owner's answer 10; `apps/mobile/src/data/savings-map.ts`): one printed page, in the
+  Recovery Kit's style and through the same in-memory print path, so the owner or an heir can find and recover Savings
+  with its keys alone, without Trikey: the network, the date, the wallet id, the checksummed descriptor as text and as
+  one QR code, each key's role, device, master fingerprint, path and xpub, the first receive address to check an import
+  against, and what to do. It holds no secret (the page is built from public fields only and refuses a private extended
+  key) but shows Savings' balance and history to whoever reads it, which the page and the screen before printing both
+  say. Offered at the end of creation, on the Savings screen and in Wallet details; the demo prints one marked as such.
 - **Moving money.** Into Savings: a normal payment from Spending to a Savings address, counted against the daily limit
   like any other (owner's answer 3); over the limit the hardware wallet signs. Out of Savings: two of its keys (phone +
   hardware wallet by default; phone + Recovery Key if the hardware wallet is lost; hardware wallet + Recovery Key if the
