@@ -33,7 +33,7 @@ and cannot change networks later, and the guardian remembers the network of its 
   finds the node and Electrs, and the wallet shows no chain data until Electrs has caught up. If Electrs already runs on your
   Umbrel and says it is synced, you are fine. On a fresh install the index can take a day or more.
 - **What looks different on mainnet.** There is no coloured network strip across the top of the app, and the first screen's pill
-  says "Pre-alpha · not audited" instead of "Pre-alpha · test network". The Ledger needs the **Bitcoin** app, not "Bitcoin Test".
+  says "Pre-alpha · not audited · open source" instead of "Pre-alpha · test network". The Ledger needs the **Bitcoin** app, not "Bitcoin Test".
   Addresses start with `bc1`.
 - You fund the wallet with a small amount sent from your own wallet (step 6), and your test payments go to your own wallet too.
 
@@ -265,7 +265,7 @@ Open Trikey. The first screen has a **Network** picker, and a small **wallet mod
 your path here, before "Create a wallet"; it must match the node's, and it cannot be changed afterwards.
 
 - **Path B:** pick Signet (or Testnet for testnet4). The pill says "Pre-alpha · test network".
-- **Path A:** pick Mainnet. The pill changes to "Pre-alpha · not audited", and a warning appears, "Mainnet means real bitcoin":
+- **Path A:** pick Mainnet. The pill changes to "Pre-alpha · not audited · open source", and a warning appears, "Mainnet means real bitcoin":
   Trikey is pre-alpha and has not been audited, a bug could lose what you put in, use only an amount you can afford to lose.
   Switch on **I understand, and I'll use a small amount**. Until you do, "Create a wallet" and "I already have a Trikey
   wallet" stay disabled. Mainnet is offered in guardian mode only.

@@ -66,7 +66,7 @@ export function MainnetWarning() {
   return (
     <View className="gap-1">
       <Notice icon={TriangleAlert} iconClass="text-warn" tone="warn" title="Mainnet means real bitcoin">
-        Trikey is pre-alpha and has not been audited. A bug could lose what you put in. Use only an amount you can afford to lose.
+        Trikey is pre-alpha and has not been audited. It is open source, so anyone can check the code, but a bug could still lose what you put in. Use only an amount you can afford to lose.
       </Notice>
       <View className="min-h-11 flex-row items-center justify-between gap-4">
         <Text nativeID="mainnet-ack-label" className={cn('flex-1', pick('text-[15px] leading-5', 'text-sm leading-5'))}>
