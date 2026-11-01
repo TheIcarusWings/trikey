@@ -16,7 +16,7 @@ who does not turn it on.
 | The command | A NIP-17 DM to the guardian whose text is the single word `LOCK` (any case, optional `.` or `!`, quoted `>` lines and blank lines ignored). |
 | The effect | The locked state of `guardian.lock`: key 3 leaves memory, nothing is co-signed, phone-only payments stop. Recoveries, their timers and their alerts run on as on any locked guardian; a ready recovery is co-signed once the owner unlocks. |
 | Unlocking | Unchanged: the passphrase in the web UI, or the phone's `guardian.unlock` with its own throttle. |
-| Answers | To a current alert contact: locked / already locked / not allowed (setting off). To anyone else: nothing. |
+| Answers | While on, to a current alert contact: locked / already locked. While off: nothing, to anyone. To anyone else: nothing. |
 | Alerts | A durable `contact_lock` notice (retried for 7 days like `limit_off`): `guardian_locked` with `reason: "contact"` and the contact to the paired phone, a DM naming the contact and the time to every other alert contact. Logged as "Locked by alert contact npub… via nostr". |
 | Turning it on / off | On: the phone alone (tightening), also at pairing and during a recovery. Off: a hardware approval over the version-3 text, `lock=off`. The contacts are told either way. |
 | Gating | `contact_lock` in `guardian.status.features` and in `pair.prepare.features`; the phone sends the rule only to such a guardian. |
@@ -61,11 +61,13 @@ rules. The worst case is 238 characters, under the 240 every device can sign. Re
 off (the device would show an unchanged limit, delay and fee cap and nothing about the lock, so a malicious phone could
 present it as a routine re-approval), and a longer token such as `contactlock=off` (over 240 in the worst case).
 
-**5. Who gets an answer.** A current alert contact gets one short answer, also when the setting is off ("not allowed"),
-so they know it did not work and call the owner instead. Anyone else gets nothing: answering strangers (or the paired
-phone's key, or a recovery's snapshotted recipients who are no longer contacts) would let anyone learn whether a key is
-a contact or whether the setting is on. This is the only change for owners who never turn it on: a contact who sends
-`LOCK` is told it is not allowed.
+**5. Who gets an answer.** While the setting is on, a current alert contact gets one short answer (locked, or already
+locked). While it is off, the command does not exist: no answer, nothing remembered, nothing in the activity log, for
+contacts as for anyone (owner's decision, 2026-11-01: "if the setting is off the contact shouldn't even be able to
+lock; that should not be an option"). An earlier build answered "not allowed" then; dropped. Anyone else gets nothing
+either way: answering strangers (or the paired phone's key, or a recovery's snapshotted recipients who are no longer
+contacts) would let anyone learn whether a key is a contact or whether the setting is on. So owners who never turn it
+on see no change at all.
 
 **6. Replays, freshness and rate limits.** Relays re-deliver gift wraps from the last two days after every restart,
 and an old `LOCK` must never lock again after the owner unlocked. Each message is remembered durably (the same store
@@ -103,7 +105,13 @@ activity log keeps the contact's lock. `guardian.status.lock` reports the reason
 - It does not stop a recovery (`CANCEL` does) and does not help against a thief holding both the phone and the
   hardware wallet, who needs no guardian.
 
-## Open questions for the owner
+## Owner's answers (2026-11-01)
+
+Kept as built: unlocking unchanged (web UI or the phone's `guardian.unlock`, both with the passphrase); the switch only in
+Settings, not in onboarding; 5 messages per contact per hour and 10 minutes of clock tolerance; no RPC lock for Trikey
+apps used as contacts. Changed: with the setting off a contact's `LOCK` gets no answer (decision 5 above).
+
+## The questions as they were asked
 
 1. Should a contact's lock make the phone's `guardian.unlock` refuse (web UI only, like a recovery the phone did not
    start)? A contact who locks because the phone looks stolen would want that; a thief would also need the passphrase.

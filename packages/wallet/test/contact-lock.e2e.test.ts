@@ -139,9 +139,11 @@ describe('alert contacts can lock the guardian', { timeout: 90_000 }, () => {
     expect(prompts().at(-1)).toMatch(new RegExp(`^Trikey policy v3 .* contacts=1 lock=off hash=${policyHash(res.policy)} expires=`));
     expect(w.contactLockOn).toBe(false);
     await waitFor(() => contactInbox.find((m) => m.includes('can no longer lock')), 'contact told');
-    // A LOCK now does nothing.
+    // A LOCK now does nothing, and gets no answer: off, the command does not exist.
+    const told = contactInbox.length;
     await contactPool.publish(rig.relayUrls, wrapDirectMessage('lock', { senderSecretKey: contactKey, recipient: rig.pubkey, now: rig.nowSec() }));
-    await waitFor(() => contactInbox.find((m) => m.includes('has not allowed')), 'not-allowed answer');
+    await sleep(800);
+    expect(contactInbox.length).toBe(told);
     expect(rig.guardian.locked).toBe(false);
   });
 
