@@ -47,6 +47,22 @@ export interface RetiredWalletSummary {
   successorId?: string;
 }
 
+/**
+ * The phone's optional Savings wallet, which this guardian only WATCHES (docs/design/savings-and-limit-off.md,
+ * option K): it holds no Savings key and cannot sign for it. It serves its coins to the phone and tells the phone and
+ * the alert contacts when they move.
+ */
+export interface SavingsSummary {
+  id: string;
+  watchedSince: ISODate;
+  /** From the guardian's last scan of Savings (absent before the first one, e.g. right after a restart). */
+  balanceSats?: number;
+  unconfirmedSats?: number;
+  scannedAt?: ISODate;
+  /** The newest time Savings coins moved out (what left, fee included). */
+  lastMoved?: { at: ISODate; sats: number; txid: string };
+}
+
 export interface DailySpend {
   /** Phone-only sats counted over the rolling 24 hours, fees included. */
   usedSats: number;
@@ -89,6 +105,8 @@ export interface GuardianStatus {
    */
   hardwareConfirmRequired?: boolean;
   dailySpend: DailySpend;
+  /** The Savings wallet this guardian watches for the phone, if the phone has one. */
+  savings?: SavingsSummary;
   /** True while a Delay & Notify recovery is running. Details: getRecovery(). */
   recoveryInProgress: boolean;
   /**

@@ -193,8 +193,10 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
               ? [`"Locked by an alert contact" alert sent to ${n}`, 'Lock alert sent']
               : e.kind === 'contact_lock_on'
                 ? [`"You may lock the guardian" message sent to ${n}`, 'Contacts told they may lock']
-                : [`"You can no longer lock the guardian" message sent to ${n}`, 'Contacts told they can no longer lock'];
-      return { ...base, kind: e.kind === 'contact_lock' ? 'system' : 'rules', event, summary, signedBy: null, sats: null, result: 'ok' };
+                : e.kind === 'savings_moved'
+                  ? [`"Savings moved" alert sent to ${n}`, 'Savings alert sent']
+                  : [`"You can no longer lock the guardian" message sent to ${n}`, 'Contacts told they can no longer lock'];
+      return { ...base, kind: e.kind === 'contact_lock' || e.kind === 'savings_moved' ? 'system' : 'rules', event, summary, signedBy: null, sats: null, result: 'ok' };
     }
     case 'contact_locked':
       return {
@@ -252,6 +254,28 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
       };
     case 'wallet_unwatched':
       return { ...base, kind: 'system', event: `Stopped watching the replaced wallet ${e.walletId}`, summary: 'Stopped watching a wallet', signedBy: 'Phone', sats: null, result: 'ok' };
+    case 'savings_registered':
+      return {
+        ...base,
+        kind: 'system',
+        event: `Now watching the phone's Savings wallet ${e.walletId}${e.replaced ? ` (instead of ${e.replaced})` : ''}. This guardian holds no Savings key and cannot sign for it: it only serves its coins and tells you when they move`,
+        summary: 'Watching Savings',
+        signedBy: 'Phone',
+        sats: null,
+        result: 'ok',
+      };
+    case 'savings_unregistered':
+      return { ...base, kind: 'system', event: `Stopped watching the Savings wallet ${e.walletId}`, summary: 'Stopped watching Savings', signedBy: 'Phone', sats: null, result: 'ok' };
+    case 'savings_moved':
+      return {
+        ...base,
+        kind: 'system',
+        event: `Savings moved: ${formatSatsText(e.amountSats)} left the Savings wallet ${e.walletId} in ${shortTx(e.txid)}. This guardian did not sign it (it cannot): it took the phone with the hardware wallet, or the Recovery Key. The phone and the alert contacts are told.`,
+        summary: 'Savings moved',
+        signedBy: null,
+        sats: sats(e.amountSats),
+        result: 'ok',
+      };
     case 'wallet_retire_refused':
       return { ...base, kind: 'system', event: `Retiring the wallet refused: ${refusalText(e.refusal)}`, signedBy: null, sats: null, result: 'refused' };
     case 'hardware_auth_confirmed':
