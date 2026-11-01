@@ -21,6 +21,7 @@ import { engineEntry, serviceEntry, shortNpub } from './activity.js';
 import { HttpError, type Route, type RouteResult } from './server.js';
 import type { ActivityEntry, GuardianStatus, PairingSession, PublicStatus, RecoveryCode, RecoveryInProgress, RelaySettings, Rules, SavingsSummary, SetupPreflight } from './types.js';
 import { sessionCookie } from './sessions.js';
+import { hostingRoutes } from '../hosting/http.js';
 
 const iso = (ms: number) => new Date(ms).toISOString();
 const ok = (body: unknown, status = 200): RouteResult => ({ status, body });
@@ -434,30 +435,7 @@ export function buildRoutes(g: Guardian): Route[] {
       },
     },
 
-    // Hosting for family is a later feature (DESIGN.md): the engine holds one wallet.
-    {
-      method: 'GET',
-      path: '/hosting',
-      handler: () => {
-        requireUnlocked(g);
-        return ok({ wallets: [], pendingInvite: null });
-      },
-    },
-    {
-      method: 'POST',
-      path: '/hosting/invites',
-      handler: () => {
-        requireUnlocked(g);
-        throw new HttpError(501, 'not_available', 'Hosting a guardian for family is not available yet.');
-      },
-    },
-    {
-      method: 'DELETE',
-      path: '/hosting/invites/:id',
-      handler: () => {
-        requireUnlocked(g);
-        throw new HttpError(501, 'not_available', 'Hosting a guardian for family is not available yet.');
-      },
-    },
+    // Hosting for family (docs/design/family-hosting.md): hosting/http.ts.
+    ...hostingRoutes(g),
   ];
 }

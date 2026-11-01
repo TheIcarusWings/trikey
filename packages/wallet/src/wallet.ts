@@ -419,7 +419,7 @@ export interface SilentPaymentScanStatus {
 /** The guardian told this phone it no longer guards its wallet (`wallet_retired`). */
 export interface WalletRetiredView {
   walletId: string;
-  reason: 'retired' | 'recovered' | 'reset';
+  reason: 'retired' | 'recovered' | 'reset' | 'hosting_ended';
   /** `recovered`: the wallet the recovery moved the money to, when the guardian named one. */
   successorWalletId?: string;
   /** When it happened (ms). */
@@ -501,7 +501,7 @@ const RELAY_PROBE_RETRY_MS = 5 * 60_000;
 const policyNameOf = (walletId: string) => `Trikey ${walletId.slice(0, 4)}`;
 
 /** `wallet_retired` in words for the person. */
-function retiredMessage(r: { reason: 'retired' | 'recovered' | 'reset'; successorWalletId?: string }): string {
+function retiredMessage(r: { reason: 'retired' | 'recovered' | 'reset' | 'hosting_ended'; successorWalletId?: string }): string {
   switch (r.reason) {
     case 'recovered':
       return r.successorWalletId
@@ -511,6 +511,8 @@ function retiredMessage(r: { reason: 'retired' | 'recovered' | 'reset'; successo
       return 'The guardian retired this wallet, so it co-signs nothing for it any more.';
     case 'reset':
       return 'The guardian was reset and no longer knows this wallet.';
+    case 'hosting_ended':
+      return 'Your host stopped hosting this wallet: its guardian key is gone. Move your money with your phone and your hardware wallet (Replace guardian).';
   }
 }
 

@@ -15,6 +15,8 @@ import type { Guardian } from './guardian.js';
 import type { IncomingDm } from './nostr/dm.js';
 import { refusalText } from './nostr/wire.js';
 import { isLockCommand, onLockDm } from './dm-lock.js';
+import { onHostedCancelDm } from './hosting/dm-cancel.js';
+import { slotOfRecoveryId } from './hosting/service.js';
 
 const CANCEL_RE = /\bcancel\s+([0-9a-z]+-[0-9a-f]{12})\b/i;
 /** Only answer "no such recovery" to fresh messages, so old DMs re-delivered after a restart stay quiet. */
@@ -29,6 +31,8 @@ export async function onContactDm(g: Guardian, dm: IncomingDm): Promise<void> {
   if (isLockCommand(dm.content)) return onLockDm(g, dm);
   const id = parseCancel(dm.content);
   if (!id) return;
+  // A guest wallet's recovery id names its slot: that slot handles it (hosting/dm-cancel.ts), never the host's wallet.
+  if (slotOfRecoveryId(id)) return onHostedCancelDm(g, dm, id);
   const reply = async (text: string) => {
     try {
       await g.dm?.send(dm.sender, text);

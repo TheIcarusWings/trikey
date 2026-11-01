@@ -9,6 +9,8 @@ export type {
   ChainStatus,
   GuardianStatus,
   PublicStatus,
+  FamilyInvite,
+  HostedWallet,
   HostingOverview,
   PairedPhone,
   PairingSession,

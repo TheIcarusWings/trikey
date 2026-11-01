@@ -345,28 +345,54 @@ export interface FamilyInvite {
   id: string;
   /** Only the host sees this name. */
   name: string;
-  /** trikey:invite?... link, also encoded in the QR code. */
-  link: string;
+  /**
+   * `trikey://invite?...` link, also encoded in the QR code. Only in the answer that created the invite: the guardian
+   * keeps just a hash of its secret, so the link cannot be shown again (cancel it and make a new one).
+   */
+  link?: string;
   createdAt: ISODate;
   expiresAt: ISODate;
   status: FamilyInviteStatus;
 }
 
+/**
+ * `invited`: invite not accepted yet; `active`: the box holds one of their keys; `recovering`: a recovery of their
+ * wallet waits (keep the box on and unlocked); `leaving`: you stopped hosting, they have until `endsAt`; `ended`: the
+ * notice ran out or you stopped at once (the key here is gone); `left`: they moved their wallet away.
+ */
+export type HostedWalletState = 'invited' | 'active' | 'recovering' | 'leaving' | 'ended' | 'left';
+
 export interface HostedWallet {
   id: string;
   name: string;
-  state: 'active' | 'invited';
-  /** Set when `active`. */
+  state: HostedWalletState;
+  /** Set once accepted. */
   since?: ISODate;
   recoveryDelayDays?: RecoveryDelayDays;
-  /** Payments co-signed in the last 7 days. The host never sees amounts or balances. */
+  /** Payments co-signed in the last 7 days. The page shows no amounts or balances. */
   paymentsThisWeek?: number;
   /** Set when `invited`. */
   inviteId?: string;
+  /** `recovering`: when the recovery's wait ends. No amounts. */
+  recoveryReadyAt?: ISODate;
+  /** `leaving`: when hosting ends and the key here is deleted. */
+  endsAt?: ISODate;
+  /** `ended` or `left`: when. */
+  endedAt?: ISODate;
 }
 
 export interface HostingOverview {
+  /** False when this guardian does not host wallets (an older one, or FAMILY_HOSTING=false): hide the page. */
+  available: boolean;
   wallets: HostedWallet[];
-  /** The latest invite that can still be accepted, if any. */
+  /** The latest invite that can still be accepted, if any (without its link: see `FamilyInvite.link`). */
   pendingInvite: FamilyInvite | null;
+  limits?: { maxWallets: number; maxPendingInvites: number };
+}
+
+export interface StopHostingInput {
+  /** End at once instead of giving 30 days' notice. Needs `confirm`. */
+  now?: boolean;
+  /** `STOP HOSTING NOW`, typed exactly, with `now`. */
+  confirm?: string;
 }

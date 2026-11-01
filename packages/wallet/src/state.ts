@@ -443,7 +443,7 @@ export const WalletState = z.object({
   /** The optional Savings wallet (absent for everyone who never creates one). */
   savings: SavingsRecord.optional(),
   /** The guardian said it retired this phone's wallet (`wallet_retired`): it co-signs nothing for it any more. */
-  retiredByGuardian: z.object({ walletId: z.string(), reason: z.enum(['retired', 'recovered', 'reset']), successorWalletId: z.string().optional(), at: z.number() }).optional(),
+  retiredByGuardian: z.object({ walletId: z.string(), reason: z.enum(['retired', 'recovered', 'reset', 'hosting_ended']), successorWalletId: z.string().optional(), at: z.number() }).optional(),
 });
 export type WalletState = z.infer<typeof WalletState>;
 

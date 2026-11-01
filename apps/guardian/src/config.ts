@@ -15,6 +15,8 @@
  *   SP_SCAN_THREADS   optional: worker threads for the silent payment scanner (1 to 64;
  *                     default one less than the CPU cores, at least 1). 1 scans in the
  *                     main thread, without workers
+ *   FAMILY_HOSTING    optional: `false` turns hosting guests' wallets off (the `family_hosting`
+ *                     feature; on by default)
  *   TRIKEY_EXTRA_ENTROPY optional: 32 bytes as 64 hex characters (on Umbrel, the app's
  *                     APP_SEED), mixed into every new setup seed (keystore.ts,
  *                     `trikey/guardian-seed/v1`). Any other value is hashed to 32 bytes. Never logged
@@ -57,6 +59,11 @@ export interface GuardianConfig {
    * Secret-ish: never logged, never written anywhere.
    */
   extraEntropy?: Uint8Array;
+  /**
+   * FAMILY_HOSTING: hosting guests' wallets (docs/design/family-hosting.md), the `family_hosting` feature. On unless set
+   * to `false`; off, the web UI offers no invites and guests' requests are dropped like a stranger's.
+   */
+  familyHosting?: boolean;
 }
 
 const NETWORK_ALIASES: Record<string, NetworkName> = {
@@ -143,5 +150,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GuardianConfig
     relayOptions: DEFAULT_RELAY_OPTIONS,
     spScanThreads: parseScanThreads(env['SP_SCAN_THREADS']),
     extraEntropy: parseExtraEntropy(env['TRIKEY_EXTRA_ENTROPY']),
+    familyHosting: env['FAMILY_HOSTING']?.trim().toLowerCase() !== 'false',
   };
 }
