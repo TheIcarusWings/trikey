@@ -210,7 +210,15 @@ jobs:
           certs="$("${bt}/apksigner" verify --verbose --print-certs "dist/${name}.apk")"
           echo "${certs}"
           if grep -qi 'Android Debug' <<<"${certs}"; then echo "::error::The APK is still signed with the debug key"; exit 1; fi
-          signer="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"${certs}" | tr -d ' :' | tr 'A-F' 'a-f')"
+          # The signers' certificate digests, however this apksigner labels the lines ("Signer #1 ...", or per scheme or
+          # SDK range in other versions): every one must be the same certificate.
+          digests="$(grep -oiE 'certificate SHA-256 digest: *[0-9a-f:]+' <<<"${certs}" | sed -E 's/.*[Dd]igest: *//' | tr -d ':' | tr 'A-F' 'a-f' | sort -u)"
+          if [ -z "${digests}" ] || [ "$(wc -l <<<"${digests}")" != 1 ]; then
+            report="$(head -n 40 <<<"${certs}" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+            echo "::error::Could not read exactly one signing certificate digest from apksigner (found: ${digests:-none}). Its report:%0A${report}"
+            exit 1
+          fi
+          signer="${digests}"
           if [ "${SIGNING}" = release ]; then
             pinned="$(grep -v '^#' packaging/android/release-cert.sha256 | tr -d ' :\n\r' | tr 'A-F' 'a-f')"
             [[ "${pinned}" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::packaging/android/release-cert.sha256 does not hold a SHA-256"; exit 1; }
@@ -245,8 +253,8 @@ jobs:
         run: |
           if [ "${SIGNING}" = release ]; then
             signing_note="**Signed with the Trikey release key** (certificate SHA-256 \`${SIGNER}\`, also in
-          packaging/android/release-cert.sha256). Every release from 0.1.6-alpha on has this signature, so it installs over
-          the previous one and the wallet on the phone stays. Builds up to 0.1.5-alpha had one-off keys: moving from one of
+          packaging/android/release-cert.sha256). Every release from 0.1.7-alpha on has this signature, so it installs over
+          the previous one and the wallet on the phone stays. Builds up to 0.1.6-alpha had one-off keys: moving from one of
           those needs a last uninstall, which deletes the wallet on that phone, so make a backup (recovery code and backup
           file) first. To get updates without downloading by hand, see docs/android-signing.md (Obtainium)."
           else

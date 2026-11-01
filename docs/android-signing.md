@@ -1,8 +1,8 @@
 # Android signing and updates
 
-From **0.1.6-alpha**, every release APK is signed with the same key: the Trikey release key. Android installs an APK over
+From **0.1.7-alpha**, every release APK is signed with the same key: the Trikey release key. Android installs an APK over
 an installed app only when both have the same signature, so a new release now updates the app in place and the wallet on
-the phone stays. Builds up to 0.1.5-alpha were signed with a one-off key each, so moving from one of those to 0.1.6-alpha
+the phone stays. Builds up to 0.1.6-alpha were signed with a one-off key each, so moving from one of those to 0.1.7-alpha
 needs one last uninstall (which deletes the wallet on that phone: make a backup first).
 
 Pull-request builds and manual runs of the **Android test APK** workflow still get a one-off key: they never see the release
@@ -15,7 +15,7 @@ refuses to publish an APK signed by anything else, and each release's notes repe
 SDK build tools):
 
 ```sh
-apksigner verify --print-certs trikey-alpha-v0.1.6-alpha.apk | grep 'SHA-256'
+apksigner verify --print-certs trikey-alpha-v0.1.7-alpha.apk | grep 'SHA-256'
 ```
 
 The digest it prints must equal the one in that file.

@@ -204,9 +204,9 @@ does not reach a release. A local build is in `apps/mobile/README.md`, "Android"
 What kind of build it is:
 
 - A **release build** with the app's code inside it. Nothing needs to run on a computer, and it starts in **Real** mode.
-- From 0.1.6-alpha, signed with the **Trikey release key**: a newer release installs over the older one and the wallet on the
+- From 0.1.7-alpha, signed with the **Trikey release key**: a newer release installs over the older one and the wallet on the
   phone stays. To get updates without downloading by hand, use Obtainium ([docs/android-signing.md](android-signing.md)).
-  Builds up to 0.1.5-alpha had a one-off key each: to move from one of those, **uninstall it first, which deletes the wallet
+  Builds up to 0.1.6-alpha had a one-off key each: to move from one of those, **uninstall it first, which deletes the wallet
   on that phone**. Back up first.
 - No passkeys and no Google Drive or iCloud backup in this build. The backup is a recovery code plus a backup file.
 - Built for 64-bit phones by default (every phone from the last several years).
@@ -238,6 +238,9 @@ own Mac, signed with a free Apple ID.
    TRIKEY_DISABLE_ICLOUD=1 TRIKEY_IOS_BUNDLE_ID=com.<yourname>.trikey npx expo run:ios --device --configuration Release
    ```
 4. On the iPhone: Settings, General, VPN & Device Management, trust your developer profile. Then open Trikey.
+
+If the build stops with an error, `apps/mobile/README.md` ("iOS (free Apple ID)") lists the snags met on a first build and their
+fixes (UTF-8 shell for CocoaPods, the device UDID, the iOS platform download, opening Xcode once for the signing profile).
 
 You should see: the same first screen as on Android. The steps below are the same; where they name an Android screen or
 setting, use the iPhone's equivalent and note any difference in the report.
