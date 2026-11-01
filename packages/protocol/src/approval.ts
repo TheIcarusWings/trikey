@@ -1,4 +1,4 @@
-import { isLimitOff, normalizePolicy, policyHash } from './policy.js';
+import { isContactLockOn, isLimitOff, normalizePolicy, policyHash } from './policy.js';
 import type { Policy } from './schemas.js';
 
 /**
@@ -15,11 +15,21 @@ import type { Policy } from './schemas.js';
  * with `limit=off` in place of the number, so the device screen says it in words:
  *
  * `Trikey policy v2 wallet=<id> seq=<n> limit=off delay=<d>d feecap=<sats> contacts=<k> hash=<policyHash> expires=<ISO>`
+ *
+ * When the alert contacts may lock the guardian (`contactLock`) in the new policy, or may now and the new policy takes
+ * that away, it is version 3, which says which in words after the contacts (`lock=on` / `lock=off`), the limit as in
+ * versions 1 and 2:
+ *
+ * `Trikey policy v3 wallet=<id> seq=<n> limit=<sats|off> delay=<d>d feecap=<sats> contacts=<k> lock=<on|off> hash=<policyHash> expires=<ISO>`
  */
 export const MAX_APPROVAL_MESSAGE_LENGTH = 240;
 
 export type HardwareAction =
-  | { action: 'policy'; policy: Policy }
+  /**
+   * `contactLockBefore`: the guardian's current policy has `contactLock` on (from `policy.get`). Then the text is
+   * version 3 even when the new policy turns it off (`lock=off`), so the device says so.
+   */
+  | { action: 'policy'; policy: Policy; contactLockBefore?: boolean }
   | { action: 'cancel-recovery'; recoveryId: string }
   | { action: 'resume-phone' }
   | { action: 'retire-wallet' };
@@ -61,13 +71,17 @@ export function approvalMessage(action: HardwareAction, ctx: ApprovalContext): s
       const p = normalizePolicy(action.policy);
       // No daily limit: version 2, which says so in words on the device screen.
       const off = isLimitOff(p.dailyLimitSats) && !ctx.legacyPolicyText;
+      // The contacts may lock the guardian (or may now, and this takes it away): version 3, which says which in words.
+      const lockOn = isContactLockOn(p);
+      const lock = lockOn || action.contactLockBefore === true;
       return line([
-        off ? 'Trikey policy v2' : 'Trikey policy v1',
+        lock ? 'Trikey policy v3' : off ? 'Trikey policy v2' : 'Trikey policy v1',
         ...head,
         off ? 'limit=off' : `limit=${p.dailyLimitSats}`,
         `delay=${p.recoveryDelayDays}d`,
         `feecap=${p.sweepFeeCapSats}`,
         `contacts=${p.alertContacts.length}`,
+        ...(lock ? [`lock=${lockOn ? 'on' : 'off'}`] : []),
         `hash=${policyHash(p)}`,
         tail,
       ]);

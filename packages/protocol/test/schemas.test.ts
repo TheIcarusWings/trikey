@@ -392,8 +392,8 @@ describe('guardian.status atMs', () => {
 });
 
 describe('Policy', () => {
-  it('has exactly the four rules the engine enforces', () => {
-    expect(Object.keys(Policy.shape).sort()).toEqual(['alertContacts', 'dailyLimitSats', 'recoveryDelayDays', 'sweepFeeCapSats']);
+  it('has exactly the rules the engine enforces (the opt-in contactLock among them)', () => {
+    expect(Object.keys(Policy.shape).sort()).toEqual(['alertContacts', 'contactLock', 'dailyLimitSats', 'recoveryDelayDays', 'sweepFeeCapSats']);
     expect(Policy.safeParse(policy).success).toBe(true);
   });
 

@@ -19,9 +19,15 @@ export function isLimitOff(dailyLimitSats: number): boolean {
  * What a guardian may list in `guardian.status.features` (unknown names are ignored). `limit_off`: it builds the
  * version-2 policy text for a policy with no daily limit, refuses "off" at pairing and during a recovery, alerts the
  * paired phone and the alert contacts when the limit is turned off, and turns it back on at its last value after a
- * recovery.
+ * recovery. `contact_lock`: it knows the policy's `contactLock` member (the alert contacts may lock it with a `LOCK`
+ * DM), builds the version-3 policy text whenever that is or was on, and reports who locked it (`guardian.status.lock`).
  */
-export const GUARDIAN_FEATURES = { limitOff: 'limit_off' } as const;
+export const GUARDIAN_FEATURES = { limitOff: 'limit_off', contactLock: 'contact_lock' } as const;
+
+/** True when the alert contacts may lock the guardian (`Policy.contactLock`). */
+export function isContactLockOn(policy: Pick<Policy, 'contactLock'>): boolean {
+  return policy.contactLock === true;
+}
 export type GuardianFeature = (typeof GUARDIAN_FEATURES)[keyof typeof GUARDIAN_FEATURES];
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
@@ -60,8 +66,9 @@ function canonicalize(value: unknown): Json {
 
 /**
  * The policy in the form that gets hashed (and that the guardian stores): contacts lowercased,
- * deduplicated and sorted. Validates against `Policy`, so unknown members, a delay other than 7/14/30
- * days, a non-positive fee cap or more than 20 contacts throw rather than being hashed.
+ * deduplicated and sorted; `contactLock` kept only when it is on (`false` is dropped, so a policy without
+ * it is byte for byte what it was before the member existed). Validates against `Policy`, so unknown members,
+ * a delay other than 7/14/30 days, a non-positive fee cap or more than 20 contacts throw rather than being hashed.
  */
 export function normalizePolicy(policy: Policy): Policy {
   const contacts = Array.isArray(policy?.alertContacts)
@@ -73,13 +80,15 @@ export function normalizePolicy(policy: Policy): Policy {
     dailyLimitSats: p.dailyLimitSats,
     recoveryDelayDays: p.recoveryDelayDays,
     sweepFeeCapSats: p.sweepFeeCapSats,
+    ...(p.contactLock === true ? { contactLock: true } : {}),
   };
 }
 
 /**
  * sha256 of the canonical JSON of the normalized policy, lowercase hex. Identical to the guardian
  * engine's `policyHash(rules)`: the canonical JSON is `{alertContacts, dailyLimitSats,
- * recoveryDelayDays, sweepFeeCapSats}` with sorted keys and sorted, lowercase contacts.
+ * recoveryDelayDays, sweepFeeCapSats}` with sorted keys and sorted, lowercase contacts, plus
+ * `"contactLock":true` (between `alertContacts` and `dailyLimitSats`) only when it is on.
  */
 export function policyHash(policy: Policy): string {
   return bytesToHex(sha256(utf8ToBytes(canonicalJson(normalizePolicy(policy)))));

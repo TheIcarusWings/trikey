@@ -116,9 +116,10 @@ export const RecoveryDelayDays = z.union([z.literal(7), z.literal(14), z.literal
 export const MAX_ALERT_CONTACTS = 20;
 
 /**
- * The rules the guardian enforces: exactly these four members and nothing else. The schema is strict
+ * The rules the guardian enforces: exactly these members and nothing else. The schema is strict
  * (unknown members are rejected, not preserved), so the protocol can never carry a rule the guardian
- * does not enforce. `policyHash` covers the same four members, with `alertContacts` sorted.
+ * does not enforce. `policyHash` covers the same members, with `alertContacts` sorted; `contactLock` only
+ * when it is on, so every policy without it hashes as it always did.
  */
 export const Policy = z.strictObject({
   /** Most the phone + guardian can spend per rolling 24 hours, in sats. 0 means "never". */
@@ -129,6 +130,13 @@ export const Policy = z.strictObject({
   alertContacts: z.array(NostrPubkey).max(MAX_ALERT_CONTACTS),
   /** Highest absolute fee (sats) a recovery sweep may pay. */
   sweepFeeCapSats: Sats.min(1),
+  /**
+   * Opt-in: the alert contacts may LOCK the guardian with a NIP-17 DM (`LOCK`), nothing more (PROTOCOL.md, "Alert
+   * contacts can lock the guardian"). Only guardians that report the `contact_lock` feature know this member (older
+   * ones refuse it, the schema being strict), and a phone sends it only to them. `false` is the same as absent:
+   * `normalizePolicy` drops it, so the policy and its hash are those of a guardian without the feature.
+   */
+  contactLock: z.boolean().optional(),
 });
 
 /**
@@ -221,6 +229,14 @@ export const PairPrepareResult = z.object({
   guardianVersion: z.string().max(32),
   /** True when `guardianKey` was derived with the request's `entropy`. Absent or false: the guardian's own key. */
   key3Mixed: z.boolean().optional(),
+  /**
+   * As `guardian.status.features` (which an unpaired phone cannot call yet): what the phone may put in `pair`'s rules,
+   * e.g. `contactLock` only when this lists `contact_lock`. Absent from guardians before it.
+   */
+  features: z
+    .array(z.string().regex(/^[a-z0-9_]{1,32}$/))
+    .max(32)
+    .optional(),
 });
 
 /** Step 2 of pairing: registers the wallet, the hardware authorization key and the initial rules. */
@@ -464,6 +480,17 @@ export const GuardianStatusResult = z
     watchedWalletId: WalletId.optional(),
     /** As `policy.get`'s: weak spots of the paired wallet's policy. Absent when there are none. */
     warnings: z.array(PolicyWarning).max(8).optional(),
+    /**
+     * While locked, why and since when (guardians with `contact_lock`; absent from older ones and while unlocked).
+     * `contact`: the alert contact who locked it with a `LOCK` DM. After a restart the reason is `restart`.
+     */
+    lock: z
+      .object({
+        reason: z.enum(['restart', 'manual', 'remote', 'contact']),
+        at: UnixSeconds,
+        contact: NostrPubkey.optional(),
+      })
+      .optional(),
     /**
      * The relays the guardian uses now (the ones its pairing and recovery codes carry). A phone whose stored list
      * differs takes this one, as for a `relays_changed` alert (PROTOCOL.md, "Changing relays"). Absent from
@@ -905,8 +932,14 @@ export const Alert = z.discriminatedUnion('type', [
   stamped({
     ...alertBase,
     type: z.literal('guardian_locked'),
-    /** `manual`: from the box's web UI; `remote`: by the paired phone (`guardian.lock`). */
-    reason: z.enum(['restart', 'manual', 'remote', 'tamper']).optional(),
+    /**
+     * `manual`: from the box's web UI; `remote`: by the paired phone (`guardian.lock`); `contact`: by the alert contact
+     * `contact` with a `LOCK` DM (only with the policy's `contactLock` on; phones before it drop this alert as malformed
+     * and see the lock in `guardian.status`).
+     */
+    reason: z.enum(['restart', 'manual', 'remote', 'tamper', 'contact']).optional(),
+    /** `reason: "contact"`: the alert contact who locked it (nostr pubkey). */
+    contact: NostrPubkey.optional(),
   }),
   stamped({
     ...alertBase,
