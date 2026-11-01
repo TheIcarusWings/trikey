@@ -1,7 +1,8 @@
 # Security review brief
 
-Status: brief for review firms, to scope and quote an independent review before mainnet (DESIGN.md, "MVP build
-order", step 4). Written 2026-11-01 against `main` at `791ff82` (0.1.7-alpha). It is documentation only and changes
+Status: a starting point for anyone reviewing Trikey's security. It was written for review firms, but there is no
+budget for a paid review (DESIGN.md, "MVP build order", step 4): independent reviewers, in any amount of depth, are
+welcome, and so are reports from testers. Written 2026-11-01 against `main` at `791ff82` (0.1.7-alpha). It is documentation only and changes
 no code. Every statement points at the file or section it comes from; anything we have not checked ourselves is
 marked **to confirm**.
 
