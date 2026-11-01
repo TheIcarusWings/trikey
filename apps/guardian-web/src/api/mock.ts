@@ -6,6 +6,8 @@ import type {
   FamilyInvite,
   GuardianStatus,
   HostedWallet,
+  NotificationSettings,
+  NotifyDestination,
   PairedPhone,
   PairingSession,
   RecoveryInProgress,
@@ -15,6 +17,7 @@ import type {
   Rules,
 } from './types';
 import { relayListError } from '../lib/relays';
+import { emailError, guardianNameError, topicError, urlError, webhookSecretError } from '../lib/notifications';
 
 /**
  * In-memory guardian with demo data matching design/screens/Guardian-*.
@@ -32,6 +35,7 @@ import { relayListError } from '../lib/relays';
  *   limitoff   the owner turned the daily limit off with the hardware wallet yesterday
  *   contactlocked  the owner lets the alert contacts lock the guardian, and one of them just did (LOCK over nostr)
  *   savings    the phone has a Savings wallet this guardian watches; some of it moved yesterday
+ *   notify     email, ntfy and a webhook are set up (Settings > Notifications); the webhook is failing
  *
  * State lives in memory only, so a page reload starts the scenario over. In the
  * mock, any unlock passphrase works except the literal `wrong`, which is
@@ -49,7 +53,8 @@ export type MockScenario =
   | 'oldrelays'
   | 'limitoff'
   | 'contactlocked'
-  | 'savings';
+  | 'savings'
+  | 'notify';
 
 /** A throwaway demo contact key (`1b` × 32), as the guardian names a contact: its npub. */
 const DEMO_CONTACT_NPUB = 'npub1rvd3kxcmrvd3kxcmrvd3kxcmrvd3kxcmrvd3kxcmrvd3kxcmrvdsca5nvq';
@@ -139,7 +144,7 @@ function demoRecovery(ready = false): RecoveryInProgress {
 
 export function readScenario(search: string): MockScenario {
   const value = new URLSearchParams(search).get('mock');
-  const known: MockScenario[] = ['firstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout', 'oldrelays', 'limitoff', 'contactlocked', 'savings'];
+  const known: MockScenario[] = ['firstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout', 'oldrelays', 'limitoff', 'contactlocked', 'savings', 'notify'];
   return known.find((s) => s === value) ?? 'default';
 }
 
@@ -258,6 +263,44 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       expiresAt: new Date(Date.now() + 23 * HOUR).toISOString(),
     },
   ];
+
+  // Settings > Notifications. Contacts' keys are throwaway demo values (`1b`/`2c` x 32).
+  const DEMO_CONTACTS = [
+    { pubkey: '1b'.repeat(32), npub: DEMO_CONTACT_NPUB },
+    { pubkey: '2c'.repeat(32), npub: 'npub19skzctpv9skzctpv9skzctpv9skzctpv9skzctpv9skzctpv9skqhnrlyr' },
+  ];
+  const notifyScenario = scenario === 'notify';
+  const never = { state: 'untested' as const };
+  let notifyName = notifyScenario ? 'Home vault' : 'Trikey Guardian';
+  let smtpSettings: NotificationSettings['smtp'] = notifyScenario
+    ? { host: 'smtp.example.com', port: 465, security: 'tls', username: 'owner@example.com', from: 'owner@example.com', passwordSet: true, health: { state: 'ok', lastOkAt: localAt(1, '09:12') } }
+    : undefined;
+  let destinations: NotifyDestination[] = notifyScenario
+    ? [
+        { id: 'd000000000001', audience: 'owner', kind: 'email', email: 'owner@example.com', health: { state: 'ok', lastOkAt: localAt(1, '09:12') } },
+        { id: 'd000000000002', audience: 'owner', kind: 'ntfy', ntfy: { server: 'http://192.168.1.20:8080', topicHint: 'tri…', tokenSet: true }, health: { state: 'ok', lastOkAt: localAt(1, '09:12') } },
+        {
+          id: 'd000000000003',
+          audience: 'owner',
+          kind: 'webhook',
+          webhook: { origin: 'http://homeassistant.local:8123', secretSet: true },
+          health: { state: 'failing', lastOkAt: localAt(3, '18:00'), lastErrorAt: localAt(1, '09:12'), lastError: 'ECONNREFUSED (homeassistant.local:8123)' },
+        },
+        { id: 'd000000000004', audience: 'contact', kind: 'email', contact: DEMO_CONTACTS[0]!.pubkey, contactNpub: DEMO_CONTACTS[0]!.npub, contactInRules: true, email: 'maria@example.com', health: never },
+        { id: 'd000000000005', audience: 'contact', kind: 'email', email: 'dad@example.org', health: never },
+      ]
+    : [];
+  let nextDest = 6;
+  const notificationSettings = (): NotificationSettings => ({
+    guardianName: notifyName,
+    ...(smtpSettings ? { smtp: clone(smtpSettings) } : {}),
+    destinations: clone(destinations),
+    contacts: clone(DEMO_CONTACTS),
+    recoveryRunning: !!recovery,
+    pending: destinations.filter((d) => d.health.state === 'failing').length,
+    defaultNtfyServer: 'https://ntfy.sh',
+    limits: { destinations: 24, ownerPerKind: 3, contactOnly: 10 },
+  });
 
   const pushActivity = (entry: Omit<ActivityEntry, 'id' | 'at'>) => {
     activity = [{ ...entry, id: `a${Date.now()}${activity.length}`, at: new Date().toISOString() }, ...activity];
@@ -455,6 +498,81 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
         });
       }
       return relaySettings();
+    },
+
+    async getNotifications() {
+      await wait();
+      if (locked) throw new ApiError('locked', 'The guardian is locked. Unlock it first.', 409);
+      return notificationSettings();
+    },
+
+    async setNotifications(input) {
+      await wait(300);
+      if (locked) throw new ApiError('locked', 'The guardian is locked. Unlock it first.', 409);
+      const bad = (m: string) => new ApiError('invalid', m, 400);
+      const nameProblem = guardianNameError(input.guardianName);
+      if (nameProblem) throw bad(nameProblem);
+      if (input.destinations.some((d) => d.kind === 'email') && !input.smtp) throw bad('Set up the email account first: email channels send through it.');
+      if (input.smtp && !input.smtp.password && !smtpSettings) throw bad('Email server: enter an app password (not your account password).');
+      const kept = new Set(input.destinations.map((d) => d.id).filter(Boolean));
+      const removing = destinations.some((d) => !kept.has(d.id));
+      if (recovery && removing) throw new ApiError('recovery_pending', 'A recovery is running: alert channels and the email account can be added to, not removed or changed, until it ends.', 409);
+      const next: NotifyDestination[] = [];
+      for (const d of input.destinations) {
+        const old = d.id ? destinations.find((x) => x.id === d.id) : undefined;
+        if (old) {
+          next.push(old);
+          continue;
+        }
+        if (d.kind === 'email') {
+          const p = emailError(d.email ?? '');
+          if (p) throw bad(p);
+        }
+        if (d.kind === 'ntfy') {
+          const p = urlError(d.ntfy?.server ?? '') ?? topicError(d.ntfy?.topic ?? '');
+          if (p) throw bad(p);
+        }
+        if (d.kind === 'webhook') {
+          const p = urlError(d.webhook?.url ?? '') ?? webhookSecretError(d.webhook?.secret ?? '');
+          if (p) throw bad(p);
+        }
+        const contactNpub = d.contact ? DEMO_CONTACTS.find((c) => c.pubkey === d.contact)?.npub : undefined;
+        next.push({
+          id: `d${String(nextDest++).padStart(12, '0')}`,
+          audience: d.audience,
+          kind: d.kind,
+          ...(d.contact ? { contact: d.contact, contactInRules: true, ...(contactNpub ? { contactNpub } : {}) } : {}),
+          ...(d.email ? { email: d.email.trim() } : {}),
+          ...(d.ntfy ? { ntfy: { server: d.ntfy.server, topicHint: `${(d.ntfy.topic ?? '').slice(0, 3)}…`, tokenSet: !!d.ntfy.token } } : {}),
+          ...(d.webhook ? { webhook: { origin: new URL(d.webhook.url ?? 'http://x').origin, secretSet: !!d.webhook.secret } } : {}),
+          health: never,
+        });
+      }
+      notifyName = input.guardianName.trim() || 'Trikey Guardian';
+      smtpSettings = input.smtp
+        ? { host: input.smtp.host, port: input.smtp.port, security: input.smtp.security, username: input.smtp.username, from: input.smtp.from, passwordSet: true, health: input.smtp.password ? never : (smtpSettings?.health ?? never) }
+        : undefined;
+      destinations = next;
+      pushActivity({ kind: 'system', event: 'Alert channels changed on this box. Every channel, before and after the change, and the paired phone are told.', summary: 'Alert channels changed', signedBy: null, sats: null, result: 'ok' });
+      return notificationSettings();
+    },
+
+    async testNotification(input) {
+      await wait(400);
+      if (locked) throw new ApiError('locked', 'The guardian is locked. Unlock it first.', 409);
+      const now = new Date().toISOString();
+      if (input.smtp) {
+        if (!smtpSettings) throw new ApiError('not_found', 'No email account is set up.', 404);
+        smtpSettings = { ...smtpSettings, health: { state: 'ok', lastOkAt: now } };
+        return { ok: true, health: clone(smtpSettings.health) };
+      }
+      const d = destinations.find((x) => x.id === input.destination);
+      if (!d) throw new ApiError('not_found', 'No such channel (it may have been removed).', 404);
+      // The demo webhook stays unreachable, so the failure state can be seen.
+      const ok = d.kind !== 'webhook' || !notifyScenario;
+      d.health = ok ? { state: 'ok', lastOkAt: now } : { ...d.health, state: 'failing', lastErrorAt: now };
+      pushActivity({ kind: 'system', event: ok ? 'Test message sent' : `Test message failed: ${d.health.lastError ?? 'unknown error'}`, summary: ok ? 'Test message sent' : 'Test message failed', signedBy: null, sats: null, result: ok ? 'ok' : 'refused' });
+      return ok ? { ok: true, health: clone(d.health) } : { ok: false, error: d.health.lastError ?? 'failed', health: clone(d.health) };
     },
 
     async resetGuardian(input) {

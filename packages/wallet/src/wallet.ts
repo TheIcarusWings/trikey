@@ -659,6 +659,17 @@ function unregistered(dev: SavingsDevice): SavingsDevice {
   return { ...rest, addressVerified: false };
 }
 
+/** One extra alert channel (email, ntfy, webhook) as the guardian lists it for the phone: masked, read-only. */
+export interface NotificationChannel {
+  kind: 'email' | 'ntfy' | 'webhook';
+  audience: 'owner' | 'contact';
+  /** The alert contact (nostr pubkey) the channel belongs to. */
+  contact?: string;
+  /** `j…@example.com`, or the server's host name. */
+  hint: string;
+  failing?: boolean;
+}
+
 export class TrikeyWallet {
   readonly network: Network;
   private readonly clock: Clock;
@@ -1474,6 +1485,7 @@ export class TrikeyWallet {
       ...(st.walletId ? { walletId: st.walletId } : {}),
       ...(st.hardwareConfirmRequired !== undefined ? { hardwareConfirmRequired: st.hardwareConfirmRequired } : {}),
       ...(st.watchedWalletId ? { watchedWalletId: st.watchedWalletId } : {}),
+      ...(st.notifications ? { notifications: { channels: st.notifications.channels.map((c) => ({ ...c })) } } : {}),
     };
     await this.update((s) => {
       s.guardianStatus = cache;
@@ -2248,6 +2260,24 @@ export class TrikeyWallet {
    */
   get contactLockSupported(): boolean {
     return !!this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.contactLock);
+  }
+
+  /**
+   * The guardian can also send alerts by email, ntfy and webhook (`notifications` in `guardian.status.features`, as last
+   * read). They are set up in the guardian's web UI, never from the phone (docs/design/notifications.md).
+   */
+  get notificationsSupported(): boolean {
+    return !!this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.notifications);
+  }
+
+  /**
+   * The extra alert channels the owner set up in the guardian's web UI, masked, as last read (`guardian.status`;
+   * a `notifications_changed` alert reads it again). Read-only here: the phone cannot change them, so a stolen phone
+   * cannot silence or redirect them. `contact`: the alert contact a channel belongs to; absent with `audience:
+   * contact`, someone reachable only by that channel. Empty for a guardian without the feature or without channels.
+   */
+  get notificationChannels(): NotificationChannel[] {
+    return (this.s.guardianStatus?.notifications?.channels ?? []).map((c) => ({ ...c }));
   }
 
   /** The alert contacts may lock the guardian now (the rules as last read). */

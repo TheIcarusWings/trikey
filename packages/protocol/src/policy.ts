@@ -24,8 +24,10 @@ export function isLimitOff(dailyLimitSats: number): boolean {
  * `savings`: it watches the phone's optional Savings wallet (`savings.register`, `savings.unregister`, `savings.get`,
  * `wallet.sync` with `wallet: "savings"`, its spends through `tx.broadcast`) and alerts when a Savings coin moves
  * (`savings_moved`). It holds no Savings key: the phone creates Savings only with such a guardian, for its chain data.
+ * `notifications`: it can also send alerts by email, ntfy and webhook (set up in its web UI, never by the phone), lists
+ * them masked in `guardian.status.notifications`, and raises `notifications_changed` when they change.
  */
-export const GUARDIAN_FEATURES = { limitOff: 'limit_off', contactLock: 'contact_lock', savings: 'savings' } as const;
+export const GUARDIAN_FEATURES = { limitOff: 'limit_off', contactLock: 'contact_lock', savings: 'savings', notifications: 'notifications' } as const;
 
 /** True when the alert contacts may lock the guardian (`Policy.contactLock`). */
 export function isContactLockOn(policy: Pick<Policy, 'contactLock'>): boolean {

@@ -60,6 +60,8 @@ All files in `TRIKEY_DATA_DIR` are mode 0600 and written atomically.
 | `unlock-throttle-phone.json`, `reset-throttle.json`, `session-throttle.json` | The same for the phone's `guardian.unlock` (which also stops after 5 failures in a row until a web unlock), the web UI's reset and its sign-in: each entry point has its own count, so none can starve another. |
 | `silent-payments.json` | The silent payment scanner: the paired phone's registration (B_spend, labels, birth height, the scan key **encrypted**), the last scanned blocks' hashes (for reorgs) and the matches. No spending key. |
 | `silent-payments-key.json` | The random key the scan key is encrypted under, **not** under the passphrase, so scanning goes on while the guardian is locked (the scan key finds payments, it cannot spend them; see `src/silent/service.ts`). |
+| `notifications.json` | Email, ntfy and webhook alerts (`src/notify/`, docs/design/notifications.md): the guardian's name in messages, the owner's email account, the channels, their health, and the outbox of messages still being retried (7 days). Every secret in it (the app password, ntfy topics and tokens, webhook URLs and secrets) is **sealed**. |
+| `notifications-key.json` | The random key those secrets are sealed under, **not** under the passphrase, so alerts go out while the guardian is locked (the same trade-off as the nostr key; see `src/notify/secrets.ts`). |
 
 After every start the guardian is locked: key 3 is decrypted only by an unlock
 (web UI or `guardian.unlock` from the paired phone) and kept only in memory.
@@ -166,7 +168,8 @@ src/
   rate-limit.ts       per-sender sliding-window limits (tx.broadcast, refusals)
   identity.ts         the guardian's nostr key
   pairing.ts          one-time pairing sessions
-  alerts.ts           Delay & Notify alerts: protocol notifications + NIP-17 DMs
+  alerts.ts           Delay & Notify alerts: protocol notifications + NIP-17 DMs (and the extra channels' queue)
+  notify/             email (SMTP), ntfy and webhook alerts: settings, sealed secrets, outbox, senders, address rules
   dm-cancel.ts        "CANCEL <id>" replies from alert contacts
   recovery-runner.ts  completing a recovery: chain time, UTXO coverage, broadcast
   service-state.ts    service.json
@@ -190,6 +193,8 @@ runs the real phone wallet (`@trikey/wallet`) against the guardian for silent pa
 reorg, sweeps). `test/sp-perf.test.ts` measures the scanner (`SP_PERF_TXS=2000` for a
 full-size block). `test/security/` holds the regression tests of the 2026-10
 security review, one file per finding (`SECURITY-REVIEW.md` at the repository root).
+`test/notify-*.test.ts` and `test/notify.e2e.test.ts` cover email, ntfy and webhook alerts against an
+in-process SMTP server (`smtp-server`, dev only) and local HTTP servers.
 
 `test/support/` (exported as `@trikey/guardian/testing`) holds the fake Electrs, the
 fake Bitcoin Core RPC (`FakeBitcoind`, `getblock <hash> 3` with prevouts) and

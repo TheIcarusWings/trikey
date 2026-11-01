@@ -9,7 +9,7 @@ import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
 import { Switch } from '@/components/ui/switch';
 import { Text } from '@/components/ui/text';
-import { CONTACT_LOCK, canOfferContactLock, shorten, useWallet, useWalletService, type Contact } from '@/data';
+import { ALERT_CHANNELS, CONTACT_LOCK, alertChannelText, alertChannelsLine, canOfferContactLock, shorten, useWallet, useWalletService, type AlertChannels, type Contact } from '@/data';
 import { IS_IOS, pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
@@ -77,6 +77,50 @@ function ContactLockSection() {
   );
 }
 
+/**
+ * Email, ntfy and webhook alerts the owner set up in the guardian's web page: a read-only summary. The phone cannot
+ * change them (so a stolen phone cannot silence them); they carry warnings, never controls.
+ */
+function AlertChannelsSection({ channels }: { channels: AlertChannels | undefined }) {
+  if (!channels) return null;
+  const none = !channels.you.length && !channels.withoutNostr.length && !Object.keys(channels.byContact).length;
+  return (
+    <>
+      <SectionLabel>{ALERT_CHANNELS.title}</SectionLabel>
+      {none ? (
+        <Body>None yet. {ALERT_CHANNELS.where}</Body>
+      ) : (
+        <View className="gap-2">
+          {channels.you.length ? (
+            <View>
+              <Text className="text-base leading-6">You</Text>
+              {channels.you.map((c, i) => (
+                <Text key={`you-${i}`} className={cn('text-sm leading-5', c.failing ? 'text-destructive' : 'text-muted-foreground')}>
+                  {alertChannelText(c)}
+                </Text>
+              ))}
+            </View>
+          ) : null}
+          {channels.withoutNostr.length ? (
+            <View>
+              <Text className="text-base leading-6">People without nostr</Text>
+              {channels.withoutNostr.map((c, i) => (
+                <Text key={`other-${i}`} className={cn('text-sm leading-5', c.failing ? 'text-destructive' : 'text-muted-foreground')}>
+                  {alertChannelText(c)}
+                </Text>
+              ))}
+              <Text className="text-muted-foreground text-xs leading-[18px]">{ALERT_CHANNELS.withoutNostr}</Text>
+            </View>
+          ) : null}
+        </View>
+      )}
+      {none ? null : <Footnote>{ALERT_CHANNELS.where}</Footnote>}
+      <Footnote>{ALERT_CHANNELS.limits}</Footnote>
+      <Footnote>{ALERT_CHANNELS.safety}</Footnote>
+    </>
+  );
+}
+
 function Avatar({ children }: { children: React.ReactNode }) {
   return <View className="bg-secondary size-10 shrink-0 items-center justify-center rounded-full">{children}</View>;
 }
@@ -84,7 +128,7 @@ function Avatar({ children }: { children: React.ReactNode }) {
 export default function AlertContacts() {
   const router = useRouter();
   const wallet = useWalletService();
-  const { contacts, hardware } = useWallet();
+  const { contacts, hardware, alertChannels } = useWallet();
   const [removing, setRemoving] = useState<Contact | null>(null);
   const { busy, run, message, error } = useAction();
 
@@ -118,6 +162,9 @@ export default function AlertContacts() {
               <View className="flex-1">
                 <Text className={pick('text-base leading-[22px]', 'text-base leading-6')}>{contact.name}</Text>
                 <Text className="text-muted-foreground font-mono text-xs leading-[18px]">{shorten(contact.npub)}</Text>
+                {alertChannels?.byContact[contact.id]?.length ? (
+                  <Text className="text-muted-foreground text-xs leading-[18px]">{alertChannelsLine(alertChannels.byContact[contact.id]!)}</Text>
+                ) : null}
               </View>
               {removing?.id === contact.id ? null : (
                 <Pressable
@@ -162,6 +209,7 @@ export default function AlertContacts() {
         </View>
       </ListGroup>
       <Footnote>Alerts arrive as nostr messages, so contacts see them in any nostr app, like Damus or Amethyst.</Footnote>
+      <AlertChannelsSection channels={alertChannels} />
       <ContactLockSection />
     </Screen>
   );

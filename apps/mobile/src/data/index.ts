@@ -16,3 +16,4 @@ export { emptySilentPayments, looksLikeSilentPaymentAddress } from './sp-empty';
 export { WalletProvider, useWallet, useWalletService, useNow, useActivity } from './provider';
 // The mock is exported for the app root only. Screens must go through useWallet().
 export { createMockWalletService } from './mock';
+export { ALERT_CHANNELS, alertChannelText, alertChannelsLine, groupAlertChannels } from './alert-channels';

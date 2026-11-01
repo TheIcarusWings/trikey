@@ -19,4 +19,7 @@ regexes = [
   # The placeholder wallet id of the approval-text tests: "Trikey policy ... wallet=0123456789abcdef" reads to the
   # generic-api-key rule as a key ("Tri-key") with a value.
   '''^0123456789abcdef$''',
+  # A made-up ntfy topic in the notifier's tests (apps/guardian/test/notify-notifier.test.ts): the generic-api-key rule
+  # reads "secret of [..., 'owner-topic-x7f3k2'" as a secret with a value.
+  '''^owner-topic-x7f3k2$''',
 ]

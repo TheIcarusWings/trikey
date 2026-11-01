@@ -419,6 +419,19 @@ export const HardwareConfirmResult = z.object({
   nextHardwareSequence: z.int().min(1),
 });
 
+/**
+ * One extra alert channel as `guardian.status.notifications` lists it: `audience` `owner` (the owner's own) or `contact`
+ * (`contact`: the alert contact's nostr pubkey; absent: a contact reachable only by this channel, warnings without
+ * controls). `hint`: a masked address (`j…@example.com`) or the server's host name. `failing`: the last send failed.
+ */
+export const NotifyChannel = z.object({
+  kind: z.enum(['email', 'ntfy', 'webhook']),
+  audience: z.enum(['owner', 'contact']),
+  contact: NostrPubkey.optional(),
+  hint: z.string().max(64),
+  failing: z.literal(true).optional(),
+});
+
 export const GuardianStatusParams = z.strictObject({});
 export const GuardianStatusResult = z
   .object({
@@ -502,6 +515,17 @@ export const GuardianStatusResult = z
      * guardians before relay changes.
      */
     relays: RelayList.optional(),
+    /**
+     * The extra alert channels the owner set up in the guardian's web UI (guardians with the `notifications` feature;
+     * absent from older ones and while there are none). Read-only for the phone: they are the owner's delivery settings,
+     * outside the policy, so no phone (a stolen one included) can change them. Masked: kinds and hints only, never a
+     * topic, a URL or a whole address (PROTOCOL.md, "Extra alert channels").
+     */
+    notifications: z
+      .object({
+        channels: z.array(NotifyChannel).max(32),
+      })
+      .optional(),
   })
   .refine((r) => sameMoment(r.time, r.atMs), { message: SAME_MOMENT, path: ['atMs'] });
 
@@ -950,7 +974,7 @@ const recoveryAlert = {
 /**
  * Alert types mirror the engine's `AlertKind` (`recovery_started`, `recovery_reminder`, `recovery_ready`,
  * `recovery_cancelled`, `recovery_completed`), plus what the service raises itself: `guardian_locked`,
- * `wallet_adopted`, `wallet_retired`, `sp_received` and `relays_changed`; and `limit_off` / `limit_on` and
+ * `wallet_adopted`, `wallet_retired`, `sp_received`, `relays_changed` and `notifications_changed`; and `limit_off` / `limit_on` and
  * `savings_moved`, which the engine records and the service delivers like the recovery alerts.
  */
 export const Alert = z.discriminatedUnion('type', [
@@ -1078,6 +1102,15 @@ export const Alert = z.discriminatedUnion('type', [
     type: z.literal('savings_unwatched'),
     walletId: WalletId,
     replacedBy: WalletId.optional(),
+  }),
+  stamped({
+    ...alertBase,
+    /**
+     * The extra alert channels (email, ntfy, webhook) were changed in the guardian's web UI: a channel or the email
+     * account added, removed or changed. Every channel before and after the change is told as well. The phone reads the
+     * new list from `guardian.status.notifications`. Phones before this alert drop it (an unknown `type`).
+     */
+    type: z.literal('notifications_changed'),
   }),
 ]);
 

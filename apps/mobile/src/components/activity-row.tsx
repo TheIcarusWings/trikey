@@ -195,6 +195,14 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
         icon: Shield,
         iconTone: 'warn',
       };
+    case 'alert-channels-changed':
+      return {
+        title: 'Email and push alerts changed',
+        subtitle: `${when} · in your guardian's web page. If that wasn't you, check the guardian`,
+        subtitleTone: 'warn',
+        icon: Shield,
+        iconTone: 'warn',
+      };
     case 'savings-key-replaced':
       return {
         title: `Savings moved to a new ${event.lostKey === 'recoveryKey' ? 'Recovery Key' : event.lostKey === 'hardware' ? ctx.hardwareBrand : 'phone key'}`,
