@@ -8,6 +8,21 @@ needs one last uninstall (which deletes the wallet on that phone: make a backup 
 Pull-request builds and manual runs of the **Android test APK** workflow still get a one-off key: they never see the release
 key, and they cannot update a release build or be updated by one.
 
+## Two APKs, one app
+
+From the release after 0.1.8-alpha, every release has two APKs of the same app:
+
+| APK | What it is |
+|---|---|
+| `trikey-alpha-v<version>.apk` | The **standard** build. It contains Google's libraries: Google Sign-In, for the Google Drive backup a later release can switch on (it needs Google Play services on the phone), Google's ML Kit to read QR codes, and the Google Play services provider for passkeys. |
+| `trikey-alpha-foss-v<version>.apk` | **No Google code**, for phones without Google Play services (GrapheneOS, /e/OS, LineageOS) and for app stores that take only free software. QR codes are read by the open source zxing-cpp. There is no Google Drive backup: the backup is the recovery code plus the backup file, which you can still save to Google Drive, or anywhere else, by hand from the share sheet. Settings, About says "Trikey (no Google)". |
+
+Both have the same package name (`app.trikey.wallet`) and are signed with the same release key, so Android treats them as
+one app: installing the other APK over the app switches builds and keeps the wallet. Only a downgrade (an older version)
+is refused. The in-app **Check for updates** offers the APK of the build that is installed; tell Obtainium which one you
+want (below). The build of the FOSS APK fails if any Google Play services, Firebase, ML Kit or Google data transport
+class, or ML Kit's `libbarhopper` library, is in it (`apps/mobile/scripts/apk-google-scan.mts`).
+
 ## The release key's certificate
 
 Its SHA-256 is in [`packaging/android/release-cert.sha256`](../packaging/android/release-cert.sha256). The release build
@@ -27,8 +42,15 @@ The digest it prints must equal the one in that file.
 1. Install Obtainium (from its GitHub releases or F-Droid).
 2. **Add app**, URL `https://github.com/TheIcarusWings/trikey`. Under the source options, turn on **Include prereleases**:
    every Trikey release is a pre-release for now.
-3. Optionally, under **Verify the certificate**, paste the SHA-256 from `packaging/android/release-cert.sha256`, so
-   Obtainium refuses an APK signed by another key. Android refuses such an update anyway.
+3. Tell Obtainium which of the two APKs you want: under **Filter APKs by regular expression**, enter
+   - `^trikey-alpha-v.*\.apk$` for the standard build, or
+   - `^trikey-alpha-foss-v.*\.apk$` for the build without Google code.
+
+   Without a filter Obtainium asks which APK to install each time (or picks one), and the `.apk.sha256` files are not
+   APKs, so they never match. To switch builds later, change the filter: the next update installs the other APK over
+   the app, and the wallet stays.
+4. Optionally, under **Verify the certificate**, paste the SHA-256 from `packaging/android/release-cert.sha256`, so
+   Obtainium refuses an APK signed by another key. Android refuses such an update anyway. Both APKs have that certificate.
 
 Obtainium then shows when a release is out, and installs it with one tap.
 

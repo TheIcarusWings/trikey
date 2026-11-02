@@ -147,10 +147,49 @@ cd apps/mobile
 npx expo run:android            # a connected phone or an emulator (debug build)
 # or a locally built APK to hand to testers:
 npx expo prebuild --platform android && (cd android && ./gradlew assembleRelease)
+# the same without Google code (see "Two Android builds" below):
+export TRIKEY_ANDROID_VARIANT=foss
+npx expo prebuild --platform android --clean && (cd android && ./gradlew assembleRelease)
 ```
 
 A debug or locally signed build installs without any store account. (Google Drive backup stays "coming later"; the backup file
 works as on iOS.)
+
+### Two Android builds
+
+The Android app comes in two builds from the same code, chosen with `TRIKEY_ANDROID_VARIANT` when the
+native project is generated and built (`android-variant.js` has the details):
+
+| | `standard` (the default) | `foss` |
+|---|---|---|
+| Release APK | `trikey-alpha-v<version>.apk` | `trikey-alpha-foss-v<version>.apk` |
+| Google code | Google Sign-In, Google's ML Kit (QR codes), the Google Play services passkey provider | none: the build fails if any is in the APK |
+| QR codes read by | ML Kit, through `expo-camera` | zxing-cpp (open source), through the app's own camera module, `modules/trikey-qr-camera` (CameraX) |
+| Google Drive backup | when `EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID` is set (needs Google Play services on the phone) | never offered; the backup is the recovery code plus the backup file, which the share sheet can still put in Google Drive |
+| Passkeys | `androidx.credentials` with the Play services provider (when `EXPO_PUBLIC_PASSKEY_RP_ID` is set) | `androidx.credentials` without it: only other credential providers, on Android 14 and later |
+| Settings → About | Trikey | Trikey (no Google) |
+
+Both have the same package name and are signed with the same release key, so either installs over the other and the wallet
+stays. Check for updates (Settings → About) offers the APK of the build that is installed. iOS has one build.
+
+How the FOSS build leaves Google out:
+
+- **Native linking.** `react-native.config.js` turns off Android linking of `@react-native-google-signin/google-signin` and
+  `react-native-cloud-storage` (on Android it is only Google Drive). The config plugin `plugins/with-android-variant.js` writes
+  the Expo modules to leave out into `settings.gradle` (`expo-camera` for FOSS, whose Kotlin code refers to ML Kit even with
+  its scanner off; the app's own `trikey-qr-camera` for standard) and excludes `androidx.credentials:credentials-play-services-auth`
+  from the app's dependencies (`androidx.credentials` stays).
+- **JavaScript.** Metro bundles `name.android.foss.ts(x)` in place of `name.ts(x)`: the camera (`src/hardware/ui/qr-camera`),
+  the native module loaders (`src/platform/native-modules`) and the build's name (`src/lib/android-variant`). Importing any of
+  the left-out packages from the FOSS Android bundle is a build error, so the app cannot crash on a missing native module.
+- **The check.** CI scans the FOSS APK (`scripts/apk-google-scan.mts`): any class or mention of `com/google/android/gms`,
+  `com/google/firebase`, `com/google/mlkit` or `com/google/android/datatransport` in its dex files, ML Kit's `libbarhopper`,
+  or Google's version files or manifest entries fail the build. Run it on any APK:
+  `node --import tsx apps/mobile/scripts/apk-google-scan.mts <app.apk> --require-none` (from the repository root).
+- **The same value everywhere.** Linking, the bundle and the app config read `TRIKEY_ANDROID_VARIANT` again during the Gradle
+  build, so set it for both `expo prebuild` and `gradlew` (the generated project stops if they differ), and start Metro with
+  `--clear` after switching. `src/hardware/ui/qr-decoding.test.ts` runs the FOSS decoder's options (zxing-cpp as WebAssembly)
+  on camera-like frames of every code the app scans.
 
 ### The demo walk (Maestro)
 
@@ -158,7 +197,7 @@ After the launch check, CI walks through the demo on both platforms with [Maestr
 screen into Demo mode, Home and its balance, Send to the amount screen, Receive, Settings and Activity, back to Home each
 time, so a screen that crashes or shows nothing when it is opened fails the pull request
 (`.maestro/demo-walk.yaml`; the failing step, Maestro's error and the app's log lines are in the check's annotations, the
-screenshots in the `android-demo-walk` / `ios-demo-walk` artifact). To run it yourself, install the Maestro CLI
+screenshots in the `android-demo-walk-<variant>` / `ios-demo-walk` artifact; Android walks both builds). To run it yourself, install the Maestro CLI
 (`.github/scripts/install-maestro.sh` installs the version CI uses; it needs Java 17), start an Android emulator or an iOS
 Simulator with the app installed (a Release build starts on Welcome in Real mode, a debug build in Demo; the flow handles
 both), and from the repository root run `maestro test apps/mobile/.maestro/demo-walk.yaml` (add `--device <id>` when more
@@ -174,7 +213,7 @@ than one is running). The flow taps accessibility labels and a few `testID`s (`w
 |---|---|---|
 | `SecureKeyStore` | `expo-secure-store`: Keychain / Android Keystore, behind Face ID or fingerprint, this device only | in memory, `isSecure: false` |
 | `KeyValueStore` | `expo-sqlite` key-value store (non-secret data only) | `localStorage`, `isSecure: false` |
-| `CloudBackupStore` | iCloud Drive (iOS), Google Drive `appDataFolder` (Android), and a local `file` provider for development | in memory, `isSecure: false` |
+| `CloudBackupStore` | iCloud Drive (iOS), Google Drive `appDataFolder` (Android, standard build only), and a local `file` provider | in memory, `isSecure: false` |
 | `PasskeyPrf` | `react-native-passkey`: WebAuthn PRF, iOS 18+ and Android Credential Manager | always unsupported |
 
 Notes on the choices:
@@ -203,7 +242,8 @@ Notes on the choices:
   `react-native-get-random-values` finds it already installed and installs nothing; `src/hardware/common/random.native.ts`
   checks that. `WebSocket` (nostr-tools) comes from React Native. See DESIGN.md, "Entropy".
 - **Metro.** `metro.config.js` resolves `./file.js` imports to `./file.ts`, because the workspace
-  packages are TypeScript sources written that way.
+  packages are TypeScript sources written that way, and swaps in the `.android.foss.ts(x)` files of the Android build
+  without Google code ("Two Android builds").
 
 ### Self-test
 
@@ -232,6 +272,7 @@ variables in your build service (for example EAS secrets).
 | `TRIKEY_ICLOUD_CONTAINER` | `iCloud.<your bundle id>` | `iCloud.<bundle id>` |
 | `TRIKEY_ICLOUD_ENVIRONMENT` | `Development` or `Production` | `Production` |
 | `TRIKEY_DISABLE_ICLOUD` | `1` builds without iCloud | iCloud on |
+| `TRIKEY_ANDROID_VARIANT` | `standard` or `foss` (no Google code); set it for both the prebuild and the Gradle build | `standard` |
 | `EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID` | Google OAuth client ID (Android backup) | Google Drive backup unavailable |
 | `EXPO_PUBLIC_PASSKEY_RP_ID` | Passkey domain: `trikey.app` for the project's builds, your own domain for a fork | Passkeys unsupported |
 
