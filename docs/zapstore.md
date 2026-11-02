@@ -12,7 +12,7 @@ listing's publisher is Trikey's own npub (below), and the APK is the same file a
 (certificate SHA-256 in [`packaging/android/release-cert.sha256`](../packaging/android/release-cert.sha256)). An APK
 from Zapstore, Obtainium or GitHub installs over the others and keeps the wallet.
 
-Publisher npub: _not set up yet_.
+Publisher npub: `npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`. Check it on the listing before installing.
 
 ## For the maintainer: setting it up (once)
 
@@ -29,7 +29,7 @@ links the APK signing certificate to Trikey's publisher npub (NIP-C1).
    from your signer app is safer than pasting the nsec) and for the release keystore (`trikey-release.p12` and its
    password) to prove the certificate is yours. The keystore and the key never leave your computer. When it asks how
    new releases get published, choose to let **Zapstore keep Trikey up to date**.
-4. Put the publisher npub on this page (it is public).
+4. The publisher npub is on this page (it is public).
 
 Releases after that need nothing: when the release workflow publishes a GitHub release with the APK, Zapstore
 publishes it on its next visit. The proof expires after a while; `zsp` says when and renews it.
