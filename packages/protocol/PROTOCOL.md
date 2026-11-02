@@ -408,13 +408,15 @@ chaincode and builds `wsh(sortedmulti(2, key2, key1, [fp]xpub3))` with key 3 as 
 register it and sign the pairing proof `pairingMessage(walletId, cosignerAccountPubkey)` over the **key-set id**
 (`walletId` = the first 16 hex chars of `sha256("trikey/keyset/v1" || app || hardware || cosigner)`, compressed account
 pubkeys in role order), and sends `hosted.pair`. The guardian checks what `pair` checks, plus the authorization key as
-`pubkey == hardware + tweak·G` at `m/48'/<coin>'/0'/2'/0/0`, refuses "limit off" and `contactLock` (phase 2), stores the
-encrypted **wallet map** write-once and burns the invite.
+`pubkey == hardware + tweak·G` at `m/48'/<coin>'/0'/2'/0/0`, refuses "limit off" (as `pair` does: the guest turns it off
+afterwards with the hardware wallet), stores the encrypted **wallet map** write-once and burns the invite. `contactLock`
+is accepted from a guardian that lists `contact_lock` in `hosted.prepare.features`.
 
 **Routing.** A guest's phone (and a phone with recovery access to a guest wallet) reaches only its own slot: `sign`,
-`policy.get`, `policy.update`, `recovery.*`, `phone.resume`, `hardware.confirm`, `wallet.retire`, `guardian.status`
-(the slot's view: its key-set id, `features: ["family_hosting"]`, `hosting: { state, endsAt? }`, never the owner's
-wallet, Savings or which contact locked the box), `fees.estimate`, `tx.broadcast` (only transactions this slot
+`policy.get`, `policy.update`, `recovery.*`, `phone.resume`, `hardware.confirm`, `wallet.retire`, `guardian.lock` (the
+phone only: a pause, below), `guardian.status` (the slot's view: its key-set id, `features: ["family_hosting",
+"limit_off", "contact_lock"]`, `hosting: { state, endsAt?, paused? }`, never the owner's wallet, Savings, extra alert
+channels or which contact locked the box), `fees.estimate`, `tx.broadcast` (only transactions this slot
 co-signed), `relays.ack`, `hosted.coins`, `hosted.map.get`, `hosted.access`; anything else answers `1001` with
 `data.reason: "not_for_hosted_wallets"`. A guest wallet's recovery ids are `<slotId>g<n>-<txid12>`: `recovery.cancel` and
 `CANCEL <id>` DMs with such an id reach that slot only, from its phone or one of its alert contacts.
@@ -433,6 +435,26 @@ abandoned. Coins received from outside are the guest phone's to find (its own ch
 server). A new phone without the old one or a backup uses `hosted.access` (version-2 text only), decrypts the map with
 the hardware wallet's chaincode and checks it against `accountPubkeys`. After an adoption without the old hardware
 wallet, `hardware.confirm` carries `hardwareAuth.tweak`.
+
+**Limit off and pausing (phase 2).** A guest turns the daily limit off and on exactly as the owner does ("No daily
+limit": `policy.update` with the version-2 text over the key-set id; `limit_off` / `limit_on` alerts to the guest's phone
+and DMs to its contacts; a recovery's adopted wallet starts with the limit back on). The contact lock works per slot: with
+the guest's `contactLock` on, a `LOCK` DM from one of that wallet's alert contacts **pauses** that wallet only, never the
+owner's box: its slot co-signs no payment (`sign` answers `1207` with `data: { reason: "wallet_paused", by, at }`) while
+the box, the owner's wallet and other guests carry on. The guest's phone gets `wallet_paused` (`walletId`, `by:
+"contact"`, `contact`), the wallet's other contacts a DM, the contact an answer naming the wallet by its label; the owner's
+contacts and channels hear nothing. While the guest's setting is off, a `LOCK` is silent and remembered, as for the owner.
+A guest's `guardian.lock` pauses its own wallet the same way (`{ state: "locked" }`, nobody else told); `guardian.unlock`
+stays the owner's (`1001`). `guardian.status.hosting.paused` (`{ by: "contact" | "phone", at, contact? }`) says so while
+it lasts. Only the guest's hardware wallet resumes a paused wallet: `phone.resume` with the `resume-phone` approval (the
+same call that lifts a contested cancel's pause). A pause is durable (a restart of the box does not lift it), does not
+stop a recovery's delay, alerts or completion, and carries over to a recovery's adopted wallet. A `LOCK` from one of the
+owner's contacts still locks the whole box, guests included; a contact of both does both, and the answer says both.
+
+**Leaving.** A guest leaves with `wallet.retire` (a `retire-wallet` approval), which retires the wallet in its slot and
+deletes the slot's key 3 record. It is refused (`1200`, `data: { reason: "ledger_unspent", coins, sats }`) while a coin
+key 3 co-signed is still unspent on the guardian's own Electrs (looked up by the coins' own scripts), since some of them
+may need key 3 to move; the phone checks the rest (an empty wallet on two servers) before it asks.
 
 **Stopping.** The owner's "Stop hosting" sends `hosting_ending` (`walletId`, `endsAt`) to the guest's phone and DMs to
 its contacts; at `endsAt` (or at once, behind a typed confirmation) the slot ends: `wallet_retired` with reason
@@ -469,6 +491,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 | `savings_unwatched` | `walletId` (the Savings wallet no longer watched), `replacedBy?` (the one watched instead): `savings.unregister`, or `savings.register` with another wallet. To the paired phone; alert contacts get a NIP-17 DM. See "Savings" |
 | `relays_changed` | `relays` (`RelayList`): the guardian moved to these relays (its web UI). Sent to the paired phone (and phones with recovery access) over the old and the new relays. See section 5, "Changing relays" |
 | `notifications_changed` | none: the extra alert channels (email, ntfy, webhook) were changed in the guardian's web UI; read the new list from `guardian.status.notifications`. Guardians with `notifications`; see "Extra alert channels" |
+| `wallet_paused` | `walletId`, `by` (`contact`), `contact?`: a guest's hosted wallet was paused by one of its alert contacts' `LOCK`; its slot co-signs no payment until the guest's hardware wallet resumes it (`phone.resume`). To the guest's phone; the wallet's other contacts get a NIP-17 DM. Phones before it drop it and see `guardian.status.hosting.paused`. See "Family hosting" |
 | `wallet_retired` | `walletId`, `reason` (`retired`\|`recovered`\|`reset`), `successorWalletId?`. Sent to the phone that was paired to the wallet: `retired` after `wallet.retire`; `reset` after the web UI's reset; `recovered` when a recovery swept the wallet and the phone paired to the new wallet is a different one (a lost phone's replacement), or the guardian adopted none (`successorWalletId` is the adopted wallet when there is one). The phone that started the recovery and is adopted gets `wallet_adopted` instead |
 
 Names match the engine (`daily_reminder` was renamed `recovery_reminder`; `daysRemaining` is now `daysLeft`, `executeAfter` is `readyAt`). The engine's `DueAlert` carries `dueAt` and `readyAt` in milliseconds; the service converts both to seconds (`at` and `readyAt`). `daysLeft` is already in days. The engine's due-alert record does not hold `cancelledBy`, the cancel's `contested` flag or the txid; the service reads them from the recovery record (`status().recovery`) when it builds those alerts.

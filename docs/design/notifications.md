@@ -288,7 +288,8 @@ no link, and the guardian's nostr messages, which are signed, remain the referen
 
 A guardian that hosts guests' wallets (docs/design/family-hosting.md) keeps these channels for its owner's own wallet and
 host-level events. A guest's alerts never go to them (the owner's nor the owner's contacts'): they go to the guest's phone
-and the guest's own contacts as nostr DMs. Channels for guests are phase 2 of family hosting.
+and the guest's own contacts as nostr DMs. Channels for guests are not built (family hosting phase 2 left them out: see
+section 16 there); phase 2's guest events (the limit turned off, a paused wallet) stay off the owner's channels as well.
 
 ## Decisions (owner, 2026-11-01)
 

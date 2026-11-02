@@ -199,7 +199,7 @@ All of these need an unlocked guardian.
 
 | Method and path | Request | Response | Notes |
 |---|---|---|---|
-| `GET /api/hosting` | none | `HostingOverview` | `available` (false with `FAMILY_HOSTING=false`), `wallets` (`HostedWallet[]`: `invited`, `active`, `recovering` with `recoveryReadyAt`, `leaving` with `endsAt`, `ended`, `left`), `pendingInvite` (the latest, **without** its link), `limits` (8 hosted wallets, 4 pending invites). |
+| `GET /api/hosting` | none | `HostingOverview` | `available` (false with `FAMILY_HOSTING=false`), `wallets` (`HostedWallet[]`: `invited`, `active`, `recovering` with `recoveryReadyAt`, `leaving` with `endsAt`, `ended`, `left`; `paused: true` while the guest's side paused it: one of their contacts sent `LOCK`, or their phone asked. Not who, and the host cannot resume it: only the guest's hardware wallet does), `pendingInvite` (the latest, **without** its link), `limits` (8 hosted wallets, 4 pending invites). |
 | `POST /api/hosting/invites` | `{ name }` (1-64 characters) | `FamilyInvite` (`201`) | The only answer that carries the `trikey://invite?...` link: the guardian keeps a hash of its secret. Single use, 24 hours. `409 too_many_invites` (4 pending) or `too_many_wallets` (8). |
 | `DELETE /api/hosting/invites/:id` | `{}` | `HostingOverview` | Cancels a pending invite (by invite id). `404` if it was accepted or is unknown. |
 | `POST /api/hosting/wallets/:id/stop` | `{ now?: boolean, confirm?: string }` | `HostedWallet` | Without `now`: 30 days' notice (`leaving`, `endsAt`); the guest's phone and contacts are told (`hosting_ending`). With `now: true` and `confirm: "STOP HOSTING NOW"`: ends at once, the slot's key 3 is deleted (`ended`). `409 recovery_pending` while that wallet's recovery runs; `400 invalid` without the confirmation. |
@@ -207,7 +207,8 @@ All of these need an unlocked guardian.
 
 `POST /api/reset` answers `409 hosting_active` while any guest wallet is hosted (a reset makes a new seed, so every
 guest's key 3 would vanish): stop hosting first. Hosting events (invite made or cancelled, accepted, a guest's recovery
-started, completed or cancelled, stopping, ended, a guest left) appear in `GET /api/activity`, by name and date only.
+started, completed or cancelled, a guest's wallet paused or resumed, stopping, ended, a guest left) appear in
+`GET /api/activity`, by name and date only.
 
 ## Running the UI
 
