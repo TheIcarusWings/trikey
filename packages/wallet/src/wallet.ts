@@ -95,7 +95,7 @@ import {
 } from './backup.js';
 import { verifyMessage } from './bip137.js';
 import { GuardianChainSource, alertTimeMs, txidOfRaw, type ChainSnapshot, type ChainSource, type FeeEstimates, type GuardianRpc, type SingleKeyChainSource } from './chain.js';
-import { WalletError, asRandomSourceError, asWalletError, isWalletNotWatched, refusalFromError, sweepBroadcastError, type GuardianRefusal } from './errors.js';
+import { WalletError, asRandomSourceError, asWalletError, isWalletNotWatched, leaveBlockerText, refusalFromError, sweepBroadcastError, type GuardianRefusal, type HostedLeaveBlocker, type HostedLeaveCheck } from './errors.js';
 import {
   authKeyPath,
   childPubkey,
@@ -1097,7 +1097,7 @@ export class TrikeyWallet {
       }
       case 'phone.resume': {
         const st = await this.call('guardian.status', {});
-        return st.phoneSpending === 'enabled' ? { phoneSpending: 'enabled' } : undefined;
+        return st.phoneSpending === 'enabled' && !st.hosting?.paused ? { phoneSpending: 'enabled' } : undefined;
       }
       case 'hardware.confirm': {
         const st = await this.call('guardian.status', {});
@@ -1516,6 +1516,7 @@ export class TrikeyWallet {
       ...(st.walletId ? { walletId: st.walletId } : {}),
       ...(st.hardwareConfirmRequired !== undefined ? { hardwareConfirmRequired: st.hardwareConfirmRequired } : {}),
       ...(st.watchedWalletId ? { watchedWalletId: st.watchedWalletId } : {}),
+      ...(st.hosting?.paused ? { paused: { ...st.hosting.paused } } : {}),
       ...(st.notifications ? { notifications: { channels: st.notifications.channels.map((c) => ({ ...c })) } } : {}),
     };
     await this.update((s) => {
@@ -2336,6 +2337,17 @@ export class TrikeyWallet {
     return { reason: gs.lock.reason, at: gs.lock.at, ...(c ? { contact: { pubkey: c, npub: npubEncode(c), name: this.s.contactNames[c] } } : {}) };
   }
 
+  /**
+   * A hosted wallet that is paused (family hosting phase 2), as the guardian last said: its host's guardian co-signs no
+   * payment for it until the hardware wallet resumes it (`resumePhoneSpending`). `contact` (named when this phone has a
+   * name for it): one of the wallet's alert contacts sent `LOCK`; `phone`: this phone paused it (`pauseHostedWallet`).
+   */
+  get hostedPause(): { by: 'contact' | 'phone'; at: number; contact?: AlertContact } | undefined {
+    const p = this.isHosted ? this.s.guardianStatus?.paused : undefined;
+    if (!p) return undefined;
+    return { by: p.by, at: p.at, ...(p.contact ? { contact: { pubkey: p.contact, npub: npubEncode(p.contact), name: this.s.contactNames[p.contact] } } : {}) };
+  }
+
   /** Refuses (before anything is sent) to turn on a rule the guardian does not know. */
   private async requireContactLockAllowed(): Promise<void> {
     const st = await this.refreshStatus();
@@ -2403,6 +2415,8 @@ export class TrikeyWallet {
   /** Unlocks the guardian after a restart with its passphrase (`guardian.unlock`). The passphrase is never stored. */
   async unlockGuardian(passphrase: string): Promise<{ ok: true } | { ok: false; refusal: GuardianRefusal }> {
     if (!this.s.guardian) throw new WalletError('wrong_state', 'No guardian is paired.');
+    // A guest never unlocks the host's box (family hosting): only its owner's passphrase does, at the box.
+    if (this.isHosted) throw new WalletError('wrong_state', "Only your host can unlock their guardian. To resume a paused wallet, use your hardware wallet.");
     try {
       await this.callChanging(
         'guardian.unlock',
@@ -2429,12 +2443,33 @@ export class TrikeyWallet {
   async lockGuardian(): Promise<void> {
     if (!this.s.guardian) throw new WalletError('wrong_state', 'No guardian is paired.');
     this.requirePaired();
+    if (this.isHosted) return this.pauseHostedWallet();
     await this.callChanging(
       'guardian.lock',
       {},
       {
         persist: false,
         verify: async () => ((await this.call('guardian.status', {})).state === 'locked' ? { state: 'locked' as const } : undefined),
+      },
+    );
+    await this.refreshStatus().catch(() => undefined);
+  }
+
+  /**
+   * Pauses this hosted wallet from the phone (family hosting phase 2): `guardian.lock` from a guest pauses only its own
+   * wallet on the host's guardian, never the host's box. Phone-only payments stop until the hardware wallet resumes it
+   * (`resumePhoneSpending`); payments with the hardware wallet and recoveries go on. For when the phone may be in the
+   * wrong hands soon, or something looks wrong. Needs no hardware wallet.
+   */
+  async pauseHostedWallet(): Promise<void> {
+    this.requirePaired();
+    if (!this.isHosted) throw new WalletError('wrong_state', 'Only a hosted wallet can be paused; lock the guardian instead.');
+    await this.callChanging(
+      'guardian.lock',
+      {},
+      {
+        persist: false,
+        verify: async () => ((await this.call('guardian.status', {})).hosting?.paused ? { state: 'locked' as const } : undefined),
       },
     );
     await this.refreshStatus().catch(() => undefined);
@@ -2875,10 +2910,16 @@ export class TrikeyWallet {
     return res;
   }
 
-  /** Re-enables phone payments after a contested cancel, with a hardware approval (`phone.resume`). */
+  /**
+   * Re-enables phone payments after a contested cancel, with a hardware approval (`phone.resume`). For a hosted wallet
+   * the same approval also resumes a paused wallet (family hosting phase 2: a contact's `LOCK` or `pauseHostedWallet`).
+   */
   async resumePhoneSpending(): Promise<void> {
     this.requirePaired();
-    const verify = async () => ((await this.call('guardian.status', {})).phoneSpending === 'enabled' ? { phoneSpending: 'enabled' as const } : undefined);
+    const verify = async () => {
+      const st = await this.call('guardian.status', {});
+      return st.phoneSpending === 'enabled' && !st.hosting?.paused ? { phoneSpending: 'enabled' as const } : undefined;
+    };
     await this.withApproval({ action: 'resume-phone' }, (approval) => this.callChanging('phone.resume', { approval }, { verify }));
     await this.refreshStatus().catch(() => undefined);
   }
@@ -4083,6 +4124,61 @@ export class TrikeyWallet {
   // stores it only encrypted (the wallet map, under the hardware wallet's chaincode). Chain data comes from the guest's
   // own server or a public Esplora (`deps.hostedChain`), never from the host.
 
+  /**
+   * Leaving a host (family hosting phase 2, the guest's "leave" screen): is it safe to release the slot on the host's
+   * guardian now? Releasing (`leaveHost`) retires the wallet there and deletes its key 3 for good, so it is safe only
+   * when nothing still needs that key: no recovery runs, the wallet holds no coin on its chain server AND on a second,
+   * independent one (decision 4), and no coin the guardian co-signed is unspent (an off-path one needs key 3, section 4).
+   * Changes nothing. To move money first: Replace guardian (which releases the slot itself once the move is accepted),
+   * or pay out with the hardware wallet.
+   */
+  async hostedLeaveCheck(opts: { allowSingleServer?: boolean } = {}): Promise<HostedLeaveCheck> {
+    this.requirePaired();
+    if (!this.isHosted) throw new WalletError('wrong_state', 'Only a hosted wallet can leave its host.');
+    const blockers: HostedLeaveBlocker[] = [];
+    const st = await this.refreshStatus().catch(() => this.s.guardianStatus);
+    if (st?.activeRecoveryId) blockers.push({ kind: 'recovery_running', recoveryId: st.activeRecoveryId });
+    const wallet = this.multisig();
+    const primary = this.hostedChainSource('primary', wallet);
+    const snap = await primary.sync();
+    await this.update((s) => void (s.chain = { ...snap, syncedAt: this.now() }));
+    const seen = new Set(snap.utxos.map((u) => `${u.txid}:${u.vout}`));
+    if (snap.utxos.length || snap.utxosTruncated) blockers.push({ kind: 'money_left', server: 'primary', coins: snap.utxos.length, sats: snap.utxos.reduce((a, u) => a + u.valueSats, 0) });
+    try {
+      const other = await this.hostedChainSource('check', wallet).sync();
+      const extra = other.utxos.filter((u) => !seen.has(`${u.txid}:${u.vout}`));
+      if (extra.length) blockers.push({ kind: 'money_left', server: 'check', coins: extra.length, sats: extra.reduce((a, u) => a + u.valueSats, 0) });
+    } catch {
+      if (!opts.allowSingleServer) blockers.push({ kind: 'second_server_unavailable' });
+    }
+    const ledger = await this.hostedCoins();
+    const candidates = ledger.filter((c) => !seen.has(`${c.txid}:${c.vout}`));
+    if (candidates.length) {
+      if (!primary.unspentByScript) throw new WalletError('chain_source_required', 'The chain server cannot look coins up by script, which leaving needs for coins the guardian co-signed.');
+      const unspent = new Set((await primary.unspentByScript([...new Set(candidates.map((c) => c.script))])).map((u) => `${u.txid}:${u.vout}`));
+      const left = candidates.filter((c) => unspent.has(`${c.txid}:${c.vout}`));
+      if (left.length) blockers.push({ kind: 'cosigned_coins_left', coins: left.length, sats: left.reduce((a, c) => a + c.valueSats, 0), offPath: left.filter((c) => !c.onPath).length });
+    }
+    return { safe: blockers.length === 0, blockers };
+  }
+
+  /**
+   * Leaves the host (family hosting phase 2): after `hostedLeaveCheck` finds nothing left, retires this wallet on the
+   * host's guardian with a hardware approval (`wallet.retire`), which releases the slot there and deletes its key 3; the
+   * guardian checks its co-signed coins once more on its own node. Refused (`not_safe_to_release`, with the blockers)
+   * while anything still needs that key. The phone keeps the wallet as a retired one; set up a new one to go on.
+   */
+  async leaveHost(opts: { allowSingleServer?: boolean } = {}): Promise<{ walletId: string; retiredAt: number }> {
+    const check = await this.hostedLeaveCheck(opts);
+    if (!check.safe) throw new WalletError('not_safe_to_release', leaveBlockerText(check.blockers), { blockers: check.blockers });
+    const res = await this.retireWallet();
+    await this.update((s) => {
+      s.retiredByGuardian = { walletId: res.walletId, reason: 'retired', at: res.retiredAt * 1000 };
+      if (s.guardianStatus) s.guardianStatus = { ...s.guardianStatus, phoneSpending: 'retired' };
+    });
+    return res;
+  }
+
   /** True for a wallet hosted on someone else's guardian. */
   get isHosted(): boolean {
     return !!this.s.guardian?.hosted;
@@ -4161,7 +4257,6 @@ export class TrikeyWallet {
       throw new WalletError('invalid_rules', `Invalid rules: ${(e as Error).message}`, { cause: e });
     }
     if (isLimitOff(rules.dailyLimitSats)) throw new WalletError('invalid_rules', 'A hosted wallet keeps a daily limit.');
-    if (isContactLockOn(rules)) throw new WalletError('guardian_unsupported', "A hosted wallet's contacts cannot lock the guardian yet.");
     const walletLabel = opts.walletLabel.trim();
     if (!walletLabel || walletLabel.length > 64) throw new WalletError('invalid_rules', 'Give the wallet a name of 1 to 64 characters.');
     if (!this.deps.hostedChain) throw new WalletError('chain_source_required', 'This app has no chain server for a hosted wallet.');
@@ -4186,6 +4281,9 @@ export class TrikeyWallet {
           throw new WalletError('guardian_unsupported', `This guardian can't host wallets yet: ask ${payload.label ?? 'its owner'} to update it.`, { cause: e });
         throw asWalletError(e, 'invite');
       }
+      // The contacts may pause a hosted wallet only on a guardian that knows it (family hosting phase 2, `contact_lock`).
+      if (isContactLockOn(rules) && !prep.features?.includes(GUARDIAN_FEATURES.contactLock))
+        throw new WalletError('guardian_unsupported', `This guardian can't let your contacts pause your wallet yet: ask ${payload.label ?? 'its owner'} to update it, or turn that off.`);
       const cosignerPub = prep.cosignerAccountPubkey;
       let cosigner: KeyExpression;
       try {
@@ -4599,7 +4697,7 @@ export class TrikeyWallet {
     ];
     return {
       newGuardian: this.previewOf(session),
-      oldWalletId: old.fingerprint(),
+      oldWalletId: this.s.wallet!.walletId,
       newWalletId: session.wallet.fingerprint(),
       oldGuardianReachable: reachable,
       balanceSats,
@@ -4696,7 +4794,9 @@ export class TrikeyWallet {
       const proof = await this.signWithAuthKey(hw, rec, pairingMessage(walletId, cosignerPub), 'pairing');
       return { proof, hmac: reg.hmac };
     });
-    const res = await this.registerAtGuardian(session, { rules, deviceName: this.s.deviceName, proof, replaces: { walletId: this.s.wallet!.walletId, descriptor: this.s.wallet!.descriptor } });
+    // The new guardian keys the wallet it watches by its descriptor hash; a hosted wallet's own id is its key-set id.
+    const replacesId = this.isHosted ? this.multisig().fingerprint() : this.s.wallet!.walletId;
+    const res = await this.registerAtGuardian(session, { rules, deviceName: this.s.deviceName, proof, replaces: { walletId: replacesId, descriptor: this.s.wallet!.descriptor } });
     // The new guardian holds the new wallet: persist before anything else can fail.
     this.replaceRpc = { rpc: session.rpc, pool: session.pool };
     this.pairing = undefined;
@@ -4739,7 +4839,7 @@ export class TrikeyWallet {
         truncated = this.s.chain!.utxosTruncated;
       } else {
         // The old guardian is gone: the new one watches the old wallet and lists its coins (never a stale snapshot while it answers).
-        const listed = await this.listOldWalletViaNewGuardian(r, old.walletId);
+        const listed = await this.listOldWalletViaNewGuardian(r, this.isHosted ? oldWallet.fingerprint() : old.walletId);
         if (listed) {
           source = listed.source;
           utxos = listed.snap.utxos;
@@ -4896,7 +4996,8 @@ export class TrikeyWallet {
         s.silentPayments.scanner = undefined;
       }
     });
-    // From here on the new guardian is the guardian.
+    // From here on the new guardian is the guardian (and its chain data: a hosted wallet's cached chain source scanned the old wallet).
+    this.chainSource = undefined;
     this.rpc?.close();
     this.pool?.close();
     this.rpc = this.replaceRpc?.rpc;

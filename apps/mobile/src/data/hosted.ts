@@ -106,3 +106,23 @@ export function inviteDisclosure(p: { host: string; device: string; server: stri
 
 /** The privacy note of the public server, as Recovery Key mode shows it. */
 export const HOSTED_SERVER_NOTE = PUBLIC_SERVER_PRIVACY_NOTE;
+
+/**
+ * The guest's "leave" screen (docs/design/family-hosting.md, section 16): how to stop being hosted without losing
+ * anything. The money moves first, with the phone and the hardware wallet (Replace guardian, which then releases the
+ * slot by itself, or a payment); the slot is released only when nothing is left, because releasing deletes the host's
+ * key for this wallet, and that key is one of the two a lost phone or hardware wallet would need.
+ */
+export function leaveHostCopy(p: { host: string; device: string }) {
+  return {
+    title: `Leave ${p.host}`,
+    intro: `${p.host}'s guardian holds one of your three keys. To stop being hosted, move your money to a wallet with another guardian (your own box, or someone else's), then release this wallet: ${p.host}'s guardian deletes its key for it.`,
+    moveTitle: '1. Move your money',
+    move: `Replace guardian moves everything with this phone and your ${p.device} to a new wallet with the new guardian, then releases this wallet on ${p.host}'s guardian by itself. Or send everything elsewhere with your ${p.device}.`,
+    releaseTitle: '2. Release this wallet',
+    release: `When nothing is left, release it here: one approval on your ${p.device}. This phone checks first, on your chain server and a second one, and so does ${p.host}'s guardian for the coins it co-signed.`,
+    why: `Don't release while money is still there: ${p.host}'s key is one of the two you would need if you lost this phone or your ${p.device}. Your phone and your ${p.device} can always move your money without ${p.host}.`,
+    safe: `Nothing is left in this wallet. Releasing it deletes ${p.host}'s key for it, for good.`,
+    done: `Released. ${p.host}'s guardian no longer holds a key for this wallet. To go on, set up a new wallet (or keep using the one Replace guardian moved you to).`,
+  };
+}

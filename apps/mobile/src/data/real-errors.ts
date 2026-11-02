@@ -43,7 +43,9 @@ export function refusalToError(r: GuardianRefusal): WalletServiceError {
         'phone_spending_paused',
         r.cause === 'wallet_retired'
           ? 'This wallet was retired by a recovery, so this phone can no longer pay from it.'
-          : 'Phone-only payments are paused because a recovery was cancelled by someone else. Resume them from Home with your hardware wallet, or approve this payment with it.',
+          : r.cause === 'wallet_paused'
+            ? 'This wallet is paused, so the guardian co-signs no payment for it. Resume it from Home with your hardware wallet, or approve this payment with it.'
+            : 'Phone-only payments are paused because a recovery was cancelled by someone else. Resume them from Home with your hardware wallet, or approve this payment with it.',
         opts(r.cause !== 'wallet_retired'),
       );
     case 'approval_required':
@@ -197,6 +199,8 @@ export function mapError(e: unknown): WalletServiceError {
         return make('wrong_state', 'The node has no fee estimate right now. Try again in a moment.');
       case 'no_chain_data':
         return make('wrong_state', 'Your wallet has not synced yet. Pull down to refresh.');
+      case 'not_safe_to_release':
+        return make('refused', e.message);
       case 'utxos_truncated':
       case 'nothing_to_sweep':
       case 'fee_cap_too_low':

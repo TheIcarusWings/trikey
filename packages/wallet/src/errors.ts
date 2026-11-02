@@ -16,7 +16,8 @@ export type GuardianRefusal = { message: string } & (
   | { kind: 'over_daily_limit'; limitSats?: number; usedSats?: number; neededSats?: number }
   | { kind: 'guardian_locked' }
   | { kind: 'recovery_in_progress'; recoveryId?: string }
-  | { kind: 'phone_spending_paused'; cause?: 'contested_recovery' | 'wallet_retired' }
+  /** `wallet_paused`: a hosted wallet paused by one of its contacts' LOCK or by its phone (family hosting phase 2). */
+  | { kind: 'phone_spending_paused'; cause?: 'contested_recovery' | 'wallet_retired' | 'wallet_paused' }
   | { kind: 'approval_required'; detail?: string }
   | { kind: 'approval_invalid' }
   | { kind: 'approval_expired' }
@@ -86,7 +87,7 @@ export function refusalFromError(e: unknown): GuardianRefusal | undefined {
     case ErrorCode.RecoveryAlreadyActive:
       return { kind: 'recovery_in_progress', recoveryId: str(data['recoveryId']), message };
     case ErrorCode.PhoneSpendingPaused:
-      return { kind: 'phone_spending_paused', cause: data['cause'] === 'wallet_retired' ? 'wallet_retired' : 'contested_recovery', message };
+      return { kind: 'phone_spending_paused', cause: data['reason'] === 'wallet_paused' ? 'wallet_paused' : data['cause'] === 'wallet_retired' ? 'wallet_retired' : 'contested_recovery', message };
     case ErrorCode.ApprovalRequired:
       return { kind: 'approval_required', detail: str(data['detail']), message };
     case ErrorCode.ApprovalInvalid:
@@ -182,6 +183,12 @@ export type WalletErrorCode =
   /** The guardian listed only part of the wallet's coins, so a sweep could not spend them all. */
   | 'utxos_truncated'
   | 'nothing_to_sweep'
+  /**
+   * Leaving a host (family hosting): releasing the slot now would delete a guardian key that coins still need. The
+   * error's `blockers` (from `hostedLeaveCheck`) say what is left: move it first (Replace guardian, or a payment with
+   * the hardware wallet), then release.
+   */
+  | 'not_safe_to_release'
   /** The sweep fee cap is too low for even the minimum relay fee. */
   | 'fee_cap_too_low'
   | 'invalid_rules'
@@ -274,6 +281,42 @@ export type WalletErrorCode =
   | 'wallet_map_invalid'
   | 'internal';
 
+/** What still needs a host's guardian key before a guest can leave (`TrikeyWallet.hostedLeaveCheck`). */
+export type HostedLeaveBlocker =
+  | { kind: 'recovery_running'; recoveryId: string }
+  /** Coins on the wallet's chain server (`primary`), or only on the second, independent one (`check`). */
+  | { kind: 'money_left'; server: 'primary' | 'check'; coins: number; sats: number }
+  /** Coins the guardian co-signed that are still unspent; `offPath`: how many of them only phone + guardian can move. */
+  | { kind: 'cosigned_coins_left'; coins: number; sats: number; offPath: number }
+  /** The second server did not answer, so "empty" could not be confirmed. */
+  | { kind: 'second_server_unavailable' };
+
+export interface HostedLeaveCheck {
+  /** Nothing is left that needs the host's guardian key: releasing the slot loses nothing. */
+  safe: boolean;
+  blockers: HostedLeaveBlocker[];
+}
+
+/** One sentence for the blockers, for the error and the screen. */
+export function leaveBlockerText(blockers: HostedLeaveBlocker[]): string {
+  const b = blockers[0];
+  if (!b) return 'Nothing is left: you can leave.';
+  switch (b.kind) {
+    case 'recovery_running':
+      return 'A recovery of this wallet is running. Let it finish or cancel it first.';
+    case 'money_left':
+      return b.server === 'primary'
+        ? `This wallet still holds ${b.sats.toLocaleString('en-US')} sats. Move them first (Replace guardian, or send them with your hardware wallet).`
+        : `A second server still sees ${b.sats.toLocaleString('en-US')} sats in this wallet that your chain server does not show. Move them first.`;
+    case 'cosigned_coins_left':
+      return b.offPath
+        ? `${b.offPath} coin${b.offPath === 1 ? '' : 's'} your host's guardian co-signed can only be moved with your phone key and that guardian. Move ${b.offPath === 1 ? 'it' : 'them'} before you leave.`
+        : `${b.coins} coin${b.coins === 1 ? '' : 's'} your host's guardian co-signed ${b.coins === 1 ? 'is' : 'are'} still unspent. Move ${b.coins === 1 ? 'it' : 'them'} first.`;
+    case 'second_server_unavailable':
+      return 'A second chain server could not confirm the wallet is empty. Try again in a moment.';
+  }
+}
+
 export class WalletError extends Error {
   readonly code: WalletErrorCode;
   readonly refusal?: GuardianRefusal;
@@ -286,11 +329,13 @@ export class WalletError extends Error {
   readonly capSats?: number;
   /** `sweep_refused`: the guardian's rule that failed (`data.reason`). */
   readonly reason?: string;
+  /** `not_safe_to_release`: what is still left. */
+  readonly blockers?: HostedLeaveBlocker[];
 
   constructor(
     code: WalletErrorCode,
     message: string,
-    opts: { refusal?: GuardianRefusal; cause?: unknown; backupNetwork?: string; retryAfterSeconds?: number; feeSats?: number; capSats?: number; reason?: string } = {},
+    opts: { refusal?: GuardianRefusal; cause?: unknown; backupNetwork?: string; retryAfterSeconds?: number; feeSats?: number; capSats?: number; reason?: string; blockers?: HostedLeaveBlocker[] } = {},
   ) {
     super(message, opts.cause === undefined ? undefined : { cause: opts.cause });
     this.name = 'WalletError';
@@ -301,6 +346,7 @@ export class WalletError extends Error {
     if (opts.feeSats !== undefined) this.feeSats = opts.feeSats;
     if (opts.capSats !== undefined) this.capSats = opts.capSats;
     if (opts.reason !== undefined) this.reason = opts.reason;
+    if (opts.blockers) this.blockers = opts.blockers;
   }
 }
 

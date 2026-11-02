@@ -47,6 +47,16 @@ export function paymentsLine(w: HostedWallet): string | undefined {
   return `Signed ${n} ${n === 1 ? 'payment' : 'payments'} this week`;
 }
 
+/**
+ * A guest's wallet paused by the guest's side (family hosting phase 2): one of their alert contacts sent LOCK, or their
+ * phone asked. This box co-signs no payment for it until their hardware wallet resumes it; the host cannot resume it
+ * and is not told who paused it. Your own wallet is not affected.
+ */
+export function pausedLine(w: HostedWallet): string | undefined {
+  if (!w.paused) return undefined;
+  return "Paused by their side: this box co-signs no payment for them until their hardware wallet resumes it. Your own wallet is not affected.";
+}
+
 /** Which actions a row offers. */
 export function hostedWalletActions(w: HostedWallet): { cancelInvite: boolean; stop: boolean; stopNow: boolean; remove: boolean } {
   return {

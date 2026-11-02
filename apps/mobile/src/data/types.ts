@@ -734,6 +734,20 @@ export interface HostedWalletView {
   publicServer: string;
   /** The host stopped hosting: key 3 ends then. */
   endsAt?: IsoDate;
+  /**
+   * The wallet is paused (family hosting phase 2): the host's guardian co-signs no payment for it until the hardware
+   * wallet resumes it. `contact`: one of its alert contacts sent LOCK (named as this phone knows them); `phone`: this
+   * phone paused it. The host's box itself is not locked.
+   */
+  paused?: { by: 'contact' | 'phone'; at: IsoDate; contactName?: string };
+}
+
+/** What still needs the host's guardian key before a guest can leave (family hosting phase 2). */
+export interface LeaveHostCheck {
+  /** Nothing is left that needs the host's key: the slot can be released. */
+  safe: boolean;
+  /** Plain sentences, one per thing still in the way. */
+  blockers: string[];
 }
 
 /** A scanned invite, before it is accepted. */

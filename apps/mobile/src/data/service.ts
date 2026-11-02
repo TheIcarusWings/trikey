@@ -23,6 +23,7 @@ import type {
   RestoreUnlock,
   ScannedCode,
   InviteView,
+  LeaveHostCheck,
   SendQuote,
   SendRequest,
   Sats,
@@ -92,6 +93,13 @@ export interface WalletService {
   /** A hosted wallet's own chain server (an Esplora URL), or null for the public one. */
   setHostedChainServer?(url: string | null): Promise<void>;
   /**
+   * Leaving a host (family hosting phase 2): may the slot on the host's guardian be released now? Safe only when the
+   * wallet holds nothing (on its chain server and a second one) and no coin the host's guardian co-signed is left.
+   */
+  checkLeaveHost?(): Promise<LeaveHostCheck>;
+  /** Releases the slot on the host's guardian (a hardware approval): its key for this wallet is deleted. Refused unless safe. */
+  leaveHost?(): Promise<void>;
+  /**
    * The alert contacts chosen during onboarding, before pairing. Kept on the phone until `setUpRules`, which sends
    * them with the first rules (the guardian refuses pairing without one on mainnet). Replaces any earlier list;
    * `[]` clears it. Throws `invalid_input` for a key that is not an npub.
@@ -130,7 +138,10 @@ export interface WalletService {
   // -- guardian --------------------------------------------------------
   /** Unlocks a guardian that restarted. The passphrase is used once and never stored. */
   unlockGuardian(passphrase?: string): Promise<void>;
-  /** Locks the guardian from this phone (key 3 leaves its memory until someone unlocks it with the passphrase). */
+  /**
+   * Locks the guardian from this phone (key 3 leaves its memory until someone unlocks it with the passphrase). For a
+   * hosted wallet it pauses only this wallet on the host's guardian; the hardware wallet resumes it (`resumePhoneSpending`).
+   */
   lockGuardian(): Promise<void>;
   /**
    * "Replace guardian", after scanning the new guardian's pairing code: what will happen, in plain steps. Changes
@@ -194,7 +205,7 @@ export interface WalletService {
   startRecovery(lostKey: LostKey, opts?: { guardian?: GuardianAddress; hardwareKind?: HardwareKind }): Promise<RecoveryInProgress>;
   acknowledgeRecovery(): void;
   cancelRecovery(): Promise<void>;
-  /** After a contested cancel: the hardware wallet re-enables phone payments. */
+  /** After a contested cancel, or a hosted wallet's pause: the hardware wallet re-enables phone payments. */
   resumePhoneSpending(): Promise<void>;
   /** A recovering phone's access to the guardian lasts a day; the hardware wallet renews it. */
   renewRecoveryAccess(): Promise<void>;
