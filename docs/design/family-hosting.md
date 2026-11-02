@@ -718,7 +718,7 @@ Kept: **a depth-0 xpub with no origin** (`cosignerKeyExpression`, `[ownfp]xpub`)
 nodes carry the xpub with the `[chain, index]` suffix and no origin, the Coldcard file says `Derivation: m` with the key's
 own fingerprint, and the descriptor imports as is. A synthetic origin (`[fp/48'/c'/0'/2']`, the xpub serialized at depth
 4 with an invented parent) gives the same addresses and is accepted by the same code, but claims a derivation that does
-not exist, so it is only the fallback. Needs real devices (alpha test plan, step 15): Ledger's Bitcoin app with a no-origin
+not exist, so it is only the fallback. Needs real devices (alpha test plan, step 18): Ledger's Bitcoin app with a no-origin
 external key, Coldcard's depth-0 fingerprint check, Trezor signing, Jade / Passport / Keystone descriptor import, BitBox02.
 
 ### Open questions

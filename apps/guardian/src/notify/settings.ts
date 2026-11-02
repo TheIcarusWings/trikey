@@ -10,6 +10,8 @@
  *   - `contact` without `contact`: someone reachable only by email or ntfy (`MAX_CONTACT_ONLY`): warnings, no controls.
  * Webhooks are for the owner only. At most `MAX_DESTINATIONS` in all.
  */
+import { X509Certificate } from 'node:crypto';
+import type { SmtpPin } from './channels.js';
 import { AddressError, checkHttpUrl, type NetPolicy } from './net.js';
 import type { Sealed } from './secrets.js';
 
@@ -28,6 +30,12 @@ export interface StoredSmtp {
   username: string;
   from: string;
   password: Sealed;
+  /**
+   * A pinned certificate (Proton Mail Bridge and other servers with a self-signed one): TLS then accepts exactly it,
+   * instead of the public CAs. Not a secret (a server shows its certificate to anyone). Part of the account: changing
+   * it is a change of the account, announced like one.
+   */
+  pin?: SmtpPin;
 }
 
 export interface StoredDestination {
@@ -75,6 +83,38 @@ export interface SmtpInput {
   from: string;
   /** Absent: keep the stored password. */
   password?: string;
+  /** Absent: keep the stored pin (if any); `null`: no pin (public CAs). */
+  pin?: SmtpPin | null;
+}
+
+const MAX_PIN_INPUT = 16_384;
+
+/**
+ * A pinned certificate from what the owner pastes: the server's certificate (one PEM block, as Proton Mail Bridge exports
+ * it or `openssl s_client` prints it) or its SHA-256 fingerprint (64 hex digits, with or without colons, also as
+ * `openssl x509 -fingerprint -sha256` writes it: `sha256 Fingerprint=AB:CD:...`). Refuses a private key outright.
+ */
+export function checkPin(raw: unknown): SmtpPin {
+  const text = typeof raw === 'string' ? raw.trim() : '';
+  const what = 'Pinned certificate';
+  if (!text || text.length > MAX_PIN_INPUT) throw new SettingsError(`${what}: paste the server's certificate (-----BEGIN CERTIFICATE-----) or its SHA-256 fingerprint.`);
+  if (/PRIVATE KEY/.test(text)) throw new SettingsError(`${what}: that holds a private key. Paste only the certificate (cert.pem), never the key.`);
+  if (text.includes('-----BEGIN')) {
+    const blocks = text.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
+    if (blocks.length !== 1)
+      throw new SettingsError(blocks.length ? `${what}: paste only the server's own certificate (the first BEGIN CERTIFICATE block).` : `${what}: paste a certificate (-----BEGIN CERTIFICATE----- ...) or its SHA-256 fingerprint.`);
+    let cert: X509Certificate;
+    try {
+      cert = new X509Certificate(blocks[0]!);
+    } catch {
+      throw new SettingsError(`${what}: that is not a readable certificate. Copy the whole block, BEGIN and END lines included.`);
+    }
+    return { sha256: cert.fingerprint256, pem: cert.toString() };
+  }
+  const hexText = text.replace(/^sha-?256(\s*fingerprint)?\s*[=:]?\s*/i, '').replace(/[\s:]/g, '');
+  if (/^[0-9a-f]{40}$/i.test(hexText)) throw new SettingsError(`${what}: that is a SHA-1 fingerprint. Use the SHA-256 one (openssl x509 -fingerprint -sha256).`);
+  if (!/^[0-9a-f]{64}$/i.test(hexText)) throw new SettingsError(`${what}: paste the certificate (PEM) or its SHA-256 fingerprint (64 hex digits, colons allowed).`);
+  return { sha256: hexText.toUpperCase().replace(/(..)(?!$)/g, '$1:') };
 }
 
 /** The email account, checked. `password` stays absent when the input keeps the stored one. */
@@ -93,7 +133,10 @@ export function checkSmtp(raw: unknown, hasStoredPassword: boolean): SmtpInput {
     if (typeof r.password !== 'string' || r.password.length > 256 || CONTROL.test(r.password)) throw new SettingsError('Email server: the app password is at most 256 characters, without line breaks.');
     password = r.password;
   } else if (!hasStoredPassword) throw new SettingsError('Email server: enter an app password (not your account password).');
-  return { host, port, security: r.security, username, from, ...(password !== undefined ? { password } : {}) };
+  let pin: SmtpPin | null | undefined;
+  if (r.pin === null) pin = null;
+  else if (r.pin !== undefined && r.pin !== '') pin = checkPin(r.pin);
+  return { host, port, security: r.security, username, from, ...(password !== undefined ? { password } : {}), ...(pin !== undefined ? { pin } : {}) };
 }
 
 export interface DestinationInput {

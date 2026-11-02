@@ -17,7 +17,7 @@ import type {
   Rules,
 } from './types';
 import { relayListError } from '../lib/relays';
-import { emailError, guardianNameError, topicError, urlError, webhookSecretError } from '../lib/notifications';
+import { emailError, guardianNameError, pinError, topicError, urlError, webhookSecretError } from '../lib/notifications';
 
 /**
  * In-memory guardian with demo data matching design/screens/Guardian-*.
@@ -514,9 +514,23 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       if (nameProblem) throw bad(nameProblem);
       if (input.destinations.some((d) => d.kind === 'email') && !input.smtp) throw bad('Set up the email account first: email channels send through it.');
       if (input.smtp && !input.smtp.password && !smtpSettings) throw bad('Email server: enter an app password (not your account password).');
+      const pinProblem = input.smtp?.pin ? pinError(input.smtp.pin) : undefined;
+      if (pinProblem) throw bad(`Pinned certificate: ${pinProblem}`);
       const kept = new Set(input.destinations.map((d) => d.id).filter(Boolean));
       const removing = destinations.some((d) => !kept.has(d.id));
-      if (recovery && removing) throw new ApiError('recovery_pending', 'A recovery is running: alert channels and the email account can be added to, not removed or changed, until it ends.', 409);
+      // Of the email account, only the app password may change during a recovery.
+      const was = smtpSettings;
+      const changingAccount =
+        !!was &&
+        (!input.smtp ||
+          input.smtp.host !== was.host ||
+          input.smtp.port !== was.port ||
+          input.smtp.security !== was.security ||
+          input.smtp.username !== was.username ||
+          input.smtp.from !== was.from ||
+          (input.smtp.pin !== undefined && !(input.smtp.pin === null && !was.pin)));
+      if (recovery && (removing || changingAccount))
+        throw new ApiError('recovery_pending', "A recovery is running: alert channels and the email account can be added to, not removed or changed, until it ends. Only the email account's app password can be changed meanwhile.", 409);
       const next: NotifyDestination[] = [];
       for (const d of input.destinations) {
         const old = d.id ? destinations.find((x) => x.id === d.id) : undefined;
@@ -549,8 +563,23 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
         });
       }
       notifyName = input.guardianName.trim() || 'Trikey Guardian';
+      // The mock cannot read a certificate: a pasted one gets a made-up fingerprint, a fingerprint is kept as typed.
+      const pin = (text: string): NonNullable<NotificationSettings['smtp']>['pin'] =>
+        text.includes('BEGIN')
+          ? { sha256: '5F:9C:2B:7A:11:E0:4D:83:C6:0F:9A:3E:52:B8:D1:47:6E:2C:90:AB:F3:18:5D:C4:07:E9:61:B2:3A:8F:D5:4C', certificate: true }
+          : { sha256: text.trim().replace(/^sha-?256(\s*fingerprint)?\s*[=:]?\s*/i, '').replace(/[\s:]/g, '').toUpperCase().replace(/(..)(?!$)/g, '$1:'), certificate: false };
+      const nextPin = input.smtp?.pin === undefined ? smtpSettings?.pin : input.smtp.pin === null ? undefined : pin(input.smtp.pin);
       smtpSettings = input.smtp
-        ? { host: input.smtp.host, port: input.smtp.port, security: input.smtp.security, username: input.smtp.username, from: input.smtp.from, passwordSet: true, health: input.smtp.password ? never : (smtpSettings?.health ?? never) }
+        ? {
+            host: input.smtp.host,
+            port: input.smtp.port,
+            security: input.smtp.security,
+            username: input.smtp.username,
+            from: input.smtp.from,
+            ...(nextPin ? { pin: nextPin } : {}),
+            passwordSet: true,
+            health: input.smtp.password || input.smtp.pin !== undefined ? never : (smtpSettings?.health ?? never),
+          }
         : undefined;
       destinations = next;
       pushActivity({ kind: 'system', event: 'Alert channels changed on this box. Every channel, before and after the change, and the paired phone are told.', summary: 'Alert channels changed', signedBy: null, sats: null, result: 'ok' });

@@ -6,7 +6,7 @@ tagline: Key 3 of your 2-of-3 bitcoin wallet, on your own node
 # TODO(verify): the icon is a placeholder (the web UI favicon). Replace with a proper icon URL.
 icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/guardian-web/public/favicon.svg
 category: bitcoin
-version: "0.1.7-alpha"
+version: "0.1.8-alpha"
 # TODO(verify): host-facing port for the app_proxy. Pick one that no other app in the store uses.
 port: 3010
 description: >-
@@ -26,8 +26,9 @@ support: https://github.com/TheIcarusWings/trikey/issues
 # TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
 gallery: []
 releaseNotes: >-
-  No guardian changes. The Trikey app reconnects a Ledger that dropped Bluetooth, switches to the new
-  wallet at once after a recovery, and from now on updates in place on Android.
+  Alerts can now also go out by email (through your own account), ntfy push or a webhook: Settings,
+  Notifications. Your alert contacts can lock the guardian if you allow it. The guardian watches an
+  optional Savings wallet and tells you and your contacts when money leaves it.
 dependencies:
   - bitcoin
   - electrs

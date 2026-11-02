@@ -6,7 +6,8 @@
  * delivery settings, outside the hardware-approved rules: only the web UI changes them (a signed-in session on an
  * unlocked guardian), never the phone, and every change is announced on every channel, the removed ones included and
  * over the email account as it was before the change, plus the paired phone (`notifications_changed`). While a
- * recovery runs, removing or changing a channel or the email account is refused; adding is allowed.
+ * recovery runs, removing or changing a channel or the email account is refused; adding is allowed, and so is changing
+ * only the email account's app password (a revoked one must be fixable when warnings matter most), announced as well.
  *
  * **Delivery** has the semantics of the nostr notices (engine.ts `LimitNotice`): every alert becomes an outbox item
  * with one delivery per destination, persisted before the first try; a delivery is retried with backoff until it is
@@ -164,7 +165,12 @@ export interface DestinationView {
 
 export interface SettingsView {
   guardianName: string;
-  smtp?: Omit<StoredSmtp, 'password'> & { passwordSet: true; health: Health & { state: HealthState } };
+  smtp?: Omit<StoredSmtp, 'password' | 'pin'> & {
+    /** The pinned certificate's SHA-256, and whether the certificate itself was pasted (else only its fingerprint). */
+    pin?: { sha256: string; certificate: boolean };
+    passwordSet: true;
+    health: Health & { state: HealthState };
+  };
   destinations: DestinationView[];
   pending: number;
   limits: { destinations: number; ownerPerKind: number; contactOnly: number };
@@ -276,7 +282,20 @@ export class Notifier {
     const inRules = new Set(this.opts.contacts());
     return {
       guardianName: f.guardianName,
-      ...(f.smtp ? { smtp: { host: f.smtp.host, port: f.smtp.port, security: f.smtp.security, username: f.smtp.username, from: f.smtp.from, passwordSet: true as const, health: this.healthView('smtp') } } : {}),
+      ...(f.smtp
+        ? {
+            smtp: {
+              host: f.smtp.host,
+              port: f.smtp.port,
+              security: f.smtp.security,
+              username: f.smtp.username,
+              from: f.smtp.from,
+              ...(f.smtp.pin ? { pin: { sha256: f.smtp.pin.sha256, certificate: !!f.smtp.pin.pem } } : {}),
+              passwordSet: true as const,
+              health: this.healthView('smtp'),
+            },
+          }
+        : {}),
       destinations: f.destinations.map((d) => ({
         id: d.id,
         audience: d.audience,
@@ -319,8 +338,9 @@ export class Notifier {
 
   /**
    * `PUT /api/notifications`: replaces the settings. `recoveryRunning`: while true, removing or changing a channel or
-   * the email account is refused (adding is allowed). Every change queues one `notifications_changed` announcement to
-   * every channel before and after it (see the file comment); the caller logs it and tells the phone.
+   * the email account is refused (adding is allowed, and changing only the email account's app password). Every change
+   * queues one `notifications_changed` announcement to every channel before and after it (see the file comment); the
+   * caller logs it and tells the phone.
    */
   async update(input: unknown, ctx: { recoveryRunning: boolean }): Promise<UpdateOutcome> {
     let outcome = { ok: true, changed: false } as UpdateOutcome;
@@ -377,7 +397,11 @@ export class Notifier {
       let smtp: StoredSmtp | undefined;
       if (smtpIn) {
         const password = smtpIn.password !== undefined ? await this.sealOrKeep('smtp.password', smtpIn.password, draft.smtp?.password) : draft.smtp!.password;
-        smtp = { host: smtpIn.host, port: smtpIn.port, security: smtpIn.security, username: smtpIn.username, from: smtpIn.from, password };
+        // The pin: absent keeps the stored one; the same certificate again (by fingerprint) keeps the stored one too,
+        // unless the certificate itself now comes with it.
+        const oldPin = draft.smtp?.pin;
+        const pin = smtpIn.pin === undefined ? oldPin : smtpIn.pin === null ? undefined : oldPin?.sha256 === smtpIn.pin.sha256 && !smtpIn.pin.pem ? oldPin : smtpIn.pin;
+        smtp = { host: smtpIn.host, port: smtpIn.port, security: smtpIn.security, username: smtpIn.username, from: smtpIn.from, password, ...(pin ? { pin } : {}) };
       }
 
       // What changed. A channel whose address changed counts as removed and added (the old address is told).
@@ -403,12 +427,25 @@ export class Notifier {
           const fresh = newId();
           await this.reseal(a, fresh);
         }
-      const smtpChanged = JSON.stringify(draft.smtp ? { ...draft.smtp, password: draft.smtp.password.c } : null) !== JSON.stringify(smtp ? { ...smtp, password: smtp.password.c } : null);
+      // What changed in the email account (the pin by its fingerprint: the same certificate is no change).
+      const smtpParts: string[] = [];
+      if (draft.smtp && smtp) {
+        const a = draft.smtp;
+        if (a.host !== smtp.host || a.port !== smtp.port || a.security !== smtp.security) smtpParts.push('server');
+        if (a.username !== smtp.username) smtpParts.push('user name');
+        if (a.from !== smtp.from) smtpParts.push('From address');
+        if (a.pin?.sha256 !== smtp.pin?.sha256)
+          smtpParts.push(!smtp.pin ? 'pinned certificate removed' : `pinned certificate ${a.pin ? 'changed' : 'set'} (SHA-256 ${smtp.pin.sha256.slice(0, 11)}…)`);
+        if (a.password.c !== smtp.password.c) smtpParts.push('app password');
+      }
+      const smtpChanged = !!draft.smtp !== !!smtp || smtpParts.length > 0;
+      // While a recovery runs, the one change of the account allowed: a new app password, everything else the same.
+      const passwordOnly = smtpParts.length === 1 && smtpParts[0] === 'app password';
       const nameChanged = draft.guardianName !== name;
 
       const changes: string[] = [];
       if (nameChanged) changes.push(`guardian name changed to ${name}`);
-      if (smtpChanged) changes.push(!smtp ? 'email account removed' : !draft.smtp ? `email account set up (${smtp.username})` : 'email account changed (server, user, From address or app password)');
+      if (smtpChanged) changes.push(!smtp ? 'email account removed' : !draft.smtp ? `email account set up (${smtp.username}${smtp.pin ? ', with a pinned certificate' : ''})` : `email account changed: ${smtpParts.join(', ')}`);
       for (const d of removed) changes.push(`${messageLabel(d)} removed ${whoLabel(d)}`);
       for (const d of added) changes.push(`${messageLabel(d)} added ${whoLabel(d)}`);
       for (const u of updated) changes.push(`${messageLabel(u.now)} ${whoLabel(u.now)}: ${u.now.kind === 'ntfy' ? 'access token' : 'signing secret'} changed`);
@@ -416,8 +453,12 @@ export class Notifier {
         outcome = { ok: true, changed: false };
         return false;
       }
-      if (ctx.recoveryRunning && (removed.length || updated.length || (smtpChanged && draft.smtp))) {
-        outcome = { ok: false, code: 'recovery_pending', message: 'A recovery is running: alert channels and the email account can be added to, not removed or changed, until it ends.' };
+      if (ctx.recoveryRunning && (removed.length || updated.length || (smtpChanged && draft.smtp && !passwordOnly))) {
+        outcome = {
+          ok: false,
+          code: 'recovery_pending',
+          message: "A recovery is running: alert channels and the email account can be added to, not removed or changed, until it ends. Only the email account's app password can be changed meanwhile.",
+        };
         return false;
       }
       const limit = this.changeLimiter.take('settings', now);
@@ -699,7 +740,7 @@ export class Notifier {
     if (dest.kind === 'email') {
       if (!smtp) throw new Error('No email account is set up.');
       const password = await this.box.open('smtp.password', smtp.password);
-      const account: SmtpAccount = { host: smtp.host, port: smtp.port, security: smtp.security, username: smtp.username, from: smtp.from, password };
+      const account: SmtpAccount = { host: smtp.host, port: smtp.port, security: smtp.security, username: smtp.username, from: smtp.from, password, ...(smtp.pin ? { pin: smtp.pin } : {}) };
       await sendEmail(account, dest.email!, msg, { guardianName: this.file.guardianName, type: meta.type }, this.opts.smtpTest);
       return;
     }

@@ -5,7 +5,8 @@
  * - durable delivery: retried with backoff, logged when a channel fails and works again, given up after 7 days,
  *   each alert once (also when the engine lists it again), a newer reminder replacing an older undelivered one;
  * - changes announced on every channel before and after, the removed ones and over the old email account included;
- *   only additions while a recovery runs;
+ *   only additions while a recovery runs, and a new app password for the same email account;
+ * - a pinned certificate for the email account (a self-signed server, no test seam), announced as an account change;
  * - test messages and their rate limit.
  */
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
@@ -16,6 +17,7 @@ import type { ServiceEvent } from '../src/service-state.js';
 import { NOTIFY_FILE, NOTIFY_TTL_MS, Notifier, type NotifyEvent } from '../src/notify/notifier.js';
 import { NOTIFY_KEY_FILE, SecretBox } from '../src/notify/secrets.js';
 import { startHttp, startSmtp, type TestHttp, type TestSmtp } from './support/notify-servers.js';
+import { selfSignedCert } from './support/self-signed.js';
 
 const T0 = Date.UTC(2026, 10, 1, 12, 0, 0);
 const MIN = 60_000;
@@ -62,6 +64,7 @@ beforeEach(async () => {
   smtp.mails.length = 0;
   smtpNew.mails.length = 0;
   smtp.failAuth = false;
+  smtp.pass = PASSWORD;
   http.requests.length = 0;
   http.status = 200;
   n = make();
@@ -362,7 +365,7 @@ describe('changes are announced', () => {
     const v = n.view();
     const keep = v.destinations.map((d) => ({ id: d.id, audience: d.audience, kind: d.kind, ...(d.contact ? { contact: d.contact } : {}), ...(d.email ? { email: d.email } : {}), ...(d.ntfy ? { ntfy: { server: d.ntfy.server } } : {}), ...(d.webhook ? { webhook: {} } : {}) }));
     const r = await n.update({ guardianName: 'Home vault', smtp: { ...smtpIn(smtpNew.port, 'another app password'), username: 'new@example.com', from: 'new@example.com' }, destinations: keep }, { recoveryRunning: false });
-    expect(r).toMatchObject({ ok: true, changes: ['email account changed (server, user, From address or app password)'] });
+    expect(r).toMatchObject({ ok: true, changes: ['email account changed: server, user name, From address, app password'] });
     await flush();
     expect(smtp.mails.map((m) => m.to[0]).sort()).toEqual(['alice@example.com', 'carol@example.org', 'owner@example.com']);
     expect(smtpNew.mails).toHaveLength(0);
@@ -378,12 +381,52 @@ describe('changes are announced', () => {
     const keep = v.destinations.map((d) => ({ id: d.id, audience: d.audience, kind: d.kind, ...(d.contact ? { contact: d.contact } : {}), ...(d.email ? { email: d.email } : {}), ...(d.ntfy ? { ntfy: { server: d.ntfy.server } } : {}), ...(d.webhook ? { webhook: {} } : {}) }));
     const removing = await n.update({ guardianName: 'Home vault', smtp: smtpIn(smtp.port, null), destinations: keep.slice(1) }, { recoveryRunning: true });
     expect(removing).toMatchObject({ ok: false, code: 'recovery_pending' });
-    const changingSmtp = await n.update({ guardianName: 'Home vault', smtp: smtpIn(smtp.port, 'a different password'), destinations: keep }, { recoveryRunning: true });
+    const changingSmtp = await n.update({ guardianName: 'Home vault', smtp: { ...smtpIn(smtp.port, null), username: 'other@example.com' }, destinations: keep }, { recoveryRunning: true });
     expect(changingSmtp).toMatchObject({ ok: false, code: 'recovery_pending' });
     const changingAddress = await n.update({ guardianName: 'Home vault', smtp: smtpIn(smtp.port, null), destinations: keep.map((d) => (d.email === 'alice@example.com' ? { ...d, email: 'thief@example.com' } : d)) }, { recoveryRunning: true });
     expect(changingAddress).toMatchObject({ ok: false, code: 'recovery_pending' });
     const adding = await n.update({ guardianName: 'Home vault', smtp: smtpIn(smtp.port, null), destinations: [...keep, { audience: 'owner', kind: 'email', email: 'second@example.com' }] }, { recoveryRunning: true });
     expect(adding).toMatchObject({ ok: true, changed: true });
+  });
+
+  it('while a recovery runs, a new app password for the same account is accepted and announced; nothing else about the account', async () => {
+    await configured();
+    const v = n.view();
+    const keep = v.destinations.map((d) => ({ id: d.id, audience: d.audience, kind: d.kind, ...(d.contact ? { contact: d.contact } : {}), ...(d.email ? { email: d.email } : {}), ...(d.ntfy ? { ntfy: { server: d.ntfy.server } } : {}), ...(d.webhook ? { webhook: {} } : {}) }));
+    const put = (s: Record<string, unknown>) => n.update({ guardianName: 'Home vault', smtp: s, destinations: keep }, { recoveryRunning: true });
+    const NEW = 'new app password';
+    // Anything but the password alone is refused, with the new password in the same body or not; nothing is queued or stored.
+    const before = JSON.stringify(n.view());
+    for (const s of [
+      { ...smtpIn(smtp.port, NEW), host: 'localhost' },
+      { ...smtpIn(smtpNew.port, NEW) },
+      { ...smtpIn(smtp.port, NEW), security: 'tls' },
+      { ...smtpIn(smtp.port, NEW), username: 'other@example.com' },
+      { ...smtpIn(smtp.port, NEW), from: 'other@example.com' },
+      { ...smtpIn(smtp.port, NEW), pin: selfSignedCert().fingerprint256 },
+      { ...smtpIn(smtp.port, null), pin: selfSignedCert().cert },
+    ]) {
+      const r = await put(s);
+      expect(r, JSON.stringify(s)).toMatchObject({ ok: false, code: 'recovery_pending', message: expect.stringMatching(/Only the email account's app password/) });
+    }
+    expect(JSON.stringify(n.view())).toBe(before);
+    expect(n.pending).toBe(0);
+
+    // The owner revoked the old app password and made a new one: the password alone may change.
+    smtp.pass = NEW;
+    const r = await put(smtpIn(smtp.port, NEW));
+    expect(r).toEqual({ ok: true, changed: true, changes: ['email account changed: app password'] });
+    expect(events).toContainEqual({ type: 'notifications_changed', changes: ['email account changed: app password'] });
+    // Announced like any change: on every channel; email over the account as it was first (its password is revoked now)...
+    await flush();
+    expect(smtp.mails).toHaveLength(0);
+    expect(http.requests.filter((q) => (JSON.parse(q.body) as { message: string }).message.includes('email account changed: app password'))).toHaveLength(2);
+    // ...then through the account with the new password.
+    now += 2 * MIN;
+    await flush();
+    expect(smtp.mails.map((m) => m.to[0]).sort()).toEqual(['alice@example.com', 'carol@example.org', 'owner@example.com']);
+    expect(smtp.mails.find((m) => m.to[0] === 'owner@example.com')!.text).toContain('email account changed: app password');
+    expect(n.view().smtp).toMatchObject({ host: '127.0.0.1', port: smtp.port, username: 'owner@example.com', from: 'owner@example.com' });
   });
 
   it('an address change is a removal and an addition: the old address is told', async () => {
@@ -395,6 +438,55 @@ describe('changes are announced', () => {
     expect(smtp.mails.find((m) => m.to[0] === 'alice@example.com')!.text).toMatch(/no longer get alerts/);
     expect(smtp.mails.find((m) => m.to[0] === 'alice.new@example.com')!.text).toMatch(/now gets alerts/);
     expect(n.view().destinations.find((d) => d.email === 'alice.new@example.com')!.id).not.toBe(v.destinations.find((d) => d.email === 'alice@example.com')!.id);
+  });
+});
+
+describe('a pinned certificate for the email account', () => {
+  it('delivers through a self-signed server only with its pin, and every pin change is announced as an account change', async () => {
+    // A server with a throwaway self-signed certificate, and a notifier without the test seam: real certificate checks.
+    const cert = selfSignedCert();
+    const bridge = await startSmtp({ tls: cert, pass: PASSWORD });
+    const sub = await mkdtemp(join(tmpdir(), 'trikey-notify-pin-'));
+    const strict = new Notifier({ dataDir: sub, now: () => now, logEvent: (e) => void events.push(e), contacts: () => rules });
+    try {
+      await strict.load();
+      const body = (s: Record<string, unknown>) => ({ guardianName: 'Home vault', smtp: { ...smtpIn(bridge.port), ...s }, destinations: [{ audience: 'owner', kind: 'email', email: 'owner@example.com' }] });
+      const keepBody = (s: Record<string, unknown>) => ({ ...body(s), destinations: strict.view().destinations.map((d) => ({ id: d.id, audience: d.audience, kind: d.kind, email: d.email })) });
+      // Without a pin the certificate is refused, and the account shows the reason.
+      expect(await strict.update(body({}), { recoveryRunning: false })).toMatchObject({ ok: true, changed: true });
+      expect(await strict.test({ smtp: true })).toMatchObject({ ok: false, message: expect.stringMatching(/self-signed|certificate/i) });
+      expect(bridge.logins).toBe(0);
+      // Pinned (the certificate itself): accepted, announced, shown.
+      const set = await strict.update(keepBody({ pin: cert.cert }), { recoveryRunning: false });
+      expect(set).toMatchObject({ ok: true, changes: [`email account changed: pinned certificate set (SHA-256 ${cert.fingerprint256.slice(0, 11)}…)`] });
+      expect(strict.view().smtp!.pin).toEqual({ sha256: cert.fingerprint256, certificate: true });
+      expect(await strict.test({ smtp: true })).toMatchObject({ ok: true });
+      // The announcement tries the account as it was first (refused: no pin), then the account as it is now.
+      await strict.run();
+      now += 2 * MIN;
+      await strict.run();
+      await strict.idle();
+      expect(bridge.mails.some((m) => m.text.includes('pinned certificate set'))).toBe(true);
+      // The same certificate again, by its fingerprint, is no change; the pin survives a restart.
+      expect(await strict.update(keepBody({ pin: cert.fingerprint256 }), { recoveryRunning: false })).toEqual({ ok: true, changed: false });
+      const again = new Notifier({ dataDir: sub, now: () => now, contacts: () => rules });
+      await again.load();
+      expect(again.view().smtp!.pin).toEqual({ sha256: cert.fingerprint256, certificate: true });
+      // Another certificate pinned (by fingerprint): refused at send time, naming what the server shows.
+      const other = selfSignedCert();
+      expect(await strict.update(keepBody({ pin: other.fingerprint256 }), { recoveryRunning: false })).toMatchObject({ ok: true, changes: [expect.stringMatching(/^email account changed: pinned certificate changed/)] });
+      expect(strict.view().smtp!.pin).toEqual({ sha256: other.fingerprint256, certificate: false });
+      expect(await strict.test({ smtp: true })).toMatchObject({ ok: false, message: expect.stringContaining(`not the pinned one: it shows SHA-256 ${cert.fingerprint256}`) });
+      // Removing the pin is announced too.
+      expect(await strict.update(keepBody({ pin: null }), { recoveryRunning: false })).toMatchObject({ ok: true, changes: ['email account changed: pinned certificate removed'] });
+      expect(strict.view().smtp).not.toHaveProperty('pin');
+      // A bad pin is refused with the reason.
+      expect(await strict.update(keepBody({ pin: 'AB:CD' }), { recoveryRunning: false })).toMatchObject({ ok: false, code: 'invalid', message: expect.stringMatching(/SHA-256 fingerprint/) });
+    } finally {
+      await strict.idle();
+      await bridge.stop();
+      await rm(sub, { recursive: true, force: true });
+    }
   });
 });
 

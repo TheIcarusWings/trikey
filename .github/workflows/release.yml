@@ -1,0 +1,99 @@
+name: Release
+
+# Makes a release when a release PR lands on main, so nobody has to create the tag by hand.
+#
+# On every push to main it reads the version in package.json. If CHANGELOG.md has a section for that version
+# ("## <version>-alpha (...)") and the tag v<version>-alpha does not exist yet, it creates the tag on that commit and a
+# published pre-release whose notes are that CHANGELOG section. A push without a version bump, or whose version is
+# already tagged, does nothing.
+#
+# A tag made with GITHUB_TOKEN does not start the workflows that run on tags (GitHub's guard against loops), but a
+# workflow_dispatch does. So it then dispatches the release builds on the new tag: Docker (the guardian image),
+# Reproducible image, Android test APK (signed with the release key, attached to this release) and Umbrel store. On a
+# tag ref they behave exactly as when the tag is pushed by hand. It can also be run by hand (workflow_dispatch) to
+# retry a release whose tag exists but whose builds did not run.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      redispatch:
+        description: 'Dispatch the release builds for the current version even if its tag already exists (the tag must point at a commit on main).'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the tag and the release
+      actions: write # dispatch the release builds
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REDISPATCH: ${{ inputs.redispatch || false }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Decide
+        id: decide
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./package.json").version')"
+          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Unexpected version in package.json: ${version}"; exit 1; }
+          tag="v${version}-alpha"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          # Its CHANGELOG section, up to the next "## " heading.
+          awk -v v="## ${version}-alpha " 'index($0, v) == 1 { on = 1; next } on && /^## / { exit } on { print }' CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
+          if [ ! -s "${RUNNER_TEMP}/notes.md" ]; then
+            echo "No CHANGELOG section for ${version}-alpha: nothing to release."
+            echo "act=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null; then
+            if [ "${REDISPATCH}" = "true" ]; then
+              echo "act=dispatch" >> "$GITHUB_OUTPUT"
+            else
+              echo "${tag} exists already: nothing to do."
+              echo "act=none" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+          echo "act=release" >> "$GITHUB_OUTPUT"
+
+      - name: Create the tag and the release
+        if: steps.decide.outputs.act == 'release'
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: |
+          set -euo pipefail
+          {
+            cat "${RUNNER_TEMP}/notes.md"
+            echo
+            echo "The Android APK and its .sha256 are attached by the Android test APK build when it finishes; the guardian"
+            echo "image is ghcr.io/theicaruswings/trikey-guardian:${TAG#v}. How to install and test: docs/alpha-test-plan.md."
+          } > "${RUNNER_TEMP}/body.md"
+          gh release create "${TAG}" --target "${GITHUB_SHA}" --prerelease --title "Trikey ${TAG}" --notes-file "${RUNNER_TEMP}/body.md"
+          echo "::notice title=Released::${TAG} on ${GITHUB_SHA::7}"
+
+      - name: Dispatch the release builds
+        if: steps.decide.outputs.act != 'none'
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: |
+          set -euo pipefail
+          for wf in docker.yml reproducible.yml android-apk.yml umbrel-store.yml; do
+            gh workflow run "${wf}" --ref "${TAG}"
+            echo "Dispatched ${wf} on ${TAG}"
+          done

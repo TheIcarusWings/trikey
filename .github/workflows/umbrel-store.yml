@@ -13,6 +13,8 @@ name: Umbrel store
 on:
   push:
     tags: ['v*']
+  # release.yml dispatches it on the tag it creates (a tag made with GITHUB_TOKEN does not trigger `push`).
+  workflow_dispatch:
 
 permissions:
   contents: read

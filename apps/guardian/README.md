@@ -194,7 +194,8 @@ reorg, sweeps). `test/sp-perf.test.ts` measures the scanner (`SP_PERF_TXS=2000` 
 full-size block). `test/security/` holds the regression tests of the 2026-10
 security review, one file per finding (`SECURITY-REVIEW.md` at the repository root).
 `test/notify-*.test.ts` and `test/notify.e2e.test.ts` cover email, ntfy and webhook alerts against an
-in-process SMTP server (`smtp-server`, dev only) and local HTTP servers.
+in-process SMTP server (`smtp-server`, dev only) and local HTTP servers; the pinned-certificate tests give it
+throwaway self-signed certificates made at test time (`test/support/self-signed.ts`, no key committed).
 
 `test/support/` (exported as `@trikey/guardian/testing`) holds the fake Electrs, the
 fake Bitcoin Core RPC (`FakeBitcoind`, `getblock <hash> 3` with prevouts) and

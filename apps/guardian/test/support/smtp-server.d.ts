@@ -14,6 +14,9 @@ declare module 'smtp-server' {
   }
   export interface SMTPServerOptions {
     secure?: boolean;
+    /** The server's TLS key and certificate (PEM); default: smtp-server's built-in test certificate. */
+    key?: string | Buffer;
+    cert?: string | Buffer;
     hideSTARTTLS?: boolean;
     authOptional?: boolean;
     disabledCommands?: string[];
