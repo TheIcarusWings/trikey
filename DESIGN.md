@@ -504,13 +504,19 @@ no policy hash or approval text changes, the same version-1 backup).
 - **Moving money.** Into Savings: a normal payment from Spending to a Savings address, counted against the daily limit
   like any other (owner's answer 3); over the limit the hardware wallet signs. Out of Savings: two of its keys (phone +
   hardware wallet by default; phone + Recovery Key if the hardware wallet is lost; hardware wallet + Recovery Key if the
-  phone key is not usable), at the 6-block fee estimate, broadcast through the guardian. "Move to Spending" pays a
-  Spending address; the hardware wallet shows it as an outgoing payment and the app says so. Spending and Savings coins
-  are never mixed in one transaction.
+  phone key is not usable), at the 6-block fee estimate with RBF signalled, broadcast through the guardian. "Move to
+  Spending" pays a Spending address; the hardware wallet shows it as an outgoing payment and the app says so. Spending and
+  Savings coins are never mixed in one transaction. **Speed up** (`TrikeyWallet.quoteSavingsSpeedUp` /
+  `speedUpSavingsSpend`): a Savings payment waiting to confirm is replaced (BIP 125) by one with the same coins and the
+  same payments, a higher fee (the 1-block estimate, at least the old fee plus the incremental relay fee for its size)
+  taken from the change back to Savings, signed again by two of Savings' keys; the app shows the fee difference first.
+  A payment with no change cannot be sped up this way (the payment is never lowered); CPFP from Spending is not built.
 - **The guardian's part** (`apps/guardian/src/savings.ts`, `PolicyEngine.registerSavings`): it watches the descriptor
   (`GuardedWallet.savings`), serves its chain data and relays its spends, and scans it on every block and every two
   minutes. A spend after the first scan raises a durable `savings_moved` notice to the paired phone and every alert
-  contact (a tripwire: an honest guardian says Savings moved; a compromised one stays silent). Turning the watch off, or
+  contact (a tripwire: an honest guardian says Savings moved; a compromised one stays silent). One outflow, one alert: a
+  later spend of the same coins is a replacement (RBF); paying out the same (a fee bump) it is only logged
+  (`savings_replaced`), paying out something else it is announced again, naming the spend it replaced. Turning the watch off, or
   swapping it for another Savings wallet, is announced to the phone and every contact the same way (`savings_unwatched`);
   the phone, which did not ask for it, registers Savings again at its next sync. It refuses to watch any
   wallet it could sign for (the guarded, watched or a retired key set, or one holding key 3). A rotation carries the

@@ -9,7 +9,8 @@ and works exactly as today), the Recovery Key a second hardware wallet, transfer
 limit (so phase 3 is not built), and Savings recommended, not required, with the limit off. DESIGN.md ("Savings") and
 PROTOCOL.md ("Savings") describe it as built; "What was built" below lists where it differs from this proposal and the
 questions it left for the owner, answered 2026-11-01 (open questions 8 to 14): the printed Savings wallet map (10) is
-built since. Option T (phases 4a and 4b) is not built.
+built since, and so is "Speed up" of a Savings payment (11, built 2026-11-02; "Speeding up a Savings payment" below).
+Option T (phases 4a and 4b) is not built.
 
 The owner raised a concern, and it holds: **the daily limit exists only in the guardian's code.** Today's wallet is
 `wsh(sortedmulti(2, phone, hardware, guardian))`. Any two keys satisfy the script, so whoever controls the guardian
@@ -141,8 +142,8 @@ pass the phase 4a test and who want "hardware mandatory" in its literal form.
   `Trikey savings v1 wallet=<id> seq=<n> savings=<savingsWalletId> expires=<ISO>`. Watch-only registration without it
   (phase 2) is harmless: it adds chain data and alerts, nothing else.
 - **Fees.** A Savings spend pays its own fee at the 6-block estimate, signals RBF and is bumped by re-signing (hardware
-  again). A move into Spending can also be sped up by CPFP from the Spending output, which phone + guardian sign within
-  the limit.
+  again). **Built** ("Speeding up a Savings payment" below). A move into Spending could also be sped up by CPFP from the
+  Spending output, which phone + guardian sign within the limit: not built (later; see there).
 - **UTXO hygiene.** A transfer links the two wallets on chain. Spending and Savings coins are never mixed in one
   transaction. Move in a few larger amounts rather than many small ones. Under T, a refresh consolidates (one more
   link, and done when fees are low).
@@ -348,9 +349,9 @@ documented later option, behind the phase 4a test, for owners on Ledger, BitBox0
 |---|---|
 | Script | `wsh(sortedmulti(2, phone, hardware, recoveryKey))`, every key at BIP 48 account 1' (`SAVINGS_ACCOUNT`). Tests: each pair of keys signs (Bitcoin Core's verifier agrees), one key or the guardian never does (`packages/core/test/savings.test.ts`) |
 | Protocol | `savings.register` / `savings.unregister` / `savings.get`, `wallet.sync` with `wallet: "savings"`, `tx.broadcast` rule (d), `guardian.status.savingsWalletId`, the `savings_moved` alert; the `savings` feature. No policy member, hash or approval text changed |
-| Guardian | `GuardedWallet.savings` (descriptor, high-water marks, the spends already seen): refuses any wallet it could sign for, scans Savings on every block and every two minutes, a durable `savings_moved` notice to the phone and every alert contact; turning the Savings watch off or swapping it is announced to the phone and every contact the same way (`savings_unwatched`), since both need only the phone; a "Savings (watched)" card in the web UI (`?mock=savings`) |
-| Wallet | `startSavings` → `savingsConnectHardware` → `savingsConnectRecoveryKey` → `finishSavings` (registration and the first address checked on both devices), `savingsReceiveAddress`, `quoteSavingsSpend` / `sendFromSavings` with any two of its keys, `replaceSavingsKey` (each lost key, also on a new phone without a backup), backup version 2 only with Savings |
-| App | Settings > Savings and Home's suggestion (limit off), the create flow, the Savings screen (balance, Add to Savings, Move to Spending, Send, Receive, activity, "Lost a Savings key?"), Home's Savings row, Receive's Spending / Savings choice, both descriptors in Wallet details, the printed Savings wallet map (end of creation, Savings screen, Wallet details), the Security tab's backup reminder; all of it in the demo |
+| Guardian | `GuardedWallet.savings` (descriptor, high-water marks, the spends already seen): refuses any wallet it could sign for, scans Savings on every block and every two minutes, a durable `savings_moved` notice to the phone and every alert contact (one per outflow: a fee bump of a spend already announced is only logged, `savings_replaced`); turning the Savings watch off or swapping it is announced to the phone and every contact the same way (`savings_unwatched`), since both need only the phone; a "Savings (watched)" card in the web UI (`?mock=savings`) |
+| Wallet | `startSavings` → `savingsConnectHardware` → `savingsConnectRecoveryKey` → `finishSavings` (registration and the first address checked on both devices), `savingsReceiveAddress`, `quoteSavingsSpend` / `sendFromSavings` with any two of its keys, `quoteSavingsSpeedUp` / `speedUpSavingsSpend` (RBF of an unconfirmed Savings payment, `planFeeBump` in `send.ts`), `replaceSavingsKey` (each lost key, also on a new phone without a backup), backup version 2 only with Savings |
+| App | Settings > Savings and Home's suggestion (limit off), the create flow, the Savings screen (balance, Add to Savings, Move to Spending, Send, Receive, activity with "Speed up" on a payment waiting to confirm, "Lost a Savings key?"), the Speed up screen (`app/savings/speed-up.tsx`), Home's Savings row, Receive's Spending / Savings choice, both descriptors in Wallet details, the printed Savings wallet map (end of creation, Savings screen, Wallet details), the Security tab's backup reminder; all of it in the demo |
 
 Where the build differs from the proposal above, and why:
 
@@ -376,13 +377,55 @@ Where the build differs from the proposal above, and why:
   One static code, not a split or animated UR: paper can't animate, and wallets import a descriptor from one plain-text
   code. Printing goes through `expo-print` in memory, as the kit does, so the app writes no file and has no print cache to
   clear; on the web the page prints from a hidden frame (`expo-print` there would print the app's own screen).
-- **No fee bump of a Savings spend yet.** It is sent at the 6-block estimate with RBF signalled; a stuck one can be
-  sped up by CPFP from Spending once it pays Spending, but the app has no "speed up" for it. Open question 11.
 - **Mainnet:** Savings is offered wherever the guardian mode is, mainnet included behind its pre-alpha warning, like
   the guardian mode's other options. It is the Spending script at another account and needs nothing new from the
   devices but a second registration; Recovery Key mode stays on test networks for what is its own (the refill chain, the
   public chain server). The device test of section 7 (Ledger, Trezor, Coldcard and Jade signing a Savings PSBT) has not
   been run on real devices. Open question 12.
+
+### Speeding up a Savings payment (built 2026-11-02, open question 11)
+
+A Savings payment goes out at the 6-block estimate with RBF signalled on every input. When fees rise before it confirms,
+the Savings screen shows "Speed up ›" on it, and the Speed up screen replaces it (BIP 125):
+
+- **What changes.** The replacement spends the same coins and pays exactly the same outputs to everyone else (address and
+  amount: the payment is never touched). The higher fee comes out of the change back to Savings. If what would be left of
+  the change is dust (below 546 sats), the whole change goes to the fee and the replacement has no change output. A
+  payment with no change ("Move everything", a key replacement's move) cannot be sped up this way, and the app says so.
+- **How much.** At the 1-block estimate by default (`speed` or `feeRate` to choose), and never less than BIP 125 asks
+  as Bitcoin Core applies it: the old fee plus the incremental relay fee (1 sat/vB, or the node's minimum relay fee if
+  higher) for the replacement's size, and so a higher fee rate. Sizes are the wallet's usual estimate (an upper bound of
+  the signed size), so the rule holds for the real transaction too. The screen shows the fee before and after (sats and
+  sat/vB) and the difference, before anything is signed.
+- **Who signs.** Two of Savings' keys again, as for any Savings payment: the pair that signed the original by default
+  (from this phone's log), any other pair on request (phone + Recovery Key when the hardware wallet is lost, hardware
+  wallet + Recovery Key when the phone key cannot be used). The hardware wallet shows the same payment with the new fee.
+  The guardian cannot sign; it relays it (rule d).
+- **The phone's record.** The replacement takes the original's place in the Savings log (its label and purpose carry
+  over, `replaces` names the original), so Savings shows one payment, marked "sped up", never two. A quote for an original
+  that was replaced since, or confirmed meanwhile, is refused before anything is signed. A speed-up can itself be sped up.
+- **The guardian: one outflow, one alert.** The scan now records, for each Savings spend it sees, the coins it spent and a
+  digest of what it pays out (its outputs that do not pay Savings). A later spend of one of the same coins is a replacement:
+  paying out the same (a fee bump) it is logged (`savings_replaced`, "Savings payment sped up" in the web UI's Activity)
+  and nobody is told again, since only one of the two can confirm and the money leaving was announced; paying out
+  something else (another address or amount: a thief redirecting it, say) it is announced once more as a `savings_moved`
+  that names the transaction it replaced and both amounts (`replaces`, `previousAmountSats`), worded as a replacement, not
+  a second outflow. The web UI's "last movement" follows the replacement. A spend seen by a guardian from before this
+  change (no coins recorded) that is then replaced is announced as a new spend: at worst one extra alert, never one less.
+- **The daily limit** is unchanged: a payment from Spending into Savings counts like any payment, and an RBF of one counts
+  as the larger of the two per coin, not both (rule 3's per-outpoint maximum; checked in
+  `apps/guardian/test/savings.test.ts`).
+- **Not built: CPFP from Spending.** A "Move to Spending" with change is sped up by the same RBF. One without change (a
+  "Move everything" into Spending) could be pulled through by a child that spends its Spending output, signed by phone +
+  guardian within the limit. Guardian mode has no CPFP or RBF of its own Spending payments today (Recovery Key mode's
+  "Speed up" is a CPFP of a refill), so this would be new code in the wallet, the guardian's policy (a spend of an
+  unconfirmed coin it did not co-sign) and the app: later, if "Move everything" turns out to get stuck in practice.
+
+Tests: the planner (`packages/wallet/test/fee-bump.test.ts`), the wallet against the in-process guardian
+(`packages/wallet/test/savings.e2e.test.ts`: phone + Ledger, then phone + Recovery Key, "Move to Spending", a stale quote,
+nothing to speed up once confirmed; the fake Electrs applies BIP 125), the real regtest node and Electrs
+(`e2e/test/savings-speed-up.test.ts`), the guardian's replacement rule (`apps/guardian/test/savings.test.ts`) and the app's
+data layer (`apps/mobile/src/data/real-savings.test.ts`, `savings.test.ts`).
 
 ## Open questions for the owner
 
@@ -414,7 +457,8 @@ Left by the Savings build (2026-11-01), each built the way described; the owner'
     Key? Decided: **yes, also a printed map. Built** (its own page, not kit format 1: "What was built" above), offered at
     the end of creation, on the Savings screen and in Wallet details.
 11. **Speeding up a Savings spend.** Not built: re-signing with a higher fee (hardware wallet again). Needed before
-    Savings holds more than a test amount on mainnet? Decided: **later.**
+    Savings holds more than a test amount on mainnet? Decided: **later. Built** 2026-11-02 ("Speeding up a Savings
+    payment" above): RBF re-signed by two of Savings' keys; CPFP from Spending is still later.
 12. **Mainnet.** Built: offered wherever the guardian mode is. Keep it on test networks until the section 7 device test
     (each supported device signs a Savings PSBT at account 1') has been run? Decided: **mainnet allowed**, behind the
     existing pre-alpha warning, as built.
