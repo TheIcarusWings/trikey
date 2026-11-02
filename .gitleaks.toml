@@ -25,4 +25,7 @@ regexes = [
   # The stub that tests refusing a pasted private key in the email certificate pin (guardian-web
   # test/notifications.test.ts): "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----", not a key.
   '''-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----''',
+  # Trikey's publisher public key (hex npub) in site/.well-known/nostr.json, the NIP-05 file: public by design; the rule
+  # reads the name "trikey" as a key ("Tri-key") with a value.
+  '''^072104ced2b692c1c7502757f59befb428184086f5c7749c41984bb4beb9a495$''',
 ]
