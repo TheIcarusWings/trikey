@@ -558,7 +558,19 @@ export const GuardianStatusResult = z
      * Only for a guest's hosted wallet (guardians with `family_hosting`): `leaving` once the host stopped hosting; the
      * wallet's key 3 ends at `endsAt` (unix seconds). Move the wallet to another guardian before then (Replace guardian).
      */
-    hosting: z.object({ state: z.enum(['active', 'leaving']), endsAt: UnixSeconds.optional() }).optional(),
+    hosting: z
+      .object({
+        state: z.enum(['active', 'leaving']),
+        endsAt: UnixSeconds.optional(),
+        /**
+         * Present while this hosted wallet is paused (family hosting phase 2): its slot co-signs no payment, whatever the
+         * box's own `state`, until the guest's hardware wallet resumes it with `phone.resume`. `contact`: the alert
+         * contact `contact` sent `LOCK` (the policy's `contactLock` on); `phone`: the guest's phone called `guardian.lock`.
+         * Recoveries run on. Only this wallet stops; the host's box and other guests carry on.
+         */
+        paused: z.object({ by: z.enum(['contact', 'phone']), at: UnixSeconds, contact: NostrPubkey.optional() }).optional(),
+      })
+      .optional(),
     /**
      * The extra alert channels the owner set up in the guardian's web UI (guardians with the `notifications` feature;
      * absent from older ones and while there are none). Read-only for the phone: they are the owner's delivery settings,
@@ -1268,6 +1280,19 @@ export const Alert = z.discriminatedUnion('type', [
     type: z.literal('hosting_ending'),
     walletId: WalletId,
     endsAt: UnixSeconds,
+  }),
+  stamped({
+    ...alertBase,
+    /**
+     * A guest's hosted wallet was paused by one of its alert contacts (`LOCK`, with the policy's `contactLock` on): its
+     * slot co-signs no payment until the guest's hardware wallet resumes it (`phone.resume`). The host's box is not locked.
+     * Sent to the guest's phone; the wallet's other contacts get a NIP-17 DM. Phones before it drop it (an unknown `type`)
+     * and see the pause in `guardian.status.hosting.paused`.
+     */
+    type: z.literal('wallet_paused'),
+    walletId: WalletId,
+    by: z.literal('contact'),
+    contact: NostrPubkey.optional(),
   }),
   stamped({
     ...alertBase,

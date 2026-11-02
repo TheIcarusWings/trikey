@@ -18,6 +18,7 @@ import { ChainUnavailableError, ElectrumUnavailableError, txidOf } from '../chai
 import { ElectrumError } from '../chain/electrum.js';
 import type { Guardian } from '../guardian.js';
 import { errorText } from '../log.js';
+import { formatBtc } from '../alerts.js';
 import { policyHash, type CancelActor } from '../policy/index.js';
 import { policyToWire, recoveryToWire, refusalError, refusalText, rulesFromPolicy } from '../nostr/wire.js';
 import { GUEST_FEATURES, GUEST_METHODS, GUEST_RECOVERY_METHODS, Hosting, slotOfRecoveryId, type GuestRoute } from './service.js';
@@ -32,6 +33,15 @@ const INVITE_REJECTIONS = {
   wrong_secret: 'This invite is not valid.',
 } as const;
 
+const PAUSED_TEXT = {
+  contact: 'This wallet is paused: one of its alert contacts sent LOCK. It co-signs no payment until your hardware wallet resumes it.',
+  phone: 'This wallet is paused (from your phone). It co-signs no payment until your hardware wallet resumes it.',
+} as const;
+
+function ledgerUnspentText(coins: number, sats: bigint): string {
+  return `This guardian co-signed ${coins} coin${coins === 1 ? '' : 's'} of this wallet (${formatBtc(sats)}) that ${coins === 1 ? 'is' : 'are'} still unspent. Retiring deletes its key, which they may need: move them first.`;
+}
+
 /** A slot's refusal as a protocol error (the engine's reasons as the host maps them, plus the slot's own). */
 export function hostedRefusalError(r: HostedRefusal): RpcError {
   switch (r.reason) {
@@ -43,6 +53,10 @@ export function hostedRefusalError(r: HostedRefusal): RpcError {
       return new RpcError(ErrorCode.WalletRetired, 'Hosting of this wallet has ended.', { reason: r.reason });
     case 'not_in_phase_1':
       return new RpcError(ErrorCode.InvalidParams, r.detail, { reason: r.reason });
+    case 'wallet_paused':
+      return new RpcError(ErrorCode.PhoneSpendingPaused, PAUSED_TEXT[r.by], { reason: r.reason, by: r.by, at: Math.floor(r.at / 1000) });
+    case 'ledger_unspent':
+      return new RpcError(ErrorCode.PolicyViolation, ledgerUnspentText(r.coins, r.sats), { reason: r.reason, coins: r.coins, sats: Number(r.sats) });
     default:
       return refusalError(r);
   }
@@ -58,6 +72,10 @@ export function hostedRefusalText(r: HostedRefusal): string {
       return 'Hosting has ended';
     case 'not_in_phase_1':
       return r.detail;
+    case 'wallet_paused':
+      return PAUSED_TEXT[r.by];
+    case 'ledger_unspent':
+      return ledgerUnspentText(r.coins, r.sats);
     default:
       return refusalText(r);
   }
@@ -113,11 +131,26 @@ function guestHandlers(g: Guardian, h: Hosting): Partial<Record<MethodName, Gues
       ...(s.walletId ? { walletId: s.walletId, hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
       ...(reg ? { key3Mixed: true } : {}),
       ...(g.service.get().relays.length ? { relays: [...g.service.get().relays] } : {}),
-      ...(s.dailyLimit ? { dailyLimit: { limitSats: Number(s.dailyLimit.limit), usedSats: Number(s.dailyLimit.used), availableSats: Number(s.dailyLimit.available) } } : {}),
+      ...(s.dailyLimit
+        ? {
+            dailyLimit: {
+              limitSats: Number(s.dailyLimit.limit),
+              usedSats: Number(s.dailyLimit.used),
+              availableSats: Number(s.dailyLimit.available),
+              ...(s.dailyLimit.off ? { off: true as const } : {}),
+              ...(s.dailyLimit.off && s.dailyLimit.limitBeforeOff !== undefined ? { limitBeforeOffSats: Number(s.dailyLimit.limitBeforeOff) } : {}),
+            },
+          }
+        : {}),
       features: [...GUEST_FEATURES],
       // Why and since when it is locked; never which contact locked the host's box.
       ...(g.locked && g.lockedAt !== undefined && g.lockReason ? { lock: { reason: g.lockReason, at: Math.floor(g.lockedAt / 1000) } } : {}),
-      hosting: { state: route.slot.state === 'leaving' ? ('leaving' as const) : ('active' as const), ...(route.slot.endsAt !== undefined ? { endsAt: Math.floor(route.slot.endsAt / 1000) } : {}) },
+      hosting: {
+        state: route.slot.state === 'leaving' ? ('leaving' as const) : ('active' as const),
+        ...(route.slot.endsAt !== undefined ? { endsAt: Math.floor(route.slot.endsAt / 1000) } : {}),
+        // This wallet's own pause (section 16): the guest's contact who paused it is the guest's, so it is named.
+        ...(s.pause ? { paused: { by: s.pause.by, at: Math.floor(s.pause.at / 1000), ...(s.pause.contact ? { contact: s.pause.contact } : {}) } } : {}),
+      },
     };
   };
 
@@ -150,6 +183,8 @@ function guestHandlers(g: Guardian, h: Hosting): Partial<Record<MethodName, Gues
       const auth = params.approval ? { authenticatedBy: 'hardware' as const, approval: params.approval } : { authenticatedBy: 'app' as const };
       const res = await route.engine.changeRules(rulesFromPolicy(params.policy), auth);
       if (!res.ok) throw hostedRefusalError(res.refusal);
+      // Limit off / on and the contact-lock setting queue notices for the phone and the contacts.
+      if (route.engine.dueNotices().length) void h.alerts.run();
       return { policy: policyToWire(res.rules), nextHardwareSequence: route.engine.status().nextHardwareSequence, policyHash: policyHash(res.rules) };
     },
 
@@ -183,10 +218,28 @@ function guestHandlers(g: Guardian, h: Hosting): Partial<Record<MethodName, Gues
       return { recovery: rec ? recoveryToWire(rec as never, g.clock.now()) : null, ...(psbt ? { psbt } : {}) };
     },
 
+    // Lifts a contested cancel's pause and the slot's own pause (section 16), with one hardware approval.
     'phone.resume': async (params: Params<'phone.resume'>, _ctx, route) => {
+      const paused = route.engine.pause();
       const res = await route.engine.resumePhoneSpending(params.approval);
       if (!res.ok) throw hostedRefusalError(res.refusal);
+      if (paused) {
+        await g.logEvent({ type: 'hosting_paused', name: route.slot.name, state: 'resumed' });
+        g.log.info('hosting.resumed', { slot: route.slot.slotId });
+      }
       return { phoneSpending: 'enabled' as const };
+    },
+
+    // A guest's guardian.lock pauses its own slot (section 16): never the host's box, which only the host's passphrase
+    // unlocks; the guest's hardware wallet resumes it (`phone.resume`). Always allowed: it only takes power away.
+    'guardian.lock': async (_p: Params<'guardian.lock'>, _ctx, route) => {
+      const res = await route.engine.pauseSlot({ kind: 'phone' });
+      if (!res.ok) throw hostedRefusalError(res.refusal);
+      if (res.outcome === 'paused') {
+        await g.logEvent({ type: 'hosting_paused', name: route.slot.name, state: 'paused', by: 'phone' });
+        g.log.info('hosting.paused', { slot: route.slot.slotId, by: 'phone' });
+      }
+      return { state: 'locked' as const };
     },
 
     'hardware.confirm': async (params: Params<'hardware.confirm'>, _ctx, route) => {
@@ -198,6 +251,13 @@ function guestHandlers(g: Guardian, h: Hosting): Partial<Record<MethodName, Gues
 
     'wallet.retire': (params: Params<'wallet.retire'>, ctx, route) =>
       g.recoveryMutex.run(async () => {
+        // Leaving (section 16): retiring deletes this slot's key 3 for good. Refused while a coin key 3 co-signed is still
+        // unspent (checked on the host's own Electrs by the coins' own scripts, so nothing leaks): such a coin may be one
+        // only the phone key and key 3 can move (section 4), and it would be lost.
+        await chainCall(g, 'wallet.retire', async () => {
+          const left = await h.unspentLedger(route.engine);
+          if (left.coins) throw hostedRefusalError({ reason: 'ledger_unspent', coins: left.coins, sats: left.sats });
+        });
         const res = await route.engine.retireWallet(params.approval);
         if (!res.ok) throw hostedRefusalError(res.refusal);
         await h.noteLeft(route.slot.slotId);
@@ -388,7 +448,7 @@ function pairingHandlers(g: Guardian, h: Hosting) {
 }
 
 /** Methods whose replay after a restart would matter (as the host's `runOnceAcrossRestarts`). */
-const GUEST_STATE_CHANGING = new Set<MethodName>(['policy.update', 'recovery.start', 'recovery.update', 'recovery.cancel', 'phone.resume', 'hardware.confirm', 'wallet.retire', 'hosted.pair']);
+const GUEST_STATE_CHANGING = new Set<MethodName>(['guardian.lock', 'policy.update', 'recovery.start', 'recovery.update', 'recovery.cancel', 'phone.resume', 'hardware.confirm', 'wallet.retire', 'hosted.pair']);
 const REMEMBER_MS = (3600 + 120) * 1000;
 
 /**

@@ -116,6 +116,20 @@ export interface LedgerEntry {
   at: number;
 }
 
+/**
+ * A paused guest wallet (phase 2, docs/design/family-hosting.md section 16): its slot co-signs no payment until the
+ * guest's hardware wallet resumes it (`phone.resume`, the `resume-phone` approval). `contact`: one of the wallet's alert
+ * contacts sent `LOCK` (its rules let them); `phone`: the guest's phone asked (`guardian.lock`). Only this slot stops:
+ * the host's box and the other guests carry on. Durable, so a restart of the host's box never lifts it.
+ */
+export interface HostedPause {
+  by: 'contact' | 'phone';
+  /** ms */
+  at: number;
+  /** `by: "contact"`: who (nostr pubkey). */
+  contact?: string;
+}
+
 export interface HostedWallet {
   registration: HostedRegistration;
   rules: Rules;
@@ -123,6 +137,10 @@ export interface HostedWallet {
   phoneSpending: PhoneSpending;
   accessGrants: AccessGrant[];
   ledger: LedgerEntry[];
+  /** While the daily limit is off: the limit it had just before (a recovery's adopted wallet starts with it, as the host's). */
+  limitBeforeOff?: bigint;
+  /** Present while the slot is paused. */
+  pause?: HostedPause;
 }
 
 export interface HostedRecoveryRecord {
@@ -165,11 +183,24 @@ export interface HostedRetired {
 /** Notices the slot owes its phone and contacts (delivered like the host's limit notices). */
 export interface HostedNotice {
   id: string;
-  kind: 'hosting_ending' | 'limit_on';
+  /**
+   * `hosting_ending`: the host stopped hosting (the phone and the contacts); `limit_off` (the phone and the contacts, old
+   * and new) / `limit_on` (the phone), as the host's; `contact_lock`: an alert contact paused the wallet (the phone and
+   * every other contact); `contact_lock_on` / `contact_lock_off`: the contacts may now pause it, or no longer may (the
+   * contacts only).
+   */
+  kind: 'hosting_ending' | 'limit_off' | 'limit_on' | 'contact_lock' | 'contact_lock_on' | 'contact_lock_off';
   walletId: string;
   at: number;
   endsAt?: number;
+  /** `limit_off`: the limit before (absent when unknown); `limit_on`: the new limit. */
   limitSats?: bigint;
+  /** `limit_off`, `contact_lock_on` / `_off` by hardware: the approval's sequence. */
+  sequence?: number;
+  /** `limit_on`: who turned it on. */
+  reason?: 'phone' | 'hardware' | 'recovery';
+  /** `contact_lock`: the contact who paused the wallet. */
+  contact?: string;
   recipients: string[];
   sent: string[];
 }
@@ -179,7 +210,9 @@ export type HostedActivityEvent =
   | { type: 'hosted_registered'; walletId: string }
   | { type: 'ledger_added'; txid: string; coins: number }
   | { type: 'hosting_ending'; endsAt: number }
-  | { type: 'hosting_ended'; walletId?: string };
+  | { type: 'hosting_ended'; walletId?: string }
+  | { type: 'wallet_paused'; by: 'contact' | 'phone'; contact?: string }
+  | { type: 'wallet_resumed'; sequence: number; paused?: 'contact' | 'phone' };
 
 export type HostedActivityEntry = { id: number; at: number; count?: number; lastAt?: number } & HostedActivityEvent;
 
@@ -211,7 +244,11 @@ export type HostedRefusal =
   | { reason: 'ledger_full'; limit: number }
   | { reason: 'invalid_abandon'; detail: string }
   | { reason: 'hosting_ended' }
-  | { reason: 'not_in_phase_1'; detail: string };
+  | { reason: 'not_in_phase_1'; detail: string }
+  /** The slot is paused (a contact's `LOCK` or the guest's `guardian.lock`): only the guest's hardware wallet resumes it. */
+  | { reason: 'wallet_paused'; by: 'contact' | 'phone'; at: number }
+  /** `wallet.retire` while coins key 3 co-signed are still unspent: retiring deletes key 3, which they may need. */
+  | { reason: 'ledger_unspent'; coins: number; sats: bigint };
 
 export type HostedResult<T> = ({ ok: true } & T) | { ok: false; refusal: HostedRefusal };
 

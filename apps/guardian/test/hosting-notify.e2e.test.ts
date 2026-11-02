@@ -2,8 +2,9 @@
  * Family hosting next to the extra alert channels (docs/design/family-hosting.md, docs/design/notifications.md): a guest's
  * alerts are never delivered on the HOST's email, ntfy or webhook channels, the owner's nor the host's contacts', even
  * when a host contact is also the guest's contact. Guests' alerts go to the guest's phone and the guest's own contacts
- * as nostr DMs only (guests have no extra channels in phase 1). The host's channels keep working for host-level events.
- * And neither feature writes into the other's files.
+ * as nostr DMs only (guests have no extra channels in phases 1 and 2). Phase 2's guest events (the limit turned off, the
+ * wallet paused by a contact's LOCK or by the guest's phone) stay off them as well. The host's channels keep working for
+ * host-level events. And neither feature writes into the other's files.
  */
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -13,7 +14,7 @@ import { HDKey } from '@scure/bip32';
 import { getPublicKey, type Event as NostrEvent } from 'nostr-tools/pure';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MultisigWallet, type KeyExpression } from '@trikey/core';
-import { RpcClient, SimplePoolRelayPool, decodeInviteUri, decodePairingUri, pairingMessage, type Alert, type Policy } from '@trikey/protocol';
+import { RpcClient, SimplePoolRelayPool, approvalMessage, decodeInviteUri, decodePairingUri, pairingMessage, wrapDirectMessage, type Alert, type Policy } from '@trikey/protocol';
 import { signMessage } from '../src/policy/index.js';
 import { AUTH_PATH, MNEMONICS, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from './helpers.js';
 import { GuardianRig } from './support/index.js';
@@ -148,7 +149,7 @@ describe("a guest's alerts never reach the host's extra channels", { timeout: 60
     // The guest's status shows nothing of the host's channels.
     const st = await guestRpc.call('guardian.status', {});
     expect(st).not.toHaveProperty('notifications');
-    expect(st.features).toEqual(['family_hosting']);
+    expect(st.features).toEqual(['family_hosting', 'limit_off', 'contact_lock']);
   });
 
   it("the guest's recovery alerts and its hosting_ending go by nostr to the guest's phone and contacts only", async () => {
@@ -174,6 +175,27 @@ describe("a guest's alerts never reach the host's extra channels", { timeout: 60
     const text = delivered();
     for (const secret of [id, guest.walletId, GUEST_LABEL, 'Dad', '250,000', '250000', 'hosting_ending', 'recovery_started', 'recovery_cancelled'])
       expect(text, `the host's channels got "${secret}"`).not.toContain(secret);
+    expect(smtp.mails.some((m) => m.to.includes('alice@example.com'))).toBe(false);
+  });
+
+  it("phase 2: the guest's limit off, a contact's pause and its phone's pause go by nostr only, never on the host's channels", async () => {
+    const rules: Policy = { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [alice.pubkey, guestContact.pubkey], sweepFeeCapSats: 20_000 };
+    const off = { ...rules, dailyLimitSats: 2_100_000_000_000_000, contactLock: true };
+    const expiresAt = rig.nowSec() + 600;
+    const st = await guestRpc.call('guardian.status', {});
+    const text = approvalMessage({ action: 'policy', policy: off }, { walletId: guest.walletId, sequence: st.nextHardwareSequence, expiresAt });
+    await guestRpc.call('policy.update', { policy: off, approval: { kind: 'bip137', sequence: st.nextHardwareSequence, expiresAt, signature: signMessage(text, hwAuthPrivateKey(AUTH_PATH, MNEMONICS.hardware2)) } });
+    await waitFor(() => guestAlerts.find((a) => a.type === 'limit_off'), "the guest phone's limit_off");
+    await waitFor(() => alice.inbox.some((m) => m.includes(GUEST_LABEL) && m.includes('turned off')), "alice's limit_off DM (as the guest's contact)");
+    // alice, the host's contact with an email channel, pauses the guest's wallet (the host's own rules do not let her lock the box).
+    await pool.publish(rig.relayUrls, wrapDirectMessage('LOCK', { senderSecretKey: alice.secretKey, recipient: rig.pubkey, now: rig.nowSec() }));
+    await waitFor(() => guestAlerts.find((a) => a.type === 'wallet_paused'), "the guest phone's wallet_paused");
+    await waitFor(() => guestContact.inbox.some((m) => m.includes('was paused by another alert contact')), "the guest contact's DM");
+    expect(rig.guardian.locked).toBe(false);
+    await rig.guardian.notifier.idle();
+    await sleep(500);
+    const sent = delivered();
+    for (const secret of [guest.walletId, GUEST_LABEL, 'Dad', 'limit_off', 'wallet_paused', 'paused']) expect(sent, `the host's channels got "${secret}"`).not.toContain(secret);
     expect(smtp.mails.some((m) => m.to.includes('alice@example.com'))).toBe(false);
   });
 

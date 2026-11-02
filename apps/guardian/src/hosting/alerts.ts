@@ -8,9 +8,14 @@
  * Never the notifier (notify/notifier.ts): the host's email, ntfy and webhook channels are the host's, for its own wallet
  * and host-level events. A guest's alerts go to the guest's phone and the guest's own contacts as nostr DMs only, even
  * to a contact who also has channels as one of the host's contacts (guests' own channels are phase 2).
+ *
+ * Phase 2 (section 16) adds the slot's `limit_off` / `limit_on` notices (the host's rule, worded for the guest's wallet)
+ * and the per-slot contact lock: `contact_lock` (a contact PAUSED this wallet: `wallet_paused` to the phone, a DM to the
+ * other contacts) and `contact_lock_on` / `_off` (the contacts may now pause it, or no longer may).
  */
 import type { Alert } from '@trikey/protocol';
-import { formatBtc, formatWhen } from '../alerts.js';
+import { formatBtc, formatWhen, noticeToWire } from '../alerts.js';
+import { npubEncode } from 'nostr-tools/nip19';
 import type { Guardian } from '../guardian.js';
 import { errorText } from '../log.js';
 import type { DueAlert } from '../policy/index.js';
@@ -20,6 +25,18 @@ import type { Hosting } from './service.js';
 import type { HostedNotice, HostedRecoveryRecord } from './types.js';
 
 const SURVIVOR = { hardware: 'hardware wallet', app: 'phone' } as const;
+
+/** A guest wallet's contacts, while its rules let them pause it (section 16): one line for their DMs. */
+export const PAUSE_HINT =
+  'If something looks wrong and you cannot reach the owner, you can pause this wallet (its guardian then co-signs no payment for it until the owner resumes it with their hardware wallet) by replying with: LOCK';
+
+function npubOf(pubkey: string): string {
+  try {
+    return npubEncode(pubkey);
+  } catch {
+    return pubkey;
+  }
+}
 
 function abandonLine(rec: HostedRecoveryRecord | undefined): string {
   if (!rec || !rec.abandon.length) return '';
@@ -44,7 +61,7 @@ export function hostedAlertToWire(a: DueAlert, rec: HostedRecoveryRecord | undef
 }
 
 /** Plain words for a guest wallet's recovery: `long` for the contacts' DMs, `short` (at most 500 characters) for the phone. */
-export function hostedAlertText(a: DueAlert, rec: HostedRecoveryRecord | undefined, label: string, form: 'long' | 'short' = 'long'): string {
+export function hostedAlertText(a: DueAlert, rec: HostedRecoveryRecord | undefined, label: string, form: 'long' | 'short' = 'long', canPause = false): string {
   const id = a.recoveryId;
   const amount = formatBtc(a.amountSats);
   const ends = formatWhen(a.readyAt);
@@ -63,7 +80,8 @@ export function hostedAlertText(a: DueAlert, rec: HostedRecoveryRecord | undefin
         return `Recovery ${id} of "${label}" completed: the funds moved to the new wallet.`;
     }
   }
-  const howToCancel = `To stop it, reply to this message with:\n\nCANCEL ${id}\n\nor cancel it in the Trikey app.`;
+  const pauseHint = canPause ? `\n\nCANCEL stops this recovery. ${PAUSE_HINT}` : '';
+  const howToCancel = `To stop it, reply to this message with:\n\nCANCEL ${id}\n\nor cancel it in the Trikey app.${pauseHint}`;
   switch (a.kind) {
     case 'recovery_started':
       return [
@@ -106,6 +124,70 @@ export function hostingEndingText(n: HostedNotice, label: string): string {
   ].join('\n');
 }
 
+/** The phone's protocol alert for a slot notice (`undefined`: a notice for the contacts only). */
+export function hostedNoticeToWire(n: HostedNotice): Alert | undefined {
+  switch (n.kind) {
+    case 'hosting_ending':
+      return hostingEndingWire(n);
+    case 'limit_off':
+    case 'limit_on':
+      // The host's wire alert; its words name no wallet, so they fit a guest's phone as they are.
+      return noticeToWire({ id: n.id, kind: n.kind, walletId: n.walletId, at: n.at, ...(n.sequence !== undefined ? { sequence: n.sequence } : {}), ...(n.limitSats !== undefined ? { limitSats: n.limitSats } : {}), ...(n.reason ? { reason: n.reason } : {}), recipients: n.recipients, sent: n.sent });
+    case 'contact_lock':
+      return {
+        type: 'wallet_paused',
+        ...stampOf(n.at),
+        walletId: n.walletId,
+        by: 'contact',
+        ...(n.contact ? { contact: n.contact } : {}),
+        message: 'One of your alert contacts paused this wallet: your guardian co-signs no payment for it until your hardware wallet resumes it. If you did not expect this, check what they saw.',
+      };
+    case 'contact_lock_on':
+    case 'contact_lock_off':
+      return undefined;
+  }
+}
+
+/** The NIP-17 DM to a guest wallet's contact about a slot notice, naming the wallet by the label its owner chose. */
+export function hostedNoticeText(n: HostedNotice, label: string, canPause = false): string {
+  switch (n.kind) {
+    case 'hosting_ending':
+      return hostingEndingText(n, label);
+    case 'limit_off':
+      return [
+        `Trikey alert: the daily limit of the bitcoin wallet "${label}" you help protect was turned off.`,
+        '',
+        `What happened: on ${formatWhen(n.at)}, the owner's hardware wallet approved turning off the daily limit${n.limitSats !== undefined ? ` (it was ${formatBtc(n.limitSats)})` : ''}. From now on, their phone and their Trikey Guardian together can send everything in the wallet at once.`,
+        '',
+        'If the owner did not mean to do this, or you are not sure, talk to them now. They can turn the limit back on from their phone alone.',
+        ...(canPause ? ['', PAUSE_HINT] : []),
+      ].join('\n');
+    case 'limit_on':
+      return `Trikey: the daily limit of the wallet "${label}" you help protect is back on (${(n.limitSats ?? 0n).toLocaleString('en-US')} sats in 24 hours).`;
+    case 'contact_lock':
+      return [
+        `Trikey alert: the bitcoin wallet "${label}" you help protect was paused by another alert contact.`,
+        '',
+        `Who and when: ${n.contact ? npubOf(n.contact) : 'an alert contact'}, on ${formatWhen(n.at)}, by sending LOCK to its guardian.`,
+        'While it is paused the guardian co-signs no payment for it, so the owner can only pay with their hardware wallet. No funds moved. Only the owner can resume it, with their hardware wallet.',
+        '',
+        'If you know why, nothing else is needed. If not, talk to the owner.',
+      ].join('\n');
+    case 'contact_lock_on':
+      return [
+        `Trikey: the owner of the bitcoin wallet "${label}" you help protect now lets you pause it.`,
+        '',
+        'If you ever see something they did not do (a recovery they did not start, their limit turned off, a message that looks wrong), you can send its guardian the single word:',
+        '',
+        'LOCK',
+        '',
+        "Its guardian then co-signs no payment for this wallet until the owner resumes it with their hardware wallet, and the owner and the other alert contacts are told it was you. You cannot resume it, change its rules or see the wallet; pausing moves no funds.",
+      ].join('\n');
+    case 'contact_lock_off':
+      return `Trikey: on ${formatWhen(n.at)} the owner's hardware wallet approved that alert contacts can no longer pause the wallet "${label}" you help protect. LOCK messages now do nothing for it. You still get its alerts and can still cancel a recovery. If the owner did not mean to do this, talk to them.`;
+  }
+}
+
 export class HostedAlerter {
   private running?: Promise<void>;
   private again = false;
@@ -143,11 +225,13 @@ export class HostedAlerter {
     const reg = engine.registration();
     const label = reg?.walletLabel ?? 'your wallet';
     const phone = reg?.appNostrPubkey;
+    const canPause = !!engine.rules()?.contactLock;
     for (const n of engine.dueNotices()) {
       const delivered: string[] = [];
+      const wire = hostedNoticeToWire(n);
       for (const to of n.recipients) {
         try {
-          const ok = to === phone ? n.kind === 'hosting_ending' && (await g.notifyPeer(to, hostingEndingWire(n))) : (await g.dm.send(to, hostingEndingText(n, label))).some((o) => o.ok);
+          const ok = to === phone ? !!wire && (await g.notifyPeer(to, wire)) : (await g.dm.send(to, hostedNoticeText(n, label, canPause))).some((o) => o.ok);
           if (ok) delivered.push(to);
         } catch (e) {
           g.log.warn('hosting.notice_failed', { error: errorText(e) });
@@ -161,7 +245,7 @@ export class HostedAlerter {
       const delivered: string[] = [];
       for (const to of a.recipients) {
         try {
-          const ok = phones.has(to) ? await g.notifyPeer(to, hostedAlertToWire(a, rec, label)) : (await g.dm.send(to, hostedAlertText(a, rec, label))).some((o) => o.ok);
+          const ok = phones.has(to) ? await g.notifyPeer(to, hostedAlertToWire(a, rec, label)) : (await g.dm.send(to, hostedAlertText(a, rec, label, 'long', canPause))).some((o) => o.ok);
           if (ok) delivered.push(to);
         } catch (e) {
           g.log.warn('hosting.alert_failed', { error: errorText(e) });

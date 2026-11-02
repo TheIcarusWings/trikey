@@ -197,4 +197,14 @@ describe('alerts and features', () => {
     expect(methods['guardian.status'].result.safeParse({ ...st, hosting: { state: 'leaving', endsAt: NOW + 86400 } }).success).toBe(true);
     expect(methods['guardian.status'].result.safeParse({ ...st, hosting: { state: 'gone' } }).success).toBe(false);
   });
+
+  it('phase 2: a paused hosted wallet (by a contact or the phone), and the wallet_paused alert', () => {
+    const st = { state: 'unlocked', paired: true, nextHardwareSequence: 1, phoneSpending: 'enabled', activeRecoveryId: null, version: '0.2.0', time: NOW };
+    const contact = 'ab'.repeat(32);
+    expect(methods['guardian.status'].result.safeParse({ ...st, hosting: { state: 'active', paused: { by: 'contact', at: NOW, contact } } }).success).toBe(true);
+    expect(methods['guardian.status'].result.safeParse({ ...st, hosting: { state: 'active', paused: { by: 'phone', at: NOW } } }).success).toBe(true);
+    expect(methods['guardian.status'].result.safeParse({ ...st, hosting: { state: 'active', paused: { by: 'host', at: NOW } } }).success).toBe(false);
+    expect(Alert.safeParse({ type: 'wallet_paused', at: NOW, walletId: '0123456789abcdef', by: 'contact', contact }).success).toBe(true);
+    expect(Alert.safeParse({ type: 'wallet_paused', at: NOW, walletId: '0123456789abcdef', by: 'phone' }).success).toBe(false);
+  });
 });

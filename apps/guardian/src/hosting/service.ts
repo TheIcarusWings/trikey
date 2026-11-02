@@ -34,6 +34,7 @@ export function slotOfRecoveryId(id: unknown): string | undefined {
 /** What a guest's paired phone may call (anything else gets a typed error, so an app bug shows). */
 export const GUEST_METHODS: ReadonlySet<MethodName> = new Set<MethodName>([
   'guardian.status',
+  'guardian.lock',
   'sign',
   'policy.get',
   'policy.update',
@@ -65,8 +66,11 @@ export const GUEST_RECOVERY_METHODS: ReadonlySet<MethodName> = new Set<MethodNam
   'hosted.map.get',
 ]);
 
-/** The features a guest sees: only what the host serves for guests in phase 1. */
-export const GUEST_FEATURES = [GUARDIAN_FEATURES.familyHosting];
+/**
+ * The features a guest sees: what the host serves for guests. `limit_off` and `contact_lock` since phase 2 (for a
+ * guest, the contact lock pauses its own slot, section 16). Never Savings, silent payments or the extra alert channels.
+ */
+export const GUEST_FEATURES = [GUARDIAN_FEATURES.familyHosting, GUARDIAN_FEATURES.limitOff, GUARDIAN_FEATURES.contactLock];
 
 class HostedFileStore implements HostedStore {
   constructor(readonly path: string) {}
@@ -202,6 +206,48 @@ export class Hosting {
     if (method === 'hosted.access') return this.liveSlots().length > 0;
     if (method === 'recovery.cancel' && this.isGuestContact(sender)) return true;
     return undefined;
+  }
+
+  /**
+   * The ledger coins of a slot's active wallet that are still unspent, by their own scripts on the host's Electrs
+   * (nothing leaks: the guardian co-signed them). Spent ones are pruned from the ledger on the way.
+   */
+  async unspentLedger(engine: HostedEngine): Promise<{ coins: number; sats: bigint }> {
+    const ledger = engine.ledger();
+    if (!ledger.length) return { coins: 0, sats: 0n };
+    const unspent = new Set((await this.g.chain.scriptUnspent(ledger.map((l) => hex.decode(l.script)))).map((u) => `${u.txid}:${u.vout}`));
+    const left = ledger.filter((l) => unspent.has(`${l.txid}:${l.vout}`));
+    const spent = ledger.filter((l) => !unspent.has(`${l.txid}:${l.vout}`)).map((l) => `${l.txid}:${l.vout}`);
+    if (spent.length) await engine.pruneLedger(spent);
+    return { coins: left.length, sats: left.reduce((a, l) => a + l.valueSats, 0n) };
+  }
+
+  /**
+   * A `LOCK` DM from `contact` (dm-lock.ts checked it is fresh, new and within the contact's rate limit): pauses every
+   * guest slot whose rules let `contact` pause it (section 16), never the host's box. Returns the slots paused now and
+   * those that already were, by the label their guest chose.
+   */
+  async pauseByContact(contact: string): Promise<{ paused: string[]; already: string[] }> {
+    const out = { paused: [] as string[], already: [] as string[] };
+    if (!this.enabled) return out;
+    for (const { slot, engine } of this.liveSlots()) {
+      if (!engine.contactMayPause(contact)) continue;
+      const res = await engine.pauseSlot({ kind: 'contact', contact });
+      if (!res.ok) continue;
+      const label = engine.registration()?.walletLabel ?? 'a wallet';
+      if (res.outcome === 'paused') {
+        out.paused.push(label);
+        await this.g.logEvent({ type: 'hosting_paused', name: slot.name, state: 'paused', by: 'contact' });
+        this.g.log.warn('hosting.paused', { slot: slot.slotId, by: 'contact' });
+      } else out.already.push(label);
+    }
+    if (out.paused.length) void this.alerts.run();
+    return out;
+  }
+
+  /** Slots whose current alert contacts include `contact` (whatever their contact-lock setting). */
+  contactOfSlots(contact: string): { slot: SlotRecord; engine: HostedEngine }[] {
+    return this.enabled ? this.liveSlots().filter(({ engine }) => engine.isCurrentContact(contact)) : [];
   }
 
   /** Every guest phone and recovery peer (for `relays_changed`). */
