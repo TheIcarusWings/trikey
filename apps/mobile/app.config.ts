@@ -1,4 +1,6 @@
 import type { ConfigContext, ExpoConfig } from 'expo/config';
+// CommonJS, shared with metro.config.js, react-native.config.js and the config plugin.
+import { androidVariant } from './android-variant';
 
 // Expo reads app.json first and passes it in as `config`; this file adds what depends on the
 // environment: the publisher's iCloud container, passkey domain and app identifiers. The defaults
@@ -35,6 +37,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   const androidPackage = env('TRIKEY_ANDROID_PACKAGE') ?? config.android?.package;
   const rpId = validRpId(process.env.EXPO_PUBLIC_PASSKEY_RP_ID); // null when unset or malformed
   const icloudEnabled = env('TRIKEY_DISABLE_ICLOUD') !== '1';
+  // The standard Android build or the one without Google code (android-variant.js). iOS has one build.
+  const variant = androidVariant();
 
   const plugins: PluginEntry[] = [
     // Development build instead of Expo Go: secure storage, passkeys and iCloud are native modules.
@@ -49,6 +53,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
           "Trikey asks for Face ID before it signs a payment with this phone's key.",
       },
     ],
+    // What the Android variant links and leaves out, written into the generated Gradle files.
+    ['./plugins/with-android-variant.js', { variant }],
   ];
   if (icloudEnabled) {
     // iCloud Drive container entitlement and NSUbiquitousContainers, for the iOS cloud backup.
@@ -82,6 +88,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       package: androidPackage,
       versionCode: config.android?.versionCode ?? androidVersionCode(config.version),
     },
+    // For reading the build's configuration (`npx expo config`); the app itself knows its variant from its bundle.
+    extra: { ...config.extra, androidVariant: variant },
     plugins: [...existing, ...plugins.filter((p) => !have.has(pluginName(p)))],
   };
 };
