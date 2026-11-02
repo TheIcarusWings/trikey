@@ -102,13 +102,21 @@ const KIND_TITLE: Record<SavingsActivityItem['kind'], string> = {
   'key-replacement': 'Moved to your new Savings',
 };
 
-/** One line of Savings' activity. */
+/**
+ * One line of Savings' activity. A payment out of Savings still waiting to confirm says "Speed up" and opens it: the same
+ * payment again with a higher fee, approved by two of Savings' keys.
+ */
 export function SavingsActivityRow({ item, brand }: { item: SavingsActivityItem; brand: string }) {
+  const router = useRouter();
   const incoming = item.kind === 'received';
   const when = new Date(item.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-  const detail = [item.status === 'pending' ? 'Pending' : when, item.signedBy ? signersText(item.signedBy, brand) : item.address ? shorten(item.address) : null].filter(Boolean).join(' · ');
-  return (
-    <View className={cn('flex-row items-center gap-3', pick('min-h-[60px] px-4 py-2.5', 'min-h-[64px] py-2.5'))} accessible accessibilityLabel={`${KIND_TITLE[item.kind]}, ${formatSats(item.amountSats)} sats, ${detail}`}>
+  const speedUp = item.status === 'pending' && !!item.canSpeedUp;
+  const detail = [item.status === 'pending' ? 'Pending' : when, item.spedUp ? 'sped up' : null, item.signedBy ? signersText(item.signedBy, brand) : item.address ? shorten(item.address) : null].filter(Boolean).join(' · ');
+  const row = (
+    <View
+      className={cn('flex-row items-center gap-3', pick('min-h-[60px] px-4 py-2.5', 'min-h-[64px] py-2.5'))}
+      accessible={!speedUp}
+      accessibilityLabel={speedUp ? undefined : `${KIND_TITLE[item.kind]}, ${formatSats(item.amountSats)} sats, ${detail}`}>
       <View className="bg-secondary size-9 items-center justify-center rounded-full">
         <Icon as={incoming ? ArrowDownLeft : ArrowUpRight} size={18} strokeWidth={2} className="text-foreground" />
       </View>
@@ -117,11 +125,23 @@ export function SavingsActivityRow({ item, brand }: { item: SavingsActivityItem;
         <Text className="text-muted-foreground text-[13px] leading-[18px]" numberOfLines={1}>
           {detail}
         </Text>
+        {speedUp ? <Text className="text-warn text-[13px] font-medium leading-[18px]">Speed up ›</Text> : null}
       </View>
       <Text className={cn('tabular-nums', pick('text-[15px]', 'text-sm'), incoming && 'text-good')}>
         {incoming ? '+' : '−'}
         {formatSats(item.amountSats)}
       </Text>
     </View>
+  );
+  if (!speedUp) return row;
+  return (
+    <Pressable
+      role="button"
+      accessibilityLabel={`${KIND_TITLE[item.kind]}, ${formatSats(item.amountSats)} sats, ${detail}. Speed up`}
+      accessibilityHint="Sends the same payment again with a higher network fee"
+      onPress={() => router.push({ pathname: '/savings/speed-up', params: { txid: item.txid } })}
+      className="active:opacity-70">
+      {row}
+    </Pressable>
   );
 }

@@ -32,6 +32,7 @@ import {
   type RecoveryRecord,
   type SavingsQuote as WalletSavingsQuote,
   type SavingsSnapshot,
+  type SavingsSpeedUpQuote as WalletSpeedUpQuote,
   type SecureKeyStore,
   type ReplacePlan,
   type ReplaceStep,
@@ -90,6 +91,7 @@ import {
   type SavingsActivityItem,
   type SavingsDevice,
   type SavingsQuote,
+  type SavingsSpeedUpQuote,
   type SavingsState,
   type SilentPaymentsState,
   type ThemePreference,
@@ -309,6 +311,7 @@ class Service implements RealWalletService {
   /** "Create Savings" in progress, as the screens show it. */
   private savingsCreating: SavingsState['creating'] = null;
   private readonly savingsQuotes = new Map<string, WalletSavingsQuote>();
+  private readonly speedUpQuotes = new Map<string, WalletSpeedUpQuote>();
 
   constructor(private readonly deps: RealServiceDeps) {
     this.clock = deps.clock ?? { now: () => Date.now() };
@@ -677,6 +680,8 @@ class Service implements RealWalletService {
           status: h.confirmations > 0 ? 'confirmed' : 'pending',
           ...(h.recipient ? { address: h.recipient } : {}),
           ...(h.signedBy ? { signedBy: h.signedBy } : {}),
+          ...(h.canSpeedUp && kind !== 'received' ? { canSpeedUp: true as const } : {}),
+          ...(h.replaces ? { spedUp: true as const } : {}),
         };
       }),
       creating: null,
@@ -1556,6 +1561,48 @@ class Service implements RealWalletService {
           }
           this.refresh();
           return { txid: res.txid, amountSats: res.amountSats, feeSats: res.feeSats };
+        }),
+      ),
+    quoteSpeedUp: async (txid) => {
+      const w = this.w;
+      if (!w?.state.savings) return { ok: false, message: 'Set up Savings first.' };
+      try {
+        const q = await w.quoteSavingsSpeedUp(txid);
+        const ref = `u${++this.quoteCounter}`;
+        this.speedUpQuotes.set(ref, q);
+        if (this.speedUpQuotes.size > 20) this.speedUpQuotes.delete(this.speedUpQuotes.keys().next().value!);
+        const quote: SavingsSpeedUpQuote = {
+          ref,
+          txid: q.replaces,
+          address: q.recipient,
+          amountSats: q.amountSats,
+          oldFeeSats: q.oldFeeSats,
+          feeSats: q.feeSats,
+          oldFeeRate: q.oldFeeRate,
+          feeRate: q.feeRate,
+          extraFeeSats: q.extraFeeSats,
+          toSpending: q.toSpending,
+          ...(q.signedBy ? { signedBy: q.signedBy } : {}),
+        };
+        return { ok: true, quote };
+      } catch (e) {
+        // Reading the transaction goes through the guardian: its refusals and timeouts read as everywhere else.
+        return { ok: false, message: mapError(e).message };
+      }
+    },
+    speedUp: (quote, signers) =>
+      this.exclusive(() =>
+        this.guarded(async () => {
+          const w = this.requireWallet();
+          const q = quote.ref ? this.speedUpQuotes.get(quote.ref) : undefined;
+          if (!q) throw new WalletServiceError('quote_stale', 'This needs a fresh quote. Go back and check it again.');
+          const res = await w.speedUpSavingsSpend(q, { signers });
+          if (!res.ok) {
+            if (res.signedTx) throw refusalToError(res.refusal.kind === 'broadcast_rejected' ? res.refusal : { kind: 'broadcast_rejected', reason: res.refusal.message, message: res.refusal.message });
+            throw refusalToError(res.refusal);
+          }
+          this.refresh();
+          return { txid: res.txid, feeSats: res.feeSats, extraFeeSats: res.extraFeeSats };
         }),
       ),
     replaceKey: (lost, opts = {}) =>
