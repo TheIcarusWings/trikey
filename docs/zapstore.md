@@ -12,7 +12,9 @@ listing's publisher is Trikey's own npub (below), and the APK is the same file a
 (certificate SHA-256 in [`packaging/android/release-cert.sha256`](../packaging/android/release-cert.sha256)). An APK
 from Zapstore, Obtainium or GitHub installs over the others and keeps the wallet.
 
-Publisher npub: `npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`. Check it on the listing before installing.
+Publisher npub: `npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`. Check it on the listing before installing. It is also
+`trikey@trikey.app` (NIP-05, from [`site/.well-known/nostr.json`](../site/.well-known/nostr.json)), so nostr apps and Zapstore
+show it verified by the trikey.app domain.
 
 ## For the maintainer: setting it up (once)
 
