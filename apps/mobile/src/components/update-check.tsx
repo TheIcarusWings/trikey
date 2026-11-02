@@ -6,6 +6,7 @@ import { Check, Download, ExternalLink, Info, TriangleAlert } from '@/components
 import { Notice, SettingsRow } from '@/components/panels';
 import { Text } from '@/components/ui/text';
 import { errorText } from '@/data/errors';
+import { ANDROID_VARIANT } from '@/lib/android-variant';
 import { useHapticOnce } from '@/lib/haptics';
 import { useAction } from '@/lib/use-action';
 import {
@@ -43,7 +44,8 @@ export function UpdateCheck() {
   const check = async () => {
     if (action.busy) return;
     setResult(null);
-    const r = await action.run(checkForUpdate(version, (url, init) => fetch(url, init)));
+    // The APK of the build that is installed: the standard one, or the one without Google code.
+    const r = await action.run(checkForUpdate(version, (url, init) => fetch(url, init), { variant: ANDROID_VARIANT }));
     if (r.ok) setResult(r.value);
   };
 

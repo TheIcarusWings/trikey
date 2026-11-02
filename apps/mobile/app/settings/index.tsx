@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { Info } from '@/components/icons';
@@ -14,6 +14,8 @@ import { Switch } from '@/components/ui/switch';
 import { Text } from '@/components/ui/text';
 import { CAN_CHECK_FOR_UPDATES, UpdateCheck } from '@/components/update-check';
 import { formatSats, serverHost, useWallet, useWalletService, type GuardianStatus, type ThemePreference } from '@/data';
+import { ANDROID_VARIANT } from '@/lib/android-variant';
+import { appDisplayName } from '@/lib/app-name';
 import { IS_IOS, pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 
@@ -104,7 +106,7 @@ export default function SettingsScreen() {
 
       <SectionLabel>About</SectionLabel>
       <ListGroup>
-        <SettingsRow title="Trikey" value={`${Constants.expoConfig?.version ?? ''} · pre-alpha`} />
+        <SettingsRow title={appDisplayName(Platform.OS, ANDROID_VARIANT)} value={`${Constants.expoConfig?.version ?? ''} · pre-alpha`} />
         {CAN_CHECK_FOR_UPDATES ? <UpdateCheck /> : null}
         <SettingsRow title="Report a problem" subtitle="Opens a public GitHub issue" onPress={() => router.push('/settings/report')} />
       </ListGroup>
