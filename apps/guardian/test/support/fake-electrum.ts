@@ -6,7 +6,12 @@
  * With `applyBroadcasts`, a broadcast behaves like a mempool: it must spend
  * known unspent outputs (else it is rejected like a double spend), removes
  * them, and adds its outputs as unconfirmed coins of whatever scripts they pay;
- * `confirmMempool()` then gives those transactions a height.
+ * `confirmMempool()` then gives those transactions a height. A transaction that
+ * spends an output an unconfirmed one already spends is a replacement (BIP 125):
+ * accepted, and the one it conflicts with evicted (with its descendants), only
+ * if every conflict signals RBF and it pays more in absolute fee (by at least
+ * the relay fee for its own size) and in fee rate; else refused as Bitcoin Core
+ * words it.
  */
 import { createServer, type Server, type Socket } from 'node:net';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -46,6 +51,12 @@ export class FakeElectrum {
   /** scripthash -> unspent outputs */
   readonly unspent = new Map<string, FakeUtxo[]>();
   readonly txs = new Map<string, string>();
+  /** Unconfirmed transactions applied as a mempool: the outputs each spent (to put back if it is replaced). */
+  private readonly mempool = new Map<string, { spent: { sh: string; utxo: FakeUtxo }[] }>();
+  /** `txid:vout` -> the unconfirmed transaction that spends it. */
+  private readonly mempoolSpends = new Map<string, string>();
+  /** Transactions a replacement evicted from the mempool. */
+  readonly replaced: string[] = [];
   readonly broadcasts: string[] = [];
   readonly calls: { method: string; params: unknown[] }[] = [];
   /** Make broadcasts fail with this message. */
@@ -108,20 +119,35 @@ export class FakeElectrum {
    */
   applyTransaction(rawHex: string, height = 0): string | undefined {
     const tx = btc.Transaction.fromRaw(hex.decode(rawHex), { allowUnknownOutputs: true, allowUnknownInputs: true, disableScriptCheck: true });
-    const spends: { sh: string; txid: string; vout: number }[] = [];
+    const outpoints: { txid: string; vout: number }[] = [];
+    const conflicts = new Set<string>();
     for (let i = 0; i < tx.inputsLength; i++) {
       const inp = tx.getInput(i);
-      const txid = hex.encode(inp.txid!);
-      const vout = inp.index!;
-      const sh = [...this.unspent.entries()].find(([, list]) => list.some((u) => u.txid === txid && u.vout === vout))?.[0];
-      if (!sh) return 'bad-txns-inputs-missingorspent';
-      spends.push({ sh, txid, vout });
+      const op = { txid: hex.encode(inp.txid!), vout: inp.index! };
+      outpoints.push(op);
+      if (this.findUtxo(op.txid, op.vout)) continue;
+      const by = this.mempoolSpends.get(`${op.txid}:${op.vout}`);
+      if (!by || height > 0) return 'bad-txns-inputs-missingorspent';
+      conflicts.add(by);
+    }
+    if (conflicts.size) {
+      const refused = this.replacementRefusal(tx, conflicts);
+      if (refused) return refused;
+      for (const c of conflicts) this.evict(c);
+    }
+    const spends: { sh: string; utxo: FakeUtxo }[] = [];
+    for (const op of outpoints) {
+      const found = this.findUtxo(op.txid, op.vout);
+      if (!found) return 'bad-txns-inputs-missingorspent';
+      spends.push(found);
     }
     const id = tx.id;
     for (const sp of spends) {
-      this.removeUtxo(sp.txid, sp.vout);
+      this.removeUtxo(sp.utxo.txid, sp.utxo.vout);
       this.history.set(sp.sh, [...(this.history.get(sp.sh) ?? []), { tx_hash: id, height }]);
+      if (height <= 0) this.mempoolSpends.set(`${sp.utxo.txid}:${sp.utxo.vout}`, id);
     }
+    if (height <= 0) this.mempool.set(id, { spent: spends });
     for (let i = 0; i < tx.outputsLength; i++) {
       const o = tx.getOutput(i);
       if (!o.script || o.amount === undefined) continue;
@@ -135,6 +161,67 @@ export class FakeElectrum {
   confirmMempool(height = this.height): void {
     for (const list of this.history.values()) for (const h of list) if (h.height <= 0) h.height = height;
     for (const list of this.unspent.values()) for (const u of list) if (u.height <= 0) u.height = height;
+    this.mempool.clear();
+    this.mempoolSpends.clear();
+  }
+
+  private findUtxo(txid: string, vout: number): { sh: string; utxo: FakeUtxo } | undefined {
+    for (const [sh, list] of this.unspent) {
+      const utxo = list.find((u) => u.txid === txid && u.vout === vout);
+      if (utxo) return { sh, utxo };
+    }
+    return undefined;
+  }
+
+  /** The fee of a transaction whose previous transactions are known (undefined otherwise). */
+  private feeOf(tx: btc.Transaction): bigint | undefined {
+    let fee = 0n;
+    for (let i = 0; i < tx.inputsLength; i++) {
+      const inp = tx.getInput(i);
+      const prev = this.txs.get(hex.encode(inp.txid!));
+      if (!prev) return undefined;
+      const out = btc.Transaction.fromRaw(hex.decode(prev), { allowUnknownOutputs: true, allowUnknownInputs: true, disableScriptCheck: true }).getOutput(inp.index!);
+      if (out.amount === undefined) return undefined;
+      fee += out.amount;
+    }
+    for (let i = 0; i < tx.outputsLength; i++) fee -= tx.getOutput(i).amount ?? 0n;
+    return fee;
+  }
+
+  /** BIP 125, as Bitcoin Core applies it (rules 1, 3, 4 and the fee rate), with the relay fee as the incremental one. */
+  private replacementRefusal(tx: btc.Transaction, conflicts: Set<string>): string | undefined {
+    const fee = this.feeOf(tx);
+    if (fee === undefined) return 'bad-txns-inputs-missingorspent';
+    const incremental = Math.round(this.relayFee * 1e5); // BTC/kvB -> sat/vB
+    let conflictFees = 0n;
+    for (const c of conflicts) {
+      const old = btc.Transaction.fromRaw(hex.decode(this.txs.get(c)!), { allowUnknownOutputs: true, allowUnknownInputs: true, disableScriptCheck: true });
+      let signals = false;
+      for (let i = 0; i < old.inputsLength; i++) signals ||= (old.getInput(i).sequence ?? 0xffffffff) < 0xfffffffe;
+      if (!signals) return 'txn-mempool-conflict';
+      const oldFee = this.feeOf(old) ?? 0n;
+      if (Number(fee) / tx.vsize <= Number(oldFee) / old.vsize) return `insufficient fee, rejecting replacement ${tx.id}; new feerate ${Number(fee) / tx.vsize} <= old feerate ${Number(oldFee) / old.vsize}`;
+      conflictFees += oldFee;
+    }
+    if (fee < conflictFees + BigInt(Math.ceil(incremental * tx.vsize)))
+      return `insufficient fee, rejecting replacement ${tx.id}, not enough additional fees to relay; ${fee - conflictFees} < ${incremental * tx.vsize}`;
+    return undefined;
+  }
+
+  /** Takes an unconfirmed transaction (and whatever spends its outputs) out of the mempool, putting back what it spent. */
+  private evict(txid: string): void {
+    const entry = this.mempool.get(txid);
+    if (!entry) return;
+    for (const [op, by] of [...this.mempoolSpends]) if (op.startsWith(`${txid}:`)) this.evict(by);
+    this.mempool.delete(txid);
+    for (const [sh, list] of this.unspent) this.unspent.set(sh, list.filter((u) => u.txid !== txid));
+    for (const [sh, list] of this.history) this.history.set(sh, list.filter((h) => h.tx_hash !== txid));
+    for (const sp of entry.spent) {
+      this.mempoolSpends.delete(`${sp.utxo.txid}:${sp.utxo.vout}`);
+      this.unspent.set(sp.sh, [...(this.unspent.get(sp.sh) ?? []), sp.utxo]);
+    }
+    this.txs.delete(txid);
+    this.replaced.push(txid);
   }
 
   removeUtxo(txid: string, vout: number): void {

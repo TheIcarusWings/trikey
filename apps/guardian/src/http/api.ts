@@ -65,12 +65,13 @@ export function savingsSummary(g: Guardian): SavingsSummary | undefined {
   const sv = g.engine.savings();
   if (!sv) return undefined;
   const last = g.savingsWatch.last?.walletId === sv.walletId ? g.savingsWatch.last : undefined;
-  const moved = g.engine.activity({ limit: 5000 }).find((e) => e.type === 'savings_moved' && e.walletId === sv.walletId);
+  // A fee bump (`savings_replaced`) is the latest form of the last movement: its txid and amount are what will confirm.
+  const moved = g.engine.activity({ limit: 5000 }).find((e) => (e.type === 'savings_moved' || e.type === 'savings_replaced') && e.walletId === sv.walletId);
   return {
     id: sv.walletId,
     watchedSince: iso(sv.since),
     ...(last ? { balanceSats: Number(last.confirmedSats + last.unconfirmedSats), unconfirmedSats: Number(last.unconfirmedSats), scannedAt: iso(last.at) } : {}),
-    ...(moved && moved.type === 'savings_moved' ? { lastMoved: { at: iso(moved.at), sats: Number(moved.amountSats), txid: moved.txid } } : {}),
+    ...(moved && (moved.type === 'savings_moved' || moved.type === 'savings_replaced') ? { lastMoved: { at: iso(moved.at), sats: Number(moved.amountSats), txid: moved.txid } } : {}),
   };
 }
 
