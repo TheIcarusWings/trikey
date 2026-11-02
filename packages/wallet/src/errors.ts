@@ -251,6 +251,11 @@ export type WalletErrorCode =
   | 'savings_exists'
   /** A Savings action on a wallet without Savings (or, on a new phone, none the guardian knows of either). */
   | 'no_savings'
+  /**
+   * "Speed up" cannot replace this payment with a higher fee (it confirmed already, it has no change to take the fee
+   * from, it is not one of the wallet's own payments, ...). The message says why; nothing was signed.
+   */
+  | 'cannot_speed_up'
   | 'internal';
 
 export class WalletError extends Error {
