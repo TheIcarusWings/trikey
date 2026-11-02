@@ -126,8 +126,9 @@ export class FakeElectrum {
       const op = { txid: hex.encode(inp.txid!), vout: inp.index! };
       outpoints.push(op);
       if (this.findUtxo(op.txid, op.vout)) continue;
+      // Spent by a transaction still in the (fake) mempool: a replacement. Anything else is a double spend.
       const by = this.mempoolSpends.get(`${op.txid}:${op.vout}`);
-      if (!by || height > 0) return 'bad-txns-inputs-missingorspent';
+      if (!by || height > 0 || !this.mempool.has(by) || !this.txs.has(by)) return 'bad-txns-inputs-missingorspent';
       conflicts.add(by);
     }
     if (conflicts.size) {
