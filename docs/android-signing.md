@@ -10,7 +10,7 @@ key, and they cannot update a release build or be updated by one.
 
 ## Two APKs, one app
 
-From the release after 0.1.8-alpha, every release has two APKs of the same app:
+From 0.1.9-alpha, every release has two APKs of the same app:
 
 | APK | What it is |
 |---|---|
