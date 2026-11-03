@@ -224,7 +224,7 @@ export function createDemoState(platform: 'ios' | 'android' = 'ios'): WalletStat
       host: 'umbrel',
       status: 'online',
       lastSeenAt: NOW.toISOString(),
-      relays: ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net'],
+      relays: ['wss://relay.trikey.app', 'wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net'],
       relaysConnected: 3,
       chainData: 'your-node',
       npub: 'npub1g4rd8k3w0c6ylv5n2xr9ts7ahe3j4fp8u2xw3mq5ca6vhz9fd3n8',
