@@ -2,10 +2,5 @@
   "names": {
     "_": "072104ced2b692c1c7502757f59befb428184086f5c7749c41984bb4beb9a495",
     "trikey": "072104ced2b692c1c7502757f59befb428184086f5c7749c41984bb4beb9a495"
-  },
-  "relays": {
-    "072104ced2b692c1c7502757f59befb428184086f5c7749c41984bb4beb9a495": [
-      "wss://relay.trikey.app"
-    ]
   }
 }

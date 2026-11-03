@@ -20,7 +20,7 @@ a plain stack of cards and reads the same.
 | `vercel.json` | Response headers: `application/json` for the Apple file and `nostr.json` (plus CORS for the latter), HSTS and other security headers |
 | `.well-known/apple-app-site-association` | iOS: passkeys for `app.trikey.wallet` (needs a Team ID) |
 | `.well-known/assetlinks.json` | Android: passkeys for `app.trikey.wallet` (needs a signing fingerprint) |
-| `.well-known/nostr.json` | NIP-05: `trikey@trikey.app` and `_@trikey.app` (shown as just `trikey.app`) name Trikey's publisher npub, the key that signs the Zapstore listing (`docs/zapstore.md`), and give `wss://relay.trikey.app` as its relay. Served as JSON with `Access-Control-Allow-Origin: *`, which NIP-05 requires |
+| `.well-known/nostr.json` | NIP-05: `trikey@trikey.app` and `_@trikey.app` (shown as just `trikey.app`) name Trikey's publisher npub, the key that signs the Zapstore listing (`docs/zapstore.md`). No `relays` hint: `relay.trikey.app` stores only gift wraps and Nostr Connect events, not profiles, so a client following a hint there would find nothing. Served as JSON with `Access-Control-Allow-Origin: *`, which NIP-05 requires |
 | `.well-known/security.txt` | RFC 9116 contact, points to the repo's private security advisories |
 
 ## Preview locally
