@@ -828,13 +828,13 @@ the rig); `apps/guardian-web/test/hosting.test.ts`; `e2e/test/hosting.test.ts` (
 off, the pause and the hardware fallback in the real mempool, and the release once the guardian finds its co-signed coins
 spent on real Electrs).
 
-### Open questions for the owner
+### The owner's answers (2026-11-03)
 
-1. **Should a paused wallet also pause a ready recovery** (as a locked box does)? Built: no (decision 3). The alternative
-   adds defence in depth against a thief's recovery the contacts failed to cancel, at the cost of a wallet that cannot
-   recover while its hardware wallet is lost and it is paused.
-2. **Should the host be able to lift a guest's pause** (for a guest who lost the hardware wallet and cannot recover)?
-   Built: no. A recovery completes regardless (decision 3), so it is not needed to get money out.
-3. **Off-path coins at leaving.** The release is refused while any exists; the app cannot yet move such a coin with
-   phone + guardian outside a recovery. A guest who has one either keeps the slot, recovers ("hardware wallet lost" sweeps
-   it), or the host stops hosting. A "move co-signed coins" action is a possible follow-up.
+1. **A paused wallet does not hold a ready recovery** (as built, decision 3). The tool against a bad recovery is
+   `CANCEL`, open to the guest and every contact for the whole delay; making the pause hold it too would leave a guest
+   who lost the hardware wallet while paused with money nobody can move. The pause carries over to the adopted wallet,
+   so a recovery is no way around it.
+2. **The host cannot lift a guest's pause** (as built). It is the guest's wallet, and a recovery completes regardless.
+3. **Off-path coins at leaving: accepted for now.** The release is refused while any exists; the guest keeps the slot,
+   recovers ("hardware wallet lost" sweeps it), or the host stops hosting. A "move co-signed coins" action is a
+   follow-up.
