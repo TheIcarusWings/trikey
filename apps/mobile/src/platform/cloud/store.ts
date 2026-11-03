@@ -73,6 +73,8 @@ export function mapCloudError(err: unknown): CloudBackupError {
   const text = message.toLowerCase();
   if (text.includes('network request failed') || text.includes('timed out')) return cloudBackupError('network', opts);
   if (text.includes('only available in an ios or android')) return cloudBackupError('unavailable', opts);
+  // The Android build without Google code has no Google Drive libraries (native-modules.android.foss.ts).
+  if (text.includes('not in the android build without google code')) return cloudBackupError('unavailable', opts);
   return cloudBackupError('failed', opts);
 }
 

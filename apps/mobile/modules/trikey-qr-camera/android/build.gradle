@@ -1,0 +1,37 @@
+// The QR camera of the Android build without Google code: CameraX and zxing-cpp. Only linked when
+// TRIKEY_ANDROID_VARIANT=foss (apps/mobile/README.md, "Two Android builds").
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'app.trikey'
+version = '1.0.0'
+
+android {
+  namespace 'app.trikey.qrcamera'
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
+
+// CameraX needs the real ListenableFuture at compile time; the React Native Gradle plugin brings Guava, which turns
+// it into the empty 9999.0 placeholder. Same fix as expo-camera's.
+configurations.configureEach {
+  resolutionStrategy.force 'com.google.guava:listenablefuture:1.0'
+}
+
+dependencies {
+  // The same CameraX as expo-camera in the standard build.
+  def camerax_version = '1.6.0'
+  implementation "androidx.camera:camera-core:${camerax_version}"
+  implementation "androidx.camera:camera-camera2:${camerax_version}"
+  implementation "androidx.camera:camera-lifecycle:${camerax_version}"
+  implementation "androidx.camera:camera-view:${camerax_version}"
+  // LifecycleOwner, which the camera is bound to (the version the rest of the app brings wins).
+  implementation 'androidx.lifecycle:lifecycle-common:2.6.1'
+  // zxing-cpp's Android wrapper (Apache-2.0, Maven Central): the C++ decoder and a Kotlin API that reads CameraX
+  // frames. 3.0.x is built with Kotlin 2.2, the version this app compiles with.
+  implementation 'io.github.zxing-cpp:android:3.0.2'
+}

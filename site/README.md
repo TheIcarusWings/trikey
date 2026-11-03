@@ -17,9 +17,10 @@ a plain stack of cards and reads the same.
 | `media/` | Photos (WebP) and three short muted video loops (H.264 MP4, under 1 MB each) taken from the launch film footage, plus one generated still of the three keys. Loops are hidden for people who prefer reduced motion; the poster image stays. |
 | `fonts/` | Geist and Geist Mono (latin, variable `woff2`) with their OFL license texts |
 | `favicon.svg` | The logo |
-| `vercel.json` | Response headers: `application/json` for the Apple file, HSTS and other security headers |
+| `vercel.json` | Response headers: `application/json` for the Apple file and `nostr.json` (plus CORS for the latter), HSTS and other security headers |
 | `.well-known/apple-app-site-association` | iOS: passkeys for `app.trikey.wallet` (needs a Team ID) |
 | `.well-known/assetlinks.json` | Android: passkeys for `app.trikey.wallet` (needs a signing fingerprint) |
+| `.well-known/nostr.json` | NIP-05: `trikey@trikey.app` and `_@trikey.app` (shown as just `trikey.app`) name Trikey's publisher npub, the key that signs the Zapstore listing (`docs/zapstore.md`). Served as JSON with `Access-Control-Allow-Origin: *`, which NIP-05 requires |
 | `.well-known/security.txt` | RFC 9116 contact, points to the repo's private security advisories |
 
 ## Preview locally

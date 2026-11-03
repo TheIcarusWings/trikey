@@ -548,6 +548,27 @@ Someone who runs a guardian can host one for a person they know.
 - **The trust involved:** a dishonest host could skip the delay and suppress alerts while teaming up with a thief. The app must state this when an invite is accepted.
 - **Later still:** two hosts could share the key 3 role.
 
+## Later: Taproot and threshold signatures (decided 2026-11-03: not now)
+
+Today every Trikey spend is a visible 2-of-3 (`wsh(sortedmulti)`): anyone reading the chain sees a multisig, and two
+signatures plus the script cost more than one key's signature. Two ways to fix that were weighed and left for later.
+
+- **FROST (threshold Schnorr), not now.** A 2-of-3 FROST key spends like one ordinary Taproot key: private and cheap.
+  But:
+  - every signer, the hardware wallet included, has to run the FROST rounds. Ledger, Trezor, Coldcard and Jade do not;
+    only FROST devices (Frostsnap) do;
+  - key shares are not seeds and the wallet is no standard descriptor, so no other wallet could recover the money
+    (against "every key is yours", and the exit through Sparrow or Nunchuk);
+  - the signing is interactive and nonce mistakes leak keys; the standards are still settling, and Trikey is not audited;
+  - it hides nothing from the guardian, which must read the whole transaction to enforce the limit.
+
+  Revisit when major hardware wallets sign FROST and its BIPs are final.
+- **A Taproot wallet type, later and opt-in.** Key path `musig(phone, guardian)`, so everyday payments look like one
+  key and cost the least; script leaves for the pairs with the hardware wallet. MuSig2 runs only between the phone and
+  the guardian, both our code. The blocker is the hardware wallet's side: Taproot multisig script paths, which Trezor
+  does not sign and other devices have to be checked for. A choice next to the default, never a replacement while
+  devices are missing. Revisit with the device list.
+
 ## Open questions
 
 1. **How the hardware wallet unlocks the guardian.** Rule changes now use BIP137 message signatures (see rule 4); which signing paths each device allows still has to be tested on real hardware. Unlocking with the hardware wallet is still open: Trezor has CipherKeyValue (SLIP-11), Ledger has no symmetric-key API. Until then, unlocking uses the passphrase.
@@ -568,7 +589,7 @@ Someone who runs a guardian can host one for a person they know.
 - `apps/guardian-web/`: the guardian's web UI, including the recovery code and the reset. Its API is in `API.md`.
 - Savings (optional, docs/design/savings-and-limit-off.md): `SAVINGS_ACCOUNT` in core; `savings.*` in the protocol; the guardian's watch (`apps/guardian/src/savings.ts`); `TrikeyWallet.startSavings` ... `replaceSavingsKey` in `packages/wallet`; `apps/mobile/app/savings/`.
 - `packages/recovery-key/`: Recovery Key mode (no home server): the printed Recovery Kit, the chain of BIP 68 timelocked refills and its scheduler, the single-key spending balance with CPFP, an Esplora client, and recovery with any two keys.
-- `apps/mobile/`: the React Native app (Expo). Demo, regtest-simulator and real modes; guardian mode runs on `@trikey/wallet` with Ledger, Trezor and QR adapters, secure key storage and a recovery-code backup file. Recovery Key mode runs on `@trikey/recovery-key` (`src/data/rk-service.ts`), on test networks only.
+- `apps/mobile/`: the React Native app (Expo). Demo, regtest-simulator and real modes; guardian mode runs on `@trikey/wallet` with Ledger, Trezor and QR adapters, secure key storage and a recovery-code backup file. Recovery Key mode runs on `@trikey/recovery-key` (`src/data/rk-service.ts`), on test networks only. Android has two builds from the same code (`TRIKEY_ANDROID_VARIANT`, `apps/mobile/android-variant.js`), with one package name and signing key: the standard one, with Google's libraries (Google Sign-In for Google Drive backup, ML Kit for QR codes), and one without any Google code, which reads QR codes with zxing-cpp through the app's own camera module (`apps/mobile/modules/trikey-qr-camera`) and backs up with the recovery code and backup file only.
 - `packaging/`: Docker image, Umbrel community app store entry, Start9 package skeleton.
 - `site/`: trikey.app, hosted on Vercel, including the passkey association files.
 - `tools/consensus-verify/`: Rust tool that checks transactions against libbitcoinconsensus (Bitcoin Core's script verifier). CI builds it, and the core and Recovery Key tests run every transaction shape through it.

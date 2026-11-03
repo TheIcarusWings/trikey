@@ -3,13 +3,14 @@ name: Android launch check
 # Builds the Android test APK for x86_64 (the same release build, Hermes bundle and one-off signing as the
 # testers' arm64-v8a APK: android-build.yml), installs it in an Android emulator, opens it, and fails if the
 # app is not running 25 seconds later or its log shows a crash. Catches an APK that installs but closes
-# straight away, which no unit test or bundler run sees.
+# straight away, which no unit test or bundler run sees. Both variants, side by side (`variant` in the matrix): the
+# standard build and the one without Google code, whose build also fails if the APK has any Google code in it.
 #
 # What it reports (CI log downloads are blocked for us; annotations can be read through the checks API):
 # - failed: `::error` annotations with the lines that say why, most telling first: the FATAL EXCEPTION
 #   block, the JavaScript error and its stack, the native abort message and backtrace, the exit reason;
 # - passed: one `::notice` with the first JavaScript log lines.
-# The full logcat, the app's own lines, a screenshot and any tombstones are in the `android-launch-logcat`
+# The full logcat, the app's own lines, a screenshot and any tombstones are in the `android-launch-logcat-<variant>`
 # artifact. The scripts are .github/scripts/android-launch.sh (drives the emulator) and
 # .github/scripts/android-launch-report.py (judges and reports); both run locally against any emulator.
 #
@@ -19,7 +20,7 @@ name: Android launch check
 # nothing when it is opened) or the app crashes during it. .github/scripts/android-walk.sh runs it and collects the
 # walk's logcat; .github/scripts/demo-walk-report.py posts the failing step, Maestro's error, the steps before it and
 # the app's log lines of the walk as `::error` annotations (one `::notice` when it passes). Maestro's screenshots,
-# JUnit report and debug output, and the walk's logcat, are in the `android-demo-walk` artifact. Maestro is installed
+# JUnit report and debug output, and the walk's logcat, are in the `android-demo-walk-<variant>` artifact. Maestro is installed
 # from its GitHub release by .github/scripts/install-maestro.sh, pinned by version and SHA-256. The emulator is a
 # Pixel 6 profile, tall enough for the Welcome screen's wallet mode picker.
 
@@ -47,18 +48,27 @@ concurrency:
 
 jobs:
   build:
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [standard, foss]
     uses: ./.github/workflows/android-build.yml
     with:
       architectures: x86_64
-      artifact-name: trikey-android-apk-x86_64
+      artifact-name: trikey-android-apk-x86_64-${{ matrix.variant }}
+      variant: ${{ matrix.variant }}
 
   launch:
     needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [standard, foss]
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
+      # The same for both variants (one package, so either installs over the other).
       APP_ID: ${{ needs.build.outputs.application-id }}
-      APK: apk/${{ needs.build.outputs.apk-name }}.apk
       OUT: launch-out
       WAIT_SECONDS: '25'
       WALK_OUT: walk-out
@@ -72,8 +82,16 @@ jobs:
 
       - uses: actions/download-artifact@v8.0.2
         with:
-          name: trikey-android-apk-x86_64
+          name: trikey-android-apk-x86_64-${{ matrix.variant }}
           path: apk
+
+      # This variant's APK (the build's apk-name output is one of the two, the matrix's last).
+      - name: Find the APK
+        run: |
+          set -euo pipefail
+          apks=(apk/*.apk)
+          [ "${#apks[@]}" = 1 ] && [ -f "${apks[0]}" ] || { echo "::error::Expected one APK in the artifact"; exit 1; }
+          echo "APK=${apks[0]}" >> "${GITHUB_ENV}"
 
       # Maestro (the demo walk) runs on Java 17 or newer.
       - uses: actions/setup-java@v6.1.0
@@ -122,7 +140,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
-          name: android-launch-logcat
+          name: android-launch-logcat-${{ matrix.variant }}
           path: launch-out/
           if-no-files-found: warn
           retention-days: 14
@@ -134,7 +152,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
-          name: android-demo-walk
+          name: android-demo-walk-${{ matrix.variant }}
           path: walk-out/
           if-no-files-found: ignore
           retention-days: 14

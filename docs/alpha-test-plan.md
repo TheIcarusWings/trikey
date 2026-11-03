@@ -197,7 +197,21 @@ limit), pay 25,000 (over it), raise the limit to 50,000.
 
 Where it comes from: every release on [GitHub's Releases page](https://github.com/TheIcarusWings/trikey/releases) has
 `trikey-alpha-v<version>.apk` and its `.apk.sha256`, built by the **Android test APK** workflow
-(`.github/workflows/android-apk.yml`). Take the newest pre-release. Before a release is made, every pull request that touches
+(`.github/workflows/android-apk.yml`). Take the newest pre-release.
+
+**Which APK.** After 0.1.8-alpha a release has two APKs of the same app; pick one:
+
+- `trikey-alpha-v<version>.apk`, the **standard** build: it contains Google's libraries (ML Kit reads the QR codes, and
+  Google Drive backup can be switched on in a later release; that needs Google Play services on the phone).
+- `trikey-alpha-foss-v<version>.apk`, **no Google code**: for a phone without Google Play services (GrapheneOS, /e/OS,
+  LineageOS) or if you prefer it. The open source zxing-cpp reads the QR codes. It never offers Google Drive backup: the
+  backup is the recovery code plus the backup file, which you can still put in Google Drive or anywhere else yourself from
+  the share sheet. Settings → About shows "Trikey (no Google)".
+
+Both have the same package and signature: installing one over the other switches builds and keeps the wallet. Today they do
+the same, because Google Drive backup is not switched on yet; the difference to test is the QR scanning. If you have the
+build without Google code, scan every kind of code the plan asks for (pairing code, contact, address, an animated QR from
+your hardware wallet, the Recovery Kit) and note in the report that you used `foss`. Before a release is made, every pull request that touches
 the app already builds it and opens it in an Android emulator (and in the iOS Simulator), so a build that crashes at start
 does not reach a release. A local build is in `apps/mobile/README.md`, "Android".
 
@@ -210,6 +224,8 @@ What kind of build it is:
   on that phone**. Back up first.
 - No passkeys and no Google Drive or iCloud backup in this build. The backup is a recovery code plus a backup file.
 - Built for 64-bit phones by default (every phone from the last several years).
+- The build without Google code is checked when it is made: no Google Play services, Firebase, ML Kit or Google data
+  transport code is in it.
 
 To install: check the file against the `.sha256`, copy the APK to the phone, open it, and allow installing from that source
 when Android asks. Play Protect may warn about an unknown app; that is expected for a sideloaded test build.
@@ -218,8 +234,10 @@ when Android asks. Play Protect may warn about an unknown app; that is expected 
 release key). Three ways, pick one:
 
 - In the app: **Settings → About → Check for updates**. It asks GitHub only when you tap it, says whether a newer version
-  exists, and **Download** hands the APK to Android's installer. Check the SHA-256 it shows against the release's `.sha256`.
-- Obtainium, which watches the repository's releases for you: see [docs/android-signing.md](android-signing.md).
+  exists, and **Download** hands the APK to Android's installer. It offers the APK of the build you have (standard or
+  without Google code). Check the SHA-256 it shows against the release's `.sha256`.
+- Obtainium, which watches the repository's releases for you: see [docs/android-signing.md](android-signing.md), with the
+  filter for the APK you want.
 - By hand, from the Releases page, as above.
 
 Note in the report which way you used, and that the wallet was still there after the update.

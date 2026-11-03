@@ -47,6 +47,18 @@ describe('createPlatform on iOS and Android', () => {
     expect(p.cloudBackups.map((c) => c.provider)).toEqual(['google-drive', 'file']);
   });
 
+  it('Android without Google code: no Google Drive at all, even with a client id; the file provider', async () => {
+    const clientId = '1234-abc.apps.googleusercontent.com';
+    for (const preferFileBackup of [false, true]) {
+      const p = createPlatform({ os: 'android', osVersion: 34, androidVariant: 'foss', preferFileBackup, config: { googleClientId: clientId, passkeyRpId: null } });
+      expect(p.cloudBackups.map((c) => c.provider)).toEqual(['file']);
+      expect(p.cloudBackup.provider).toBe('file');
+    }
+    // The standard build with the same id offers Google Drive; iOS is not affected by the Android variant.
+    expect(createPlatform({ os: 'android', osVersion: 34, androidVariant: 'standard', config: { googleClientId: clientId } }).cloudBackups[0]!.provider).toBe('google-drive');
+    expect(createPlatform({ os: 'ios', osVersion: '18.2', androidVariant: 'foss', config: { googleClientId: null } }).cloudBackups[0]!.provider).toBe('icloud');
+  });
+
   it('can put the file provider first for development', () => {
     const p = createPlatform({ os: 'android', osVersion: 34, preferFileBackup: true, config: { googleClientId: null } });
     expect(p.cloudBackups.map((c) => c.provider)).toEqual(['file', 'google-drive']);

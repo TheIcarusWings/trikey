@@ -81,8 +81,9 @@ jobs:
           {
             cat "${RUNNER_TEMP}/notes.md"
             echo
-            echo "The Android APK and its .sha256 are attached by the Android test APK build when it finishes; the guardian"
-            echo "image is ghcr.io/theicaruswings/trikey-guardian:${TAG#v}. How to install and test: docs/alpha-test-plan.md."
+            echo "The Android APKs (the standard build and the one without Google code) and their .sha256 files are attached by"
+            echo "the Android test APK build when it finishes; the guardian image is ghcr.io/theicaruswings/trikey-guardian:${TAG#v}."
+            echo "How to install and test: docs/alpha-test-plan.md."
           } > "${RUNNER_TEMP}/body.md"
           gh release create "${TAG}" --target "${GITHUB_SHA}" --prerelease --title "Trikey ${TAG}" --notes-file "${RUNNER_TEMP}/body.md"
           echo "::notice title=Released::${TAG} on ${GITHUB_SHA::7}"
