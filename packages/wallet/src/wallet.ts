@@ -190,6 +190,12 @@ export interface WalletDeps {
   createRpc?: (opts: RpcClientOptions) => GuardianRpc;
   /** Default timeout for guardian calls (ms, default 30 s). */
   rpcTimeoutMs?: number;
+  /**
+   * Timeout for `wallet.sync`, the guardian reading the wallet from its Electrum server (ms, default three times
+   * `rpcTimeoutMs`: 90 s). On a slow server it takes far longer than any other call; `sync()` tells a guardian that
+   * answered its status but not this in time apart from one that does not answer (`guardian_slow`).
+   */
+  syncTimeoutMs?: number;
   /** Re-send unanswered requests at this interval (ms, default 10 s; same id, so idempotent; 0 = never). */
   rpcRetryIntervalMs?: number;
   /** Argon2id cost for new recovery-code slots (default `DEFAULT_RECOVERY_CODE_KDF`). */
@@ -895,6 +901,17 @@ export class TrikeyWallet {
     await hw?.close().catch(() => {});
   }
 
+  /**
+   * Subscribe again now on every relay connection that dropped, instead of waiting out the pool's backoff: the app
+   * calls this when it comes back to the front (Android destroys a background app's sockets). Then `sync()`.
+   */
+  reconnect(): void {
+    this.pool?.reconnect?.();
+    for (const c of this.oldConnections) c.pool.reconnect?.();
+    this.pairing?.pool.reconnect?.();
+    this.replaceRpc?.pool.reconnect?.();
+  }
+
   /** Removes key 2, the nostr key and the state from this phone. The cloud backup is left alone. */
   async forget(): Promise<void> {
     await this.close();
@@ -976,7 +993,7 @@ export class TrikeyWallet {
       this.requireRecoveryAccess();
       if (!this.rpc) throw new WalletError('wrong_state', 'Not connected to the guardian; call start() first.');
       return this.rpc;
-    });
+    }, { syncTimeoutMs: () => this.syncTimeoutMs });
     return this.chainSource;
   }
 
@@ -1626,6 +1643,11 @@ export class TrikeyWallet {
     this.oldConnections.clear();
   }
 
+  /** `WalletDeps.syncTimeoutMs`. */
+  private get syncTimeoutMs(): number {
+    return this.deps.syncTimeoutMs ?? 3 * (this.deps.rpcTimeoutMs ?? 30_000);
+  }
+
   private get relayProbeTimeoutMs(): number {
     return Math.min(RELAY_PROBE_TIMEOUT_MS, this.deps.rpcTimeoutMs ?? 30_000);
   }
@@ -1693,7 +1715,14 @@ export class TrikeyWallet {
     return true;
   }
 
-  /** Chain data, guardian status and fee estimates, from the guardian. Works while the guardian is locked. */
+  /**
+   * Chain data, guardian status and fee estimates, from the guardian. Works while the guardian is locked.
+   *
+   * The status and the chain data are asked for together, and the chain data can take much longer (the guardian
+   * reads every address from its Electrum server; `syncTimeoutMs`). A guardian that answered its status but not the
+   * chain data in time is not unreachable: that throws `guardian_slow`, the status is stored, and the last chain
+   * data stays.
+   */
   async sync(): Promise<WalletSnapshot> {
     if (this.s.stage === 'new') throw new WalletError('wrong_state', 'The wallet is not paired yet.');
     // Recovered on another phone: the guardian answers nothing for this wallet. Keep the history the phone has readable.
@@ -1710,8 +1739,8 @@ export class TrikeyWallet {
     await this.storeStatus(status);
     // `wallet.sync` describes the wallet the guardian guards now: after an adoption that is the new one.
     const switched = await this.followGuardianWallet(status.walletId);
-    let snap = await snapP;
-    if (switched) snap = await this.chain.sync({ historyLimit: this.deps.historyLimit });
+    let snap = await snapP.catch(slowGuardian);
+    if (switched) snap = await this.chain.sync({ historyLimit: this.deps.historyLimit }).catch(slowGuardian);
     else if (status.walletId && status.walletId !== this.s.wallet?.walletId)
       throw new WalletError('guardian_mismatch', `The guardian now guards another wallet (${status.walletId}).`);
     const now = this.now();
@@ -4367,7 +4396,7 @@ export class TrikeyWallet {
   private async listOldWalletViaNewGuardian(r: ReplaceRecord, oldWalletId: string): Promise<{ source: GuardianChainSource; snap: ChainSnapshot; fees?: FeeEstimates } | undefined> {
     try {
       const rpc = await this.replacementRpc(r);
-      const source = new GuardianChainSource(() => rpc, { wallet: 'replaced' });
+      const source = new GuardianChainSource(() => rpc, { wallet: 'replaced', syncTimeoutMs: () => this.syncTimeoutMs });
       const snap = await source.sync();
       if (snap.walletId !== oldWalletId) return undefined; // an older guardian ignoring `wallet` would describe the new wallet
       return { source, snap, fees: await source.estimateFees([3, 6]).catch(() => undefined) };
@@ -4491,7 +4520,7 @@ export class TrikeyWallet {
     if (this.s.guardian) {
       try {
         const rpc = await this.client();
-        const source = new GuardianChainSource(() => rpc, { wallet: 'replaced' });
+        const source = new GuardianChainSource(() => rpc, { wallet: 'replaced', syncTimeoutMs: () => this.syncTimeoutMs });
         const snap = await source.sync();
         if (snap.walletId === w.walletId) return { source, snap, close: () => {}, via: 'current-guardian' };
         // The guardian watches another wallet, or an older one ignored `wallet`: not this one.
@@ -4503,7 +4532,7 @@ export class TrikeyWallet {
       const conn = await this.connect(w.guardian.pubkey, w.guardian.relays, { routeAlerts: false });
       const st = await this.probeGuardian(conn.rpc).catch(() => undefined);
       if (st && (!st.walletId || st.walletId === w.walletId))
-        return { source: new GuardianChainSource(() => conn.rpc), close: () => (conn.rpc.close(), conn.pool.close()), via: 'old-guardian' };
+        return { source: new GuardianChainSource(() => conn.rpc, { syncTimeoutMs: () => this.syncTimeoutMs }), close: () => (conn.rpc.close(), conn.pool.close()), via: 'old-guardian' };
       conn.rpc.close();
       conn.pool.close();
     }
@@ -4859,7 +4888,7 @@ export class TrikeyWallet {
     return new GuardianChainSource(() => {
       if (!this.rpc) throw new WalletError('wrong_state', 'Not connected to the guardian; call start() first.');
       return this.rpc;
-    }, { wallet: 'savings' });
+    }, { wallet: 'savings', syncTimeoutMs: () => this.syncTimeoutMs });
   }
 
   /**
@@ -5786,4 +5815,11 @@ function fallbackReason(r: GuardianRefusal): HardwareReason | undefined {
     default:
       return undefined;
   }
+}
+
+/** A `wallet.sync` that timed out (or could not be sent) after the guardian answered `guardian.status`: slow, not offline. */
+function slowGuardian(e: unknown): never {
+  if (e instanceof WalletError && e.refusal?.kind === 'unreachable')
+    throw new WalletError('guardian_slow', 'Your guardian answered but is slow to read the wallet from its node. The balance shown is from the last sync.', { cause: e });
+  throw e;
 }

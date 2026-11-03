@@ -736,6 +736,11 @@ export interface WalletState {
   syncing: boolean;
   /** Has the wallet heard from the guardian at least once? */
   synced: boolean;
+  /**
+   * The guardian answered the last sync but was too slow sending the wallet's chain data (a slow Electrum server): it
+   * is online, and the balance shown is the last one. Not "offline".
+   */
+  guardianSlow: boolean;
   phoneSpending: PhoneSpending;
   /** A recovery on this phone's wallet that is no longer running. */
   recoveryOutcome: RecoveryOutcome | null;

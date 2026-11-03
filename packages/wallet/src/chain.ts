@@ -109,19 +109,31 @@ export class GuardianChainSource implements ChainSource {
    */
   constructor(
     private readonly rpc: () => GuardianRpc,
-    private readonly opts: { timeoutMs?: number; wallet?: string } = {},
+    private readonly opts: {
+      timeoutMs?: number;
+      /**
+       * For `wallet.sync`, which reads the whole wallet from the user's Electrum server and can take far longer than
+       * any other call (a minute and more on a slow one); a function is read at each sync. Default `timeoutMs`.
+       */
+      syncTimeoutMs?: number | (() => number);
+      wallet?: string;
+    } = {},
   ) {}
 
-  private async call<M extends MethodName>(method: M, params: Params<M>): Promise<Result<M>> {
+  private async call<M extends MethodName>(method: M, params: Params<M>, timeoutMs = this.opts.timeoutMs): Promise<Result<M>> {
     try {
-      return await this.rpc().call(method, params, { timeoutMs: this.opts.timeoutMs });
+      return await this.rpc().call(method, params, { timeoutMs });
     } catch (e) {
       throw asWalletError(e, method);
     }
   }
 
   sync(opts: { historyLimit?: number } = {}): Promise<ChainSnapshot> {
-    return this.call('wallet.sync', { ...(opts.historyLimit ? { historyLimit: opts.historyLimit } : {}), ...(this.opts.wallet ? { wallet: this.opts.wallet } : {}) });
+    return this.call(
+      'wallet.sync',
+      { ...(opts.historyLimit ? { historyLimit: opts.historyLimit } : {}), ...(this.opts.wallet ? { wallet: this.opts.wallet } : {}) },
+      typeof this.opts.syncTimeoutMs === 'function' ? this.opts.syncTimeoutMs() : (this.opts.syncTimeoutMs ?? this.opts.timeoutMs),
+    );
   }
 
   async getTransaction(txid: string): Promise<string> {
