@@ -9,6 +9,7 @@
 import { pathToFileURL } from 'node:url';
 import { matchFilters, type Filter } from 'nostr-tools/filter';
 import { verifyEvent, type Event as NostrEvent } from 'nostr-tools/pure';
+import type { Socket } from 'node:net';
 import { WebSocketServer, type WebSocket } from 'ws';
 
 export interface DevRelayOptions {
@@ -53,6 +54,8 @@ export class DevRelay {
   transformOutgoing?: (event: NostrEvent) => NostrEvent;
 
   private wss?: WebSocketServer;
+  /** The port of the last `start()`, so a restart comes back on the same URL. */
+  private port?: number;
   private readonly subs = new Map<string, Sub>(); // `${connectionId}:${subId}`
   private readonly sockets = new Map<WebSocket, number>();
   private nextConn = 1;
@@ -75,13 +78,15 @@ export class DevRelay {
   start(): Promise<string> {
     return new Promise((resolve, reject) => {
       const host = this.opts.host ?? '127.0.0.1';
-      const wss = new WebSocketServer({ host, port: this.opts.port ?? 0, maxPayload: 1_048_576 });
+      // A restart (start after stop) listens on the same port again, so clients find it at the same URL.
+      const wss = new WebSocketServer({ host, port: this.opts.port ?? this.port ?? 0, maxPayload: 1_048_576 });
       this.wss = wss;
       wss.once('error', reject);
       wss.on('connection', (socket) => this.onConnection(socket));
       wss.once('listening', () => {
         const addr = wss.address();
         if (typeof addr === 'string' || addr === null) return reject(new Error('unexpected address'));
+        this.port = addr.port;
         this._url = `ws://${host}:${addr.port}`;
         resolve(this._url);
       });
@@ -96,6 +101,18 @@ export class DevRelay {
       wss.close(() => resolve());
       this.wss = undefined;
     });
+  }
+
+  /**
+   * Fault injection: ends every client connection now, the relay keeps running. `'reset'` (default) aborts the TCP
+   * connections with a RST and no WebSocket close frame (what a phone sees when Android destroys a background app's
+   * sockets, or a NAT forgets it); `'close'` sends a clean close frame (1001, going away) first.
+   */
+  dropConnections(how: 'reset' | 'close' = 'reset'): void {
+    for (const s of this.sockets.keys()) {
+      if (how === 'close') s.close(1001, 'going away');
+      else (s as unknown as { _socket?: Socket })._socket?.resetAndDestroy();
+    }
   }
 
   private log(...args: unknown[]): void {

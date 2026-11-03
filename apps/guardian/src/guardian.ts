@@ -505,8 +505,13 @@ export class Guardian {
       this.log.error('nostr.no_relays');
       return;
     }
-    this.simplePool = createSimplePool({ enableReconnect: true, enablePing: true });
-    this.pool = new SimplePoolRelayPool({ pool: this.simplePool });
+    this.simplePool = createSimplePool({ enablePing: true });
+    // The pool subscribes again by itself on a relay that dropped (a relay restart, a network change).
+    this.pool = new SimplePoolRelayPool({
+      pool: this.simplePool,
+      // The first try after a drop is worth a line; a relay that stays down retries every 30 s.
+      onResubscribe: (r) => (r.attempt === 1 ? this.log.info : this.log.debug).call(this.log, 'nostr.resubscribe', { relay: r.relay, reason: r.reason, attempt: r.attempt, inMs: r.delayMs }),
+    });
     this.rpc = new RpcServer({
       pool: this.pool,
       relays,

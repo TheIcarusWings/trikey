@@ -145,6 +145,8 @@ export interface RealServiceDeps {
   deviceName?: string;
   recoveryCodeKdf?: Argon2Params;
   rpcTimeoutMs?: number;
+  /** How long a sync waits for the guardian's chain data (`wallet.sync`; ms, default the wallet's: 3 x `rpcTimeoutMs`, 90 s). */
+  syncTimeoutMs?: number;
   rpcRetryIntervalMs?: number;
   /** Sync this often while the service lives (ms; default 60 s, 0 = only when asked). */
   syncIntervalMs?: number;
@@ -171,6 +173,7 @@ export interface RealWalletService extends WalletService {
   /** The wallet, once there is one. */
   readonly wallet: TrikeyWallet | undefined;
   readonly prompts: DevicePromptStore;
+  resume(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -290,6 +293,11 @@ class Service implements RealWalletService {
   private syncRun?: Promise<void>;
   private syncAgain = false;
   private reachable = true;
+  /**
+   * The guardian answered the last sync's `guardian.status` but not its chain data in time (`guardian_slow`): it is
+   * online, the balance is the last one. Cleared by a full sync, or by the guardian not answering at all.
+   */
+  private slow = false;
   private preview?: { guardianNpub: string; label?: string; relays: string[]; expiresAt: number };
   private recoveryCodeValue: string | null = null;
   private readonly quotes = new Map<string, WalletQuote>();
@@ -409,6 +417,7 @@ class Service implements RealWalletService {
       storageKey: this.storageKey,
       recoveryCodeKdf: this.deps.recoveryCodeKdf,
       rpcTimeoutMs: this.deps.rpcTimeoutMs,
+      ...(this.deps.syncTimeoutMs !== undefined ? { syncTimeoutMs: this.deps.syncTimeoutMs } : {}),
       rpcRetryIntervalMs: this.deps.rpcRetryIntervalMs,
     };
   }
@@ -436,6 +445,16 @@ class Service implements RealWalletService {
     await this.sync();
     const every = this.deps.syncIntervalMs ?? 60_000;
     if (every > 0 && !this.closed) this.timer ??= setInterval(() => void this.sync(), every);
+  }
+
+  /**
+   * The app came back to the front: subscribe again now on any relay connection that dropped in the background
+   * (Android destroys a background app's sockets) instead of waiting out the relay pool's backoff, then sync.
+   */
+  resume(): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    this.w?.reconnect();
+    return this.sync();
   }
 
   async close(): Promise<void> {
@@ -588,6 +607,7 @@ class Service implements RealWalletService {
       devicePrompt: this.prompts.getSnapshot(),
       syncing: this.syncing,
       synced: !!s?.chain,
+      guardianSlow: this.slow && this.reachable,
       phoneSpending: gs?.phoneSpending ?? 'enabled',
       recoveryOutcome: outcome,
       recovering: s?.stage === 'recovering',
@@ -751,6 +771,7 @@ class Service implements RealWalletService {
     const refusal = e instanceof WalletError ? e.refusal : undefined;
     if (refusal?.kind === 'unreachable') {
       this.reachable = false;
+      this.slow = false;
       this.refresh();
     }
   }
@@ -898,9 +919,15 @@ class Service implements RealWalletService {
         if (changed) await saveLog(this.deps.platform.kv, this.logKey, this.log);
       }
       this.reachable = true;
+      this.slow = false;
     } catch (e) {
+      if (e instanceof WalletError && e.code === 'guardian_slow') {
+        // It answered its status: online, only slow to read the chain (a slow Electrum server). Not "offline".
+        this.reachable = true;
+        this.slow = true;
+      }
       // Another sync is due right after this one, and only its outcome says whether the guardian answers now.
-      if (!this.syncAgain) this.noteGuardianResult(e);
+      else if (!this.syncAgain) this.noteGuardianResult(e);
     }
     this.refresh();
   }

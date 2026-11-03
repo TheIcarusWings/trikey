@@ -205,6 +205,7 @@ export function createDemoState(platform: 'ios' | 'android' = 'ios'): WalletStat
     devicePrompt: null,
     syncing: false,
     synced: true,
+    guardianSlow: false,
     phoneSpending: 'enabled',
     recoveryOutcome: null,
     recovering: false,

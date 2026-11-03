@@ -110,8 +110,9 @@ export function parseExtraEntropy(value: string | undefined): Uint8Array | undef
 }
 
 /**
- * The relays offered at setup, all ticked. `relay.trikey.app` is the project's own relay: it takes only Trikey's
- * kinds (gift wraps, DM inbox lists, profiles, Nostr Connect) and makes delivery less dependent on public relays.
+ * The relays offered at setup, all ticked. `relay.trikey.app` is the project's own relay: it stores only gift wraps
+ * (kind 1059) and Nostr Connect events (kind 24133), serves DM inbox lists (kind 10050) read-only and refuses profiles
+ * (kind 0), and makes delivery less dependent on public relays.
  * Like every relay it sees only ciphertext and metadata (which keys talk, when, from where), and it is never the only
  * one: the others stay ticked, and the owner can untick any of them.
  */

@@ -165,6 +165,11 @@ export type WalletErrorCode =
   /** The guardian answered something inconsistent with what the wallet sent (descriptor, wallet id, key). */
   | 'guardian_mismatch'
   | 'guardian_refused'
+  /**
+   * The guardian answered (`guardian.status`) but not a slower call in time: `wallet.sync`, which reads the wallet from
+   * its Electrum server. It is online; the chain data is the last one. No `refusal`.
+   */
+  | 'guardian_slow'
   /** The secure store has no key 2, or the user cancelled the biometric prompt. */
   | 'key_unavailable'
   | 'invalid_address'

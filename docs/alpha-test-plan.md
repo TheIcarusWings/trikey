@@ -148,8 +148,8 @@ Guardian log lines have one event per line and carry no keys or request bodies, 
   `restart: on-failure` takes for a deliberate stop, so the app stayed down. Restart it from the Umbrel home screen (right-click or
   long-press the app). Later versions exit with 1 after a crash, so Umbrel restarts them by itself.
 - **"No relay is connected" on the guardian's Home.** The Umbrel cannot reach any of the chosen relays, so the phone cannot reach the
-  guardian either. Check the box's internet connection (a relay that is down only matters if all of them are). The relays are
-  chosen at setup and cannot be changed afterwards in this build; note which ones you picked in the bug report.
+  guardian either. Check the box's internet connection (a relay that is down only matters if all of them are). From 0.1.8-alpha
+  the relays can be changed in the guardian's web UI (Settings, Change relays); note which ones you use in the bug report.
 
 **From source (developers).** To test a commit that is not released, build the image on the box and install a copy of the app that
 uses it. This follows `packaging/README.md`. I have not run it on a real Umbrel, so treat each step as "check, then continue".
@@ -199,7 +199,7 @@ Where it comes from: every release on [GitHub's Releases page](https://github.co
 `trikey-alpha-v<version>.apk` and its `.apk.sha256`, built by the **Android test APK** workflow
 (`.github/workflows/android-apk.yml`). Take the newest pre-release.
 
-**Which APK.** After 0.1.8-alpha a release has two APKs of the same app; pick one:
+**Which APK.** From 0.1.9-alpha a release has two APKs of the same app; pick one:
 
 - `trikey-alpha-v<version>.apk`, the **standard** build: it contains Google's libraries (ML Kit reads the QR codes, and
   Google Drive backup can be switched on in a later release; that needs Google Play services on the phone).

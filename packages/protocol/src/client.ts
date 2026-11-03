@@ -129,12 +129,20 @@ export class RpcClient {
     return this.o.now ? this.o.now() : nowSeconds();
   }
 
-  /** Subscribe to wraps addressed to us. Idempotent; resolves once the relays have replied with EOSE (or after 3 s). */
+  /**
+   * Subscribe to wraps addressed to us. Idempotent; resolves once the relays have replied with EOSE (or after 3 s).
+   * The pool keeps the subscription open across dropped connections (`RelayPool.subscribe`); should it end anyway
+   * (a pool that does not, or one that was closed), the next `call` subscribes again.
+   */
   start(): Promise<void> {
     if (this.closed) return Promise.reject(new Error('client closed'));
-    this.starting ??= new Promise<void>((resolve) => {
+    if (this.starting) return this.starting;
+    let ended = false;
+    let sub: Subscription | undefined;
+    let starting: Promise<void> | undefined = undefined;
+    starting = new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, 3000);
-      this.sub = this.o.pool.subscribe(
+      sub = this.o.pool.subscribe(
         this.relays,
         { kinds: [1059], '#p': [this.publicKey], since: this.now() - SUBSCRIPTION_LOOKBACK_SEC },
         {
@@ -143,10 +151,22 @@ export class RpcClient {
             clearTimeout(timer);
             resolve();
           },
+          onclose: () => {
+            clearTimeout(timer);
+            resolve();
+            ended = true;
+            // (Synchronously, from a closed pool, neither is set yet.)
+            if (sub && this.sub === sub) this.sub = undefined;
+            if (starting && this.starting === starting) this.starting = undefined;
+          },
         },
       );
     });
-    return this.starting;
+    if (!ended) {
+      this.sub = sub;
+      this.starting = starting;
+    }
+    return starting;
   }
 
   /** Stop listening and fail all pending calls. Does not close the pool. */

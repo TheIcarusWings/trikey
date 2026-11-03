@@ -524,6 +524,7 @@ For state-changing methods (`guardian.unlock`, `guardian.lock`, `pair`, `policy.
 * A relay must accept kind 1059 and honour `#p` filters. Relays that implement NIP-40 will purge wraps at their (randomised, later) wrap expiration; see "Wrap timestamps".
 * PSBT messages are large after two layers of base64 (roughly 1.8x the PSBT's base64 size); choose relays that accept events of a few hundred KB.
 * A hostile relay can drop, delay or replay events. It cannot read or alter them (altered ciphertext fails the MAC; a re-signed wrap fails to decrypt) and replays are caught by section 4.
+* **Keep the subscription open.** Connections drop: a relay restarts, a phone changes network, Android destroys the sockets of an app in the background. Both sides MUST subscribe again on a relay whose subscription ended (after a short backoff; the reference pool waits 1, 2, 5, 10, then every 30 s, jittered, and the app does it at once when it comes back to the front), and MUST NOT narrow `since` to the newest event seen: a wrap sent while the relay was out of reach can be back-dated by up to 2 days (section 2). The reference pool asks again from as far before the drop as the first subscription asked before its start (2 days and 10 minutes). The events delivered again are dropped by wrap id and by the replay guard (section 4); a duplicate request is answered from the guardian's response cache, never run again. Publishing alone is not enough: a client that can still publish but no longer listens sends requests whose answers it never hears.
 
 ### Changing relays
 
