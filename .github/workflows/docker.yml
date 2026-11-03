@@ -31,6 +31,9 @@ jobs:
       packages: write
     env:
       IMAGE: ghcr.io/theicaruswings/trikey-guardian
+    outputs:
+      version: ${{ steps.params.outputs.version }}
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -107,6 +110,72 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           # Also as an annotation, which the checks API returns (the summary is only on the web page).
           echo "::notice title=Published image::${IMAGE}@${DIGEST}"
+
+  # On a release tag: attach the plain-Docker files (packaging/compose) to the GitHub release, the compose file with the
+  # image pinned by the digest just pushed, so users download a file that runs exactly this image. release.yml creates
+  # the release before it dispatches this workflow on the tag (a tag made with GITHUB_TOKEN starts no `push: tags`
+  # run, a dispatch does); a tag pushed by hand without a release gets a notice and nothing attached.
+  compose-files:
+    needs: image
+    if: github.ref_type == 'tag' && needs.image.outputs.digest != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # upload release assets
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      IMAGE: ghcr.io/theicaruswings/trikey-guardian
+      VERSION: ${{ needs.image.outputs.version }}
+      DIGEST: ${{ needs.image.outputs.digest }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Pin the image in the compose file
+        run: |
+          set -euo pipefail
+          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::unexpected digest ${DIGEST}"; exit 1; }
+          out="${RUNNER_TEMP}/assets"
+          mkdir -p "${out}"
+          pinned="${IMAGE}:${VERSION}@${DIGEST}"
+          {
+            echo "# Trikey Guardian ${TAG}: the image is pinned by digest (${pinned})."
+            echo "# Check it against your own build: packaging/VERIFY.md. Settings: trikey-guardian.env.example, saved as .env."
+            # The release copy runs exactly this image: no TRIKEY_IMAGE override.
+            sed -E "s|^(    image: )\\\$\{TRIKEY_IMAGE:-${IMAGE}:[^}]+\}\$|\1${pinned}|" packaging/compose/docker-compose.yml
+          } > "${out}/trikey-guardian-compose.yml"
+          grep -Fxq "    image: ${pinned}" "${out}/trikey-guardian-compose.yml" \
+            || { echo "::error::could not pin the image in packaging/compose/docker-compose.yml (its image: line changed?)"; exit 1; }
+          if grep -q 'TRIKEY_IMAGE' "${out}/trikey-guardian-compose.yml"; then echo "::error::the release copy still names TRIKEY_IMAGE"; exit 1; fi
+          cp packaging/compose/.env.example "${out}/trikey-guardian.env.example"
+          (cd "${out}" && sha256sum trikey-guardian-compose.yml trikey-guardian.env.example > trikey-guardian-compose.sha256)
+          cat "${out}/trikey-guardian-compose.sha256"
+
+      - name: Check the pinned file
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/assets"
+          cp "${out}/trikey-guardian.env.example" "${out}/.env"
+          docker compose --project-directory "${out}" -f "${out}/trikey-guardian-compose.yml" config -q
+          # The node profile needs RPC credentials, which the example leaves for the user to choose.
+          BITCOIN_RPC_USER=check BITCOIN_RPC_PASS=check \
+            docker compose --project-directory "${out}" -f "${out}/trikey-guardian-compose.yml" --profile node config --images | sort
+          rm "${out}/.env"
+
+      - name: Attach to the release
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/assets"
+          # release.yml creates the release just before it dispatches this workflow; allow for a slow API.
+          for attempt in $(seq 1 10); do
+            if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+              gh release upload "${TAG}" --repo "${GITHUB_REPOSITORY}" --clobber \
+                "${out}/trikey-guardian-compose.yml" "${out}/trikey-guardian.env.example" "${out}/trikey-guardian-compose.sha256"
+              echo "::notice title=Compose files attached::${TAG}: trikey-guardian-compose.yml pins ${IMAGE}:${VERSION}@${DIGEST}"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::notice title=Compose files not attached::There is no GitHub release for ${TAG}. Create it (or run release.yml with redispatch) and re-run this job."
 
   # Builds the image for this machine and starts it: the guardian must come up and answer /api/status.
   # Building alone does not show that every module the service imports is in the image (0.1.0-alpha and

@@ -146,14 +146,27 @@ export interface SetupPreflight {
   /** Chain data fully synced. */
   synced: boolean;
   syncProgress?: number;
+  /** While `electrs` is missing: why the guardian cannot reach its Electrum server, in plain words (guardians from 0.1.9). */
+  electrsProblem?: string;
   relayOptions: RelayOption[];
+  /**
+   * Where the guardian runs (guardians from 0.1.9; older ones are on Umbrel or Start9). On `docker` no platform login
+   * guards this page, and the box must stay on for the guardian to work.
+   */
+  platform?: Platform;
+  /** True: setup needs the one-time setup code the guardian prints in its log (plain Docker). Check it with `checkSetupCode`. */
+  setupCodeRequired?: boolean;
 }
+
+export type Platform = 'umbrel' | 'start9' | 'docker';
 
 export interface SetupInput {
   /** Used once to derive the key that encrypts key 3 at rest (Argon2id). Never stored. */
   passphrase: string;
   /** URLs from `relayOptions` the guardian should connect to. */
   relays: string[];
+  /** With `setupCodeRequired`: the setup code from the guardian's log. */
+  setupCode?: string;
 }
 
 export interface UnlockInput {

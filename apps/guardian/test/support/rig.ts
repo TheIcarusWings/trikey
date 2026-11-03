@@ -62,6 +62,8 @@ export interface GuardianRigOptions {
    * SMTP server with a self-signed certificate. Test seams only; a real guardian refuses both. Default false.
    */
   notifyTestServers?: boolean;
+  /** The guardian's TRIKEY_PLATFORM, as loadConfig sets it. Default unset (no setup code), as for embedders. */
+  platform?: GuardianConfig['platform'];
 }
 
 export interface FundedOutput {
@@ -147,6 +149,7 @@ export class GuardianRig {
       relayOptions: this.relayUrls.map((url) => ({ url, defaultSelected: true })),
       ...(this.opts.spScanThreads ? { spScanThreads: this.opts.spScanThreads } : {}),
       ...(this.opts.extraEntropy ? { extraEntropy: this.opts.extraEntropy } : {}),
+      ...(this.opts.platform ? { platform: this.opts.platform } : {}),
     };
     this.guardian = await Guardian.open({
       config,
