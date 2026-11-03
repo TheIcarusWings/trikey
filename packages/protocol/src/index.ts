@@ -5,6 +5,7 @@ export * from './approval.js';
 export * from './envelope.js';
 export * from './transport.js';
 export * from './pool.js';
+export * from './seen.js';
 export * from './client.js';
 export * from './server.js';
 export * from './pairing.js';

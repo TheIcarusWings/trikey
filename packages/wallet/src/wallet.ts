@@ -44,6 +44,7 @@ import {
   MAX_SINGLE_KEY_COINS,
   PairingUriError,
   RpcClient,
+  SeenWraps,
   RpcError,
   RpcTimeoutError,
   approvalMessage,
@@ -751,6 +752,15 @@ export class TrikeyWallet {
   /** `savingsWallet()` parses the Savings descriptor once per descriptor. */
   private savingsCache?: { descriptor: string; wallet: MultisigWallet };
   private scanQueued?: Promise<{ found: SilentPaymentCoin[]; scannedHeight: number }>;
+  /**
+   * Ids of the gift wraps the guardian connections handled, kept in the app's storage across restarts: every
+   * subscription is sent two days of wraps again, and without these each one cost a signature check and two
+   * decryptions on every app start (seconds of the phone's JS thread). Shared by all connections (one nostr key).
+   */
+  private readonly seenWraps: SeenWraps;
+  private readonly seenWrapsKey: string;
+  /** A `guardian.status` read after a relay connection came back, while it runs. */
+  private reconnectRefresh?: Promise<unknown>;
 
   private constructor(
     private readonly deps: WalletDeps,
@@ -762,6 +772,11 @@ export class TrikeyWallet {
     this.store = store;
     this.s = state;
     this.txs = new TxCache(deps.store, `${store.key}.txs`);
+    const key = (this.seenWrapsKey = `${store.key}.seenWraps`);
+    this.seenWraps = new SeenWraps({
+      storage: { load: () => deps.store.get(key), save: (text) => deps.store.set(key, text) },
+      now: () => this.nowSec(),
+    });
   }
 
   // ===========================================================================
@@ -884,6 +899,7 @@ export class TrikeyWallet {
 
   /** Disconnects from the guardian and the hardware wallet. */
   async close(): Promise<void> {
+    await this.seenWraps.flush().catch(() => undefined);
     this.rpc?.close();
     this.pool?.close();
     this.rpc = undefined;
@@ -923,6 +939,7 @@ export class TrikeyWallet {
     this.spScanKey = undefined;
     await this.store.clear();
     await this.txs.clear();
+    await this.deps.store.remove(this.seenWrapsKey).catch(() => undefined);
   }
 
   // ===========================================================================
@@ -959,6 +976,7 @@ export class TrikeyWallet {
   private async connect(peer: string, relays: string[], how: { routeAlerts?: boolean } = {}): Promise<{ rpc: GuardianRpc; pool: RelayPool }> {
     const pool = this.deps.relayPool();
     const secretKey = await this.nostrSecret();
+    await this.seenWraps.load(); // before subscribing: what was handled before is skipped without any crypto
     const opts: RpcClientOptions = {
       pool,
       relays,
@@ -967,12 +985,28 @@ export class TrikeyWallet {
       now: () => this.nowSec(),
       defaultTimeoutMs: this.deps.rpcTimeoutMs ?? 30_000,
       retryIntervalMs: this.deps.rpcRetryIntervalMs ?? 10_000,
+      seenWraps: this.seenWraps,
     };
     const rpc = this.deps.createRpc ? this.deps.createRpc(opts) : new RpcClient(opts);
     // The client keeps the key for as long as it runs; it is not zeroed here.
-    if (how.routeAlerts !== false) rpc.onAlert((alert, meta) => void this.onAlert(alert, meta, peer));
+    if (how.routeAlerts !== false) {
+      rpc.onAlert((alert, meta) => void this.onAlert(alert, meta, peer));
+      rpc.onReconnect?.(() => this.afterReconnect(rpc));
+    }
     await rpc.start();
     return { rpc, pool };
+  }
+
+  /**
+   * A relay connection of the paired guardian's client came back after it dropped (a relay or network restart, the app
+   * back from the background): anything the guardian said meanwhile may be lost (an unlock after its restart has no
+   * alert), so its status is read again now rather than at the next sync. One at a time.
+   */
+  private afterReconnect(rpc: GuardianRpc): void {
+    if (rpc !== this.rpc || this.reconnectRefresh || this.s.stage === 'new' || !this.s.guardian) return;
+    this.reconnectRefresh = this.refreshStatus()
+      .catch(() => undefined)
+      .finally(() => (this.reconnectRefresh = undefined));
   }
 
   /** The guardian client for the paired (or recovering) wallet. */
