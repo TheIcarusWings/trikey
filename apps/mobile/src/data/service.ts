@@ -63,8 +63,16 @@ export interface WalletService {
   now(): Date;
   /** How often screens should re-read `now()`. 0 or missing: never (the mock's frozen clock). */
   readonly clockTickMs?: number;
-  /** Asks the guardian for the wallet's coins and history. Resolves when done; a guardian that does not answer is shown as offline. */
+  /**
+   * Asks the guardian for the wallet's coins and history. Resolves when done; a guardian that does not answer is shown
+   * as offline, one that answers but is slow to read the chain as `guardianSlow` (the last balance stays).
+   */
   sync(): Promise<void>;
+  /**
+   * The app came back to the front: reconnect to the relays now (the OS may have closed the connections while it was
+   * in the background), then `sync()`. Optional: without it, the app just syncs.
+   */
+  resume?(): Promise<void>;
 
   // -- onboarding ------------------------------------------------------
   /**

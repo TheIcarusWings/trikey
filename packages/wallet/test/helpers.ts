@@ -55,6 +55,10 @@ export class FlakyPool implements RelayPool {
     });
   }
 
+  reconnect(): void {
+    this.inner.reconnect();
+  }
+
   close(): void {
     this.inner.close();
   }

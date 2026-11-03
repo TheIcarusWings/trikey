@@ -364,7 +364,10 @@ know these methods, and only to them does a phone send them (an older one answer
   it). The first scan after registration is history; every later transaction that took value out of Savings (in the
   mempool or a block) is logged and announced once: `savings_moved` to the paired phone, and a NIP-17 DM to every alert
   contact, retried for 7 days like `limit_off`. It cannot tell who signed it (the owner, or two keys in other hands); a
-  compromised guardian could stay silent, which costs nothing it was trusted with.
+  compromised guardian could stay silent, which costs nothing it was trusted with. **One outflow, one alert:** a spend of
+  a Savings coin that an earlier spend also spent is a replacement (RBF). If it pays out the same as the one it replaces
+  (the same outputs to everyone but Savings: a fee bump, only the change is smaller) it is logged and not announced;
+  otherwise it is announced as a `savings_moved` with `replaces` (the txid it replaced) and `previousAmountSats`.
 
 ### Extra alert channels
 
@@ -487,7 +490,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 | `sp_received` | `txid`, `vout`, `valueSats`, `height`, `label?`: the silent payment scanner found a payment in a new block (see "Silent payments"); `sp.scan` has its tweak |
 | `limit_off` | `sequence` (the hardware approval's), `limitBeforeSats?`: the daily limit was turned off. To the paired phone; alert contacts get a NIP-17 DM saying so in words. See "No daily limit" |
 | `limit_on` | `limitSats`, `reason` (`phone`\|`hardware`\|`recovery`): the daily limit is on again; `recovery`: the wallet a recovery adopted starts with it. To the paired phone |
-| `savings_moved` | `walletId` (the Savings wallet), `txid`, `amountSats` (what left Savings, fee included): a Savings coin was spent. To the paired phone; alert contacts get a NIP-17 DM. Guardians with `savings`; see "Savings" |
+| `savings_moved` | `walletId` (the Savings wallet), `txid`, `amountSats` (what left Savings, fee included), `replaces?` and `previousAmountSats?` (a replacement of a spend announced before that pays out something else; a fee bump is not announced): a Savings coin was spent. To the paired phone; alert contacts get a NIP-17 DM. Guardians with `savings`; see "Savings" |
 | `savings_unwatched` | `walletId` (the Savings wallet no longer watched), `replacedBy?` (the one watched instead): `savings.unregister`, or `savings.register` with another wallet. To the paired phone; alert contacts get a NIP-17 DM. See "Savings" |
 | `relays_changed` | `relays` (`RelayList`): the guardian moved to these relays (its web UI). Sent to the paired phone (and phones with recovery access) over the old and the new relays. See section 5, "Changing relays" |
 | `notifications_changed` | none: the extra alert channels (email, ntfy, webhook) were changed in the guardian's web UI; read the new list from `guardian.status.notifications`. Guardians with `notifications`; see "Extra alert channels" |
@@ -600,6 +603,7 @@ For state-changing methods (`guardian.unlock`, `guardian.lock`, `pair`, `policy.
 * A relay must accept kind 1059 and honour `#p` filters. Relays that implement NIP-40 will purge wraps at their (randomised, later) wrap expiration; see "Wrap timestamps".
 * PSBT messages are large after two layers of base64 (roughly 1.8x the PSBT's base64 size); choose relays that accept events of a few hundred KB.
 * A hostile relay can drop, delay or replay events. It cannot read or alter them (altered ciphertext fails the MAC; a re-signed wrap fails to decrypt) and replays are caught by section 4.
+* **Keep the subscription open.** Connections drop: a relay restarts, a phone changes network, Android destroys the sockets of an app in the background. Both sides MUST subscribe again on a relay whose subscription ended (after a short backoff; the reference pool waits 1, 2, 5, 10, then every 30 s, jittered, and the app does it at once when it comes back to the front), and MUST NOT narrow `since` to the newest event seen: a wrap sent while the relay was out of reach can be back-dated by up to 2 days (section 2). The reference pool asks again from as far before the drop as the first subscription asked before its start (2 days and 10 minutes). The events delivered again are dropped by wrap id and by the replay guard (section 4); a duplicate request is answered from the guardian's response cache, never run again. Publishing alone is not enough: a client that can still publish but no longer listens sends requests whose answers it never hears.
 
 ### Changing relays
 

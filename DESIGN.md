@@ -158,7 +158,12 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
   - a NIP-40 expiry;
   - the hash of the PSBT it refers to.
 - **Replay protection:** old rumors are dropped. Strangers (senders that are not the paired phone, an alert contact or a phone with recovery access) get their own small replay cache and seen-wrap set, so they cannot push a peer's entries out; refused `sign` / `recovery.start` / `recovery.update` are rate limited per sender, and repeated identical refusals are one log entry with a count.
-- **Relays:** several, with the user's own relay optional (Umbrel has a Nostr Relay app).
+- **Relays:** several, with the user's own relay optional (Umbrel has a Nostr Relay app). Setup ticks the project's
+  relay `wss://relay.trikey.app` (it stores only gift wraps and Nostr Connect events, kinds 1059 and 24133) next to
+  three public ones; it sees what any relay sees, ciphertext and metadata, and is never the only one. Trikey keeps its
+  subscriptions open itself: a relay whose connection drops (a restart, a network change, Android closing a background
+  app's sockets) is subscribed on again after a short backoff, two days and ten minutes back because gift wraps are
+  back-dated, and the app does it at once when it comes back to the front (PROTOCOL.md section 5).
 - **Changing relays** (web UI, Settings; `PUT /api/relays`, PROTOCOL.md "Changing relays"). The phone, its backups
   and printed recovery sheets all carry the list from pairing, so a change must never cut any of them off. The guardian
   listens *and publishes* on the new relays and on the removed ones at once, and keeps watching the removed ones
@@ -504,13 +509,19 @@ no policy hash or approval text changes, the same version-1 backup).
 - **Moving money.** Into Savings: a normal payment from Spending to a Savings address, counted against the daily limit
   like any other (owner's answer 3); over the limit the hardware wallet signs. Out of Savings: two of its keys (phone +
   hardware wallet by default; phone + Recovery Key if the hardware wallet is lost; hardware wallet + Recovery Key if the
-  phone key is not usable), at the 6-block fee estimate, broadcast through the guardian. "Move to Spending" pays a
-  Spending address; the hardware wallet shows it as an outgoing payment and the app says so. Spending and Savings coins
-  are never mixed in one transaction.
+  phone key is not usable), at the 6-block fee estimate with RBF signalled, broadcast through the guardian. "Move to
+  Spending" pays a Spending address; the hardware wallet shows it as an outgoing payment and the app says so. Spending and
+  Savings coins are never mixed in one transaction. **Speed up** (`TrikeyWallet.quoteSavingsSpeedUp` /
+  `speedUpSavingsSpend`): a Savings payment waiting to confirm is replaced (BIP 125) by one with the same coins and the
+  same payments, a higher fee (the 1-block estimate, at least the old fee plus the incremental relay fee for its size)
+  taken from the change back to Savings, signed again by two of Savings' keys; the app shows the fee difference first.
+  A payment with no change cannot be sped up this way (the payment is never lowered); CPFP from Spending is not built.
 - **The guardian's part** (`apps/guardian/src/savings.ts`, `PolicyEngine.registerSavings`): it watches the descriptor
   (`GuardedWallet.savings`), serves its chain data and relays its spends, and scans it on every block and every two
   minutes. A spend after the first scan raises a durable `savings_moved` notice to the paired phone and every alert
-  contact (a tripwire: an honest guardian says Savings moved; a compromised one stays silent). Turning the watch off, or
+  contact (a tripwire: an honest guardian says Savings moved; a compromised one stays silent). One outflow, one alert: a
+  later spend of the same coins is a replacement (RBF); paying out the same (a fee bump) it is only logged
+  (`savings_replaced`), paying out something else it is announced again, naming the spend it replaced. Turning the watch off, or
   swapping it for another Savings wallet, is announced to the phone and every contact the same way (`savings_unwatched`);
   the phone, which did not ask for it, registers Savings again at its next sync. It refuses to watch any
   wallet it could sign for (the guarded, watched or a retired key set, or one holding key 3). A rotation carries the
@@ -573,6 +584,27 @@ is left are in docs/design/family-hosting.md.
 - **Later:** extra alert channels for guests; the host's view of a guest's recovery code; shared mode (the full
   descriptor, opt-in); two hosts sharing the key 3 role (another script, a separate design).
 
+## Later: Taproot and threshold signatures (decided 2026-11-03: not now)
+
+Today every Trikey spend is a visible 2-of-3 (`wsh(sortedmulti)`): anyone reading the chain sees a multisig, and two
+signatures plus the script cost more than one key's signature. Two ways to fix that were weighed and left for later.
+
+- **FROST (threshold Schnorr), not now.** A 2-of-3 FROST key spends like one ordinary Taproot key: private and cheap.
+  But:
+  - every signer, the hardware wallet included, has to run the FROST rounds. Ledger, Trezor, Coldcard and Jade do not;
+    only FROST devices (Frostsnap) do;
+  - key shares are not seeds and the wallet is no standard descriptor, so no other wallet could recover the money
+    (against "every key is yours", and the exit through Sparrow or Nunchuk);
+  - the signing is interactive and nonce mistakes leak keys; the standards are still settling, and Trikey is not audited;
+  - it hides nothing from the guardian, which must read the whole transaction to enforce the limit.
+
+  Revisit when major hardware wallets sign FROST and its BIPs are final.
+- **A Taproot wallet type, later and opt-in.** Key path `musig(phone, guardian)`, so everyday payments look like one
+  key and cost the least; script leaves for the pairs with the hardware wallet. MuSig2 runs only between the phone and
+  the guardian, both our code. The blocker is the hardware wallet's side: Taproot multisig script paths, which Trezor
+  does not sign and other devices have to be checked for. A choice next to the default, never a replacement while
+  devices are missing. Revisit with the device list.
+
 ## Open questions
 
 1. **How the hardware wallet unlocks the guardian.** Rule changes now use BIP137 message signatures (see rule 4); which signing paths each device allows still has to be tested on real hardware. Unlocking with the hardware wallet is still open: Trezor has CipherKeyValue (SLIP-11), Ledger has no symmetric-key API. Until then, unlocking uses the passphrase.
@@ -593,7 +625,7 @@ is left are in docs/design/family-hosting.md.
 - `apps/guardian-web/`: the guardian's web UI, including the recovery code and the reset. Its API is in `API.md`.
 - Savings (optional, docs/design/savings-and-limit-off.md): `SAVINGS_ACCOUNT` in core; `savings.*` in the protocol; the guardian's watch (`apps/guardian/src/savings.ts`); `TrikeyWallet.startSavings` ... `replaceSavingsKey` in `packages/wallet`; `apps/mobile/app/savings/`.
 - `packages/recovery-key/`: Recovery Key mode (no home server): the printed Recovery Kit, the chain of BIP 68 timelocked refills and its scheduler, the single-key spending balance with CPFP, an Esplora client, and recovery with any two keys.
-- `apps/mobile/`: the React Native app (Expo). Demo, regtest-simulator and real modes; guardian mode runs on `@trikey/wallet` with Ledger, Trezor and QR adapters, secure key storage and a recovery-code backup file. Recovery Key mode runs on `@trikey/recovery-key` (`src/data/rk-service.ts`), on test networks only.
+- `apps/mobile/`: the React Native app (Expo). Demo, regtest-simulator and real modes; guardian mode runs on `@trikey/wallet` with Ledger, Trezor and QR adapters, secure key storage and a recovery-code backup file. Recovery Key mode runs on `@trikey/recovery-key` (`src/data/rk-service.ts`), on test networks only. Android has two builds from the same code (`TRIKEY_ANDROID_VARIANT`, `apps/mobile/android-variant.js`), with one package name and signing key: the standard one, with Google's libraries (Google Sign-In for Google Drive backup, ML Kit for QR codes), and one without any Google code, which reads QR codes with zxing-cpp through the app's own camera module (`apps/mobile/modules/trikey-qr-camera`) and backs up with the recovery code and backup file only.
 - `packaging/`: Docker image, Umbrel community app store entry, Start9 package skeleton.
 - `site/`: trikey.app, hosted on Vercel, including the passkey association files.
 - `tools/consensus-verify/`: Rust tool that checks transactions against libbitcoinconsensus (Bitcoin Core's script verifier). CI builds it, and the core and Recovery Key tests run every transaction shape through it.

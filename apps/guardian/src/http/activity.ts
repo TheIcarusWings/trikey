@@ -280,8 +280,20 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
       return {
         ...base,
         kind: 'system',
-        event: `Savings moved: ${formatSatsText(e.amountSats)} left the Savings wallet ${e.walletId} in ${shortTx(e.txid)}. This guardian did not sign it (it cannot): it took the phone with the hardware wallet, or the Recovery Key. The phone and the alert contacts are told.`,
-        summary: 'Savings moved',
+        event: e.replaces
+          ? `Savings payment replaced: ${shortTx(e.txid)} replaced ${shortTx(e.replaces)} and pays out something else; ${formatSatsText(e.amountSats)} now leaves the Savings wallet ${e.walletId}${e.previousAmountSats !== undefined ? ` (was ${formatSatsText(e.previousAmountSats)})` : ''}. Only one of the two can confirm. This guardian did not sign it (it cannot). The phone and the alert contacts are told.`
+          : `Savings moved: ${formatSatsText(e.amountSats)} left the Savings wallet ${e.walletId} in ${shortTx(e.txid)}. This guardian did not sign it (it cannot): it took the phone with the hardware wallet, or the Recovery Key. The phone and the alert contacts are told.`,
+        summary: e.replaces ? 'Savings payment replaced' : 'Savings moved',
+        signedBy: null,
+        sats: sats(e.amountSats),
+        result: 'ok',
+      };
+    case 'savings_replaced':
+      return {
+        ...base,
+        kind: 'system',
+        event: `Savings payment sped up: ${shortTx(e.txid)} replaced ${shortTx(e.replaces)}, paying the same with a higher network fee (${formatSatsText(e.amountSats - e.previousAmountSats)} more; ${formatSatsText(e.amountSats)} leaves Savings in all). The same payment, already announced: nobody is told again.`,
+        summary: 'Savings payment sped up',
         signedBy: null,
         sats: sats(e.amountSats),
         result: 'ok',

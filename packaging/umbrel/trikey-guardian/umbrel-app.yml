@@ -6,7 +6,7 @@ tagline: Key 3 of your 2-of-3 bitcoin wallet, on your own node
 # TODO(verify): the icon is a placeholder (the web UI favicon). Replace with a proper icon URL.
 icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/guardian-web/public/favicon.svg
 category: bitcoin
-version: "0.1.8-alpha"
+version: "0.1.9-alpha"
 # TODO(verify): host-facing port for the app_proxy. Pick one that no other app in the store uses.
 port: 3010
 description: >-
@@ -26,9 +26,10 @@ support: https://github.com/TheIcarusWings/trikey/issues
 # TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
 gallery: []
 releaseNotes: >-
-  Alerts can now also go out by email (through your own account), ntfy push or a webhook: Settings,
-  Notifications. Your alert contacts can lock the guardian if you allow it. The guardian watches an
-  optional Savings wallet and tells you and your contacts when money leaves it.
+  The guardian and the app keep listening after a relay restarts or a connection drops: before, the
+  phone could stop hearing the guardian ("Guardian offline", no balance) until the app was restarted.
+  A slow answer no longer shows as offline. Savings payments waiting to confirm can be sped up, and
+  Trikey's own relay is offered at setup (Settings, Change relays, to add it to an existing guardian).
 dependencies:
   - bitcoin
   - electrs

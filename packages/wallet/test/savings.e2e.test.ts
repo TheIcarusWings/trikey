@@ -10,6 +10,8 @@
  * - Receive into Savings; "Add to Savings" from Spending counts against the daily limit like any payment.
  * - Out of Savings with every pair of its keys (phone + Ledger, phone + Recovery Key, Ledger + Recovery Key), never the
  *   guardian; the guardian tells the phone (`savings_moved`) and the alert contact.
+ * - "Speed up": an unconfirmed Savings payment is replaced (RBF) with a higher fee, signed again by two of its keys; the
+ *   payment is unchanged, the change pays the difference; the guardian relays it and does not announce it twice.
  * - The backup holds Savings (version 2) and a restored phone spends it.
  * - Lost Recovery Key: everything moves to a new Savings with a new one. Lost phone, no backup: after the guardian's
  *   recovery of Spending, the new phone finds Savings at the guardian and the Ledger + Recovery Key move it to a new
@@ -18,7 +20,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as nip17 from 'nostr-tools/nip17';
 import { getPublicKey, type Event as NostrEvent } from 'nostr-tools/pure';
-import { MultisigWallet, parseSortedMultiDescriptor } from '@trikey/core';
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { MultisigWallet, NETWORKS, parseSortedMultiDescriptor } from '@trikey/core';
 import { SimplePoolRelayPool, encodeRecoveryUri, type Policy } from '@trikey/protocol';
 import { GuardianRig } from '@trikey/guardian/testing';
 import { BackupPayload, SAVINGS_POLICY_NAME, TrikeyWallet, WalletError, openBackup, type HardwareKind, type HardwareProvider, type HardwareSigner, type WalletEvent } from '../src/index.js';
@@ -29,6 +33,7 @@ const contactKey = new Uint8Array(32).fill(71);
 const contactPub = getPublicKey(contactKey);
 const RULES: Policy = { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [contactPub], sweepFeeCapSats: 20_000 };
 const HOUR = 3_600_000;
+const regtest = NETWORKS.regtest;
 
 /** Hardware wallets by kind: the wallet's Ledger, and Recovery Keys of other kinds. */
 class Devices implements HardwareProvider {
@@ -228,6 +233,107 @@ describe('moving money', { timeout: 90_000 }, () => {
     await w.sync();
     expect(w.snapshot()!.balance.totalSats).toBe(spendingBefore + 300_000);
     expect(w.savingsSnapshot()!.history[0]).toMatchObject({ purpose: 'to_spending' });
+  });
+});
+
+describe('speeding up a Savings payment (RBF)', { timeout: 90_000 }, () => {
+  it('replaces the unconfirmed payment with a higher fee: same coins, same payment, a smaller change, phone + Ledger again', async () => {
+    await rig.mine();
+    await w.syncSavings();
+    const balance = w.savingsSnapshot()!.balance.totalSats;
+    const paid = await w.sendFromSavings(w.quoteSavingsSpend({ address: externalAddress(8), amountSats: 70_000, label: 'Rent' }));
+    if (!paid.ok) throw new Error('the payment was refused');
+    // The guardian announced it once, to the phone and the contact.
+    await waitFor(() => events.find((e) => e.type === 'alert' && e.alert.type === 'savings_moved' && e.alert.txid === paid.txid), 'savings_moved');
+    await waitFor(() => contactInbox.find((m) => m.includes(paid.txid)), 'the contact is told');
+    const pending = w.savingsSnapshot()!.history.find((h) => h.txid === paid.txid)!;
+    expect(pending).toMatchObject({ confirmations: 0, canSpeedUp: true, label: 'Rent' });
+
+    const q = await w.quoteSavingsSpeedUp(paid.txid);
+    expect(q).toMatchObject({ replaces: paid.txid, recipient: externalAddress(8), amountSats: 70_000, paymentSats: 70_000, oldFeeSats: paid.feeSats, toSpending: false, signedBy: 'phone+hardware', feeRateSource: 'estimate' });
+    // The 1-block estimate (20 sat/vB on the fake node) against the 6-block one it was sent at (5 sat/vB).
+    expect(q.feeRate).toBeCloseTo(20, 0);
+    expect(q.extraFeeSats).toBe(q.feeSats - paid.feeSats);
+    expect(q.extraFeeSats).toBeGreaterThan(q.vsize); // BIP 125: at least the incremental relay fee for its size
+    expect(q.change.afterSats).toBe(q.change.beforeSats - q.extraFeeSats);
+
+    const signs = ledger.calls.filter((c) => c.op === 'signPsbt').length;
+    const prompts = events.length;
+    const r = await w.speedUpSavingsSpend(q);
+    expect(r).toMatchObject({ ok: true, replaces: paid.txid, feeSats: q.feeSats, extraFeeSats: q.extraFeeSats, signedBy: 'phone+hardware' });
+    if (!r.ok) throw new Error('unreachable');
+    expect(ledger.calls.filter((c) => c.op === 'signPsbt').length).toBe(signs + 1);
+    const prompt = events.slice(prompts).find((e) => e.type === 'hardware_prompt');
+    expect(prompt).toMatchObject({ purpose: 'payment', text: expect.stringMatching(/^Speed up the Savings payment of 70000 sats to .*: network fee \d+ -> \d+ sats \(\d+ more\)$/) });
+
+    // The node took the replacement and dropped the original.
+    expect(rig.electrs.replaced).toContain(paid.txid);
+    expect(rig.electrs.broadcasts).toContain(r.txHex);
+    const before = btc.Transaction.fromRaw(hex.decode(paid.txHex), { allowUnknownOutputs: true });
+    const after = btc.Transaction.fromRaw(hex.decode(r.txHex), { allowUnknownOutputs: true });
+    const outpoints = (t: btc.Transaction) => Array.from({ length: t.inputsLength }, (_, i) => `${hex.encode(t.getInput(i).txid!)}:${t.getInput(i).index}`);
+    expect(outpoints(after)).toEqual(outpoints(before));
+    const paysOut = (t: btc.Transaction) => Array.from({ length: t.outputsLength }, (_, i) => t.getOutput(i)).filter((o) => !w.isSavingsAddress(btc.Address(regtest.btc).encode(btc.OutScript.decode(o.script!)))).map((o) => o.amount);
+    expect(paysOut(after)).toEqual([70_000n]);
+    expect(paysOut(before)).toEqual([70_000n]);
+
+    // Savings shows one payment, the replacement, with what the phone knew of the original.
+    const snap = w.savingsSnapshot()!;
+    expect(snap.history.find((h) => h.txid === paid.txid)).toBeUndefined();
+    expect(snap.history.find((h) => h.txid === r.txid)).toMatchObject({ replaces: paid.txid, amountSats: 70_000, feeSats: q.feeSats, label: 'Rent', signedBy: 'phone+hardware', canSpeedUp: true });
+    expect(snap.balance.totalSats).toBe(balance - 70_000 - q.feeSats);
+    expect(w.state.savings!.sendLog.filter((e) => e.txid === paid.txid)).toEqual([]);
+
+    // The guardian logged the bump and did not announce it: one outflow, one alert.
+    await rig.guardian.savingsWatch.run({ force: true });
+    await rig.guardian.alerts.run();
+    const log = rig.guardian.engine.activity({ limit: 20 });
+    expect(log.find((e) => e.type === 'savings_replaced' && e.txid === r.txid)).toMatchObject({ replaces: paid.txid, amountSats: BigInt(70_000 + q.feeSats), previousAmountSats: BigInt(70_000 + paid.feeSats) });
+    expect(log.filter((e) => e.type === 'savings_moved' && (e.txid === paid.txid || e.txid === r.txid))).toHaveLength(1);
+    expect(rig.guardian.engine.dueNotices().filter((n) => n.txid === r.txid)).toEqual([]);
+    await new Promise((res) => setTimeout(res, 300));
+    expect(events.filter((e) => e.type === 'alert' && e.alert.type === 'savings_moved' && e.alert.txid === r.txid)).toEqual([]);
+    expect(contactInbox.filter((m) => m.includes(r.txid))).toEqual([]);
+
+    // The quote for the original is stale now: it is no longer waiting.
+    expect((await walletError(w.speedUpSavingsSpend(q))).code).toBe('quote_stale');
+  });
+
+  it('sped up again with the Recovery Key and the phone; once confirmed there is nothing to speed up', async () => {
+    const last = w.savingsSnapshot()!.history.find((h) => h.confirmations === 0 && h.replaces)!;
+    const q = await w.quoteSavingsSpeedUp(last.txid, { feeRate: 40 });
+    expect(q.feeRate).toBeCloseTo(40, 0);
+    expect(q.feeRateSource).toBe('caller');
+    const r = await w.speedUpSavingsSpend(q, { signers: 'phone+recoveryKey' });
+    expect(r).toMatchObject({ ok: true, replaces: last.txid, signedBy: 'phone+recoveryKey' });
+    if (!r.ok) throw new Error('unreachable');
+    await rig.mine();
+    await w.syncSavings();
+    const h = w.savingsSnapshot()!.history.find((x) => x.txid === r.txid)!;
+    expect(h).toMatchObject({ confirmations: 1, amountSats: 70_000, label: 'Rent', signedBy: 'phone+recoveryKey' });
+    expect(h.canSpeedUp).toBeUndefined();
+    const err = await walletError(w.quoteSavingsSpeedUp(r.txid));
+    expect(err.code).toBe('cannot_speed_up');
+    expect(err.message).toMatch(/confirmed already/);
+    expect((await walletError(w.quoteSavingsSpeedUp('ab'.repeat(32)))).code).toBe('cannot_speed_up');
+    // Still one Savings alert for the whole payment.
+    expect(rig.guardian.engine.activity({ limit: 30 }).filter((e) => e.type === 'savings_moved' && e.amountSats > 70_000n && e.amountSats < 80_000n)).toHaveLength(1);
+  });
+
+  it('"Move to Spending" can be sped up too; Spending receives the same amount', async () => {
+    await w.sync();
+    const spendingBefore = w.snapshot()!.balance.totalSats;
+    const to = (await w.receiveAddress()).address;
+    const paid = await w.sendFromSavings(w.quoteSavingsSpend({ address: to, amountSats: 40_000 }));
+    if (!paid.ok) throw new Error('refused');
+    const q = await w.quoteSavingsSpeedUp(paid.txid);
+    expect(q).toMatchObject({ toSpending: true, recipient: to, amountSats: 40_000 });
+    const r = await w.speedUpSavingsSpend(q);
+    expect(r.ok).toBe(true);
+    await rig.mine();
+    await w.sync();
+    expect(w.snapshot()!.balance.totalSats).toBe(spendingBefore + 40_000);
+    expect(w.savingsSnapshot()!.history[0]).toMatchObject({ purpose: 'to_spending', replaces: paid.txid, confirmations: 1 });
   });
 });
 

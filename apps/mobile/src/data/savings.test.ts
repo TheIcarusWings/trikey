@@ -129,6 +129,38 @@ describe('Savings: the demo wallet', () => {
     expect(wallet.getState().savings.balanceSats).toBe(0);
   });
 
+  it('a payment out of Savings waiting to confirm can be sped up; a "move everything" or money received cannot', async () => {
+    const wallet = fast();
+    wallet.dev!.setDemoSavings!(true);
+    const sv = wallet.savings!;
+    const q = sv.quote({ address: 'tb1qxh7u3m0k9e2r5t8wq4lzj6yd3c0vnp7s2fga8w5ke9h3rj4mt6qy0xl2dn', amountSats: 2_000_000 });
+    if (!q.ok) throw new Error(q.message);
+    const sent = await sv.send(q.quote, 'phone+hardware');
+    expect(wallet.getState().savings.activity[0]).toMatchObject({ txid: sent.txid, status: 'pending', canSpeedUp: true });
+    const before = wallet.getState().savings.balanceSats;
+    const offer = await sv.quoteSpeedUp(sent.txid);
+    if (!offer.ok) throw new Error(offer.message);
+    expect(offer.quote).toMatchObject({ txid: sent.txid, amountSats: 2_000_000, oldFeeSats: sent.feeSats, signedBy: 'phone+hardware' });
+    expect(offer.quote.extraFeeSats).toBe(offer.quote.feeSats - offer.quote.oldFeeSats);
+    expect(offer.quote.feeRate).toBeGreaterThan(offer.quote.oldFeeRate);
+    const r = await sv.speedUp(offer.quote, 'phone+hardware');
+    const after = wallet.getState().savings;
+    expect(after.balanceSats).toBe(before - offer.quote.extraFeeSats);
+    expect(after.activity.filter((a) => a.amountSats === 2_000_000)).toHaveLength(1);
+    expect(after.activity[0]).toMatchObject({ txid: r.txid, spedUp: true, feeSats: offer.quote.feeSats });
+    await expect(sv.speedUp(offer.quote, 'phone+hardware')).rejects.toMatchObject({ kind: 'quote_stale' });
+    // Money that came in is not the phone's to speed up.
+    expect(await sv.quoteSpeedUp(wallet.getState().savings.activity.find((a) => a.kind === 'received')!.txid)).toMatchObject({ ok: false, message: expect.stringMatching(/not a payment out of Savings/) });
+    const all = sv.quote({ address: 'tb1qxh7u3m0k9e2r5t8wq4lzj6yd3c0vnp7s2fga8w5ke9h3rj4mt6qy0xl2dn', amountSats: 0, max: true });
+    if (!all.ok) throw new Error(all.message);
+    const everything = await sv.send(all.quote, 'phone+hardware');
+    expect(await sv.quoteSpeedUp(everything.txid)).toMatchObject({ ok: false, message: expect.stringMatching(/no change back/) });
+  });
+
+  it('"Speed up" refusals in words', () => {
+    expect(mapError(new WalletError('cannot_speed_up', 'This payment has confirmed already: there is nothing to speed up.'))).toMatchObject({ kind: 'refused', message: 'This payment has confirmed already: there is nothing to speed up.' });
+  });
+
   it('a lost Recovery Key: Savings moves to a new one', async () => {
     const wallet = fast();
     wallet.dev!.setDemoSavings!(true);

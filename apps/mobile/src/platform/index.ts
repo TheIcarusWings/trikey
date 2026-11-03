@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { ANDROID_VARIANT, type AndroidVariant } from '../lib/android-variant';
 import { googleOAuthClientId, passkeyRpId } from './config';
 import { createCloudBackupStore } from './cloud/store';
 import type { TrikeyCloudBackupStore } from './cloud/store';
@@ -32,7 +33,10 @@ export interface TrikeyPlatform {
   secureKeys: TrikeySecureKeyStore;
   /** Non-secret app state. */
   kv: TrikeyKeyValueStore;
-  /** The provider to use first: iCloud on iOS, Google Drive on Android, memory on web. */
+  /**
+   * The provider to use first: iCloud on iOS, Google Drive on Android (the standard build), memory on web. The Android
+   * build without Google code has no Google Drive: there it is the local `file` provider.
+   */
   cloudBackup: TrikeyCloudBackupStore;
   /**
    * Every provider this build has, best first. On iOS and Android the last one is the local
@@ -51,6 +55,8 @@ export interface CreatePlatformOptions {
   preferFileBackup?: boolean;
   /** Override the build-time configuration (tests). */
   config?: { googleClientId?: string | null; passkeyRpId?: string | null };
+  /** Which Android build this is (tests); defaults to the bundle's own, `ANDROID_VARIANT`. */
+  androidVariant?: AndroidVariant;
 }
 
 export function createPlatform(opts: CreatePlatformOptions = {}): TrikeyPlatform {
@@ -72,14 +78,18 @@ export function createPlatform(opts: CreatePlatformOptions = {}): TrikeyPlatform
   }
 
   const file = createFileBackupStore();
-  const primary: TrikeyCloudBackupStore =
+  // No Google Drive at all in the Android build without Google code: not offered, not even as "coming later".
+  const googleFree = os === 'android' && (opts.androidVariant ?? ANDROID_VARIANT) === 'foss';
+  const primary: TrikeyCloudBackupStore | null =
     os === 'ios'
       ? createICloudBackupStore()
-      : createGoogleDriveBackupStore({
-          clientId: opts.config?.googleClientId === undefined ? googleOAuthClientId() : opts.config.googleClientId,
-          isAndroid: true,
-        });
-  const cloudBackups = opts.preferFileBackup ? [file, primary] : [primary, file];
+      : googleFree
+        ? null
+        : createGoogleDriveBackupStore({
+            clientId: opts.config?.googleClientId === undefined ? googleOAuthClientId() : opts.config.googleClientId,
+            isAndroid: true,
+          });
+  const cloudBackups = !primary ? [file] : opts.preferFileBackup ? [file, primary] : [primary, file];
 
   return {
     os,

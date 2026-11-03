@@ -7,8 +7,12 @@
  * IP address and that it runs Trikey. The request carries no account, token or wallet data.
  *
  * Every Trikey release is a GitHub pre-release for now (tag `v0.1.6-alpha`, asset `trikey-alpha-v0.1.6-alpha.apk`
- * beside `trikey-alpha-v0.1.6-alpha.apk.sha256`), so pre-releases count.
+ * beside `trikey-alpha-v0.1.6-alpha.apk.sha256`), so pre-releases count. From 0.1.9 a release carries two Android
+ * builds: the standard one and the one without Google code (`trikey-alpha-foss-v0.1.9-alpha.apk`). The check offers
+ * the APK of the build that is installed, so an update never swaps one for the other.
  */
+
+import type { AndroidVariant } from './android-variant';
 
 const REPO = 'TheIcarusWings/trikey';
 export const RELEASES_API_URL = `https://api.github.com/repos/${REPO}/releases?per_page=10`;
@@ -70,9 +74,12 @@ function isReleasePageUrl(url: unknown): url is string {
   return /^[A-Za-z0-9._-]+$/.test(tag) && !/^\.+$/.test(tag);
 }
 
-/** The file names a release must carry: the APK and, beside it, its checksum. */
-export function assetNames(tag: string): { apk: string; sha256: string } {
-  const apk = `trikey-alpha-${tag}.apk`;
+/**
+ * The file names a release must carry for `variant`: the APK and, beside it, its checksum. The names are made in
+ * .github/workflows/android-build.yml.
+ */
+export function assetNames(tag: string, variant: AndroidVariant = 'standard'): { apk: string; sha256: string } {
+  const apk = variant === 'foss' ? `trikey-alpha-foss-${tag}.apk` : `trikey-alpha-${tag}.apk`;
   return { apk, sha256: `${apk}.sha256` };
 }
 
@@ -96,13 +103,13 @@ function downloadUrl(assets: unknown[], name: string): string | null {
   return isObject(asset) && isReleaseDownloadUrl(asset.browser_download_url) ? asset.browser_download_url : null;
 }
 
-/** One entry of GitHub's release list, if it is a published Trikey release with an APK. */
-export function readRelease(raw: unknown): Release | null {
+/** One entry of GitHub's release list, if it is a published Trikey release with an APK of `variant`. */
+export function readRelease(raw: unknown, variant: AndroidVariant = 'standard'): Release | null {
   if (!isObject(raw) || raw.draft === true || typeof raw.tag_name !== 'string') return null;
   const tag = raw.tag_name;
   const version = parseTag(tag);
   if (!version || !Array.isArray(raw.assets)) return null;
-  const names = assetNames(tag);
+  const names = assetNames(tag, variant);
   const apkUrl = downloadUrl(raw.assets, names.apk);
   if (!apkUrl) return null;
   const title = typeof raw.name === 'string' ? raw.name.trim().slice(0, 120) : '';
@@ -116,11 +123,11 @@ export function readRelease(raw: unknown): Release | null {
   };
 }
 
-/** The newest Trikey release with an APK in GitHub's list, drafts and other tags skipped. */
-export function pickRelease(list: unknown[]): Release | null {
+/** The newest Trikey release with an APK of `variant` in GitHub's list, drafts and other tags skipped. */
+export function pickRelease(list: unknown[], variant: AndroidVariant = 'standard'): Release | null {
   let best: Release | null = null;
   for (const raw of list) {
-    const release = readRelease(raw);
+    const release = readRelease(raw, variant);
     if (release && (!best || compareVersions(release.version, best.version) > 0)) best = release;
   }
   return best;
@@ -177,9 +184,14 @@ async function withTimeout<T>(ms: number, task: (signal: AbortSignal | undefined
 
 /**
  * Asks GitHub for the latest releases (one request, plus the small checksum file when there is a newer APK) and
- * compares the newest with `currentVersion`. Throws `UpdateCheckError`. Call it only from a tap: see the top of this file.
+ * compares the newest with `currentVersion`. Only releases with an APK of `opts.variant` (the installed build, standard
+ * by default) count. Throws `UpdateCheckError`. Call it only from a tap: see the top of this file.
  */
-export async function checkForUpdate(currentVersion: string, fetchFn: FetchLike, opts: { timeoutMs?: number } = {}): Promise<UpdateCheck> {
+export async function checkForUpdate(
+  currentVersion: string,
+  fetchFn: FetchLike,
+  opts: { timeoutMs?: number; variant?: AndroidVariant } = {}
+): Promise<UpdateCheck> {
   const timeoutMs = opts.timeoutMs ?? 15_000;
   const current = parseAppVersion(currentVersion);
   if (!current) throw new UpdateCheckError('unknown-version');
@@ -207,7 +219,7 @@ export async function checkForUpdate(currentVersion: string, fetchFn: FetchLike,
   if (!Array.isArray(list)) throw new UpdateCheckError('unreadable');
 
   const shown = formatVersion(current);
-  const release = pickRelease(list);
+  const release = pickRelease(list, opts.variant ?? 'standard');
   if (!release) return { kind: 'none', current: shown };
   if (compareVersions(release.version, current) <= 0) return { kind: 'up-to-date', current: shown };
   return { kind: 'available', current: shown, release, sha256: await fetchSha256(release, fetchFn, timeoutMs) };

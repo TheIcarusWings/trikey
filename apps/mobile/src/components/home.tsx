@@ -78,9 +78,16 @@ export function BalanceHeader({
   /** Replaces the BTC line, e.g. "Spend with Face ID, no Ledger needed". */
   caption?: string;
 }) {
-  const { unit, synced, syncing, backing } = useWallet();
+  const { unit, synced, syncing, guardianSlow, backing } = useWallet();
   const [hidden, toggle] = useBalanceHidden();
-  const waiting = backing !== 'demo' && !synced ? (syncing ? 'Syncing with your guardian…' : 'Not synced yet. Pull down to refresh.') : undefined;
+  const waiting =
+    backing !== 'demo' && !synced
+      ? syncing
+        ? 'Syncing with your guardian…'
+        : guardianSlow
+          ? 'Your guardian is slow to answer. Pull down to try again.'
+          : 'Not synced yet. Pull down to refresh.'
+      : undefined;
   const main = formatAmount(sats, unit);
   const unitText = unit === 'btc' ? 'BTC' : 'sats';
   const secondary = unit === 'btc' ? `BTC · ${formatSats(sats)} sats` : `sats · ${formatBtc(sats)} BTC`;

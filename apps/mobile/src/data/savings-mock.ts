@@ -9,7 +9,7 @@ import { emptySavings } from './savings-empty';
 import { displayPath, renderSavingsMap } from './savings-map';
 import type { SavingsActions } from './savings-actions';
 import type { MockHooks } from './rk-mock';
-import type { HardwareKind, Sats, SavingsActivityItem, SavingsDevice, SavingsMapData, SavingsMapKey, SavingsQuote, SavingsSigners, SavingsState } from './types';
+import type { HardwareKind, Sats, SavingsActivityItem, SavingsDevice, SavingsMapData, SavingsMapKey, SavingsQuote, SavingsSigners, SavingsSpeedUpQuote, SavingsState } from './types';
 
 /** The demo's Savings receive addresses (index 0, 1, ...): samples, not anyone's wallet. */
 export const DEMO_SAVINGS_ADDRESSES = [
@@ -25,6 +25,9 @@ const DEMO_SAVINGS_KEYS = [...DEMO_SAVINGS_DESCRIPTOR.matchAll(/\[([0-9a-f]{8})\
 
 /** The demo's fee for a Savings payment (one 2-of-3 input, two outputs, at the slow rate). */
 const DEMO_SAVINGS_FEE: Sats = 640;
+/** The demo's size of that payment (vbytes) and the fee rate "Speed up" moves it to (the 1-block estimate). */
+const DEMO_SAVINGS_VSIZE = 180;
+const DEMO_FAST_RATE = 20;
 const MIN_PAYMENT: Sats = 546;
 
 export const isDemoSavingsAddress = (address: string) => DEMO_SAVINGS_ADDRESSES.includes(address.trim());
@@ -150,10 +153,43 @@ export function createMockSavings(h: MockHooks, nextId: (prefix: string) => stri
         status: 'pending',
         address: quote.address,
         signedBy: signers,
+        ...(quote.max ? {} : { canSpeedUp: true as const }),
       };
       patch((s) => ({ balanceSats: s.balanceSats - quote.totalSats, activity: [item, ...s.activity] }));
       if (quote.toSpending) h.update((s) => ({ balanceSats: s.balanceSats + quote.amountSats }));
       return { txid: item.txid, amountSats: quote.amountSats, feeSats: quote.feeSats };
+    },
+    async quoteSpeedUp(txid: string) {
+      await h.wait(h.networkDelay);
+      const item = sv().activity.find((a) => a.txid === txid);
+      if (!item || item.kind === 'received') return { ok: false, message: 'That is not a payment out of Savings that Trikey knows of.' };
+      if (item.status === 'confirmed') return { ok: false, message: 'This payment has confirmed already: there is nothing to speed up.' };
+      if (!item.canSpeedUp) return { ok: false, message: 'This payment sends everything, with no change back: there is nothing to pay a higher fee from without lowering what it pays.' };
+      const oldFee = item.feeSats ?? DEMO_SAVINGS_FEE;
+      const feeSats = Math.max(DEMO_FAST_RATE * DEMO_SAVINGS_VSIZE, oldFee + DEMO_SAVINGS_VSIZE);
+      const quote: SavingsSpeedUpQuote = {
+        txid,
+        address: item.address ?? '',
+        amountSats: item.amountSats,
+        oldFeeSats: oldFee,
+        feeSats,
+        oldFeeRate: oldFee / DEMO_SAVINGS_VSIZE,
+        feeRate: feeSats / DEMO_SAVINGS_VSIZE,
+        extraFeeSats: feeSats - oldFee,
+        toSpending: item.kind === 'to-spending',
+        ...(item.signedBy ? { signedBy: item.signedBy } : {}),
+      };
+      return { ok: true as const, quote };
+    },
+    async speedUp(quote: SavingsSpeedUpQuote, signers: SavingsSigners) {
+      requireActive();
+      const item = sv().activity.find((a) => a.txid === quote.txid);
+      if (!item || item.status !== 'pending') throw new WalletServiceError('quote_stale', 'This payment is no longer waiting in Savings. Go back and look again.');
+      await h.wait(h.deviceDelay * (signers === 'hardware+recoveryKey' ? 2 : 1));
+      const txid = nextId('5c').replace(/[^0-9a-f]/g, '').padEnd(64, 'c');
+      const next: SavingsActivityItem = { ...item, id: nextId('sv'), txid, feeSats: quote.feeSats, at: h.now.toISOString(), signedBy: signers, spedUp: true };
+      patch((s) => ({ balanceSats: s.balanceSats - quote.extraFeeSats, activity: s.activity.map((a) => (a.txid === quote.txid ? next : a)) }));
+      return { txid, feeSats: quote.feeSats, extraFeeSats: quote.extraFeeSats };
     },
     async replaceKey(lost, opts = {}) {
       requireActive();

@@ -1,6 +1,6 @@
 {
   "name": "@trikey/mobile",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "The Trikey phone app: key 2 of your 2-of-3 bitcoin wallet",
   "license": "MIT",
   "private": true,
@@ -97,8 +97,11 @@
   "devDependencies": {
     "@trikey/guardian": "^0.1.0",
     "@trikey/silent-payments": "*",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "~19.2.14",
+    "qrcode": "^1.5.4",
     "tailwindcss": "^3.4.19",
-    "vitest": "^5.0.5"
+    "vitest": "^5.0.5",
+    "zxing-wasm": "^3.1.6"
   }
 }

@@ -221,6 +221,8 @@ export function mapError(e: unknown): WalletServiceError {
         return make('wrong_state', 'This wallet already has Savings.');
       case 'no_savings':
         return make('wrong_state', e.message);
+      case 'cannot_speed_up':
+        return make('refused', e.message);
       case 'backup_wrong_secret':
         return make('backup_wrong_secret', "That didn't unlock the backup. Check the recovery code, or use the passkey you made it with.");
       case 'recovery_code_typo':

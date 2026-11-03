@@ -241,7 +241,7 @@ def main(argv: list[str]) -> int:
         with open(summary_path, "a", encoding="utf-8") as f:
             f.write(f"## Android launch check: {'failed' if failed else 'passed'}\n\n")
             f.write(f"`{status.get('apk', '')}` on a {status.get('device_abi', '?')} emulator, API {status.get('device_sdk', '?')}. ")
-            f.write("The full logcat, the app's lines, a screenshot and any tombstones are in the `android-launch-logcat` artifact.\n\n")
+            f.write("The full logcat, the app's lines, a screenshot and any tombstones are in the `android-launch-logcat-<variant>` artifact.\n\n")
             f.write("```\n" + "\n".join(report).replace("```", "'''") + "\n```\n")
     return 1 if failed else 0
 

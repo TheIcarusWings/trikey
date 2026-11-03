@@ -1,0 +1,25 @@
+# Zapstore listing (https://zapstore.dev), read by zsp. Zapstore picks up each GitHub release by itself once the
+# maintainer has linked the APK signing certificate to Trikey's publisher npub (run `zsp` once; see
+# docs/zapstore.md). No key or secret belongs in this file or in this repository.
+repository: https://github.com/TheIcarusWings/trikey
+release_source: https://github.com/TheIcarusWings/trikey
+pubkey: npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9
+# The standard APK only (trikey-alpha-v<version>.apk), never its .sha256.
+match: '^trikey-alpha-v[0-9][^/]*\.apk$'
+# Every release is a GitHub pre-release while Trikey is pre-alpha; publish them on the main channel.
+prerelease_channel: main
+
+name: Trikey
+summary: A 2-of-3 bitcoin wallet where every key is yours. Pre-alpha, open source, not audited.
+description: |
+  Trikey is a 2-of-3 bitcoin wallet: your hardware wallet (Ledger or Trezor), this phone, and the Trikey Guardian
+  on your own Umbrel. Everyday payments need only the phone, under a daily limit the guardian enforces. Bigger
+  payments and rule changes need your hardware wallet. Lose the phone and a Delay & Notify recovery gets your money
+  back while your alert contacts are told over nostr.
+
+  **Pre-alpha, open source, not audited.** Use test networks, or on mainnet only an amount you can afford to lose.
+license: MIT
+website: https://trikey.app
+tags: [bitcoin, wallet, multisig, nostr]
+icon: ./apps/mobile/assets/icon.png
+release_notes: ./CHANGELOG.md
