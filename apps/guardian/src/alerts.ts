@@ -194,7 +194,10 @@ export function noticeToWire(n: LimitNotice): Alert | undefined {
           walletId: n.savingsWalletId,
           txid: n.txid,
           amountSats: Number(n.amountSats ?? 0n),
-          message: `${satsText(n.amountSats ?? 0n)} moved out of Savings. That needs your hardware wallet or your Recovery Key with another key: if you did not do this, act now.`,
+          ...(n.replacesTxid ? { replaces: n.replacesTxid, ...(n.previousAmountSats !== undefined ? { previousAmountSats: Number(n.previousAmountSats) } : {}) } : {}),
+          message: n.replacesTxid
+            ? `A payment out of Savings was replaced: it now moves ${satsText(n.amountSats ?? 0n)}${n.previousAmountSats !== undefined ? ` instead of ${satsText(n.previousAmountSats)}` : ''}, and pays out something else. Only one of the two can confirm. That needs your hardware wallet or your Recovery Key with another key: if you did not do this, act now.`
+            : `${satsText(n.amountSats ?? 0n)} moved out of Savings. That needs your hardware wallet or your Recovery Key with another key: if you did not do this, act now.`,
         }
       : undefined;
   if (n.kind === 'contact_lock')
@@ -244,6 +247,15 @@ export function noticeText(n: LimitNotice, canLock = false, reach: ContactReach 
       n.replacedBy
         ? 'This is expected when the owner replaced a lost Savings key. If not, or you are not sure, call them now: someone with their phone may be about to move Savings unseen.'
         : 'If the owner did not do this, or you are not sure, call them now: someone with their phone may be about to move Savings unseen.',
+    ].join('\n');
+  if (n.kind === 'savings_moved' && n.replacesTxid)
+    return [
+      'Trikey alert: a payment out of the Savings wallet of the bitcoin wallet you help protect was replaced.',
+      '',
+      `What happened: on ${formatWhen(n.at)}, transaction ${n.txid ?? '(unknown)'} replaced transaction ${n.replacesTxid}${n.previousAmountSats !== undefined ? `, which moved ${formatBtc(n.previousAmountSats)}` : ''} and which you were told about. It spends the same Savings coins but pays out something else: ${formatBtc(n.amountSats ?? 0n)} now leaves Savings. Only one of the two can confirm, so this is not a second payment.`,
+      "The guardian cannot sign for Savings: this took two of the owner's other keys (their phone with their hardware wallet, or one of them with their Recovery Key).",
+      '',
+      'If the owner changed the payment, nothing else is needed. If not, or you are not sure, call them now: they may need to move what is left with their hardware wallet and Recovery Key.',
     ].join('\n');
   if (n.kind === 'savings_moved')
     return [

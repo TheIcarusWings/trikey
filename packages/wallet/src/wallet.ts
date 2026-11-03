@@ -132,14 +132,17 @@ import {
   FEE_TARGETS,
   LIMIT_WINDOW_MS,
   MIN_PAYMENT_SATS,
+  buildBumpPsbt,
   buildSendMaxPsbt,
   guardianBlocker,
   outputScriptOf,
   pickFeeRate,
+  planFeeBump,
   selectAllCoins,
   selectCoins,
   spentTodayEstimate,
   toCoreUtxo,
+  type BumpPlan,
   type HardwareReason,
   type SendQuote,
   type SendRequest,
@@ -591,6 +594,10 @@ export interface SavingsHistoryEntry extends HistoryEntry {
   purpose?: SavingsSendEntry['purpose'];
   /** Sent by this phone, not listed by the guardian yet. */
   local?: true;
+  /** "Speed up": this replaced the unconfirmed Savings spend `replaces` (same payment, higher fee). */
+  replaces?: string;
+  /** A payment out of Savings that has not confirmed: "Speed up" may replace it with a higher fee (`quoteSavingsSpeedUp` says whether it can). */
+  canSpeedUp?: true;
 }
 
 /** The Savings wallet as the screens show it (`savingsSnapshot`). */
@@ -635,6 +642,32 @@ export interface SavingsQuote {
 
 export type SavingsSendResult =
   | { ok: true; txid: string; txHex: string; amountSats: number; feeSats: number; signedBy: SavingsSigners }
+  | { ok: false; refusal: GuardianRefusal; signedTx?: { txid: string; txHex: string } };
+
+/**
+ * "Speed up" of an unconfirmed payment out of Savings (`quoteSavingsSpeedUp`): a replacement (BIP 125) with the same coins
+ * and the same payments, signed again by two of Savings' keys, the higher fee taken from the change back to Savings.
+ */
+export interface SavingsSpeedUpQuote extends Omit<BumpPlan, 'change'> {
+  /** The unconfirmed Savings transaction it replaces. */
+  replaces: string;
+  /** Where the fee rate came from (the 1-block estimate unless the caller named a rate or speed). */
+  feeRateSource: SavingsQuote['feeRateSource'];
+  /** How much more it pays than the transaction it replaces (`feeSats - oldFeeSats`). */
+  extraFeeSats: number;
+  /** The change back to Savings before and after (absent after: what was left was dust, so it went to the fee). */
+  change: BumpPlan['change'];
+  /** The first payment's address (the one the person sent to), and what all payments send: unchanged by the bump. */
+  recipient: string;
+  amountSats: number;
+  /** The payment goes to this phone's own Spending wallet. */
+  toSpending: boolean;
+  /** Who signed the original, when this phone sent it (the default to sign the replacement with). */
+  signedBy?: SavingsSigners;
+}
+
+export type SavingsSpeedUpResult =
+  | { ok: true; txid: string; txHex: string; replaces: string; feeSats: number; extraFeeSats: number; signedBy: SavingsSigners }
   | { ok: false; refusal: GuardianRefusal; signedTx?: { txid: string; txHex: string } };
 
 /** A lost Savings key was replaced: everything moved to the new Savings wallet `walletId`. */
@@ -4634,14 +4667,20 @@ export class TrikeyWallet {
     const balance = c?.balance ?? { confirmedSats: 0, unconfirmedSats: 0 };
     const log = new Map(sv.sendLog.map((e) => [e.txid, e]));
     const listed = new Set<string>();
+    // An unconfirmed payment out of Savings can be sped up (RBF); a key replacement's move too, through the same path.
+    const speedable = (h: { confirmations: number; netSats: number }) => (h.confirmations === 0 && h.netSats < 0 ? { canSpeedUp: true as const } : {});
     const history: SavingsHistoryEntry[] = (c?.history ?? []).map((h) => {
       listed.add(h.txid);
       const e = log.get(h.txid);
-      return e ? { ...h, sentAt: e.at, recipient: e.recipient, amountSats: e.amountSats, signedBy: e.signedBy, ...(e.purpose ? { purpose: e.purpose } : {}), ...(e.label ? { label: e.label } : {}) } : { ...h };
+      return e
+        ? { ...h, sentAt: e.at, recipient: e.recipient, amountSats: e.amountSats, signedBy: e.signedBy, ...(e.purpose ? { purpose: e.purpose } : {}), ...(e.label ? { label: e.label } : {}), ...(e.replaces ? { replaces: e.replaces } : {}), ...speedable(h) }
+        : { ...h, ...speedable(h) };
     });
+    // A spend this phone replaced ("Speed up") is gone from the mempool: never shown as still on its way.
+    const replaced = new Set(sv.sendLog.flatMap((e) => (e.replaces ? [e.replaces] : [])));
     const unlisted = sv.sendLog
-      .filter((e) => !listed.has(e.txid) && e.at > (c?.syncedAt ?? 0) - 10 * 60_000)
-      .map((e): SavingsHistoryEntry => ({ txid: e.txid, height: 0, confirmations: 0, netSats: -(e.amountSats + e.feeSats), feeSats: e.feeSats, sentAt: e.at, recipient: e.recipient, amountSats: e.amountSats, signedBy: e.signedBy, ...(e.purpose ? { purpose: e.purpose } : {}), local: true }));
+      .filter((e) => !listed.has(e.txid) && !replaced.has(e.txid) && e.at > (c?.syncedAt ?? 0) - 10 * 60_000)
+      .map((e): SavingsHistoryEntry => ({ txid: e.txid, height: 0, confirmations: 0, netSats: -(e.amountSats + e.feeSats), feeSats: e.feeSats, sentAt: e.at, recipient: e.recipient, amountSats: e.amountSats, signedBy: e.signedBy, ...(e.purpose ? { purpose: e.purpose } : {}), ...(e.replaces ? { replaces: e.replaces } : {}), local: true }));
     return {
       walletId: sv.walletId,
       descriptor: sv.descriptor,
@@ -5000,6 +5039,115 @@ export class TrikeyWallet {
     await this.update((s) => {
       if (s.savings) s.savings.sendLog = [...s.savings.sendLog.filter((e) => e.txid !== entry.txid), entry].slice(-MAX_SEND_LOG);
     });
+  }
+
+  /** Every Savings script within reach (receive and change, the scanned range plus the gap), and where it is. */
+  private savingsScripts(wallet: MultisigWallet, record: SavingsRecord): Map<string, { chain: 0 | 1; index: number }> {
+    const out = new Map<string, { chain: 0 | 1; index: number }>();
+    const gap = record.chain?.gapLimit ?? 20;
+    const next = { 0: Math.max(record.nextReceiveIndex, record.chain?.nextReceiveIndex ?? 0), 1: Math.max(record.nextChangeIndex, record.chain?.nextChangeIndex ?? 0) };
+    for (const chain of [0, 1] as const) for (let i = 0; i < next[chain] + gap; i++) out.set(hex.encode(wallet.derive(chain, i).script), { chain, index: i });
+    return out;
+  }
+
+  /**
+   * "Speed up" of an unconfirmed payment out of Savings (docs/design/savings-and-limit-off.md, "Fees"): plans a
+   * replacement (BIP 125) that spends the same coins and pays the same outputs to everyone else, with a higher fee taken
+   * from the change back to Savings, at the 1-block estimate (or `speed` / `feeRate`) and never less than the rules ask
+   * (the old fee plus the relay fee for its size). Nothing is signed here; `speedUpSavingsSpend` does that with two of
+   * Savings' keys, like any Savings spend. Reads the transaction and its coins' previous transactions through the guardian.
+   *
+   * Throws `cannot_speed_up` (with the reason) when it confirmed already, is not a payment out of Savings, or has no change
+   * to take the fee from (a "move everything"): the payments are never lowered.
+   */
+  async quoteSavingsSpeedUp(txid: string, opts: { speed?: SendRequest['speed']; feeRate?: number } = {}): Promise<SavingsSpeedUpQuote> {
+    const { record, wallet, feeRate, feeRateSource } = this.savingsQuoteBasics({ feeRate: opts.feeRate, speed: opts.speed ?? 'fast' });
+    const listed = record.chain?.history.find((h) => h.txid === txid);
+    const logged = record.sendLog.find((e) => e.txid === txid);
+    if (!listed && !logged) throw new WalletError('cannot_speed_up', 'That is not a payment out of Savings that Trikey knows of.');
+    if (listed && listed.confirmations > 0) throw new WalletError('cannot_speed_up', 'This payment has confirmed already: there is nothing to speed up.');
+    if (listed && listed.netSats >= 0) throw new WalletError('cannot_speed_up', 'Only a payment out of Savings can be sped up from here.');
+    const source = this.savingsChain();
+    const [txHex] = await this.prevTxs([txid], source);
+    const original = btc.Transaction.fromRaw(hex.decode(txHex!), { ...TX_OPTS, allowUnknownOutputs: true });
+    const inputTxids: string[] = [];
+    for (let i = 0; i < original.inputsLength; i++) inputTxids.push(hex.encode(original.getInput(i).txid!));
+    const prevs = await this.prevTxs(inputTxids, source);
+    const scripts = this.savingsScripts(wallet, record);
+    const plan = planFeeBump({
+      txHex: txHex!,
+      prevTxHexes: prevs,
+      pathOf: (script) => scripts.get(hex.encode(script)),
+      feeRate,
+      incrementalSatPerVb: Math.max(1, this.fees?.minRelaySatPerVb ?? 1),
+    });
+    const payments = plan.outputs.filter((o) => !o.change);
+    const recipient = logged?.recipient ?? (payments[0] ? btc.Address(this.network.btc).encode(btc.OutScript.decode(hex.decode(payments[0].script))) : '');
+    return {
+      ...plan,
+      replaces: txid,
+      feeRateSource,
+      extraFeeSats: plan.feeSats - plan.oldFeeSats,
+      recipient,
+      amountSats: plan.paymentSats,
+      toSpending: logged ? logged.purpose === 'to_spending' : this.isSpendingAddress(recipient),
+      ...(logged ? { signedBy: logged.signedBy } : {}),
+    };
+  }
+
+  /**
+   * Signs and broadcasts a "Speed up" quote with two of Savings' keys (`signers`, default the ones that signed the
+   * original, else the phone and the hardware wallet): the hardware wallet shows the same payment again with the higher
+   * fee. Refused (`cannot_speed_up`) if the original confirmed meanwhile, and `quote_stale` if it was replaced already
+   * (Savings no longer lists it, and this phone's log no longer has it). The guardian relays it; it does not announce a fee bump of a spend it announced already.
+   */
+  async speedUpSavingsSpend(quote: SavingsSpeedUpQuote, opts: { signers?: SavingsSigners } = {}): Promise<SavingsSpeedUpResult> {
+    const { record, wallet } = this.requireSavings();
+    const signers = opts.signers ?? quote.signedBy ?? 'phone+hardware';
+    // Always read Savings again: the original must still be waiting, and still be the one in the mempool.
+    await this.syncSavings();
+    const now = this.s.savings?.chain?.history.find((h) => h.txid === quote.replaces);
+    if (now && now.confirmations > 0) throw new WalletError('cannot_speed_up', 'This payment confirmed meanwhile: there is nothing to speed up.');
+    // Not listed and not in this phone's log (a replacement drops the original's entry): it was replaced already.
+    // Sent by this phone moments ago, the guardian's Electrs may simply not list it yet; the node judges the replacement.
+    if (!now && !this.s.savings?.sendLog.some((e) => e.txid === quote.replaces))
+      throw new WalletError('quote_stale', 'This payment is no longer waiting in Savings (it was replaced, or dropped). Sync and look again.');
+    const prevs = await this.prevTxs(quote.inputs.map((u) => u.txid), this.savingsChain());
+    const psbt = selfCheck(() => buildBumpPsbt({ wallet, plan: quote, prevTxHexes: prevs }));
+    const a = selfCheck(() => analyzePsbt(psbt, wallet.accountPubkeys(), this.network, { requireNonWitnessUtxo: true }));
+    const changeAfter = quote.change.afterSats ?? 0;
+    if (a.inputs.length !== quote.inputs.length || a.fee !== BigInt(quote.feeSats) || a.selfOut !== BigInt(changeAfter) || a.externalOut !== BigInt(quote.amountSats) || a.fee <= BigInt(quote.oldFeeSats))
+      throw new WalletError('internal', 'The replacement does not match its quote; quote it again.');
+    const detail = `Speed up the Savings payment of ${quote.amountSats} sats to ${quote.recipient}${quote.toSpending ? ' (your Spending wallet)' : ''}: network fee ${quote.oldFeeSats} -> ${quote.feeSats} sats (${quote.extraFeeSats} more)`;
+    const final = await this.signSavings(psbt, wallet, record, signers, detail);
+    const { txHex, txid } = finalizePsbt(final);
+    try {
+      await this.savingsChain().broadcast(txHex);
+    } catch (e) {
+      const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
+      if (!refusal) throw e;
+      return { ok: false, refusal, signedTx: { txid, txHex } };
+    }
+    const before = this.s.savings?.sendLog.find((e) => e.txid === quote.replaces);
+    await this.update((s) => {
+      if (!s.savings) return;
+      const entry: SavingsSendEntry = {
+        txid,
+        at: this.now(),
+        recipient: quote.recipient,
+        amountSats: quote.amountSats,
+        feeSats: quote.feeSats,
+        ...(before?.label ? { label: before.label } : {}),
+        signedBy: signers,
+        ...(before?.purpose ? { purpose: before.purpose } : quote.toSpending ? { purpose: 'to_spending' as const } : {}),
+        replaces: quote.replaces,
+      };
+      // The original left the mempool: its entry goes, the replacement carries its label and purpose.
+      s.savings.sendLog = [...s.savings.sendLog.filter((e) => e.txid !== quote.replaces && e.txid !== txid), entry].slice(-MAX_SEND_LOG);
+    });
+    await this.syncSavings().catch(() => undefined);
+    if (quote.toSpending) await this.sync().catch(() => undefined);
+    return { ok: true, txid, txHex, replaces: quote.replaces, feeSats: quote.feeSats, extraFeeSats: quote.extraFeeSats, signedBy: signers };
   }
 
   /**

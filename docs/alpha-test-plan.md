@@ -710,10 +710,18 @@ Do:
    You should see: no guardian and no limit involved; once it is broadcast, the phone, every alert contact and the email and
    ntfy channels get "Money moved out of Savings" with the amount.
 4. **Move money out with phone + Recovery Key** (the Ledger left aside). Same as 3, signed on the Recovery Key.
-5. **Restore** (step 11 again, after 1 to 4): the restored phone shows Savings with the right balance.
-6. **Turn the watch off** (or replace the Recovery Key). You should see the phone and every contact told about it.
+5. **Speed up a Savings payment.** Send a small amount out of Savings again and, before it confirms, tap it on the
+   Savings screen ("Speed up ›"). It is easiest when the network is busy, or on signet or testnet4 right after a block.
+   You should see: the old fee, the new fee and the difference before anything is signed; the amount and address
+   unchanged; the hardware wallet (or the Recovery Key, if you pick it) shows the same payment with the higher fee; Savings
+   then lists one payment marked "sped up", not two; the explorer shows the new transaction and the old one gone; and **no
+   second** "Money moved out of Savings" alert on the phone, the contacts or the email and ntfy channels (the guardian's
+   Activity shows "Savings payment sped up"). A "Move everything" payment has no change to pay from: the app should say it
+   cannot be sped up.
+6. **Restore** (step 11 again, after 1 to 5): the restored phone shows Savings with the right balance.
+7. **Turn the watch off** (or replace the Recovery Key). You should see the phone and every contact told about it.
 
-If it goes wrong, collect: which two keys signed, both devices' models and firmware, the transaction id, the screen and
+If it goes wrong, collect: which two keys signed, for a speed-up both transaction ids, both devices' models and firmware, the transaction id, the screen and
 message, the guardian's Activity page and the log lines starting with `savings`.
 
 ---
