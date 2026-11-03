@@ -1,5 +1,8 @@
 import type {
   ActivityEntry,
+  ChainSettings,
+  ChainSourceInput,
+  ChainTestResult,
   ActivityQuery,
   FamilyInvite,
   GuardianStatus,
@@ -127,6 +130,16 @@ export interface GuardianApi {
   setNotifications(input: NotificationSettingsInput): Promise<NotificationSettings>;
   /** "Send a test message" to one channel, or to the email account's own From address. Resolves with what happened. */
   testNotification(input: NotifyTestInput): Promise<NotifyTestResult>;
+
+  /** Settings > Server: where the guardian reads the blockchain. */
+  getChain(): Promise<ChainSettings>;
+  /**
+   * Switches the chain source. Announced to the phone, on every alert channel and in Activity. Rejects with `invalid`, and
+   * with `recovery_pending` for a public server while a recovery runs (your own node is always allowed).
+   */
+  setChain(input: ChainSourceInput): Promise<ChainSettings>;
+  /** "Test connection": connects to `input` without switching to it. */
+  testChain(input: ChainSourceInput): Promise<ChainTestResult>;
 
   /**
    * Forgets every wallet and creates a new key 3 (the old one is destroyed). Needs the passphrase and

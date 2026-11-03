@@ -513,7 +513,8 @@ class Service implements RealWalletService {
       status,
       lastSeenAt: this.iso(gs?.checkedAt ?? snap?.syncedAt ?? this.clock.now()),
       relays,
-      chainData: 'your-node',
+      chainData: gs?.chainSource?.kind === 'public' ? 'public' : 'your-node',
+      ...(gs?.chainSource ? { chainSource: { kind: gs.chainSource.kind, backend: gs.chainSource.backend, host: gs.chainSource.host } } : {}),
       npub,
       ...(g?.key3Mixed ? { key3Note: KEY3_MIXED_NOTE } : {}),
       ...(lockedBy ? { lockedByContact: { name: contactName(lockedBy), npub: lockedBy.npub } } : {}),
@@ -813,6 +814,11 @@ class Service implements RealWalletService {
           // pointed elsewhere. The wallet registers Savings again at the next sync.
           addEvent(this.log, { kind: 'savings-unwatched', replaced: !!a.replacedBy, at: e.atMs });
           void this.saveLogNow();
+        } else if (a.type === 'chain_source_changed') {
+          // Changed in the guardian's web page (this phone cannot): the new source shows in Settings > Guardian.
+          addEvent(this.log, { kind: 'guardian-server-changed', public: a.kind === 'public', host: a.host, at: e.atMs });
+          void this.saveLogNow();
+          this.refresh();
         } else if (a.type === 'notifications_changed') {
           // Changed in the guardian's web page (this phone cannot): worth a line, as a stolen-phone thief cannot do it.
           addEvent(this.log, { kind: 'alert-channels-changed', at: e.atMs });

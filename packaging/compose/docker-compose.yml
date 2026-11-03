@@ -6,9 +6,9 @@
 #   docker compose logs guardian | grep setup.code      the one-time setup code for the first run
 #   open http://localhost:3000
 #
-# The guardian needs a Bitcoin node with an Electrum server (Electrs or Fulcrum) that it can reach: your own, on
-# another box or on this one. `--profile node` also runs one here (bitcoind + Electrs; see README.md, "A node in
-# this file").
+# The guardian reads the blockchain from your own Electrum server (Electrs or Fulcrum) or your own Bitcoin Core, on
+# another box or on this one; `--profile node` also runs one here (bitcoind + Electrs; see README.md, "A node in this
+# file"). Without any node, a public server works too, at a cost in privacy (README.md, "No node at all?").
 #
 # The guardian makes outbound connections only (the nostr relays, your Electrum server and node). Nothing has to be
 # forwarded on your router. The one port below is the web UI, for you.
@@ -39,15 +39,22 @@ services:
       # guardian prints in its log. Never change this to umbrel or start9.
       TRIKEY_PLATFORM: docker
       BITCOIN_NETWORK: ${BITCOIN_NETWORK:?set BITCOIN_NETWORK in .env (mainnet, testnet4, signet or regtest)}
-      ELECTRUM_HOST: ${ELECTRUM_HOST:?set ELECTRUM_HOST in .env (your Electrum server)}
+      # Where the guardian reads the blockchain (README.md, "Settings"): electrum (default), core or public. The web UI's
+      # Settings > Server can change it later.
+      CHAIN_SOURCE: ${CHAIN_SOURCE:-electrum}
+      ELECTRUM_HOST: ${ELECTRUM_HOST:-}
       ELECTRUM_PORT: ${ELECTRUM_PORT:-}
       ELECTRUM_TLS: ${ELECTRUM_TLS:-0}
       ELECTRUM_TLS_CERT_SHA256: ${ELECTRUM_TLS_CERT_SHA256:-}
       ELECTRUM_ALLOW_PUBLIC_PLAINTEXT: ${ELECTRUM_ALLOW_PUBLIC_PLAINTEXT:-0}
+      PUBLIC_ELECTRUM_SERVER: ${PUBLIC_ELECTRUM_SERVER:-}
+      PUBLIC_ELECTRUM_CERT_SHA256: ${PUBLIC_ELECTRUM_CERT_SHA256:-}
       BITCOIN_RPC_HOST: ${BITCOIN_RPC_HOST:-}
       BITCOIN_RPC_PORT: ${BITCOIN_RPC_PORT:-}
       BITCOIN_RPC_USER: ${BITCOIN_RPC_USER:-}
       BITCOIN_RPC_PASS: ${BITCOIN_RPC_PASS:-}
+      BITCOIN_RPC_ALLOW_PUBLIC: ${BITCOIN_RPC_ALLOW_PUBLIC:-0}
+      BITCOIN_CORE_WALLET: ${BITCOIN_CORE_WALLET:-}
       TRIKEY_RELAYS: ${TRIKEY_RELAYS:-}
       SP_SCAN_THREADS: ${SP_SCAN_THREADS:-}
     extra_hosts:

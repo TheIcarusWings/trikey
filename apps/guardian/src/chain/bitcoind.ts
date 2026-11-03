@@ -1,12 +1,20 @@
 /**
- * Optional Bitcoin Core JSON-RPC client: sync status for the web UI, a
- * fallback for broadcasting when Electrs refuses or is down, and blocks with
- * their prevouts for the silent payment scanner (`getblock <hash> 3`, which
- * Electrs cannot serve). Electrs stays the primary chain source. The node is
- * on the platform's internal network, so this is plain HTTP with basic auth;
- * the credentials never reach a log line.
+ * Bitcoin Core JSON-RPC client: sync status for the web UI, a fallback for
+ * broadcasting when the Electrum server refuses or is down, blocks with their
+ * prevouts for the silent payment scanner (`getblock <hash> 3`, which Electrs
+ * cannot serve), and the whole chain source when the owner chose Bitcoin Core
+ * alone (core-backend.ts, through a wallet: `forWallet`).
+ *
+ * Bitcoin Core's RPC has no TLS: plain HTTP with basic auth. So it goes only to an
+ * address on the box or the owner's own network (loopback, private, link-local),
+ * checked after resolving the name, unless `allowPublic` (BITCOIN_RPC_ALLOW_PUBLIC).
+ * The credentials never reach a log line.
  */
+import type { LookupAddress } from 'node:dns';
+import { lookup as dnsLookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import type { BitcoinRpcConfig } from '../config.js';
+import { isLocalAddress } from './electrum.js';
 
 export class BitcoinRpcError extends Error {
   constructor(
@@ -46,21 +54,72 @@ export interface VerboseBlock {
   tx: VerboseTx[];
 }
 
+export interface BitcoinRpcOptions {
+  timeoutMs?: number;
+  /** Allow plain RPC to an address on the internet. */
+  allowPublic?: boolean;
+  /** Name resolution for the address check. Test seam. */
+  resolve?: (host: string) => Promise<LookupAddress[]>;
+}
+
+/** How long a passed address check holds before the name is resolved again. */
+const HOST_CHECK_MS = 5 * 60_000;
+
 export class BitcoinRpc {
   private readonly url: string;
   private readonly auth: string;
   private id = 0;
+  private readonly timeoutMs: number;
+  private hostCheckedAt = 0;
 
   constructor(
-    cfg: BitcoinRpcConfig,
-    private readonly timeoutMs = 10_000,
+    private readonly cfg: BitcoinRpcConfig,
+    opts: BitcoinRpcOptions | number = {},
+    private readonly wallet?: string,
   ) {
+    this.o = typeof opts === 'number' ? { timeoutMs: opts } : opts;
+    this.timeoutMs = this.o.timeoutMs ?? 10_000;
     const host = cfg.host.includes(':') && !cfg.host.startsWith('[') ? `[${cfg.host}]` : cfg.host;
-    this.url = `http://${host}:${cfg.port}/`;
+    this.url = `http://${host}:${cfg.port}/${wallet !== undefined ? `wallet/${encodeURIComponent(wallet)}` : ''}`;
     this.auth = `Basic ${Buffer.from(`${cfg.user}:${cfg.pass}`).toString('base64')}`;
   }
 
+  private readonly o: BitcoinRpcOptions;
+
+  get host(): string {
+    return this.cfg.host;
+  }
+
+  get port(): number {
+    return this.cfg.port;
+  }
+
+  /** The same node, calling the wallet `name` (`/wallet/<name>`). */
+  forWallet(name: string): BitcoinRpc {
+    return new BitcoinRpc(this.cfg, this.o, name);
+  }
+
+  /** Refuses plain RPC to an address on the internet (see the file comment). */
+  private async checkHost(method: string): Promise<void> {
+    if (this.o.allowPublic || Date.now() - this.hostCheckedAt < HOST_CHECK_MS) return;
+    const host = this.cfg.host.replace(/^\[|\]$/g, '');
+    let addrs: LookupAddress[];
+    try {
+      addrs = isIP(host) ? [{ address: host, family: isIP(host) }] : await (this.o.resolve ?? ((h: string) => dnsLookup(h, { all: true, verbatim: true })))(host);
+    } catch {
+      throw new BitcoinRpcError(method, `cannot resolve ${host}`);
+    }
+    const outside = addrs.find((a) => !isLocalAddress(a.address));
+    if (outside)
+      throw new BitcoinRpcError(
+        method,
+        `${host} (${outside.address}) is not on this box or your own network, and Bitcoin Core's RPC has no encryption: use it over your own network or a tunnel such as Tailscale (or set BITCOIN_RPC_ALLOW_PUBLIC=1)`,
+      );
+    this.hostCheckedAt = Date.now();
+  }
+
   async call<T>(method: string, params: unknown[] = [], opts: { timeoutMs?: number } = {}): Promise<T> {
+    await this.checkHost(method);
     let res: Response;
     try {
       res = await fetch(this.url, {

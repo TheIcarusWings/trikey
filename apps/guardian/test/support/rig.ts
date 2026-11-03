@@ -18,7 +18,7 @@ import { encodePairingUri } from '@trikey/protocol';
 import { DevRelay } from '@trikey/protocol/dev/relay';
 import type { NetworkName } from '@trikey/core';
 import type { GuardianConfig } from '../../src/config.js';
-import { Guardian } from '../../src/guardian.js';
+import { Guardian, type GuardianOptions } from '../../src/guardian.js';
 import type { RateLimitOptions } from '../../src/rate-limit.js';
 import { createLogger } from '../../src/log.js';
 import { ManualClock } from '../../src/policy/index.js';
@@ -64,6 +64,8 @@ export interface GuardianRigOptions {
   notifyTestServers?: boolean;
   /** The guardian's TRIKEY_PLATFORM, as loadConfig sets it. Default unset (no setup code), as for embedders. */
   platform?: GuardianConfig['platform'];
+  /** Builds the backend for a chain source the web UI chooses (Settings > Server): fakes instead of public servers. */
+  chainBackend?: GuardianOptions['chainBackend'];
 }
 
 export interface FundedOutput {
@@ -160,6 +162,7 @@ export class GuardianRig {
       electrum: { minBackoffMs: 20, maxBackoffMs: 100 },
       discoverDmRelays: false,
       broadcastLimit: this.opts.broadcastLimit,
+      ...(this.opts.chainBackend ? { chainBackend: this.opts.chainBackend } : {}),
       ...(this.opts.notifyTestServers ? { notify: { net: { allowLoopback: true }, smtpTest: { tls: { rejectUnauthorized: false } } } } : {}),
     });
     await this.guardian.start(this.opts.http ? { port: 0, host: '127.0.0.1' } : false);

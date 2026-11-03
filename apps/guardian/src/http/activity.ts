@@ -432,6 +432,24 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
         sats: null,
         result: 'ok',
       };
+    case 'chain_source_changed': {
+      const words = (v: string) => {
+        const [kind, backend, ...rest] = v.split(':');
+        const port = rest.pop();
+        const where = `${rest.join(':')}:${port}`;
+        return kind === 'public' ? `the public server ${where}` : backend === 'core' ? `your own Bitcoin Core ${where}` : `your own Electrum server ${where}`;
+      };
+      const toPublic = e.to.startsWith('public:');
+      return {
+        ...base,
+        kind: 'system',
+        event: `The guardian now reads the blockchain from ${words(e.to)}${e.from ? ` (before: ${words(e.from)})` : ''}.${toPublic ? ' A public server sees the wallets\' addresses and this box\'s IP address.' : ''} The paired phone and every alert channel are told.`,
+        summary: toPublic ? 'Server changed to a public one' : 'Server changed',
+        signedBy: null,
+        sats: null,
+        result: 'ok',
+      };
+    }
     case 'notification_failing':
       return { ...base, kind: 'system', event: `Alerts to ${e.channel} are failing: ${e.error}. The guardian keeps retrying for 7 days.`, summary: 'Alert channel failing', signedBy: null, sats: null, result: 'refused' };
     case 'notification_ok':

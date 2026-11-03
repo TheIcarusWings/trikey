@@ -1,11 +1,14 @@
 /**
  * Everything the guardian asks of the chain: the tip and its median time past,
- * the wallet's unspent outputs, and broadcasting. Electrs (Electrum protocol)
- * is the primary source; Bitcoin Core RPC, when configured, adds sync progress
- * and a broadcast fallback.
+ * the wallet's unspent outputs, and broadcasting. The chain source (backend.ts) is an
+ * Electrum server (the box's own Electrs, one on the owner's network, or a public one)
+ * or Bitcoin Core alone (core-backend.ts); it can change at run time (`setBackend`,
+ * Settings > Server). Bitcoin Core RPC, when configured, adds sync progress and a
+ * broadcast fallback.
  *
- * Trust: both run on the user's own box, so their answers are trusted the way
- * the user's own node is. Headers are checked to link up, not for proof of work.
+ * Trust: the answers are trusted the way the chosen server is (DESIGN.md, "Chain
+ * sources"). Transactions are checked against their txid and headers to link up, not
+ * for proof of work.
  */
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hex } from '@scure/base';
@@ -13,9 +16,20 @@ import * as btc from '@scure/btc-signer';
 import type { MultisigWallet } from '@trikey/core';
 import type { AddressSource } from '../singlekey.js';
 import { errorText, silentLogger, type Logger } from '../log.js';
+import {
+  BackendRejectedError,
+  BackendTxNotFoundError,
+  BackendUnavailableError,
+  ElectrumBackend,
+  scriptHash,
+  type ChainBackend,
+  type ElectrumHistoryItem,
+} from './backend.js';
 import { BitcoinRpc, type BlockchainInfo } from './bitcoind.js';
-import { ElectrumClient, ElectrumError, ElectrumUnavailableError } from './electrum.js';
+import { ElectrumClient, ElectrumUnavailableError } from './electrum.js';
 import { isLinked, medianTimePast, parseHeader, splitHeaders } from './headers.js';
+
+export { scriptHash, type ElectrumHistoryItem };
 
 export const DEFAULT_GAP_LIMIT = 20;
 /** Stop scanning a chain past this index (far beyond any real wallet; keeps a lying server from looping us). */
@@ -35,7 +49,7 @@ export type SingleKeySweepRefusal = 'too_many_inputs' | 'too_many_outputs' | 'in
 export type SingleKeySweepCheck = { ok: true; feeSats: bigint; inputs: number; outputs: number } | { ok: false; reason: SingleKeySweepRefusal };
 
 export class ChainUnavailableError extends Error {
-  constructor(message = 'chain data is unavailable (Electrs is not connected)') {
+  constructor(message = 'chain data is unavailable (the chain server is not connected)') {
     super(message);
     this.name = 'ChainUnavailableError';
   }
@@ -100,16 +114,6 @@ export interface ChainPreflight {
   syncProgress?: number;
 }
 
-/** Electrum's script hash: sha256 of the output script, byte-reversed, hex. */
-export function scriptHash(script: Uint8Array): string {
-  return hex.encode(sha256(script).reverse());
-}
-
-export interface ElectrumHistoryItem {
-  tx_hash: string;
-  /** > 0 confirmed; 0 in the mempool; -1 in the mempool with unconfirmed parents. */
-  height: number;
-}
 
 export interface ScannedAddress {
   index: number;
@@ -176,58 +180,125 @@ export function txidOf(txHex: string): string {
   return hex.encode(sha256(sha256(hex.decode(stripWitness(txHex)))).reverse());
 }
 
-interface ElectrumUnspent {
-  tx_hash: string;
-  tx_pos: number;
-  height: number;
-  value: number;
+/** Backend errors as the service's own (callers know these). */
+async function mapped<T>(p: Promise<T>): Promise<T> {
+  try {
+    return await p;
+  } catch (e) {
+    if (e instanceof BackendTxNotFoundError) throw new TxNotFoundError(e.txid);
+    if (e instanceof BackendUnavailableError || e instanceof ElectrumUnavailableError) throw new ChainUnavailableError(e.message);
+    throw e;
+  }
+}
+
+export interface ChainServiceOptions {
+  /** The chain source. Or `electrum`, wrapped in an `ElectrumBackend`. */
+  backend?: ChainBackend;
+  electrum?: ElectrumClient;
+  rpc?: BitcoinRpc;
+  log?: Logger;
+  gapLimit?: number;
 }
 
 export class ChainService {
   private tipCache?: ChainTip;
   private rpcInfo?: { at: number; info?: BlockchainInfo; error?: string };
   private readonly log: Logger;
+  private current?: ChainBackend;
+  private started = false;
+  private readonly tipListeners = new Set<() => void>();
+  private offHeader?: () => void;
 
-  constructor(
-    private readonly opts: { electrum?: ElectrumClient; rpc?: BitcoinRpc; log?: Logger; gapLimit?: number },
-  ) {
+  constructor(private readonly opts: ChainServiceOptions) {
     this.log = opts.log ?? silentLogger;
+    this.current = opts.backend ?? (opts.electrum ? new ElectrumBackend(opts.electrum) : undefined);
   }
 
+  /** The chain source in use. */
+  get backend(): ChainBackend | undefined {
+    return this.current;
+  }
+
+  /** The Electrum client, when the chain source is an Electrum server. */
   get electrum(): ElectrumClient | undefined {
-    return this.opts.electrum;
+    return this.current instanceof ElectrumBackend ? this.current.client : undefined;
+  }
+
+  /** Bitcoin Core's RPC, when configured. */
+  get rpc(): BitcoinRpc | undefined {
+    return this.opts.rpc;
   }
 
   start(): void {
-    this.opts.electrum?.start();
+    this.started = true;
+    this.attach();
+    this.current?.start();
   }
 
   stop(): void {
-    this.opts.electrum?.stop();
+    this.started = false;
+    this.offHeader?.();
+    this.offHeader = undefined;
+    this.current?.stop();
   }
 
-  /** Calls `fn` on every new tip announced by Electrs. */
+  /**
+   * Switches to another chain source (Settings > Server): the old one is stopped, the new one started if the service
+   * runs. What the old source said about tips and block times is forgotten; transactions are kept (checked by txid).
+   */
+  setBackend(next: ChainBackend): void {
+    this.offHeader?.();
+    this.offHeader = undefined;
+    this.current?.stop();
+    this.current = next;
+    this.tipCache = undefined;
+    this.blockTimes.clear();
+    if (this.started) {
+      this.attach();
+      next.start();
+    }
+  }
+
+  private attach(): void {
+    this.offHeader?.();
+    this.offHeader = this.current?.onHeader(() => {
+      for (const fn of this.tipListeners) {
+        try {
+          fn();
+        } catch {
+          /* a listener's failure is its own */
+        }
+      }
+    });
+  }
+
+  /** Calls `fn` on every new tip the chain source announces (whichever source is in use). */
   onTip(fn: () => void): () => void {
-    return this.opts.electrum?.onHeader(() => fn()) ?? (() => {});
+    this.tipListeners.add(fn);
+    return () => this.tipListeners.delete(fn);
   }
 
-  private client(): ElectrumClient {
-    const e = this.opts.electrum;
-    if (!e || !e.connected) throw new ChainUnavailableError();
+  private client(): ChainBackend {
+    const e = this.current;
+    if (!e || !e.connected) throw new ChainUnavailableError(e?.lastError ? `chain data is unavailable: ${e.lastError}` : undefined);
     return e;
+  }
+
+  /** Lets the chain source watch `wallet` up to `upToIndex` (Bitcoin Core's wallet needs to be told; Electrum does not). */
+  private async prepare(wallet: AddressSource, upToIndex: number): Promise<void> {
+    await mapped(this.client().prepare(wallet, upToIndex));
   }
 
   /** The tip and its median time past, from the last 11 headers (checked to link up to the announced tip). */
   async tip(): Promise<ChainTip> {
     const e = this.client();
     const announced = e.tip;
-    if (!announced) throw new ChainUnavailableError('no block header from Electrs yet');
+    if (!announced) throw new ChainUnavailableError('no block header from the chain server yet');
     const tipHeader = parseHeader(announced.hex);
     if (this.tipCache && this.tipCache.hash === tipHeader.hash) return this.tipCache;
     const start = Math.max(0, announced.height - 10);
     const count = announced.height - start + 1;
-    const res = await e.request<{ hex: string; count: number }>('blockchain.block.headers', [start, count]);
-    const headers = splitHeaders(String(res?.hex ?? ''));
+    const headers = splitHeaders(await mapped(e.headers(start, count)));
     if (headers.length !== count) throw new ChainUnavailableError('Electrs returned too few headers');
     if (!isLinked(headers)) throw new ChainUnavailableError('Electrs returned headers that do not link up');
     if (headers[headers.length - 1].hash !== tipHeader.hash) throw new ChainUnavailableError('the tip moved; try again');
@@ -255,15 +326,8 @@ export class ChainService {
     return s;
   }
 
-  private async history(script: Uint8Array): Promise<ElectrumHistoryItem[]> {
-    const r = await this.client().request<unknown[]>('blockchain.scripthash.get_history', [scriptHash(script)]);
-    if (!Array.isArray(r)) return [];
-    return r.map((x) => {
-      const h = x as Partial<ElectrumHistoryItem>;
-      if (typeof h?.tx_hash !== 'string' || !/^[0-9a-f]{64}$/i.test(h.tx_hash) || !Number.isSafeInteger(h.height))
-        throw new ChainUnavailableError('Electrs returned a malformed history entry');
-      return { tx_hash: h.tx_hash.toLowerCase(), height: h.height! };
-    });
+  private history(script: Uint8Array): Promise<ElectrumHistoryItem[]> {
+    return mapped(this.client().history(script));
   }
 
   /**
@@ -280,6 +344,7 @@ export class ChainService {
       let next = 0;
       const used: ScannedAddress[] = [];
       for (;;) {
+        await this.prepare(wallet, next + gap);
         const batch = Array.from({ length: gap }, (_, k) => next + k).map((index) => ({ index, script: this.script(wallet, chain, index) }));
         const histories = await Promise.all(batch.map((b) => this.history(b.script)));
         histories.forEach((h, k) => {
@@ -310,16 +375,10 @@ export class ChainService {
   private async unspentOf(scan: WalletScan): Promise<WalletUtxo[]> {
     const out: WalletUtxo[] = [];
     for (const chain of [0, 1] as const) {
-      const lists = await Promise.all(
-        scan.chains[chain].used.map((u) => this.client().request<ElectrumUnspent[]>('blockchain.scripthash.listunspent', [scriptHash(u.script)])),
-      );
+      const lists = await Promise.all(scan.chains[chain].used.map((u) => mapped(this.client().listUnspent(u.script))));
       lists.forEach((list, k) => {
         const u = scan.chains[chain].used[k];
-        for (const x of Array.isArray(list) ? list : []) {
-          if (typeof x?.tx_hash !== 'string' || !/^[0-9a-f]{64}$/i.test(x.tx_hash) || !Number.isSafeInteger(x.tx_pos) || !Number.isSafeInteger(x.value) || x.value < 0)
-            throw new ChainUnavailableError('Electrs returned a malformed unspent output');
-          out.push({ txid: x.tx_hash.toLowerCase(), vout: x.tx_pos, value: BigInt(x.value), height: x.height, chain, index: u.index });
-        }
+        for (const x of list) out.push({ txid: x.txid, vout: x.vout, value: x.value, height: x.height, chain, index: u.index });
       });
     }
     return out;
@@ -350,18 +409,10 @@ export class ChainService {
     const id = txid.toLowerCase();
     const cached = this.txCache.get(id);
     if (cached) return cached;
-    let raw: unknown;
-    try {
-      raw = await this.client().request('blockchain.transaction.get', [id]);
-    } catch (e) {
-      // Only "no such transaction" means not found; any other server error is the server's trouble.
-      if (e instanceof ElectrumError && /no such|not found|unknown transaction|missing/i.test(e.message)) throw new TxNotFoundError(id);
-      if (e instanceof ElectrumError) throw new ChainUnavailableError(`Electrs could not serve ${id}: ${e.message}`);
-      throw e;
-    }
-    if (typeof raw !== 'string' || !/^(?:[0-9a-fA-F]{2})+$/.test(raw)) throw new ChainUnavailableError('Electrs returned a malformed transaction');
+    const raw = await mapped(this.client().transaction(id));
+    if (typeof raw !== 'string' || !/^(?:[0-9a-fA-F]{2})+$/.test(raw)) throw new ChainUnavailableError('the chain server returned a malformed transaction');
     const txHex = raw.toLowerCase();
-    if (txidOf(txHex) !== id) throw new ChainUnavailableError('Electrs returned a transaction that does not match its txid');
+    if (txidOf(txHex) !== id) throw new ChainUnavailableError('the chain server returned a transaction that does not match its txid');
     if (this.txCache.size > 5000) this.txCache.clear();
     this.txCache.set(id, txHex);
     return txHex;
@@ -373,9 +424,8 @@ export class ChainService {
   private async blockTime(height: number): Promise<number> {
     const hit = this.blockTimes.get(height);
     if (hit) return hit.time;
-    const res = await this.client().request<{ hex: string }>('blockchain.block.headers', [height, 1]);
-    const [h] = splitHeaders(String(res?.hex ?? ''));
-    if (!h) throw new ChainUnavailableError(`Electrs returned no header at height ${height}`);
+    const [h] = splitHeaders(await mapped(this.client().headers(height, 1)));
+    if (!h) throw new ChainUnavailableError(`the chain server returned no header at height ${height}`);
     if (this.blockTimes.size > 10_000) this.blockTimes.clear();
     this.blockTimes.set(height, { hash: h.hash, time: h.time });
     return h.time;
@@ -544,19 +594,25 @@ export class ChainService {
    * Unspent outputs paying any of `scripts` (confirmed or not), at most `max`: the phone's registered
    * single-key coins and the silent payment scanner's matches (`wallet.sync` with `wallet: "helper"`).
    */
-  async scriptUnspent(scripts: Uint8Array[], max = Number.MAX_SAFE_INTEGER): Promise<{ script: Uint8Array; txid: string; vout: number; value: bigint; height: number; confirmations: number }[]> {
+  async scriptUnspent(
+    scripts: Uint8Array[],
+    max = Number.MAX_SAFE_INTEGER,
+    /** The outpoints the caller knows these coins by: a chain source that cannot list an arbitrary script (Bitcoin Core) checks them instead. */
+    outpoints?: { txid: string; vout: number }[],
+  ): Promise<{ script: Uint8Array; txid: string; vout: number; value: bigint; height: number; confirmations: number }[]> {
     const tip = await this.tip();
     const unique = [...new Map(scripts.map((sc) => [hex.encode(sc), sc])).values()];
     const out: { script: Uint8Array; txid: string; vout: number; value: bigint; height: number; confirmations: number }[] = [];
+    const backend = this.client();
     for (let i = 0; i < unique.length && out.length < max; i += 16) {
       const batch = unique.slice(i, i + 16);
-      const lists = await Promise.all(batch.map((sc) => this.client().request<ElectrumUnspent[]>('blockchain.scripthash.listunspent', [scriptHash(sc)])));
+      const lists = await Promise.all(
+        batch.map((sc) => mapped(outpoints && backend.unspentAt ? backend.unspentAt(sc, outpoints) : backend.listUnspent(sc))),
+      );
       lists.forEach((list, k) => {
-        for (const x of Array.isArray(list) ? list : []) {
-          if (typeof x?.tx_hash !== 'string' || !/^[0-9a-f]{64}$/i.test(x.tx_hash) || !Number.isSafeInteger(x.tx_pos) || !Number.isSafeInteger(x.value) || x.value < 0)
-            throw new ChainUnavailableError('Electrs returned a malformed unspent output');
+        for (const x of list) {
           const height = Math.max(0, x.height);
-          out.push({ script: batch[k]!, txid: x.tx_hash.toLowerCase(), vout: x.tx_pos, value: BigInt(x.value), height, confirmations: height > 0 ? Math.max(1, tip.height - height + 1) : 0 });
+          out.push({ script: batch[k]!, txid: x.txid, vout: x.vout, value: x.value, height, confirmations: height > 0 ? Math.max(1, tip.height - height + 1) : 0 });
         }
       });
     }
@@ -643,15 +699,8 @@ export class ChainService {
     const e = this.client();
     const toSatPerVb = (btcPerKvb: unknown) =>
       typeof btcPerKvb === 'number' && Number.isFinite(btcPerKvb) && btcPerKvb > 0 ? Math.round(btcPerKvb * 1e8) / 1000 : null;
-    const estimates = await Promise.all(
-      targets.map(async (target) => ({ target, satPerVb: toSatPerVb(await e.request<number>('blockchain.estimatefee', [target])) })),
-    );
-    let minRelay: number | null = null;
-    try {
-      minRelay = toSatPerVb(await e.request<number>('blockchain.relayfee', []));
-    } catch (err) {
-      if (!(err instanceof ElectrumError)) throw err;
-    }
+    const estimates = await Promise.all(targets.map(async (target) => ({ target, satPerVb: toSatPerVb(await mapped(e.estimateFee(target))) })));
+    const minRelay = toSatPerVb(await mapped(e.relayFee()));
     return { estimates, minRelaySatPerVb: Math.max(minRelay ?? 1, 0.001) };
   }
 
@@ -672,15 +721,9 @@ export class ChainService {
     return undefined;
   }
 
-  /** True if Electrs knows the transaction (mempool or chain). */
+  /** True if the chain server knows the transaction (mempool or chain). */
   async hasTransaction(txid: string): Promise<boolean> {
-    try {
-      await this.client().request('blockchain.transaction.get', [txid]);
-      return true;
-    } catch (e) {
-      if (e instanceof ElectrumError) return false;
-      throw e;
-    }
+    return mapped(this.client().hasTransaction(txid));
   }
 
   /**
@@ -691,19 +734,21 @@ export class ChainService {
   async broadcast(txHex: string): Promise<{ txid: string; via: 'electrum' | 'bitcoind' }> {
     const errors: string[] = [];
     let rejected: string | undefined;
-    const e = this.opts.electrum;
+    const e = this.current;
+    const name = e?.kind === 'core' ? 'Bitcoin Core' : 'Electrum server';
     if (e?.connected) {
       try {
-        const txid = await e.request<string>('blockchain.transaction.broadcast', [txHex]);
-        return { txid: String(txid).toLowerCase(), via: 'electrum' };
+        const txid = await e.broadcast(txHex);
+        return { txid, via: e.kind === 'core' ? 'bitcoind' : 'electrum' };
       } catch (err) {
-        if (err instanceof ElectrumError) rejected ??= err.message.replace(/^blockchain\.transaction\.broadcast: /, '');
-        errors.push(`Electrs: ${errorText(err)}`);
+        if (err instanceof BackendRejectedError) rejected ??= err.reason;
+        errors.push(`${name}: ${errorText(err)}`);
       }
     } else {
-      errors.push('Electrs: not connected');
+      errors.push(`${name}: not connected`);
     }
-    if (this.opts.rpc) {
+    // Bitcoin Core as the chain source already was the node: no second try through the same node.
+    if (this.opts.rpc && e?.kind !== 'core') {
       try {
         const txid = await this.opts.rpc.sendRawTransaction(txHex);
         return { txid: String(txid).toLowerCase(), via: 'bitcoind' };
@@ -729,8 +774,8 @@ export class ChainService {
   }
 
   async syncStatus(): Promise<ChainSyncStatus> {
-    const source = this.opts.rpc ? 'Bitcoin node + Electrs' : 'Electrs';
-    const e = this.opts.electrum;
+    const e = this.current;
+    const source = e?.kind === 'core' ? 'Bitcoin node' : this.opts.rpc ? 'Bitcoin node + Electrs' : 'Electrs';
     if (!e || !e.connected || !e.tip) return { state: 'unavailable', source };
     const node = await this.nodeInfo();
     const info = node?.info;
@@ -743,7 +788,7 @@ export class ChainService {
   async preflight(): Promise<ChainPreflight> {
     const status = await this.syncStatus();
     const node = await this.nodeInfo();
-    const electrs = this.opts.electrum?.connected ? 'found' : 'missing';
+    const electrs = this.current?.connected ? 'found' : 'missing';
     // Without RPC settings, a working Electrs implies a working node behind it.
     const nodeFound = node ? !!node.info : electrs === 'found';
     return {

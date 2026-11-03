@@ -6,6 +6,9 @@
  */
 export type {
   ActivityEntry,
+  ChainSettings,
+  ChainSourceInput,
+  ChainTestResult,
   ChainStatus,
   GuardianStatus,
   PublicStatus,

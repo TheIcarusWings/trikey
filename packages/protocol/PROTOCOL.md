@@ -292,7 +292,7 @@ Opt-in (`Policy.contactLock`, DESIGN.md rule 8, docs/design/contact-lock.md). On
 
 ### Chain data
 
-The guardian already has the wallet's descriptor and the user's own Electrs, so it serves the paired phone's chain data and broadcasts for it: the phone never asks a public server. `wallet.sync`, `tx.get`, `tx.broadcast` and `fees.estimate` need no key 3, so they **work while the guardian is locked**. Only the paired phone may call them (plus, for the reads, a phone with recovery access); requests from anyone else are dropped without an answer like every other unauthorized request. Amounts are `Sats` (JSON numbers); heights are 0 while unconfirmed.
+The guardian already has the wallet's descriptor and a chain source (the user's own Electrs, see "Chain source" below), so it serves the paired phone's chain data and broadcasts for it: the phone never asks a server itself. `wallet.sync`, `tx.get`, `tx.broadcast` and `fees.estimate` need no key 3, so they **work while the guardian is locked**. Only the paired phone may call them (plus, for the reads, a phone with recovery access); requests from anyone else are dropped without an answer like every other unauthorized request. Amounts are `Sats` (JSON numbers); heights are 0 while unconfirmed.
 
 * **`wallet.sync`** scans both chains of the descriptor (receive `0`, change `1`) the way the guardian checks recovery coverage: until `gapLimit` (20) consecutive addresses have no history.
   * `utxos`: `{ txid, vout, valueSats, height, confirmations, chain, index }`, every unspent output, confirmed ones first by value, at most 500 (`utxosTruncated` says there are more; `balance` always counts all of them). `chain`/`index` are the derivation steps below the account keys, which the phone needs to build the PSBT input.
@@ -306,6 +306,16 @@ The guardian already has the wallet's descriptor and the user's own Electrs, so 
   * **A sweep of the phone's single-key coins** (rule c, see "Silent payments") is checked the same way: at most 500 inputs and 10 outputs; **every input** spends a silent payment the guardian's scanner found, a coin the phone registered (`singlekey.register`, and the previous output must pay exactly the registered script), or a coin of the registered helper account (scanned range) (`input_not_single_key`); **every output** pays an address of the paired wallet (`output_not_to_wallet`); the outputs do not exceed the inputs; and the fee is at most `sweepFeeCapSats` (`1200`, `sweep_fee_exceeds_cap`). It applies as soon as one input is such a coin, so a transaction that spends a match but pays anyone else is refused, not relayed under another rule.
 * **`fees.estimate`** asks the node (`blockchain.estimatefee`) per target and converts BTC/kvB to sat/vB; `satPerVb` is `null` where the node has no estimate (usual on regtest and signet, and right after a restart). `minRelaySatPerVb` is the node's relay fee floor.
 * Electrs unreachable or not synced: `1501 Unavailable`; try again later.
+
+**Chain source.** Where the guardian reads the chain is the owner's choice in its web UI (Settings > Server), as in
+Sparrow Wallet: a private Electrum server (the box's own Electrs on Umbrel and Start9, the default), Bitcoin Core alone
+(through a watch-only descriptor wallet in it), or a public Electrum server (TLS, from a short list or another one).
+It is not in the policy and no phone can change it. The phone only sees **`guardian.status.chainSource`**
+`{ kind: "own" | "public", backend: "electrum" | "core", host }` (absent from older guardians, which use the box's own
+node) and the **`chain_source_changed`** alert (the same members) when the owner switches. A public server sees every
+address of the wallet and the box's IP address and could hide coins or delay confirmations from the guardian (it
+cannot spend or change a rule); the phone shows that warning while `kind` is `public`. During a recovery the guardian
+refuses to switch to a public server.
 
 The phone keeps its own "spent today" estimate for showing the remaining limit and choosing the signing path, but the guardian's count is the truth: `guardian.status.dailyLimit`, and `data` of an `over_daily_limit` refusal (`limit`, `used`, `outflow`, `wouldUse`).
 
@@ -395,7 +405,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 
 ### Alerts
 
-`params` is `{ type, at, atMs?, message? , ...}` (`at` in unix seconds; `atMs` the same moment in unix milliseconds, sent on every alert, see "Time") with `type` one of the engine's alert kinds (`AlertKind`), plus `guardian_locked`, `wallet_adopted`, `wallet_retired`, `sp_received`, `relays_changed` and `notifications_changed`, which the service raises itself. The `type` set is closed: a phone drops an alert whose `type` it does not know as malformed (section 4), so a new type reaches only phones that know it, and must never be needed by an older one to keep working:
+`params` is `{ type, at, atMs?, message? , ...}` (`at` in unix seconds; `atMs` the same moment in unix milliseconds, sent on every alert, see "Time") with `type` one of the engine's alert kinds (`AlertKind`), plus `guardian_locked`, `wallet_adopted`, `wallet_retired`, `sp_received`, `relays_changed`, `notifications_changed` and `chain_source_changed`, which the service raises itself. The `type` set is closed: a phone drops an alert whose `type` it does not know as malformed (section 4), so a new type reaches only phones that know it, and must never be needed by an older one to keep working:
 
 | `type` | extra members |
 |---|---|
@@ -413,6 +423,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 | `savings_unwatched` | `walletId` (the Savings wallet no longer watched), `replacedBy?` (the one watched instead): `savings.unregister`, or `savings.register` with another wallet. To the paired phone; alert contacts get a NIP-17 DM. See "Savings" |
 | `relays_changed` | `relays` (`RelayList`): the guardian moved to these relays (its web UI). Sent to the paired phone (and phones with recovery access) over the old and the new relays. See section 5, "Changing relays" |
 | `notifications_changed` | none: the extra alert channels (email, ntfy, webhook) were changed in the guardian's web UI; read the new list from `guardian.status.notifications`. Guardians with `notifications`; see "Extra alert channels" |
+| `chain_source_changed` | `kind` (`own`\|`public`), `backend` (`electrum`\|`core`), `host`: the owner switched where the guardian reads the chain (its web UI, Settings > Server). Also announced on the extra alert channels and in Activity. See "Chain data", "Chain source" |
 | `wallet_retired` | `walletId`, `reason` (`retired`\|`recovered`\|`reset`), `successorWalletId?`. Sent to the phone that was paired to the wallet: `retired` after `wallet.retire`; `reset` after the web UI's reset; `recovered` when a recovery swept the wallet and the phone paired to the new wallet is a different one (a lost phone's replacement), or the guardian adopted none (`successorWalletId` is the adopted wallet when there is one). The phone that started the recovery and is adopted gets `wallet_adopted` instead |
 
 Names match the engine (`daily_reminder` was renamed `recovery_reminder`; `daysRemaining` is now `daysLeft`, `executeAfter` is `readyAt`). The engine's `DueAlert` carries `dueAt` and `readyAt` in milliseconds; the service converts both to seconds (`at` and `readyAt`). `daysLeft` is already in days. The engine's due-alert record does not hold `cancelledBy`, the cancel's `contested` flag or the txid; the service reads them from the recovery record (`status().recovery`) when it builds those alerts.

@@ -185,6 +185,14 @@ failing", "Alert channel works again", "Alert not delivered"). Rate limits: 20 m
 hour through the email account (more wait, they are not dropped). Messages go out **while the guardian is locked**: the
 secrets are sealed under a key file on the box, not the unlock passphrase.
 
+### Server (where the guardian reads the blockchain)
+
+| Method and path | Request | Response | Notes |
+|---|---|---|---|
+| `GET /api/chain` | none | `ChainSettings` | Unlocked. `source` (the RPC password never: `passSet`), `summary` (`own` or `public`), `origin` (`environment`: Umbrel, Start9 or `.env`; `settings`: chosen here), `status` (`connected`, `server`, `height`, `error`, Bitcoin Core's `rescans`), the `publicServers` listed for the network, `recoveryRunning`. |
+| `PUT /api/chain` | `ChainSourceInput` | `ChainSettings` | Unlocked. Switches at once. `electrum` `{ host, port?, tls, certSha256? }`; `core` `{ rpc: { host, port, user, pass? }, wallet? }` (leave `pass` out to keep the stored one); `public` `{ preset }` or `{ host, port?, certSha256? }` (always TLS). `400 invalid` (plain TCP or RPC to an internet address, a pin without TLS, a "public" server on the owner's network, ...); `409 recovery_pending` for a public server while a recovery runs. Logged in Activity and announced to the paired phone (`chain_source_changed`) and on every alert channel. |
+| `POST /api/chain/test` | `ChainSourceInput` | `ChainTestResult` | Unlocked. "Test connection": connects (Electrum: and checks the server's network by its first block; Bitcoin Core: version 24+ and network, no wallet made) without switching. `{ ok, server?, height?, error? }`. |
+
 ### Recovery code
 
 | Method and path | Response | Notes |
@@ -239,6 +247,7 @@ The mock keeps state in memory (a reload starts over). Pick the starting state w
 | `/?mock=syncing` | Unlocked, node still syncing, one relay down |
 | `/?mock=signedout` | Set up and locked, this browser not signed in: the sign-in screen |
 | `/?mock=oldrelays` | Two old relays still watched after a change months ago; the phone switched |
+| `/?mock=publicserver` | The guardian reads the chain from a public server (Settings > Server) |
 | `/?mock=notify` | Email, ntfy and a webhook set up in Settings > Notifications; the webhook is failing |
 
 In the mock any unlock passphrase works except the literal `wrong` (also for the reset). In dev, run
