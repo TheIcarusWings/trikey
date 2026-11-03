@@ -158,7 +158,9 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
   - a NIP-40 expiry;
   - the hash of the PSBT it refers to.
 - **Replay protection:** old rumors are dropped. Strangers (senders that are not the paired phone, an alert contact or a phone with recovery access) get their own small replay cache and seen-wrap set, so they cannot push a peer's entries out; refused `sign` / `recovery.start` / `recovery.update` are rate limited per sender, and repeated identical refusals are one log entry with a count.
-- **Relays:** several, with the user's own relay optional (Umbrel has a Nostr Relay app).
+- **Relays:** several, with the user's own relay optional (Umbrel has a Nostr Relay app). Setup ticks the project's
+  relay `wss://relay.trikey.app` (only Trikey's kinds) next to three public ones; it sees what any relay sees, ciphertext
+  and metadata, and is never the only one.
 - **Changing relays** (web UI, Settings; `PUT /api/relays`, PROTOCOL.md "Changing relays"). The phone, its backups
   and printed recovery sheets all carry the list from pairing, so a change must never cut any of them off. The guardian
   listens *and publishes* on the new relays and on the removed ones at once, and keeps watching the removed ones
