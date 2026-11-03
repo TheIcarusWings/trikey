@@ -112,6 +112,8 @@ export const NOTICE_TTL_MS = 7 * DAY;
 const MAX_NOTICES = 32;
 /** Savings spends remembered as seen (`SavingsWatch.seenSpends`): more than one scan's history ever lists. */
 const MAX_SAVINGS_SPENDS = 500;
+/** Savings spends whose coins and payment are remembered (`SavingsWatch.spendDetails`), to tell a replacement (RBF) apart. */
+const MAX_SAVINGS_SPEND_DETAILS = 100;
 
 /** Weak spots of a policy the phone and the web UI should show. */
 export type PolicyWarning = 'no_alert_contacts';
@@ -954,15 +956,25 @@ export class PolicyEngine {
 
   /**
    * What a scan of the Savings wallet found: the indexes used (its high-water marks rise, never fall) and the
-   * transactions that spent its coins, newest first (`amountSats` what left Savings, fee included). The first scan after
-   * registration only records them (history, not news). Every later spend not seen before is logged and queued as a
-   * `savings_moved` notice for the paired phone and every alert contact, delivered and retried like the limit notices.
-   * Returns the newly announced spends. Writes nothing when nothing is new.
+   * transactions that spent its coins, newest first (`amountSats` what left Savings, fee included; `outpoints` the coins
+   * spent and `payment` a digest of what it pays out, savings.ts). The first scan after registration only records them
+   * (history, not news). Every later spend not seen before is logged and queued as a `savings_moved` notice for the paired
+   * phone and every alert contact, delivered and retried like the limit notices, with one exception: one outflow, one
+   * alert. A spend of a coin that an earlier spend (seen with its coins) also spent is a replacement (RBF) of it:
+   *
+   * - paying out the same (a fee bump: only the change back to Savings is smaller), it is logged (`savings_replaced`) and
+   *   nobody is told again: the money that leaves was announced, and only one of the two can confirm;
+   * - paying out something else (another address or amount), it is announced as a `savings_moved` naming the spend it
+   *   replaced (`replacesTxid`) and what that one moved, so the phone and the contacts read it as a change, not a second
+   *   outflow.
+   *
+   * Returns the new spends (`announced`: queued as a notice; `replaces`: the spend it replaced). Writes nothing when
+   * nothing is new.
    */
   async noteSavingsScan(
     walletId: string,
-    scan: { nextReceiveIndex: number; nextChangeIndex: number; spends: { txid: string; amountSats: bigint }[] },
-  ): Promise<{ txid: string; amountSats: bigint }[]> {
+    scan: { nextReceiveIndex: number; nextChangeIndex: number; spends: { txid: string; amountSats: bigint; outpoints?: string[]; payment?: string }[] },
+  ): Promise<{ txid: string; amountSats: bigint; announced: boolean; replaces?: string }[]> {
     const used: HighWater = { receive: scan.nextReceiveIndex - 1, change: scan.nextChangeIndex - 1 };
     const ok = (n: number) => Number.isSafeInteger(n) && n <= MAX_SELF_INDEX;
     const pending = (st: GuardianState) => {
@@ -984,13 +996,33 @@ export class PolicyEngine {
       // Oldest first, so the log and the notices read in the order the coins moved.
       const fresh = [...new Map(p.fresh.map((x) => [x.txid, x])).values()].reverse();
       sv.seenSpends = [...sv.seenSpends, ...fresh.map((x) => x.txid)].slice(-MAX_SAVINGS_SPENDS);
+      // What each spend spent and paid out, so a later spend of the same coins reads as a replacement of it.
+      const details = [...(sv.spendDetails ?? [])];
+      const remember = (x: (typeof fresh)[number]) => {
+        const outpoints = (x.outpoints ?? []).filter((o) => typeof o === 'string' && /^[0-9a-f]{64}:\d{1,10}$/.test(o));
+        if (outpoints.length) details.push({ txid: x.txid, outpoints, ...(typeof x.payment === 'string' ? { payment: x.payment } : {}), amountSats: x.amountSats });
+      };
       if (!sv.baselined) {
         sv.baselined = true;
+        for (const x of fresh) remember(x);
+        sv.spendDetails = details.slice(-MAX_SAVINGS_SPEND_DETAILS);
         return [];
       }
       const recipients = [w.registration.appNostrPubkey, ...w.rules.alertContacts.filter((c) => c !== w.registration.appNostrPubkey)];
+      const out: { txid: string; amountSats: bigint; announced: boolean; replaces?: string }[] = [];
       for (const x of fresh) {
-        this.log(draft, now, { type: 'savings_moved', walletId, txid: x.txid, amountSats: x.amountSats });
+        const coins = new Set(x.outpoints ?? []);
+        // The latest earlier spend of one of these coins: the one this replaces (the newest of a chain of bumps).
+        const prior = coins.size ? [...details].reverse().find((d) => d.txid !== x.txid && d.outpoints.some((o) => coins.has(o))) : undefined;
+        remember(x);
+        if (prior && prior.payment !== undefined && prior.payment === x.payment) {
+          // A fee bump: the same payment, a smaller change. Already announced; only one of the two can confirm.
+          this.log(draft, now, { type: 'savings_replaced', walletId, txid: x.txid, replaces: prior.txid, amountSats: x.amountSats, previousAmountSats: prior.amountSats });
+          out.push({ txid: x.txid, amountSats: x.amountSats, announced: false, replaces: prior.txid });
+          continue;
+        }
+        const replaced = prior ? { replaces: prior.txid, previousAmountSats: prior.amountSats } : {};
+        this.log(draft, now, { type: 'savings_moved', walletId, txid: x.txid, amountSats: x.amountSats, ...replaced });
         this.addNotice(draft, now, {
           id: `savings-${draft.nextActivityId}`,
           kind: 'savings_moved',
@@ -999,11 +1031,14 @@ export class PolicyEngine {
           savingsWalletId: walletId,
           txid: x.txid,
           amountSats: x.amountSats,
+          ...(prior ? { replacesTxid: prior.txid, previousAmountSats: prior.amountSats } : {}),
           recipients,
           sent: [],
         });
+        out.push({ txid: x.txid, amountSats: x.amountSats, announced: true, ...(prior ? { replaces: prior.txid } : {}) });
       }
-      return fresh;
+      sv.spendDetails = details.slice(-MAX_SAVINGS_SPEND_DETAILS);
+      return out;
     });
   }
 

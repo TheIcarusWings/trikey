@@ -32,6 +32,7 @@ import {
   type RecoveryRecord,
   type SavingsQuote as WalletSavingsQuote,
   type SavingsSnapshot,
+  type SavingsSpeedUpQuote as WalletSpeedUpQuote,
   type SecureKeyStore,
   type ReplacePlan,
   type ReplaceStep,
@@ -93,6 +94,7 @@ import {
   type SavingsActivityItem,
   type SavingsDevice,
   type SavingsQuote,
+  type SavingsSpeedUpQuote,
   type SavingsState,
   type SilentPaymentsState,
   type ThemePreference,
@@ -146,6 +148,8 @@ export interface RealServiceDeps {
   deviceName?: string;
   recoveryCodeKdf?: Argon2Params;
   rpcTimeoutMs?: number;
+  /** How long a sync waits for the guardian's chain data (`wallet.sync`; ms, default the wallet's: 3 x `rpcTimeoutMs`, 90 s). */
+  syncTimeoutMs?: number;
   rpcRetryIntervalMs?: number;
   /** Sync this often while the service lives (ms; default 60 s, 0 = only when asked). */
   syncIntervalMs?: number;
@@ -178,6 +182,7 @@ export interface RealWalletService extends WalletService {
   /** The wallet, once there is one. */
   readonly wallet: TrikeyWallet | undefined;
   readonly prompts: DevicePromptStore;
+  resume(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -297,6 +302,11 @@ class Service implements RealWalletService {
   private syncRun?: Promise<void>;
   private syncAgain = false;
   private reachable = true;
+  /**
+   * The guardian answered the last sync's `guardian.status` but not its chain data in time (`guardian_slow`): it is
+   * online, the balance is the last one. Cleared by a full sync, or by the guardian not answering at all.
+   */
+  private slow = false;
   private preview?: { guardianNpub: string; label?: string; relays: string[]; expiresAt: number };
   private recoveryCodeValue: string | null = null;
   private readonly quotes = new Map<string, WalletQuote>();
@@ -318,6 +328,7 @@ class Service implements RealWalletService {
   /** "Create Savings" in progress, as the screens show it. */
   private savingsCreating: SavingsState['creating'] = null;
   private readonly savingsQuotes = new Map<string, WalletSavingsQuote>();
+  private readonly speedUpQuotes = new Map<string, WalletSpeedUpQuote>();
 
   constructor(private readonly deps: RealServiceDeps) {
     this.clock = deps.clock ?? { now: () => Date.now() };
@@ -415,6 +426,7 @@ class Service implements RealWalletService {
       storageKey: this.storageKey,
       recoveryCodeKdf: this.deps.recoveryCodeKdf,
       rpcTimeoutMs: this.deps.rpcTimeoutMs,
+      ...(this.deps.syncTimeoutMs !== undefined ? { syncTimeoutMs: this.deps.syncTimeoutMs } : {}),
       rpcRetryIntervalMs: this.deps.rpcRetryIntervalMs,
       hostedChain: this.deps.hostedChain ?? hostedChainFactory(),
     };
@@ -443,6 +455,16 @@ class Service implements RealWalletService {
     await this.sync();
     const every = this.deps.syncIntervalMs ?? 60_000;
     if (every > 0 && !this.closed) this.timer ??= setInterval(() => void this.sync(), every);
+  }
+
+  /**
+   * The app came back to the front: subscribe again now on any relay connection that dropped in the background
+   * (Android destroys a background app's sockets) instead of waiting out the relay pool's backoff, then sync.
+   */
+  resume(): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    this.w?.reconnect();
+    return this.sync();
   }
 
   async close(): Promise<void> {
@@ -595,6 +617,7 @@ class Service implements RealWalletService {
       devicePrompt: this.prompts.getSnapshot(),
       syncing: this.syncing,
       synced: !!s?.chain,
+      guardianSlow: this.slow && this.reachable,
       phoneSpending: gs?.phoneSpending ?? 'enabled',
       recoveryOutcome: outcome,
       recovering: s?.stage === 'recovering',
@@ -699,6 +722,8 @@ class Service implements RealWalletService {
           status: h.confirmations > 0 ? 'confirmed' : 'pending',
           ...(h.recipient ? { address: h.recipient } : {}),
           ...(h.signedBy ? { signedBy: h.signedBy } : {}),
+          ...(h.canSpeedUp && kind !== 'received' ? { canSpeedUp: true as const } : {}),
+          ...(h.replaces ? { spedUp: true as const } : {}),
         };
       }),
       creating: null,
@@ -768,6 +793,7 @@ class Service implements RealWalletService {
     const refusal = e instanceof WalletError ? e.refusal : undefined;
     if (refusal?.kind === 'unreachable') {
       this.reachable = false;
+      this.slow = false;
       this.refresh();
     }
   }
@@ -915,9 +941,15 @@ class Service implements RealWalletService {
         if (changed) await saveLog(this.deps.platform.kv, this.logKey, this.log);
       }
       this.reachable = true;
+      this.slow = false;
     } catch (e) {
+      if (e instanceof WalletError && e.code === 'guardian_slow') {
+        // It answered its status: online, only slow to read the chain (a slow Electrum server). Not "offline".
+        this.reachable = true;
+        this.slow = true;
+      }
       // Another sync is due right after this one, and only its outcome says whether the guardian answers now.
-      if (!this.syncAgain) this.noteGuardianResult(e);
+      else if (!this.syncAgain) this.noteGuardianResult(e);
     }
     this.refresh();
   }
@@ -1641,6 +1673,48 @@ class Service implements RealWalletService {
           }
           this.refresh();
           return { txid: res.txid, amountSats: res.amountSats, feeSats: res.feeSats };
+        }),
+      ),
+    quoteSpeedUp: async (txid) => {
+      const w = this.w;
+      if (!w?.state.savings) return { ok: false, message: 'Set up Savings first.' };
+      try {
+        const q = await w.quoteSavingsSpeedUp(txid);
+        const ref = `u${++this.quoteCounter}`;
+        this.speedUpQuotes.set(ref, q);
+        if (this.speedUpQuotes.size > 20) this.speedUpQuotes.delete(this.speedUpQuotes.keys().next().value!);
+        const quote: SavingsSpeedUpQuote = {
+          ref,
+          txid: q.replaces,
+          address: q.recipient,
+          amountSats: q.amountSats,
+          oldFeeSats: q.oldFeeSats,
+          feeSats: q.feeSats,
+          oldFeeRate: q.oldFeeRate,
+          feeRate: q.feeRate,
+          extraFeeSats: q.extraFeeSats,
+          toSpending: q.toSpending,
+          ...(q.signedBy ? { signedBy: q.signedBy } : {}),
+        };
+        return { ok: true, quote };
+      } catch (e) {
+        // Reading the transaction goes through the guardian: its refusals and timeouts read as everywhere else.
+        return { ok: false, message: mapError(e).message };
+      }
+    },
+    speedUp: (quote, signers) =>
+      this.exclusive(() =>
+        this.guarded(async () => {
+          const w = this.requireWallet();
+          const q = quote.ref ? this.speedUpQuotes.get(quote.ref) : undefined;
+          if (!q) throw new WalletServiceError('quote_stale', 'This needs a fresh quote. Go back and check it again.');
+          const res = await w.speedUpSavingsSpend(q, { signers });
+          if (!res.ok) {
+            if (res.signedTx) throw refusalToError(res.refusal.kind === 'broadcast_rejected' ? res.refusal : { kind: 'broadcast_rejected', reason: res.refusal.message, message: res.refusal.message });
+            throw refusalToError(res.refusal);
+          }
+          this.refresh();
+          return { txid: res.txid, feeSats: res.feeSats, extraFeeSats: res.extraFeeSats };
         }),
       ),
     replaceKey: (lost, opts = {}) =>

@@ -34,7 +34,7 @@ LINES_PER_ANNOTATION = 20
 MAX_LOG_LINES = 60
 MAX_LINE_CHARS = 400
 STEPS_BEFORE_FAILURE = 8
-ARTIFACT = {"android": "android-demo-walk", "ios": "ios-demo-walk"}
+ARTIFACT = {"android": "android-demo-walk-<variant>", "ios": "ios-demo-walk"}
 PLATFORM_NAME = {"android": "Android", "ios": "iOS"}
 
 # Maestro's plain-text output (`--no-ansi`): "    Tap on id: home-balance... COMPLETED"

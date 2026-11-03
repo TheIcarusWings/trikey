@@ -559,6 +559,7 @@ class Service implements RkWalletService {
       devicePrompt: this.prompts.getSnapshot(),
       syncing: this.syncing,
       synced: !!h,
+      guardianSlow: false,
       phoneSpending: 'enabled',
       recoveryOutcome: null,
       recovering: false,

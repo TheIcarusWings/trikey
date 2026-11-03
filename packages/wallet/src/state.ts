@@ -388,6 +388,8 @@ export const SavingsSendEntry = z.object({
   signedBy: SavingsSigners,
   /** `to_spending`: back into this phone's own Spending wallet; `key_replacement`: the move to a new Savings wallet. */
   purpose: z.enum(['payment', 'to_spending', 'key_replacement']).optional(),
+  /** "Speed up": this replaced (RBF) the unconfirmed Savings spend `replaces`, same payment, higher fee. */
+  replaces: Hex32.optional(),
 });
 export type SavingsSendEntry = z.infer<typeof SavingsSendEntry>;
 

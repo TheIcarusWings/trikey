@@ -1,9 +1,9 @@
-import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Linking, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
 import { Text } from '@/components/ui/text';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
+import { QrCamera, useCameraPermissions } from './qr-camera';
 
 export interface QrScannerProps {
   /** Called with every QR the camera reads, as text. The same QR arrives many times a second; the receiver decides what is new. */
@@ -17,7 +17,8 @@ export interface QrScannerProps {
 const CORNER = 'absolute size-11 border-white';
 
 /**
- * Camera viewfinder that reads QR codes with expo-camera. It asks for the camera permission itself and explains what to
+ * Camera viewfinder that reads QR codes (`QrCamera`: expo-camera, or the open source decoder in the Android build
+ * without Google code). It asks for the camera permission itself and explains what to
  * do if it was refused. The corner brackets match `ScanViewfinder`, the placeholder it replaces.
  */
 export function QrScanner({ onFrame, paused, size = pick(264, 316) }: QrScannerProps) {
@@ -49,13 +50,7 @@ export function QrScanner({ onFrame, paused, size = pick(264, 316) }: QrScannerP
       accessibilityLabel="Camera. Point it at the QR code on your hardware wallet."
       style={{ width: size, height: size }}
       className="self-center overflow-hidden rounded-3xl bg-[#1B1F24]">
-      <CameraView
-        style={{ width: size, height: size }}
-        facing="back"
-        active
-        barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-        onBarcodeScanned={paused ? undefined : (result) => onFrame(result.data)}
-      />
+      <QrCamera size={size} onCode={paused ? undefined : onFrame} />
       <View pointerEvents="none" className="absolute inset-0">
         <View className={cn(CORNER, 'left-10 top-10 rounded-tl-xl border-l-4 border-t-4')} />
         <View className={cn(CORNER, 'right-10 top-10 rounded-tr-xl border-r-4 border-t-4')} />

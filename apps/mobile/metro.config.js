@@ -1,9 +1,10 @@
 // Expo SDK 52+ configures Metro for npm workspaces on its own (watchFolders and
 // nodeModulesPaths cover the repo root, where npm hoists packages), so the additions
-// here are NativeWind's CSS pipeline, a polyfill for Node's `stream`, and one resolver
-// rule for the workspace packages.
+// here are NativeWind's CSS pipeline, a polyfill for Node's `stream`, resolver rules for
+// the workspace packages and one library, and the file variants of the Android build without Google code.
 const { getDefaultConfig } = require('expo/metro-config');
 const { withNativeWind } = require('nativewind/metro');
+const { FOSS_FORBIDDEN_PACKAGES, androidVariant } = require('./android-variant');
 
 const config = getDefaultConfig(__dirname);
 
@@ -26,8 +27,23 @@ const COMMONJS_ONLY = /^@sinclair\/typebox(\/|$)/;
 // @trikey/core and @trikey/wallet are TypeScript sources written for Node, which imports `./network.js` for
 // `network.ts`. Metro looks for the `.js` file literally, so when a relative `.js` import is not found, try it
 // without the extension (which finds the `.ts` file).
+// The Android build without Google code (TRIKEY_ANDROID_VARIANT=foss, android-variant.js):
+// - a file `name.android.foss.ts(x)` replaces `name.ts(x)` in its bundle (Metro tries `foss.ts` before `ts`, and the
+//   `.android` part keeps the iOS bundle on the ordinary file), the way `.native.ts` files replace web ones;
+// - the packages whose native side that build leaves out cannot be bundled at all, so a stray import fails the build
+//   instead of crashing the app when the code runs.
+const FOSS = androidVariant() === 'foss';
+if (FOSS) config.resolver.sourceExts = ['foss.ts', 'foss.tsx', ...config.resolver.sourceExts];
+const isFossForbidden = (moduleName) => FOSS_FORBIDDEN_PACKAGES.some((name) => moduleName === name || moduleName.startsWith(`${name}/`));
+
 const defaultResolve = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (FOSS && platform === 'android' && isFossForbidden(moduleName)) {
+    throw new Error(
+      `${moduleName} is not in the Android build without Google code (TRIKEY_ANDROID_VARIANT=foss), but ${context.originModulePath} imports it. ` +
+        'Give that file a .android.foss.ts variant that does without it (see android-variant.js).',
+    );
+  }
   // `isESMImport` picks the "import" or "require" branch of a package's exports.
   if (COMMONJS_ONLY.test(moduleName) && context.isESMImport) context = { ...context, isESMImport: false };
   const resolve = defaultResolve ?? context.resolveRequest;

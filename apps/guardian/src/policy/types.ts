@@ -72,6 +72,22 @@ export interface SavingsWatch {
   baselined: boolean;
   /** Txids of Savings spends already seen (announced, or history at the first scan), newest last, bounded. */
   seenSpends: string[];
+  /**
+   * What those spends spent and paid out, newest last, bounded like `seenSpends` (absent before guardians that tell a
+   * replacement apart): a later spend of one of the same coins is a replacement (RBF) of it, not a new outflow.
+   */
+  spendDetails?: SavingsSpendSeen[];
+}
+
+/** One Savings spend the guardian has seen: its coins and a digest of what it pays out (`savings.ts`, `SavingsSpend`). */
+export interface SavingsSpendSeen {
+  txid: string;
+  /** The Savings coins it spends (`txid:vout`). */
+  outpoints: string[];
+  /** Digest of its outputs that do not pay Savings; absent when the scan did not say. */
+  payment?: string;
+  /** What left Savings, fee included. */
+  amountSats: bigint;
 }
 
 /**
@@ -296,8 +312,17 @@ export type ActivityEvent =
   /** The phone asked the guardian to watch its Savings wallet (`replaced`: the Savings wallet it watched before). */
   | { type: 'savings_registered'; walletId: string; replaced?: string }
   | { type: 'savings_unregistered'; walletId: string }
-  /** A coin of the watched Savings wallet was spent (`amountSats`: what left Savings, fee included). The guardian did not sign it. */
-  | { type: 'savings_moved'; walletId: string; txid: string; amountSats: bigint }
+  /**
+   * A coin of the watched Savings wallet was spent (`amountSats`: what left Savings, fee included). The guardian did not
+   * sign it. `replaces`: it replaced (RBF) the Savings spend `replaces`, announced before with `previousAmountSats`, and
+   * pays out something else (another address or amount), so it is announced again.
+   */
+  | { type: 'savings_moved'; walletId: string; txid: string; amountSats: bigint; replaces?: string; previousAmountSats?: bigint }
+  /**
+   * A Savings spend already announced was replaced (RBF) by `txid` paying out the same (a fee bump: only the change back
+   * to Savings is smaller): the same outflow, so nobody is told again. `amountSats` now, `previousAmountSats` before.
+   */
+  | { type: 'savings_replaced'; walletId: string; txid: string; replaces: string; amountSats: bigint; previousAmountSats: bigint }
   /** `helperInput`: the outpoint of the phone's helper coin that rode along (a silent payment). */
   | { type: 'cosign_signed'; txid: string; outflow: bigint; usedAfter: bigint; replay: boolean; helperInput?: string }
   | { type: 'single_key_registered'; helper: boolean; coins: number }
@@ -423,6 +448,9 @@ export interface LimitNotice {
   replacedBy?: string;
   txid?: string;
   amountSats?: bigint;
+  /** `savings_moved` of a replacement (RBF) that pays out something else: the spend it replaced, and what that one moved. */
+  replacesTxid?: string;
+  previousAmountSats?: bigint;
   /** The paired phone first, then the contacts (nostr pubkeys). */
   recipients: string[];
   /** Recipients it reached. */

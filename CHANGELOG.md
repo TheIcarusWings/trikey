@@ -8,6 +8,39 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 
 ## Unreleased
 
+## 0.1.9-alpha (2026-11-03)
+
+- **The phone keeps hearing the guardian after a connection drops.** Found on a Pixel 10a (Android 16): Android closes the
+  sockets of an app in the background, and the relay library (nostr-tools 2.25) then ended the app's subscription
+  instead of reconnecting. Nothing subscribed again: requests still went out, but the answers were never heard, so the
+  app showed "Guardian offline" and no balance until it was restarted. The guardian had the same flaw after a relay
+  restart, and where the library did reconnect it skipped gift wraps (they are back-dated up to two days). Trikey now
+  keeps every subscription open itself, on the phone and on the guardian: a relay that drops is subscribed on again
+  after a short backoff (1 s, growing to 30 s), far enough back for back-dated gift wraps, and the app does it at once
+  when it comes back to the front. Messages a relay delivers again are not handled twice (#109).
+- **A slow guardian is "slow to answer", not "offline".** A sync now waits up to 90 s for the guardian to read the
+  wallet from its node (was 30 s). A guardian that answers but takes longer (a slow Electrum server) shows "Slow to
+  answer" with the last balance, and phone-only payments stay available; only a guardian that does not answer at all is
+  offline (#109).
+- **Savings: speed up a payment waiting to confirm** (RBF). The same coins pay the same people the same amount; the
+  higher fee, never below what Bitcoin Core requires, comes out of the change back to Savings, and two of Savings' keys
+  sign it again. The guardian sends one alert per outflow, not one per replacement, and announces a replacement that
+  pays someone else. A payment with no change ("Move everything") cannot be sped up, and the app says why (#98).
+- **Android: a second APK without Google code**, for GrapheneOS and other phones without Google Play services: none of
+  Google's libraries (it reads QR codes with zxing-cpp instead of ML Kit, and has no Google Drive option). Same app and
+  release key, so either APK installs over the other and the wallet stays; CI checks the FOSS one has no Google classes.
+  Which to pick, and how in Obtainium: docs/alpha-test-plan.md, docs/android-signing.md (#102).
+- **Trikey's own relay, `wss://relay.trikey.app`, is offered at setup** next to damus, nos.lol and Primal, never alone.
+  It stores only gift wraps and Nostr Connect events and sees what any relay sees. Existing guardians keep their relays
+  and can add it in the web UI (Settings, Change relays) (#106).
+- **Zapstore listing**: `zapstore.yaml` and docs/zapstore.md, so Zapstore can publish each release from GitHub; NIP-05
+  `trikey@trikey.app` for the publisher npub that signs it (#100, #101, #107, #108).
+- Docs: test plan steps 16 (contact lock) and 17 (Savings) (#97); the APK release notes say "open source" with "not
+  audited" (#96); DESIGN.md records Taproot (MuSig2) and FROST as decided for later (#103). Fixed: the relay notes in the
+  guardian's config and DESIGN.md (relay.trikey.app takes gift wraps and Nostr Connect events only), the NIP-05 file no
+  longer points clients to relay.trikey.app for the publisher's profile, and the test plan no longer says relays cannot
+  be changed after setup (#109).
+
 ## 0.1.8-alpha (2026-11-01)
 
 - **Savings, an optional vault that phone + guardian can never spend** (option K). Settings > Savings: your hardware

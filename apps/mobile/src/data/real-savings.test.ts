@@ -3,7 +3,8 @@
  * (regtest, throwaway keys; docs/design/savings-and-limit-off.md): before it exists it is offered (or "update the
  * guardian" when the guardian cannot watch it), creating it takes this phone, the simulated device and the second
  * simulated device (the Recovery Key), its balance and activity reach the state, "Add to Savings" is a payment like any
- * other, and a payment out of Savings is signed by two of its keys. Wallet details show both descriptors.
+ * other, and a payment out of Savings is signed by two of its keys; one still waiting to confirm can be sped up (the same
+ * payment, a higher fee). Wallet details show both descriptors.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GuardianRig } from '@trikey/guardian/testing';
@@ -141,6 +142,42 @@ describe('Savings in the app', { timeout: 120_000 }, () => {
     expect(s.balanceSats).toBe(spendingBefore + 30_000);
     expect(s.savings.balanceSats).toBe(80_000 - 30_000 - r.feeSats);
     expect(s.savings.activity[0]).toMatchObject({ kind: 'to-spending', signedBy: 'phone+hardware', amountSats: 30_000 });
+  });
+
+  it('a payment out of Savings waiting to confirm can be sped up: the fee difference first, then the same payment again', async () => {
+    const before = svc.getState().savings.balanceSats;
+    const to = 'bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080';
+    const q = svc.savings!.quote({ address: to, amountSats: 10_000 });
+    if (!q.ok) throw new Error(q.message);
+    const sent = await svc.savings!.send(q.quote, 'phone+hardware');
+    const pending = svc.getState().savings.activity.find((a) => a.txid === sent.txid);
+    expect(pending).toMatchObject({ kind: 'sent', status: 'pending', canSpeedUp: true });
+
+    const offer = await svc.savings!.quoteSpeedUp(sent.txid);
+    if (!offer.ok) throw new Error(offer.message);
+    expect(offer.quote).toMatchObject({ txid: sent.txid, address: to, amountSats: 10_000, oldFeeSats: sent.feeSats, toSpending: false, signedBy: 'phone+hardware' });
+    expect(offer.quote.extraFeeSats).toBe(offer.quote.feeSats - offer.quote.oldFeeSats);
+    expect(offer.quote.extraFeeSats).toBeGreaterThan(0);
+    expect(offer.quote.feeRate).toBeGreaterThan(offer.quote.oldFeeRate);
+
+    const r = await svc.savings!.speedUp(offer.quote, 'phone+recoveryKey');
+    expect(r).toMatchObject({ feeSats: offer.quote.feeSats, extraFeeSats: offer.quote.extraFeeSats });
+    const s = svc.getState().savings;
+    // One line for the payment: the replacement, marked as sped up; the original is gone.
+    expect(s.activity.find((a) => a.txid === sent.txid)).toBeUndefined();
+    expect(s.activity.find((a) => a.txid === r.txid)).toMatchObject({ kind: 'sent', amountSats: 10_000, feeSats: offer.quote.feeSats, signedBy: 'phone+recoveryKey', spedUp: true, canSpeedUp: true });
+    expect(s.balanceSats).toBe(before - 10_000 - offer.quote.feeSats);
+    // The old quote is spent: refused before anything is signed.
+    await expect(svc.savings!.speedUp(offer.quote, 'phone+hardware')).rejects.toMatchObject({ kind: 'quote_stale' });
+
+    await rig.mine();
+    await svc.sync();
+    const done = svc.getState().savings.activity.find((a) => a.txid === r.txid)!;
+    expect(done.status).toBe('confirmed');
+    expect(done.canSpeedUp).toBeUndefined();
+    const late = await svc.savings!.quoteSpeedUp(r.txid);
+    expect(late).toMatchObject({ ok: false, message: expect.stringMatching(/confirmed already/) });
+    expect(await svc.savings!.speedUp({ txid: r.txid, address: to, amountSats: 1, oldFeeSats: 1, feeSats: 2, oldFeeRate: 1, feeRate: 2, extraFeeSats: 1, toSpending: false }, 'phone+hardware').catch((e) => e)).toMatchObject({ kind: 'quote_stale' });
   });
 
   it('the guardian stopping its watch behind the phone\'s back is in Activity, and the next sync registers Savings again', async () => {

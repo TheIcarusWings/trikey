@@ -3,10 +3,20 @@ name: Android APK build
 # The build half of the Android test APK, as a reusable workflow so the release build and the launch check
 # make the APK with the very same steps:
 #
-# - android-apk.yml (tags and manual dispatch) calls it for arm64-v8a, the phones testers use, and publishes
-#   the result as a draft release;
+# - android-apk.yml (tags and manual dispatch) calls it for arm64-v8a, the phones testers use, once per variant,
+#   and attaches both APKs to the release;
 # - android-launch.yml (pull requests) calls it for x86_64, the emulator's ABI, and opens the APK in an
 #   Android emulator to check it starts.
+#
+# Two variants (`variant`, TRIKEY_ANDROID_VARIANT; apps/mobile/android-variant.js explains them), the same app with
+# the same package name and signature, so either installs over the other and the wallet stays:
+#
+# - `standard`: trikey-alpha-<version>.apk. Has Google's libraries: Google Sign-In for Google Drive backup (off until
+#   EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID is set), ML Kit for reading QR codes, the Play services passkey provider.
+# - `foss`: trikey-alpha-foss-<version>.apk, no Google code. QR codes are read by zxing-cpp (open source); there is
+#   no Google Drive. A check fails the build if any Google Play services, Firebase, ML Kit or data transport class,
+#   or ML Kit's libbarhopper, is in the APK (apps/mobile/scripts/apk-google-scan.mts); for the standard APK the same
+#   check only reports what is there.
 #
 # The build is in its own file, not a `workflow_call` trigger on android-apk.yml, because a called workflow
 # cannot ask for more than its caller has: android-apk.yml's release job needs `contents: write`, which a
@@ -47,7 +57,7 @@ on:
         default: 'arm64-v8a'
         type: string
       artifact-name:
-        description: 'Name of the uploaded artifact (the APK, its .sha256 file and the release notes).'
+        description: 'Name of the uploaded artifact (the APK, its .sha256 file and its part of the release notes).'
         required: false
         default: 'trikey-android-apk'
         type: string
@@ -55,6 +65,11 @@ on:
         description: "'release' (the project's release key, from the secrets below) or 'one-off' (a throwaway key)."
         required: false
         default: 'one-off'
+        type: string
+      variant:
+        description: "'standard' (with Google's libraries) or 'foss' (no Google code). See the header."
+        required: false
+        default: 'standard'
         type: string
     secrets:
       ANDROID_RELEASE_KEYSTORE:
@@ -89,6 +104,9 @@ jobs:
       TRIKEY_DISABLE_ICLOUD: '1'
       EXPO_PUBLIC_PASSKEY_RP_ID: ''
       EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID: ''
+      # Read by app.config.ts and the config plugin at the prebuild, and by linking, Metro and the app config during
+      # the Gradle build (the generated project stops if they differ): set once, for the whole job.
+      TRIKEY_ANDROID_VARIANT: ${{ inputs.variant || 'standard' }}
       # Through the environment, not spliced into a script.
       ARCHITECTURES: ${{ inputs.architectures || 'arm64-v8a' }}
     steps:
@@ -107,6 +125,13 @@ jobs:
       # Command-line tools and licences. Gradle then fetches the platform, build tools, NDK and CMake
       # that this React Native version asks for.
       - uses: android-actions/setup-android@v4.0.4
+
+      - name: Check the variant
+        run: |
+          case "${TRIKEY_ANDROID_VARIANT}" in
+            standard|foss) echo "Building the ${TRIKEY_ANDROID_VARIANT} variant" ;;
+            *) echo "::error::Unknown variant: ${TRIKEY_ANDROID_VARIANT} (standard or foss)"; exit 1 ;;
+          esac
 
       - run: npm ci
 
@@ -159,8 +184,13 @@ jobs:
           bt="$(ls -d "${ANDROID_HOME}"/build-tools/*/ | sort -V | tail -n 1)"
           bt="${bt%/}"
 
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+          # The names the app's update check looks for (apps/mobile/src/lib/update-check.ts, assetNames).
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${TRIKEY_ANDROID_VARIANT}" = foss ]; then
+            name="trikey-alpha-foss-${GITHUB_REF_NAME}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             name="trikey-alpha-${GITHUB_REF_NAME}"
+          elif [ "${TRIKEY_ANDROID_VARIANT}" = foss ]; then
+            name="trikey-alpha-foss-0.1.0-${GITHUB_SHA::7}"
           else
             name="trikey-alpha-0.1.0-${GITHUB_SHA::7}"
           fi
@@ -243,14 +273,48 @@ jobs:
           (cd dist && sha256sum "${name}.apk" > "${name}.apk.sha256")
           echo "name=${name}" >> "${GITHUB_OUTPUT}"
           echo "sha256=$(cut -d' ' -f1 "dist/${name}.apk.sha256")" >> "${GITHUB_OUTPUT}"
+          echo "size=$(stat -c %s "dist/${name}.apk")" >> "${GITHUB_OUTPUT}"
 
+      # Every dex file (any class of these packages, or any mention of one), the native libraries, the files Google's
+      # libraries leave at the APK's root and the manifest. The FOSS APK must have none of it; the standard APK's
+      # findings are only reported, as a notice.
+      - name: Check for Google code
+        env:
+          APK: dist/${{ steps.sign.outputs.name }}.apk
+        run: |
+          set -euo pipefail
+          if [ "${TRIKEY_ANDROID_VARIANT}" = foss ]; then
+            if ! report="$(node --import tsx apps/mobile/scripts/apk-google-scan.mts "${APK}" --require-none)"; then
+              echo "${report}"
+              echo "::error title=Google code in the FOSS APK::$(sed 's/%/%25/g' <<<"${report}" | awk '{printf "%s%%0A", $0}')"
+              exit 1
+            fi
+            echo "${report}"
+            echo "::notice title=No Google code::${report}"
+          else
+            report="$(node --import tsx apps/mobile/scripts/apk-google-scan.mts "${APK}")"
+            echo "${report}"
+            echo "::notice title=Google code in the standard APK (expected)::$(head -n 12 <<<"${report}" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+          fi
+          {
+            echo "### Google code check (${TRIKEY_ANDROID_VARIANT})"
+            echo '```'
+            echo "${report}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      # The release notes, in parts that android-apk.yml puts together for the release, in this order:
+      # - release-notes-common.md (written by the standard build): signing, which of the two APKs to pick, how to install;
+      # - release-notes-<variant>.md (each build): the APK's name, checksum, size and what it was built from.
       - name: Release notes
         env:
           NAME: ${{ steps.sign.outputs.name }}
           SHA256: ${{ steps.sign.outputs.sha256 }}
           SIGNER: ${{ steps.sign.outputs.signer }}
+          SIZE: ${{ steps.sign.outputs.size }}
           SIGNING: ${{ inputs.signing || 'one-off' }}
         run: |
+          set -euo pipefail
           if [ "${SIGNING}" = release ]; then
             signing_note="**Signed with the Trikey release key** (certificate SHA-256 \`${SIGNER}\`, also in
           packaging/android/release-cert.sha256). Every release from 0.1.7-alpha on has this signature, so it installs over
@@ -262,19 +326,54 @@ jobs:
           after the build, so Android will not install this build over another one, or another over it: uninstall first.
           Uninstalling deletes the wallet on that phone, so make a backup (recovery code and backup file) before you do."
           fi
-          cat > dist/release-notes.md <<EOF
+          # Both APK names, whichever variant this job built.
+          standard_name="${NAME/trikey-alpha-foss-/trikey-alpha-}"
+          foss_name="${standard_name/trikey-alpha-/trikey-alpha-foss-}"
+          size_mb="$(awk -v b="${SIZE}" 'BEGIN { printf "%.1f", b / 1048576 }')"
+
+          if [ "${TRIKEY_ANDROID_VARIANT}" = standard ]; then
+            cat > dist/release-notes-common.md <<EOF
           ## Trikey alpha test build (Android)
 
           ${signing_note}
 
+          **Which APK?** There are two builds of the same app. They have the same name, package and signature, so you can
+          switch at any time by installing the other one over the app; the wallet stays.
+
+          - \`${standard_name}.apk\`: the **standard** build. It contains Google's libraries: QR codes are read with
+            Google's ML Kit, and Google Drive backup can be switched on in a later release (it needs Google Play services
+            on the phone).
+          - \`${foss_name}.apk\`: **no Google code**, for phones without Google Play services (GrapheneOS, /e/OS,
+            LineageOS) or if you prefer an app without it. QR codes are read with the open source zxing-cpp. It will never
+            offer Google Drive backup: the backup is the recovery code plus the backup file, which you can still save to
+            Google Drive or anywhere else from the share sheet. Settings, About says "Trikey (no Google)".
+
+          Today both do the same: Google Drive backup is not switched on in either yet. Not sure? Take the standard one.
+
           - Pre-alpha, open source, not audited. Test networks only (signet, testnet4). Never put real bitcoin in it.
-          - Install: download \`${NAME}.apk\` on the phone, open it, and allow installing from this source when Android asks.
-          - Built for: ${ARCHITECTURES} (built from commit ${GITHUB_SHA::12}).
-          - Check the download: SHA-256 \`${SHA256}\`.
-          - Passkeys and Google Drive backup are not in this build; the backup is a recovery code plus a backup file.
+          - Install: download the APK on the phone, open it, and allow installing from this source when Android asks.
+          - Passkeys and Google Drive backup are not in these builds; the backup is a recovery code plus a backup file.
+          - Check for updates (Settings, About) offers the APK of the build you have installed.
           - How to test it: docs/alpha-test-plan.md in the repository.
           EOF
-          cp dist/release-notes.md "${GITHUB_STEP_SUMMARY}"
+          fi
+
+          if [ "${TRIKEY_ANDROID_VARIANT}" = foss ]; then
+            heading="No Google: \`${NAME}.apk\`"
+            checked="- Checked by the build: no Google Play services, Firebase, ML Kit or data transport code in it."
+          else
+            heading="Standard: \`${NAME}.apk\`"
+            checked=""
+          fi
+          cat > "dist/release-notes-${TRIKEY_ANDROID_VARIANT}.md" <<EOF
+
+          ### ${heading}
+
+          - SHA-256 \`${SHA256}\`
+          - ${size_mb} MB, built for ${ARCHITECTURES} from commit ${GITHUB_SHA::12}.
+          ${checked}
+          EOF
+          cat dist/release-notes-*.md >> "${GITHUB_STEP_SUMMARY}"
 
       - uses: actions/upload-artifact@v7.0.2
         with:
@@ -282,6 +381,6 @@ jobs:
           path: |
             dist/*.apk
             dist/*.apk.sha256
-            dist/release-notes.md
+            dist/release-notes-*.md
           if-no-files-found: error
           retention-days: 30

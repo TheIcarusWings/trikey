@@ -1,8 +1,12 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   RELEASES_API_URL,
   RELEASES_PAGE_URL,
   UpdateCheckError,
+  assetNames,
   checkForUpdate,
   compareVersions,
   isReleaseDownloadUrl,
@@ -254,5 +258,51 @@ describe('checking for an update', () => {
     };
     await checkForUpdate('0.1.6', fetchFn);
     expect(seen.flatMap((h) => Object.keys(h).map((k) => k.toLowerCase()))).not.toContain('authorization');
+  });
+});
+
+describe('the two Android builds', () => {
+  /** A release with both APKs, as android-apk.yml publishes them from 0.1.9 on. */
+  function both(tag: string) {
+    const r = release(tag);
+    const foss = `trikey-alpha-foss-${tag}.apk`;
+    return {
+      ...r,
+      assets: [
+        ...r.assets,
+        { name: foss, browser_download_url: `${DL}${tag}/${foss}` },
+        { name: `${foss}.sha256`, browser_download_url: `${DL}${tag}/${foss}.sha256` },
+      ],
+    };
+  }
+
+  it('names the APK of each build as the release workflow does', () => {
+    expect(assetNames('v0.1.9-alpha')).toEqual({ apk: 'trikey-alpha-v0.1.9-alpha.apk', sha256: 'trikey-alpha-v0.1.9-alpha.apk.sha256' });
+    expect(assetNames('v0.1.9-alpha', 'foss')).toEqual({ apk: 'trikey-alpha-foss-v0.1.9-alpha.apk', sha256: 'trikey-alpha-foss-v0.1.9-alpha.apk.sha256' });
+    // The workflow's names (.github/workflows/android-build.yml), so the app and the releases agree.
+    const workflow = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../.github/workflows/android-build.yml'), 'utf8');
+    expect(workflow).toContain('name="trikey-alpha-foss-${GITHUB_REF_NAME}"');
+    expect(workflow).toContain('name="trikey-alpha-${GITHUB_REF_NAME}"');
+  });
+
+  it('offers the installed build its own APK, never the other one', async () => {
+    const list = [both('v0.1.9-alpha')];
+    const files = {
+      [`${DL}v0.1.9-alpha/trikey-alpha-v0.1.9-alpha.apk.sha256`]: `${HASH}  trikey-alpha-v0.1.9-alpha.apk\n`,
+      [`${DL}v0.1.9-alpha/trikey-alpha-foss-v0.1.9-alpha.apk.sha256`]: `${'c'.repeat(64)}  trikey-alpha-foss-v0.1.9-alpha.apk\n`,
+    };
+    const standard = await checkForUpdate('0.1.8', fakeGitHub(list, files).fetchFn);
+    const foss = await checkForUpdate('0.1.8', fakeGitHub(list, files).fetchFn, { variant: 'foss' });
+    expect(standard).toMatchObject({ kind: 'available', release: { apkUrl: `${DL}v0.1.9-alpha/trikey-alpha-v0.1.9-alpha.apk` }, sha256: HASH });
+    expect(foss).toMatchObject({ kind: 'available', release: { apkUrl: `${DL}v0.1.9-alpha/trikey-alpha-foss-v0.1.9-alpha.apk` }, sha256: 'c'.repeat(64) });
+  });
+
+  it('skips releases without an APK of the installed build (older ones, or one whose FOSS build failed)', async () => {
+    // 0.1.10 has only the standard APK: the FOSS build stays on 0.1.9, the newest it can install.
+    const list = [release('v0.1.10-alpha'), both('v0.1.9-alpha'), release('v0.1.8-alpha')];
+    expect(pickRelease(list, 'foss')?.tag).toBe('v0.1.9-alpha');
+    expect(pickRelease(list)?.tag).toBe('v0.1.10-alpha');
+    expect(await checkForUpdate('0.1.9', fakeGitHub(list).fetchFn, { variant: 'foss' })).toEqual({ kind: 'up-to-date', current: '0.1.9' });
+    expect(await checkForUpdate('0.1.8', fakeGitHub([release('v0.1.8-alpha')]).fetchFn, { variant: 'foss' })).toEqual({ kind: 'none', current: '0.1.8' });
   });
 });
