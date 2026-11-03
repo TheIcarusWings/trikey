@@ -115,6 +115,7 @@ describe('extra alert channels, end to end', { timeout: 60_000 }, () => {
     await waitFor(() => phoneAlerts.find((a) => a.type === 'notifications_changed'), 'notifications_changed alert');
     const st = await phone.call('guardian.status', {});
     expect(st.features).toContain('notifications');
+    expect(st.features).toContain('short_wraps'); // its answers' wraps are back-dated 10 minutes at most (0.1.10)
     expect(st.notifications!.channels).toEqual(
       expect.arrayContaining([
         { kind: 'email', audience: 'owner', hint: 'o…@example.com' },

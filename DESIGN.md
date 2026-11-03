@@ -163,7 +163,11 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
   three public ones; it sees what any relay sees, ciphertext and metadata, and is never the only one. Trikey keeps its
   subscriptions open itself: a relay whose connection drops (a restart, a network change, Android closing a background
   app's sockets) is subscribed on again after a short backoff, two days and ten minutes back because gift wraps are
-  back-dated, and the app does it at once when it comes back to the front (PROTOCOL.md section 5).
+  back-dated, and the app does it at once when it comes back to the front (PROTOCOL.md section 5). Every subscription
+  is sent that whole look-back again, so both sides keep the ids of the wraps they handled across restarts and skip
+  them before any signature check or decryption, and the phone opens new ones a few at a time so the app never stalls
+  (PROTOCOL.md section 4, "Handled wraps"). From 0.1.10 a call's wraps are back-dated 10 minutes and gone from the
+  relays about an hour later; alerts keep the two days.
 - **Changing relays** (web UI, Settings; `PUT /api/relays`, PROTOCOL.md "Changing relays"). The phone, its backups
   and printed recovery sheets all carry the list from pairing, so a change must never cut any of them off. The guardian
   listens *and publishes* on the new relays and on the removed ones at once, and keeps watching the removed ones
@@ -325,7 +329,7 @@ Guessable keys would lose money silently, so where each key's randomness comes f
 | Backup data key, nonces, salts, recovery code, passkey PRF salt | `packages/wallet/src/backup.ts`, `wallet.ts` | `secureRandomBytes`. |
 | Pairing secret, message ids, pairing session id | `packages/protocol/src/pairing.ts`, `envelope.ts`, `apps/guardian/src/pairing.ts` | `secureRandomBytes`. |
 | Guardian keystore salt and nonce, silent-payment key encryption | `apps/guardian/src/keystore.ts`, `silent/service.ts` | `secureRandomBytes`. |
-| NIP-44 nonces and NIP-59 back-dating (RPC and the guardian's NIP-17 alert DMs) | `packages/protocol/src/transport.ts` | `secureRandomBytes` and `secureRandomInt`, no longer `Math.random` or nostr-tools' own generator. Back-dating hides when a message was sent, so it should not come from a predictable generator. The wrap's public `expiration` is derived from that same back-dated `created_at` (`created_at + 2 days + the class TTL ceiling`), never from the send time, so it does not undo the back-dating; relays still see when an event arrives. |
+| NIP-44 nonces and NIP-59 back-dating (RPC and the guardian's NIP-17 alert DMs) | `packages/protocol/src/transport.ts` | `secureRandomBytes` and `secureRandomInt`, no longer `Math.random` or nostr-tools' own generator. Back-dating hides when a message was sent, so it should not come from a predictable generator. The wrap's public `expiration` is derived from that same back-dated `created_at` (`created_at + W + the class TTL ceiling`, where `W` is the back-dating window: 2 days for alerts, 10 minutes for requests and responses from 0.1.10, PROTOCOL.md section 2), never from the send time, so it does not undo the back-dating; relays still see when an event arrives. |
 
 `Math.random` is left in one place: the Electrum reconnect jitter, which is timing only. A lint-style test ([`packages/core/test/randomness-lint.test.ts`](packages/core/test/randomness-lint.test.ts), checker in `test/support/randomness-check.ts`) fails CI when the shipped sources (`apps/*/src`, `apps/*/app`, `packages/*/src`) reach randomness any other way: `Math.random`; a random function (`randomBytes`, `getRandomValues`, `randomUUID`, `randomInt`, `randomFill`, `randomSecretKey`, `generateMnemonic`, `generateSecretKey`, nostr-tools' `wrapEvent`/`createWrap`/`createSeal`, ...) imported, destructured or reached as a member from any module other than our own; `globalThis.crypto` / `window.crypto` (except `.subtle`); and `nip44.encrypt` without an explicit nonce. Aliased, namespace, default, `require` and dynamic-import forms are followed. The few files that implement the source itself are allowlisted per rule, with the reason, and a test fails if an exception is no longer needed. It cannot see value aliasing (`const m = Math; m.random()`) or code inside dependencies.
 

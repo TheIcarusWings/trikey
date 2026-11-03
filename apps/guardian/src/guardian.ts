@@ -31,7 +31,7 @@ import type { Server } from 'node:http';
 import { hex } from '@scure/base';
 import type { SimplePool } from 'nostr-tools/pool';
 import { normalizeURL } from 'nostr-tools/utils';
-import { GUARDIAN_FEATURES, RpcServer, SimplePoolRelayPool, checkRelayList, checkRelayUrl, createSimplePool, sameRelays, type Alert, type MethodName } from '@trikey/protocol';
+import { GUARDIAN_FEATURES, RpcServer, SeenWraps, SimplePoolRelayPool, checkRelayList, checkRelayUrl, createSimplePool, sameRelays, type Alert, type MethodName } from '@trikey/protocol';
 import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 import { ChainService } from './chain/chain.js';
 import { BitcoinRpc } from './chain/bitcoind.js';
@@ -65,7 +65,7 @@ import { DAY, JsonFileStore, PolicyEngine, systemClock, type Clock, type Recover
 import { ServiceState, type RetiringRelay, type ServiceEvent } from './service-state.js';
 import { UnlockThrottle, type ThrottleOptions } from './unlock-throttle.js';
 import { DirectMessages } from './nostr/dm.js';
-import { Inbox } from './nostr/inbox.js';
+import { Inbox, seenWrapsFile } from './nostr/inbox.js';
 import { buildHandlers } from './nostr/handlers.js';
 import { stampOf, toSeconds } from './nostr/wire.js';
 import { DEFAULT_BROADCAST_LIMIT, DEFAULT_CONTACT_LOCK_LIMIT, DEFAULT_REFUSAL_LIMIT, SlidingWindowLimiter, type RateLimitOptions } from './rate-limit.js';
@@ -91,6 +91,8 @@ export const FILES = {
   phoneThrottle: 'unlock-throttle-phone.json',
   resetThrottle: 'reset-throttle.json',
   sessionThrottle: 'session-throttle.json',
+  /** Ids of gift wraps already handled (not secret: the relays hold the wraps), so a restart opens none again. */
+  seenWraps: 'seen-wraps.json',
 } as const;
 
 /** After this many failed `guardian.unlock` passphrases in a row, the phone may not unlock until the web UI does. */
@@ -395,7 +397,7 @@ export class Guardian {
    * only when it lists `savings` (the guardian serves Savings' chain data). Tests clear it to see how a phone treats a
    * guardian from before a feature.
    */
-  features: string[] = [GUARDIAN_FEATURES.limitOff, GUARDIAN_FEATURES.contactLock, GUARDIAN_FEATURES.savings, GUARDIAN_FEATURES.notifications];
+  features: string[] = [GUARDIAN_FEATURES.limitOff, GUARDIAN_FEATURES.contactLock, GUARDIAN_FEATURES.savings, GUARDIAN_FEATURES.notifications, GUARDIAN_FEATURES.shortWraps];
 
   nowSec(): number {
     return toSeconds(this.clock.now());
@@ -551,6 +553,11 @@ export class Guardian {
       onDm: (opened) => dm.handleOpened(opened),
       log: this.log,
       isPeer: (sender) => this.isKnownSender(sender),
+      seen: new SeenWraps({
+        storage: seenWrapsFile(this.path('seenWraps')),
+        now: () => this.nowSec(),
+        onError: (e) => this.log.warn('inbox.seen_wraps_failed', { error: errorText(e) }),
+      }),
     });
     await this.inbox.start();
     this.log.info('nostr.listening', { npub: this.identity.npub, relays: relays.length });

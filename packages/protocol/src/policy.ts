@@ -27,7 +27,18 @@ export function isLimitOff(dailyLimitSats: number): boolean {
  * `notifications`: it can also send alerts by email, ntfy and webhook (set up in its web UI, never by the phone), lists
  * them masked in `guardian.status.notifications`, and raises `notifications_changed` when they change.
  */
-export const GUARDIAN_FEATURES = { limitOff: 'limit_off', contactLock: 'contact_lock', savings: 'savings', notifications: 'notifications' } as const;
+/**
+ * What a guardian lists in `guardian.status.features`. `short_wraps` (0.1.10): its answers' gift wraps are back-dated
+ * at most `RPC_WRAP_BACKDATE_SEC` and expire about an hour later (PROTOCOL.md, "Wrap timestamps"); its alerts are still
+ * back-dated up to two days.
+ */
+export const GUARDIAN_FEATURES = {
+  limitOff: 'limit_off',
+  contactLock: 'contact_lock',
+  savings: 'savings',
+  notifications: 'notifications',
+  shortWraps: 'short_wraps',
+} as const;
 
 /** True when the alert contacts may lock the guardian (`Policy.contactLock`). */
 export function isContactLockOn(policy: Pick<Policy, 'contactLock'>): boolean {

@@ -1,6 +1,6 @@
 import { secureRandomInt } from '@trikey/core/random';
 import type { Filter } from 'nostr-tools/filter';
-import type { Event as NostrEvent } from 'nostr-tools/pure';
+import { getEventHash, verifyEvent, type Event as NostrEvent } from 'nostr-tools/pure';
 import { SimplePool } from 'nostr-tools/pool';
 import { normalizeURL } from 'nostr-tools/utils';
 
@@ -20,6 +20,21 @@ export interface SubscriptionHandlers {
   oneose?: () => void;
   /** The subscription ended without `close()`: the pool was closed. A relay that drops is subscribed again instead. */
   onclose?: (reasons: string[]) => void;
+  /**
+   * Ids the caller already handled. An event with such an id is skipped before it is parsed or its signature checked
+   * (nostr-tools' `alreadyHaveEvent`), on every relay and after every resubscription. Put only ids of events that were
+   * fully verified here: see `SeenWraps` for why skipping them is then safe.
+   */
+  isKnown?: (id: string) => boolean;
+  /**
+   * The caller checks each event's id and signature itself (gift wraps: `openGiftWrap` does, before decrypting), so
+   * the pool does not check the signature again. It still checks that the id is the hash of the event, and passes the
+   * same event on once (same id and same signature: an exact copy), so no relay can shadow another relay's copy of an
+   * event with a forged one. Default false: the pool passes on only events whose id and signature it verified.
+   */
+  verifiedByCaller?: boolean;
+  /** A relay whose subscription had dropped is subscribed again and has sent EOSE (connected again). */
+  onresubscribed?: (relay: string) => void;
 }
 
 export interface Subscription {
@@ -137,6 +152,8 @@ interface RelaySub {
   since?: number;
   /** Its first EOSE (or giving up) was counted for `oneose`. */
   eosed: boolean;
+  /** It dropped since it was last up (for `onresubscribed`). */
+  dropped?: boolean;
 }
 
 interface KeptSub {
@@ -169,6 +186,12 @@ interface KeptSub {
  * event from several relays) reach `onevent` once while the subscription remembers their ids; past that, the RPC
  * client and server, the guardian's inbox and DMs drop them by wrap id and replay guard. `reconnect()` skips the
  * wait (the app calls it when it comes back to the front).
+ *
+ * Signatures: nostr-tools checks only each event's shape here (`wellFormed`); the pool verifies an event once, after
+ * dropping ids the caller already handled (`isKnown`, checked before the event is even parsed) and copies from other
+ * relays, and not at all where the caller verifies (`verifiedByCaller`: gift wraps, whose signature `openGiftWrap`
+ * checks before it decrypts). On a phone, one signature check per wrap per relay on every (re)subscription was most of
+ * the cost of opening the app.
  */
 export class SimplePoolRelayPool implements RelayPool {
   private readonly pool: SimplePool;
@@ -181,6 +204,10 @@ export class SimplePoolRelayPool implements RelayPool {
     this.pool = opts.pool ?? createSimplePool({ ...(opts.websocketImplementation ? { websocketImplementation: opts.websocketImplementation } : {}) });
     // A pool made elsewhere may have it on; its `since` narrowing must never apply (see above).
     this.pool.enableReconnect = false;
+    // nostr-tools checks only the shape; `deliver` verifies, after skipping known ids and duplicates, and not at all
+    // for a caller that verifies itself (`verifiedByCaller`). One signature check per event instead of one per relay
+    // plus the caller's. (Relays the pool already holds keep nostr-tools' check: harmless, only slower.)
+    this.pool.verifyEvent = wellFormed;
     this.maxWaitMs = opts.maxWaitMs ?? 5000;
     this.backoff = opts.resubscribeBackoffMs?.length ? [...opts.resubscribeBackoffMs] : RESUBSCRIBE_BACKOFF_MS;
   }
@@ -266,8 +293,11 @@ export class SimplePoolRelayPool implements RelayPool {
     const gen = ++r.gen;
     const current = () => !kept.stopped && !this.closed && r.gen === gen;
     const filter = r.since === undefined ? kept.filter : { ...kept.filter, since: r.since };
+    const isKnown = kept.handlers.isKnown;
     r.closer = this.pool.subscribeMany([r.url], filter, {
       maxWait: this.maxWaitMs,
+      // Checked on the raw message, before nostr-tools parses or verifies anything.
+      ...(isKnown ? { alreadyHaveEvent: (id: string) => isKnown(id) } : {}),
       onevent: (e) => {
         if (current()) this.deliver(kept, e, r.url);
       },
@@ -280,6 +310,14 @@ export class SimplePoolRelayPool implements RelayPool {
           r.eosed = true;
           if (++kept.eoses === kept.relays.length) kept.handlers.oneose?.();
         }
+        if (r.dropped && r.upAt !== undefined) {
+          r.dropped = false;
+          try {
+            kept.handlers.onresubscribed?.(r.url);
+          } catch {
+            /* the caller's problem */
+          }
+        }
       },
       onclose: (reasons) => {
         if (current()) this.dropped(kept, r, reasons[0]?.reason ?? 'closed');
@@ -289,6 +327,7 @@ export class SimplePoolRelayPool implements RelayPool {
 
   private dropped(kept: KeptSub, r: RelaySub, reason: string): void {
     r.closer = undefined;
+    r.dropped = true;
     if (r.upAt !== undefined) {
       if (Date.now() - r.upAt >= RESUBSCRIBE_STABLE_MS) r.attempt = 0;
       // Everything up to the drop was seen: ask again from as far before the drop as the caller asked before the start.
@@ -308,11 +347,58 @@ export class SimplePoolRelayPool implements RelayPool {
   }
 
   private deliver(kept: KeptSub, event: NostrEvent, relay: string): void {
-    // Ids are remembered only after nostr-tools verified the event, so a relay cannot shadow a real event with a fake.
-    if (kept.seen.has(event.id)) return;
-    kept.seen.add(event.id);
+    const h = kept.handlers;
+    if (h.isKnown?.(event.id)) return;
+    // Remembered only once checked, so a relay cannot shadow a real event with a fake: verified (id and signature), or
+    // for a caller that verifies itself, an id that is the hash of the content plus the very same signature (an
+    // event that differs in anything has another key, and reaches the caller too, which then rejects the fake).
+    let key: string;
+    if (h.verifiedByCaller) {
+      if (kept.seen.has(event.id + event.sig)) return;
+      if (!idMatches(event)) return;
+      key = event.id + event.sig;
+    } else {
+      if (kept.seen.has(event.id)) return;
+      if (!verifyEvent(event)) return;
+      key = event.id;
+    }
+    kept.seen.add(key);
     if (kept.seen.size > SEEN_IDS) kept.seen.delete(kept.seen.values().next().value!);
-    kept.handlers.onevent(event, relay);
+    h.onevent(event, relay);
+  }
+}
+
+const HEX64 = /^[0-9a-f]{64}$/;
+const HEX128 = /^[0-9a-f]{128}$/;
+
+/**
+ * What nostr-tools checks on each event in place of its signature check (`verifyEvent` of the SimplePool): the shape
+ * only (hex id, pubkey and signature, kind, timestamps, string tags). The signature is checked later, once (see `deliver`).
+ */
+export function wellFormed(e: NostrEvent): boolean {
+  return (
+    !!e &&
+    typeof e === 'object' &&
+    typeof e.id === 'string' &&
+    HEX64.test(e.id) &&
+    typeof e.pubkey === 'string' &&
+    HEX64.test(e.pubkey) &&
+    typeof e.sig === 'string' &&
+    HEX128.test(e.sig) &&
+    Number.isInteger(e.kind) &&
+    Number.isInteger(e.created_at) &&
+    typeof e.content === 'string' &&
+    Array.isArray(e.tags) &&
+    e.tags.every((t) => Array.isArray(t) && t.every((x) => typeof x === 'string'))
+  );
+}
+
+/** The event's id is the sha256 of its serialization (NIP-01). Cheap next to a signature check. */
+function idMatches(e: NostrEvent): boolean {
+  try {
+    return getEventHash(e) === e.id;
+  } catch {
+    return false;
   }
 }
 
