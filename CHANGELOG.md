@@ -8,6 +8,34 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 
 ## Unreleased
 
+## 0.1.10-alpha (2026-11-03)
+
+A fix release for the phone app freezing when it opens. Update the app and the guardian; either alone already helps,
+and they work with each other's older versions.
+
+- **The app no longer freezes for a long time when it opens or comes back to the front.** Found on a Pixel 10a and an
+  iPhone with 0.1.9: "super slow, and I can't tap anything for a while", every time. The relays held about 600
+  encrypted messages addressed to the phone (every answer of the guardian from the last two days: they were dated up to
+  two days back, so the relays kept them that long, and every subscription asked for all of them), and the app checked
+  the signature of each one (once per relay) and decrypted it again on every start and, since 0.1.9, every time it came
+  back to the front, all on the thread that also handles taps. Now:
+  - the app remembers which messages it already read, across restarts, and skips them before any signature check or
+    decryption; the guardian does the same (in `seen-wraps.json` in its data directory). Measured with 500 such messages
+    on two relays (on a laptop; a phone is many times slower): before, 2,000 signature checks and 1,000 decryptions on
+    every start and 1,000 more checks after each return to the front, with the app blocked for over 4 s at a time; now,
+    on the first start after the update each message is checked and decrypted once, without blocking for more than a few
+    tens of milliseconds, and nothing at all on the next starts or after a return to the front;
+  - each new message's signature is checked once instead of once per relay plus once more;
+  - the app reads new messages a few at a time, so it stays responsive, and an answer it is waiting for goes first;
+  - requests and answers are now dated at most 10 minutes back and expire from the relays about an hour after they
+    are sent (alerts keep the two days, so a phone that was off still gets them). The old messages expire from the
+    relays within two days of the update. Why so little back-dating is enough for calls: PROTOCOL.md section 2.
+- **A "Locked" left over from a guardian restart clears by itself.** When a relay connection comes back (after a relay
+  or network restart, or when the app returns to the front), the app reads the guardian's status again instead of
+  waiting for the next sync: unlocking the guardian in its web UI after an update sends no alert.
+- Compatibility: a 0.1.10 guardian still reads requests from older phones (dated up to two days back), and a 0.1.10
+  phone still reads answers from older guardians. The guardian lists `short_wraps` in its features.
+
 ## 0.1.9-alpha (2026-11-03)
 
 - **The phone keeps hearing the guardian after a connection drops.** Found on a Pixel 10a (Android 16): Android closes the
