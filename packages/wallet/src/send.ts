@@ -27,8 +27,8 @@ export const MAX_ESTIMATE_SAT_PER_VB = 2000;
  * The lowest fee rate (sat/vB) the wallet picks by itself on mainnet. Bitcoin Core 29 lowered its default minimum
  * relay fee to 0.1 sat/vB, and its estimates follow it down (a mainnet payment went out at 0.11 sat/vB while
  * mempool.space recommended 1 to 2), but many nodes still relay nothing under 1 sat/vB, so such a payment may never
- * reach a miner, and a Spending payment in guardian mode cannot be sped up yet. Only a rate the caller sets (`feeRate`)
- * goes lower (`feeRateBelowFloor` warns). Test networks keep the node's estimate.
+ * reach a miner (it can be sped up, `TrikeyWallet.quoteSpeedUp`, but better not to need it). Only a rate the caller
+ * sets (`feeRate`) goes lower (`feeRateBelowFloor` warns). Test networks keep the node's estimate.
  */
 export const MAINNET_MIN_FEE_SAT_PER_VB = 1;
 
@@ -72,10 +72,17 @@ export function pickFeeRate(fees: FeeEstimates | undefined, speed: FeeSpeed = 'n
  */
 export function spentTodayEstimate(state: Pick<WalletState, 'spends' | 'guardianStatus'>, now: number): number {
   const recent = state.spends.filter((s) => s.at > now - LIMIT_WINDOW_MS);
-  const local = recent.reduce((s, x) => s + x.outflowSats, 0);
+  // A replacement ("Speed up") of a co-signed spend adds only what it moves more than that one: the guardian counts each
+  // coin once in the window, at the largest amount a transaction it co-signed moved with it (its `limit.ts`).
+  const byTxid = new Map(recent.map((s) => [s.txid, s]));
+  const adds = (x: (typeof recent)[number]) => {
+    const prev = x.replaces ? byTxid.get(x.replaces) : undefined;
+    return prev ? Math.max(0, x.outflowSats - prev.outflowSats) : x.outflowSats;
+  };
+  const local = recent.reduce((s, x) => s + adds(x), 0);
   const gs = state.guardianStatus;
   if (!gs?.dailyLimit || gs.checkedAt <= now - LIMIT_WINDOW_MS) return local;
-  const since = recent.filter((s) => s.at > gs.checkedAt).reduce((s, x) => s + x.outflowSats, 0);
+  const since = recent.filter((s) => s.at > gs.checkedAt).reduce((s, x) => s + adds(x), 0);
   return Math.max(local, gs.dailyLimit.usedSats + since);
 }
 

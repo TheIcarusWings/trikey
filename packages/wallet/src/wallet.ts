@@ -292,6 +292,10 @@ export interface WalletHistoryEntry extends HistoryEntry {
   silentPayment?: { outputKey: string; outputAddress: string };
   /** This transaction moved a received silent payment into the vault (the coin's outpoint). */
   silentSweep?: { fromTxid: string; fromVout: number };
+  /** "Speed up": this replaced the unconfirmed payment `replaces` (same payment, higher fee); the original is not listed. */
+  replaces?: string;
+  /** An unconfirmed payment out of the wallet: "Speed up" may replace it with a higher fee (`quoteSpeedUp` says whether it can). */
+  canSpeedUp?: true;
 }
 
 /** What "Replace guardian" will do, for the person to confirm (`previewReplaceGuardian`). */
@@ -488,6 +492,59 @@ export type SendResult =
       signedTx?: { txid: string; txHex: string };
     };
 
+/**
+ * "Speed up" of an unconfirmed payment out of the wallet (`quoteSpeedUp`): a replacement (BIP 125) that spends the same
+ * coins and pays the same outputs to everyone else, with the higher fee taken out of the change. Signed like any payment:
+ * the phone and the guardian within the daily limit, else the phone and the hardware wallet (`plan`).
+ */
+export interface SpeedUpQuote extends Omit<BumpPlan, 'change'> {
+  /** The unconfirmed transaction it replaces. */
+  replaces: string;
+  /** The speed it was quoted for (absent when the caller named a fee rate). */
+  speed?: SendRequest['speed'];
+  feeRateSource: SendQuote['feeRateSource'];
+  /** `feeSats - oldFeeSats`: what speeding it up costs, out of the change. */
+  extraFeeSats: number;
+  /** The change before and after (absent after: what was left would be dust, so it goes to the fee). */
+  change: BumpPlan['change'];
+  /** The first payment's address (the one the person sent to), and what all payments send: both unchanged. */
+  recipient: string;
+  amountSats: number;
+  /** The person's note on the original, carried over to the replacement. */
+  label?: string;
+  /** The key that signed the original next to the phone's, when this phone sent it. */
+  signedBy?: 'guardian' | 'hardware';
+  plan: SigningPath;
+  /**
+   * What this replacement adds to the guardian's daily count. The guardian counts each coin once in 24 hours, at the
+   * largest amount any transaction it co-signed moved with it: after it co-signed the original within the window, only
+   * the extra fee; otherwise everything the replacement sends (payments and the new fee).
+   */
+  limitSats: number;
+  /** Daily limit left after it, by the phone's estimate (as `SendQuote.remainingAfterSats`). */
+  remainingAfterSats: number;
+  dailyLimitSats?: number;
+  /** The payment already pays at least the rate of this speed: the replacement pays the least a replacement must. */
+  alreadyAtRate?: true;
+  /** The caller's fee rate is under the mainnet floor (as `SendQuote.lowFeeRate`). */
+  lowFeeRate?: true;
+}
+
+export type SpeedUpResult =
+  | {
+      ok: true;
+      txid: string;
+      txHex: string;
+      replaces: string;
+      amountSats: number;
+      feeSats: number;
+      extraFeeSats: number;
+      signedBy: 'phone+guardian' | 'phone+hardware';
+      hardwareReason?: HardwareReason;
+      guardianRefusal?: GuardianRefusal;
+    }
+  | { ok: false; refusal: GuardianRefusal; signedTx?: { txid: string; txHex: string } };
+
 export interface RulesView {
   policy: Policy;
   policyHash: string;
@@ -523,6 +580,51 @@ function liveNet(t: Pick<LiveTx, 'direction' | 'amountSats' | 'feeSats'>): numbe
   if (t.direction === 'self') return -(t.feeSats ?? 0);
   return -(t.amountSats + (t.feeSats ?? 0));
 }
+
+/** The transactions `txid` replaced ("Speed up"), nearest first, by this phone's log or the guardian's word (`replaces`). */
+function replacedChain(txid: string, replacesOf: (txid: string) => string | undefined): string[] {
+  const out: string[] = [];
+  const seen = new Set([txid]);
+  for (let x = replacesOf(txid); x && !seen.has(x); x = replacesOf(x)) {
+    seen.add(x);
+    out.push(x);
+  }
+  return out;
+}
+
+/**
+ * "Speed up" in the history: a replacement (RBF) and the payment it replaced can never both confirm, so they are one
+ * row. While the replacement is there (listed by the guardian, announced by it, or just sent from this phone) the payment
+ * it replaced is not shown, and a replacement the phone has no log of carries what it knew of that one (the note, where
+ * it went). A replacement of a payment that confirmed after all lost the race: it is not shown. Unconfirmed payments
+ * out of the wallet (not sweeps, not silent payments, whose helper coin the replacement would have to sign again) are
+ * marked `canSpeedUp`.
+ */
+function withReplacements(entries: WalletHistoryEntry[], log: Map<string, SendLogEntry>, live: Map<string, LiveTx>): WalletHistoryEntry[] {
+  const replacesOf = (txid: string) => log.get(txid)?.replaces ?? live.get(txid)?.replaces;
+  const confirmed = new Set(entries.filter((h) => h.confirmations > 0).map((h) => h.txid));
+  const hidden = new Set<string>();
+  for (const h of entries) {
+    const chain = replacedChain(h.txid, replacesOf);
+    const won = chain.findIndex((x) => confirmed.has(x));
+    for (const x of won < 0 ? chain : chain.slice(0, won)) hidden.add(x);
+    if (won >= 0 && h.confirmations === 0) hidden.add(h.txid);
+  }
+  return entries
+    .filter((h) => !hidden.has(h.txid))
+    .map((h) => {
+      const chain = replacedChain(h.txid, replacesOf);
+      const known = log.has(h.txid) ? undefined : chain.map((x) => log.get(x)).find((e) => e);
+      const speedable = h.confirmations === 0 && h.netSats < 0 && !h.silentPayment && !h.silentSweep && h.purpose !== 'sweep';
+      return {
+        ...h,
+        ...(known ? { recipient: known.recipient, amountSats: known.amountSats, ...(known.label ? { label: known.label } : {}), ...(known.purpose ? { purpose: known.purpose } : {}) } : {}),
+        ...(chain[0] ? { replaces: chain[0] } : {}),
+        ...(speedable ? { canSpeedUp: true as const } : {}),
+      };
+    });
+}
+
 /** How long the phone waits for the guardian over relays it was told to move to, before staying where it is. */
 const RELAY_PROBE_TIMEOUT_MS = 10_000;
 /** A list the guardian did not answer over is tried again at most this often (alerts and status reads bring it again). */
@@ -1912,6 +2014,7 @@ export class TrikeyWallet {
         confirmations: Math.max(a.confirmations, old?.confirmations ?? 0),
         firstAt: old?.firstAt ?? now,
         at: now,
+        ...(a.replaces ?? old?.replaces ? { replaces: (a.replaces ?? old?.replaces)! } : {}),
       };
       s.liveTxs = [...s.liveTxs.filter((t) => t !== old), entry].slice(-MAX_LIVE_TXS);
     });
@@ -1932,12 +2035,21 @@ export class TrikeyWallet {
     let { confirmedSats, unconfirmedSats } = c.balance;
     const listed = new Map(c.history.map((h) => [h.txid, h]));
     const sent = new Set(this.s.sendLog.map((e) => e.txid));
-    for (const t of this.liveSince('main', c)) {
+    const announced = this.liveSince('main', c);
+    const liveById = new Map(announced.map((t) => [t.txid, t]));
+    for (const t of announced) {
       const net = liveNet(t);
       const h = listed.get(t.txid);
       if (!h) {
-        // This phone's own payment is applied already (`applyLocalSpend`).
+        // This phone's own payment is applied already (`applyLocalSpend`, `applyLocalBump`).
         if (sent.has(t.txid)) continue;
+        // A replacement ("Speed up") of a payment counted already: only what it changes (the higher fee, out of the change).
+        const before = t.replaces ? (listed.get(t.replaces) ?? liveById.get(t.replaces)) : undefined;
+        if (before && before.confirmations === 0) {
+          const was = 'netSats' in before ? before.netSats : liveNet(before);
+          unconfirmedSats = Math.max(0, unconfirmedSats + (net - was));
+          continue;
+        }
         if (net >= 0) {
           if (t.confirmations > 0) confirmedSats += net;
           else unconfirmedSats += net;
@@ -2002,7 +2114,7 @@ export class TrikeyWallet {
     const unlisted = this.s.sendLog
       .filter((e) => !listed.has(e.txid) && e.at > recent && e.at > (c?.syncedAt ?? 0) - 10 * 60_000)
       .map((e): WalletHistoryEntry => ({ txid: e.txid, height: 0, confirmations: 0, netSats: -(e.amountSats + e.feeSats), feeSats: e.feeSats, ...meta(e), local: true }));
-    return [...unlisted.reverse(), ...announced.reverse(), ...out];
+    return withReplacements([...unlisted.reverse(), ...announced.reverse(), ...out], log, live);
   }
 
   /** The last synced view of the wallet, or undefined before the first sync. */
@@ -2084,6 +2196,8 @@ export class TrikeyWallet {
    * (not the same coins again, which the node would refuse as a replacement paying no more).
    */
   private async applyLocalSpend(txHex: string, txid: string, quote: SendQuote): Promise<void> {
+    // Kept for "Speed up" (`quoteSpeedUp` reads it from the cache, not through the guardian); dropped with its last coin.
+    await this.txs.put([{ txid, txHex }]).catch(() => undefined);
     const c = this.s.chain;
     if (!c) return;
     const spent = new Set(quote.inputs.map((u) => `${u.txid}:${u.vout}`));
@@ -2368,6 +2482,234 @@ export class TrikeyWallet {
   async broadcast(txHex: string): Promise<string> {
     await this.client();
     return this.chain.broadcast(txHex);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Speed up (RBF) of an unconfirmed payment
+
+  /** Every script of the wallet within reach (receive and change, the scanned range plus the gap), and where it is. */
+  private spendingScripts(wallet: MultisigWallet): Map<string, { chain: 0 | 1; index: number }> {
+    const c = this.s.chain;
+    const out = new Map<string, { chain: 0 | 1; index: number }>();
+    const gap = c?.gapLimit ?? 20;
+    const next = { 0: c?.nextReceiveIndex ?? 0, 1: c?.nextChangeIndex ?? 0 };
+    for (const chain of [0, 1] as const) for (let i = 0; i < next[chain] + gap; i++) out.set(hex.encode(wallet.derive(chain, i).script), { chain, index: i });
+    return out;
+  }
+
+  /** The nearest of `txid` and the payments it replaced that the guardian co-signed within the window (`spends`). */
+  private cosignedAncestor(txid: string): WalletState['spends'][number] | undefined {
+    const recent = this.now() - LIMIT_WINDOW_MS;
+    const log = new Map(this.s.sendLog.map((e) => [e.txid, e]));
+    for (const x of [txid, ...replacedChain(txid, (t) => log.get(t)?.replaces)]) {
+      const s = this.s.spends.find((y) => y.txid === x && y.at > recent);
+      if (s) return s;
+    }
+    return undefined;
+  }
+
+  /**
+   * "Speed up" of an unconfirmed payment out of the wallet (DESIGN.md, "Speed up"): plans a replacement (BIP 125) that
+   * spends the same coins and pays the same outputs to everyone else (the amount and the address never change), with a
+   * higher fee taken out of the change: at the estimate for `speed` (default `fast`; never under 1 sat/vB on mainnet) or
+   * `feeRate`, and never less than the rules ask (the old fee plus the relay fee for its size). A change that would be
+   * left as dust goes to the fee. Reads the transaction and its coins' previous transactions from the phone's cache, else
+   * through the guardian. Nothing is signed here; `speedUp` does that.
+   *
+   * Who signs is planned as for any payment (`plan`): the phone and the guardian when the replacement fits in what is
+   * left of the daily limit (and the guardian may co-sign), else the phone and the hardware wallet (`signer: 'hardware'`
+   * asks for that). The guardian counts each coin once a day, at the larger of the two amounts: after it co-signed the
+   * original, the replacement adds only the extra fee (`limitSats`); a payment the hardware wallet signed counts in full.
+   *
+   * Throws `cannot_speed_up` (with the reason in words) when it confirmed already, is not a payment out of the wallet
+   * (an incoming payment is sped up by its sender), went to a silent payment address, was replaced already, or has no
+   * change to take the fee from; `no_chain_data` before a sync; `no_fee_estimate` on mainnet without an estimate.
+   */
+  async quoteSpeedUp(txid: string, opts: { speed?: SendRequest['speed']; feeRate?: number; signer?: 'auto' | 'hardware' } = {}): Promise<SpeedUpQuote> {
+    const speed = opts.feeRate === undefined ? (opts.speed ?? 'fast') : undefined;
+    const { wallet, feeRate, feeRateSource } = this.quoteBasics({ feeRate: opts.feeRate, speed });
+    const cannot = (why: string) => new WalletError('cannot_speed_up', why);
+    if (this.s.sendLog.some((e) => e.replaces === txid) && !this.history().some((h) => h.txid === txid))
+      throw cannot('This payment was sped up already: speed up the newer version instead.');
+    const entry = this.history().find((h) => h.txid === txid);
+    if (!entry) throw cannot('That is not a payment of this wallet that Trikey knows of.');
+    if (entry.confirmations > 0) throw cannot('This payment has confirmed already: there is nothing to speed up.');
+    if (entry.netSats >= 0) throw cannot('Only a payment out of this wallet can be sped up from here. An incoming payment can be sped up by whoever sent it.');
+    if (entry.silentPayment) throw cannot('A payment to a silent payment address cannot be sped up yet: it would have to be worked out again with your helper coin.');
+    if (entry.silentSweep || entry.purpose === 'sweep') throw cannot('Only a payment can be sped up from here, not a move of the wallet\'s own coins.');
+    const logged = this.s.sendLog.find((e) => e.txid === txid);
+    await this.client();
+    const [txHex] = await this.prevTxs([txid], this.chain);
+    const original = btc.Transaction.fromRaw(hex.decode(txHex!), { ...TX_OPTS, allowUnknownOutputs: true });
+    const inputTxids: string[] = [];
+    for (let i = 0; i < original.inputsLength; i++) inputTxids.push(hex.encode(original.getInput(i).txid!));
+    const prevs = await this.prevTxs(inputTxids, this.chain);
+    const scripts = this.spendingScripts(wallet);
+    const plan = planFeeBump({
+      txHex: txHex!,
+      prevTxHexes: prevs,
+      pathOf: (script) => scripts.get(hex.encode(script)),
+      feeRate,
+      incrementalSatPerVb: Math.max(1, this.fees?.minRelaySatPerVb ?? 1),
+    });
+    // What the guardian would count: its own measure of what leaves the wallet (inputs minus change), of the PSBT it would see.
+    const psbt = selfCheck(() => buildBumpPsbt({ wallet, plan, prevTxHexes: prevs }));
+    const outflow = Number(selfCheck(() => analyzePsbt(psbt, wallet.accountPubkeys(), this.network, { requireNonWitnessUtxo: true })).outflow);
+    const before = this.cosignedAncestor(txid);
+    const limitSats = before ? Math.max(0, outflow - before.outflowSats) : outflow;
+    const { plan: signing, limit, remainingAfterSats } = this.signingPlan({ signer: opts.signer }, limitSats);
+    const payments = plan.outputs.filter((o) => !o.change);
+    const recipient = logged?.recipient ?? entry.recipient ?? (payments[0] ? btc.Address(this.network.btc).encode(btc.OutScript.decode(hex.decode(payments[0].script))) : '');
+    const label = logged?.label ?? entry.label;
+    return {
+      ...plan,
+      replaces: txid,
+      ...(speed ? { speed } : {}),
+      feeRateSource,
+      extraFeeSats: plan.feeSats - plan.oldFeeSats,
+      recipient,
+      amountSats: plan.paymentSats,
+      ...(label ? { label } : {}),
+      ...(logged ? { signedBy: logged.signedBy } : entry.signedBy ? { signedBy: entry.signedBy } : {}),
+      plan: signing,
+      limitSats,
+      remainingAfterSats,
+      dailyLimitSats: limit,
+      ...(feeRate <= plan.oldFeeRate ? { alreadyAtRate: true as const } : {}),
+      ...(feeRateSource === 'caller' && feeRateBelowFloor(feeRate, this.network.name) ? { lowFeeRate: true as const } : {}),
+    };
+  }
+
+  /**
+   * Signs and broadcasts a "Speed up" quote: key 2 first (biometric prompt), then the guardian when the quote's plan says
+   * so (it may refuse as for any payment: over the limit, locked, paused; then the hardware wallet signs, unless
+   * `fallbackToHardware: false`), else the hardware wallet, which shows the same payment with the new fee. The original's
+   * note goes over to the replacement, and Activity shows the replacement in its place (`history`). Refused
+   * (`cannot_speed_up`) if the original confirmed meanwhile, and `quote_stale` if it is no longer waiting (replaced
+   * already, or dropped).
+   */
+  async speedUp(quote: SpeedUpQuote, opts: { fallbackToHardware?: boolean; syncAfter?: boolean } = {}): Promise<SpeedUpResult> {
+    this.requirePaired();
+    // Read the wallet again: the original must still be waiting. A guardian slow to read its node does not stop it (the node judges).
+    await this.sync().catch((e) => {
+      if (!(e instanceof WalletError && e.code === 'guardian_slow')) throw e;
+    });
+    const listed = this.s.chain?.history.find((h) => h.txid === quote.replaces);
+    if (listed && listed.confirmations > 0) throw new WalletError('cannot_speed_up', 'This payment confirmed meanwhile: there is nothing to speed up.');
+    if (!this.history().some((h) => h.txid === quote.replaces))
+      throw new WalletError('quote_stale', 'This payment is no longer waiting (it was sped up already, or dropped). Sync and look again.');
+    const wallet = this.multisig();
+    const prevs = await this.prevTxs(quote.inputs.map((u) => u.txid), this.chain);
+    const psbt = selfCheck(() => buildBumpPsbt({ wallet, plan: quote, prevTxHexes: prevs }));
+    const a = selfCheck(() => analyzePsbt(psbt, wallet.accountPubkeys(), this.network, { requireNonWitnessUtxo: true }));
+    if (a.inputs.length !== quote.inputs.length || a.fee !== BigInt(quote.feeSats) || a.fee <= BigInt(quote.oldFeeSats) || a.externalOut + a.selfOut + a.fee !== BigInt(quote.inputs.reduce((s, u) => s + u.valueSats, 0)))
+      throw new WalletError('internal', 'The replacement does not match its quote; quote it again.');
+    const outflow = Number(a.outflow);
+    const signed = await this.withKey2('Approve the faster payment', async (m) => new SoftwareSigner('app', m).signPsbt(psbt, this.network));
+
+    let final: Uint8Array | undefined;
+    let signedBy: 'phone+guardian' | 'phone+hardware' = 'phone+hardware';
+    let hardwareReason: HardwareReason | undefined = quote.plan.signer === 'phone+hardware' ? quote.plan.reason : undefined;
+    let guardianRefusal: GuardianRefusal | undefined;
+    if (quote.plan.signer === 'phone+guardian') {
+      let cosignedB64: string | undefined;
+      try {
+        cosignedB64 = (await (await this.client()).call('sign', { psbt: base64.encode(signed), memo: `Speed up of ${quote.replaces}` })).psbt;
+      } catch (e) {
+        const refusal = refusalFromError(e);
+        if (!refusal) throw e;
+        guardianRefusal = refusal;
+        await this.learnFromRefusal(refusal);
+        const reason = fallbackReason(refusal);
+        if (!reason || opts.fallbackToHardware === false || !this.deps.hardware) return { ok: false, refusal };
+        hardwareReason = reason;
+      }
+      if (cosignedB64) {
+        final = checkSignedBy(signed, base64.decode(cosignedB64), wallet, ['app', 'cosigner'], 'guardian_mismatch', 'The guardian did not co-sign every input.');
+        signedBy = 'phone+guardian';
+        const txid = parsePsbt(signed).id;
+        // Counted once with the payment it replaces, at the larger amount, as the guardian counts it.
+        const before = this.cosignedAncestor(quote.replaces);
+        await this.update((s) => void s.spends.push({ txid, at: this.now(), outflowSats: outflow, ...(before ? { replaces: before.txid } : {}) }));
+      }
+    }
+    if (!final) {
+      if (this.s.hardwareConfirm) throw new WalletError('hardware_unconfirmed', 'Confirm the new wallet on your hardware wallet first, then it can approve payments.');
+      this.emit({
+        type: 'hardware_prompt',
+        purpose: 'payment',
+        text: `Speed up the payment of ${quote.amountSats} sats to ${quote.recipient}: network fee ${quote.oldFeeSats} -> ${quote.feeSats} sats (${quote.extraFeeSats} more)`,
+      });
+      final = await this.withHardware((hw, rec) => this.hardwareSignPsbt(hw, signed, wallet, this.devicePolicy(rec)));
+    }
+
+    const { txHex, txid } = finalizePsbt(final);
+    this.emit({ type: 'payment_signed', txid, signedBy });
+    const was = this.s.sendLog.find((e) => e.txid === quote.replaces);
+    const entry: SendLogEntry = {
+      txid,
+      at: this.now(),
+      recipient: quote.recipient,
+      amountSats: quote.amountSats,
+      feeSats: quote.feeSats,
+      ...(quote.label ? { label: quote.label } : {}),
+      signedBy: signedBy === 'phone+guardian' ? 'guardian' : 'hardware',
+      ...(was?.purpose ? { purpose: was.purpose } : {}),
+      ...(was?.toSavings ? { toSavings: true as const } : {}),
+      replaces: quote.replaces,
+    };
+    try {
+      await this.chain.broadcast(txHex);
+    } catch (e) {
+      const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
+      if (!refusal) throw e;
+      // No answer is not a refusal (see `send`): listed in the original's place until a sync says which one is waiting.
+      if (refusal.kind === 'unreachable') {
+        await this.logSend(entry);
+        await this.applyLocalBump(txHex, txid, quote);
+      }
+      return { ok: false, refusal, signedTx: { txid, txHex } };
+    }
+    // The original keeps its entry in the log (it shows again if the replacement never makes it); `history` shows one row.
+    await this.logSend(entry);
+    await this.applyLocalBump(txHex, txid, quote);
+    if (opts.syncAfter !== false) await this.sync().catch(() => undefined);
+    return {
+      ok: true,
+      txid,
+      txHex,
+      replaces: quote.replaces,
+      amountSats: quote.amountSats,
+      feeSats: quote.feeSats,
+      extraFeeSats: quote.extraFeeSats,
+      signedBy,
+      ...(hardwareReason ? { hardwareReason } : {}),
+      ...(guardianRefusal ? { guardianRefusal } : {}),
+    };
+  }
+
+  /**
+   * A replacement just sent, applied to the last synced view until the next sync: the original's coins back to the
+   * wallet (its change) give way to the replacement's (the smaller change, or none when it went to the fee).
+   */
+  private async applyLocalBump(txHex: string, txid: string, quote: SpeedUpQuote): Promise<void> {
+    await this.txs.put([{ txid, txHex }]).catch(() => undefined);
+    const wallet = this.multisig();
+    const raw = btc.RawTx.decode(hex.decode(txHex));
+    await this.update((s) => {
+      const chain = s.chain;
+      if (!chain) return;
+      const gone = chain.utxos.filter((u) => u.txid === quote.replaces);
+      const added: WalletUtxo[] = [];
+      for (const u of gone) {
+        const script = hex.encode(wallet.derive(u.chain, u.index).script);
+        const vout = raw.outputs.findIndex((o) => hex.encode(o.script) === script);
+        if (vout >= 0) added.push({ ...u, txid, vout, valueSats: Number(raw.outputs[vout]!.amount), height: 0, confirmations: 0 });
+      }
+      chain.utxos = [...chain.utxos.filter((u) => u.txid !== quote.replaces), ...added];
+      const delta = added.reduce((t, u) => t + u.valueSats, 0) - gone.reduce((t, u) => t + u.valueSats, 0);
+      chain.balance = { ...chain.balance, unconfirmedSats: Math.max(0, chain.balance.unconfirmedSats + delta) };
+    });
   }
 
   /** The guardian's refusal is the truth: fold what it says into the cached status. */
