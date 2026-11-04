@@ -47,7 +47,7 @@ export default function SavingsSend() {
   const outcome = useMemo(
     () => (savings && address ? savings.quote({ address, amountSats, max: everything }) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [savings, address, amountSats, everything, state.savings.balanceSats],
+    [savings, address, amountSats, everything, state.savings.balanceSats, state.feesVersion],
   );
   const quote = outcome?.ok ? outcome.quote : null;
 
@@ -71,7 +71,9 @@ export default function SavingsSend() {
   };
   const usesHardware = signers !== 'phone+recoveryKey';
   const usesRk = signers !== 'phone+hardware';
-  const title = action.busy ? 'Waiting for your devices…' : usesHardware && usesRk ? `Approve on your ${brand}, then your Recovery Key` : usesHardware ? `Approve on your ${brand}` : 'Approve on your Recovery Key';
+  // The fee estimates are being read again (a sync just ran): the payment waits for them, and is quoted again with them.
+  const feesLanding = !!state.feesUpdating;
+  const title = action.busy ? 'Waiting for your devices…' : feesLanding ? 'Updating the network fee…' : usesHardware && usesRk ? `Approve on your ${brand}, then your Recovery Key` : usesHardware ? `Approve on your ${brand}` : 'Approve on your Recovery Key';
 
   return (
     <Screen
@@ -80,7 +82,7 @@ export default function SavingsSend() {
       footer={
         <>
           <ActionNotice message={action.message} error={action.error} />
-          <AppButton title={title} busy={action.busy} disabled={!quote} onPress={send} />
+          <AppButton title={title} busy={action.busy || (feesLanding && !!quote)} disabled={!quote} onPress={send} />
         </>
       }>
       {toSpending ? (

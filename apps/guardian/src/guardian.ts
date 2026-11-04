@@ -400,7 +400,7 @@ export class Guardian {
     // The environment's choice; `open` swaps in the web UI's, if the owner made one (chain-source.json).
     this.chainSource = opts.config.chainSource ?? this.envElectrumSource();
     this.chainSourceStore = new ChainSourceStore(opts.config.dataDir);
-    this.chain = new ChainService({ backend: this.chainSource ? this.makeBackend(this.chainSource, false) : undefined, rpc, log: this.log, liveMaxScripts: opts.liveMaxScripts });
+    this.chain = new ChainService({ backend: this.chainSource ? this.makeBackend(this.chainSource, false) : undefined, rpc, log: this.log, liveMaxScripts: opts.liveMaxScripts, now: () => this.clock.now() });
     this.sp = new SilentPaymentService({
       dataDir: opts.config.dataDir,
       rpc,

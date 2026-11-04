@@ -833,6 +833,13 @@ export interface WalletState {
    * quietly, not the pull-to-refresh spinner. The balance and Activity are already up to date. Absent: never.
    */
   updating?: boolean;
+  /**
+   * The fee estimates are being read again (asked for after a sync's core, in its background part): quotes use the last
+   * ones meanwhile, and Review waits for them before it offers to send. Absent: never.
+   */
+  feesUpdating?: boolean;
+  /** Changes each time new fee estimates land: quotes are made again with them. Absent: never changes. */
+  feesVersion?: number;
   /** Has the wallet heard from the guardian at least once? */
   synced: boolean;
   /**

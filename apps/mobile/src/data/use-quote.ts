@@ -9,7 +9,9 @@ import type { QuoteOutcome, SendRequest } from './types';
  * ahead of the quote, `pending` is true and the caller should not offer to continue.
  *
  * `exact`: for the screens that show the final fee. A wallet that picks coins from the chain (Recovery Key mode) quotes
- * at once with an estimate, then `refineQuote` replaces it with the exact one; `pending` stays true until it has.
+ * at once with an estimate, then `refineQuote` replaces it with the exact one; `pending` stays true until it has. And
+ * while the fee estimates are being read again (`feesUpdating`, after a sync), `pending` is true until they land, and
+ * the quote is made again with them.
  */
 export function useQuote(request: SendRequest, debounceMs = 0, opts: { exact?: boolean } = {}): { outcome: QuoteOutcome; pending: boolean } {
   const wallet = useWalletService();
@@ -37,6 +39,7 @@ export function useQuote(request: SendRequest, debounceMs = 0, opts: { exact?: b
     state.synced,
     state.mode,
     state.mode === 'recoveryKey' ? `${state.recoveryKey.spendingSats}|${state.recoveryKey.vaultSats}` : '',
+    state.feesVersion ?? '',
   ].join('|');
   const formKey = [current.address, current.amountSats, current.speed, current.signer ?? ''].join('|');
 
@@ -61,6 +64,7 @@ export function useQuote(request: SendRequest, debounceMs = 0, opts: { exact?: b
   }, [refining, key]);
 
   const exactOutcome = refined?.key === key ? refined.outcome : null;
-  const pending = (debounceMs > 0 && (settled.address !== request.address || settled.amountSats !== request.amountSats)) || (refining && !exactOutcome);
+  const pending =
+    (debounceMs > 0 && (settled.address !== request.address || settled.amountSats !== request.amountSats)) || (refining && !exactOutcome) || (!!opts.exact && !!state.feesUpdating);
   return { outcome: exactOutcome ?? outcome, pending };
 }
