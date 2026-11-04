@@ -93,7 +93,7 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
    - **Hardware signature:** only accepted as part of a recovery.
 3. **Daily limit.** The guardian counts `Σinputs − Σchange` (the fee included) over a rolling 24 hours, keyed by outpoint:
    - a replayed transaction is never counted twice;
-   - an RBF replacement counts as the larger of the old and new amounts;
+   - an RBF replacement counts as the larger of the old and new amounts: a "Speed up" (below) of a payment it co-signed adds only the extra fee, and one of a payment the hardware wallet signed counts in full;
    - **change is only change within reach of a scan:** an output counts as change only if it pays the wallet's own derived address at an index no more than 20 (the gap limit) past that chain's *high-water mark*, the highest index seen used on chain or co-signed. Anything further out counts as leaving the wallet. The marks are persisted, rise with every co-signed change output and with what `wallet.sync` finds (a payment to a fresh receive address), and every scan of the wallet (coverage before a recovery completes, `wallet.sync`, the broadcast relay check) reaches at least them, so no coin key 3 co-signed is ever out of sight;
    - **the window's clock is checked against the chain:** the guardian refuses to co-sign while the system clock is more than 3 hours ahead of the chain's median time past (`clock_ahead_of_chain`), and the time it counts the window with never goes backwards (persisted), so stepping the clock forward or back cannot open a fresh window.
    - **Payments into the optional Savings wallet count like any payment** (the owner's decision, 2026-11-01): the guardian is not told which wallet is Savings for this rule and counts an output to it as leaving the wallet. A phone thief registering their own wallet as "Savings" therefore gains nothing.
@@ -448,6 +448,42 @@ Built in [`packages/recovery-key`](packages/recovery-key) (`@trikey/recovery-key
   - a public chain server sees the whole wallet.
 - **To check on real devices:** that each device signs inputs with `nSequence` = 1,008 and a non-zero `nLockTime`, and what it shows. Trezor needs the `sequence` passed explicitly when the PSBT is converted to its format. Ledger, Coldcard, BitBox02, Jade, Keystone and Passport sign PSBTs as given but may warn about the timelock. The test is to sign a batch on regtest or signet with each device, run every refill through `tools/consensus-verify`, and broadcast refill 2 before and after its 1,008 blocks.
 
+## Speed up (RBF) of a Spending payment
+
+A payment out of Spending that waits too long to confirm (on mainnet, payments of 0.1.10 went out at 0.11 sat/vB, the
+rate Bitcoin Core 29's estimates follow its relay minimum down to) can be sent again with a higher fee
+(`TrikeyWallet.quoteSpeedUp` / `speedUp`, the planner of Savings' speed-up, `planFeeBump` and `buildBumpPsbt`):
+
+- **What changes.** Every Spending payment signals RBF (`nSequence` 0xfffffffd). The replacement (BIP 125, as Bitcoin
+  Core applies it) spends the same coins and pays the same outputs to everyone else: the amount and the address never
+  change. The higher fee comes out of the change: at the estimate for the chosen speed (fast by default; never under
+  1 sat/vB on mainnet, as for any payment), and at least the old fee plus the incremental relay fee (taken as at least
+  1 sat/vB) for the replacement's size. A change that would be left as dust goes to the fee. A payment with no change
+  (send max) cannot be sped up this way, nor a silent payment (its output key depends on the helper coin, which would
+  have to sign again), nor a sweep; the app says why.
+- **Who signs.** Like any payment: the phone and the guardian within what is left of the daily limit, else the phone and
+  the hardware wallet (over the limit, guardian locked or away, a recovery running), and a guardian refusal hands it to
+  the hardware wallet as for a payment (the app asks first). The guardian needs nothing new: its per-outpoint count
+  (rule 3) takes the larger of the old and new amounts for each coin, so the replacement of a payment it co-signed in the
+  last 24 hours adds exactly the extra fee (`apps/guardian/test/limit.test.ts`), and a payment first signed with the
+  hardware wallet counts in full when the guardian co-signs its speed-up. The phone's own estimate does the same
+  (`spends[].replaces`). Payments first signed with the hardware wallet can be sped up either way.
+- **Broadcast.** The guardian relays the replacement through its usual shortcuts: one it co-signed moments ago
+  (`RecentlyCosigned`), or a coin it knows (`KnownCoins`), which keeps a coin while an unconfirmed transaction in the
+  wallet's history spends it, so a hardware-signed replacement needs no wallet scan either.
+- **One row.** The replacement goes into the send log with `replaces` and the original's note; the wallet's history
+  shows it in the original's place (the original keeps its own entry, and comes back only if the replacement never
+  shows). The guardian's `wallet_tx` for a replacement says so (`replaces`, from the coins its live wallet saw the
+  original spend, `live-wallet.ts`), so the phone shows a speed-up made anywhere as the same row, not a second payment,
+  and moves the balance by the extra fee only. The owner's own channels read "Payment of X sats sped up: fee now Y".
+- **The app.** "Speed up ›" under a pending payment in Activity and on its details screen opens `app/send/speed-up.tsx`:
+  the amount (unchanged), the fee now and the new fee (sats and sat/vB), the three speeds with their fees, what it
+  costs, who signs, then the usual co-sign or hardware flow ("Signed. Sending…").
+- **Later: CPFP.** An incoming payment waiting to confirm (or a payment that cannot be replaced) could be hurried by a
+  child spending its output with a high fee. Not built: the sender can speed up an incoming payment, and a CPFP from
+  Spending would spend a coin the guardian must co-sign against the limit for a fee only; Recovery Key mode's spending
+  balance has CPFP for its refills.
+
 ## Silent payments
 
 Built in [`packages/silent-payments`](packages/silent-payments) (`@trikey/silent-payments`: BIP 352 v1.1 in pure TypeScript, checked against every case of the BIP's official test vectors) and wired into `@trikey/wallet`.
@@ -524,6 +560,8 @@ no policy hash or approval text changes, the same version-1 backup).
   same payments, a higher fee (the 1-block estimate, at least the old fee plus the incremental relay fee for its size)
   taken from the change back to Savings, signed again by two of Savings' keys; the app shows the fee difference first.
   A payment with no change cannot be sped up this way (the payment is never lowered); CPFP from Spending is not built.
+  Spending payments are sped up the same way, with the guardian's co-signature within the limit ("Speed up (RBF) of a
+  Spending payment", above).
 - **The guardian's part** (`apps/guardian/src/savings.ts`, `PolicyEngine.registerSavings`): it watches the descriptor
   (`GuardedWallet.savings`), serves its chain data and relays its spends, and scans it on every block and every two
   minutes. A spend after the first scan raises a durable `savings_moved` notice to the paired phone and every alert

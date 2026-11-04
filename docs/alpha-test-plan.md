@@ -477,6 +477,27 @@ If it goes wrong, collect:
 - What the device showed, what the phone showed, and the amounts you used, the limit and the amount already spent today.
 - The message under the button if it did not complete, and the device model and app version.
 
+#### Speed up a payment waiting to confirm
+
+Do:
+
+- Send a small payment at **Slow** (step 7) and, before it confirms, open Activity: it says **Speed up ›** under it (also
+  on its details screen). It is easiest when the network is busy, or on signet or testnet4 right after a block.
+- Tap it. You should see the amount and the address **unchanged**, the network fee now and the new one (sats and
+  sat/vB), the three speeds with their fees, and what speeding up costs, all before anything is signed. Pick **Fast**.
+- Within today's limit: **Speed up with fingerprint**, no prompt on the hardware wallet, then "Signed. Sending…".
+- Then speed the same payment up again at a fee over what is left of today's limit (or with the guardian locked from its
+  web page): the screen says the hardware wallet signs this one, and the device shows the same payment with the higher fee.
+
+You should see: Activity shows **one** row for the payment, now "sped up", with the new fee (never the old and the new
+side by side, not even for a moment while the guardian's alert comes in); the explorer shows the new transaction and the
+old one gone; on the Guardian page, "Phone-only today" goes up by the **extra fee only** for the co-signed speed-up, and
+not at all for the hardware one. A send-max payment has no change to pay from, and an incoming payment is not yours to
+speed up: the app should say so. On mainnet the new fee is never under 1 sat/vB.
+
+If it goes wrong, collect: both transaction ids, the fees the screen showed, the guardian's Activity page and the log
+lines starting with `tx.broadcast` and `live.wallet_tx`, and whether Activity showed two rows.
+
 ### 9. Guardian lock and unlock, from the phone and from the web page
 
 Do:
