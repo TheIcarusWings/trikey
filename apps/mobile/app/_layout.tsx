@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Platform, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
 import { DevicePromptHost } from '@/components/device-prompt-host';
+import { ToastHost } from '@/components/toast-host';
 import { Screen } from '@/components/screen';
 import { Body } from '@/components/panels';
 import { WalletProvider, useWallet, type AppMode, type ThemePreference } from '@/data';
@@ -101,6 +102,8 @@ function Shell({ restarts }: { restarts: number }) {
         {/* Both sheets show only while the wallet waits for a hardware wallet. */}
         <QrBridgeHost />
         <DevicePromptHost />
+        {/* "Incoming 2,000 sats · unconfirmed": a payment the guardian just saw (wallet_tx). */}
+        <ToastHost />
       </View>
     </ThemeProvider>
   );

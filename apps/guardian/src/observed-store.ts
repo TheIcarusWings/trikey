@@ -13,6 +13,13 @@ import type { GuardianState, StateStore } from './policy/index.js';
 
 export class ObservedStore implements StateStore {
   private last?: GuardianState;
+  private readonly listeners = new Set<() => void>();
+
+  /** `fn` runs after every save (the live wallet notices a new wallet at once). */
+  onSave(fn: () => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
 
   constructor(private readonly inner: StateStore) {}
 
@@ -25,6 +32,13 @@ export class ObservedStore implements StateStore {
   async save(state: GuardianState): Promise<void> {
     await this.inner.save(state);
     this.last = state;
+    for (const fn of this.listeners) {
+      try {
+        fn();
+      } catch {
+        /* a listener's failure is its own */
+      }
+    }
   }
 
   /** The engine's current state (read-only; never modify it). */

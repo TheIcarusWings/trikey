@@ -176,6 +176,15 @@ export class LiveWallet {
     this.stopped = false;
     this.offs.push(this.g.chain.onWalletChange((reason) => this.changed(reason)));
     this.offs.push(this.g.chain.onTip(() => this.changed('tip')));
+    // A wallet paired, Savings registered, a rotation: look at once, not at the next tick.
+    this.offs.push(
+      this.g.store.onSave(() => {
+        // After the engine took the saved state as its own (it does right after the save).
+        setTimeout(() => {
+          if (!this.stopped && this.targetsKey() !== this.lastTargets) this.changed('wallets');
+        }, 0).unref?.();
+      }),
+    );
     this.changed('start');
   }
 
@@ -201,10 +210,13 @@ export class LiveWallet {
     await this.deliver();
   }
 
+  /** Which wallets are watched, cheaply (no wallet object built). */
   private targetsKey(): string {
-    return this.targets()
-      .map((t) => `${t.kind ?? ''}:${t.walletId}`)
-      .join(',');
+    if (this.opts.targets) return this.opts.targets().map((t) => t.walletId).join(',');
+    const e = this.g.engine;
+    const reg = e.registration();
+    if (!reg) return '';
+    return [reg.walletId, e.savings()?.walletId ?? '', e.watchedWallet()?.walletId ?? '', e.singleKey()?.helper?.xpub ?? ''].join(',');
   }
 
   /** Something may have changed: a pass soon. */
