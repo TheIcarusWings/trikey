@@ -33,4 +33,6 @@ export type {
   SavingsSummary,
   Rules,
   SetupPreflight,
+  WalletOverview,
+  WalletPayment,
 } from '../../../guardian-web/src/api/types.js';

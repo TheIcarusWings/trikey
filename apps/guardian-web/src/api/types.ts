@@ -71,6 +71,78 @@ export interface DailySpend {
   limitOff?: true;
 }
 
+// --- wallet (view and receive only) ------------------------------------------
+
+/** One payment of the paired wallet, as the guardian read it from the chain (the phone's `wallet_tx` words). */
+export interface WalletPayment {
+  txid: string;
+  /** `in`: someone paid the wallet. `out`: the wallet paid someone. `self`: a move within the wallet. */
+  direction: 'in' | 'out' | 'self';
+  /**
+   * `in`: what the wallet received. `out`: what it paid to others, the fee apart when the fee is known (else everything
+   * that left the wallet). `self`: 0.
+   */
+  amountSats: number;
+  /** Known when every input was the wallet's (its own payments and moves). */
+  feeSats?: number;
+  /** 0 while unconfirmed. */
+  confirmations: number;
+  /** The block's time; absent while unconfirmed. */
+  at?: ISODate;
+}
+
+/**
+ * The address to receive at: the first unused address of the receive chain after the highest used one, the same rule
+ * (and the same address) as the phone's Receive screen. The guardian never moves the index on: a payment to it does.
+ */
+export interface WalletReceive {
+  address: string;
+  /** Its index on the receive chain (`.../0/<index>` of the descriptor). */
+  index: number;
+}
+
+/** The phone's daily limit, as the guardian counts it (the same numbers the phone shows). */
+export interface WalletDailyLimit {
+  limitSats: number;
+  /** Phone-only sats counted over the rolling 24 hours, fees included. */
+  usedSats: number;
+  leftSats: number;
+  /** True while there is no daily limit (`limitSats` is then the protocol maximum: do not show it as a number). */
+  limitOff?: true;
+}
+
+/**
+ * `GET /api/wallet`: the paired wallet, read-only (view and receive; nothing here spends). Works while the guardian is
+ * locked (it is all public chain data and the policy's own counters). Only the host's own wallet: never a hosted
+ * guest's, nor how many guests there are.
+ */
+export interface WalletOverview {
+  /** False before a phone is paired: nothing else but `state` and `network` is set. */
+  paired: boolean;
+  state: 'locked' | 'unlocked';
+  network?: string;
+  walletId?: string;
+  walletName?: string;
+  /**
+   * From the guardian's last read of the chain (`readAt`). Absent, with `chainError`, when it has not been able to read
+   * the wallet yet.
+   */
+  balance?: { confirmedSats: number; unconfirmedSats: number };
+  /** Newest first, unconfirmed ones before the rest. */
+  payments?: WalletPayment[];
+  /** True when older payments exist than the list holds. */
+  paymentsTruncated?: boolean;
+  receive?: WalletReceive;
+  readAt?: ISODate;
+  /** The chain height at `readAt`. */
+  tipHeight?: number;
+  /** Why there is no chain data (no balance, payments or address): the guardian could not read the blockchain. */
+  chainError?: string;
+  dailyLimit?: WalletDailyLimit;
+  /** The phone's Savings wallet, which this guardian only watches (as in `GuardianStatus.savings`). */
+  savings?: SavingsSummary;
+}
+
 /**
  * What `GET /api/status` answers without a session (after setup): enough to pick the screen (sign in,
  * then maybe unlock), nothing about the wallet. Sign in with `POST /api/session`.
