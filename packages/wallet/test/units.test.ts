@@ -23,6 +23,9 @@ import {
   parseBackup,
   phoneMayApply,
   pickFeeRate,
+  minFeeRateFor,
+  feeRateBelowFloor,
+  MAINNET_MIN_FEE_SAT_PER_VB,
   isWalletNotWatched,
   refusalFromError,
   sealBackup,
@@ -199,6 +202,22 @@ describe('fees, limit estimate and coin selection', () => {
     expect(pickFeeRate({ estimates: [{ target: 1, satPerVb: null }], minRelaySatPerVb: 1.5 }, 'fast')).toBe(1.5);
     expect(pickFeeRate({ estimates: [{ target: 6, satPerVb: 0.5 }], minRelaySatPerVb: 1 }, 'slow')).toBe(1);
     expect(pickFeeRate(undefined)).toBe(1);
+  });
+
+  it('keeps to the mainnet floor of 1 sat/vB, however low the node goes (Core 29: 0.1 sat/vB)', () => {
+    const low = { estimates: [{ target: 1, satPerVb: 0.11 }, { target: 3, satPerVb: 0.11 }, { target: 6, satPerVb: 0.1 }], minRelaySatPerVb: 0.1 };
+    const main = { minSatPerVb: minFeeRateFor('bitcoin') };
+    expect(MAINNET_MIN_FEE_SAT_PER_VB).toBe(1);
+    for (const speed of ['slow', 'normal', 'fast'] as const) expect(pickFeeRate(low, speed, main)).toBe(1);
+    expect(pickFeeRate(undefined, 'normal', main)).toBe(1);
+    expect(pickFeeRate({ estimates: [{ target: 1, satPerVb: 1.6 }], minRelaySatPerVb: 0.1 }, 'fast', main)).toBe(1.6);
+    // Test networks keep the node's estimate.
+    for (const n of ['testnet', 'testnet4', 'signet', 'regtest']) expect(minFeeRateFor(n)).toBeUndefined();
+    expect(pickFeeRate(low, 'fast')).toBe(0.11);
+    // Lower only when the caller sets it, and then flagged.
+    expect(feeRateBelowFloor(0.5, 'bitcoin')).toBe(true);
+    expect(feeRateBelowFloor(1, 'bitcoin')).toBe(false);
+    expect(feeRateBelowFloor(0.5, 'signet')).toBe(false);
   });
 
   it('estimates spending from the guardian count plus what it co-signed since', () => {

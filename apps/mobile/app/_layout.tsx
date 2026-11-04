@@ -165,11 +165,16 @@ export default function RootLayout() {
     setEpoch((e) => e + 1);
   }, []);
 
-  // Back at the front: reconnect to the relays now (Android destroys a background app's sockets), then sync.
+  // Away from the front, then back: reconnect to the relays now (iOS cancels a suspended app's sockets, Android
+  // destroys a background app's), then sync. The wallet is told when the app leaves, so a call that was under way
+  // when the phone slept (its timeout fires late, on an iPhone before the app hears it is active) is not "offline".
   useEffect(() => {
     const sub = AppState.addEventListener('change', (s) => {
-      if (s !== 'active') return;
       const w = current.current?.wallet;
+      if (s !== 'active') {
+        w?.pause?.(s === 'background' ? 'background' : 'inactive');
+        return;
+      }
       void (w?.resume ? w.resume() : w?.sync())?.catch(() => {});
     });
     return () => sub.remove();

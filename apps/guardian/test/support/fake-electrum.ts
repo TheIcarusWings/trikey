@@ -75,6 +75,13 @@ export class FakeElectrum {
   fragment = false;
   port = 0;
 
+  /**
+   * What `blockchain.block.header` answers for height 0, when set: the real genesis header of the network the guardian
+   * runs on, so its "is this server on my network" check (chain/backend.ts) passes on mainnet, testnet or signet.
+   * The fake chain itself stays synthetic.
+   */
+  genesisHeader?: string;
+
   constructor(opts: { blocks?: number; startTime?: number; spacing?: number } = {}) {
     const n = opts.blocks ?? 20;
     const t0 = opts.startTime ?? 1_700_000_000;
@@ -292,6 +299,12 @@ export class FakeElectrum {
       case 'blockchain.headers.subscribe':
         this.subscribed.add(socket);
         return ok({ height: this.height, hex: this.headers[this.height] });
+      case 'blockchain.block.header': {
+        const [height] = p as [number];
+        if (height === 0 && this.genesisHeader) return ok(this.genesisHeader);
+        const h = this.headers[height];
+        return h ? ok(h) : fail(`no header at ${height}`);
+      }
       case 'blockchain.block.headers': {
         const [start, count] = p as [number, number];
         const slice = this.headers.slice(start, start + count);

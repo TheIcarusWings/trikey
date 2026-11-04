@@ -6,7 +6,50 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
-## Unreleased
+## 0.1.11-alpha (2026-11-04)
+
+A fix release for what was seen on an iPhone with 0.1.10, and the guardian on plain Docker. Update the app and the guardian; each fix works with the
+other side's older version.
+
+- **No more "Guardian offline" after the phone slept.** With the screen off for a while, the app came back saying
+  "Guardian offline" until a pull to refresh. Nothing was wrong with the guardian: the app had been waiting for an
+  answer when the phone went to sleep, and on waking that wait ran out at once, before the app could reconnect. Now:
+  - a wait that ran out while the phone slept is not taken as "no answer": the app asks again and waits a little longer;
+  - every time the app comes back from the background (iOS cuts all of an app's connections when it suspends it, even
+    for a few seconds), it opens its relay connections anew, waits until one relay is back (3 s at most) before it
+    syncs, and asks again for any answer it was still waiting for; a connection that silently stopped working (the
+    phone's network changed) is also replaced as soon as a message on it goes unacknowledged;
+  - a relay that is down is no longer connected to again for every message the app sends (every 10 s while it waits
+    for an answer): it is tried again on the same growing schedule as the subscription to it, while the other relays
+    get every message;
+  - if the guardian was offline before, the app shows "Reconnecting to your guardian…" on return (calm, no red), and
+    says "offline" again only if the guardian does not answer a request made after the return;
+  - any answer from the guardian clears "offline" (before, only a full sync did);
+  - the same on Android, where the phone also closes a background app's connections.
+- **A payment shows in Activity at once.** The guardian co-signed in a second, but before it sent any payment (also one
+  signed with the hardware wallet) it read the whole wallet from its node again to check that the payment spends the
+  wallet's coins (slow on an Umbrel's Electrs), and the app then waited for a whole sync before showing it: about a
+  minute. Now the guardian skips that read for a payment it co-signed in the last 30 minutes (it checked the coins when it
+  signed), and for one that spends a coin its last sync listed (it checks that coin against its transaction instead);
+  anything else is checked as before. The app lists the payment as pending, with amount, fee and transaction id, as soon
+  as it is sent, and a payment made right after spends what is left; the next sync shows it once, not twice. With a
+  hardware wallet the screen says "Signed. Sending…" as soon as the device has signed, instead of "Waiting for your
+  Ledger" until the end. If the guardian does not confirm that a payment went out, the app says it may have, keeps it
+  listed as pending until a sync shows whether it did, and asks you not to pay again before then.
+- **Fees on mainnet are never below 1 sat/vB.** A mainnet payment went out at 0.11 sat/vB while mempool.space suggested
+  1 to 2: newer Bitcoin Core nodes estimate down to 0.1 sat/vB, but many nodes still relay nothing under 1, so such a
+  payment may never confirm, and a Spending payment cannot be sped up yet. Every speed the app offers, and every fee
+  the wallet picks by itself (sweeps, moves, Savings), is now at least 1 sat/vB on mainnet. Test networks keep the
+  node's estimate.
+- **The guardian on plain Docker.** Besides Umbrel and Start9, the guardian can run with Docker Compose on a Mac, a
+  Windows PC, Linux or a NAS, with your own Electrum server: [packaging/compose](packaging/compose/README.md).
+- **Choose the guardian's chain server, like Sparrow** (guardian web UI, Settings > Server): your own Electrum server
+  (the default, and what Umbrel and Start9 keep), Bitcoin Core alone (a watch-only wallet in your node, no Electrum
+  server needed), or a public Electrum server, always encrypted, behind a clear warning: it sees the wallet's addresses
+  and your IP and could hide coins, but can't spend or change rules. Every change is announced to your phone and alert
+  channels, and switching to a public server is refused during a recovery. The phone shows which kind it is under
+  Settings > Guardian (#105).
+- Test plan: what to do when Play Protect says "Unsafe app blocked" when installing or updating the APK.
 
 ## 0.1.10-alpha (2026-11-03)
 

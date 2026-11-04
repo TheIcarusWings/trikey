@@ -252,14 +252,22 @@ What kind of build it is:
   transport code is in it.
 
 To install: check the file against the `.sha256`, copy the APK to the phone, open it, and allow installing from that source
-when Android asks. Play Protect may warn about an unknown app; that is expected for a sideloaded test build.
+when Android asks.
+
+**Play Protect.** Android may stop the install with "Unsafe app blocked" (or "App scan recommended"). That is expected for
+any APK from outside the Play Store that Google has not seen before; it says nothing about this file. Tap **More details**,
+then **Install anyway**. What does tell you the file is the real one: its SHA-256 matches the release's `.sha256`, and it
+is signed with the Trikey release certificate (`apksigner verify --print-certs`, compared with
+`packaging/android/release-cert.sha256`; see [docs/android-signing.md](android-signing.md)). The warning can come back with
+an update; the same two checks apply.
 
 **Updating the app.** A newer release installs over the installed one and keeps the wallet (both are signed with the Trikey
 release key). Three ways, pick one:
 
 - In the app: **Settings → About → Check for updates**. It asks GitHub only when you tap it, says whether a newer version
   exists, and **Download** hands the APK to Android's installer. It offers the APK of the build you have (standard or
-  without Google code). Check the SHA-256 it shows against the release's `.sha256`.
+  without Google code). Check the SHA-256 it shows against the release's `.sha256`. If Play Protect blocks it, see
+  above: **More details**, **Install anyway**, after the checks.
 - Obtainium, which watches the repository's releases for you: see [docs/android-signing.md](android-signing.md), with the
   filter for the APK you want.
 - By hand, from the Releases page, as above.

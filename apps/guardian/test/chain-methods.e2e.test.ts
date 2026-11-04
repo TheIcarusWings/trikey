@@ -170,6 +170,74 @@ describe('chain methods, end to end', { timeout: 30_000 }, () => {
     expect((await rpcError(phone.call('tx.broadcast', { txHex: 'ff'.repeat(80) }))).code).toBe(ErrorCode.InvalidParams);
   });
 
+  it('tx.broadcast needs no wallet scan for a transaction it co-signed moments ago, or one spending a coin the last sync listed', async () => {
+    // A wallet scan on a slow Electrs (an Umbrel's electrs 0.11) took long enough that the phone re-sent the broadcast
+    // three times, and showed a phone-only payment a minute late.
+    await rig.unlock();
+    const chain = rig.guardian.chain as unknown as { spendsWalletCoin: (...a: unknown[]) => Promise<boolean> };
+    const real = chain.spendsWalletCoin.bind(chain);
+    let scans = 0;
+    chain.spendsWalletCoin = async (...a) => {
+      scans++;
+      return real(...a);
+    };
+    try {
+      const coin = rig.fund(wallet.derive(0, 9).script, 80_000n);
+      const utxo = { txid: coin.txid, vout: 0, value: coin.value, chain: 0, index: 9, prevTxHex: coin.rawTx };
+      const plan = buildSpend({ wallet, utxos: [utxo], recipients: [{ address: externalAddress(4), amount: 20_000n }], feeRate: 2, changeIndex: 3 });
+      const bySign = await appSigner().signPsbt(plan.psbt, network);
+      const cosigned = base64.decode((await phone.call('sign', { psbt: base64.encode(bySign) })).psbt);
+      const { txHex, txid } = finalizePsbt(cosigned);
+      expect(await phone.call('tx.broadcast', { txHex })).toEqual({ txid });
+      expect(scans).toBe(0);
+      expect(rig.electrs.broadcasts).toContain(txHex);
+      expect(rig.logLines.some((l) => /tx\.broadcast/.test(l) && /cosigned/.test(l))).toBe(true);
+
+      // Signed with the hardware wallet instead (the guardian never saw it): checked against the wallet as before.
+      const other = rig.fund(wallet.derive(0, 10).script, 50_000n);
+      const plan2 = buildSpend({
+        wallet,
+        utxos: [{ txid: other.txid, vout: 0, value: other.value, chain: 0, index: 10, prevTxHex: other.rawTx }],
+        recipients: [{ address: externalAddress(5), amount: 10_000n }],
+        feeRate: 2,
+        changeIndex: 4,
+      });
+      const hw = finalizePsbt(await hwSigner().signPsbt(await appSigner().signPsbt(plan2.psbt, network), network));
+      expect(await phone.call('tx.broadcast', { txHex: hw.txHex })).toEqual({ txid: hw.txid });
+      expect(scans).toBe(1); // a coin no sync has listed yet: the full scan
+
+      // A hardware-signed payment of a coin the last sync listed: checked against that coin, no scan.
+      const third = rig.fund(wallet.derive(0, 11).script, 40_000n);
+      const synced = await phone.call('wallet.sync', {});
+      expect(synced.utxos.some((u) => u.txid === third.txid)).toBe(true);
+      const plan3 = buildSpend({
+        wallet,
+        utxos: [{ txid: third.txid, vout: 0, value: third.value, chain: 0, index: 11, prevTxHex: third.rawTx }],
+        recipients: [{ address: externalAddress(6), amount: 10_000n }],
+        feeRate: 2,
+        changeIndex: 5,
+      });
+      const hw3 = finalizePsbt(await hwSigner().signPsbt(await appSigner().signPsbt(plan3.psbt, network), network));
+      expect(await phone.call('tx.broadcast', { txHex: hw3.txHex })).toEqual({ txid: hw3.txid });
+      expect(scans).toBe(1);
+      expect(rig.logLines.some((l) => /tx\.broadcast/.test(l) && /known_coin/.test(l))).toBe(true);
+
+      // A foreign transaction still gets the scan, and is still refused.
+      const strangerKey = new Uint8Array(32).fill(9);
+      const stranger = btc.p2wpkh(secp256k1.getPublicKey(strangerKey, true), network.btc);
+      const foreign = rig.fund(stranger.script, 10_000n);
+      const ftx = new btc.Transaction();
+      ftx.addInput({ txid: foreign.txid, index: 0, witnessUtxo: { script: stranger.script, amount: 10_000n } });
+      ftx.addOutputAddress(externalAddress(7), 9_000n, network.btc);
+      ftx.sign(strangerKey);
+      ftx.finalize();
+      expect((await rpcError(phone.call('tx.broadcast', { txHex: hex.encode(ftx.extract()) }))).code).toBe(ErrorCode.ForeignTransaction);
+      expect(scans).toBe(2);
+    } finally {
+      chain.spendsWalletCoin = real;
+    }
+  });
+
   it('drops chain methods from unpaired senders without an answer', async () => {
     const stranger = client(generateSecretKey());
     for (const call of [

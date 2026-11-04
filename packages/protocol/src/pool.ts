@@ -56,10 +56,17 @@ export interface RelayPool {
   subscribe(relays: string[], filter: Filter, handlers: SubscriptionHandlers): Subscription;
   /**
    * Subscribe again now on every relay that dropped, instead of waiting out the backoff (the phone came back to the
-   * front, the network changed). Optional; a no-op where the pool has nothing to wait for.
+   * front, the network changed). With `force`, also close and open again every connection that looks up: after the
+   * phone was suspended a while, a socket the OS or a NAT dropped can still look open (half-open) and would swallow
+   * whatever is sent on it. Optional; a no-op where the pool has nothing to wait for.
    */
-  reconnect?(): void;
+  reconnect?(opts?: ReconnectOptions): void;
   close(): void;
+}
+
+export interface ReconnectOptions {
+  /** Close and open again every relay connection, not only those that dropped (see `RelayPool.reconnect`). */
+  force?: boolean;
 }
 
 export interface SimplePoolOptions {
@@ -198,6 +205,14 @@ export class SimplePoolRelayPool implements RelayPool {
   private readonly maxWaitMs: number;
   private readonly backoff: number[];
   private readonly subs = new Set<KeptSub>();
+  /** Bumped for a relay each time `recycle` replaces its connection (a publish under way on the old one is sent again). */
+  private readonly generations = new Map<string, number>();
+  /**
+   * Relays a publish failed on lately, and when to try publishing to them again: on the subscriptions' backoff schedule
+   * (`resubscribeBackoffMs`). Without it every publish (and every retry of an unanswered request, every 10 s) opened a
+   * new connection to a relay that is down: on an iPhone, one socket cancelled and reopened every 10 to 20 s.
+   */
+  private readonly publishBackoff = new Map<string, { failures: number; retryAt: number }>();
   private closed = false;
 
   constructor(private readonly opts: SimplePoolOptions = {}) {
@@ -215,8 +230,49 @@ export class SimplePoolRelayPool implements RelayPool {
   async publish(relays: string[], event: NostrEvent): Promise<PublishOutcome[]> {
     // A destroyed SimplePool would quietly open new connections (that nothing closes) for a late publish.
     if (this.closed) return relays.map((relay) => ({ relay, ok: false, reason: 'pool closed' }));
-    const promises = this.pool.publish(relays, event, { maxWait: this.maxWaitMs });
-    const settled = await Promise.allSettled(promises);
+    const urls = relays.map((r) => normalizeURL(r));
+    const gens = urls.map((u) => this.generations.get(u) ?? 0);
+    // Relays that failed lately are skipped until their backoff is over, while the others are published to; when every
+    // relay is waiting, all are tried (an event that goes nowhere helps no one).
+    const now = Date.now();
+    const waiting = urls.map((u) => (this.publishBackoff.get(u)?.retryAt ?? 0) > now);
+    const skip = waiting.every(Boolean) ? waiting.map(() => false) : waiting;
+    const tried = relays.filter((_, i) => !skip[i]);
+    const promises = this.pool.publish(tried, event, { maxWait: this.maxWaitMs });
+    const results = await Promise.allSettled(promises);
+    let next = 0;
+    const settled: PromiseSettledResult<string>[] = relays.map((_, i) =>
+      skip[i] ? { status: 'rejected', reason: 'relay failed lately; trying again later' } : results[next++]!,
+    );
+    // A connection this pool replaced while the event was on its way (`recycle`): sent again, once, on the new one.
+    await Promise.all(
+      settled.map(async (r, i) => {
+        if (skip[i] || r.status !== 'rejected' || this.closed || (this.generations.get(urls[i]!) ?? 0) === gens[i]) return;
+        [settled[i]] = await Promise.allSettled(this.pool.publish([relays[i]!], event, { maxWait: this.maxWaitMs }));
+      }),
+    );
+    // A relay that looks connected but did not acknowledge in time: most likely a half-open socket (the phone's network
+    // changed, a NAT forgot it, the app was suspended), which would also swallow what the relay sends us. Open it anew,
+    // so the subscription on it is back too. A slow but healthy relay costs one reconnection.
+    const stale = new Set<string>();
+    const status = this.pool.listConnectionStatus();
+    settled.forEach((r, i) => {
+      if (r.status !== 'rejected' || !/publish timed out/.test(errorText(r.reason))) return;
+      const url = urls[i]!;
+      // Once: a relay that keeps not acknowledging is only backed off from (below), not reconnected again and again.
+      if (status.get(url) && !this.publishBackoff.has(url)) stale.add(url);
+    });
+    if (stale.size && !this.closed) this.recycle(stale);
+    settled.forEach((r, i) => {
+      if (skip[i]) return;
+      const url = urls[i]!;
+      if (r.status === 'fulfilled') this.publishBackoff.delete(url);
+      else {
+        const failures = (this.publishBackoff.get(url)?.failures ?? 0) + 1;
+        const wait = jittered(this.backoff[Math.min(failures - 1, this.backoff.length - 1)]!);
+        this.publishBackoff.set(url, { failures, retryAt: Date.now() + wait });
+      }
+    });
     return settled.map((r, i) =>
       r.status === 'fulfilled'
         ? { relay: relays[i]!, ok: true, reason: r.value }
@@ -245,9 +301,17 @@ export class SimplePoolRelayPool implements RelayPool {
     return { close: () => this.stop(kept) };
   }
 
-  /** Subscribe again now on every relay that is waiting to, and start each one's backoff over. */
-  reconnect(): void {
+  /**
+   * Subscribe again now on every relay that is waiting to, and start each one's backoff over. With `force`, every
+   * connection that is up is closed and opened again first (see `RelayPool.reconnect`): its subscriptions are made
+   * anew on the new connection (once each; the old ones end with the old connection, and their callbacks are ignored),
+   * and `onresubscribed` follows their EOSE. A connection still being opened is left alone: it is new anyway.
+   */
+  reconnect(opts: ReconnectOptions = {}): void {
     if (this.closed) return;
+    // Back at the front: every relay gets a fresh try.
+    this.publishBackoff.clear();
+    if (opts.force) this.recycle(this.connectedUrls());
     for (const kept of this.subs) {
       for (const r of kept.relays) {
         r.attempt = 0;
@@ -257,6 +321,39 @@ export class SimplePoolRelayPool implements RelayPool {
         this.open(kept, r);
       }
     }
+  }
+
+  /** Relays with an open (or open-looking) connection in the nostr-tools pool. */
+  private connectedUrls(): Set<string> {
+    const urls = new Set<string>();
+    for (const [url, up] of this.pool.listConnectionStatus()) if (up) urls.add(url);
+    return urls;
+  }
+
+  /**
+   * Closes the connections to `urls` and subscribes again on new ones, now. Each kept subscription on such a relay is
+   * marked down first (a newer generation, so the old subscription's `onclose` from the closing is ignored; `since`
+   * moved on as after a drop), then opened again with the backoff count started over.
+   */
+  private recycle(urls: Set<string>): void {
+    if (urls.size === 0 || this.closed) return;
+    for (const u of urls) this.generations.set(u, (this.generations.get(u) ?? 0) + 1);
+    const reopen: [KeptSub, RelaySub][] = [];
+    for (const kept of this.subs) {
+      for (const r of kept.relays) {
+        if (!urls.has(r.url)) continue;
+        r.gen++;
+        if (r.timer !== undefined) clearTimeout(r.timer);
+        r.timer = undefined;
+        this.markDown(kept, r);
+        r.attempt = 0;
+        reopen.push([kept, r]);
+      }
+    }
+    // Closes each relay's sockets (without waiting for a close handshake a dead socket never completes) and ends its
+    // nostr-tools subscriptions and publishes; the next use opens a new connection.
+    this.pool.close([...urls]);
+    for (const [kept, r] of reopen) this.open(kept, r);
   }
 
   /** Resubscriptions waiting for their turn (diagnostics and tests). */
@@ -325,7 +422,8 @@ export class SimplePoolRelayPool implements RelayPool {
     });
   }
 
-  private dropped(kept: KeptSub, r: RelaySub, reason: string): void {
+  /** The relay's subscription ended (dropped, or closed by `recycle`): what the next one on it starts from. */
+  private markDown(kept: KeptSub, r: RelaySub): void {
     r.closer = undefined;
     r.dropped = true;
     if (r.upAt !== undefined) {
@@ -335,6 +433,10 @@ export class SimplePoolRelayPool implements RelayPool {
       if (since !== undefined) r.since = since + Math.max(0, Math.floor((Date.now() - kept.startedAt) / 1000));
       r.upAt = undefined;
     }
+  }
+
+  private dropped(kept: KeptSub, r: RelaySub, reason: string): void {
+    this.markDown(kept, r);
     const base = this.backoff[Math.min(r.attempt, this.backoff.length - 1)]!;
     r.attempt++;
     const delayMs = jittered(base);

@@ -106,9 +106,10 @@ export default function SendHardware() {
           {quote.warning && !acknowledged ? (
             <AppButton title={`I understand, ask my ${brand}`} onPress={() => setAcknowledged(true)} />
           ) : busy ? (
+            // Once the device has signed, the payment is on its way: say so at once.
             <View className="flex-row items-center justify-center gap-2.5" accessibilityLiveRegion="polite">
-              <View className="bg-warn size-2 rounded-full" />
-              <Text className="text-muted-foreground text-sm leading-5">Waiting for your {brand}{'…'}</Text>
+              <View className={state.paymentSending ? 'bg-good size-2 rounded-full' : 'bg-warn size-2 rounded-full'} />
+              <Text className="text-muted-foreground text-sm leading-5">{state.paymentSending ? 'Signed. Sending…' : `Waiting for your ${brand}…`}</Text>
             </View>
           ) : (
             <AppButton title="Try again" onPress={() => setAttempt((a) => a + 1)} />

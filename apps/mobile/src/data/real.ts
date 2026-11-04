@@ -25,6 +25,7 @@ import {
   parseBackup,
   type Argon2Params,
   type CloudBackupStore,
+  type GuardianRefusal,
   type HardwareKind as WalletHardwareKind,
   type HardwareProvider,
   type KeyValueStore,
@@ -173,16 +174,43 @@ export interface RealWalletService extends WalletService {
   /** The wallet, once there is one. */
   readonly wallet: TrikeyWallet | undefined;
   readonly prompts: DevicePromptStore;
+  /** The app left the front (AppState `inactive` or `background`). See `resume`. */
+  pause(state?: 'inactive' | 'background'): void;
   resume(): Promise<void>;
   close(): Promise<void>;
 }
 
 const DEFAULT_SWEEP_FEE_CAP_SATS = 20_000;
+/**
+ * Away from the front this long (even only `inactive`), the relay connections are opened anew on `resume`, as after any
+ * time in the background: a socket may be gone without either end saying so. (ms)
+ */
+const FORCE_RECONNECT_AFTER_MS = 20_000;
+/** After a forced reconnect, `resume` waits at most this long for the first relay to be back before it syncs. (ms) */
+const RELAYS_BACK_WAIT_MS = 3_000;
+/** An `inactive` pause shorter than this (a Face ID prompt, Control Center) does not excuse a call that failed across it. (ms) */
+const SHORT_PAUSE_MS = 2_000;
 /** A helper coin below this cannot pay its share of the fee of a payment at ordinary rates: shown as not funded. */
 const HELPER_USABLE_SATS = 1_000;
 const PREFS_KEY = 'trikey.app.prefs.v1';
 const networkPrefKey = (mode: string) => `trikey.app.network.${mode}`;
 const walletKey = (mode: string, network: NetworkName) => `trikey.wallet.${mode}.${network}`;
+
+/**
+ * A signed payment that was not broadcast: refused by the network (nothing was sent), or no answer from the guardian,
+ * which may have sent it anyway. `listed`: the wallet lists such a payment in Activity until a sync shows it or not.
+ */
+function broadcastError(refusal: GuardianRefusal, how: 'listed' | 'unlisted'): WalletServiceError {
+  if (refusal.kind === 'unreachable')
+    return new WalletServiceError(
+      'broadcast_failed',
+      how === 'listed'
+        ? "Your guardian didn't confirm that the payment went out, but it may have. It shows in Activity as pending until your guardian's next check says whether it did. Don't pay again before then."
+        : "Your guardian didn't confirm that the payment went out, but it may have. Check Activity after the next sync before you try again.",
+      { cause: refusal },
+    );
+  return refusalToError(refusal.kind === 'broadcast_rejected' ? refusal : { kind: 'broadcast_rejected', reason: refusal.message, message: refusal.message });
+}
 
 const PLACEHOLDER_HARDWARE: HardwareWallet = { kind: 'ledger', brand: 'hardware wallet', model: 'Hardware wallet' };
 
@@ -292,7 +320,23 @@ class Service implements RealWalletService {
   /** The sync under way, and whether another was asked for while it ran (see `sync`). */
   private syncRun?: Promise<void>;
   private syncAgain = false;
+  /** False once a guardian call failed for want of an answer ("offline"). Any later answer sets it again. */
   private reachable = true;
+  /** When `reachable` went false (the app's clock): a guardian status read after this clears it (see `refresh`). */
+  private unreachableAt = 0;
+  /**
+   * Back at the front after the guardian was "offline": shown as reconnecting, not offline, until a call that began
+   * after the return has an outcome.
+   */
+  private reconnecting = false;
+  /** Since when the app is away from the front (`pause`), or undefined while it is at the front. */
+  private pausedAt?: number;
+  /** The last time away from the front (`pause` to `resume`). */
+  private lastPause?: { start: number; end: number; background: boolean };
+  /** The app went to the background (not only `inactive`) since it was last at the front. */
+  private backgrounded = false;
+  /** A payment is signed and being broadcast (`sendPayment`, between `payment_signed` and its end). */
+  private paymentSending = false;
   /**
    * The guardian answered the last sync's `guardian.status` but not its chain data in time (`guardian_slow`): it is
    * online, the balance is the last one. Cleared by a full sync, or by the guardian not answering at all.
@@ -436,25 +480,62 @@ class Service implements RealWalletService {
   private async startInBackground(): Promise<void> {
     const w = this.w;
     if (!w || this.closed) return;
+    const startedAt = this.clock.now();
     try {
       await w.start();
-      this.reachable = true;
+      this.answered();
     } catch (e) {
-      this.noteGuardianResult(e);
+      this.noteGuardianResult(e, startedAt);
     }
     await this.sync();
     const every = this.deps.syncIntervalMs ?? 60_000;
     if (every > 0 && !this.closed) this.timer ??= setInterval(() => void this.sync(), every);
   }
 
+  pause(state: 'inactive' | 'background' = 'background'): void {
+    this.pausedAt ??= this.clock.now();
+    if (state === 'background') this.backgrounded = true;
+  }
+
   /**
-   * The app came back to the front: subscribe again now on any relay connection that dropped in the background
-   * (Android destroys a background app's sockets) instead of waiting out the relay pool's backoff, then sync.
+   * The app came back to the front. After the app was in the background (however briefly: iOS cancels every socket of
+   * a suspended app, Android destroys them), or away more than `FORCE_RECONNECT_AFTER_MS`, every relay connection is
+   * opened anew, and the sync waits for the first relay to be back (its EOSE, at most `RELAYS_BACK_WAIT_MS`), so it is
+   * not sent into sockets that are gone. Unanswered requests are sent again once the relays are back. After a short
+   * `inactive` (a Face ID prompt, Control Center) only the connections that dropped are opened again.
+   *
+   * A guardian that was "offline" shows as reconnecting meanwhile; what the screen said before the phone slept, or a
+   * call under way (or made) while it was away, is no news about the guardian now. Only a call begun after the return
+   * says "offline" again.
    */
-  resume(): Promise<void> {
-    if (this.closed) return Promise.resolve();
-    this.w?.reconnect();
+  async resume(): Promise<void> {
+    if (this.closed) return;
+    const now = this.clock.now();
+    const away = this.pausedAt !== undefined ? now - this.pausedAt : 0;
+    const background = this.backgrounded;
+    if (this.pausedAt !== undefined) this.lastPause = { start: this.pausedAt, end: now, background };
+    this.pausedAt = undefined;
+    this.backgrounded = false;
+    if (!this.reachable && this.w && this.w.stage !== 'new') {
+      this.reconnecting = true;
+      this.refresh();
+    }
+    const force = background || away >= FORCE_RECONNECT_AFTER_MS;
+    await this.w?.reconnect({ force, waitMs: force ? RELAYS_BACK_WAIT_MS : 0 }).catch(() => undefined);
+    if (this.closed) return;
     return this.sync();
+  }
+
+  /**
+   * A guardian call begun at `startedAt` that failed now spanned a time away from the front: the app was suspended
+   * (iOS) or its timers and sockets were (Android), or it was sent before the connections were back, so its failure says
+   * nothing about the guardian. A time away still going on counts whatever its length (on an iPhone the late timeout
+   * comes before the app hears it is back); one that ended if it was in the background or long enough to matter.
+   */
+  private spannedPause(startedAt: number): boolean {
+    if (this.pausedAt !== undefined) return true;
+    const p = this.lastPause;
+    return !!p && startedAt < p.end && (p.background || p.end - p.start >= SHORT_PAUSE_MS);
   }
 
   async close(): Promise<void> {
@@ -485,6 +566,10 @@ class Service implements RealWalletService {
 
   private refresh(): void {
     if (this.closed) return;
+    // Any answer from the guardian since it was marked offline (a status read by the wallet on its own, after a relay
+    // came back; a refusal it learned from) means it is reachable again.
+    const checkedAt = this.w?.state.guardianStatus?.checkedAt;
+    if (!this.reachable && checkedAt !== undefined && checkedAt > this.unreachableAt) this.answered(false);
     this.state = this.project();
     for (const l of this.listeners) l();
   }
@@ -526,7 +611,8 @@ class Service implements RealWalletService {
     const label = g?.label ?? this.preview?.label;
     const relays = g?.relays ?? this.preview?.relays ?? [];
     const npub = g ? npubEncode(g.pubkey) : (this.preview?.guardianNpub ?? '');
-    const status = !this.reachable ? 'offline' : gs?.state === 'locked' ? 'locked' : 'online';
+    // Reconnecting after a return to the front: the last status the guardian gave, not "offline" (see `resume`).
+    const status = !this.reachable && !this.reconnecting ? 'offline' : gs?.state === 'locked' ? 'locked' : 'online';
     // An alert contact locked it (LOCK over nostr): named as this phone knows them.
     const lockedBy = status === 'locked' ? this.w?.guardianLock?.contact : undefined;
     return {
@@ -609,6 +695,8 @@ class Service implements RealWalletService {
       syncing: this.syncing,
       synced: !!s?.chain,
       guardianSlow: this.slow && this.reachable,
+      guardianReconnecting: this.reconnecting,
+      paymentSending: this.paymentSending,
       phoneSpending: gs?.phoneSpending ?? 'enabled',
       recoveryOutcome: outcome,
       recovering: s?.stage === 'recovering',
@@ -760,21 +848,35 @@ class Service implements RealWalletService {
 
   /** Runs `job`; whatever it throws becomes a `WalletServiceError`, and a guardian that does not answer is noted. */
   private async guarded<T>(job: () => Promise<T>): Promise<T> {
+    const startedAt = this.clock.now();
     try {
       return await job();
     } catch (e) {
-      this.noteGuardianResult(e);
+      this.noteGuardianResult(e, startedAt);
       throw mapError(e);
     }
   }
 
-  private noteGuardianResult(e: unknown): void {
+  /**
+   * A guardian call begun at `startedAt` failed with `e`. No answer makes the guardian "offline", unless the call spanned
+   * a time away from the front (`spannedPause`): `resume` syncs again, and that sync decides.
+   */
+  private noteGuardianResult(e: unknown, startedAt: number): void {
     const refusal = e instanceof WalletError ? e.refusal : undefined;
-    if (refusal?.kind === 'unreachable') {
-      this.reachable = false;
-      this.slow = false;
-      this.refresh();
-    }
+    if (refusal?.kind !== 'unreachable') return;
+    if (this.spannedPause(startedAt)) return;
+    this.reachable = false;
+    this.unreachableAt = this.clock.now();
+    this.reconnecting = false;
+    this.slow = false;
+    this.refresh();
+  }
+
+  /** The guardian answered. */
+  private answered(refresh = true): void {
+    this.reachable = true;
+    this.reconnecting = false;
+    if (refresh) this.refresh();
   }
 
   private requireWallet(): TrikeyWallet {
@@ -817,6 +919,11 @@ class Service implements RealWalletService {
         } else this.refresh();
         break;
       case 'silent_payments_found':
+        this.refresh();
+        break;
+      case 'payment_signed':
+        // Signed (the hardware wallet is done): the screen says "Sending…" now, not "Waiting for your Ledger".
+        this.paymentSending = true;
         this.refresh();
         break;
       case 'alert': {
@@ -914,6 +1021,7 @@ class Service implements RealWalletService {
   private async syncOnce(): Promise<void> {
     const w = this.w;
     if (!w || w.stage === 'new' || this.closed) return;
+    const startedAt = this.clock.now();
     try {
       // A recovering phone follows its recovery; the guardian's status says when it took the new wallet over.
       if (w.stage === 'recovering') await w.refreshStatus().then(() => w.recoveryStatus());
@@ -924,17 +1032,20 @@ class Service implements RealWalletService {
         for (const h of snap.history) if (h.confirmations === 0 && this.log.seen[h.txid] === undefined) ((this.log.seen[h.txid] = now), (changed = true));
         if (changed) await saveLog(this.deps.platform.kv, this.logKey, this.log);
       }
-      this.reachable = true;
+      this.answered(false);
       this.slow = false;
     } catch (e) {
       if (e instanceof WalletError && e.code === 'guardian_slow') {
         // It answered its status: online, only slow to read the chain (a slow Electrum server). Not "offline".
-        this.reachable = true;
+        this.answered(false);
         this.slow = true;
       }
       // Another sync is due right after this one, and only its outcome says whether the guardian answers now.
-      else if (!this.syncAgain) this.noteGuardianResult(e);
+      else if (!this.syncAgain) this.noteGuardianResult(e, startedAt);
     }
+    // A sync begun after the return to the front has had its say (or another one is due): no longer "reconnecting"
+    // once the guardian is known to answer or not.
+    if (this.reconnecting && !this.syncAgain && !this.spannedPause(startedAt)) this.reconnecting = false;
     this.refresh();
   }
 
@@ -1237,16 +1348,24 @@ class Service implements RealWalletService {
               speed: quote.request.speed,
               ...(plan.signer === 'phone+hardware' ? { signer: 'hardware' as const } : {}),
             };
-        // The person decides when the hardware wallet steps in: no silent fallback after a refusal.
-        const res = await w.send(input, { fallbackToHardware: false });
+        // The person decides when the hardware wallet steps in: no silent fallback after a refusal. The payment is in
+        // Activity as soon as it is broadcast (the wallet's send log); the sync that follows runs on its own, so a
+        // guardian slow to read its node does not keep the person waiting on "Sending".
+        let res: Awaited<ReturnType<TrikeyWallet['send']>>;
+        try {
+          res = await w.send(input, { fallbackToHardware: false, syncAfter: false });
+        } finally {
+          this.paymentSending = false;
+        }
         if (!res.ok) {
-          if (res.signedTx) throw refusalToError(res.refusal.kind === 'broadcast_rejected' ? res.refusal : { kind: 'broadcast_rejected', reason: res.refusal.message, message: res.refusal.message });
+          if (res.signedTx) throw broadcastError(res.refusal, 'listed');
           throw refusalToError(res.refusal);
         }
         // The wallet's send log keeps where it went and who signed (Activity reads it from the wallet's history).
         const at = this.clock.now();
         const signedBy = res.signedBy;
         this.refresh();
+        void this.sync();
         return {
           id: res.txid,
           kind: 'sent' as const,
@@ -1280,8 +1399,7 @@ class Service implements RealWalletService {
       if (!passphrase) throw new WalletServiceError('invalid_input', "Enter your guardian's passphrase.");
       const r = await w.unlockGuardian(passphrase);
       if (!r.ok) throw refusalToError(r.refusal);
-      this.reachable = true;
-      this.refresh();
+      this.answered();
     });
   }
 
@@ -1336,7 +1454,7 @@ class Service implements RealWalletService {
           const out = await w.replaceGuardian(opts.oldGuardianGone ? { oldGuardianReachable: false } : {});
           if (out.status === 'awaiting_broadcast') return { status: 'waiting' as const, movedSats: out.movedSats };
           this.replacePlan = null;
-          this.reachable = true;
+          this.answered(false);
           addEvent(this.log, { kind: 'guardian-replaced', host, movedSats: out.movedSats, at: this.clock.now() });
           await this.saveLogNow();
           return { status: 'done' as const, movedSats: out.movedSats, oldWalletRetired: out.oldWalletRetired };
@@ -1589,7 +1707,7 @@ class Service implements RealWalletService {
           if (!q) throw new WalletServiceError('quote_stale', 'This payment needs a fresh quote. Go back and check it again.');
           const res = await w.sendFromSavings(q, { signers });
           if (!res.ok) {
-            if (res.signedTx) throw refusalToError(res.refusal.kind === 'broadcast_rejected' ? res.refusal : { kind: 'broadcast_rejected', reason: res.refusal.message, message: res.refusal.message });
+            if (res.signedTx) throw broadcastError(res.refusal, 'unlisted');
             throw refusalToError(res.refusal);
           }
           this.refresh();
@@ -1631,7 +1749,7 @@ class Service implements RealWalletService {
           if (!q) throw new WalletServiceError('quote_stale', 'This needs a fresh quote. Go back and check it again.');
           const res = await w.speedUpSavingsSpend(q, { signers });
           if (!res.ok) {
-            if (res.signedTx) throw refusalToError(res.refusal.kind === 'broadcast_rejected' ? res.refusal : { kind: 'broadcast_rejected', reason: res.refusal.message, message: res.refusal.message });
+            if (res.signedTx) throw broadcastError(res.refusal, 'unlisted');
             throw refusalToError(res.refusal);
           }
           this.refresh();

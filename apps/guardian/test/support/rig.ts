@@ -104,6 +104,10 @@ export class GuardianRig {
     }
     const blocks = opts.blocks ?? 30;
     rig.electrs = new FakeElectrum({ blocks, startTime: rig.nowSec() - blocks * 600, spacing: 600 });
+    // Mainnet's real block 0, for the guardian's network check of its Electrum server (#105).
+    if ((opts.network ?? 'regtest') === 'bitcoin')
+      rig.electrs.genesisHeader =
+        '0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c';
     rig.electrs.applyBroadcasts = opts.applyBroadcasts ?? true;
     await rig.electrs.start();
     if (opts.bitcoind) {

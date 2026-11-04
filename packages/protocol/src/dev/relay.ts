@@ -115,6 +115,19 @@ export class DevRelay {
     }
   }
 
+  /**
+   * Fault injection: every client connection open now goes silent without closing (half-open): what the client sends
+   * on it is ignored and nothing is sent to it, as with a socket the phone's OS or a NAT dropped while the app was
+   * suspended, which the client still takes for open. New connections are served as usual. With `match`, only the
+   * connections whose open subscriptions' filters it accepts (to stall one client among several).
+   */
+  stallConnections(match?: (filters: Filter[][]) => boolean): void {
+    for (const [s, conn] of this.sockets) {
+      const filters = [...this.subs].filter(([k]) => k.startsWith(`${conn}:`)).map(([, sub]) => sub.filters);
+      if (!match || match(filters)) stalledSockets.add(s);
+    }
+  }
+
   private log(...args: unknown[]): void {
     if (this.opts.log) console.log('[dev-relay]', ...args);
   }
@@ -123,6 +136,7 @@ export class DevRelay {
     const conn = this.nextConn++;
     this.sockets.set(socket, conn);
     socket.on('message', (data) => {
+      if (stalledSockets.has(socket)) return;
       let msg: unknown;
       try {
         msg = JSON.parse(data.toString());
@@ -203,8 +217,11 @@ export class DevRelay {
   }
 }
 
+/** Connections `stallConnections` made half-open: open, but nothing in or out. */
+const stalledSockets = new WeakSet<WebSocket>();
+
 function send(socket: WebSocket, msg: unknown[]): void {
-  if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(msg));
+  if (socket.readyState === socket.OPEN && !stalledSockets.has(socket)) socket.send(JSON.stringify(msg));
 }
 
 // Standalone entry: `tsx src/dev/relay.ts`
