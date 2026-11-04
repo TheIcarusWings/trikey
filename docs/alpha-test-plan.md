@@ -170,6 +170,30 @@ uses it. This follows `packaging/README.md`. I have not run it on a real Umbrel,
 Start9's Bitcoin package, which runs mainnet only, and `packaging/start9/startos/main.ts` hard-codes `BITCOIN_NETWORK: 'bitcoin'`.
 It has not been tried for this round, and Start9 is out of it (see "Known limits").
 
+### Without Umbrel or Start9: plain Docker (a Mac, a PC, Linux, a NAS)
+
+From the release after 0.1.8-alpha the guardian also runs with Docker Compose on any computer with Docker, against a
+node and Electrum server (Electrs or Fulcrum) you already have somewhere: on another box (Umbrel, Start9, RaspiBlitz,
+myNode), on a NAS, or in the same compose file (`--profile node`). The full guide, with the steps for Docker Desktop on
+Mac and Windows, Linux, Synology, QNAP, Unraid and TrueNAS, is [`packaging/compose/README.md`](../packaging/compose/README.md).
+In short:
+
+1. From the release page, download `trikey-guardian-compose.yml` (save it as `docker-compose.yml`) and
+   `trikey-guardian.env.example` (save it as `.env`) into a new folder.
+2. In `.env`, set `BITCOIN_NETWORK` (the network you picked above) and `ELECTRUM_HOST` (your Electrum server's address;
+   `ELECTRUM_TLS=1` for one on another machine that offers TLS).
+3. `docker compose up -d`, then `docker compose logs guardian | grep setup.code`: the **setup code**. With no platform
+   login in front of the page, the guardian asks for it before the first setup, so nobody else who reaches the port can
+   set it up before you.
+4. Open <http://localhost:3000> (on a NAS, see the guide's "Opening the web UI from another computer"), enter the setup
+   code, and continue with step 1 below.
+
+**The computer must stay on.** The guardian co-signs and sends recovery alerts only while it runs: a laptop that sleeps
+stops both (the guide says how to keep a Mac or a PC awake). A NAS is ideal. After every restart, unlock it (step 9).
+
+Note in the bug report: the platform (Docker Desktop on Mac or Windows, Linux, which NAS), and where your Electrum server
+runs.
+
 ### The guardian needs a node and Electrs that are ready
 
 The guardian's first screen ("Set up your guardian") shows whether it found the node and Electrs. Its **Create guardian** button

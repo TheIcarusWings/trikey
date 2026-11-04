@@ -75,6 +75,7 @@ import { onContactDm } from './dm-cancel.js';
 import { startHttpServer } from './http/server.js';
 import { buildRoutes } from './http/api.js';
 import { WebSessions } from './http/sessions.js';
+import { SetupCode } from './http/setup-code.js';
 import { GUARDIAN_VERSION } from './version.js';
 import { SilentPaymentService } from './silent/service.js';
 import { SavingsMonitor } from './savings.js';
@@ -255,6 +256,13 @@ export class Guardian {
   sessionThrottle!: UnlockThrottle;
   /** The web UI's sessions (http/sessions.ts). In memory: a restart signs everyone out. */
   readonly sessions = new WebSessions();
+  /**
+   * On plain Docker (`config.platform === 'docker'`): the one-time code first-run setup asks for, printed in the log
+   * (http/setup-code.ts). New at every start. Undefined on Umbrel and Start9, whose login guards the first-run screen.
+   */
+  readonly setupCode?: SetupCode;
+  /** Wrong setup codes, all callers together: 10 a minute. The code has 80 bits; this keeps the log quiet. */
+  readonly setupCodeLimiter = new SlidingWindowLimiter({ max: 10, windowMs: 60_000 });
   keystore?: KeystoreFile;
   identity?: GuardianIdentity;
   rpc?: RpcServer;
@@ -293,6 +301,7 @@ export class Guardian {
     this.config = opts.config;
     this.clock = opts.clock ?? systemClock;
     this.log = opts.log ?? silentLogger;
+    if (opts.config.platform === 'docker') this.setupCode = new SetupCode();
     const electrum = opts.config.electrum
       ? new ElectrumClient({ ...opts.config.electrum, log: this.log, ...opts.electrum })
       : undefined;
@@ -449,6 +458,10 @@ export class Guardian {
     }
     this.chain.start();
     this.chain.onTip(() => void this.tick());
+    if (!this.setupComplete && this.setupCode) {
+      // Deliberately in the log (the one place only the box's owner reads): http/setup-code.ts.
+      this.log.info('setup.code', { code: this.setupCode.code, hint: 'Open the web UI and enter this setup code to set up the guardian. It changes at every restart.' });
+    }
     if (this.setupComplete) {
       await this.startNostr();
       await this.notifyPhone({ type: 'guardian_locked', reason: 'restart', ...this.stampNow() });

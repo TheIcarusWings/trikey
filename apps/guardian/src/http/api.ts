@@ -3,7 +3,7 @@
  * service state. Which endpoints work when:
  *
  *   without a session: GET /status (reduced: `PublicStatus`), POST /session, DELETE /session,
- *                      and before setup GET /setup/preflight, POST /setup (which signs the browser in)
+ *                      and before setup GET /setup/preflight, POST /setup/code, POST /setup (which signs the browser in)
  *   locked:            GET /status, POST /unlock, POST /reset
  *   unlocked:          everything (GET and PUT /relays included)
  *
@@ -48,6 +48,24 @@ function requireUnlocked(g: Guardian): void {
 
 function requireNotSetUp(g: Guardian): void {
   if (g.setupComplete) throw new HttpError(409, 'already_setup', 'This guardian is already set up.');
+}
+
+/**
+ * On plain Docker, first-run setup needs the setup code from the guardian's log (http/setup-code.ts). Throws 403
+ * `setup_code_required` without one, 401 `bad_setup_code` for a wrong one, 429 after too many wrong ones.
+ */
+function requireSetupCode(g: Guardian, input: unknown): void {
+  const gate = g.setupCode;
+  if (!gate) return;
+  if (typeof input !== 'string' || input.trim() === '')
+    throw new HttpError(403, 'setup_code_required', "Enter the setup code from the guardian's log first.");
+  const now = g.clock.now();
+  const blocked = g.setupCodeLimiter.blocked('setup', now);
+  if (!blocked.ok) throw new HttpError(429, 'rate_limited', 'Too many wrong setup codes. Wait a minute and try again.', Math.ceil(blocked.retryAfterMs / 1000));
+  if (gate.matches(input)) return;
+  g.setupCodeLimiter.take('setup', now);
+  g.log.warn('setup.bad_code');
+  throw new HttpError(401, 'bad_setup_code', "That is not the setup code. Copy it from the guardian's log (it changes at every restart).");
 }
 
 /** `GET /api/status` without a session: which screen to show, nothing about the wallet. */
@@ -288,8 +306,27 @@ export function buildRoutes(g: Guardian): Route[] {
       handler: async () => {
         requireNotSetUp(g);
         const p = await g.chain.preflight();
-        const body: SetupPreflight = { ...p, relayOptions: g.config.relayOptions.map((r) => ({ ...r })) };
+        const problem = g.chain.electrum?.lastError;
+        const body: SetupPreflight = {
+          ...p,
+          ...(p.electrs === 'missing' && problem ? { electrsProblem: problem } : {}),
+          relayOptions: g.config.relayOptions.map((r) => ({ ...r })),
+          platform: g.config.platform ?? 'docker',
+          setupCodeRequired: !!g.setupCode,
+        };
         return ok(body);
+      },
+    },
+
+    // Checks the setup code before the owner types a passphrase (POST /setup checks it again).
+    {
+      method: 'POST',
+      path: '/setup/code',
+      public: () => !g.setupComplete,
+      handler: ({ body }) => {
+        requireNotSetUp(g);
+        requireSetupCode(g, (body as { code?: unknown } | undefined)?.code);
+        return ok({ ok: true });
       },
     },
 
@@ -300,7 +337,8 @@ export function buildRoutes(g: Guardian): Route[] {
       handler: async ({ body, session }) => {
         requireNotSetUp(g);
         // `entropy`: 32 bytes from the browser's generator (hex), mixed into the new seed; never logged or kept.
-        const input = (body ?? {}) as { passphrase?: unknown; relays?: unknown; entropy?: unknown };
+        const input = (body ?? {}) as { passphrase?: unknown; relays?: unknown; entropy?: unknown; setupCode?: unknown };
+        requireSetupCode(g, input.setupCode);
         const r = await g.setup({ passphrase: input.passphrase, relays: input.relays, entropy: input.entropy });
         if (!r.ok) throw new HttpError(r.code === 'already_setup' ? 409 : 400, r.code, r.message);
         // The browser that set the guardian up is signed in.

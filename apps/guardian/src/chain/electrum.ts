@@ -1,15 +1,31 @@
 /**
- * A minimal Electrum protocol client (what Electrs speaks): JSON-RPC 2.0 over
- * plain TCP, one JSON object per line.
+ * A minimal Electrum protocol client (what Electrs and Fulcrum speak): JSON-RPC 2.0
+ * over TCP or TLS, one JSON object per line.
  *
- * Plain TCP is fine because Electrs runs on the same box (Umbrel and Start9
- * give us its address on the internal network). The client reconnects with
- * exponential backoff and re-subscribes to block headers after each connect.
- * Requests made while disconnected fail at once with `ElectrumUnavailableError`;
- * callers retry on their own schedule.
+ * Plain TCP is fine when the server runs on the same box or the owner's own network
+ * (Umbrel and Start9 give us Electrs' address on the internal network). So plain TCP is
+ * only used to an address that is loopback, private (10/8, 172.16/12, 192.168/16,
+ * 100.64/10 as Tailscale uses, fc00::/7) or link-local: the host name is resolved before
+ * every connect, every address it resolves to is checked, and the connection goes to the
+ * checked address. Anything on the internet needs TLS (`tls: true`), unless the owner
+ * says otherwise (`allowPublicPlaintext`).
+ *
+ * TLS: by default the server's certificate must chain to a public CA (Node's bundled
+ * Mozilla roots, plus NODE_EXTRA_CA_CERTS) and name the host. With `certSha256` (the
+ * self-signed certificate Fulcrum, or Electrs behind stunnel/nginx, makes) exactly that
+ * certificate is accepted, whatever it says: the pin is the identity, and nothing is sent
+ * before the certificate shown has been compared with it.
+ *
+ * The client reconnects with exponential backoff and re-subscribes to block headers after
+ * each connect. Requests made while disconnected fail at once with
+ * `ElectrumUnavailableError`; callers retry on their own schedule.
  */
-import { connect, type Socket } from 'node:net';
+import type { LookupAddress } from 'node:dns';
+import { lookup as dnsLookup } from 'node:dns/promises';
+import { connect, isIP, type Socket } from 'node:net';
+import { connect as tlsConnect, type TLSSocket } from 'node:tls';
 import { errorText, silentLogger, type Logger } from '../log.js';
+import { classifyIp } from '../notify/net.js';
 
 /** Splits a text stream into lines. Throws if a line grows past `maxLength` characters. */
 export class LineDecoder {
@@ -49,6 +65,28 @@ export class ElectrumError extends Error {
   }
 }
 
+/** Plain TCP to an address on the internet, refused (see the file comment). */
+export class PlaintextRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PlaintextRefusedError';
+  }
+}
+
+/** A connection error in plain words, with a hint for the usual TLS mistakes. */
+function tlsHint(e: unknown, tls: boolean): string {
+  const err = e as { code?: string; message?: string };
+  const code = err.code ?? '';
+  if (tls && /SELF_SIGNED|UNABLE_TO_VERIFY|UNABLE_TO_GET_ISSUER|CERT_UNTRUSTED/.test(code))
+    return `the server's certificate is not signed by a public CA (${code}): pin it with ELECTRUM_TLS_CERT_SHA256`;
+  if (tls && code === 'ERR_TLS_CERT_ALTNAME_INVALID') return `the server's certificate is for another name (${err.message ?? code})`;
+  if (tls && code === 'CERT_HAS_EXPIRED') return "the server's certificate has expired";
+  if (tls && /EPROTO|wrong version number|packet length too long/i.test(`${code} ${err.message ?? ''}`)) return 'the server does not speak TLS on this port (try ELECTRUM_TLS=0, or its TLS port)';
+  if (code === 'ECONNREFUSED') return 'connection refused: nothing listens on that port';
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'that host name does not resolve';
+  return errorText(e);
+}
+
 /** Not connected, timed out, or the connection dropped mid-request. */
 export class ElectrumUnavailableError extends Error {
   constructor(message: string) {
@@ -63,9 +101,40 @@ export interface HeaderNotification {
   hex: string;
 }
 
+/**
+ * Whether plain TCP may go to `ip`: loopback, a private range or link-local (the owner's own box or network).
+ * Everything else is "on the internet" and needs TLS.
+ */
+export function isLocalAddress(ip: string): boolean {
+  const cls = classifyIp(ip);
+  if (cls === 'loopback' || cls === 'private') return true;
+  const a = ip.replace(/^\[|\]$/g, '').toLowerCase().replace(/^::ffff:(?=\d)/, '');
+  return /^169\.254\./.test(a) || /^fe[89ab][0-9a-f]:/.test(a);
+}
+
+/** A SHA-256 certificate fingerprint as Node writes it (`AB:CD:...`, 32 pairs), from 64 hex digits with or without colons. */
+export function normalizeFingerprint(raw: string): string | undefined {
+  const hexText = raw
+    .trim()
+    .replace(/^sha-?256(\s*fingerprint)?\s*[=:]?\s*/i, '')
+    .replace(/[\s:]/g, '');
+  if (!/^[0-9a-f]{64}$/i.test(hexText)) return undefined;
+  return hexText.toUpperCase().replace(/(..)(?!$)/g, '$1:');
+}
+
 export interface ElectrumClientOptions {
   host: string;
   port: number;
+  /** Connect over TLS. */
+  tls?: boolean;
+  /** With `tls`: accept exactly the certificate with this SHA-256 fingerprint (`AB:CD:...`) instead of a CA-signed one. */
+  certSha256?: string;
+  /** Allow plain TCP to an address on the internet (ELECTRUM_ALLOW_PUBLIC_PLAINTEXT). */
+  allowPublicPlaintext?: boolean;
+  /** Extra trusted CA certificates (PEM) for `tls` without a pin. Test seam; a real guardian uses NODE_EXTRA_CA_CERTS. */
+  ca?: string[];
+  /** Name resolution for the plain-TCP address check (default: the system's). Test seam. */
+  resolve?: (host: string) => Promise<LookupAddress[]>;
   clientName?: string;
   requestTimeoutMs?: number;
   connectTimeoutMs?: number;
@@ -83,8 +152,10 @@ interface Pending {
   timer: ReturnType<typeof setTimeout>;
 }
 
+type Defaulted = 'clientName' | 'requestTimeoutMs' | 'connectTimeoutMs' | 'minBackoffMs' | 'maxBackoffMs' | 'pingIntervalMs';
+
 export class ElectrumClient {
-  private readonly o: Required<Omit<ElectrumClientOptions, 'log'>> & { log: Logger };
+  private readonly o: Required<Pick<ElectrumClientOptions, Defaulted>> & Omit<ElectrumClientOptions, Defaulted | 'log'> & { log: Logger };
   private socket?: Socket;
   private readonly decoder = new LineDecoder();
   private readonly pending = new Map<number, Pending>();
@@ -98,6 +169,7 @@ export class ElectrumClient {
   private readonly statusListeners = new Set<(connected: boolean) => void>();
   private readyWaiters: (() => void)[] = [];
   private warnedUnreachable = false;
+  private lastErrorText?: string;
 
   /** The latest block header the server announced. */
   tip?: HeaderNotification;
@@ -120,6 +192,16 @@ export class ElectrumClient {
 
   get connected(): boolean {
     return this.ready;
+  }
+
+  /** Why the last connection attempt failed, in plain words (no secrets), while disconnected. */
+  get lastError(): string | undefined {
+    return this.ready ? undefined : this.lastErrorText;
+  }
+
+  /** `tcp` or `tls`, and with a pinned certificate. For status pages and logs. */
+  get transport(): 'tcp' | 'tls' | 'tls-pinned' {
+    return !this.o.tls ? 'tcp' : this.o.certSha256 ? 'tls-pinned' : 'tls';
   }
 
   start(): void {
@@ -182,7 +264,66 @@ export class ElectrumClient {
 
   private connect(): void {
     if (this.stopped) return;
-    const socket = connect({ host: this.o.host, port: this.o.port });
+    if (this.o.tls) {
+      this.attach(this.openTls(), 'secureConnect');
+      return;
+    }
+    void this.checkedAddress().then(
+      (address) => {
+        if (this.stopped) return;
+        this.attach(connect({ host: address, port: this.o.port }), 'connect');
+      },
+      (e: unknown) => {
+        this.fail(errorText(e), e instanceof PlaintextRefusedError ? 'error' : 'warn');
+        this.scheduleReconnect();
+      },
+    );
+  }
+
+  /**
+   * The address plain TCP may go to: the host itself if it is an IP, else what it resolves to, every address checked
+   * (see the file comment). Throws `PlaintextRefusedError` for an address on the internet.
+   */
+  private async checkedAddress(): Promise<string> {
+    const host = this.o.host.replace(/^\[|\]$/g, '');
+    const addrs: LookupAddress[] = isIP(host)
+      ? [{ address: host, family: isIP(host) }]
+      : await (this.o.resolve ?? ((h: string) => dnsLookup(h, { all: true, verbatim: true })))(host).catch((e: unknown) => {
+          throw new Error(`cannot resolve ${host}: ${errorText(e)}`);
+        });
+    if (!addrs.length) throw new Error(`${host} has no address`);
+    if (!this.o.allowPublicPlaintext) {
+      const outside = addrs.find((a) => !isLocalAddress(a.address));
+      if (outside)
+        throw new PlaintextRefusedError(
+          `${host} (${outside.address}) is not on this box or your own network, so plain TCP would cross the internet: set ELECTRUM_TLS=1 (or ELECTRUM_ALLOW_PUBLIC_PLAINTEXT=1 if you really mean it)`,
+        );
+    }
+    return addrs[0]!.address;
+  }
+
+  private openTls(): TLSSocket {
+    const pinned = this.o.certSha256;
+    return tlsConnect({
+      host: this.o.host,
+      port: this.o.port,
+      minVersion: 'TLSv1.2',
+      ...(isIP(this.o.host) ? {} : { servername: this.o.host }),
+      // With a pin, the pin is the trust anchor (checked on `secureConnect`, before anything is sent); without one, a
+      // CA-signed certificate for this host.
+      rejectUnauthorized: !pinned,
+      ...(this.o.ca && !pinned ? { ca: this.o.ca } : {}),
+    });
+  }
+
+  private fail(text: string, level: 'warn' | 'error' = 'warn'): void {
+    const changed = text !== this.lastErrorText;
+    this.lastErrorText = text;
+    // Once per kind of failure, not on every retry.
+    if (changed) this.o.log[level]('electrum.connect_failed', { host: this.o.host, port: this.o.port, transport: this.transport, error: text });
+  }
+
+  private attach(socket: Socket, ready: 'connect' | 'secureConnect'): void {
     this.socket = socket;
     this.decoder.reset();
     socket.setEncoding('utf8');
@@ -190,8 +331,16 @@ export class ElectrumClient {
     socket.setKeepAlive(true, 30_000);
     const connectTimer = setTimeout(() => socket.destroy(new Error('connect timed out')), this.o.connectTimeoutMs);
 
-    socket.on('connect', () => {
+    socket.on(ready, () => {
       clearTimeout(connectTimer);
+      if (ready === 'secureConnect' && this.o.certSha256) {
+        const seen = (socket as TLSSocket).getPeerCertificate().fingerprint256;
+        if (seen !== this.o.certSha256) {
+          this.fail(`the server's certificate is not the pinned one: it shows SHA-256 ${seen ?? 'nothing'} (ELECTRUM_TLS_CERT_SHA256)`, 'error');
+          socket.destroy();
+          return;
+        }
+      }
       void this.handshake(socket);
     });
     socket.on('data', (chunk: string) => {
@@ -207,6 +356,7 @@ export class ElectrumClient {
     });
     socket.on('error', (e) => {
       this.o.log.debug('electrum.socket_error', { error: errorText(e) });
+      if (!this.ready) this.fail(tlsHint(e, !!this.o.tls));
     });
     socket.on('close', () => {
       clearTimeout(connectTimer);
@@ -234,8 +384,9 @@ export class ElectrumClient {
       this.setTip(tip);
       this.backoffMs = this.o.minBackoffMs;
       this.warnedUnreachable = false;
+      this.lastErrorText = undefined;
       this.setReady(true);
-      this.o.log.info('electrum.connected', { host: this.o.host, port: this.o.port, server: version?.[0], height: tip?.height });
+      this.o.log.info('electrum.connected', { host: this.o.host, port: this.o.port, transport: this.transport, server: version?.[0], height: tip?.height });
       if (this.o.pingIntervalMs > 0) {
         clearInterval(this.pingTimer);
         this.pingTimer = setInterval(() => {
@@ -245,6 +396,7 @@ export class ElectrumClient {
       }
     } catch (e) {
       this.o.log.warn('electrum.handshake_failed', { error: errorText(e) });
+      this.fail(`the server did not answer as an Electrum server (${errorText(e)})`);
       socket.destroy();
     }
   }
