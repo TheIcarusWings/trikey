@@ -7,6 +7,7 @@ import { NetworkStrip } from '@/components/network-strip';
 import { FLOATING_TAB_BAR_SPACE } from '@/components/tab-bar';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
+import { UpdatingNote } from '@/components/updating-note';
 import { backDecision, type BackHold } from '@/lib/back';
 import { IS_ANDROID, IS_IOS, IS_WEB, pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
@@ -250,7 +251,15 @@ export function Screen({
       <NetworkStrip />
       {bare ? <View style={{ height: bareTop }} /> : null}
       {header}
-      {body}
+      {onRefresh ? (
+        // The pull's spinner waits for the balance and Activity only; the rest of the sync shows as "Updating…".
+        <View className="flex-1">
+          {body}
+          <UpdatingNote />
+        </View>
+      ) : (
+        body
+      )}
       {footer ? (
         <View
           className={cn('gap-4', overflowing && 'border-border border-t pt-3')}

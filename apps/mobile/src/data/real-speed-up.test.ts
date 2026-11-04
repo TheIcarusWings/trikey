@@ -57,6 +57,7 @@ beforeAll(async () => {
     rpcTimeoutMs: 5000,
     rpcRetryIntervalMs: 0,
     syncIntervalMs: 0,
+    syncJoinMs: 0, // every sync() asks the guardian again
     yieldToUi: async () => {},
     recoveryCodeKdf: { m: 64, t: 1, p: 1 },
   });
@@ -69,6 +70,7 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
+  await svc?.idle();
   await svc?.close();
   await rig?.stop();
 });

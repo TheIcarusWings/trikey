@@ -155,6 +155,8 @@ export interface RealServiceDeps {
   rpcRetryIntervalMs?: number;
   /** Sync this often while the service lives (ms; default 60 s, 0 = only when asked). */
   syncIntervalMs?: number;
+  /** `sync()` joins a sync that began less than this long ago (ms, the app's clock; default `SYNC_JOIN_MS`; 0 = never). */
+  syncJoinMs?: number;
   /** How often screens re-read the clock (ms, default 30 s). */
   clockTickMs?: number;
   /** Hands a backup file to the OS share sheet. */
@@ -181,6 +183,8 @@ export interface RealWalletService extends WalletService {
   /** The app left the front (AppState `inactive` or `background`). See `resume`. */
   pause(state?: 'inactive' | 'background'): void;
   resume(): Promise<void>;
+  /** Resolves once no sync is running or due, its background part (`updating`) included. */
+  idle(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -197,6 +201,11 @@ const SHORT_PAUSE_MS = 2_000;
 /** A helper coin below this cannot pay its share of the fee of a payment at ordinary rates: shown as not funded. */
 const HELPER_USABLE_SATS = 1_000;
 const PREFS_KEY = 'trikey.app.prefs.v1';
+/**
+ * A pull to refresh (or the timer) joins a sync that began less than this long ago instead of asking the guardian again:
+ * its answer is as fresh as a new one would be. (ms)
+ */
+export const SYNC_JOIN_MS = 10_000;
 /** How long the "Incoming …" note stays. */
 export const TOAST_MS = 6_000;
 /** An incoming payment's note shows only for an alert this recent (relays replay alerts for days). */
@@ -329,10 +338,16 @@ class Service implements RealWalletService {
   private log: AppLog = emptyLog();
   private prefs: { unit: AmountUnit; theme: ThemePreference } = { unit: 'sats', theme: 'system' };
   private progress: string | null = null;
-  private syncing = false;
-  /** The sync under way, and whether another was asked for while it ran (see `sync`). */
-  private syncRun?: Promise<void>;
-  private syncAgain = false;
+  /**
+   * A sync comes in two parts (see `sync`). The first, `core`: the guardian's status and the wallet's chain data, what
+   * the balance and Activity show; a pull to refresh waits for it. The core under way and when it began; and the next
+   * one, due as soon as it ends.
+   */
+  private core?: { done: Promise<void>; startedAt: number };
+  private nextCore?: Promise<void>;
+  /** The rest of a sync, in the background ("Updating…"): the one running, and the newest one waiting for it. */
+  private restRun?: Promise<void>;
+  private restNext?: { rest: () => Promise<unknown>; startedAt: number };
   /** False once a guardian call failed for want of an answer ("offline"). Any later answer sets it again. */
   private reachable = true;
   /** When `reachable` went false (the app's clock): a guardian status read after this clears it (see `refresh`). */
@@ -365,7 +380,9 @@ class Service implements RealWalletService {
   private quoteCounter = 0;
   private chain: Promise<unknown> = Promise.resolve();
   private abort?: AbortController;
-  private timer?: ReturnType<typeof setInterval>;
+  /** The periodic sync's next turn (`armTimer`); set once the first sync is done. */
+  private timer?: ReturnType<typeof setTimeout>;
+  private timerOn = false;
   private closed = false;
   private starting?: Promise<void>;
   private addressCache?: { key: string; address: string };
@@ -504,9 +521,9 @@ class Service implements RealWalletService {
     } catch (e) {
       this.noteGuardianResult(e, startedAt);
     }
+    this.timerOn = true;
     await this.sync();
-    const every = this.deps.syncIntervalMs ?? 60_000;
-    if (every > 0 && !this.closed) this.timer ??= setInterval(() => void this.sync(), every);
+    if (this.isIdle()) this.armTimer();
   }
 
   pause(state: 'inactive' | 'background' = 'background'): void {
@@ -540,7 +557,7 @@ class Service implements RealWalletService {
     const force = background || away >= FORCE_RECONNECT_AFTER_MS;
     await this.w?.reconnect({ force, waitMs: force ? RELAYS_BACK_WAIT_MS : 0 }).catch(() => undefined);
     if (this.closed) return;
-    return this.sync();
+    return this.requestSync(true);
   }
 
   /**
@@ -558,7 +575,7 @@ class Service implements RealWalletService {
   async close(): Promise<void> {
     this.closed = true;
     clearTimeout(this.toastTimer);
-    if (this.timer) clearInterval(this.timer);
+    clearTimeout(this.timer);
     this.timer = undefined;
     await this.starting?.catch(() => {}); // a connection opened after close() would never be closed
     this.unsubWallet?.();
@@ -727,7 +744,8 @@ class Service implements RealWalletService {
       capabilities: { lockGuardian: true, replaceGuardian: true, recoveryKey: true },
       progress: this.progress,
       devicePrompt: this.prompts.getSnapshot(),
-      syncing: this.syncing,
+      syncing: !!this.core || !!this.nextCore,
+      updating: !!this.restRun,
       synced: !!s?.chain,
       guardianSlow: this.slow && this.reachable,
       guardianReconnecting: this.reconnecting,
@@ -951,7 +969,7 @@ class Service implements RealWalletService {
           addEvent(this.log, { kind: 'recovery-finished', movedSats: moved, at: this.clock.now() });
           void this.saveLogNow();
           // The new wallet's coins, from the guardian that now guards it.
-          void this.sync();
+          void this.requestSync(true);
         } else this.refresh();
         break;
       case 'silent_payments_found':
@@ -1006,7 +1024,7 @@ class Service implements RealWalletService {
           const known = !!st && (st.liveTxs.some((t) => t.txid === a.txid) || (a.wallet === 'main' ? st.chain : st.savings?.chain)?.history.some((h) => h.txid === a.txid));
           if (a.direction === 'in' && fresh && !known && st?.stage === 'paired') this.showToast(toastText(a));
           this.refresh();
-          if (a.wallet === 'main') void this.sync();
+          if (a.wallet === 'main') void this.requestSync(true);
         } else if (a.type === 'limit_on' && a.reason === 'recovery') {
           // The guardian turned the limit back on for the recovered wallet (this phone logs its own changes itself).
           addEvent(this.log, { kind: 'limit-on', limitSats: a.limitSats, at: e.atMs });
@@ -1038,48 +1056,76 @@ class Service implements RealWalletService {
   // Sync
 
   /**
-   * One sync at a time, and none is lost: a sync asked for while one runs (the switch to the wallet a recovery made, the
-   * timer, a pull to refresh) runs again as soon as that one ends, and the caller waits for it. The running sync may
-   * have started before the wallet changed, so its answer, or its failure, is about what was. (Dropping the request
-   * left the phone showing the guardian offline and no balance right after a recovery finished, until the next timer:
-   * the sync begun while recovering failed after the switch, and the switch's own sync had been dropped.)
+   * Asks the guardian for the wallet's coins and history (a pull to refresh, the timer, a screen that opens). Resolves
+   * when the balance and Activity are up to date: the guardian's status and the wallet's chain data are in (the sync's
+   * core). The rest of the sync (silent payments, Savings, previous transactions kept for signing, the recovery
+   * followed) goes on in the background: `updating` in the state, not the spinner.
+   *
+   * One core at a time. A sync that began less than `SYNC_JOIN_MS` ago and is still running is joined: its answer is as
+   * fresh as a new one. An older core still under way (a slow guardian) is not asked again in parallel: a new core
+   * follows it at once, without waiting for its background part. (A pull used to wait for the rest of the running
+   * sync, its background part, and then a whole second sync: a minute or two with a slow Electrs.)
    */
   sync(): Promise<void> {
-    if (this.syncRun) {
-      this.syncAgain = true;
-      return this.syncRun;
-    }
-    const w = this.w;
-    if (!w || w.stage === 'new' || this.closed) return Promise.resolve();
-    this.syncing = true;
-    this.refresh();
-    this.syncRun = (async () => {
-      try {
-        do {
-          this.syncAgain = false;
-          await this.syncOnce();
-        } while (this.syncAgain && !this.closed);
-      } finally {
-        this.syncing = false;
-        this.syncRun = undefined;
-        this.refresh();
-      }
-    })();
-    return this.syncRun;
+    return this.requestSync(false);
   }
 
-  private async syncOnce(): Promise<void> {
+  /**
+   * `fresh`: the answer must be asked for after now (the wallet a recovery made, a payment just sent or announced, the
+   * return to the front), so a core under way, which may have been asked before, is never joined: one follows it. None
+   * is lost. (Dropping the request left the phone showing the guardian offline and no balance right after a recovery
+   * finished, until the next timer: the sync begun while recovering failed after the switch, and the switch's own sync
+   * had been dropped.)
+   */
+  private requestSync(fresh: boolean): Promise<void> {
     const w = this.w;
-    if (!w || w.stage === 'new' || this.closed) return;
+    if (!w || w.stage === 'new' || this.closed) return Promise.resolve();
+    if (this.nextCore) return this.nextCore;
+    const recent = this.lastSyncAt !== undefined && this.clock.now() - this.lastSyncAt < (this.deps.syncJoinMs ?? SYNC_JOIN_MS);
+    const core = this.core;
+    if (core) {
+      if (!fresh && recent) return core.done;
+      this.nextCore = core.done.catch(() => undefined).then(() => {
+        this.nextCore = undefined;
+        return this.startCore();
+      });
+      this.refresh();
+      return this.nextCore;
+    }
+    // Only its background part is left: the balance it brought is as fresh as a new one.
+    if (!fresh && recent && this.restRun) return Promise.resolve();
+    return this.startCore();
+  }
+
+  /** When the last sync began (`startCore`). */
+  private lastSyncAt?: number;
+
+  private startCore(): Promise<void> {
+    const w = this.w;
+    if (!w || w.stage === 'new' || this.closed) return Promise.resolve();
     const startedAt = this.clock.now();
+    this.lastSyncAt = startedAt;
+    const done: Promise<void> = this.runCore(w, startedAt).finally(() => {
+      if (this.core?.done === done) this.core = undefined;
+      if (this.isIdle()) this.armTimer();
+      this.refresh();
+    });
+    this.core = { done, startedAt };
+    this.refresh();
+    return done;
+  }
+
+  private async runCore(w: TrikeyWallet, startedAt: number): Promise<void> {
+    let rest: (() => Promise<unknown>) | undefined;
     try {
       // A recovering phone follows its recovery; the guardian's status says when it took the new wallet over.
       if (w.stage === 'recovering') await w.refreshStatus().then(() => w.recoveryStatus());
       if (w.stage === 'paired') {
-        const snap = await w.sync();
+        const core = await w.syncCore();
+        rest = core.rest;
         const now = this.clock.now();
         let changed = false;
-        for (const h of snap.history) if (h.confirmations === 0 && this.log.seen[h.txid] === undefined) ((this.log.seen[h.txid] = now), (changed = true));
+        for (const h of core.snapshot.history) if (h.confirmations === 0 && this.log.seen[h.txid] === undefined) ((this.log.seen[h.txid] = now), (changed = true));
         if (changed) await saveLog(this.deps.platform.kv, this.logKey, this.log);
       }
       this.answered(false);
@@ -1091,12 +1137,73 @@ class Service implements RealWalletService {
         this.slow = true;
       }
       // Another sync is due right after this one, and only its outcome says whether the guardian answers now.
-      else if (!this.syncAgain) this.noteGuardianResult(e, startedAt);
+      else if (!this.nextCore) this.noteGuardianResult(e, startedAt);
     }
     // A sync begun after the return to the front has had its say (or another one is due): no longer "reconnecting"
     // once the guardian is known to answer or not.
-    if (this.reconnecting && !this.syncAgain && !this.spannedPause(startedAt)) this.reconnecting = false;
+    if (this.reconnecting && !this.nextCore && !this.spannedPause(startedAt)) this.reconnecting = false;
+    if (rest && !this.closed) this.startRest(rest, startedAt);
     this.refresh();
+  }
+
+  /**
+   * The background part of a sync (`updating`). One at a time: a newer one waits for the one running, and replaces any
+   * older one waiting (it reads the same things, later). A failure shows as a failed sync did (a guardian that stopped
+   * answering is "offline"), unless a newer core is under way or due: its outcome says.
+   */
+  private startRest(rest: () => Promise<unknown>, startedAt: number): void {
+    this.restNext = { rest, startedAt };
+    if (this.restRun || this.closed) return;
+    this.restRun = (async () => {
+      try {
+        for (let next = this.restNext; next && !this.closed; next = this.restNext) {
+          this.restNext = undefined;
+          try {
+            await next.rest();
+          } catch (e) {
+            if (!this.core && !this.nextCore) this.noteGuardianResult(e, next.startedAt);
+          }
+          this.refresh();
+        }
+      } finally {
+        // In the same turn as the last look at `restNext`: one asked for from now on starts a new run.
+        this.restRun = undefined;
+        this.restNext = undefined;
+        if (this.isIdle()) this.armTimer();
+        this.refresh();
+      }
+    })();
+  }
+
+  /** No sync is running or due, background part included. */
+  private isIdle(): boolean {
+    return !this.core && !this.nextCore && !this.restRun;
+  }
+
+  /**
+   * The periodic sync (`syncIntervalMs`) comes `syncIntervalMs` after the end of the last sync, whatever started it, and
+   * never queues one: a sync under way when it comes due makes it wait for that sync's end (it is re-armed then). With
+   * a guardian slower than the interval (a wallet.sync of 33-39 s on an Umbrel, and the rest of the sync after it), a
+   * fixed 60 s timer always found a sync running, queued another, and the phone synced back to back, never idle:
+   * constant load on the guardian and its Electrs, a drained battery, and every pull waiting behind it.
+   */
+  private armTimer(): void {
+    const every = this.deps.syncIntervalMs ?? 60_000;
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    if (!this.timerOn || every <= 0 || this.closed) return;
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      if (!this.isIdle()) return;
+      void this.sync();
+      // Nothing to sync yet (a phone key made, not paired): look again next time.
+      if (this.isIdle()) this.armTimer();
+    }, every);
+  }
+
+  /** Resolves once no sync is running or due, background part included (tests; a screen that needs all of it). */
+  async idle(): Promise<void> {
+    for (let p = this.nextCore ?? this.core?.done ?? this.restRun; p; p = this.nextCore ?? this.core?.done ?? this.restRun) await p.catch(() => undefined);
   }
 
   // ===========================================================================
@@ -1415,7 +1522,7 @@ class Service implements RealWalletService {
         const at = this.clock.now();
         const signedBy = res.signedBy;
         this.refresh();
-        void this.sync();
+        void this.requestSync(true);
         return {
           id: res.txid,
           kind: 'sent' as const,
@@ -1440,8 +1547,9 @@ class Service implements RealWalletService {
       this.paymentSending = false;
     },
     sent: () => {
+      // As after a payment: a new sync, never one joined that began before the replacement went out.
       this.refresh();
-      void this.sync();
+      void this.requestSync(true);
     },
     broadcastError: (refusal) => broadcastError(refusal, 'listed'),
     iso: (ms) => this.iso(ms),
@@ -2088,7 +2196,7 @@ class Service implements RealWalletService {
       this.guarded(async () => {
         await this.requireWallet().renewRecoveryAccess();
         // Following the recovery picks up now, not at the next tick.
-        void this.sync();
+        void this.requestSync(true);
       }),
     );
   }
