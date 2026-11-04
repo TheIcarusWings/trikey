@@ -741,6 +741,14 @@ export interface WalletState {
    * is online, and the balance shown is the last one. Not "offline".
    */
   guardianSlow: boolean;
+  /**
+   * Back at the front after the guardian was offline: the connection to it is being made again (the OS may have closed
+   * it while the phone slept). Calm, not "offline": `guardian.status` is the last one it gave until the next answer, or
+   * a call made since the return that goes unanswered (then `offline`).
+   */
+  guardianReconnecting?: boolean;
+  /** A payment is signed (by the guardian or the hardware wallet) and on its way out: "Sending…". */
+  paymentSending?: boolean;
   phoneSpending: PhoneSpending;
   /** A recovery on this phone's wallet that is no longer running. */
   recoveryOutcome: RecoveryOutcome | null;
