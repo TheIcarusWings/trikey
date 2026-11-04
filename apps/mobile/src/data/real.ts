@@ -61,6 +61,8 @@ import type { SilentPaymentActions } from './sp-actions';
 import { emptySilentPayments } from './sp-empty';
 import type { SavingsActions } from './savings-actions';
 import { emptySavings } from './savings-empty';
+import { createSpeedUpActions } from './real-speed-up';
+import type { SpeedUpActions } from './speed-up-actions';
 import { renderSavingsMap, savingsMapData } from './savings-map';
 import {
   GUARDIAN_NETWORKS,
@@ -1652,6 +1654,24 @@ class Service implements RealWalletService {
       }),
     );
   }
+
+  /** "Speed up" of a payment waiting to confirm (./real-speed-up.ts): signed like `sendPayment`, "Sending…" the same way. */
+  readonly speedUp: SpeedUpActions = createSpeedUpActions({
+    wallet: () => this.w,
+    requireWallet: () => this.requireWallet(),
+    run: (job) => this.exclusive(() => this.guarded(job)),
+    sendingDone: () => {
+      this.paymentSending = false;
+    },
+    sent: () => {
+      // As after a payment: a new sync, never one joined that began before the replacement went out.
+      this.refresh();
+      void this.requestSync(true);
+    },
+    broadcastError: (refusal) => broadcastError(refusal, 'listed'),
+    iso: (ms) => this.iso(ms),
+    now: () => this.clock.now(),
+  });
 
   async receiveAddress(opts: { verifyOnDevice?: boolean } = {}): Promise<ReceiveAddress> {
     const run = () =>

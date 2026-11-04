@@ -7,6 +7,7 @@ import { emptyRecoveryKeyState } from './rk-empty';
 import { DEMO_FINGERPRINT, createMockRecoveryKey } from './rk-mock';
 import { looksLikeSilentPaymentAddress } from './sp-empty';
 import { DEMO_HELPER_FEE, DEMO_TAPROOT_OUTPUT, createMockSilentPayments, demoSilentActivity, demoSilentPayments, type MockSilentControl } from './sp-mock';
+import { createMockSpeedUp } from './speed-up-mock';
 import { DEMO_SAVINGS_DESCRIPTOR, createMockSavings, creditDemoSavings, demoFilledSavings, emptySavings, isDemoSavingsAddress } from './savings-mock';
 import type { WalletService } from './service';
 import type {
@@ -500,6 +501,8 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
         txid: txid((counter * 7919).toString(16).padStart(12, '0')),
         signedBy,
         ...(silent ? { silentOutputAddress: DEMO_TAPROOT_OUTPUT } : {}),
+        // Waiting to confirm, with change to take a higher fee from: "Speed up" can send it again (guardian mode).
+        ...(state.mode === 'guardian' && !silent && !quote.max ? { canSpeedUp: true as const } : {}),
       };
       if (silent && state.mode === 'guardian') update((s) => ({ silentPayments: { ...s.silentPayments, helper: { ...s.silentPayments.helper, sats: Math.max(0, s.silentPayments.helper.sats - DEMO_HELPER_FEE) } } }));
       // "Add to Savings": a payment like any other (it counted against the limit above), and it lands in Savings.
@@ -748,6 +751,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     rk: createMockRecoveryKey({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }),
     silentPayments: createMockSilentPayments({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }, silentControl, nextId),
     savings: createMockSavings({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }, nextId),
+    speedUp: createMockSpeedUp({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW, nextId, nextTxid: () => txid((++counter * 7919).toString(16).padStart(12, '0')) }),
 
     // -- preferences --------------------------------------------------
     setUnit: (unit: AmountUnit) => update({ unit }),

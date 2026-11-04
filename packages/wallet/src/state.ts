@@ -226,6 +226,8 @@ export const SendLogEntry = z.object({
       outputAddress: z.string(),
     })
     .optional(),
+  /** "Speed up": this replaced (RBF) the unconfirmed payment `replaces`, same payment, higher fee. */
+  replaces: Hex32.optional(),
 });
 export type SendLogEntry = z.infer<typeof SendLogEntry>;
 
@@ -468,6 +470,8 @@ export const LiveTx = z.object({
   /** When this phone first heard of it, and last (ms, the phone's clock). */
   firstAt: z.number(),
   at: z.number(),
+  /** The guardian said it replaced (RBF) this unconfirmed transaction of the wallet ("Speed up"). */
+  replaces: Hex32.optional(),
 });
 export type LiveTx = z.infer<typeof LiveTx>;
 
@@ -501,7 +505,17 @@ export const WalletState = z.object({
   chain: ChainCache.optional(),
   guardianStatus: GuardianStatusCache.optional(),
   /** Spends the guardian co-signed, for the local "spent today" estimate (ms, sats). */
-  spends: z.array(z.object({ txid: z.string(), at: z.number(), outflowSats: z.number() })).default([]),
+  spends: z
+    .array(
+      z.object({
+        txid: z.string(),
+        at: z.number(),
+        outflowSats: z.number(),
+        /** A replacement ("Speed up") of the co-signed spend `replaces`: the guardian counts their coins once, at the larger amount. */
+        replaces: z.string().optional(),
+      }),
+    )
+    .default([]),
   recovery: RecoveryRecord.optional(),
   /**
    * A recovering phone: when the guardian's `recovery.access` grant ends (unix seconds, the guardian's `accessExpiresAt`).

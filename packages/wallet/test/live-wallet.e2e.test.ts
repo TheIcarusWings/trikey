@@ -138,6 +138,29 @@ describe('wallet_tx on the phone', { timeout: 120_000 }, () => {
     expect(W.snapshot()!.balance.totalSats).toBe(before);
   });
 
+  it('a replacement announced with `replaces` takes the payment\'s row (its note, where it went), and the balance moves by the extra fee only', async () => {
+    clock.advance(1_000);
+    await W.sync();
+    const sent = await W.send({ address: externalAddress(7), amountSats: 6_000, label: 'Lunch' });
+    if (!sent.ok) throw new Error('the payment was refused');
+    await waitFor(() => txAlerts().find((x) => x.txid === sent.txid), 'the payment alert');
+    clock.advance(1_000);
+    await W.sync();
+    const before = W.snapshot()!.balance.totalSats;
+    // Made elsewhere (the hardware wallet with a desktop wallet): this phone only hears of it from the guardian.
+    const at = clock.now();
+    const txid = 'cc'.repeat(32);
+    await feed(W, { type: 'wallet_tx', txid, direction: 'out', amountSats: 6_000, feeSats: sent.feeSats + 900, confirmations: 0, wallet: 'main', replaces: sent.txid, at: Math.floor(at / 1000), atMs: at }, 'rbf-1', W.state.guardian!.pubkey);
+    const rows = W.snapshot()!.history.filter((h) => h.txid === sent.txid || h.txid === txid);
+    expect(rows).toEqual([expect.objectContaining({ txid, replaces: sent.txid, label: 'Lunch', recipient: externalAddress(7), amountSats: 6_000, feeSats: sent.feeSats + 900, live: true, canSpeedUp: true })]);
+    expect(W.snapshot()!.balance.totalSats).toBe(before - 900);
+    // The guardian has no such transaction (the original is still the one waiting): the next sync puts the original back.
+    clock.advance(1);
+    await W.sync();
+    expect(W.snapshot()!.history.filter((h) => h.txid === sent.txid || h.txid === txid).map((h) => h.txid)).toEqual([sent.txid]);
+    expect(W.snapshot()!.balance.totalSats).toBe(before);
+  });
+
   it('only the paired guardian counts, and a replay is ignored', async () => {
     const at = clock.now();
     const alert: Alert = { type: 'wallet_tx', txid: 'dd'.repeat(32), direction: 'in', amountSats: 999_999, confirmations: 0, wallet: 'main', at: Math.floor(at / 1000), atMs: at };

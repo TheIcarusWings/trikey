@@ -1346,6 +1346,10 @@ export const Alert = z.discriminatedUnion('type', [
      * `direction`: `in` (the wallet received `amountSats`), `out` (it paid `amountSats` to others; the fee is `feeSats`
      * when every input was the wallet's, and is then not in `amountSats`), `self` (a move between the wallet's own
      * addresses: `amountSats` is 0, `feeSats` the fee).
+     *
+     * `replaces`: it spends a coin that the unconfirmed transaction `replaces`, seen before, spent too: a replacement
+     * (RBF, "Speed up"). Only one of the two can confirm, so the phone shows this one in place of that one, not next to
+     * it. Older phones ignore the member.
      */
     type: z.literal('wallet_tx'),
     txid: Hex32,
@@ -1354,6 +1358,7 @@ export const Alert = z.discriminatedUnion('type', [
     feeSats: Sats.optional(),
     confirmations: z.int().min(0),
     wallet: z.enum(['main', 'savings']),
+    replaces: Hex32.optional(),
   }),
 ]);
 

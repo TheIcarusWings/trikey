@@ -137,6 +137,72 @@ describe('daily limit', () => {
   });
 });
 
+describe('"Speed up" of a co-signed payment (RBF): the same coins and payment, a higher fee', () => {
+  /** The original at 2 sat/vB and its fee bump at `rate`: the same coins, the same payment, the same change address. */
+  async function paymentAndBump(wallet: Awaited<ReturnType<typeof setup>>['wallet'], coins: ReturnType<typeof fund>[], amount: bigint, rate: number) {
+    const old = await phoneSpend(wallet, coins, amount, { feeRate: 2, changeIndex: 3 });
+    const bump = await phoneSpend(wallet, coins, amount, { feeRate: rate, changeIndex: 3 });
+    expect(bump.plan.inputs.map((u) => `${u.txid}:${u.vout}`)).toEqual(old.plan.inputs.map((u) => `${u.txid}:${u.vout}`));
+    expect(bump.plan.change!.amount).toBeLessThan(old.plan.change!.amount);
+    return { old, bump, extra: bump.plan.fee - old.plan.fee };
+  }
+
+  it('within the limit: only the extra fee is added to the day, never the payment again', async () => {
+    const { engine, wallet } = await setup({ rules: { dailyLimitSats: 100_000n } });
+    // Two coins, so the count is split over two outpoints (by value, with a rounding remainder).
+    const coins = [fund(wallet, RECEIVE, 0, 30_001n), fund(wallet, RECEIVE, 1, 70_003n)];
+    const { old, bump, extra } = await paymentAndBump(wallet, coins, 60_000n, 9);
+    const r1 = await engine.cosign(old.psbt);
+    expect(r1).toMatchObject({ ok: true, outflow: 60_000n + old.plan.fee, usedAfter: 60_000n + old.plan.fee });
+    const r2 = await engine.cosign(bump.psbt);
+    expect(r2).toMatchObject({ ok: true, replay: false, outflow: 60_000n + bump.plan.fee, usedAfter: 60_000n + bump.plan.fee });
+    expect(engine.status().dailyLimit!.used).toBe(60_000n + old.plan.fee + extra);
+    // Asked again (the phone retried): a replay, nothing more.
+    expect(await engine.cosign(bump.psbt)).toMatchObject({ ok: true, replay: true });
+    // Bumped once more: again only what this one adds.
+    const third = await phoneSpend(wallet, coins, 60_000n, { feeRate: 15, changeIndex: 3 });
+    expect((await engine.cosign(third.psbt)).ok).toBe(true);
+    expect(engine.status().dailyLimit!.used).toBe(60_000n + third.plan.fee);
+  });
+
+  it('fits when only the extra fee fits: a bump of a payment that used most of the limit', async () => {
+    const { engine, wallet } = await setup({ rules: { dailyLimitSats: 100_000n } });
+    const { old, bump, extra } = await paymentAndBump(wallet, [fund(wallet, RECEIVE, 0, 200_000n)], 95_000n, 10);
+    expect((await engine.cosign(old.psbt)).ok).toBe(true);
+    // 95,000 + both fees would be far over 100,000; the bump adds only `extra`.
+    expect(95_000n + old.plan.fee + 95_000n + bump.plan.fee).toBeGreaterThan(100_000n);
+    expect(95_000n + bump.plan.fee).toBeLessThanOrEqual(100_000n);
+    expect(await engine.cosign(bump.psbt)).toMatchObject({ ok: true, usedAfter: 95_000n + old.plan.fee + extra });
+  });
+
+  it('over the limit: refused (the phone hands it to the hardware wallet), counting only the extra fee as new', async () => {
+    const { engine, wallet } = await setup({ rules: { dailyLimitSats: 100_000n } });
+    const { old, bump, extra } = await paymentAndBump(wallet, [fund(wallet, RECEIVE, 0, 200_000n)], 99_000n, 20);
+    const used = 99_000n + old.plan.fee;
+    expect((await engine.cosign(old.psbt)).ok).toBe(true);
+    expect(await engine.cosign(bump.psbt)).toMatchObject({
+      ok: false,
+      refusal: { reason: 'over_daily_limit', limit: 100_000n, used, outflow: 99_000n + bump.plan.fee, wouldUse: used + extra },
+    });
+    expect(engine.status().dailyLimit!.used).toBe(used);
+  });
+
+  it('a payment the hardware wallet signed (the guardian never counted it) counts in full when the guardian co-signs its bump', async () => {
+    const { engine, wallet } = await setup({ rules: { dailyLimitSats: 100_000n } });
+    const { bump } = await paymentAndBump(wallet, [fund(wallet, RECEIVE, 0, 200_000n)], 40_000n, 10);
+    expect(await engine.cosign(bump.psbt)).toMatchObject({ ok: true, usedAfter: 40_000n + bump.plan.fee });
+  });
+
+  it('a locked guardian refuses it like any payment (the phone hands it to the hardware wallet)', async () => {
+    const ctx = await setup({ rules: { dailyLimitSats: 100_000n } });
+    const { old, bump } = await paymentAndBump(ctx.wallet, [fund(ctx.wallet, RECEIVE, 0, 200_000n)], 40_000n, 10);
+    expect((await ctx.engine.cosign(old.psbt)).ok).toBe(true);
+    ctx.engine.setSigner(undefined);
+    expect(await ctx.engine.cosign(bump.psbt)).toMatchObject({ ok: false, refusal: { reason: 'guardian_locked' } });
+    expect(ctx.engine.status().dailyLimit!.used).toBe(40_000n + old.plan.fee);
+  });
+});
+
 describe('limit accounting helpers', () => {
   it('splitOutflow is proportional and sums exactly', () => {
     const s = splitOutflow(

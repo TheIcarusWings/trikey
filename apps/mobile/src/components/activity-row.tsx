@@ -34,6 +34,8 @@ type Described = {
   icon: LucideIcon;
   iconTone: 'fill' | 'good' | 'warn';
   href?: string;
+  /** A payment waiting to confirm that can go again with a higher fee: "Speed up ›" opens that. */
+  speedUpTxid?: string;
 };
 
 export function describeActivity(item: ActivityItem, variant: 'home' | 'activity', ctx: ActivityContext): Described {
@@ -60,7 +62,7 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
     let subtitle: string;
     let subtitleTone: 'muted' | 'warn' = 'muted';
     if (tx.status === 'pending') {
-      subtitle = 'Waiting to confirm';
+      subtitle = tx.spedUp ? 'Waiting to confirm · sped up' : 'Waiting to confirm';
       subtitleTone = 'warn';
     } else if (tx.kind === 'refill' || tx.fromVault) {
       subtitle = `${formatShortDate(tx.at)} · from vault`;
@@ -85,6 +87,7 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
       icon: silentMove ? Vault : sent ? ArrowUpRight : ArrowDownLeft,
       iconTone: sent || silentMove ? 'fill' : 'good',
       href: `/tx/${tx.id}`,
+      ...(sent && tx.status === 'pending' && tx.canSpeedUp ? { speedUpTxid: tx.txid } : {}),
     };
   }
 
@@ -285,7 +288,7 @@ export function ActivityRow({
       className={cn(
         'flex-row items-center',
         withIcon ? pick('min-h-14 gap-3', 'min-h-[72px] gap-4') : pick('min-h-[60px] justify-between', 'min-h-[72px] justify-between'),
-        IS_IOS && !last && 'border-border border-b'
+        IS_IOS && !last && !d.speedUpTxid && 'border-border border-b'
       )}>
       {withIcon ? (
         <View
@@ -326,7 +329,7 @@ export function ActivityRow({
   );
 
   if (!d.href) return row;
-  return (
+  const link = (
     <Pressable
       role="link"
       onPress={() => router.push(d.href as never)}
@@ -334,5 +337,21 @@ export function ActivityRow({
       className="active:bg-accent">
       {row}
     </Pressable>
+  );
+  if (!d.speedUpTxid) return link;
+  // Waiting long: the same payment again with a higher fee, one tap from the list (and from its details).
+  return (
+    <View className={cn(IS_IOS && !last && 'border-border border-b')}>
+      {link}
+      <Pressable
+        role="button"
+        accessibilityLabel={`Speed up: ${d.title}, ${d.amount ?? ''}`}
+        accessibilityHint="Sends the same payment again with a higher network fee"
+        onPress={() => router.push({ pathname: '/send/speed-up', params: { txid: d.speedUpTxid } } as never)}
+        hitSlop={4}
+        className={cn('min-h-10 justify-center self-start active:opacity-60', withIcon && pick('ml-12', 'ml-14'))}>
+        <Text className="text-warn text-[13px] font-medium leading-[18px]">Speed up ›</Text>
+      </Pressable>
+    </View>
   );
 }

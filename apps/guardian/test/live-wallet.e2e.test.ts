@@ -218,6 +218,39 @@ describe('the live wallet', { timeout: 60_000 }, () => {
     expect(rig.guardian.knownCoins.get(wallet.fingerprint(), coin.txid, 0)).toEqual({ chain: 0, index: 4 });
   });
 
+  it('a replacement (RBF, "Speed up") is announced as replacing the payment, once; its confirmation once', async () => {
+    const coin = pay(wallet.derive(0, 8).script, 50_000, true);
+    await waitFor(() => rig.guardian.knownCoins.get(wallet.fingerprint(), coin.txid, 0), 'the coin known');
+    const original = spendElsewhere([coin], [
+      { script: stranger, amount: 9_000 },
+      { script: wallet.derive(1, 1).script, amount: 40_800 },
+    ]);
+    const a = await waitFor(() => txAlerts().find((x) => x.txid === original), 'the payment');
+    expect(a.replaces).toBeUndefined();
+    // The same coin, the same payment, 1,000 sats less change: the fee goes from 200 to 1,200 sats.
+    const faster = spendElsewhere([coin], [
+      { script: stranger, amount: 9_000 },
+      { script: wallet.derive(1, 1).script, amount: 39_800 },
+    ]);
+    expect(rig.electrs.replaced).toContain(original);
+    const b = await waitFor(() => txAlerts().find((x) => x.txid === faster), 'the replacement');
+    expect(b).toMatchObject({ direction: 'out', amountSats: 9_000, feeSats: 1_200, confirmations: 0, replaces: original, message: 'Payment of 9,000 sats sped up: fee now 1,200 sats (unconfirmed).' });
+    // The coin is still known while the replacement waits (a later bump would spend it again).
+    expect(rig.guardian.knownCoins.get(wallet.fingerprint(), coin.txid, 0)).toEqual({ chain: 0, index: 8 });
+    const pending = rig.guardian.live!.store.state.wallets[wallet.fingerprint()]!.pending!;
+    expect(pending[faster]).toEqual([`${coin.txid}:0`]);
+    expect(pending[original]).toBeUndefined();
+    await rig.mine(1);
+    const c = await waitFor(() => txAlerts().find((x) => x.txid === faster && x.confirmations > 0), 'its confirmation');
+    expect(c.replaces).toBeUndefined();
+    expect(c.message).toBe('Payment of 9,000 sats confirmed.');
+    await rig.guardian.live!.idle();
+    await sleep(200);
+    expect(txAlerts().filter((x) => x.txid === faster)).toHaveLength(2);
+    expect(txAlerts().filter((x) => x.txid === original)).toHaveLength(1);
+    expect(rig.guardian.live!.store.state.wallets[wallet.fingerprint()]!.pending![faster]).toBeUndefined();
+  });
+
   it('opt-in: the owner\'s own channels get payments (amounts only); an alert contact\'s channel never does', async () => {
     const put = (paymentAlerts?: boolean) => {
       const existing = rig.guardian.notifier.view().destinations;
@@ -268,5 +301,8 @@ describe('wallet_tx words', () => {
     expect(describeTx({ net: -300n, fee: 300n, spent: ['x:0'], paidOut: [] })).toEqual({ direction: 'self', amountSats: 0n, feeSats: 300n });
     expect(walletTxText({ direction: 'in', amountSats: 2_000, confirmations: 3, wallet: 'main' }, true)).toBe('Received 2,000 sats (confirmed).');
     expect(walletTxText({ direction: 'self', amountSats: 0, feeSats: 300, confirmations: 1, wallet: 'savings' }, false)).toBe('Savings: A move within your wallet confirmed, fee 300 sats.');
+    const r = 'ab'.repeat(32);
+    expect(walletTxText({ direction: 'out', amountSats: 9_000, feeSats: 1_200, confirmations: 0, wallet: 'main', replaces: r }, true)).toBe('Payment of 9,000 sats sped up: fee now 1,200 sats (unconfirmed).');
+    expect(walletTxText({ direction: 'out', amountSats: 9_000, feeSats: 1_200, confirmations: 0, wallet: 'savings', replaces: r }, true)).toBe('Savings: Payment of 9,000 sats sped up: fee now 1,200 sats (unconfirmed).');
   });
 });

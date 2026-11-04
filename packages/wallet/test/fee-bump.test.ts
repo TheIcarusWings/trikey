@@ -1,6 +1,6 @@
 /**
  * The fee bump planner (`planFeeBump`, `buildBumpPsbt`): BIP 125 as Bitcoin Core applies it, for "Speed up" of an
- * unconfirmed Savings payment. The same inputs, the same payments, a smaller change and a higher fee: at the target rate,
+ * unconfirmed Savings or Spending payment. The same inputs, the same payments, a smaller change and a higher fee: at the target rate,
  * and never less than the old fee plus the incremental relay fee for the replacement's size. Throwaway keys, regtest.
  */
 import { describe, expect, it } from 'vitest';
@@ -10,7 +10,7 @@ import { HDKey } from '@scure/bip32';
 import { mnemonicToSeedSync } from '@scure/bip39';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { MultisigWallet, TX_OPTS, analyzePsbt, buildSpend, cosignerKeyExpression, estimateVsize, keyExpressionFromMaster, parsePsbt, type Utxo } from '@trikey/core';
-import { WalletError, buildBumpPsbt, planFeeBump } from '../src/index.js';
+import { WalletError, buildBumpPsbt, minFeeRateFor, pickFeeRate, planFeeBump } from '../src/index.js';
 import { MNEMONICS, externalAddress, network } from './helpers.js';
 
 const master = (m: string) => HDKey.fromMasterSeed(mnemonicToSeedSync(m), network.bip32);
@@ -117,6 +117,23 @@ describe('planFeeBump', () => {
     // A coin that is not the wallet's.
     const p = payment([funding(200_000n, 7)], 50_000n, 2);
     expect(code(() => planFeeBump({ txHex: p.txHex, prevTxHexes: p.prevTxHexes, pathOf: () => undefined, feeRate: 10, incrementalSatPerVb: 1 }))).toBe('cannot_speed_up');
+  });
+});
+
+describe('a Spending payment stuck at 0.11 sat/vB on mainnet', () => {
+  it('signals RBF, and its bump is at least 1 sat/vB (the mainnet floor) and what BIP 125 asks', () => {
+    // As the payments of 0.1.10 went out: Bitcoin Core 29's estimates follow its 0.1 sat/vB relay minimum down.
+    const p = payment([funding(120_000n, 8)], 40_000n, 0.11);
+    const tx = btc.Transaction.fromRaw(hex.decode(p.txHex), TX_OPTS);
+    expect(tx.getInput(0).sequence).toBe(0xfffffffd);
+    const fees = { minRelaySatPerVb: 0.1, estimates: [1, 3, 6].map((target) => ({ target, satPerVb: 0.11 })) };
+    const rate = pickFeeRate(fees, 'fast', { minSatPerVb: minFeeRateFor('bitcoin') });
+    expect(rate).toBe(1);
+    const bump = planFeeBump({ txHex: p.txHex, prevTxHexes: p.prevTxHexes, pathOf, feeRate: rate, incrementalSatPerVb: Math.max(1, fees.minRelaySatPerVb) });
+    expect(bump.oldFeeRate).toBeLessThan(0.2);
+    expect(bump.feeSats).toBeGreaterThanOrEqual(Math.ceil(bump.vsize));
+    expect(bump.feeSats).toBeGreaterThanOrEqual(bump.oldFeeSats + Math.ceil(bump.vsize));
+    expect(bump.paymentSats).toBe(40_000);
   });
 });
 

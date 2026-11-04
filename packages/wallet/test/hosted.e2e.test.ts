@@ -109,6 +109,12 @@ describe('a hosted wallet, end to end', { timeout: 90_000 }, () => {
     const st = await A.refreshStatus();
     expect(st.walletId).toBe(walletId);
     expect(st.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps']);
+    // "Speed up" is not for a guest yet (DESIGN.md, "Speed up"): not offered, and refused before anything is read or signed.
+    if (!res.ok) throw new Error('unreachable');
+    expect(A.snapshot()!.history.find((h) => h.txid === res.txid)?.canSpeedUp).toBeUndefined();
+    const err = await A.quoteSpeedUp(res.txid).catch((e) => e);
+    expect(err).toBeInstanceOf(WalletError);
+    expect(err).toMatchObject({ code: 'cannot_speed_up', message: expect.stringMatching(/hosted on someone else's guardian/) });
   });
 
   it('a second server is asked before a recovery sweep; with it down the recovery waits unless the person accepts one server', async () => {
