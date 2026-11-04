@@ -7,7 +7,10 @@
  * - Watching changes nothing the daily limit counts: a phone thief who registers its own wallet as "Savings" still has
  *   every payment to it counted in full (owner's decision 3: transfers into Savings count against the limit).
  * - `noteSavingsScan`: the first scan is history; every later spend is logged and queued once as a `savings_moved`
- *   notice to the paired phone and every alert contact; high-water marks only rise.
+ *   notice to the paired phone and every alert contact; high-water marks only rise. One outflow, one alert: a fee bump
+ *   (RBF) of a spend already announced is logged, not announced again; a replacement that pays out something else is
+ *   announced once more, naming the spend it replaced.
+ * - An RBF of a payment from Spending into Savings counts as the larger of the two against the daily limit, not both.
  * - It goes with the active wallet: carried to the wallet a recovery adopts, dropped by retirement and reset.
  * - Nothing of it reaches the policy: rules, hash and approval texts are as before.
  * Regtest, throwaway keys and published BIP39 test mnemonics only.
@@ -18,7 +21,7 @@ import { MultisigWallet, RECEIVE, SAVINGS_ACCOUNT, SoftwareSigner, buildSweep, c
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { engineEntry } from '../src/http/activity.js';
 import { noticeText, noticeToWire } from '../src/alerts.js';
-import { spendsOf } from '../src/savings.js';
+import { paymentDigest, spendsOf } from '../src/savings.js';
 import { policyHash, type SavingsWatch } from '../src/policy/index.js';
 import { APP_NOSTR, COSIGNER_PRIV, CONTACT_A, DEFAULT_RULES, MNEMONICS, approve, appSigner, fund, hwSigner, makeWallet, network, phoneSpend, setup, type Ctx } from './helpers.js';
 
@@ -124,6 +127,28 @@ describe('watching changes nothing the daily limit counts', () => {
     expect(await ctx.engine.cosign(big)).toMatchObject({ ok: false, refusal: { reason: 'over_daily_limit' } });
   });
 
+  it('an RBF of a payment into Savings counts as the larger of the two, not both (as any replacement)', async () => {
+    const ctx = await setup({ rules: { dailyLimitSats: 100_000n } });
+    const savings = await savingsWallet();
+    await registered(ctx, savings);
+    const coin = fund(ctx.wallet, RECEIVE, 3, 500_000n);
+    const to = savings.derive(RECEIVE, 0).address;
+    const first = await ctx.engine.cosign((await phoneSpend(ctx.wallet, [coin], 60_000n, { to, feeRate: 2 })).psbt);
+    if (!first.ok) throw new Error('the payment into Savings was refused');
+    expect(ctx.engine.status().dailyLimit!.used).toBe(first.outflow);
+    // The fee bump: same coin, same Savings address, a higher fee. Both together would not fit in the limit.
+    const bump = await ctx.engine.cosign((await phoneSpend(ctx.wallet, [coin], 60_000n, { to, feeRate: 25 })).psbt);
+    if (!bump.ok) throw new Error('the replacement was refused');
+    expect(bump.outflow).toBeGreaterThan(first.outflow);
+    expect(first.outflow + bump.outflow).toBeGreaterThan(100_000n);
+    expect(ctx.engine.status().dailyLimit!.used).toBe(bump.outflow);
+    // A replacement that moves more into Savings counts as that larger amount.
+    const more = await ctx.engine.cosign((await phoneSpend(ctx.wallet, [coin], 90_000n, { to, feeRate: 25 })).psbt);
+    if (!more.ok) throw new Error('the larger replacement was refused');
+    expect(ctx.engine.status().dailyLimit!.used).toBe(more.outflow);
+    expect(more.outflow).toBeGreaterThan(90_000n);
+  });
+
   it("a phone thief's own wallet registered as \"Savings\" gains nothing: payments to it count in full", async () => {
     const ctx = await setup();
     const thief = await makeWallet({ app: 'vessel ladder alter error federal sibling chat ability sun glass valve picture', hardware: MNEMONICS.hardware2, cosignerPriv: new Uint8Array(32).fill(44) });
@@ -153,7 +178,7 @@ describe('the savings_moved tripwire', () => {
         { txid: TXID(1), amountSats: 5_000n },
       ],
     });
-    expect(fresh).toEqual([{ txid: TXID(2), amountSats: 48_000_000n }]);
+    expect(fresh).toEqual([{ txid: TXID(2), amountSats: 48_000_000n, announced: true }]);
     const notices = ctx.engine.dueNotices();
     expect(notices).toHaveLength(1);
     expect(notices[0]).toMatchObject({ kind: 'savings_moved', savingsWalletId: sv.walletId, txid: TXID(2), amountSats: 48_000_000n, recipients: [APP_NOSTR, CONTACT_A] });
@@ -204,6 +229,116 @@ describe('the savings_moved tripwire', () => {
       { txid: TXID(5), amountSats: 120_300n },
       { txid: TXID(7), amountSats: 400n },
     ]);
+  });
+
+  it('spendsOf: the coins each spend took and a digest of what it paid out (order left out, change not in it)', () => {
+    const a = { script: '0014' + '11'.repeat(20), amount: 100_000n };
+    const b = { script: '0014' + '22'.repeat(20), amount: 5_000n };
+    const [x] = spendsOf({ history: [{ txid: TXID(8), height: 0, confirmations: 0, net: -101_000n, spent: [`${TXID(1)}:0`], paidOut: [a, b] }] });
+    expect(x).toEqual({ txid: TXID(8), amountSats: 101_000n, outpoints: [`${TXID(1)}:0`], payment: paymentDigest([a, b]) });
+    expect(paymentDigest([b, a])).toBe(paymentDigest([a, b]));
+    expect(paymentDigest([a])).not.toBe(paymentDigest([a, b]));
+    expect(paymentDigest([{ ...a, amount: 100_001n }, b])).not.toBe(paymentDigest([a, b]));
+  });
+});
+
+describe('a replaced Savings spend (RBF): one outflow, one alert', () => {
+  const COIN = (n: number, vout = 0) => `${TXID(n)}:${vout}`;
+  const PAY = 'a1'.repeat(16);
+  const OTHER = 'b2'.repeat(16);
+
+  async function announced(ctx: Ctx) {
+    const sv = await registered(ctx);
+    await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 1, nextChangeIndex: 0, spends: [] });
+    const first = await ctx.engine.noteSavingsScan(sv.walletId, {
+      nextReceiveIndex: 1,
+      nextChangeIndex: 1,
+      spends: [{ txid: TXID(10), amountSats: 100_700n, outpoints: [COIN(1), COIN(2, 1)], payment: PAY }],
+    });
+    expect(first).toEqual([{ txid: TXID(10), amountSats: 100_700n, announced: true }]);
+    expect(ctx.engine.dueNotices()).toHaveLength(1);
+    return sv;
+  }
+
+  it('a fee bump (same coins, same payment, a smaller change) is logged, not announced again; nor is a bump of the bump', async () => {
+    const ctx = await setup({ rules: { alertContacts: [CONTACT_A] } });
+    const sv = await announced(ctx);
+    // The bump: Electrs lists the replacement only (the original left the mempool).
+    const bump = await ctx.engine.noteSavingsScan(sv.walletId, {
+      nextReceiveIndex: 1,
+      nextChangeIndex: 1,
+      spends: [{ txid: TXID(11), amountSats: 102_100n, outpoints: [COIN(2, 1), COIN(1)], payment: PAY }],
+    });
+    expect(bump).toEqual([{ txid: TXID(11), amountSats: 102_100n, announced: false, replaces: TXID(10) }]);
+    expect(ctx.engine.dueNotices()).toHaveLength(1);
+    const entry = ctx.engine.activity({ limit: 1 })[0]!;
+    expect(entry).toMatchObject({ type: 'savings_replaced', walletId: sv.walletId, txid: TXID(11), replaces: TXID(10), amountSats: 102_100n, previousAmountSats: 100_700n });
+    expect(engineEntry(entry)).toMatchObject({ summary: 'Savings payment sped up', sats: 102_100 });
+    expect(engineEntry(entry).event).toMatch(/1,400 sats more/);
+    expect(engineEntry(entry).event).toMatch(/nobody is told again/);
+    // A second bump of the first bump: still the same payment.
+    const again = await ctx.engine.noteSavingsScan(sv.walletId, {
+      nextReceiveIndex: 1,
+      nextChangeIndex: 1,
+      spends: [{ txid: TXID(12), amountSats: 104_000n, outpoints: [COIN(1), COIN(2, 1)], payment: PAY }],
+    });
+    expect(again).toEqual([{ txid: TXID(12), amountSats: 104_000n, announced: false, replaces: TXID(11) }]);
+    expect(ctx.engine.dueNotices()).toHaveLength(1);
+    expect(ctx.engine.activity({ limit: 20 }).filter((e) => e.type === 'savings_moved')).toHaveLength(1);
+    // The original confirming after all (it won the race) is not news either: it was announced.
+    expect(await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 1, nextChangeIndex: 1, spends: [{ txid: TXID(10), amountSats: 100_700n, outpoints: [COIN(1), COIN(2, 1)], payment: PAY }] })).toEqual([]);
+    expect(ctx.engine.dueNotices()).toHaveLength(1);
+  });
+
+  it('a replacement that pays out something else is announced once, naming the spend it replaced and both amounts', async () => {
+    const ctx = await setup({ rules: { alertContacts: [CONTACT_A] } });
+    const sv = await announced(ctx);
+    const changed = await ctx.engine.noteSavingsScan(sv.walletId, {
+      nextReceiveIndex: 1,
+      nextChangeIndex: 1,
+      spends: [{ txid: TXID(13), amountSats: 2_000_500n, outpoints: [COIN(1)], payment: OTHER }],
+    });
+    expect(changed).toEqual([{ txid: TXID(13), amountSats: 2_000_500n, announced: true, replaces: TXID(10) }]);
+    const notices = ctx.engine.dueNotices();
+    expect(notices).toHaveLength(2);
+    const n = notices[1]!;
+    expect(n).toMatchObject({ kind: 'savings_moved', txid: TXID(13), amountSats: 2_000_500n, replacesTxid: TXID(10), previousAmountSats: 100_700n, recipients: [APP_NOSTR, CONTACT_A] });
+    const wire = noticeToWire(n)!;
+    expect(wire).toMatchObject({ type: 'savings_moved', txid: TXID(13), amountSats: 2_000_500, replaces: TXID(10), previousAmountSats: 100_700 });
+    expect(wire.message).toMatch(/was replaced: it now moves 2,000,500 sats instead of 100,700 sats/);
+    expect(wire.message).toMatch(/Only one of the two can confirm/);
+    expect(wire.message!.length).toBeLessThanOrEqual(500);
+    const dm = noticeText(n);
+    expect(dm).toMatch(/was replaced/);
+    expect(dm).toContain(TXID(13));
+    expect(dm).toContain(TXID(10));
+    expect(dm).toMatch(/0\.02000500 BTC \(2,000,500 sats\) now leaves Savings/);
+    expect(dm).toMatch(/which moved 0\.00100700 BTC/);
+    expect(dm).toMatch(/not a second payment/);
+    const entry = ctx.engine.activity({ limit: 1 })[0]!;
+    expect(entry).toMatchObject({ type: 'savings_moved', txid: TXID(13), replaces: TXID(10), previousAmountSats: 100_700n });
+    expect(engineEntry(entry).summary).toBe('Savings payment replaced');
+  });
+
+  it('a spend of other coins is a new outflow, announced as one', async () => {
+    const ctx = await setup();
+    const sv = await announced(ctx);
+    const other = await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 1, nextChangeIndex: 2, spends: [{ txid: TXID(14), amountSats: 9_000n, outpoints: [COIN(3)], payment: PAY }] });
+    expect(other).toEqual([{ txid: TXID(14), amountSats: 9_000n, announced: true }]);
+    expect(ctx.engine.dueNotices()[1]).not.toHaveProperty('replacesTxid');
+  });
+
+  it('a replacement of a spend seen before the watch began (history) that pays the same is not news; what was seen survives a restart', async () => {
+    const ctx = await setup();
+    const sv = await registered(ctx);
+    await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 1, nextChangeIndex: 1, spends: [{ txid: TXID(15), amountSats: 50_000n, outpoints: [COIN(4)], payment: PAY }] });
+    expect(ctx.engine.savings()!.spendDetails).toEqual([{ txid: TXID(15), outpoints: [COIN(4)], payment: PAY, amountSats: 50_000n }]);
+    const restarted = await (await import('../src/policy/index.js')).PolicyEngine.open({ store: ctx.store, clock: ctx.clock });
+    expect(restarted.savings()!.spendDetails).toEqual([{ txid: TXID(15), outpoints: [COIN(4)], payment: PAY, amountSats: 50_000n }]);
+    expect(await restarted.noteSavingsScan(sv.walletId, { nextReceiveIndex: 1, nextChangeIndex: 1, spends: [{ txid: TXID(16), amountSats: 51_000n, outpoints: [COIN(4)], payment: PAY }] })).toEqual([
+      { txid: TXID(16), amountSats: 51_000n, announced: false, replaces: TXID(15) },
+    ]);
+    expect(restarted.dueNotices()).toEqual([]);
   });
 });
 

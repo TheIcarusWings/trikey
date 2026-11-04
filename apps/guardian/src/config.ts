@@ -252,7 +252,15 @@ export function parseRelayOptions(value: string | undefined): GuardianConfig['re
   return r.relays.map((url) => ({ url, defaultSelected: true }));
 }
 
+/**
+ * The relays offered at setup, all ticked. `relay.trikey.app` is the project's own relay: it stores only gift wraps
+ * (kind 1059) and Nostr Connect events (kind 24133), serves DM inbox lists (kind 10050) read-only and refuses profiles
+ * (kind 0), and makes delivery less dependent on public relays.
+ * Like every relay it sees only ciphertext and metadata (which keys talk, when, from where), and it is never the only
+ * one: the others stay ticked, and the owner can untick any of them.
+ */
 export const DEFAULT_RELAY_OPTIONS: GuardianConfig['relayOptions'] = [
+  { url: 'wss://relay.trikey.app', label: 'Trikey relay', defaultSelected: true },
   { url: 'wss://relay.damus.io', defaultSelected: true },
   { url: 'wss://nos.lol', defaultSelected: true },
   { url: 'wss://relay.primal.net', defaultSelected: true },

@@ -3,6 +3,7 @@
 # docs/zapstore.md). No key or secret belongs in this file or in this repository.
 repository: https://github.com/TheIcarusWings/trikey
 release_source: https://github.com/TheIcarusWings/trikey
+pubkey: npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9
 # The standard APK only (trikey-alpha-v<version>.apk), never its .sha256.
 match: '^trikey-alpha-v[0-9][^/]*\.apk$'
 # Every release is a GitHub pre-release while Trikey is pre-alpha; publish them on the main channel.
@@ -22,3 +23,4 @@ website: https://trikey.app
 tags: [bitcoin, wallet, multisig, nostr]
 icon: ./apps/mobile/assets/icon.png
 release_notes: ./CHANGELOG.md
+metadata_sources: [github]

@@ -136,6 +136,10 @@ export interface WalletHistoryEntry {
   /** Received minus spent by the wallet. */
   net: bigint;
   fee?: bigint;
+  /** The wallet's own outputs this transaction spends (`txid:vout`): what a replacement (RBF) of it spends too. */
+  spent: string[];
+  /** Its outputs that do not pay the wallet (script hex, amount): what it pays out, unchanged by a fee bump. */
+  paidOut: { script: string; amount: bigint }[];
 }
 
 export interface WalletSync {
@@ -479,11 +483,14 @@ export class ChainService {
       const tx = parseRawTx(await this.getTransaction(txid));
       let received = 0n;
       let totalOut = 0n;
+      const paidOut: WalletHistoryEntry['paidOut'] = [];
       for (const o of tx.outputs) {
         totalOut += o.amount;
         if (isOurs(o.script)) received += o.amount;
+        else paidOut.push({ script: hex.encode(o.script), amount: o.amount });
       }
       let spent = 0n;
+      const spentOutpoints: string[] = [];
       let allInputsOurs = tx.inputs.length > 0;
       for (const inp of tx.inputs) {
         // A previous output can only be ours if its transaction is in our history.
@@ -492,8 +499,10 @@ export class ChainService {
           continue;
         }
         const prev = parseRawTx(await this.getTransaction(inp.txid)).outputs[inp.vout];
-        if (prev && isOurs(prev.script)) spent += prev.amount;
-        else allInputsOurs = false;
+        if (prev && isOurs(prev.script)) {
+          spent += prev.amount;
+          spentOutpoints.push(`${inp.txid}:${inp.vout}`);
+        } else allInputsOurs = false;
       }
       history.push({
         txid,
@@ -502,6 +511,8 @@ export class ChainService {
         time: height > 0 ? await this.blockTime(height) : undefined,
         net: received - spent,
         fee: allInputsOurs && spent >= totalOut ? spent - totalOut : undefined,
+        spent: spentOutpoints,
+        paidOut,
       });
     }
 

@@ -461,3 +461,36 @@ describe('restart safety', () => {
     expect(w.state.pending).toBeUndefined();
   });
 });
+
+describe('GuardianChainSource timeouts', () => {
+  it('wallet.sync gets its own (longer) timeout, read at each sync; the other calls the default one', async () => {
+    const { GuardianChainSource } = await import('../src/chain.js');
+    const seen: { method: string; timeoutMs?: number }[] = [];
+    const rpc = {
+      publicKey: '00'.repeat(32),
+      start: async () => {},
+      close: () => {},
+      onAlert: () => () => {},
+      call: async (method: string, _params: unknown, opts?: { timeoutMs?: number }) => {
+        seen.push({ method, timeoutMs: opts?.timeoutMs });
+        if (method === 'fees.estimate') return { estimates: [], minRelaySatPerVb: 1 };
+        throw new RpcTimeoutError(method, opts?.timeoutMs ?? 0);
+      },
+    } as unknown as GuardianRpc;
+    let syncMs = 90_000;
+    const source = new GuardianChainSource(() => rpc, { timeoutMs: 30_000, syncTimeoutMs: () => syncMs });
+    await expect(source.sync()).rejects.toMatchObject({ code: 'guardian_refused', refusal: { kind: 'unreachable' } });
+    syncMs = 120_000;
+    await source.sync().catch(() => undefined);
+    await source.estimateFees();
+    expect(seen).toEqual([
+      { method: 'wallet.sync', timeoutMs: 90_000 },
+      { method: 'wallet.sync', timeoutMs: 120_000 },
+      { method: 'fees.estimate', timeoutMs: 30_000 },
+    ]);
+    // Without one, wallet.sync uses the default too.
+    seen.length = 0;
+    await new GuardianChainSource(() => rpc, { timeoutMs: 7000 }).sync().catch(() => undefined);
+    expect(seen).toEqual([{ method: 'wallet.sync', timeoutMs: 7000 }]);
+  });
+});

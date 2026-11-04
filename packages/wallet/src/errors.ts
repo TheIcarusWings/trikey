@@ -165,6 +165,11 @@ export type WalletErrorCode =
   /** The guardian answered something inconsistent with what the wallet sent (descriptor, wallet id, key). */
   | 'guardian_mismatch'
   | 'guardian_refused'
+  /**
+   * The guardian answered (`guardian.status`) but not a slower call in time: `wallet.sync`, which reads the wallet from
+   * its Electrum server. It is online; the chain data is the last one. No `refusal`.
+   */
+  | 'guardian_slow'
   /** The secure store has no key 2, or the user cancelled the biometric prompt. */
   | 'key_unavailable'
   | 'invalid_address'
@@ -251,6 +256,11 @@ export type WalletErrorCode =
   | 'savings_exists'
   /** A Savings action on a wallet without Savings (or, on a new phone, none the guardian knows of either). */
   | 'no_savings'
+  /**
+   * "Speed up" cannot replace this payment with a higher fee (it confirmed already, it has no change to take the fee
+   * from, it is not one of the wallet's own payments, ...). The message says why; nothing was signed.
+   */
+  | 'cannot_speed_up'
   | 'internal';
 
 export class WalletError extends Error {

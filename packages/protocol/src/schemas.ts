@@ -1098,11 +1098,17 @@ export const Alert = z.discriminatedUnion('type', [
      * transaction to the paired phone, and to the alert contacts as a NIP-17 DM. `amountSats`: what left Savings,
      * fee included (only the fee for a move between Savings addresses). The guardian cannot tell who signed it. Phones before
      * this alert drop it (an unknown `type`).
+     *
+     * One outflow, one alert: a replacement (RBF) of a spend already announced that pays out the same (a fee bump) is not
+     * announced again. One that pays out something else is, with `replaces` (the spend it replaced) and
+     * `previousAmountSats` (what that one moved): only one of the two can confirm. Older phones ignore both members.
      */
     type: z.literal('savings_moved'),
     walletId: WalletId,
     txid: Hex32,
     amountSats: Sats,
+    replaces: Hex32.optional(),
+    previousAmountSats: Sats.optional(),
   }),
   stamped({
     ...alertBase,
