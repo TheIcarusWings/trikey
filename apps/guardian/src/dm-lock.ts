@@ -6,9 +6,13 @@
  * guardian locks exactly as the web UI or the phone's `guardian.lock` would: no co-signing until the owner unlocks it.
  * A contact can only lock: never unlock, change rules or see anything.
  *
+ * Family hosting (docs/design/family-hosting.md, section 16): a guest wallet's contact pauses only that guest's wallet
+ * (its slot co-signs nothing until the guest's hardware wallet resumes it), never the host's box; the host's own contacts
+ * still lock the whole box, guests included. A contact of both does both. Each wallet's own setting decides for it.
+ *
  * Who gets an answer:
  * - while the setting is on, a current alert contact of the active wallet: one short DM (locked, or already locked),
- *   for fresh messages only;
+ *   for fresh messages only; a guest wallet's contact, likewise, about that wallet only (paused, already paused);
  * - while it is off, nobody (owner's decision, 2026-11-01): the command does not exist then, not even as a refusal,
  *   and nothing is logged;
  * - anyone else (strangers, the paired phone, a running recovery's snapshotted recipients who are no longer contacts):
@@ -43,12 +47,25 @@ function cancelHint(g: Guardian): string {
   return rec ? ` Locking does not stop the recovery ${rec.id} that is running: to cancel it, reply CANCEL ${rec.id}.` : '';
 }
 
+/** For a guest wallet the contact paused: how to stop its running recovery, if one runs (pausing does not cancel it). */
+function hostedCancelHint(g: Guardian, contact: string): string {
+  const ids = g.hosting
+    .contactOfSlots(contact)
+    .map(({ engine }) => engine.activeRecord()?.id)
+    .filter((x): x is string => !!x);
+  return ids.map((id) => ` Pausing does not stop the recovery ${id} that is running: to cancel it, reply CANCEL ${id}.`).join('');
+}
+
+const quoted = (labels: string[]) => labels.map((l) => `"${l}"`).join(', ');
+
 export async function onLockDm(g: Guardian, dm: IncomingDm): Promise<void> {
   const reg = g.engine.registration();
-  if (!reg) return;
-  const rules = g.engine.status().rules;
-  // Only the active wallet's alert contacts; anyone else gets no answer (no probing who is a contact, or the setting).
-  if (!rules || dm.sender === reg.appNostrPubkey || !rules.alertContacts.includes(dm.sender)) {
+  const rules = reg ? g.engine.status().rules : undefined;
+  // The host's wallet's current alert contacts, and the guest wallets that list the sender as a current contact
+  // (family hosting, section 16): anyone else gets no answer (no probing who is a contact, or the setting).
+  const hostContact = !!reg && !!rules && dm.sender !== reg.appNostrPubkey && rules.alertContacts.includes(dm.sender);
+  const guestContact = g.hosting.contactOfSlots(dm.sender).length > 0;
+  if (!hostContact && !guestContact) {
     g.log.debug('dm.lock_ignored', { reason: 'not an alert contact' });
     return;
   }
@@ -69,30 +86,44 @@ export async function onLockDm(g: Guardian, dm: IncomingDm): Promise<void> {
   }
   const until = (Math.max(dm.createdAt, now) + LOCK_WINDOW_SEC) * 1000 + 120_000;
   if (!(await g.service.rememberRequest(key, until, g.clock.now()))) return;
-  // Setting off: as if the command did not exist, so no answer and nothing in the activity log. The message is still
-  // remembered (above): a relay handing it over again after the owner turned the setting on must not lock then.
-  if (!rules.contactLock) {
+  // Setting off (for the host's wallet and for every guest wallet that lists the sender): as if the command did not
+  // exist, so no answer and nothing in the activity log. The message is still remembered (above): a relay handing it
+  // over again after an owner turned the setting on must not lock or pause then.
+  const hostOn = hostContact && !!rules?.contactLock;
+  const guestOn = g.hosting.contactOfSlots(dm.sender).some(({ engine }) => engine.contactMayPause(dm.sender));
+  if (!hostOn && !guestOn) {
     g.log.debug('dm.lock_ignored', { reason: 'setting off' });
     return;
   }
 
-  const outcome = await g.lockByContact(dm.sender);
-  const reply = async (text: string) => {
-    try {
-      await g.dm?.send(dm.sender, text);
-    } catch {
-      /* best effort */
+  const parts: string[] = [];
+  // The host's wallet: the whole box locks (guests included), as before family hosting.
+  if (hostOn) {
+    const outcome = await g.lockByContact(dm.sender);
+    if (outcome === 'locked') {
+      g.log.info('dm.lock', { contact: shortNpub(dm.sender) });
+      parts.push(
+        `Trikey: the guardian is locked. It co-signs nothing until its owner unlocks it. The owner and the other alert contacts are being told that you locked it.${cancelHint(g)} Thank you for checking.`,
+      );
+    } else if (outcome === 'already_locked') {
+      // `not_allowed` here means the owner turned the setting off a moment ago: silent, as above.
+      await g.logEvent({ type: 'contact_lock_request', contact: dm.sender, outcome });
+      parts.push(`Trikey: the guardian is already locked, so nothing changed.${cancelHint(g)}`);
     }
-  };
-  if (outcome === 'locked') {
-    g.log.info('dm.lock', { contact: shortNpub(dm.sender) });
-    await reply(
-      `Trikey: the guardian is locked. It co-signs nothing until its owner unlocks it. The owner and the other alert contacts are being told that you locked it.${cancelHint(g)} Thank you for checking.`,
-    );
-    return;
   }
-  // `not_allowed` here means the owner turned the setting off a moment ago: silent, as above.
-  if (outcome !== 'already_locked') return;
-  await g.logEvent({ type: 'contact_lock_request', contact: dm.sender, outcome });
-  await reply(`Trikey: the guardian is already locked, so nothing changed.${cancelHint(g)}`);
+  // Guest wallets (family hosting, section 16): a guest's contact pauses only that guest's wallet, never the host's box.
+  if (guestOn) {
+    const slots = await g.hosting.pauseByContact(dm.sender);
+    if (slots.paused.length)
+      parts.push(
+        `Trikey: the wallet ${quoted(slots.paused)} is paused. Its guardian co-signs no payment for it until its owner resumes it with their hardware wallet. The owner and the other alert contacts are being told that you paused it.${hostedCancelHint(g, dm.sender)} Thank you for checking.`,
+      );
+    if (slots.already.length) parts.push(`Trikey: the wallet ${quoted(slots.already)} is already paused, so nothing changed.`);
+  }
+  if (!parts.length) return;
+  try {
+    await g.dm?.send(dm.sender, parts.join('\n\n'));
+  } catch {
+    /* best effort */
+  }
 }

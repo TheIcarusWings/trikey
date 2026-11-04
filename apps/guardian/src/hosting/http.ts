@@ -38,6 +38,8 @@ export function hostedWalletOf(s: SlotRecord, engine: HostedEngine | undefined, 
     ...(rules ? { recoveryDelayDays: rules.recoveryDelayDays } : {}),
     ...(engine && (state === 'active' || state === 'leaving' || state === 'recovering') ? { paymentsThisWeek: engine.cosignCount(now - WEEK) } : {}),
     ...(rec ? { recoveryReadyAt: iso(rec.readyAt) } : {}),
+    // Paused by the guest's side (a contact's LOCK or the guest's phone, section 16): the host sees that, not who.
+    ...(engine?.pause() && (state === 'active' || state === 'leaving' || state === 'recovering') ? { paused: true as const } : {}),
     ...(s.state === 'leaving' && s.endsAt !== undefined ? { endsAt: iso(s.endsAt) } : {}),
     ...(s.endedAt !== undefined && (s.state === 'ended' || s.state === 'left') ? { endedAt: iso(s.endedAt) } : {}),
   };

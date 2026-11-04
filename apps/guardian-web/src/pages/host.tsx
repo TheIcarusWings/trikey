@@ -21,6 +21,7 @@ import {
   hostedWalletActions,
   hostedWalletLine,
   paymentsLine,
+  pausedLine,
 } from '@/lib/hosting';
 
 function WalletRow({ wallet, onChanged, onError }: { wallet: HostedWallet; onChanged: () => void; onError: (m?: string) => void }) {
@@ -43,12 +44,14 @@ function WalletRow({ wallet, onChanged, onError }: { wallet: HostedWallet; onCha
     }
   };
   const payments = paymentsLine(wallet);
+  const paused = pausedLine(wallet);
   return (
     <li className="flex flex-col gap-3 border-b px-4 py-3.5 last:border-b-0">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="flex min-w-0 flex-col">
           <span className="text-sm leading-5 font-medium">{wallet.name}</span>
           <span className="text-[13px] leading-[18px] text-muted-foreground">{hostedWalletLine(wallet)}</span>
+          {paused && <span className="text-[13px] leading-[18px] text-warn">{paused}</span>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {payments && (

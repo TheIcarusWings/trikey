@@ -131,6 +131,11 @@ export const GuardianStatusCache = z.object({
   /** The replaced wallet this guardian watches ("Replace guardian"): its coins can be read and swept through the guardian. */
   watchedWalletId: z.string().optional(),
   /**
+   * A hosted wallet that is paused (family hosting phase 2, `guardian.status.hosting.paused`): its slot co-signs no
+   * payment until the hardware wallet resumes it. `contact`: the alert contact who sent `LOCK`; `phone`: this phone asked.
+   */
+  paused: z.object({ by: z.enum(['contact', 'phone']), at: z.number(), contact: z.string().optional() }).optional(),
+  /**
    * The extra alert channels (email, ntfy, webhook) the owner set up in the guardian's web UI, masked
    * (`guardian.status.notifications`). Read-only on the phone. Absent from older guardians and while there are none.
    */

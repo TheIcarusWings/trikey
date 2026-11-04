@@ -15,7 +15,8 @@ import { GuardianRig, type FakeElectrum } from '@trikey/guardian/testing';
 import type { ChainSnapshot, ChainSource, WalletDeps } from '@trikey/wallet';
 import { MemoryCloudBackupStore, MemoryKeyValueStore, MemoryPasskeyPrf, MemorySecureKeyStore, SoftwareHardwareProvider, SoftwareHardwareSigner } from '@trikey/wallet/testing';
 import { createMockWalletService } from './mock';
-import { SECOND_ESPLORA_URLS, hostedChainFactory, inviteDisclosure, publicServer } from './hosted';
+import { SECOND_ESPLORA_URLS, hostedChainFactory, inviteDisclosure, leaveHostCopy, publicServer } from './hosted';
+import { CONTACT_PAUSE, contactLockCopy, CONTACT_LOCK, hostLockedLine, walletPausedLine } from './format';
 import { createRealWalletService, type RealWalletService } from './real';
 
 describe('the invite screen says what section 9 says', () => {
@@ -41,6 +42,28 @@ describe('the invite screen says what section 9 says', () => {
     expect(d.changes[0]).toMatch(/Use your own server in Settings/);
     expect(d.changes[1]).toMatch(/You must keep a backup of your phone key/);
     expect(d.contactHint).toMatch(/Add Maria as an alert contact/);
+  });
+});
+
+describe('phase 2: the words for a paused wallet and for leaving', () => {
+  it("a contact's LOCK pauses this wallet only, and only the hardware wallet resumes it", () => {
+    expect(contactLockCopy(true)).toBe(CONTACT_PAUSE);
+    expect(contactLockCopy(false)).toBe(CONTACT_LOCK);
+    expect(CONTACT_PAUSE.allows).toMatch(/co-signs nothing for this wallet until you resume it with your hardware wallet/);
+    expect(CONTACT_PAUSE.allows).toMatch(/Your host's own wallet is not affected/);
+    expect(CONTACT_PAUSE.cannot).toMatch(/Only your hardware wallet resumes it/);
+    expect(walletPausedLine({ by: 'contact', contactName: 'Maria' }, 'Ledger')).toMatch(/^Maria paused this wallet from their nostr app\./);
+    expect(walletPausedLine({ by: 'phone' }, 'Ledger')).toMatch(/until your Ledger resumes it/);
+    expect(hostLockedLine("Maria's Umbrel", 'Ledger')).toMatch(/Only they can unlock it/);
+  });
+
+  it('the leave screen: move first, release only when nothing is left, and why', () => {
+    const c = leaveHostCopy({ host: 'Maria', device: 'Ledger' });
+    expect(c.title).toBe('Leave Maria');
+    expect(c.move).toMatch(/Replace guardian .* then releases this wallet on Maria's guardian by itself/);
+    expect(c.release).toMatch(/When nothing is left/);
+    expect(c.why).toMatch(/one of the two you would need if you lost this phone or your Ledger/);
+    expect(c.safe).toMatch(/deletes Maria's key for it, for good/);
   });
 });
 
@@ -90,6 +113,22 @@ describe('the demo', () => {
     await svc.setHostedChainServer!('https://my.server/api');
     expect(svc.getState().hosted?.chainServer).toBe('https://my.server/api');
     expect(svc.readCode('demo-invite')).toMatchObject({ kind: 'invite' });
+  });
+
+  it('phase 2: pauses only itself, resumes with the hardware wallet; leaving waits until the money is gone', async () => {
+    const svc = createMockWalletService();
+    svc.readInvite!('demo-invite');
+    svc.acknowledgeInvite!(true);
+    await svc.setUpRules(100_000, 7);
+    await svc.lockGuardian();
+    expect(svc.getState().hosted?.paused).toMatchObject({ by: 'phone' });
+    expect(svc.getState().guardian.status).toBe('online');
+    await svc.resumePhoneSpending();
+    expect(svc.getState().hosted?.paused).toBeUndefined();
+    if (svc.getState().balanceSats > 0) {
+      expect((await svc.checkLeaveHost!()).safe).toBe(false);
+      await expect(svc.leaveHost!()).rejects.toMatchObject({ kind: 'refused' });
+    }
   });
 });
 
@@ -194,6 +233,22 @@ describe('the real service with a real guardian as host', () => {
     const logged = () => svc.getState().activity.find((a) => a.type === 'security' && a.event.kind === 'guardian-server-changed');
     while (!logged() && Date.now() - start < 8000) await new Promise((r) => setTimeout(r, 20));
     expect(logged()).toMatchObject({ event: { kind: 'guardian-server-changed', public: true, host: 'electrum.example.org', hosted: true } });
+
+    // Phase 2: "Pause this wallet" pauses only this slot; the hardware wallet resumes it.
+    await svc.lockGuardian();
+    expect(svc.getState().hosted?.paused).toMatchObject({ by: 'phone' });
+    expect(svc.getState().guardian.status).toBe('online');
+    expect(rig.guardian.locked).toBe(false);
+    await svc.resumePhoneSpending();
+    expect(svc.getState().hosted?.paused).toBeUndefined();
+
+    // Leaving: the wallet is empty, so the slot is released and its key deleted on the host's guardian.
+    expect(await svc.checkLeaveHost!()).toEqual({ safe: true, blockers: [] });
+    await svc.leaveHost!();
+    expect(svc.getState().walletRetired).toEqual({ reason: 'retired' });
+    const after = rig.guardian.hosting.registry.slots.find((x) => x.name === 'Ana')!;
+    expect(after.state).toBe('left');
+    expect(after.key3Mix).toBeUndefined();
   });
 
   it('on mainnet an invite needs the same pre-alpha consent as guardian mode, before anything else', async () => {

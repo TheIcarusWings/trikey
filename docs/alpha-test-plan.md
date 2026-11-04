@@ -786,6 +786,24 @@ guardian mode; a test network is the safer place to try it.
 8. **Optional, test network only: a guest's recovery.** On the guest's phone start "Lost my hardware wallet" with a third
    device. The web page shows "Recovery waiting until <date>. Keep this box on and unlocked." and no amount. Cancel it from
    the guest's phone.
+9. **The guest's limit off.** On the guest's phone, Settings > Daily limit > "Turn off the limit": the guest's device must
+   show `Trikey policy v2 ... limit=off` with the guest wallet's id (not yours). The guest's phone and the guest's contacts
+   are told (by the name the guest gave the wallet); your contacts and your email/ntfy channels get nothing. Turn it back
+   on from the guest's phone.
+10. **A guest's contact pauses only the guest's wallet.** On the guest's phone, Settings > Alert contacts > "Contacts can
+    pause this wallet" on. From that contact's nostr app send `LOCK` to the guardian. Check: the contact's answer names
+    the guest's wallet ("... is paused"); the guest's Home shows "This wallet is paused" and a payment with the phone alone
+    goes to the hardware wallet; **your** wallet still pays with your phone, and the web page still shows the box unlocked,
+    with the guest's row saying "Paused by their side" (not who). Resume it on the guest's phone with "Resume with
+    <device>" (one device approval). Restart the box in between if you can: the pause must survive it.
+11. **The guest's own pause, and your contacts' lock.** On the guest's phone, Settings > Guardian > "Pause this wallet":
+    same as 10, nobody else is told; there is no passphrase form on the guest's phone. Then, if one of **your** contacts
+    may lock your box (step 16), have them send `LOCK`: the whole box locks, the guest's phone says your box is locked and
+    that only you can unlock it.
+12. **The guest leaves.** On the guest's phone, Settings > Guardian > "Leave <host>": "Check if it's safe to release"
+    must say what is still there while the wallet holds money. Use "Replace guardian" to move to another guardian (for
+    example a second test box): at the end the web page shows the guest as "They moved their wallet
+    away". Or, with an empty wallet, release it directly (one device approval).
 
 **Key 3's shape on your device (decision 11).** A hosted wallet's descriptor holds key 3 as a depth-0 xpub with no
 origin (`[fingerprint]xpub`, "Derivation: m" in a Coldcard file). The app's integrations accept it in code; a real device

@@ -22,6 +22,7 @@ import {
   KEY3_MIXED_NOTE,
   TrikeyWallet,
   WalletError,
+  leaveBlockerText,
   parseBackup,
   type Argon2Params,
   type CloudBackupStore,
@@ -104,6 +105,8 @@ import {
   type Transaction,
   type WalletMode,
   type WalletState,
+  type HostedWalletView,
+  type LeaveHostCheck,
 } from './types';
 
 /** What the real wallet needs from the phone. `createPlatform()` fits; tests pass the in-memory stand-ins. */
@@ -816,6 +819,7 @@ class Service implements RealWalletService {
               chainServer: s.guardian.hosted.chainServer ?? null,
               publicServer: publicServer(this.network),
               ...(s.guardian.hosted.endsAt !== undefined ? { endsAt: this.iso(s.guardian.hosted.endsAt) } : {}),
+              ...(this.w?.hostedPause ? { paused: this.pausedView(this.w.hostedPause) } : {}),
             },
           }
         : {}),
@@ -1316,6 +1320,32 @@ class Service implements RealWalletService {
     this.refresh();
   }
 
+  private pausedView(p: NonNullable<TrikeyWallet['hostedPause']>): NonNullable<HostedWalletView['paused']> {
+    return { by: p.by, at: this.iso(p.at * 1000), ...(p.contact ? { contactName: contactName(p.contact) } : {}) };
+  }
+
+  checkLeaveHost(): Promise<LeaveHostCheck> {
+    return this.guarded(async () => {
+      const c = await this.requireWallet().hostedLeaveCheck();
+      this.refresh();
+      return { safe: c.safe, blockers: c.blockers.map((b) => leaveBlockerText([b])) };
+    });
+  }
+
+  leaveHost(): Promise<void> {
+    return this.exclusive(() =>
+      this.guarded(async () => {
+        this.setProgress('Releasing your wallet on your host’s guardian');
+        try {
+          await this.requireWallet().leaveHost();
+        } finally {
+          this.setProgress(null);
+        }
+        this.refresh();
+      }),
+    );
+  }
+
   setHostedChainServer(url: string | null): Promise<void> {
     return this.guarded(async () => {
       const w = this.requireWallet();
@@ -1648,7 +1678,7 @@ class Service implements RealWalletService {
   lockGuardian(): Promise<void> {
     return this.exclusive(() =>
       this.guarded(async () => {
-        this.setProgress('Locking your guardian');
+        this.setProgress(this.w?.isHosted ? 'Pausing your wallet' : 'Locking your guardian');
         try {
           await this.requireWallet().lockGuardian();
         } finally {

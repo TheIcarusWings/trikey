@@ -92,6 +92,16 @@ activity log keeps the contact's lock. `guardian.status.lock` reports the reason
 **10. Replace guardian.** The rules move to the new guardian; one without `contact_lock` is paired without the rule
 (the owner turns it on there once it is updated) rather than failing the move.
 
+## Family hosting (phase 2)
+
+On a guardian that hosts other people's wallets (docs/design/family-hosting.md, section 16) the rule applies per wallet.
+A `LOCK` from one of a **guest** wallet's alert contacts, while that guest turned the setting on, **pauses** only that
+guest's wallet: its slot co-signs no payment, while the box, the owner's wallet and other guests carry on. A `LOCK` from
+one of the **owner's** contacts locks the whole box as above, guests included. A contact of both does both. Everything
+else here holds for guests too: off by default, silent and remembered while off, off only with the guest's hardware
+wallet (version-3 text), five per contact per hour, ten minutes of clock tolerance, and contacts never resume. A guest has
+no passphrase for the host's box, so a paused guest wallet is resumed by the guest's hardware wallet (`phone.resume`).
+
 ## Threats
 
 - A contact, or someone with a stolen contact key, can at worst **lock** the guardian, again each time the owner

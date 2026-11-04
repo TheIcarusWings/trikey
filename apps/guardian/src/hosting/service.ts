@@ -34,6 +34,7 @@ export function slotOfRecoveryId(id: unknown): string | undefined {
 /** What a guest's paired phone may call (anything else gets a typed error, so an app bug shows). */
 export const GUEST_METHODS: ReadonlySet<MethodName> = new Set<MethodName>([
   'guardian.status',
+  'guardian.lock',
   'sign',
   'policy.get',
   'policy.update',
@@ -66,12 +67,15 @@ export const GUEST_RECOVERY_METHODS: ReadonlySet<MethodName> = new Set<MethodNam
 ]);
 
 /**
- * The features a guest sees: only what the host serves for guests in phase 1, and `short_wraps`, a property of the one
- * nostr transport every phone talks to (guests' answers are short wraps like the host phone's). Never `live_wallet`:
- * the live wallet (live-wallet.ts) watches the host's own wallets only; a guest's scripts are never subscribed or
- * imported (BIP 89: the host knows no address of a guest wallet), and the guest's phone reads its own chain server.
+/**
+ * The features a guest sees: what the host serves for guests. `limit_off` and `contact_lock` since phase 2 (for a
+ * guest, the contact lock pauses its own slot, section 16), and `short_wraps`, a property of the one nostr transport
+ * every phone talks to (guests' answers are short wraps like the host phone's). Never Savings, silent payments, the
+ * extra alert channels or `live_wallet`: the live wallet (live-wallet.ts) watches the host's own wallets only; a guest's
+ * scripts are never subscribed or imported (BIP 89: the host knows no address of a guest wallet), and the guest's phone
+ * reads its own chain server.
  */
-export const GUEST_FEATURES = [GUARDIAN_FEATURES.familyHosting, GUARDIAN_FEATURES.shortWraps];
+export const GUEST_FEATURES = [GUARDIAN_FEATURES.familyHosting, GUARDIAN_FEATURES.limitOff, GUARDIAN_FEATURES.contactLock, GUARDIAN_FEATURES.shortWraps];
 
 /** What a guest is told of the host's chain source: its kind, and a public server's name; never the host's own node's address. */
 export interface GuestChainSource {
@@ -219,6 +223,50 @@ export class Hosting {
     if (method === 'hosted.access') return this.liveSlots().length > 0;
     if (method === 'recovery.cancel' && this.isGuestContact(sender)) return true;
     return undefined;
+  }
+
+  /**
+   * The ledger coins of a slot's active wallet that are still unspent, by their own outpoints and scripts on the host's
+   * chain source (nothing leaks: the guardian co-signed them). Spent ones are pruned from the ledger on the way.
+   * `outpointsUnspent`, never a script listing: Bitcoin Core's watch-only wallet holds nothing of a guest (and must not),
+   * so a listing there would call every ledger coin spent and prune them all; by outpoint (`gettxout`) it is exact.
+   */
+  async unspentLedger(engine: HostedEngine): Promise<{ coins: number; sats: bigint }> {
+    const ledger = engine.ledger();
+    if (!ledger.length) return { coins: 0, sats: 0n };
+    const unspent = await this.g.chain.outpointsUnspent(ledger.map((l) => ({ txid: l.txid, vout: l.vout, script: hex.decode(l.script) })));
+    const left = ledger.filter((l) => unspent.has(`${l.txid}:${l.vout}`));
+    const spent = ledger.filter((l) => !unspent.has(`${l.txid}:${l.vout}`)).map((l) => `${l.txid}:${l.vout}`);
+    if (spent.length) await engine.pruneLedger(spent);
+    return { coins: left.length, sats: left.reduce((a, l) => a + l.valueSats, 0n) };
+  }
+
+  /**
+   * A `LOCK` DM from `contact` (dm-lock.ts checked it is fresh, new and within the contact's rate limit): pauses every
+   * guest slot whose rules let `contact` pause it (section 16), never the host's box. Returns the slots paused now and
+   * those that already were, by the label their guest chose.
+   */
+  async pauseByContact(contact: string): Promise<{ paused: string[]; already: string[] }> {
+    const out = { paused: [] as string[], already: [] as string[] };
+    if (!this.enabled) return out;
+    for (const { slot, engine } of this.liveSlots()) {
+      if (!engine.contactMayPause(contact)) continue;
+      const res = await engine.pauseSlot({ kind: 'contact', contact });
+      if (!res.ok) continue;
+      const label = engine.registration()?.walletLabel ?? 'a wallet';
+      if (res.outcome === 'paused') {
+        out.paused.push(label);
+        await this.g.logEvent({ type: 'hosting_paused', name: slot.name, state: 'paused', by: 'contact' });
+        this.g.log.warn('hosting.paused', { slot: slot.slotId, by: 'contact' });
+      } else out.already.push(label);
+    }
+    if (out.paused.length) void this.alerts.run();
+    return out;
+  }
+
+  /** Slots whose current alert contacts include `contact` (whatever their contact-lock setting). */
+  contactOfSlots(contact: string): { slot: SlotRecord; engine: HostedEngine }[] {
+    return this.enabled ? this.liveSlots().filter(({ engine }) => engine.isCurrentContact(contact)) : [];
   }
 
   /** Every guest phone and recovery peer (for `relays_changed`). */

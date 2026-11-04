@@ -514,6 +514,10 @@ function hostingEntry(base: { id: string; at: string }, e: ServiceActivity): Act
       return row(e.how === 'now' ? `Hosting of ${e.name}'s wallet ended at once; its key here is gone` : `The notice for ${e.name}'s wallet ran out; its key here is gone`, 'Hosting ended');
     case 'hosting_guest_left':
       return row(`${e.name} moved their wallet away; its key here is gone`, 'Guest left');
+    case 'hosting_paused':
+      return e.state === 'paused'
+        ? row(`${e.name}'s wallet was paused ${e.by === 'contact' ? 'by one of their alert contacts' : 'from their phone'}: this box co-signs no payment for it until their hardware wallet resumes it. Your own wallet is not affected.`, 'Guest wallet paused')
+        : row(`${e.name}'s wallet was resumed with their hardware wallet`, 'Guest wallet resumed');
     default:
       return row('Guardian event', 'Guardian event');
   }

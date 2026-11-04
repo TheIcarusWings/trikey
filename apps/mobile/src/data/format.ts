@@ -39,6 +39,38 @@ export const CONTACT_LOCK = {
   unsupported: 'Your guardian needs an update before contacts can lock it.',
 } as const;
 
+/**
+ * The same switch for a wallet hosted on someone else's guardian (family hosting phase 2): a contact's LOCK pauses only
+ * this wallet there, never the host's box, and only the hardware wallet resumes it (there is no passphrase to type).
+ */
+export const CONTACT_PAUSE = {
+  title: 'Contacts can pause this wallet',
+  short: "If they see something you didn't do, they can stop your host's guardian co-signing for you.",
+  allows:
+    "If one of them sees something you didn't do, like a recovery starting or your limit turned off, they can send the guardian the word LOCK from their nostr app. It then co-signs nothing for this wallet until you resume it with your hardware wallet, and you and your other contacts are told who paused it. Your host's own wallet is not affected.",
+  cannot: "They can't resume it, change your rules, see your balance or move money. Only your hardware wallet resumes it.",
+  worst:
+    'The worst a contact, or someone who stole their nostr key, can do is pause it: a nuisance, never a loss. Resume it, and turn this off with your hardware wallet if it happens again.',
+  offNeeds: (brand: string) => `Turning this off needs your ${brand}.`,
+  unsupported: "Your host's guardian needs an update before contacts can pause this wallet.",
+} as const;
+
+/** The contact-lock words that fit this wallet: the guardian's own, or a hosted wallet's pause. */
+export function contactLockCopy(hosted: boolean): typeof CONTACT_LOCK | typeof CONTACT_PAUSE {
+  return hosted ? CONTACT_PAUSE : CONTACT_LOCK;
+}
+
+/** Home's card for a paused hosted wallet: who paused it, and that the hardware wallet resumes it. */
+export function walletPausedLine(paused: { by: 'contact' | 'phone'; contactName?: string }, hardwareBrand: string): string {
+  const who = paused.by === 'contact' ? `${paused.contactName ?? 'One of your alert contacts'} paused this wallet from their nostr app. Find out what they saw.` : 'You paused this wallet from this phone.';
+  return `${who} Your host's guardian co-signs no payment for it until your ${hardwareBrand} resumes it; your ${hardwareBrand} can still pay.`;
+}
+
+/** Home's "Guardian locked" card for a hosted wallet: the host's box is locked, and only the host unlocks it. */
+export function hostLockedLine(host: string, hardwareBrand: string): string {
+  return `${host} is locked (it restarted, or its owner locked it). Only they can unlock it. Phone-only payments wait until then; your ${hardwareBrand} can still pay.`;
+}
+
 /** Home's "Guardian locked" card: why it is locked, when the guardian said so. */
 export function guardianLockedLine(guardian: { lockedByContact?: { name: string } }, host: string, hardwareBrand: string): string {
   if (guardian.lockedByContact)

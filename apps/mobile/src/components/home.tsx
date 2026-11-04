@@ -16,6 +16,8 @@ import {
   formatCountdown,
   formatSats,
   guardianLockedLine,
+  hostLockedLine,
+  walletPausedLine,
   LIMIT_OFF_LINE,
   limitIsOff,
   remainingToday,
@@ -231,7 +233,7 @@ export function SilentPaymentsRow() {
  */
 export function GuardianDownNotice() {
   const router = useRouter();
-  const { guardian, hardware } = useWallet();
+  const { guardian, hardware, hosted } = useWallet();
   const locked = guardian.status === 'locked';
   const host = guardianBox(guardian);
 
@@ -243,10 +245,12 @@ export function GuardianDownNotice() {
           <Text className="text-[15px] font-semibold leading-5">{locked ? 'Guardian locked' : 'Guardian offline'}</Text>
           <Text className="text-sm leading-5">
             {locked
-              ? guardianLockedLine(guardian, host, hardware.brand)
+              ? hosted
+                ? hostLockedLine(hosted.hostLabel ?? `Your host's ${host}`, hardware.brand)
+                : guardianLockedLine(guardian, host, hardware.brand)
               : `Trikey can't reach your ${host}. Phone-only payments wait until it's back; your ${hardware.brand} can still pay.`}
           </Text>
-          {locked ? (
+          {locked && !hosted ? (
             <Pressable role="link" onPress={() => router.push('/settings/guardian')} className="min-h-11 justify-center self-start active:opacity-60">
               <Text className="text-[15px] font-semibold leading-5">Unlock with passphrase</Text>
             </Pressable>
@@ -309,10 +313,22 @@ export function RecoveryBanner() {
   const router = useRouter();
   const now = useNow();
   const wallet = useWalletService();
-  const { recovery, phoneSpending, hardware, walletRetired: retired } = useWallet();
+  const { recovery, phoneSpending, hardware, walletRetired: retired, hosted } = useWallet();
   const { busy, run, message, error } = useAction();
 
   if (!recovery) {
+    // A hosted wallet that is paused (family hosting phase 2): only this wallet, and only the hardware wallet resumes it.
+    if (hosted?.paused && !retired && phoneSpending !== 'retired') {
+      return (
+        <View className="gap-3">
+          <Notice icon={Lock} iconClass="text-warn" tone="warn-outline" title="This wallet is paused">
+            {walletPausedLine(hosted.paused, hardware.brand)}
+          </Notice>
+          <AppButton title={busy ? `Waiting for your ${hardware.brand}…` : `Resume with ${hardware.brand}`} variant="outline" busy={busy} onPress={() => void run(wallet.resumePhoneSpending())} />
+          <ActionNotice message={message} error={error} />
+        </View>
+      );
+    }
     if (phoneSpending === 'paused_contested') {
       return (
         <View className="gap-3">

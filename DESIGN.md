@@ -556,8 +556,8 @@ no policy hash or approval text changes, the same version-1 backup).
 ## Guardian for family
 
 Someone who runs a guardian (the **host**) can hold key 3 for a person they know (the **guest**), who keeps key 1 (their
-own hardware wallet) and key 2 (their own phone). Phase 1 is built; the design, the owner's decisions and what is left
-are in docs/design/family-hosting.md.
+own hardware wallet) and key 2 (their own phone). Phases 1 and 2 are built; the design, the owner's decisions and what
+is left are in docs/design/family-hosting.md.
 
 - **The host's own wallet is untouched.** Each hosted wallet is a slot with its own policy engine (`apps/guardian/src/hosting/`)
   under `hosted/<slotId>/`, next to `guardian-state.json`, which keeps its version-2 format byte for byte (a golden test
@@ -584,8 +584,13 @@ are in docs/design/family-hosting.md.
 - **Mainnet:** allowed (decision 5), behind the same pre-alpha / not-audited consent as guardian mode on mainnet.
 - **The host:** sees guests' names, states, recovery dates and a weekly co-signature count, never an amount; cannot
   reset while hosting; stops with 30 days' notice (`hosting_ending`) or at once behind a typed confirmation.
-- **Later:** limit off and a per-slot contact lock for guests (phase 2); shared mode (the full descriptor, opt-in);
-  two hosts sharing the key 3 role (another script, a separate design).
+- **Guests' own controls (phase 2):** limit off with the owner's rule and text; the contact lock per slot: a guest
+  contact's `LOCK`, or the guest's own `guardian.lock`, **pauses** only that guest's wallet (never the host's box), and
+  only the guest's hardware wallet resumes it; a host contact's `LOCK` still locks the whole box. A guest leaves with
+  Replace guardian, which then releases its slot, or by releasing an empty wallet; the guardian refuses while a coin it
+  co-signed is unspent.
+- **Later:** extra alert channels for guests; the host's view of a guest's recovery code; shared mode (the full
+  descriptor, opt-in); two hosts sharing the key 3 role (another script, a separate design).
 
 ## Later: Taproot and threshold signatures (decided 2026-11-03: not now)
 

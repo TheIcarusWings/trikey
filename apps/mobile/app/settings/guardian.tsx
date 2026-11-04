@@ -9,7 +9,7 @@ import { Screen } from '@/components/screen';
 import { UnlockForm } from '@/components/unlock-form';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
-import { formatSats, serverHost, shorten, useNow, useWallet, useWalletService } from '@/data';
+import { formatSats, hostLockedLine, serverHost, shorten, useNow, useWallet, useWalletService, walletPausedLine } from '@/data';
 import { guardianBox, hostLabel } from '@/lib/labels';
 import { PUBLIC_SERVER_WARNING, chainDataLabel, hostChainDataLabel } from '@/data/chain-source';
 import { pick } from '@/lib/platform';
@@ -59,6 +59,54 @@ function LockGuardian() {
   );
 }
 
+/**
+ * A wallet hosted on someone else's guardian (family hosting phase 2): "Pause this wallet" instead of "Lock guardian".
+ * It stops only this wallet on the host's box (never the box itself), and only the hardware wallet resumes it.
+ */
+function PauseHostedWallet() {
+  const wallet = useWalletService();
+  const { guardian, hosted, hardware } = useWallet();
+  const [asking, setAsking] = useState(false);
+  const pause = useAction();
+  const resume = useAction();
+  if (!hosted) return null;
+  if (hosted.paused)
+    return (
+      <View className="gap-3">
+        <Notice icon={Lock} iconClass="text-warn" tone="warn-outline" title="This wallet is paused">
+          {walletPausedLine(hosted.paused, hardware.brand)}
+        </Notice>
+        <AppButton title={resume.busy ? `Waiting for your ${hardware.brand}…` : `Resume with ${hardware.brand}`} variant="outline" busy={resume.busy} onPress={() => void resume.run(wallet.resumePhoneSpending())} />
+        <ActionNotice message={resume.message} error={resume.error} />
+      </View>
+    );
+  if (guardian.status !== 'online') return null;
+  const run = async () => {
+    const r = await pause.run(wallet.lockGuardian());
+    if (r.ok) setAsking(false);
+  };
+  return (
+    <View className="gap-3">
+      <ListGroup>
+        <SettingsRow title="Pause this wallet" subtitle={asking ? undefined : `Takes your ${hardware.brand} to resume`} onPress={asking ? undefined : () => setAsking(true)} />
+      </ListGroup>
+      {asking ? (
+        <View className="gap-3">
+          <Notice icon={Lock} iconClass="text-warn" tone="warn-outline" title="Pause this wallet?">
+            Use this if you think someone may get your phone. {hosted.hostLabel ?? 'Your host'}'s guardian then co-signs nothing for this wallet until your{' '}
+            {hardware.brand} resumes it. Phone-only payments stop; your {hardware.brand} can still approve payments. Your host's own wallet is not affected.
+          </Notice>
+          <View className="flex-row gap-3">
+            <AppButton title="Cancel" variant="outline" className="flex-1 self-auto" onPress={() => setAsking(false)} />
+            <AppButton title="Pause it now" variant="destructive" className="flex-1 self-auto" busy={pause.busy} onPress={() => void run()} />
+          </View>
+        </View>
+      ) : null}
+      <ActionNotice message={pause.message} error={pause.error} />
+    </View>
+  );
+}
+
 /** Wallets left behind by "Replace guardian": coins sent there later can still be moved, and an old box that is back can retire it. */
 function OldWallets() {
   const wallet = useWalletService();
@@ -103,7 +151,7 @@ function OldWallets() {
 export default function GuardianSettings() {
   const router = useRouter();
   const now = useNow();
-  const { guardian, dailyLimit, replace, hosted } = useWallet();
+  const { guardian, dailyLimit, replace, hosted, hardware } = useWallet();
   const host = guardianBox(guardian);
 
   const status =
@@ -140,7 +188,7 @@ export default function GuardianSettings() {
           </View>
         </View>
       </View>
-      {guardian.status === 'locked' ? <UnlockForm /> : null}
+      {guardian.status === 'locked' ? hosted ? <Text className="text-warn text-sm leading-5">{hostLockedLine(hosted.hostLabel ?? "Your host's guardian", hardware.brand)}</Text> : <UnlockForm /> : null}
       <Panel>
         <InfoRow label="Last seen" value={lastSeen(guardian.lastSeenAt, now)} />
         <InfoRow
@@ -174,7 +222,12 @@ export default function GuardianSettings() {
           {PUBLIC_SERVER_WARNING}
         </Notice>
       ) : null}
-      <LockGuardian />
+      {hosted ? <PauseHostedWallet /> : <LockGuardian />}
+      {hosted ? (
+        <ListGroup>
+          <SettingsRow title={`Leave ${hosted.hostLabel ?? 'your host'}`} subtitle="Move your money, then release this wallet" onPress={() => router.push('/settings/leave-host')} />
+        </ListGroup>
+      ) : null}
       <View className="gap-1.5">
         <Text className="text-sm font-medium leading-5">Guardian public key (npub)</Text>
         <Text className="text-muted-foreground font-mono text-[13px] leading-5" selectable>
@@ -193,8 +246,9 @@ export default function GuardianSettings() {
       ) : null}
       <OldWallets />
       <Footnote>
-        The guardian holds key 3. It locks itself after a restart and takes its passphrase to unlock. Keep the npub and relays, or the "Recover on a
-        new phone" code from its page: a new phone needs them to recover with your hardware wallet.
+        {hosted
+          ? `Your host's guardian holds key 3. It locks itself after a restart, and only your host unlocks it. Keep this wallet's recovery code: a new phone needs it to recover with your hardware wallet.`
+          : 'The guardian holds key 3. It locks itself after a restart and takes its passphrase to unlock. Keep the npub and relays, or the "Recover on a new phone" code from its page: a new phone needs them to recover with your hardware wallet.'}
       </Footnote>
       {guardian.key3Note ? <Footnote>{guardian.key3Note}</Footnote> : null}
     </Screen>

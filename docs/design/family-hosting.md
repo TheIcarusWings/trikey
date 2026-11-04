@@ -1,9 +1,11 @@
 # Guardian for family (hosting a guardian for someone): design proposal
 
-Status: **phase 1 built** (2026-11-01, branch `feature/family-hosting`). Written as a proposal the same day against
-`main` at `b8fd81c` (after Savings); the owner's decisions are recorded in section 14, and what was built, where it differs
-from the proposal and what is still open are in section 15. Sections 0 to 13 are the proposal as reviewed; where the
-build differs, section 15 says so.
+Status: **phase 1 built** (2026-11-01, branch `feature/family-hosting`), **phase 2 built** (2026-11-02, branch
+`feature/family-hosting-phase2`: limit off and the contact lock for guests, a guest's `guardian.lock` as a per-slot pause,
+the guest's "leave" screen). Written as a proposal on 2026-11-01 against `main` at `b8fd81c` (after Savings); the owner's
+decisions are recorded in section 14, what phase 1 built, where it differs from the proposal and what is still open in
+section 15, and what phase 2 built and decided in section 16. Sections 0 to 13 are the proposal as reviewed; where the
+build differs, sections 15 and 16 say so.
 
 Someone who runs a Trikey Guardian (the **host**) holds key 3 for a person they know (the **guest**), who has no home
 server. The guest keeps key 1 (their own hardware wallet) and key 2 (their own phone). DESIGN.md fixes four things:
@@ -224,7 +226,7 @@ recovery).
 | Rolling 24 hours, keyed by outpoint; a replay counted once; an RBF replacement counts as the larger amount | **Works.** Outpoints and shares (`splitOutflow`, `usageWith`, `apps/guardian/src/policy/limit.ts`) need no addresses. |
 | Clock checked against the chain (`clock_ahead_of_chain`, monotonic `timeFloor`) | **Works.** Chain time comes from the host's own node. |
 | Payments to Savings count as leaving | Works trivially: the guardian does not know Savings. |
-| Limit off | Works (same rule, same approval text); phase 2 (section 10). |
+| Limit off | Works (same rule, same approval text); built in phase 2 (section 16). |
 | Coins spent by phone + hardware wallet | Not seen, and need not be: the limit bounds only what key 3 co-signs. Same as today ("Big payment ... the guardian isn't involved"). |
 
 ### What does not work: "change only within reach"
@@ -521,9 +523,9 @@ amounts or balances".
 | Feature | Guests | Why |
 |---|---|---|
 | Daily limit, delay, fee cap, alert contacts, rule changes with hardware approval | Phase 1 | The engine's rules, unchanged |
-| Limit off (rule 3) | Phase 2 | Same rule and text (`Trikey policy v2`); phase 1 stays small |
-| Contact lock (rule 8) | Phase 2, per slot | A guest's contact's `LOCK` must stop only that slot ("paused"), not the host's box; the engine's lock is global today (`Guardian.lockByContact`). A host's contact's `LOCK` still locks the whole box, guests included (a nuisance to say in the host UI) |
-| `guardian.lock` / `guardian.unlock` from a guest | Never unlock; lock as per-slot pause in phase 2 | Unlock is the host's passphrase. Until then a guest who fears a phone thief lowers the limit to 0 (tightening, phone alone) |
+| Limit off (rule 3) | Phase 2 (built) | Same rule and text (`Trikey policy v2`); phase 1 stays small |
+| Contact lock (rule 8) | Phase 2, per slot (built) | A guest's contact's `LOCK` must stop only that slot ("paused"), not the host's box; the engine's lock is global today (`Guardian.lockByContact`). A host's contact's `LOCK` still locks the whole box, guests included (a nuisance to say in the host UI) |
+| `guardian.lock` / `guardian.unlock` from a guest | Never unlock; lock as per-slot pause in phase 2 (built) | Unlock is the host's passphrase. A paused slot is resumed by the guest's hardware wallet (section 16) |
 | Savings watch | No | `savings.register` sends Savings' descriptor, so the host would see Savings. The guest's phone watches Savings through its own chain source; the tripwire alert then comes from the phone, which is weaker |
 | Silent payments (`sp.register`), the helper coin (`singlekey.register`) | No | The scan key would show the host every payment received; scanning costs the host's CPU per guest |
 | Watching the replaced wallet (`pair.replacesDescriptor`) | No | It reveals the old wallet. The guest's phone watches it through its chain source |
@@ -580,6 +582,11 @@ Limit off and contact lock for guests (per-slot pause), `guardian.lock` from a g
 for guests and their contacts: each guest's own, never the host's (docs/design/notifications.md). (The second-server check before a sweep and
 mainnet came into phase 1: decisions 4 and 5.)
 
+**Built** (section 16): limit off, the per-slot contact lock and pause, `guardian.lock` from a guest, the "leave" screen
+(with Replace guardian working for hosted wallets and a guardian-side check before a slot is released). **Not built:** the
+host's view of a guest's recovery code (still open question 4 of section 15) and guests' extra alert channels (section 16,
+"Left out").
+
 ### Phase 3 and later
 
 Shared mode as an opt-in (decision 1); compact block filters from the host's node; Savings for guests if wanted;
@@ -601,7 +608,7 @@ two hosts for key 3 (a new script, a separate design).
   required backup) or the hardware wallet's seed words in software.
 - **Chain analysis** from co-signed transactions (section 3).
 - **Locks that are not the guest's doing.** The host's own lock, a restart, or a `LOCK` from one of the host's contacts
-  stop the guest's phone-only payments until the host unlocks.
+  stop the guest's phone-only payments until the host unlocks. (A guest's own pause, phase 2, is the guest's to lift.)
 - **A relay run by the host** sees the guest phone's IP address.
 - **Coercion** of the host or the guest.
 
@@ -806,6 +813,106 @@ external key, Coldcard's depth-0 fingerprint check, Trezor signing, Jade / Passp
 3. **Printing the descriptor** (decision 3's offer) uses the existing wallet-details export; a dedicated "print your
    wallet" step at acceptance is not built.
 4. **Guest wallets' recovery code in the host's web UI** (section 10) is not shown yet; the guest's own app makes it.
-5. **Per-slot `LOCK`** (phase 2): a host contact's `LOCK` still locks the whole box, guests included.
+5. **Per-slot `LOCK`**: built in phase 2 (section 16). A host contact's `LOCK` still locks the whole box, guests included,
+   by design.
 6. **Alert-contact DMs of a guest's recovery come from the host's box**, which a dishonest host can keep silent (section
    13); nothing in phase 1 changes that, by design.
+
+## 16. What phase 2 built (2026-11-02)
+
+Branch `feature/family-hosting-phase2`, on top of phase 1. The host's own wallet is still untouched: every phase 1 test
+passes, the golden state file loads and saves byte for byte, and the end-to-end runs keep the host's
+`guardian-state.json` identical through everything guests do (pausing, resuming, limit off, leaving).
+
+### Per component
+
+| Where | What |
+|---|---|
+| `packages/protocol` | `guardian.status.hosting.paused` (`{ by: "contact" \| "phone", at, contact? }`, a lenient member); the `wallet_paused` alert; PROTOCOL.md "Family hosting" (limit off and pausing, leaving). No new method and no new approval text. |
+| `apps/guardian` | `HostedEngine`: limit off (the host's rule, `limitBeforeOff`, `limit_off` / `limit_on` notices, the limit back on after a recovery), the contact-lock rule (on from the phone, off with the version-3 text, `contact_lock_on` / `_off` notices), `pauseSlot` and the pause lifted by `resumePhoneSpending`; `dm-lock.ts` routes a `LOCK` per wallet; the guest's `guardian.lock` handler; `wallet.retire` refused while a ledger coin is unspent; the slot alerter's new notices and pause hints; `GUEST_FEATURES` gains `limit_off` and `contact_lock`; the web page's `paused` flag and activity rows. |
+| `packages/wallet` | `acceptInvite` accepts `contactLock` from a guardian that reports it; `hostedPause`; `pauseHostedWallet` (what `lockGuardian` does for a hosted wallet); `unlockGuardian` refused for a hosted wallet; `resumePhoneSpending` checks the pause too; `hostedLeaveCheck` and `leaveHost`; Replace guardian works for a hosted wallet (the new guardian watches it by its descriptor hash; the cached chain source is dropped at the switch). |
+| `apps/mobile` | Settings > Guardian for a guest: "Pause this wallet" (instead of "Lock guardian"), the paused card with "Resume with <device>", the host's lock explained without a passphrase form, and "Leave <host>"; Home's paused card; the "leave" screen (`app/settings/leave-host.tsx`); "Contacts can pause this wallet" in Settings > Alert contacts; the demo. |
+| `apps/guardian-web` | A guest's row says "Paused by their side" (not who); activity rows for a pause and a resume. |
+
+### Decisions taken (the safest consistent option each time)
+
+1. **A pause is a per-slot state, not a lock.** The box's lock drops key 3 from memory; a guest's pause cannot (the host's
+   other wallets need the box), so it is a flag on the slot's wallet (`HostedWallet.pause`) that `sign` checks first. It
+   is **durable** (in the slot's `state.json`): a restart of the host's box, which the guest does not control, must never
+   lift it. The host's own lock state stays in memory, as before.
+2. **Only the guest's hardware wallet resumes a paused wallet,** with `phone.resume` and the existing `resume-phone`
+   approval text (bound to the key-set id and the slot's hardware sequence). Why: the phone alone would defeat the pause
+   (it exists for a phone that may be in the wrong hands); the host must not (it cannot know whether the guest's contact
+   was right, and DESIGN.md's rule is that only the wallet's owner lifts a protection); contacts can never unlock
+   (contact-lock.md). The hardware wallet is what proves the owner, and "resume phone payments" is exactly what the device
+   shows. One approval also lifts a contested cancel's pause, so no new text, method or device screen is needed.
+3. **A pause does not stop Delay & Notify.** A running recovery keeps its timers and alerts and completes when ready, unlike
+   on a locked box (where a ready recovery waits for the unlock, a cost contact-lock.md lists, not a goal). The pause stops
+   what a phone alone can do; a recovery is already protected by its delay, its alerts and every contact's `CANCEL`. This
+   also removes a dead end: a guest who lost the hardware wallet while paused can still recover. The pause **carries over
+   to the adopted wallet**, so a recovery is never a way around it: the adopted wallet's hardware wallet lifts it after
+   `hardware.confirm`.
+4. **Who a `LOCK` reaches.** Each wallet's own setting decides, by the sender's place in that wallet's current alert
+   contacts (never a recovery's snapshotted recipients, never the wallet's own phone). A host contact locks the box,
+   guests included; a guest contact pauses that guest's wallet only; a contact of both does both, and the answer says
+   both. A guest-only contact learns nothing of the host's wallet; while every wallet that lists the sender has the
+   setting off, the message is silent, remembered (once, durably) and never counted later. The rate limit (5 per hour)
+   and the clock window (10 minutes) are the contact's, shared across wallets.
+5. **A guest's `guardian.lock` pauses its own wallet;** `guardian.unlock` stays refused (the host's passphrase only).
+   Nobody else is told of a phone's own pause (as the host's remote lock tells only the owner, and guests have no extra
+   channels). `guardian.lock` is remembered across restarts like the guest's other state-changing requests, so a replay
+   cannot pause again after a resume.
+6. **Wire shape.** `phoneSpending` keeps its four values (older apps parse it strictly); the pause is a separate member of
+   `guardian.status.hosting`, and `sign` answers `1207` (phone payments paused) with `data.reason: "wallet_paused"`, so the
+   wallet falls back to the hardware wallet as for any paused phone path. The guest's phone gets `wallet_paused` when a
+   contact paused it (not `guardian_locked`, which means the box).
+7. **Limit off for guests** is the host's rule as is: hardware approval over the version-2 text with the key-set id, refused
+   during a recovery and at pairing, back on from the phone alone, `limit_off` to the phone and every contact (old and new)
+   and `limit_on` to the phone, and a recovery's adopted wallet starts with the limit it had before (0 when unknown).
+8. **Leaving.** The money moves first, with the phone and the hardware wallet. Replace guardian now works for a hosted
+   wallet and retires it on the host's guardian once a node accepted the sweep; an empty wallet can be released directly.
+   Releasing (`wallet.retire`) deletes the slot's key 3 for good, which is safe only when nothing needs it, so: the phone
+   checks that no recovery runs, that its chain server **and** a second, independent one see no coin, and that no coin the
+   guardian co-signed is unspent (`hostedLeaveCheck`); the guardian, for its part, **refuses** `wallet.retire` while a
+   ledger coin is unspent on its own chain source (`ledger_unspent`), since an off-path coin (section 4) needs key 3 and
+   would be lost. A host's chain source that is down blocks the release (the money still moves with phone + hardware
+   wallet); the host's Stop hosting remains the other way out. Since chain sources (#105) the check asks by outpoint
+   (`ChainService.outpointsUnspent`, as the recovery's coin check does, section 15 "Chain sources and guests"): with
+   Bitcoin Core a listing of the scripts would read the host's watch-only wallet, which holds nothing of a guest, and
+   take every ledger coin for spent (and prune it); by outpoint (`gettxout`) it is exact and imports nothing.
+9. **The host's page** shows that a guest's wallet is paused, never who paused it and never an amount; the host cannot
+   resume it. The host's email, ntfy and webhook channels never carry a guest's limit-off, pause or contact
+   (`hosting-notify.e2e.test.ts`).
+
+### Left out, and why
+
+- **Guests' own email / ntfy / webhook channels.** Not trivially safe: the channels' settings and secrets live in the
+  host's web UI and the host's `notifications.json`, the email would go out through the host's own mail account (its
+  provider sees the guest's alerts), and the phone has no authenticated way to set them that a phone thief could not use
+  to silence them. They need their own design (who holds the secrets, who may change them, how a guest's contact
+  consents). Guests' alerts stay nostr DMs.
+- **The host's view of a guest's recovery code** (section 15, open question 4): the guest's app makes it.
+
+### Tests
+
+`apps/guardian/test/hosting-engine.test.ts` (limit off, contact-lock rule, pause and resume, recovery with a pause),
+`hosting-phase2.e2e.test.ts` (over nostr RPC and DMs: per-slot pause, replays, setting off, host contact's lock, a contact
+of both, `guardian.lock`, restart, limit off, leaving, the host's file byte for byte), `hosting-notify.e2e.test.ts` (phase
+2 events stay off the host's channels), `hosting.e2e.test.ts` (updated: guests may call `guardian.lock`);
+`packages/wallet/test/hosted-phase2.e2e.test.ts` (accept with the contact lock, limit off, pause and resume with the
+hardware fallback, the leave check, Replace guardian from a hosted wallet, releasing an empty one);
+`packages/protocol/test/hosting.test.ts`; `apps/mobile/src/data/hosted.test.ts` (words, the demo, the real service against
+the rig); `apps/guardian-web/test/hosting.test.ts`; `e2e/test/hosting.test.ts` (regtest: a co-signed payment, the limit
+off, the pause and the hardware fallback in the real mempool, and the release once the guardian finds its co-signed coins
+spent on real Electrs).
+
+### The owner's answers (2026-11-03)
+
+1. **A paused wallet does not hold a ready recovery** (as built, decision 3). The tool against a bad recovery is
+   `CANCEL`, open to the guest and every contact for the whole delay; making the pause hold it too would leave a guest
+   who lost the hardware wallet while paused with money nobody can move. The pause carries over to the adopted wallet,
+   so a recovery is no way around it.
+2. **The host cannot lift a guest's pause** (as built). It is the guest's wallet, and a recovery completes regardless.
+3. **Off-path coins at leaving: accepted for now.** The release is refused while any exists; the guest keeps the slot,
+   recovers ("hardware wallet lost" sweeps it), or the host stops hosting. A "move co-signed coins" action is a
+   follow-up.

@@ -189,7 +189,7 @@ describe('family hosting, end to end', { timeout: 60_000 }, () => {
     await expect(dad().rpc.call('hosted.prepare', { inviteSecret: a.secret, network: 'regtest' } as never)).rejects.toThrow(/expected string/);
     const prep = await dad().rpc.call('hosted.prepare', { inviteSecret: a.secret, network: 'regtest', entropy: 'ab'.repeat(31) + 'cd' });
     expect(prep.cosignerAccountPubkey).toMatch(/^0[23][0-9a-f]{64}$/);
-    expect(prep.features).toEqual(['family_hosting', 'short_wraps']);
+    expect(prep.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps']);
     expect(prep.cosignerAccountPubkey).not.toBe(hex.encode(hostWallet.accountPubkeys().cosigner));
     const other = client(generateSecretKey());
     const e = await rpcError(other.call('hosted.prepare', { inviteSecret: a.secret, network: 'regtest', entropy: 'cd'.repeat(32) }));
@@ -218,20 +218,19 @@ describe('family hosting, end to end', { timeout: 60_000 }, () => {
 
   it("the guest's guardian.status is its slot's view: its key-set id, family_hosting only, nothing of the host's wallet", async () => {
     const st = await dad().rpc.call('guardian.status', {});
-    expect(st).toMatchObject({ paired: true, walletId: dad().fx!.walletId, features: ['family_hosting', 'short_wraps'], hosting: { state: 'active' }, key3Mixed: true });
+    expect(st).toMatchObject({ paired: true, walletId: dad().fx!.walletId, features: ['family_hosting', 'limit_off', 'contact_lock', 'short_wraps'], hosting: { state: 'active' }, key3Mixed: true });
     expect(st.walletId).not.toBe(hostWallet.fingerprint());
     expect(st).not.toHaveProperty('savingsWalletId');
     expect(st).not.toHaveProperty('watchedWalletId');
     expect(stable(await host.call('guardian.status', {}))).toEqual(hostStatusBefore);
   });
 
-  it('guests get typed errors for what they may not call (wallet.sync, tx.get, savings, sp, unlock, lock)', async () => {
+  it('guests get typed errors for what they may not call (wallet.sync, tx.get, savings, sp, unlock)', async () => {
     for (const [m, p] of [
       ['wallet.sync', {}],
       ['tx.get', { txid: 'ab'.repeat(32) }],
       ['savings.get', {}],
       ['sp.unregister', {}],
-      ['guardian.lock', {}],
       ['guardian.unlock', { kind: 'passphrase', passphrase: 'x' }],
     ] as const) {
       const e = await rpcError(dad().rpc.call(m as never, p as never));

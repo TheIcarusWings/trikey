@@ -81,6 +81,8 @@ export type ServiceEvent =
   | { type: 'hosting_stopping'; name: string; endsAt: number }
   | { type: 'hosting_ended'; name: string; how: 'now' | 'notice' }
   | { type: 'hosting_guest_left'; name: string }
+  /** A guest's wallet was paused (its contact's LOCK, or its phone) or resumed by its hardware wallet: that slot only. */
+  | { type: 'hosting_paused'; name: string; state: 'paused' | 'resumed'; by?: 'contact' | 'phone' }
   /** The web UI changed the extra alert channels (notify/notifier.ts): a security event, announced on every channel. */
   | { type: 'notifications_changed'; changes: string[] }
   /** An extra alert channel started failing (logged once until it works again), or works again. */

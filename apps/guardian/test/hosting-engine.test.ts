@@ -1,7 +1,8 @@
 /**
  * One guest wallet's engine (docs/design/family-hosting.md, sections 4 and 5): delegated registration, co-signing under
  * the limit with tweak-proven change, the co-signed-coin ledger, guest-built recovery with `abandon` and the
- * write-once wallet map, rotation, recovery access (version-2 text only), and stopping hosting.
+ * write-once wallet map, rotation, recovery access (version-2 text only), and stopping hosting. Phase 2: limit off with
+ * the host's rule and text, the contact lock as a per-slot pause, and pause / resume.
  */
 import { hex } from '@scure/base';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
@@ -10,8 +11,8 @@ import { buildSpend, keySetId, parsePsbt } from '@trikey/core';
 import { HostedEngine, MemoryHostedStore, hostedAuthPath, serializeHosted } from '../src/hosting/engine.js';
 import { HOSTED_RECOVERY_ID, slotOfRecoveryId } from '../src/hosting/service.js';
 import { hostedAlertText } from '../src/hosting/alerts.js';
-import { ClockChain, DAY, ManualClock, SoftwareCosignerSigner, pairingMessage, recoveryAccessMessage, signMessage, type Rules } from '../src/policy/index.js';
-import { APP_NOSTR, AUTH_PATH, CONTACT_A, MNEMONICS, T0, appSigner, approve, fund, hwAuthPrivateKey, network, nostrKey } from './helpers.js';
+import { ClockChain, DAY, ManualClock, SoftwareCosignerSigner, approvalMessage as approvalText, pairingMessage, recoveryAccessMessage, signMessage, type Rules } from '../src/policy/index.js';
+import { APP_NOSTR, AUTH_PATH, CONTACT_A, CONTACT_B, MNEMONICS, T0, appSigner, approve, fund, hwAuthPrivateKey, network, nostrKey } from './helpers.js';
 import { destinationAfterHardwareLoss, externalScript, fakeMap, hostedWallet, offPathPayment, phoneSweep, type HostedFixture } from './support/hosted.js';
 
 const SLOT = '0123456789abcdef';
@@ -89,9 +90,10 @@ describe('registration of a hosted wallet', () => {
     expect(!r.ok && r.refusal).toMatchObject({ reason: 'invalid_registration', detail: 'hardware pairing proof does not verify' });
   });
 
-  it('refuses phase-2 rules (limit off, contact lock), a missing or oversized map, and repeated keys', async () => {
-    expect((await attempt((i) => void (i.rules = { ...RULES, contactLock: true }))).ok).toBe(false);
-    expect((await attempt((i) => void (i.rules = { ...RULES, dailyLimitSats: 2_100_000_000_000_000n }))).ok).toBe(false);
+  it('refuses the limit off at pairing (as the host), a missing or oversized map, and repeated keys; accepts the contact lock', async () => {
+    expect((await attempt((i) => void (i.rules = { ...RULES, contactLock: true }))).ok).toBe(true);
+    const off = await attempt((i) => void (i.rules = { ...RULES, dailyLimitSats: 2_100_000_000_000_000n }));
+    expect(!off.ok && off.refusal).toMatchObject({ reason: 'invalid_registration', detail: expect.stringMatching(/daily limit off/) });
     expect((await attempt((i) => void (i.walletMap = 'not base64!'))).ok).toBe(false);
     expect((await attempt((i) => void (i.walletMap = fakeMap(4097)))).ok).toBe(false);
     expect((await attempt((i) => void (i.accountPubkeys.hardware = i.accountPubkeys.app))).ok).toBe(false);
@@ -318,8 +320,6 @@ describe('recovery access and stopping hosting', () => {
     expect((await engine.changeRules(looser, { authenticatedBy: 'app' })).ok).toBe(false);
     const ok = await engine.changeRules(looser, { authenticatedBy: 'hardware', approval: approve(ctxOf(fx, clock), { action: 'policy', rules: looser }, 1) });
     expect(ok.ok).toBe(true);
-    const off = await engine.changeRules({ ...RULES, dailyLimitSats: 2_100_000_000_000_000n }, { authenticatedBy: 'hardware', approval: approve(ctxOf(fx, clock), { action: 'policy', rules: { ...RULES, dailyLimitSats: 2_100_000_000_000_000n } }, 2) });
-    expect(!off.ok && off.refusal.reason).toBe('invalid_rules');
   });
 
   it('persists through its store and reopens the same', async () => {
@@ -329,3 +329,114 @@ describe('recovery access and stopping hosting', () => {
     await expect(HostedEngine.open({ slotId: 'fedcba9876543210', store })).rejects.toThrow(/another slot/);
   });
 });
+
+const OFF = 2_100_000_000_000_000n;
+const to = 'bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080';
+
+describe('phase 2: the limit off for a guest (the host rule and text)', () => {
+  it('needs the hardware wallet (version-2 text, key-set id), co-signs past the old limit, and tells the phone and the contacts', async () => {
+    const { engine, fx, clock } = await setup();
+    const offRules = { ...RULES, dailyLimitSats: OFF };
+    expect((await engine.changeRules(offRules, { authenticatedBy: 'app' })).ok).toBe(false);
+    // The text the device signs says "limit=off" in words (version 2), over the key-set id.
+    const v2 = approve(ctxOf(fx, clock), { action: 'policy', rules: offRules }, 1);
+    expect(approvalMessageOf(fx, clock, offRules, 1)).toContain('Trikey policy v2');
+    expect(approvalMessageOf(fx, clock, offRules, 1)).toContain(`wallet=${fx.walletId}`);
+    const ok = await engine.changeRules(offRules, { authenticatedBy: 'hardware', approval: v2 });
+    expect(ok.ok).toBe(true);
+    expect(engine.status().dailyLimit).toMatchObject({ off: true, limitBeforeOff: 100_000n });
+    const [n] = engine.dueNotices();
+    expect(n).toMatchObject({ kind: 'limit_off', limitSats: 100_000n, sequence: 1, recipients: [APP_NOSTR, CONTACT_A] });
+    const big = await appSigner().signPsbt(buildSpend({ wallet: fx.wallet, utxos: [fund(fx.wallet, 0, 0, 900_000n)], recipients: [{ address: to, amount: 500_000n }], feeRate: 1, changeIndex: 0 }).psbt, network);
+    expect((await engine.cosign(big)).ok).toBe(true);
+    // Back on from the phone alone (tightening): limit_on to the phone.
+    expect((await engine.changeRules({ ...RULES, dailyLimitSats: 10_000n }, { authenticatedBy: 'app' })).ok).toBe(true);
+    expect(engine.status().dailyLimit?.off).toBeUndefined();
+    expect(engine.dueNotices().find((x) => x.kind === 'limit_on')).toMatchObject({ limitSats: 10_000n, reason: 'phone', recipients: [APP_NOSTR] });
+  });
+
+  it('is refused during a recovery, and a recovery adopts the wallet with the limit back on (limit_on, reason recovery)', async () => {
+    const { engine, fx, clock } = await setup();
+    const offRules = { ...RULES, dailyLimitSats: OFF };
+    expect((await engine.changeRules(offRules, { authenticatedBy: 'hardware', approval: approve(ctxOf(fx, clock), { action: 'policy', rules: offRules }, 1) })).ok).toBe(true);
+    const dest = await destinationAfterHardwareLoss(fx);
+    const res = await engine.startRecovery({ psbt: await phoneSweep(fx, dest, [fund(fx.wallet, 0, 0, 200_000n)]), destinationKeys: dest.accountPubkeys, destinationMap: fakeMap(), initiator: APP_NOSTR });
+    if (!res.ok) throw new Error('start');
+    const during = await engine.changeRules({ ...RULES, dailyLimitSats: OFF, recoveryDelayDays: 14 }, { authenticatedBy: 'hardware', approval: approve(ctxOf(fx, clock), { action: 'policy', rules: { ...RULES, dailyLimitSats: OFF, recoveryDelayDays: 14 } }, 2) });
+    expect(!during.ok && during.refusal.reason).toBe('recovery_in_progress');
+    clock.advance(7 * DAY + 1000);
+    expect((await engine.completeRecovery()).ok).toBe(true);
+    const rot = await engine.rotateAfterSweep(res.recovery.id);
+    expect(rot.ok && rot.adopted?.walletId).toBe(dest.walletId);
+    expect(engine.rules()!.dailyLimitSats).toBe(100_000n);
+    expect(engine.status().dailyLimit?.off).toBeUndefined();
+    expect(engine.dueNotices().find((x) => x.kind === 'limit_on')).toMatchObject({ reason: 'recovery', limitSats: 100_000n, walletId: dest.walletId });
+  });
+});
+
+describe('phase 2: the contact lock as a per-slot pause', () => {
+  it('on from the phone alone (contacts told); off only with the hardware wallet over the version-3 text, lock=off', async () => {
+    const { engine, fx, clock } = await setup({ rules: { alertContacts: [CONTACT_A, CONTACT_B] } });
+    const base = { ...RULES, alertContacts: [CONTACT_A, CONTACT_B] };
+    expect((await engine.changeRules({ ...base, contactLock: true }, { authenticatedBy: 'app' })).ok).toBe(true);
+    expect(engine.dueNotices().find((n) => n.kind === 'contact_lock_on')?.recipients.sort()).toEqual([CONTACT_A, CONTACT_B].sort());
+    const offByPhone = await engine.changeRules(base, { authenticatedBy: 'app' });
+    expect(!offByPhone.ok && offByPhone.refusal.reason).toBe('hardware_approval_required');
+    // The version-1 text over the same rules (no "lock=off") does not verify.
+    const wrong = await engine.changeRules(base, { authenticatedBy: 'hardware', approval: approve(ctxOf(fx, clock), { action: 'policy', rules: base }, 1) });
+    expect(!wrong.ok && wrong.refusal.reason).toBe('approval_invalid_signature');
+    const right = await engine.changeRules(base, { authenticatedBy: 'hardware', approval: approve(ctxOf(fx, clock), { action: 'policy', rules: base, contactLockBefore: true }, 2) });
+    expect(right.ok).toBe(true);
+    expect(engine.dueNotices().find((n) => n.kind === 'contact_lock_off')).toBeTruthy();
+  });
+
+  it("a contact's pause stops co-signing for this slot only, is told to the phone and the other contacts, and needs the hardware wallet to lift", async () => {
+    const { engine, fx, clock } = await setup({ rules: { alertContacts: [CONTACT_A, CONTACT_B], contactLock: true } });
+    expect(engine.contactMayPause(CONTACT_A)).toBe(true);
+    expect(engine.contactMayPause(APP_NOSTR)).toBe(false);
+    const stranger = nostrKey(77);
+    expect(await engine.pauseSlot({ kind: 'contact', contact: stranger })).toMatchObject({ ok: false, refusal: { reason: 'not_authorized' } });
+    expect(await engine.pauseSlot({ kind: 'contact', contact: CONTACT_A })).toMatchObject({ ok: true, outcome: 'paused' });
+    expect(await engine.pauseSlot({ kind: 'contact', contact: CONTACT_B })).toMatchObject({ ok: true, outcome: 'already_paused' });
+    expect(engine.status().pause).toMatchObject({ by: 'contact', contact: CONTACT_A });
+    expect(engine.dueNotices().find((n) => n.kind === 'contact_lock')).toMatchObject({ contact: CONTACT_A, recipients: [APP_NOSTR, CONTACT_B] });
+    const pay = await appSigner().signPsbt(buildSpend({ wallet: fx.wallet, utxos: [fund(fx.wallet, 0, 0, 100_000n)], recipients: [{ address: to, amount: 10_000n }], feeRate: 1, changeIndex: 0 }).psbt, network);
+    const r = await engine.cosign(pay);
+    expect(!r.ok && r.refusal).toMatchObject({ reason: 'wallet_paused', by: 'contact' });
+    // Tightening still works while paused; the phone cannot lift it.
+    expect((await engine.changeRules({ ...RULES, alertContacts: [CONTACT_A, CONTACT_B], contactLock: true, dailyLimitSats: 50_000n }, { authenticatedBy: 'app' })).ok).toBe(true);
+    // The hardware wallet resumes it (the resume-phone text, bound to the key-set id).
+    const wrongKey = approve(ctxOf(fx, clock), { action: 'resume-phone' }, 1, { privateKey: hwAuthPrivateKey(AUTH_PATH, MNEMONICS.hardware2) });
+    expect((await engine.resumePhoneSpending(wrongKey)).ok).toBe(false);
+    expect((await engine.resumePhoneSpending(approve(ctxOf(fx, clock), { action: 'resume-phone' }, 1))).ok).toBe(true);
+    expect(engine.status().pause).toBeUndefined();
+    expect((await engine.cosign(pay)).ok).toBe(true);
+    expect((await engine.resumePhoneSpending(approve(ctxOf(fx, clock), { action: 'resume-phone' }, 2))).ok).toBe(false);
+  });
+
+  it("with the setting off a contact cannot pause; the guest's own phone always can, and a pause survives a reopen", async () => {
+    const { engine, store } = await setup();
+    expect(engine.contactMayPause(CONTACT_A)).toBe(false);
+    expect(await engine.pauseSlot({ kind: 'contact', contact: CONTACT_A })).toMatchObject({ ok: false });
+    expect(await engine.pauseSlot({ kind: 'phone' })).toMatchObject({ ok: true, outcome: 'paused' });
+    expect(engine.dueNotices()).toEqual([]);
+    const again = await HostedEngine.open({ slotId: SLOT, store });
+    expect(again.status().pause).toMatchObject({ by: 'phone' });
+  });
+
+  it('a pause does not stop Delay & Notify: a ready recovery completes, and the adopted wallet stays paused', async () => {
+    const { engine, fx, clock } = await setup();
+    expect((await engine.pauseSlot({ kind: 'phone' })).ok).toBe(true);
+    const dest = await destinationAfterHardwareLoss(fx);
+    const res = await engine.startRecovery({ psbt: await phoneSweep(fx, dest, [fund(fx.wallet, 0, 0, 200_000n)]), destinationKeys: dest.accountPubkeys, destinationMap: fakeMap(), initiator: APP_NOSTR });
+    if (!res.ok) throw new Error('start');
+    clock.advance(7 * DAY + 1000);
+    expect((await engine.completeRecovery()).ok).toBe(true);
+    expect((await engine.rotateAfterSweep(res.recovery.id)).ok).toBe(true);
+    expect(engine.status().pause).toMatchObject({ by: 'phone' });
+  });
+});
+
+function approvalMessageOf(fx: HostedFixture, clock: ManualClock, rules: Rules, sequence: number): string {
+  return approvalText({ action: 'policy', rules }, { walletId: fx.walletId, sequence, expiresAt: Math.floor(clock.now() / 1000) + 600 });
+}

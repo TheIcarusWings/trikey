@@ -17,8 +17,11 @@
  * - A recovery names its destination by account pubkeys and brings the destination's encrypted wallet map; its sweep's
  *   outputs must be tweak-proven to the destination. Completion needs every unspent ledger coin swept or named in
  *   `abandon` (checked by the hosted recovery runner, with the host's Electrs, by the coins' own scripts).
- * - Phase 1 features only (decision 12): the daily limit, the delay, the fee cap, alert contacts and hardware-approved
- *   rule changes. No "limit off", no contact lock, no Savings, no silent payments, no watched wallet.
+ * - Features (decision 12): the daily limit, the delay, the fee cap, alert contacts and hardware-approved rule changes
+ *   (phase 1); "limit off" with the host's rule and approval text, and the contact lock as a per-slot PAUSE (phase 2,
+ *   section 16): a contact's `LOCK` or the guest's `guardian.lock` stops this slot's co-signing only, never the host's
+ *   box, and only the guest's hardware wallet resumes it (`phone.resume`). No Savings, no silent payments, no watched
+ *   wallet.
  */
 import { base64, hex } from '@scure/base';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
@@ -57,6 +60,7 @@ import {
   type HostedActivityEntry,
   type HostedActivityEvent,
   type HostedNotice,
+  type HostedPause,
   type HostedRecoveryRecord,
   type HostedRefusal,
   type HostedRegistration,
@@ -136,7 +140,12 @@ export type HostedRecoveryView = RecoveryView & { abandon: string[]; abandonSats
 
 export interface HostedStatus extends Omit<GuardianStatus, 'recovery'> {
   recovery?: HostedRecoveryView;
+  /** Present while the slot is paused (section 16). */
+  pause?: HostedPause;
 }
+
+/** What pausing a slot did: `paused` now, or it was `already_paused` (nothing changed, nobody alerted). */
+export type PauseOutcome = 'paused' | 'already_paused';
 
 /** `m/48'/<coin>'/0'/2'/0/0`, both apostrophe and `h` spellings: the only authorization path a hosted wallet may use. */
 export function hostedAuthPath(network: NetworkName): string {
@@ -338,11 +347,40 @@ export class HostedEngine {
       recoveryStatus: active ? viewOf(active, now).status : 'none',
       recovery: last ? viewOf(last, now) : undefined,
       nextHardwareSequence: s.hardwareSequence + 1,
-      dailyLimit: rules ? { limit: rules.dailyLimitSats, used, available: rules.dailyLimitSats > used ? rules.dailyLimitSats - used : 0n } : undefined,
+      dailyLimit: rules
+        ? {
+            limit: rules.dailyLimitSats,
+            used,
+            available: rules.dailyLimitSats > used ? rules.dailyLimitSats - used : 0n,
+            ...(isLimitOff(rules) ? { off: true as const } : {}),
+            ...(isLimitOff(rules) && w?.limitBeforeOff !== undefined ? { limitBeforeOff: w.limitBeforeOff } : {}),
+          }
+        : undefined,
       hardwareConfirmRequired: !!reg && !reg.hardwareAuthConfirmed,
       retiredWallets: s.retired.length,
       warnings: policyWarnings(rules),
+      ...(w?.pause ? { pause: { ...w.pause } } : {}),
     };
+  }
+
+  /** The slot's pause, if it is paused. */
+  pause(): HostedPause | undefined {
+    return this.state.active?.pause;
+  }
+
+  /**
+   * May `pubkey` pause this slot with a `LOCK` DM? Only one of the active wallet's alert contacts (not a running
+   * recovery's snapshotted recipients, not the guest's phone), and only while the rules let them (`contactLock`).
+   */
+  contactMayPause(pubkey: string): boolean {
+    const w = this.state.active;
+    return !!w && isContactLockOn(w.rules) && pubkey !== w.registration.appNostrPubkey && w.rules.alertContacts.includes(pubkey);
+  }
+
+  /** Is `pubkey` one of the active wallet's current alert contacts (whatever the contact-lock setting)? */
+  isCurrentContact(pubkey: string): boolean {
+    const w = this.state.active;
+    return !!w && pubkey !== w.registration.appNostrPubkey && w.rules.alertContacts.includes(pubkey);
   }
 
   activity(opts: { limit?: number } = {}): HostedActivityEntry[] {
@@ -542,12 +580,6 @@ export class HostedEngine {
     return live.length;
   }
 
-  private phase1Rules(rules: Rules): string | undefined {
-    if (isLimitOff(rules)) return 'a hosted wallet cannot turn the daily limit off yet (phase 2)';
-    if (isContactLockOn(rules)) return "a hosted wallet's contacts cannot lock the guardian yet (phase 2)";
-    return undefined;
-  }
-
   // -------------------------------------------------------------------------
   // Registration (`hosted.pair`)
 
@@ -582,8 +614,6 @@ export class HostedEngine {
       }
       if (network.name === 'bitcoin' && !rules.alertContacts.length) return bad(`rules: ${MAINNET_CONTACT_REQUIRED}`);
       if (isLimitOff(rules)) return bad(`rules: ${LIMIT_OFF_AT_PAIRING}`);
-      const phase1 = this.phase1Rules(rules);
-      if (phase1) return bad(`rules: ${phase1}`);
       const authRefusal = this.authKeyRefusal(network.name, keys.hardware, input.hardwareAuth);
       if (authRefusal) return bad(authRefusal);
       const walletId = keySetId(acctOf(keys));
@@ -690,6 +720,8 @@ export class HostedEngine {
       if (active) return refuse({ reason: 'recovery_in_progress', recoveryId: active.id });
       const ps = w.phoneSpending;
       if (ps.state !== 'enabled') return refuse({ reason: 'phone_spending_paused', cause: ps.state === 'retired' ? 'wallet_retired' : 'contested_recovery', recoveryId: ps.recoveryId });
+      // Paused (a contact's LOCK or the guest's own guardian.lock): this slot co-signs no payment until the hardware wallet resumes it.
+      if (w.pause) return refuse({ reason: 'wallet_paused', by: w.pause.by, at: w.pause.at });
       const time = this.limitTime(draft, now, chain);
       if (!time.ok) return refuse(time.refusal);
       const at = time.at;
@@ -774,8 +806,6 @@ export class HostedEngine {
         return refuse({ reason: 'invalid_rules', detail: (e as Error).message });
       }
       if (w.registration.network === 'bitcoin' && !rules.alertContacts.length) return refuse({ reason: 'invalid_rules', detail: MAINNET_CONTACT_REQUIRED });
-      const phase1 = this.phase1Rules(rules);
-      if (phase1) return refuse({ reason: 'invalid_rules', detail: phase1 });
       let sequence: number | undefined;
       if (auth.authenticatedBy === 'app') {
         const may = phoneMayApply(current, rules);
@@ -783,11 +813,51 @@ export class HostedEngine {
       } else if (auth.authenticatedBy === 'hardware') {
         const active = activeRecovery(draft);
         if (active) return refuse({ reason: 'recovery_in_progress', recoveryId: active.id });
-        const r = this.checkApproval(draft, now, auth.approval, { action: 'policy', rules, contactLockBefore: false });
+        // The host's texts: version 2 for "no daily limit", version 3 whenever the contacts may pause it now (turning it off says `lock=off`).
+        const r = this.checkApproval(draft, now, auth.approval, { action: 'policy', rules, contactLockBefore: isContactLockOn(current) });
         if (r) return refuse(r);
         sequence = auth.approval.sequence;
       } else {
         return refuse({ reason: 'not_authorized' });
+      }
+      // No daily limit (rule 3, the host's rule): only through the hardware branch (it is a raise), so no recovery runs.
+      // The limit it had is kept for a recovery's adopted wallet; the phone and every contact, old and new, are told.
+      const phone = w.registration.appNostrPubkey;
+      const wasOff = isLimitOff(current);
+      const nowOff = isLimitOff(rules);
+      if (nowOff && !wasOff) {
+        w.limitBeforeOff = current.dailyLimitSats;
+        const contacts = [...new Set([...current.alertContacts, ...rules.alertContacts])];
+        this.addNotice(draft, now, {
+          id: `limit-${draft.nextActivityId}`,
+          kind: 'limit_off',
+          walletId: w.registration.walletId,
+          at: now,
+          sequence,
+          limitSats: current.dailyLimitSats,
+          recipients: [phone, ...contacts.filter((c) => c !== phone)],
+          sent: [],
+        });
+      } else if (wasOff && !nowOff) {
+        delete w.limitBeforeOff;
+        this.addNotice(draft, now, { id: `limit-${draft.nextActivityId}`, kind: 'limit_on', walletId: w.registration.walletId, at: now, limitSats: rules.dailyLimitSats, reason: by === 'hardware' ? 'hardware' : 'phone', recipients: [phone], sent: [] });
+      }
+      // The contacts may now pause the wallet, or no longer may (rule 8, per slot): they are told, so they know whether LOCK works.
+      const lockWas = isContactLockOn(current);
+      const lockNow = isContactLockOn(rules);
+      if (lockWas !== lockNow) {
+        const contacts = lockNow ? rules.alertContacts : [...new Set([...current.alertContacts, ...rules.alertContacts])];
+        const to = contacts.filter((c) => c !== phone);
+        if (to.length)
+          this.addNotice(draft, now, {
+            id: `lockrule-${draft.nextActivityId}`,
+            kind: lockNow ? 'contact_lock_on' : 'contact_lock_off',
+            walletId: w.registration.walletId,
+            at: now,
+            ...(sequence !== undefined ? { sequence } : {}),
+            recipients: to,
+            sent: [],
+          });
       }
       w.rules = rules;
       this.log(draft, now, { type: 'rules_changed', by, sequence, from: current, to: rules });
@@ -1117,6 +1187,11 @@ export class HostedEngine {
         if (checked.ok) ledger = selfOutputs(psbt, checked.analysis, acctOf(dest), now);
       }
       const destMap = draft.maps[rec.destinationWalletId];
+      // A completed recovery means a key was lost or taken: as the host's, the adopted wallet starts with the daily limit
+      // ON, at the value it had before it was turned off (0, "never", when that is not known). A pause carries over: only
+      // a hardware wallet of the adopted wallet lifts it (after `hardware.confirm`).
+      const limitRestored = isLimitOff(w.rules) ? (w.limitBeforeOff ?? 0n) : undefined;
+      const rules = limitRestored !== undefined ? { ...w.rules, dailyLimitSats: limitRestored } : w.rules;
       for (const other of draft.recoveries) {
         if (other.walletId !== old.walletId || other.id === rec.id || (other.status !== 'pending' && other.status !== 'ready')) continue;
         other.status = 'cancelled';
@@ -1126,8 +1201,10 @@ export class HostedEngine {
       }
       const revokedGrants = this.retireActive(draft, now, { reason: 'recovered', recoveryId: rec.id, ...(next ? { successorWalletId: next.walletId } : {}) });
       if (next) {
-        draft.active = { registration: next, rules: w.rules, spends: [], phoneSpending: { state: 'enabled' }, accessGrants: [], ledger };
+        draft.active = { registration: next, rules, spends: [], phoneSpending: { state: 'enabled' }, accessGrants: [], ledger, ...(w.pause ? { pause: { ...w.pause } } : {}) };
         if (destMap) draft.maps = { [next.walletId]: destMap };
+        if (limitRestored !== undefined)
+          this.addNotice(draft, now, { id: `limit-${draft.nextActivityId}`, kind: 'limit_on', walletId: next.walletId, at: now, limitSats: limitRestored, reason: 'recovery', recipients: [next.appNostrPubkey], sent: [] });
       }
       rec.rotatedAt = now;
       this.log(draft, now, {
@@ -1137,6 +1214,7 @@ export class HostedEngine {
         ...(next ? { toWalletId: next.walletId, phone: next.appNostrPubkey } : {}),
         ...(detail ? { detail } : {}),
         revokedGrants,
+        ...(next && limitRestored !== undefined ? { limitRestoredSats: limitRestored } : {}),
       });
       return { ok: true as const, retiredWalletId: old.walletId, ...(next ? { adopted: next } : {}), ...(detail ? { detail } : {}), revokedGrants, previousPhone: old.appNostrPubkey };
     });
@@ -1171,12 +1249,59 @@ export class HostedEngine {
       if (!w) return refused({ reason: 'not_registered' });
       const active = activeRecovery(draft);
       if (active) return refuse({ reason: 'recovery_in_progress', recoveryId: active.id });
-      if (w.phoneSpending.state !== 'paused_contested') return refuse({ reason: 'nothing_to_resume' });
+      // One approval lifts what the hardware wallet may lift: a contested cancel's pause and the slot's pause (section 16).
+      const contested = w.phoneSpending.state === 'paused_contested';
+      if (!contested && !w.pause) return refuse({ reason: 'nothing_to_resume' });
       const r = this.checkApproval(draft, now, approval, { action: 'resume-phone' });
       if (r) return refuse(r);
-      w.phoneSpending = { state: 'enabled' };
-      this.log(draft, now, { type: 'phone_spending_resumed', sequence: approval.sequence });
+      if (contested) {
+        w.phoneSpending = { state: 'enabled' };
+        this.log(draft, now, { type: 'phone_spending_resumed', sequence: approval.sequence });
+      }
+      if (w.pause) {
+        this.log(draft, now, { type: 'wallet_resumed', sequence: approval.sequence, paused: w.pause.by });
+        delete w.pause;
+      }
       return { ok: true as const };
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Pausing the slot (phase 2, section 16): the per-slot form of the contact lock and of `guardian.lock`
+
+  /**
+   * Pauses this slot: no payment is co-signed until the guest's hardware wallet resumes it (`resumePhoneSpending`).
+   * `contact`: a `LOCK` DM from one of the active wallet's alert contacts while its rules let them (`not_authorized`
+   * otherwise); a `contact_lock` notice goes to the phone and every other contact. `phone`: the guest's own
+   * `guardian.lock`, always allowed (it only takes power away); nobody else is told. Recoveries, their timers and alerts
+   * run on, and a ready one still completes: a pause stops what a phone alone can do, not Delay & Notify. Already
+   * paused: nothing changes.
+   */
+  async pauseSlot(by: { kind: 'phone' } | { kind: 'contact'; contact: string }): Promise<HostedResult<{ outcome: PauseOutcome }>> {
+    return this.mutate((draft, now) => {
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      let contact: string | undefined;
+      if (by.kind === 'contact') {
+        contact = String(by.contact).toLowerCase();
+        if (!isContactLockOn(w.rules) || contact === w.registration.appNostrPubkey || !w.rules.alertContacts.includes(contact)) return refused({ reason: 'not_authorized' });
+      }
+      if (w.pause) return { ok: true as const, outcome: 'already_paused' as const };
+      w.pause = { by: by.kind, at: now, ...(contact ? { contact } : {}) };
+      if (contact) {
+        const phone = w.registration.appNostrPubkey;
+        this.addNotice(draft, now, {
+          id: `lock-${draft.nextActivityId}`,
+          kind: 'contact_lock',
+          walletId: w.registration.walletId,
+          at: now,
+          contact,
+          recipients: [phone, ...w.rules.alertContacts.filter((c) => c !== contact && c !== phone)],
+          sent: [],
+        });
+      }
+      this.log(draft, now, { type: 'wallet_paused', by: by.kind, ...(contact ? { contact } : {}) });
+      return { ok: true as const, outcome: 'paused' as const };
     });
   }
 

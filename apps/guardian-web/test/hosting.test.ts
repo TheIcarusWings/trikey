@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMockApi } from '../src/api/mock';
 import { createHttpApi } from '../src/api/http';
 import type { HostedWallet } from '../src/api/types';
-import { HOST_DISCLOSURE, RESET_WHILE_HOSTING, STOP_NOW_CONFIRMATION, STOP_NOW_WARNING, hostedWalletActions, hostedWalletLine, paymentsLine } from '../src/lib/hosting';
+import { HOST_DISCLOSURE, RESET_WHILE_HOSTING, STOP_NOW_CONFIRMATION, STOP_NOW_WARNING, hostedWalletActions, hostedWalletLine, paymentsLine, pausedLine } from '../src/lib/hosting';
 
 describe('what the host is told', () => {
   it('says the page shows no amounts but the box stores what it co-signs (no "never sees amounts")', () => {
@@ -38,6 +38,10 @@ describe('a hosted wallet row', () => {
     expect(hostedWalletLine({ ...base, state: 'ended', endedAt: '2026-12-01T10:00:00Z' })).toMatch(/key here is gone/);
     expect(hostedWalletLine({ id: 'i', name: 'Ana', state: 'invited', inviteId: 'x' })).toBe('Invite sent · not accepted yet');
     expect(paymentsLine({ ...base, state: 'ended' })).toBeUndefined();
+    // Phase 2: a wallet the guest's side paused says so, without who or any amount.
+    expect(pausedLine(base)).toBeUndefined();
+    expect(pausedLine({ ...base, paused: true })).toMatch(/until their hardware wallet resumes it/);
+    expect(pausedLine({ ...base, paused: true })).not.toMatch(/sats|contact/i);
   });
 
   it('offers Stop hosting only while active (refused during a recovery), removal only once over', () => {

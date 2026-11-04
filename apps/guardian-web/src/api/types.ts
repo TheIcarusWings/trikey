@@ -515,6 +515,11 @@ export interface HostedWallet {
   endsAt?: ISODate;
   /** `ended` or `left`: when. */
   endedAt?: ISODate;
+  /**
+   * The guest's side paused this wallet (one of their alert contacts sent LOCK, or their phone asked): this box co-signs
+   * no payment for it until their hardware wallet resumes it. The host cannot resume it and is not told who paused it.
+   */
+  paused?: true;
 }
 
 export interface HostingOverview {

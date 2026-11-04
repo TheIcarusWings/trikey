@@ -392,6 +392,20 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
       if (!state.invite) throw new WalletServiceError('wrong_state', 'Scan the invite first.');
       update((s) => ({ invite: { ...s.invite!, acknowledged: understood } }));
     },
+    async checkLeaveHost() {
+      await wait(networkDelay);
+      if (!state.hosted) throw new WalletServiceError('wrong_state', 'Only a hosted wallet can leave its host.');
+      // The demo: safe once the balance is gone (moved with Replace guardian or the hardware wallet).
+      return state.balanceSats > 0
+        ? { safe: false, blockers: [`This wallet still holds ${state.balanceSats.toLocaleString('en-US')} sats. Move them first (Replace guardian, or send them with your hardware wallet).`] }
+        : { safe: true, blockers: [] };
+    },
+    async leaveHost() {
+      await wait(deviceDelay);
+      if (!state.hosted) throw new WalletServiceError('wrong_state', 'Only a hosted wallet can leave its host.');
+      if (state.balanceSats > 0) throw new WalletServiceError('refused', 'This wallet still holds money. Move it first.');
+      update({ walletRetired: { reason: 'retired' }, phoneSpending: 'retired' });
+    },
     async setHostedChainServer(url: string | null) {
       await wait(networkDelay);
       if (!state.hosted) throw new WalletServiceError('wrong_state', 'Only a hosted wallet has a chain server setting.');
@@ -523,6 +537,11 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     },
     async lockGuardian() {
       await wait(networkDelay);
+      // A hosted wallet pauses only itself on the host's guardian (family hosting phase 2).
+      if (state.hosted) {
+        update((s) => ({ hosted: { ...s.hosted!, paused: { by: 'phone', at: NOW.toISOString() } } }));
+        return;
+      }
       update((s) => {
         const { lockedByContact: _other, ...guardian } = s.guardian;
         return { guardian: { ...guardian, status: 'locked' } };
@@ -713,7 +732,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     },
     async resumePhoneSpending() {
       await wait(deviceDelay);
-      update({ phoneSpending: 'enabled' });
+      update((s) => ({ phoneSpending: 'enabled', ...(s.hosted?.paused ? { hosted: { ...s.hosted, paused: undefined } } : {}) }));
     },
     async renewRecoveryAccess() {
       await wait(deviceDelay);

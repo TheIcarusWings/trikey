@@ -108,7 +108,7 @@ describe('a hosted wallet, end to end', { timeout: 90_000 }, () => {
     // The status is the slot's view.
     const st = await A.refreshStatus();
     expect(st.walletId).toBe(walletId);
-    expect(st.features).toEqual(['family_hosting', 'short_wraps']);
+    expect(st.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps']);
   });
 
   it('a second server is asked before a recovery sweep; with it down the recovery waits unless the person accepts one server', async () => {
