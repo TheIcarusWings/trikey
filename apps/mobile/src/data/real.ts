@@ -759,6 +759,8 @@ class Service implements RealWalletService {
       devicePrompt: this.prompts.getSnapshot(),
       syncing: !!this.core || !!this.nextCore,
       updating: !!this.restRun,
+      feesUpdating: !!this.w?.feesPending,
+      feesVersion: this.w?.feesVersion ?? 0,
       synced: !!s?.chain,
       guardianSlow: this.slow && this.reachable,
       guardianReconnecting: this.reconnecting,
@@ -1559,6 +1561,7 @@ class Service implements RealWalletService {
       request.speed,
       request.signer ?? 'auto',
       st.chain?.syncedAt,
+      w.feesVersion, // fee estimates that landed after the sync
       // the coins themselves: a send max is made of all of them, and a clock that does not move would hide a sync
       st.chain?.utxos.map((u) => `${u.txid}:${u.vout}`).join(','),
       st.guardianStatus?.checkedAt,

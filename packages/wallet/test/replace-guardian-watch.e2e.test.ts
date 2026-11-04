@@ -59,11 +59,17 @@ async function walletError(p: Promise<unknown>): Promise<WalletError> {
 
 const inputsOf = (txHex: string) => btc.Transaction.fromRaw(hex.decode(txHex), { allowUnknownOutputs: true }).inputsLength;
 const sweepHex = (txid: string) => net.broadcasts.find((t) => btc.Transaction.fromRaw(hex.decode(t), { allowUnknownOutputs: true }).id === txid)!;
+/** The guardians read fee estimates again (a new block would drop what they keep). */
+const feesChanged = () => rigs.forEach((r) => r.guardian.chain.forgetFees());
 const setFeeRate = (btcPerKvB: number) => {
   for (const t of [1, 3, 6]) net.feeRates.set(t, btcPerKvB);
+  feesChanged();
 };
 const NORMAL_FEES = [0.0002, 0.0001, 0.00005];
-const resetFees = () => [1, 3, 6].forEach((t, i) => net.feeRates.set(t, NORMAL_FEES[i]!));
+const resetFees = () => {
+  [1, 3, 6].forEach((t, i) => net.feeRates.set(t, NORMAL_FEES[i]!));
+  feesChanged();
+};
 
 describe('the old guardian is gone, the new one watches the old wallet', { timeout: 120_000 }, () => {
   const device = new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware, network: 'regtest', kind: 'ledger' });

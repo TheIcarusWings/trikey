@@ -271,6 +271,7 @@ describe('the guardian mode on mainnet', { timeout: 60_000 }, () => {
       [3, 0.00002],
       [6, 0.0000125],
     ]);
+    rig.guardian.chain.forgetFees(); // as a new block would: the guardian reads them again
     await p.sync();
     await p.idle(); // and the sync's background part
     const q = p.quoteSend({ address: to, amountSats: 20_000, speed: 'normal' });
