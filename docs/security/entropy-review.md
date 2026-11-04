@@ -42,8 +42,8 @@ The other findings are Low or Informational:
 | I3 | Info | The guardian accepts a degenerate phone contribution (`c` all-zero or constant) without comment | Confirmed, no direct impact |
 | I4 | Info | `randomPositions` (Recovery Kit word challenge) has modulo bias and reuses its 32 bytes | Confirmed, negligible |
 | I5 | Info | Secret material that cannot be zeroed in JS (mnemonic strings, intermediate BIP 32 nodes); the backup file stays in the app cache | Confirmed, inherent; the cached backup file is now cleared (see I5) |
-| S1 | Suspicion | `expo-print` on Android may write the kit page (key 3 in the clear) to a cache file | Not confirmed |
-| S2 | Suspicion | A second instance of `@trikey/core/random` in the Metro bundle would be pinned only on first use | Not confirmed |
+| S1 | Suspicion | `expo-print` on Android may write the kit page (key 3 in the clear) to a cache file | Ruled out (follow-up, 4 November) |
+| S2 | Suspicion | A second instance of `@trikey/core/random` in the Metro bundle would be pinned only on first use | Ruled out (follow-up, 4 November) |
 
 ---
 
@@ -317,7 +317,11 @@ receiving the file may only read it after control returns. The document picker's
 
 ---
 
-## Suspicions (not confirmed)
+## Suspicions (checked afterwards)
+
+Both were open when the review was written. A follow-up on 4 November 2026, at `main` `a46051a`, ruled
+both out. Each one keeps its original text, with the result under it.
+
 
 - **S1. `expo-print` on Android.** `apps/mobile/src/lib/print-kit.ts` passes the kit HTML (key 3 in
   the clear) to `Print.printAsync({ html })` on the grounds that nothing is written to the app's
@@ -327,6 +331,19 @@ receiving the file may only read it after control returns. The document picker's
   secure-store entry, which is the pairing the kit design forbids. Check on a device, after printing
   to "Save as PDF" and cancelling: list `getCacheDir()`. Clear `Print/` and the cache after
   printing if anything is there.
+
+  **Ruled out.** In plain terms: printing the kit does not leave a copy of it in the app's files.
+  The expo-print 58.0.8 native code shows this:
+  - **Android.** `printAsync({ html })` calls `PrintPDFRenderTask.render(null, null, …)`
+    (`PrintModule.kt`). The page is loaded straight into a WebView and handed to Android's print
+    service, and no file is created. The only code that writes to the cache directory (`Print/`) is
+    `printToFileAsync`, which the app never calls.
+  - **iOS.** The page becomes a PDF in memory and goes to the system print dialog. The cache file in
+    `ExpoPrintToFile.swift` is again only written by `printToFileAsync`.
+
+  What remains is outside the app: the system print service, the printer, or a PDF the person saves
+  may keep a copy. `print-kit.ts` and the kit screen already say so. Checking what the system print
+  service keeps would need a real phone.
 - **S2. Duplicate module instances.** Pinning, the latched failure and the continuous-test state are
   module-global in `@trikey/core/random`. If Metro ever bundled two copies, for example through the
   `.js`-stripping resolver fallback in `metro.config.js` or a nested `node_modules`, the second copy
@@ -336,6 +353,28 @@ receiving the file may only read it after control returns. The document picker's
   unpinned copy. I did not build the bundle to check. Recommendation: assert one instance at
   startup (a `Symbol.for('trikey.random')` marker on `globalThis` that a second copy refuses), or
   check the bundle in CI.
+
+  **Ruled out.** In plain terms: the app contains exactly one copy of the code that guards the random
+  source, so every key goes through the copy that was locked to the right source at start-up. I built
+  the real Android and iOS app bundles (`npx expo export`) and counted the modules in their source
+  maps:
+  - each bundle contains exactly one `packages/core/src/random.ts`, one `random-health.ts`, one
+    `platform/polyfills.ts` and one `platform/rng-startup.ts`;
+  - `node_modules/@trikey/core` is a link to `packages/core`, so Metro sees a single file, whether code
+    imports `@trikey/core/random`, the relative `./random.js`, or the name without `.js` that the
+    resolver tries as a fallback.
+
+  Side note (Info). The bundle does include two other copies of the noble crypto libraries, nested
+  inside other packages:
+  - nostr-tools has its own `@noble/hashes` and `@noble/curves` 2.0.1;
+  - bitcoinjs-lib, pulled in by the Ledger signer kit, has `@noble/hashes` 1.8.0, which keeps a
+    reference to `globalThis.crypto` taken when it loads.
+
+  All three draw random bytes by calling that object's `getRandomValues`, and throw if it is missing:
+  none falls back to `Math.random`. The app's polyfill runs before any of them load, so they use the
+  same locked source, only without `secureRandomBytes`' checks. Today that affects only the nostr
+  signature randomness in I1, which cannot leak a key. These copies are what a runtime check for
+  random draws outside `secureRandomBytes` (L1's last suggestion) would catch.
 
 ---
 
