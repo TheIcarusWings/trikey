@@ -112,6 +112,11 @@ export const GuardianStatusCache = z.object({
       ),
     })
     .optional(),
+  /**
+   * Where the guardian reads the blockchain (`guardian.status.chainSource`): the owner's own node or a public server,
+   * chosen in the guardian's web UI. Absent from older guardians, which use the box's own node.
+   */
+  chainSource: z.object({ kind: z.enum(['own', 'public']), backend: z.enum(['electrum', 'core']), host: z.string() }).optional(),
 });
 export type GuardianStatusCache = z.infer<typeof GuardianStatusCache>;
 

@@ -371,6 +371,8 @@ export function buildHandlers(g: Guardian): Handlers {
         ...(g.service.get().relays.length ? { relays: [...g.service.get().relays] } : {}),
         // The owner's extra alert channels, masked and read-only (PROTOCOL.md, "Extra alert channels").
         ...(g.notifier.configured ? { notifications: { channels: g.notifier.summary() } } : {}),
+        // Where it reads the blockchain: the owner's own node or a public server (PROTOCOL.md, "Chain source").
+        ...(g.chainSourceSummary() ? { chainSource: { kind: g.chainSourceSummary()!.kind, backend: g.chainSourceSummary()!.backend, host: g.chainSourceSummary()!.host.slice(0, 255) } } : {}),
         ...(s.dailyLimit
           ? {
               dailyLimit: {
@@ -861,7 +863,8 @@ export function buildHandlers(g: Guardian): Handlers {
     const { helper, coins } = singleKeyCoins(g);
     if (!helper && !coins.size) throw new RpcError(ErrorCode.WalletNotWatched, 'The phone registered no single-key coins with this guardian (singlekey.register).');
     const scripts = [...new Set(coins.values())].map(hexToBytes);
-    const unspent = (await g.chain.scriptUnspent(scripts, MAX_SYNC_UTXOS)).filter((u) => {
+    const outpoints = [...coins.keys()].map((k) => ({ txid: k.slice(0, k.lastIndexOf(':')), vout: Number(k.slice(k.lastIndexOf(':') + 1)) }));
+    const unspent = (await g.chain.scriptUnspent(scripts, MAX_SYNC_UTXOS, outpoints)).filter((u) => {
       const want = coins.get(`${u.txid}:${u.vout}`);
       return want !== undefined && want === bytesToHex(u.script);
     });

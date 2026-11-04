@@ -1,3 +1,4 @@
+import type { GuardianChainSource } from './chain-source';
 /**
  * Domain types for the Trikey app UI.
  *
@@ -128,8 +129,10 @@ export interface Guardian {
   relays: string[];
   /** How many of them are connected right now, when the wallet can tell. */
   relaysConnected?: number;
-  /** Where the guardian reads the chain from. */
-  chainData: 'your-node';
+  /** Where the guardian reads the chain from: `your-node` unless the guardian says it uses a public server. */
+  chainData: 'your-node' | 'public';
+  /** What the guardian said about it (`guardian.status.chainSource`; absent from older guardians, which use the box's node). */
+  chainSource?: GuardianChainSource;
   /** The guardian's nostr public key, bech32. */
   npub: string;
   /** Block explorer on the same box (Umbrel's Mempool app), shared when pairing. */
@@ -268,6 +271,8 @@ export type SecurityEvent = { id: string; at: IsoDate } & (
   | { kind: 'savings-unwatched'; replaced: boolean }
   /** The guardian's email, ntfy or webhook alerts were changed in its web page (never from this phone). */
   | { kind: 'alert-channels-changed' }
+  /** Where the guardian reads the blockchain was changed in its web page (never from this phone): `public` for a public server. */
+  | { kind: 'guardian-server-changed'; public: boolean; host: string }
 );
 
 export type ActivityItem =

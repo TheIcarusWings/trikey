@@ -36,6 +36,8 @@ import type {
 } from './types.js';
 import type { Health, HealthState } from '../notify/notifier.js';
 import { sessionCookie } from './sessions.js';
+import { publicServersFor, publicView } from '../chain/source.js';
+import type { ChainSettings, ChainTestResult } from './types.js';
 
 const iso = (ms: number) => new Date(ms).toISOString();
 const ok = (body: unknown, status = 200): RouteResult => ({ status, body });
@@ -248,6 +250,27 @@ export function notificationSettings(g: Guardian): NotificationSettings {
     pending: v.pending,
     defaultNtfyServer: v.defaultNtfyServer,
     limits: v.limits,
+  };
+}
+
+/** `GET` and `PUT /api/chain` (Settings > Server): the chain source, how it is doing, the public servers to offer. */
+export function chainSettings(g: Guardian): ChainSettings {
+  const b = g.chain.backend;
+  const summary = g.chainSourceSummary();
+  return {
+    source: g.chainSource ? (publicView(g.chainSource) as unknown as ChainSettings['source']) : null,
+    ...(summary ? { summary } : {}),
+    origin: g.chainSourceOrigin,
+    status: {
+      connected: !!b?.connected,
+      ...(b?.serverVersion ? { server: b.serverVersion } : {}),
+      ...(b?.connected && b.tip ? { height: b.tip.height } : {}),
+      ...(!b?.connected && b?.lastError ? { error: b.lastError } : {}),
+      rescans: g.chainRescans.map((r) => ({ since: iso(r.since), from: iso(r.birthday * 1000) })),
+    },
+    publicServers: publicServersFor(g.config.network).map((p) => ({ id: p.id, host: p.host, port: p.port, operator: p.operator, ...(p.chain ? { chain: p.chain } : {}) })),
+    network: g.config.network,
+    recoveryRunning: !!g.activeRecord(),
   };
 }
 
@@ -476,6 +499,36 @@ export function buildRoutes(g: Guardian): Route[] {
         if (r.code === 'rate_limited') throw new HttpError(429, 'rate_limited', r.message, r.retryAfterSeconds);
         // The send failed: an answer, not an error of the API (the page shows it next to the channel).
         const res: NotifyTestResult = { ok: false, error: r.message, health: healthBody(r.health ?? { state: 'failing' }) };
+        return ok(res);
+      },
+    },
+
+    // Settings > Server: where the guardian reads the blockchain. Unlocked only, like the relays and the alert channels.
+    {
+      method: 'GET',
+      path: '/chain',
+      handler: () => {
+        requireUnlocked(g);
+        return ok(chainSettings(g));
+      },
+    },
+    {
+      method: 'PUT',
+      path: '/chain',
+      handler: async ({ body }) => {
+        requireUnlocked(g);
+        const r = await g.changeChainSource(body);
+        if (!r.ok) throw new HttpError(r.code === 'invalid' ? 400 : 409, r.code, r.message);
+        return ok(chainSettings(g));
+      },
+    },
+    {
+      method: 'POST',
+      path: '/chain/test',
+      handler: async ({ body }) => {
+        requireUnlocked(g);
+        const r = await g.testChainSource(body);
+        const res: ChainTestResult = { ok: r.ok, ...(r.server ? { server: r.server } : {}), ...(r.height !== undefined ? { height: r.height } : {}), ...(r.error ? { error: r.error } : {}) };
         return ok(res);
       },
     },

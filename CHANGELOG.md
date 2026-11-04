@@ -6,8 +6,6 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
-## Unreleased
-
 ## 0.1.11-alpha (2026-11-04)
 
 A fix release for what was seen on an iPhone with 0.1.10, and the guardian on plain Docker. Update the app and the guardian; each fix works with the
@@ -45,6 +43,12 @@ other side's older version.
   node's estimate.
 - **The guardian on plain Docker.** Besides Umbrel and Start9, the guardian can run with Docker Compose on a Mac, a
   Windows PC, Linux or a NAS, with your own Electrum server: [packaging/compose](packaging/compose/README.md).
+- **Choose the guardian's chain server, like Sparrow** (guardian web UI, Settings > Server): your own Electrum server
+  (the default, and what Umbrel and Start9 keep), Bitcoin Core alone (a watch-only wallet in your node, no Electrum
+  server needed), or a public Electrum server, always encrypted, behind a clear warning: it sees the wallet's addresses
+  and your IP and could hide coins, but can't spend or change rules. Every change is announced to your phone and alert
+  channels, and switching to a public server is refused during a recovery. The phone shows which kind it is under
+  Settings > Guardian (#105).
 - Test plan: what to do when Play Protect says "Unsafe app blocked" when installing or updating the APK.
 
 ## 0.1.10-alpha (2026-11-03)

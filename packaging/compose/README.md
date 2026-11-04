@@ -19,8 +19,10 @@ run (`ghcr.io/theicaruswings/trikey-guardian`), started with Docker Compose.
 - [After a restart: unlock](#after-a-restart-unlock)
 - [Updating](#updating)
 - [Backups, and what losing the data means](#backups-and-what-losing-the-data-means)
+- [Bitcoin Core alone](#bitcoin-core-alone)
 - [A node in this file (`--profile node`)](#a-node-in-this-file---profile-node)
 - [No node at all?](#no-node-at-all)
+- [Changing the server later (Settings > Server)](#changing-the-server-later-settings--server)
 - [Troubleshooting](#troubleshooting)
 - [Files here](#files-here)
 
@@ -28,11 +30,13 @@ run (`ghcr.io/theicaruswings/trikey-guardian`), started with Docker Compose.
 
 - **Docker with Compose v2** (`docker compose version` answers). Docker Desktop has it; on Linux install Docker Engine
   and the Compose plugin; on a NAS, its container app (below).
-- **A Bitcoin node with an Electrum server that this computer can reach.** The guardian reads the chain from an
-  Electrum server (Electrs or Fulcrum) and, optionally, from Bitcoin Core's RPC. It can be:
-  - your own node on another box: Umbrel, Start9, RaspiBlitz, myNode, Parmanode, a NAS running Fulcrum;
-  - a node on this same computer (`ELECTRUM_HOST=host.docker.internal`);
-  - the node this compose file can run for you (`--profile node`, [below](#a-node-in-this-file---profile-node)).
+- **A Bitcoin node that this computer can reach**, best with an Electrum server (Electrs or Fulcrum). The guardian
+  reads the chain from one of three kinds of server (`CHAIN_SOURCE`), as Sparrow Wallet does:
+  - **your own Electrum server** (`electrum`, the default): your node on another box (Umbrel, Start9, RaspiBlitz,
+    myNode, Parmanode, a NAS running Fulcrum), on this same computer (`ELECTRUM_HOST=host.docker.internal`), or the
+    node this compose file can run for you (`--profile node`, [below](#a-node-in-this-file---profile-node));
+  - **your own Bitcoin Core alone** (`core`): no Electrum server needed ([Bitcoin Core alone](#bitcoin-core-alone));
+  - **a public server** (`public`), if you have no node at all, at a cost in privacy ([No node at all?](#no-node-at-all)).
 
   It must be on the same network as the guardian's key: a signet guardian needs a signet node.
 - **Internet access, outbound only.** The guardian talks to your phone through nostr relays over outbound WebSocket
@@ -93,12 +97,16 @@ the container with the new settings; the data stays).
 | Setting | What it is |
 |---|---|
 | `BITCOIN_NETWORK` | `mainnet`, `testnet4`, `signet` or `regtest`. Key 3 is made for this network and the guardian refuses to start on another one later. |
+| `CHAIN_SOURCE` | `electrum` (your Electrum server, the default), `core` (your Bitcoin Core alone) or `public` (a public server). The first choice only: the web page's Settings > Server can change it, and its choice then wins. |
 | `ELECTRUM_HOST` | Your Electrum server's host name or IP address, as this computer reaches it. |
 | `ELECTRUM_PORT` | Empty for the usual port: 50001, or 50002 with TLS. |
 | `ELECTRUM_TLS` | `1` for TLS. Use it for any server on another machine that offers TLS. |
 | `ELECTRUM_TLS_CERT_SHA256` | With TLS: the SHA-256 fingerprint of the server's own certificate (self-signed, as Fulcrum makes). [Electrum over TLS](#electrum-over-tls). |
 | `ELECTRUM_ALLOW_PUBLIC_PLAINTEXT` | `1` allows plain TCP to a server on the internet. Not advised. |
-| `BITCOIN_RPC_HOST`, `_PORT`, `_USER`, `_PASS` | Optional, all four or none: your Bitcoin Core's RPC. With it the guardian shows sync progress, broadcasts through the node when the Electrum server fails, and scans for silent payments. |
+| `PUBLIC_ELECTRUM_SERVER`, `PUBLIC_ELECTRUM_CERT_SHA256` | With `CHAIN_SOURCE=public`: a listed server's id or `host:port` of another public one (empty: the first listed for your network), and its certificate pin if it is self-signed. |
+| `BITCOIN_RPC_HOST`, `_PORT`, `_USER`, `_PASS` | All four or none: your Bitcoin Core's RPC. Needed for `CHAIN_SOURCE=core`. Otherwise optional: the guardian then shows sync progress, broadcasts through the node when the Electrum server fails, and scans for silent payments. |
+| `BITCOIN_RPC_ALLOW_PUBLIC` | `1` allows plain RPC to an address on the internet. Not advised. |
+| `BITCOIN_CORE_WALLET` | With `CHAIN_SOURCE=core`: the watch-only wallet's name in Bitcoin Core (default `trikey-guardian`). |
 | `TRIKEY_UI_BIND` | `127.0.0.1` (default): only this computer opens the web UI. See [another computer](#opening-the-web-ui-from-another-computer). |
 | `TRIKEY_UI_PORT` | The web UI's port on this computer, default 3000. |
 | `TRIKEY_RELAYS` | Optional: the nostr relays the first-run screen offers, comma-separated `wss://` URLs. |
@@ -364,12 +372,55 @@ compose file. Its data lives in the volumes `trikey-guardian_bitcoin-data` and `
 To update the pins, change the tag and digest in a commit of its own, here and in `e2e/docker-compose.yml` together
 (`e2e/test/unit/compose-guardian.test.ts` checks that they match).
 
+## Bitcoin Core alone
+
+No Electrum server? The guardian can read the chain from Bitcoin Core alone, the way Sparrow Wallet does: set
+`CHAIN_SOURCE=core` and the four `BITCOIN_RPC_*` settings (or choose "Your own Bitcoin Core" in Settings > Server).
+
+- Bitcoin Core **24 or later**.
+- The guardian creates a **watch-only descriptor wallet** in your node (`trikey-guardian`, or `BITCOIN_CORE_WALLET`):
+  no private keys, nothing can be spent from it. It imports the descriptors of the wallets it watches (your Trikey
+  wallet, Savings, a replaced wallet, the phone's helper account), and Bitcoin Core follows those addresses itself.
+- **The first import scans the chain** from the wallet's birthday (for your Trikey wallet: the guardian's setup day).
+  On mainnet that takes from minutes to an hour or more; until it is done the guardian says "Bitcoin Core is scanning the
+  chain for this wallet" and the phone shows the wallet as not available yet. A wallet whose start the guardian does not
+  know (a replaced wallet, the helper account) is scanned from the genesis block: hours on mainnet.
+- **A pruned node** works only while it still has the blocks since the wallet's birthday; otherwise the guardian refuses
+  the import and says why. Use an unpruned node, or an Electrum server.
+- Bitcoin Core's **RPC has no encryption**: the guardian sends it only to an address on this computer or your own
+  network (or a Tailscale address). Use the RPC user and password from your node's settings (Umbrel's Bitcoin Node app
+  lists them where it explains how to connect a wallet), or `__cookie__` and the cookie's password for a cookie file (it changes at every
+  restart of the node).
+- Removing that wallet from Bitcoin Core loses nothing: the guardian imports again (with a new scan).
+
 ## No node at all?
 
-A **public chain server** option (a well-known public Electrum or Esplora server, for people with no node at all) is
-coming and under discussion. It costs privacy and trust: the server sees every address of the wallet and the box's IP
-address, and could hide coins or delay confirmations from the guardian (it cannot spend or change any rule). Your own
-node stays the recommended setup.
+Then the guardian can use a **public Electrum server**, as a last resort: `CHAIN_SOURCE=public` (or "A public server" in
+Settings > Server). The guardian offers a few well-known, long-running servers (TLS, CA-verified), and you can name
+another public one:
+
+| Network | Servers |
+|---|---|
+| mainnet | `electrum.blockstream.info:50002` (Blockstream), `electrum.emzy.de:50002` (Emzy), `bitcoin.lukechilds.co:50002` (Luke Childs), `electrum.bitaroo.net:50002` (Bitaroo) |
+| testnet | `electrum.blockstream.info:60002` (testnet3), `mempool.space:40002` (testnet4) |
+| signet | `mempool.space:60602` |
+
+**What it costs.** A public server sees every address of the wallets the guardian watches, and this computer's IP
+address, and can link them. It could hide coins from the guardian or delay confirmations (which can hold up a payment
+or a recovery). It **cannot** spend, and it cannot change any rule: the keys and the rules stay where they are. Your
+own node avoids all of this; use one if you can. While a recovery runs, the guardian refuses to switch to a public
+server (switching to your own node is always allowed).
+
+## Changing the server later (Settings > Server)
+
+The guardian's web page has **Settings > Server**, like Sparrow Wallet's Server preferences: it shows the server in use
+and whether it is connected, lets you choose another one of the three kinds, and has **Test connection** (which connects
+without switching). A change is announced to your phone, on every alert channel (email, ntfy, webhook, yours and your
+contacts') and in Activity, because a change of server is a change of whom the guardian trusts for chain data. The
+phone shows the kind in Settings > Guardian ("Your node", or "Public server: <host>" with the warning above).
+
+The choice is kept in the guardian's data (`chain-source.json`, the RPC password sealed) and wins over `.env` from then
+on. To go back to `.env`, choose the same settings there again in the page.
 
 ## Troubleshooting
 
