@@ -38,6 +38,34 @@ const DRAIN_BUDGET_MS = 16;
 /** How many unmatched responses `RpcClient` keeps for re-sent requests. */
 const MAX_UNMATCHED = 64;
 
+/**
+ * A call's timer that fires this much later than it was set for did not run on time: the process was suspended (an
+ * iPhone with the screen off keeps each timer's target date and fires every one that passed as soon as the app
+ * comes back, before the app hears it is active again; Android pauses timers in the background). (ms)
+ */
+export const SUSPENSION_SLACK_MS = 2000;
+/** After a suspension, an unanswered call is re-sent and waits this much longer (at most its own timeout). (ms) */
+export const RESUME_WINDOW_MS = 15_000;
+/** A pending request is re-sent at most this often when relays come back (`onresubscribed`), however many do. (ms) */
+const RESEND_MIN_GAP_MS = 1000;
+/**
+ * Methods that only read, so a request whose rumor has expired by the time it is re-sent (the phone slept longer than
+ * its TTL) goes out again with a fresh date: the guardian answering it twice is harmless. Anything else is re-sent only
+ * as it was (the guardian answers a duplicate from its cache, and never runs it twice); once expired, it is not
+ * re-sent, and the call ends with its timeout.
+ */
+const READ_ONLY_METHODS: ReadonlySet<MethodName> = new Set<MethodName>([
+  'guardian.status',
+  'wallet.sync',
+  'tx.get',
+  'fees.estimate',
+  'policy.get',
+  'recovery.status',
+  'savings.get',
+]);
+/** A request is re-dated (read-only methods) when less than this is left of its TTL (s). */
+const REDATE_MARGIN_SEC = 60;
+
 /** Why an incoming event was ignored. Reported through `onDrop`; nothing is sent to the sender. */
 export interface DropInfo {
   reason: EnvelopeReason | 'unauthorized' | 'unexpected_direction' | 'unmatched';
@@ -115,6 +143,8 @@ interface Pending {
   method: MethodName;
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
+  /** Sends the request again now (a fresh wrap), unless it was sent less than `RESEND_MIN_GAP_MS` ago. */
+  resend?: () => void;
 }
 
 /** Phone side: sends requests to the guardian and awaits the matching responses. */
@@ -195,6 +225,9 @@ export class RpcClient {
           isKnown: (id) => this.known(id),
           verifiedByCaller: true,
           onresubscribed: (relay) => {
+            // What was sent while that relay was gone (or on a connection that only looked open) may never have
+            // reached the guardian, and its answer may have gone the same way: send unanswered requests again now.
+            this.resendPending();
             for (const h of this.reconnectHandlers) {
               try {
                 h(relay);
@@ -239,6 +272,15 @@ export class RpcClient {
     this.pending.clear();
   }
 
+  /**
+   * Sends every unanswered request again now, over fresh wraps (the app came back to the front, relays reconnected).
+   * Safe: the guardian answers a request it has seen from its cache. Called by itself when a relay's subscription is
+   * back (`onresubscribed`).
+   */
+  resendPending(): void {
+    for (const p of this.pending.values()) p.resend?.();
+  }
+
   /** Register a handler for guardian alerts. Returns an unsubscribe function. */
   onAlert(handler: (alert: Alert, meta: { id: string; at: number }) => void): () => void {
     this.alertHandlers.add(handler);
@@ -263,19 +305,40 @@ export class RpcClient {
 
     const lim = this.limits.request;
     const ttlSec = opts.ttlSec ?? Math.min(lim.maxTtlSec, Math.max(lim.defaultTtlSec, Math.ceil(timeoutMs / 1000) + 30));
-    const createdAt = this.now();
-    const send = () =>
-      this.o.pool.publish(
-        this.relays,
-        wrapMessage(request, {
-          senderSecretKey: this.o.secretKey,
-          recipient: this.o.peer,
-          ttlSec,
-          createdAt,
-          now: createdAt,
-          limits: this.limits,
-        }).wrap,
-      );
+    let createdAt = this.now();
+    const readOnly = READ_ONLY_METHODS.has(method);
+    /** The request can still be accepted (re-dated first, when it only reads). False: an expired request that changes something. */
+    const sendable = (): boolean => {
+      if (this.now() <= createdAt + ttlSec - REDATE_MARGIN_SEC) return true;
+      if (!readOnly) return this.now() < createdAt + ttlSec;
+      createdAt = this.now();
+      return true;
+    };
+    let lastSentAt = 0;
+    /** Some relay accepted the request at least once. */
+    let accepted = false;
+    let lastFailure: PublishError | undefined;
+    const send = (): Promise<PublishOutcome[] | undefined> => {
+      if (!sendable()) return Promise.resolve(undefined);
+      lastSentAt = Date.now();
+      return this.o.pool
+        .publish(
+          this.relays,
+          wrapMessage(request, {
+            senderSecretKey: this.o.secretKey,
+            recipient: this.o.peer,
+            ttlSec,
+            createdAt,
+            now: createdAt,
+            limits: this.limits,
+          }).wrap,
+        )
+        .then((outcomes) => {
+          if (outcomes.some((o) => o.ok)) accepted = true;
+          else lastFailure = new PublishError(outcomes);
+          return outcomes;
+        });
+    };
 
     return new Promise<Result<M>>((resolve, reject) => {
       if (this.pending.has(id)) {
@@ -289,6 +352,10 @@ export class RpcClient {
         clearInterval(retry);
         this.pending.delete(id);
       };
+      const resend = () => {
+        if (Date.now() - lastSentAt < RESEND_MIN_GAP_MS) return;
+        void send().catch(() => undefined);
+      };
       this.pending.set(id, {
         method,
         resolve: (v) => {
@@ -299,12 +366,36 @@ export class RpcClient {
           settle();
           reject(e);
         },
+        resend,
       });
-      timer = setTimeout(() => this.pending.get(id)?.reject(new RpcTimeoutError(method, timeoutMs)), timeoutMs);
+      /**
+       * The timeout, `ms` from now. If it fires late, the process was suspended meanwhile (see `SUSPENSION_SLACK_MS`):
+       * that says nothing about the guardian, whose answer may be waiting on the relays, or may have been lost with a
+       * connection the OS closed. So the request is sent again and the call waits a little longer (`RESUME_WINDOW_MS`),
+       * as often as it is suspended. Only a timeout that fires on time ends the call.
+       */
+      const arm = (ms: number) => {
+        const due = Date.now() + ms;
+        timer = setTimeout(() => {
+          const p = this.pending.get(id);
+          if (!p) return;
+          if (Date.now() - due > SUSPENSION_SLACK_MS) {
+            lastSentAt = 0;
+            resend();
+            arm(Math.min(timeoutMs, RESUME_WINDOW_MS));
+            return;
+          }
+          // No relay ever took the request: say so (still "unreachable" to the wallet), rather than "no answer".
+          p.reject(!accepted && lastFailure ? lastFailure : new RpcTimeoutError(method, timeoutMs));
+        }, ms);
+      };
+      arm(timeoutMs);
 
       send().then(
         (outcomes) => {
-          if (!outcomes.some((o) => o.ok)) this.pending.get(id)?.reject(new PublishError(outcomes));
+          // Without retries, no relay taking the request is the end of it. With retries, a relay that fails now (the
+          // network just came back, a socket the OS closed) may take it at the next try: keep trying until the timeout.
+          if (outcomes && !outcomes.some((o) => o.ok) && retryMs <= 0) this.pending.get(id)?.reject(new PublishError(outcomes));
         },
         (e) => this.pending.get(id)?.reject(e),
       );
