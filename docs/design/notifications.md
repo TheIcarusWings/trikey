@@ -284,6 +284,12 @@ no link, and the guardian's nostr messages, which are signed, remain the referen
   signed nostr messages.
 - **Links in alerts** ("open the app", "see details"): exactly what phishing imitates. Trikey alerts never carry one.
 
+## Family hosting
+
+A guardian that hosts guests' wallets (docs/design/family-hosting.md) keeps these channels for its owner's own wallet and
+host-level events. A guest's alerts never go to them (the owner's nor the owner's contacts'): they go to the guest's phone
+and the guest's own contacts as nostr DMs. Channels for guests are phase 2 of family hosting.
+
 ## Decisions (owner, 2026-11-01)
 
 The note's open questions, answered by the owner:

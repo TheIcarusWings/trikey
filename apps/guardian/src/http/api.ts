@@ -36,6 +36,7 @@ import type {
 } from './types.js';
 import type { Health, HealthState } from '../notify/notifier.js';
 import { sessionCookie } from './sessions.js';
+import { hostingRoutes } from '../hosting/http.js';
 import { publicServersFor, publicView } from '../chain/source.js';
 import type { ChainSettings, ChainTestResult } from './types.js';
 
@@ -271,7 +272,8 @@ export function chainSettings(g: Guardian): ChainSettings {
     },
     publicServers: publicServersFor(g.config.network).map((p) => ({ id: p.id, host: p.host, port: p.port, operator: p.operator, ...(p.chain ? { chain: p.chain } : {}) })),
     network: g.config.network,
-    recoveryRunning: !!g.activeRecord(),
+    // A guest wallet's recovery counts too: its coin check runs on this chain source.
+    recoveryRunning: !!g.activeRecord() || g.hosting.recoveryRunning(),
   };
 }
 
@@ -607,30 +609,7 @@ export function buildRoutes(g: Guardian): Route[] {
       },
     },
 
-    // Hosting for family is a later feature (DESIGN.md): the engine holds one wallet.
-    {
-      method: 'GET',
-      path: '/hosting',
-      handler: () => {
-        requireUnlocked(g);
-        return ok({ wallets: [], pendingInvite: null });
-      },
-    },
-    {
-      method: 'POST',
-      path: '/hosting/invites',
-      handler: () => {
-        requireUnlocked(g);
-        throw new HttpError(501, 'not_available', 'Hosting a guardian for family is not available yet.');
-      },
-    },
-    {
-      method: 'DELETE',
-      path: '/hosting/invites/:id',
-      handler: () => {
-        requireUnlocked(g);
-        throw new HttpError(501, 'not_available', 'Hosting a guardian for family is not available yet.');
-      },
-    },
+    // Hosting for family (docs/design/family-hosting.md): hosting/http.ts.
+    ...hostingRoutes(g),
   ];
 }

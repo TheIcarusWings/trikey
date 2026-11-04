@@ -52,6 +52,7 @@ node --import tsx apps/guardian/src/main.ts
 | `BITCOIN_NETWORK` | `bitcoin` | `bitcoin`, `testnet`, `signet`, `regtest`; also `mainnet`, `main`, `testnet3`, `testnet4`, `test` |
 | `TRIKEY_LOG_LEVEL` | `info` | `debug` for more |
 | `TRIKEY_EXTRA_ENTROPY` | none | Optional: 32 bytes as 64 hex characters, mixed into every new setup seed with the OS draw and the browser's entropy (`trikey/guardian-seed/v1`, DESIGN.md "Entropy"). The Umbrel package sets it to the app's `APP_SEED`. Any other non-empty value is hashed to 32 bytes (SHA-256); it never stops the guardian from starting. Never logged; removed from the process environment once read. |
+| `FAMILY_HOSTING` | on | `false` turns hosting guests' wallets off (docs/design/family-hosting.md): no invites in the web UI, and guests' requests are dropped like a stranger's |
 | `SP_SCAN_THREADS` | cores - 1, at least 1 | Worker threads for the silent payment scanner, 1 to 64. `1` scans in the main thread, without workers. Lower it to leave more of the box to Bitcoin Core during a first scan. |
 
 For the web UI's dev server (`VITE_API=http`), run the guardian with `PORT=8787` or

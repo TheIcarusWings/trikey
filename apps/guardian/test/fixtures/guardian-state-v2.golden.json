@@ -1,0 +1,121 @@
+{
+  "version": 2,
+  "retired": [],
+  "hardwareSequence": 1,
+  "recoveries": [],
+  "activity": [
+    {
+      "id": 1,
+      "at": 1790856000000,
+      "type": "registered",
+      "walletId": "da1cc1a954d65a15"
+    },
+    {
+      "id": 2,
+      "at": 1790856000000,
+      "type": "cosign_signed",
+      "txid": "802215445d73b438dc3dfcdb20eb858e02d66788d80300308b71e26082988b52",
+      "outflow": {
+        "$bigint": "40380"
+      },
+      "usedAfter": {
+        "$bigint": "40380"
+      },
+      "replay": false
+    },
+    {
+      "id": 3,
+      "at": 1790856000000,
+      "type": "rules_changed",
+      "by": "hardware",
+      "sequence": 1,
+      "from": {
+        "dailyLimitSats": {
+          "$bigint": "100000"
+        },
+        "recoveryDelayDays": 7,
+        "alertContacts": [
+          "0f0fb9a244ad31a369ee02b7abfbbb0bfa3812b9a39ed93346d03d67d412d177"
+        ],
+        "sweepFeeCapSats": {
+          "$bigint": "20000"
+        }
+      },
+      "to": {
+        "dailyLimitSats": {
+          "$bigint": "150000"
+        },
+        "recoveryDelayDays": 7,
+        "alertContacts": [
+          "0f0fb9a244ad31a369ee02b7abfbbb0bfa3812b9a39ed93346d03d67d412d177"
+        ],
+        "sweepFeeCapSats": {
+          "$bigint": "20000"
+        }
+      }
+    }
+  ],
+  "nextActivityId": 4,
+  "active": {
+    "registration": {
+      "walletId": "da1cc1a954d65a15",
+      "network": "regtest",
+      "descriptor": "wsh(sortedmulti(2,[73c5da0a/48h/1h/0h/2h]tpubDFH9dgzveyD8zTbPUFuLrGmCydNvxehyNdUXKJAQN8x4aZ4j6UZqGfnqFrD4NqyaTVGKbvEW54tsvPTK2UoSbCC1PJY8iCNiwTL3RWZEheQ/<0;1>/*,[b8688df1/48h/1h/0h/2h]tpubDEfobrrtptRTbKf4gysDhoabneABDTAcdj3Vbn4XwPsLE2pmqpizSPRG6zHsbAMuiSgWmWPsYCLHTKTPpyrGJ5rAoTpKoQNZcxodiPf2tSJ/<0;1>/*,[a3c6b1ee]tpubD6NzVbkrYhZ4WMyyc74UghV3dg2tUoui4qE58mz3vD6Xbp78xBTWUmw11mjWZsgUeWFjxmYtZhr8Pztr7F9vEUjevPtLdFyYDUdThUE5USD/<0;1>/*))#3ymkn7jx",
+      "cosignerAccountPubkey": "02989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f",
+      "hardwareAuth": {
+        "kind": "bip137",
+        "pubkey": "03aa93b6a70ed21658af2fafcc7344ccc5bff0703cd872bd9d9f06825e02f2145c",
+        "path": "m/48'/1'/0'/2'/0/0"
+      },
+      "hardwareAuthConfirmed": true,
+      "appNostrPubkey": "552c630b64b54bf50210c9e253d38bd4949c72e22873500f6285c2bede312a84",
+      "registeredAt": 1790856000000,
+      "origin": {
+        "kind": "paired"
+      }
+    },
+    "rules": {
+      "dailyLimitSats": {
+        "$bigint": "150000"
+      },
+      "recoveryDelayDays": 7,
+      "alertContacts": [
+        "0f0fb9a244ad31a369ee02b7abfbbb0bfa3812b9a39ed93346d03d67d412d177"
+      ],
+      "sweepFeeCapSats": {
+        "$bigint": "20000"
+      }
+    },
+    "spends": [
+      {
+        "txid": "802215445d73b438dc3dfcdb20eb858e02d66788d80300308b71e26082988b52",
+        "at": 1790856000000,
+        "outflow": {
+          "$bigint": "40380"
+        },
+        "shares": [
+          {
+            "outpoint": "bedd0391f358a9a52bb75484b8aae62d5df9477cd1027cbd037539d01f100d7d:0",
+            "share": {
+              "$bigint": "40380"
+            }
+          }
+        ]
+      }
+    ],
+    "phoneSpending": {
+      "state": "enabled"
+    },
+    "accessGrants": [],
+    "highWater": {
+      "receive": -1,
+      "change": 3
+    }
+  },
+  "chainSeen": {
+    "height": 2984760,
+    "medianTimePastMs": 1790856000000,
+    "at": 1790856000000
+  },
+  "timeFloor": 1790856000000
+}

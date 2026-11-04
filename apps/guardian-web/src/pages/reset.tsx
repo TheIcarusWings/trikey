@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { usePageTitle } from '@/hooks/use-api';
+import { RESET_WHILE_HOSTING } from '@/lib/hosting';
 
 function messageFor(err: unknown): string {
   if (!(err instanceof ApiError)) return 'Could not reset the guardian.';
@@ -17,6 +18,8 @@ function messageFor(err: unknown): string {
       return "That passphrase isn't right.";
     case 'rate_limited':
       return err.retryAfterSeconds ? `Too many tries. Wait ${err.retryAfterSeconds} seconds and try again.` : 'Too many tries. Wait a moment and try again.';
+    case 'hosting_active':
+      return `${err.message} ${RESET_WHILE_HOSTING}`;
     default:
       // recovery_pending, sweep_pending, invalid: the guardian's message says what to do.
       return err.message;

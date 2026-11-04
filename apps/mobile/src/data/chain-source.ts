@@ -18,3 +18,13 @@ export function chainDataLabel(cs: GuardianChainSource | undefined): string {
   if (!cs || cs.kind === 'own') return cs?.backend === 'core' ? 'Your node (Bitcoin Core)' : 'Your node';
   return `Public server: ${cs.host}`;
 }
+
+/**
+ * A hosted wallet's "Host's server" row: where the HOST's guardian reads the chain (`guardian.status.chainSource` from a
+ * host, which names a public server but never the host's own node). It checks this wallet's recovery coins and relays
+ * its payments there; the phone itself reads the wallet from its own chain server.
+ */
+export function hostChainDataLabel(cs: GuardianChainSource | undefined): string {
+  if (!cs || cs.kind === 'own') return "Host's own node";
+  return `Public server: ${cs.host}`;
+}

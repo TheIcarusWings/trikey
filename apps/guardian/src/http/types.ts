@@ -12,6 +12,8 @@ export type {
   ChainStatus,
   GuardianStatus,
   PublicStatus,
+  FamilyInvite,
+  HostedWallet,
   HostingOverview,
   ChannelHealth,
   NotificationSettings,

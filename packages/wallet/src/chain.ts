@@ -41,6 +41,11 @@ export interface ChainSource {
   /** Broadcasts a fully signed transaction; resolves with its txid. */
   broadcast(txHex: string): Promise<string>;
   estimateFees(targets?: number[]): Promise<FeeEstimates>;
+  /**
+   * Optional: unspent outputs paying any of `scripts` (hex), mempool included. A hosted wallet's phone asks it for the
+   * coins the guardian co-signed at no derivation path (its ledger), which a descriptor scan cannot find.
+   */
+  unspentByScript?(scripts: string[]): Promise<ScriptUtxo[]>;
 }
 
 /** An unspent output found by its script. */

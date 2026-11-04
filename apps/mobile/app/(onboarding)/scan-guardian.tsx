@@ -58,6 +58,15 @@ export default function ScanGuardian() {
     if (code.kind === 'pairing') {
       setScanNote(null);
       void submit(code.uri);
+    } else if (code.kind === 'invite' && !replacing && wallet.readInvite) {
+      // Someone's invite to keep a key of this wallet on their guardian: read what it says before anything is sent.
+      setScanNote(null);
+      try {
+        wallet.readInvite(code.uri);
+        router.push('/guardian-invite');
+      } catch (e) {
+        setScanNote(e instanceof Error ? e.message : 'This invite cannot be used.');
+      }
     } else if (code.kind === 'recovery') setScanNote("That is the guardian's recovery code. To pair, choose Pair a phone on the guardian and scan the code it shows.");
     else if (code.kind === 'unknown' && /^trikey:/i.test(data.trim())) setScanNote(code.reason);
   };

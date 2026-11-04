@@ -125,7 +125,7 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
       };
     case 'wallet-retired':
       return {
-        title: event.reason === 'recovered' ? 'Wallet moved by a recovery' : event.reason === 'reset' ? 'Guardian was reset' : 'Old wallet retired on the guardian',
+        title: event.reason === 'recovered' ? 'Wallet moved by a recovery' : event.reason === 'reset' ? 'Guardian was reset' : event.reason === 'hosting_ended' ? 'Your host stopped hosting this wallet' : 'Old wallet retired on the guardian',
         subtitle: `${when} · the guardian co-signs nothing for it any more`,
         subtitleTone: 'warn',
         icon: Shield,
@@ -196,6 +196,14 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
         iconTone: 'warn',
       };
     case 'guardian-server-changed':
+      if (event.hosted)
+        return {
+          title: event.public ? `Your host's guardian now uses a public server (${event.host})` : "Your host's guardian now uses its own node",
+          subtitle: `${when} · changed by your host. Your phone still reads your wallet from its own server`,
+          subtitleTone: event.public ? 'warn' : 'muted',
+          icon: Shield,
+          iconTone: event.public ? 'warn' : 'fill',
+        };
       return {
         title: event.public ? `Guardian now uses a public server (${event.host})` : 'Guardian now uses your own node',
         subtitle: `${when} · changed in your guardian's web page. If that wasn't you, check the guardian`,

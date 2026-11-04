@@ -9,9 +9,9 @@ import { Screen } from '@/components/screen';
 import { UnlockForm } from '@/components/unlock-form';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
-import { formatSats, shorten, useNow, useWallet, useWalletService } from '@/data';
+import { formatSats, serverHost, shorten, useNow, useWallet, useWalletService } from '@/data';
 import { guardianBox, hostLabel } from '@/lib/labels';
-import { PUBLIC_SERVER_WARNING, chainDataLabel } from '@/data/chain-source';
+import { PUBLIC_SERVER_WARNING, chainDataLabel, hostChainDataLabel } from '@/data/chain-source';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
@@ -103,7 +103,7 @@ function OldWallets() {
 export default function GuardianSettings() {
   const router = useRouter();
   const now = useNow();
-  const { guardian, dailyLimit, replace } = useWallet();
+  const { guardian, dailyLimit, replace, hosted } = useWallet();
   const host = guardianBox(guardian);
 
   const status =
@@ -149,10 +149,27 @@ export default function GuardianSettings() {
           tabular
         />
         <InfoRow label="Relays" value={guardian.relaysConnected === undefined ? `${guardian.relays.length}` : `${guardian.relaysConnected} connected`} />
-        <InfoRow label="Chain data" value={chainDataLabel(guardian.chainSource)} tone={guardian.chainData === 'public' ? 'warn' : 'default'} />
+        {hosted ? (
+          <>
+            {/* A wallet hosted on someone else's guardian: whose box, and where this phone reads the chain (never from the host). */}
+            <InfoRow label="Hosted by" value={hosted.hostLabel ?? 'Someone else'} />
+            <InfoRow label="Chain data" value={`${serverHost(hosted.chainServer ?? hosted.publicServer)}${hosted.chainServer ? '' : ' (public)'}`} />
+            {/* Where the host's guardian checks this wallet's recovery coins and relays its payments. */}
+            <InfoRow label="Host's server" value={hostChainDataLabel(guardian.chainSource)} tone={guardian.chainData === 'public' ? 'warn' : 'default'} />
+            {hosted.endsAt ? <InfoRow label="Hosting ends" value={new Date(hosted.endsAt).toLocaleDateString()} tone="warn" /> : null}
+          </>
+        ) : (
+          <InfoRow label="Chain data" value={chainDataLabel(guardian.chainSource)} tone={guardian.chainData === 'public' ? 'warn' : 'default'} />
+        )}
         <InfoRow label="Guardian ID" value={shorten(guardian.npub, 8, 4)} mono />
       </Panel>
-      {guardian.chainData === 'public' ? (
+      {hosted ? <AppButton title="Chain server" variant="outline" onPress={() => router.push('/settings/hosted-server')} /> : null}
+      {hosted?.endsAt ? (
+        <Text className="text-warn text-sm leading-5">
+          Your host stopped hosting this wallet. Move it before {new Date(hosted.endsAt).toLocaleDateString()} with Replace guardian: your phone and hardware wallet can always move it.
+        </Text>
+      ) : null}
+      {!hosted && guardian.chainData === 'public' ? (
         <Notice icon={TriangleAlert} iconClass="text-warn" tone="warn-outline" title="Public server">
           {PUBLIC_SERVER_WARNING}
         </Notice>
