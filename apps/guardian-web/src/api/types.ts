@@ -499,3 +499,61 @@ export interface HostingOverview {
   /** The latest invite that can still be accepted, if any. */
   pendingInvite: FamilyInvite | null;
 }
+
+// --- Settings > Server (where the guardian reads the blockchain) ---------------
+
+/**
+ * The chain source as the guardian shows it: never the RPC password (`passSet` says one is stored).
+ * - `electrum`: a private Electrum server (the box's own Electrs, or Electrs or Fulcrum on your network);
+ * - `core`: your own Bitcoin Core alone, through a watch-only wallet in it;
+ * - `public`: a public Electrum server (always TLS).
+ */
+export type ChainSourceView =
+  | { kind: 'electrum'; host: string; port: number; tls: boolean; certSha256?: string; allowPublicPlaintext?: boolean }
+  | { kind: 'public'; host: string; port: number; certSha256?: string }
+  | { kind: 'core'; rpc: { host: string; port: number; user: string; passSet: true; allowPublic?: boolean }; wallet?: string };
+
+/** `PUT /api/chain` and `POST /api/chain/test`. For `core`, leave `pass` out to keep the stored one. For `public`, `preset` or `host`. */
+export type ChainSourceInput =
+  | { kind: 'electrum'; host: string; port?: number; tls: boolean; certSha256?: string; allowPublicPlaintext?: boolean }
+  | { kind: 'public'; preset?: string; host?: string; port?: number; certSha256?: string }
+  | { kind: 'core'; rpc: { host: string; port: number; user: string; pass?: string; allowPublic?: boolean }; wallet?: string };
+
+export interface PublicServerOption {
+  id: string;
+  host: string;
+  port: number;
+  operator: string;
+  /** For testnet: which test network the server follows. */
+  chain?: 'testnet3' | 'testnet4';
+}
+
+export interface ChainSettings {
+  source: ChainSourceView | null;
+  /** `own` (your Electrum server or Bitcoin Core) or `public`. */
+  summary?: { kind: 'own' | 'public'; backend: 'electrum' | 'core'; host: string; port: number };
+  /** `environment`: the settings the guardian was started with (Umbrel, Start9, `.env`); `settings`: chosen here. */
+  origin: 'environment' | 'settings';
+  status: {
+    connected: boolean;
+    /** `electrs/0.12.0`, `Bitcoin Core 32.1`. */
+    server?: string;
+    height?: number;
+    /** While not connected: why. */
+    error?: string;
+    /** Bitcoin Core only: wallet imports still scanning the chain, since when, from which date. */
+    rescans: { since: ISODate; from: ISODate }[];
+  };
+  /** Well-known public servers for this network. */
+  publicServers: PublicServerOption[];
+  network: string;
+  /** While a recovery runs, switching to a public server is refused (`recovery_pending`). */
+  recoveryRunning: boolean;
+}
+
+export interface ChainTestResult {
+  ok: boolean;
+  server?: string;
+  height?: number;
+  error?: string;
+}

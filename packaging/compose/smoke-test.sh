@@ -3,7 +3,7 @@
 # bitcoind and Electrs of e2e/docker-compose.yml, and checks what a user meets first:
 #   - the compose file (and its node profile) is valid;
 #   - the guardian comes up healthy, with the web UI on 127.0.0.1 only;
-#   - it reaches the Electrum server (the first-run check says "found");
+#   - it reaches the Electrum server (the first-run check says "found"), and Bitcoin Core alone with CHAIN_SOURCE=core;
 #   - first-run setup is closed without the setup code from the log, and opens with it.
 #
 # Used by .github/workflows/compose.yml. Locally (Docker running):
@@ -113,4 +113,14 @@ code="$(dc logs --no-color guardian | sed -n 's/.* setup\.code code=\([0-9A-Z-]*
 [ "$(post /setup/code '{"code":"'"$code"'"}')" = "200" ] || fail "the setup code from the log was not accepted"
 curl -fsS "$base/status" | jq -e '.setupComplete == false' >/dev/null || fail "checking the code must not set the guardian up"
 
-echo "The guardian from packaging/compose came up, reached Electrs and guards its first run with the setup code."
+echo "== Bitcoin Core alone (CHAIN_SOURCE=core)"
+sed -i -e 's/^CHAIN_SOURCE=.*/CHAIN_SOURCE=core/' "$work/.env"
+dc up -d guardian || fail "docker compose up with CHAIN_SOURCE=core failed"
+for i in $(seq 1 60); do
+  pre="$(curl -fsS "$base/setup/preflight" 2>/dev/null)" && echo "$pre" | jq -e '.electrs == "found"' >/dev/null && break
+  sleep 1
+done
+echo "$pre" | jq -e '.electrs == "found" and .node == "found"' >/dev/null || fail "the guardian did not reach Bitcoin Core alone: $pre"
+dc logs --no-color guardian | grep -q 'core.connected' || fail "no core.connected in the log"
+
+echo "The guardian from packaging/compose came up, reached Electrs (and Bitcoin Core alone) and guards its first run with the setup code."

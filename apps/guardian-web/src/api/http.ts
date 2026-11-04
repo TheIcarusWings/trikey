@@ -2,6 +2,8 @@ import { BrowserRandomError, browserRandomHex } from '../lib/random';
 import { ApiError, type GuardianApi } from './client';
 import type {
   ActivityEntry,
+  ChainSettings,
+  ChainTestResult,
   FamilyInvite,
   GuardianStatus,
   HostingOverview,
@@ -126,6 +128,9 @@ export function createHttpApi(base = ''): GuardianApi {
     getNotifications: () => request<NotificationSettings>('GET', '/notifications'),
     setNotifications: (input) => request<NotificationSettings>('PUT', '/notifications', input),
     testNotification: (input) => request<NotifyTestResult>('POST', '/notifications/test', input),
+    getChain: () => request<ChainSettings>('GET', '/chain'),
+    setChain: (input) => request<ChainSettings>('PUT', '/chain', input),
+    testChain: (input) => request<ChainTestResult>('POST', '/chain/test', input),
     resetGuardian: async (input) => request<GuardianStatus>('POST', '/reset', withBrowserEntropy(input)),
 
     startPairing: () => request<PairingSession>('POST', '/pairing'),

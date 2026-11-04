@@ -14,7 +14,14 @@
  *   ELECTRUM_ALLOW_PUBLIC_PLAINTEXT optional: 1 allows plain TCP to an address on the internet (not advised)
  *   BITCOIN_RPC_HOST, BITCOIN_RPC_PORT, BITCOIN_RPC_USER, BITCOIN_RPC_PASS
  *                     optional: Bitcoin Core, for sync status, as a broadcast fallback,
- *                     and for the silent payment scanner (blocks with prevouts)
+ *                     and for the silent payment scanner (blocks with prevouts); with
+ *                     CHAIN_SOURCE=core the whole chain source. Plain RPC only to an address on
+ *                     the box or the owner's network, unless BITCOIN_RPC_ALLOW_PUBLIC=1
+ *   CHAIN_SOURCE      electrum (default with ELECTRUM_HOST), core (Bitcoin Core alone, through a
+ *                     watch-only wallet named BITCOIN_CORE_WALLET, default trikey-guardian) or public
+ *                     (a public Electrum server: PUBLIC_ELECTRUM_SERVER, a listed id or host:port;
+ *                     default the first listed for the network). The first choice only: the web
+ *                     UI's Settings > Server overrides it (chain/source.ts)
  *   BITCOIN_NETWORK   bitcoin|testnet|signet|regtest, plus the names Umbrel and
  *                     others use (mainnet, main, testnet3, testnet4, test)
  *   SP_SCAN_THREADS   optional: worker threads for the silent payment scanner (1 to 64;
@@ -37,6 +44,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { hex } from '@scure/base';
 import { DEFAULT_KDF, SETUP_ENTROPY_BYTES, type KdfParams } from './keystore.js';
 import { isLocalAddress, normalizeFingerprint } from './chain/electrum.js';
+import { ChainSourceError, parseChainSource, publicServersFor, PUBLIC_SERVERS, type ChainSource } from './chain/source.js';
 
 /**
  * Where the guardian reads the chain. Today one kind: an Electrum server (the box's own Electrs, or one on the
@@ -61,6 +69,8 @@ export interface BitcoinRpcConfig {
   port: number;
   user: string;
   pass: string;
+  /** Plain RPC to an address on the internet allowed (BITCOIN_RPC_ALLOW_PUBLIC). */
+  allowPublic?: boolean;
 }
 
 export interface GuardianConfig {
@@ -88,6 +98,13 @@ export interface GuardianConfig {
    * Unset (embedders and tests that build a config by hand): no setup code.
    */
   platform?: Platform;
+  /**
+   * The chain source from the environment (CHAIN_SOURCE). Unset: the Electrum server of `electrum`. The web UI's
+   * choice, once made, overrides both (chain/source.ts).
+   */
+  chainSource?: ChainSource;
+  /** BITCOIN_CORE_WALLET: the watch-only wallet's name in Bitcoin Core (CHAIN_SOURCE=core). */
+  coreWallet?: string;
 }
 
 const NETWORK_ALIASES: Record<string, NetworkName> = {
@@ -183,6 +200,45 @@ export function parseElectrum(env: NodeJS.ProcessEnv): ElectrumConfig | undefine
   return { host, port, ...(tls ? { tls } : {}), ...(certSha256 ? { certSha256 } : {}), ...(allowPublicPlaintext ? { allowPublicPlaintext } : {}) };
 }
 
+/**
+ * CHAIN_SOURCE and its settings (see the file comment). `electrum` (the default) needs ELECTRUM_HOST; `core` the four
+ * BITCOIN_RPC_*; `public` takes PUBLIC_ELECTRUM_SERVER (a listed id, or host[:port]) or the network's first listed one.
+ */
+export function parseChainSourceEnv(
+  env: NodeJS.ProcessEnv,
+  network: NetworkName,
+  electrum: ElectrumConfig | undefined,
+  rpc: BitcoinRpcConfig | undefined,
+  coreWallet?: string,
+): ChainSource | undefined {
+  const kind = (env['CHAIN_SOURCE'] ?? '').trim().toLowerCase();
+  try {
+    if (kind === '' || kind === 'electrum') {
+      if (kind === 'electrum' && !electrum) throw new Error('CHAIN_SOURCE=electrum needs ELECTRUM_HOST');
+      return electrum ? { kind: 'electrum', host: electrum.host, port: electrum.port, tls: !!electrum.tls, ...(electrum.certSha256 ? { certSha256: electrum.certSha256 } : {}), ...(electrum.allowPublicPlaintext ? { allowPublicPlaintext: true } : {}) } : undefined;
+    }
+    if (kind === 'core') {
+      if (!rpc) throw new Error('CHAIN_SOURCE=core needs BITCOIN_RPC_HOST, BITCOIN_RPC_USER and BITCOIN_RPC_PASS');
+      return parseChainSource({ kind: 'core', rpc: { ...rpc }, ...(coreWallet ? { wallet: coreWallet } : {}) });
+    }
+    if (kind === 'public') {
+      const named = (env['PUBLIC_ELECTRUM_SERVER'] ?? '').trim();
+      if (!named) {
+        const first = publicServersFor(network)[0];
+        if (!first) throw new Error(`no public server is listed for ${network}: set PUBLIC_ELECTRUM_SERVER=host:port`);
+        return parseChainSource({ kind: 'public', preset: first.id });
+      }
+      if (PUBLIC_SERVERS.some((s) => s.id === named)) return parseChainSource({ kind: 'public', preset: named });
+      const m = /^(.+?)(?::(\d{1,5}))?$/.exec(named)!;
+      return parseChainSource({ kind: 'public', host: m[1], ...(m[2] ? { port: Number(m[2]) } : {}), certSha256: env['PUBLIC_ELECTRUM_CERT_SHA256'] });
+    }
+  } catch (e) {
+    if (e instanceof ChainSourceError) throw new Error(`CHAIN_SOURCE=${kind}: ${e.message}`);
+    throw e;
+  }
+  throw new Error(`CHAIN_SOURCE must be electrum, core or public (got "${env['CHAIN_SOURCE']}")`);
+}
+
 /** TRIKEY_RELAYS: unset means the built-in list; else 1 to 8 relay URLs, all selected by default. */
 export function parseRelayOptions(value: string | undefined): GuardianConfig['relayOptions'] {
   if (value === undefined || value.trim() === '') return DEFAULT_RELAY_OPTIONS;
@@ -223,16 +279,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GuardianConfig
     if (!user || !pass) throw new Error('BITCOIN_RPC_HOST is set, so BITCOIN_RPC_USER and BITCOIN_RPC_PASS are needed too');
     const network = parseNetwork(env['BITCOIN_NETWORK']);
     const defaultRpcPort = { bitcoin: 8332, testnet: 18332, signet: 38332, regtest: 18443 }[network];
-    bitcoinRpc = { host: rpcHost, port: parsePort('BITCOIN_RPC_PORT', env['BITCOIN_RPC_PORT'], defaultRpcPort)!, user, pass };
+    const allowPublic = parseFlag('BITCOIN_RPC_ALLOW_PUBLIC', env['BITCOIN_RPC_ALLOW_PUBLIC']);
+    const bareHost = rpcHost.replace(/^\[|\]$/g, '');
+    if (!allowPublic && isIP(bareHost) && !isLocalAddress(bareHost))
+      throw new Error(`BITCOIN_RPC_HOST ${rpcHost} is on the internet, and Bitcoin Core's RPC has no encryption: use your own network or a tunnel (or BITCOIN_RPC_ALLOW_PUBLIC=1)`);
+    bitcoinRpc = { host: rpcHost, port: parsePort('BITCOIN_RPC_PORT', env['BITCOIN_RPC_PORT'], defaultRpcPort)!, user, pass, ...(allowPublic ? { allowPublic } : {}) };
   }
+  const network = parseNetwork(env['BITCOIN_NETWORK']);
+  const electrum = parseElectrum(env);
+  const coreWallet = get('BITCOIN_CORE_WALLET');
+  const chainSource = parseChainSourceEnv(env, network, electrum, bitcoinRpc, coreWallet);
   return {
     port: parsePort('PORT', env['PORT'], 3000)!,
     host: '0.0.0.0',
     dataDir: get('TRIKEY_DATA_DIR') ?? '/data',
     webDir: get('TRIKEY_WEB_DIR'),
-    network: parseNetwork(env['BITCOIN_NETWORK']),
-    electrum: parseElectrum(env),
+    network,
+    electrum,
     bitcoinRpc,
+    ...(chainSource ? { chainSource } : {}),
+    ...(coreWallet ? { coreWallet } : {}),
     kdf: DEFAULT_KDF,
     relayOptions: parseRelayOptions(env['TRIKEY_RELAYS']),
     spScanThreads: parseScanThreads(env['SP_SCAN_THREADS']),

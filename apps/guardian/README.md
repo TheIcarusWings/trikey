@@ -44,6 +44,8 @@ node --import tsx apps/guardian/src/main.ts
 | `ELECTRUM_TLS` | `0` | `1`: TLS, the certificate checked against the public CAs (and `NODE_EXTRA_CA_CERTS`) and the host name |
 | `ELECTRUM_TLS_CERT_SHA256` | none | With TLS: accept exactly the certificate with this SHA-256 fingerprint (64 hex digits, colons allowed), for self-signed certificates. Compared before anything is sent. |
 | `ELECTRUM_ALLOW_PUBLIC_PLAINTEXT` | `0` | `1` allows plain TCP to an address on the internet |
+| `CHAIN_SOURCE` | `electrum` | `electrum` (the Electrum server of `ELECTRUM_*`), `core` (Bitcoin Core alone through a watch-only wallet, `BITCOIN_RPC_*`; `BITCOIN_CORE_WALLET`, default `trikey-guardian`) or `public` (`PUBLIC_ELECTRUM_SERVER`: a listed id or `host:port`, default the network's first; `PUBLIC_ELECTRUM_CERT_SHA256`). The first choice: the web UI's Settings > Server overrides it (`chain-source.json`). `src/chain/source.ts` |
+| `BITCOIN_RPC_ALLOW_PUBLIC` | `0` | `1` allows plain RPC to an address on the internet (Bitcoin Core's RPC has no TLS) |
 | `TRIKEY_PLATFORM` | `docker` | `umbrel` or `start9`: the platform's login guards the web UI. `docker`: first-run setup needs the setup code from the log. The Umbrel and Start9 packages set theirs. |
 | `TRIKEY_RELAYS` | built-in list | Optional: the relays the first-run screen offers, comma-separated, 1 to 8 |
 | `BITCOIN_RPC_HOST`, `_PORT`, `_USER`, `_PASS` | none | Optional: sync progress, a broadcast fallback, and the silent payment scanner (`getblock <hash> 3`; without them `sp.*` answers `1700`) |

@@ -1570,6 +1570,7 @@ export class TrikeyWallet {
       ...(st.hardwareConfirmRequired !== undefined ? { hardwareConfirmRequired: st.hardwareConfirmRequired } : {}),
       ...(st.watchedWalletId ? { watchedWalletId: st.watchedWalletId } : {}),
       ...(st.notifications ? { notifications: { channels: st.notifications.channels.map((c) => ({ ...c })) } } : {}),
+      ...(st.chainSource ? { chainSource: { ...st.chainSource } } : {}),
     };
     await this.update((s) => {
       s.guardianStatus = cache;
