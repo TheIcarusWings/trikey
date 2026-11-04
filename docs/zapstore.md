@@ -6,7 +6,7 @@ signed by the same APK key.
 
 ## For users
 
-Install Zapstore (from zapstore.dev), search for **Trikey**, and install it. Updates then show up in Zapstore. The
+Trikey is listed on Zapstore from 0.1.10-alpha. Install Zapstore (from zapstore.dev), search for **Trikey**, and install it. Updates then show up in Zapstore. The
 listing's publisher is Trikey's own npub (below), and the APK is the same file as on the
 [GitHub releases page](https://github.com/TheIcarusWings/trikey/releases), signed with the Trikey release key
 (certificate SHA-256 in [`packaging/android/release-cert.sha256`](../packaging/android/release-cert.sha256)). An APK
@@ -31,6 +31,9 @@ links the APK signing certificate to Trikey's publisher npub (NIP-C1).
    from your signer app is safer than pasting the nsec) and for the release keystore (`trikey-release.p12` and its
    password) to prove the certificate is yours. The keystore and the key never leave your computer. When it asks how
    new releases get published, choose to let **Zapstore keep Trikey up to date**.
+   Keep the signer app in front while the wizard runs: with Amber in the background the wizard stops with
+   `connect to bunker: context deadline exceeded` (nothing is changed; run it again). Commit the `zapstore.yaml` it
+   writes, so the repository's copy (which Zapstore reads) matches what the wizard used.
 4. **A new publisher key must be admitted by Zapstore first.** Until then the wizard stops at the first upload with
    `blob upload rejected: upload icon: status 403: authenticated pubkey is not allowed`, and nothing is published.
    Zapstore's relay admits an uploader that is on its whitelist, has enough Vertex reputation (follows from
