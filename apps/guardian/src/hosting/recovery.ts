@@ -3,10 +3,13 @@
  * host's wallet, without addresses:
  *
  * 1. Time, three ways (the engine checks again): the system clock, the chain's median time past and the block count.
- * 2. Coverage by the host's own Electrs, by the coins' OWN scripts (so nothing leaks): every input of the sweep is still
- *    unspent, and every ledger coin (a coin key 3 co-signed into existence) that is still unspent is in the sweep or in
- *    its `abandon` list. Coins received from outside cannot be checked here: that is the guest phone's job (it scans
- *    with its own chain source and a second server before it signs).
+ * 2. Coverage by the host's chain source, by the coins' OWN outpoints and scripts (so nothing is derived and nothing
+ *    leaks beyond those coins): every input of the sweep is still unspent, and every ledger coin (a coin key 3 co-signed
+ *    into existence) that is still unspent is in the sweep or in its `abandon` list (`ChainService.outpointsUnspent`).
+ *    It works with every chain source: an Electrum server is asked per script; Bitcoin Core is asked per outpoint
+ *    (`gettxout`), and the host's watch-only wallet in it never imports a guest's descriptor or address (BIP 89: the
+ *    host must not learn the guest's wallet). Coins received from outside cannot be checked here: that is the guest
+ *    phone's job (it scans with its own chain source and a second server before it signs).
  *
  * Then the co-signed sweep goes to the slot's `slot.json`, is broadcast through the host's node (retried), and once a
  * node accepted it the slot rotates to the destination wallet.
@@ -14,6 +17,7 @@
 import { base64, hex } from '@scure/base';
 import { parsePsbt } from '@trikey/core';
 import { formatBtc, formatWhen } from '../alerts.js';
+import { parseRawTx } from '../chain/chain.js';
 import type { Guardian } from '../guardian.js';
 import { errorText } from '../log.js';
 import type { HostedEngine } from './engine.js';
@@ -98,13 +102,17 @@ export class HostedRecoveryRunner {
   async checkCoverage(engine: HostedEngine, rec: HostedRecoveryRecord): Promise<{ ok: true } | { ok: false; reason: 'sweep_incomplete' | 'sweep_inputs_missing'; detail: string }> {
     const tx = parsePsbt(base64.decode(rec.sweepPsbt));
     const inputs = new Map<string, Uint8Array>();
+    const coins: { txid: string; vout: number; script: Uint8Array }[] = [];
     for (let i = 0; i < tx.inputsLength; i++) {
       const inp = tx.getInput(i);
-      inputs.set(`${hex.encode(inp.txid!)}:${inp.index}`, inp.witnessUtxo!.script);
+      const txid = hex.encode(inp.txid!);
+      inputs.set(`${txid}:${inp.index}`, inp.witnessUtxo!.script);
+      coins.push({ txid, vout: inp.index!, script: inp.witnessUtxo!.script });
     }
     const ledger = engine.ledger();
-    const scripts = [...inputs.values(), ...ledger.map((l) => hex.decode(l.script))];
-    const unspent = new Set((await this.g.chain.scriptUnspent(scripts)).map((u) => `${u.txid}:${u.vout}`));
+    for (const l of ledger) coins.push({ txid: l.txid, vout: l.vout, script: hex.decode(l.script) });
+    // By outpoint: nothing is imported into the host's Bitcoin Core wallet, nothing derived from the guest's wallet.
+    const unspent = await this.g.chain.outpointsUnspent(coins);
     const gone = [...inputs.keys()].filter((o) => !unspent.has(o));
     if (gone.length)
       return { ok: false, reason: 'sweep_inputs_missing', detail: `The sweep spends coins that are no longer unspent (${gone.slice(0, 5).join(', ')}), so it cannot be broadcast.` };
@@ -134,7 +142,7 @@ export class HostedRecoveryRunner {
       } catch (e) {
         error = errorText(e);
         try {
-          ok = await this.g.chain.hasTransaction(s.txid);
+          ok = (await this.g.chain.hasTransaction(s.txid)) || (await this.sweepOutputsUnspent(s.txHex, s.txid));
         } catch {
           /* keep the error */
         }
@@ -146,6 +154,16 @@ export class HostedRecoveryRunner {
       });
       if (ok) this.g.log.info('hosting.sweep_broadcast', { slot: slot.slotId, recoveryId: s.recoveryId });
     }
+  }
+
+  /**
+   * The sweep is known to the chain by one of its outputs (in the UTXO set or the mempool). Bitcoin Core without
+   * `-txindex` cannot serve a confirmed transaction that is not in the host's watch-only wallet (a guest's never is),
+   * so a sweep the guest's phone broadcast itself and that confirmed would otherwise be retried for ever.
+   */
+  private async sweepOutputsUnspent(txHex: string, txid: string): Promise<boolean> {
+    const outs = parseRawTx(txHex).outputs.map((o, vout) => ({ txid, vout, script: o.script }));
+    return (await this.g.chain.outpointsUnspent(outs)).size > 0;
   }
 
   private async rotateBroadcast(slot: SlotRecord, engine: HostedEngine): Promise<void> {

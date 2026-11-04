@@ -24,7 +24,7 @@ import { MultisigWallet, finalizePsbt, keySetId, type KeyExpression } from '@tri
 import { ErrorCode, RpcClient, RpcError, SimplePoolRelayPool, decodeInviteUri, decodePairingUri, pairingMessage, recoveryAccessMessage, type Alert, type Policy } from '@trikey/protocol';
 import { DAY, deserializeState, serializeState, signMessage } from '../src/policy/index.js';
 import { STOP_NOW_CONFIRMATION } from '../src/hosting/types.js';
-import { AUTH_PATH, MNEMONICS, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from './helpers.js';
+import { AUTH_PATH, MNEMONICS, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, phoneSpend } from './helpers.js';
 import { GuardianRig } from './support/rig.js';
 import { destinationAfterHardwareLoss, externalScript, fakeMap, hostedWallet, offPathPayment, phoneSweep, type HostedFixture } from './support/hosted.js';
 
@@ -189,7 +189,7 @@ describe('family hosting, end to end', { timeout: 60_000 }, () => {
     await expect(dad().rpc.call('hosted.prepare', { inviteSecret: a.secret, network: 'regtest' } as never)).rejects.toThrow(/expected string/);
     const prep = await dad().rpc.call('hosted.prepare', { inviteSecret: a.secret, network: 'regtest', entropy: 'ab'.repeat(31) + 'cd' });
     expect(prep.cosignerAccountPubkey).toMatch(/^0[23][0-9a-f]{64}$/);
-    expect(prep.features).toEqual(['family_hosting']);
+    expect(prep.features).toEqual(['family_hosting', 'short_wraps']);
     expect(prep.cosignerAccountPubkey).not.toBe(hex.encode(hostWallet.accountPubkeys().cosigner));
     const other = client(generateSecretKey());
     const e = await rpcError(other.call('hosted.prepare', { inviteSecret: a.secret, network: 'regtest', entropy: 'cd'.repeat(32) }));
@@ -218,7 +218,7 @@ describe('family hosting, end to end', { timeout: 60_000 }, () => {
 
   it("the guest's guardian.status is its slot's view: its key-set id, family_hosting only, nothing of the host's wallet", async () => {
     const st = await dad().rpc.call('guardian.status', {});
-    expect(st).toMatchObject({ paired: true, walletId: dad().fx!.walletId, features: ['family_hosting'], hosting: { state: 'active' }, key3Mixed: true });
+    expect(st).toMatchObject({ paired: true, walletId: dad().fx!.walletId, features: ['family_hosting', 'short_wraps'], hosting: { state: 'active' }, key3Mixed: true });
     expect(st.walletId).not.toBe(hostWallet.fingerprint());
     expect(st).not.toHaveProperty('savingsWalletId');
     expect(st).not.toHaveProperty('watchedWalletId');
@@ -250,6 +250,9 @@ describe('family hosting, end to end', { timeout: 60_000 }, () => {
     expect(ledger.total).toBe(1);
     expect(ledger.coins[0]).toMatchObject({ vout: 1, valueSats: 379_000 });
     const final = finalizePsbt(Buffer.from(signed.psbt, 'base64'));
+    // The host's broadcast shortcuts (co-signed a moment ago, coins of its last sync) are the host wallet's own: the
+    // host's phone cannot relay a guest's transaction through them.
+    expect((await rpcError(host.call('tx.broadcast', { txHex: final.txHex }))).code).toBe(ErrorCode.ForeignTransaction);
     expect((await dad().rpc.call('tx.broadcast', { txHex: final.txHex })).txid).toBe(final.txid);
     const strange = rig.fund(externalScript(5), 1000n);
     const e = await rpcError(dad().rpc.call('tx.broadcast', { txHex: strange.rawTx }));
@@ -388,5 +391,15 @@ describe('family hosting, end to end', { timeout: 60_000 }, () => {
     const { relays: _now, ...after } = stable(await host.call('guardian.status', {}));
     const { relays: _before, ...before } = hostStatusBefore;
     expect(after).toEqual(before);
+  });
+
+  it("the host's broadcast shortcuts stay the host's: a payment it co-signed for its own wallet is not a guest's", async () => {
+    // Last, as the host's payment changes the host's state file (which the tests above pin byte for byte).
+    const hostCoin = rig.fund(hostWallet.derive(0, 0).script, 300_000n);
+    await host.call('wallet.sync', {});
+    const { psbt: hostPsbt } = await phoneSpend(hostWallet, [{ txid: hostCoin.txid, vout: 0, value: hostCoin.value, chain: 0, index: 0, prevTxHex: hostCoin.rawTx }], 10_000n);
+    const hostSigned = finalizePsbt(Buffer.from((await host.call('sign', { psbt: Buffer.from(hostPsbt).toString('base64') })).psbt, 'base64'));
+    expect((await rpcError(dad().rpc.call('tx.broadcast', { txHex: hostSigned.txHex }))).code).toBe(ErrorCode.ForeignTransaction);
+    expect((await host.call('tx.broadcast', { txHex: hostSigned.txHex })).txid).toBe(hostSigned.txid);
   });
 });

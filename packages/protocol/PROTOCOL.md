@@ -429,8 +429,8 @@ encrypted **wallet map** write-once and burns the invite.
 
 **Routing.** A guest's phone (and a phone with recovery access to a guest wallet) reaches only its own slot: `sign`,
 `policy.get`, `policy.update`, `recovery.*`, `phone.resume`, `hardware.confirm`, `wallet.retire`, `guardian.status`
-(the slot's view: its key-set id, `features: ["family_hosting"]`, `hosting: { state, endsAt? }`, never the owner's
-wallet, Savings or which contact locked the box), `fees.estimate`, `tx.broadcast` (only transactions this slot
+(the slot's view: its key-set id, `features: ["family_hosting", "short_wraps"]`, `hosting: { state, endsAt? }`,
+`chainSource` as below, never the owner's wallet, Savings or which contact locked the box), `fees.estimate`, `tx.broadcast` (only transactions this slot
 co-signed), `relays.ack`, `hosted.coins`, `hosted.map.get`, `hosted.access`; anything else answers `1001` with
 `data.reason: "not_for_hosted_wallets"`. A guest wallet's recovery ids are `<slotId>g<n>-<txid12>`: `recovery.cancel` and
 `CANCEL <id>` DMs with such an id reach that slot only, from its phone or one of its alert contacts.
@@ -444,11 +444,20 @@ guardian need no BIP 32 derivations (the phone strips them). `sign` is limited t
 abandon? }` for a guest wallet (the descriptor form is refused there, and the hosted form for the owner's wallet). Every
 output must be tweak-proven to the destination; `abandon` names ledger coins the sweep leaves behind on purpose (coins the
 hardware wallet cannot sign); the alerts say how many and how much. Before completing, the guardian checks with its own
-Electrs, by the coins' own scripts, that the sweep's inputs are unspent and every unspent ledger coin is swept or
-abandoned. Coins received from outside are the guest phone's to find (its own chain source, cross-checked with a second
+chain source, by the coins' own outpoints and scripts, that the sweep's inputs are unspent and every unspent ledger
+coin is swept or abandoned (an Electrum server is asked per script; Bitcoin Core per outpoint with `gettxout`, so its
+watch-only wallet never imports anything of a guest). Coins received from outside are the guest phone's to find (its own chain source, cross-checked with a second
 server). A new phone without the old one or a backup uses `hosted.access` (version-2 text only), decrypts the map with
 the hardware wallet's chaincode and checks it against `accountPubkeys`. After an adoption without the old hardware
 wallet, `hardware.confirm` carries `hardwareAuth.tweak`.
+
+**The owner's chain source.** It is what the guardian checks a guest recovery's coins against and broadcasts a guest's
+transactions through (the guest's phone reads its wallet from its own chain server). A guest's `guardian.status.chainSource`
+and the `chain_source_changed` alert its phone and recovery peers get when the owner switches carry `kind`, `backend` and,
+for a public server, its `host`; for the owner's own node `host` is `"own"` (its address on the owner's network is not
+the guest's to know). The guest's alert is sent over nostr only, never on the owner's extra alert channels, and its
+`message` is written for the guest. Switching to a public server is refused while a guest wallet's recovery runs, as
+while the owner's does.
 
 **Stopping.** The owner's "Stop hosting" sends `hosting_ending` (`walletId`, `endsAt`) to the guest's phone and DMs to
 its contacts; at `endsAt` (or at once, behind a typed confirmation) the slot ends: `wallet_retired` with reason
@@ -485,7 +494,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 | `savings_unwatched` | `walletId` (the Savings wallet no longer watched), `replacedBy?` (the one watched instead): `savings.unregister`, or `savings.register` with another wallet. To the paired phone; alert contacts get a NIP-17 DM. See "Savings" |
 | `relays_changed` | `relays` (`RelayList`): the guardian moved to these relays (its web UI). Sent to the paired phone (and phones with recovery access) over the old and the new relays. See section 5, "Changing relays" |
 | `notifications_changed` | none: the extra alert channels (email, ntfy, webhook) were changed in the guardian's web UI; read the new list from `guardian.status.notifications`. Guardians with `notifications`; see "Extra alert channels" |
-| `chain_source_changed` | `kind` (`own`\|`public`), `backend` (`electrum`\|`core`), `host`: the owner switched where the guardian reads the chain (its web UI, Settings > Server). Also announced on the extra alert channels and in Activity. See "Chain data", "Chain source" |
+| `chain_source_changed` | `kind` (`own`\|`public`), `backend` (`electrum`\|`core`), `host`: the owner switched where the guardian reads the chain (its web UI, Settings > Server). Also announced on the extra alert channels and in Activity. To a guest wallet's phone: `host` is `"own"` for the owner's own node, and nothing goes on the owner's channels (see "Family hosting"). See "Chain data", "Chain source" |
 | `wallet_retired` | `walletId`, `reason` (`retired`\|`recovered`\|`reset`), `successorWalletId?`. Sent to the phone that was paired to the wallet: `retired` after `wallet.retire`; `reset` after the web UI's reset; `recovered` when a recovery swept the wallet and the phone paired to the new wallet is a different one (a lost phone's replacement), or the guardian adopted none (`successorWalletId` is the adopted wallet when there is one). The phone that started the recovery and is adopted gets `wallet_adopted` instead |
 
 Names match the engine (`daily_reminder` was renamed `recovery_reminder`; `daysRemaining` is now `daysLeft`, `executeAfter` is `readyAt`). The engine's `DueAlert` carries `dueAt` and `readyAt` in milliseconds; the service converts both to seconds (`at` and `readyAt`). `daysLeft` is already in days. The engine's due-alert record does not hold `cancelledBy`, the cancel's `contested` flag or the txid; the service reads them from the recovery record (`status().recovery`) when it builds those alerts.

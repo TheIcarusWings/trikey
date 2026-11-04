@@ -11,7 +11,7 @@ import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { formatSats, serverHost, shorten, useNow, useWallet, useWalletService } from '@/data';
 import { guardianBox, hostLabel } from '@/lib/labels';
-import { PUBLIC_SERVER_WARNING, chainDataLabel } from '@/data/chain-source';
+import { PUBLIC_SERVER_WARNING, chainDataLabel, hostChainDataLabel } from '@/data/chain-source';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
@@ -154,6 +154,8 @@ export default function GuardianSettings() {
             {/* A wallet hosted on someone else's guardian: whose box, and where this phone reads the chain (never from the host). */}
             <InfoRow label="Hosted by" value={hosted.hostLabel ?? 'Someone else'} />
             <InfoRow label="Chain data" value={`${serverHost(hosted.chainServer ?? hosted.publicServer)}${hosted.chainServer ? '' : ' (public)'}`} />
+            {/* Where the host's guardian checks this wallet's recovery coins and relays its payments. */}
+            <InfoRow label="Host's server" value={hostChainDataLabel(guardian.chainSource)} tone={guardian.chainData === 'public' ? 'warn' : 'default'} />
             {hosted.endsAt ? <InfoRow label="Hosting ends" value={new Date(hosted.endsAt).toLocaleDateString()} tone="warn" /> : null}
           </>
         ) : (

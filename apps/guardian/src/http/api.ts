@@ -271,7 +271,8 @@ export function chainSettings(g: Guardian): ChainSettings {
     },
     publicServers: publicServersFor(g.config.network).map((p) => ({ id: p.id, host: p.host, port: p.port, operator: p.operator, ...(p.chain ? { chain: p.chain } : {}) })),
     network: g.config.network,
-    recoveryRunning: !!g.activeRecord(),
+    // A guest wallet's recovery counts too: its coin check runs on this chain source.
+    recoveryRunning: !!g.activeRecord() || g.hosting.recoveryRunning(),
   };
 }
 

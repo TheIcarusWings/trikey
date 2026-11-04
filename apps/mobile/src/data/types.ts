@@ -272,7 +272,8 @@ export type SecurityEvent = { id: string; at: IsoDate } & (
   /** The guardian's email, ntfy or webhook alerts were changed in its web page (never from this phone). */
   | { kind: 'alert-channels-changed' }
   /** Where the guardian reads the blockchain was changed in its web page (never from this phone): `public` for a public server. */
-  | { kind: 'guardian-server-changed'; public: boolean; host: string }
+  /** `hosted`: the host changed its guardian's server (a hosted wallet), not the person's own guardian. */
+  | { kind: 'guardian-server-changed'; public: boolean; host: string; hosted?: true }
 );
 
 export type ActivityItem =

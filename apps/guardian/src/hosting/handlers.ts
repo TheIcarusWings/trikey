@@ -20,7 +20,7 @@ import type { Guardian } from '../guardian.js';
 import { errorText } from '../log.js';
 import { policyHash, type CancelActor } from '../policy/index.js';
 import { policyToWire, recoveryToWire, refusalError, refusalText, rulesFromPolicy } from '../nostr/wire.js';
-import { GUEST_FEATURES, GUEST_METHODS, GUEST_RECOVERY_METHODS, Hosting, slotOfRecoveryId, type GuestRoute } from './service.js';
+import { GUEST_FEATURES, GUEST_METHODS, GUEST_RECOVERY_METHODS, Hosting, guestChainSource, slotOfRecoveryId, type GuestRoute } from './service.js';
 import type { HostedRecoveryView } from './engine.js';
 import type { HostedRefusal } from './types.js';
 
@@ -115,6 +115,9 @@ function guestHandlers(g: Guardian, h: Hosting): Partial<Record<MethodName, Gues
       ...(g.service.get().relays.length ? { relays: [...g.service.get().relays] } : {}),
       ...(s.dailyLimit ? { dailyLimit: { limitSats: Number(s.dailyLimit.limit), usedSats: Number(s.dailyLimit.used), availableSats: Number(s.dailyLimit.available) } } : {}),
       features: [...GUEST_FEATURES],
+      // Where the host's guardian reads the chain (for this wallet: its recovery's coin check and its broadcasts), without
+      // the address of the host's own node (`guestChainSource`).
+      ...(g.chainSourceSummary() ? { chainSource: guestChainSource(g.chainSourceSummary()!) } : {}),
       // Why and since when it is locked; never which contact locked the host's box.
       ...(g.locked && g.lockedAt !== undefined && g.lockReason ? { lock: { reason: g.lockReason, at: Math.floor(g.lockedAt / 1000) } } : {}),
       hosting: { state: route.slot.state === 'leaving' ? ('leaving' as const) : ('active' as const), ...(route.slot.endsAt !== undefined ? { endsAt: Math.floor(route.slot.endsAt / 1000) } : {}) },

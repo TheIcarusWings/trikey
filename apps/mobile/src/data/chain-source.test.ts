@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PUBLIC_SERVER_WARNING, chainDataLabel } from './chain-source';
+import { PUBLIC_SERVER_WARNING, chainDataLabel, hostChainDataLabel } from './chain-source';
 
 describe("Settings > Guardian: where the guardian reads the chain", () => {
   it('says "Your node" for the owner\'s own server, and for guardians that do not say (they use the box\'s node)', () => {
@@ -13,5 +13,11 @@ describe("Settings > Guardian: where the guardian reads the chain", () => {
     expect(PUBLIC_SERVER_WARNING).toMatch(/sees your wallet's addresses/);
     expect(PUBLIC_SERVER_WARNING).toMatch(/cannot spend or change your rules/);
     expect(PUBLIC_SERVER_WARNING).toMatch(/Use your own node/);
+  });
+
+  it("a hosted wallet: the host's server, never as \"Your node\" (a host names a public server only)", () => {
+    expect(hostChainDataLabel(undefined)).toBe("Host's own node");
+    expect(hostChainDataLabel({ kind: 'own', backend: 'core', host: 'own' })).toBe("Host's own node");
+    expect(hostChainDataLabel({ kind: 'public', backend: 'electrum', host: 'electrum.blockstream.info' })).toBe('Public server: electrum.blockstream.info');
   });
 });

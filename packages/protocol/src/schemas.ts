@@ -574,7 +574,8 @@ export const GuardianStatusResult = z
      * Where the guardian reads the blockchain (absent from older guardians, which use the box's own Electrs): `own`, the
      * owner's Electrum server or Bitcoin Core, or `public`, a public Electrum server, which sees every address of the
      * wallet and the box's IP address and could hide coins or delay confirmations (it cannot spend or change a rule).
-     * The owner chooses it in the guardian's web UI; the phone only shows it (PROTOCOL.md, "Chain source").
+     * The owner chooses it in the guardian's web UI; the phone only shows it (PROTOCOL.md, "Chain source"). To a hosted
+     * guest wallet's phone it is the host's, with `host: "own"` for the host's own node (PROTOCOL.md, "Family hosting").
      */
     chainSource: z
       .object({

@@ -970,8 +970,10 @@ class Service implements RealWalletService {
           addEvent(this.log, { kind: 'savings-unwatched', replaced: !!a.replacedBy, at: e.atMs });
           void this.saveLogNow();
         } else if (a.type === 'chain_source_changed') {
-          // Changed in the guardian's web page (this phone cannot): the new source shows in Settings > Guardian.
-          addEvent(this.log, { kind: 'guardian-server-changed', public: a.kind === 'public', host: a.host, at: e.atMs });
+          // Changed in the guardian's web page (this phone cannot): the new source shows in Settings > Guardian. For a
+          // hosted wallet it is the host's choice (this phone still reads the wallet from its own chain server).
+          const hosted = this.w?.isHosted ? ({ hosted: true } as const) : {};
+          addEvent(this.log, { kind: 'guardian-server-changed', public: a.kind === 'public', host: a.host, ...hosted, at: e.atMs });
           void this.saveLogNow();
           this.refresh();
         } else if (a.type === 'notifications_changed') {

@@ -10,7 +10,7 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hex } from '@scure/base';
-import type { MethodName } from '@trikey/protocol';
+import type { Alert, MethodName } from '@trikey/protocol';
 import { GUARDIAN_FEATURES } from '@trikey/protocol';
 import type { Guardian } from '../guardian.js';
 import { hostedKey3Context, hostedKey3Mix, type GuardianSeed, type KeystoreSigner } from '../keystore.js';
@@ -65,8 +65,23 @@ export const GUEST_RECOVERY_METHODS: ReadonlySet<MethodName> = new Set<MethodNam
   'hosted.map.get',
 ]);
 
-/** The features a guest sees: only what the host serves for guests in phase 1. */
-export const GUEST_FEATURES = [GUARDIAN_FEATURES.familyHosting];
+/**
+ * The features a guest sees: only what the host serves for guests in phase 1, and `short_wraps`, a property of the one
+ * nostr transport every phone talks to (guests' answers are short wraps like the host phone's).
+ */
+export const GUEST_FEATURES = [GUARDIAN_FEATURES.familyHosting, GUARDIAN_FEATURES.shortWraps];
+
+/** What a guest is told of the host's chain source: its kind, and a public server's name; never the host's own node's address. */
+export interface GuestChainSource {
+  kind: 'own' | 'public';
+  backend: 'electrum' | 'core';
+  /** A public server's host name, or `own` for the host's own node (whose address on the host's network stays the host's). */
+  host: string;
+}
+
+export function guestChainSource(s: { kind: 'own' | 'public'; backend: 'electrum' | 'core'; host: string }): GuestChainSource {
+  return { kind: s.kind, backend: s.backend, host: s.kind === 'public' ? s.host.slice(0, 255) : 'own' };
+}
 
 class HostedFileStore implements HostedStore {
   constructor(readonly path: string) {}
@@ -220,6 +235,28 @@ export class Hosting {
     const out = new Set<string>();
     for (const [id, e] of this.engines) if (id !== except) for (const k of e.keySets()) out.add(k);
     return out;
+  }
+
+  /** A guest wallet's recovery is running (the host's chain source must not become a public server meanwhile). */
+  recoveryRunning(): boolean {
+    return this.liveSlots().some(({ engine }) => !!engine.activeRecord());
+  }
+
+  /**
+   * The host switched its chain source (Settings > Server): every guest phone and recovery peer is told, best effort,
+   * with `guestChainSource` (the host's own node is not named). It is what the host's guardian checks a guest recovery's
+   * coins against and broadcasts through; the guest's phone still reads its wallet from its own chain server. Only over
+   * nostr to the guests' own phones: never the host's channels, and never the guests' contacts (it is not about them).
+   */
+  async announceChainSource(to: { kind: 'own' | 'public'; backend: 'electrum' | 'core'; host: string }): Promise<void> {
+    if (!this.enabled) return;
+    const cs = guestChainSource(to);
+    const text =
+      (cs.kind === 'public'
+        ? `Your host's guardian now reads the blockchain from a public server (${cs.host}). It checks your wallet's recovery and relays your payments through it: that server sees those coins and transactions.`
+        : "Your host's guardian now reads the blockchain from the host's own node.") + ' Your phone still reads your wallet from its own chain server.';
+    const alert: Alert = { type: 'chain_source_changed', ...cs, ...this.g.stampNow(), message: text.slice(0, 500) };
+    for (const peer of this.phones()) await this.g.notifyPeer(peer, alert);
   }
 
   // -------------------------------------------------------------------------

@@ -4519,7 +4519,7 @@ export class TrikeyWallet {
     const fees = (await primary.estimateFees([3, 6]).catch(() => undefined)) ?? this.fees;
     const destAddr = destination.derive(0, 0);
     const vsize = estimateVsize(total, [destAddr.script]);
-    let rate = pickFeeRate(fees, 'normal');
+    let rate = pickFeeRate(fees, 'normal', this.feeFloor);
     if (Math.ceil(vsize * rate) > feeCapSats) rate = Math.floor((feeCapSats / vsize) * 1000) / 1000;
     if (rate < (fees?.minRelaySatPerVb ?? 1) || Math.ceil(vsize * rate) > feeCapSats)
       throw new WalletError('fee_cap_too_low', `The sweep fee cap (${feeCapSats} sats) does not cover the minimum relay fee for ${total} coins.`);

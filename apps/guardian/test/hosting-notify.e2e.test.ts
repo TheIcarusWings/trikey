@@ -148,7 +148,7 @@ describe("a guest's alerts never reach the host's extra channels", { timeout: 60
     // The guest's status shows nothing of the host's channels.
     const st = await guestRpc.call('guardian.status', {});
     expect(st).not.toHaveProperty('notifications');
-    expect(st.features).toEqual(['family_hosting']);
+    expect(st.features).toEqual(['family_hosting', 'short_wraps']);
   });
 
   it("the guest's recovery alerts and its hosting_ending go by nostr to the guest's phone and contacts only", async () => {

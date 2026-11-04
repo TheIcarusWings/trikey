@@ -25,6 +25,13 @@
  *                        ntfy and webhook settings, their delivery outbox, and
  *                        the key their secrets are sealed under (so alerts go
  *                        out while locked)
+ *   seen-wraps.json      ids of gift wraps already handled (`FILES.seenWraps`).
+ *                        One file for the one nostr key: guests' phones talk to
+ *                        the same key, so their wraps are remembered here too
+ *   hosting.json, hosted/<slotId>/state.json, hosted/<slotId>/slot.json
+ *                        family hosting (hosting/service.ts): the slot
+ *                        registry, and each guest wallet's engine state and
+ *                        sweeps. Only once the owner invites someone
  */
 import { join } from 'node:path';
 import type { Server } from 'node:http';
@@ -938,7 +945,9 @@ export class Guardian {
    * wallets' addresses and could hide coins), so every change is logged in Activity and announced to the paired phone
    * (`chain_source_changed`), the owner's channels and the alert contacts' channels. While a recovery runs, switching
    * to a public server is refused: the recovery's own checks (spends elsewhere, the sweep's confirmations) must not
-   * rest on a stranger's server. Switching to the owner's own node is always allowed.
+   * rest on a stranger's server. Switching to the owner's own node is always allowed. With family hosting, a guest
+   * wallet's recovery counts as running too, and guests' phones are told in their own words (never on the host's
+   * channels, never naming the host's own node: `Hosting.announceChainSource`).
    */
   changeChainSource(input: unknown): Promise<ChainSourceOutcome> {
     return this.chainMutex.run(async (): Promise<ChainSourceOutcome> => {
@@ -950,7 +959,8 @@ export class Guardian {
         if (e instanceof ChainSourceError) return { ok: false, code: 'invalid', message: e.message };
         throw e;
       }
-      if (next.kind === 'public' && this.activeRecord())
+      // A guest wallet's recovery too: its coin check (hosting/recovery.ts) runs on this chain source.
+      if (next.kind === 'public' && (this.activeRecord() || this.hosting.recoveryRunning()))
         return {
           ok: false,
           code: 'recovery_pending',
@@ -972,6 +982,8 @@ export class Guardian {
         ' If you did not change this in the guardian\'s web page, check the guardian.';
       await this.notifyPhone({ type: 'chain_source_changed', kind: to.kind, backend: to.backend, host: to.host.slice(0, 255), ...this.stampNow(), message: text.slice(0, 500) });
       this.announceChainSource(text);
+      // Guests' phones, in their own words; never through the host's channels above (hosting/service.ts).
+      await this.hosting.announceChainSource(to);
       return { ok: true, changed: true };
     });
   }
