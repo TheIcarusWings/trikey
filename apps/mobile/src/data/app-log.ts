@@ -107,6 +107,9 @@ export function buildActivity(history: WalletHistoryEntry[], log: AppLog, nowMs:
       ...(sent && h.recipient ? { address: h.recipient } : {}),
       ...(sent && h.signedBy ? { signedBy: h.signedBy === 'guardian' ? ('phone+guardian' as const) : ('phone+hardware' as const) } : {}),
       ...(sent && h.silentPayment ? { silentOutputAddress: h.silentPayment.outputAddress } : {}),
+      // "Speed up": the wallet lists a replacement in place of the payment it replaced (one row), and says which can be.
+      ...(sent && !confirmed && h.canSpeedUp ? { canSpeedUp: true as const } : {}),
+      ...(h.replaces ? { spedUp: true as const } : {}),
       txid: h.txid,
     };
     items.push({ type: 'payment', at: tx.at, tx });

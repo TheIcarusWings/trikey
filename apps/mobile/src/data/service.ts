@@ -34,8 +34,9 @@ import type {
 import type { RecoveryKeyActions } from './rk-actions';
 import type { SilentPaymentActions } from './sp-actions';
 import type { SavingsActions } from './savings-actions';
+import type { SpeedUpActions } from './speed-up-actions';
 
-export type { RecoveryKeyActions, SilentPaymentActions, SavingsActions };
+export type { RecoveryKeyActions, SilentPaymentActions, SavingsActions, SpeedUpActions };
 
 export interface ReceiveAddress {
   address: string;
@@ -125,6 +126,11 @@ export interface WalletService {
   getWalletDetails(): WalletDetails | null;
   /** Signs with whichever keys the quote's plan names, then broadcasts. */
   sendPayment(quote: SendQuote): Promise<Transaction>;
+  /**
+   * "Speed up" of a payment waiting to confirm (`Transaction.canSpeedUp`): the same payment again with a higher fee. The
+   * guardian mode's wallet and the demo have it; Recovery Key mode speeds up its refills its own way (`rk.speedUp`).
+   */
+  readonly speedUp?: SpeedUpActions;
   /** The next unused address. With `verifyOnDevice` the hardware wallet shows it too and it must match. */
   receiveAddress(opts?: { verifyOnDevice?: boolean }): Promise<ReceiveAddress>;
 

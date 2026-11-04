@@ -236,6 +236,13 @@ export interface Transaction {
   silentOutputAddress?: string;
   /** `silent_received`: the label of the address it paid, when it was a labelled one. */
   silentLabel?: number;
+  /**
+   * Guardian mode: a payment out of the wallet waiting to confirm. "Speed up" (`WalletService.speedUp`) can send it again
+   * with a higher network fee, out of the change; the amount and the address stay as they are.
+   */
+  canSpeedUp?: true;
+  /** This is a sped-up payment: it replaced an earlier version of itself (same payment, lower fee), which is not listed. */
+  spedUp?: true;
 }
 
 export type SecurityEvent = { id: string; at: IsoDate } & (
@@ -349,6 +356,37 @@ export type QuoteProblem =
   | 'other';
 
 export type QuoteOutcome = { ok: true; quote: SendQuote } | { ok: false; problem: QuoteProblem; message: string };
+
+/**
+ * "Speed up" of a payment out of the wallet that is waiting to confirm (guardian mode): the same payment sent again with a
+ * higher network fee, which comes out of the change. Signed like any payment: this phone and the guardian within the
+ * daily limit, else the hardware wallet (`plan`).
+ */
+export interface SpeedUpQuote {
+  /** The wallet's own handle for this quote. Pass the whole quote back to `speedUp.send`. */
+  ref?: string;
+  /** The transaction it replaces. */
+  txid: string;
+  speed: FeeSpeed;
+  address: string;
+  /** What the payment sends: the same as before. */
+  amountSats: Sats;
+  /** The network fee it pays now and the one it will pay (sats, and sat/vB). */
+  oldFeeSats: Sats;
+  feeSats: Sats;
+  oldFeeRate: number;
+  feeRate: number;
+  /** `feeSats - oldFeeSats`: what speeding it up costs. */
+  extraFeeSats: Sats;
+  plan: SigningPlan;
+  /** What it adds to today's limit: only the extra fee when the guardian approved the payment today, else all of it. */
+  limitSats: Sats;
+  /** The payment already pays at least this speed's rate: the new fee is the least a replacement must add. */
+  alreadyAtRate?: true;
+}
+
+/** The speed-up of one payment at each speed (the same payment, the fee for that speed), or why it cannot be sped up. */
+export type SpeedUpOutcome = { ok: true; quotes: Partial<Record<FeeSpeed, SpeedUpQuote>> } | { ok: false; message: string };
 
 // ---------------------------------------------------------------- recovery
 

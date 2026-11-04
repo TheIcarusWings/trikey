@@ -1,5 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
-import { Redirect, useLocalSearchParams } from 'expo-router';
+import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
@@ -19,6 +19,7 @@ import {
   useActivity,
   useNow,
   useWallet,
+  useWalletService,
   type TxSigners,
 } from '@/data';
 import { pick } from '@/lib/platform';
@@ -39,6 +40,8 @@ const SIGNERS: Record<TxSigners, string> = {
 
 export default function TransactionDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
+  const wallet = useWalletService();
   const state = useWallet();
   const now = useNow();
   const activity = useActivity();
@@ -106,7 +109,15 @@ export default function TransactionDetail() {
         {tx.feeSats !== undefined ? <InfoRow label="Network fee" value={`${formatSats(tx.feeSats)} sats`} tabular /> : null}
         {tx.signedBy ? <InfoRow label="Approved by" value={SIGNERS[tx.signedBy]} /> : null}
         {tx.fromVault ? <InfoRow label="Paid from" value="The vault" /> : null}
+        {tx.spedUp ? <InfoRow label="Sped up" value="Sent again with a higher fee" /> : null}
       </Panel>
+      {/* Guardian mode: a payment waiting to confirm can go again with a higher fee (Recovery Key mode speeds up refills on Home). */}
+      {sent && tx.status === 'pending' && tx.canSpeedUp && state.mode === 'guardian' && wallet.speedUp ? (
+        <View className="gap-2">
+          <Text className="text-muted-foreground text-sm leading-5">Waiting a long time? Send the same payment again with a higher network fee, so miners take it sooner.</Text>
+          <AppButton title="Speed up" variant="outline" onPress={() => router.push({ pathname: '/send/speed-up', params: { txid: tx.txid } })} />
+        </View>
+      ) : null}
       {technical ? (
         <View className="gap-3">
           {tx.silentOutputAddress ? (

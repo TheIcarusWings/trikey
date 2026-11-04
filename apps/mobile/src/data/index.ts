@@ -10,6 +10,7 @@ export type { WalletService, ReceiveAddress } from './service';
 export type { RecoveryKeyActions } from './rk-actions';
 export type { SilentPaymentActions } from './sp-actions';
 export type { SavingsActions } from './savings-actions';
+export type { SpeedUpActions } from './speed-up-actions';
 export { emptySavings, suggestSavings } from './savings-empty';
 export { groupWalletId } from './savings-map';
 export { emptySilentPayments, looksLikeSilentPaymentAddress } from './sp-empty';
