@@ -1140,7 +1140,7 @@ const recoveryAlert = {
 /**
  * Alert types mirror the engine's `AlertKind` (`recovery_started`, `recovery_reminder`, `recovery_ready`,
  * `recovery_cancelled`, `recovery_completed`), plus what the service raises itself: `guardian_locked`,
- * `wallet_adopted`, `wallet_retired`, `sp_received`, `relays_changed`, `notifications_changed` and `chain_source_changed`; and `limit_off` / `limit_on` and
+ * `wallet_adopted`, `wallet_retired`, `sp_received`, `relays_changed`, `notifications_changed`, `chain_source_changed` and `wallet_tx`; and `limit_off` / `limit_on` and
  * `savings_moved`, which the engine records and the service delivers like the recovery alerts.
  */
 export const Alert = z.discriminatedUnion('type', [
@@ -1309,6 +1309,26 @@ export const Alert = z.discriminatedUnion('type', [
     kind: z.enum(['own', 'public']),
     backend: z.enum(['electrum', 'core']),
     host: z.string().min(1).max(255),
+  }),
+  stamped({
+    ...alertBase,
+    /**
+     * A transaction touching the wallet (`wallet: "main"`, the paired wallet; `"savings"`, the watched Savings wallet),
+     * from this phone or any other device: sent when the guardian first sees it (in the mempool, `confirmations: 0`, or
+     * already in a block) and once more when it first confirms. Paired phone only (guardian feature `live_wallet`). The
+     * phone shows it at once and syncs to get the coins. Phones before this alert drop it (an unknown `type`).
+     *
+     * `direction`: `in` (the wallet received `amountSats`), `out` (it paid `amountSats` to others; the fee is `feeSats`
+     * when every input was the wallet's, and is then not in `amountSats`), `self` (a move between the wallet's own
+     * addresses: `amountSats` is 0, `feeSats` the fee).
+     */
+    type: z.literal('wallet_tx'),
+    txid: Hex32,
+    direction: z.enum(['in', 'out', 'self']),
+    amountSats: Sats,
+    feeSats: Sats.optional(),
+    confirmations: z.int().min(0),
+    wallet: z.enum(['main', 'savings']),
   }),
 ]);
 

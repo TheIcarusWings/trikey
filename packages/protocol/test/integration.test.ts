@@ -437,6 +437,32 @@ describe('RpcClient <-> RpcServer through two dev relays', () => {
     expect(got[1]!.type).toBe('guardian_locked');
   });
 
+  it('an alert type the phone does not know (a newer guardian) is dropped; the phone carries on', async () => {
+    // What an older phone sees of `wallet_tx` (0.1.12): a `type` outside its closed union. Crafted by hand, since this
+    // package's own schema refuses to send one.
+    const got: Alert[] = [];
+    rig.client.onAlert((a) => got.push(a));
+    const now = Math.floor(Date.now() / 1000);
+    const template = {
+      kind: TRIKEY_RPC_KIND,
+      created_at: now,
+      content: JSON.stringify({ id: generateMessageId(), method: 'alert', params: { type: 'wallet_tx_from_the_future', txid: 'ab'.repeat(32), at: now } }),
+      tags: [['p', phone.pubkey], ['trikey', '1'], ['expiration', String(now + 60)]],
+    };
+    const rumor = createRumor(template, guardian.secretKey);
+    const seal = createSeal(rumor, guardian.secretKey, phone.pubkey);
+    const wk = generateSecretKey();
+    const wrap = finalizeEvent({ kind: 1059, created_at: now, tags: [['p', phone.pubkey]], content: nip44.encrypt(JSON.stringify(seal), nip44.getConversationKey(wk, phone.pubkey)) }, wk);
+    await rig.rawPool.publish(rig.relays, wrap);
+    await waitFor(() => rig.clientDrops.some((d) => d.reason === 'bad_payload'));
+    expect(got).toHaveLength(0);
+    // The next alert it knows, and the next call, work as before.
+    await rig.server.notify(phone.pubkey, { type: 'wallet_tx', txid: 'cd'.repeat(32), direction: 'in', amountSats: 2_000, confirmations: 0, wallet: 'main', at: now, atMs: now * 1000 });
+    await waitFor(() => got.length === 1);
+    expect(got[0]).toMatchObject({ type: 'wallet_tx', amountSats: 2_000 });
+    expect((await rig.client.call('guardian.status', {})).paired).toBe(true);
+  });
+
   it('does not take alerts from anyone but the guardian', async () => {
     const got: Alert[] = [];
     rig.client.onAlert((a) => got.push(a));

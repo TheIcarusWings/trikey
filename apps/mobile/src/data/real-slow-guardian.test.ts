@@ -76,9 +76,11 @@ describe('a slow guardian in the app', { timeout: 60_000 }, () => {
       return real(params, ctx);
     };
     try {
-      rig.fund(svc.wallet!.multisig().derive(0, 1).script, 50_000n);
+      const coin = rig.fund(svc.wallet!.multisig().derive(0, 1).script, 50_000n);
       await svc.sync();
-      expect(svc.getState()).toMatchObject({ synced: true, guardianSlow: true, balanceSats: 300_000, guardian: { status: 'online' } });
+      // The last chain data is kept; the payment the guardian announced meanwhile (`wallet_tx`, live-wallet) is on top.
+      expect(svc.getState()).toMatchObject({ synced: true, guardianSlow: true, balanceSats: 350_000, guardian: { status: 'online' } });
+      expect(svc.wallet!.snapshot()!.history.find((x) => x.txid === coin.txid)).toMatchObject({ live: true, netSats: 50_000 });
     } finally {
       h['wallet.sync'] = real;
     }

@@ -166,6 +166,7 @@ import {
   type GuardianStatusCache,
   type HardwareRecord,
   type HelperCoin,
+  type LiveTx,
   type PendingRequest,
   type RecoveryRecord,
   type ReplaceRecord,
@@ -313,6 +314,8 @@ export interface WalletHistoryEntry extends HistoryEntry {
   purpose?: 'payment' | 'sweep';
   /** Sent by this phone and not in the guardian's history yet. */
   local?: true;
+  /** Announced by the guardian (`wallet_tx`) a moment ago, not in the last sync yet. */
+  live?: true;
   /** A payment to a silent payment address (`recipient` is the `sp1…` address): the taproot output it made. */
   silentPayment?: { outputKey: string; outputAddress: string };
   /** This transaction moved a received silent payment into the vault (the coin's outpoint). */
@@ -539,6 +542,15 @@ const ACCESS_TTL_SEC = 12 * 3600;
 const PENDING_RESEND_MS = 50 * 60_000;
 const STATE_CHANGING = new Set<MethodName>(['policy.update', 'recovery.start', 'recovery.cancel', 'phone.resume', 'hardware.confirm']);
 const MAX_SEND_LOG = 500;
+/** Transactions announced by `wallet_tx` kept until a sync lists them. */
+const MAX_LIVE_TXS = 50;
+
+/** What a `wallet_tx` did to the balance (negative for payments), as `netSats` of a history entry. */
+function liveNet(t: Pick<LiveTx, 'direction' | 'amountSats' | 'feeSats'>): number {
+  if (t.direction === 'in') return t.amountSats;
+  if (t.direction === 'self') return -(t.feeSats ?? 0);
+  return -(t.amountSats + (t.feeSats ?? 0));
+}
 /** How long the phone waits for the guardian over relays it was told to move to, before staying where it is. */
 const RELAY_PROBE_TIMEOUT_MS = 10_000;
 /** A list the guardian did not answer over is tried again at most this often (alerts and status reads bring it again). */
@@ -862,6 +874,8 @@ export class TrikeyWallet {
       contactNames: {},
       seenAlerts: [],
       sendLog: [],
+      liveTxs: [],
+      liveCounter: 0,
       retiredWallets: [],
     };
     await store.save(state);
@@ -1836,6 +1850,7 @@ export class TrikeyWallet {
     }
     this.requireRecoveryAccess(); // before anything is sent: the guardian would drop it
     await this.client();
+    let liveSeq = this.s.liveCounter;
     const snapP = this.chain.sync({ historyLimit: this.deps.historyLimit });
     snapP.catch(() => undefined); // awaited below; a failed status must not leave it unhandled
     const [status, fees] = await Promise.all([this.call('guardian.status', {}), this.chain.estimateFees(FEE_TARGETS).catch(() => undefined)]);
@@ -1844,13 +1859,19 @@ export class TrikeyWallet {
     // `wallet.sync` describes the wallet the guardian guards now: after an adoption that is the new one.
     const switched = await this.followGuardianWallet(status.walletId);
     let snap = await snapP.catch(slowGuardian);
-    if (switched) snap = await this.chain.sync({ historyLimit: this.deps.historyLimit }).catch(slowGuardian);
+    if (switched) {
+      liveSeq = this.s.liveCounter;
+      snap = await this.chain.sync({ historyLimit: this.deps.historyLimit }).catch(slowGuardian);
+    }
     else if (status.walletId && status.walletId !== this.s.wallet?.walletId)
       throw new WalletError('guardian_mismatch', `The guardian now guards another wallet (${status.walletId}).`);
     const now = this.now();
     await this.update((s) => {
-      s.chain = { ...snap, syncedAt: now };
+      s.chain = { ...snap, syncedAt: now, liveSeq };
       s.spends = s.spends.filter((x) => x.at > now - LIMIT_WINDOW_MS);
+      // Noted before this sync was asked for: it has them (or they are gone); and none about another wallet.
+      const walletId = s.wallet?.walletId;
+      s.liveTxs = s.liveTxs.filter((t) => (t.wallet === 'main' ? t.walletId === walletId && t.seq > liveSeq : t.walletId === s.savings?.walletId));
     });
     await this.prefetchPrevTxs(snap.utxos).catch(() => undefined);
     await this.trackRecovery(status.activeRecoveryId).catch(() => undefined);
@@ -1907,10 +1928,74 @@ export class TrikeyWallet {
     return out;
   }
 
+  /** Records a `wallet_tx`: new, or more confirmations of one already announced (never fewer: alerts can come late). */
+  private async noteLiveTx(a: Extract<Alert, { type: 'wallet_tx' }>): Promise<void> {
+    const walletId = a.wallet === 'savings' ? this.s.savings?.walletId : this.s.wallet?.walletId;
+    if (!walletId) return;
+    const now = this.now();
+    await this.update((s) => {
+      const old = s.liveTxs.find((t) => t.txid === a.txid && t.wallet === a.wallet && t.walletId === walletId);
+      s.liveCounter += 1;
+      const entry: LiveTx = {
+        seq: s.liveCounter,
+        walletId,
+        txid: a.txid,
+        wallet: a.wallet,
+        direction: a.direction,
+        amountSats: a.amountSats,
+        ...(a.feeSats !== undefined ? { feeSats: a.feeSats } : {}),
+        confirmations: Math.max(a.confirmations, old?.confirmations ?? 0),
+        firstAt: old?.firstAt ?? now,
+        at: now,
+      };
+      s.liveTxs = [...s.liveTxs.filter((t) => t !== old), entry].slice(-MAX_LIVE_TXS);
+    });
+  }
+
+  /**
+   * The announced transactions of `wallet` (this phone's current one) that the last sync may not have seen: noted after
+   * it was asked for. A sync asked for later lists them, or knows they are gone (replaced, dropped).
+   */
+  private liveSince(wallet: 'main' | 'savings', c: { liveSeq?: number } | undefined): LiveTx[] {
+    const walletId = wallet === 'savings' ? this.s.savings?.walletId : this.s.wallet?.walletId;
+    const since = c?.liveSeq ?? (c ? Number.POSITIVE_INFINITY : 0);
+    return this.s.liveTxs.filter((t) => t.wallet === wallet && t.walletId === walletId && t.seq > since);
+  }
+
+  /** The last sync's balance with what the guardian announced since (a nudge until the next sync). */
+  private liveBalance(c: NonNullable<WalletState['chain']>): { confirmedSats: number; unconfirmedSats: number } {
+    let { confirmedSats, unconfirmedSats } = c.balance;
+    const listed = new Map(c.history.map((h) => [h.txid, h]));
+    const sent = new Set(this.s.sendLog.map((e) => e.txid));
+    for (const t of this.liveSince('main', c)) {
+      const net = liveNet(t);
+      const h = listed.get(t.txid);
+      if (!h) {
+        // This phone's own payment is applied already (`applyLocalSpend`).
+        if (sent.has(t.txid)) continue;
+        if (net >= 0) {
+          if (t.confirmations > 0) confirmedSats += net;
+          else unconfirmedSats += net;
+        } else {
+          const fromConfirmed = Math.min(confirmedSats, -net);
+          confirmedSats -= fromConfirmed;
+          unconfirmedSats = Math.max(0, unconfirmedSats - (-net - fromConfirmed));
+        }
+      } else if (h.confirmations === 0 && t.confirmations > 0 && h.netSats > 0) {
+        // Received, and confirmed since the sync.
+        const moved = Math.min(unconfirmedSats, h.netSats);
+        unconfirmedSats -= moved;
+        confirmedSats += moved;
+      }
+    }
+    return { confirmedSats, unconfirmedSats };
+  }
+
   /** The guardian's history with this phone's send log merged in, plus payments it sent that the guardian has not listed yet. */
   private history(): WalletHistoryEntry[] {
     const c = this.s.chain;
     const log = new Map(this.s.sendLog.map((e) => [e.txid, e]));
+    const live = new Map(this.liveSince('main', c).map((t) => [t.txid, t]));
     const sweeps = new Map((this.s.silentPayments?.coins ?? []).flatMap((c) => (c.sweepTxid ? [[c.sweepTxid, c] as const] : [])));
     const meta = (e: SendLogEntry) => ({
       sentAt: e.at,
@@ -1927,13 +2012,32 @@ export class TrikeyWallet {
       const e = log.get(h.txid);
       const sweep = sweeps.get(h.txid);
       const tagged = sweep ? { silentSweep: { fromTxid: sweep.txid, fromVout: sweep.vout } } : {};
-      return e ? { ...h, ...meta(e), ...tagged, ...(h.feeSats === undefined ? { feeSats: e.feeSats } : {}) } : { ...h, ...tagged };
+      // Confirmed since the sync, as the guardian just said: pending -> confirmed at once.
+      const l = live.get(h.txid);
+      const fresher = l && l.confirmations > h.confirmations ? { confirmations: l.confirmations } : {};
+      return e ? { ...h, ...meta(e), ...tagged, ...(h.feeSats === undefined ? { feeSats: e.feeSats } : {}), ...fresher } : { ...h, ...tagged, ...fresher };
     });
+    // Announced by the guardian since the sync, from any device: this phone's own payments keep what it knows of them.
+    const announced = [...live.values()]
+      .filter((t) => !listed.has(t.txid))
+      .map((t): WalletHistoryEntry => {
+        listed.add(t.txid);
+        const e = log.get(t.txid);
+        return {
+          txid: t.txid,
+          height: 0,
+          confirmations: t.confirmations,
+          netSats: liveNet(t),
+          ...(t.feeSats !== undefined ? { feeSats: t.feeSats } : e ? { feeSats: e.feeSats } : {}),
+          ...(e ? meta(e) : {}),
+          live: true,
+        };
+      });
     const recent = this.now() - LIMIT_WINDOW_MS;
     const unlisted = this.s.sendLog
       .filter((e) => !listed.has(e.txid) && e.at > recent && e.at > (c?.syncedAt ?? 0) - 10 * 60_000)
       .map((e): WalletHistoryEntry => ({ txid: e.txid, height: 0, confirmations: 0, netSats: -(e.amountSats + e.feeSats), feeSats: e.feeSats, ...meta(e), local: true }));
-    return [...unlisted.reverse(), ...out];
+    return [...unlisted.reverse(), ...announced.reverse(), ...out];
   }
 
   /** The last synced view of the wallet, or undefined before the first sync. */
@@ -1942,9 +2046,10 @@ export class TrikeyWallet {
     if (!c) return undefined;
     const limit = this.s.guardianStatus?.dailyLimit?.limitSats ?? this.s.rules?.policy.dailyLimitSats;
     const spent = spentTodayEstimate(this.s, this.now());
+    const balance = this.liveBalance(c);
     return {
       ...(this.s.wallet ? { walletId: this.s.wallet.walletId } : {}),
-      balance: { ...c.balance, totalSats: c.balance.confirmedSats + c.balance.unconfirmedSats },
+      balance: { ...balance, totalSats: balance.confirmedSats + balance.unconfirmedSats },
       tipHeight: c.tipHeight,
       syncedAt: c.syncedAt,
       history: this.history(),
@@ -2693,9 +2798,10 @@ export class TrikeyWallet {
     const st = await this.call('recovery.status', recoveryId ? { recoveryId } : {});
     if (st.recovery) await this.storeRecovery(st.recovery);
     if (st.recovery && this.recoveryUpdatable()) {
+      const liveSeq = this.s.liveCounter;
       const snap = await this.chain.sync().catch(() => undefined);
       if (snap) {
-        await this.update((s) => void (s.chain = { ...snap, syncedAt: this.now() }));
+        await this.update((s) => void (s.chain = { ...snap, syncedAt: this.now(), liveSeq }));
         await this.noticeRecoveryCoins(snap.utxos);
       }
     }
@@ -2835,8 +2941,9 @@ export class TrikeyWallet {
    */
   private async buildSweepPsbt(destination: MultisigWallet, feeCapSats: number): Promise<Uint8Array> {
     const from = this.multisig();
+    const liveSeq = this.s.liveCounter;
     const snap = await this.chain.sync();
-    await this.update((s) => void (s.chain = { ...snap, syncedAt: this.now() }));
+    await this.update((s) => void (s.chain = { ...snap, syncedAt: this.now(), liveSeq }));
     if (snap.utxosTruncated) throw new WalletError('utxos_truncated', 'The wallet has more coins than one sweep can list.');
     if (!snap.utxos.length) throw new WalletError('nothing_to_sweep', 'The wallet has no coins to move.');
     const fees = (await this.chain.estimateFees([3, 6]).catch(() => undefined)) ?? this.fees;
@@ -3106,6 +3213,13 @@ export class TrikeyWallet {
       case 'savings_moved':
         // The guardian saw a Savings coin move (this phone's own spend, or two keys in other hands): read Savings again.
         void this.syncSavings().catch(() => undefined);
+        return;
+      case 'wallet_tx':
+        // A transaction touching the wallet or Savings, from any device, just seen by the guardian (only the paired
+        // guardian's count). Shown at once (`history()`, the balance in `snapshot()`); the app syncs for the coins.
+        if (from && from !== this.s.guardian?.pubkey) return;
+        await this.noteLiveTx(alert);
+        if (alert.wallet === 'savings') void this.syncSavings().catch(() => undefined);
         return;
       case 'savings_unwatched':
         // The guardian stopped watching this phone's Savings (or swapped it for another wallet), and this phone did not

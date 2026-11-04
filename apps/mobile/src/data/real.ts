@@ -48,6 +48,7 @@ import { hostedChainFactory, publicServer } from './hosted';
 import { parseServerUrl } from './rk-server';
 import { addEvent, buildActivity, emptyLog, hostFromLabel, loadLog, saveLog, takeLegacySends, type AppLog } from './app-log';
 import { groupAlertChannels } from './alert-channels';
+import { formatSats } from './format';
 import { LIMIT_OFF_SATS } from './rules';
 import { DevicePromptStore, compositeProvider, ledgerHint, withDevicePrompts } from './device';
 import { WalletServiceError, notAvailableYet } from './errors';
@@ -62,6 +63,7 @@ import { emptySavings } from './savings-empty';
 import { renderSavingsMap, savingsMapData } from './savings-map';
 import {
   GUARDIAN_NETWORKS,
+  type AppToast,
   type WalletDetails,
   type InviteView,
   type AmountUnit,
@@ -202,6 +204,15 @@ const SHORT_PAUSE_MS = 2_000;
 /** A helper coin below this cannot pay its share of the fee of a payment at ordinary rates: shown as not funded. */
 const HELPER_USABLE_SATS = 1_000;
 const PREFS_KEY = 'trikey.app.prefs.v1';
+/** How long the "Incoming …" note stays. */
+export const TOAST_MS = 6_000;
+/** An incoming payment's note shows only for an alert this recent (relays replay alerts for days). */
+const TOAST_FRESH_MS = 10 * 60_000;
+
+/** The note for an incoming payment: "Incoming 2,000 sats · unconfirmed". */
+export function toastText(a: { amountSats: number; confirmations: number; wallet: 'main' | 'savings' }): string {
+  return `Incoming ${formatSats(a.amountSats)} sats${a.wallet === 'savings' ? ' to Savings' : ''} · ${a.confirmations > 0 ? 'confirmed' : 'unconfirmed'}`;
+}
 const networkPrefKey = (mode: string) => `trikey.app.network.${mode}`;
 const walletKey = (mode: string, network: NetworkName) => `trikey.wallet.${mode}.${network}`;
 
@@ -346,6 +357,10 @@ class Service implements RealWalletService {
   private backgrounded = false;
   /** A payment is signed and being broadcast (`sendPayment`, between `payment_signed` and its end). */
   private paymentSending = false;
+  /** The in-app note showing now (`WalletState.toast`), and the timer that hides it. */
+  private toast: AppToast | null = null;
+  private toastTimer?: ReturnType<typeof setTimeout>;
+  private toastCount = 0;
   /**
    * The guardian answered the last sync's `guardian.status` but not its chain data in time (`guardian_slow`): it is
    * online, the balance is the last one. Cleared by a full sync, or by the guardian not answering at all.
@@ -550,6 +565,7 @@ class Service implements RealWalletService {
 
   async close(): Promise<void> {
     this.closed = true;
+    clearTimeout(this.toastTimer);
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
     await this.starting?.catch(() => {}); // a connection opened after close() would never be closed
@@ -582,6 +598,23 @@ class Service implements RealWalletService {
     if (!this.reachable && checkedAt !== undefined && checkedAt > this.unreachableAt) this.answered(false);
     this.state = this.project();
     for (const l of this.listeners) l();
+  }
+
+  /** Shows `text` over every screen for `TOAST_MS` (`WalletState.toast`). */
+  private showToast(text: string): void {
+    clearTimeout(this.toastTimer);
+    this.toast = { id: `toast-${++this.toastCount}`, kind: 'incoming', text };
+    this.toastTimer = setTimeout(() => this.dismissToast(), TOAST_MS);
+    (this.toastTimer as { unref?: () => void }).unref?.();
+    this.refresh();
+  }
+
+  dismissToast(): void {
+    clearTimeout(this.toastTimer);
+    this.toastTimer = undefined;
+    if (!this.toast) return;
+    this.toast = null;
+    this.refresh();
   }
 
   private setProgress(text: string | null): void {
@@ -707,6 +740,7 @@ class Service implements RealWalletService {
       guardianSlow: this.slow && this.reachable,
       guardianReconnecting: this.reconnecting,
       paymentSending: this.paymentSending,
+      toast: this.toast,
       phoneSpending: gs?.phoneSpending ?? 'enabled',
       recoveryOutcome: outcome,
       recovering: s?.stage === 'recovering',
@@ -981,6 +1015,20 @@ class Service implements RealWalletService {
           addEvent(this.log, { kind: 'alert-channels-changed', at: e.atMs });
           void this.saveLogNow();
           this.refresh();
+        } else if (a.type === 'wallet_tx') {
+          // A payment in or out, from any device, just seen by the guardian: the wallet shows it already (pending, then
+          // confirmed); the activity dates it from now; an incoming one gets a note; a sync brings the coins.
+          if (a.confirmations === 0 && this.log.seen[a.txid] === undefined) {
+            this.log.seen[a.txid] = this.clock.now();
+            void saveLog(this.deps.platform.kv, this.logKey, this.log);
+          }
+          // The note is for news: a recent alert about a payment this phone did not know yet (not its confirmation).
+          const fresh = Math.abs(this.clock.now() - e.atMs) < TOAST_FRESH_MS;
+          const st = this.w?.state;
+          const known = !!st && (st.liveTxs.some((t) => t.txid === a.txid) || (a.wallet === 'main' ? st.chain : st.savings?.chain)?.history.some((h) => h.txid === a.txid));
+          if (a.direction === 'in' && fresh && !known && st?.stage === 'paired') this.showToast(toastText(a));
+          this.refresh();
+          if (a.wallet === 'main') void this.sync();
         } else if (a.type === 'limit_on' && a.reason === 'recovery') {
           // The guardian turned the limit back on for the recovered wallet (this phone logs its own changes itself).
           addEvent(this.log, { kind: 'limit-on', limitSats: a.limitSats, at: e.atMs });

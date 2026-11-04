@@ -196,11 +196,13 @@ describe('alert contacts lock the guardian', { timeout: 60_000 }, () => {
   });
 
   it('again: "already locked", and nobody else is alerted', async () => {
-    const before = phoneAlerts.length;
+    // Payments the live wallet announces (`wallet_tx`, the coins funded above) are not about the lock.
+    const lockAlerts = () => phoneAlerts.filter((a) => a.type !== 'wallet_tx').length;
+    const before = lockAlerts();
     await dm(alice, 'LOCK!');
     await waitFor(() => alice.inbox.find((m) => m.includes('already locked')), 'already-locked answer');
     await settle();
-    expect(phoneAlerts.length).toBe(before);
+    expect(lockAlerts()).toBe(before);
     expect(rig.guardian.engine.dueNotices()).toEqual([]);
   });
 

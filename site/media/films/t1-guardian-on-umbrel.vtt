@@ -1,0 +1,41 @@
+WEBVTT
+
+1
+00:00:03.000 --> 00:00:13.080
+Hi! Let's set up the Trikey Guardian on your Umbrel. It holds key three of your wallet, on a server you own.
+
+2
+00:00:13.650 --> 00:00:25.550
+Before you start, you need an Umbrel with Bitcoin Node and Electrs, both on the network you'll test on. Signet is the easiest. And let Electrs finish syncing first.
+
+3
+00:00:25.600 --> 00:00:36.135
+In the App Store, open the menu, choose Community App Stores, and add the Trikey store. Paste the address rather than typing it.
+
+4
+00:00:52.086 --> 00:01:00.274
+Open the Trikey store and install Trikey Guardian. Umbrel adds Bitcoin Node and Electrs too, if they're missing.
+
+5
+00:01:13.070 --> 00:01:19.550
+Then open it from your Umbrel's home screen. Always use the icon: it goes through Umbrel's login.
+
+6
+00:01:20.570 --> 00:01:28.634
+One thing to get right: your passphrase. There's no way to reset it, so write it down and keep it somewhere safe.
+
+7
+00:01:29.220 --> 00:01:40.324
+Choose a passphrase and type it twice. The green check means the guardian found your node and Electrs. Leave the relays as they are, unless you know you need others.
+
+8
+00:01:45.310 --> 00:01:50.913
+Your guardian is ready. It shows a pairing code, which you'll scan with the app when you create your wallet.
+
+9
+00:01:54.810 --> 00:02:05.837
+After a restart, the guardian locks itself, so a stolen box is useless. Unlock it from the Trikey app with your hardware wallet, or type your passphrase here.
+
+10
+00:02:09.630 --> 00:02:18.686
+That's it, your guardian is ready. Next, let's install the Trikey app on your phone.

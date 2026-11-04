@@ -341,6 +341,38 @@ function ChannelRow({ d, busy, test, remove, locked }: { d: NotifyDestination; b
 }
 
 /**
+ * Opt-in payment messages: the owner's own channels also hear of every payment in or out of the wallet (and Savings),
+ * and when it confirms. Off by default. Amounts only, never an address or a link, never to alert contacts.
+ */
+function PaymentMessages({ data, busy, save }: { data: NotificationSettings; busy: boolean; save: (on: boolean) => Promise<string | undefined> }) {
+  const [problem, setProblem] = useState<string>();
+  const owners = data.destinations.some((d) => d.audience === 'owner');
+  return (
+    <div className="flex flex-col gap-1.5">
+      <h3 className="m-0 text-sm leading-5 font-medium">Payments</h3>
+      <div className="flex items-start gap-2">
+        <Checkbox
+          id="payment-alerts"
+          checked={data.paymentAlerts}
+          disabled={busy}
+          onCheckedChange={(v) => void save(v === true).then(setProblem)}
+          aria-describedby="payment-alerts-hint"
+        />
+        <Label htmlFor="payment-alerts" className="text-[13px] leading-[18px] font-normal">
+          Also tell my own channels about payments: each one coming in or going out, and when it confirms
+        </Label>
+      </div>
+      <p id="payment-alerts-hint" className={hint}>
+        Off by default. A short line such as "Incoming 2,000 sats (unconfirmed)": amounts only, never an address or a link, and never to your alert
+        contacts. Your phone shows every payment as it happens either way. Turning this on or off is announced on every channel, like any change here.
+        {!owners ? ' Add a channel for yourself first: these go only to your own channels.' : ''}
+      </p>
+      <Problem text={problem} />
+    </div>
+  );
+}
+
+/**
  * Settings > Notifications: email (through the owner's own account), ntfy and webhook, for the owner and the alert
  * contacts. Notify-only: they carry warnings, never controls. Every change is announced on every channel and to the
  * phone; while a recovery runs, channels can be added but not removed, and of the email account only the app password
@@ -431,6 +463,8 @@ export function NotificationsSection() {
       </div>
 
       <AddChannel data={data} busy={busy} add={(d) => put({ add: d })} />
+
+      <PaymentMessages data={data} busy={busy} save={(on) => put({ paymentAlerts: on })} />
     </section>
   );
 }

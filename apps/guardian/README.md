@@ -71,6 +71,7 @@ All files in `TRIKEY_DATA_DIR` are mode 0600 and written atomically.
 | `nostr-identity.json` | The guardian's nostr key, **unencrypted** so a locked guardian can still answer the phone and send alerts (trade-off in `src/identity.ts`). |
 | `guardian-state.json` | The policy engine, format version 2: the active wallet (registration, rules, limit accounting, recovery access grants), retired wallets, recoveries, activity. A version-1 file (one wallet) is migrated when it is loaded and written back as version 2. |
 | `service.json` | Relays, the paired phone's name, co-signed sweeps and their broadcast state, the service log, recently handled request ids. (Recovery access grants used to live here; they are moved into the engine on start.) |
+| `live-wallet.json` | The live wallet (`src/live-wallet.ts`): per wallet, which transactions a `wallet_tx` alert announced (unconfirmed or confirmed), so a restart repeats none, and the alerts no relay took yet. Txids and amounts only, nothing secret. |
 | `unlock-throttle.json` | Failed web unlock attempts (exponential backoff after 3, up to 1 hour). |
 | `unlock-throttle-phone.json`, `reset-throttle.json`, `session-throttle.json` | The same for the phone's `guardian.unlock` (which also stops after 5 failures in a row until a web unlock), the web UI's reset and its sign-in: each entry point has its own count, so none can starve another. |
 | `silent-payments.json` | The silent payment scanner: the paired phone's registration (B_spend, labels, birth height, the scan key **encrypted**), the last scanned blocks' hashes (for reorgs) and the matches. No spending key. |
@@ -106,6 +107,12 @@ After every start the guardian is locked: key 3 is decrypted only by an unlock
   transactions that spend the wallet's own coins, or sweep the wallet it
   replaced into it (below), at most 20 per 10 minutes per phone. Alerts and
   `guardian.status` carry `atMs` (milliseconds) next to the seconds.
+- **Live wallet** (`features: ["live_wallet"]`): the guardian subscribes to the
+  wallet's scripts on its Electrum server (or polls Bitcoin Core's watch-only
+  wallet every 5 s) and sends `wallet_tx` `{ txid, direction, amountSats,
+  feeSats?, confirmations, wallet }` when a transaction touching the wallet or
+  Savings first appears and once when it confirms, from any device. Show it at
+  once, then `wallet.sync` for the coins (now answered in milliseconds).
 - **Co-signing** (`sign`) needs `nonWitnessUtxo` on every input, the phone's
   signature alone, and an unlocked guardian; the daily limit counts outflow
   plus fee over a rolling 24 h. `guardian.status.dailyLimit` is the count.

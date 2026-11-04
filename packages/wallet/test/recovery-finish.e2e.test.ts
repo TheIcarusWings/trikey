@@ -150,7 +150,12 @@ describe('lost phone: a new phone with the recovery QR and the hardware wallet',
     const snap = await A.sync();
     expect(snap).toMatchObject({ walletId: oldId, walletRetired: { reason: 'recovered', successorWalletId: newId } });
     expect(snap.history.length).toBeGreaterThan(0);
-    expect(A.snapshot()!.balance.totalSats).toBe(420_000);
+    // What it kept, less the sweep if the guardian announced it (`wallet_tx`) before it retired the wallet: either way
+    // the balance is what the phone last knew, not a fresh read.
+    const sweptOut = A.state.liveTxs
+      .filter((t) => t.walletId === oldId && t.wallet === 'main' && t.seq > (A.state.chain?.liveSeq ?? Infinity) && !A.state.chain?.history.some((h) => h.txid === t.txid))
+      .reduce((sum, t) => sum + (t.direction === 'out' ? t.amountSats + (t.feeSats ?? 0) : t.direction === 'self' ? (t.feeSats ?? 0) : -t.amountSats), 0);
+    expect(A.snapshot()!.balance.totalSats).toBe(Math.max(0, 420_000 - sweptOut));
     expect((await A.refreshStatus()).phoneSpending).toBe('retired');
     // No co-sign attempts, receiving or rule changes.
     for (const attempt of [

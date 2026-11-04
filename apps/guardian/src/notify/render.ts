@@ -51,6 +51,7 @@ export const TITLES: Record<string, string> = {
   wallet_adopted: 'Recovered wallet adopted',
   notifications_changed: 'Alert channels changed',
   chain_source_changed: 'Guardian server changed',
+  wallet_tx: 'Payment',
   test: 'Test message',
 };
 
@@ -71,6 +72,7 @@ export const PRIORITIES: Record<string, Priority> = {
   limit_on: 'default',
   guardian_locked: 'default',
   wallet_adopted: 'default',
+  wallet_tx: 'low',
   test: 'low',
 };
 

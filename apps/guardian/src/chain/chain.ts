@@ -9,6 +9,12 @@
  * Trust: the answers are trusted the way the chosen server is (DESIGN.md, "Chain
  * sources"). Transactions are checked against their txid and headers to link up, not
  * for proof of work.
+ *
+ * Live data (`watchWallet`): on an Electrum server, the scripts of the wallets the guardian
+ * watches are subscribed (live.ts, `ScriptWatch`), so a scan reads them from memory and
+ * `wallet.sync` answers in milliseconds instead of one request per address. Bitcoin Core
+ * reads its own wallet (core-backend.ts) and says when it changed. Either way
+ * `onWalletChange` tells the live wallet watcher (live-wallet.ts) to look again.
  */
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hex } from '@scure/base';
@@ -22,16 +28,23 @@ import {
   BackendUnavailableError,
   ElectrumBackend,
   scriptHash,
+  type BackendUnspent,
   type ChainBackend,
   type ElectrumHistoryItem,
 } from './backend.js';
 import { BitcoinRpc, type BlockchainInfo } from './bitcoind.js';
-import { ElectrumClient, ElectrumUnavailableError } from './electrum.js';
+import { ElectrumClient, ElectrumUnavailableError, type HeaderNotification } from './electrum.js';
 import { isLinked, medianTimePast, parseHeader, splitHeaders } from './headers.js';
+import { ScriptWatch, type LiveStats } from './live.js';
 
 export { scriptHash, type ElectrumHistoryItem };
 
 export const DEFAULT_GAP_LIMIT = 20;
+
+/** Where a scan of one chain ends (exclusive): `gap` unused addresses after the last used one, and past `mustReach`. */
+function scanEnd(lastUsed: number, mustReach: number, gap: number): number {
+  return Math.min(MAX_SCAN_INDEX + 1, Math.max(lastUsed + 1 + gap, mustReach + 1));
+}
 /** Stop scanning a chain past this index (far beyond any real wallet; keeps a lying server from looping us). */
 export const MAX_SCAN_INDEX = 100_000;
 
@@ -202,7 +215,19 @@ export interface ChainServiceOptions {
   rpc?: BitcoinRpc;
   log?: Logger;
   gapLimit?: number;
+  /** Most scripts subscribed on an Electrum server (live.ts). Default `DEFAULT_MAX_SCRIPTS`. */
+  liveMaxScripts?: number;
 }
+
+/**
+ * Why the watched wallets may have changed (`ChainService.onWalletChange`): `scripts`, an Electrum server notified some
+ * of their scripts; `reconnect`, it is connected again (things may have happened meanwhile); `reset`, another chain
+ * source is in use (nothing is watched on it yet); `core`, Bitcoin Core's wallet read something new.
+ */
+export type WalletChangeReason = 'scripts' | 'reconnect' | 'reset' | 'core';
+
+/** What `liveStats` reports: Electrum subscriptions, or Bitcoin Core's own wallet. */
+export type ChainLiveStats = ({ kind: 'electrum' } & LiveStats) | { kind: 'core' } | { kind: 'none' };
 
 export class ChainService {
   private tipCache?: ChainTip;
@@ -212,6 +237,12 @@ export class ChainService {
   private started = false;
   private readonly tipListeners = new Set<() => void>();
   private offHeader?: () => void;
+  /** Subscriptions on an Electrum server (none for Bitcoin Core). */
+  private live?: ScriptWatch;
+  private offLive?: () => void;
+  private readonly changeListeners = new Set<(reason: WalletChangeReason) => void>();
+  /** The last header announced, to tell a block on top of it from a reorg. */
+  private lastHeader?: { height: number; hash: string };
 
   constructor(private readonly opts: ChainServiceOptions) {
     this.log = opts.log ?? silentLogger;
@@ -243,6 +274,7 @@ export class ChainService {
     this.started = false;
     this.offHeader?.();
     this.offHeader = undefined;
+    this.detachLive();
     this.current?.stop();
   }
 
@@ -253,19 +285,34 @@ export class ChainService {
   setBackend(next: ChainBackend): void {
     this.offHeader?.();
     this.offHeader = undefined;
+    // Nothing the old source said about the wallets is kept: its subscriptions and what they read go with it.
+    this.detachLive();
     this.current?.stop();
     this.current = next;
     this.tipCache = undefined;
+    this.lastHeader = undefined;
     this.blockTimes.clear();
     if (this.started) {
       this.attach();
       next.start();
     }
+    this.emitChange('reset');
   }
 
   private attach(): void {
     this.offHeader?.();
-    this.offHeader = this.current?.onHeader(() => {
+    this.detachLive();
+    const b = this.current;
+    if (b instanceof ElectrumBackend) {
+      const live = new ScriptWatch(b, { log: this.log, maxScripts: this.opts.liveMaxScripts });
+      const off = live.onChange((e) => this.emitChange(e.reason === 'status' ? 'scripts' : 'reconnect'));
+      this.live = live;
+      this.offLive = off;
+    } else if (b?.onWalletChange) {
+      this.offLive = b.onWalletChange(() => this.emitChange('core'));
+    }
+    this.offHeader = b?.onHeader((h) => {
+      this.onNewHeader(h);
       for (const fn of this.tipListeners) {
         try {
           fn();
@@ -274,6 +321,93 @@ export class ChainService {
         }
       }
     });
+  }
+
+  private detachLive(): void {
+    this.offLive?.();
+    this.offLive = undefined;
+    this.live?.stop();
+    this.live = undefined;
+  }
+
+  /**
+   * A new tip: on top of the last one, only scripts with unconfirmed transactions are read again (confirmations
+   * themselves follow from the tip); anything else (a reorg, or blocks missed) re-checks every subscribed script.
+   */
+  private onNewHeader(h: HeaderNotification): void {
+    let hash: string;
+    let prev: string;
+    try {
+      const parsed = parseHeader(h.hex);
+      hash = parsed.hash;
+      prev = parsed.prevHash;
+    } catch {
+      return;
+    }
+    const last = this.lastHeader;
+    this.lastHeader = { height: h.height, hash };
+    if (!this.live || !last || last.hash === hash) return;
+    if (h.height === last.height + 1 && prev === last.hash) this.live.refreshUnconfirmed();
+    else void this.live.revalidate();
+  }
+
+  private emitChange(reason: WalletChangeReason): void {
+    for (const fn of this.changeListeners) {
+      try {
+        fn(reason);
+      } catch {
+        /* a listener's failure is its own */
+      }
+    }
+  }
+
+  /** Calls `fn` when the watched wallets may have changed (`WalletChangeReason`). */
+  onWalletChange(fn: (reason: WalletChangeReason) => void): () => void {
+    this.changeListeners.add(fn);
+    return () => this.changeListeners.delete(fn);
+  }
+
+  /** What is watched live right now. */
+  liveStats(): ChainLiveStats {
+    if (this.live) return { kind: 'electrum', ...this.live.stats() };
+    if (this.current?.kind === 'core') return { kind: 'core' };
+    return { kind: 'none' };
+  }
+
+  /**
+   * Keeps `wallet` live: on an Electrum server, subscribes to its scripts on both chains up to `gapLimit` past the last
+   * used one (and past `minIndex`), extending as subscriptions show more used addresses. Bitcoin Core follows the
+   * wallets it imported by itself (`prepare`, on the first scan). Never throws for an unavailable chain: the next call
+   * (a reconnect, a change) tries again.
+   */
+  async watchWallet(wallet: AddressSource, opts: { gapLimit?: number; minIndex?: Partial<Record<0 | 1, number>> } = {}): Promise<void> {
+    const live = this.live;
+    if (!live || !this.current?.connected) return;
+    const gap = Math.max(1, opts.gapLimit ?? this.opts.gapLimit ?? DEFAULT_GAP_LIMIT);
+    for (const chain of [0, 1] as const) {
+      // Exactly the scripts a scan reads (`scanWallet`), so a scan is served from here entirely.
+      const mustReach = opts.minIndex?.[chain] ?? -1;
+      let next = 0;
+      let end = scanEnd(-1, mustReach, gap);
+      while (next < end) {
+        await live.watch(Array.from({ length: end - next }, (_, k) => this.script(wallet, chain, next + k)));
+        if (live !== this.live) return; // the chain source changed meanwhile
+        let lastUsed = -1;
+        for (let i = 0; i < end; i++) {
+          const st = live.status(this.script(wallet, chain, i));
+          if (st === undefined) return; // not known (not connected, refused): the next pass goes on
+          if (st !== null) lastUsed = i;
+        }
+        next = end;
+        end = scanEnd(lastUsed, mustReach, gap);
+        if (live.limited) break;
+      }
+    }
+  }
+
+  /** Keeps single scripts live (the phone's registered single-key coins), like `watchWallet`. */
+  async watchScripts(scripts: Uint8Array[]): Promise<void> {
+    if (this.live && this.current?.connected) await this.live.watch(scripts);
   }
 
   /** Calls `fn` on every new tip the chain source announces (whichever source is in use). */
@@ -330,8 +464,20 @@ export class ChainService {
     return s;
   }
 
-  private history(script: Uint8Array): Promise<ElectrumHistoryItem[]> {
-    return mapped(this.client().history(script));
+  /** A script's history: from the subscriptions when current, else from the server. */
+  private async history(script: Uint8Array): Promise<ElectrumHistoryItem[]> {
+    const backend = this.client();
+    const hit = await this.live?.read(script);
+    if (hit) return hit.history.map((h) => ({ ...h }));
+    return mapped(backend.history(script));
+  }
+
+  /** A script's unspent outputs: from the subscriptions when current, else from the server. */
+  private async unspent(script: Uint8Array): Promise<BackendUnspent[]> {
+    const backend = this.client();
+    const hit = await this.live?.read(script);
+    if (hit) return hit.unspent.map((u) => ({ ...u }));
+    return mapped(backend.listUnspent(script));
   }
 
   /**
@@ -342,14 +488,18 @@ export class ChainService {
   async scanWallet(wallet: AddressSource, opts: { gapLimit?: number; minIndex?: Partial<Record<0 | 1, number>> } = {}): Promise<WalletScan> {
     const gap = Math.max(1, opts.gapLimit ?? this.opts.gapLimit ?? DEFAULT_GAP_LIMIT);
     const chains = {} as WalletScan['chains'];
+    // Every notification the server sent before this scan is seen before it reads from the subscriptions.
+    await this.live?.sync();
     for (const chain of [0, 1] as const) {
       const mustReach = opts.minIndex?.[chain] ?? -1;
       let lastUsed = -1;
       let next = 0;
       const used: ScannedAddress[] = [];
-      for (;;) {
-        await this.prepare(wallet, next + gap);
-        const batch = Array.from({ length: gap }, (_, k) => next + k).map((index) => ({ index, script: this.script(wallet, chain, index) }));
+      let end = scanEnd(lastUsed, mustReach, gap);
+      while (next < end) {
+        const stop = Math.min(end, next + gap);
+        await this.prepare(wallet, stop);
+        const batch = Array.from({ length: stop - next }, (_, k) => next + k).map((index) => ({ index, script: this.script(wallet, chain, index) }));
         const histories = await Promise.all(batch.map((b) => this.history(b.script)));
         histories.forEach((h, k) => {
           if (h.length > 0) {
@@ -357,8 +507,8 @@ export class ChainService {
             used.push({ ...batch[k], history: h });
           }
         });
-        next += gap;
-        if (next > mustReach && next - 1 - lastUsed >= gap) break;
+        next = stop;
+        end = scanEnd(lastUsed, mustReach, gap);
         if (next > MAX_SCAN_INDEX) throw new ChainUnavailableError('address scan went past the index limit');
       }
       chains[chain] = { used, nextIndex: lastUsed + 1 };
@@ -379,7 +529,7 @@ export class ChainService {
   private async unspentOf(scan: WalletScan): Promise<WalletUtxo[]> {
     const out: WalletUtxo[] = [];
     for (const chain of [0, 1] as const) {
-      const lists = await Promise.all(scan.chains[chain].used.map((u) => mapped(this.client().listUnspent(u.script))));
+      const lists = await Promise.all(scan.chains[chain].used.map((u) => this.unspent(u.script)));
       lists.forEach((list, k) => {
         const u = scan.chains[chain].used[k];
         for (const x of list) out.push({ txid: x.txid, vout: x.vout, value: x.value, height: x.height, chain, index: u.index });
@@ -615,10 +765,11 @@ export class ChainService {
     const unique = [...new Map(scripts.map((sc) => [hex.encode(sc), sc])).values()];
     const out: { script: Uint8Array; txid: string; vout: number; value: bigint; height: number; confirmations: number }[] = [];
     const backend = this.client();
+    await this.live?.sync();
     for (let i = 0; i < unique.length && out.length < max; i += 16) {
       const batch = unique.slice(i, i + 16);
       const lists = await Promise.all(
-        batch.map((sc) => mapped(outpoints && backend.unspentAt ? backend.unspentAt(sc, outpoints) : backend.listUnspent(sc))),
+        batch.map((sc) => (outpoints && backend.unspentAt ? mapped(backend.unspentAt(sc, outpoints)) : this.unspent(sc))),
       );
       lists.forEach((list, k) => {
         for (const x of list) {

@@ -753,6 +753,13 @@ export interface InviteView {
   acknowledged: boolean;
 }
 
+/** A short in-app note (`WalletState.toast`). `id` changes for every new one. */
+export interface AppToast {
+  id: string;
+  kind: 'incoming';
+  text: string;
+}
+
 export interface WalletState {
   /** Which wallet is behind the screens. */
   backing: AppMode;
@@ -784,6 +791,11 @@ export interface WalletState {
   guardianReconnecting?: boolean;
   /** A payment is signed (by the guardian or the hardware wallet) and on its way out: "Sending…". */
   paymentSending?: boolean;
+  /**
+   * A short note over every screen for a few seconds ("Incoming 2,000 sats · unconfirmed"): the guardian just saw a
+   * payment come in (`wallet_tx`). Absent or null: nothing to show. `dismissToast` hides it sooner.
+   */
+  toast?: AppToast | null;
   phoneSpending: PhoneSpending;
   /** A recovery on this phone's wallet that is no longer running. */
   recoveryOutcome: RecoveryOutcome | null;

@@ -287,6 +287,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
   const notifyScenario = scenario === 'notify';
   const never = { state: 'untested' as const };
   let notifyName = notifyScenario ? 'Home vault' : 'Trikey Guardian';
+  let paymentAlerts = false;
   let smtpSettings: NotificationSettings['smtp'] = notifyScenario
     ? { host: 'smtp.example.com', port: 465, security: 'tls', username: 'owner@example.com', from: 'owner@example.com', passwordSet: true, health: { state: 'ok', lastOkAt: localAt(1, '09:12') } }
     : undefined;
@@ -308,6 +309,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
   let nextDest = 6;
   const notificationSettings = (): NotificationSettings => ({
     guardianName: notifyName,
+    paymentAlerts,
     ...(smtpSettings ? { smtp: clone(smtpSettings) } : {}),
     destinations: clone(destinations),
     contacts: clone(DEMO_CONTACTS),
@@ -599,6 +601,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
         });
       }
       notifyName = input.guardianName.trim() || 'Trikey Guardian';
+      if (input.paymentAlerts !== undefined) paymentAlerts = input.paymentAlerts;
       // The mock cannot read a certificate: a pasted one gets a made-up fingerprint, a fingerprint is kept as typed.
       const pin = (text: string): NonNullable<NotificationSettings['smtp']>['pin'] =>
         text.includes('BEGIN')

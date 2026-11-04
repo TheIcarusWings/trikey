@@ -92,6 +92,12 @@ export interface ChainBackend {
   relayFee(): Promise<number | null>;
   /** Returns the txid. Throws `BackendRejectedError` when the server refused it. */
   broadcast(txHex: string): Promise<string>;
+  /**
+   * A backend that reads its wallets' transactions itself (Bitcoin Core): `fn` runs when what it read changed (a
+   * transaction new in the mempool or a block, a confirmation, a transaction gone). Electrum servers notify per script
+   * instead (chain/live.ts, `ScriptWatch`).
+   */
+  onWalletChange?(fn: () => void): () => void;
 }
 
 /** Genesis block hashes, for the "is this server on my network" check. `testnet` is testnet3 or testnet4. */
@@ -113,12 +119,43 @@ export function scriptHash(script: Uint8Array): string {
   return hex.encode(sha256(script).reverse());
 }
 
+/**
+ * Electrum's status of a script: sha256 of `tx_hash:height:` for each history entry in the server's order, hex; null
+ * for no history (protocol 1.4, "Status"). What `blockchain.scripthash.subscribe` returns and notifies.
+ */
+export function electrumStatus(history: readonly ElectrumHistoryItem[]): string | null {
+  if (!history.length) return null;
+  return hex.encode(sha256(new TextEncoder().encode(history.map((h) => `${h.tx_hash}:${h.height}:`).join(''))));
+}
+
+function parseHistory(r: unknown): ElectrumHistoryItem[] {
+  if (!Array.isArray(r)) return [];
+  return r.map((x) => {
+    const h = x as Partial<ElectrumHistoryItem>;
+    if (typeof h?.tx_hash !== 'string' || !/^[0-9a-f]{64}$/i.test(h.tx_hash) || !Number.isSafeInteger(h.height))
+      throw new BackendUnavailableError('the Electrum server returned a malformed history entry');
+    return { tx_hash: h.tx_hash.toLowerCase(), height: h.height! };
+  });
+}
+
+function parseUnspent(list: unknown): BackendUnspent[] {
+  return (Array.isArray(list) ? (list as ElectrumUnspent[]) : []).map((x) => {
+    if (typeof x?.tx_hash !== 'string' || !/^[0-9a-f]{64}$/i.test(x.tx_hash) || !Number.isSafeInteger(x.tx_pos) || !Number.isSafeInteger(x.value) || x.value < 0)
+      throw new BackendUnavailableError('the Electrum server returned a malformed unspent output');
+    return { txid: x.tx_hash.toLowerCase(), vout: x.tx_pos, value: BigInt(x.value), height: x.height };
+  });
+}
+
+/** A batch call's outcome: its value, or why it has none (the server's error, a malformed answer). */
+export type Got<T> = { ok: true; value: T } | { ok: false; error: string };
+
 /** An Electrum server through `ElectrumClient`. With `genesis`, it is used only once its block 0 is one of them. */
 export class ElectrumBackend implements ChainBackend {
   readonly kind = 'electrum' as const;
   private networkOk: boolean;
   private networkError?: string;
   private readonly offStatus: () => void;
+  private readonly readyListeners = new Set<(up: boolean) => void>();
 
   constructor(
     readonly client: ElectrumClient,
@@ -126,11 +163,16 @@ export class ElectrumBackend implements ChainBackend {
   ) {
     this.networkOk = !opts.genesis;
     this.offStatus = client.onStatus((up) => {
-      if (up && opts.genesis) void this.checkNetwork();
+      if (!up) this.emitReady(false);
+      else if (!opts.genesis || this.networkOk) {
+        this.emitReady(true);
+        if (opts.genesis) void this.checkNetwork();
+      } else void this.checkNetwork();
     });
   }
 
   private async checkNetwork(): Promise<void> {
+    const was = this.networkOk;
     try {
       const hexHeader = await this.client.request<string>('blockchain.block.header', [0]);
       const hash = parseHeader(String(hexHeader)).hash;
@@ -140,6 +182,66 @@ export class ElectrumBackend implements ChainBackend {
       this.networkOk = false;
       this.networkError = `the server did not say which network it is on (${errorText(e)})`;
     }
+    if (!was && this.connected) this.emitReady(true);
+    else if (was && !this.networkOk) this.emitReady(false);
+  }
+
+  private emitReady(up: boolean): void {
+    for (const fn of this.readyListeners) {
+      try {
+        fn(up);
+      } catch {
+        /* a listener's failure is its own */
+      }
+    }
+  }
+
+  /** `fn(true)` each time the server is connected and on the right network (a reconnect too), `fn(false)` when it drops. */
+  onReady(fn: (up: boolean) => void): () => void {
+    this.readyListeners.add(fn);
+    return () => this.readyListeners.delete(fn);
+  }
+
+  /** Script status notifications (`blockchain.scripthash.subscribe`). */
+  onScriptStatus(fn: (scripthash: string, status: string | null) => void): () => void {
+    return this.client.onScriptStatus(fn);
+  }
+
+  private async batch<T>(method: string, paramsList: unknown[][], parse: (r: unknown) => T): Promise<Got<T>[]> {
+    if (!this.connected) throw new BackendUnavailableError(this.lastError ? `the Electrum server is not connected: ${this.lastError}` : 'the Electrum server is not connected');
+    const out = await this.client.requestBatch(paramsList.map((params) => ({ method, params })));
+    return out.map((o): Got<T> => {
+      if (!o.ok) return { ok: false, error: o.error.message };
+      try {
+        return { ok: true, value: parse(o.result) };
+      } catch (e) {
+        return { ok: false, error: errorText(e) };
+      }
+    });
+  }
+
+  /** `server.ping`: answered after everything the server sent before it (notifications included). */
+  async ping(): Promise<void> {
+    await this.req('server.ping', []);
+  }
+
+  /** Subscribes to scripts by hash (one batch): each one's status now (null: no history), or why not. */
+  subscribeScripts(hashes: string[]): Promise<Got<string | null>[]> {
+    return this.batch('blockchain.scripthash.subscribe', hashes.map((h) => [h]), (r) => {
+      if (r === null) return null;
+      if (typeof r !== 'string' || !/^[0-9a-f]{64}$/i.test(r)) throw new Error('malformed status');
+      return r.toLowerCase();
+    });
+  }
+
+  /** Histories by script hash, in one batch. */
+  histories(hashes: string[]): Promise<Got<ElectrumHistoryItem[]>[]> {
+    return this.batch('blockchain.scripthash.get_history', hashes.map((h) => [h]), parseHistory);
+  }
+
+  /** Unspent outputs by script hash, in one batch. */
+  unspents(hashes: string[]): Promise<Got<BackendUnspent[]>[]> {
+    return this.batch('blockchain.scripthash.listunspent', hashes.map((h) => [h]), parseUnspent);
   }
 
   get connected(): boolean {
@@ -188,23 +290,11 @@ export class ElectrumBackend implements ChainBackend {
   }
 
   async history(script: Uint8Array): Promise<ElectrumHistoryItem[]> {
-    const r = await this.req<unknown[]>('blockchain.scripthash.get_history', [scriptHash(script)]);
-    if (!Array.isArray(r)) return [];
-    return r.map((x) => {
-      const h = x as Partial<ElectrumHistoryItem>;
-      if (typeof h?.tx_hash !== 'string' || !/^[0-9a-f]{64}$/i.test(h.tx_hash) || !Number.isSafeInteger(h.height))
-        throw new BackendUnavailableError('the Electrum server returned a malformed history entry');
-      return { tx_hash: h.tx_hash.toLowerCase(), height: h.height! };
-    });
+    return parseHistory(await this.req<unknown[]>('blockchain.scripthash.get_history', [scriptHash(script)]));
   }
 
   async listUnspent(script: Uint8Array): Promise<BackendUnspent[]> {
-    const list = await this.req<ElectrumUnspent[]>('blockchain.scripthash.listunspent', [scriptHash(script)]);
-    return (Array.isArray(list) ? list : []).map((x) => {
-      if (typeof x?.tx_hash !== 'string' || !/^[0-9a-f]{64}$/i.test(x.tx_hash) || !Number.isSafeInteger(x.tx_pos) || !Number.isSafeInteger(x.value) || x.value < 0)
-        throw new BackendUnavailableError('the Electrum server returned a malformed unspent output');
-      return { txid: x.tx_hash.toLowerCase(), vout: x.tx_pos, value: BigInt(x.value), height: x.height };
-    });
+    return parseUnspent(await this.req<ElectrumUnspent[]>('blockchain.scripthash.listunspent', [scriptHash(script)]));
   }
 
   async transaction(txid: string): Promise<string> {

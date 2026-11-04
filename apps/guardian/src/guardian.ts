@@ -32,6 +32,9 @@
  *                        family hosting (hosting/service.ts): the slot
  *                        registry, and each guest wallet's engine state and
  *                        sweeps. Only once the owner invites someone
+ *   live-wallet.json     the live wallet (live-wallet.ts): which transactions
+ *                        `wallet_tx` alerts announced, and those still waiting
+ *                        for a relay
  */
 import { join } from 'node:path';
 import type { Server } from 'node:http';
@@ -85,7 +88,12 @@ import { ServiceState, type RetiringRelay, type ServiceEvent } from './service-s
 import { UnlockThrottle, type ThrottleOptions } from './unlock-throttle.js';
 import { DirectMessages } from './nostr/dm.js';
 import { Inbox, seenWrapsFile } from './nostr/inbox.js';
-import { buildHandlers } from './nostr/handlers.js';
+import { buildHandlers, KnownCoins, walletOf } from './nostr/handlers.js';
+import { LiveWallet, type LiveWalletOptions } from './live-wallet.js';
+import { helperAccount, type AddressSource } from './singlekey.js';
+import { savingsWallet } from './savings.js';
+import type { MultisigWallet, NetworkName } from '@trikey/core';
+import type { SavingsWatch } from './policy/index.js';
 import { stampOf, toSeconds } from './nostr/wire.js';
 import { DEFAULT_BROADCAST_LIMIT, DEFAULT_CONTACT_LOCK_LIMIT, DEFAULT_REFUSAL_LIMIT, SlidingWindowLimiter, type RateLimitOptions } from './rate-limit.js';
 import { Alerter } from './alerts.js';
@@ -145,6 +153,10 @@ export interface GuardianOptions {
   notify?: { net?: NetPolicy; smtpTest?: SmtpTestOptions };
   /** Builds the backend for a chain source (tests: fakes instead of public servers). Default: chain/source.ts `buildBackend`. */
   chainBackend?: (source: ChainSource, opts: { probe: boolean }) => ChainBackend;
+  /** The live wallet (live-wallet.ts): `false` turns it off (no subscriptions, no `wallet_tx`); else its options. */
+  liveWallet?: false | LiveWalletOptions;
+  /** Most scripts subscribed on an Electrum server (chain/live.ts). */
+  liveMaxScripts?: number;
 }
 
 export type ChainSourceOutcome =
@@ -276,6 +288,13 @@ export class Guardian {
   readonly hosting: Hosting;
   /** Email, ntfy and webhook alerts (notify/notifier.ts): owner-side settings from the web UI; works while locked. */
   readonly notifier: Notifier;
+  /** Keeps the wallets' chain data live and sends `wallet_tx` alerts (live-wallet.ts). Undefined when turned off. */
+  readonly live?: LiveWallet;
+  /**
+   * The paired wallet's coins as last read (a `wallet.sync`, or a pass of the live wallet): what `tx.broadcast` checks a
+   * transaction's inputs against before it scans (handlers.ts `spendsKnownCoin`).
+   */
+  readonly knownCoins = new KnownCoins();
 
   engine!: PolicyEngine;
   store!: ObservedStore;
@@ -381,7 +400,7 @@ export class Guardian {
     // The environment's choice; `open` swaps in the web UI's, if the owner made one (chain-source.json).
     this.chainSource = opts.config.chainSource ?? this.envElectrumSource();
     this.chainSourceStore = new ChainSourceStore(opts.config.dataDir);
-    this.chain = new ChainService({ backend: this.chainSource ? this.makeBackend(this.chainSource, false) : undefined, rpc, log: this.log });
+    this.chain = new ChainService({ backend: this.chainSource ? this.makeBackend(this.chainSource, false) : undefined, rpc, log: this.log, liveMaxScripts: opts.liveMaxScripts });
     this.sp = new SilentPaymentService({
       dataDir: opts.config.dataDir,
       rpc,
@@ -396,6 +415,10 @@ export class Guardian {
     this.recovery = new RecoveryRunner(this);
     this.savingsWatch = new SavingsMonitor(this, opts.savingsScanIntervalMs);
     this.hosting = new Hosting(this);
+    if (opts.liveWallet !== false) {
+      this.live = new LiveWallet(this, opts.liveWallet ?? {});
+      this.features.push(GUARDIAN_FEATURES.liveWallet);
+    }
     this.notifier = new Notifier({
       dataDir: opts.config.dataDir,
       now: () => this.clock.now(),
@@ -461,6 +484,7 @@ export class Guardian {
     // Guests' slots: nothing to load without hosting.json (every guardian before family hosting).
     await g.hosting.load();
     await g.notifier.load();
+    await g.live?.load();
     const stored = await g.chainSourceStore.load();
     if (stored) {
       g.chainSource = stored;
@@ -490,7 +514,38 @@ export class Guardian {
    * only when it lists `savings` (the guardian serves Savings' chain data). Tests clear it to see how a phone treats a
    * guardian from before a feature.
    */
-  features: string[] = [GUARDIAN_FEATURES.limitOff, GUARDIAN_FEATURES.contactLock, GUARDIAN_FEATURES.savings, GUARDIAN_FEATURES.notifications, GUARDIAN_FEATURES.shortWraps];
+  features: string[] = [
+    GUARDIAN_FEATURES.limitOff,
+    GUARDIAN_FEATURES.contactLock,
+    GUARDIAN_FEATURES.savings,
+    GUARDIAN_FEATURES.notifications,
+    GUARDIAN_FEATURES.shortWraps,
+  ];
+
+  /** The wallet object of a registration or a watched wallet (cached per descriptor). */
+  walletOf(w: { descriptor: string; network: NetworkName }): MultisigWallet {
+    return walletOf(w);
+  }
+
+  /** The wallet object of the watched Savings wallet. */
+  savingsWalletOf(sv: SavingsWatch): MultisigWallet {
+    return savingsWallet(sv);
+  }
+
+  /** The phone's registered helper account (single-key coins), if any. */
+  helperWallet(): AddressSource | undefined {
+    const reg = this.engine.registration();
+    const helper = this.engine.singleKey()?.helper;
+    return reg && helper ? helperAccount(helper.xpub, reg.network) : undefined;
+  }
+
+  /** The scripts of the phone's registered single-key coins and silent payment matches. */
+  singleKeyScripts(): Uint8Array[] {
+    if (!this.engine.registration()) return [];
+    const scripts = new Set<string>(this.sp.matchScripts().values());
+    for (const c of this.engine.singleKey()?.coins ?? []) scripts.add(c.script);
+    return [...scripts].map((x) => hex.decode(x));
+  }
 
   nowSec(): number {
     return toSeconds(this.clock.now());
@@ -542,6 +597,7 @@ export class Guardian {
     }
     this.chain.start();
     this.chain.onTip(() => void this.tick());
+    this.live?.start();
     if (!this.setupComplete && this.setupCode) {
       // Deliberately in the log (the one place only the box's owner reads): http/setup-code.ts.
       this.log.info('setup.code', { code: this.setupCode.code, hint: 'Open the web UI and enter this setup code to set up the guardian. It changes at every restart.' });
@@ -572,6 +628,8 @@ export class Guardian {
     this.stopped = true;
     clearInterval(this.timer);
     await this.ticking?.catch(() => {});
+    this.live?.stop();
+    await this.live?.idle().catch(() => undefined);
     await this.sp.stop();
     // A send in flight may finish (its outcome is saved); a slow mail server does not hold the stop up for long.
     await Promise.race([this.notifier.idle(), new Promise<void>((r) => setTimeout(r, 5000).unref?.())]);
@@ -902,10 +960,10 @@ export class Guardian {
    * Queues an alert for the owner's own email, ntfy and webhook channels (not the contacts'), the same words as the
    * phone's alert, and starts delivering in the background. Durable and retried like the engine's alerts.
    */
-  notifyOwner(type: string, text: string, walletId?: string): void {
+  notifyOwner(type: string, text: string, walletId?: string, id?: string): void {
     if (!this.notifier.configured) return;
     const at = this.clock.now();
-    const ev: NotifyEvent = { id: `${type}-${at}`, type, at, owner: text, ...(walletId ? { walletId } : {}) };
+    const ev: NotifyEvent = { id: id ?? `${type}-${at}`, type, at, owner: text, ...(walletId ? { walletId } : {}) };
     void this.notifier
       .enqueue(ev)
       .then((queued) => queued && this.notifier.kick())
@@ -1126,6 +1184,8 @@ export class Guardian {
           // Before the alerts, so a Savings spend found now is announced in the same pass.
           await this.savingsWatch.run();
           await this.alerts.run();
+          // `wallet_tx` alerts no relay took yet, and a first look at wallets new since the last pass.
+          await this.live?.tick();
           // Email, ntfy, webhook: in the background, so a slow mail server never holds back the tick.
           this.notifier.kick();
           // In the background: a long catch-up must not hold back alerts or recoveries.
