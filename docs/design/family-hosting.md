@@ -874,9 +874,12 @@ passes, the golden state file loads and saves byte for byte, and the end-to-end 
    Releasing (`wallet.retire`) deletes the slot's key 3 for good, which is safe only when nothing needs it, so: the phone
    checks that no recovery runs, that its chain server **and** a second, independent one see no coin, and that no coin the
    guardian co-signed is unspent (`hostedLeaveCheck`); the guardian, for its part, **refuses** `wallet.retire` while a
-   ledger coin is unspent on its own Electrs (`ledger_unspent`), since an off-path coin (section 4) needs key 3 and would
-   be lost. A host's Electrs that is down blocks the release (the money still moves with phone + hardware wallet); the
-   host's Stop hosting remains the other way out.
+   ledger coin is unspent on its own chain source (`ledger_unspent`), since an off-path coin (section 4) needs key 3 and
+   would be lost. A host's chain source that is down blocks the release (the money still moves with phone + hardware
+   wallet); the host's Stop hosting remains the other way out. Since chain sources (#105) the check asks by outpoint
+   (`ChainService.outpointsUnspent`, as the recovery's coin check does, section 15 "Chain sources and guests"): with
+   Bitcoin Core a listing of the scripts would read the host's watch-only wallet, which holds nothing of a guest, and
+   take every ledger coin for spent (and prune it); by outpoint (`gettxout`) it is exact and imports nothing.
 9. **The host's page** shows that a guest's wallet is paused, never who paused it and never an amount; the host cannot
    resume it. The host's email, ntfy and webhook channels never carry a guest's limit-off, pause or contact
    (`hosting-notify.e2e.test.ts`).

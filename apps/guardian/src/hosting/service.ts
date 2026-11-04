@@ -226,13 +226,15 @@ export class Hosting {
   }
 
   /**
-   * The ledger coins of a slot's active wallet that are still unspent, by their own scripts on the host's Electrs
-   * (nothing leaks: the guardian co-signed them). Spent ones are pruned from the ledger on the way.
+   * The ledger coins of a slot's active wallet that are still unspent, by their own outpoints and scripts on the host's
+   * chain source (nothing leaks: the guardian co-signed them). Spent ones are pruned from the ledger on the way.
+   * `outpointsUnspent`, never a script listing: Bitcoin Core's watch-only wallet holds nothing of a guest (and must not),
+   * so a listing there would call every ledger coin spent and prune them all; by outpoint (`gettxout`) it is exact.
    */
   async unspentLedger(engine: HostedEngine): Promise<{ coins: number; sats: bigint }> {
     const ledger = engine.ledger();
     if (!ledger.length) return { coins: 0, sats: 0n };
-    const unspent = new Set((await this.g.chain.scriptUnspent(ledger.map((l) => hex.decode(l.script)))).map((u) => `${u.txid}:${u.vout}`));
+    const unspent = await this.g.chain.outpointsUnspent(ledger.map((l) => ({ txid: l.txid, vout: l.vout, script: hex.decode(l.script) })));
     const left = ledger.filter((l) => unspent.has(`${l.txid}:${l.vout}`));
     const spent = ledger.filter((l) => !unspent.has(`${l.txid}:${l.vout}`)).map((l) => `${l.txid}:${l.vout}`);
     if (spent.length) await engine.pruneLedger(spent);

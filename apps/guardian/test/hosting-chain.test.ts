@@ -2,7 +2,8 @@
  * Family hosting and the host's chain source (docs/design/family-hosting.md, "Chain sources and guests"): a guest
  * recovery's coin check (hosting/recovery.ts) works with every chain source, by the coins' own outpoints, and never
  * asks the chain source to watch the guest's wallet. With Bitcoin Core that means the host's watch-only wallet imports
- * no descriptor and no address of a guest (`prepare` is never called; coins are looked up with `gettxout`).
+ * no descriptor and no address of a guest (`prepare` is never called; coins are looked up with `gettxout`). The same
+ * for phase 2's "leave" check (`Hosting.unspentLedger`), which must not take a guest's ledger coins for spent on Core.
  */
 import { base64, hex } from '@scure/base';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
@@ -11,7 +12,7 @@ import type { BackendUnspent, ChainBackend } from '../src/chain/backend.js';
 import { ChainService } from '../src/chain/chain.js';
 import { HostedRecoveryRunner } from '../src/hosting/recovery.js';
 import type { HostedEngine } from '../src/hosting/engine.js';
-import type { Hosting } from '../src/hosting/service.js';
+import { Hosting } from '../src/hosting/service.js';
 import type { Guardian } from '../src/guardian.js';
 import type { HostedRecoveryRecord } from '../src/hosting/types.js';
 import { MNEMONICS, fundScript } from './helpers.js';
@@ -145,4 +146,17 @@ describe("family hosting on the host's chain source", () => {
     expect([...res]).toEqual([`${g.live.txid}:0`]);
     expect(calls.unspentAt).toBe(2);
   });
+
+  for (const kind of ['core', 'electrum'] as const) {
+    it(`${kind}: leaving counts the unspent ledger coins by outpoint, and prunes only the spent one`, async () => {
+      const g = await guestRecovery();
+      const { backend, calls } = stubBackend(kind, g.utxos);
+      const { engine, pruned } = runnerOn(new ChainService({ backend }), g.ledger);
+      const fake = { g: { chain: new ChainService({ backend }) } } as unknown as Hosting;
+      expect(await Hosting.prototype.unspentLedger.call(fake, engine)).toEqual({ coins: 1, sats: 50_000n });
+      expect(pruned).toEqual([[`${g.spent.txid}:0`]]);
+      expect(calls.prepare).toBe(0);
+      if (kind === 'core') expect(calls.listUnspent).toBe(0);
+    });
+  }
 });

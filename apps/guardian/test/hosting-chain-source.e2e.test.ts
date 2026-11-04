@@ -84,7 +84,7 @@ describe("family hosting and the host's chain source", { timeout: 60_000 }, () =
     expect(st.chainSource).toEqual({ kind: 'own', backend: 'electrum', host: 'own' });
     // The host's own Electrs is at 127.0.0.1 in this rig: not named to the guest (the relays are, as to every phone).
     expect(JSON.stringify(st.chainSource)).not.toContain('127.0.0.1');
-    expect(st.features).toEqual(['family_hosting', 'short_wraps']);
+    expect(st.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps']);
   });
 
   it("a public server is refused while a guest's recovery runs", async () => {
