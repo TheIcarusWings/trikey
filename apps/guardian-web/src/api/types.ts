@@ -146,14 +146,27 @@ export interface SetupPreflight {
   /** Chain data fully synced. */
   synced: boolean;
   syncProgress?: number;
+  /** While `electrs` is missing: why the guardian cannot reach its Electrum server, in plain words (guardians from 0.1.9). */
+  electrsProblem?: string;
   relayOptions: RelayOption[];
+  /**
+   * Where the guardian runs (guardians from 0.1.9; older ones are on Umbrel or Start9). On `docker` no platform login
+   * guards this page, and the box must stay on for the guardian to work.
+   */
+  platform?: Platform;
+  /** True: setup needs the one-time setup code the guardian prints in its log (plain Docker). Check it with `checkSetupCode`. */
+  setupCodeRequired?: boolean;
 }
+
+export type Platform = 'umbrel' | 'start9' | 'docker';
 
 export interface SetupInput {
   /** Used once to derive the key that encrypts key 3 at rest (Argon2id). Never stored. */
   passphrase: string;
   /** URLs from `relayOptions` the guardian should connect to. */
   relays: string[];
+  /** With `setupCodeRequired`: the setup code from the guardian's log. */
+  setupCode?: string;
 }
 
 export interface UnlockInput {
@@ -279,6 +292,11 @@ export interface NotifyDestination {
 export interface NotificationSettings {
   /** How every message names this guardian: letters, digits, spaces, `-` and `'`, at most 32. */
   guardianName: string;
+  /**
+   * Opt-in, off by default: your own channels also get a short message for each payment in or out of the wallet (and
+   * Savings), and when it confirms. Amounts only, never an address or a link; never to alert contacts.
+   */
+  paymentAlerts: boolean;
   smtp?: SmtpSettings;
   destinations: NotifyDestination[];
   /** The alert contacts in the rules (hex pubkey and npub), to attach an email or ntfy topic to. */
@@ -308,6 +326,8 @@ export interface NotifyDestinationInput {
 
 export interface NotificationSettingsInput {
   guardianName: string;
+  /** Payments to your own channels too (`NotificationSettings.paymentAlerts`). Omitted: as it was. */
+  paymentAlerts?: boolean;
   /**
    * `null`: no email account. `password` omitted: keep the stored one. `pin`: the server's certificate (PEM) or its
    * SHA-256 fingerprint to pin; omitted keeps the stored pin, `null` removes it (public CAs again).
@@ -516,4 +536,62 @@ export interface StopHostingInput {
   now?: boolean;
   /** `STOP HOSTING NOW`, typed exactly, with `now`. */
   confirm?: string;
+}
+
+// --- Settings > Server (where the guardian reads the blockchain) ---------------
+
+/**
+ * The chain source as the guardian shows it: never the RPC password (`passSet` says one is stored).
+ * - `electrum`: a private Electrum server (the box's own Electrs, or Electrs or Fulcrum on your network);
+ * - `core`: your own Bitcoin Core alone, through a watch-only wallet in it;
+ * - `public`: a public Electrum server (always TLS).
+ */
+export type ChainSourceView =
+  | { kind: 'electrum'; host: string; port: number; tls: boolean; certSha256?: string; allowPublicPlaintext?: boolean }
+  | { kind: 'public'; host: string; port: number; certSha256?: string }
+  | { kind: 'core'; rpc: { host: string; port: number; user: string; passSet: true; allowPublic?: boolean }; wallet?: string };
+
+/** `PUT /api/chain` and `POST /api/chain/test`. For `core`, leave `pass` out to keep the stored one. For `public`, `preset` or `host`. */
+export type ChainSourceInput =
+  | { kind: 'electrum'; host: string; port?: number; tls: boolean; certSha256?: string; allowPublicPlaintext?: boolean }
+  | { kind: 'public'; preset?: string; host?: string; port?: number; certSha256?: string }
+  | { kind: 'core'; rpc: { host: string; port: number; user: string; pass?: string; allowPublic?: boolean }; wallet?: string };
+
+export interface PublicServerOption {
+  id: string;
+  host: string;
+  port: number;
+  operator: string;
+  /** For testnet: which test network the server follows. */
+  chain?: 'testnet3' | 'testnet4';
+}
+
+export interface ChainSettings {
+  source: ChainSourceView | null;
+  /** `own` (your Electrum server or Bitcoin Core) or `public`. */
+  summary?: { kind: 'own' | 'public'; backend: 'electrum' | 'core'; host: string; port: number };
+  /** `environment`: the settings the guardian was started with (Umbrel, Start9, `.env`); `settings`: chosen here. */
+  origin: 'environment' | 'settings';
+  status: {
+    connected: boolean;
+    /** `electrs/0.12.0`, `Bitcoin Core 32.1`. */
+    server?: string;
+    height?: number;
+    /** While not connected: why. */
+    error?: string;
+    /** Bitcoin Core only: wallet imports still scanning the chain, since when, from which date. */
+    rescans: { since: ISODate; from: ISODate }[];
+  };
+  /** Well-known public servers for this network. */
+  publicServers: PublicServerOption[];
+  network: string;
+  /** While a recovery runs, switching to a public server is refused (`recovery_pending`). */
+  recoveryRunning: boolean;
+}
+
+export interface ChainTestResult {
+  ok: boolean;
+  server?: string;
+  height?: number;
+  error?: string;
 }

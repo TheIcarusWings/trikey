@@ -23,6 +23,7 @@ import {
   ElectrumUnavailableError,
   InvalidTransactionError,
   TxNotFoundError,
+  parseRawTx,
   txidOf,
 } from '../chain/chain.js';
 import { ElectrumError } from '../chain/electrum.js';
@@ -80,7 +81,7 @@ function runningRecovery(g: Guardian, id: string): RecoveryRecord {
  * the same object must come back for the same wallet (the paired one and the watched one).
  */
 const walletCache = new Map<string, MultisigWallet>();
-function walletOf(w: { descriptor: string; network: Parameters<typeof getNetwork>[0] }): MultisigWallet {
+export function walletOf(w: { descriptor: string; network: Parameters<typeof getNetwork>[0] }): MultisigWallet {
   const key = `${w.network}:${w.descriptor}`;
   let wallet = walletCache.get(key);
   if (!wallet) {
@@ -267,7 +268,88 @@ function runOnceAcrossRestarts(g: Guardian, handlers: Handlers): Handlers {
   return out as Handlers;
 }
 
+/** How long `tx.broadcast` trusts a co-signature this guardian made to say the transaction spends the wallet's coins (ms). */
+export const COSIGNED_TRUST_MS = 30 * 60_000;
+/** At most this many co-signed transactions are remembered for that. */
+const COSIGNED_MAX = 256;
+
+/**
+ * Transactions this guardian co-signed in the last `COSIGNED_TRUST_MS`, by wallet id and txid. `sign` checked every
+ * input to be a coin of the paired wallet (inspect.ts) before it signed, and the txid commits to the inputs and outputs
+ * (not to the witnesses), so `tx.broadcast` of such a transaction needs no scan of the wallet on Electrs to tell that
+ * it spends the wallet's coins. That scan took up to half a minute on a slow Electrs (electrs 0.11 on an Umbrel), so
+ * the phone re-sent the broadcast several times and showed the payment a minute late. In memory only (a restart just
+ * means one scan), bounded; anything else is checked as before.
+ */
+export class RecentlyCosigned {
+  private readonly items = new Map<string, number>(); // `${walletId}:${txid}` -> until (ms)
+  constructor(private readonly ttlMs = COSIGNED_TRUST_MS, private readonly max = COSIGNED_MAX) {}
+
+  add(walletId: string, txid: string, now: number): void {
+    const key = `${walletId}:${txid}`;
+    this.items.delete(key);
+    this.items.set(key, now + this.ttlMs);
+    for (const [k, until] of this.items) if (until <= now) this.items.delete(k);
+    while (this.items.size > this.max) this.items.delete(this.items.keys().next().value!);
+  }
+
+  has(walletId: string, txid: string, now: number): boolean {
+    const until = this.items.get(`${walletId}:${txid}`);
+    return until !== undefined && until > now;
+  }
+}
+
+/**
+ * The paired wallet's coins as its last `wallet.sync` found them (outpoint to chain and index), per wallet id: what
+ * `tx.broadcast` checks a transaction's inputs against before it falls back to a full scan (`spendsKnownCoin`).
+ */
+export class KnownCoins {
+  private readonly byWallet = new Map<string, Map<string, { chain: 0 | 1; index: number }>>();
+
+  /** The coins one sync found, replacing what an earlier sync of the wallet found. */
+  set(walletId: string, utxos: readonly { txid: string; vout: number; chain: 0 | 1; index: number }[]): void {
+    // One wallet at a time: the paired one (a recovery's new wallet replaces the old wallet's coins).
+    this.byWallet.clear();
+    this.byWallet.set(walletId, new Map(utxos.map((u) => [`${u.txid}:${u.vout}`, { chain: u.chain, index: u.index }])));
+  }
+
+  get(walletId: string, txid: string, vout: number): { chain: 0 | 1; index: number } | undefined {
+    return this.byWallet.get(walletId)?.get(`${txid}:${vout}`);
+  }
+}
+
+/**
+ * Whether `txHex` spends a coin of `wallet` that its last sync listed: the same thing `chain.spendsWalletCoin` checks
+ * (an input spends an output paying one of the wallet's addresses), without scanning the whole wallet on Electrs. The
+ * known coin only says which input to look at and which address it should pay: the previous transaction is fetched
+ * (checked against its txid by `getTransaction`, so Electrs cannot make it up) and its output must pay exactly the
+ * script of that address of this wallet. A coin listed by mistake, or spent since, fails or proves nothing worse than
+ * the scan would (a spent coin still is the wallet's: the node refuses the double spend). False on any miss: the
+ * caller scans.
+ */
+async function spendsKnownCoin(g: Guardian, wallet: MultisigWallet, known: KnownCoins, walletId: string, txHex: string): Promise<boolean> {
+  let inputs: { txid: string; vout: number }[];
+  try {
+    inputs = parseRawTx(txHex).inputs;
+  } catch {
+    return false;
+  }
+  for (const inp of inputs) {
+    const coin = known.get(walletId, inp.txid, inp.vout);
+    if (!coin) continue;
+    try {
+      const prev = parseRawTx(await g.chain.getTransaction(inp.txid)).outputs[inp.vout];
+      if (prev && hex.encode(prev.script) === hex.encode(wallet.derive(coin.chain, coin.index).script)) return true;
+    } catch {
+      // not fetched: let the scan decide
+    }
+  }
+  return false;
+}
+
 export function buildHandlers(g: Guardian): Handlers {
+  const cosigned = new RecentlyCosigned();
+  const known = g.knownCoins;
   const handlers: Handlers = {
     'guardian.status': () => {
       const s = g.engine.status();
@@ -290,6 +372,8 @@ export function buildHandlers(g: Guardian): Handlers {
         ...(g.service.get().relays.length ? { relays: [...g.service.get().relays] } : {}),
         // The owner's extra alert channels, masked and read-only (PROTOCOL.md, "Extra alert channels").
         ...(g.notifier.configured ? { notifications: { channels: g.notifier.summary() } } : {}),
+        // Where it reads the blockchain: the owner's own node or a public server (PROTOCOL.md, "Chain source").
+        ...(g.chainSourceSummary() ? { chainSource: { kind: g.chainSourceSummary()!.kind, backend: g.chainSourceSummary()!.backend, host: g.chainSourceSummary()!.host.slice(0, 255) } } : {}),
         ...(s.dailyLimit
           ? {
               dailyLimit: {
@@ -433,6 +517,8 @@ export function buildHandlers(g: Guardian): Handlers {
       const res = await refusable(g, ctx.sender, () => g.engine.cosign(base64.decode(params.psbt)));
       if (!res.ok) throw refusalError(res.refusal);
       g.log.info('cosign.signed', { txid: res.txid, outflow: Number(res.outflow), replay: res.replay });
+      const walletId = g.engine.registration()?.walletId;
+      if (walletId) cosigned.add(walletId, res.txid, g.clock.now());
       return { psbt: base64.encode(res.psbt) };
     },
 
@@ -534,7 +620,10 @@ export function buildHandlers(g: Guardian): Handlers {
           maxUtxos: MAX_SYNC_UTXOS,
           ...(paired ? { minIndex: g.scanFloor(walletId) } : {}),
         });
-        if (paired) await g.noteScan(walletId, r);
+        if (paired) {
+          await g.noteScan(walletId, r);
+          known.set(walletId, r.utxos);
+        }
         return {
           walletId,
           tipHeight: r.tipHeight,
@@ -588,7 +677,13 @@ export function buildHandlers(g: Guardian): Handlers {
         // (silent payments, the helper coin) into it, or a sweep of the watched (replaced) wallet into it.
         let via = 'wallet';
         const sv = g.engine.savings();
-        if (!(await g.chain.spendsWalletCoin(wallet, params.txHex, { minIndex: g.scanFloor(g.engine.registration()!.walletId) }))) {
+        const walletId = g.engine.registration()!.walletId;
+        // Co-signed here a moment ago: its inputs were checked to be the wallet's coins then (`RecentlyCosigned`). Else
+        // a coin the last sync listed (a payment the hardware wallet signed), checked against its previous transaction
+        // (`spendsKnownCoin`). Only then the full scan, which can take long on a slow Electrs.
+        if (cosigned.has(walletId, txid, g.clock.now())) via = 'cosigned';
+        else if (await spendsKnownCoin(g, wallet, known, walletId, params.txHex)) via = 'known_coin';
+        else if (!(await g.chain.spendsWalletCoin(wallet, params.txHex, { minIndex: g.scanFloor(walletId) }))) {
           // (d) A spend of the watched Savings wallet: the guardian did not sign it and cannot; it only relays it, and
           // its tripwire announces it like any other Savings spend.
           if (sv && (await g.chain.spendsWalletCoin(savingsWallet(sv), params.txHex, { minIndex: g.savingsWatch.scanFloor(sv) }))) {
@@ -771,7 +866,8 @@ export function buildHandlers(g: Guardian): Handlers {
     const { helper, coins } = singleKeyCoins(g);
     if (!helper && !coins.size) throw new RpcError(ErrorCode.WalletNotWatched, 'The phone registered no single-key coins with this guardian (singlekey.register).');
     const scripts = [...new Set(coins.values())].map(hexToBytes);
-    const unspent = (await g.chain.scriptUnspent(scripts, MAX_SYNC_UTXOS)).filter((u) => {
+    const outpoints = [...coins.keys()].map((k) => ({ txid: k.slice(0, k.lastIndexOf(':')), vout: Number(k.slice(k.lastIndexOf(':') + 1)) }));
+    const unspent = (await g.chain.scriptUnspent(scripts, MAX_SYNC_UTXOS, outpoints)).filter((u) => {
       const want = coins.get(`${u.txid}:${u.vout}`);
       return want !== undefined && want === bytesToHex(u.script);
     });

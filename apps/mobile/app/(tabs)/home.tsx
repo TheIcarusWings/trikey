@@ -62,6 +62,8 @@ export default function HomeScreen() {
       <BalanceHeader label={state.savings.status === 'active' ? 'Spending' : 'Balance'} sats={state.balanceSats} />
       {paused ? <StatusLine tone="warn" text={state.recovery ? 'Phone-only payments paused during recovery' : 'Phone-only payments paused'} /> : <LimitLine newWallet={newWallet} />}
       {/* Online but slow to send the chain data (a slow node): the balance above is the last one, not "offline". */}
+      {/* Back at the front: the connection to the guardian is being made again. Calm: nothing is wrong yet. */}
+      {state.guardianReconnecting && !down ? <StatusLine text="Reconnecting to your guardian…" /> : null}
       {state.guardianSlow && !down && state.synced ? (
         <StatusLine tone="warn" text={state.syncing ? 'Syncing… your guardian is slow to answer' : 'Slow to answer · last balance shown'} />
       ) : null}

@@ -1,6 +1,7 @@
 # Trikey Guardian
 
-Key 3 of a Trikey 2-of-3 wallet, running on the user's own Umbrel or Start9. It
+Key 3 of a Trikey 2-of-3 wallet, running on the user's own Umbrel or Start9, or on plain
+Docker (`packaging/compose/`). It
 co-signs phone payments under a daily limit, runs Delay & Notify recovery, and
 talks to the phone and alert contacts over nostr. See `DESIGN.md` at the repository
 root for the why, `packages/protocol/PROTOCOL.md` for the wire protocol and
@@ -17,9 +18,15 @@ directly): every endpoint but the reduced `GET /api/status` and first-run setup
 needs a session, which only the unlock passphrase opens (`POST /api/session`;
 `apps/guardian-web/API.md`).
 
+On plain Docker (`TRIKEY_PLATFORM=docker`, the default) there is no platform login in
+front of the first-run screen, so setup also needs the one-time setup code the guardian
+prints in its log at every start (`src/http/setup-code.ts`). `packaging/compose/` publishes
+the port on `127.0.0.1` by default. A DNS-rebinding page reaches only what a signed-out
+client does: its origin is not the guardian's, so it gets no session cookie.
+
 Network use: outbound `wss://` to the nostr relays chosen at setup (and alert
-contacts' NIP-17 inbox relays, `wss://` only), TCP to Electrs and optionally HTTP to
-Bitcoin Core on the platform's internal network. The only inbound traffic is HTTP
+contacts' NIP-17 inbox relays, `wss://` only), TCP or TLS to the Electrum server (plain
+TCP only to a loopback, private or link-local address) and optionally HTTP to Bitcoin Core. The only inbound traffic is HTTP
 on `PORT`.
 
 ## Running
@@ -33,11 +40,19 @@ node --import tsx apps/guardian/src/main.ts
 | `PORT` | `3000` | HTTP (web UI and `/api`) |
 | `TRIKEY_DATA_DIR` | `/data` | State, see below |
 | `TRIKEY_WEB_DIR` | none | The built web UI (`apps/guardian-web/dist`) |
-| `ELECTRUM_HOST`, `ELECTRUM_PORT` | none, `50001` | Electrs, plain TCP. Without it, recoveries cannot complete. |
+| `ELECTRUM_HOST`, `ELECTRUM_PORT` | none, `50001` (`50002` with TLS) | The Electrum server (Electrs, Fulcrum). Without it, recoveries cannot complete. Plain TCP goes only to an address on the box or the owner's network (loopback, 10/8, 172.16/12, 192.168/16, 100.64/10, fc00::/7, link-local), checked after resolving the name; anything else needs TLS. |
+| `ELECTRUM_TLS` | `0` | `1`: TLS, the certificate checked against the public CAs (and `NODE_EXTRA_CA_CERTS`) and the host name |
+| `ELECTRUM_TLS_CERT_SHA256` | none | With TLS: accept exactly the certificate with this SHA-256 fingerprint (64 hex digits, colons allowed), for self-signed certificates. Compared before anything is sent. |
+| `ELECTRUM_ALLOW_PUBLIC_PLAINTEXT` | `0` | `1` allows plain TCP to an address on the internet |
+| `CHAIN_SOURCE` | `electrum` | `electrum` (the Electrum server of `ELECTRUM_*`), `core` (Bitcoin Core alone through a watch-only wallet, `BITCOIN_RPC_*`; `BITCOIN_CORE_WALLET`, default `trikey-guardian`) or `public` (`PUBLIC_ELECTRUM_SERVER`: a listed id or `host:port`, default the network's first; `PUBLIC_ELECTRUM_CERT_SHA256`). The first choice: the web UI's Settings > Server overrides it (`chain-source.json`). `src/chain/source.ts` |
+| `BITCOIN_RPC_ALLOW_PUBLIC` | `0` | `1` allows plain RPC to an address on the internet (Bitcoin Core's RPC has no TLS) |
+| `TRIKEY_PLATFORM` | `docker` | `umbrel` or `start9`: the platform's login guards the web UI. `docker`: first-run setup needs the setup code from the log. The Umbrel and Start9 packages set theirs. |
+| `TRIKEY_RELAYS` | built-in list | Optional: the relays the first-run screen offers, comma-separated, 1 to 8 |
 | `BITCOIN_RPC_HOST`, `_PORT`, `_USER`, `_PASS` | none | Optional: sync progress, a broadcast fallback, and the silent payment scanner (`getblock <hash> 3`; without them `sp.*` answers `1700`) |
 | `BITCOIN_NETWORK` | `bitcoin` | `bitcoin`, `testnet`, `signet`, `regtest`; also `mainnet`, `main`, `testnet3`, `testnet4`, `test` |
 | `TRIKEY_LOG_LEVEL` | `info` | `debug` for more |
 | `TRIKEY_EXTRA_ENTROPY` | none | Optional: 32 bytes as 64 hex characters, mixed into every new setup seed with the OS draw and the browser's entropy (`trikey/guardian-seed/v1`, DESIGN.md "Entropy"). The Umbrel package sets it to the app's `APP_SEED`. Any other non-empty value is hashed to 32 bytes (SHA-256); it never stops the guardian from starting. Never logged; removed from the process environment once read. |
+| `FAMILY_HOSTING` | on | `false` turns hosting guests' wallets off (docs/design/family-hosting.md): no invites in the web UI, and guests' requests are dropped like a stranger's |
 | `SP_SCAN_THREADS` | cores - 1, at least 1 | Worker threads for the silent payment scanner, 1 to 64. `1` scans in the main thread, without workers. Lower it to leave more of the box to Bitcoin Core during a first scan. |
 
 For the web UI's dev server (`VITE_API=http`), run the guardian with `PORT=8787` or
@@ -56,6 +71,7 @@ All files in `TRIKEY_DATA_DIR` are mode 0600 and written atomically.
 | `nostr-identity.json` | The guardian's nostr key, **unencrypted** so a locked guardian can still answer the phone and send alerts (trade-off in `src/identity.ts`). |
 | `guardian-state.json` | The policy engine, format version 2: the active wallet (registration, rules, limit accounting, recovery access grants), retired wallets, recoveries, activity. A version-1 file (one wallet) is migrated when it is loaded and written back as version 2. |
 | `service.json` | Relays, the paired phone's name, co-signed sweeps and their broadcast state, the service log, recently handled request ids. (Recovery access grants used to live here; they are moved into the engine on start.) |
+| `live-wallet.json` | The live wallet (`src/live-wallet.ts`): per wallet, which transactions a `wallet_tx` alert announced (unconfirmed or confirmed), so a restart repeats none, and the alerts no relay took yet. Txids and amounts only, nothing secret. |
 | `unlock-throttle.json` | Failed web unlock attempts (exponential backoff after 3, up to 1 hour). |
 | `unlock-throttle-phone.json`, `reset-throttle.json`, `session-throttle.json` | The same for the phone's `guardian.unlock` (which also stops after 5 failures in a row until a web unlock), the web UI's reset and its sign-in: each entry point has its own count, so none can starve another. |
 | `silent-payments.json` | The silent payment scanner: the paired phone's registration (B_spend, labels, birth height, the scan key **encrypted**), the last scanned blocks' hashes (for reorgs) and the matches. No spending key. |
@@ -91,6 +107,12 @@ After every start the guardian is locked: key 3 is decrypted only by an unlock
   transactions that spend the wallet's own coins, or sweep the wallet it
   replaced into it (below), at most 20 per 10 minutes per phone. Alerts and
   `guardian.status` carry `atMs` (milliseconds) next to the seconds.
+- **Live wallet** (`features: ["live_wallet"]`): the guardian subscribes to the
+  wallet's scripts on its Electrum server (or polls Bitcoin Core's watch-only
+  wallet every 5 s) and sends `wallet_tx` `{ txid, direction, amountSats,
+  feeSats?, confirmations, wallet }` when a transaction touching the wallet or
+  Savings first appears and once when it confirms, from any device. Show it at
+  once, then `wallet.sync` for the coins (now answered in milliseconds).
 - **Co-signing** (`sign`) needs `nonWitnessUtxo` on every input, the phone's
   signature alone, and an unlocked guardian; the daily limit counts outflow
   plus fee over a rolling 24 h. `guardian.status.dailyLimit` is the count.

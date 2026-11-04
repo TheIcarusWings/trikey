@@ -23,3 +23,4 @@ website: https://trikey.app
 tags: [bitcoin, wallet, multisig, nostr]
 icon: ./apps/mobile/assets/icon.png
 release_notes: ./CHANGELOG.md
+metadata_sources: [github]

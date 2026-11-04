@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Platform, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
 import { DevicePromptHost } from '@/components/device-prompt-host';
+import { ToastHost } from '@/components/toast-host';
 import { Screen } from '@/components/screen';
 import { Body } from '@/components/panels';
 import { WalletProvider, useWallet, type AppMode, type ThemePreference } from '@/data';
@@ -101,6 +102,8 @@ function Shell({ restarts }: { restarts: number }) {
         {/* Both sheets show only while the wallet waits for a hardware wallet. */}
         <QrBridgeHost />
         <DevicePromptHost />
+        {/* "Incoming 2,000 sats · unconfirmed": a payment the guardian just saw (wallet_tx). */}
+        <ToastHost />
       </View>
     </ThemeProvider>
   );
@@ -165,11 +168,16 @@ export default function RootLayout() {
     setEpoch((e) => e + 1);
   }, []);
 
-  // Back at the front: reconnect to the relays now (Android destroys a background app's sockets), then sync.
+  // Away from the front, then back: reconnect to the relays now (iOS cancels a suspended app's sockets, Android
+  // destroys a background app's), then sync. The wallet is told when the app leaves, so a call that was under way
+  // when the phone slept (its timeout fires late, on an iPhone before the app hears it is active) is not "offline".
   useEffect(() => {
     const sub = AppState.addEventListener('change', (s) => {
-      if (s !== 'active') return;
       const w = current.current?.wallet;
+      if (s !== 'active') {
+        w?.pause?.(s === 'background' ? 'background' : 'inactive');
+        return;
+      }
       void (w?.resume ? w.resume() : w?.sync())?.catch(() => {});
     });
     return () => sub.remove();

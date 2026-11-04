@@ -19,6 +19,7 @@ import {
   nowSeconds,
   parseRumor,
   type Limits,
+  type MessageClass,
   type ReplayGuard,
   type RumorMeta,
 } from './envelope.js';
@@ -27,8 +28,18 @@ import { randomSecretKey, secureRandomBytes, secureRandomInt } from '@trikey/cor
 
 export { GiftWrap as GIFT_WRAP_KIND, Seal as SEAL_KIND } from 'nostr-tools/kinds';
 
-/** NIP-59 back-dates the seal and wrap timestamps by up to this much. Subscribe with `since` at least this far back. */
+/**
+ * NIP-59 back-dates the seal and wrap timestamps by up to this much. Alerts and NIP-17 DMs still are; senders before
+ * 0.1.10 back-dated requests and responses this much too, so receivers subscribe with `since` at least this far back.
+ */
 export const WRAP_BACKDATE_SEC = 2 * 86_400;
+/**
+ * Requests and responses (from 0.1.10) back-date their wrap by at most this much (PROTOCOL.md, "Wrap timestamps"): an
+ * interactive call's timing shows anyway (the relay sees a request arrive and its answer follow within seconds), so two
+ * days bought little privacy, and every call's wraps stayed on the relays for two days, which every subscription then
+ * downloaded again.
+ */
+export const RPC_WRAP_BACKDATE_SEC = 600;
 /** Subscription `since` margin: the back-dating plus a little slack. */
 export const SUBSCRIPTION_LOOKBACK_SEC = WRAP_BACKDATE_SEC + 600;
 
@@ -123,6 +134,11 @@ export interface WrapOptions {
   limits?: Limits;
   /** Conversation keys for the seal layer. Default `defaultConversationKeys`; `null` disables caching. */
   conversationKeys?: ConversationKeyCache | null;
+  /**
+   * The wrap's back-dating window, seconds. Default `wrapBackdateSec` of the message's class. Only tests set it (to
+   * send as a sender before 0.1.10 did: `WRAP_BACKDATE_SEC` for every message).
+   */
+  backdateSec?: number;
 }
 
 export interface WrappedMessage {
@@ -142,35 +158,56 @@ export interface WrappedMessage {
  * from `secureRandomInt` rather than `Math.random`, whose state an observer of enough timestamps could
  * recover.
  */
-const backdated = (now: number) => Math.round(now) - secureRandomInt(WRAP_BACKDATE_SEC + 1);
+const backdated = (now: number, windowSec = WRAP_BACKDATE_SEC) => Math.round(now) - secureRandomInt(windowSec + 1);
+
+/** How far a message of class `cls` back-dates its wrap: `RPC_WRAP_BACKDATE_SEC` for requests and responses, `WRAP_BACKDATE_SEC` for alerts. */
+export function wrapBackdateSec(cls: MessageClass): number {
+  return cls === 'alert' ? WRAP_BACKDATE_SEC : RPC_WRAP_BACKDATE_SEC;
+}
 
 /**
- * The public timestamps of a gift wrap: the back-dated `created_at` and the cleartext NIP-40 `expiration`.
+ * The public timestamps of a gift wrap: the back-dated `created_at` and the cleartext NIP-40 `expiration`, for a
+ * back-dating window `W` (`backdateSec`: `WRAP_BACKDATE_SEC` for alerts, `RPC_WRAP_BACKDATE_SEC` for requests and
+ * responses, see `wrapBackdateSec`).
  *
  * Back-dating only hides the send time if nothing else on the wrap gives it away. An expiration of
  * `now + ttl` (what the rumor carries) would do exactly that: `expiration - ttl` is the send time. So the
  * wrap's expiration is not derived from the send time at all, only from the wrap's own back-dated
  * `created_at`:
  *
- *     expiration = createdAt + WRAP_BACKDATE_SEC + maxTtlSec
+ *     expiration = createdAt + W + maxTtlSec
  *
- * With `createdAt = now - r`, `r` uniform in `0..WRAP_BACKDATE_SEC`, that is uniform over
- * `[now + maxTtlSec, now + maxTtlSec + WRAP_BACKDATE_SEC]`: the jitter is as wide as the back-dating
+ * With `createdAt = now - r`, `r` uniform in `0..W`, that is uniform over
+ * `[now + maxTtlSec, now + maxTtlSec + W]`: the jitter is as wide as the back-dating
  * window and it is the same random number, so the expiration is a function of a value the relay
  * already sees and tells an observer nothing more about `now` than `created_at` does. (An independent
  * jitter of the same width would let an observer intersect the two windows and narrow the send time.)
  *
- * - Never in the past: `createdAt + WRAP_BACKDATE_SEC >= now`, so `expiration >= now + maxTtlSec`.
+ * - Never in the past: `createdAt + W >= now`, so `expiration >= now + maxTtlSec`.
  * - Never before the message's own expiry: the exact one is inside the rumor (checked by receivers,
  *   section 4 of PROTOCOL.md), and a message is never created with a TTL above `maxTtlSec`, so the relay
  *   keeps the wrap at least as long as a receiver would accept it.
  * - It does not reveal the TTL either: it uses the class maximum (`maxTtlSec`), not the message's own
  *   TTL, so a 5-minute status call and a 1-hour call look the same.
  */
-export function wrapTimestamps(now: number, maxTtlSec: number): { createdAt: number; expiration: number } {
+export function wrapTimestamps(now: number, maxTtlSec: number, backdateSec = WRAP_BACKDATE_SEC): { createdAt: number; expiration: number } {
   if (!Number.isInteger(maxTtlSec) || maxTtlSec <= 0) throw new RangeError('maxTtlSec must be a positive integer');
-  const createdAt = backdated(now);
-  return { createdAt, expiration: createdAt + WRAP_BACKDATE_SEC + maxTtlSec };
+  if (!Number.isInteger(backdateSec) || backdateSec < 0) throw new RangeError('backdateSec must be a non-negative integer');
+  const createdAt = backdated(now, backdateSec);
+  return { createdAt, expiration: createdAt + backdateSec + maxTtlSec };
+}
+
+/**
+ * A wrap's public NIP-40 `expiration` (unix seconds), or undefined without one. Receivers drop a wrap past it (with
+ * `clockSkewSec` of slack) before any signature check or decryption: its rumor expired no later (`wrapMessage` never
+ * sets it earlier than the rumor's), and a relay that honours NIP-40 would not have sent it.
+ */
+export function wrapExpiration(wrap: Pick<NostrEvent, 'tags'>): number | undefined {
+  if (!Array.isArray(wrap.tags)) return undefined;
+  for (const t of wrap.tags) {
+    if (Array.isArray(t) && t[0] === TAG_EXPIRATION && typeof t[1] === 'string' && /^\d{1,12}$/.test(t[1])) return Number(t[1]);
+  }
+  return undefined;
 }
 
 /** NIP-44 nonces from the checked source too (nostr-tools would draw its own). */
@@ -202,9 +239,10 @@ export function wrapMessage(message: Message, opts: WrapOptions): WrappedMessage
   const wrapKey = randomSecretKey();
   const expiration = Number(template.tags.find((t) => t[0] === TAG_EXPIRATION)![1]);
   const limits = opts.limits ?? DEFAULT_LIMITS;
-  const times = wrapTimestamps(now, limits[classOf(message)].maxTtlSec);
+  const cls = classOf(message);
+  const times = wrapTimestamps(now, limits[cls].maxTtlSec, opts.backdateSec ?? wrapBackdateSec(cls));
   // Relays must never purge a wrap while the receiver would still accept its rumor.
-  const wrapExpiration = Math.max(times.expiration, expiration);
+  const publicExpiration = Math.max(times.expiration, expiration);
   const wrap = finalizeEvent(
     {
       kind: GiftWrap,
@@ -212,7 +250,7 @@ export function wrapMessage(message: Message, opts: WrapOptions): WrappedMessage
       created_at: times.createdAt,
       tags: [
         ['p', opts.recipient],
-        [TAG_EXPIRATION, String(wrapExpiration)],
+        [TAG_EXPIRATION, String(publicExpiration)],
       ],
     },
     wrapKey,

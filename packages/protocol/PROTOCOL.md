@@ -22,15 +22,16 @@ rumor  kind 21420, unsigned, authored by the sender          <- carries the JSON
 ```
 
 * **Rumor kind `21420`** is Trikey's RPC kind. It sits in the ephemeral range (20000-29999) so a rumor leaked onto a relay by mistake would not be stored. Rumors are never published.
-* **Seal** and **wrap** are exactly as in NIP-59 (NIP-44 v2 encryption; the wrap is encrypted with the throwaway key's conversation key with the recipient). Their `created_at` is randomised up to 2 days into the past, as NIP-59 recommends. The rumor's `created_at` is the real send time and stays inside the encryption.
+* **Seal** and **wrap** are exactly as in NIP-59 (NIP-44 v2 encryption; the wrap is encrypted with the throwaway key's conversation key with the recipient). Their `created_at` is randomised into the past, as NIP-59 recommends: the seal's up to 2 days; the wrap's up to 2 days for alerts and up to 10 minutes for requests and responses (from 0.1.10; see "Wrap timestamps"). The rumor's `created_at` is the real send time and stays inside the encryption.
 * **Wrap tags:** `["p", <recipient pubkey>]` and `["expiration", <unix seconds>]`, so relays can purge it. The wrap's `expiration` is **not** the rumor's: it is cleartext, and `rumor expiration - TTL` would be the send time, which the back-dating exists to hide. See "Wrap timestamps" below.
 * The wrap is the only thing published. Publish it to every relay in the shared relay list; a message needs to reach just one.
-* **Subscribing:** `{"kinds":[1059], "#p":[<own pubkey>], "since": now - 2 days - 10 min}`. The look-back is needed because wrap timestamps are back-dated; staleness is judged on the rumor (section 4), never on the wrap.
+* **Subscribing:** `{"kinds":[1059], "#p":[<own pubkey>], "since": now - 2 days - 10 min}`. The look-back is needed because wrap timestamps are back-dated (alerts by up to 2 days, and requests and responses from senders before 0.1.10 too); staleness is judged on the rumor (section 4), never on the wrap.
+* **Each wrap is opened once.** A subscription is sent every stored wrap in its look-back again, on every relay, at every (re)subscription. A receiver SHOULD keep the ids of the wraps it handled across restarts and skip them before checking any signature or decrypting anything; see "Handled wraps" in section 4.
 * **Implementation note (reference code).** The seal layer is encrypted with the conversation key of the two static keys, which never change between a phone and its guardian, so `@trikey/protocol` caches it per (secret key, peer) (`ConversationKeyCache`); only the wrap layer's ECDH with the throwaway key is done per message. The guardian opens each incoming wrap once (`openGiftWrap`) and routes the rumor by kind: 21420 to the RPC server, 14 (NIP-17 DMs from alert contacts) to the DM handler. Neither changes anything on the wire.
 
 ### Wrap timestamps
 
-Let `W` = 172,800 s (2 days, the back-dating window) and `M` = the largest TTL the message's class allows (section 4: 3,600 s for requests and responses, 604,800 s for alerts). The sender draws `r` uniformly from the integers `0..W` with the checked random source (`secureRandomInt`) and sets, on the wrap:
+Let `W` be the back-dating window of the message's class: 600 s (10 minutes) for requests and responses, 172,800 s (2 days) for alerts (before 0.1.10, 2 days for every message), and `M` = the largest TTL the class allows (section 4: 3,600 s for requests and responses, 604,800 s for alerts). The sender draws `r` uniformly from the integers `0..W` with the checked random source (`secureRandomInt`) and sets, on the wrap:
 
 ```
 created_at = floor(now) - r
@@ -41,7 +42,9 @@ expiration = created_at + W + M          (= now + M + (W - r), in [now + M, now 
 * **Never in the past.** `created_at + W >= now`, so `expiration >= now + M`, at least one hour ahead when published, whatever the clock rounding.
 * **Receivers still accept fresh messages.** Receivers judge freshness on the *rumor's* exact `expiration` (section 4), which is inside the encryption; they never read the wrap's tag. The wrap's expiration is always at or after the rumor's (a message's TTL is at most `M`, and a sender whose own rumor expiration were later would publish that value instead), so a relay never purges a wrap a receiver would still accept.
 * **Not the TTL.** The wrap uses the class maximum `M`, not the message's own TTL, so a 30 s status call and a 1 h call look the same; only the class (alert or not) shows.
-* **Cost.** A relay may keep a request's wrap for up to `W + M` (about 2 days) instead of minutes. Replay protection is unaffected: it uses the rumor's `created_at` and `expiration` only (section 4), never the wrap's tag, and wrap event ids are deduplicated separately.
+* **Cost.** A relay keeps a wrap for up to `W + M`: about 70 minutes for a request or response, about 9 days for an alert. Replay protection is unaffected: it uses the rumor's `created_at` and `expiration` only (section 4), never the wrap's tag, and wrap event ids are deduplicated separately.
+* **Why requests and responses back-date only 10 minutes (0.1.10).** Back-dating hides the send time from someone who reads stored events later; it never hid it from the relays, which see each event arrive. For an interactive call it hides little even from a later reader: the phone's request and the guardian's answer (and the phone's next one, every minute while the app is open) arrive within seconds of each other, so the pattern of traffic shows when the phone was in use whatever the timestamps say. What the 2-day window did cost was large: every call's two wraps stayed on the relays for 2 days and an hour, and every subscription downloaded all of them again (on the owner's phone, 603 wraps on one relay, each a signature check and two decryptions on every app start). With `W` = 10 minutes the wraps expire about 70 minutes after they are sent, the order of messages within a few minutes is still not given away by `created_at`, and the expiration is still a function of `created_at` only. Alerts are pushed by the guardian when something happens (a recovery started, a payment refused), so their timing says more about the user and the alert must survive a phone that is off for days: they keep the 2-day window. So do NIP-17 DMs to alert contacts, which are read by ordinary nostr apps.
+* **Compatibility.** Receivers keep the 2-day-and-10-minute look-back: the guardian for requests from phones before 0.1.10, the phone for alerts (and for answers from guardians before 0.1.10). A guardian from 0.1.10 lists `short_wraps` in `guardian.status.features` (section 7).
 * NIP-17 direct messages to alert contacts (`wrapDirectMessage`) carry no `expiration` tag; their seal and wrap `created_at` are back-dated the same way.
 
 ### Rumor tags
@@ -297,7 +300,7 @@ Opt-in (`Policy.contactLock`, DESIGN.md rule 8, docs/design/contact-lock.md). On
 
 ### Chain data
 
-The guardian already has the wallet's descriptor and the user's own Electrs, so it serves the paired phone's chain data and broadcasts for it: the phone never asks a public server. `wallet.sync`, `tx.get`, `tx.broadcast` and `fees.estimate` need no key 3, so they **work while the guardian is locked**. Only the paired phone may call them (plus, for the reads, a phone with recovery access); requests from anyone else are dropped without an answer like every other unauthorized request. Amounts are `Sats` (JSON numbers); heights are 0 while unconfirmed.
+The guardian already has the wallet's descriptor and a chain source (the user's own Electrs, see "Chain source" below), so it serves the paired phone's chain data and broadcasts for it: the phone never asks a server itself. `wallet.sync`, `tx.get`, `tx.broadcast` and `fees.estimate` need no key 3, so they **work while the guardian is locked**. Only the paired phone may call them (plus, for the reads, a phone with recovery access); requests from anyone else are dropped without an answer like every other unauthorized request. Amounts are `Sats` (JSON numbers); heights are 0 while unconfirmed.
 
 * **`wallet.sync`** scans both chains of the descriptor (receive `0`, change `1`) the way the guardian checks recovery coverage: until `gapLimit` (20) consecutive addresses have no history.
   * `utxos`: `{ txid, vout, valueSats, height, confirmations, chain, index }`, every unspent output, confirmed ones first by value, at most 500 (`utxosTruncated` says there are more; `balance` always counts all of them). `chain`/`index` are the derivation steps below the account keys, which the phone needs to build the PSBT input.
@@ -311,6 +314,32 @@ The guardian already has the wallet's descriptor and the user's own Electrs, so 
   * **A sweep of the phone's single-key coins** (rule c, see "Silent payments") is checked the same way: at most 500 inputs and 10 outputs; **every input** spends a silent payment the guardian's scanner found, a coin the phone registered (`singlekey.register`, and the previous output must pay exactly the registered script), or a coin of the registered helper account (scanned range) (`input_not_single_key`); **every output** pays an address of the paired wallet (`output_not_to_wallet`); the outputs do not exceed the inputs; and the fee is at most `sweepFeeCapSats` (`1200`, `sweep_fee_exceeds_cap`). It applies as soon as one input is such a coin, so a transaction that spends a match but pays anyone else is refused, not relayed under another rule.
 * **`fees.estimate`** asks the node (`blockchain.estimatefee`) per target and converts BTC/kvB to sat/vB; `satPerVb` is `null` where the node has no estimate (usual on regtest and signet, and right after a restart). `minRelaySatPerVb` is the node's relay fee floor.
 * Electrs unreachable or not synced: `1501 Unavailable`; try again later.
+
+**Chain source.** Where the guardian reads the chain is the owner's choice in its web UI (Settings > Server), as in
+Sparrow Wallet: a private Electrum server (the box's own Electrs on Umbrel and Start9, the default), Bitcoin Core alone
+(through a watch-only descriptor wallet in it), or a public Electrum server (TLS, from a short list or another one).
+It is not in the policy and no phone can change it. The phone only sees **`guardian.status.chainSource`**
+`{ kind: "own" | "public", backend: "electrum" | "core", host }` (absent from older guardians, which use the box's own
+node) and the **`chain_source_changed`** alert (the same members) when the owner switches. A public server sees every
+address of the wallet and the box's IP address and could hide coins or delay confirmations from the guardian (it
+cannot spend or change a rule); the phone shows that warning while `kind` is `public`. During a recovery the guardian
+refuses to switch to a public server.
+
+**Live wallet.** Guardians that list `live_wallet` in `guardian.status.features` keep the paired wallet's chain data
+live instead of reading it per `wallet.sync`: on an Electrum server they subscribe (`blockchain.scripthash.subscribe`)
+to every script of both chains up to `gapLimit` past the last used one (extending as addresses get used), and of the
+watched Savings, replaced and helper wallets; Bitcoin Core's watch-only wallet is read again at every tip poll (5 s).
+A `wallet.sync` is then answered from memory (milliseconds instead of one request per address), and so is the
+`tx.broadcast` check. Nothing changes on the wire except the **`wallet_tx`** alert: when a transaction touching the
+paired wallet (`wallet: "main"`) or Savings (`"savings"`) first appears, in the mempool or already in a block, and once
+more when it first confirms, the paired phone gets `{ txid, direction, amountSats, feeSats?, confirmations, wallet }`,
+whichever device made it. `direction` is `in` (received `amountSats`), `out` (paid `amountSats` to others, `feeSats`
+when every input was the wallet's) or `self` (a move between the wallet's own addresses: `amountSats` 0, `feeSats` the
+fee). Each transaction is announced at most once per state, also across restarts (the guardian keeps what it
+announced); what the wallet held when the guardian first saw it is history, not news. The phone shows the transaction
+at once and syncs for the coins: the alert is a hint, `wallet.sync` stays the truth. Alert contacts never get it. With a
+public Electrum server, the server learns that the subscribed addresses belong together and when the guardian is
+online (it sees the same addresses at every scan anyway).
 
 The phone keeps its own "spent today" estimate for showing the remaining limit and choosing the signing path, but the guardian's count is the truth: `guardian.status.dailyLimit`, and `data` of an `over_daily_limit` refusal (`limit`, `used`, `outflow`, `wouldUse`).
 
@@ -418,8 +447,8 @@ is accepted from a guardian that lists `contact_lock` in `hosted.prepare.feature
 **Routing.** A guest's phone (and a phone with recovery access to a guest wallet) reaches only its own slot: `sign`,
 `policy.get`, `policy.update`, `recovery.*`, `phone.resume`, `hardware.confirm`, `wallet.retire`, `guardian.lock` (the
 phone only: a pause, below), `guardian.status` (the slot's view: its key-set id, `features: ["family_hosting",
-"limit_off", "contact_lock"]`, `hosting: { state, endsAt?, paused? }`, never the owner's wallet, Savings, extra alert
-channels or which contact locked the box), `fees.estimate`, `tx.broadcast` (only transactions this slot
+"limit_off", "contact_lock", "short_wraps"]`, `hosting: { state, endsAt?, paused? }`, `chainSource` as below, never the
+owner's wallet, Savings, extra alert channels or which contact locked the box), `fees.estimate`, `tx.broadcast` (only transactions this slot
 co-signed), `relays.ack`, `hosted.coins`, `hosted.map.get`, `hosted.access`; anything else answers `1001` with
 `data.reason: "not_for_hosted_wallets"`. A guest wallet's recovery ids are `<slotId>g<n>-<txid12>`: `recovery.cancel` and
 `CANCEL <id>` DMs with such an id reach that slot only, from its phone or one of its alert contacts.
@@ -433,8 +462,9 @@ guardian need no BIP 32 derivations (the phone strips them). `sign` is limited t
 abandon? }` for a guest wallet (the descriptor form is refused there, and the hosted form for the owner's wallet). Every
 output must be tweak-proven to the destination; `abandon` names ledger coins the sweep leaves behind on purpose (coins the
 hardware wallet cannot sign); the alerts say how many and how much. Before completing, the guardian checks with its own
-Electrs, by the coins' own scripts, that the sweep's inputs are unspent and every unspent ledger coin is swept or
-abandoned. Coins received from outside are the guest phone's to find (its own chain source, cross-checked with a second
+chain source, by the coins' own outpoints and scripts, that the sweep's inputs are unspent and every unspent ledger
+coin is swept or abandoned (an Electrum server is asked per script; Bitcoin Core per outpoint with `gettxout`, so its
+watch-only wallet never imports anything of a guest). Coins received from outside are the guest phone's to find (its own chain source, cross-checked with a second
 server). A new phone without the old one or a backup uses `hosted.access` (version-2 text only), decrypts the map with
 the hardware wallet's chaincode and checks it against `accountPubkeys`. After an adoption without the old hardware
 wallet, `hardware.confirm` carries `hardwareAuth.tweak`.
@@ -456,8 +486,22 @@ owner's contacts still locks the whole box, guests included; a contact of both d
 
 **Leaving.** A guest leaves with `wallet.retire` (a `retire-wallet` approval), which retires the wallet in its slot and
 deletes the slot's key 3 record. It is refused (`1200`, `data: { reason: "ledger_unspent", coins, sats }`) while a coin
-key 3 co-signed is still unspent on the guardian's own Electrs (looked up by the coins' own scripts), since some of them
-may need key 3 to move; the phone checks the rest (an empty wallet on two servers) before it asks.
+key 3 co-signed is still unspent on the guardian's chain source (looked up by the coins' own outpoints and scripts, as the
+recovery's coin check does; nothing imported into Bitcoin Core), since some of them may need key 3 to move; the phone checks the rest (an empty wallet on two servers) before it asks.
+
+**No live wallet for guests.** The guardian never subscribes to a guest wallet's scripts, never imports anything of
+it into Bitcoin Core, and sends its phone no `wallet_tx` (a guest's `features` do not list `live_wallet`): it knows no
+address of the wallet, and must not learn one. The guest's phone reads its wallet from its own chain server. The
+owner's live wallet, its `wallet_tx` alerts and the "Payments" notifications on the owner's channels are about the
+owner's own wallets only.
+
+**The owner's chain source.** It is what the guardian checks a guest recovery's coins against and broadcasts a guest's
+transactions through (the guest's phone reads its wallet from its own chain server). A guest's `guardian.status.chainSource`
+and the `chain_source_changed` alert its phone and recovery peers get when the owner switches carry `kind`, `backend` and,
+for a public server, its `host`; for the owner's own node `host` is `"own"` (its address on the owner's network is not
+the guest's to know). The guest's alert is sent over nostr only, never on the owner's extra alert channels, and its
+`message` is written for the guest. Switching to a public server is refused while a guest wallet's recovery runs, as
+while the owner's does.
 
 **Stopping.** The owner's "Stop hosting" sends `hosting_ending` (`walletId`, `endsAt`) to the guest's phone and DMs to
 its contacts; at `endsAt` (or at once, behind a typed confirmation) the slot ends: `wallet_retired` with reason
@@ -476,7 +520,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 
 ### Alerts
 
-`params` is `{ type, at, atMs?, message? , ...}` (`at` in unix seconds; `atMs` the same moment in unix milliseconds, sent on every alert, see "Time") with `type` one of the engine's alert kinds (`AlertKind`), plus `guardian_locked`, `wallet_adopted`, `wallet_retired`, `sp_received`, `relays_changed` and `notifications_changed`, which the service raises itself. The `type` set is closed: a phone drops an alert whose `type` it does not know as malformed (section 4), so a new type reaches only phones that know it, and must never be needed by an older one to keep working:
+`params` is `{ type, at, atMs?, message? , ...}` (`at` in unix seconds; `atMs` the same moment in unix milliseconds, sent on every alert, see "Time") with `type` one of the engine's alert kinds (`AlertKind`), plus `guardian_locked`, `wallet_adopted`, `wallet_retired`, `sp_received`, `relays_changed`, `notifications_changed`, `chain_source_changed` and `wallet_tx`, which the service raises itself. The `type` set is closed: a phone drops an alert whose `type` it does not know as malformed (section 4), so a new type reaches only phones that know it, and must never be needed by an older one to keep working:
 
 | `type` | extra members |
 |---|---|
@@ -495,6 +539,8 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 | `relays_changed` | `relays` (`RelayList`): the guardian moved to these relays (its web UI). Sent to the paired phone (and phones with recovery access) over the old and the new relays. See section 5, "Changing relays" |
 | `notifications_changed` | none: the extra alert channels (email, ntfy, webhook) were changed in the guardian's web UI; read the new list from `guardian.status.notifications`. Guardians with `notifications`; see "Extra alert channels" |
 | `wallet_paused` | `walletId`, `by` (`contact`), `contact?`: a guest's hosted wallet was paused by one of its alert contacts' `LOCK`; its slot co-signs no payment until the guest's hardware wallet resumes it (`phone.resume`). To the guest's phone; the wallet's other contacts get a NIP-17 DM. Phones before it drop it and see `guardian.status.hosting.paused`. See "Family hosting" |
+| `chain_source_changed` | `kind` (`own`\|`public`), `backend` (`electrum`\|`core`), `host`: the owner switched where the guardian reads the chain (its web UI, Settings > Server). Also announced on the extra alert channels and in Activity. To a guest wallet's phone: `host` is `"own"` for the owner's own node, and nothing goes on the owner's channels (see "Family hosting"). See "Chain data", "Chain source" |
+| `wallet_tx` | `txid`, `direction` (`in`\|`out`\|`self`), `amountSats`, `feeSats?`, `confirmations`, `wallet` (`main`\|`savings`): a transaction touching the paired wallet or Savings was first seen (mempool or block), or first confirmed. Paired phone only. Guardians with `live_wallet`; see "Chain data", "Live wallet" |
 | `wallet_retired` | `walletId`, `reason` (`retired`\|`recovered`\|`reset`), `successorWalletId?`. Sent to the phone that was paired to the wallet: `retired` after `wallet.retire`; `reset` after the web UI's reset; `recovered` when a recovery swept the wallet and the phone paired to the new wallet is a different one (a lost phone's replacement), or the guardian adopted none (`successorWalletId` is the adopted wallet when there is one). The phone that started the recovery and is adopted gets `wallet_adopted` instead |
 
 Names match the engine (`daily_reminder` was renamed `recovery_reminder`; `daysRemaining` is now `daysLeft`, `executeAfter` is `readyAt`). The engine's `DueAlert` carries `dueAt` and `readyAt` in milliseconds; the service converts both to seconds (`at` and `readyAt`). `daysLeft` is already in days. The engine's due-alert record does not hold `cancelledBy`, the cancel's `contested` flag or the txid; the service reads them from the recovery record (`status().recovery`) when it builds those alerts.
@@ -587,11 +633,28 @@ A receiver MUST, in this order, silently drop (no reply, so nothing can be probe
    Default TTLs when sending: 5 minutes for requests and responses, 7 days for alerts.
 6. **Replay:** the pair (sender pubkey, message `id`) is remembered until `min(expiration, created_at + window) + 120 s` (bounded LRU, 4096 entries by default). A second message with the same pair is a duplicate. The check is made only for already-authorized senders, so strangers cannot fill the cache.
 
-Also drop a wrap *event id* seen before (the same event arrives from several relays).
+Also drop a wrap *event id* seen before (the same event arrives from several relays), and a wrap whose public `expiration` tag is more than 120 s in the past, before step 1: the wrap's expiration is never before the rumor's (section 2), so its rumor would fail step 5 anyway.
+
+### Handled wraps
+
+Every subscription is sent the whole look-back again (section 2), so a receiver that opens each delivered wrap afresh does steps 1 and 2 (two signature checks, two decryptions) for every stored wrap, on every relay, at every start and every resubscription: on a phone, minutes of its JS thread. The reference implementation therefore:
+
+* **keeps the ids of handled wraps across restarts** (`SeenWraps`: the phone in its app storage, the guardian in `seen-wraps.json` in its data directory), each until it can no longer be delivered: `min(wrap expiration, wrap created_at + 2 days 10 min) + 10 min`, at most 4096;
+* **checks a delivered event's id against them before anything else**: before the event is even parsed (nostr-tools' `alreadyHaveEvent` reads the id from the raw message), so a handled wrap costs no signature check and no decryption;
+* **checks each new wrap's signature once**, in step 1, and not again in the relay layer (the reference pool checks only the event's shape and that its id is its hash, and passes on each exact copy once, keyed by id *and* signature);
+* opens new wraps a few per turn of the event loop (the phone: 2), those that arrived after the subscription's EOSE first, so that a backlog never blocks the app.
+
+**Why skipping a known id is safe.** An event id is the SHA-256 of the event's serialized content (`[0, pubkey, created_at, kind, tags, content]`, NIP-01), and an id is added only after the wrap passed step 1, i.e. its id was recomputed from the content and its signature checked. A different event cannot have that id (a SHA-256 collision); any event that arrives claiming a known id is either that same wrap again or a forgery that would have failed step 1, and dropping either loses nothing. Forgeries cannot suppress a real wrap the other way round either: a wrap that fails step 1 (`bad_wrap`) is never remembered, and the relay layer, which no longer checks signatures, deduplicates on id plus signature after checking the id is the hash of the content, so a forged copy that arrives first (same content, broken signature) is passed on separately, rejected in step 1, and the real copy from another relay is still opened. A hostile relay can still withhold events, as it always could (section 5). The phone remembers for all its connections (one nostr key) only outcomes that are the same for each of them (an answer that settled a call, an alert, a stale or malformed message); an answer to no call of that connection, a duplicate message id and a wrap from another guardian are remembered by that connection only, in memory, since another connection (to the guardian's new relays, to an old guardian) may still need them.
 
 ### Retries and idempotency
 
 If no response arrives, the phone MAY re-send the same request: same `id`, same rumor `created_at` and `expiration`, in a new gift wrap. The guardian runs a request's handler **at most once** per `(sender, id)`. On a duplicate it re-sends the response it computed the first time (it keeps recent responses), or does nothing if the handler is still running. A response is matched to its call by `id`; responses with an unknown `id` are ignored.
+
+A request that only reads (`guardian.status`, `wallet.sync`, `tx.get`, `fees.estimate`, `policy.get`, `recovery.status`, `savings.get`) MAY be re-sent with a fresh rumor `created_at` and `expiration` (same `id`) once the original is close to expiring: the reference client does so when the phone was suspended longer than the request's TTL. Running such a request twice is harmless, and a guardian that still remembers the `id` answers from its cache. Any other request is re-sent only as it was, and not at all once it has expired, so it never runs twice.
+
+A phone that was suspended (an iPhone with the screen off, an Android app in the background) sees a call's timeout fire late, on waking. The reference client takes that for a suspension, not a silent guardian: it re-sends the request and waits up to 15 s more. It also re-sends every unanswered request when a relay's subscription is back after a drop, since what it sent meanwhile may have been lost with the old connection.
+
+The reference guardian answers `tx.broadcast` without the wallet scan of rule (a) in "Chain data" when it can tell otherwise that the transaction spends a coin of the wallet: it co-signed the transaction in the last 30 minutes (`sign` checked every input, and the txid commits to them), or an input is a coin its last `wallet.sync` of the paired wallet listed, and the previous transaction (checked against its txid) pays that coin's address of the wallet. Both are kept in memory only; on a miss it scans as before.
 
 A phone that restarts while a request is unanswered can re-send it with the same `id` once it is subscribed again. The relays may then replay the guardian's original answer (it is stored until the wrap's expiration, which is later than the rumor's), which the phone receives before it re-sends; the reference client keeps recent answers that matched no call and resolves a call that re-uses their `id` with them (its replay guard would otherwise drop the fresh answer for that `id` as a duplicate).
 
@@ -603,7 +666,7 @@ For state-changing methods (`guardian.unlock`, `guardian.lock`, `pair`, `policy.
 * A relay must accept kind 1059 and honour `#p` filters. Relays that implement NIP-40 will purge wraps at their (randomised, later) wrap expiration; see "Wrap timestamps".
 * PSBT messages are large after two layers of base64 (roughly 1.8x the PSBT's base64 size); choose relays that accept events of a few hundred KB.
 * A hostile relay can drop, delay or replay events. It cannot read or alter them (altered ciphertext fails the MAC; a re-signed wrap fails to decrypt) and replays are caught by section 4.
-* **Keep the subscription open.** Connections drop: a relay restarts, a phone changes network, Android destroys the sockets of an app in the background. Both sides MUST subscribe again on a relay whose subscription ended (after a short backoff; the reference pool waits 1, 2, 5, 10, then every 30 s, jittered, and the app does it at once when it comes back to the front), and MUST NOT narrow `since` to the newest event seen: a wrap sent while the relay was out of reach can be back-dated by up to 2 days (section 2). The reference pool asks again from as far before the drop as the first subscription asked before its start (2 days and 10 minutes). The events delivered again are dropped by wrap id and by the replay guard (section 4); a duplicate request is answered from the guardian's response cache, never run again. Publishing alone is not enough: a client that can still publish but no longer listens sends requests whose answers it never hears.
+* **Keep the subscription open.** Connections drop: a relay restarts, a phone changes network, Android destroys the sockets of an app in the background. Both sides MUST subscribe again on a relay whose subscription ended (after a short backoff; the reference pool waits 1, 2, 5, 10, then every 30 s, jittered, and the app does it at once when it comes back to the front), and MUST NOT narrow `since` to the newest event seen: a wrap sent while the relay was out of reach can be back-dated by up to 2 days (section 2). The reference pool asks again from as far before the drop as the first subscription asked before its start (2 days and 10 minutes). The events delivered again are dropped by wrap id, before any signature check or decryption ("Handled wraps", section 4), and by the replay guard; a duplicate request is answered from the guardian's response cache, never run again. Once a relay's subscription is back, the reference phone reads `guardian.status` again: what the guardian said meanwhile may be lost (an unlock in the web UI after a restart sends no alert). Publishing alone is not enough: a client that can still publish but no longer listens sends requests whose answers it never hears.
 
 ### Changing relays
 
@@ -655,6 +718,6 @@ It carries **no secret and no expiry**: the npub and relays are not secret, and 
 
 * Add new methods or optional result members freely; never change the meaning of an existing error code or field. A breaking envelope change bumps the `trikey` tag value.
 * A new alert `type` is dropped by phones that do not know it (the alert schema is a closed union, and a malformed message is dropped silently, section 4), and a new method is answered `-32601` by guardians that do not know it. So a new alert may only add something an older phone can do without (`relays_changed`: an older phone keeps the old relays, which the guardian watches until its owner stops them), and a phone sends a new method only to a guardian that showed it knows it.
-* A capability that changes what the phone may ask (rather than adding a method) is announced in `guardian.status.features`; the phone acts on it only when listed (`limit_off`: "No daily limit"; `contact_lock`: "Alert contacts can lock the guardian"; `savings`: the "Savings" methods, whose wallet's chain data comes from the guardian, so a phone makes Savings only with such a guardian; `notifications`: `guardian.status.notifications` and the `notifications_changed` alert, read-only). A new approval text gets a new version word (`Trikey policy v2`, `v3`), so an older guardian refuses it with `1202` rather than misreading it.
+* A capability that changes what the phone may ask (rather than adding a method) is announced in `guardian.status.features`; the phone acts on it only when listed (`limit_off`: "No daily limit"; `contact_lock`: "Alert contacts can lock the guardian"; `savings`: the "Savings" methods, whose wallet's chain data comes from the guardian, so a phone makes Savings only with such a guardian; `notifications`: `guardian.status.notifications` and the `notifications_changed` alert, read-only; `live_wallet`: `wallet_tx` alerts and `wallet.sync` from live data, nothing the phone must send differently; `short_wraps` (0.1.10): the guardian's answers are back-dated at most 10 minutes and expire about an hour later, section 2. Its alerts still are back-dated up to 2 days, and they arrive on the same subscription, so the reference phone keeps its 2-day look-back either way; a phone MUST NOT shorten its look-back before it has seen `short_wraps`, since the first answers of an older guardian are back-dated up to 2 days). A new approval text gets a new version word (`Trikey policy v2`, `v3`), so an older guardian refuses it with `1202` rather than misreading it.
 * Hardware approvals are an `approval` object with a `kind`. Only `bip137` exists. If the project settles on a PSBT-based approval (see DESIGN.md, open question 1), it will be a new `kind`, not a change to `bip137`.
 * The policy is deliberately closed: a new rule means a new engine rule first, then a new `Policy` member and a new `policyHash` input. A rule that is always present changes every hash and needs a protocol version bump. An **opt-in** rule (`contactLock`) can avoid that: it is present only when on, so every policy without it, and its hash and approval text, are exactly what they were; it is announced as a feature, sent only to guardians that list it (older ones refuse the member, the schema being strict), and approved over a new text version. A guardian downgraded below the feature ignores the member (it hashes and returns the policy without it, and LOCK messages do nothing).

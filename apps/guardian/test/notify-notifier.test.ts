@@ -512,3 +512,60 @@ describe('test messages', () => {
     expect(limited).toBe(true);
   });
 });
+
+describe('payment messages (opt-in, wallet_tx)', () => {
+  const ownerOnly = () => ({
+    guardianName: 'Home vault',
+    smtp: null,
+    destinations: [
+      { audience: 'owner', kind: 'webhook', webhook: { url: `${http.url}/api/webhook/trikey-secret-id`, secret: 'webhook-secret-for-tests' } },
+      { audience: 'contact', kind: 'ntfy', contact: CONTACT_A, ntfy: { server: http.url, topic: 'contact-topic-a' } },
+    ],
+  });
+  const payment = (i: number): NotifyEvent => ({ id: `wallet_tx-w-${i}-m`, type: 'wallet_tx', at: now, walletId: 'w', owner: `Incoming ${i} sats (unconfirmed).` });
+
+  it('off by default; turning it on or off is a change, announced; an older web page leaves it as it was', async () => {
+    await configured(ownerOnly());
+    expect(n.view().paymentAlerts).toBe(false);
+    expect(n.paymentAlerts).toBe(false);
+    const on = await n.update({ ...ownerOnly(), destinations: n.view().destinations.map((d) => ({ id: d.id, audience: d.audience, kind: d.kind, ...(d.contact ? { contact: d.contact } : {}), ...(d.ntfy ? { ntfy: { server: d.ntfy.server } } : {}), ...(d.webhook ? { webhook: {} } : {}) })), paymentAlerts: true }, { recoveryRunning: true });
+    expect(on).toMatchObject({ ok: true, changed: true, changes: [expect.stringMatching(/payment messages turned on/)] });
+    expect(n.paymentAlerts).toBe(true);
+    // A page that does not know the setting sends none: it stays on.
+    const same = n.view().destinations.map((d) => ({ id: d.id, audience: d.audience, kind: d.kind, ...(d.contact ? { contact: d.contact } : {}), ...(d.ntfy ? { ntfy: { server: d.ntfy.server } } : {}), ...(d.webhook ? { webhook: {} } : {}) }));
+    expect(await n.update({ ...ownerOnly(), destinations: same }, { recoveryRunning: false })).toEqual({ ok: true, changed: false });
+    expect(n.paymentAlerts).toBe(true);
+    expect((await n.update({ ...ownerOnly(), destinations: same, paymentAlerts: 'yes' }, { recoveryRunning: false })).ok).toBe(false);
+    await flush();
+    expect(http.requests.filter((r) => /payment messages turned on/.test(r.body)).length).toBeGreaterThan(0);
+  });
+
+  it('go to the owner only, never take from the warnings\' budget, and at most 20 wait', async () => {
+    await configured(ownerOnly());
+    for (let i = 0; i < 25; i++) await n.enqueue(payment(i));
+    expect(n.pending).toBe(20); // owner webhook only: one delivery each
+    await flush();
+    const paid = http.requests.filter((r) => /Incoming \d+ sats/.test(r.body));
+    expect(paid.length).toBe(12); // their own limit: 12 an hour per channel
+    expect(paid.every((r) => r.path.startsWith('/api/webhook'))).toBe(true);
+    // A warning still goes out at once: payments took nothing from its limit.
+    http.requests.length = 0;
+    await n.enqueue(started({ id: '9-abc/started' }));
+    await flush();
+    expect(http.requests.some((r) => r.body.includes('OWNER TEXT'))).toBe(true);
+    expect(http.requests.some((r) => r.body.includes('CONTACT TEXT'))).toBe(true);
+  });
+
+  it('a day late is too late for a payment message', async () => {
+    await configured(ownerOnly());
+    http.status = 500;
+    await n.enqueue(payment(1));
+    await flush();
+    now += 25 * 60 * MIN;
+    http.status = 200;
+    http.requests.length = 0;
+    await flush();
+    expect(http.requests.some((r) => /Incoming 1 sats/.test(r.body))).toBe(false);
+    expect(n.pending).toBe(0);
+  });
+});

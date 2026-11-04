@@ -170,6 +170,30 @@ uses it. This follows `packaging/README.md`. I have not run it on a real Umbrel,
 Start9's Bitcoin package, which runs mainnet only, and `packaging/start9/startos/main.ts` hard-codes `BITCOIN_NETWORK: 'bitcoin'`.
 It has not been tried for this round, and Start9 is out of it (see "Known limits").
 
+### Without Umbrel or Start9: plain Docker (a Mac, a PC, Linux, a NAS)
+
+From the release after 0.1.8-alpha the guardian also runs with Docker Compose on any computer with Docker, against a
+node and Electrum server (Electrs or Fulcrum) you already have somewhere: on another box (Umbrel, Start9, RaspiBlitz,
+myNode), on a NAS, or in the same compose file (`--profile node`). The full guide, with the steps for Docker Desktop on
+Mac and Windows, Linux, Synology, QNAP, Unraid and TrueNAS, is [`packaging/compose/README.md`](../packaging/compose/README.md).
+In short:
+
+1. From the release page, download `trikey-guardian-compose.yml` (save it as `docker-compose.yml`) and
+   `trikey-guardian.env.example` (save it as `.env`) into a new folder.
+2. In `.env`, set `BITCOIN_NETWORK` (the network you picked above) and `ELECTRUM_HOST` (your Electrum server's address;
+   `ELECTRUM_TLS=1` for one on another machine that offers TLS).
+3. `docker compose up -d`, then `docker compose logs guardian | grep setup.code`: the **setup code**. With no platform
+   login in front of the page, the guardian asks for it before the first setup, so nobody else who reaches the port can
+   set it up before you.
+4. Open <http://localhost:3000> (on a NAS, see the guide's "Opening the web UI from another computer"), enter the setup
+   code, and continue with step 1 below.
+
+**The computer must stay on.** The guardian co-signs and sends recovery alerts only while it runs: a laptop that sleeps
+stops both (the guide says how to keep a Mac or a PC awake). A NAS is ideal. After every restart, unlock it (step 9).
+
+Note in the bug report: the platform (Docker Desktop on Mac or Windows, Linux, which NAS), and where your Electrum server
+runs.
+
 ### The guardian needs a node and Electrs that are ready
 
 The guardian's first screen ("Set up your guardian") shows whether it found the node and Electrs. Its **Create guardian** button
@@ -228,14 +252,22 @@ What kind of build it is:
   transport code is in it.
 
 To install: check the file against the `.sha256`, copy the APK to the phone, open it, and allow installing from that source
-when Android asks. Play Protect may warn about an unknown app; that is expected for a sideloaded test build.
+when Android asks.
+
+**Play Protect.** Android may stop the install with "Unsafe app blocked" (or "App scan recommended"). That is expected for
+any APK from outside the Play Store that Google has not seen before; it says nothing about this file. Tap **More details**,
+then **Install anyway**. What does tell you the file is the real one: its SHA-256 matches the release's `.sha256`, and it
+is signed with the Trikey release certificate (`apksigner verify --print-certs`, compared with
+`packaging/android/release-cert.sha256`; see [docs/android-signing.md](android-signing.md)). The warning can come back with
+an update; the same two checks apply.
 
 **Updating the app.** A newer release installs over the installed one and keeps the wallet (both are signed with the Trikey
 release key). Three ways, pick one:
 
 - In the app: **Settings → About → Check for updates**. It asks GitHub only when you tap it, says whether a newer version
   exists, and **Download** hands the APK to Android's installer. It offers the APK of the build you have (standard or
-  without Google code). Check the SHA-256 it shows against the release's `.sha256`.
+  without Google code). Check the SHA-256 it shows against the release's `.sha256`. If Play Protect blocks it, see
+  above: **More details**, **Install anyway**, after the checks.
 - Obtainium, which watches the repository's releases for you: see [docs/android-signing.md](android-signing.md), with the
   filter for the APK you want.
 - By hand, from the Releases page, as above.

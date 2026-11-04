@@ -1,3 +1,4 @@
+import type { GuardianChainSource } from './chain-source';
 /**
  * Domain types for the Trikey app UI.
  *
@@ -128,8 +129,10 @@ export interface Guardian {
   relays: string[];
   /** How many of them are connected right now, when the wallet can tell. */
   relaysConnected?: number;
-  /** Where the guardian reads the chain from. */
-  chainData: 'your-node';
+  /** Where the guardian reads the chain from: `your-node` unless the guardian says it uses a public server. */
+  chainData: 'your-node' | 'public';
+  /** What the guardian said about it (`guardian.status.chainSource`; absent from older guardians, which use the box's node). */
+  chainSource?: GuardianChainSource;
   /** The guardian's nostr public key, bech32. */
   npub: string;
   /** Block explorer on the same box (Umbrel's Mempool app), shared when pairing. */
@@ -268,6 +271,9 @@ export type SecurityEvent = { id: string; at: IsoDate } & (
   | { kind: 'savings-unwatched'; replaced: boolean }
   /** The guardian's email, ntfy or webhook alerts were changed in its web page (never from this phone). */
   | { kind: 'alert-channels-changed' }
+  /** Where the guardian reads the blockchain was changed in its web page (never from this phone): `public` for a public server. */
+  /** `hosted`: the host changed its guardian's server (a hosted wallet), not the person's own guardian. */
+  | { kind: 'guardian-server-changed'; public: boolean; host: string; hosted?: true }
 );
 
 export type ActivityItem =
@@ -761,6 +767,13 @@ export interface InviteView {
   acknowledged: boolean;
 }
 
+/** A short in-app note (`WalletState.toast`). `id` changes for every new one. */
+export interface AppToast {
+  id: string;
+  kind: 'incoming';
+  text: string;
+}
+
 export interface WalletState {
   /** Which wallet is behind the screens. */
   backing: AppMode;
@@ -784,6 +797,19 @@ export interface WalletState {
    * is online, and the balance shown is the last one. Not "offline".
    */
   guardianSlow: boolean;
+  /**
+   * Back at the front after the guardian was offline: the connection to it is being made again (the OS may have closed
+   * it while the phone slept). Calm, not "offline": `guardian.status` is the last one it gave until the next answer, or
+   * a call made since the return that goes unanswered (then `offline`).
+   */
+  guardianReconnecting?: boolean;
+  /** A payment is signed (by the guardian or the hardware wallet) and on its way out: "Sending…". */
+  paymentSending?: boolean;
+  /**
+   * A short note over every screen for a few seconds ("Incoming 2,000 sats · unconfirmed"): the guardian just saw a
+   * payment come in (`wallet_tx`). Absent or null: nothing to show. `dismissToast` hides it sooner.
+   */
+  toast?: AppToast | null;
   phoneSpending: PhoneSpending;
   /** A recovery on this phone's wallet that is no longer running. */
   recoveryOutcome: RecoveryOutcome | null;

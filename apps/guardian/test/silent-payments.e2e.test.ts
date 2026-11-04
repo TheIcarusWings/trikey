@@ -354,7 +354,8 @@ describe('the silent payment scanner', { timeout: 60_000 }, () => {
     let r = await raw.call('sp.scan', { fromHeight: birth });
     expect(r.matches.map((m) => [m.txid, m.height])).toEqual([[p2.txid, tip - 1]]);
     // p1 confirms again later: found again, and not announced twice.
-    const before = alerts.length;
+    const spAlerts = () => alerts.filter((a) => a.type === 'sp_received').length;
+    const before = spAlerts();
     rig.bitcoind!.mine([p1.txHex]);
     await rig.guardian.sp.run();
     r = await raw.call('sp.scan', { fromHeight: birth });
@@ -363,7 +364,7 @@ describe('the silent payment scanner', { timeout: 60_000 }, () => {
       [p1.txid, tip + 1],
     ]);
     await new Promise((res) => setTimeout(res, 200));
-    expect(alerts.length).toBe(before);
+    expect(spAlerts()).toBe(before);
     // The answer repeats the reorg window below fromHeight, so a phone that already scanned it sees moved payments.
     expect((await raw.call('sp.scan', { fromHeight: tip + 1 })).matches.map((m) => m.txid)).toEqual([p2.txid, p1.txid]);
     expect((await raw.call('sp.scan', { fromHeight: tip + 8 })).matches).toEqual([]);

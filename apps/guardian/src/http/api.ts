@@ -3,7 +3,7 @@
  * service state. Which endpoints work when:
  *
  *   without a session: GET /status (reduced: `PublicStatus`), POST /session, DELETE /session,
- *                      and before setup GET /setup/preflight, POST /setup (which signs the browser in)
+ *                      and before setup GET /setup/preflight, POST /setup/code, POST /setup (which signs the browser in)
  *   locked:            GET /status, POST /unlock, POST /reset
  *   unlocked:          everything (GET and PUT /relays included)
  *
@@ -37,6 +37,8 @@ import type {
 import type { Health, HealthState } from '../notify/notifier.js';
 import { sessionCookie } from './sessions.js';
 import { hostingRoutes } from '../hosting/http.js';
+import { publicServersFor, publicView } from '../chain/source.js';
+import type { ChainSettings, ChainTestResult } from './types.js';
 
 const iso = (ms: number) => new Date(ms).toISOString();
 const ok = (body: unknown, status = 200): RouteResult => ({ status, body });
@@ -49,6 +51,24 @@ function requireUnlocked(g: Guardian): void {
 
 function requireNotSetUp(g: Guardian): void {
   if (g.setupComplete) throw new HttpError(409, 'already_setup', 'This guardian is already set up.');
+}
+
+/**
+ * On plain Docker, first-run setup needs the setup code from the guardian's log (http/setup-code.ts). Throws 403
+ * `setup_code_required` without one, 401 `bad_setup_code` for a wrong one, 429 after too many wrong ones.
+ */
+function requireSetupCode(g: Guardian, input: unknown): void {
+  const gate = g.setupCode;
+  if (!gate) return;
+  if (typeof input !== 'string' || input.trim() === '')
+    throw new HttpError(403, 'setup_code_required', "Enter the setup code from the guardian's log first.");
+  const now = g.clock.now();
+  const blocked = g.setupCodeLimiter.blocked('setup', now);
+  if (!blocked.ok) throw new HttpError(429, 'rate_limited', 'Too many wrong setup codes. Wait a minute and try again.', Math.ceil(blocked.retryAfterMs / 1000));
+  if (gate.matches(input)) return;
+  g.setupCodeLimiter.take('setup', now);
+  g.log.warn('setup.bad_code');
+  throw new HttpError(401, 'bad_setup_code', "That is not the setup code. Copy it from the guardian's log (it changes at every restart).");
 }
 
 /** `GET /api/status` without a session: which screen to show, nothing about the wallet. */
@@ -224,6 +244,7 @@ export function notificationSettings(g: Guardian): NotificationSettings {
   const contacts = g.engine.status().rules?.alertContacts ?? [];
   return {
     guardianName: v.guardianName,
+    paymentAlerts: v.paymentAlerts,
     ...(v.smtp ? { smtp: { ...v.smtp, health: healthBody(v.smtp.health) } } : {}),
     destinations: v.destinations.map((d) => ({ ...d, ...(d.contact ? { contactNpub: npubEncode(d.contact) } : {}), health: healthBody(d.health) })),
     contacts: contacts.map((pubkey) => ({ pubkey, npub: npubEncode(pubkey) })),
@@ -231,6 +252,28 @@ export function notificationSettings(g: Guardian): NotificationSettings {
     pending: v.pending,
     defaultNtfyServer: v.defaultNtfyServer,
     limits: v.limits,
+  };
+}
+
+/** `GET` and `PUT /api/chain` (Settings > Server): the chain source, how it is doing, the public servers to offer. */
+export function chainSettings(g: Guardian): ChainSettings {
+  const b = g.chain.backend;
+  const summary = g.chainSourceSummary();
+  return {
+    source: g.chainSource ? (publicView(g.chainSource) as unknown as ChainSettings['source']) : null,
+    ...(summary ? { summary } : {}),
+    origin: g.chainSourceOrigin,
+    status: {
+      connected: !!b?.connected,
+      ...(b?.serverVersion ? { server: b.serverVersion } : {}),
+      ...(b?.connected && b.tip ? { height: b.tip.height } : {}),
+      ...(!b?.connected && b?.lastError ? { error: b.lastError } : {}),
+      rescans: g.chainRescans.map((r) => ({ since: iso(r.since), from: iso(r.birthday * 1000) })),
+    },
+    publicServers: publicServersFor(g.config.network).map((p) => ({ id: p.id, host: p.host, port: p.port, operator: p.operator, ...(p.chain ? { chain: p.chain } : {}) })),
+    network: g.config.network,
+    // A guest wallet's recovery counts too: its coin check runs on this chain source.
+    recoveryRunning: !!g.activeRecord() || g.hosting.recoveryRunning(),
   };
 }
 
@@ -289,8 +332,27 @@ export function buildRoutes(g: Guardian): Route[] {
       handler: async () => {
         requireNotSetUp(g);
         const p = await g.chain.preflight();
-        const body: SetupPreflight = { ...p, relayOptions: g.config.relayOptions.map((r) => ({ ...r })) };
+        const problem = g.chain.electrum?.lastError;
+        const body: SetupPreflight = {
+          ...p,
+          ...(p.electrs === 'missing' && problem ? { electrsProblem: problem } : {}),
+          relayOptions: g.config.relayOptions.map((r) => ({ ...r })),
+          platform: g.config.platform ?? 'docker',
+          setupCodeRequired: !!g.setupCode,
+        };
         return ok(body);
+      },
+    },
+
+    // Checks the setup code before the owner types a passphrase (POST /setup checks it again).
+    {
+      method: 'POST',
+      path: '/setup/code',
+      public: () => !g.setupComplete,
+      handler: ({ body }) => {
+        requireNotSetUp(g);
+        requireSetupCode(g, (body as { code?: unknown } | undefined)?.code);
+        return ok({ ok: true });
       },
     },
 
@@ -301,7 +363,8 @@ export function buildRoutes(g: Guardian): Route[] {
       handler: async ({ body, session }) => {
         requireNotSetUp(g);
         // `entropy`: 32 bytes from the browser's generator (hex), mixed into the new seed; never logged or kept.
-        const input = (body ?? {}) as { passphrase?: unknown; relays?: unknown; entropy?: unknown };
+        const input = (body ?? {}) as { passphrase?: unknown; relays?: unknown; entropy?: unknown; setupCode?: unknown };
+        requireSetupCode(g, input.setupCode);
         const r = await g.setup({ passphrase: input.passphrase, relays: input.relays, entropy: input.entropy });
         if (!r.ok) throw new HttpError(r.code === 'already_setup' ? 409 : 400, r.code, r.message);
         // The browser that set the guardian up is signed in.
@@ -439,6 +502,36 @@ export function buildRoutes(g: Guardian): Route[] {
         if (r.code === 'rate_limited') throw new HttpError(429, 'rate_limited', r.message, r.retryAfterSeconds);
         // The send failed: an answer, not an error of the API (the page shows it next to the channel).
         const res: NotifyTestResult = { ok: false, error: r.message, health: healthBody(r.health ?? { state: 'failing' }) };
+        return ok(res);
+      },
+    },
+
+    // Settings > Server: where the guardian reads the blockchain. Unlocked only, like the relays and the alert channels.
+    {
+      method: 'GET',
+      path: '/chain',
+      handler: () => {
+        requireUnlocked(g);
+        return ok(chainSettings(g));
+      },
+    },
+    {
+      method: 'PUT',
+      path: '/chain',
+      handler: async ({ body }) => {
+        requireUnlocked(g);
+        const r = await g.changeChainSource(body);
+        if (!r.ok) throw new HttpError(r.code === 'invalid' ? 400 : 409, r.code, r.message);
+        return ok(chainSettings(g));
+      },
+    },
+    {
+      method: 'POST',
+      path: '/chain/test',
+      handler: async ({ body }) => {
+        requireUnlocked(g);
+        const r = await g.testChainSource(body);
+        const res: ChainTestResult = { ok: r.ok, ...(r.server ? { server: r.server } : {}), ...(r.height !== undefined ? { height: r.height } : {}), ...(r.error ? { error: r.error } : {}) };
         return ok(res);
       },
     },

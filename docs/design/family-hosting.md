@@ -718,6 +718,81 @@ id, wallet id, label, amount or alert type while a guest's recovery and Stop hos
 host-level event, and that hosting and the notifier keep to their own files (`hosting.json`, `hosted/` against
 `notifications.json`, `notifications-key.json`).
 
+### Updated to 0.1.10, 0.1.11 and the live wallet (for the next release)
+
+Family hosting was built on 0.1.9 and merged with 0.1.10, 0.1.11 and the live wallet (#114) for the next release. What
+those changed underneath it, and how hosting fits:
+
+- **Seen wraps (0.1.10).** The guardian has one nostr key, and guests' phones talk to it like the host's phone: there is
+  no per-slot key. So there is one `seen-wraps.json` (`FILES.seenWraps`), and a guest's phone, recovery peer and
+  contacts count as known senders (`Hosting.isKnownSender`), so their wraps are remembered there and survive a restart
+  like the host phone's; strangers' (invitees') wraps stay in the inbox's small in-memory set. The file holds ids only
+  (not secret), bounded at 4,096; with short wraps an id is kept about an hour, ample for the host and 8 guests. Reset
+  is refused while any guest is hosted, does not change the nostr key, and so leaves the file as it is; a slot's own
+  files stay in `hosted/<slotId>/` (`state.json`, `slot.json`), listed in `guardian.ts`'s data directory comment.
+- **Short wraps (0.1.10).** A property of the one transport, so guests get it too: `short_wraps` is in the guest's
+  `features` (`GUEST_FEATURES`) and in `hosted.prepare`.
+- **`tx.broadcast` shortcuts (0.1.11).** The host's handler trusts a transaction it co-signed in the last 30 minutes
+  (`RecentlyCosigned`) or one spending a coin its last `wallet.sync` or live-wallet pass listed (`Guardian.knownCoins`),
+  both keyed by the host's wallet id and filled only by the host's own `sign`, `wallet.sync` and live wallet. A guest's `sign` and `tx.broadcast` are the
+  slot's handlers (`hosting/handlers.ts`), which never touch them: a guest's `tx.broadcast` relays only what its own
+  slot co-signed (`HostedEngine.signedTxid`). A guest's transaction sent by the host's phone, and a host transaction
+  sent by a guest's phone, are refused as foreign (`test/hosting.e2e.test.ts`). The phone side (the "Sending" entry,
+  the 1 sat/vB mainnet floor) applies to hosted wallets too; the hosted sweep now keeps the floor as well.
+- **The live wallet (#114).** The guardian now subscribes to its wallets' scripts on an Electrum server (Bitcoin Core
+  follows the descriptors it imported), keeps their data in memory, answers `wallet.sync` and the `tx.broadcast` check
+  from it, and sends `wallet_tx` to the paired phone (plus, opted in, "Payments" on the owner's channels). Its targets
+  are the host engine's wallets only (the paired one, Savings, the watched replaced wallet, the helper account; see
+  `LiveWallet.targets`), and it delivers to the host's paired phone only. **Guests are never watched**: no guest script
+  is subscribed, nothing of a guest is imported into Bitcoin Core, `live-wallet.json` holds nothing of a guest, no guest
+  phone gets `wallet_tx`, and a guest's payments never reach the host's channels (guests do not list `live_wallet`).
+  This is BIP 89, not a gap: the host's guardian knows no address of a guest wallet, and the guest's phone reads its
+  own chain server. The only chain reads for guests stay the outpoint checks below (`ChainService.outpointsUnspent`,
+  which bypasses the live script cache). Should those ever need a cache, it belongs per slot and per outpoint (the
+  slot's ledger and its recovery's inputs), behind that one method, never in the script subscriptions.
+  `test/hosting.e2e.test.ts` checks the subscriptions, the file and the alerts; `test/hosting-notify.e2e.test.ts`
+  checks the owner's channels with "Payments" on (the host's own payment arrives, the guest's never).
+- **Plain Docker and the setup code (#104).** `TRIKEY_PLATFORM` and the first-run setup code guard the web UI's first
+  setup only; invites are made from a signed-in web UI as before and are not affected. `FAMILY_HOSTING` sits next to
+  the new settings in `config.ts`, the guardian README and the plain Docker compose file (`FAMILY_HOSTING=false` turns
+  hosting off there too).
+
+### Chain sources and guests
+
+Since #105 the host chooses where its guardian reads the chain: its own Electrum server, Bitcoin Core alone (a
+watch-only descriptor wallet in it), or a public Electrum server. Guests' phones never read their wallet from the host
+(section 6); the host's chain source matters to a guest for what the guardian does with it: the tip and its median
+time past (a recovery's delay), the coverage check before a guest recovery completes, broadcasting the slot's
+co-signed transactions and sweeps, and fee estimates.
+
+**The coverage check works with every backend, by outpoint, and imports nothing.** It only ever asks about coins the
+guardian already knows by outpoint: the sweep's inputs and the ledger (coins key 3 co-signed into existence). So it
+asks `ChainService.outpointsUnspent`, which never calls `prepare` (the step that makes Bitcoin Core's watch-only wallet
+import a descriptor): an Electrum server is asked for those scripts' unspent outputs (as before), Bitcoin Core is
+asked per outpoint with `gettxout` on its UTXO set (mempool included; no `-txindex` needed). **The host's Bitcoin Core
+wallet never imports a guest's descriptor, address or script** (BIP 89: the host must not learn the guest's wallet;
+a descriptor in the host's node would also outlive the slot). Decision: no refusal on Core, it works there.
+`test/hosting-chain.test.ts` runs the check on a Core-like and an Electrum-like backend and asserts that nothing is
+prepared or imported. A sweep the guest's phone broadcast itself and that confirmed is recognised by its outputs
+(`gettxout`), since Core without `-txindex` cannot serve a transaction outside its wallet.
+
+What a public server sees: with a public Electrum server, the coverage check asks it about the sweep's inputs and the
+ledger coins' scripts, and broadcasts go through it, with the box's IP address. So:
+
+- **`chain_source_changed` reaches guests.** On a switch, every guest phone and recovery peer gets the alert over nostr
+  (`Hosting.announceChainSource`), in the guest's words ("Your host's guardian now reads the blockchain from a public
+  server ... Your phone still reads your wallet from its own chain server"). Never on the host's email, ntfy or webhook
+  channels (those get the host's own announcement, with nothing of a guest), and not to the guests' contacts (it is
+  not about their recovery role). The guest's `guardian.status.chainSource` says the same. Both name a public server
+  but never the host's own node: for that `host` is `"own"`, since its address on the host's network is the host's.
+  The app shows it as the host's change ("Your host's guardian now uses ...") and as a "Host's server" row in
+  Settings > Guardian, next to the guest's own chain server.
+- **A public server is refused while a guest's recovery runs**, as while the host's runs (`GET /api/chain`'s
+  `recoveryRunning` counts guest recoveries too). Starting a guest recovery while the host already uses a public server
+  is allowed, as for the host's own: the guest's phone does its own check with its own server and a second one.
+
+`test/hosting-chain-source.e2e.test.ts` checks the guest's status, both alerts, the host's channels, and the refusal.
+
 ### Key 3's shape (decision 11)
 
 Kept: **a depth-0 xpub with no origin** (`cosignerKeyExpression`, `[ownfp]xpub`). Through the integrations in code

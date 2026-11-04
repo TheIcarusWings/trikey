@@ -6,7 +6,7 @@ tagline: Key 3 of your 2-of-3 bitcoin wallet, on your own node
 # TODO(verify): the icon is a placeholder (the web UI favicon). Replace with a proper icon URL.
 icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/guardian-web/public/favicon.svg
 category: bitcoin
-version: "0.1.9-alpha"
+version: "0.1.11-alpha"
 # TODO(verify): host-facing port for the app_proxy. Pick one that no other app in the store uses.
 port: 3010
 description: >-
@@ -26,10 +26,10 @@ support: https://github.com/TheIcarusWings/trikey/issues
 # TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
 gallery: []
 releaseNotes: >-
-  The guardian and the app keep listening after a relay restarts or a connection drops: before, the
-  phone could stop hearing the guardian ("Guardian offline", no balance) until the app was restarted.
-  A slow answer no longer shows as offline. Savings payments waiting to confirm can be sped up, and
-  Trikey's own relay is offered at setup (Settings, Change relays, to add it to an existing guardian).
+  A fix release. The guardian now sends out a payment without first reading the whole wallet from Electrs
+  again when it has just co-signed it, or when it spends a coin the last sync listed (that coin is checked
+  instead), so a payment shows in the app in seconds instead of about a minute. With the 0.1.11 app: no more "Guardian offline" after the phone
+  slept, and mainnet fees never below 1 sat/vB.
 dependencies:
   - bitcoin
   - electrs

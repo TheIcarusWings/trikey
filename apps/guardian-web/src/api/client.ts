@@ -1,5 +1,8 @@
 import type {
   ActivityEntry,
+  ChainSettings,
+  ChainSourceInput,
+  ChainTestResult,
   ActivityQuery,
   FamilyInvite,
   GuardianStatus,
@@ -33,6 +36,8 @@ export type ApiErrorCode =
   | 'locked'
   | 'setup_required'
   | 'already_setup'
+  | 'setup_code_required'
+  | 'bad_setup_code'
   | 'already_paired'
   | 'not_available'
   | 'forbidden'
@@ -81,6 +86,8 @@ export interface GuardianApi {
   signOut(): Promise<PublicStatus>;
 
   getSetupPreflight(): Promise<SetupPreflight>;
+  /** Checks the setup code (plain Docker, `setupCodeRequired`) before setup. Rejects with `bad_setup_code` or `rate_limited`. */
+  checkSetupCode(code: string): Promise<void>;
   /** Creates key 3 and the unlock passphrase. The guardian ends up unlocked. */
   completeSetup(input: SetupInput): Promise<GuardianStatus>;
 
@@ -129,6 +136,16 @@ export interface GuardianApi {
   setNotifications(input: NotificationSettingsInput): Promise<NotificationSettings>;
   /** "Send a test message" to one channel, or to the email account's own From address. Resolves with what happened. */
   testNotification(input: NotifyTestInput): Promise<NotifyTestResult>;
+
+  /** Settings > Server: where the guardian reads the blockchain. */
+  getChain(): Promise<ChainSettings>;
+  /**
+   * Switches the chain source. Announced to the phone, on every alert channel and in Activity. Rejects with `invalid`, and
+   * with `recovery_pending` for a public server while a recovery runs (your own node is always allowed).
+   */
+  setChain(input: ChainSourceInput): Promise<ChainSettings>;
+  /** "Test connection": connects to `input` without switching to it. */
+  testChain(input: ChainSourceInput): Promise<ChainTestResult>;
 
   /**
    * Forgets every wallet and creates a new key 3 (the old one is destroyed). Needs the passphrase and

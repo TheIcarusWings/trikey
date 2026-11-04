@@ -582,6 +582,20 @@ export const GuardianStatusResult = z
         channels: z.array(NotifyChannel).max(32),
       })
       .optional(),
+    /**
+     * Where the guardian reads the blockchain (absent from older guardians, which use the box's own Electrs): `own`, the
+     * owner's Electrum server or Bitcoin Core, or `public`, a public Electrum server, which sees every address of the
+     * wallet and the box's IP address and could hide coins or delay confirmations (it cannot spend or change a rule).
+     * The owner chooses it in the guardian's web UI; the phone only shows it (PROTOCOL.md, "Chain source"). To a hosted
+     * guest wallet's phone it is the host's, with `host: "own"` for the host's own node (PROTOCOL.md, "Family hosting").
+     */
+    chainSource: z
+      .object({
+        kind: z.enum(['own', 'public']),
+        backend: z.enum(['electrum', 'core']),
+        host: z.string().min(1).max(255),
+      })
+      .optional(),
   })
   .refine((r) => sameMoment(r.time, r.atMs), { message: SAME_MOMENT, path: ['atMs'] });
 
@@ -1138,7 +1152,7 @@ const recoveryAlert = {
 /**
  * Alert types mirror the engine's `AlertKind` (`recovery_started`, `recovery_reminder`, `recovery_ready`,
  * `recovery_cancelled`, `recovery_completed`), plus what the service raises itself: `guardian_locked`,
- * `wallet_adopted`, `wallet_retired`, `sp_received`, `relays_changed` and `notifications_changed`; and `limit_off` / `limit_on` and
+ * `wallet_adopted`, `wallet_retired`, `sp_received`, `relays_changed`, `notifications_changed`, `chain_source_changed` and `wallet_tx`; and `limit_off` / `limit_on` and
  * `savings_moved`, which the engine records and the service delivers like the recovery alerts.
  */
 export const Alert = z.discriminatedUnion('type', [
@@ -1308,6 +1322,38 @@ export const Alert = z.discriminatedUnion('type', [
      * new list from `guardian.status.notifications`. Phones before this alert drop it (an unknown `type`).
      */
     type: z.literal('notifications_changed'),
+  }),
+  stamped({
+    ...alertBase,
+    /**
+     * The owner switched the guardian's chain source in its web UI (Settings > Server): `own` (the owner's Electrum
+     * server or Bitcoin Core) or `public` (a public Electrum server, which sees the wallet's addresses). The phone reads
+     * it again from `guardian.status.chainSource`. Phones before this alert drop it (an unknown `type`).
+     */
+    type: z.literal('chain_source_changed'),
+    kind: z.enum(['own', 'public']),
+    backend: z.enum(['electrum', 'core']),
+    host: z.string().min(1).max(255),
+  }),
+  stamped({
+    ...alertBase,
+    /**
+     * A transaction touching the wallet (`wallet: "main"`, the paired wallet; `"savings"`, the watched Savings wallet),
+     * from this phone or any other device: sent when the guardian first sees it (in the mempool, `confirmations: 0`, or
+     * already in a block) and once more when it first confirms. Paired phone only (guardian feature `live_wallet`). The
+     * phone shows it at once and syncs to get the coins. Phones before this alert drop it (an unknown `type`).
+     *
+     * `direction`: `in` (the wallet received `amountSats`), `out` (it paid `amountSats` to others; the fee is `feeSats`
+     * when every input was the wallet's, and is then not in `amountSats`), `self` (a move between the wallet's own
+     * addresses: `amountSats` is 0, `feeSats` the fee).
+     */
+    type: z.literal('wallet_tx'),
+    txid: Hex32,
+    direction: z.enum(['in', 'out', 'self']),
+    amountSats: Sats,
+    feeSats: Sats.optional(),
+    confirmations: z.int().min(0),
+    wallet: z.enum(['main', 'savings']),
   }),
 ]);
 

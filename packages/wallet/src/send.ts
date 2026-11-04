@@ -24,12 +24,38 @@ export const LIMIT_WINDOW_MS = 24 * 3_600_000;
 export const MAX_ESTIMATE_SAT_PER_VB = 2000;
 
 /**
+ * The lowest fee rate (sat/vB) the wallet picks by itself on mainnet. Bitcoin Core 29 lowered its default minimum
+ * relay fee to 0.1 sat/vB, and its estimates follow it down (a mainnet payment went out at 0.11 sat/vB while
+ * mempool.space recommended 1 to 2), but many nodes still relay nothing under 1 sat/vB, so such a payment may never
+ * reach a miner, and a Spending payment in guardian mode cannot be sped up yet. Only a rate the caller sets (`feeRate`)
+ * goes lower (`feeRateBelowFloor` warns). Test networks keep the node's estimate.
+ */
+export const MAINNET_MIN_FEE_SAT_PER_VB = 1;
+
+/** Options for `pickFeeRate`. */
+export interface FeeRateOptions {
+  /** Never below this (sat/vB): `MAINNET_MIN_FEE_SAT_PER_VB` on mainnet (`minFeeRateFor`). */
+  minSatPerVb?: number;
+}
+
+/** The floor `pickFeeRate` applies on a network: 1 sat/vB on mainnet, none elsewhere. */
+export function minFeeRateFor(network: string): number | undefined {
+  return network === 'bitcoin' ? MAINNET_MIN_FEE_SAT_PER_VB : undefined;
+}
+
+/** A fee rate the caller chose that is under the mainnet floor (it may never confirm): worth a warning. */
+export function feeRateBelowFloor(feeRate: number, network: string): boolean {
+  const min = minFeeRateFor(network);
+  return min !== undefined && feeRate < min;
+}
+
+/**
  * The fee rate (sat/vB) for `speed`: the node's estimate for that target, else
  * the next slower target that has one, else the minimum relay fee. Never below
- * the minimum relay fee.
+ * the minimum relay fee, nor below `opts.minSatPerVb` (mainnet: 1 sat/vB).
  */
-export function pickFeeRate(fees: FeeEstimates | undefined, speed: FeeSpeed = 'normal'): number {
-  const floor = Math.min(fees?.minRelaySatPerVb ?? 1, MAX_ESTIMATE_SAT_PER_VB);
+export function pickFeeRate(fees: FeeEstimates | undefined, speed: FeeSpeed = 'normal', opts: FeeRateOptions = {}): number {
+  const floor = Math.min(Math.max(fees?.minRelaySatPerVb ?? 1, opts.minSatPerVb ?? 0), MAX_ESTIMATE_SAT_PER_VB);
   const target = SPEED_TARGETS[speed];
   const usable = (fees?.estimates ?? [])
     .filter((e) => e.satPerVb !== null && e.satPerVb <= MAX_ESTIMATE_SAT_PER_VB && e.target >= target)
@@ -125,6 +151,11 @@ export interface SendQuote {
    * (`quote_stale`) if the coins it would spend now are not these.
    */
   sendMax?: true;
+  /**
+   * The caller's fee rate (`feeRate`) is under the mainnet floor (`MAINNET_MIN_FEE_SAT_PER_VB`): many nodes will not
+   * relay the payment, and it may never confirm. The wallet never picks such a rate by itself; show a warning.
+   */
+  lowFeeRate?: true;
 }
 
 export interface SilentPaymentQuote {

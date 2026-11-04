@@ -164,7 +164,7 @@ export function passwordOnlyChange(stored: NonNullable<NotificationSettings['smt
 /** The body for `PUT /api/notifications` from the current settings and one change. */
 export function settingsInput(
   s: NotificationSettings,
-  change: { guardianName?: string; smtp?: SmtpDraft | null; add?: NotifyDestinationInput; remove?: string },
+  change: { guardianName?: string; smtp?: SmtpDraft | null; add?: NotifyDestinationInput; remove?: string; paymentAlerts?: boolean },
 ): NotificationSettingsInput {
   let smtp: NotificationSettingsInput['smtp'] = s.smtp
     ? { host: s.smtp.host, port: s.smtp.port, security: s.smtp.security, username: s.smtp.username, from: s.smtp.from }
@@ -182,7 +182,7 @@ export function settingsInput(
     };
   const destinations = s.destinations.filter((d) => d.id !== change.remove).map(keepDestination);
   if (change.add) destinations.push(change.add);
-  return { guardianName: (change.guardianName ?? s.guardianName).trim(), smtp, destinations };
+  return { guardianName: (change.guardianName ?? s.guardianName).trim(), paymentAlerts: change.paymentAlerts ?? s.paymentAlerts, smtp, destinations };
 }
 
 /** The email account's form errors, or undefined. `hasPassword`: one is stored already. */

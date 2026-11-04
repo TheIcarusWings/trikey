@@ -2,6 +2,8 @@ import { BrowserRandomError, browserRandomHex } from '../lib/random';
 import { ApiError, type GuardianApi } from './client';
 import type {
   ActivityEntry,
+  ChainSettings,
+  ChainTestResult,
   FamilyInvite,
   GuardianStatus,
   HostedWallet,
@@ -99,6 +101,9 @@ export function createHttpApi(base = ''): GuardianApi {
     signOut: () => request<PublicStatus>('DELETE', '/session'),
 
     getSetupPreflight: () => request<SetupPreflight>('GET', '/setup/preflight'),
+    checkSetupCode: async (code) => {
+      await request<{ ok: true }>('POST', '/setup/code', { code });
+    },
     // Both make a new key 3, so each sends fresh browser randomness for its seed (async: a failed draw rejects).
     completeSetup: async (input) => request<GuardianStatus>('POST', '/setup', withBrowserEntropy(input)),
 
@@ -124,6 +129,9 @@ export function createHttpApi(base = ''): GuardianApi {
     getNotifications: () => request<NotificationSettings>('GET', '/notifications'),
     setNotifications: (input) => request<NotificationSettings>('PUT', '/notifications', input),
     testNotification: (input) => request<NotifyTestResult>('POST', '/notifications/test', input),
+    getChain: () => request<ChainSettings>('GET', '/chain'),
+    setChain: (input) => request<ChainSettings>('PUT', '/chain', input),
+    testChain: (input) => request<ChainTestResult>('POST', '/chain/test', input),
     resetGuardian: async (input) => request<GuardianStatus>('POST', '/reset', withBrowserEntropy(input)),
 
     startPairing: () => request<PairingSession>('POST', '/pairing'),

@@ -50,6 +50,8 @@ export const TITLES: Record<string, string> = {
   wallet_retired: 'Wallet retired',
   wallet_adopted: 'Recovered wallet adopted',
   notifications_changed: 'Alert channels changed',
+  chain_source_changed: 'Guardian server changed',
+  wallet_tx: 'Payment',
   test: 'Test message',
 };
 
@@ -61,6 +63,7 @@ export const PRIORITIES: Record<string, Priority> = {
   savings_unwatched: 'high',
   contact_lock: 'high',
   notifications_changed: 'high',
+  chain_source_changed: 'high',
   relays_changed: 'high',
   wallet_retired: 'high',
   recovery_reminder: 'high',
@@ -69,6 +72,7 @@ export const PRIORITIES: Record<string, Priority> = {
   limit_on: 'default',
   guardian_locked: 'default',
   wallet_adopted: 'default',
+  wallet_tx: 'low',
   test: 'low',
 };
 

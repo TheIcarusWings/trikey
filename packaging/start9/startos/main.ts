@@ -126,6 +126,9 @@ export const main = sdk.setupMain(async ({ effects }) => {
           env: {
             PORT: String(uiPort),
             TRIKEY_DATA_DIR: dataDir,
+            // The interface's basic-auth gate guards the web UI, so first-run setup needs no setup code
+            // (plain Docker's default, packaging/compose/README.md).
+            TRIKEY_PLATFORM: 'start9',
             // StartOS runs Bitcoin Core on mainnet only.
             BITCOIN_NETWORK: 'bitcoin',
             ELECTRUM_HOST: electrumAddress.host,

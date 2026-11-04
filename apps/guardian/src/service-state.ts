@@ -91,7 +91,12 @@ export type ServiceEvent =
   /** A message could not be delivered to `channel` within 7 days and was given up. */
   | { type: 'notification_expired'; channel: string; alert: string; error?: string }
   /** "Send a test message" in the web UI. */
-  | { type: 'notification_test'; channel: string; ok: boolean; error?: string };
+  | { type: 'notification_test'; channel: string; ok: boolean; error?: string }
+  /**
+   * Settings > Server switched the chain source (chain/source.ts): a security event, announced to the phone and on
+   * every channel. `from` and `to` are `<own|public>:<electrum|core>:<host>:<port>` (no credential).
+   */
+  | { type: 'chain_source_changed'; from?: string; to: string };
 
 /** A relay removed from `relays` that the guardian still watches (listens and publishes on) until the owner stops it. */
 export interface RetiringRelay {

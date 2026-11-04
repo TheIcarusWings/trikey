@@ -24,6 +24,7 @@ import { formatDateYear, shortenMiddle } from '@/lib/format';
 import { addRelay, oldRelaysAfterChange, relayListError, sameRelayList } from '@/lib/relays';
 import { cn } from '@/lib/utils';
 import { NotificationsSection } from './settings-notifications';
+import { ServerSection } from './settings-server';
 
 function InfoRow({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -411,6 +412,8 @@ export function SettingsPage() {
       <RelaysSection paired={status.wallets.some((w) => w.phonesPaired > 0)} onSaved={refresh} />
 
       <NotificationsSection />
+
+      <ServerSection />
 
       <details className="group/advanced">
         <summary className="flex w-fit cursor-pointer list-none items-center gap-1 rounded-sm text-base leading-[22px] font-semibold outline-none marker:content-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">

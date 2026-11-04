@@ -227,6 +227,13 @@ describe('the real service with a real guardian as host', () => {
     const slot = rig.guardian.hosting.registry.slots.find((x) => x.name === 'Ana')!;
     expect(rig.guardian.hosting.engines.get(slot.slotId)!.registration()!.walletId).toBe(svc.wallet!.state.wallet!.walletId);
 
+    // The host switches its guardian to a public server: the guest's phone logs it as the host's change, in its words.
+    await rig.guardian.hosting.announceChainSource({ kind: 'public', backend: 'electrum', host: 'electrum.example.org' });
+    const start = Date.now();
+    const logged = () => svc.getState().activity.find((a) => a.type === 'security' && a.event.kind === 'guardian-server-changed');
+    while (!logged() && Date.now() - start < 8000) await new Promise((r) => setTimeout(r, 20));
+    expect(logged()).toMatchObject({ event: { kind: 'guardian-server-changed', public: true, host: 'electrum.example.org', hosted: true } });
+
     // Phase 2: "Pause this wallet" pauses only this slot; the hardware wallet resumes it.
     await svc.lockGuardian();
     expect(svc.getState().hosted?.paused).toMatchObject({ by: 'phone' });

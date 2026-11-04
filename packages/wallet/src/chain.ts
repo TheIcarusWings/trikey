@@ -89,6 +89,8 @@ export interface GuardianRpc {
   close(): void;
   call<M extends MethodName>(method: M, params: Params<M>, opts?: { timeoutMs?: number; id?: string; retryIntervalMs?: number }): Promise<Result<M>>;
   onAlert(handler: (alert: Alert, meta: { id: string; at: number }) => void): () => void;
+  /** A dropped relay connection is back (see `RpcClient.onReconnect`). Optional for stand-ins. */
+  onReconnect?(handler: (relay: string) => void): () => void;
 }
 
 /** txid of a raw transaction: double SHA-256 of the serialization without witnesses, byte-reversed. */

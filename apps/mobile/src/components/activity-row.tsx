@@ -195,6 +195,22 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
         icon: Shield,
         iconTone: 'warn',
       };
+    case 'guardian-server-changed':
+      if (event.hosted)
+        return {
+          title: event.public ? `Your host's guardian now uses a public server (${event.host})` : "Your host's guardian now uses its own node",
+          subtitle: `${when} · changed by your host. Your phone still reads your wallet from its own server`,
+          subtitleTone: event.public ? 'warn' : 'muted',
+          icon: Shield,
+          iconTone: event.public ? 'warn' : 'fill',
+        };
+      return {
+        title: event.public ? `Guardian now uses a public server (${event.host})` : 'Guardian now uses your own node',
+        subtitle: `${when} · changed in your guardian's web page. If that wasn't you, check the guardian`,
+        subtitleTone: 'warn',
+        icon: Shield,
+        iconTone: 'warn',
+      };
     case 'alert-channels-changed':
       return {
         title: 'Email and push alerts changed',

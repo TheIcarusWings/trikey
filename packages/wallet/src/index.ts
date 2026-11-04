@@ -53,6 +53,7 @@ export {
   type SavingsSendEntry,
   type SavingsSigners,
   type SendLogEntry,
+  type LiveTx,
   type HelperCoin,
   type HelperRecord,
   type SilentPaymentCoin,
