@@ -128,6 +128,37 @@ describe('back from sleep', { timeout: 60_000 }, () => {
     expect(svc.getState()).toMatchObject({ guardian: { status: 'online' }, guardianReconnecting: false });
   });
 
+  it('every return from the background, however short, opens every relay connection anew before it syncs', async () => {
+    // Seen in an iPhone's log: iOS cancels all of the app's sockets on every suspension (4 s, 12 s, 27 s away).
+    const conns = () => rig.relays.reduce((n, r) => n + (r as unknown as { nextConn: number }).nextConn, 0);
+    const before = conns();
+    const syncs: number[] = [];
+    const h = handlers();
+    const real = h['wallet.sync']!;
+    h['wallet.sync'] = async (params, ctx) => {
+      syncs.push(conns() - before);
+      return real(params, ctx);
+    };
+    try {
+      svc.pause('inactive');
+      svc.pause('background');
+      rig.clock.advance(4000);
+      await svc.resume();
+    } finally {
+      h['wallet.sync'] = real;
+    }
+    expect(conns() - before).toBe(rig.relays.length); // one new connection per relay (the guardian's stay)
+    expect(syncs[0]).toBeGreaterThan(0); // the sync went out once the connections were back
+    expect(svc.getState()).toMatchObject({ guardian: { status: 'online' }, guardianReconnecting: false });
+
+    // A Face ID prompt (inactive, back within a second) leaves the connections alone.
+    const after = conns();
+    svc.pause('inactive');
+    rig.clock.advance(800);
+    await svc.resume();
+    expect(conns()).toBe(after);
+  });
+
   it('offline before the phone slept: "reconnecting" on return, then offline only once a call made since fails', async () => {
     const restore = slowStatus(4000);
     try {

@@ -72,7 +72,7 @@ export interface WalletService {
    */
   resume?(): Promise<void>;
   /** The app left the front (AppState `inactive` or `background`): a call under way meanwhile may fail only for that. Optional. */
-  pause?(): void;
+  pause?(state?: 'inactive' | 'background'): void;
 
   // -- onboarding ------------------------------------------------------
   /**

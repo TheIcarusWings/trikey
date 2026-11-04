@@ -928,13 +928,32 @@ export class TrikeyWallet {
    * Subscribe again now on every relay connection that dropped, instead of waiting out the pool's backoff: the app
    * calls this when it comes back to the front (Android destroys a background app's sockets). Then `sync()`. With
    * `force` (the app was away long enough for the OS or a NAT to drop a socket without a word), every connection is
-   * opened anew, and unanswered requests are sent again once the relays are back (`RpcClient.resendPending`).
+   * opened anew, and unanswered requests are sent again once the relays are back (`RpcClient.resendPending`). With
+   * `waitMs`, resolves once a relay of the guardian's connection is back (its first EOSE), or after that long.
    */
-  reconnect(opts: ReconnectOptions = {}): void {
+  reconnect(opts: ReconnectOptions & { waitMs?: number } = {}): Promise<void> {
+    // Listening before the connections are replaced, so the first relay back is not missed.
+    const back = opts.waitMs && opts.waitMs > 0 ? this.relayBack(opts.waitMs) : Promise.resolve();
     this.pool?.reconnect?.(opts);
     for (const c of this.oldConnections) c.pool.reconnect?.(opts);
     this.pairing?.pool.reconnect?.(opts);
     this.replaceRpc?.pool.reconnect?.(opts);
+    return back;
+  }
+
+  /** Resolves when a relay of the guardian's connection is subscribed again (its EOSE), or after `ms`. */
+  private relayBack(ms: number): Promise<void> {
+    const rpc = this.rpc;
+    if (!rpc?.onReconnect) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        off();
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      const off = rpc.onReconnect!(done);
+    });
   }
 
   /** Removes key 2, the nostr key and the state from this phone. The cloud backup is left alone. */

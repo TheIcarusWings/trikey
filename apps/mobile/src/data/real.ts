@@ -174,19 +174,21 @@ export interface RealWalletService extends WalletService {
   /** The wallet, once there is one. */
   readonly wallet: TrikeyWallet | undefined;
   readonly prompts: DevicePromptStore;
-  /** The app left the front (AppState is no longer `active`). See `resume`. */
-  pause(): void;
+  /** The app left the front (AppState `inactive` or `background`). See `resume`. */
+  pause(state?: 'inactive' | 'background'): void;
   resume(): Promise<void>;
   close(): Promise<void>;
 }
 
 const DEFAULT_SWEEP_FEE_CAP_SATS = 20_000;
 /**
- * Away from the front this long, the relay connections are opened anew on `resume` (not only those that dropped): an
- * iPhone or a Pixel may have lost a socket without either end saying so, and a NAT forgets an idle one. (ms)
+ * Away from the front this long (even only `inactive`), the relay connections are opened anew on `resume`, as after any
+ * time in the background: a socket may be gone without either end saying so. (ms)
  */
 const FORCE_RECONNECT_AFTER_MS = 20_000;
-/** A pause shorter than this (a Face ID prompt, Control Center) does not excuse a call that failed across it. (ms) */
+/** After a forced reconnect, `resume` waits at most this long for the first relay to be back before it syncs. (ms) */
+const RELAYS_BACK_WAIT_MS = 3_000;
+/** An `inactive` pause shorter than this (a Face ID prompt, Control Center) does not excuse a call that failed across it. (ms) */
 const SHORT_PAUSE_MS = 2_000;
 /** A helper coin below this cannot pay its share of the fee of a payment at ordinary rates: shown as not funded. */
 const HELPER_USABLE_SATS = 1_000;
@@ -330,7 +332,9 @@ class Service implements RealWalletService {
   /** Since when the app is away from the front (`pause`), or undefined while it is at the front. */
   private pausedAt?: number;
   /** The last time away from the front (`pause` to `resume`). */
-  private lastPause?: { start: number; end: number };
+  private lastPause?: { start: number; end: number; background: boolean };
+  /** The app went to the background (not only `inactive`) since it was last at the front. */
+  private backgrounded = false;
   /** A payment is signed and being broadcast (`sendPayment`, between `payment_signed` and its end). */
   private paymentSending = false;
   /**
@@ -488,44 +492,50 @@ class Service implements RealWalletService {
     if (every > 0 && !this.closed) this.timer ??= setInterval(() => void this.sync(), every);
   }
 
-  pause(): void {
+  pause(state: 'inactive' | 'background' = 'background'): void {
     this.pausedAt ??= this.clock.now();
+    if (state === 'background') this.backgrounded = true;
   }
 
   /**
-   * The app came back to the front: subscribe again now on any relay connection that dropped in the background
-   * (Android destroys a background app's sockets) instead of waiting out the relay pool's backoff, then sync. After
-   * more than `FORCE_RECONNECT_AFTER_MS` away, every connection is opened anew (iOS too may have dropped a socket that
-   * still looks open), and unanswered requests are sent again once the relays are back.
+   * The app came back to the front. After the app was in the background (however briefly: iOS cancels every socket of
+   * a suspended app, Android destroys them), or away more than `FORCE_RECONNECT_AFTER_MS`, every relay connection is
+   * opened anew, and the sync waits for the first relay to be back (its EOSE, at most `RELAYS_BACK_WAIT_MS`), so it is
+   * not sent into sockets that are gone. Unanswered requests are sent again once the relays are back. After a short
+   * `inactive` (a Face ID prompt, Control Center) only the connections that dropped are opened again.
    *
-   * A guardian that was "offline" shows as reconnecting meanwhile; what the screen said before the phone slept (or a
-   * call that was under way when it did) is no news about the guardian now. Only a call begun after this returns says
-   * "offline" again.
+   * A guardian that was "offline" shows as reconnecting meanwhile; what the screen said before the phone slept, or a
+   * call under way (or made) while it was away, is no news about the guardian now. Only a call begun after the return
+   * says "offline" again.
    */
-  resume(): Promise<void> {
-    if (this.closed) return Promise.resolve();
+  async resume(): Promise<void> {
+    if (this.closed) return;
     const now = this.clock.now();
     const away = this.pausedAt !== undefined ? now - this.pausedAt : 0;
-    if (this.pausedAt !== undefined) this.lastPause = { start: this.pausedAt, end: now };
+    const background = this.backgrounded;
+    if (this.pausedAt !== undefined) this.lastPause = { start: this.pausedAt, end: now, background };
     this.pausedAt = undefined;
-    this.w?.reconnect({ force: away >= FORCE_RECONNECT_AFTER_MS });
+    this.backgrounded = false;
     if (!this.reachable && this.w && this.w.stage !== 'new') {
       this.reconnecting = true;
       this.refresh();
     }
+    const force = background || away >= FORCE_RECONNECT_AFTER_MS;
+    await this.w?.reconnect({ force, waitMs: force ? RELAYS_BACK_WAIT_MS : 0 }).catch(() => undefined);
+    if (this.closed) return;
     return this.sync();
   }
 
   /**
-   * A call begun at `startedAt` that failed now spanned a time away from the front: the app was suspended (iOS) or its
-   * timers and sockets were (Android), so its failure says nothing about the guardian. An away time still going on
-   * counts whatever its length (on an iPhone the late timeout comes before the app hears it is back); one that ended
-   * only if it was long enough to matter.
+   * A guardian call begun at `startedAt` that failed now spanned a time away from the front: the app was suspended
+   * (iOS) or its timers and sockets were (Android), or it was sent before the connections were back, so its failure says
+   * nothing about the guardian. A time away still going on counts whatever its length (on an iPhone the late timeout
+   * comes before the app hears it is back); one that ended if it was in the background or long enough to matter.
    */
   private spannedPause(startedAt: number): boolean {
-    if (this.pausedAt !== undefined && startedAt <= this.pausedAt) return true;
+    if (this.pausedAt !== undefined) return true;
     const p = this.lastPause;
-    return !!p && startedAt <= p.start && p.end - p.start >= SHORT_PAUSE_MS;
+    return !!p && startedAt < p.end && (p.background || p.end - p.start >= SHORT_PAUSE_MS);
   }
 
   async close(): Promise<void> {
