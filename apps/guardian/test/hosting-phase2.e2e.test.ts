@@ -88,6 +88,16 @@ let host: RpcClient;
 let hostWallet: MultisigWallet;
 const HOST_RULES: Policy = { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [hostContact.pubkey, both.pubkey], sweepFeeCapSats: 20_000, contactLock: true };
 let hostBytes: string;
+/**
+ * The host's state file once the live wallet (live-wallet.ts) has read the host's own wallet: a pass raises the host's
+ * high-water marks for coins the test funded (the host's own data, never a guest's), so the byte-for-byte comparisons
+ * of guest-only steps start from there.
+ */
+async function settledHostState(): Promise<string> {
+  await rig.guardian.live?.run();
+  await rig.guardian.live?.idle();
+  return readFile(stateFile(), 'utf8');
+}
 
 interface Guest {
   key: Uint8Array;
@@ -178,7 +188,7 @@ beforeAll(async () => {
   guests.dad = await acceptGuest('Dad', 91, { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [dadContact.pubkey, dadContact2.pubkey, both.pubkey], sweepFeeCapSats: 20_000, contactLock: true }, { app: MNEMONICS.app2, hardware: MNEMONICS.hardware });
   // Ana: the setting off.
   guests.ana = await acceptGuest('Ana', 92, { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [anaContact.pubkey], sweepFeeCapSats: 20_000 }, { app: MNEMONICS.stranger, hardware: MNEMONICS.hardware2 });
-  hostBytes = await readFile(stateFile(), 'utf8');
+  hostBytes = await settledHostState();
 }, 60_000);
 
 afterAll(async () => {
@@ -254,7 +264,7 @@ describe('family hosting phase 2, end to end', { timeout: 60_000 }, () => {
     await guests.ana.rpc.call('tx.broadcast', { txHex: finalizePsbt(base64.decode(anaSigned.psbt)).txHex });
     // Nothing reached the host's contacts. (The host's own payment above changed its file: compared again on guest-only steps.)
     expect(hostContact.inbox).toEqual([]);
-    hostBytes = await readFile(stateFile(), 'utf8');
+    hostBytes = await settledHostState();
     // The same message again (a relay re-delivery): nothing, no second answer.
     const answers = dadContact.inbox.length;
     await pool.publish(rig.relayUrls, wrap);
@@ -341,7 +351,7 @@ describe('family hosting phase 2, end to end', { timeout: 60_000 }, () => {
     const st = await guests.dad.rpc.call('guardian.status', {});
     expect(st).toMatchObject({ state: 'unlocked', hosting: { paused: { by: 'contact', contact: both.pubkey } } });
     await guests.dad.rpc.call('phone.resume', { approval: approve(guests.dad, { action: 'resume-phone' }, st.nextHardwareSequence) });
-    hostBytes = await readFile(stateFile(), 'utf8');
+    hostBytes = await settledHostState();
   });
 
   it('leaving: wallet.retire is refused while a co-signed coin is unspent, then releases the slot (key gone)', async () => {
