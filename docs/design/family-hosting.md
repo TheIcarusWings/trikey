@@ -711,10 +711,10 @@ id, wallet id, label, amount or alert type while a guest's recovery and Stop hos
 host-level event, and that hosting and the notifier keep to their own files (`hosting.json`, `hosted/` against
 `notifications.json`, `notifications-key.json`).
 
-### Updated to 0.1.10 and 0.1.11 (for the next release)
+### Updated to 0.1.10, 0.1.11 and the live wallet (for the next release)
 
-Family hosting was built on 0.1.9 and merged with 0.1.10 and 0.1.11 for the next release. What those releases changed
-underneath it, and how hosting fits:
+Family hosting was built on 0.1.9 and merged with 0.1.10, 0.1.11 and the live wallet (#114) for the next release. What
+those changed underneath it, and how hosting fits:
 
 - **Seen wraps (0.1.10).** The guardian has one nostr key, and guests' phones talk to it like the host's phone: there is
   no per-slot key. So there is one `seen-wraps.json` (`FILES.seenWraps`), and a guest's phone, recovery peer and
@@ -726,15 +726,29 @@ underneath it, and how hosting fits:
 - **Short wraps (0.1.10).** A property of the one transport, so guests get it too: `short_wraps` is in the guest's
   `features` (`GUEST_FEATURES`) and in `hosted.prepare`.
 - **`tx.broadcast` shortcuts (0.1.11).** The host's handler trusts a transaction it co-signed in the last 30 minutes
-  (`RecentlyCosigned`) or one spending a coin its last `wallet.sync` listed (`KnownCoins`), both keyed by the host's
-  wallet id and filled only by the host's own `sign` and `wallet.sync`. A guest's `sign` and `tx.broadcast` are the
+  (`RecentlyCosigned`) or one spending a coin its last `wallet.sync` or live-wallet pass listed (`Guardian.knownCoins`),
+  both keyed by the host's wallet id and filled only by the host's own `sign`, `wallet.sync` and live wallet. A guest's `sign` and `tx.broadcast` are the
   slot's handlers (`hosting/handlers.ts`), which never touch them: a guest's `tx.broadcast` relays only what its own
   slot co-signed (`HostedEngine.signedTxid`). A guest's transaction sent by the host's phone, and a host transaction
   sent by a guest's phone, are refused as foreign (`test/hosting.e2e.test.ts`). The phone side (the "Sending" entry,
   the 1 sat/vB mainnet floor) applies to hosted wallets too; the hosted sweep now keeps the floor as well.
+- **The live wallet (#114).** The guardian now subscribes to its wallets' scripts on an Electrum server (Bitcoin Core
+  follows the descriptors it imported), keeps their data in memory, answers `wallet.sync` and the `tx.broadcast` check
+  from it, and sends `wallet_tx` to the paired phone (plus, opted in, "Payments" on the owner's channels). Its targets
+  are the host engine's wallets only (the paired one, Savings, the watched replaced wallet, the helper account; see
+  `LiveWallet.targets`), and it delivers to the host's paired phone only. **Guests are never watched**: no guest script
+  is subscribed, nothing of a guest is imported into Bitcoin Core, `live-wallet.json` holds nothing of a guest, no guest
+  phone gets `wallet_tx`, and a guest's payments never reach the host's channels (guests do not list `live_wallet`).
+  This is BIP 89, not a gap: the host's guardian knows no address of a guest wallet, and the guest's phone reads its
+  own chain server. The only chain reads for guests stay the outpoint checks below (`ChainService.outpointsUnspent`,
+  which bypasses the live script cache). Should those ever need a cache, it belongs per slot and per outpoint (the
+  slot's ledger and its recovery's inputs), behind that one method, never in the script subscriptions.
+  `test/hosting.e2e.test.ts` checks the subscriptions, the file and the alerts; `test/hosting-notify.e2e.test.ts`
+  checks the owner's channels with "Payments" on (the host's own payment arrives, the guest's never).
 - **Plain Docker and the setup code (#104).** `TRIKEY_PLATFORM` and the first-run setup code guard the web UI's first
   setup only; invites are made from a signed-in web UI as before and are not affected. `FAMILY_HOSTING` sits next to
-  the new settings in `config.ts`.
+  the new settings in `config.ts`, the guardian README and the plain Docker compose file (`FAMILY_HOSTING=false` turns
+  hosting off there too).
 
 ### Chain sources and guests
 

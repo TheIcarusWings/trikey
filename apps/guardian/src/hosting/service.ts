@@ -67,7 +67,9 @@ export const GUEST_RECOVERY_METHODS: ReadonlySet<MethodName> = new Set<MethodNam
 
 /**
  * The features a guest sees: only what the host serves for guests in phase 1, and `short_wraps`, a property of the one
- * nostr transport every phone talks to (guests' answers are short wraps like the host phone's).
+ * nostr transport every phone talks to (guests' answers are short wraps like the host phone's). Never `live_wallet`:
+ * the live wallet (live-wallet.ts) watches the host's own wallets only; a guest's scripts are never subscribed or
+ * imported (BIP 89: the host knows no address of a guest wallet), and the guest's phone reads its own chain server.
  */
 export const GUEST_FEATURES = [GUARDIAN_FEATURES.familyHosting, GUARDIAN_FEATURES.shortWraps];
 

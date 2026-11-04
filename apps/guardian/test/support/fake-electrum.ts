@@ -196,6 +196,13 @@ export class FakeElectrum {
     return n;
   }
 
+  /** Whether any connection subscribed to `script` (family hosting: never a guest's). */
+  subscribedTo(script: Uint8Array): boolean {
+    const sh = scriptHash(script);
+    for (const subs of this.scriptSubs.values()) if (subs.has(sh)) return true;
+    return false;
+  }
+
   /** Adds an unspent output paying `script` (and its funding tx, if given). */
   addUtxo(script: Uint8Array, utxo: FakeUtxo, rawTx?: string): void {
     const sh = scriptHash(script);

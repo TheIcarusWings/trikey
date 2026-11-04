@@ -344,6 +344,23 @@ describe('family hosting, end to end', { timeout: 60_000 }, () => {
     expect(await readFile(stateFile(), 'utf8')).toBe(hostBytes);
   });
 
+  it("the live wallet keeps to the host's wallet: no guest script subscribed, nothing of a guest recorded or announced", async () => {
+    const g = rig.guardian;
+    await g.live!.run();
+    await g.live!.idle();
+    // A positive control: the host's own wallet is subscribed.
+    expect(rig.electrs.subscribedTo(hostWallet.derive(0, 0).script)).toBe(true);
+    // Not one script of a guest, though their coins were funded, co-signed, checked and swept above.
+    for (const gst of [dad(), guests.ana])
+      for (const chain of [0, 1] as const)
+        for (let i = 0; i < 5; i++) expect(rig.electrs.subscribedTo(gst.fx!.wallet.derive(chain, i).script), `${chain}/${i}`).toBe(false);
+    for (const c of (await dad().rpc.call('hosted.coins', {})).coins) expect(rig.electrs.subscribedTo(hex.decode(c.script))).toBe(false);
+    // Its record is the host's wallet's only; no guest phone got a wallet_tx.
+    const live = await readFile(join(rig.dir, 'live-wallet.json'), 'utf8').catch(() => '');
+    for (const gst of [dad(), guests.ana]) expect(live).not.toContain(gst.fx!.walletId);
+    for (const gst of [dad(), guests.ana]) expect(gst.alerts.filter((a) => a.type === 'wallet_tx')).toEqual([]);
+  });
+
   it('a new phone with only the hardware wallet gets in with hosted.access (version-2 text) and reads the map', async () => {
     const fx = guests.ana.fx!;
     const phone = generateSecretKey();

@@ -2,7 +2,8 @@
  * Family hosting next to the extra alert channels (docs/design/family-hosting.md, docs/design/notifications.md): a guest's
  * alerts are never delivered on the HOST's email, ntfy or webhook channels, the owner's nor the host's contacts', even
  * when a host contact is also the guest's contact. Guests' alerts go to the guest's phone and the guest's own contacts
- * as nostr DMs only (guests have no extra channels in phase 1). The host's channels keep working for host-level events.
+ * as nostr DMs only (guests have no extra channels in phase 1). The host's channels keep working for host-level events,
+ * and for the host's own payments when the owner turned "Payments" on (the live wallet watches the host's wallets only).
  * And neither feature writes into the other's files.
  */
 import { readFile, readdir } from 'node:fs/promises';
@@ -50,6 +51,7 @@ const HOST_RULES: Policy = { dailyLimitSats: 100_000, recoveryDelayDays: 7, aler
 const GUEST_LABEL = 'Family wallet of the guest';
 const guestAlerts: Alert[] = [];
 let guest: HostedFixture;
+let hostWallet: MultisigWallet;
 let hostPhone: RpcClient;
 let guestRpc: RpcClient;
 
@@ -84,7 +86,7 @@ beforeAll(async () => {
   hostPhone = client(host.secretKey);
   const prep = await hostPhone.call('pair.prepare', { pairingSecret: p.secret, network: 'regtest' });
   const cosigner: KeyExpression = { fingerprint: prep.guardianKey.fingerprint, originPath: prep.guardianKey.path.replace(/^m\//, '').replace(/'/g, 'h'), xpub: prep.guardianKey.xpub };
-  const wallet = new MultisigWallet(network, { app: await appSigner().getKey(network), hardware: await hwSigner().getKey(network), cosigner });
+  const wallet = (hostWallet = new MultisigWallet(network, { app: await appSigner().getKey(network), hardware: await hwSigner().getKey(network), cosigner }));
   const app = wallet.keys.app;
   await hostPhone.call('pair', {
     pairingSecret: p.secret,
@@ -97,9 +99,10 @@ beforeAll(async () => {
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!)), hwAuthPrivateKey()),
     rules: HOST_RULES,
   });
-  // The host's extra channels: its own email, webhook and ntfy, and alice's email.
+  // The host's extra channels: its own email, webhook and ntfy, and alice's email; payments too (live wallet).
   const r = await rig.api('PUT', '/notifications', {
     guardianName: 'Host box',
+    paymentAlerts: true,
     smtp: { host: '127.0.0.1', port: smtp.port, security: 'starttls', username: 'owner@example.com', from: 'owner@example.com', password: PASSWORD },
     destinations: [
       { audience: 'owner', kind: 'email', email: 'owner@example.com' },
@@ -178,6 +181,16 @@ describe("a guest's alerts never reach the host's extra channels", { timeout: 60
   });
 
   it("the host's channels still work for host-level events (a positive control), still without guest data", async () => {
+    // Payments: the host's own wallet's are on its channels (the guest's 250,000 above never were).
+    expect(rig.guardian.notifier.paymentAlerts).toBe(true);
+    rig.fund(hostWallet.derive(0, 0).script, 123_456n);
+    await waitFor(() => /123,456 sats/.test(delivered()), "the host's own incoming payment on its channels");
+    await rig.guardian.notifier.idle();
+    await sleep(300);
+    for (const secret of [guest.walletId, GUEST_LABEL, 'Dad', '250,000']) expect(delivered()).not.toContain(secret);
+    smtp.mails.length = 0;
+    hook.requests.length = 0;
+    ntfy.requests.length = 0;
     await hostPhone.call('guardian.lock', {});
     await waitFor(() => smtp.mails.some((m) => m.to.includes('owner@example.com')) && hook.requests.length >= 1 && ntfy.requests.length >= 1, "the host's lock alert on its channels");
     const text = delivered();

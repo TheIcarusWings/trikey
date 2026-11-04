@@ -783,10 +783,11 @@ export class ChainService {
 
   /**
    * Which of `coins` (each known by its outpoint and the script it pays) are unspent now, mempool included, as
-   * `txid:vout`. Never asks the chain source to watch anything (no `prepare`): Bitcoin Core answers by outpoint
-   * (`gettxout` on its UTXO set, `unspentAt`), so its watch-only wallet imports no descriptor and no address for them;
-   * an Electrum server is asked for each script's unspent outputs. For coins of wallets the guardian must not watch: a
-   * hosted guest's (docs/design/family-hosting.md, "Chain sources and guests").
+   * `txid:vout`. Never asks the chain source to watch anything: no `prepare` (Bitcoin Core answers by outpoint,
+   * `gettxout` on its UTXO set via `unspentAt`, so its watch-only wallet imports no descriptor and no address for them)
+   * and no subscription (an Electrum server is asked for each script's unspent outputs once, around the live script
+   * cache, which they never enter). For coins of wallets the guardian must not watch: a hosted guest's
+   * (docs/design/family-hosting.md, "Chain sources and guests").
    */
   async outpointsUnspent(coins: readonly { txid: string; vout: number; script: Uint8Array }[]): Promise<Set<string>> {
     const byScript = new Map<string, { script: Uint8Array; outpoints: { txid: string; vout: number }[] }>();

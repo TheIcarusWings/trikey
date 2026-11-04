@@ -467,6 +467,12 @@ server). A new phone without the old one or a backup uses `hosted.access` (versi
 the hardware wallet's chaincode and checks it against `accountPubkeys`. After an adoption without the old hardware
 wallet, `hardware.confirm` carries `hardwareAuth.tweak`.
 
+**No live wallet for guests.** The guardian never subscribes to a guest wallet's scripts, never imports anything of
+it into Bitcoin Core, and sends its phone no `wallet_tx` (a guest's `features` do not list `live_wallet`): it knows no
+address of the wallet, and must not learn one. The guest's phone reads its wallet from its own chain server. The
+owner's live wallet, its `wallet_tx` alerts and the "Payments" notifications on the owner's channels are about the
+owner's own wallets only.
+
 **The owner's chain source.** It is what the guardian checks a guest recovery's coins against and broadcasts a guest's
 transactions through (the guest's phone reads its wallet from its own chain server). A guest's `guardian.status.chainSource`
 and the `chain_source_changed` alert its phone and recovery peers get when the owner switches carry `kind`, `backend` and,
