@@ -43,17 +43,29 @@ describe('an unreachable relay', () => {
     expect(Object.getPrototypeOf(Ws)).toBe(globalThis.WebSocket);
   });
 
-  it('a subscription reports the relay as failed and the process lives', { timeout: 20_000 }, async () => {
+  it('a subscription gives up on the relay for EOSE, keeps trying it, and the process lives', { timeout: 20_000 }, async () => {
     const relays = [`ws://127.0.0.1:${await closedPort()}`, `ws://127.0.0.1:${await closedPort()}`];
-    const pool = new SimplePoolRelayPool({ pool: createSimplePool({ enableReconnect: true, enablePing: true }), maxWaitMs: 3000 });
+    const tries: { relay: string; reason: string }[] = [];
+    const pool = new SimplePoolRelayPool({
+      pool: createSimplePool({ enablePing: true }),
+      maxWaitMs: 3000,
+      resubscribeBackoffMs: [100],
+      onResubscribe: (r) => tries.push(r),
+    });
+    let closed: string[] | undefined;
     await noUncaught(async () => {
-      const reasons = await new Promise<string[]>((resolve) => {
-        pool.subscribe(relays, { kinds: [1] }, { onevent: () => {}, onclose: resolve });
+      await new Promise<void>((resolve) => {
+        pool.subscribe(relays, { kinds: [1] }, { onevent: () => {}, oneose: resolve, onclose: (r) => (closed = r) });
       });
-      expect(reasons).toHaveLength(2);
-      for (const r of reasons) expect(r).toMatch(/connection failed|closed/);
+      await new Promise((r) => setTimeout(r, 600));
+      // Both relays are tried again (and again), not given up on.
+      for (const url of relays) expect(tries.filter((t) => t.relay.startsWith(url)).length).toBeGreaterThanOrEqual(2);
+      for (const t of tries) expect(t.reason).toMatch(/connection failed|closed/);
+      expect(closed).toBeUndefined();
     });
     pool.close();
+    expect(closed).toHaveLength(2);
+    expect(pool.pendingResubscribes).toBe(0);
   });
 
   it('a publish resolves with ok: false for it and the process lives', { timeout: 20_000 }, async () => {

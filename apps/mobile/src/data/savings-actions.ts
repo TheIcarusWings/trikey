@@ -1,5 +1,5 @@
 import type { ReceiveAddress } from './service';
-import type { HardwareKind, Sats, SavingsDevice, SavingsQuote, SavingsQuoteOutcome, SavingsSigners, SavingsWalletMap } from './types';
+import type { HardwareKind, Sats, SavingsDevice, SavingsQuote, SavingsQuoteOutcome, SavingsSigners, SavingsSpeedUpOutcome, SavingsSpeedUpQuote, SavingsWalletMap } from './types';
 
 /**
  * What the Savings screens ask of the wallet (`WalletService.savings`; docs/design/savings-and-limit-off.md, option K).
@@ -37,6 +37,14 @@ export interface SavingsActions {
   quote(req: { address: string; amountSats: Sats; max?: boolean }): SavingsQuoteOutcome;
   /** Signs with the two keys `signers` names and sends. The guardian relays it and tells you and your contacts. */
   send(quote: SavingsQuote, signers: SavingsSigners): Promise<{ txid: string; amountSats: Sats; feeSats: Sats }>;
+  /**
+   * "Speed up" of a payment out of Savings that has not confirmed (`SavingsActivityItem.canSpeedUp`): the same payment
+   * with a higher network fee, out of the change back to Savings. Reads the transaction through the guardian; nothing is
+   * signed. `ok: false` says in words why it cannot be sped up (it confirmed, it sent everything with no change, ...).
+   */
+  quoteSpeedUp(txid: string): Promise<SavingsSpeedUpOutcome>;
+  /** Signs the replacement with the two keys `signers` names and sends it. The guardian does not announce it again. */
+  speedUp(quote: SavingsSpeedUpQuote, signers: SavingsSigners): Promise<{ txid: string; feeSats: Sats; extraFeeSats: Sats }>;
   /**
    * A Savings key is lost: everything moves to a new Savings that keeps the other two keys. `recoveryKey`: connect a new
    * second hardware wallet (`recoveryKeyKind`). `hardware`: Savings moves to the hardware wallet the wallet uses now (set

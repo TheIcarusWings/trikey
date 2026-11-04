@@ -61,6 +61,10 @@ export default function HomeScreen() {
       {/* With Savings, the main balance is Spending's; Savings has its own row below. */}
       <BalanceHeader label={state.savings.status === 'active' ? 'Spending' : 'Balance'} sats={state.balanceSats} />
       {paused ? <StatusLine tone="warn" text={state.recovery ? 'Phone-only payments paused during recovery' : 'Phone-only payments paused'} /> : <LimitLine newWallet={newWallet} />}
+      {/* Online but slow to send the chain data (a slow node): the balance above is the last one, not "offline". */}
+      {state.guardianSlow && !down && state.synced ? (
+        <StatusLine tone="warn" text={state.syncing ? 'Syncing… your guardian is slow to answer' : 'Slow to answer · last balance shown'} />
+      ) : null}
       <SendReceiveButtons newWallet={newWallet} />
       <SavingsRow />
       <RecoveryBanner />

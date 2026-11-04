@@ -15,9 +15,11 @@
  * mempool is noticed within minutes), and after each `wallet.sync` of Savings the phone asks for. The engine
  * (`noteSavingsScan`) decides what is news: the first scan after registration is history.
  */
+import { sha256 } from '@noble/hashes/sha2.js';
+import { hex } from '@scure/base';
 import { MultisigWallet, getNetwork } from '@trikey/core';
 import type { Guardian } from './guardian.js';
-import type { WalletSync } from './chain/chain.js';
+import type { WalletHistoryEntry, WalletSync } from './chain/chain.js';
 import { errorText } from './log.js';
 import type { SavingsWatch } from './policy/index.js';
 
@@ -39,9 +41,39 @@ export function savingsWallet(sv: Pick<SavingsWatch, 'descriptor' | 'network'>):
   return w;
 }
 
-/** The spends in a scan of Savings: every transaction that took value out of it, with what left (fee included). */
-export function spendsOf(r: Pick<WalletSync, 'history'>): { txid: string; amountSats: bigint }[] {
-  return r.history.filter((h) => h.net < 0n).map((h) => ({ txid: h.txid, amountSats: -h.net }));
+/** One spend of Savings as the engine weighs it (`PolicyEngine.noteSavingsScan`). */
+export interface SavingsSpend {
+  txid: string;
+  /** What left Savings, fee included. */
+  amountSats: bigint;
+  /** The Savings coins it spends (`txid:vout`): a replacement (RBF) spends at least one of them again. */
+  outpoints?: string[];
+  /**
+   * What it pays out, as one short digest of its outputs that do not pay Savings (script and amount each, in any order).
+   * A fee bump keeps it (it only lowers the change); a replacement that pays someone else, or another amount, does not.
+   */
+  payment?: string;
+}
+
+/** The digest of what a transaction pays out (`SavingsSpend.payment`): its non-Savings outputs, order left out. */
+export function paymentDigest(paidOut: WalletHistoryEntry['paidOut']): string {
+  const parts = paidOut.map((o) => `${o.script}:${o.amount}`).sort();
+  return hex.encode(sha256(new TextEncoder().encode(parts.join(',')))).slice(0, 32);
+}
+
+/**
+ * The spends in a scan of Savings: every transaction that took value out of it, with what left (fee included), the coins
+ * it spent and what it paid out (so the engine can tell a replacement from a new spend).
+ */
+export function spendsOf(r: { history: (Omit<WalletHistoryEntry, 'spent' | 'paidOut'> & Partial<Pick<WalletHistoryEntry, 'spent' | 'paidOut'>>)[] }): SavingsSpend[] {
+  return r.history
+    .filter((h) => h.net < 0n)
+    .map((h) => ({
+      txid: h.txid,
+      amountSats: -h.net,
+      ...(h.spent?.length ? { outpoints: h.spent } : {}),
+      ...(h.paidOut ? { payment: paymentDigest(h.paidOut) } : {}),
+    }));
 }
 
 /** What the web UI's Savings card shows: the last scan, in memory (a restart scans again within one tick). */
@@ -110,8 +142,13 @@ export class SavingsMonitor {
     this.last = { walletId, confirmedSats: r.confirmedSats, unconfirmedSats: r.unconfirmedSats, at: g.clock.now() };
     try {
       const fresh = await g.engine.noteSavingsScan(walletId, { nextReceiveIndex: r.nextReceiveIndex, nextChangeIndex: r.nextChangeIndex, spends: spendsOf(r) });
-      for (const x of fresh) g.log.warn('savings.moved', { walletId, txid: x.txid, amountSats: Number(x.amountSats) });
-      if (fresh.length) void g.alerts.run();
+      for (const x of fresh) {
+        const fields = { walletId, txid: x.txid, amountSats: Number(x.amountSats), ...(x.replaces ? { replaces: x.replaces } : {}) };
+        // A fee bump of a spend already announced is the same payment: logged, not announced again.
+        if (x.announced) g.log.warn('savings.moved', fields);
+        else g.log.info('savings.replaced', fields);
+      }
+      if (fresh.some((x) => x.announced)) void g.alerts.run();
     } catch (e) {
       g.log.error('savings.note_failed', { error: errorText(e) });
     }

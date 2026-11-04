@@ -159,7 +159,16 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
   - a NIP-40 expiry;
   - the hash of the PSBT it refers to.
 - **Replay protection:** old rumors are dropped. Strangers (senders that are not the paired phone, an alert contact or a phone with recovery access) get their own small replay cache and seen-wrap set, so they cannot push a peer's entries out; refused `sign` / `recovery.start` / `recovery.update` are rate limited per sender, and repeated identical refusals are one log entry with a count.
-- **Relays:** several, with the user's own relay optional (Umbrel has a Nostr Relay app).
+- **Relays:** several, with the user's own relay optional (Umbrel has a Nostr Relay app). Setup ticks the project's
+  relay `wss://relay.trikey.app` (it stores only gift wraps and Nostr Connect events, kinds 1059 and 24133) next to
+  three public ones; it sees what any relay sees, ciphertext and metadata, and is never the only one. Trikey keeps its
+  subscriptions open itself: a relay whose connection drops (a restart, a network change, Android closing a background
+  app's sockets) is subscribed on again after a short backoff, two days and ten minutes back because gift wraps are
+  back-dated, and the app does it at once when it comes back to the front (PROTOCOL.md section 5). Every subscription
+  is sent that whole look-back again, so both sides keep the ids of the wraps they handled across restarts and skip
+  them before any signature check or decryption, and the phone opens new ones a few at a time so the app never stalls
+  (PROTOCOL.md section 4, "Handled wraps"). From 0.1.10 a call's wraps are back-dated 10 minutes and gone from the
+  relays about an hour later; alerts keep the two days.
 - **Changing relays** (web UI, Settings; `PUT /api/relays`, PROTOCOL.md "Changing relays"). The phone, its backups
   and printed recovery sheets all carry the list from pairing, so a change must never cut any of them off. The guardian
   listens *and publishes* on the new relays and on the removed ones at once, and keeps watching the removed ones
@@ -322,7 +331,7 @@ Guessable keys would lose money silently, so where each key's randomness comes f
 | Backup data key, nonces, salts, recovery code, passkey PRF salt | `packages/wallet/src/backup.ts`, `wallet.ts` | `secureRandomBytes`. |
 | Pairing secret, message ids, pairing session id | `packages/protocol/src/pairing.ts`, `envelope.ts`, `apps/guardian/src/pairing.ts` | `secureRandomBytes`. |
 | Guardian keystore salt and nonce, silent-payment key encryption | `apps/guardian/src/keystore.ts`, `silent/service.ts` | `secureRandomBytes`. |
-| NIP-44 nonces and NIP-59 back-dating (RPC and the guardian's NIP-17 alert DMs) | `packages/protocol/src/transport.ts` | `secureRandomBytes` and `secureRandomInt`, no longer `Math.random` or nostr-tools' own generator. Back-dating hides when a message was sent, so it should not come from a predictable generator. The wrap's public `expiration` is derived from that same back-dated `created_at` (`created_at + 2 days + the class TTL ceiling`), never from the send time, so it does not undo the back-dating; relays still see when an event arrives. |
+| NIP-44 nonces and NIP-59 back-dating (RPC and the guardian's NIP-17 alert DMs) | `packages/protocol/src/transport.ts` | `secureRandomBytes` and `secureRandomInt`, no longer `Math.random` or nostr-tools' own generator. Back-dating hides when a message was sent, so it should not come from a predictable generator. The wrap's public `expiration` is derived from that same back-dated `created_at` (`created_at + W + the class TTL ceiling`, where `W` is the back-dating window: 2 days for alerts, 10 minutes for requests and responses from 0.1.10, PROTOCOL.md section 2), never from the send time, so it does not undo the back-dating; relays still see when an event arrives. |
 
 `Math.random` is left in one place: the Electrum reconnect jitter, which is timing only. A lint-style test ([`packages/core/test/randomness-lint.test.ts`](packages/core/test/randomness-lint.test.ts), checker in `test/support/randomness-check.ts`) fails CI when the shipped sources (`apps/*/src`, `apps/*/app`, `packages/*/src`) reach randomness any other way: `Math.random`; a random function (`randomBytes`, `getRandomValues`, `randomUUID`, `randomInt`, `randomFill`, `randomSecretKey`, `generateMnemonic`, `generateSecretKey`, nostr-tools' `wrapEvent`/`createWrap`/`createSeal`, ...) imported, destructured or reached as a member from any module other than our own; `globalThis.crypto` / `window.crypto` (except `.subtle`); and `nip44.encrypt` without an explicit nonce. Aliased, namespace, default, `require` and dynamic-import forms are followed. The few files that implement the source itself are allowlisted per rule, with the reason, and a test fails if an exception is no longer needed. It cannot see value aliasing (`const m = Math; m.random()`) or code inside dependencies.
 
@@ -506,13 +515,19 @@ no policy hash or approval text changes, the same version-1 backup).
 - **Moving money.** Into Savings: a normal payment from Spending to a Savings address, counted against the daily limit
   like any other (owner's answer 3); over the limit the hardware wallet signs. Out of Savings: two of its keys (phone +
   hardware wallet by default; phone + Recovery Key if the hardware wallet is lost; hardware wallet + Recovery Key if the
-  phone key is not usable), at the 6-block fee estimate, broadcast through the guardian. "Move to Spending" pays a
-  Spending address; the hardware wallet shows it as an outgoing payment and the app says so. Spending and Savings coins
-  are never mixed in one transaction.
+  phone key is not usable), at the 6-block fee estimate with RBF signalled, broadcast through the guardian. "Move to
+  Spending" pays a Spending address; the hardware wallet shows it as an outgoing payment and the app says so. Spending and
+  Savings coins are never mixed in one transaction. **Speed up** (`TrikeyWallet.quoteSavingsSpeedUp` /
+  `speedUpSavingsSpend`): a Savings payment waiting to confirm is replaced (BIP 125) by one with the same coins and the
+  same payments, a higher fee (the 1-block estimate, at least the old fee plus the incremental relay fee for its size)
+  taken from the change back to Savings, signed again by two of Savings' keys; the app shows the fee difference first.
+  A payment with no change cannot be sped up this way (the payment is never lowered); CPFP from Spending is not built.
 - **The guardian's part** (`apps/guardian/src/savings.ts`, `PolicyEngine.registerSavings`): it watches the descriptor
   (`GuardedWallet.savings`), serves its chain data and relays its spends, and scans it on every block and every two
   minutes. A spend after the first scan raises a durable `savings_moved` notice to the paired phone and every alert
-  contact (a tripwire: an honest guardian says Savings moved; a compromised one stays silent). Turning the watch off, or
+  contact (a tripwire: an honest guardian says Savings moved; a compromised one stays silent). One outflow, one alert: a
+  later spend of the same coins is a replacement (RBF); paying out the same (a fee bump) it is only logged
+  (`savings_replaced`), paying out something else it is announced again, naming the spend it replaced. Turning the watch off, or
   swapping it for another Savings wallet, is announced to the phone and every contact the same way (`savings_unwatched`);
   the phone, which did not ask for it, registers Savings again at its next sync. It refuses to watch any
   wallet it could sign for (the guarded, watched or a retired key set, or one holding key 3). A rotation carries the

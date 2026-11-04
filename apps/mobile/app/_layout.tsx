@@ -165,10 +165,12 @@ export default function RootLayout() {
     setEpoch((e) => e + 1);
   }, []);
 
-  // Syncing when the app returns to the front.
+  // Back at the front: reconnect to the relays now (Android destroys a background app's sockets), then sync.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (s) => {
-      if (s === 'active') void current.current?.wallet.sync().catch(() => {});
+      if (s !== 'active') return;
+      const w = current.current?.wallet;
+      void (w?.resume ? w.resume() : w?.sync())?.catch(() => {});
     });
     return () => sub.remove();
   }, []);

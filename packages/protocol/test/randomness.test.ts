@@ -7,7 +7,7 @@ import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 import { RandomSourceError } from '@trikey/core/random';
 import { installRandomSource } from '@trikey/core/testing/random';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_LIMITS, WRAP_BACKDATE_SEC, generateMessageId, generatePairingSecret, unwrapMessage, wrapDirectMessage, wrapMessage, wrapTimestamps } from '../src/index.js';
+import { DEFAULT_LIMITS, RPC_WRAP_BACKDATE_SEC, WRAP_BACKDATE_SEC, generateMessageId, generatePairingSecret, unwrapMessage, wrapDirectMessage, wrapMessage, wrapTimestamps } from '../src/index.js';
 
 const alice = generateSecretKey();
 const bob = generateSecretKey();
@@ -25,15 +25,23 @@ describe('randomness in the transport', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it('back-dates seals and wraps uniformly within the NIP-59 window', () => {
+  it('back-dates seals and wraps uniformly within the NIP-59 window (alerts: 2 days; calls: 10 minutes)', () => {
     const seen = new Set<number>();
     for (let i = 0; i < 40; i++) {
-      const { wrap } = wrapMessage({ id: generateMessageId(), method: 'guardian.status', params: {} }, { senderSecretKey: alice, recipient: getPublicKey(bob), now: NOW });
+      const { wrap } = wrapMessage({ id: generateMessageId(), method: 'alert', params: { type: 'guardian_locked', at: NOW } }, { senderSecretKey: alice, recipient: getPublicKey(bob), now: NOW });
       expect(wrap.created_at).toBeLessThanOrEqual(NOW);
       expect(wrap.created_at).toBeGreaterThanOrEqual(NOW - WRAP_BACKDATE_SEC);
       seen.add(wrap.created_at);
     }
     expect(seen.size).toBeGreaterThan(35);
+    const calls = new Set<number>();
+    for (let i = 0; i < 40; i++) {
+      const { wrap } = wrapMessage({ id: generateMessageId(), method: 'guardian.status', params: {} }, { senderSecretKey: alice, recipient: getPublicKey(bob), now: NOW });
+      expect(wrap.created_at).toBeLessThanOrEqual(NOW);
+      expect(wrap.created_at).toBeGreaterThanOrEqual(NOW - RPC_WRAP_BACKDATE_SEC);
+      calls.add(wrap.created_at);
+    }
+    expect(calls.size).toBeGreaterThan(25); // 40 draws from 601 values: about 39 distinct
   });
 
   describe('wrap expiration (L2)', () => {
@@ -78,14 +86,27 @@ describe('randomness in the transport', () => {
         const m = wrapMessage(status(), { senderSecretKey: alice, recipient: getPublicKey(bob), now: NOW });
         const e = exp(m.wrap);
         expect(e).toBeGreaterThanOrEqual(NOW + MAX);
-        expect(e).toBeLessThanOrEqual(NOW + MAX + WRAP_BACKDATE_SEC);
+        expect(e).toBeLessThanOrEqual(NOW + MAX + RPC_WRAP_BACKDATE_SEC);
         expect(e).toBeGreaterThanOrEqual(m.expiration); // rumor expiry is NOW + 300, inside
         expect(m.expiration).toBe(NOW + 300);
         // The wrap's expiry gives no more than its created_at: both come from one draw.
-        expect(e - m.wrap.created_at).toBe(WRAP_BACKDATE_SEC + MAX);
+        expect(e - m.wrap.created_at).toBe(RPC_WRAP_BACKDATE_SEC + MAX);
         exps.add(e);
       }
-      expect(exps.size).toBeGreaterThan(90);
+      expect(exps.size).toBeGreaterThan(75); // 100 draws from 601 values: about 92 distinct
+    });
+
+    it('wrapTimestamps: a shorter window keeps the same construction', () => {
+      const seen = new Set<number>();
+      for (let i = 0; i < 500; i++) {
+        const t = wrapTimestamps(NOW, MAX, RPC_WRAP_BACKDATE_SEC);
+        expect(t.createdAt).toBeLessThanOrEqual(NOW);
+        expect(t.createdAt).toBeGreaterThanOrEqual(NOW - RPC_WRAP_BACKDATE_SEC);
+        expect(t.expiration - t.createdAt).toBe(RPC_WRAP_BACKDATE_SEC + MAX);
+        seen.add(t.createdAt);
+      }
+      expect(seen.size).toBeGreaterThan(300); // spread over the whole 0..600 s window
+      expect(() => wrapTimestamps(NOW, MAX, -1)).toThrow(RangeError);
     });
 
     it('wrapMessage: the receiver still accepts it, judging only the rumor expiry', () => {

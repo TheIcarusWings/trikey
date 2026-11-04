@@ -71,6 +71,7 @@ const DAY = 24 * HOUR;
 
 const DEMO_NPUB = 'npub1m4r1ac0d3guardian7x2p9k5v8q6w3t0y4h8s2n5e7u9a1z3c6f0kxq4d2l';
 const RELAYS: RelayOption[] = [
+  { url: 'wss://relay.trikey.app', label: 'Trikey relay', defaultSelected: true },
   { url: 'wss://relay.damus.io', defaultSelected: true },
   { url: 'wss://nos.lol', defaultSelected: true },
   { url: 'ws://nostr-relay_server_1:4848', label: 'Nostr Relay app on this Umbrel', defaultSelected: true },

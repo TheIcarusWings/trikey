@@ -21,7 +21,7 @@ import {
   type Response,
   type Result,
 } from './schemas.js';
-import { SUBSCRIPTION_LOOKBACK_SEC, openGiftWrap, readRumor, wrapMessage, type OpenedWrap } from './transport.js';
+import { SUBSCRIPTION_LOOKBACK_SEC, openGiftWrap, readRumor, wrapExpiration, wrapMessage, type OpenedWrap } from './transport.js';
 
 export interface HandlerContext {
   /** Hex pubkey of the (verified) sender. */
@@ -145,6 +145,9 @@ export class RpcServer {
       {
         onevent: (e) => void this.handleWrap(e).catch((err: unknown) => this.o.onError?.(err, {})),
         oneose,
+        // Handled wraps are skipped before any signature check; new ones are verified once, by `openGiftWrap`.
+        isKnown: (id) => this.seenWraps.has(id),
+        verifiedByCaller: true,
       },
     );
   }
@@ -188,15 +191,22 @@ export class RpcServer {
   }
 
   private async handleWrap(wrap: NostrEvent): Promise<void> {
-    if (this.closed || this.seenWraps.seen(wrap.id)) return;
+    if (this.closed || !wrap || typeof wrap.id !== 'string' || this.seenWraps.has(wrap.id)) return;
+    // Past its public expiration (never before its rumor's): dropped without any crypto.
+    const exp = wrapExpiration(wrap);
+    if (exp !== undefined && exp + this.limits.clockSkewSec < this.now()) return;
     let opened: OpenedWrap;
     try {
       opened = openGiftWrap(wrap, { recipientSecretKey: this.o.secretKey });
     } catch (e) {
+      // Remembered only once its id and signature checked out (`bad_wrap` is that check failing): a forged copy must
+      // not keep the real wrap out.
+      if (e instanceof EnvelopeError && e.reason !== 'bad_wrap') this.seenWraps.seen(wrap.id);
       if (e instanceof EnvelopeError) this.drop({ reason: e.reason, wrapId: wrap.id, sender: e.sender, messageId: e.messageId, detail: e.message });
       else this.drop({ reason: 'decrypt_failed', wrapId: wrap.id, detail: String(e) });
       return;
     }
+    this.seenWraps.seen(wrap.id);
     await this.handleOpened(opened);
   }
 

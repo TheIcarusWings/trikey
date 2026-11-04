@@ -736,6 +736,11 @@ export interface WalletState {
   syncing: boolean;
   /** Has the wallet heard from the guardian at least once? */
   synced: boolean;
+  /**
+   * The guardian answered the last sync but was too slow sending the wallet's chain data (a slow Electrum server): it
+   * is online, and the balance shown is the last one. Not "offline".
+   */
+  guardianSlow: boolean;
   phoneSpending: PhoneSpending;
   /** A recovery on this phone's wallet that is no longer running. */
   recoveryOutcome: RecoveryOutcome | null;
@@ -808,6 +813,10 @@ export interface SavingsActivityItem {
   status: 'pending' | 'confirmed';
   address?: string;
   signedBy?: SavingsSigners;
+  /** A payment out of Savings that has not confirmed: "Speed up" can replace it with a higher fee. */
+  canSpeedUp?: true;
+  /** It replaced an earlier version of the same payment ("Speed up"). */
+  spedUp?: true;
 }
 
 export interface SavingsState {
@@ -879,3 +888,29 @@ export interface SavingsQuote {
 }
 
 export type SavingsQuoteOutcome = { ok: true; quote: SavingsQuote } | { ok: false; problem: QuoteProblem; message: string };
+
+/**
+ * "Speed up" of a payment out of Savings that has not confirmed: the same payment again, with a higher network fee taken
+ * from the change back to Savings, signed again by two of Savings' keys.
+ */
+export interface SavingsSpeedUpQuote {
+  /** The wallet's own handle for this quote. Pass the whole quote back to `savings.speedUp`. */
+  ref?: string;
+  /** The transaction it replaces. */
+  txid: string;
+  address: string;
+  /** What the payment sends: the same as before. */
+  amountSats: Sats;
+  /** The network fee it paid, and the one it pays now (sats, and sat/vB). */
+  oldFeeSats: Sats;
+  feeSats: Sats;
+  oldFeeRate: number;
+  feeRate: number;
+  /** `feeSats - oldFeeSats`: what speeding it up costs, out of the change back to Savings. */
+  extraFeeSats: Sats;
+  toSpending: boolean;
+  /** Who approved the payment, when this phone sent it: the suggested pair for the replacement. */
+  signedBy?: SavingsSigners;
+}
+
+export type SavingsSpeedUpOutcome = { ok: true; quote: SavingsSpeedUpQuote } | { ok: false; message: string };
