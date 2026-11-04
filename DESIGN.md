@@ -22,7 +22,7 @@ Visual walkthrough (private canvas): https://claude.ai/artifact/NV7SCZja8ik9LAvu
 | Topic | Decision | Why |
 |---|---|---|
 | Script | Plain `wsh(sortedmulti(2,…))`, BIP48 paths (`m/48'/coin'/0'/2'`) | The only script every hardware wallet can co-sign, Trezor included. Miniscript, taproot multisig and MuSig2 all exclude major devices. |
-| Key 3 | Trikey Guardian on the user's Umbrel or Start9 (both in the MVP) | Bitkey's features with no third party |
+| Key 3 | Trikey Guardian on the user's Umbrel or Start9 (both in the MVP), or on plain Docker (`packaging/compose`: a Mac, a PC, Linux, a NAS) against the user's own node | Bitkey's features with no third party |
 | No home server | Recovery Key mode (below) | Same script; Bitcoin's timelock rules enforce the limit |
 | Key 2 backup | Encrypted cloud backup, unlocked by passkey | The user picks the cloud. Losing the backup is survivable: see the recovery flows. |
 | Optional extra | Timelocked heir/backstop path for miniscript-capable devices | Opt-in only, so the default stays universal |
@@ -64,8 +64,9 @@ Hardware (key 1) ───┘   outbound only           └── alerts: nostr 
   - more unlock slots can be added later, such as a Recovery Code.
 
 ### Trikey Guardian (Docker container)
-- **Packaging:** one image, shipped as an Umbrel app (`umbrel-app.yml`, depending on `bitcoin` + `electrs`) and a Start9 service package.
-- **Chain data and broadcasting** go through the local node and Electrs. No public servers are used.
+- **Packaging:** one image, shipped as an Umbrel app (`umbrel-app.yml`, depending on `bitcoin` + `electrs`), a Start9 service package, and a Docker Compose file for plain Docker (`packaging/compose`), with an optional node profile.
+- **Chain data and broadcasting** go through the user's own node and Electrum server: on Umbrel and Start9 the box's own; on plain Docker one on the user's network (plain TCP only to a private address, else TLS, optionally with a pinned certificate). No public servers are used.
+- **First run on plain Docker** needs a one-time setup code from the container's log, since no platform login guards the page there (Umbrel and Start9 do).
 - **Web UI on the box:**
   - pairing QR;
   - status (locked or unlocked);
@@ -304,8 +305,9 @@ printed and kept with the hardware wallet.
 - **The recovery code holds no secret.** The guardian's npub and relays are visible on the relays anyway; what lets a new phone in is the hardware wallet's `recovery.access` signature, bound to that phone's nostr key and (version 2, when the code carries the wallet id) to the wallet. A version-1 signature whose grant a rotation or retirement revoked is refused until it expires.
 - **The guardian's clock is not trusted alone.** An attacker who controls the box's NTP can move the system clock: a recovery's delay counts from the later of the clock and the chain's median time past at the start (a clock set back cannot shorten it), and completes only when the clock, the median time past and the block count all agree (a clock pushed forward cannot either). The daily limit's window is not opened by stepping the clock: the guardian refuses to co-sign while the clock is more than 3 hours ahead of the chain, and its window time never goes backwards. Without chain data a recovery does not start, and co-signing stops once the last chain observation is 3 hours old.
 - **The web UI has its own sessions.** Every API call needs a session (the unlock passphrase signs a browser in; an HttpOnly, SameSite=Strict cookie, idle-expiring, in memory), except the reduced status and first-run setup until it completes, because other apps' containers on the box can likely reach the guardian without going through the platform's proxy. Still keep the port behind the proxy (Umbrel's `app_proxy`, Start9's interfaces), which also stops DNS rebinding.
+- **First run without a platform login (plain Docker).** Before setup there is no passphrase, so whoever reached the web UI first could set the guardian up and own key 3. On plain Docker the guardian therefore asks for a one-time setup code (80 bits, new at every start, in memory only) that it prints in its log: reading it takes the Docker access only the owner has. The compose file publishes the web UI on 127.0.0.1 by default; on a LAN the passphrase crosses it over plain HTTP, so the guide points to Tailscale or the NAS's HTTPS proxy. A DNS-rebinding page gets no session (its origin is not the guardian's) and so no more than a signed-out client.
 - **The guardian's nostr key is stored unencrypted** (mode 0600), so a locked guardian can still answer the phone and receive an unlock. It can't sign transactions.
-- **Electrs and the node are trusted** for chain data; headers are checked to link up but not for proof of work.
+- **Electrs and the node are trusted** for chain data; headers are checked to link up but not for proof of work. On plain Docker the Electrum server may be on another machine: plain TCP goes only to a loopback, private or link-local address (resolved and checked before every connection), anything else needs TLS, verified against the public CAs or a pinned certificate.
 - **Nuisances, not thefts:**
   - Anyone who knows a wallet address can send a coin after a recovery starts. That blocks completion, because the sweep must spend every coin, until the surviving key adds it with `recovery.update` (the delay runs on).
   - Anyone who sees the guardian's npub on a relay can burn a 5-minute pairing code with wrong attempts (at no disk write: a wrong secret is refused before anything is recorded).

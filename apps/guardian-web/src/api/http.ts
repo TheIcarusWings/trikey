@@ -98,6 +98,9 @@ export function createHttpApi(base = ''): GuardianApi {
     signOut: () => request<PublicStatus>('DELETE', '/session'),
 
     getSetupPreflight: () => request<SetupPreflight>('GET', '/setup/preflight'),
+    checkSetupCode: async (code) => {
+      await request<{ ok: true }>('POST', '/setup/code', { code });
+    },
     // Both make a new key 3, so each sends fresh browser randomness for its seed (async: a failed draw rejects).
     completeSetup: async (input) => request<GuardianStatus>('POST', '/setup', withBrowserEntropy(input)),
 

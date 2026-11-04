@@ -31,6 +31,8 @@ export type ApiErrorCode =
   | 'locked'
   | 'setup_required'
   | 'already_setup'
+  | 'setup_code_required'
+  | 'bad_setup_code'
   | 'already_paired'
   | 'not_available'
   | 'forbidden'
@@ -75,6 +77,8 @@ export interface GuardianApi {
   signOut(): Promise<PublicStatus>;
 
   getSetupPreflight(): Promise<SetupPreflight>;
+  /** Checks the setup code (plain Docker, `setupCodeRequired`) before setup. Rejects with `bad_setup_code` or `rate_limited`. */
+  checkSetupCode(code: string): Promise<void>;
   /** Creates key 3 and the unlock passphrase. The guardian ends up unlocked. */
   completeSetup(input: SetupInput): Promise<GuardianStatus>;
 
