@@ -18,6 +18,7 @@ import {
   RpcTimeoutError,
   SimplePoolRelayPool,
   decodePairingUri,
+  type Handlers,
   pairingMessage,
   recoveryAccessMessage,
 } from '@trikey/protocol';
@@ -254,6 +255,32 @@ describe('chain methods, end to end', { timeout: 30_000 }, () => {
       expect(scans).toBe(2);
     } finally {
       chain.spendsWalletCoin = real;
+    }
+  });
+
+  it('wallet.sync re-sent by the phone while it scans joins the scan under way: one scan, one answer', async () => {
+    // A cold wallet scan on a slow Electrs (32 s on an Umbrel): the phone re-sends the request every 10 s, same id.
+    // Here a 2 s scan and a re-send every 250 ms.
+    const handlers = (rig.guardian.rpc as unknown as { o: { handlers: Handlers } }).o.handlers;
+    const real = handlers['wallet.sync']!;
+    let scans = 0;
+    handlers['wallet.sync'] = async (params, ctx) => {
+      scans++;
+      await new Promise((r) => setTimeout(r, 2000));
+      return real(params, ctx);
+    };
+    const retrying = new RpcClient({ pool, relays: rig.relayUrls, secretKey: phoneKey, peer: rig.pubkey, now: () => rig.nowSec(), defaultTimeoutMs: 10_000, retryIntervalMs: 250 });
+    clients.push(retrying);
+    const joined = () => rig.logLines.filter((l) => /rpc\.dropped/.test(l) && /replay/.test(l)).length;
+    const before = joined();
+    try {
+      const s = await retrying.call('wallet.sync', {});
+      expect(s.walletId).toBe(wallet.fingerprint());
+      expect(scans).toBe(1);
+      // The re-sends reached the guardian and were dropped as duplicates of the request in flight.
+      expect(joined() - before).toBeGreaterThanOrEqual(3);
+    } finally {
+      handlers['wallet.sync'] = real;
     }
   });
 
