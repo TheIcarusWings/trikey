@@ -243,6 +243,7 @@ export function notificationSettings(g: Guardian): NotificationSettings {
   const contacts = g.engine.status().rules?.alertContacts ?? [];
   return {
     guardianName: v.guardianName,
+    paymentAlerts: v.paymentAlerts,
     ...(v.smtp ? { smtp: { ...v.smtp, health: healthBody(v.smtp.health) } } : {}),
     destinations: v.destinations.map((d) => ({ ...d, ...(d.contact ? { contactNpub: npubEncode(d.contact) } : {}), health: healthBody(d.health) })),
     contacts: contacts.map((pubkey) => ({ pubkey, npub: npubEncode(pubkey) })),

@@ -30,7 +30,9 @@ export function isLimitOff(dailyLimitSats: number): boolean {
 /**
  * What a guardian lists in `guardian.status.features`. `short_wraps` (0.1.10): its answers' gift wraps are back-dated
  * at most `RPC_WRAP_BACKDATE_SEC` and expire about an hour later (PROTOCOL.md, "Wrap timestamps"); its alerts are still
- * back-dated up to two days.
+ * back-dated up to two days. `live_wallet`: it keeps the paired wallet's chain data live (Electrum subscriptions, or
+ * Bitcoin Core's wallet polled) and sends `wallet_tx` alerts when a transaction touching the wallet or Savings appears
+ * and when it confirms (PROTOCOL.md, "Live wallet").
  */
 export const GUARDIAN_FEATURES = {
   limitOff: 'limit_off',
@@ -38,6 +40,7 @@ export const GUARDIAN_FEATURES = {
   savings: 'savings',
   notifications: 'notifications',
   shortWraps: 'short_wraps',
+  liveWallet: 'live_wallet',
 } as const;
 
 /** True when the alert contacts may lock the guardian (`Policy.contactLock`). */

@@ -51,6 +51,8 @@ export type GuardianRecord = z.infer<typeof GuardianRecord>;
 
 export const ChainCache = z.object({
   syncedAt: z.number(),
+  /** `WalletState.liveCounter` when this sync was asked for: a `wallet_tx` noted after it may be news to it (`LiveTx`). */
+  liveSeq: z.number().optional(),
   tipHeight: z.number(),
   tipHash: z.string(),
   utxos: z.array(WalletUtxo),
@@ -410,6 +412,27 @@ export const WalletStage = z.enum([
 ]);
 export type WalletStage = z.infer<typeof WalletStage>;
 
+/**
+ * A transaction a `wallet_tx` alert announced (the guardian's live wallet): shown at once, until a sync asked for after
+ * the alert lists it (or does not: it was replaced or dropped).
+ */
+export const LiveTx = z.object({
+  /** In the order this phone noted them (`WalletState.liveCounter`): compared with the sync's `liveSeq`, never with clocks. */
+  seq: z.number(),
+  /** The phone's wallet when it was noted: announcements about a wallet the phone moved away from do not count. */
+  walletId: z.string(),
+  txid: Hex32,
+  wallet: z.enum(['main', 'savings']),
+  direction: z.enum(['in', 'out', 'self']),
+  amountSats: z.number(),
+  feeSats: z.number().optional(),
+  confirmations: z.number(),
+  /** When this phone first heard of it, and last (ms, the phone's clock). */
+  firstAt: z.number(),
+  at: z.number(),
+});
+export type LiveTx = z.infer<typeof LiveTx>;
+
 export const WalletState = z.object({
   version: z.literal(1),
   network: Network,
@@ -455,6 +478,10 @@ export const WalletState = z.object({
   seenAlerts: z.array(z.string()).default([]),
   /** Payments this phone made (newest last), merged into the history. */
   sendLog: z.array(SendLogEntry).default([]),
+  /** Transactions the guardian announced (`wallet_tx`) that a sync may not list yet, newest last. */
+  liveTxs: z.array(LiveTx).default([]),
+  /** The last `LiveTx.seq` given. */
+  liveCounter: z.number().default(0),
   /** The wallet changed under the hardware wallet (a recovery the guardian adopted): it must register it and confirm its key (`confirmHardware`). */
   hardwareConfirm: z.object({ walletId: z.string(), since: z.number() }).optional(),
   /** Wallets this phone moved away from with "Replace guardian". */

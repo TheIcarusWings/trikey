@@ -292,6 +292,11 @@ export interface NotifyDestination {
 export interface NotificationSettings {
   /** How every message names this guardian: letters, digits, spaces, `-` and `'`, at most 32. */
   guardianName: string;
+  /**
+   * Opt-in, off by default: your own channels also get a short message for each payment in or out of the wallet (and
+   * Savings), and when it confirms. Amounts only, never an address or a link; never to alert contacts.
+   */
+  paymentAlerts: boolean;
   smtp?: SmtpSettings;
   destinations: NotifyDestination[];
   /** The alert contacts in the rules (hex pubkey and npub), to attach an email or ntfy topic to. */
@@ -321,6 +326,8 @@ export interface NotifyDestinationInput {
 
 export interface NotificationSettingsInput {
   guardianName: string;
+  /** Payments to your own channels too (`NotificationSettings.paymentAlerts`). Omitted: as it was. */
+  paymentAlerts?: boolean;
   /**
    * `null`: no email account. `password` omitted: keep the stored one. `pin`: the server's certificate (PEM) or its
    * SHA-256 fingerprint to pin; omitted keeps the stored pin, `null` removes it (public CAs again).

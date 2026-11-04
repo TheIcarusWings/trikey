@@ -73,6 +73,8 @@ export interface WalletService {
   resume?(): Promise<void>;
   /** The app left the front (AppState `inactive` or `background`): a call under way meanwhile may fail only for that. Optional. */
   pause?(state?: 'inactive' | 'background'): void;
+  /** Hides `state.toast` now (a tap on it). Optional: a toast also goes away by itself. */
+  dismissToast?(): void;
 
   // -- onboarding ------------------------------------------------------
   /**

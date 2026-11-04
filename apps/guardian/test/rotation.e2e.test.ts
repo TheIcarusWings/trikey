@@ -365,11 +365,12 @@ describe('remote lock from the phone', { timeout: 60_000 }, () => {
     const psbt = base64.encode(await appSigner().signPsbt(plan.psbt, network));
     expect((await rpcError(phone.rpc.call('sign', { psbt }))).code).toBe(ErrorCode.GuardianLocked);
 
-    // Locking again is fine (and alerts nobody again).
-    const n = phone.alerts.length;
+    // Locking again is fine (and alerts nobody again). (The coin funded above brings a `wallet_tx`: not counted.)
+    const locks = () => phone.alerts.filter((a) => a.type === 'guardian_locked').length;
+    const n = locks();
     expect(await phone.rpc.call('guardian.lock', {})).toEqual({ state: 'locked' });
     await sleep(100);
-    expect(phone.alerts.length).toBe(n);
+    expect(locks()).toBe(n);
 
     expect(await phone.rpc.call('guardian.unlock', { kind: 'passphrase', passphrase: rig.passphrase })).toEqual({ unlocked: true });
     expect((await phone.rpc.call('sign', { psbt })).psbt).toBeDefined();

@@ -60,6 +60,17 @@ export const CHANNEL_LIMIT: RateLimitOptions = { max: 20, windowMs: 60 * MINUTE 
 export const SMTP_LIMIT: RateLimitOptions = { max: 60, windowMs: 60 * MINUTE };
 export const TEST_LIMIT: RateLimitOptions = { max: 10, windowMs: 10 * MINUTE };
 export const CHANGE_LIMIT: RateLimitOptions = { max: 30, windowMs: 60 * MINUTE };
+/**
+ * Payment messages (`wallet_tx`, opt-in) are low priority and never take from the warnings' budgets: their own per-channel
+ * and email limits, at most `MAX_PAYMENT_ITEMS` waiting (more are dropped), a day to go out, and the first to leave a
+ * full outbox.
+ */
+export const PAYMENT_LIMIT: RateLimitOptions = { max: 12, windowMs: 60 * MINUTE };
+export const PAYMENT_SMTP_LIMIT: RateLimitOptions = { max: 20, windowMs: 60 * MINUTE };
+export const MAX_PAYMENT_ITEMS = 20;
+export const PAYMENT_TTL_MS = DAY;
+const isPayment = (type: string) => type === 'wallet_tx';
+const ttlOf = (type: string) => (isPayment(type) ? PAYMENT_TTL_MS : NOTIFY_TTL_MS);
 
 export interface Health {
   lastOkAt?: number;
@@ -111,6 +122,11 @@ interface NotifyFile {
   outbox: OutboxItem[];
   done: { id: string; at: number }[];
   changes: number;
+  /**
+   * Opt-in, off by default: the owner's own channels also get a short message for each payment in or out of the wallet
+   * (and Savings), and when it confirms (`wallet_tx`, live-wallet.ts). Amounts only, never an address; never to contacts.
+   */
+  paymentAlerts?: boolean;
 }
 
 const empty = (): NotifyFile => ({ version: 1, guardianName: DEFAULT_GUARDIAN_NAME, destinations: [], health: {}, outbox: [], done: [], changes: 0 });
@@ -165,6 +181,8 @@ export interface DestinationView {
 
 export interface SettingsView {
   guardianName: string;
+  /** The owner's channels also get payments in and out (`NotifyFile.paymentAlerts`). */
+  paymentAlerts: boolean;
   smtp?: Omit<StoredSmtp, 'password' | 'pin'> & {
     /** The pinned certificate's SHA-256, and whether the certificate itself was pasted (else only its fingerprint). */
     pin?: { sha256: string; certificate: boolean };
@@ -224,6 +242,8 @@ export class Notifier {
   private readonly smtpLimiter = new SlidingWindowLimiter(SMTP_LIMIT);
   private readonly testLimiter = new SlidingWindowLimiter(TEST_LIMIT);
   private readonly changeLimiter = new SlidingWindowLimiter(CHANGE_LIMIT);
+  private readonly paymentLimiter = new SlidingWindowLimiter(PAYMENT_LIMIT);
+  private readonly paymentSmtpLimiter = new SlidingWindowLimiter(PAYMENT_SMTP_LIMIT);
 
   constructor(private readonly opts: NotifierOptions) {
     this.box = new SecretBox(opts.dataDir, opts.now);
@@ -259,6 +279,11 @@ export class Notifier {
     return this.file.guardianName;
   }
 
+  /** The owner chose to hear about payments on their own channels too (and has a channel). */
+  get paymentAlerts(): boolean {
+    return !!this.file.paymentAlerts && this.file.destinations.some((d) => d.audience === 'owner');
+  }
+
   /** True when any channel is set up (a guardian without any does no work here). */
   get configured(): boolean {
     return this.file.destinations.length > 0;
@@ -282,6 +307,7 @@ export class Notifier {
     const inRules = new Set(this.opts.contacts());
     return {
       guardianName: f.guardianName,
+      paymentAlerts: !!f.paymentAlerts,
       ...(f.smtp
         ? {
             smtp: {
@@ -345,7 +371,7 @@ export class Notifier {
   async update(input: unknown, ctx: { recoveryRunning: boolean }): Promise<UpdateOutcome> {
     let outcome = { ok: true, changed: false } as UpdateOutcome;
     await this.change(async (draft, now) => {
-      const r = (input ?? {}) as { guardianName?: unknown; smtp?: unknown; destinations?: unknown };
+      const r = (input ?? {}) as { guardianName?: unknown; smtp?: unknown; destinations?: unknown; paymentAlerts?: unknown };
       let name: string;
       let smtpIn: ReturnType<typeof checkSmtp> | null;
       let list: DestinationInput[];
@@ -364,6 +390,7 @@ export class Notifier {
         if (new Set(ids).size !== ids.length) throw new SettingsError('A channel is in the list twice.');
         checkCaps(list.map((d) => ({ ...d, key: d.kind === 'email' ? `${d.audience}:${d.contact ?? ''}:${d.email}` : undefined })));
         if (list.some((d) => d.kind === 'email') && !smtpIn) throw new SettingsError('Set up the email account first: email channels send through it.');
+        if (r.paymentAlerts !== undefined && typeof r.paymentAlerts !== 'boolean') throw new SettingsError('paymentAlerts is true or false.');
       } catch (e) {
         if (e instanceof SettingsError) {
           outcome = { ok: false, code: 'invalid', message: e.message };
@@ -442,9 +469,13 @@ export class Notifier {
       // While a recovery runs, the one change of the account allowed: a new app password, everything else the same.
       const passwordOnly = smtpParts.length === 1 && smtpParts[0] === 'app password';
       const nameChanged = draft.guardianName !== name;
+      // Absent: as it was (an older web page does not send it).
+      const payments = typeof r.paymentAlerts === 'boolean' ? r.paymentAlerts : !!draft.paymentAlerts;
+      const paymentsChanged = payments !== !!draft.paymentAlerts;
 
       const changes: string[] = [];
       if (nameChanged) changes.push(`guardian name changed to ${name}`);
+      if (paymentsChanged) changes.push(payments ? 'payment messages turned on (your own channels: amounts only)' : 'payment messages turned off');
       if (smtpChanged) changes.push(!smtp ? 'email account removed' : !draft.smtp ? `email account set up (${smtp.username}${smtp.pin ? ', with a pinned certificate' : ''})` : `email account changed: ${smtpParts.join(', ')}`);
       for (const d of removed) changes.push(`${messageLabel(d)} removed ${whoLabel(d)}`);
       for (const d of added) changes.push(`${messageLabel(d)} added ${whoLabel(d)}`);
@@ -511,6 +542,8 @@ export class Notifier {
       for (const it of draft.outbox) for (const d of it.deliveries) if (gone.has(d.dest) && d.sentAt === undefined && !d.via) d.droppedAt = at;
       draft.outbox = [...draft.outbox, item].slice(-MAX_OUTBOX_ITEMS);
       draft.guardianName = name;
+      if (payments) draft.paymentAlerts = true;
+      else delete draft.paymentAlerts;
       draft.smtp = smtp;
       draft.destinations = next;
       if (smtpChanged) delete draft.health.smtp;
@@ -563,8 +596,12 @@ export class Notifier {
     if (!this.file.destinations.length) return false;
     let queued = false;
     await this.change((draft, now) => {
-      if (ev.at <= now - NOTIFY_TTL_MS) return false;
+      if (ev.at <= now - ttlOf(ev.type)) return false;
       if (draft.outbox.some((i) => i.id === ev.id) || draft.done.some((d) => d.id === ev.id)) return false;
+      if (isPayment(ev.type) && draft.outbox.filter((i) => isPayment(i.type)).length >= MAX_PAYMENT_ITEMS) {
+        this.log.warn('notify.payment_dropped', { reason: 'too_many_waiting' });
+        return false;
+      }
       const inRules = new Set(this.opts.contacts());
       const title = TITLES[ev.type] ?? 'Alert';
       const priority = PRIORITIES[ev.type] ?? 'default';
@@ -587,7 +624,12 @@ export class Notifier {
         for (const it of draft.outbox)
           if (it.type === 'recovery_reminder' && it.id.startsWith(prefix)) for (const d of it.deliveries) if (d.sentAt === undefined) d.droppedAt = now;
       }
-      draft.outbox = [...draft.outbox, { id: ev.id, type: ev.type, at: ev.at, ...(ev.walletId ? { walletId: ev.walletId } : {}), deliveries }].slice(-MAX_OUTBOX_ITEMS);
+      draft.outbox = [...draft.outbox, { id: ev.id, type: ev.type, at: ev.at, ...(ev.walletId ? { walletId: ev.walletId } : {}), deliveries }];
+      // Full: payment messages leave first, then the oldest.
+      while (draft.outbox.length > MAX_OUTBOX_ITEMS) {
+        const i = draft.outbox.findIndex((x) => isPayment(x.type));
+        draft.outbox.splice(i >= 0 ? i : 0, 1);
+      }
       queued = true;
       return true;
     });
@@ -634,7 +676,7 @@ export class Notifier {
     // Work on a snapshot; results are merged back under the lock (settings may change meanwhile).
     const due: { item: OutboxItem; d: Delivery }[] = [];
     for (const item of this.file.outbox)
-      for (const d of item.deliveries) if (d.sentAt === undefined && d.droppedAt === undefined && d.nextAt <= now && item.at > now - NOTIFY_TTL_MS) due.push({ item, d });
+      for (const d of item.deliveries) if (d.sentAt === undefined && d.droppedAt === undefined && d.nextAt <= now && item.at > now - ttlOf(item.type)) due.push({ item, d });
     const results = new Map<string, { ok: boolean; error?: string; at: number; dropped?: boolean; retryAt?: number; healthKeys: string[] }>();
     let sends = 0;
     for (const { item, d } of due) {
@@ -645,7 +687,8 @@ export class Notifier {
         results.set(key, { ok: false, at: now, dropped: true, healthKeys: [] });
         continue;
       }
-      const limit = this.channelLimiter.take(dest.id, now);
+      const payment = isPayment(item.type);
+      const limit = (payment ? this.paymentLimiter : this.channelLimiter).take(dest.id, now);
       if (!limit.ok) {
         results.set(key, { ok: false, at: now, retryAt: now + limit.retryAfterMs, healthKeys: [] });
         continue;
@@ -653,7 +696,7 @@ export class Notifier {
       // A change announcement tries the old email account first, the current one on every other attempt.
       const smtp = dest.kind === 'email' ? (d.via?.smtp && (d.attempts % 2 === 0 || !this.file.smtp) ? d.via.smtp : this.file.smtp) : undefined;
       if (dest.kind === 'email') {
-        const s = this.smtpLimiter.take('smtp', now);
+        const s = (payment ? this.paymentSmtpLimiter : this.smtpLimiter).take('smtp', now);
         if (!s.ok) {
           results.set(key, { ok: false, at: now, retryAt: now + s.retryAfterMs, healthKeys: [] });
           continue;
@@ -714,7 +757,7 @@ export class Notifier {
       const keep: OutboxItem[] = [];
       for (const item of draft.outbox) {
         const open = item.deliveries.filter((d) => d.sentAt === undefined && d.droppedAt === undefined);
-        const expired = item.at <= now - NOTIFY_TTL_MS;
+        const expired = item.at <= now - ttlOf(item.type);
         if (open.length && !expired) {
           keep.push(item);
           continue;
