@@ -12,6 +12,7 @@
  *   match its histories simply gets no cache (every read goes to it, as before).
  * - **As fresh as the server**: every scan starts with `sync`, a ping on the subscription's connection; the server
  *   answers it after any notification it sent before, so a scan never reads what the server had already changed.
+ *   Scans that start together share one ping sent after they all asked (never one sent before).
  * - **Connection epochs**: everything read is tied to the connection it came on. After a reconnect (or a re-check after a
  *   reorg, `revalidate`) every script is subscribed again; one whose status did not change keeps its data, the others
  *   are read again. While disconnected nothing is served.
@@ -84,6 +85,10 @@ export class ScriptWatch {
   private readonly queue = new Set<Entry>();
   private flushing?: Promise<void>;
   private warnedMismatch = false;
+  /** `sync` calls so far, those a ping answered after they were made, and the ping under way. */
+  private syncAsks = 0;
+  private syncCovered = 0;
+  private pinging?: Promise<void>;
   private readonly log: Logger;
   private readonly maxScripts: number;
 
@@ -161,10 +166,22 @@ export class ScriptWatch {
    */
   async sync(): Promise<void> {
     if (!this.up || !this.entries.size) return;
-    try {
-      await this.b.ping();
-    } catch {
-      /* not connected: nothing is served from here anyway */
+    // Scans at the same time share a ping, but only one sent after they asked: a ping already on its way may have been
+    // answered before a notification this scan must see. It goes out on the next turn of the event loop, so the scans
+    // that start together (a phone's sync, the live wallet watcher's) all ride on it.
+    const ask = ++this.syncAsks;
+    while (this.syncCovered < ask && this.up) {
+      this.pinging ??= (async () => {
+        await new Promise((r) => setImmediate(r));
+        const upTo = this.syncAsks;
+        try {
+          await this.b.ping();
+        } catch {
+          /* not connected: nothing is served from here anyway */
+        }
+        this.syncCovered = Math.max(this.syncCovered, upTo);
+      })().finally(() => (this.pinging = undefined));
+      await this.pinging;
     }
   }
 
