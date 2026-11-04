@@ -325,13 +325,17 @@ live instead of reading it per `wallet.sync`: on an Electrum server they subscri
 to every script of both chains up to `gapLimit` past the last used one (extending as addresses get used), and of the
 watched Savings, replaced and helper wallets; Bitcoin Core's watch-only wallet is read again at every tip poll (5 s).
 A `wallet.sync` is then answered from memory (milliseconds instead of one request per address), and so is the
-`tx.broadcast` check. Nothing changes on the wire except the **`wallet_tx`** alert: when a transaction touching the
+`tx.broadcast` check (which also accepts a replacement of an unconfirmed payment by the coin it spends again, without a
+wallet scan). Nothing changes on the wire except the **`wallet_tx`** alert: when a transaction touching the
 paired wallet (`wallet: "main"`) or Savings (`"savings"`) first appears, in the mempool or already in a block, and once
 more when it first confirms, the paired phone gets `{ txid, direction, amountSats, feeSats?, confirmations, wallet }`,
 whichever device made it. `direction` is `in` (received `amountSats`), `out` (paid `amountSats` to others, `feeSats`
 when every input was the wallet's) or `self` (a move between the wallet's own addresses: `amountSats` 0, `feeSats` the
-fee). Each transaction is announced at most once per state, also across restarts (the guardian keeps what it
-announced); what the wallet held when the guardian first saw it is history, not news. The phone shows the transaction
+fee). A transaction that spends a coin an unconfirmed one seen before also spent is a replacement (RBF, "Speed up"):
+its alert carries `replaces` (that one's txid), and the phone shows it in that one's place, not next to it (only one of
+the two can confirm; older phones ignore the member). Each transaction is announced at most once per state, also across
+restarts (the guardian keeps what it announced, and the coins its unconfirmed spends spent); what the wallet held when
+the guardian first saw it is history, not news. The phone shows the transaction
 at once and syncs for the coins: the alert is a hint, `wallet.sync` stays the truth. Alert contacts never get it. With a
 public Electrum server, the server learns that the subscribed addresses belong together and when the guardian is
 online (it sees the same addresses at every scan anyway).
@@ -446,7 +450,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 | `relays_changed` | `relays` (`RelayList`): the guardian moved to these relays (its web UI). Sent to the paired phone (and phones with recovery access) over the old and the new relays. See section 5, "Changing relays" |
 | `notifications_changed` | none: the extra alert channels (email, ntfy, webhook) were changed in the guardian's web UI; read the new list from `guardian.status.notifications`. Guardians with `notifications`; see "Extra alert channels" |
 | `chain_source_changed` | `kind` (`own`\|`public`), `backend` (`electrum`\|`core`), `host`: the owner switched where the guardian reads the chain (its web UI, Settings > Server). Also announced on the extra alert channels and in Activity. See "Chain data", "Chain source" |
-| `wallet_tx` | `txid`, `direction` (`in`\|`out`\|`self`), `amountSats`, `feeSats?`, `confirmations`, `wallet` (`main`\|`savings`): a transaction touching the paired wallet or Savings was first seen (mempool or block), or first confirmed. Paired phone only. Guardians with `live_wallet`; see "Chain data", "Live wallet" |
+| `wallet_tx` | `txid`, `direction` (`in`\|`out`\|`self`), `amountSats`, `feeSats?`, `confirmations`, `wallet` (`main`\|`savings`), `replaces?` (the unconfirmed transaction it replaced, RBF): a transaction touching the paired wallet or Savings was first seen (mempool or block), or first confirmed. Paired phone only. Guardians with `live_wallet`; see "Chain data", "Live wallet" |
 | `wallet_retired` | `walletId`, `reason` (`retired`\|`recovered`\|`reset`), `successorWalletId?`. Sent to the phone that was paired to the wallet: `retired` after `wallet.retire`; `reset` after the web UI's reset; `recovered` when a recovery swept the wallet and the phone paired to the new wallet is a different one (a lost phone's replacement), or the guardian adopted none (`successorWalletId` is the adopted wallet when there is one). The phone that started the recovery and is adopted gets `wallet_adopted` instead |
 
 Names match the engine (`daily_reminder` was renamed `recovery_reminder`; `daysRemaining` is now `daysLeft`, `executeAfter` is `readyAt`). The engine's `DueAlert` carries `dueAt` and `readyAt` in milliseconds; the service converts both to seconds (`at` and `readyAt`). `daysLeft` is already in days. The engine's due-alert record does not hold `cancelledBy`, the cancel's `contested` flag or the txid; the service reads them from the recovery record (`status().recovery`) when it builds those alerts.

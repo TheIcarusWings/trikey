@@ -52,7 +52,15 @@ type Kind = 'main' | 'savings';
 interface WalletRecord {
   /** txid -> its last announced (or recorded) state, oldest first. */
   seen: Record<string, TxState>;
+  /**
+   * Unconfirmed transactions that spent the wallet's coins: txid -> the coins (`txid:vout`). A later transaction that
+   * spends one of them replaced it (RBF, "Speed up"): its `wallet_tx` says so (`replaces`). Absent in older files.
+   */
+  pending?: Record<string, string[]>;
 }
+
+/** Unconfirmed spends remembered per wallet (`WalletRecord.pending`), newest kept. */
+export const MAX_PENDING_PER_WALLET = 200;
 
 interface Queued {
   id: string;
@@ -118,10 +126,12 @@ export function describeTx(h: Pick<WalletHistoryEntry, 'net' | 'fee' | 'spent' |
 const sats = (n: bigint | number) => `${BigInt(n).toLocaleString('en-US')} sats`;
 
 /** The alert's words (the phone's `message`, and the owner's channels): amounts only, never an address. */
-export function walletTxText(a: Pick<WalletTxAlert, 'direction' | 'amountSats' | 'feeSats' | 'confirmations' | 'wallet'>, firstSeen: boolean): string {
+export function walletTxText(a: Pick<WalletTxAlert, 'direction' | 'amountSats' | 'feeSats' | 'confirmations' | 'wallet' | 'replaces'>, firstSeen: boolean): string {
   const where = a.wallet === 'savings' ? 'Savings: ' : '';
   const confirmed = a.confirmations > 0;
   const fee = a.feeSats !== undefined ? `, fee ${sats(a.feeSats)}` : '';
+  // A replacement (RBF) of a payment announced before: the same payment, faster.
+  if (a.replaces && a.direction === 'out' && !confirmed) return `${where}Payment of ${sats(a.amountSats)} sped up${a.feeSats !== undefined ? `: fee now ${sats(a.feeSats)}` : ''} (unconfirmed).`;
   switch (a.direction) {
     case 'in':
       if (!confirmed) return `${where}Incoming ${sats(a.amountSats)} (unconfirmed).`;
@@ -302,7 +312,7 @@ export class LiveWallet {
       }
       if (t.kind === 'main') {
         await g.noteScan(t.walletId, r);
-        g.knownCoins.set(t.walletId, r.utxos);
+        g.knownCoins.set(t.walletId, r.utxos, r.history);
       } else if (g.engine.savings()?.walletId === t.walletId) {
         // The Savings tripwire hears of a spend now, not at its next timed scan.
         await g.savingsWatch.note(t.walletId, r);
@@ -322,9 +332,27 @@ export class LiveWallet {
       rec ??= draft.wallets[t.walletId] = { seen: {} };
       const out: { alert: WalletTxAlert; firstSeen: boolean }[] = [];
       let dirty = first;
-      for (const h of r.history) {
+      const pending = (rec.pending ??= {});
+      // Oldest first, so a replacement is met after the transaction it replaced.
+      for (const h of [...r.history].reverse()) {
         const state: TxState = h.confirmations > 0 ? 'confirmed' : 'mempool';
         const prev = rec.seen[h.txid];
+        // A spend this wallet has not met yet that spends a coin an unconfirmed one spent: it replaced that one.
+        const coins = new Set(h.spent);
+        const replaced = prev === undefined && coins.size ? Object.keys(pending).find((id) => id !== h.txid && pending[id]!.some((o) => coins.has(o))) : undefined;
+        if (state === 'mempool' && coins.size && !pending[h.txid]) {
+          pending[h.txid] = [...h.spent];
+          dirty = true;
+        }
+        if (state === 'confirmed' || replaced) {
+          // Confirmed, or a replacement: the other unconfirmed spends of the same coins can never confirm now.
+          for (const id of Object.keys(pending)) {
+            if (id === h.txid ? state === 'confirmed' : pending[id]!.some((o) => coins.has(o))) {
+              delete pending[id];
+              dirty = true;
+            }
+          }
+        }
         // Announced as it is, or confirmed already (a reorg that puts it back in the mempool is not news again).
         if (prev === state || prev === 'confirmed') continue;
         delete rec.seen[h.txid];
@@ -340,6 +368,7 @@ export class LiveWallet {
           ...(d.feeSats !== undefined ? { feeSats: Number(d.feeSats) } : {}),
           confirmations: h.confirmations,
           wallet: t.kind,
+          ...(replaced ? { replaces: replaced } : {}),
           ...g.stampNow(),
         };
         alert.message = walletTxText(alert, prev === undefined);
@@ -347,6 +376,8 @@ export class LiveWallet {
       }
       const ids = Object.keys(rec.seen);
       if (ids.length > MAX_SEEN_PER_WALLET) for (const id of ids.slice(0, ids.length - MAX_SEEN_PER_WALLET)) delete rec.seen[id];
+      const waiting = Object.keys(pending);
+      if (waiting.length > MAX_PENDING_PER_WALLET) for (const id of waiting.slice(0, waiting.length - MAX_PENDING_PER_WALLET)) delete pending[id];
       for (const o of out) draft.outbox.push({ id: `${t.walletId}:${o.alert.txid}:${o.alert.confirmations > 0 ? 'confirmed' : 'mempool'}`, at: now, walletId: t.walletId, alert: o.alert });
       if (draft.outbox.length > MAX_OUTBOX) draft.outbox = draft.outbox.slice(-MAX_OUTBOX);
       return { save: dirty, value: out };

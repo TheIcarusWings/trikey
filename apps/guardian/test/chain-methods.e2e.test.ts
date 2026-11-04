@@ -257,6 +257,67 @@ describe('chain methods, end to end', { timeout: 30_000 }, () => {
     }
   });
 
+  it('a "Speed up" replacement (RBF) takes the same shortcuts: co-signed, or a coin the original spends in the mempool', async () => {
+    await rig.unlock();
+    const chain = rig.guardian.chain as unknown as { spendsWalletCoin: (...a: unknown[]) => Promise<boolean> };
+    const real = chain.spendsWalletCoin.bind(chain);
+    let scans = 0;
+    chain.spendsWalletCoin = async (...a) => {
+      scans++;
+      return real(...a);
+    };
+    const walletId = wallet.fingerprint();
+    /** A payment of `coin` and, at `rate`, its fee bump: the same coin, the same payment and change address, a smaller change. */
+    const pair = (coin: { txid: string; value: bigint; rawTx: string }, index: number, changeIndex: number, rate: number) => {
+      const utxos = [{ txid: coin.txid, vout: 0, value: coin.value, chain: 0, index, prevTxHex: coin.rawTx }];
+      const at = (feeRate: number) => buildSpend({ wallet, utxos, recipients: [{ address: externalAddress(9), amount: 10_000n }], feeRate, changeIndex });
+      return { original: at(2), bump: at(rate) };
+    };
+    try {
+      // Co-signed, then co-signed again faster: both broadcasts skip the scan.
+      const a = rig.fund(wallet.derive(0, 13).script, 60_000n);
+      const p = pair(a, 13, 7, 12);
+      const send = async (psbt: Uint8Array) => {
+        const cosigned = base64.decode((await phone.call('sign', { psbt: base64.encode(await appSigner().signPsbt(psbt, network)) })).psbt);
+        const { txHex, txid } = finalizePsbt(cosigned);
+        expect(await phone.call('tx.broadcast', { txHex })).toEqual({ txid });
+        return txid;
+      };
+      const first = await send(p.original.psbt);
+      const second = await send(p.bump.psbt);
+      expect(rig.electrs.replaced).toContain(first);
+      expect(scans).toBe(0);
+      expect(rig.logLines.filter((l) => /tx\.broadcast /.test(l) && /cosigned/.test(l) && l.includes(second))).toHaveLength(1);
+
+      // Signed with the hardware wallet, of a coin the last sync listed; then its bump, signed the same way. The coin is
+      // gone from the wallet's unspent list (the original spends it in the mempool) but still known: no scan.
+      const b = rig.fund(wallet.derive(0, 14).script, 50_000n);
+      const synced = await phone.call('wallet.sync', {});
+      expect(synced.utxos.some((u) => u.txid === b.txid)).toBe(true);
+      const q = pair(b, 14, 8, 12);
+      const hw = async (psbt: Uint8Array) => {
+        const { txHex, txid } = finalizePsbt(await hwSigner().signPsbt(await appSigner().signPsbt(psbt, network), network));
+        expect(await phone.call('tx.broadcast', { txHex })).toEqual({ txid });
+        return txid;
+      };
+      const orig = await hw(q.original.psbt);
+      const after = await phone.call('wallet.sync', {});
+      expect(after.utxos.some((u) => u.txid === b.txid)).toBe(false);
+      expect(rig.guardian.knownCoins.get(walletId, b.txid, 0)).toEqual({ chain: 0, index: 14 });
+      const bumped = await hw(q.bump.psbt);
+      expect(rig.electrs.replaced).toContain(orig);
+      expect(scans).toBe(0);
+      expect(rig.logLines.some((l) => /tx\.broadcast /.test(l) && /known_coin/.test(l) && l.includes(bumped))).toBe(true);
+
+      // Once the replacement confirms, the coin is spent for good: no longer kept.
+      await rig.mine(1);
+      await phone.call('wallet.sync', {});
+      expect(rig.guardian.knownCoins.get(walletId, b.txid, 0)).toBeUndefined();
+    } finally {
+      chain.spendsWalletCoin = real;
+    }
+  });
+
   it('drops chain methods from unpaired senders without an answer', async () => {
     const stranger = client(generateSecretKey());
     for (const call of [

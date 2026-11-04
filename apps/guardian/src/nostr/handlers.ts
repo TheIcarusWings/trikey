@@ -301,15 +301,29 @@ export class RecentlyCosigned {
 /**
  * The paired wallet's coins as its last `wallet.sync` found them (outpoint to chain and index), per wallet id: what
  * `tx.broadcast` checks a transaction's inputs against before it falls back to a full scan (`spendsKnownCoin`).
+ *
+ * A coin an unconfirmed transaction spends is no longer in a sync's list, but a replacement of that transaction (RBF,
+ * "Speed up" signed with the hardware wallet) spends it again: what an earlier sync knew of it is kept while a pending
+ * transaction in the history (`history`, its `spent`) spends it. A coin first seen already spent so is left to the scan.
  */
 export class KnownCoins {
   private readonly byWallet = new Map<string, Map<string, { chain: 0 | 1; index: number }>>();
 
-  /** The coins one sync found, replacing what an earlier sync of the wallet found. */
-  set(walletId: string, utxos: readonly { txid: string; vout: number; chain: 0 | 1; index: number }[]): void {
+  /** The coins one sync found, replacing what an earlier sync of the wallet found (but those its pending spends spend). */
+  set(
+    walletId: string,
+    utxos: readonly { txid: string; vout: number; chain: 0 | 1; index: number }[],
+    history: readonly { confirmations: number; spent: readonly string[] }[] = [],
+  ): void {
+    const next = new Map(utxos.map((u) => [`${u.txid}:${u.vout}`, { chain: u.chain, index: u.index }]));
+    const before = this.byWallet.get(walletId);
+    if (before) {
+      const pending = new Set(history.filter((h) => h.confirmations === 0).flatMap((h) => h.spent));
+      for (const [outpoint, place] of before) if (pending.has(outpoint) && !next.has(outpoint)) next.set(outpoint, place);
+    }
     // One wallet at a time: the paired one (a recovery's new wallet replaces the old wallet's coins).
     this.byWallet.clear();
-    this.byWallet.set(walletId, new Map(utxos.map((u) => [`${u.txid}:${u.vout}`, { chain: u.chain, index: u.index }])));
+    this.byWallet.set(walletId, next);
   }
 
   get(walletId: string, txid: string, vout: number): { chain: 0 | 1; index: number } | undefined {
@@ -619,7 +633,7 @@ export function buildHandlers(g: Guardian): Handlers {
         });
         if (paired) {
           await g.noteScan(walletId, r);
-          known.set(walletId, r.utxos);
+          known.set(walletId, r.utxos, r.history);
         }
         return {
           walletId,
