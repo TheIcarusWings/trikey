@@ -6,6 +6,40 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## 0.1.12-alpha (2026-11-04)
+
+Live payments, a faster app, a way to unstick a payment, and family hosting. Update the guardian and the app; each
+works with the other side's older version (an older app ignores the new alerts; an older guardian means no live
+updates, and the app syncs as before).
+
+- **Payments show up on the phone the moment they happen, from any device.** The guardian keeps your wallet's state
+  live: it subscribes to your wallet's addresses on its Electrum server (or reads Bitcoin Core's wallet every 5
+  seconds) and tells the phone as soon as a payment in or out reaches the mempool, then again when it confirms,
+  whether it was made on this phone, with your hardware wallet elsewhere, or sent to you by someone else. The app
+  lists it at once (pending, then confirmed), adjusts the balance, and shows "Incoming 2,000 sats · unconfirmed" for
+  a payment coming in. Syncs are much faster too: on an Umbrel's Electrs a sync took about 10 seconds and now takes
+  milliseconds (#114).
+- **Optional: payment notices on your own email, ntfy or webhook** (guardian web page, Settings > Notifications >
+  Payments), also while the app is closed. Off by default, amounts only (never an address or a link), never sent to
+  your alert contacts. With a public Electrum server, the server now also learns that your addresses belong
+  together and when your guardian is online; your own node remains the better choice (#114).
+- **Pull to refresh is quick again.** A pull waits only for the balance and Activity, then the spinner stops;
+  silent payments, Savings and the rest finish behind a quiet "Updating…". A pull during a sync that began moments
+  ago joins it. With a slow guardian the app no longer syncs back to back: the next periodic sync comes a minute
+  after the last one ends. A request the app repeats while the guardian is still working on it never starts a
+  second scan (#116).
+- **Speed up a payment waiting to confirm** (RBF): "Speed up ›" in Activity and on the payment's details shows the
+  old and new fee before signing (never below 1 sat/vB on mainnet). The guardian co-signs within the daily limit,
+  where only the extra fee counts; otherwise your hardware wallet signs. Activity keeps one row. Not yet for wallets
+  hosted on someone else's guardian (#117).
+- **Host a guardian for family** ("Host for someone" in the guardian's web page menu). Invite someone you know with a QR
+  code: your guardian then also guards their 2-of-3 wallet, with their own daily limit, contacts and Delay & Notify
+  recovery. BIP 89 keeps their addresses and balances from you; their phone reads the chain from its own server.
+  They can turn their limit off and pause their wallet (with their hardware wallet), and leave with "Leave <host>".
+  The app states plainly what a host could do with a thief before a guest accepts. Your own wallet is unchanged
+  (#92, #99).
+- Docs: the entropy review's last two suspicions ruled out (#115); the site's Watch section (#113).
+
 ## 0.1.11-alpha (2026-11-04)
 
 A fix release for what was seen on an iPhone with 0.1.10, and the guardian on plain Docker. Update the app and the guardian; each fix works with the
