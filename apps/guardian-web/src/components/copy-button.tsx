@@ -26,7 +26,11 @@ async function writeClipboard(text: string): Promise<boolean> {
   }
 }
 
-export function CopyButton({ value, label = 'Copy' }: { value: string; label?: string }) {
+/**
+ * Copies `value`. `compact`: a small ghost button, for a value in a list (a payment's txid); `ariaLabel` then names
+ * what it copies.
+ */
+export function CopyButton({ value, label = 'Copy', compact, ariaLabel }: { value: string; label?: string; compact?: boolean; ariaLabel?: string }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -40,7 +44,13 @@ export function CopyButton({ value, label = 'Copy' }: { value: string; label?: s
 
   return (
     <>
-      <Button variant="outline" className="shrink-0" onClick={onClick}>
+      <Button
+        variant={compact ? 'ghost' : 'outline'}
+        size={compact ? 'sm' : 'default'}
+        className={compact ? 'h-8 shrink-0 px-2 text-muted-foreground' : 'shrink-0'}
+        onClick={onClick}
+        aria-label={ariaLabel}
+      >
         {state === 'copied' ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
         {state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed' : label}
       </Button>

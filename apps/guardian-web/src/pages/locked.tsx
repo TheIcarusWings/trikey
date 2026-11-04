@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '@/api';
 import { useGuardian } from '@/components/guardian-provider';
 import { AuthCard, AuthHeader } from '@/components/layout/centered';
@@ -109,6 +109,12 @@ export function LockedPage() {
       </form>
       <p className="m-0 text-center text-[13px] leading-[18px] text-muted-foreground">
         Locking after every restart means a stolen box is useless.
+      </p>
+      <p className="m-0 text-center text-sm leading-5">
+        <Link to="/wallet" className="font-medium underline underline-offset-3">
+          View the wallet
+        </Link>{' '}
+        <span className="text-muted-foreground">(read-only, works while locked)</span>
       </p>
     </AuthCard>
   );

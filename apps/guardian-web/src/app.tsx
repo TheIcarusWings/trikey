@@ -18,6 +18,7 @@ import { ResetPage } from '@/pages/reset';
 import { RulesPage } from '@/pages/rules';
 import { SettingsPage } from '@/pages/settings';
 import { SignInPage } from '@/pages/sign-in';
+import { WalletPage } from '@/pages/wallet';
 
 type Phase = 'setup' | 'signin' | 'locked' | 'ready';
 
@@ -30,8 +31,11 @@ function phaseOf(status: GuardianStatus | PublicStatus): Phase {
   return status.state === 'locked' ? 'locked' : 'ready';
 }
 
-/** Sends people to the screen that matches the guardian's state: setup, sign-in, locked or the app. */
-function Gate({ phase, children }: { phase: Phase; children: React.ReactNode }) {
+/**
+ * Sends people to the screen that matches the guardian's state: setup, sign-in, locked or the app. A page for more than
+ * one phase (the read-only Wallet page: unlocked or locked) lists them.
+ */
+function Gate({ phase, children }: { phase: Phase | Phase[]; children: React.ReactNode }) {
   const { status: signedIn, signedOut, error, loading, refresh, landingFor } = useGuardian();
   const status = signedIn ?? signedOut;
 
@@ -50,11 +54,11 @@ function Gate({ phase, children }: { phase: Phase; children: React.ReactNode }) 
     );
   }
   const actual = phaseOf(status);
-  if (actual !== phase) return <Navigate to={landingFor(status) ?? PHASE_PATH[actual]} replace />;
+  if (!(Array.isArray(phase) ? phase : [phase]).includes(actual)) return <Navigate to={landingFor(status) ?? PHASE_PATH[actual]} replace />;
   return <>{children}</>;
 }
 
-function GatedOutlet({ phase }: { phase: Phase }) {
+function GatedOutlet({ phase }: { phase: Phase | Phase[] }) {
   return (
     <Gate phase={phase}>
       <Outlet />
@@ -94,6 +98,12 @@ export function App() {
             <Route element={<GatedOutlet phase="locked" />}>
               <Route element={<Centered width="narrow" />}>
                 <Route path="/locked" element={<LockedPage />} />
+              </Route>
+            </Route>
+            {/* The Wallet page is read-only: it works while the guardian is locked too (the header says so). */}
+            <Route element={<GatedOutlet phase={['ready', 'locked']} />}>
+              <Route element={<Shell />}>
+                <Route path="/wallet" element={<WalletPage />} />
               </Route>
             </Route>
             <Route element={<GatedOutlet phase="ready" />}>

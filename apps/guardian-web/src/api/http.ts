@@ -18,6 +18,7 @@ import type {
   RelaySettings,
   Rules,
   SetupPreflight,
+  WalletOverview,
 } from './types';
 
 interface ErrorBody {
@@ -116,6 +117,7 @@ export function createHttpApi(base = ''): GuardianApi {
       return res.entries;
     },
     getRules: () => request<Rules>('GET', '/rules'),
+    getWallet: () => request<WalletOverview>('GET', '/wallet'),
 
     async getRecovery() {
       const res = await request<{ recovery: RecoveryInProgress | null }>('GET', '/recovery');
