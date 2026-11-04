@@ -109,6 +109,7 @@ async function phone(opts: { rig: GuardianRig; device: HardwareSigner; cloud?: M
     rpcTimeoutMs: 5000,
     rpcRetryIntervalMs: 0,
     syncIntervalMs: 0,
+    syncJoinMs: 0, // every sync() asks the guardian again
     yieldToUi: async () => {},
     recoveryCodeKdf: { m: 64, t: 1, p: 1 },
   });
@@ -253,6 +254,7 @@ describe('the guardian mode on mainnet', { timeout: 60_000 }, () => {
     await p.setUpRules(100_000, 7);
     rig.fund(p.wallet!.multisig().derive(0, 0).script, 300_000n);
     await p.sync();
+    await p.idle(); // and the sync's background part
     const to = MultisigWallet.fromDescriptor(p.getWalletDetails()!.descriptor, NETWORKS.bitcoin).derive(0, 5).address;
     for (const speed of ['slow', 'normal', 'fast'] as const) {
       const q = p.quoteSend({ address: to, amountSats: 20_000, speed });
@@ -270,6 +272,7 @@ describe('the guardian mode on mainnet', { timeout: 60_000 }, () => {
       [6, 0.0000125],
     ]);
     await p.sync();
+    await p.idle(); // and the sync's background part
     const q = p.quoteSend({ address: to, amountSats: 20_000, speed: 'normal' });
     expect(q.ok && q.quote.feeRateSatPerVb).toBe(2);
   });

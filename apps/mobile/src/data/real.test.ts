@@ -152,6 +152,7 @@ async function phone(
     rpcTimeoutMs: opts.rpcTimeoutMs ?? 5000,
     rpcRetryIntervalMs: 0,
     syncIntervalMs: 0,
+    syncJoinMs: 0, // every sync() asks the guardian again
     yieldToUi: async () => {},
     recoveryCodeKdf: { m: 64, t: 1, p: 1 },
     shareBackupFile: async (name, bytes) => void shared.push({ name, bytes }),
@@ -239,6 +240,7 @@ describe('the real wallet service', { timeout: 60_000 }, () => {
     rig.fund(A.svc.wallet!.multisig().derive(0, 0).script, 500_000n);
     rig.fund(A.svc.wallet!.multisig().derive(0, 1).script, 50_000n);
     await A.svc.sync();
+    await A.svc.idle(); // and the sync's background part
     const s = A.svc.getState();
     expect(s).toMatchObject({ synced: true, balanceSats: 550_000, syncing: false, guardian: { status: 'online' } });
     expect(s.activity.filter((i) => i.type === 'payment')).toHaveLength(2);
@@ -356,6 +358,7 @@ describe('the real wallet service', { timeout: 60_000 }, () => {
     expect(A.svc.getState().recovery).toEqual(r);
     // Phone-only payments pause while it runs.
     await A.svc.sync();
+    await A.svc.idle(); // and the sync's background part
     expect(A.svc.getState().phoneSpending).toBe('paused_recovery');
     const q = A.svc.quoteSend({ address: externalAddress(), amountSats: 1_000, speed: 'normal' });
     expect(q).toMatchObject({ ok: true, quote: { plan: { signer: 'hardware', reason: 'recovery-pending' } } });
@@ -610,6 +613,7 @@ describe('the real wallet service: finishing a recovery, replacing the guardian,
     const old = await onboarded(R1);
     R1.fund(old.svc.wallet!.multisig().derive(0, 0).script, 300_000n);
     await old.svc.sync();
+    await old.svc.idle(); // and the sync's background part
 
     P = await phone({ clock: R1.clock, hardware: hw });
     const code = P.svc.readCode(encodeRecoveryUri({ guardianPubkey: R1.pubkey, relays: R1.relayUrls, network: 'regtest' }));
@@ -653,6 +657,7 @@ describe('the real wallet service: finishing a recovery, replacing the guardian,
     const old = await onboarded(own, ownDevice);
     own.fund(old.svc.wallet!.multisig().derive(0, 0).script, 300_000n);
     await old.svc.sync();
+    await old.svc.idle(); // and the sync's background part
     await old.svc.close();
 
     const gate = relayGate();
@@ -729,6 +734,7 @@ describe('the real wallet service: finishing a recovery, replacing the guardian,
     R2.fund(Q.svc.wallet!.multisig().derive(0, 0).script, 150_000n);
     R2.fund(Q.svc.wallet!.multisig().derive(0, 1).script, 50_000n);
     await Q.svc.sync();
+    await Q.svc.idle(); // and the sync's background part
     const oldId = Q.svc.wallet!.state.wallet!.walletId;
 
     expect(await failure(Q.svc.previewReplaceGuardian('not a code'))).toMatchObject({ kind: 'pairing_invalid' });
@@ -764,6 +770,7 @@ describe('the real wallet service: finishing a recovery, replacing the guardian,
     const Z = await onboarded(R4, new SoftwareHardwareProvider(dev2), 1500);
     R4.fund(Z.svc.wallet!.multisig().derive(0, 0).script, 80_000n);
     await Z.svc.sync();
+    await Z.svc.idle(); // and the sync's background part
     await R4.guardian.stop(); // the box goes away
 
     // R2 retired Q's wallet in the last test, so it pairs again.
@@ -815,6 +822,7 @@ describe('the real wallet service: silent payments', { timeout: 120_000 }, () =>
     await p.svc.setUpRules(100_000, 7);
     rig.fund(p.svc.wallet!.multisig().derive(0, 0).script, 500_000n);
     await p.svc.sync();
+    await p.svc.idle(); // and the sync's background part
     return p;
   }
 
@@ -837,6 +845,7 @@ describe('the real wallet service: silent payments', { timeout: 120_000 }, () =>
     const address = await S.svc.silentPayments!.helperAddress();
     R.fund(btc.OutScript.encode(btc.Address(NETWORKS.regtest.btc).decode(address)), 30_000n);
     await S.svc.sync();
+    await S.svc.idle(); // and the sync's background part
     expect(S.svc.getState().silentPayments.helper).toMatchObject({ sats: 30_000, funded: true });
     const q = S.svc.quoteSend({ address: recipient, amountSats: 20_000, speed: 'normal' });
     expect(q).toMatchObject({ ok: true, quote: { plan: { signer: 'phone+guardian' }, silentPayment: { outputAddress: expect.stringMatching(/^bcrt1p/), helperFeeSats: expect.any(Number) } } });
@@ -845,6 +854,7 @@ describe('the real wallet service: silent payments', { timeout: 120_000 }, () =>
     expect(tx).toMatchObject({ address: recipient, signedBy: 'phone+guardian' });
     await R.mine(1);
     await S.svc.sync();
+    await S.svc.idle(); // and the sync's background part
     expect(events(S).find((t) => t.txid === tx.txid)).toMatchObject({ kind: 'sent', address: recipient, silentOutputAddress: q.quote.silentPayment!.outputAddress });
   });
 
@@ -862,6 +872,7 @@ describe('the real wallet service: silent payments', { timeout: 120_000 }, () =>
     expect(r).toMatchObject({ moved: 1, movedSats: plan.totalNetSats, feeSats: plan.totalFeeSats, failed: 0 });
     await R.mine(1);
     await S.svc.sync();
+    await S.svc.idle(); // and the sync's background part
     expect(S.svc.getState().balanceSats).toBe(vaultBefore + plan.totalNetSats);
     expect(S.svc.getState().silentPayments.balance.sats).toBe(0);
     expect(events(S).find((t) => t.kind === 'silent_sweep')).toMatchObject({ amountSats: plan.totalNetSats, feeSats: plan.totalFeeSats, status: 'confirmed' });
@@ -890,6 +901,7 @@ describe('the real wallet service: silent payments', { timeout: 120_000 }, () =>
     const address = await P.svc.silentPayments!.helperAddress();
     N.fund(btc.OutScript.encode(btc.Address(NETWORKS.regtest.btc).decode(address)), 30_000n);
     await P.svc.sync();
+    await P.svc.idle(); // and the sync's background part
     expect(P.svc.quoteSend({ address: recipient, amountSats: 10_000, speed: 'normal' })).toMatchObject({ ok: true, quote: { plan: { signer: 'phone+guardian' } } });
     await N.stop();
   });
@@ -943,6 +955,7 @@ describe('the real wallet service: send max, and coins that arrive while a recov
     fund(0, 40_000);
     fund(1, 15_000);
     await P.svc.sync();
+    await P.svc.idle(); // and the sync's background part
     const fees: number[] = [];
     for (const speed of ['slow', 'normal', 'fast'] as const) {
       const q = quoted(to, speed);
@@ -968,6 +981,7 @@ describe('the real wallet service: send max, and coins that arrive while a recov
     expect(G.guardian.engine.status().dailyLimit!.used - used).toBe(55_000n);
     await G.mine(1);
     await P.svc.sync();
+    await P.svc.idle(); // and the sync's background part
     expect(P.svc.getState().balanceSats).toBe(0);
     expect(P.svc.wallet!.snapshot()!.utxos).toEqual([]);
     expect(P.svc.getState().activity.find((i) => i.type === 'payment' && i.tx.id === tx.id)).toMatchObject({ tx: { amountSats: q.request.amountSats, signedBy: 'phone+guardian' } });
@@ -977,6 +991,7 @@ describe('the real wallet service: send max, and coins that arrive while a recov
     fund(2, 120_000);
     fund(3, 30_000);
     await P.svc.sync();
+    await P.svc.idle(); // and the sync's background part
     const q = quoted(to, 'fast');
     expect(q).toMatchObject({ totalSats: 150_000, plan: { signer: 'hardware', reason: 'over-limit' } });
     const prompts = P.prompts.length;
@@ -985,22 +1000,26 @@ describe('the real wallet service: send max, and coins that arrive while a recov
     expect(P.prompts.length).toBeGreaterThan(prompts);
     await G.mine(1);
     await P.svc.sync();
+    await P.svc.idle(); // and the sync's background part
     expect(P.svc.getState().balanceSats).toBe(0);
   });
 
   it('is stale when the coins changed, and never sends from a quote the wallet no longer holds', async () => {
     fund(4, 20_000);
     await P.svc.sync();
+    await P.svc.idle(); // and the sync's background part
     const q = quoted(to, 'normal');
     expect(await failure(P.svc.sendPayment({ ...q, ref: undefined }))).toMatchObject({ kind: 'quote_stale' });
     fund(5, 5_000); // a coin arrives: this quote would leave it behind
     await P.svc.sync();
+    await P.svc.idle(); // and the sync's background part
     expect(await failure(P.svc.sendPayment(q))).toMatchObject({ kind: 'quote_stale' });
     const again = quoted(to, 'normal');
     expect(again.totalSats).toBe(25_000);
     await P.svc.sendPayment(again);
     await G.mine(1);
     await P.svc.sync();
+    await P.svc.idle(); // and the sync's background part
     expect(P.svc.getState().balanceSats).toBe(0);
   });
 
@@ -1009,14 +1028,17 @@ describe('the real wallet service: send max, and coins that arrive while a recov
     const sp = receiverAddress(silentPaymentKeysFromSeed(sha256(new TextEncoder().encode('someone else')), { coinType: 1 }), 'regtest');
     fund(6, 30_000);
     await P.svc.sync();
+    await P.svc.idle(); // and the sync's background part
     expect(P.svc.quoteSendMax({ address: 'nonsense', speed: 'normal' })).toMatchObject({ ok: false, problem: 'invalid_address' });
     expect(P.svc.quoteSendMax({ address: sp, speed: 'normal' })).toMatchObject({ ok: false, problem: 'needs_helper', message: expect.stringContaining('helper') });
     await P.svc.sendPayment(quoted(to, 'normal'));
     await G.mine(1);
     await P.svc.sync();
+    await P.svc.idle(); // and the sync's background part
     // 700 sats: the fee of one input at the slow rate (about 735) eats it whole.
     fund(7, 700);
     await P.svc.sync();
+    await P.svc.idle(); // and the sync's background part
     expect(P.svc.quoteSendMax({ address: to, speed: 'slow' })).toMatchObject({ ok: false, problem: 'amount_too_small', message: expect.stringMatching(/smallest payment/) });
   });
 
@@ -1031,6 +1053,7 @@ describe('the real wallet service: send max, and coins that arrive while a recov
     it('starts it with a new hardware wallet and moves the whole vault, dust included', async () => {
       fund(8, 200_000);
       await P.svc.sync();
+      await P.svc.idle(); // and the sync's background part
       oldWallet = P.svc.wallet!.multisig();
       ownProvider.device = newDevice;
       const r = await P.svc.startRecovery('hardware', { hardwareKind: 'simulated' });
@@ -1046,6 +1069,7 @@ describe('the real wallet service: send max, and coins that arrive while a recov
       P.secure.cancelNextPrompt = true; // the person cancels the fingerprint prompt
       fund(9, 900);
       await P.svc.sync();
+      await P.svc.idle(); // and the sync's background part
       const refused = await waitFor(() => (update()?.status === 'refused' ? update() : undefined), 'the refusal in the state');
       stop();
       expect(seen).toContain('waiting');
@@ -1057,9 +1081,11 @@ describe('the real wallet service: send max, and coins that arrive while a recov
 
     it('is tried again after a while, and then says that the coin was added', async () => {
       await P.svc.sync();
+      await P.svc.idle(); // and the sync's background part
       expect(update()?.status).toBe('refused'); // not at once: the person just said no
       G.clock.advance(11 * 60_000);
       await P.svc.sync();
+      await P.svc.idle(); // and the sync's background part
       const added = await waitFor(() => (update()?.status === 'added' ? update() : undefined), 'the coin to be added');
       expect(added).toEqual({ status: 'added', coins: 1, text: '1 new coin was added to your recovery' });
       expect(moving()).toBe(201_600);
@@ -1069,6 +1095,7 @@ describe('the real wallet service: send max, and coins that arrive while a recov
       const started = P.svc.getState().recovery!;
       fund(10, 33_000);
       await P.svc.sync();
+      await P.svc.idle(); // and the sync's background part
       await waitFor(() => (moving() === 234_600 ? true : undefined), 'the second update');
       const s = P.svc.getState().recovery!;
       expect(s.sweepUpdate).toEqual({ status: 'added', coins: 1, text: '1 new coin was added to your recovery' });
