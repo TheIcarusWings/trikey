@@ -80,7 +80,7 @@ function runningRecovery(g: Guardian, id: string): RecoveryRecord {
  * the same object must come back for the same wallet (the paired one and the watched one).
  */
 const walletCache = new Map<string, MultisigWallet>();
-function walletOf(w: { descriptor: string; network: Parameters<typeof getNetwork>[0] }): MultisigWallet {
+export function walletOf(w: { descriptor: string; network: Parameters<typeof getNetwork>[0] }): MultisigWallet {
   const key = `${w.network}:${w.descriptor}`;
   let wallet = walletCache.get(key);
   if (!wallet) {
@@ -348,7 +348,7 @@ async function spendsKnownCoin(g: Guardian, wallet: MultisigWallet, known: Known
 
 export function buildHandlers(g: Guardian): Handlers {
   const cosigned = new RecentlyCosigned();
-  const known = new KnownCoins();
+  const known = g.knownCoins;
   const handlers: Handlers = {
     'guardian.status': () => {
       const s = g.engine.status();

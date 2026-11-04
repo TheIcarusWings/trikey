@@ -75,6 +75,7 @@ describe('the checks', () => {
 
 const settings: NotificationSettings = {
   guardianName: 'Home vault',
+  paymentAlerts: false,
   smtp: { host: 'smtp.example.com', port: 465, security: 'tls', username: 'me@example.com', from: 'me@example.com', passwordSet: true, health: { state: 'ok', lastOkAt: '2026-11-01T10:00:00.000Z' } },
   destinations: [
     { id: 'd1', audience: 'owner', kind: 'ntfy', ntfy: { server: 'https://ntfy.example.com', topicHint: 'tri…', tokenSet: true }, health: { state: 'untested' } },
@@ -107,6 +108,23 @@ describe('the PUT body', () => {
     expect(settingsInput(settings, { smtp: draft }).smtp).not.toHaveProperty('password');
     expect(settingsInput(settings, { smtp: { ...draft, password: 'new app password' } }).smtp).toHaveProperty('password', 'new app password');
     expect(settingsInput(settings, { smtp: null }).smtp).toBeNull();
+  });
+
+  it('carries the payment messages choice: kept as it is, or the one change asked for', () => {
+    expect(settingsInput(settings, { guardianName: 'Cabin' }).paymentAlerts).toBe(false);
+    expect(settingsInput(settings, { paymentAlerts: true }).paymentAlerts).toBe(true);
+    expect(settingsInput({ ...settings, paymentAlerts: true }, { remove: 'd2' }).paymentAlerts).toBe(true);
+    // Turning it on changes nothing else.
+    const on = settingsInput(settings, { paymentAlerts: true });
+    expect({ ...on, paymentAlerts: false }).toEqual(settingsInput(settings, {}));
+  });
+
+  it('the demo guardian keeps the choice (mock API)', async () => {
+    const api = createMockApi('notify');
+    const s = await api.getNotifications();
+    expect(s.paymentAlerts).toBe(false);
+    const after = await api.setNotifications(settingsInput(s, { paymentAlerts: true }));
+    expect(after.paymentAlerts).toBe(true);
   });
 
   it('labels: who, what (hints only) and how it did', () => {

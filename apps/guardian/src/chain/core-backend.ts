@@ -14,7 +14,9 @@
  * - transactions from the wallet, else `getrawtransaction` (the mempool, or any block with `-txindex`);
  * - headers, fee estimates (`estimatesmartfee`), the relay fee, and broadcasts (`sendrawtransaction`).
  *
- * It polls the tip every few seconds. It needs Bitcoin Core 24 or later (descriptor wallets, `listdescriptors`,
+ * It polls the tip every few seconds and, while someone listens (`onWalletChange`: the live wallet watcher), the wallet's
+ * transactions too (`listsinceblock` and `listunspent`, the same reads a scan makes), so a payment is noticed within one
+ * poll of reaching the node's mempool. No ZMQ: the RPC is all it needs. It needs Bitcoin Core 24 or later (descriptor wallets, `listdescriptors`,
  * `getblock` verbosity 3). A **pruned** node works only while it still has the blocks since a wallet's birthday; an
  * import that needs older blocks is refused with that reason. The RPC has no TLS: bitcoind.ts sends it only to an
  * address on the owner's own network (or a tunnel).
@@ -93,13 +95,16 @@ export class CoreBackend implements ChainBackend {
   private stopped = true;
   private timer?: ReturnType<typeof setTimeout>;
   private readonly listeners = new Set<(h: HeaderNotification) => void>();
+  private readonly changeListeners = new Set<() => void>();
+  /** What the last poll read of the wallet (`txid:height` of every transaction, and the unspent outputs). */
+  private lastSignature?: string;
   private imported = new Map<string, Imported>();
   /** Imports under way, by fingerprint of the address source: the promise, and when it started. */
   private readonly importing = new Map<string, { since: number; birthday: number; done: Promise<void> }>();
   /** Why an import failed, by fingerprint (shown until it is tried again). */
   private readonly importErrors = new Map<string, string>();
   private readonly txs = new Map<string, WalletTx>();
-  private index?: { at: number; tipHash: string; byScript: Map<string, Map<string, number>>; unspent: Map<string, BackendUnspent[]> };
+  private index?: { at: number; tipHash: string; byScript: Map<string, Map<string, number>>; unspent: Map<string, BackendUnspent[]>; signature: string };
   private pruneHeight?: number;
   private version?: number;
   private errorText?: string;
@@ -151,6 +156,35 @@ export class CoreBackend implements ChainBackend {
     return () => this.listeners.delete(fn);
   }
 
+  onWalletChange(fn: () => void): () => void {
+    this.changeListeners.add(fn);
+    return () => this.changeListeners.delete(fn);
+  }
+
+  /** While someone listens: reads the wallet again and says when anything in it changed since the last poll. */
+  private async pollWallet(): Promise<void> {
+    if (!this.changeListeners.size || !this.imported.size || this.importing.size) return;
+    let idx;
+    try {
+      idx = await this.readIndex();
+    } catch (e) {
+      // Rescanning, or a slow node: the next poll tries again. Not a reason to call the node unreachable.
+      this.log.debug('core.wallet_poll_failed', { error: errorText(e) });
+      return;
+    }
+    const sig = idx.signature;
+    const before = this.lastSignature;
+    this.lastSignature = sig;
+    if (before === undefined || before === sig) return;
+    for (const fn of this.changeListeners) {
+      try {
+        fn();
+      } catch {
+        /* a listener's failure is its own */
+      }
+    }
+  }
+
   async waitReady(timeoutMs = 10_000): Promise<void> {
     const until = Date.now() + timeoutMs;
     while (!this.ready) {
@@ -174,6 +208,7 @@ export class CoreBackend implements ChainBackend {
     } catch (e) {
       this.fail(errorText(e));
     }
+    if (this.ready && !this.stopped) await this.pollWallet();
     if (this.stopped) return;
     this.timer = setTimeout(() => void this.poll(), this.ready ? (this.o.pollMs ?? 5000) : Math.max(this.o.pollMs ?? 5000, 5000));
     this.timer.unref?.();
@@ -386,7 +421,12 @@ export class CoreBackend implements ChainBackend {
       const key = u.scriptPubKey.toLowerCase();
       unspent.set(key, [...(unspent.get(key) ?? []), entry]);
     }
-    this.index = { at: Date.now(), tipHash, byScript, unspent };
+    const signature = [
+      ...[...heights].map(([txid, h]) => `${txid}:${h}`).sort(),
+      '|',
+      ...list.map((u) => `${u.txid}:${u.vout}:${u.confirmations > 0 ? 1 : 0}`).sort(),
+    ].join(',');
+    this.index = { at: Date.now(), tipHash, byScript, unspent, signature };
     return this.index;
   }
 

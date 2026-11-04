@@ -193,7 +193,9 @@ describe('chain methods, end to end', { timeout: 30_000 }, () => {
       expect(rig.electrs.broadcasts).toContain(txHex);
       expect(rig.logLines.some((l) => /tx\.broadcast/.test(l) && /cosigned/.test(l))).toBe(true);
 
-      // Signed with the hardware wallet instead (the guardian never saw it): checked against the wallet as before.
+      // Signed with the hardware wallet instead (the guardian never saw it), for a coin the guardian has not read yet
+      // (the live wallet is off for a moment): checked against the wallet as before.
+      rig.guardian.live!.stop();
       const other = rig.fund(wallet.derive(0, 10).script, 50_000n);
       const plan2 = buildSpend({
         wallet,
@@ -205,6 +207,7 @@ describe('chain methods, end to end', { timeout: 30_000 }, () => {
       const hw = finalizePsbt(await hwSigner().signPsbt(await appSigner().signPsbt(plan2.psbt, network), network));
       expect(await phone.call('tx.broadcast', { txHex: hw.txHex })).toEqual({ txid: hw.txid });
       expect(scans).toBe(1); // a coin no sync has listed yet: the full scan
+      rig.guardian.live!.start();
 
       // A hardware-signed payment of a coin the last sync listed: checked against that coin, no scan.
       const third = rig.fund(wallet.derive(0, 11).script, 40_000n);
@@ -221,6 +224,22 @@ describe('chain methods, end to end', { timeout: 30_000 }, () => {
       expect(await phone.call('tx.broadcast', { txHex: hw3.txHex })).toEqual({ txid: hw3.txid });
       expect(scans).toBe(1);
       expect(rig.logLines.some((l) => /tx\.broadcast/.test(l) && /known_coin/.test(l))).toBe(true);
+
+      // A coin no phone synced, that the live wallet read the moment it arrived (live-wallet.ts): no scan either.
+      const fourth = rig.fund(wallet.derive(0, 12).script, 30_000n);
+      const walletId = wallet.fingerprint();
+      for (let i = 0; i < 200 && !rig.guardian.knownCoins.get(walletId, fourth.txid, 0); i++) await new Promise((r) => setTimeout(r, 25));
+      expect(rig.guardian.knownCoins.get(walletId, fourth.txid, 0)).toEqual({ chain: 0, index: 12 });
+      const plan4 = buildSpend({
+        wallet,
+        utxos: [{ txid: fourth.txid, vout: 0, value: fourth.value, chain: 0, index: 12, prevTxHex: fourth.rawTx }],
+        recipients: [{ address: externalAddress(8), amount: 10_000n }],
+        feeRate: 2,
+        changeIndex: 6,
+      });
+      const hw4 = finalizePsbt(await hwSigner().signPsbt(await appSigner().signPsbt(plan4.psbt, network), network));
+      expect(await phone.call('tx.broadcast', { txHex: hw4.txHex })).toEqual({ txid: hw4.txid });
+      expect(scans).toBe(1);
 
       // A foreign transaction still gets the scan, and is still refused.
       const strangerKey = new Uint8Array(32).fill(9);

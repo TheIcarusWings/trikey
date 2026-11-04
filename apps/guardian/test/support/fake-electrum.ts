@@ -12,12 +12,35 @@
  * if every conflict signals RBF and it pays more in absolute fee (by at least
  * the relay fee for its own size) and in fee rate; else refused as Bitcoin Core
  * words it.
+ *
+ * Script subscriptions (`blockchain.scripthash.subscribe`) are notified like a real server's: whenever a subscribed
+ * script's status changes (every method here that changes the chain notifies at once; a test that edits `history` or
+ * `unspent` in place is caught within `pollMs`), and also when a test replaces a script's entry in `history` or
+ * `unspent` (`set`). JSON-RPC batches (an array on one line) are answered as one array, unless `refuseBatches`.
+ * `delayMs` makes every script read take that long (one after the other, as Electrs serves a connection), to measure
+ * what the subscriptions save.
  */
 import { createServer, type Server, type Socket } from 'node:net';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hex } from '@scure/base';
 import * as btc from '@scure/btc-signer';
 import { scriptHash } from '../../src/chain/chain.js';
+import { electrumStatus } from '../../src/chain/backend.js';
+
+/** A Map that tells its owner which key a test replaced (`set`, `delete`). */
+class WatchedMap<V> extends Map<string, V> {
+  onTouch?: (key: string) => void;
+  override set(key: string, value: V): this {
+    super.set(key, value);
+    this.onTouch?.(key);
+    return this;
+  }
+  override delete(key: string): boolean {
+    const had = super.delete(key);
+    if (had) this.onTouch?.(key);
+    return had;
+  }
+}
 
 export interface FakeUtxo {
   txid: string;
@@ -47,9 +70,28 @@ export class FakeElectrum {
   private readonly subscribed = new Set<Socket>();
   headers: string[] = [];
   /** scripthash -> history entries */
-  readonly history = new Map<string, { tx_hash: string; height: number }[]>();
+  readonly history = new WatchedMap<{ tx_hash: string; height: number }[]>();
   /** scripthash -> unspent outputs */
-  readonly unspent = new Map<string, FakeUtxo[]>();
+  readonly unspent = new WatchedMap<FakeUtxo[]>();
+  /** Per connection: the script hashes it subscribed to, and the status it was last told. */
+  private readonly scriptSubs = new Map<Socket, Map<string, string | null>>();
+  /** Scripts a test replaced in `history` or `unspent`: notified even if the status is the same. */
+  private readonly touched = new Set<string>();
+  private notifyQueued = false;
+  private poller?: ReturnType<typeof setInterval>;
+  /** Notify subscribers of script changes (default true). */
+  notifyScripts = true;
+  /** How often in-place edits are looked for (ms). */
+  pollMs = 20;
+  /** Answer a batch with one error, as a server without batch support does. */
+  refuseBatches = false;
+  /** Refuse subscriptions past this many per connection, as Fulcrum's limit does. */
+  maxSubscriptions = Infinity;
+  /** Every script read (`get_history`, `listunspent`, `subscribe`) takes this long (ms), one after the other. */
+  delayMs = 0;
+  private busyUntil = 0;
+  /** Batches received (lines that were arrays). */
+  batches = 0;
   readonly txs = new Map<string, string>();
   /** Unconfirmed transactions applied as a mempool: the outputs each spent (to put back if it is replaced). */
   private readonly mempool = new Map<string, { spent: { sh: string; utxo: FakeUtxo }[] }>();
@@ -83,6 +125,8 @@ export class FakeElectrum {
   genesisHeader?: string;
 
   constructor(opts: { blocks?: number; startTime?: number; spacing?: number } = {}) {
+    this.history.onTouch = (k) => this.touch(k);
+    this.unspent.onTouch = (k) => this.touch(k);
     const n = opts.blocks ?? 20;
     const t0 = opts.startTime ?? 1_700_000_000;
     let prev = '00'.repeat(32);
@@ -109,6 +153,45 @@ export class FakeElectrum {
   announce(): void {
     const msg = { jsonrpc: '2.0', method: 'blockchain.headers.subscribe', params: [{ height: this.height, hex: this.headers[this.height] }] };
     for (const s of this.subscribed) this.write(s, msg);
+    this.notifyChanges();
+  }
+
+  /** The Electrum status of a script hash now. */
+  statusOf(sh: string): string | null {
+    return electrumStatus(this.history.get(sh) ?? []);
+  }
+
+  private touch(sh: string): void {
+    this.touched.add(sh);
+    if (this.notifyQueued) return;
+    this.notifyQueued = true;
+    queueMicrotask(() => {
+      this.notifyQueued = false;
+      this.notifyChanges();
+    });
+  }
+
+  /** Tells every subscriber of a script whose status changed (or that a test replaced) its new status. */
+  notifyChanges(): void {
+    if (!this.notifyScripts) {
+      this.touched.clear();
+      return;
+    }
+    for (const [socket, subs] of this.scriptSubs)
+      for (const [sh, last] of subs) {
+        const now = this.statusOf(sh);
+        if (now === last && !this.touched.has(sh)) continue;
+        subs.set(sh, now);
+        this.write(socket, { jsonrpc: '2.0', method: 'blockchain.scripthash.subscribe', params: [sh, now] });
+      }
+    this.touched.clear();
+  }
+
+  /** Script hashes subscribed, over all connections. */
+  get subscriptions(): number {
+    let n = 0;
+    for (const subs of this.scriptSubs.values()) n += subs.size;
+    return n;
   }
 
   /** Adds an unspent output paying `script` (and its funding tx, if given). */
@@ -162,6 +245,7 @@ export class FakeElectrum {
       this.addUtxo(o.script, { txid: id, vout: i, value: Number(o.amount), height });
     }
     this.txs.set(id, rawHex);
+    this.notifyChanges();
     return undefined;
   }
 
@@ -171,6 +255,7 @@ export class FakeElectrum {
     for (const list of this.unspent.values()) for (const u of list) if (u.height <= 0) u.height = height;
     this.mempool.clear();
     this.mempoolSpends.clear();
+    this.notifyChanges();
   }
 
   private findUtxo(txid: string, vout: number): { sh: string; utxo: FakeUtxo } | undefined {
@@ -233,7 +318,7 @@ export class FakeElectrum {
   }
 
   removeUtxo(txid: string, vout: number): void {
-    for (const [sh, list] of this.unspent) this.unspent.set(sh, list.filter((u) => !(u.txid === txid && u.vout === vout)));
+    for (const [sh, list] of this.unspent) if (list.some((u) => u.txid === txid && u.vout === vout)) this.unspent.set(sh, list.filter((u) => !(u.txid === txid && u.vout === vout)));
   }
 
   /** Drops every open client connection (they should reconnect). */
@@ -249,10 +334,16 @@ export class FakeElectrum {
         this.port = typeof addr === 'object' && addr ? addr.port : 0;
         resolve(this.port);
       });
+      clearInterval(this.poller);
+      this.poller = setInterval(() => {
+        if (this.scriptSubs.size) this.notifyChanges();
+      }, this.pollMs);
+      this.poller.unref?.();
     });
   }
 
   stop(): Promise<void> {
+    clearInterval(this.poller);
     for (const s of this.sockets) s.destroy();
     return new Promise((resolve) => (this.server ? this.server.close(() => resolve()) : resolve()));
   }
@@ -276,21 +367,47 @@ export class FakeElectrum {
       while ((i = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, i);
         buf = buf.slice(i + 1);
-        if (line.trim()) this.onRequest(socket, JSON.parse(line));
+        if (line.trim()) void this.onLine(socket, JSON.parse(line));
       }
     });
     socket.on('close', () => {
       this.sockets.delete(socket);
       this.subscribed.delete(socket);
+      this.scriptSubs.delete(socket);
     });
     socket.on('error', () => socket.destroy());
   }
 
-  private onRequest(socket: Socket, req: { id: number; method: string; params: unknown[] }): void {
+  private async onLine(socket: Socket, msg: unknown): Promise<void> {
+    if (!Array.isArray(msg)) {
+      const r = await this.onRequest(socket, msg as { id: number; method: string; params: unknown[] });
+      if (!socket.destroyed) this.write(socket, r);
+      return;
+    }
+    this.batches++;
+    if (this.refuseBatches) {
+      this.write(socket, { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'batch requests are not supported' } });
+      return;
+    }
+    const out: unknown[] = [];
+    for (const req of msg) out.push(await this.onRequest(socket, req as { id: number; method: string; params: unknown[] }));
+    if (!socket.destroyed) this.write(socket, out);
+  }
+
+  /** Waits `delayMs` after the last script read of any connection (reads are served one after the other). */
+  private async slow(): Promise<void> {
+    if (this.delayMs <= 0) return;
+    const start = Math.max(Date.now(), this.busyUntil);
+    this.busyUntil = start + this.delayMs;
+    await new Promise((r) => setTimeout(r, this.busyUntil - Date.now()));
+  }
+
+  private async onRequest(socket: Socket, req: { id: number; method: string; params: unknown[] }): Promise<unknown> {
     this.calls.push({ method: req.method, params: req.params });
-    const ok = (result: unknown) => this.write(socket, { jsonrpc: '2.0', id: req.id, result });
-    const fail = (message: string, code = 1) => this.write(socket, { jsonrpc: '2.0', id: req.id, error: { code, message } });
+    const ok = (result: unknown) => ({ jsonrpc: '2.0', id: req.id, result });
+    const fail = (message: string, code = 1) => ({ jsonrpc: '2.0', id: req.id, error: { code, message } });
     const p = req.params ?? [];
+    if (req.method.startsWith('blockchain.scripthash.')) await this.slow();
     switch (req.method) {
       case 'server.version':
         return ok(['FakeElectrs 0.1', '1.4']);
@@ -309,6 +426,15 @@ export class FakeElectrum {
         const [start, count] = p as [number, number];
         const slice = this.headers.slice(start, start + count);
         return ok({ hex: slice.join(''), count: slice.length, max: 2016 });
+      }
+      case 'blockchain.scripthash.subscribe': {
+        const sh = p[0] as string;
+        let subs = this.scriptSubs.get(socket);
+        if (!subs) this.scriptSubs.set(socket, (subs = new Map()));
+        if (!subs.has(sh) && subs.size >= this.maxSubscriptions) return fail('excessive resource usage: subscription limit reached', -32600);
+        const status = this.statusOf(sh);
+        subs.set(sh, status);
+        return ok(status);
       }
       case 'blockchain.scripthash.get_history':
         return ok(this.history.get(p[0] as string) ?? []);

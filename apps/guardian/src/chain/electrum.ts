@@ -18,7 +18,11 @@
  *
  * The client reconnects with exponential backoff and re-subscribes to block headers after
  * each connect. Requests made while disconnected fail at once with
- * `ElectrumUnavailableError`; callers retry on their own schedule.
+ * `ElectrumUnavailableError`; callers retry on their own schedule. Script hash
+ * subscriptions (`blockchain.scripthash.subscribe`) are the caller's (chain/live.ts): their
+ * notifications go to `onScriptStatus`, and the caller subscribes again after a reconnect.
+ * `requestBatch` sends several calls as one JSON-RPC batch (one line), falling back to
+ * separate requests on a server that refuses batches.
  */
 import type { LookupAddress } from 'node:dns';
 import { lookup as dnsLookup } from 'node:dns/promises';
@@ -145,8 +149,16 @@ export interface ElectrumClientOptions {
   log?: Logger;
 }
 
+/** One call of a batch (`requestBatch`): its result, or the server's error for it. */
+export type BatchOutcome<T> = { ok: true; result: T } | { ok: false; error: ElectrumError };
+
+/** The server answered a batch with one error for the whole line: it does not take batches. */
+class BatchRefusedError extends Error {}
+
 interface Pending {
   method: string;
+  /** Sent as part of the batch with this number. */
+  batch?: number;
   resolve: (v: unknown) => void;
   reject: (e: unknown) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -167,6 +179,10 @@ export class ElectrumClient {
   private pingTimer?: ReturnType<typeof setInterval>;
   private readonly headerListeners = new Set<(h: HeaderNotification) => void>();
   private readonly statusListeners = new Set<(connected: boolean) => void>();
+  private readonly scriptListeners = new Set<(scripthash: string, status: string | null) => void>();
+  /** The server refused a batch once: separate requests from then on (for this client). */
+  private batchRefused = false;
+  private nextBatch = 1;
   private readyWaiters: (() => void)[] = [];
   private warnedUnreachable = false;
   private lastErrorText?: string;
@@ -230,6 +246,17 @@ export class ElectrumClient {
     return () => this.statusListeners.delete(fn);
   }
 
+  /** `blockchain.scripthash.subscribe` notifications: the script hash and its new status (null: no history). */
+  onScriptStatus(fn: (scripthash: string, status: string | null) => void): () => void {
+    this.scriptListeners.add(fn);
+    return () => this.scriptListeners.delete(fn);
+  }
+
+  /** True once the server refused a JSON-RPC batch (requests then go one by one). */
+  get batchesRefused(): boolean {
+    return this.batchRefused;
+  }
+
   /** Resolves once connected and subscribed (or rejects after `timeoutMs`). */
   waitReady(timeoutMs = 10_000): Promise<void> {
     if (this.ready) return Promise.resolve();
@@ -246,6 +273,60 @@ export class ElectrumClient {
   request<T = unknown>(method: string, params: unknown[] = []): Promise<T> {
     if (!this.ready) return Promise.reject(new ElectrumUnavailableError('Electrum is not connected'));
     return this.send<T>(method, params);
+  }
+
+  /**
+   * Several calls in one JSON-RPC batch (one line; Electrs, Fulcrum and ElectrumX take them), each with its own outcome.
+   * A server that answers the batch with one error (it takes no batches) gets the calls one by one, now and from then
+   * on. Rejects (`ElectrumUnavailableError`) only when the connection fails.
+   */
+  async requestBatch<T = unknown>(calls: { method: string; params: unknown[] }[]): Promise<BatchOutcome<T>[]> {
+    if (!calls.length) return [];
+    if (!this.ready) throw new ElectrumUnavailableError('Electrum is not connected');
+    const one = (c: { method: string; params: unknown[] }) =>
+      this.send<T>(c.method, c.params).then(
+        (result): BatchOutcome<T> => ({ ok: true, result }),
+        (e: unknown): BatchOutcome<T> => {
+          if (e instanceof ElectrumError) return { ok: false, error: e };
+          throw e;
+        },
+      );
+    if (this.batchRefused || calls.length === 1) return Promise.all(calls.map(one));
+    try {
+      return await this.sendBatch<T>(calls);
+    } catch (e) {
+      if (!(e instanceof BatchRefusedError)) throw e;
+      if (!this.batchRefused) this.o.log.info('electrum.batch_refused', { host: this.o.host });
+      this.batchRefused = true;
+      return Promise.all(calls.map(one));
+    }
+  }
+
+  private sendBatch<T>(calls: { method: string; params: unknown[] }[]): Promise<BatchOutcome<T>[]> {
+    const socket = this.socket;
+    if (!socket || socket.destroyed) return Promise.reject(new ElectrumUnavailableError('Electrum is not connected'));
+    const batch = this.nextBatch++;
+    const ids: number[] = [];
+    const out = calls.map(
+      (c) =>
+        new Promise<BatchOutcome<T>>((resolve, reject) => {
+          const id = this.nextId++;
+          ids.push(id);
+          const timer = setTimeout(() => {
+            this.pending.delete(id);
+            reject(new ElectrumUnavailableError(`${c.method} timed out`));
+          }, this.o.requestTimeoutMs);
+          this.pending.set(id, {
+            method: c.method,
+            batch,
+            resolve: (v) => resolve({ ok: true, result: v as T }),
+            reject: (e) => (e instanceof ElectrumError ? resolve({ ok: false, error: e }) : reject(e)),
+            timer,
+          });
+        }),
+    );
+    socket.write(`${JSON.stringify(calls.map((c, i) => ({ jsonrpc: '2.0', id: ids[i], method: c.method, params: c.params })))}\n`);
+    return Promise.all(out);
   }
 
   private send<T>(method: string, params: unknown[]): Promise<T> {
@@ -415,15 +496,34 @@ export class ElectrumClient {
   }
 
   private onLine(line: string, socket: Socket): void {
-    let msg: { id?: unknown; result?: unknown; error?: { code?: number; message?: string } | string | null; method?: string; params?: unknown };
+    let parsed: unknown;
     try {
-      msg = JSON.parse(line);
+      parsed = JSON.parse(line);
     } catch {
       this.o.log.warn('electrum.protocol_error', { error: 'invalid JSON' });
       socket.destroy();
       return;
     }
+    // A batch's answers come as one array.
+    if (Array.isArray(parsed)) for (const m of parsed) this.onMessage(m);
+    else this.onMessage(parsed);
+  }
+
+  private onMessage(raw: unknown): void {
+    const msg = raw as { id?: unknown; result?: unknown; error?: { code?: number; message?: string } | string | null; method?: string; params?: unknown };
     if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return;
+    // One error without an id while a batch waits: the server does not take batches (it could not read the line).
+    if ((msg.id === null || msg.id === undefined) && msg.error && !msg.method) {
+      const waiting = [...this.pending].filter(([, p]) => p.batch !== undefined);
+      if (waiting.length) {
+        for (const [id, p] of waiting) {
+          clearTimeout(p.timer);
+          this.pending.delete(id);
+          p.reject(new BatchRefusedError('batch refused'));
+        }
+      }
+      return;
+    }
     if (typeof msg.id === 'number' && this.pending.has(msg.id)) {
       const p = this.pending.get(msg.id)!;
       this.pending.delete(msg.id);
@@ -439,6 +539,17 @@ export class ElectrumClient {
     }
     if (msg.method === 'blockchain.headers.subscribe' && Array.isArray(msg.params)) {
       this.setTip(msg.params[0] as HeaderNotification);
+    }
+    if (msg.method === 'blockchain.scripthash.subscribe' && Array.isArray(msg.params)) {
+      const [hash, status] = msg.params as unknown[];
+      if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/i.test(hash) || !(status === null || (typeof status === 'string' && /^[0-9a-f]{64}$/i.test(status)))) return;
+      for (const fn of this.scriptListeners) {
+        try {
+          fn(hash.toLowerCase(), status === null ? null : status.toLowerCase());
+        } catch {
+          /* a listener's failure is its own */
+        }
+      }
     }
   }
 
