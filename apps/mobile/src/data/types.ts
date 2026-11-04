@@ -744,8 +744,13 @@ export interface WalletState {
   /** A long step that is running, in words ("Creating your phone key"). */
   progress: string | null;
   devicePrompt: DevicePrompt | null;
-  /** A sync is running. */
+  /** A sync is running: the guardian's status and the wallet's chain data are on their way (what a pull waits for). */
   syncing: boolean;
+  /**
+   * The rest of a sync is running in the background (silent payments, Savings, the recovery followed): "Updating…",
+   * quietly, not the pull-to-refresh spinner. The balance and Activity are already up to date. Absent: never.
+   */
+  updating?: boolean;
   /** Has the wallet heard from the guardian at least once? */
   synced: boolean;
   /**

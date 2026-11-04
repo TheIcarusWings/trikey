@@ -42,6 +42,7 @@ beforeAll(async () => {
     rpcTimeoutMs: 5000,
     rpcRetryIntervalMs: 0,
     syncIntervalMs: 0,
+    syncJoinMs: 0, // every sync() asks the guardian again
     yieldToUi: async () => {},
     recoveryCodeKdf: { m: 64, t: 1, p: 1 },
     secondDeviceKind: 'coldcard',
@@ -51,6 +52,7 @@ beforeAll(async () => {
   await svc.setUpRules(100_000, 7);
   rig.fund(svc.wallet!.multisig().derive(0, 0).script, 900_000n);
   await svc.sync();
+  await svc.idle(); // Savings is read in the sync's background part
 }, 60_000);
 
 afterAll(async () => {
@@ -66,11 +68,13 @@ describe('Savings in the app', { timeout: 120_000 }, () => {
     rig.guardian.features = features.filter((f) => f !== 'savings');
     try {
       await svc.sync();
+      await svc.idle(); // Savings is read in the sync's background part
       expect(svc.getState().savings.status).toBe('guardian-update');
       await expect(svc.savings!.start()).rejects.toMatchObject({ kind: 'not_available' });
     } finally {
       rig.guardian.features = features;
       await svc.sync();
+      await svc.idle(); // Savings is read in the sync's background part
     }
     expect(svc.getState().savings.status).toBe('available');
   });
@@ -85,6 +89,7 @@ describe('Savings in the app', { timeout: 120_000 }, () => {
     const done = await sv.finish();
     expect(done.watchedByGuardian).toBe(true);
     await svc.sync();
+    await svc.idle(); // Savings is read in the sync's background part
     const s = svc.getState().savings;
     expect(s).toMatchObject({ status: 'active', balanceSats: 0, watchedByGuardian: true, creating: null, recoveryKey: { fingerprint: second.info.fingerprint } });
     expect(s.descriptor).toBe(done.descriptor);
@@ -122,6 +127,7 @@ describe('Savings in the app', { timeout: 120_000 }, () => {
     await svc.sendPayment(q.quote);
     await rig.mine();
     await svc.sync();
+    await svc.idle(); // Savings is read in the sync's background part
     const s = svc.getState();
     expect(s.savings.balanceSats).toBe(80_000);
     expect(s.savings.activity[0]).toMatchObject({ kind: 'received', amountSats: 80_000, status: 'confirmed' });
@@ -138,6 +144,7 @@ describe('Savings in the app', { timeout: 120_000 }, () => {
     expect(r.amountSats).toBe(30_000);
     await rig.mine();
     await svc.sync();
+    await svc.idle(); // Savings is read in the sync's background part
     const s = svc.getState();
     expect(s.balanceSats).toBe(spendingBefore + 30_000);
     expect(s.savings.balanceSats).toBe(80_000 - 30_000 - r.feeSats);
@@ -172,6 +179,7 @@ describe('Savings in the app', { timeout: 120_000 }, () => {
 
     await rig.mine();
     await svc.sync();
+    await svc.idle(); // Savings is read in the sync's background part
     const done = svc.getState().savings.activity.find((a) => a.txid === r.txid)!;
     expect(done.status).toBe('confirmed');
     expect(done.canSpeedUp).toBeUndefined();
@@ -187,6 +195,7 @@ describe('Savings in the app', { timeout: 120_000 }, () => {
     for (let i = 0; i < 200 && !seen(); i++) await new Promise((r) => setTimeout(r, 20));
     expect(seen()).toMatchObject({ event: { kind: 'savings-unwatched', replaced: false } });
     await svc.sync();
+    await svc.idle(); // Savings is read in the sync's background part
     expect(svc.getState().savings.watchedByGuardian).toBe(true);
     expect(rig.guardian.engine.savings()?.walletId).toBe(svc.getState().savings.walletId);
   });
