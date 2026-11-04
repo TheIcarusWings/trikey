@@ -521,6 +521,9 @@ describe('Trikey Guardian service, end to end', { timeout: 30_000 }, () => {
     const data = JSON.parse(await readFile(path, 'utf8'));
     data.sweeps = [];
     await writeFile(path, JSON.stringify(data));
+    // A crash also loses the wrap ids not saved yet (they are written a moment after each wrap): without them, the
+    // replay guard below is what stops a re-delivered request.
+    await rm(join(dir, 'seen-wraps.json'), { force: true });
     const marker = logLines.length;
     await openGuardian();
     expect(guardian.service.get().sweeps).toHaveLength(0);

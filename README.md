@@ -7,7 +7,7 @@ company holding a key.
 |---|---|---|
 | 1 | **Any hardware wallet** (Ledger, Trezor, Coldcard, BitBox, Jade…) | Big payments, changing rules, recovery |
 | 2 | **Your phone**, backed up to your own cloud | Everyday payments |
-| 3 | **Trikey Guardian** on your own Umbrel or Start9 | Co-signs phone payments under a daily limit; runs a 7-day Delay & Notify recovery |
+| 3 | **Trikey Guardian** on your own Umbrel or Start9, or on plain Docker ([`packaging/compose`](packaging/compose/README.md): a Mac, a PC, Linux, a NAS) | Co-signs phone payments under a daily limit; runs a 7-day Delay & Notify recovery |
 
 Any two keys move money. The guardian only co-signs what its rules allow, it
 talks to your phone over encrypted nostr relays, and it never opens a port on
@@ -41,7 +41,7 @@ The full design, threat model and open questions are in [DESIGN.md](DESIGN.md).
 | `apps/guardian` | The guardian service |
 | `apps/guardian-web` | The guardian's web UI |
 | `apps/mobile` | The React Native app (iOS and Android) |
-| `packaging/` | Docker image, Umbrel app and Start9 package |
+| `packaging/` | Docker image, Umbrel app, Start9 package, and Docker Compose for everything else (`packaging/compose/`) |
 | `tools/consensus-verify` | Checks transactions with Bitcoin Core's script verifier |
 
 Marketing and brand material (social videos, setup tutorials) lives in a separate repository,

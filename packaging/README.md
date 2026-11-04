@@ -1,29 +1,36 @@
 # Packaging Trikey Guardian
 
-One Docker image runs on both Umbrel and Start9. The Umbrel and Start9 packages wrap
-that image.
+One Docker image runs on Umbrel, Start9 and plain Docker. The Umbrel and Start9 packages wrap
+that image; `compose/` runs it with Docker Compose.
 
 - `docker/Dockerfile`: the image (build context = repository root). Reproducible: see `VERIFY.md`.
 - `docker/oci-digests.sh`: prints the digests that identify an image (used by CI and `VERIFY.md`).
 - `VERIFY.md`: rebuild a release and compare its digest with the image on GHCR.
 - `umbrel/`: an Umbrel community app store (`umbrel-app-store.yml` plus the app folder `trikey-guardian/`).
+- `compose/`: plain Docker (a Mac, a Windows PC, Linux, a NAS): `docker-compose.yml`, `.env.example` and the user guide
+  (`compose/README.md`), with an optional node profile. Each release attaches the compose file with the image pinned by
+  digest (`trikey-guardian-compose.yml`) and the settings (`trikey-guardian.env.example`): `docker.yml`, job
+  `compose-files`. `.github/workflows/compose.yml` runs `compose/smoke-test.sh` against the regtest stack.
 - `start9/`: the StartOS package (TypeScript SDK 3.1). It has its own `package.json`, and is not
   one of the monorepo's npm workspaces (`packages/*`, `apps/*`), so a root `npm install` does not touch it.
 
-The guardian has no login of its own, so both platforms put their authenticating proxy in front
-of it (Umbrel's `app_proxy`; on Start9 a basic-auth gate, see `start9/README.md`). Never publish
-its port directly.
+Both platforms put their authenticating proxy in front of the guardian (Umbrel's `app_proxy`; on
+Start9 a basic-auth gate, see `start9/README.md`), and the packages say so with `TRIKEY_PLATFORM`
+(`umbrel`, `start9`). The guardian's own login is the unlock passphrase (web sessions); before
+setup there is none, so without `TRIKEY_PLATFORM` (plain Docker, `compose/`) first-run setup asks
+for a one-time setup code that the guardian prints in its log. A new platform package must set
+`TRIKEY_PLATFORM` only if its own login guards the page. Never publish the port to the internet.
 
 ## Build the image locally
 
 ```sh
 docker build -f packaging/docker/Dockerfile -t trikey-guardian:local .
-docker run --rm -p 3000:3000 -v "$PWD/.trikey-data:/data" \
+docker run --rm -p 127.0.0.1:3000:3000 -v trikey-dev-data:/data \
   -e ELECTRUM_HOST=... -e ELECTRUM_PORT=50001 \
   trikey-guardian:local
 ```
 
-Then open http://localhost:3000. Persistent state goes in `/data`. Never pass real keys
+Then open http://localhost:3000 with the setup code from the output (`setup.code`). Persistent state goes in `/data`. Never pass real keys
 or credentials on the command line or bake them into the image. The environment variables
 are listed in `apps/guardian/README.md`. For silent payments the guardian also needs
 `BITCOIN_RPC_HOST`, `BITCOIN_RPC_PORT`, `BITCOIN_RPC_USER` and `BITCOIN_RPC_PASS` (all four).
@@ -55,7 +62,8 @@ fine-grained personal access token with "Contents: read and write" on the store 
 Without the secret it does nothing and says so in the run's annotations. (To use another
 repository name, set the repository variable `UMBREL_STORE_REPO` to `owner/name`.) The workflow
 refuses to publish if `umbrel-app.yml` and `docker-compose.yml` do not name the tag's version, so
-bump both before tagging.
+bump both before tagging. Bump the image version in `compose/docker-compose.yml` with them
+(`e2e/test/unit/compose-guardian.test.ts` checks that it names the same one).
 
 The compose file passes the node's Bitcoin RPC details (`BITCOIN_RPC_*`) from the variables Umbrel
 exports for the `bitcoin` dependency, because the silent payment scanner needs them.

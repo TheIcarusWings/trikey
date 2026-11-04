@@ -48,6 +48,7 @@ import {
   MAX_SINGLE_KEY_COINS,
   PairingUriError,
   RpcClient,
+  SeenWraps,
   RpcError,
   RpcTimeoutError,
   approvalMessage,
@@ -78,9 +79,11 @@ import {
   type Policy,
   type RecoveryPayload,
   type Recovery,
+  type ReconnectOptions,
   type RelayPool,
   type Result,
   type RpcClientOptions,
+  type WalletUtxo,
 } from '@trikey/protocol';
 import {
   BACKUP_FILE_PREFIX,
@@ -143,6 +146,9 @@ import {
   guardianBlocker,
   outputScriptOf,
   pickFeeRate,
+  minFeeRateFor,
+  feeRateBelowFloor,
+  type FeeRateOptions,
   planFeeBump,
   selectAllCoins,
   selectCoins,
@@ -280,6 +286,8 @@ export type WalletEvent =
   | { type: 'pending_settled'; method: string; ok: boolean; refusal?: GuardianRefusal }
   /** A step of a long operation ("Replace guardian"), for a progress line. */
   | { type: 'progress'; operation: 'replace-guardian' | 'stray-coins'; step: ReplaceStep }
+  /** A payment is fully signed (by the guardian or the hardware wallet) and is being broadcast now (`send`). */
+  | { type: 'payment_signed'; txid: string; signedBy: 'phone+guardian' | 'phone+hardware' }
   /** The phone now holds another wallet: the guardian adopted a recovery's destination, or "Replace guardian" finished. */
   | { type: 'wallet_switched'; walletId: string; previousWalletId: string; reason: 'recovery' | 'replace-guardian'; hardwareConfirmRequired: boolean }
   /**
@@ -781,6 +789,15 @@ export class TrikeyWallet {
   /** `savingsWallet()` parses the Savings descriptor once per descriptor. */
   private savingsCache?: { descriptor: string; wallet: MultisigWallet };
   private scanQueued?: Promise<{ found: SilentPaymentCoin[]; scannedHeight: number }>;
+  /**
+   * Ids of the gift wraps the guardian connections handled, kept in the app's storage across restarts: every
+   * subscription is sent two days of wraps again, and without these each one cost a signature check and two
+   * decryptions on every app start (seconds of the phone's JS thread). Shared by all connections (one nostr key).
+   */
+  private readonly seenWraps: SeenWraps;
+  private readonly seenWrapsKey: string;
+  /** A `guardian.status` read after a relay connection came back, while it runs. */
+  private reconnectRefresh?: Promise<unknown>;
 
   private constructor(
     private readonly deps: WalletDeps,
@@ -792,6 +809,11 @@ export class TrikeyWallet {
     this.store = store;
     this.s = state;
     this.txs = new TxCache(deps.store, `${store.key}.txs`);
+    const key = (this.seenWrapsKey = `${store.key}.seenWraps`);
+    this.seenWraps = new SeenWraps({
+      storage: { load: () => deps.store.get(key), save: (text) => deps.store.set(key, text) },
+      now: () => this.nowSec(),
+    });
   }
 
   // ===========================================================================
@@ -914,6 +936,7 @@ export class TrikeyWallet {
 
   /** Disconnects from the guardian and the hardware wallet. */
   async close(): Promise<void> {
+    await this.seenWraps.flush().catch(() => undefined);
     this.rpc?.close();
     this.pool?.close();
     this.rpc = undefined;
@@ -933,13 +956,34 @@ export class TrikeyWallet {
 
   /**
    * Subscribe again now on every relay connection that dropped, instead of waiting out the pool's backoff: the app
-   * calls this when it comes back to the front (Android destroys a background app's sockets). Then `sync()`.
+   * calls this when it comes back to the front (Android destroys a background app's sockets). Then `sync()`. With
+   * `force` (the app was away long enough for the OS or a NAT to drop a socket without a word), every connection is
+   * opened anew, and unanswered requests are sent again once the relays are back (`RpcClient.resendPending`). With
+   * `waitMs`, resolves once a relay of the guardian's connection is back (its first EOSE), or after that long.
    */
-  reconnect(): void {
-    this.pool?.reconnect?.();
-    for (const c of this.oldConnections) c.pool.reconnect?.();
-    this.pairing?.pool.reconnect?.();
-    this.replaceRpc?.pool.reconnect?.();
+  reconnect(opts: ReconnectOptions & { waitMs?: number } = {}): Promise<void> {
+    // Listening before the connections are replaced, so the first relay back is not missed.
+    const back = opts.waitMs && opts.waitMs > 0 ? this.relayBack(opts.waitMs) : Promise.resolve();
+    this.pool?.reconnect?.(opts);
+    for (const c of this.oldConnections) c.pool.reconnect?.(opts);
+    this.pairing?.pool.reconnect?.(opts);
+    this.replaceRpc?.pool.reconnect?.(opts);
+    return back;
+  }
+
+  /** Resolves when a relay of the guardian's connection is subscribed again (its EOSE), or after `ms`. */
+  private relayBack(ms: number): Promise<void> {
+    const rpc = this.rpc;
+    if (!rpc?.onReconnect) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        off();
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      const off = rpc.onReconnect!(done);
+    });
   }
 
   /** Removes key 2, the nostr key and the state from this phone. The cloud backup is left alone. */
@@ -953,6 +997,7 @@ export class TrikeyWallet {
     this.spScanKey = undefined;
     await this.store.clear();
     await this.txs.clear();
+    await this.deps.store.remove(this.seenWrapsKey).catch(() => undefined);
   }
 
   // ===========================================================================
@@ -989,6 +1034,7 @@ export class TrikeyWallet {
   private async connect(peer: string, relays: string[], how: { routeAlerts?: boolean } = {}): Promise<{ rpc: GuardianRpc; pool: RelayPool }> {
     const pool = this.deps.relayPool();
     const secretKey = await this.nostrSecret();
+    await this.seenWraps.load(); // before subscribing: what was handled before is skipped without any crypto
     const opts: RpcClientOptions = {
       pool,
       relays,
@@ -997,12 +1043,28 @@ export class TrikeyWallet {
       now: () => this.nowSec(),
       defaultTimeoutMs: this.deps.rpcTimeoutMs ?? 30_000,
       retryIntervalMs: this.deps.rpcRetryIntervalMs ?? 10_000,
+      seenWraps: this.seenWraps,
     };
     const rpc = this.deps.createRpc ? this.deps.createRpc(opts) : new RpcClient(opts);
     // The client keeps the key for as long as it runs; it is not zeroed here.
-    if (how.routeAlerts !== false) rpc.onAlert((alert, meta) => void this.onAlert(alert, meta, peer));
+    if (how.routeAlerts !== false) {
+      rpc.onAlert((alert, meta) => void this.onAlert(alert, meta, peer));
+      rpc.onReconnect?.(() => this.afterReconnect(rpc));
+    }
     await rpc.start();
     return { rpc, pool };
+  }
+
+  /**
+   * A relay connection of the paired guardian's client came back after it dropped (a relay or network restart, the app
+   * back from the background): anything the guardian said meanwhile may be lost (an unlock after its restart has no
+   * alert), so its status is read again now rather than at the next sync. One at a time.
+   */
+  private afterReconnect(rpc: GuardianRpc): void {
+    if (rpc !== this.rpc || this.reconnectRefresh || this.s.stage === 'new' || !this.s.guardian) return;
+    this.reconnectRefresh = this.refreshStatus()
+      .catch(() => undefined)
+      .finally(() => (this.reconnectRefresh = undefined));
   }
 
   /** The guardian client for the paired (or recovering) wallet. */
@@ -1567,6 +1629,7 @@ export class TrikeyWallet {
       ...(st.hardwareConfirmRequired !== undefined ? { hardwareConfirmRequired: st.hardwareConfirmRequired } : {}),
       ...(st.watchedWalletId ? { watchedWalletId: st.watchedWalletId } : {}),
       ...(st.notifications ? { notifications: { channels: st.notifications.channels.map((c) => ({ ...c })) } } : {}),
+      ...(st.chainSource ? { chainSource: { ...st.chainSource } } : {}),
     };
     await this.update((s) => {
       s.guardianStatus = cache;
@@ -1672,6 +1735,12 @@ export class TrikeyWallet {
       c.pool.close();
     }
     this.oldConnections.clear();
+  }
+
+  /** The floor every fee rate the wallet picks by itself keeps to (mainnet: 1 sat/vB; see `MAINNET_MIN_FEE_SAT_PER_VB`). */
+  private get feeFloor(): FeeRateOptions {
+    const min = minFeeRateFor(this.network.name);
+    return min === undefined ? {} : { minSatPerVb: min };
   }
 
   /** `WalletDeps.syncTimeoutMs`. */
@@ -1939,6 +2008,42 @@ export class TrikeyWallet {
     return fresh.length;
   }
 
+  /**
+   * A payment just sent, applied to the last synced view until the next sync replaces it: its coins are gone, its change
+   * is an unconfirmed coin, and the change index moves on. A payment made right after then spends what is really left
+   * (not the same coins again, which the node would refuse as a replacement paying no more).
+   */
+  private async applyLocalSpend(txHex: string, txid: string, quote: SendQuote): Promise<void> {
+    const c = this.s.chain;
+    if (!c) return;
+    const spent = new Set(quote.inputs.map((u) => `${u.txid}:${u.vout}`));
+    let change: WalletUtxo | undefined;
+    if (quote.changeSats > 0) {
+      const script = hex.encode(this.multisig().derive(1, quote.changeIndex).script);
+      const raw = btc.RawTx.decode(hex.decode(txHex));
+      const vout = raw.outputs.findIndex((o) => hex.encode(o.script) === script && Number(o.amount) === quote.changeSats);
+      if (vout >= 0) change = { txid, vout, valueSats: quote.changeSats, height: 0, confirmations: 0, chain: 1, index: quote.changeIndex };
+    }
+    await this.update((s) => {
+      const chain = s.chain;
+      if (!chain) return;
+      let confirmed = chain.balance.confirmedSats;
+      let unconfirmed = chain.balance.unconfirmedSats;
+      for (const u of chain.utxos) {
+        if (!spent.has(`${u.txid}:${u.vout}`)) continue;
+        if (u.confirmations > 0) confirmed -= u.valueSats;
+        else unconfirmed -= u.valueSats;
+      }
+      chain.utxos = chain.utxos.filter((u) => !spent.has(`${u.txid}:${u.vout}`));
+      if (change && !chain.utxos.some((u) => u.txid === change.txid && u.vout === change.vout)) {
+        chain.utxos.push(change);
+        unconfirmed += change.valueSats;
+      }
+      chain.balance = { confirmedSats: Math.max(0, confirmed), unconfirmedSats: unconfirmed };
+      if (quote.changeSats > 0) chain.nextChangeIndex = Math.max(chain.nextChangeIndex, quote.changeIndex + 1);
+    });
+  }
+
   private async logSend(entry: SendLogEntry): Promise<void> {
     await this.update((s) => {
       s.sendLog = [...s.sendLog.filter((e) => e.txid !== entry.txid), entry].slice(-MAX_SEND_LOG);
@@ -2007,7 +2112,7 @@ export class TrikeyWallet {
     const estimated = this.fees?.estimates.some((e) => e.satPerVb !== null) ?? false;
     if (req.feeRate === undefined && !estimated && this.network.name === 'bitcoin')
       throw new WalletError('no_fee_estimate', 'The node has no fee estimate right now; sync again or choose a fee rate.');
-    const feeRate = req.feeRate ?? pickFeeRate(this.fees, req.speed);
+    const feeRate = req.feeRate ?? pickFeeRate(this.fees, req.speed, this.feeFloor);
     const feeRateSource: SendQuote['feeRateSource'] = req.feeRate !== undefined ? 'caller' : estimated ? 'estimate' : 'relay-minimum';
     return { wallet, chain, feeRate, feeRateSource };
   }
@@ -2046,6 +2151,7 @@ export class TrikeyWallet {
       remainingAfterSats,
       dailyLimitSats: limit,
       ...(q.sendMax ? { sendMax: true as const } : {}),
+      ...(q.feeRateSource === 'caller' && feeRateBelowFloor(q.feeRate, this.network.name) ? { lowFeeRate: true as const } : {}),
     };
   }
 
@@ -2098,7 +2204,7 @@ export class TrikeyWallet {
    * fix (over the limit, locked, paused, offline), the hardware wallet signs.
    * Guardian refusals come back as typed results.
    */
-  async send(quoteOrRequest: SendQuote | SendRequest, opts: { fallbackToHardware?: boolean } = {}): Promise<SendResult> {
+  async send(quoteOrRequest: SendQuote | SendRequest, opts: { fallbackToHardware?: boolean; syncAfter?: boolean } = {}): Promise<SendResult> {
     this.requirePaired();
     // Spending a coin that is already gone would still use up the daily limit at the guardian: refresh a stale view first.
     if (!this.s.chain || this.now() - this.s.chain.syncedAt > STALE_CHAIN_MS) await this.sync();
@@ -2150,15 +2256,9 @@ export class TrikeyWallet {
     }
 
     const { txHex, txid } = finalizePsbt(final);
-    try {
-      await this.chain.broadcast(txHex);
-    } catch (e) {
-      const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
-      if (!refusal) throw e;
-      return { ok: false, refusal, signedTx: { txid, txHex } };
-    }
+    this.emit({ type: 'payment_signed', txid, signedBy });
     const label = quote.request.label?.trim().slice(0, 200);
-    await this.logSend({
+    const entry: SendLogEntry = {
       txid,
       at: this.now(),
       recipient: quote.request.address,
@@ -2167,8 +2267,26 @@ export class TrikeyWallet {
       ...(label ? { label } : {}),
       signedBy: signedBy === 'phone+guardian' ? 'guardian' : 'hardware',
       ...(this.isSavingsAddress(quote.request.address) ? { toSavings: true as const } : {}),
-    });
-    await this.sync().catch(() => undefined);
+    };
+    try {
+      await this.chain.broadcast(txHex);
+    } catch (e) {
+      const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
+      if (!refusal) throw e;
+      // No answer is not a refusal: the guardian may well have sent it (and only its answer got lost). Listed as a
+      // payment not yet seen (it drops out of the list if no sync shows it within ten minutes, see `history`), so the
+      // person does not pay again by mistake.
+      if (refusal.kind === 'unreachable') {
+        await this.logSend(entry);
+        await this.applyLocalSpend(txHex, txid, quote);
+      }
+      return { ok: false, refusal, signedTx: { txid, txHex } };
+    }
+    // In the history at once (as a payment the guardian has not listed yet), and its coins out of the wallet's view,
+    // before any sync.
+    await this.logSend(entry);
+    await this.applyLocalSpend(txHex, txid, quote);
+    if (opts.syncAfter !== false) await this.sync().catch(() => undefined);
     return {
       ok: true,
       txid,
@@ -2725,7 +2843,7 @@ export class TrikeyWallet {
     if (!fees?.estimates.some((e) => e.satPerVb !== null) && this.network.name === 'bitcoin')
       throw new WalletError('no_fee_estimate', 'The node has no fee estimate right now; try the recovery again later.');
     const vsize = estimateVsize(snap.utxos.length, [destination.derive(0, 0).script]);
-    let rate = pickFeeRate(fees, 'normal');
+    let rate = pickFeeRate(fees, 'normal', this.feeFloor);
     if (Math.ceil(vsize * rate) > feeCapSats) rate = Math.floor((feeCapSats / vsize) * 1000) / 1000;
     if (rate < (fees?.minRelaySatPerVb ?? 1) || Math.ceil(vsize * rate) > feeCapSats)
       throw new WalletError('fee_cap_too_low', `The sweep fee cap (${feeCapSats} sats) does not cover the minimum relay fee for ${snap.utxos.length} coins.`);
@@ -3778,7 +3896,7 @@ export class TrikeyWallet {
    */
   previewSilentSweep(opts: { feeRate?: number; minSats?: number } = {}): SilentSweepPreview {
     const sp = this.s.silentPayments;
-    const feeRate = opts.feeRate ?? pickFeeRate(this.fees, 'normal');
+    const feeRate = opts.feeRate ?? pickFeeRate(this.fees, 'normal', this.feeFloor);
     const feeSats = Math.ceil(VB_SWEEP * feeRate);
     const minSats = Math.max(DUST_SATS, opts.minSats ?? this.deps.silentPaymentSweepMinSats ?? DEFAULT_SWEEP_MIN_SATS);
     const coins = (sp?.coins ?? [])
@@ -3808,7 +3926,7 @@ export class TrikeyWallet {
     if (!coins.length) return [];
     const estimated = this.fees?.estimates.some((e) => e.satPerVb !== null) ?? false;
     if (opts.feeRate === undefined && !estimated && this.network.name === 'bitcoin') throw new WalletError('no_fee_estimate', 'There is no fee estimate right now; sync again or choose a fee rate.');
-    const feeRate = opts.feeRate ?? pickFeeRate(this.fees, 'normal');
+    const feeRate = opts.feeRate ?? pickFeeRate(this.fees, 'normal', this.feeFloor);
     const feeSats = Math.ceil(VB_SWEEP * feeRate);
     const minSats = Math.max(DUST_SATS, opts.minSats ?? this.deps.silentPaymentSweepMinSats ?? DEFAULT_SWEEP_MIN_SATS);
     // The chain must show each coin unspent with the value the scanner reported (the signature commits to it).
@@ -4636,7 +4754,7 @@ export class TrikeyWallet {
     }
     const utxos = this.s.chain?.utxos ?? [];
     const balanceSats = utxos.reduce((a, u) => a + u.valueSats, 0);
-    const estimatedFeeSats = utxos.length ? Math.ceil(estimateVsize(utxos.length, [session.wallet.derive(0, 0).script]) * pickFeeRate(this.fees, 'normal')) : 0;
+    const estimatedFeeSats = utxos.length ? Math.ceil(estimateVsize(utxos.length, [session.wallet.derive(0, 0).script]) * pickFeeRate(this.fees, 'normal', this.feeFloor)) : 0;
     const name = session.payload.label ? `the new guardian (${session.payload.label})` : 'the new guardian';
     const reachable = !!st;
     const steps: ReplacePlan['steps'] = [
@@ -4820,7 +4938,7 @@ export class TrikeyWallet {
         throw new WalletError('no_fee_estimate', 'There is no fee estimate right now; try again in a moment.');
       const prevs = await this.prevTxs(utxos.map((u) => u.txid), source);
       const coins = utxos.map((u, i) => toCoreUtxo({ txid: u.txid, vout: u.vout, valueSats: u.valueSats, chain: u.chain, index: u.index }, prevs[i]));
-      const plan = selfCheck(() => buildSweep({ from: oldWallet, utxos: coins, destination: newWallet, destinationIndex: 0, feeRate: pickFeeRate(fees, 'normal') }));
+      const plan = selfCheck(() => buildSweep({ from: oldWallet, utxos: coins, destination: newWallet, destinationIndex: 0, feeRate: pickFeeRate(fees, 'normal', this.feeFloor) }));
       selfCheck(() => analyzePsbt(plan.psbt, oldWallet.accountPubkeys(), this.network, { requireNonWitnessUtxo: true, outputsAcct: newWallet.accountPubkeys() }));
       const total = coins.reduce((a, u) => a + u.value, 0n);
       const amountSats = Number(total - plan.fee);
@@ -5053,7 +5171,7 @@ export class TrikeyWallet {
         );
         const coins = snap.utxos.map((u, i) => toCoreUtxo({ txid: u.txid, vout: u.vout, valueSats: u.valueSats, chain: u.chain, index: u.index }, prevs[i]));
         const index = this.s.chain?.nextReceiveIndex ?? 0;
-        const plan = selfCheck(() => buildSweep({ from, utxos: coins, destination: current, destinationIndex: index, feeRate: pickFeeRate(fees, 'normal') }));
+        const plan = selfCheck(() => buildSweep({ from, utxos: coins, destination: current, destinationIndex: index, feeRate: pickFeeRate(fees, 'normal', this.feeFloor) }));
         selfCheck(() => analyzePsbt(plan.psbt, from.accountPubkeys(), this.network, { requireNonWitnessUtxo: true, outputsAcct: current.accountPubkeys() }));
         const amountSats = Number(coins.reduce((a, u) => a + u.value, 0n) - plan.fee);
         const appSigned = await this.withKey2('Approve moving coins from your old wallet', async (m) => new SoftwareSigner('app', m).signPsbt(plan.psbt, this.network));
@@ -5478,7 +5596,7 @@ export class TrikeyWallet {
     const estimated = this.fees?.estimates.some((e) => e.satPerVb !== null) ?? false;
     if (req.feeRate === undefined && !estimated && this.network.name === 'bitcoin')
       throw new WalletError('no_fee_estimate', 'The node has no fee estimate right now; sync again or choose a fee rate.');
-    const feeRate = req.feeRate ?? pickFeeRate(this.fees, req.speed ?? 'slow');
+    const feeRate = req.feeRate ?? pickFeeRate(this.fees, req.speed ?? 'slow', this.feeFloor);
     const feeRateSource: SavingsQuote['feeRateSource'] = req.feeRate !== undefined ? 'caller' : estimated ? 'estimate' : 'relay-minimum';
     return { record, wallet, chain, feeRate, feeRateSource };
   }
@@ -5779,7 +5897,7 @@ export class TrikeyWallet {
 
     let sweep: { txid: string; txHex: string; amountSats: number; feeSats: number } | undefined;
     if (snap.utxos.length) {
-      const feeRate = pickFeeRate(this.fees ?? (await this.chain.estimateFees(FEE_TARGETS).catch(() => undefined)), 'slow');
+      const feeRate = pickFeeRate(this.fees ?? (await this.chain.estimateFees(FEE_TARGETS).catch(() => undefined)), 'slow', this.feeFloor);
       const utxos = snap.utxos.map((u) => ({ txid: u.txid, vout: u.vout, valueSats: u.valueSats, chain: u.chain, index: u.index }));
       const prevs = await this.prevTxs(utxos.map((u) => u.txid), this.savingsChain());
       const plan = selfCheck(() => buildSweep({ from: oldWallet, utxos: utxos.map((u, i) => toCoreUtxo(u, prevs[i])), destination: next, destinationIndex: 0, feeRate }));

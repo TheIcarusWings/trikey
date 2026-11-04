@@ -31,11 +31,23 @@ import type { Server } from 'node:http';
 import { hex } from '@scure/base';
 import type { SimplePool } from 'nostr-tools/pool';
 import { normalizeURL } from 'nostr-tools/utils';
-import { GUARDIAN_FEATURES, RpcServer, SimplePoolRelayPool, checkRelayList, checkRelayUrl, createSimplePool, sameRelays, type Alert, type MethodName } from '@trikey/protocol';
+import { GUARDIAN_FEATURES, RpcServer, SeenWraps, SimplePoolRelayPool, checkRelayList, checkRelayUrl, createSimplePool, sameRelays, type Alert, type MethodName } from '@trikey/protocol';
 import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 import { ChainService } from './chain/chain.js';
 import { BitcoinRpc } from './chain/bitcoind.js';
-import { ElectrumClient, type ElectrumClientOptions } from './chain/electrum.js';
+import { type ElectrumClientOptions } from './chain/electrum.js';
+import type { ChainBackend } from './chain/backend.js';
+import { CoreBackend } from './chain/core-backend.js';
+import {
+  buildBackend,
+  ChainSourceError,
+  ChainSourceStore,
+  describe as describeSource,
+  parseChainSource,
+  summarize,
+  type ChainSource,
+  type ChainSourceSummary,
+} from './chain/source.js';
 import type { GuardianConfig } from './config.js';
 import { ensureDataDir, Mutex } from './files.js';
 import { loadOrCreateIdentity, loadIdentity, type GuardianIdentity } from './identity.js';
@@ -65,7 +77,7 @@ import { DAY, JsonFileStore, PolicyEngine, systemClock, type Clock, type Recover
 import { ServiceState, type RetiringRelay, type ServiceEvent } from './service-state.js';
 import { UnlockThrottle, type ThrottleOptions } from './unlock-throttle.js';
 import { DirectMessages } from './nostr/dm.js';
-import { Inbox } from './nostr/inbox.js';
+import { Inbox, seenWrapsFile } from './nostr/inbox.js';
 import { buildHandlers } from './nostr/handlers.js';
 import { stampOf, toSeconds } from './nostr/wire.js';
 import { DEFAULT_BROADCAST_LIMIT, DEFAULT_CONTACT_LOCK_LIMIT, DEFAULT_REFUSAL_LIMIT, SlidingWindowLimiter, type RateLimitOptions } from './rate-limit.js';
@@ -75,6 +87,7 @@ import { onContactDm } from './dm-cancel.js';
 import { startHttpServer } from './http/server.js';
 import { buildRoutes } from './http/api.js';
 import { WebSessions } from './http/sessions.js';
+import { SetupCode } from './http/setup-code.js';
 import { GUARDIAN_VERSION } from './version.js';
 import { SilentPaymentService } from './silent/service.js';
 import { SavingsMonitor } from './savings.js';
@@ -93,6 +106,8 @@ export const FILES = {
   phoneThrottle: 'unlock-throttle-phone.json',
   resetThrottle: 'reset-throttle.json',
   sessionThrottle: 'session-throttle.json',
+  /** Ids of gift wraps already handled (not secret: the relays hold the wraps), so a restart opens none again. */
+  seenWraps: 'seen-wraps.json',
 } as const;
 
 /** After this many failed `guardian.unlock` passphrases in a row, the phone may not unlock until the web UI does. */
@@ -121,6 +136,19 @@ export interface GuardianOptions {
   savingsScanIntervalMs?: number;
   /** Test seams for the extra alert channels (notify/): local test servers on 127.0.0.1, a self-signed SMTP server. */
   notify?: { net?: NetPolicy; smtpTest?: SmtpTestOptions };
+  /** Builds the backend for a chain source (tests: fakes instead of public servers). Default: chain/source.ts `buildBackend`. */
+  chainBackend?: (source: ChainSource, opts: { probe: boolean }) => ChainBackend;
+}
+
+export type ChainSourceOutcome =
+  | { ok: true; changed: boolean }
+  | { ok: false; code: 'invalid' | 'setup_required' | 'recovery_pending'; message: string };
+
+export interface ChainTestOutcome {
+  ok: boolean;
+  server?: string;
+  height?: number;
+  error?: string;
 }
 
 /** What a `LOCK` DM from an alert contact did (`Guardian.lockByContact`). */
@@ -257,6 +285,13 @@ export class Guardian {
   sessionThrottle!: UnlockThrottle;
   /** The web UI's sessions (http/sessions.ts). In memory: a restart signs everyone out. */
   readonly sessions = new WebSessions();
+  /**
+   * On plain Docker (`config.platform === 'docker'`): the one-time code first-run setup asks for, printed in the log
+   * (http/setup-code.ts). New at every start. Undefined on Umbrel and Start9, whose login guards the first-run screen.
+   */
+  readonly setupCode?: SetupCode;
+  /** Wrong setup codes, all callers together: 10 a minute. The code has 80 bits; this keeps the log quiet. */
+  readonly setupCodeLimiter = new SlidingWindowLimiter({ max: 10, windowMs: 60_000 });
   keystore?: KeystoreFile;
   identity?: GuardianIdentity;
   rpc?: RpcServer;
@@ -290,16 +325,56 @@ export class Guardian {
   readonly recoveryMutex = new Mutex();
   private readonly opts: GuardianOptions;
 
+  /** The chain source in use (chain/source.ts): the environment's, or the owner's choice from the web UI. */
+  chainSource?: ChainSource;
+  /** Where `chainSource` came from. */
+  chainSourceOrigin: 'environment' | 'settings' = 'environment';
+  private readonly chainSourceStore: ChainSourceStore;
+  private readonly chainMutex = new Mutex();
+
+  private envElectrumSource(): ChainSource | undefined {
+    const e = this.opts.config.electrum;
+    return e ? { kind: 'electrum', host: e.host, port: e.port, tls: !!e.tls, ...(e.certSha256 ? { certSha256: e.certSha256 } : {}), ...(e.allowPublicPlaintext ? { allowPublicPlaintext: true } : {}) } : undefined;
+  }
+
+  /** The backend for a chain source, with this guardian's network, log and wallet birthdays. */
+  private makeBackend(source: ChainSource, probe: boolean): ChainBackend {
+    if (this.opts.chainBackend) return this.opts.chainBackend(source, { probe });
+    const src: ChainSource = source.kind === 'core' && !source.wallet && this.opts.config.coreWallet ? { ...source, wallet: this.opts.config.coreWallet } : source;
+    return buildBackend(src, {
+      network: this.opts.config.network,
+      log: this.log,
+      electrum: this.opts.electrum,
+      probe,
+      core: { birthday: (w) => this.walletBirthday(w.fingerprint()), defaultBirthday: () => 0 },
+    });
+  }
+
+  /**
+   * When a wallet's coins can start (unix seconds), for Bitcoin Core's rescan: a wallet with this guardian's key 3 cannot
+   * be older than the setup; Savings not older than the phone's registration of it. Others (a replaced wallet, the
+   * helper account): unknown, a full rescan.
+   */
+  private walletBirthday(fingerprint: string): number | undefined {
+    const setupAt = this.service?.get().setupAt;
+    const mine = new Set([this.engine?.registration()?.walletId, ...(this.engine?.retiredWallets().map((r) => r.registration.walletId) ?? [])]);
+    if (setupAt !== undefined && mine.has(fingerprint)) return Math.floor(setupAt / 1000);
+    const sv = this.engine?.savings();
+    if (sv && sv.walletId === fingerprint) return Math.floor(sv.since / 1000);
+    return undefined;
+  }
+
   private constructor(opts: GuardianOptions) {
     this.opts = opts;
     this.config = opts.config;
     this.clock = opts.clock ?? systemClock;
     this.log = opts.log ?? silentLogger;
-    const electrum = opts.config.electrum
-      ? new ElectrumClient({ ...opts.config.electrum, log: this.log, ...opts.electrum })
-      : undefined;
-    const rpc = opts.config.bitcoinRpc ? new BitcoinRpc(opts.config.bitcoinRpc) : undefined;
-    this.chain = new ChainService({ electrum, rpc, log: this.log });
+    if (opts.config.platform === 'docker') this.setupCode = new SetupCode();
+    const rpc = opts.config.bitcoinRpc ? new BitcoinRpc(opts.config.bitcoinRpc, { allowPublic: opts.config.bitcoinRpc.allowPublic }) : undefined;
+    // The environment's choice; `open` swaps in the web UI's, if the owner made one (chain-source.json).
+    this.chainSource = opts.config.chainSource ?? this.envElectrumSource();
+    this.chainSourceStore = new ChainSourceStore(opts.config.dataDir);
+    this.chain = new ChainService({ backend: this.chainSource ? this.makeBackend(this.chainSource, false) : undefined, rpc, log: this.log });
     this.sp = new SilentPaymentService({
       dataDir: opts.config.dataDir,
       rpc,
@@ -379,6 +454,12 @@ export class Guardian {
     // Guests' slots: nothing to load without hosting.json (every guardian before family hosting).
     await g.hosting.load();
     await g.notifier.load();
+    const stored = await g.chainSourceStore.load();
+    if (stored) {
+      g.chainSource = stored;
+      g.chainSourceOrigin = 'settings';
+      g.chain.setBackend(g.makeBackend(stored, false));
+    }
     g.lockedAt = g.clock.now();
     g.lockReason = 'restart';
     return g;
@@ -402,7 +483,7 @@ export class Guardian {
    * only when it lists `savings` (the guardian serves Savings' chain data). Tests clear it to see how a phone treats a
    * guardian from before a feature.
    */
-  features: string[] = [GUARDIAN_FEATURES.limitOff, GUARDIAN_FEATURES.contactLock, GUARDIAN_FEATURES.savings, GUARDIAN_FEATURES.notifications];
+  features: string[] = [GUARDIAN_FEATURES.limitOff, GUARDIAN_FEATURES.contactLock, GUARDIAN_FEATURES.savings, GUARDIAN_FEATURES.notifications, GUARDIAN_FEATURES.shortWraps];
 
   nowSec(): number {
     return toSeconds(this.clock.now());
@@ -454,6 +535,10 @@ export class Guardian {
     }
     this.chain.start();
     this.chain.onTip(() => void this.tick());
+    if (!this.setupComplete && this.setupCode) {
+      // Deliberately in the log (the one place only the box's owner reads): http/setup-code.ts.
+      this.log.info('setup.code', { code: this.setupCode.code, hint: 'Open the web UI and enter this setup code to set up the guardian. It changes at every restart.' });
+    }
     if (this.setupComplete) {
       await this.startNostr();
       await this.notifyPhone({ type: 'guardian_locked', reason: 'restart', ...this.stampNow() });
@@ -558,6 +643,11 @@ export class Guardian {
       onDm: (opened) => dm.handleOpened(opened),
       log: this.log,
       isPeer: (sender) => this.isKnownSender(sender),
+      seen: new SeenWraps({
+        storage: seenWrapsFile(this.path('seenWraps')),
+        now: () => this.nowSec(),
+        onError: (e) => this.log.warn('inbox.seen_wraps_failed', { error: errorText(e) }),
+      }),
     });
     await this.inbox.start();
     this.log.info('nostr.listening', { npub: this.identity.npub, relays: relays.length });
@@ -836,6 +926,110 @@ export class Guardian {
   /** "Send a test message" (`POST /api/notifications/test`). */
   testNotification(input: unknown): Promise<TestOutcome> {
     return this.notifier.test(input);
+  }
+
+  /** What the phone and the web UI are told about the chain source (no credential). */
+  chainSourceSummary(): ChainSourceSummary | undefined {
+    return this.chainSource ? summarize(this.chainSource) : undefined;
+  }
+
+  /**
+   * Settings > Server (`PUT /api/chain`): switches the chain source. Security-relevant (a public server sees the
+   * wallets' addresses and could hide coins), so every change is logged in Activity and announced to the paired phone
+   * (`chain_source_changed`), the owner's channels and the alert contacts' channels. While a recovery runs, switching
+   * to a public server is refused: the recovery's own checks (spends elsewhere, the sweep's confirmations) must not
+   * rest on a stranger's server. Switching to the owner's own node is always allowed.
+   */
+  changeChainSource(input: unknown): Promise<ChainSourceOutcome> {
+    return this.chainMutex.run(async (): Promise<ChainSourceOutcome> => {
+      if (!this.setupComplete) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
+      let next: ChainSource;
+      try {
+        next = parseChainSource(input, this.chainSource);
+      } catch (e) {
+        if (e instanceof ChainSourceError) return { ok: false, code: 'invalid', message: e.message };
+        throw e;
+      }
+      if (next.kind === 'public' && this.activeRecord())
+        return {
+          ok: false,
+          code: 'recovery_pending',
+          message: 'A recovery is running: the guardian switches to a public server only after it ends. You can switch to your own node now.',
+        };
+      const before = this.chainSource;
+      if (before && JSON.stringify(before) === JSON.stringify(next)) return { ok: true, changed: false };
+      await this.chainSourceStore.save(next, this.clock.now());
+      this.chainSource = next;
+      this.chainSourceOrigin = 'settings';
+      this.chain.setBackend(this.makeBackend(next, false));
+      const from = before ? summarize(before) : undefined;
+      const to = summarize(next);
+      await this.logEvent({ type: 'chain_source_changed', ...(from ? { from: `${from.kind}:${from.backend}:${from.host}:${from.port}` } : {}), to: `${to.kind}:${to.backend}:${to.host}:${to.port}` });
+      this.log.warn('chain.source_changed', { from: from ? `${from.backend}:${from.host}` : 'none', to: `${to.backend}:${to.host}`, public: to.kind === 'public' });
+      const text =
+        `Your guardian now reads the blockchain from ${describeSource(next)}${before ? ` (before: ${describeSource(before)})` : ''}.` +
+        (to.kind === 'public' ? ' A public server sees your wallet\'s addresses and could hide coins or delay confirmations; it cannot spend or change rules.' : '') +
+        ' If you did not change this in the guardian\'s web page, check the guardian.';
+      await this.notifyPhone({ type: 'chain_source_changed', kind: to.kind, backend: to.backend, host: to.host.slice(0, 255), ...this.stampNow(), message: text.slice(0, 500) });
+      this.announceChainSource(text);
+      return { ok: true, changed: true };
+    });
+  }
+
+  /** The owner's channels and the alert contacts' channels (email, ntfy, webhook), like a change of the alert channels. */
+  private announceChainSource(text: string): void {
+    if (!this.notifier.configured) return;
+    const at = this.clock.now();
+    const ev: NotifyEvent = {
+      id: `chain_source_changed-${at}`,
+      type: 'chain_source_changed',
+      at,
+      owner: text,
+      contacts: { text: () => `The guardian of a Trikey wallet you are an alert contact for changed where it reads the blockchain: ${text.replace(/^Your guardian now reads/, 'it now reads')}` },
+    };
+    void this.notifier
+      .enqueue(ev)
+      .then((queued) => queued && this.notifier.kick())
+      .catch((e: unknown) => this.log.error('notify.enqueue_failed', { type: ev.type, error: errorText(e) }));
+  }
+
+  /**
+   * "Test connection" (`POST /api/chain/test`): connects to a server the owner is about to choose and says what it found,
+   * without switching to it or keeping anything (Bitcoin Core: version and network only, no wallet).
+   */
+  async testChainSource(input: unknown, timeoutMs = 10_000): Promise<ChainTestOutcome> {
+    let source: ChainSource;
+    try {
+      source = parseChainSource(input, this.chainSource);
+    } catch (e) {
+      if (e instanceof ChainSourceError) return { ok: false, error: e.message };
+      throw e;
+    }
+    const backend = this.makeBackend(source, true);
+    backend.start();
+    const started = Date.now();
+    try {
+      // Connected, or a clear failure (given a second for a slow handshake), or the timeout.
+      for (;;) {
+        if (backend.connected) {
+          if (backend.kind === 'electrum') await backend.waitReady(Math.max(1, timeoutMs - (Date.now() - started)));
+          return { ok: true, ...(backend.serverVersion ? { server: backend.serverVersion } : {}), ...(backend.tip ? { height: backend.tip.height } : {}) };
+        }
+        const elapsed = Date.now() - started;
+        if ((backend.lastError && elapsed > 1000) || elapsed > timeoutMs) return { ok: false, error: backend.lastError ?? 'no answer in time' };
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    } catch (e) {
+      return { ok: false, error: backend.lastError ?? errorText(e) };
+    } finally {
+      backend.stop();
+    }
+  }
+
+  /** For Settings > Server: the rescans Bitcoin Core is running for the guardian's wallets. */
+  get chainRescans(): { since: number; birthday: number }[] {
+    const b = this.chain.backend;
+    return b instanceof CoreBackend ? b.rescans : [];
   }
 
   /**

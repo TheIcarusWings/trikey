@@ -3,6 +3,8 @@ import { ApiError, type GuardianApi } from './client';
 import { RESET_CONFIRMATION } from './types';
 import type {
   ActivityEntry,
+  ChainSettings,
+  ChainSourceView,
   FamilyInvite,
   GuardianStatus,
   HostedWallet,
@@ -25,6 +27,7 @@ import { emailError, guardianNameError, pinError, topicError, urlError, webhookS
  * Pick the starting point with `?mock=<scenario>` in the URL:
  *   (none)     unlocked, one phone paired, a week of activity
  *   firstrun   brand-new box: setup wizard first
+ *   dockerfirstrun  brand-new guardian on plain Docker: the setup code first (the mock's is MOCK_SETUP_CODE)
  *   locked     the box just restarted
  *   recovery   a Delay & Notify recovery is running
  *   recoveryready  the recovery's waiting period is over and the guardian has not completed it yet
@@ -36,6 +39,7 @@ import { emailError, guardianNameError, pinError, topicError, urlError, webhookS
  *   contactlocked  the owner lets the alert contacts lock the guardian, and one of them just did (LOCK over nostr)
  *   savings    the phone has a Savings wallet this guardian watches; some of it moved yesterday
  *   notify     email, ntfy and a webhook are set up (Settings > Notifications); the webhook is failing
+ *   publicserver  the guardian reads the chain from a public server (Settings > Server)
  *
  * State lives in memory only, so a page reload starts the scenario over. In the
  * mock, any unlock passphrase works except the literal `wrong`, which is
@@ -44,6 +48,7 @@ import { emailError, guardianNameError, pinError, topicError, urlError, webhookS
 export type MockScenario =
   | 'default'
   | 'firstrun'
+  | 'dockerfirstrun'
   | 'locked'
   | 'recovery'
   | 'recoveryready'
@@ -54,7 +59,15 @@ export type MockScenario =
   | 'limitoff'
   | 'contactlocked'
   | 'savings'
-  | 'notify';
+  | 'notify'
+  | 'publicserver';
+
+/** The public servers the mock offers (a signet guardian's list). */
+const PUBLIC_SERVERS_DEMO = [{ id: 'mempool-signet', host: 'mempool.space', port: 60602, operator: 'mempool.space' }];
+
+/** The `dockerfirstrun` scenario's setup code (a real guardian prints a fresh one in its log at every start). */
+export const MOCK_SETUP_CODE = '7K3M-Q9TX-2HWB-F4NR';
+const normalizeCode = (c: string) => c.toUpperCase().replace(/[\s\-_.]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
 
 /** A throwaway demo contact key (`1b` × 32), as the guardian names a contact: its npub. */
 const DEMO_CONTACT_NPUB = 'npub1rvd3kxcmrvd3kxcmrvd3kxcmrvd3kxcmrvd3kxcmrvd3kxcmrvdsca5nvq';
@@ -145,19 +158,20 @@ function demoRecovery(ready = false): RecoveryInProgress {
 
 export function readScenario(search: string): MockScenario {
   const value = new URLSearchParams(search).get('mock');
-  const known: MockScenario[] = ['firstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout', 'oldrelays', 'limitoff', 'contactlocked', 'savings', 'notify'];
+  const known: MockScenario[] = ['firstrun', 'dockerfirstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout', 'oldrelays', 'limitoff', 'contactlocked', 'savings', 'notify', 'publicserver'];
   return known.find((s) => s === value) ?? 'default';
 }
 
 export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
-  const setupDone = scenario !== 'firstrun';
+  const docker = scenario === 'dockerfirstrun';
+  const setupDone = scenario !== 'firstrun' && !docker;
   const contactLocked = scenario === 'contactlocked';
   let locked = scenario === 'locked' || scenario === 'signedout' || contactLocked;
   let lockedAt: string | undefined = locked ? localAt(0, '03:12') : undefined;
   let lockReason: 'restart' | 'manual' | 'remote' | 'contact' | undefined = locked ? (contactLocked ? 'contact' : 'restart') : undefined;
   let lockedBy: string | undefined = contactLocked ? DEMO_CONTACT_NPUB : undefined;
   let phones: PairedPhone[] =
-    scenario === 'unpaired' || scenario === 'firstrun'
+    scenario === 'unpaired' || scenario === 'firstrun' || docker
       ? []
       : [{ id: 'ph_1', name: 'Pixel 8', pairedAt: localAt(9, '16:44') }];
   let activity: ActivityEntry[] = setupDone ? demoActivity() : [];
@@ -216,7 +230,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
     ];
   let recovery: RecoveryInProgress | null =
     scenario === 'recovery' ? demoRecovery() : scenario === 'recoveryready' ? demoRecovery(true) : null;
-  let walletIds = scenario === 'unpaired' || scenario === 'firstrun' ? [] : ['3a7f09c2d41e8b65'];
+  let walletIds = scenario === 'unpaired' || scenario === 'firstrun' || docker ? [] : ['3a7f09c2d41e8b65'];
   let pairing: PairingSession | null = null;
   let relayUrls = RELAYS.map((r) => r.url);
   let retiring: RetiringRelay[] = [];
@@ -357,6 +371,21 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
     };
   };
 
+  let chainSource: ChainSourceView =
+    scenario === 'publicserver' ? { kind: 'public', host: 'mempool.space', port: 60602 } : { kind: 'electrum', host: '10.21.21.10', port: 50001, tls: false };
+  let chainOrigin: ChainSettings['origin'] = scenario === 'publicserver' ? 'settings' : 'environment';
+  const chainView = (): ChainSettings => ({
+    source: clone(chainSource),
+    summary: chainSource.kind === 'core'
+      ? { kind: 'own', backend: 'core', host: chainSource.rpc.host, port: chainSource.rpc.port }
+      : { kind: chainSource.kind === 'public' ? 'public' : 'own', backend: 'electrum', host: chainSource.host, port: chainSource.port },
+    origin: chainOrigin,
+    status: { connected: true, server: chainSource.kind === 'core' ? 'Bitcoin Core 32.1' : 'electrs/0.12.0', height: 271_042, rescans: [] },
+    publicServers: clone(PUBLIC_SERVERS_DEMO),
+    network: 'signet',
+    recoveryRunning: recovery !== null,
+  });
+
   const api: GuardianApi = {
     async getStatus() {
       await wait();
@@ -385,11 +414,17 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
 
     async getSetupPreflight() {
       await wait();
-      return { node: 'found', electrs: 'found', synced: true, relayOptions: clone(RELAYS) };
+      return { node: 'found', electrs: 'found', synced: true, relayOptions: clone(RELAYS), ...(docker ? { platform: 'docker' as const, setupCodeRequired: true } : {}) };
+    },
+
+    async checkSetupCode(code) {
+      await wait(200);
+      if (docker && normalizeCode(code) !== normalizeCode(MOCK_SETUP_CODE)) throw new ApiError('bad_setup_code', "That is not the setup code. Copy it from the guardian's log (it changes at every restart).", 401);
     },
 
     async completeSetup(input) {
       await wait(400);
+      if (docker && normalizeCode(input.setupCode ?? '') !== normalizeCode(MOCK_SETUP_CODE)) throw new ApiError('bad_setup_code', 'That is not the setup code.', 401);
       if (input.relays.length === 0) throw new ApiError('invalid', 'Choose at least one relay.', 400);
       relayUrls = input.relays;
       setupFinished = true;
@@ -585,6 +620,37 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       destinations = next;
       pushActivity({ kind: 'system', event: 'Alert channels changed on this box. Every channel, before and after the change, and the paired phone are told.', summary: 'Alert channels changed', signedBy: null, sats: null, result: 'ok' });
       return notificationSettings();
+    },
+
+    async getChain() {
+      await wait();
+      if (locked) throw new ApiError('locked', 'The guardian is locked. Unlock it first.', 409);
+      return chainView();
+    },
+
+    async setChain(input) {
+      await wait(400);
+      if (locked) throw new ApiError('locked', 'The guardian is locked. Unlock it first.', 409);
+      if (input.kind === 'public' && recovery !== null)
+        throw new ApiError('recovery_pending', 'A recovery is running: the guardian switches to a public server only after it ends. You can switch to your own node now.', 409);
+      if (input.kind === 'core') {
+        if (!input.rpc.pass && chainSource.kind !== 'core') throw new ApiError('invalid', 'RPC password: enter it.', 400);
+        chainSource = { kind: 'core', rpc: { host: input.rpc.host, port: input.rpc.port, user: input.rpc.user, passSet: true }, ...(input.wallet ? { wallet: input.wallet } : {}) };
+      } else if (input.kind === 'public') {
+        const p = PUBLIC_SERVERS_DEMO.find((x) => x.id === input.preset);
+        chainSource = { kind: 'public', host: p?.host ?? input.host ?? '', port: p?.port ?? input.port ?? 50002 };
+      } else {
+        chainSource = { kind: 'electrum', host: input.host, port: input.port ?? (input.tls ? 50002 : 50001), tls: input.tls, ...(input.certSha256 ? { certSha256: input.certSha256 } : {}) };
+      }
+      chainOrigin = 'settings';
+      pushActivity({ kind: 'system', event: `The guardian now reads the blockchain from ${chainSource.kind === 'public' ? 'a public server' : 'your own node'}.`, signedBy: null, sats: null, result: 'ok' });
+      return chainView();
+    },
+
+    async testChain(input) {
+      await wait(600);
+      if (input.kind === 'electrum' && input.host === 'nowhere.local') return { ok: false, error: 'connection refused: nothing listens on that port' };
+      return { ok: true, server: input.kind === 'core' ? 'Bitcoin Core 32.1' : 'electrs/0.12.0', height: 271_042 };
     },
 
     async testNotification(input) {

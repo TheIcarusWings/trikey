@@ -12,35 +12,87 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useApi, usePageTitle } from '@/hooks/use-api';
 import { passwordRules } from '@/lib/password-manager';
+import { SETUP_CODE_HELP, STAY_ON_NOTE, chainCheckCopy, setupCodeFormatError } from '@/lib/setup';
 import { cn } from '@/lib/utils';
 
 const MIN_PASSPHRASE = 12;
 
 function ChainCheck({ preflight }: { preflight: SetupPreflight }) {
-  const missing = preflight.node === 'missing' || preflight.electrs === 'missing';
-  const syncing = !missing && !preflight.synced;
-  if (!missing && !syncing) {
+  const copy = chainCheckCopy(preflight);
+  if (copy.ok) {
     return (
       <div className="flex items-center gap-2 text-sm leading-5 text-good">
         <Check className="size-4 shrink-0" strokeWidth={2.5} aria-hidden="true" />
-        Bitcoin Node and Electrs found
+        {copy.title}
       </div>
     );
   }
-  const title = missing ? `${preflight.node === 'missing' ? 'Bitcoin Node' : 'Electrs'} not found` : 'Bitcoin Node and Electrs found';
-  const body = missing
-    ? 'Install and start both apps on this box, then reload this page. The guardian only reads chain data from them.'
-    : `Still syncing${preflight.syncProgress !== undefined ? ` (${Math.round(preflight.syncProgress * 100)}%)` : ''}. You can set up now; payments wait until it finishes.`;
   return (
     <div className="flex items-start gap-3">
       <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-warn-soft text-warn">
         <TriangleAlert className="size-3.5" strokeWidth={2.5} aria-hidden="true" />
       </span>
       <div className="flex flex-col gap-0.5">
-        <span className="text-sm leading-5 font-medium">{title}</span>
-        <span className="text-[13px] leading-[18px] text-muted-foreground">{body}</span>
+        <span className="text-sm leading-5 font-medium">{copy.title}</span>
+        <span className="text-[13px] leading-[18px] text-muted-foreground">{copy.body}</span>
       </div>
     </div>
+  );
+}
+
+/** Plain Docker: no platform login guards this page, so the owner first proves they can read the guardian's log. */
+function SetupCodeStep({ onDone, initialError }: { onDone: (code: string) => void; initialError?: string }) {
+  const [code, setCode] = useState('');
+  const [error, setError] = useState<string | undefined>(initialError);
+  const [busy, setBusy] = useState(false);
+
+  const onSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    const bad = setupCodeFormatError(code);
+    if (bad) return setError(bad);
+    setBusy(true);
+    try {
+      await api.checkSetupCode(code.trim());
+      onDone(code.trim());
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not check the setup code.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <AuthCard>
+      <AuthHeader title="Set up your guardian" />
+      <form onSubmit={onSubmit} noValidate className="flex flex-col gap-5">
+        <p className="m-0 text-sm leading-5 text-muted-foreground">{SETUP_CODE_HELP}</p>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="g-code">Setup code</Label>
+          <Input
+            id="g-code"
+            name="setup-code"
+            autoComplete="off"
+            autoCapitalize="characters"
+            spellCheck={false}
+            placeholder="XXXX-XXXX-XXXX-XXXX"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? 'g-code-error' : undefined}
+            disabled={busy}
+            className="h-11 font-mono"
+          />
+          {error && (
+            <p id="g-code-error" role="alert" className="m-0 text-[13px] leading-[18px] text-bad">
+              {error}
+            </p>
+          )}
+        </div>
+        <Button type="submit" size="lg" disabled={busy} className="h-12 w-full">
+          {busy ? 'Checking…' : 'Continue'}
+        </Button>
+      </form>
+    </AuthCard>
   );
 }
 
@@ -56,6 +108,9 @@ export function FirstRunPage() {
   const [errors, setErrors] = useState<{ passphrase?: string; confirm?: string; relays?: string; form?: string }>({});
   const [busy, setBusy] = useState(false);
   const [relaysOpen, setRelaysOpen] = useState(false);
+  // Plain Docker: the setup code, once the guardian has accepted it (sent again with the setup itself).
+  const [setupCode, setSetupCode] = useState<string | undefined>();
+  const [codeError, setCodeError] = useState<string | undefined>();
 
   useEffect(() => {
     if (preflight) setRelays(Object.fromEntries(preflight.relayOptions.map((r) => [r.url, r.defaultSelected])));
@@ -63,6 +118,17 @@ export function FirstRunPage() {
 
   if (loading) return <PageSkeleton rows={2} />;
   if (!preflight) return <ErrorState error={loadError!} onRetry={reload} title="Couldn't check this box" />;
+
+  if (preflight.setupCodeRequired && setupCode === undefined)
+    return (
+      <SetupCodeStep
+        initialError={codeError}
+        onDone={(c) => {
+          setCodeError(undefined);
+          setSetupCode(c);
+        }}
+      />
+    );
 
   const chainReady = preflight.node === 'found' && preflight.electrs === 'found';
 
@@ -79,10 +145,16 @@ export function FirstRunPage() {
 
     setBusy(true);
     try {
-      const status = await api.completeSetup({ passphrase, relays: chosen });
+      const status = await api.completeSetup({ passphrase, relays: chosen, ...(setupCode !== undefined ? { setupCode } : {}) });
       setStatus(status, '/phones');
       navigate('/phones');
     } catch (err) {
+      if (err instanceof ApiError && (err.code === 'bad_setup_code' || err.code === 'setup_code_required')) {
+        // The guardian restarted since (a new code): ask for the code again.
+        setCodeError('The guardian has a new setup code (it restarted). Copy the new one from its log.');
+        setSetupCode(undefined);
+        return;
+      }
       setErrors({ form: err instanceof ApiError ? err.message : 'Could not create the guardian.' });
     } finally {
       // Never keep the passphrase around once it has been sent.
@@ -101,6 +173,7 @@ export function FirstRunPage() {
           Choose the passphrase that unlocks the guardian after a restart. Keep it somewhere safe; there is no way to reset it. This box
           will hold key 3 of your Trikey wallet.
         </p>
+        {preflight.platform === 'docker' && <p className="m-0 text-sm leading-5 text-muted-foreground">{STAY_ON_NOTE}</p>}
 
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="g-pass">Passphrase</Label>

@@ -36,7 +36,8 @@ when the guardian restarts. Without one, everything else answers `401 unauthenti
   ```
 
   Codes: `unauthenticated` (401, no session: sign in), `bad_passphrase` (401), `rate_limited` (429, with `retryAfterSeconds` and a
-  `Retry-After` header), `locked` (409), `setup_required` (409), `already_setup` (409),
+  `Retry-After` header), `locked` (409), `setup_required` (409), `already_setup` (409), `setup_code_required` (403) and
+  `bad_setup_code` (401) (plain Docker's first run, below),
   `already_paired` (409), `recovery_pending` (409), `sweep_pending` (409), `not_found` (404), `invalid` (400, 413 or 415), `forbidden`
   (403, a cross-origin request), `not_available` (501), `internal` (500). The UI
   reacts to the first few and shows any other code as a generic failure using `message`.
@@ -68,7 +69,7 @@ when the guardian restarts. Without one, everything else answers `401 unauthenti
 
 | Guardian state | Allowed |
 |---|---|
-| Setup not complete | `GET /status`, `GET /setup/preflight`, `POST /setup` (no session needed; setup signs the browser in) |
+| Setup not complete | `GET /status`, `GET /setup/preflight`, `POST /setup/code`, `POST /setup` (no session needed; setup signs the browser in; on plain Docker setup needs the setup code) |
 | No session (after setup) | `GET /status` (as `PublicStatus`), `POST /session`, `DELETE /session` |
 | Locked, signed in | `GET /status`, `POST /unlock`, `POST /reset`, the session endpoints |
 | Unlocked, signed in | everything |
@@ -89,8 +90,9 @@ the sign-in screen. The guardian is locked after every start of its process.
 | `GET /api/status` | none | `GuardianStatus` or `PublicStatus` | Always available. Without a session (after setup) only `PublicStatus`: `authenticated: false`, `setupComplete`, `state`, `network`, `version`. With one (`authenticated: true`): `setupComplete`, `state` (`locked` or `unlocked`), `lockedAt` and `lockReason` (`restart`, `manual` from this UI, `remote` from the paired phone's `guardian.lock`, or `contact`: an alert contact sent `LOCK` over nostr, allowed only while the rules' `contactLock` is on) while locked, `lockedBy` (with `contact`: that contact's npub), `relays[]` (with live connection state), `chain` (`synced` once Electrs answers, `syncing` with `progress` when Bitcoin Core RPC reports initial block download, else `unavailable`; `height`), `wallets[]` (zero or one: the engine guards one active wallet), `retiredWallets[]` (wallets it guarded before, read-only history: `reason` `recovered` with the `successorId` it guards now, or `retired`), `hardwareConfirmRequired` (after the guardian took over a recovered wallet, until the phone confirms the hardware wallet), `dailySpend` (`usedSats`, `limitSats`, and `limitOff: true` while there is no daily limit), `savings?` (the phone's optional Savings wallet, which this guardian only watches and cannot sign for: `id`, `watchedSince`, `balanceSats`/`unconfirmedSats`/`scannedAt` from its last scan, and `lastMoved: { at, sats, txid }`, the newest time coins left it; absent without Savings), `recoveryInProgress`, and `phoneSpending`, `network`, `npub`, `version`, `warnings?` (`no_alert_contacts`: a recovery would be announced only to the paired phone; mainnet guardians refuse that, test networks warn). |
 | `POST /api/session` | `{ passphrase, unlock? }` | `GuardianStatus` | Signs the browser in (sets the session cookie). With `unlock: true` a locked guardian is unlocked by the same passphrase (that attempt counts against the unlock's rate limit). `401 bad_passphrase`, `429 rate_limited`: sign-in has its own rate limit (exponential backoff after 3 failures, persisted), which neither the unlock, the reset nor the phone's `guardian.unlock` shares. |
 | `DELETE /api/session` | `{}` | `PublicStatus` | Signs the browser out (clears the cookie). |
-| `GET /api/setup/preflight` | none | `SetupPreflight` | First run only. `electrs` is `found` when Electrs answers; `node` is `found` when Bitcoin Core RPC answers (or, without RPC settings, when Electrs does). The relay choices to offer. |
-| `POST /api/setup` | `{ passphrase, relays: string[], entropy? }` | `GuardianStatus` | First run only. Creates key 3 (a fresh BIP39 seed; the BIP48 account key), encrypts it under an Argon2id key from the passphrase, connects the chosen relays. The guardian ends up unlocked. `entropy`: 32 bytes from the browser's `crypto.getRandomValues` as 64 lowercase hex characters, mixed into the new seed with the guardian's own (DESIGN.md, "Entropy", `trikey/guardian-seed/v1`); never logged or stored. The UI always sends it; it is optional for other clients. `400 invalid` if `relays` is empty, has more than 8 entries or a URL that is not `wss://` (or `ws://` on a local host), the passphrase has fewer than 12 characters, or `entropy` is present but not exactly 64 lowercase hex characters. There is no backup of key 3, by design. |
+| `GET /api/setup/preflight` | none | `SetupPreflight` | First run only. `electrs` is `found` when Electrs answers; `node` is `found` when Bitcoin Core RPC answers (or, without RPC settings, when Electrs does). The relay choices to offer. Since 0.1.9: `electrsProblem` (while `electrs` is `missing`: why, in plain words), `platform` (`umbrel`, `start9` or `docker`) and `setupCodeRequired`. |
+| `POST /api/setup/code` | `{ code }` | `{ ok: true }` | First run only. Checks the setup code (below) before the owner types a passphrase; sets nothing up. `403 setup_code_required` without a code, `401 bad_setup_code`, `429 rate_limited` after 10 wrong codes in a minute. Without `setupCodeRequired` any code passes. |
+| `POST /api/setup` | `{ passphrase, relays: string[], entropy?, setupCode? }` | `GuardianStatus` | First run only. With `setupCodeRequired`, `setupCode` must be the setup code (checked first, same answers as `POST /setup/code`). Creates key 3 (a fresh BIP39 seed; the BIP48 account key), encrypts it under an Argon2id key from the passphrase, connects the chosen relays. The guardian ends up unlocked. `entropy`: 32 bytes from the browser's `crypto.getRandomValues` as 64 lowercase hex characters, mixed into the new seed with the guardian's own (DESIGN.md, "Entropy", `trikey/guardian-seed/v1`); never logged or stored. The UI always sends it; it is optional for other clients. `400 invalid` if `relays` is empty, has more than 8 entries or a URL that is not `wss://` (or `ws://` on a local host), the passphrase has fewer than 12 characters, or `entropy` is present but not exactly 64 lowercase hex characters. There is no backup of key 3, by design. |
 | `POST /api/unlock` | `{ passphrase }` | `GuardianStatus` | `401 bad_passphrase` on a wrong passphrase (with `retryAfterSeconds` once the next try has to wait). Rate limited with exponential backoff after 3 failures (`429 rate_limited`); the count survives restarts. The phone's `guardian.unlock`, the reset and the sign-in each have their own count, so a stolen phone guessing away never delays this UI (security review 2026-10, finding 4). Unlocking takes a few seconds on a Raspberry Pi (Argon2id). |
 | `POST /api/lock` | `{}` | `GuardianStatus` | Drops key 3 from memory and invalidates a pairing code in progress. The phone gets a `guardian_locked` alert. |
 | `POST /api/reset` | `{ passphrase, confirm, entropy? }` | `GuardianStatus` | "Reset guardian", see below. Works locked or unlocked and ends unlocked. `entropy` as for setup (the new key 3's seed); `400 invalid` if present and malformed. |
@@ -108,6 +110,14 @@ signature would be lost with key 3). The paired phone gets a `wallet_retired` al
 anyone holding this UI, the passphrase and a stolen hardware wallet could pair the user's own
 wallet again with a phone of their choosing and no alert contacts, and run a recovery only they
 hear about. A wallet that used the old key 3 stays spendable with its phone and hardware wallet.
+
+**The setup code (plain Docker).** On Umbrel and Start9 the platform's login guards the first-run screen
+(`TRIKEY_PLATFORM=umbrel` or `start9`). On plain Docker (`packaging/compose/`, `TRIKEY_PLATFORM=docker`, the
+default) nothing does, so whoever reached the port first could set the guardian up. There the guardian makes a
+one-time code at every start, 16 Crockford base32 characters from the OS generator (`XXXX-XXXX-XXXX-XXXX`), kept in
+memory only, and prints it in its log (`setup.code code=...`), which only the box's owner can read. The UI asks for it
+first (`POST /api/setup/code`) and sends it again with `POST /api/setup`. Case, spaces and dashes do not matter, and
+`O`, `I` and `L` read as `0`, `1` and `1`. After setup the code opens nothing.
 
 **Passphrase handling.** The UI sends the passphrase in exactly one request body.
 It is held in component state only while the form is open, cleared as soon as the
@@ -175,6 +185,14 @@ failing", "Alert channel works again", "Alert not delivered"). Rate limits: 20 m
 hour through the email account (more wait, they are not dropped). Messages go out **while the guardian is locked**: the
 secrets are sealed under a key file on the box, not the unlock passphrase.
 
+### Server (where the guardian reads the blockchain)
+
+| Method and path | Request | Response | Notes |
+|---|---|---|---|
+| `GET /api/chain` | none | `ChainSettings` | Unlocked. `source` (the RPC password never: `passSet`), `summary` (`own` or `public`), `origin` (`environment`: Umbrel, Start9 or `.env`; `settings`: chosen here), `status` (`connected`, `server`, `height`, `error`, Bitcoin Core's `rescans`), the `publicServers` listed for the network, `recoveryRunning`. |
+| `PUT /api/chain` | `ChainSourceInput` | `ChainSettings` | Unlocked. Switches at once. `electrum` `{ host, port?, tls, certSha256? }`; `core` `{ rpc: { host, port, user, pass? }, wallet? }` (leave `pass` out to keep the stored one); `public` `{ preset }` or `{ host, port?, certSha256? }` (always TLS). `400 invalid` (plain TCP or RPC to an internet address, a pin without TLS, a "public" server on the owner's network, ...); `409 recovery_pending` for a public server while a recovery runs. Logged in Activity and announced to the paired phone (`chain_source_changed`) and on every alert channel. |
+| `POST /api/chain/test` | `ChainSourceInput` | `ChainTestResult` | Unlocked. "Test connection": connects (Electrum: and checks the server's network by its first block; Bitcoin Core: version 24+ and network, no wallet made) without switching. `{ ok, server?, height?, error? }`. |
+
 ### Recovery code
 
 | Method and path | Response | Notes |
@@ -228,6 +246,7 @@ The mock keeps state in memory (a reload starts over). Pick the starting state w
 |---|---|
 | `/` | Unlocked, one phone paired, a week of activity |
 | `/?mock=firstrun` | Brand-new box, setup wizard first |
+| `/?mock=dockerfirstrun` | Brand-new guardian on plain Docker: the setup code first (the mock's is `7K3M-Q9TX-2HWB-F4NR`) |
 | `/?mock=locked` | The box just restarted |
 | `/?mock=recovery` | A Delay & Notify recovery is running |
 | `/?mock=recoveryready` | The recovery's waiting period is over, but the guardian cannot complete it yet (`waitingFor`) |
@@ -235,6 +254,7 @@ The mock keeps state in memory (a reload starts over). Pick the starting state w
 | `/?mock=syncing` | Unlocked, node still syncing, one relay down |
 | `/?mock=signedout` | Set up and locked, this browser not signed in: the sign-in screen |
 | `/?mock=oldrelays` | Two old relays still watched after a change months ago; the phone switched |
+| `/?mock=publicserver` | The guardian reads the chain from a public server (Settings > Server) |
 | `/?mock=notify` | Email, ntfy and a webhook set up in Settings > Notifications; the webhook is failing |
 
 In the mock any unlock passphrase works except the literal `wrong` (also for the reset). In dev, run

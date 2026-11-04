@@ -195,6 +195,14 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
         icon: Shield,
         iconTone: 'warn',
       };
+    case 'guardian-server-changed':
+      return {
+        title: event.public ? `Guardian now uses a public server (${event.host})` : 'Guardian now uses your own node',
+        subtitle: `${when} · changed in your guardian's web page. If that wasn't you, check the guardian`,
+        subtitleTone: 'warn',
+        icon: Shield,
+        iconTone: 'warn',
+      };
     case 'alert-channels-changed':
       return {
         title: 'Email and push alerts changed',

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { Lock, Server } from '@/components/icons';
+import { Lock, Server, TriangleAlert } from '@/components/icons';
 import { Footnote, InfoRow, ListGroup, Notice, Panel, SectionLabel, SettingsRow } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { UnlockForm } from '@/components/unlock-form';
@@ -11,6 +11,7 @@ import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { formatSats, serverHost, shorten, useNow, useWallet, useWalletService } from '@/data';
 import { guardianBox, hostLabel } from '@/lib/labels';
+import { PUBLIC_SERVER_WARNING, chainDataLabel } from '@/data/chain-source';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
@@ -156,7 +157,7 @@ export default function GuardianSettings() {
             {hosted.endsAt ? <InfoRow label="Hosting ends" value={new Date(hosted.endsAt).toLocaleDateString()} tone="warn" /> : null}
           </>
         ) : (
-          <InfoRow label="Chain data" value="Your node" />
+          <InfoRow label="Chain data" value={chainDataLabel(guardian.chainSource)} tone={guardian.chainData === 'public' ? 'warn' : 'default'} />
         )}
         <InfoRow label="Guardian ID" value={shorten(guardian.npub, 8, 4)} mono />
       </Panel>
@@ -165,6 +166,11 @@ export default function GuardianSettings() {
         <Text className="text-warn text-sm leading-5">
           Your host stopped hosting this wallet. Move it before {new Date(hosted.endsAt).toLocaleDateString()} with Replace guardian: your phone and hardware wallet can always move it.
         </Text>
+      ) : null}
+      {!hosted && guardian.chainData === 'public' ? (
+        <Notice icon={TriangleAlert} iconClass="text-warn" tone="warn-outline" title="Public server">
+          {PUBLIC_SERVER_WARNING}
+        </Notice>
       ) : null}
       <LockGuardian />
       <View className="gap-1.5">

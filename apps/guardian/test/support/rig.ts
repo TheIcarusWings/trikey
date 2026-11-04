@@ -18,7 +18,7 @@ import { encodePairingUri } from '@trikey/protocol';
 import { DevRelay } from '@trikey/protocol/dev/relay';
 import type { NetworkName } from '@trikey/core';
 import type { GuardianConfig } from '../../src/config.js';
-import { Guardian } from '../../src/guardian.js';
+import { Guardian, type GuardianOptions } from '../../src/guardian.js';
 import type { RateLimitOptions } from '../../src/rate-limit.js';
 import { createLogger } from '../../src/log.js';
 import { ManualClock } from '../../src/policy/index.js';
@@ -62,6 +62,10 @@ export interface GuardianRigOptions {
    * SMTP server with a self-signed certificate. Test seams only; a real guardian refuses both. Default false.
    */
   notifyTestServers?: boolean;
+  /** The guardian's TRIKEY_PLATFORM, as loadConfig sets it. Default unset (no setup code), as for embedders. */
+  platform?: GuardianConfig['platform'];
+  /** Builds the backend for a chain source the web UI chooses (Settings > Server): fakes instead of public servers. */
+  chainBackend?: GuardianOptions['chainBackend'];
 }
 
 export interface FundedOutput {
@@ -100,6 +104,10 @@ export class GuardianRig {
     }
     const blocks = opts.blocks ?? 30;
     rig.electrs = new FakeElectrum({ blocks, startTime: rig.nowSec() - blocks * 600, spacing: 600 });
+    // Mainnet's real block 0, for the guardian's network check of its Electrum server (#105).
+    if ((opts.network ?? 'regtest') === 'bitcoin')
+      rig.electrs.genesisHeader =
+        '0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c';
     rig.electrs.applyBroadcasts = opts.applyBroadcasts ?? true;
     await rig.electrs.start();
     if (opts.bitcoind) {
@@ -147,6 +155,7 @@ export class GuardianRig {
       relayOptions: this.relayUrls.map((url) => ({ url, defaultSelected: true })),
       ...(this.opts.spScanThreads ? { spScanThreads: this.opts.spScanThreads } : {}),
       ...(this.opts.extraEntropy ? { extraEntropy: this.opts.extraEntropy } : {}),
+      ...(this.opts.platform ? { platform: this.opts.platform } : {}),
     };
     this.guardian = await Guardian.open({
       config,
@@ -157,6 +166,7 @@ export class GuardianRig {
       electrum: { minBackoffMs: 20, maxBackoffMs: 100 },
       discoverDmRelays: false,
       broadcastLimit: this.opts.broadcastLimit,
+      ...(this.opts.chainBackend ? { chainBackend: this.opts.chainBackend } : {}),
       ...(this.opts.notifyTestServers ? { notify: { net: { allowLoopback: true }, smtpTest: { tls: { rejectUnauthorized: false } } } } : {}),
     });
     await this.guardian.start(this.opts.http ? { port: 0, host: '127.0.0.1' } : false);

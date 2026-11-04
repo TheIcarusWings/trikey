@@ -1,0 +1,65 @@
+name: Compose
+
+# packaging/compose: the guardian on plain Docker. Builds the image for this machine, starts the regtest bitcoind and
+# Electrs of e2e/docker-compose.yml, and runs packaging/compose/smoke-test.sh: the compose file (and its node profile)
+# is valid, the guardian from it comes up healthy with the web UI on 127.0.0.1 only, reaches Electrs, and keeps
+# first-run setup closed without the setup code from its log.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - 'packaging/**'
+      - 'apps/guardian/**'
+      - 'apps/guardian-web/**'
+      - 'packages/**'
+      - 'e2e/docker-compose.yml'
+      - 'package-lock.json'
+      - '.github/workflows/compose.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compose-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: guardian from docker-compose.yml against regtest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+
+      - uses: docker/setup-buildx-action@v4.4.1
+
+      - name: Build the image (linux/amd64, loaded locally)
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          file: packaging/docker/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: trikey-guardian:smoke
+          cache-from: type=gha
+          # The release image is built in docker.yml; this one only has to start.
+
+      - name: Start bitcoind and Electrs (regtest)
+        run: npm run stack:up -w @trikey/e2e
+
+      - name: Smoke test
+        env:
+          TRIKEY_IMAGE: trikey-guardian:smoke
+        run: bash packaging/compose/smoke-test.sh
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f e2e/docker-compose.yml -p trikey-e2e down --volumes --remove-orphans

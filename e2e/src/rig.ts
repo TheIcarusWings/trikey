@@ -78,6 +78,12 @@ export interface RigOptions {
   passphrase?: string;
   /** How many in-memory nostr relays (default 2). */
   relayCount?: number;
+  /**
+   * Real stack only: `core` makes Bitcoin Core alone the guardian's chain source (a watch-only wallet in the node, no
+   * Electrs; chain/core-backend.ts), with the wallet `coreWallet` (default: a fresh name per rig).
+   */
+  chainSource?: 'electrum' | 'core';
+  coreWallet?: string;
 }
 
 const FORBIDDEN = /pass|secret|seed|mnemonic|priv|key|psbt|token|auth|cookie/i;
@@ -158,6 +164,11 @@ export class RegtestRig implements E2eRig {
       electrum: { host: electrs.host, port: electrs.port },
       // The silent payment scanner needs the node (`getblock <hash> 3`); the guardian broadcasts through Electrs and falls back to it.
       bitcoinRpc: { host: bitcoind.host, port: bitcoind.port, user: bitcoind.user, pass: bitcoind.pass },
+      ...(this.core
+        ? {
+            chainSource: { kind: 'core' as const, rpc: { host: bitcoind.host, port: bitcoind.port, user: bitcoind.user, pass: bitcoind.pass }, wallet: this.coreWallet },
+          }
+        : {}),
       kdf: { t: 1, m: 64, p: 1 }, // cheap Argon2 for tests only
       relayOptions: this.relayUrls.map((url) => ({ url, defaultSelected: true })),
     };
@@ -171,8 +182,18 @@ export class RegtestRig implements E2eRig {
       discoverDmRelays: false,
     });
     await this.guardian.start(false);
-    await this.guardian.chain.electrum!.waitReady(15_000);
+    await this.guardian.chain.backend!.waitReady(15_000);
   }
+
+  private get core(): boolean {
+    return this.opts.chainSource === 'core';
+  }
+
+  /** The Bitcoin Core wallet the guardian keeps (with `chainSource: 'core'`): fresh per rig unless the test names one. */
+  get coreWallet(): string {
+    return (this.coreWalletName ??= this.opts.coreWallet ?? `trikey-e2e-${process.pid}-${Date.now()}`);
+  }
+  private coreWalletName?: string;
 
   pairingUri(): string {
     const s = this.guardian.pairing.create(this.clock.now());
@@ -198,6 +219,8 @@ export class RegtestRig implements E2eRig {
 
   async fund(script: Uint8Array, sats: bigint): Promise<FundedCoin> {
     const coin = await this.chain.sendToScript(script, sats);
+    // Bitcoin Core as the chain source has it in its mempool already.
+    if (this.core) return coin;
     // Electrs polls bitcoind's mempool; wait until it shows the payment, so a sync right after sees it.
     const e = this.guardian.chain.electrum!;
     await waitFor(
@@ -214,9 +237,9 @@ export class RegtestRig implements E2eRig {
   async mine(count = 1): Promise<void> {
     const want = (await this.chain.height()) + count;
     await this.chain.mine(count);
-    await this.chain.waitForElectrs(want);
-    const e = this.guardian.chain.electrum!;
-    await waitFor(() => (e.tip?.height ?? 0) >= want, `the guardian to see block ${want} from Electrs`, { timeoutMs: 30_000, intervalMs: 50 });
+    if (!this.core) await this.chain.waitForElectrs(want);
+    const e = this.guardian.chain.backend!;
+    await waitFor(() => (e.tip?.height ?? 0) >= want, `the guardian to see block ${want} from its chain source`, { timeoutMs: 30_000, intervalMs: 50 });
   }
 
   async syncChainClock(): Promise<void> {

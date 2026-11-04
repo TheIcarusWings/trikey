@@ -231,4 +231,46 @@ describe('the guardian mode on mainnet', { timeout: 60_000 }, () => {
     expect(n.wallet!.state.wallet!.walletId).toBe(walletId);
     expect(n.getState().receiveAddress).toMatch(/^bc1q/);
   });
+
+  it('never picks a fee rate under 1 sat/vB on mainnet, whatever the node estimates', async () => {
+    const rig = await mainnetGuardian();
+    // Seen on mainnet: Bitcoin Core 29 (minimum relay fee 0.1 sat/vB) estimated 0.11 sat/vB while mempool.space said
+    // 1 to 2, and a payment went out at 0.11. BTC/kvB here: 0.0000011 is 0.11 sat/vB.
+    rig.electrs.feeRates = new Map([
+      [1, 0.0000011],
+      [3, 0.0000011],
+      [6, 0.0000011],
+      [144, 0.000001],
+    ]);
+    rig.electrs.relayFee = 0.000001;
+    const device = new MainnetTestDevice(MNEMONICS.c);
+    const p = await phone({ rig, device });
+    p.setNetwork('bitcoin');
+    p.acceptMainnetRisk(true);
+    p.setOnboardingContacts([{ name: 'My laptop', npub: npubOf(22) }]);
+    await p.connectHardware('ledger');
+    await p.pairGuardian(rig.pairingUri());
+    await p.setUpRules(100_000, 7);
+    rig.fund(p.wallet!.multisig().derive(0, 0).script, 300_000n);
+    await p.sync();
+    const to = MultisigWallet.fromDescriptor(p.getWalletDetails()!.descriptor, NETWORKS.bitcoin).derive(0, 5).address;
+    for (const speed of ['slow', 'normal', 'fast'] as const) {
+      const q = p.quoteSend({ address: to, amountSats: 20_000, speed });
+      if (!q.ok) throw new Error(q.message);
+      expect(q.quote.feeRateSatPerVb).toBe(1);
+    }
+    // Only a rate the caller sets goes lower, with a warning.
+    const low = p.wallet!.quoteSend({ address: to, amountSats: 20_000, feeRate: 0.5 });
+    expect(low).toMatchObject({ feeRate: 0.5, feeRateSource: 'caller', lowFeeRate: true });
+    expect(p.wallet!.quoteSend({ address: to, amountSats: 20_000, feeRate: 2 }).lowFeeRate).toBeUndefined();
+    // Higher estimates are taken as they are.
+    rig.electrs.feeRates = new Map([
+      [1, 0.00003],
+      [3, 0.00002],
+      [6, 0.0000125],
+    ]);
+    await p.sync();
+    const q = p.quoteSend({ address: to, amountSats: 20_000, speed: 'normal' });
+    expect(q.ok && q.quote.feeRateSatPerVb).toBe(2);
+  });
 });
