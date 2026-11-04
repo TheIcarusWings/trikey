@@ -10,7 +10,7 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 
 ## 0.1.11-alpha (2026-11-04)
 
-A fix release for three things seen on an iPhone with 0.1.10. Update the app and the guardian; each fix works with the
+A fix release for what was seen on an iPhone with 0.1.10, and the guardian on plain Docker. Update the app and the guardian; each fix works with the
 other side's older version.
 
 - **No more "Guardian offline" after the phone slept.** With the screen off for a while, the app came back saying
@@ -39,6 +39,8 @@ other side's older version.
   payment may never confirm, and a Spending payment cannot be sped up yet. Every speed the app offers, and every fee
   the wallet picks by itself (sweeps, moves, Savings), is now at least 1 sat/vB on mainnet. Test networks keep the
   node's estimate.
+- **The guardian on plain Docker.** Besides Umbrel and Start9, the guardian can run with Docker Compose on a Mac, a
+  Windows PC, Linux or a NAS, with your own Electrum server: [packaging/compose](packaging/compose/README.md).
 - Test plan: what to do when Play Protect says "Unsafe app blocked" when installing or updating the APK.
 
 ## 0.1.10-alpha (2026-11-03)
