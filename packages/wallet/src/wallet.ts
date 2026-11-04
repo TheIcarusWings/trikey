@@ -395,6 +395,13 @@ export interface PairOutcome {
   key3Note?: string;
 }
 
+/** `TrikeyWallet.syncCore()`: the balance and history are up to date; `rest` finishes the sync. */
+export interface WalletSyncCore {
+  snapshot: WalletSnapshot;
+  /** The rest of the sync (previous transactions, the recovery, silent payments, Savings); the snapshot after it. */
+  rest(): Promise<WalletSnapshot>;
+}
+
 /** A recovering phone's access to the guardian (`recovery.access`): when it ends (unix seconds), and whether it has by the wallet's clock. */
 export interface RecoveryAccessView {
   expiresAt: number;
@@ -1840,13 +1847,26 @@ export class TrikeyWallet {
    * reads every address from its Electrum server; `syncTimeoutMs`). A guardian that answered its status but not the
    * chain data in time is not unreachable: that throws `guardian_slow`, the status is stored, and the last chain
    * data stays.
+   *
+   * The same as `syncCore()` followed by its `rest()`.
    */
   async sync(): Promise<WalletSnapshot> {
+    return (await this.syncCore()).rest();
+  }
+
+  /**
+   * The part of `sync()` the balance and the activity need: the guardian's status, fee estimates and the wallet's
+   * chain data (`wallet.sync`), stored. It resolves as soon as they are, with the snapshot and `rest`: the rest of the
+   * sync (previous transactions kept for signing, the recovery followed, silent payments, Savings), which an app can
+   * let run in the background. `rest` never needs to be called for the snapshot to be right; call it at most once.
+   * Its parts are best effort, as in `sync()`.
+   */
+  async syncCore(): Promise<WalletSyncCore> {
     if (this.s.stage === 'new') throw new WalletError('wrong_state', 'The wallet is not paired yet.');
     // Recovered on another phone: the guardian answers nothing for this wallet. Keep the history the phone has readable.
     if (this.recoveredElsewhere) {
       const kept = this.snapshot();
-      if (kept) return kept;
+      if (kept) return { snapshot: kept, rest: async () => this.snapshot() ?? kept };
     }
     this.requireRecoveryAccess(); // before anything is sent: the guardian would drop it
     await this.client();
@@ -1873,12 +1893,16 @@ export class TrikeyWallet {
       const walletId = s.wallet?.walletId;
       s.liveTxs = s.liveTxs.filter((t) => (t.wallet === 'main' ? t.walletId === walletId && t.seq > liveSeq : t.walletId === s.savings?.walletId));
     });
-    await this.prefetchPrevTxs(snap.utxos).catch(() => undefined);
-    await this.trackRecovery(status.activeRecoveryId).catch(() => undefined);
-    await this.syncSilentPayments();
-    // Savings (only a wallet that has it): best effort, it never holds up Spending's sync.
-    if (this.s.savings) await this.syncSavings().catch(() => undefined);
-    return this.snapshot()!;
+    const utxos = snap.utxos;
+    const rest = async (): Promise<WalletSnapshot> => {
+      await this.prefetchPrevTxs(utxos).catch(() => undefined);
+      await this.trackRecovery(status.activeRecoveryId).catch(() => undefined);
+      await this.syncSilentPayments();
+      // Savings (only a wallet that has it): best effort, it never holds up Spending's sync.
+      if (this.s.savings) await this.syncSavings().catch(() => undefined);
+      return this.snapshot()!;
+    };
+    return { snapshot: this.snapshot()!, rest };
   }
 
   /**

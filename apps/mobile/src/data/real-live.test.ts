@@ -75,6 +75,7 @@ beforeAll(async () => {
     syncTimeoutMs: 6000,
     rpcRetryIntervalMs: 0,
     syncIntervalMs: 0,
+    syncJoinMs: 0, // every sync() asks the guardian again
     yieldToUi: async () => {},
     recoveryCodeKdf: { m: 64, t: 1, p: 1 },
   });
@@ -84,6 +85,7 @@ beforeAll(async () => {
   rig.fund(svc.wallet!.multisig().derive(0, 0).script, 300_000n);
   await waitFor(() => rig.guardian.live!.store.state.wallets[svc.wallet!.state.wallet!.walletId], 'the guardian to read the wallet');
   await svc.sync();
+  await svc.idle(); // and the sync's background part
 }, 60_000);
 
 afterAll(async () => {
@@ -121,6 +123,7 @@ describe('a payment from another device', { timeout: 60_000 }, () => {
       expect(svc.getState().balanceSats).toBe(before + 2_000);
       // The sync the alert set off lists it: still one row.
       await svc.sync();
+      await svc.idle(); // and the sync's background part
       expect(svc.getState().activity.filter((i) => i.type === 'payment' && i.tx.txid === txid)).toHaveLength(1);
     } finally {
       h['wallet.sync'] = realSync;
@@ -149,6 +152,7 @@ describe('a payment from another device', { timeout: 60_000 }, () => {
 
   it("this phone's own payment is one row: Sending, and the guardian's alert about it", async () => {
     await svc.sync();
+    await svc.idle(); // and the sync's background part
     rig.clock.advance(1000);
     const q = svc.quoteSend({ address: externalAddress(), amountSats: 20_000, speed: 'normal' });
     if (!q.ok) throw new Error(q.message);

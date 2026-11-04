@@ -55,6 +55,7 @@ beforeAll(async () => {
     rpcTimeoutMs: 5000,
     rpcRetryIntervalMs: 0,
     syncIntervalMs: 0,
+    syncJoinMs: 0, // every sync() asks the guardian again
     yieldToUi: async () => {},
     recoveryCodeKdf: { m: 64, t: 1, p: 1 },
   });
@@ -67,6 +68,7 @@ beforeAll(async () => {
   await svc.setUpRules(100_000, 7);
   rig.fund(svc.wallet!.multisig().derive(0, 0).script, 900_000n);
   await svc.sync();
+  await svc.idle(); // and the sync's background part
 }, 60_000);
 
 afterAll(async () => {
@@ -122,6 +124,7 @@ describe('no daily limit in the app', { timeout: 120_000 }, () => {
     rig.guardian.features = [];
     try {
       await svc.sync();
+      await svc.idle(); // and the sync's background part
       expect(svc.getState().dailyLimit.canTurnOff).toBeUndefined();
       expect(canOfferLimitOff(svc.getState())).toBe(false);
       const signs = device.calls.filter((c) => c.op === 'signMessage').length;
