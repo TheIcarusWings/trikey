@@ -1,0 +1,29 @@
+WEBVTT
+
+1
+00:00:03.000 --> 00:00:12.056
+Let's move some coins: receive first, then send, inside your limit and over it.
+
+2
+00:00:12.600 --> 00:00:21.344
+First, on Home, tap Receive, and copy your address. On signet, you get coins from a faucet.
+
+3
+00:00:22.544 --> 00:00:27.598
+Your balance shows up as soon as your guardian sees the payment, and it confirms after a block.
+
+4
+00:00:30.044 --> 00:00:40.874
+Now, to send: enter an address, and an amount under your daily limit. Review shows it's signed by your phone and your guardian. Confirm, and it's on its way.
+
+5
+00:00:47.204 --> 00:00:55.268
+And if you go over the limit, your hardware wallet signs instead. Always check the amount and the address on its screen.
+
+6
+00:00:55.804 --> 00:01:05.274
+Now send more than your limit, and the app hands over to your hardware wallet. Check the amount, the address and the fee on the device, then approve.
+
+7
+00:01:14.544 --> 00:01:19.600
+Next: locking your guardian, and changing your limit.

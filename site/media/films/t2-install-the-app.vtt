@@ -1,0 +1,29 @@
+WEBVTT
+
+1
+00:00:03.000 --> 00:00:14.072
+Next, the app. Trikey runs on Android and iPhone. Pick yours, and you'll be ready in a few minutes.
+
+2
+00:00:14.600 --> 00:00:22.580
+So, on Android: open the Releases page of the Trikey repository on GitHub, and download the Android app from the latest release.
+
+3
+00:00:23.780 --> 00:00:34.622
+Now open the file. Android asks whether you trust this source: allow it, then install. A warning about an unknown app is normal for a test build.
+
+4
+00:00:35.822 --> 00:00:41.954
+To stay up to date, use Check for updates in the app's Settings, or follow the repository with Obtainium.
+
+5
+00:00:43.154 --> 00:00:51.595
+On iPhone, for now, you build the app from a Mac, with Xcode and a free Apple ID. The test plan has the exact steps.
+
+6
+00:00:52.795 --> 00:01:01.626
+Then trust your developer profile in the iPhone's Settings, and open Trikey. With a free Apple ID, the install needs renewing every week.
+
+7
+00:01:02.426 --> 00:01:08.506
+So, got it installed? Great. Then let's create your wallet.
