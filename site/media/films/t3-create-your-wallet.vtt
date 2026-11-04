@@ -1,0 +1,37 @@
+WEBVTT
+
+1
+00:00:03.000 --> 00:00:12.056
+Now the fun part: your wallet. Have your phone, your hardware wallet, and your guardian's page at hand.
+
+2
+00:00:12.600 --> 00:00:22.254
+First, open Trikey and pick the network. For testing, choose Signet: its coins have no value. Then tap Create a wallet.
+
+3
+00:00:24.700 --> 00:00:32.272
+Connect your hardware wallet. A Ledger needs its Bitcoin Test app open; a Trezor works through Suite Lite.
+
+4
+00:00:36.500 --> 00:00:45.471
+Next, add an alert contact: a nostr account that hears about anything unusual. On a test network you can skip it, but it's worth doing.
+
+5
+00:00:49.360 --> 00:00:57.944
+On your guardian's page, make a pairing code, and scan it with the app. They talk over encrypted messages, so nothing on your network is opened.
+
+6
+00:01:01.960 --> 00:01:10.024
+Your daily limit matters. Payments under it need just your phone. Anything bigger needs your hardware wallet.
+
+7
+00:01:10.560 --> 00:01:18.049
+Choose your daily limit, and the waiting period for recoveries. Then approve the rules on your hardware wallet.
+
+8
+00:01:21.060 --> 00:01:31.321
+Last, back up this phone. Write the recovery code on paper, and save the backup file somewhere that isn't this phone. Keep the two apart.
+
+9
+00:01:37.060 --> 00:01:42.116
+That's your wallet. Next, let's receive and send some coins.
