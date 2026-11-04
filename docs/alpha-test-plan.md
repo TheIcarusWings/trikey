@@ -779,6 +779,62 @@ message, the guardian's Activity page and the log lines starting with `savings`.
 
 ---
 
+### 18. Host a family member (optional; two phones and two hardware wallets)
+
+Family hosting (docs/design/family-hosting.md): your guardian holds key 3 for someone else's wallet. You need a second
+phone with the app (the **guest**) and a second hardware wallet. Mainnet works, behind the same warning as the rest of
+guardian mode; a test network is the safer place to try it.
+
+1. **Make an invite.** On the guardian's web page, open **Host for someone**, type a name only you will see ("Dad") and
+   choose **Create invite link**. Check: the warning says the page never shows their balance or payments but the box
+   stores what it co-signs; the link and QR code appear once; reloading the page shows the invite without its link.
+2. **Accept it on the guest's phone.** New wallet, connect the guest's hardware wallet, then on "Pair your guardian" scan
+   the invite QR (or "I have an invite from someone" and paste the link). Read the screen: it must say the host's box sees
+   each payment it co-signs and a recovery's total, and that the host with a thief could skip the wait and keep the alerts
+   silent. **Accept and continue** stays greyed out until "I understand ... could help a thief skip the wait" is ticked
+   (and, on mainnet, until the mainnet warning is accepted). Set the rules (on mainnet with an alert contact; adding the
+   host as one is suggested) and approve on the device. The device shows the first address: it must match the app.
+3. **Check the host learns little.** The web page shows the guest as active with "Signed 0 payments this week", no
+   amounts. Settings > Guardian on the guest's phone says "Hosted by ..." and "Chain data: ... (public)".
+4. **Back up, then receive.** The guest's Receive screen refuses until the phone key is backed up: back it up (step 5),
+   then receive a small amount. The balance comes from the public server (or the guest's own: Settings > Guardian >
+   Chain server), never from your guardian.
+5. **Pay inside the limit** from the guest's phone: phone + your guardian sign. The web page's count goes to 1.
+6. **Reset is refused** on your guardian's web page while you host (it says why).
+7. **Stop hosting.** On the web page choose **Stop hosting** for the guest: it shows "until <date> to move"; the guest's
+   phone shows that hosting ends on that date. Then try **Stop now...**: it needs `STOP HOSTING NOW` typed. Before doing
+   it, make sure the guest moved their money (Replace guardian, or a sweep with phone + hardware wallet).
+8. **Optional, test network only: a guest's recovery.** On the guest's phone start "Lost my hardware wallet" with a third
+   device. The web page shows "Recovery waiting until <date>. Keep this box on and unlocked." and no amount. Cancel it from
+   the guest's phone.
+9. **The guest's limit off.** On the guest's phone, Settings > Daily limit > "Turn off the limit": the guest's device must
+   show `Trikey policy v2 ... limit=off` with the guest wallet's id (not yours). The guest's phone and the guest's contacts
+   are told (by the name the guest gave the wallet); your contacts and your email/ntfy channels get nothing. Turn it back
+   on from the guest's phone.
+10. **A guest's contact pauses only the guest's wallet.** On the guest's phone, Settings > Alert contacts > "Contacts can
+    pause this wallet" on. From that contact's nostr app send `LOCK` to the guardian. Check: the contact's answer names
+    the guest's wallet ("... is paused"); the guest's Home shows "This wallet is paused" and a payment with the phone alone
+    goes to the hardware wallet; **your** wallet still pays with your phone, and the web page still shows the box unlocked,
+    with the guest's row saying "Paused by their side" (not who). Resume it on the guest's phone with "Resume with
+    <device>" (one device approval). Restart the box in between if you can: the pause must survive it.
+11. **The guest's own pause, and your contacts' lock.** On the guest's phone, Settings > Guardian > "Pause this wallet":
+    same as 10, nobody else is told; there is no passphrase form on the guest's phone. Then, if one of **your** contacts
+    may lock your box (step 16), have them send `LOCK`: the whole box locks, the guest's phone says your box is locked and
+    that only you can unlock it.
+12. **The guest leaves.** On the guest's phone, Settings > Guardian > "Leave <host>": "Check if it's safe to release"
+    must say what is still there while the wallet holds money. Use "Replace guardian" to move to another guardian (for
+    example a second test box): at the end the web page shows the guest as "They moved their wallet
+    away". Or, with an empty wallet, release it directly (one device approval).
+
+**Key 3's shape on your device (decision 11).** A hosted wallet's descriptor holds key 3 as a depth-0 xpub with no
+origin (`[fingerprint]xpub`, "Derivation: m" in a Coldcard file). The app's integrations accept it in code; a real device
+must confirm it. Please report, per device you have: Ledger (the wallet policy registers and shows the first address;
+the Bitcoin app treats key 3 as an external key with no origin), Trezor (the multisig address matches and a payment signs),
+Coldcard (the multisig file with `Derivation: m` imports; Coldcard checks a depth-0 xpub's fingerprint is its own),
+Jade / Passport / Keystone (the descriptor imports and the first address matches), BitBox02 (registers the multisig).
+If a device refuses it, say exactly what it showed: the fallback is a synthetic BIP 48 origin over the same key
+(`syntheticCosignerKeyExpression`, same addresses), which every integration in code also accepts.
+
 ## Known limits of this round
 
 - **Pre-alpha and not audited.** Nothing here should be taken as a statement about what is safe with real money. The test
@@ -789,7 +845,7 @@ message, the guardian's Activity page and the log lines starting with `savings`.
   you skip that step. Recovery Key mode stays on test networks only.
 - **Out of this round:** Recovery Key mode ("No home server?"), passkeys, iCloud and Google Drive backup (the backup
   is a recovery code plus a backup file), QR-based devices (Coldcard Q, Keystone, Passport, Jade, SeedSigner), BitBox02, the
-  "I have an invite" screen (a fixed demo; family hosting comes later), silent payments and Start9.
+  silent payments and Start9. Family hosting is new and has its own optional step ("Host a family member" below).
 - **iOS** is possible from your own Mac only ("Or on an iPhone"): a free Apple ID's install lasts **7 days**, and nobody has
   run it on a real iPhone yet, so report anything iOS-specific. Android stays the main platform of this round.
 - **Updates keep the wallet from 0.1.7-alpha on** (the Trikey release key). Moving from 0.1.6-alpha or older still needs

@@ -27,6 +27,8 @@
  *   SP_SCAN_THREADS   optional: worker threads for the silent payment scanner (1 to 64;
  *                     default one less than the CPU cores, at least 1). 1 scans in the
  *                     main thread, without workers
+ *   FAMILY_HOSTING    optional: `false` turns hosting guests' wallets off (the `family_hosting`
+ *                     feature; on by default)
  *   TRIKEY_PLATFORM   umbrel, start9 or docker (default). Umbrel and Start9 put their own login in front of the
  *                     web UI; on plain Docker nothing does, so first-run setup asks for a one-time setup code
  *                     that the guardian prints in its log (http/setup-code.ts)
@@ -93,6 +95,11 @@ export interface GuardianConfig {
    * Secret-ish: never logged, never written anywhere.
    */
   extraEntropy?: Uint8Array;
+  /**
+   * FAMILY_HOSTING: hosting guests' wallets (docs/design/family-hosting.md), the `family_hosting` feature. On unless set
+   * to `false`; off, the web UI offers no invites and guests' requests are dropped like a stranger's.
+   */
+  familyHosting?: boolean;
   /**
    * TRIKEY_PLATFORM. `docker` (the default of `loadConfig`): first-run setup needs the setup code from the log.
    * Unset (embedders and tests that build a config by hand): no setup code.
@@ -303,6 +310,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GuardianConfig
     relayOptions: parseRelayOptions(env['TRIKEY_RELAYS']),
     spScanThreads: parseScanThreads(env['SP_SCAN_THREADS']),
     extraEntropy: parseExtraEntropy(env['TRIKEY_EXTRA_ENTROPY']),
+    familyHosting: env['FAMILY_HOSTING']?.trim().toLowerCase() !== 'false',
     platform: parsePlatform(env['TRIKEY_PLATFORM']),
   };
 }

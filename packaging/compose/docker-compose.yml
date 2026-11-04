@@ -57,6 +57,7 @@ services:
       BITCOIN_CORE_WALLET: ${BITCOIN_CORE_WALLET:-}
       TRIKEY_RELAYS: ${TRIKEY_RELAYS:-}
       SP_SCAN_THREADS: ${SP_SCAN_THREADS:-}
+      FAMILY_HOSTING: ${FAMILY_HOSTING:-}
     extra_hosts:
       # A node on this same computer: ELECTRUM_HOST=host.docker.internal works on Linux too (Docker Desktop has it).
       - "host.docker.internal:host-gateway"

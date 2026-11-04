@@ -782,6 +782,36 @@ export class ChainService {
   }
 
   /**
+   * Which of `coins` (each known by its outpoint and the script it pays) are unspent now, mempool included, as
+   * `txid:vout`. Never asks the chain source to watch anything: no `prepare` (Bitcoin Core answers by outpoint,
+   * `gettxout` on its UTXO set via `unspentAt`, so its watch-only wallet imports no descriptor and no address for them)
+   * and no subscription (an Electrum server is asked for each script's unspent outputs once, around the live script
+   * cache, which they never enter). For coins of wallets the guardian must not watch: a hosted guest's
+   * (docs/design/family-hosting.md, "Chain sources and guests").
+   */
+  async outpointsUnspent(coins: readonly { txid: string; vout: number; script: Uint8Array }[]): Promise<Set<string>> {
+    const byScript = new Map<string, { script: Uint8Array; outpoints: { txid: string; vout: number }[] }>();
+    for (const c of coins) {
+      const k = hex.encode(c.script);
+      const e = byScript.get(k) ?? { script: c.script, outpoints: [] };
+      if (!e.outpoints.some((o) => o.txid === c.txid && o.vout === c.vout)) e.outpoints.push({ txid: c.txid, vout: c.vout });
+      byScript.set(k, e);
+    }
+    const groups = [...byScript.values()];
+    const out = new Set<string>();
+    const backend = this.client();
+    for (let i = 0; i < groups.length; i += 16) {
+      const batch = groups.slice(i, i + 16);
+      const lists = await Promise.all(batch.map((g) => mapped(backend.unspentAt ? backend.unspentAt(g.script, g.outpoints) : backend.listUnspent(g.script))));
+      lists.forEach((list, k) => {
+        const want = new Set(batch[k]!.outpoints.map((o) => `${o.txid}:${o.vout}`));
+        for (const x of list) if (want.has(`${x.txid}:${x.vout}`)) out.add(`${x.txid}:${x.vout}`);
+      });
+    }
+    return out;
+  }
+
+  /**
    * Whether `txHex` sweeps the phone's single-key coins into the active wallet (`SingleKeySweepCheck`),
    * or `undefined` when none of its inputs is one (the rule does not apply). Every rule must hold:
    *

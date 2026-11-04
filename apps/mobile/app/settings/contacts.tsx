@@ -9,7 +9,7 @@ import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
 import { Switch } from '@/components/ui/switch';
 import { Text } from '@/components/ui/text';
-import { ALERT_CHANNELS, CONTACT_LOCK, alertChannelText, alertChannelsLine, canOfferContactLock, shorten, useWallet, useWalletService, type AlertChannels, type Contact } from '@/data';
+import { ALERT_CHANNELS, alertChannelText, contactLockCopy, alertChannelsLine, canOfferContactLock, shorten, useWallet, useWalletService, type AlertChannels, type Contact } from '@/data';
 import { IS_IOS, pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
@@ -25,6 +25,8 @@ function ContactLockSection() {
   const [asking, setAsking] = useState(false);
   const toggle = useAction();
   if (!canOfferContactLock(state)) return null;
+  // A hosted wallet's contacts pause only this wallet on the host's guardian (family hosting phase 2).
+  const CONTACT_LOCK = contactLockCopy(!!state.hosted);
   const on = !!state.contactLock?.on;
   const turnOff = async () => {
     const r = await toggle.run(wallet.setContactLock(false));
@@ -53,8 +55,8 @@ function ContactLockSection() {
       </View>
       {asking ? (
         <View className="gap-3">
-          <Notice icon={Lock} tone="warn-outline" title="Stop contacts locking your guardian?">
-            {`They won't be able to stop your guardian any more, even if they see something you didn't do. They still hear about recoveries and can cancel one. ${CONTACT_LOCK.offNeeds(hardware.brand)}`}
+          <Notice icon={Lock} tone="warn-outline" title={state.hosted ? 'Stop contacts pausing this wallet?' : 'Stop contacts locking your guardian?'}>
+            {`They won't be able to stop ${state.hosted ? 'this wallet' : 'your guardian'} any more, even if they see something you didn't do. They still hear about recoveries and can cancel one. ${CONTACT_LOCK.offNeeds(hardware.brand)}`}
           </Notice>
           <View className="flex-row gap-3">
             <AppButton title="Keep" variant="outline" size="compact" className="flex-1 self-auto" disabled={toggle.busy} onPress={() => setAsking(false)} />

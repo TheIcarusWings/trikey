@@ -102,7 +102,7 @@ export type SigningPath = { signer: 'phone+guardian' } | { signer: 'phone+hardwa
 export function guardianBlocker(gs: GuardianStatusCache | undefined): HardwareReason | undefined {
   if (!gs) return undefined;
   if (gs.activeRecoveryId || gs.phoneSpending === 'paused_recovery') return 'recovery-pending';
-  if (gs.phoneSpending !== 'enabled') return 'phone-spending-paused';
+  if (gs.phoneSpending !== 'enabled' || gs.paused) return 'phone-spending-paused';
   if (gs.state === 'locked') return 'guardian-locked';
   return undefined;
 }

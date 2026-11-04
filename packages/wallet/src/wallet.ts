@@ -28,6 +28,10 @@ import {
   analyzePsbt,
   bip48Path,
   buildSpend,
+  cosignerKeyExpression,
+  keySetId,
+  tweakFromPath,
+  tweakToBytes,
   buildSweep,
   combinePsbts,
   estimateVsize,
@@ -49,6 +53,7 @@ import {
   RpcTimeoutError,
   approvalMessage,
   checkRelayList,
+  decodeInviteUri,
   decodePairingUri,
   decodeRecoveryUri,
   generateMessageId,
@@ -69,6 +74,7 @@ import {
   type KeyOrigin,
   type MethodName,
   type Params,
+  type InvitePayload,
   type PairingPayload,
   type Policy,
   type RecoveryPayload,
@@ -92,7 +98,7 @@ import {
 } from './backup.js';
 import { verifyMessage } from './bip137.js';
 import { GuardianChainSource, alertTimeMs, txidOfRaw, type ChainSnapshot, type ChainSource, type FeeEstimates, type GuardianRpc, type SingleKeyChainSource } from './chain.js';
-import { WalletError, asRandomSourceError, asWalletError, isWalletNotWatched, refusalFromError, sweepBroadcastError, type GuardianRefusal } from './errors.js';
+import { WalletError, asRandomSourceError, asWalletError, isWalletNotWatched, leaveBlockerText, refusalFromError, sweepBroadcastError, type GuardianRefusal, type HostedLeaveBlocker, type HostedLeaveCheck } from './errors.js';
 import {
   authKeyPath,
   childPubkey,
@@ -175,6 +181,20 @@ import {
 } from './state.js';
 import { secureRandomBytes } from '@trikey/core/random';
 import { assertRandomSourceHealthy } from '@trikey/core/random-health';
+import {
+  chainCodeOf,
+  classifyLedgerCoins,
+  decryptWalletMap,
+  encryptWalletMap,
+  ledgerInput,
+  mergeSignatures,
+  signByTweaks,
+  stripDerivations,
+  verifyWalletMap,
+  walletMapKey,
+  type ClassifiedCoin,
+  type LedgerCoinView,
+} from './hosted.js';
 
 export interface Clock {
   /** Milliseconds since the Unix epoch. */
@@ -243,6 +263,14 @@ export interface WalletDeps {
   silentPaymentsViaGuardian?: boolean;
   /** A received silent payment waits while it would bring less than this into the vault after the fee (default 1,000 sats). */
   silentPaymentSweepMinSats?: number;
+  /**
+   * Chain data for a wallet hosted on someone else's guardian (docs/design/family-hosting.md, section 6): the hosting
+   * guardian never serves it (it would learn every address). `server` is the guest's own Esplora when set, else the
+   * app's public default; `role: 'check'` asks for a SECOND, independent server, which the phone compares the coins
+   * with before it signs a recovery sweep (decision 4). The app passes Recovery Key mode's `EsploraChainSource` (with
+   * `unspentByScript`). Without it a hosted wallet cannot be accepted, synced or recovered.
+   */
+  hostedChain?: (ctx: { wallet: MultisigWallet; network: NetworkName; server?: string; role: 'primary' | 'check' }) => ChainSource | undefined;
 }
 
 export type WalletEvent =
@@ -450,7 +478,7 @@ export interface SilentPaymentScanStatus {
 /** The guardian told this phone it no longer guards its wallet (`wallet_retired`). */
 export interface WalletRetiredView {
   walletId: string;
-  reason: 'retired' | 'recovered' | 'reset';
+  reason: 'retired' | 'recovered' | 'reset' | 'hosting_ended';
   /** `recovered`: the wallet the recovery moved the money to, when the guardian named one. */
   successorWalletId?: string;
   /** When it happened (ms). */
@@ -588,6 +616,9 @@ function liveNet(t: Pick<LiveTx, 'direction' | 'amountSats' | 'feeSats'>): numbe
   return -(t.amountSats + (t.feeSats ?? 0));
 }
 
+/** Why a wallet hosted on someone else's guardian cannot speed up a payment yet (family hosting). */
+const HOSTED_SPEED_UP = "A payment from a wallet hosted on someone else's guardian cannot be sped up yet. It confirms once the network is less busy.";
+
 /** The transactions `txid` replaced ("Speed up"), nearest first, by this phone's log or the guardian's word (`replaces`). */
 function replacedChain(txid: string, replacesOf: (txid: string) => string | undefined): string[] {
   const out: string[] = [];
@@ -605,9 +636,9 @@ function replacedChain(txid: string, replacesOf: (txid: string) => string | unde
  * it replaced is not shown, and a replacement the phone has no log of carries what it knew of that one (the note, where
  * it went). A replacement of a payment that confirmed after all lost the race: it is not shown. Unconfirmed payments
  * out of the wallet (not sweeps, not silent payments, whose helper coin the replacement would have to sign again) are
- * marked `canSpeedUp`.
+ * marked `canSpeedUp`, unless `opts.speedUp` is false (a wallet hosted on someone else's guardian: `quoteSpeedUp`).
  */
-function withReplacements(entries: WalletHistoryEntry[], log: Map<string, SendLogEntry>, live: Map<string, LiveTx>): WalletHistoryEntry[] {
+function withReplacements(entries: WalletHistoryEntry[], log: Map<string, SendLogEntry>, live: Map<string, LiveTx>, opts: { speedUp: boolean }): WalletHistoryEntry[] {
   const replacesOf = (txid: string) => log.get(txid)?.replaces ?? live.get(txid)?.replaces;
   const confirmed = new Set(entries.filter((h) => h.confirmations > 0).map((h) => h.txid));
   const hidden = new Set<string>();
@@ -622,7 +653,7 @@ function withReplacements(entries: WalletHistoryEntry[], log: Map<string, SendLo
     .map((h) => {
       const chain = replacedChain(h.txid, replacesOf);
       const known = log.has(h.txid) ? undefined : chain.map((x) => log.get(x)).find((e) => e);
-      const speedable = h.confirmations === 0 && h.netSats < 0 && !h.silentPayment && !h.silentSweep && h.purpose !== 'sweep';
+      const speedable = opts.speedUp && h.confirmations === 0 && h.netSats < 0 && !h.silentPayment && !h.silentSweep && h.purpose !== 'sweep';
       return {
         ...h,
         ...(known ? { recipient: known.recipient, amountSats: known.amountSats, ...(known.label ? { label: known.label } : {}), ...(known.purpose ? { purpose: known.purpose } : {}) } : {}),
@@ -639,7 +670,7 @@ const RELAY_PROBE_RETRY_MS = 5 * 60_000;
 const policyNameOf = (walletId: string) => `Trikey ${walletId.slice(0, 4)}`;
 
 /** `wallet_retired` in words for the person. */
-function retiredMessage(r: { reason: 'retired' | 'recovered' | 'reset'; successorWalletId?: string }): string {
+function retiredMessage(r: { reason: 'retired' | 'recovered' | 'reset' | 'hosting_ended'; successorWalletId?: string }): string {
   switch (r.reason) {
     case 'recovered':
       return r.successorWalletId
@@ -649,6 +680,8 @@ function retiredMessage(r: { reason: 'retired' | 'recovered' | 'reset'; successo
       return 'The guardian retired this wallet, so it co-signs nothing for it any more.';
     case 'reset':
       return 'The guardian was reset and no longer knows this wallet.';
+    case 'hosting_ended':
+      return 'Your host stopped hosting this wallet: its guardian key is gone. Move your money with your phone and your hardware wallet (Replace guardian).';
   }
 }
 
@@ -1172,8 +1205,9 @@ export class TrikeyWallet {
     return rpc;
   }
 
-  /** Where chain data comes from. In guardian mode: the guardian. */
+  /** Where chain data comes from. In guardian mode: the guardian; for a hosted wallet, the guest's or a public server. */
   get chain(): ChainSource {
+    if (this.s.guardian?.hosted) return this.hostedChainSource('primary');
     this.chainSource ??= new GuardianChainSource(() => {
       this.requireRecoveryAccess();
       if (!this.rpc) throw new WalletError('wrong_state', 'Not connected to the guardian; call start() first.');
@@ -1301,7 +1335,7 @@ export class TrikeyWallet {
       }
       case 'phone.resume': {
         const st = await this.call('guardian.status', {});
-        return st.phoneSpending === 'enabled' ? { phoneSpending: 'enabled' } : undefined;
+        return st.phoneSpending === 'enabled' && !st.hosting?.paused ? { phoneSpending: 'enabled' } : undefined;
       }
       case 'hardware.confirm': {
         const st = await this.call('guardian.status', {});
@@ -1720,6 +1754,7 @@ export class TrikeyWallet {
       ...(st.walletId ? { walletId: st.walletId } : {}),
       ...(st.hardwareConfirmRequired !== undefined ? { hardwareConfirmRequired: st.hardwareConfirmRequired } : {}),
       ...(st.watchedWalletId ? { watchedWalletId: st.watchedWalletId } : {}),
+      ...(st.hosting?.paused ? { paused: { ...st.hosting.paused } } : {}),
       ...(st.notifications ? { notifications: { channels: st.notifications.channels.map((c) => ({ ...c })) } } : {}),
       ...(st.chainSource ? { chainSource: { ...st.chainSource } } : {}),
     };
@@ -1876,10 +1911,12 @@ export class TrikeyWallet {
     } catch (e) {
       throw new WalletError('internal', 'The recovery destination saved on this phone is not a valid descriptor.', { cause: e });
     }
-    if (w.fingerprint() !== walletId) throw new WalletError('guardian_mismatch', 'The guardian guards a wallet with the id of the recovery destination but not its keys.');
+    // A hosted wallet is named by its key-set id, and its key 3 is the slot's account key under this phone's chaincode.
+    if ((g.hosted ? keySetId(w.accountPubkeys()) : w.fingerprint()) !== walletId) throw new WalletError('guardian_mismatch', 'The guardian guards a wallet with the id of the recovery destination but not its keys.');
     if (!sameKey(w.keys.app, keyExpressionOf(this.s.key2))) throw new WalletError('internal', "The recovery destination does not hold this phone's key.");
     if (!sameKey(w.keys.hardware, keyExpressionOf(hw.account))) throw new WalletError('internal', "The recovery destination does not hold the hardware wallet's key.");
-    if (!sameKey(w.keys.cosigner, keyExpressionOf(g.key))) throw new WalletError('guardian_mismatch', "The recovery destination does not hold this guardian's key.");
+    if (g.hosted ? hex.encode(w.accountPubkeys().cosigner) !== g.hosted.cosignerAccountPubkey : !sameKey(w.keys.cosigner, keyExpressionOf(g.key)))
+      throw new WalletError('guardian_mismatch', "The recovery destination does not hold this guardian's key.");
     const recoveryId = rec.recovery?.recoveryId;
     // The guardian just named this wallet (it answered this phone, so it took it over): no expiry check on the way.
     const st = await this.call('recovery.status', recoveryId ? { recoveryId } : {}, { viaAlert: true });
@@ -1900,6 +1937,8 @@ export class TrikeyWallet {
       s.pending = undefined;
       s.retiredByGuardian = undefined;
     });
+    // A hosted wallet's chain source scans one wallet: the new one now.
+    if (g.hosted) this.chainSource = undefined;
     await this.txs.keepOnly(new Set());
     this.emit({ type: 'wallet_switched', walletId, previousWalletId, reason: 'recovery', hardwareConfirmRequired: true });
     // The new wallet's rules: with the daily limit back on if it was off (the guardian restores the last value).
@@ -2138,7 +2177,7 @@ export class TrikeyWallet {
     const unlisted = this.s.sendLog
       .filter((e) => !listed.has(e.txid) && e.at > recent && e.at > (c?.syncedAt ?? 0) - 10 * 60_000)
       .map((e): WalletHistoryEntry => ({ txid: e.txid, height: 0, confirmations: 0, netSats: -(e.amountSats + e.feeSats), feeSats: e.feeSats, ...meta(e), local: true }));
-    return withReplacements([...unlisted.reverse(), ...announced.reverse(), ...out], log, live);
+    return withReplacements([...unlisted.reverse(), ...announced.reverse(), ...out], log, live, { speedUp: !this.isHosted });
   }
 
   /** The last synced view of the wallet, or undefined before the first sync. */
@@ -2264,6 +2303,8 @@ export class TrikeyWallet {
    */
   async receiveAddress(opts: { verifyOnDevice?: boolean } = {}): Promise<{ address: string; index: number; verifiedOnDevice: boolean }> {
     this.requirePaired();
+    // A hosted wallet needs the phone key backup in every recovery case (decision 2): no address before there is one.
+    if (this.isHosted && !this.s.backup) throw new WalletError('backup_required', 'Back up your phone key first: a hosted wallet needs it to recover in every case.');
     if (!this.s.hardware?.addressVerified)
       throw new WalletError('address_unverified', 'The hardware wallet has not confirmed this wallet\'s addresses yet.');
     const index = this.s.chain?.nextReceiveIndex ?? 0;
@@ -2430,7 +2471,9 @@ export class TrikeyWallet {
     if (quote.plan.signer === 'phone+guardian') {
       let cosignedB64: string | undefined;
       try {
-        const res = await (await this.client()).call('sign', { psbt: base64.encode(signed), ...(quote.request.memo ? { memo: quote.request.memo } : {}) });
+        // A hosting guardian gets the PSBT without BIP 32 derivations: it needs only the tweaks, and learns no index.
+        const toGuardian = this.isHosted ? stripDerivations(signed) : signed;
+        const res = await (await this.client()).call('sign', { psbt: base64.encode(toGuardian), ...(quote.request.memo ? { memo: quote.request.memo } : {}) });
         cosignedB64 = res.psbt;
       } catch (e) {
         const refusal = refusalFromError(e);
@@ -2442,7 +2485,8 @@ export class TrikeyWallet {
         hardwareReason = reason;
       }
       if (cosignedB64) {
-        final = checkSignedBy(signed, base64.decode(cosignedB64), wallet, ['app', 'cosigner'], 'guardian_mismatch', 'The guardian did not co-sign every input.');
+        const returned = this.isHosted ? mergeSignatures(signed, base64.decode(cosignedB64)) : base64.decode(cosignedB64);
+        final = checkSignedBy(signed, returned, wallet, ['app', 'cosigner'], 'guardian_mismatch', 'The guardian did not co-sign every input.');
         signedBy = 'phone+guardian';
         const txid = parsePsbt(signed).id;
         await this.update((s) => void s.spends.push({ txid, at: this.now(), outflowSats: outflow }));
@@ -2553,6 +2597,9 @@ export class TrikeyWallet {
     const speed = opts.feeRate === undefined ? (opts.speed ?? 'fast') : undefined;
     const { wallet, feeRate, feeRateSource } = this.quoteBasics({ feeRate: opts.feeRate, speed });
     const cannot = (why: string) => new WalletError('cannot_speed_up', why);
+    // Family hosting: not for a guest yet. Its slot's coin ledger would keep the replaced payment's change next to the
+    // replacement's, its payments go out without derivations, and the host's live wallet never watches it.
+    if (this.isHosted) throw cannot(HOSTED_SPEED_UP);
     if (this.s.sendLog.some((e) => e.replaces === txid) && !this.history().some((h) => h.txid === txid))
       throw cannot('This payment was sped up already: speed up the newer version instead.');
     const entry = this.history().find((h) => h.txid === txid);
@@ -2614,6 +2661,7 @@ export class TrikeyWallet {
    */
   async speedUp(quote: SpeedUpQuote, opts: { fallbackToHardware?: boolean; syncAfter?: boolean } = {}): Promise<SpeedUpResult> {
     this.requirePaired();
+    if (this.isHosted) throw new WalletError('cannot_speed_up', HOSTED_SPEED_UP);
     // Read the wallet again (its chain data: `syncCore`, not the rest): the original must still be waiting. A guardian
     // slow to read its node does not stop it (the node judges).
     await this.syncCore().catch((e) => {
@@ -2948,6 +2996,17 @@ export class TrikeyWallet {
     return { reason: gs.lock.reason, at: gs.lock.at, ...(c ? { contact: { pubkey: c, npub: npubEncode(c), name: this.s.contactNames[c] } } : {}) };
   }
 
+  /**
+   * A hosted wallet that is paused (family hosting phase 2), as the guardian last said: its host's guardian co-signs no
+   * payment for it until the hardware wallet resumes it (`resumePhoneSpending`). `contact` (named when this phone has a
+   * name for it): one of the wallet's alert contacts sent `LOCK`; `phone`: this phone paused it (`pauseHostedWallet`).
+   */
+  get hostedPause(): { by: 'contact' | 'phone'; at: number; contact?: AlertContact } | undefined {
+    const p = this.isHosted ? this.s.guardianStatus?.paused : undefined;
+    if (!p) return undefined;
+    return { by: p.by, at: p.at, ...(p.contact ? { contact: { pubkey: p.contact, npub: npubEncode(p.contact), name: this.s.contactNames[p.contact] } } : {}) };
+  }
+
   /** Refuses (before anything is sent) to turn on a rule the guardian does not know. */
   private async requireContactLockAllowed(): Promise<void> {
     const st = await this.refreshStatus();
@@ -3015,6 +3074,8 @@ export class TrikeyWallet {
   /** Unlocks the guardian after a restart with its passphrase (`guardian.unlock`). The passphrase is never stored. */
   async unlockGuardian(passphrase: string): Promise<{ ok: true } | { ok: false; refusal: GuardianRefusal }> {
     if (!this.s.guardian) throw new WalletError('wrong_state', 'No guardian is paired.');
+    // A guest never unlocks the host's box (family hosting): only its owner's passphrase does, at the box.
+    if (this.isHosted) throw new WalletError('wrong_state', "Only your host can unlock their guardian. To resume a paused wallet, use your hardware wallet.");
     try {
       await this.callChanging(
         'guardian.unlock',
@@ -3041,12 +3102,33 @@ export class TrikeyWallet {
   async lockGuardian(): Promise<void> {
     if (!this.s.guardian) throw new WalletError('wrong_state', 'No guardian is paired.');
     this.requirePaired();
+    if (this.isHosted) return this.pauseHostedWallet();
     await this.callChanging(
       'guardian.lock',
       {},
       {
         persist: false,
         verify: async () => ((await this.call('guardian.status', {})).state === 'locked' ? { state: 'locked' as const } : undefined),
+      },
+    );
+    await this.refreshStatus().catch(() => undefined);
+  }
+
+  /**
+   * Pauses this hosted wallet from the phone (family hosting phase 2): `guardian.lock` from a guest pauses only its own
+   * wallet on the host's guardian, never the host's box. Phone-only payments stop until the hardware wallet resumes it
+   * (`resumePhoneSpending`); payments with the hardware wallet and recoveries go on. For when the phone may be in the
+   * wrong hands soon, or something looks wrong. Needs no hardware wallet.
+   */
+  async pauseHostedWallet(): Promise<void> {
+    this.requirePaired();
+    if (!this.isHosted) throw new WalletError('wrong_state', 'Only a hosted wallet can be paused; lock the guardian instead.');
+    await this.callChanging(
+      'guardian.lock',
+      {},
+      {
+        persist: false,
+        verify: async () => ((await this.call('guardian.status', {})).hosting?.paused ? { state: 'locked' as const } : undefined),
       },
     );
     await this.refreshStatus().catch(() => undefined);
@@ -3316,7 +3398,7 @@ export class TrikeyWallet {
    * a new wallet of key 2, a NEW hardware wallet (connect it when asked) and
    * the same guardian key, after the Delay & Notify period. Key 2 signs the sweep.
    */
-  async startRecovery(opts: { lostKey: 'hardware'; newHardwareKind?: HardwareKind }): Promise<Recovery> {
+  async startRecovery(opts: { lostKey: 'hardware'; newHardwareKind?: HardwareKind; allowSingleServer?: boolean }): Promise<Recovery> {
     this.requirePaired();
     if (opts.lostKey !== 'hardware') throw new WalletError('wrong_state', 'Without the phone key, recover from a new phone with recoverWithHardware().');
     const old = this.s.hardware!;
@@ -3329,6 +3411,7 @@ export class TrikeyWallet {
     }
     if (rec.fingerprint === old.fingerprint || rec.account.xpub === old.account.xpub)
       throw new WalletError('hardware_mismatch', 'Connect the NEW hardware wallet: this is the one being replaced.');
+    if (this.isHosted) return this.startHostedRecovery(rec, opts);
     const current = this.multisig();
     const destination = new MultisigWallet(this.network, { app: current.keys.app, hardware: keyExpressionOf(rec.account), cosigner: current.keys.cosigner });
     const { policy } = await this.getRules();
@@ -3488,10 +3571,16 @@ export class TrikeyWallet {
     return res;
   }
 
-  /** Re-enables phone payments after a contested cancel, with a hardware approval (`phone.resume`). */
+  /**
+   * Re-enables phone payments after a contested cancel, with a hardware approval (`phone.resume`). For a hosted wallet
+   * the same approval also resumes a paused wallet (family hosting phase 2: a contact's `LOCK` or `pauseHostedWallet`).
+   */
   async resumePhoneSpending(): Promise<void> {
     this.requirePaired();
-    const verify = async () => ((await this.call('guardian.status', {})).phoneSpending === 'enabled' ? { phoneSpending: 'enabled' as const } : undefined);
+    const verify = async () => {
+      const st = await this.call('guardian.status', {});
+      return st.phoneSpending === 'enabled' && !st.hosting?.paused ? { phoneSpending: 'enabled' as const } : undefined;
+    };
     await this.withApproval({ action: 'resume-phone' }, (approval) => this.callChanging('phone.resume', { approval }, { verify }));
     await this.refreshStatus().catch(() => undefined);
   }
@@ -3530,6 +3619,11 @@ export class TrikeyWallet {
       case 'relays_changed':
         // Only from the paired guardian (`from`: the connection's peer, whose key the client checked).
         await this.followGuardianRelays(alert.relays, from);
+        return;
+      case 'hosting_ending':
+        // The host stopped hosting this wallet: key 3 ends at `endsAt`. The app asks the person to move it (Replace guardian).
+        if (this.s.guardian?.hosted && from === this.s.guardian.pubkey && alert.walletId === this.s.wallet?.walletId)
+          await this.update((s) => void (s.guardian!.hosted!.endsAt = alert.endsAt * 1000));
         return;
       case 'savings_moved':
         // The guardian saw a Savings coin move (this phone's own spend, or two keys in other hands): read Savings again.
@@ -3698,7 +3792,9 @@ export class TrikeyWallet {
     });
     // The device knows the wallet now, whatever the guardian answers next.
     await this.update((s) => void (s.hardware = { ...s.hardware!, policyName: name, registrationHmac: hmac, addressVerified: true }));
-    const hardwareAuth = this.s.hardware!.auth;
+    // A hosting guardian never sees the hardware xpub: it checks the key as the account key plus this tweak at 0/0.
+    const hd = HDKey.fromExtendedKey(this.s.hardware!.account.xpub, this.network.bip32);
+    const hardwareAuth = this.isHosted ? { ...this.s.hardware!.auth, tweak: hex.encode(tweakToBytes(tweakFromPath(hd.publicKey!, hd.chainCode!, [0, 0]).tweak)) } : this.s.hardware!.auth;
     const params = { hardwareAuth, hardwareAuthProof: proof };
     const res = await this.callChanging('hardware.confirm', params, {
       verify: () => this.verifyApplied({ id: '', method: 'hardware.confirm', params, sentAt: 0 }),
@@ -4688,6 +4784,487 @@ export class TrikeyWallet {
   }
 
   // ===========================================================================
+  // Hosted on someone else's guardian (docs/design/family-hosting.md)
+  //
+  // A host's guardian keeps key 3 of this wallet in its own slot, knowing only the wallet's three account pubkeys (BIP
+  // 89 delegation): never the descriptor, an address or a balance. This phone chooses key 3's chaincode, so the
+  // descriptor (`wsh(sortedmulti(2, key2, key1, [fp]xpub3))`, key 3 as a depth-0 xpub) is this phone's alone; the host
+  // stores it only encrypted (the wallet map, under the hardware wallet's chaincode). Chain data comes from the guest's
+  // own server or a public Esplora (`deps.hostedChain`), never from the host.
+
+  /**
+   * Leaving a host (family hosting phase 2, the guest's "leave" screen): is it safe to release the slot on the host's
+   * guardian now? Releasing (`leaveHost`) retires the wallet there and deletes its key 3 for good, so it is safe only
+   * when nothing still needs that key: no recovery runs, the wallet holds no coin on its chain server AND on a second,
+   * independent one (decision 4), and no coin the guardian co-signed is unspent (an off-path one needs key 3, section 4).
+   * Changes nothing. To move money first: Replace guardian (which releases the slot itself once the move is accepted),
+   * or pay out with the hardware wallet.
+   */
+  async hostedLeaveCheck(opts: { allowSingleServer?: boolean } = {}): Promise<HostedLeaveCheck> {
+    this.requirePaired();
+    if (!this.isHosted) throw new WalletError('wrong_state', 'Only a hosted wallet can leave its host.');
+    const blockers: HostedLeaveBlocker[] = [];
+    const st = await this.refreshStatus().catch(() => this.s.guardianStatus);
+    if (st?.activeRecoveryId) blockers.push({ kind: 'recovery_running', recoveryId: st.activeRecoveryId });
+    const wallet = this.multisig();
+    const primary = this.hostedChainSource('primary', wallet);
+    const snap = await primary.sync();
+    await this.update((s) => void (s.chain = { ...snap, syncedAt: this.now() }));
+    const seen = new Set(snap.utxos.map((u) => `${u.txid}:${u.vout}`));
+    if (snap.utxos.length || snap.utxosTruncated) blockers.push({ kind: 'money_left', server: 'primary', coins: snap.utxos.length, sats: snap.utxos.reduce((a, u) => a + u.valueSats, 0) });
+    try {
+      const other = await this.hostedChainSource('check', wallet).sync();
+      const extra = other.utxos.filter((u) => !seen.has(`${u.txid}:${u.vout}`));
+      if (extra.length) blockers.push({ kind: 'money_left', server: 'check', coins: extra.length, sats: extra.reduce((a, u) => a + u.valueSats, 0) });
+    } catch {
+      if (!opts.allowSingleServer) blockers.push({ kind: 'second_server_unavailable' });
+    }
+    const ledger = await this.hostedCoins();
+    const candidates = ledger.filter((c) => !seen.has(`${c.txid}:${c.vout}`));
+    if (candidates.length) {
+      if (!primary.unspentByScript) throw new WalletError('chain_source_required', 'The chain server cannot look coins up by script, which leaving needs for coins the guardian co-signed.');
+      const unspent = new Set((await primary.unspentByScript([...new Set(candidates.map((c) => c.script))])).map((u) => `${u.txid}:${u.vout}`));
+      const left = candidates.filter((c) => unspent.has(`${c.txid}:${c.vout}`));
+      if (left.length) blockers.push({ kind: 'cosigned_coins_left', coins: left.length, sats: left.reduce((a, c) => a + c.valueSats, 0), offPath: left.filter((c) => !c.onPath).length });
+    }
+    return { safe: blockers.length === 0, blockers };
+  }
+
+  /**
+   * Leaves the host (family hosting phase 2): after `hostedLeaveCheck` finds nothing left, retires this wallet on the
+   * host's guardian with a hardware approval (`wallet.retire`), which releases the slot there and deletes its key 3; the
+   * guardian checks its co-signed coins once more on its own node. Refused (`not_safe_to_release`, with the blockers)
+   * while anything still needs that key. The phone keeps the wallet as a retired one; set up a new one to go on.
+   */
+  async leaveHost(opts: { allowSingleServer?: boolean } = {}): Promise<{ walletId: string; retiredAt: number }> {
+    const check = await this.hostedLeaveCheck(opts);
+    if (!check.safe) throw new WalletError('not_safe_to_release', leaveBlockerText(check.blockers), { blockers: check.blockers });
+    const res = await this.retireWallet();
+    await this.update((s) => {
+      s.retiredByGuardian = { walletId: res.walletId, reason: 'retired', at: res.retiredAt * 1000 };
+      if (s.guardianStatus) s.guardianStatus = { ...s.guardianStatus, phoneSpending: 'retired' };
+    });
+    return res;
+  }
+
+  /** True for a wallet hosted on someone else's guardian. */
+  get isHosted(): boolean {
+    return !!this.s.guardian?.hosted;
+  }
+
+  /** What an invite says, before anything is sent (`acceptInvite` sends it). */
+  previewInvite(inviteUri: string): { hostLabel?: string; guardianNpub: string; relays: string[]; network: NetworkName; expiresAt: number; mainnet: boolean } {
+    const p = this.decodeInvite(inviteUri);
+    return { ...(p.label ? { hostLabel: p.label } : {}), guardianNpub: npubEncode(p.guardianPubkey), relays: p.relays, network: p.network, expiresAt: p.expiresAt, mainnet: p.network === 'bitcoin' };
+  }
+
+  private decodeInvite(uri: string): InvitePayload {
+    let p: InvitePayload;
+    try {
+      p = decodeInviteUri(uri, this.nowSec());
+    } catch (e) {
+      throw new WalletError('invite_invalid', `This is not a usable invite: ${(e as Error).message}`, { cause: e });
+    }
+    if (p.network !== this.network.name) throw new WalletError('network_mismatch', `This invite is for ${p.network}, but this phone is set to ${this.network.name}.`);
+    return p;
+  }
+
+  /** The chain source of a hosted wallet: `primary` (cached) or a second, independent `check` server. */
+  private hostedChainSource(role: 'primary' | 'check', wallet: MultisigWallet = this.multisig()): ChainSource {
+    if (role === 'primary' && this.chainSource) return this.chainSource;
+    const src = this.deps.hostedChain?.({ wallet, network: this.network.name, ...(this.s.guardian?.hosted?.chainServer ? { server: this.s.guardian.hosted.chainServer } : {}), role });
+    if (!src) throw new WalletError('chain_source_required', 'This app has no chain server for a hosted wallet. Set your own server in Settings.');
+    if (role === 'primary') this.chainSource = src;
+    return src;
+  }
+
+  /** The guest's own chain server for a hosted wallet (an Esplora base URL), or `undefined` for the public default. */
+  async setHostedChainServer(url: string | undefined): Promise<void> {
+    if (!this.s.guardian?.hosted) throw new WalletError('wrong_state', 'Only a hosted wallet has a chain server setting.');
+    const clean = url?.trim();
+    if (clean !== undefined && clean !== '' && !/^https?:\/\/[^\s]+$/i.test(clean)) throw new WalletError('invalid_params' as never, 'Give the server as an http(s) URL.');
+    this.chainSource = undefined;
+    await this.update((s) => {
+      if (clean) s.guardian!.hosted!.chainServer = clean;
+      else delete s.guardian!.hosted!.chainServer;
+    });
+  }
+
+  /**
+   * Accepts a host's invite (docs/design/family-hosting.md, section 7). Needs the hardware wallet connected
+   * (`connectHardware`) and `understood: true`, the person's acknowledgement of the disclosure ("I understand <host> could
+   * help a thief skip the wait"); on mainnet also `mainnetConsent: true`, the same pre-alpha / not-audited consent the app
+   * asks for guardian mode on mainnet. Steps: `hosted.prepare` (with this phone's key 3 contribution, required) answers
+   * key 3's account pubkey; this phone picks key 3's chaincode, builds the descriptor, the hardware wallet signs the
+   * pairing proof over the key-set id and registers the wallet; the guardian gets the account pubkeys, the
+   * authorization key with its tweak at 0/0 and the encrypted wallet map (`hosted.pair`). Then the device shows the
+   * first address, which must match.
+   */
+  async acceptInvite(opts: {
+    inviteUri: string;
+    rules: Policy;
+    walletLabel: string;
+    understood: boolean;
+    mainnetConsent?: boolean;
+    chainServer?: string;
+    deviceName?: string;
+    verifyAddress?: boolean;
+    birthHeight?: number;
+  }): Promise<PairOutcome & { hosted: true; hostLabel?: string }> {
+    if (this.s.stage !== 'new') throw new WalletError('wrong_state', 'This wallet is already set up.');
+    if (opts.understood !== true) throw new WalletError('consent_required', 'Read what the host can and cannot do, and tick "I understand" first.');
+    const payload = this.decodeInvite(opts.inviteUri);
+    if (this.network.name === 'bitcoin' && opts.mainnetConsent !== true)
+      throw new WalletError('mainnet_consent_required', 'Trikey is pre-alpha software, not audited. Confirm you accept that before using real bitcoin.');
+    const hwRec = this.s.hardware;
+    if (!hwRec) throw new WalletError('wrong_state', 'Connect the hardware wallet first.');
+    let rules: Policy;
+    try {
+      rules = normalizePolicy(opts.rules);
+    } catch (e) {
+      throw new WalletError('invalid_rules', `Invalid rules: ${(e as Error).message}`, { cause: e });
+    }
+    if (isLimitOff(rules.dailyLimitSats)) throw new WalletError('invalid_rules', 'A hosted wallet keeps a daily limit.');
+    const walletLabel = opts.walletLabel.trim();
+    if (!walletLabel || walletLabel.length > 64) throw new WalletError('invalid_rules', 'Give the wallet a name of 1 to 64 characters.');
+    if (!this.deps.hostedChain) throw new WalletError('chain_source_required', 'This app has no chain server for a hosted wallet.');
+    if (hwRec.auth.path.replace(/h/g, "'") !== authKeyPath(this.network)) throw new WalletError('hardware_invalid_response', 'The hardware authorization key is not at the wallet path.');
+    let contribution: Uint8Array;
+    try {
+      assertRandomSourceHealthy('key 3 contribution');
+      contribution = secureRandomBytes(32);
+    } catch (e) {
+      throw asRandomSourceError(e);
+    }
+    const entropy = hex.encode(contribution);
+    contribution.fill(0);
+    const { rpc, pool } = await this.connect(payload.guardianPubkey, payload.relays);
+    let kept = false;
+    try {
+      let prep: Result<'hosted.prepare'>;
+      try {
+        prep = await rpc.call('hosted.prepare', { inviteSecret: payload.secret, network: this.network.name, entropy });
+      } catch (e) {
+        if (e instanceof RpcError && e.code === ErrorCode.MethodNotFound)
+          throw new WalletError('guardian_unsupported', `This guardian can't host wallets yet: ask ${payload.label ?? 'its owner'} to update it.`, { cause: e });
+        throw asWalletError(e, 'invite');
+      }
+      // The contacts may pause a hosted wallet only on a guardian that knows it (family hosting phase 2, `contact_lock`).
+      if (isContactLockOn(rules) && !prep.features?.includes(GUARDIAN_FEATURES.contactLock))
+        throw new WalletError('guardian_unsupported', `This guardian can't let your contacts pause your wallet yet: ask ${payload.label ?? 'its owner'} to update it, or turn that off.`);
+      const cosignerPub = prep.cosignerAccountPubkey;
+      let cosigner: KeyExpression;
+      try {
+        secp256k1.Point.fromBytes(hex.decode(cosignerPub));
+        cosigner = cosignerKeyExpression(hex.decode(cosignerPub), secureRandomBytes(32), this.network);
+      } catch (e) {
+        throw new WalletError('guardian_mismatch', "The guardian's key is not a usable public key.", { cause: e });
+      }
+      const wallet = new MultisigWallet(this.network, { app: keyExpressionOf(this.s.key2), hardware: keyExpressionOf(hwRec.account), cosigner });
+      const acct = wallet.accountPubkeys();
+      if (new Set([hex.encode(acct.app), hex.encode(acct.hardware), hex.encode(acct.cosigner)]).size !== 3) throw new WalletError('guardian_mismatch', 'The three keys of the wallet must be different.');
+      const walletId = keySetId(acct);
+      const descriptor = wallet.descriptor();
+      const hd = HDKey.fromExtendedKey(hwRec.account.xpub, this.network.bip32);
+      const t = tweakFromPath(hd.publicKey!, hd.chainCode!, [0, 0]);
+      if (hex.encode(t.publicKey) !== hwRec.auth.pubkey) throw new WalletError('hardware_invalid_response', "The hardware wallet's authorization key does not derive from its account key.");
+      const policyName = policyNameOf(walletId);
+      const { proof, hmac } = await this.withHardware(async (hw, rec) => {
+        const proof = await this.signWithAuthKey(hw, rec, pairingMessage(walletId, cosignerPub), 'pairing');
+        const reg = await hw.registerWallet({ name: policyName, descriptor });
+        return { proof, hmac: reg.hmac };
+      }, hwRec);
+      const walletMap = encryptWalletMap({ version: 1, network: this.network.name, descriptor, birthHeight: opts.birthHeight ?? 0 }, walletMapKey(hd.chainCode!, payload.guardianPubkey, walletId));
+      let res: Result<'hosted.pair'>;
+      try {
+        res = await rpc.call('hosted.pair', {
+          inviteSecret: payload.secret,
+          deviceName: opts.deviceName ?? this.s.deviceName,
+          walletLabel,
+          network: this.network.name,
+          accountPubkeys: { app: hex.encode(acct.app), hardware: hex.encode(acct.hardware) },
+          hardwareAuth: { pubkey: hwRec.auth.pubkey, path: hwRec.auth.path, tweak: hex.encode(tweakToBytes(t.tweak)) },
+          hardwareAuthProof: proof,
+          rules,
+          walletMap,
+          phoneNostrPubkey: this.s.nostrPubkey,
+        });
+      } catch (e) {
+        throw asWalletError(e, 'invite');
+      }
+      if (res.walletId !== walletId || res.cosignerAccountPubkey !== cosignerPub) throw new WalletError('guardian_mismatch', 'The guardian registered a different wallet than the phone built.');
+      this.rpc = rpc;
+      this.pool = pool;
+      kept = true;
+      this.chainSource = undefined;
+      const chainServer = opts.chainServer?.trim();
+      await this.update((s) => {
+        s.stage = 'paired';
+        s.deviceName = opts.deviceName ?? s.deviceName;
+        s.guardian = {
+          pubkey: payload.guardianPubkey,
+          relays: payload.relays,
+          ...(payload.label ? { label: payload.label } : {}),
+          version: res.guardianVersion,
+          key: { fingerprint: cosigner.fingerprint, path: 'm', xpub: cosigner.xpub },
+          key3Mixed: true,
+          hosted: { ...(payload.label ? { hostLabel: payload.label } : {}), walletLabel, cosignerAccountPubkey: cosignerPub, ...(chainServer ? { chainServer } : {}), acceptedAt: this.now() },
+        };
+        s.wallet = { descriptor, walletId, pairedAt: this.now() };
+        s.hardware = { ...hwRec, policyName, registrationHmac: hmac };
+        s.rules = { policy: rules, policyHash: policyHash(rules), nextHardwareSequence: 1, fetchedAt: this.now() };
+      });
+      const firstAddress = wallet.derive(0, 0).address;
+      let addressVerified = false;
+      if (opts.verifyAddress !== false) {
+        const shown = await this.withHardware((hw, rec) => hw.displayAddress(this.devicePolicy(rec), 0, 0));
+        addressVerified = shown === firstAddress;
+        await this.update((s) => void (s.hardware!.addressVerified = addressVerified));
+        if (!addressVerified) throw new WalletError('address_mismatch', `The hardware wallet shows ${shown}, but the wallet computed ${firstAddress}. Do not receive funds until this is resolved.`);
+      }
+      const hw = this.hwSession;
+      this.hwSession = undefined;
+      await hw?.close().catch(() => {});
+      await this.sync().catch(() => undefined);
+      return { walletId, descriptor, firstAddress, addressVerified, key3Mixed: true, key3Note: KEY3_MIXED_NOTE, hosted: true, ...(payload.label ? { hostLabel: payload.label } : {}) };
+    } finally {
+      if (!kept) {
+        rpc.close();
+        pool.close();
+      }
+    }
+  }
+
+  /** Every coin the hosting guardian co-signed into existence for this wallet (its ledger), page by page. */
+  private async fetchLedger(call: <M extends 'hosted.coins'>(m: M, p: Params<M>) => Promise<Result<M>> = (m, p) => this.call(m, p)): Promise<LedgerCoinView[]> {
+    const out: LedgerCoinView[] = [];
+    let offset: number | undefined = 0;
+    for (let page = 0; offset !== undefined && page < 100; page++) {
+      const r: Result<'hosted.coins'> = await call('hosted.coins', { offset, limit: 100 });
+      out.push(...r.coins.map((c) => ({ txid: c.txid, vout: c.vout, valueSats: c.valueSats, script: c.script, tweaks: c.tweaks })));
+      offset = r.nextOffset;
+    }
+    return out;
+  }
+
+  /**
+   * The coins the hosting guardian co-signed (`hosted.coins`), each found on this wallet's derivation paths or not:
+   * `onPath: false` coins are reachable only with this phone's key and the guardian (a phone thief's change, section 4),
+   * which the phone key backup keeps recoverable.
+   */
+  async hostedCoins(): Promise<ClassifiedCoin[]> {
+    if (!this.isHosted) throw new WalletError('wrong_state', 'Only a hosted wallet has a co-signed coin list.');
+    return classifyLedgerCoins(this.multisig(), await this.fetchLedger());
+  }
+
+  /**
+   * A hosted wallet's sweep (docs/design/family-hosting.md, section 5): every coin the descriptor scan finds, cross-checked
+   * against a second server (decision 4: coins only the second one sees are taken too, from their verified previous
+   * transactions), plus the guardian's ledger coins that sit at no derivation path. Those are swept when the surviving
+   * key is this phone's (it signs them by tweak), and named in `abandon` when it is the hardware wallet's (it signs only
+   * inputs of its registered wallet at a path). Returns the unsigned sweep and the abandoned outpoints.
+   */
+  private async buildHostedSweep(
+    from: MultisigWallet,
+    destination: MultisigWallet,
+    feeCapSats: number,
+    survivor: 'app' | 'hardware',
+    ledgerCall?: Parameters<TrikeyWallet['fetchLedger']>[0],
+    opts: { allowSingleServer?: boolean } = {},
+  ): Promise<{ psbt: Uint8Array; abandon: string[]; coins: number }> {
+    const primary = this.hostedChainSource('primary', from);
+    const snap = await primary.sync();
+    await this.update((s) => void (s.chain = { ...snap, syncedAt: this.now() }));
+    if (snap.utxosTruncated) throw new WalletError('utxos_truncated', 'The wallet has more coins than one sweep can list.');
+    let extra: typeof snap.utxos = [];
+    let check: ChainSource | undefined;
+    try {
+      check = this.hostedChainSource('check', from);
+      const other = await check.sync();
+      const seen = new Set(snap.utxos.map((u) => `${u.txid}:${u.vout}`));
+      extra = other.utxos.filter((u) => !seen.has(`${u.txid}:${u.vout}`));
+    } catch (e) {
+      if (!opts.allowSingleServer)
+        throw new WalletError('second_server_unavailable', 'A second chain server could not confirm the wallet\'s coins. Try again, or recover with one server only if you are sure.', { cause: e });
+      check = undefined;
+    }
+    const derived = [...snap.utxos, ...extra];
+    const ledger = classifyLedgerCoins(from, await this.fetchLedger(ledgerCall));
+    const known = new Set(derived.map((u) => `${u.txid}:${u.vout}`));
+    const offPath = ledger.filter((c) => !c.onPath && !known.has(`${c.txid}:${c.vout}`));
+    let liveOff: LedgerCoinView[] = [];
+    if (offPath.length) {
+      if (!primary.unspentByScript) throw new WalletError('chain_source_required', 'The chain server cannot look coins up by script, which this wallet needs for coins the guardian co-signed.');
+      const unspent = new Set((await primary.unspentByScript([...new Set(offPath.map((c) => c.script))])).map((u) => `${u.txid}:${u.vout}`));
+      liveOff = offPath.filter((c) => unspent.has(`${c.txid}:${c.vout}`));
+    }
+    const sweptOff = survivor === 'app' ? liveOff : [];
+    const abandon = survivor === 'app' ? [] : liveOff.map((c) => `${c.txid}:${c.vout}`);
+    const total = derived.length + sweptOff.length;
+    if (!total) throw new WalletError('nothing_to_sweep', 'The wallet has no coins to move.');
+    const fees = (await primary.estimateFees([3, 6]).catch(() => undefined)) ?? this.fees;
+    const destAddr = destination.derive(0, 0);
+    const vsize = estimateVsize(total, [destAddr.script]);
+    let rate = pickFeeRate(fees, 'normal', this.feeFloor);
+    if (Math.ceil(vsize * rate) > feeCapSats) rate = Math.floor((feeCapSats / vsize) * 1000) / 1000;
+    if (rate < (fees?.minRelaySatPerVb ?? 1) || Math.ceil(vsize * rate) > feeCapSats)
+      throw new WalletError('fee_cap_too_low', `The sweep fee cap (${feeCapSats} sats) does not cover the minimum relay fee for ${total} coins.`);
+    const prevSnap = await this.prevTxs(snap.utxos.map((u) => u.txid), primary);
+    const prevExtra = check ? await this.prevTxs(extra.map((u) => u.txid), check) : [];
+    const prevOff = await this.prevTxs(sweptOff.map((c) => c.txid), primary);
+    const tx = new btc.Transaction({ ...TX_OPTS });
+    const acct = from.accountPubkeys();
+    derived.forEach((u, i) => {
+      const d = from.derive(u.chain, u.index);
+      const prev = i < snap.utxos.length ? prevSnap[i] : prevExtra[i - snap.utxos.length];
+      tx.addInput({ txid: u.txid, index: u.vout, sequence: SEQUENCE_RBF, witnessUtxo: { script: d.script, amount: BigInt(u.valueSats) }, nonWitnessUtxo: hex.decode(prev), sighashType: btc.SigHash.ALL, ...from.psbtFields(d) });
+    });
+    sweptOff.forEach((c, i) => tx.addInput(ledgerInput(acct, c, prevOff[i], this.network, SEQUENCE_RBF)));
+    const totalIn = derived.reduce((s, u) => s + BigInt(u.valueSats), 0n) + sweptOff.reduce((s, c) => s + BigInt(c.valueSats), 0n);
+    const fee = BigInt(Math.ceil(vsize * rate));
+    if (totalIn - fee < BigInt(DUST_SATS)) throw new WalletError('nothing_to_sweep', 'The coins are worth less than the fee to move them.');
+    tx.addOutput({ script: destAddr.script, amount: totalIn - fee, ...destination.psbtFields(destAddr) });
+    const psbt = tx.toPSBT();
+    selfCheck(() => analyzePsbt(psbt, acct, this.network, { requireNonWitnessUtxo: true, outputsAcct: destination.accountPubkeys() }));
+    return { psbt, abandon, coins: total };
+  }
+
+  /** `recovery.start` for a hosted wallet: the destination by its account pubkeys and its wallet map, with `abandon`. */
+  private async startHostedWithSweep(sweep: Uint8Array, destination: MultisigWallet, destinationMap: string, abandon: string[], extra: Partial<RecoveryRecord>, feeCapSats: number): Promise<Recovery> {
+    const txid = parsePsbt(sweep).id;
+    const a = destination.accountPubkeys();
+    const res = await this.callChanging(
+      'recovery.start',
+      { sweepPsbt: base64.encode(sweep), destinationKeys: { app: hex.encode(a.app), hardware: hex.encode(a.hardware), cosigner: hex.encode(a.cosigner) }, destinationMap, ...(abandon.length ? { abandon } : {}) },
+      {
+        verify: async () => {
+          const st = await this.call('recovery.status', {});
+          return st.recovery && st.recovery.sweepTxid === txid ? { recovery: st.recovery } : undefined;
+        },
+      },
+    );
+    await this.storeRecovery(res.recovery, {
+      role: 'initiator',
+      destination: { descriptor: destination.descriptor(), walletId: keySetId(a), ...extra.destination },
+      sweepInputs: outpointsOf(sweep),
+      feeCapSats,
+    });
+    await this.refreshStatus().catch(() => undefined);
+    return res.recovery;
+  }
+
+  /** "Lost my hardware wallet" for a hosted wallet: key 2 signs every coin (by tweak), off-path ones included. */
+  private async startHostedRecovery(rec: HardwareRecord, opts: { allowSingleServer?: boolean }): Promise<Recovery> {
+    const current = this.multisig();
+    const acct = current.accountPubkeys();
+    // The same key 3 account, with a fresh chaincode this phone picks: the guardian still learns no address.
+    const destination = new MultisigWallet(this.network, { app: current.keys.app, hardware: keyExpressionOf(rec.account), cosigner: cosignerKeyExpression(acct.cosigner, secureRandomBytes(32), this.network) });
+    const { policy } = await this.getRules();
+    const { psbt } = await this.buildHostedSweep(current, destination, policy.sweepFeeCapSats, 'app', undefined, opts);
+    const signed = await this.withKey2('Approve the recovery', async (m) => {
+      const account = HDKey.fromMasterSeed(mnemonicToSeedSync(m), this.network.bip32).derive(bip48Path(this.network));
+      try {
+        return signByTweaks(psbt, account.privateKey!, this.network);
+      } finally {
+        account.wipePrivateData();
+      }
+    });
+    const destWalletId = keySetId(destination.accountPubkeys());
+    const map = encryptWalletMap({ version: 1, network: this.network.name, descriptor: destination.descriptor(), birthHeight: this.s.chain?.tipHeight ?? 0 }, walletMapKey(chainCodeOf(rec.account.xpub, this.network), this.s.guardian!.pubkey, destWalletId));
+    return this.startHostedWithSweep(signed, destination, map, [], { destination: { descriptor: destination.descriptor(), walletId: destWalletId, hardware: rec } }, policy.sweepFeeCapSats);
+  }
+
+  /**
+   * "Lost my phone and its backup", for a HOSTED wallet, on a new phone (stage `new`): the hardware wallet vouches for
+   * this phone (`hosted.access`, the version-2 text bound to the wallet's key-set id, so `code` must name the wallet),
+   * the phone fetches the encrypted wallet map (`hosted.map.get`), decrypts it with the hardware wallet's chaincode and
+   * checks it against the guardian's account pubkeys and the device's key; then the hardware wallet signs a sweep of
+   * every coin to a new wallet of this phone's key 2, the same hardware wallet and the same key 3 account (a new
+   * chaincode). Coins the guardian co-signed at no derivation path cannot be signed by the hardware wallet: they are
+   * named in `abandon` (and the alerts say so). On mainnet, `mainnetConsent: true` as for any hosted wallet.
+   */
+  async recoverHostedWithHardware(opts: { code: string; hardwareKind?: HardwareKind; mainnetConsent?: boolean; allowSingleServer?: boolean; walletLabel?: string }): Promise<Recovery & { abandoned: string[] }> {
+    const guardian = TrikeyWallet.parseRecoveryCode(opts.code, this.network.name);
+    if (this.s.stage !== 'new') throw new WalletError('wrong_state', 'Recover from a phone that is not set up yet.');
+    if (!guardian.walletId) throw new WalletError('pairing_uri_invalid', 'This recovery code does not name the wallet; ask the host to show it again from their guardian.');
+    if (this.network.name === 'bitcoin' && opts.mainnetConsent !== true)
+      throw new WalletError('mainnet_consent_required', 'Trikey is pre-alpha software, not audited. Confirm you accept that before using real bitcoin.');
+    if (!this.deps.hostedChain) throw new WalletError('chain_source_required', 'This app has no chain server for a hosted wallet.');
+    const guardianPubkey = nostrHex(guardian.npub);
+    const relays = [...new Set(guardian.relays.map((r) => normalizeRelayUrl(r)))];
+    await this.close();
+    const { rpc, pool } = await this.connect(guardianPubkey, relays);
+    let keep = false;
+    try {
+      const hw = await this.hardwareProvider().connect({ kind: opts.hardwareKind });
+      this.hwSession = hw;
+      const rec = await this.readHardware(hw);
+      const expiresAt = this.nowSec() + ACCESS_TTL_SEC;
+      const text = recoveryAccessMessage({ guardianPubkey, phonePubkey: this.s.nostrPubkey, expiresAt, walletId: guardian.walletId });
+      const signature = await this.signWithAuthKey(hw, rec, text, 'recovery-access');
+      let access: Result<'hosted.access'>;
+      try {
+        access = await rpc.call('hosted.access', { approval: { kind: 'bip137', expiresAt, signature } });
+      } catch (e) {
+        throw asWalletError(e, 'recovery access');
+      }
+      if (access.network !== this.network.name) throw new WalletError('network_mismatch', `The guardian's wallet is on ${access.network}.`);
+      if (access.walletId !== guardian.walletId) throw new WalletError('guardian_mismatch', 'The guardian let this phone into another wallet than the code names.');
+      if (access.hardwareAuth.pubkey !== rec.auth.pubkey) throw new WalletError('guardian_mismatch', 'The guardian records another authorization key.');
+      const hwPub = hex.encode(HDKey.fromExtendedKey(rec.account.xpub, this.network.bip32).publicKey!);
+      if (access.accountPubkeys.hardware !== hwPub) throw new WalletError('hardware_mismatch', "This hardware wallet is not the one in the hosted wallet.");
+      const got = await rpc.call('hosted.map.get', {});
+      if (!got.map) throw new WalletError('wallet_map_invalid', 'The guardian keeps no wallet map for this wallet. Restore from your phone key backup, or a printed copy of the wallet.');
+      let old: MultisigWallet;
+      try {
+        const content = decryptWalletMap(got.map, walletMapKey(chainCodeOf(rec.account.xpub, this.network), guardianPubkey, access.walletId));
+        old = verifyWalletMap(content, { network: this.network, accountPubkeys: access.accountPubkeys, hardwareXpub: rec.account.xpub });
+      } catch (e) {
+        throw new WalletError('wallet_map_invalid', `The wallet map cannot be used: ${(e as Error).message}`, { cause: e });
+      }
+      if (keySetId(old.accountPubkeys()) !== access.walletId) throw new WalletError('wallet_map_invalid', 'The wallet map names another wallet.');
+      const descriptor = old.descriptor();
+      const policyName = policyNameOf(access.walletId);
+      const regd = await hw.registerWallet({ name: policyName, descriptor });
+      const hwRec: HardwareRecord = { ...rec, policyName, registrationHmac: regd.hmac, addressVerified: false };
+      this.rpc = rpc;
+      this.pool = pool;
+      keep = true;
+      this.chainSource = undefined;
+      await this.update((s) => {
+        s.stage = 'recovering';
+        s.recoveryAccessExpiresAt = access.accessExpiresAt;
+        s.hardware = hwRec;
+        s.guardian = { pubkey: guardianPubkey, relays, key: { fingerprint: old.keys.cosigner.fingerprint, path: 'm', xpub: old.keys.cosigner.xpub }, hosted: { walletLabel: opts.walletLabel ?? 'Recovered wallet', cosignerAccountPubkey: access.accountPubkeys.cosigner, acceptedAt: this.now() } };
+        s.wallet = { descriptor, walletId: access.walletId, pairedAt: this.now() };
+        s.rules = { policy: access.policy, policyHash: policyHash(access.policy), nextHardwareSequence: access.nextHardwareSequence, fetchedAt: this.now() };
+      });
+      if (access.activeRecoveryId)
+        throw new WalletError('guardian_refused', `A recovery (${access.activeRecoveryId}) is already running.`, {
+          refusal: { kind: 'recovery_in_progress', recoveryId: access.activeRecoveryId, message: 'A recovery is already running.' },
+        });
+      const destination = new MultisigWallet(this.network, { app: keyExpressionOf(this.s.key2), hardware: old.keys.hardware, cosigner: cosignerKeyExpression(old.accountPubkeys().cosigner, secureRandomBytes(32), this.network) });
+      const { psbt, abandon } = await this.buildHostedSweep(old, destination, access.policy.sweepFeeCapSats, 'hardware', (m, p) => rpc.call(m, p), { allowSingleServer: opts.allowSingleServer });
+      this.emit({ type: 'hardware_prompt', purpose: 'recovery-sweep', text: `Move every coin of the wallet to the new wallet ${keySetId(destination.accountPubkeys())}` });
+      const signed = await this.hardwareSignPsbt(hw, psbt, old, this.devicePolicy(hwRec, descriptor));
+      const a = analyzePsbt(signed, old.accountPubkeys(), this.network);
+      if (a.inputs.some((i) => i.signedBy.length !== 1 || i.signedBy[0] !== 'hardware')) throw new WalletError('hardware_invalid_response', "The sweep must carry the hardware wallet's signature alone.");
+      const destWalletId = keySetId(destination.accountPubkeys());
+      const map = encryptWalletMap({ version: 1, network: this.network.name, descriptor: destination.descriptor(), birthHeight: this.s.chain?.tipHeight ?? 0 }, walletMapKey(chainCodeOf(rec.account.xpub, this.network), guardianPubkey, destWalletId));
+      const recovery = await this.startHostedWithSweep(signed, destination, map, abandon, {}, access.policy.sweepFeeCapSats);
+      return { ...recovery, abandoned: abandon };
+    } finally {
+      const hw = this.hwSession;
+      this.hwSession = undefined;
+      await hw?.close().catch(() => {});
+      if (!keep) {
+        rpc.close();
+        pool.close();
+      }
+    }
+  }
+
+  // ===========================================================================
   // Replace guardian
 
   private emitStep(step: ReplaceStep, operation: 'replace-guardian' | 'stray-coins' = 'replace-guardian'): void {
@@ -4788,7 +5365,7 @@ export class TrikeyWallet {
     ];
     return {
       newGuardian: this.previewOf(session),
-      oldWalletId: old.fingerprint(),
+      oldWalletId: this.s.wallet!.walletId,
       newWalletId: session.wallet.fingerprint(),
       oldGuardianReachable: reachable,
       balanceSats,
@@ -4885,7 +5462,9 @@ export class TrikeyWallet {
       const proof = await this.signWithAuthKey(hw, rec, pairingMessage(walletId, cosignerPub), 'pairing');
       return { proof, hmac: reg.hmac };
     });
-    const res = await this.registerAtGuardian(session, { rules, deviceName: this.s.deviceName, proof, replaces: { walletId: this.s.wallet!.walletId, descriptor: this.s.wallet!.descriptor } });
+    // The new guardian keys the wallet it watches by its descriptor hash; a hosted wallet's own id is its key-set id.
+    const replacesId = this.isHosted ? this.multisig().fingerprint() : this.s.wallet!.walletId;
+    const res = await this.registerAtGuardian(session, { rules, deviceName: this.s.deviceName, proof, replaces: { walletId: replacesId, descriptor: this.s.wallet!.descriptor } });
     // The new guardian holds the new wallet: persist before anything else can fail.
     this.replaceRpc = { rpc: session.rpc, pool: session.pool };
     this.pairing = undefined;
@@ -4928,7 +5507,7 @@ export class TrikeyWallet {
         truncated = this.s.chain!.utxosTruncated;
       } else {
         // The old guardian is gone: the new one watches the old wallet and lists its coins (never a stale snapshot while it answers).
-        const listed = await this.listOldWalletViaNewGuardian(r, old.walletId);
+        const listed = await this.listOldWalletViaNewGuardian(r, this.isHosted ? oldWallet.fingerprint() : old.walletId);
         if (listed) {
           source = listed.source;
           utxos = listed.snap.utxos;
@@ -5085,7 +5664,8 @@ export class TrikeyWallet {
         s.silentPayments.scanner = undefined;
       }
     });
-    // From here on the new guardian is the guardian.
+    // From here on the new guardian is the guardian (and its chain data: a hosted wallet's cached chain source scanned the old wallet).
+    this.chainSource = undefined;
     this.rpc?.close();
     this.pool?.close();
     this.rpc = this.replaceRpc?.rpc;
@@ -6018,8 +6598,8 @@ export class TrikeyWallet {
       const s = this.s;
       const sv = s.savings;
       const payload: BackupPayload = {
-        // Version 2 only with Savings: everyone else's backup is byte for byte the format it always was.
-        v: sv ? 2 : 1,
+        // Version 2 only with Savings, 3 only for a hosted wallet: everyone else's backup is byte for byte the format it always was.
+        v: s.guardian?.hosted ? 3 : sv ? 2 : 1,
         network: this.network.name,
         createdAt: this.nowSec(),
         mnemonic,
@@ -6159,9 +6739,10 @@ export class TrikeyWallet {
       const w = parse(p.wallet.descriptor);
       // Key 2 is the wallet's phone key; a recovering phone's key 2 is the destination's instead.
       const keyHolder = recovering && p.recoveryDestination ? parse(p.recoveryDestination.descriptor) : w;
-      if (w.fingerprint() !== p.wallet.walletId || !sameKey(keyHolder.keys.app, key2.account) || !p.guardian || !p.hardware)
+      if ((p.guardian?.hosted ? keySetId(w.accountPubkeys()) : w.fingerprint()) !== p.wallet.walletId || !sameKey(keyHolder.keys.app, key2.account) || !p.guardian || !p.hardware)
         throw new WalletError('backup_invalid', 'The backup does not hold a consistent wallet.');
-      if (!sameKey(w.keys.hardware, keyExpressionOf(p.hardware.account)) || !sameKey(w.keys.cosigner, keyExpressionOf(p.guardian.key)))
+      const cosignerOk = p.guardian.hosted ? hex.encode(w.accountPubkeys().cosigner) === p.guardian.hosted.cosignerAccountPubkey : sameKey(w.keys.cosigner, keyExpressionOf(p.guardian.key));
+      if (!sameKey(w.keys.hardware, keyExpressionOf(p.hardware.account)) || !cosignerOk)
         throw new WalletError('backup_invalid', 'The backup does not hold a consistent wallet.');
     }
     if (p.savings) {

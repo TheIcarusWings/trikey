@@ -1,7 +1,11 @@
 # Guardian for family (hosting a guardian for someone): design proposal
 
-Status: proposal, not built. Written 2026-11-01 against `main` at `b8fd81c` (after Savings). DESIGN.md ("Later:
-guardian for family") states the goal; nothing below is in the code yet except the UI mockups listed in section 0.
+Status: **phase 1 built** (2026-11-01, branch `feature/family-hosting`), **phase 2 built** (2026-11-02, branch
+`feature/family-hosting-phase2`: limit off and the contact lock for guests, a guest's `guardian.lock` as a per-slot pause,
+the guest's "leave" screen). Written as a proposal on 2026-11-01 against `main` at `b8fd81c` (after Savings); the owner's
+decisions are recorded in section 14, what phase 1 built, where it differs from the proposal and what is still open in
+section 15, and what phase 2 built and decided in section 16. Sections 0 to 13 are the proposal as reviewed; where the
+build differs, sections 15 and 16 say so.
 
 Someone who runs a Trikey Guardian (the **host**) holds key 3 for a person they know (the **guest**), who has no home
 server. The guest keeps key 1 (their own hardware wallet) and key 2 (their own phone). DESIGN.md fixes four things:
@@ -219,10 +223,10 @@ recovery).
 | Part of rule 3 | Private mode |
 |---|---|
 | `Σ inputs − Σ change`, fee included | **Works.** Inputs and their amounts are proven by tweaks plus `nonWitnessUtxo`; an output is change when its three tweaks rebuild its script from the guest's account pubkeys. This is core's `analysis.outflow` / `vaultIn − selfOut` (`packages/core/src/psbt.ts`). |
-| Rolling 24 hours, keyed by outpoint; a replay counted once; an RBF replacement counts as the larger amount | **Works.** Outpoints and shares (`splitOutflow`, `usageWith`, `apps/guardian/src/policy/limit.ts`) need no addresses. |
+| Rolling 24 hours, keyed by outpoint; a replay counted once; an RBF replacement counts as the larger amount | **Works.** Outpoints and shares (`splitOutflow`, `usageWith`, `apps/guardian/src/policy/limit.ts`) need no addresses. The app's "Speed up" (RBF) of a Spending payment is not offered to a guest yet: the slot's ledger would keep the replaced payment's change (DESIGN.md, "Speed up"). |
 | Clock checked against the chain (`clock_ahead_of_chain`, monotonic `timeFloor`) | **Works.** Chain time comes from the host's own node. |
 | Payments to Savings count as leaving | Works trivially: the guardian does not know Savings. |
-| Limit off | Works (same rule, same approval text); phase 2 (section 10). |
+| Limit off | Works (same rule, same approval text); built in phase 2 (section 16). |
 | Coins spent by phone + hardware wallet | Not seen, and need not be: the limit bounds only what key 3 co-signs. Same as today ("Big payment ... the guardian isn't involved"). |
 
 ### What does not work: "change only within reach"
@@ -519,9 +523,9 @@ amounts or balances".
 | Feature | Guests | Why |
 |---|---|---|
 | Daily limit, delay, fee cap, alert contacts, rule changes with hardware approval | Phase 1 | The engine's rules, unchanged |
-| Limit off (rule 3) | Phase 2 | Same rule and text (`Trikey policy v2`); phase 1 stays small |
-| Contact lock (rule 8) | Phase 2, per slot | A guest's contact's `LOCK` must stop only that slot ("paused"), not the host's box; the engine's lock is global today (`Guardian.lockByContact`). A host's contact's `LOCK` still locks the whole box, guests included (a nuisance to say in the host UI) |
-| `guardian.lock` / `guardian.unlock` from a guest | Never unlock; lock as per-slot pause in phase 2 | Unlock is the host's passphrase. Until then a guest who fears a phone thief lowers the limit to 0 (tightening, phone alone) |
+| Limit off (rule 3) | Phase 2 (built) | Same rule and text (`Trikey policy v2`); phase 1 stays small |
+| Contact lock (rule 8) | Phase 2, per slot (built) | A guest's contact's `LOCK` must stop only that slot ("paused"), not the host's box; the engine's lock is global today (`Guardian.lockByContact`). A host's contact's `LOCK` still locks the whole box, guests included (a nuisance to say in the host UI) |
+| `guardian.lock` / `guardian.unlock` from a guest | Never unlock; lock as per-slot pause in phase 2 (built) | Unlock is the host's passphrase. A paused slot is resumed by the guest's hardware wallet (section 16) |
 | Savings watch | No | `savings.register` sends Savings' descriptor, so the host would see Savings. The guest's phone watches Savings through its own chain source; the tripwire alert then comes from the phone, which is weaker |
 | Silent payments (`sp.register`), the helper coin (`singlekey.register`) | No | The scan key would show the host every payment received; scanning costs the host's CPU per guest |
 | Watching the replaced wallet (`pair.replacesDescriptor`) | No | It reveals the old wallet. The guest's phone watches it through its chain source |
@@ -554,7 +558,7 @@ amounts or balances".
 
 ## 12. Phasing (question 10)
 
-### Phase 1: the smallest useful, safe slice (test networks only)
+### Phase 1: the smallest useful, safe slice (built; mainnet allowed, decision 5)
 
 Multi-wallet core, invites and pairing, co-signing under the limit, guest-built recovery with the ledger and the wallet
 map, guest chain data from Esplora, the host page live.
@@ -573,8 +577,15 @@ map, guest chain data from Esplora, the host page live.
 
 ### Phase 2
 
-Limit off and contact lock for guests (per-slot pause), `guardian.lock` from a guest as a per-slot pause, the
-second-server coverage check in the app, the guest's "leave" screen, mainnet (decision 5).
+Limit off and contact lock for guests (per-slot pause), `guardian.lock` from a guest as a per-slot pause, the guest's
+"leave" screen, the host's view of a guest's recovery code in the web UI, and extra alert channels (email, ntfy, webhook)
+for guests and their contacts: each guest's own, never the host's (docs/design/notifications.md). (The second-server check before a sweep and
+mainnet came into phase 1: decisions 4 and 5.)
+
+**Built** (section 16): limit off, the per-slot contact lock and pause, `guardian.lock` from a guest, the "leave" screen
+(with Replace guardian working for hosted wallets and a guardian-side check before a slot is released). **Not built:** the
+host's view of a guest's recovery code (still open question 4 of section 15) and guests' extra alert channels (section 16,
+"Left out").
 
 ### Phase 3 and later
 
@@ -597,7 +608,7 @@ two hosts for key 3 (a new script, a separate design).
   required backup) or the hardware wallet's seed words in software.
 - **Chain analysis** from co-signed transactions (section 3).
 - **Locks that are not the guest's doing.** The host's own lock, a restart, or a `LOCK` from one of the host's contacts
-  stop the guest's phone-only payments until the host unlocks.
+  stop the guest's phone-only payments until the host unlocks. (A guest's own pause, phase 2, is the guest's to lift.)
 - **A relay run by the host** sees the guest phone's IP address.
 - **Coercion** of the host or the guest.
 
@@ -634,3 +645,274 @@ or status, or another guest's, and a guest's key 3 cannot sign for any other slo
     watch are never served by the host.
 13. **`abandon` in recoveries.** Let a sweep leave named ledger coins behind, announced in the alerts.
     *Recommendation:* yes; without it one off-path coin blocks a hardware recovery for good.
+
+### The owner's decisions (2026-11-01)
+
+| # | Decision |
+|---|---|
+| 1 | Privacy: BIP 89 only in phase 1; a "shared" mode later, as an opt-in. **Yes.** |
+| 2 | Rule 3 for guests: change proven by tweaks plus the co-signed-coin ledger, and a key 2 backup **required**. **Yes.** |
+| 3 | Wallet map: required at pairing (encrypted, write-once on the host), plus an offer to print the descriptor. **Yes.** |
+| 4 | Chain data: the guest's own server, else a public Esplora, with a second-server check before sweeps. **Yes.** |
+| 5 | **Mainnet allowed from the start** (overriding the "test networks only" recommendation), behind the same pre-alpha / "not audited, open source" warning and consent the app uses for mainnet in guardian mode; every mainnet path for guests goes through it. |
+| 6 | One engine per hosted wallet; at most 8 hosted wallets and 4 pending invites; invites single use for 24 hours. **Yes.** |
+| 7 | The host sees guests' recoveries in the web UI without amounts, no DMs; the accept screen suggests adding the host as an alert contact. **Yes.** |
+| 8 | Stopping hosting: 30 days' notice by default; "stop now" behind a typed confirmation; refused while that wallet's recovery runs. **Yes.** |
+| 9 | Reset refused while hosting. **Yes.** |
+| 10 | Section 9's disclosure texts with a required "I understand" checkbox; the mockups and copy that overstated privacy updated. **Yes.** |
+| 11 | Key 3's shape: test the depth-0 xpub against a synthetic origin through every device integration in code, keep what all accept, and document what needs real devices. **Yes** (section 15: depth-0 kept). |
+| 12 | Guests in phase 1: limit, delay, fee cap, contacts, hardware-approved changes; limit off and contact lock in phase 2; never Savings watch, silent payments or the replaced-wallet watch. **Yes.** |
+| 13 | `abandon` in recoveries. **Yes.** |
+
+## 15. What phase 1 built
+
+### Per component
+
+| Where | What |
+|---|---|
+| `packages/core` | `keySetId(acct)` (`sha256("trikey/keyset/v1" || app || hardware || cosigner)[:16]`), a fixed vector; `syntheticCosignerKeyExpression` (the decision-11 alternative, for tests). |
+| `packages/protocol` | `trikey://invite` (`encodeInviteUri`, `decodeInviteUri`, in `decodeTrikeyUri`); `hosted.prepare`, `hosted.pair`, `hosted.coins`, `hosted.map.get`, `hosted.access`; the hosted form of `recovery.start` (a union with the descriptor form), `abandon` on `recovery.update`, `tweak` on `hardware.confirm`; the `hosting_ending` alert and `wallet_retired` reason `hosting_ended`; `guardian.status.hosting`; `GUARDIAN_FEATURES.familyHosting`; recovery codes' `hosted=1`. PROTOCOL.md "Family hosting". |
+| `apps/guardian` | `src/hosting/`: `registry.ts` (`hosting.json`, invites), `engine.ts` (`HostedEngine`, one per slot), `service.ts` (routing, key 3 per slot at unlock, stop hosting, reset refusal, background work), `handlers.ts` (guests' methods and the router in front of the host's), `recovery.ts`, `alerts.ts`, `dm-cancel.ts`, `http.ts`. `keystore.ts` gained `trikey/key3-hosted/v1`. The host's files are touched only to call into hosting (`guardian.ts`: authorize, known senders, signer install and drop, tick, reset refusal, `relays_changed` to guests; `nostr/handlers.ts`: the router; `dm-cancel.ts`: a guest id goes to its slot). `FAMILY_HOSTING=false` turns it off. |
+| `packages/wallet` | Hosted mode: `acceptInvite` (disclosure and mainnet consent required), `deps.hostedChain` (never the host's chain), PSBTs to the guardian without derivations, receiving only after a key 2 backup, `hostedCoins` (ledger classification), wallet map encrypt / decrypt / verify (`src/hosted.ts`), recovery with the hardware wallet lost (key 2 signs every coin by tweak, off-path ones included) and with the phone lost (`recoverHostedWithHardware`: `hosted.access`, the map, `abandon` for off-path coins), the second-server check before both, backup version 3, `hardware.confirm` with the tweak, invites and hosted recovery codes in `parseScannedCode`. |
+| `apps/mobile` | The invite screen (section 9 word for word, the checkbox, the mainnet warning, the contact suggestion), `readInvite` / `acknowledgeInvite` / `setUpRules` accepting the invite, the chain source (`src/data/hosted.ts`: Recovery Key mode's `EsploraChainSource` plus a look-up by script, the guest's server or the public one, a second public server for the check), Settings > Guardian "Hosted by", a chain-server screen, hosted recovery codes, the demo. |
+| `apps/guardian-web` | The host page on the real API (`available` replaces the build flag), states (`recovering`, `leaving`, `ended`, `left`), Stop hosting with notice and "stop now" with the typed confirmation, removal, the corrected disclosure, the Reset page's reason. API.md. |
+
+### How the host-unchanged guarantee and isolation are tested
+
+- Every existing guardian test passes untouched. A committed version-2 state file (`test/fixtures/guardian-state-v2.golden.json`)
+  loads and saves byte for byte; end to end, the host's `guardian-state.json` is byte for byte the same across two guests
+  pairing, paying, starting and cancelling recoveries, a relay change, a restart and stopping hosting, and the host's
+  `guardian.status` and `policy.get` answers are unchanged (`test/hosting.e2e.test.ts`).
+- Isolation: a guest's phone gets typed errors for `wallet.sync`, `tx.get`, Savings, silent payments, `guardian.lock` and
+  `guardian.unlock`; its status is its slot's; one guest cannot see or cancel another's recovery; a guest's contact
+  cannot cancel another slot's or the host's recovery ids; the host's phone never reaches a guest slot; a phone pubkey
+  belongs to one slot; `tx.broadcast` relays only what the slot co-signed.
+
+### Deviations from the proposal (the safest option was taken each time)
+
+1. **`hosted.access` instead of a looser `recovery.access`.** Answering a guest wallet through `recovery.access` would have
+   made its `descriptor` and `guardianKey` optional, changing the host's RPC shape. A new method keeps `recovery.access`
+   byte for byte; recovery codes of guest wallets say `hosted=1`.
+2. **Slot ids are 8 random bytes, recovery ids `<slotId>g<n>-<txid12>`.** 12 bytes and `<slotId>-<n>-<txid12>` would not fit
+   the protocol's `RecoveryId` (40 characters) nor the `CANCEL <id>` pattern; this form fits both, so no schema widens and
+   old contact apps still cancel. 64 bits of slot randomness are ample next to the phone's 32-byte contribution.
+3. **The ledger and the wallet maps live in `state.json`**, not `slot.json`, so a co-signature is never handed out before
+   the ledger entry is durable (the same write as the limit's record). `slot.json` keeps the co-signed sweeps.
+4. **The host's own `guardian.status` does not list `family_hosting`** (its answers stay as they were); guests see it in
+   their status and in `hosted.prepare`.
+5. **Strangers keep an answer for 10 minutes after an invite is used or ran out** (as for pairing codes), so a second
+   phone hears "already used" rather than a timeout.
+6. **A guest's own key 2 backup is enforced as "no receive address before a backup"** in the wallet.
+7. **The regtest stack has no Esplora endpoint:** the wallet's and the app's end-to-end tests use an in-process stand-in
+   over the rig's chain; the real `EsploraChainSource` is covered by Recovery Key mode's tests and the factory's own.
+
+### Guests and the host's extra alert channels
+
+The host's email, ntfy and webhook channels (docs/design/notifications.md) are the host's: they carry the host's own
+wallet's alerts and host-level events (restarted and locked, relays changed, the channels changed) only. A guest's alerts
+(its recoveries, `hosting_ending`, the end of hosting) are sent by the hosted alerter (`src/hosting/alerts.ts`) to the
+guest's phone and the guest's own alert contacts as nostr DMs, and never enter the notifier, not even for a host contact
+who is also the guest's contact. Guests have no extra channels in phase 1 (phase 2). The guest's `guardian.status` does
+not show the host's channels. `test/hosting-notify.e2e.test.ts` checks that the host's channels receive no guest recovery
+id, wallet id, label, amount or alert type while a guest's recovery and Stop hosting run, that they still work for a
+host-level event, and that hosting and the notifier keep to their own files (`hosting.json`, `hosted/` against
+`notifications.json`, `notifications-key.json`).
+
+### Updated to 0.1.10, 0.1.11 and the live wallet (for the next release)
+
+Family hosting was built on 0.1.9 and merged with 0.1.10, 0.1.11 and the live wallet (#114) for the next release. What
+those changed underneath it, and how hosting fits:
+
+- **Seen wraps (0.1.10).** The guardian has one nostr key, and guests' phones talk to it like the host's phone: there is
+  no per-slot key. So there is one `seen-wraps.json` (`FILES.seenWraps`), and a guest's phone, recovery peer and
+  contacts count as known senders (`Hosting.isKnownSender`), so their wraps are remembered there and survive a restart
+  like the host phone's; strangers' (invitees') wraps stay in the inbox's small in-memory set. The file holds ids only
+  (not secret), bounded at 4,096; with short wraps an id is kept about an hour, ample for the host and 8 guests. Reset
+  is refused while any guest is hosted, does not change the nostr key, and so leaves the file as it is; a slot's own
+  files stay in `hosted/<slotId>/` (`state.json`, `slot.json`), listed in `guardian.ts`'s data directory comment.
+- **Short wraps (0.1.10).** A property of the one transport, so guests get it too: `short_wraps` is in the guest's
+  `features` (`GUEST_FEATURES`) and in `hosted.prepare`.
+- **`tx.broadcast` shortcuts (0.1.11).** The host's handler trusts a transaction it co-signed in the last 30 minutes
+  (`RecentlyCosigned`) or one spending a coin its last `wallet.sync` or live-wallet pass listed (`Guardian.knownCoins`),
+  both keyed by the host's wallet id and filled only by the host's own `sign`, `wallet.sync` and live wallet. A guest's `sign` and `tx.broadcast` are the
+  slot's handlers (`hosting/handlers.ts`), which never touch them: a guest's `tx.broadcast` relays only what its own
+  slot co-signed (`HostedEngine.signedTxid`). A guest's transaction sent by the host's phone, and a host transaction
+  sent by a guest's phone, are refused as foreign (`test/hosting.e2e.test.ts`). The phone side (the "Sending" entry,
+  the 1 sat/vB mainnet floor) applies to hosted wallets too; the hosted sweep now keeps the floor as well.
+- **The live wallet (#114).** The guardian now subscribes to its wallets' scripts on an Electrum server (Bitcoin Core
+  follows the descriptors it imported), keeps their data in memory, answers `wallet.sync` and the `tx.broadcast` check
+  from it, and sends `wallet_tx` to the paired phone (plus, opted in, "Payments" on the owner's channels). Its targets
+  are the host engine's wallets only (the paired one, Savings, the watched replaced wallet, the helper account; see
+  `LiveWallet.targets`), and it delivers to the host's paired phone only. **Guests are never watched**: no guest script
+  is subscribed, nothing of a guest is imported into Bitcoin Core, `live-wallet.json` holds nothing of a guest, no guest
+  phone gets `wallet_tx`, and a guest's payments never reach the host's channels (guests do not list `live_wallet`).
+  This is BIP 89, not a gap: the host's guardian knows no address of a guest wallet, and the guest's phone reads its
+  own chain server. The only chain reads for guests stay the outpoint checks below (`ChainService.outpointsUnspent`,
+  which bypasses the live script cache). Should those ever need a cache, it belongs per slot and per outpoint (the
+  slot's ledger and its recovery's inputs), behind that one method, never in the script subscriptions.
+  `test/hosting.e2e.test.ts` checks the subscriptions, the file and the alerts; `test/hosting-notify.e2e.test.ts`
+  checks the owner's channels with "Payments" on (the host's own payment arrives, the guest's never).
+- **Plain Docker and the setup code (#104).** `TRIKEY_PLATFORM` and the first-run setup code guard the web UI's first
+  setup only; invites are made from a signed-in web UI as before and are not affected. `FAMILY_HOSTING` sits next to
+  the new settings in `config.ts`, the guardian README and the plain Docker compose file (`FAMILY_HOSTING=false` turns
+  hosting off there too).
+
+### Chain sources and guests
+
+Since #105 the host chooses where its guardian reads the chain: its own Electrum server, Bitcoin Core alone (a
+watch-only descriptor wallet in it), or a public Electrum server. Guests' phones never read their wallet from the host
+(section 6); the host's chain source matters to a guest for what the guardian does with it: the tip and its median
+time past (a recovery's delay), the coverage check before a guest recovery completes, broadcasting the slot's
+co-signed transactions and sweeps, and fee estimates.
+
+**The coverage check works with every backend, by outpoint, and imports nothing.** It only ever asks about coins the
+guardian already knows by outpoint: the sweep's inputs and the ledger (coins key 3 co-signed into existence). So it
+asks `ChainService.outpointsUnspent`, which never calls `prepare` (the step that makes Bitcoin Core's watch-only wallet
+import a descriptor): an Electrum server is asked for those scripts' unspent outputs (as before), Bitcoin Core is
+asked per outpoint with `gettxout` on its UTXO set (mempool included; no `-txindex` needed). **The host's Bitcoin Core
+wallet never imports a guest's descriptor, address or script** (BIP 89: the host must not learn the guest's wallet;
+a descriptor in the host's node would also outlive the slot). Decision: no refusal on Core, it works there.
+`test/hosting-chain.test.ts` runs the check on a Core-like and an Electrum-like backend and asserts that nothing is
+prepared or imported. A sweep the guest's phone broadcast itself and that confirmed is recognised by its outputs
+(`gettxout`), since Core without `-txindex` cannot serve a transaction outside its wallet.
+
+What a public server sees: with a public Electrum server, the coverage check asks it about the sweep's inputs and the
+ledger coins' scripts, and broadcasts go through it, with the box's IP address. So:
+
+- **`chain_source_changed` reaches guests.** On a switch, every guest phone and recovery peer gets the alert over nostr
+  (`Hosting.announceChainSource`), in the guest's words ("Your host's guardian now reads the blockchain from a public
+  server ... Your phone still reads your wallet from its own chain server"). Never on the host's email, ntfy or webhook
+  channels (those get the host's own announcement, with nothing of a guest), and not to the guests' contacts (it is
+  not about their recovery role). The guest's `guardian.status.chainSource` says the same. Both name a public server
+  but never the host's own node: for that `host` is `"own"`, since its address on the host's network is the host's.
+  The app shows it as the host's change ("Your host's guardian now uses ...") and as a "Host's server" row in
+  Settings > Guardian, next to the guest's own chain server.
+- **A public server is refused while a guest's recovery runs**, as while the host's runs (`GET /api/chain`'s
+  `recoveryRunning` counts guest recoveries too). Starting a guest recovery while the host already uses a public server
+  is allowed, as for the host's own: the guest's phone does its own check with its own server and a second one.
+
+`test/hosting-chain-source.e2e.test.ts` checks the guest's status, both alerts, the host's channels, and the refusal.
+
+### Key 3's shape (decision 11)
+
+Kept: **a depth-0 xpub with no origin** (`cosignerKeyExpression`, `[ownfp]xpub`). Through the integrations in code
+(`apps/mobile/src/hardware/common/key3-shape.test.ts`): Ledger's wallet policy key info is `[fp]xpub`, Trezor's multisig
+nodes carry the xpub with the `[chain, index]` suffix and no origin, the Coldcard file says `Derivation: m` with the key's
+own fingerprint, and the descriptor imports as is. A synthetic origin (`[fp/48'/c'/0'/2']`, the xpub serialized at depth
+4 with an invented parent) gives the same addresses and is accepted by the same code, but claims a derivation that does
+not exist, so it is only the fallback. Needs real devices (alpha test plan, step 18): Ledger's Bitcoin app with a no-origin
+external key, Coldcard's depth-0 fingerprint check, Trezor signing, Jade / Passport / Keystone descriptor import, BitBox02.
+
+### Open questions
+
+1. **Off-path coins on the phone side.** The phone finds ledger coins at no derivation path through the chain source's
+   look-up by script (`unspentByScript`); a public server that hides them makes a hardware-lost sweep leave them out (the
+   guardian then blocks the completion until they are swept or abandoned, so nothing is lost silently).
+2. **The second server is a fixed public one per network** (`SECOND_ESPLORA_URLS`). A guest with their own server still
+   asks a public one for the check; whether to let them name a second own server is open.
+3. **Printing the descriptor** (decision 3's offer) uses the existing wallet-details export; a dedicated "print your
+   wallet" step at acceptance is not built.
+4. **Guest wallets' recovery code in the host's web UI** (section 10) is not shown yet; the guest's own app makes it.
+5. **Per-slot `LOCK`**: built in phase 2 (section 16). A host contact's `LOCK` still locks the whole box, guests included,
+   by design.
+6. **Alert-contact DMs of a guest's recovery come from the host's box**, which a dishonest host can keep silent (section
+   13); nothing in phase 1 changes that, by design.
+
+## 16. What phase 2 built (2026-11-02)
+
+Branch `feature/family-hosting-phase2`, on top of phase 1. The host's own wallet is still untouched: every phase 1 test
+passes, the golden state file loads and saves byte for byte, and the end-to-end runs keep the host's
+`guardian-state.json` identical through everything guests do (pausing, resuming, limit off, leaving).
+
+### Per component
+
+| Where | What |
+|---|---|
+| `packages/protocol` | `guardian.status.hosting.paused` (`{ by: "contact" \| "phone", at, contact? }`, a lenient member); the `wallet_paused` alert; PROTOCOL.md "Family hosting" (limit off and pausing, leaving). No new method and no new approval text. |
+| `apps/guardian` | `HostedEngine`: limit off (the host's rule, `limitBeforeOff`, `limit_off` / `limit_on` notices, the limit back on after a recovery), the contact-lock rule (on from the phone, off with the version-3 text, `contact_lock_on` / `_off` notices), `pauseSlot` and the pause lifted by `resumePhoneSpending`; `dm-lock.ts` routes a `LOCK` per wallet; the guest's `guardian.lock` handler; `wallet.retire` refused while a ledger coin is unspent; the slot alerter's new notices and pause hints; `GUEST_FEATURES` gains `limit_off` and `contact_lock`; the web page's `paused` flag and activity rows. |
+| `packages/wallet` | `acceptInvite` accepts `contactLock` from a guardian that reports it; `hostedPause`; `pauseHostedWallet` (what `lockGuardian` does for a hosted wallet); `unlockGuardian` refused for a hosted wallet; `resumePhoneSpending` checks the pause too; `hostedLeaveCheck` and `leaveHost`; Replace guardian works for a hosted wallet (the new guardian watches it by its descriptor hash; the cached chain source is dropped at the switch). |
+| `apps/mobile` | Settings > Guardian for a guest: "Pause this wallet" (instead of "Lock guardian"), the paused card with "Resume with <device>", the host's lock explained without a passphrase form, and "Leave <host>"; Home's paused card; the "leave" screen (`app/settings/leave-host.tsx`); "Contacts can pause this wallet" in Settings > Alert contacts; the demo. |
+| `apps/guardian-web` | A guest's row says "Paused by their side" (not who); activity rows for a pause and a resume. |
+
+### Decisions taken (the safest consistent option each time)
+
+1. **A pause is a per-slot state, not a lock.** The box's lock drops key 3 from memory; a guest's pause cannot (the host's
+   other wallets need the box), so it is a flag on the slot's wallet (`HostedWallet.pause`) that `sign` checks first. It
+   is **durable** (in the slot's `state.json`): a restart of the host's box, which the guest does not control, must never
+   lift it. The host's own lock state stays in memory, as before.
+2. **Only the guest's hardware wallet resumes a paused wallet,** with `phone.resume` and the existing `resume-phone`
+   approval text (bound to the key-set id and the slot's hardware sequence). Why: the phone alone would defeat the pause
+   (it exists for a phone that may be in the wrong hands); the host must not (it cannot know whether the guest's contact
+   was right, and DESIGN.md's rule is that only the wallet's owner lifts a protection); contacts can never unlock
+   (contact-lock.md). The hardware wallet is what proves the owner, and "resume phone payments" is exactly what the device
+   shows. One approval also lifts a contested cancel's pause, so no new text, method or device screen is needed.
+3. **A pause does not stop Delay & Notify.** A running recovery keeps its timers and alerts and completes when ready, unlike
+   on a locked box (where a ready recovery waits for the unlock, a cost contact-lock.md lists, not a goal). The pause stops
+   what a phone alone can do; a recovery is already protected by its delay, its alerts and every contact's `CANCEL`. This
+   also removes a dead end: a guest who lost the hardware wallet while paused can still recover. The pause **carries over
+   to the adopted wallet**, so a recovery is never a way around it: the adopted wallet's hardware wallet lifts it after
+   `hardware.confirm`.
+4. **Who a `LOCK` reaches.** Each wallet's own setting decides, by the sender's place in that wallet's current alert
+   contacts (never a recovery's snapshotted recipients, never the wallet's own phone). A host contact locks the box,
+   guests included; a guest contact pauses that guest's wallet only; a contact of both does both, and the answer says
+   both. A guest-only contact learns nothing of the host's wallet; while every wallet that lists the sender has the
+   setting off, the message is silent, remembered (once, durably) and never counted later. The rate limit (5 per hour)
+   and the clock window (10 minutes) are the contact's, shared across wallets.
+5. **A guest's `guardian.lock` pauses its own wallet;** `guardian.unlock` stays refused (the host's passphrase only).
+   Nobody else is told of a phone's own pause (as the host's remote lock tells only the owner, and guests have no extra
+   channels). `guardian.lock` is remembered across restarts like the guest's other state-changing requests, so a replay
+   cannot pause again after a resume.
+6. **Wire shape.** `phoneSpending` keeps its four values (older apps parse it strictly); the pause is a separate member of
+   `guardian.status.hosting`, and `sign` answers `1207` (phone payments paused) with `data.reason: "wallet_paused"`, so the
+   wallet falls back to the hardware wallet as for any paused phone path. The guest's phone gets `wallet_paused` when a
+   contact paused it (not `guardian_locked`, which means the box).
+7. **Limit off for guests** is the host's rule as is: hardware approval over the version-2 text with the key-set id, refused
+   during a recovery and at pairing, back on from the phone alone, `limit_off` to the phone and every contact (old and new)
+   and `limit_on` to the phone, and a recovery's adopted wallet starts with the limit it had before (0 when unknown).
+8. **Leaving.** The money moves first, with the phone and the hardware wallet. Replace guardian now works for a hosted
+   wallet and retires it on the host's guardian once a node accepted the sweep; an empty wallet can be released directly.
+   Releasing (`wallet.retire`) deletes the slot's key 3 for good, which is safe only when nothing needs it, so: the phone
+   checks that no recovery runs, that its chain server **and** a second, independent one see no coin, and that no coin the
+   guardian co-signed is unspent (`hostedLeaveCheck`); the guardian, for its part, **refuses** `wallet.retire` while a
+   ledger coin is unspent on its own chain source (`ledger_unspent`), since an off-path coin (section 4) needs key 3 and
+   would be lost. A host's chain source that is down blocks the release (the money still moves with phone + hardware
+   wallet); the host's Stop hosting remains the other way out. Since chain sources (#105) the check asks by outpoint
+   (`ChainService.outpointsUnspent`, as the recovery's coin check does, section 15 "Chain sources and guests"): with
+   Bitcoin Core a listing of the scripts would read the host's watch-only wallet, which holds nothing of a guest, and
+   take every ledger coin for spent (and prune it); by outpoint (`gettxout`) it is exact and imports nothing.
+9. **The host's page** shows that a guest's wallet is paused, never who paused it and never an amount; the host cannot
+   resume it. The host's email, ntfy and webhook channels never carry a guest's limit-off, pause or contact
+   (`hosting-notify.e2e.test.ts`).
+
+### Left out, and why
+
+- **Guests' own email / ntfy / webhook channels.** Not trivially safe: the channels' settings and secrets live in the
+  host's web UI and the host's `notifications.json`, the email would go out through the host's own mail account (its
+  provider sees the guest's alerts), and the phone has no authenticated way to set them that a phone thief could not use
+  to silence them. They need their own design (who holds the secrets, who may change them, how a guest's contact
+  consents). Guests' alerts stay nostr DMs.
+- **The host's view of a guest's recovery code** (section 15, open question 4): the guest's app makes it.
+
+### Tests
+
+`apps/guardian/test/hosting-engine.test.ts` (limit off, contact-lock rule, pause and resume, recovery with a pause),
+`hosting-phase2.e2e.test.ts` (over nostr RPC and DMs: per-slot pause, replays, setting off, host contact's lock, a contact
+of both, `guardian.lock`, restart, limit off, leaving, the host's file byte for byte), `hosting-notify.e2e.test.ts` (phase
+2 events stay off the host's channels), `hosting.e2e.test.ts` (updated: guests may call `guardian.lock`);
+`packages/wallet/test/hosted-phase2.e2e.test.ts` (accept with the contact lock, limit off, pause and resume with the
+hardware fallback, the leave check, Replace guardian from a hosted wallet, releasing an empty one);
+`packages/protocol/test/hosting.test.ts`; `apps/mobile/src/data/hosted.test.ts` (words, the demo, the real service against
+the rig); `apps/guardian-web/test/hosting.test.ts`; `e2e/test/hosting.test.ts` (regtest: a co-signed payment, the limit
+off, the pause and the hardware fallback in the real mempool, and the release once the guardian finds its co-signed coins
+spent on real Electrs).
+
+### The owner's answers (2026-11-03)
+
+1. **A paused wallet does not hold a ready recovery** (as built, decision 3). The tool against a bad recovery is
+   `CANCEL`, open to the guest and every contact for the whole delay; making the pause hold it too would leave a guest
+   who lost the hardware wallet while paused with money nobody can move. The pause carries over to the adopted wallet,
+   so a recovery is no way around it.
+2. **The host cannot lift a guest's pause** (as built). It is the guest's wallet, and a recovery completes regardless.
+3. **Off-path coins at leaving: accepted for now.** The release is refused while any exists; the guest keeps the slot,
+   recovers ("hardware wallet lost" sweeps it), or the host stops hosting. A "move co-signed coins" action is a
+   follow-up.

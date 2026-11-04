@@ -33,7 +33,7 @@ Visual walkthrough (private canvas): https://claude.ai/artifact/NV7SCZja8ik9LAvu
 | Alerts beyond nostr | Email through the owner's own account (SMTP), ntfy and a webhook, all inside the guardian, notify-only; owner-side settings in the web UI, outside the policy, every change announced ("Alerts beyond nostr" below) | The phone may be the stolen one, and not every contact uses nostr; controls stay on signed nostr messages |
 | Chain sources | The owner chooses, as in Sparrow Wallet: their own Electrum server (the default: the box's own Electrs on Umbrel and Start9), their own Bitcoin Core alone (a watch-only descriptor wallet in it), or a public Electrum server (TLS, a short list or another one) behind a warning; every change announced on every channel; no switch to a public server during a recovery | Own node first; a public server only for people with none, since it sees the wallets' addresses and could hide coins (it cannot spend or change rules) |
 | Entropy | Every key from one checked function on the OS CSPRNG; the guardian's seed mixes in the browser's (and on Umbrel the platform's) randomness, key 3 the phone's; no dice | See "Entropy": guards catch gross failures, the setup mix, the key-3 mix and 2-of-3 cover subtle ones |
-| Later | Guardian for family (invite-only hosting) | See the end of this document |
+| Guardian for family | Invite-only hosting: a guardian holds key 3 for a person its owner knows, one engine per hosted wallet, BIP 89 delegation | See "Guardian for family"; phase 1 built (docs/design/family-hosting.md) |
 
 Options considered and dropped, with research in the earlier pages under `docs/`:
 - company cosigner (Bitkey's model);
@@ -479,6 +479,12 @@ rate Bitcoin Core 29's estimates follow its relay minimum down to) can be sent a
 - **The app.** "Speed up ›" under a pending payment in Activity and on its details screen opens `app/send/speed-up.tsx`:
   the amount (unchanged), the fee now and the new fee (sats and sat/vB), the three speeds with their fees, what it
   costs, who signs, then the usual co-sign or hardware flow ("Signed. Sending…").
+- **Not for a family-hosting guest yet.** A wallet hosted on someone else's guardian is refused (`cannot_speed_up`, not
+  offered in Activity). Its slot would count a co-signed bump correctly (the same per-outpoint limit), but the slot's coin
+  ledger drops only the coins a PSBT spends, so it would keep the replaced payment's change next to the replacement's;
+  guest payments go to the slot without BIP 32 derivations; and the host's live wallet never watches a guest, so no
+  `replaces` would reach its phone. The guest's `tx.broadcast` relays only what its own slot co-signed, so the host's
+  shortcuts (`RecentlyCosigned`, `KnownCoins`, per wallet id) and its `replaces` alerts stay the host's own.
 - **Later: CPFP.** An incoming payment waiting to confirm (or a payment that cannot be replaced) could be hurried by a
   child spending its output with a high fee. Not built: the sender can speed up an incoming payment, and a CPFP from
   Spending would spend a coin the guardian must co-sign against the limit for a fee only; Recovery Key mode's spending
@@ -591,13 +597,44 @@ no policy hash or approval text changes, the same version-1 backup).
   coercion; Spending is as exposed as before; no restriction on where Savings can go; every transfer links the two wallets
   on chain, and the guardian and the alert contacts learn of every Savings move.
 
-## Later: guardian for family
+## Guardian for family
 
-Someone who runs a guardian can host one for a person they know.
-- **How it works:** invite-only (QR or link), with a separate key per hosted wallet.
-- **Privacy:** BIP 89 chaincode delegation (`packages/core/src/tweak.ts`) hides the guest's addresses and balance from the host.
-- **The trust involved:** a dishonest host could skip the delay and suppress alerts while teaming up with a thief. The app must state this when an invite is accepted.
-- **Later still:** two hosts could share the key 3 role.
+Someone who runs a guardian (the **host**) can hold key 3 for a person they know (the **guest**), who keeps key 1 (their
+own hardware wallet) and key 2 (their own phone). Phases 1 and 2 are built; the design, the owner's decisions and what
+is left are in docs/design/family-hosting.md.
+
+- **The host's own wallet is untouched.** Each hosted wallet is a slot with its own policy engine (`apps/guardian/src/hosting/`)
+  under `hosted/<slotId>/`, next to `guardian-state.json`, which keeps its version-2 format byte for byte (a golden test
+  pins it). A guardian with no guests has no `hosting.json` and runs every host code path as before.
+- **Invite-only:** the host makes a single-use invite in the web UI (24 hours, a 32-byte secret kept only as its hash, at
+  most 4 pending and 8 hosted wallets). The guest's phone accepts it with `hosted.prepare` / `hosted.pair` after an
+  "I understand" checkbox under the disclosure below.
+- **A separate key per hosted wallet:** `trikey/key3-hosted/v1`, from the host's seed, a fresh slot id and the guest
+  phone's contribution (required); the guest only ever gets its account pubkey.
+- **Privacy (BIP 89 only, decision 1):** the guardian knows the guest's three account pubkeys, never a chaincode,
+  descriptor, address or balance. Key 3 sits in the guest's descriptor as a depth-0 xpub over that account pubkey and a
+  chaincode the phone picks (decision 11). The wallet id is the key-set id. What the host does learn: every payment it
+  co-signs (amount and recipient), the total of a recovery, and the guest's contacts' nostr keys.
+- **The daily limit without addresses:** inputs and change are proven by the PSBT's tweaks; "change only within reach of
+  a scan" cannot be checked without learning addresses, so every co-signed change coin goes into the slot's ledger, which
+  a recovery must sweep (or name in `abandon`), and a phone key backup is required for guests (decision 2).
+- **Recovery:** the guest's phone (or a new phone the hardware wallet lets in with `hosted.access`) builds the sweep from
+  its own chain data and, without a backup, from the encrypted, write-once wallet map the host stores but cannot read.
+- **Chain data:** never from the host (it would learn every address): the guest's own server, else a public Esplora,
+  with a second server asked before a recovery sweep (decision 4).
+- **The trust involved:** a dishonest host, or anyone who controls the host's box, together with someone holding the
+  guest's phone or hardware wallet, can skip the limit, the delay and the alerts. The invite screen says so, word for
+  word, and needs the checkbox.
+- **Mainnet:** allowed (decision 5), behind the same pre-alpha / not-audited consent as guardian mode on mainnet.
+- **The host:** sees guests' names, states, recovery dates and a weekly co-signature count, never an amount; cannot
+  reset while hosting; stops with 30 days' notice (`hosting_ending`) or at once behind a typed confirmation.
+- **Guests' own controls (phase 2):** limit off with the owner's rule and text; the contact lock per slot: a guest
+  contact's `LOCK`, or the guest's own `guardian.lock`, **pauses** only that guest's wallet (never the host's box), and
+  only the guest's hardware wallet resumes it; a host contact's `LOCK` still locks the whole box. A guest leaves with
+  Replace guardian, which then releases its slot, or by releasing an empty wallet; the guardian refuses while a coin it
+  co-signed is unspent.
+- **Later:** extra alert channels for guests; the host's view of a guest's recovery code; shared mode (the full
+  descriptor, opt-in); two hosts sharing the key 3 role (another script, a separate design).
 
 ## Later: Taproot and threshold signatures (decided 2026-11-03: not now)
 
@@ -633,10 +670,10 @@ signatures plus the script cost more than one key's signature. Two ways to fix t
 
 ## Repository state
 
-- `packages/core/`: descriptors (BIP380 checksum, BIP389 multipath), BIP48 wallets, PSBT build, sign, analyze and finalize, software signer. `tweak.ts` holds the BIP 89 tweak math, kept for family hosting.
+- `packages/core/`: descriptors (BIP380 checksum, BIP389 multipath), BIP48 wallets, PSBT build, sign, analyze and finalize, software signer. `tweak.ts` holds the BIP 89 tweak math family hosting uses; `keySetId` names a hosted wallet.
 - `packages/protocol/`: the nostr RPC (schemas, gift-wrap transport with per-peer NIP-44 conversation key caching, replay guard, client and server, pairing and recovery URIs, NIP-06 phone identity, an in-memory relay for tests). Spec in `PROTOCOL.md`.
 - `packages/wallet/`: the phone's side (key 2, pairing, payments, rules, recovery, backup), platform-agnostic; the app supplies storage and hardware adapters. It finishes a recovery (switching to the adopted wallet after checking it, then `confirmHardware()`), replaces the guardian (pair the new one, sweep, retire the old wallet, sweep stray coins later), locks the guardian remotely, parses every Trikey QR (`parseScannedCode`), and keeps a send log that travels in the backup. Chain data comes from the guardian.
-- `apps/guardian/`: the guardian. `src/policy/` is the policy engine (spend checks, daily limit, rule changes with BIP137 approvals, Delay & Notify, wallet rotation with one active wallet plus retired ones, state format version 2 with migration from version 1). Around it: key storage (Argon2id, m=64 MiB, t=3, then XChaCha20-Poly1305), lock/unlock (also from the phone), reset, the nostr RPC server and NIP-17 alert DMs behind one shared inbox, email, ntfy and webhook alerts (`src/notify/`), an Electrum client (sweep completeness, broadcast, chain time) and the HTTP API for the web UI. Entry point `src/main.ts`.
+- `apps/guardian/`: the guardian. `src/policy/` is the policy engine (spend checks, daily limit, rule changes with BIP137 approvals, Delay & Notify, wallet rotation with one active wallet plus retired ones, state format version 2 with migration from version 1). Around it: key storage (Argon2id, m=64 MiB, t=3, then XChaCha20-Poly1305), lock/unlock (also from the phone), reset, the nostr RPC server and NIP-17 alert DMs behind one shared inbox, email, ntfy and webhook alerts (`src/notify/`), an Electrum client (sweep completeness, broadcast, chain time) and the HTTP API for the web UI. `src/hosting/` hosts guests' wallets (family hosting): the slot registry and invites, one engine per hosted wallet, routing by sender, guests' alerts and recoveries. Entry point `src/main.ts`.
 - `apps/guardian-web/`: the guardian's web UI, including the recovery code and the reset. Its API is in `API.md`.
 - Savings (optional, docs/design/savings-and-limit-off.md): `SAVINGS_ACCOUNT` in core; `savings.*` in the protocol; the guardian's watch (`apps/guardian/src/savings.ts`); `TrikeyWallet.startSavings` ... `replaceSavingsKey` in `packages/wallet`; `apps/mobile/app/savings/`.
 - `packages/recovery-key/`: Recovery Key mode (no home server): the printed Recovery Kit, the chain of BIP 68 timelocked refills and its scheduler, the single-key spending balance with CPFP, an Esplora client, and recovery with any two keys.

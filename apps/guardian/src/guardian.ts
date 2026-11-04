@@ -25,6 +25,13 @@
  *                        ntfy and webhook settings, their delivery outbox, and
  *                        the key their secrets are sealed under (so alerts go
  *                        out while locked)
+ *   seen-wraps.json      ids of gift wraps already handled (`FILES.seenWraps`).
+ *                        One file for the one nostr key: guests' phones talk to
+ *                        the same key, so their wraps are remembered here too
+ *   hosting.json, hosted/<slotId>/state.json, hosted/<slotId>/slot.json
+ *                        family hosting (hosting/service.ts): the slot
+ *                        registry, and each guest wallet's engine state and
+ *                        sweeps. Only once the owner invites someone
  *   live-wallet.json     the live wallet (live-wallet.ts): which transactions
  *                        `wallet_tx` alerts announced, and those still waiting
  *                        for a relay
@@ -99,6 +106,8 @@ import { SetupCode } from './http/setup-code.js';
 import { GUARDIAN_VERSION } from './version.js';
 import { SilentPaymentService } from './silent/service.js';
 import { SavingsMonitor } from './savings.js';
+import { Hosting } from './hosting/service.js';
+import type { HostedKey3Mix } from './keystore.js';
 import { Notifier, type NotifyEvent, type TestOutcome, type UpdateOutcome } from './notify/notifier.js';
 import type { NetPolicy } from './notify/net.js';
 import type { SmtpTestOptions } from './notify/channels.js';
@@ -199,7 +208,7 @@ export function parseRelayList(input: unknown): { ok: true; relays: string[] } |
 export type ResetOutcome =
   | { ok: true; forgotten: string[] }
   | { ok: false; code: 'bad_passphrase' | 'rate_limited'; retryAfterSeconds?: number }
-  | { ok: false; code: 'setup_required' | 'invalid' | 'recovery_pending' | 'sweep_pending'; message: string };
+  | { ok: false; code: 'setup_required' | 'invalid' | 'recovery_pending' | 'sweep_pending' | 'hosting_active'; message: string };
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -275,6 +284,8 @@ export class Guardian {
   readonly sp: SilentPaymentService;
   /** Watches the phone's Savings wallet, if it registered one: chain data and the `savings_moved` tripwire (savings.ts). */
   readonly savingsWatch: SavingsMonitor;
+  /** Guests' wallets (docs/design/family-hosting.md): one engine per slot, next to the host's untouched engine. */
+  readonly hosting: Hosting;
   /** Email, ntfy and webhook alerts (notify/notifier.ts): owner-side settings from the web UI; works while locked. */
   readonly notifier: Notifier;
   /** Keeps the wallets' chain data live and sends `wallet_tx` alerts (live-wallet.ts). Undefined when turned off. */
@@ -403,6 +414,7 @@ export class Guardian {
     this.alerts = new Alerter(this);
     this.recovery = new RecoveryRunner(this);
     this.savingsWatch = new SavingsMonitor(this, opts.savingsScanIntervalMs);
+    this.hosting = new Hosting(this);
     if (opts.liveWallet !== false) {
       this.live = new LiveWallet(this, opts.liveWallet ?? {});
       this.features.push(GUARDIAN_FEATURES.liveWallet);
@@ -469,6 +481,8 @@ export class Guardian {
       });
     }
     await g.sp.load();
+    // Guests' slots: nothing to load without hosting.json (every guardian before family hosting).
+    await g.hosting.load();
     await g.notifier.load();
     await g.live?.load();
     const stored = await g.chainSourceStore.load();
@@ -715,6 +729,14 @@ export class Guardian {
    * Everything else is dropped without an answer.
    */
   authorize(sender: string, method: MethodName): boolean {
+    // Guests' phones, recovery peers, contacts and invitees (hosting/service.ts); undefined leaves it to the host's rules.
+    const hosted = this.hosting.authorize(sender, method);
+    if (hosted !== undefined) return hosted;
+    return this.authorizeHost(sender, method);
+  }
+
+  /** The host's own rules, exactly as before family hosting. */
+  authorizeHost(sender: string, method: MethodName): boolean {
     const reg = this.engine.registration();
     if (reg && sender === reg.appNostrPubkey) return true;
     if (reg && RECOVERY_PEER_METHODS.has(method) && this.hasRecoveryAccess(sender)) return true;
@@ -727,7 +749,7 @@ export class Guardian {
   /** The paired phone, an alert contact (or a running recovery's recipient), or a phone with recovery access: not a stranger. */
   isKnownSender(sender: string): boolean {
     const reg = this.engine.registration();
-    return (!!reg && sender === reg.appNostrPubkey) || this.isAlertContact(sender) || this.hasRecoveryAccess(sender);
+    return (!!reg && sender === reg.appNostrPubkey) || this.isAlertContact(sender) || this.hasRecoveryAccess(sender) || this.hosting.isKnownSender(sender);
   }
 
   /** Phones holding an unexpired `recovery.access` grant for the active wallet. */
@@ -855,7 +877,8 @@ export class Guardian {
       ...this.stampNow(),
       message: 'Your guardian moved to other relays. The app switches by itself; the old ones stay watched until you stop them.',
     };
-    const to = new Set([...(reg ? [reg.appNostrPubkey] : []), ...this.recoveryPeers()]);
+    // Guests' phones too: they reach this box over the same relays.
+    const to = new Set([...(reg ? [reg.appNostrPubkey] : []), ...this.recoveryPeers(), ...this.hosting.phones()]);
     for (const peer of to) await this.notifyPeer(peer, alert);
     this.notifyOwner('relays_changed', `${alert.message} If you did not change them in the guardian's web page, check the guardian now.`);
   }
@@ -980,7 +1003,9 @@ export class Guardian {
    * wallets' addresses and could hide coins), so every change is logged in Activity and announced to the paired phone
    * (`chain_source_changed`), the owner's channels and the alert contacts' channels. While a recovery runs, switching
    * to a public server is refused: the recovery's own checks (spends elsewhere, the sweep's confirmations) must not
-   * rest on a stranger's server. Switching to the owner's own node is always allowed.
+   * rest on a stranger's server. Switching to the owner's own node is always allowed. With family hosting, a guest
+   * wallet's recovery counts as running too, and guests' phones are told in their own words (never on the host's
+   * channels, never naming the host's own node: `Hosting.announceChainSource`).
    */
   changeChainSource(input: unknown): Promise<ChainSourceOutcome> {
     return this.chainMutex.run(async (): Promise<ChainSourceOutcome> => {
@@ -992,7 +1017,8 @@ export class Guardian {
         if (e instanceof ChainSourceError) return { ok: false, code: 'invalid', message: e.message };
         throw e;
       }
-      if (next.kind === 'public' && this.activeRecord())
+      // A guest wallet's recovery too: its coin check (hosting/recovery.ts) runs on this chain source.
+      if (next.kind === 'public' && (this.activeRecord() || this.hosting.recoveryRunning()))
         return {
           ok: false,
           code: 'recovery_pending',
@@ -1014,6 +1040,8 @@ export class Guardian {
         ' If you did not change this in the guardian\'s web page, check the guardian.';
       await this.notifyPhone({ type: 'chain_source_changed', kind: to.kind, backend: to.backend, host: to.host.slice(0, 255), ...this.stampNow(), message: text.slice(0, 500) });
       this.announceChainSource(text);
+      // Guests' phones, in their own words; never through the host's channels above (hosting/service.ts).
+      await this.hosting.announceChainSource(to);
       return { ok: true, changed: true };
     });
   }
@@ -1152,6 +1180,7 @@ export class Guardian {
         try {
           await this.engine.tick();
           await this.recovery.run();
+          await this.hosting.tick();
           // Before the alerts, so a Savings spend found now is announced in the same pass.
           await this.savingsWatch.run();
           await this.alerts.run();
@@ -1249,12 +1278,15 @@ export class Guardian {
     this.seed?.wipe();
     this.seed = seed;
     this.signer = signer;
+    // Every guest slot's key 3, derived from the same seed and the slot's record.
+    this.hosting.installSigners(seed);
     this.lockedAt = undefined;
     this.lockReason = undefined;
     this.lockedBy = undefined;
   }
 
   private dropSigner(): void {
+    this.hosting.dropSigners();
     this.engine.setSigner(undefined);
     this.signer?.wipe();
     this.signer = undefined;
@@ -1274,6 +1306,13 @@ export class Guardian {
     const mix = input.entropy === undefined ? undefined : key3Mix(input.entropy, key3Context({ network, pairingId: input.pairingId, phonePubkey: input.phonePubkey }));
     const { signer, pub } = seed.key3(network, mix);
     return { signer, pub, ...(mix ? { mix } : {}) };
+  }
+
+  /** Key 3 of a guest slot (`trikey/key3-hosted/v1`). Needs the guardian unlocked. The caller wipes `signer`. */
+  hostedKey3(mix: HostedKey3Mix): { signer: KeystoreSigner; pub: CosignerPublic } {
+    const seed = this.seed;
+    if (!seed || seed.wiped || this.locked) throw new Error('the guardian is locked');
+    return seed.hostedKey3(this.config.network, mix);
   }
 
   /**
@@ -1464,12 +1503,16 @@ export class Guardian {
           const passphrase = input.passphrase;
           if (typeof passphrase !== 'string' || passphrase.length === 0 || passphrase.length > 4 * MAX_PASSPHRASE_LENGTH)
             return { ok: false, code: 'invalid', message: 'Enter the unlock passphrase.' };
-          const refuse = async (code: 'recovery_pending' | 'sweep_pending', message: string): Promise<ResetOutcome> => {
+          const refuse = async (code: 'recovery_pending' | 'sweep_pending' | 'hosting_active', message: string): Promise<ResetOutcome> => {
             await this.logEvent({ type: 'reset_refused', detail: message });
             return { ok: false, code, message };
           };
           const running = this.activeRecord();
           if (running) return refuse('recovery_pending', `Recovery ${running.id} is running. It must be cancelled or completed before the guardian can be reset.`);
+          // A reset makes a new seed: every guest's key 3 would vanish (decision 9).
+          const hosted = this.hosting.blocksReset();
+          if (hosted)
+            return refuse('hosting_active', `This box hosts a wallet for ${hosted.name}. Reset is refused while you host: use Stop hosting for each wallet first (they get 30 days to move).`);
           // A dead sweep (it can never be broadcast: recovery-runner.ts) has no signature worth keeping.
           const unsent = this.service.get().sweeps.find((s) => s.broadcastAt === undefined && s.deadAt === undefined);
           if (unsent) return refuse('sweep_pending', `The sweep of recovery ${unsent.recoveryId} has not been broadcast yet. Wait until it is.`);

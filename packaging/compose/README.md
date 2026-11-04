@@ -111,6 +111,7 @@ the container with the new settings; the data stays).
 | `TRIKEY_UI_PORT` | The web UI's port on this computer, default 3000. |
 | `TRIKEY_RELAYS` | Optional: the nostr relays the first-run screen offers, comma-separated `wss://` URLs. |
 | `SP_SCAN_THREADS` | Optional: worker threads for the silent payment scanner. |
+| `FAMILY_HOSTING` | Optional: `false` turns hosting family members' wallets off (no invites in the web UI). |
 
 The compose file also sets `TRIKEY_PLATFORM=docker`, which turns the setup code on. Leave it.
 

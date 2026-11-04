@@ -120,6 +120,11 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `savings.unregister` | `{}` | `unregistered: boolean`, `walletId?` |
 | `savings.get` | `{}` | `savings: { walletId, descriptor, since } \| null` |
 | `relays.ack` | `relays: RelayList` (the relays the phone uses now) | `current: boolean` (they are the guardian's current list, in any order), `relays: RelayList` (the guardian's current list) (paired phone only; see section 5, "Changing relays") |
+| `hosted.prepare` | `inviteSecret` (43 base64url chars), `network`, `entropy: Hex32` (required) | `cosignerAccountPubkey` (compressed, no chaincode), `guardianVersion`, `features?` (see "Family hosting") |
+| `hosted.pair` | `inviteSecret`, `deviceName`, `walletLabel` (1-64), `network`, `accountPubkeys: { app, hardware }`, `hardwareAuth: { pubkey, path, tweak: Hex32 }`, `hardwareAuthProof`, `rules: Policy`, `walletMap` (base64url, at most 4096 bytes decoded), `phoneNostrPubkey` | `walletId` (the key-set id), `cosignerAccountPubkey`, `guardianVersion` |
+| `hosted.coins` | `offset?`, `limit?` (1-100) | `walletId`, `coins: [{ txid, vout, valueSats, script, tweaks: { app, hardware, cosigner }, at }]`, `total`, `nextOffset?` |
+| `hosted.map.get` | `walletId?` (default the hosted wallet; or a running recovery's destination) | `walletId`, `map` (or `null`) |
+| `hosted.access` | `approval: { kind: "bip137", expiresAt, signature }` (the version-2 access text only) | `walletId`, `network`, `accountPubkeys: { app, hardware, cosigner }`, `hardwareAuth`, `policy`, `nextHardwareSequence`, `phoneSpending`, `activeRecoveryId`, `accessExpiresAt` |
 
 **Policy** is exactly the rules the guardian's policy engine enforces, and nothing else: four always, and one opt-in rule that is present only when it is on:
 
@@ -419,6 +424,94 @@ app password for the same email account). The policy,
 its hash and every approval text are unchanged, and the contacts who can cancel and lock are still exactly
 `Policy.alertContacts` (rule 4 unchanged, including the mainnet minimum of one).
 
+### Family hosting
+
+A guardian that lists `family_hosting` (`GUARDIAN_FEATURES.familyHosting`) holds key 3 for guests' wallets, each in its own
+slot next to its owner's wallet (docs/design/family-hosting.md). It knows a guest wallet only by its three account
+pubkeys (BIP 89 delegation): never a chaincode, descriptor, address or balance. Its owner's wallet, file, methods and
+answers are exactly as without guests (the owner's `guardian.status` does not list `family_hosting`).
+
+**Invites.** The owner makes one in the web UI: `trikey://invite?v=1&npub=<npub>&relay=<url>...&secret=<32 bytes,
+base64url>&exp=<unix>&net=<network>[&label=<text>]`, the pairing URI's rules (at most 24 hours) plus the network and a
+full 32-byte secret. The guardian keeps only the secret's SHA-256; the invite survives restarts, is single use and binds
+to the first phone that shows it (`hosted.prepare`); five refused attempts burn it. Strangers' `hosted.prepare` /
+`hosted.pair` are answered while an invite is pending, and for 10 minutes after one was used or ran out.
+
+**Accepting.** `hosted.prepare` derives the slot's key 3 (`trikey/key3-hosted/v1`: HMAC-SHA512 of the owner's seed over
+the tag, the length-prefixed network, slot id and guest phone key, and `u32be(32) || entropy`; the phone's `entropy` is
+required, so a guest never gets the guardian's own key) and answers its account pubkey only. The phone picks key 3's
+chaincode and builds `wsh(sortedmulti(2, key2, key1, [fp]xpub3))` with key 3 as a depth-0 xpub, has the hardware wallet
+register it and sign the pairing proof `pairingMessage(walletId, cosignerAccountPubkey)` over the **key-set id**
+(`walletId` = the first 16 hex chars of `sha256("trikey/keyset/v1" || app || hardware || cosigner)`, compressed account
+pubkeys in role order), and sends `hosted.pair`. The guardian checks what `pair` checks, plus the authorization key as
+`pubkey == hardware + tweak·G` at `m/48'/<coin>'/0'/2'/0/0`, refuses "limit off" (as `pair` does: the guest turns it off
+afterwards with the hardware wallet), stores the encrypted **wallet map** write-once and burns the invite. `contactLock`
+is accepted from a guardian that lists `contact_lock` in `hosted.prepare.features`.
+
+**Routing.** A guest's phone (and a phone with recovery access to a guest wallet) reaches only its own slot: `sign`,
+`policy.get`, `policy.update`, `recovery.*`, `phone.resume`, `hardware.confirm`, `wallet.retire`, `guardian.lock` (the
+phone only: a pause, below), `guardian.status` (the slot's view: its key-set id, `features: ["family_hosting",
+"limit_off", "contact_lock", "short_wraps"]`, `hosting: { state, endsAt?, paused? }`, `chainSource` as below, never the
+owner's wallet, Savings, extra alert channels or which contact locked the box), `fees.estimate`, `tx.broadcast` (only transactions this slot
+co-signed), `relays.ack`, `hosted.coins`, `hosted.map.get`, `hosted.access`; anything else answers `1001` with
+`data.reason: "not_for_hosted_wallets"`. A guest wallet's recovery ids are `<slotId>g<n>-<txid12>`: `recovery.cancel` and
+`CANCEL <id>` DMs with such an id reach that slot only, from its phone or one of its alert contacts.
+
+**Co-signing.** As for the owner's wallet, but change is an output whose three tweaks rebuild its script from the
+account pubkeys (no index window: it cannot be checked without learning addresses). Every such output is recorded in the
+slot's ledger (`hosted.coins`; at most 2,000, then `sign` answers `1200` with `reason: "ledger_full"`). PSBTs sent to the
+guardian need no BIP 32 derivations (the phone strips them). `sign` is limited to 60 requests per hour per slot.
+
+**Recovery.** `recovery.start` takes `{ sweepPsbt, destinationKeys: { app, hardware, cosigner }, destinationMap,
+abandon? }` for a guest wallet (the descriptor form is refused there, and the hosted form for the owner's wallet). Every
+output must be tweak-proven to the destination; `abandon` names ledger coins the sweep leaves behind on purpose (coins the
+hardware wallet cannot sign); the alerts say how many and how much. Before completing, the guardian checks with its own
+chain source, by the coins' own outpoints and scripts, that the sweep's inputs are unspent and every unspent ledger
+coin is swept or abandoned (an Electrum server is asked per script; Bitcoin Core per outpoint with `gettxout`, so its
+watch-only wallet never imports anything of a guest). Coins received from outside are the guest phone's to find (its own chain source, cross-checked with a second
+server). A new phone without the old one or a backup uses `hosted.access` (version-2 text only), decrypts the map with
+the hardware wallet's chaincode and checks it against `accountPubkeys`. After an adoption without the old hardware
+wallet, `hardware.confirm` carries `hardwareAuth.tweak`.
+
+**Limit off and pausing (phase 2).** A guest turns the daily limit off and on exactly as the owner does ("No daily
+limit": `policy.update` with the version-2 text over the key-set id; `limit_off` / `limit_on` alerts to the guest's phone
+and DMs to its contacts; a recovery's adopted wallet starts with the limit back on). The contact lock works per slot: with
+the guest's `contactLock` on, a `LOCK` DM from one of that wallet's alert contacts **pauses** that wallet only, never the
+owner's box: its slot co-signs no payment (`sign` answers `1207` with `data: { reason: "wallet_paused", by, at }`) while
+the box, the owner's wallet and other guests carry on. The guest's phone gets `wallet_paused` (`walletId`, `by:
+"contact"`, `contact`), the wallet's other contacts a DM, the contact an answer naming the wallet by its label; the owner's
+contacts and channels hear nothing. While the guest's setting is off, a `LOCK` is silent and remembered, as for the owner.
+A guest's `guardian.lock` pauses its own wallet the same way (`{ state: "locked" }`, nobody else told); `guardian.unlock`
+stays the owner's (`1001`). `guardian.status.hosting.paused` (`{ by: "contact" | "phone", at, contact? }`) says so while
+it lasts. Only the guest's hardware wallet resumes a paused wallet: `phone.resume` with the `resume-phone` approval (the
+same call that lifts a contested cancel's pause). A pause is durable (a restart of the box does not lift it), does not
+stop a recovery's delay, alerts or completion, and carries over to a recovery's adopted wallet. A `LOCK` from one of the
+owner's contacts still locks the whole box, guests included; a contact of both does both, and the answer says both.
+
+**Leaving.** A guest leaves with `wallet.retire` (a `retire-wallet` approval), which retires the wallet in its slot and
+deletes the slot's key 3 record. It is refused (`1200`, `data: { reason: "ledger_unspent", coins, sats }`) while a coin
+key 3 co-signed is still unspent on the guardian's chain source (looked up by the coins' own outpoints and scripts, as the
+recovery's coin check does; nothing imported into Bitcoin Core), since some of them may need key 3 to move; the phone checks the rest (an empty wallet on two servers) before it asks.
+
+**No live wallet for guests.** The guardian never subscribes to a guest wallet's scripts, never imports anything of
+it into Bitcoin Core, and sends its phone no `wallet_tx` (a guest's `features` do not list `live_wallet`): it knows no
+address of the wallet, and must not learn one. The guest's phone reads its wallet from its own chain server. The
+owner's live wallet, its `wallet_tx` alerts and the "Payments" notifications on the owner's channels are about the
+owner's own wallets only.
+
+**The owner's chain source.** It is what the guardian checks a guest recovery's coins against and broadcasts a guest's
+transactions through (the guest's phone reads its wallet from its own chain server). A guest's `guardian.status.chainSource`
+and the `chain_source_changed` alert its phone and recovery peers get when the owner switches carry `kind`, `backend` and,
+for a public server, its `host`; for the owner's own node `host` is `"own"` (its address on the owner's network is not
+the guest's to know). The guest's alert is sent over nostr only, never on the owner's extra alert channels, and its
+`message` is written for the guest. Switching to a public server is refused while a guest wallet's recovery runs, as
+while the owner's does.
+
+**Stopping.** The owner's "Stop hosting" sends `hosting_ending` (`walletId`, `endsAt`) to the guest's phone and DMs to
+its contacts; at `endsAt` (or at once, behind a typed confirmation) the slot ends: `wallet_retired` with reason
+`hosting_ended`, and the slot's key 3 record is deleted. Refused while that wallet's recovery runs. The owner's reset is
+refused while any guest wallet is hosted.
+
 ### Recovery access
 
 "Lost phone, no backup": the user has a new phone, the hardware wallet and the guardian. The new phone has a fresh nostr key that the guardian does not know, and it knows neither the descriptor nor the guardian's key, only the guardian's `npub` and relays (the web UI's "Recover on a new phone" code, section 6). `recovery.access` lets the hardware wallet vouch for it:
@@ -449,7 +542,8 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 | `savings_unwatched` | `walletId` (the Savings wallet no longer watched), `replacedBy?` (the one watched instead): `savings.unregister`, or `savings.register` with another wallet. To the paired phone; alert contacts get a NIP-17 DM. See "Savings" |
 | `relays_changed` | `relays` (`RelayList`): the guardian moved to these relays (its web UI). Sent to the paired phone (and phones with recovery access) over the old and the new relays. See section 5, "Changing relays" |
 | `notifications_changed` | none: the extra alert channels (email, ntfy, webhook) were changed in the guardian's web UI; read the new list from `guardian.status.notifications`. Guardians with `notifications`; see "Extra alert channels" |
-| `chain_source_changed` | `kind` (`own`\|`public`), `backend` (`electrum`\|`core`), `host`: the owner switched where the guardian reads the chain (its web UI, Settings > Server). Also announced on the extra alert channels and in Activity. See "Chain data", "Chain source" |
+| `wallet_paused` | `walletId`, `by` (`contact`), `contact?`: a guest's hosted wallet was paused by one of its alert contacts' `LOCK`; its slot co-signs no payment until the guest's hardware wallet resumes it (`phone.resume`). To the guest's phone; the wallet's other contacts get a NIP-17 DM. Phones before it drop it and see `guardian.status.hosting.paused`. See "Family hosting" |
+| `chain_source_changed` | `kind` (`own`\|`public`), `backend` (`electrum`\|`core`), `host`: the owner switched where the guardian reads the chain (its web UI, Settings > Server). Also announced on the extra alert channels and in Activity. To a guest wallet's phone: `host` is `"own"` for the owner's own node, and nothing goes on the owner's channels (see "Family hosting"). See "Chain data", "Chain source" |
 | `wallet_tx` | `txid`, `direction` (`in`\|`out`\|`self`), `amountSats`, `feeSats?`, `confirmations`, `wallet` (`main`\|`savings`), `replaces?` (the unconfirmed transaction it replaced, RBF): a transaction touching the paired wallet or Savings was first seen (mempool or block), or first confirmed. Paired phone only. Guardians with `live_wallet`; see "Chain data", "Live wallet" |
 | `wallet_retired` | `walletId`, `reason` (`retired`\|`recovered`\|`reset`), `successorWalletId?`. Sent to the phone that was paired to the wallet: `retired` after `wallet.retire`; `reset` after the web UI's reset; `recovered` when a recovery swept the wallet and the phone paired to the new wallet is a different one (a lost phone's replacement), or the guardian adopted none (`successorWalletId` is the adopted wallet when there is one). The phone that started the recovery and is adopted gets `wallet_adopted` instead |
 
@@ -612,6 +706,9 @@ trikey://pair?v=1&npub=<npub1...>&relay=<url>&relay=<url>&secret=<base64url>&exp
 The phone scans it, derives its key, and sends `pair.prepare` and then `pair` (see "Pairing" in section 3) to the guardian's `npub` on those relays. The guardian accepts these two methods from an unknown pubkey only if `pairingSecret` matches the live, unused secret (constant-time comparison; one attempt budget per code is advisable); `pair` then adds the sender to its peers and burns the secret.
 
 ### Recovery code ("Recover on a new phone")
+
+A guest wallet's code adds `&hosted=1` (and always `&wallet=<walletId>`): the new phone uses `hosted.access` and the wallet
+map instead of `recovery.access`.
 
 For a new phone without the old one or its backup, the guardian's web UI shows a second, permanent QR code with only where to find the guardian:
 

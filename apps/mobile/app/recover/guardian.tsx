@@ -37,7 +37,8 @@ export default function RecoverGuardian() {
             ? parseGuardianAddress(`${code.guardianNpub} ${code.relays.join(' ')}`, r)
             : parseGuardianAddress(code.kind === 'contact' ? code.npub : a, r);
       setProblem(null);
-      router.push({ pathname: '/recover/new-hardware', params: { lost: 'phone', npub: parsed.npub, relays: parsed.relays.join(',') } });
+      const hostedParams = code.kind === 'recovery' && code.hosted && code.guardian.walletId ? { walletId: code.guardian.walletId, hosted: '1' } : {};
+      router.push({ pathname: '/recover/new-hardware', params: { lost: 'phone', npub: parsed.npub, relays: parsed.relays.join(','), ...hostedParams } });
     } catch (e) {
       setProblem(e instanceof GuardianAddressError ? e.message : 'That is not a guardian address.');
     }

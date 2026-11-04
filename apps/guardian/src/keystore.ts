@@ -358,6 +358,62 @@ export function mixedKey3Seed(guardianSeed: Uint8Array, mix: Key3Mix): Uint8Arra
   return hmac(sha512, guardianSeed, data);
 }
 
+// -----------------------------------------------------------------------------
+// Key 3 of a hosted wallet (`trikey/key3-hosted/v1`, docs/design/family-hosting.md, "Key 3 for a guest")
+//
+//     seed3 = HMAC-SHA512(key  = guardian setup seed,
+//                         data = "trikey/key3-hosted/v1" || u32be(len) || network || u32be(len) || slotId
+//                                || u32be(32) || guest phone nostr pubkey || u32be(32) || c)
+//     key 3 = BIP 32 master of seed3, account m/48'/<coin>'/0'/2'
+//
+// The same construction as `trikey/key3/v1` with its own tag, so a guest's key can never equal a key of the host's own
+// pairings; `slotId` is fresh randomness per invite, so no two slots share a key. The phone's `c` is REQUIRED: a guest
+// never gets the guardian's own key. The record (`HostedKey3Mix`) is not secret and is kept with the slot; deleting it
+// (when hosting ends) makes the key underivable.
+
+export const KEY3_HOSTED_FORMAT = 'trikey/key3-hosted/v1';
+const KEY3_HOSTED_TAG = utf8ToBytes(KEY3_HOSTED_FORMAT);
+
+/** What a slot keeps to derive its key 3 again at every unlock. Not secret on its own. */
+export interface HostedKey3Mix {
+  version: 1;
+  kind: 'hosted';
+  /** The phone's contribution `c`, 32 bytes hex. */
+  entropy: string;
+  /** `u32be(len) || network || u32be(len) || slotId || u32be(32) || phone pubkey`, hex. */
+  context: string;
+}
+
+/** The hosted key 3 context: the network, the slot and the guest phone's nostr key, each length-prefixed. */
+export function hostedKey3Context(i: { network: NetworkName; slotId: string; phonePubkey: string }): Uint8Array {
+  getNetwork(i.network);
+  if (!/^[0-9a-f]{64}$/.test(i.phonePubkey)) throw new Error('phonePubkey must be 32-byte hex');
+  if (!/^[0-9a-f]{16,64}$/.test(i.slotId)) throw new Error('slotId must be hex');
+  const net = utf8ToBytes(i.network);
+  const slot = utf8ToBytes(i.slotId);
+  const phone = hex.decode(i.phonePubkey);
+  return concat([u32be(net.length), net, u32be(slot.length), slot, u32be(phone.length), phone]);
+}
+
+/** The `HostedKey3Mix` record for the phone's contribution `entropy` (hex, required) in `context`. */
+export function hostedKey3Mix(entropy: string, context: Uint8Array): HostedKey3Mix {
+  if (!/^[0-9a-f]{64}$/.test(entropy)) throw new Error('the key 3 contribution must be 32-byte hex');
+  return { version: 1, kind: 'hosted', entropy, context: hex.encode(context) };
+}
+
+export function isHostedKey3Mix(v: unknown): v is HostedKey3Mix {
+  const m = v as HostedKey3Mix;
+  return !!m && typeof m === 'object' && m.version === 1 && m.kind === 'hosted' && /^[0-9a-f]{64}$/.test(String(m.entropy)) && /^([0-9a-f]{2}){12,256}$/.test(String(m.context));
+}
+
+/** `seed3` of a hosted wallet: HMAC-SHA512(guardianSeed, tag || context || u32be(32) || c). 64 bytes; the caller zeroes it. */
+export function hostedKey3Seed(guardianSeed: Uint8Array, mix: HostedKey3Mix): Uint8Array {
+  if (guardianSeed.length !== 64) throw new Error('the guardian seed must be 64 bytes');
+  if (!isHostedKey3Mix(mix)) throw new Error('invalid hosted key 3 record');
+  const c = hex.decode(mix.entropy);
+  return hmac(sha512, guardianSeed, concat([KEY3_HOSTED_TAG, hex.decode(mix.context), u32be(c.length), c]));
+}
+
 /**
  * The guardian's setup seed while unlocked: what every wallet's key 3 is derived from. Kept in memory
  * only between unlock and lock (like the signer), so a new pairing can derive its key 3. `wipe()` zeroes it.
@@ -380,6 +436,17 @@ export class GuardianSeed {
     if (!this.#seed) throw new Error('the guardian is locked');
     if (!mix) return cosignerFromSeed(this.#seed, network);
     const seed3 = mixedKey3Seed(this.#seed, mix);
+    try {
+      return cosignerFromSeed(seed3, network);
+    } finally {
+      seed3.fill(0);
+    }
+  }
+
+  /** Key 3 of a hosted wallet (`trikey/key3-hosted/v1`). There is no variant without the phone's contribution. */
+  hostedKey3(network: NetworkName, mix: HostedKey3Mix): { signer: KeystoreSigner; pub: CosignerPublic } {
+    if (!this.#seed) throw new Error('the guardian is locked');
+    const seed3 = hostedKey3Seed(this.#seed, mix);
     try {
       return cosignerFromSeed(seed3, network);
     } finally {

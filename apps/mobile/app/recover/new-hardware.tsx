@@ -18,12 +18,14 @@ export default function RecoverNewHardware() {
   const router = useRouter();
   const wallet = useWalletService();
   const { progress, recoveryDelayDays } = useWallet();
-  const { lost, npub, relays } = useLocalSearchParams<{ lost?: string; npub?: string; relays?: string }>();
+  const { lost, npub, relays, walletId, hosted } = useLocalSearchParams<{ lost?: string; npub?: string; relays?: string; walletId?: string; hosted?: string }>();
   const lostKey = lost === 'phone' ? 'phone' : 'hardware';
   const { busy, run, message, error } = useAction();
 
   const start = async (kind: HardwareKind) => {
-    const guardian = lostKey === 'phone' && npub ? parseGuardianAddress(npub, (relays ?? '').split(',').join(' ')) : undefined;
+    const parsed = lostKey === 'phone' && npub ? parseGuardianAddress(npub, (relays ?? '').split(',').join(' ')) : undefined;
+    // A wallet hosted on someone else's guardian (its recovery code said so): recovered from its encrypted wallet map.
+    const guardian = parsed ? { ...parsed, ...(walletId ? { walletId } : {}), ...(hosted === '1' ? { hosted: true as const } : {}) } : undefined;
     const r = await run(wallet.startRecovery(lostKey, { hardwareKind: kind, guardian }));
     if (r.ok) router.replace('/recover/waiting');
   };
