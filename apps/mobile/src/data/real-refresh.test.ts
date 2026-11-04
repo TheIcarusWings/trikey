@@ -278,3 +278,123 @@ describe('the periodic sync', { timeout: 60_000 }, () => {
     }
   });
 });
+
+/** The guardian's `fees.estimate` answers `delayMs` late (a slow Electrs, nothing kept), and is counted, until `restore()`. */
+function slowFees(delayMs: number): { calls: () => number; restore: () => void } {
+  const h = handlers();
+  const real = h['fees.estimate']!;
+  let n = 0;
+  h['fees.estimate'] = async (params, ctx) => {
+    n++;
+    await sleep(delayMs);
+    return real(params, ctx);
+  };
+  return { calls: () => n, restore: () => void (h['fees.estimate'] = real) };
+}
+
+describe('fee estimates, off the pull', { timeout: 60_000 }, () => {
+  /** Fees went up (BTC/kvB): 60, 50 and 40 sat/vB. The guardian reads them again (a new block drops what it kept). */
+  const raiseFees = () => {
+    rig.electrs.feeRates = new Map([
+      [1, 0.0006],
+      [3, 0.0005],
+      [6, 0.0004],
+    ]);
+    rig.guardian.chain.forgetFees();
+  };
+  const rateOf = (address: string) => {
+    const q = svc.quoteSend({ address, amountSats: 20_000, speed: 'normal' });
+    if (!q.ok) throw new Error(q.message);
+    return q.quote.feeRateSatPerVb;
+  };
+
+  it('a pull resolves without waiting for a slow fees.estimate; the fees land in the background part, the last ones meanwhile', async () => {
+    rig.clock.advance(SYNC_JOIN_MS + 1000);
+    await svc.idle();
+    const to = svc.wallet!.multisig().derive(0, 40).address;
+    const oldRate = rateOf(to);
+    const version = svc.getState().feesVersion;
+    raiseFees();
+    const fees = slowFees(1500);
+    const order: string[] = [];
+    const h = handlers();
+    const sync = h['wallet.sync']!;
+    const est = h['fees.estimate']!;
+    h['wallet.sync'] = async (params, ctx) => {
+      const r = await sync(params, ctx);
+      order.push('wallet.sync answered');
+      return r;
+    };
+    h['fees.estimate'] = async (params, ctx) => {
+      order.push('fees.estimate asked');
+      return est(params, ctx);
+    };
+    const rec = record(svc);
+    try {
+      const t = Date.now();
+      await svc.sync();
+      expect(Date.now() - t).toBeLessThan(1500);
+      // The balance is in; the fees are on their way: "Updating…", and Review holds its send button.
+      expect(svc.getState()).toMatchObject({ syncing: false, updating: true, feesUpdating: true, feesVersion: version });
+      expect(svc.wallet!.feesPending).toBe(true);
+      // Meanwhile quotes use the last fees.
+      expect(rateOf(to)).toBe(oldRate);
+      await svc.idle();
+      expect(fees.calls()).toBe(1);
+      expect(svc.getState()).toMatchObject({ syncing: false, updating: false, feesUpdating: false });
+      expect(svc.getState().feesVersion).toBeGreaterThan(version!);
+      // The quote is made again with the new fees (not the one kept for the same coins): what Review shows and sends.
+      expect(rateOf(to)).toBe(50);
+      // The fees were asked for once the chain data was answered: on Electrs their requests would hold up its ping.
+      expect(order.slice(0, 2)).toEqual(['wallet.sync answered', 'fees.estimate asked']);
+      // "Updating…" lasted until they landed.
+      const last = rec.states.findLastIndex((s) => s.feesUpdating);
+      expect(rec.states.slice(0, last + 1).every((s) => s.syncing || s.updating)).toBe(true);
+    } finally {
+      rec.stop();
+      h['wallet.sync'] = sync;
+      h['fees.estimate'] = est;
+      fees.restore();
+    }
+  });
+
+  it('a fee read that fails keeps the last fees; a speed-up quote or a sweep waits for one under way', async () => {
+    rig.clock.advance(SYNC_JOIN_MS + 1000);
+    await svc.idle();
+    const to = svc.wallet!.multisig().derive(0, 41).address;
+    const before = rateOf(to);
+    const h = handlers();
+    const real = h['fees.estimate']!;
+    h['fees.estimate'] = async () => {
+      throw new Error('no fees');
+    };
+    try {
+      await svc.sync();
+      await svc.idle();
+      expect(svc.getState()).toMatchObject({ updating: false, feesUpdating: false });
+      expect(rateOf(to)).toBe(before);
+    } finally {
+      h['fees.estimate'] = real;
+    }
+    // A read under way: what needs fresh fees waits for it (`settledFees`), and gets the new ones.
+    rig.electrs.feeRates = new Map([
+      [1, 0.0007],
+      [3, 0.0007],
+      [6, 0.0007],
+    ]);
+    rig.guardian.chain.forgetFees();
+    const fees = slowFees(800);
+    try {
+      const w = svc.wallet!;
+      const reading = w.refreshFees();
+      expect(w.feesPending).toBe(true);
+      const settled = await w.settledFees();
+      expect(w.feesPending).toBe(false);
+      expect(settled?.estimates.find((e) => e.target === 3)?.satPerVb).toBe(70);
+      expect(await reading).toBe(settled);
+      expect(fees.calls()).toBe(1);
+    } finally {
+      fees.restore();
+    }
+  });
+});

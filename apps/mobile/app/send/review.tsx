@@ -49,10 +49,12 @@ export default function SendReview() {
   const maxOutcome = useMemo(
     () => (sendMax ? wallet.quoteSendMax({ address, speed }) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sendMax, wallet, address, speed, state.balanceSats, state.dailyLimit.usedSats, state.guardian.status],
+    [sendMax, wallet, address, speed, state.balanceSats, state.dailyLimit.usedSats, state.guardian.status, state.feesVersion],
   );
   const outcome = maxOutcome ?? typed.outcome;
   const quote = outcome.ok ? outcome.quote : null;
+  // The fee estimates are being read again (a sync just ran): the payment waits for them, and is quoted again with them.
+  const feesLanding = !!state.feesUpdating;
   const hardware = quote?.plan.signer === 'hardware';
 
   // The fee of each speed, for the sheet; worked out only while it is open.
@@ -65,12 +67,12 @@ export default function SendReview() {
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [choosingSpeed, wallet, address, amount, signer, sendMax]);
+  }, [choosingSpeed, wallet, address, amount, signer, sendMax, state.feesVersion]);
 
   if (!quote) {
     return (
       <Screen title="Review" backLabel="Back" footer={<AppButton title="Back" variant="outline" onPress={() => router.back()} />}>
-        <Notice tone="warn-outline">{outcome.ok ? '' : outcome.message}</Notice>
+        <Notice tone="warn-outline">{outcome.ok ? '' : outcome.problem === 'no_fee_estimate' && feesLanding ? 'Getting the current network fee…' : outcome.message}</Notice>
       </Screen>
     );
   }
@@ -114,14 +116,18 @@ export default function SendReview() {
             </View>
           ) : null}
           {hardware ? (
-            <AppButton title={`Review on ${state.hardware.brand}`} onPress={reviewOnDevice} />
+            <AppButton title={feesLanding ? 'Updating the network fee…' : `Review on ${state.hardware.brand}`} busy={feesLanding} onPress={reviewOnDevice} />
           ) : offerHardware ? (
             <AppButton
               title={`Approve with your ${state.hardware.brand} instead`}
               onPress={() => router.replace({ pathname: '/send/hardware', params: { address, amount, speed, signer: 'hardware' } })}
             />
           ) : (
-            <AppButton title={busy ? 'Signing…' : pick('Send with Face ID', 'Send with fingerprint')} busy={busy} onPress={send} />
+            <AppButton
+              title={busy ? 'Signing…' : feesLanding ? 'Updating the network fee…' : pick('Send with Face ID', 'Send with fingerprint')}
+              busy={busy || feesLanding}
+              onPress={send}
+            />
           )}
         </>
       }>
