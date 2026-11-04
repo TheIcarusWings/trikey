@@ -207,6 +207,12 @@ export class SimplePoolRelayPool implements RelayPool {
   private readonly subs = new Set<KeptSub>();
   /** Bumped for a relay each time `recycle` replaces its connection (a publish under way on the old one is sent again). */
   private readonly generations = new Map<string, number>();
+  /**
+   * Relays a publish failed on lately, and when to try publishing to them again: on the subscriptions' backoff schedule
+   * (`resubscribeBackoffMs`). Without it every publish (and every retry of an unanswered request, every 10 s) opened a
+   * new connection to a relay that is down: on an iPhone, one socket cancelled and reopened every 10 to 20 s.
+   */
+  private readonly publishBackoff = new Map<string, { failures: number; retryAt: number }>();
   private closed = false;
 
   constructor(private readonly opts: SimplePoolOptions = {}) {
@@ -226,12 +232,22 @@ export class SimplePoolRelayPool implements RelayPool {
     if (this.closed) return relays.map((relay) => ({ relay, ok: false, reason: 'pool closed' }));
     const urls = relays.map((r) => normalizeURL(r));
     const gens = urls.map((u) => this.generations.get(u) ?? 0);
-    const promises = this.pool.publish(relays, event, { maxWait: this.maxWaitMs });
-    const settled = await Promise.allSettled(promises);
+    // Relays that failed lately are skipped until their backoff is over, while the others are published to; when every
+    // relay is waiting, all are tried (an event that goes nowhere helps no one).
+    const now = Date.now();
+    const waiting = urls.map((u) => (this.publishBackoff.get(u)?.retryAt ?? 0) > now);
+    const skip = waiting.every(Boolean) ? waiting.map(() => false) : waiting;
+    const tried = relays.filter((_, i) => !skip[i]);
+    const promises = this.pool.publish(tried, event, { maxWait: this.maxWaitMs });
+    const results = await Promise.allSettled(promises);
+    let next = 0;
+    const settled: PromiseSettledResult<string>[] = relays.map((_, i) =>
+      skip[i] ? { status: 'rejected', reason: 'relay failed lately; trying again later' } : results[next++]!,
+    );
     // A connection this pool replaced while the event was on its way (`recycle`): sent again, once, on the new one.
     await Promise.all(
       settled.map(async (r, i) => {
-        if (r.status !== 'rejected' || this.closed || (this.generations.get(urls[i]!) ?? 0) === gens[i]) return;
+        if (skip[i] || r.status !== 'rejected' || this.closed || (this.generations.get(urls[i]!) ?? 0) === gens[i]) return;
         [settled[i]] = await Promise.allSettled(this.pool.publish([relays[i]!], event, { maxWait: this.maxWaitMs }));
       }),
     );
@@ -243,9 +259,20 @@ export class SimplePoolRelayPool implements RelayPool {
     settled.forEach((r, i) => {
       if (r.status !== 'rejected' || !/publish timed out/.test(errorText(r.reason))) return;
       const url = urls[i]!;
-      if (status.get(url)) stale.add(url);
+      // Once: a relay that keeps not acknowledging is only backed off from (below), not reconnected again and again.
+      if (status.get(url) && !this.publishBackoff.has(url)) stale.add(url);
     });
     if (stale.size && !this.closed) this.recycle(stale);
+    settled.forEach((r, i) => {
+      if (skip[i]) return;
+      const url = urls[i]!;
+      if (r.status === 'fulfilled') this.publishBackoff.delete(url);
+      else {
+        const failures = (this.publishBackoff.get(url)?.failures ?? 0) + 1;
+        const wait = jittered(this.backoff[Math.min(failures - 1, this.backoff.length - 1)]!);
+        this.publishBackoff.set(url, { failures, retryAt: Date.now() + wait });
+      }
+    });
     return settled.map((r, i) =>
       r.status === 'fulfilled'
         ? { relay: relays[i]!, ok: true, reason: r.value }
@@ -282,6 +309,8 @@ export class SimplePoolRelayPool implements RelayPool {
    */
   reconnect(opts: ReconnectOptions = {}): void {
     if (this.closed) return;
+    // Back at the front: every relay gets a fresh try.
+    this.publishBackoff.clear();
     if (opts.force) this.recycle(this.connectedUrls());
     for (const kept of this.subs) {
       for (const r of kept.relays) {

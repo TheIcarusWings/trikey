@@ -19,6 +19,7 @@ import {
   RpcServer,
   RpcTimeoutError,
   SimplePoolRelayPool,
+  onceCloseWebSocket,
   type DropInfo,
   type Filter,
   type Handlers,
@@ -269,5 +270,69 @@ describe('a connection that only looks open (half-open)', () => {
     p.close();
     expect(() => p.reconnect({ force: true })).not.toThrow();
     expect(p.pendingResubscribes).toBe(0);
+  });
+});
+
+/** The platform WebSocket, counting the connections opened to each relay. */
+function countingSockets(): { ws: typeof WebSocket; opened: Map<string, number> } {
+  const opened = new Map<string, number>();
+  class Counting extends onceCloseWebSocket()! {
+    constructor(url: string | URL, protocols?: string | string[]) {
+      super(url, protocols);
+      const u = String(url).replace(/\/$/, '');
+      opened.set(u, (opened.get(u) ?? 0) + 1);
+    }
+  }
+  return { ws: Counting, opened };
+}
+
+describe('a relay that is down while another works', () => {
+  it('is not connected to again for every publish: it waits out a backoff, and the others are published to', { timeout: 30_000 }, async () => {
+    const up = await startRelay();
+    const down = await startRelay();
+    const downUrl = down.url;
+    await down.stop();
+    const { ws, opened } = countingSockets();
+    // Unanswered for a while: the request is re-sent every 300 ms (the app: every 10 s).
+    const { client } = await rig([up.url, downUrl], {
+      timeoutMs: 8000,
+      retryMs: 300,
+      statusDelayMs: 3000,
+      client: { websocketImplementation: ws, resubscribeBackoffMs: [5000] },
+    });
+    const before = opened.get(downUrl) ?? 0;
+    await expect(client.call('guardian.status', {})).resolves.toMatchObject({ state: 'unlocked' });
+    // About ten sends in 3 s; the down relay was tried by the first publish, and then not again within its 5 s backoff.
+    expect((opened.get(downUrl) ?? 0) - before).toBeLessThanOrEqual(1);
+    expect(opened.get(up.url)).toBe(1);
+  });
+
+  it('a relay that takes connections but never acknowledges is reconnected once, then backed off from', { timeout: 30_000 }, async () => {
+    const good = await startRelay();
+    const mute = await startRelay();
+    const conns = () => (mute as unknown as { nextConn: number }).nextConn - 1;
+    const { client } = await rig([good.url, mute.url], { timeoutMs: 14_000, retryMs: 300, statusDelayMs: 11_000, client: { resubscribeBackoffMs: [5000] } });
+    mute.stallConnections(isPhone);
+    const before = conns();
+    await expect(client.call('guardian.status', {})).resolves.toMatchObject({ state: 'unlocked' });
+    // Each publish to it times out after 4.4 s: one reconnection, then publishes to it wait out the backoff.
+    expect(conns() - before).toBeLessThanOrEqual(2);
+  });
+
+  it('reconnect() gives every relay a fresh try at once', { timeout: 30_000 }, async () => {
+    const up = await startRelay();
+    const down = await startRelay();
+    const downUrl = down.url;
+    await down.stop();
+    const { ws, opened } = countingSockets();
+    const { client, clientPool } = await rig([up.url, downUrl], { client: { websocketImplementation: ws, resubscribeBackoffMs: [60_000] } });
+    await client.call('guardian.status', {});
+    const before = opened.get(downUrl) ?? 0;
+    await client.call('guardian.status', {});
+    expect(opened.get(downUrl) ?? 0).toBe(before); // backing off
+    await down.start();
+    clientPool.reconnect();
+    await client.call('guardian.status', {});
+    expect(opened.get(downUrl) ?? 0).toBeGreaterThan(before);
   });
 });
