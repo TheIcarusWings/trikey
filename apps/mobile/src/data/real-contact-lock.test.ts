@@ -67,6 +67,7 @@ beforeAll(async () => {
     rpcTimeoutMs: 5000,
     rpcRetryIntervalMs: 0,
     syncIntervalMs: 0,
+    syncJoinMs: 0, // every sync() asks the guardian again
     yieldToUi: async () => {},
     recoveryCodeKdf: { m: 64, t: 1, p: 1 },
   });
@@ -79,6 +80,7 @@ beforeAll(async () => {
   svc.setOnboardingContacts([{ name: 'Maria', npub: npubEncode(mariaPub) }]);
   await svc.setUpRules(100_000, 7);
   await svc.sync();
+  await svc.idle(); // and the sync's background part
 }, 60_000);
 
 afterAll(async () => {
@@ -108,6 +110,7 @@ describe('contacts can lock the guardian, in the app', { timeout: 120_000 }, () 
     await until(() => rig.guardian.locked, 'the guardian locks');
     await until(() => svc.getState().activity.some((a) => a.type === 'security' && a.event.kind === 'guardian-locked' && a.event.byContact === 'Maria'), 'the activity entry');
     await svc.sync();
+    await svc.idle(); // and the sync's background part
     const s = svc.getState();
     expect(s.guardian).toMatchObject({ status: 'locked', lockedByContact: { name: 'Maria', npub: npubEncode(mariaPub) } });
     expect(guardianLockedLine(s.guardian, 'Umbrel', 'Ledger')).toMatch(/^Maria locked your guardian/);
@@ -116,6 +119,7 @@ describe('contacts can lock the guardian, in the app', { timeout: 120_000 }, () 
   it('the phone unlocks it as before', async () => {
     await svc.unlockGuardian(rig.passphrase);
     await svc.sync();
+    await svc.idle(); // and the sync's background part
     expect(rig.guardian.locked).toBe(false);
     expect(svc.getState().guardian.status).toBe('online');
     expect(svc.getState().guardian.lockedByContact).toBeUndefined();
@@ -135,6 +139,7 @@ describe('contacts can lock the guardian, in the app', { timeout: 120_000 }, () 
     rig.guardian.features = ['limit_off'];
     try {
       await svc.sync();
+      await svc.idle(); // and the sync's background part
       expect(svc.getState().contactLock).toEqual({ on: false, supported: false });
       expect(canOfferContactLock(svc.getState())).toBe(false);
       const before = signs();

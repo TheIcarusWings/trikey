@@ -88,6 +88,14 @@ export class RpcServer {
   /** Strangers' replay guard and responses (see `isPeer`). */
   private readonly strangerGuard: ReplayGuard;
   private readonly strangerResponses = new Map<string, Response>();
+  /**
+   * Requests whose handler is running, by `${sender}:${id}`. A re-send of one (a phone re-sends a long request every
+   * few seconds, with the same id) joins it: the handler is not run again, and the one answer goes out when it is done.
+   * Checked apart from the replay guard, which forgets a request once it could no longer be accepted, while its
+   * handler may still be running (a `wallet.sync` reading the whole wallet from a slow Electrs, re-sent with a fresh
+   * date after the phone slept).
+   */
+  private readonly inFlight = new Set<string>();
   private sub?: Subscription;
   private starting?: Promise<void>;
   private closed = false;
@@ -252,10 +260,15 @@ export class RpcServer {
     const guard = peer ? this.guard : this.strangerGuard;
     // A sender that became a peer since (a phone retrying its `pair`) is still a duplicate.
     const other = peer ? this.strangerGuard : this.guard;
+    const key = `${sender}:${meta.id}`;
+    if (this.inFlight.has(key)) {
+      // Joins the run under way: its answer goes to this id when it is done.
+      this.drop({ reason: 'replay', wrapId, sender, messageId: meta.id, detail: 'in flight' });
+      return;
+    }
     const verdict = other.has(sender, meta.id, this.now()) ? 'duplicate' : guard.admit(meta, this.now());
     if (verdict === 'duplicate') {
       // A retry (or a replay): never run the handler again; resend the earlier answer if we have one.
-      const key = `${sender}:${meta.id}`;
       const cached = this.responses.get(key) ?? this.strangerResponses.get(key);
       this.drop({ reason: 'replay', wrapId, sender, messageId: meta.id, detail: cached ? 'resent cached response' : 'in flight' });
       if (cached) await this.reply(sender, cached);
@@ -267,7 +280,13 @@ export class RpcServer {
     }
 
     const ctx: HandlerContext = { sender, id: message.id, wrapId, createdAt: meta.createdAt };
-    const response = await this.dispatch(message, ctx);
+    this.inFlight.add(key);
+    let response: Response;
+    try {
+      response = await this.dispatch(message, ctx);
+    } finally {
+      this.inFlight.delete(key);
+    }
     if (peer) this.remember(this.responses, `${sender}:${message.id}`, response, this.o.responseCacheSize ?? 256);
     else this.remember(this.strangerResponses, `${sender}:${message.id}`, response, this.o.strangerCacheSize?.responses ?? 32);
     await this.reply(sender, response);

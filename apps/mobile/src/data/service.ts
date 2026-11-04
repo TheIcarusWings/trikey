@@ -64,8 +64,10 @@ export interface WalletService {
   /** How often screens should re-read `now()`. 0 or missing: never (the mock's frozen clock). */
   readonly clockTickMs?: number;
   /**
-   * Asks the guardian for the wallet's coins and history. Resolves when done; a guardian that does not answer is shown
-   * as offline, one that answers but is slow to read the chain as `guardianSlow` (the last balance stays).
+   * Asks the guardian for the wallet's coins and history. Resolves when the balance and Activity are up to date (what a
+   * pull to refresh waits for); the rest may go on in the background (`state.updating`). A sync that began moments ago
+   * is joined rather than asked again. A guardian that does not answer is shown as offline, one that answers but is
+   * slow to read the chain as `guardianSlow` (the last balance stays).
    */
   sync(): Promise<void>;
   /**

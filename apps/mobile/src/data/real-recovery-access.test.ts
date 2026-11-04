@@ -58,6 +58,7 @@ async function newService(rig: GuardianRig, hardware: SoftwareHardwareProvider, 
     rpcTimeoutMs,
     rpcRetryIntervalMs: 0,
     syncIntervalMs: 0,
+    syncJoinMs: 0, // every sync() asks the guardian again
     yieldToUi: async () => {},
     recoveryCodeKdf: { m: 64, t: 1, p: 1 },
   });
@@ -87,6 +88,7 @@ describe('a recovering phone whose access to the guardian ran out', { timeout: 1
       await old.setUpRules(100_000, 7);
       rig.fund(old.wallet!.multisig().derive(0, 0).script, 300_000n);
       await old.sync();
+      await old.idle(); // and the sync's background part
       await old.close();
 
       // The new phone: only the hardware wallet and the guardian's address.
@@ -114,6 +116,7 @@ describe('a recovering phone whose access to the guardian ran out', { timeout: 1
       rig.clock.advance(13 * HOUR);
       const t0 = Date.now();
       await N.sync();
+      await N.idle(); // and the sync's background part
       expect(Date.now() - t0, 'a sync must not wait for the RPC timeout').toBeLessThan(FAST_MS);
       expect(N.getState().recovery).toMatchObject({ id: started.id, accessExpired: true, accessExpiresAt: new Date(firstEnd).toISOString(), state: 'pending' });
       // The guardian was not asked, so it is not "offline": the status stays as it was last known.
@@ -121,7 +124,9 @@ describe('a recovering phone whose access to the guardian ran out', { timeout: 1
       expect(rig.guardian.hasRecoveryAccess(N.wallet!.state.nostrPubkey)).toBe(false);
       // Syncing again and again changes nothing (and still does not wait).
       await N.sync();
+      await N.idle(); // and the sync's background part
       await N.sync();
+      await N.idle(); // and the sync's background part
       expect(N.getState().guardian.status).toBe('online');
 
       // A button that needs the guardian says what is wrong, at once, and does not mark it offline.
@@ -142,11 +147,13 @@ describe('a recovering phone whose access to the guardian ran out', { timeout: 1
       expect(N.getState()).toMatchObject({ guardian: { status: 'online' }, recovery: { id: started.id, accessExpired: false } });
       const t2 = Date.now();
       await N.sync();
+      await N.idle(); // and the sync's background part
       expect(Date.now() - t2).toBeLessThan(FAST_MS);
 
       // The delay passes with the access run out again: the guardian takes the new wallet over, tells this phone, and it switches.
       rig.clock.set(new Date(started.completesAt).getTime() + 2 * HOUR);
       await N.sync();
+      await N.idle(); // and the sync's background part
       expect(N.getState().recovery).toMatchObject({ accessExpired: true });
       await rig.mine(11);
       await rig.guardian.tick();
