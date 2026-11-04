@@ -17,9 +17,13 @@ other side's older version.
   "Guardian offline" until a pull to refresh. Nothing was wrong with the guardian: the app had been waiting for an
   answer when the phone went to sleep, and on waking that wait ran out at once, before the app could reconnect. Now:
   - a wait that ran out while the phone slept is not taken as "no answer": the app asks again and waits a little longer;
-  - when the app comes back after more than about 20 seconds away, it opens its relay connections anew, and asks again
-    for any answer it was still waiting for; a connection that silently stopped working (the phone's network changed, or
-    the phone dropped it while asleep) is also replaced as soon as a message on it goes unacknowledged;
+  - every time the app comes back from the background (iOS cuts all of an app's connections when it suspends it, even
+    for a few seconds), it opens its relay connections anew, waits until one relay is back (3 s at most) before it
+    syncs, and asks again for any answer it was still waiting for; a connection that silently stopped working (the
+    phone's network changed) is also replaced as soon as a message on it goes unacknowledged;
+  - a relay that is down is no longer connected to again for every message the app sends (every 10 s while it waits
+    for an answer): it is tried again on the same growing schedule as the subscription to it, while the other relays
+    get every message;
   - if the guardian was offline before, the app shows "Reconnecting to your guardian…" on return (calm, no red), and
     says "offline" again only if the guardian does not answer a request made after the return;
   - any answer from the guardian clears "offline" (before, only a full sync did);
