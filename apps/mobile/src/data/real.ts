@@ -998,8 +998,11 @@ class Service implements RealWalletService {
             this.log.seen[a.txid] = this.clock.now();
             void saveLog(this.deps.platform.kv, this.logKey, this.log);
           }
+          // The note is for news: a recent alert about a payment this phone did not know yet (not its confirmation).
           const fresh = Math.abs(this.clock.now() - e.atMs) < TOAST_FRESH_MS;
-          if (a.direction === 'in' && fresh && this.w?.stage === 'paired') this.showToast(toastText(a));
+          const st = this.w?.state;
+          const known = !!st && (st.liveTxs.some((t) => t.txid === a.txid) || (a.wallet === 'main' ? st.chain : st.savings?.chain)?.history.some((h) => h.txid === a.txid));
+          if (a.direction === 'in' && fresh && !known && st?.stage === 'paired') this.showToast(toastText(a));
           this.refresh();
           if (a.wallet === 'main') void this.sync();
         } else if (a.type === 'limit_on' && a.reason === 'recovery') {

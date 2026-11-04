@@ -31,8 +31,11 @@ import { electrumStatus, scriptHash, type BackendUnspent, type ElectrumBackend, 
 
 /** Most scripts one watch subscribes to. */
 export const DEFAULT_MAX_SCRIPTS = 5000;
-/** Calls per JSON-RPC batch. */
-export const BATCH_SIZE = 50;
+/**
+ * Calls per JSON-RPC batch. A server answers a connection's calls one after the other (Electrs), so a batch takes about
+ * this many reads: 25 at the ~160 ms per read seen on an Umbrel's electrs 0.11 is 4 s, well inside the request timeout.
+ */
+export const BATCH_SIZE = 25;
 /** Reads of a script whose history does not match its status before it is left to the server. */
 const MAX_MISMATCHES = 3;
 
@@ -221,7 +224,11 @@ export class ScriptWatch {
     for (const e of this.entries.values()) {
       if (!this.isCurrent(e) || !e.data!.history.some((h) => h.height <= 0)) continue;
       e.dirty = true;
-      this.schedule(e);
+      const p = this.schedule(e);
+      e.busy = p;
+      void p.finally(() => {
+        if (e.busy === p) e.busy = undefined;
+      });
     }
   }
 
@@ -319,7 +326,9 @@ export class ScriptWatch {
       const hashes = batch.map((e) => e.hash);
       let histories, unspents;
       try {
-        [histories, unspents] = await Promise.all([this.b.histories(hashes), this.b.unspents(hashes)]);
+        // One after the other: a slow server answers in order anyway, and the second batch's timeout starts later.
+        histories = await this.b.histories(hashes);
+        unspents = await this.b.unspents(hashes);
       } catch (err) {
         this.log.debug('chain.live_read_failed', { error: errorText(err) });
         return; // the connection dropped: the reconnect reads them again

@@ -134,6 +134,11 @@ describe('a payment from another device', { timeout: 60_000 }, () => {
     svc.dismissToast?.();
     expect(svc.getState().toast).toBeNull();
     await waitFor(() => row(txid), 'the row');
+    // Its confirmation is no news worth a note.
+    rig.clock.advance(1000);
+    await rig.mine(1);
+    await waitFor(() => row(txid)?.status === 'confirmed', 'confirmed');
+    expect(svc.getState().toast).toBeNull();
     // A week-old alert, as relays replay them: listed, no note.
     const at = rig.clock.now() - 7 * 86_400_000;
     const old: Alert = { type: 'wallet_tx', txid: 'aa'.repeat(32), direction: 'in', amountSats: 777, confirmations: 3, wallet: 'main', at: Math.floor(at / 1000), atMs: at };

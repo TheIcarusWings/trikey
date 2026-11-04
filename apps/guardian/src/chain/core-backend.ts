@@ -175,7 +175,8 @@ export class CoreBackend implements ChainBackend {
     const sig = idx.signature;
     const before = this.lastSignature;
     this.lastSignature = sig;
-    if (before === undefined || before === sig) return;
+    // The first read after an import (or after someone started listening) counts as a change: it may be all new.
+    if (before === sig) return;
     for (const fn of this.changeListeners) {
       try {
         fn();
@@ -291,17 +292,25 @@ export class CoreBackend implements ChainBackend {
     const normalized = await Promise.all(descs.map((d) => this.normalize(d)));
     const need = upToIndex + 50;
     if (normalized.every((d) => (this.imported.get(d.desc)?.end ?? -1) >= need)) return;
+    // Another reader (a sync, the live wallet) started the import while this one waited for the node: wait for it too.
+    const meanwhile = this.importing.get(id);
+    if (meanwhile) {
+      const quick = await Promise.race([meanwhile.done.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 3000).unref?.())]);
+      if (quick && normalized.every((d) => (this.imported.get(d.desc)?.end ?? -1) >= need)) return;
+      throw new BackendUnavailableError(`Bitcoin Core is scanning the chain for this wallet (since ${new Date(meanwhile.birthday * 1000).toISOString().slice(0, 10)}); this takes a while on mainnet`);
+    }
     const failed = this.importErrors.get(id);
     this.importErrors.delete(id);
     if (failed) this.log.info('core.import_retry', { wallet: id });
     const end = Math.max(CORE_IMPORT_RANGE, Math.ceil((need + 1) / CORE_IMPORT_RANGE) * CORE_IMPORT_RANGE) - 1;
     const birthday = Math.max(0, (this.o.birthday?.(wallet) ?? this.o.defaultBirthday?.() ?? 0) - BIRTHDAY_MARGIN_S);
-    await this.checkPruned(birthday);
     const since = Date.now();
-    const done = this.importDescriptors(normalized, end, birthday).then(
+    // Registered before the next wait, so a reader coming in meanwhile waits for this import instead of starting one.
+    const done = this.checkPruned(birthday).then(() => this.importDescriptors(normalized, end, birthday)).then(
       () => {
         this.importing.delete(id);
         this.index = undefined;
+        this.lastSignature = undefined;
         this.log.info('core.import_done', { wallet: id, range: end + 1, seconds: Math.round((Date.now() - since) / 1000) });
       },
       (e: unknown) => {
@@ -316,7 +325,11 @@ export class CoreBackend implements ChainBackend {
     const quick = await Promise.race([done.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 3000).unref?.())]);
     if (quick && !this.importErrors.has(id)) return;
     const err = this.importErrors.get(id);
-    if (err) throw new BackendUnavailableError(`Bitcoin Core could not import this wallet: ${err}`);
+    if (err) {
+      // A pruned node's refusal is said as it is (checkPruned's words); anything else is the import's.
+      if (/this node is pruned/.test(err)) throw new BackendUnavailableError(err);
+      throw new BackendUnavailableError(`Bitcoin Core could not import this wallet: ${err}`);
+    }
     throw new BackendUnavailableError(`Bitcoin Core is scanning the chain for this wallet (since ${new Date(birthday * 1000).toISOString().slice(0, 10)}); this takes a while on mainnet`);
   }
 

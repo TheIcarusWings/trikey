@@ -85,6 +85,8 @@ export class FakeElectrum {
   pollMs = 20;
   /** Answer a batch with one error, as a server without batch support does. */
   refuseBatches = false;
+  /** Hang up on a batch, as a server that cannot read an array might. */
+  hangUpOnBatch = false;
   /** Refuse subscriptions past this many per connection, as Fulcrum's limit does. */
   maxSubscriptions = Infinity;
   /** Every script read (`get_history`, `listunspent`, `subscribe`) takes this long (ms), one after the other. */
@@ -385,6 +387,10 @@ export class FakeElectrum {
       return;
     }
     this.batches++;
+    if (this.hangUpOnBatch) {
+      socket.destroy();
+      return;
+    }
     if (this.refuseBatches) {
       this.write(socket, { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'batch requests are not supported' } });
       return;

@@ -182,6 +182,8 @@ export class ElectrumClient {
   private readonly scriptListeners = new Set<(scripthash: string, status: string | null) => void>();
   /** The server refused a batch once: separate requests from then on (for this client). */
   private batchRefused = false;
+  /** A batch was answered: the server takes them (a dropped connection later is not about batches). */
+  private batchAnswered = false;
   private nextBatch = 1;
   private readyWaiters: (() => void)[] = [];
   private warnedUnreachable = false;
@@ -444,6 +446,11 @@ export class ElectrumClient {
       if (this.socket !== socket) return;
       this.socket = undefined;
       clearInterval(this.pingTimer);
+      // A server that hangs up on the first batch it gets (it cannot read an array) gets none again.
+      if (!this.batchAnswered && !this.batchRefused && [...this.pending.values()].some((p) => p.batch !== undefined)) {
+        this.batchRefused = true;
+        this.o.log.info('electrum.batch_refused', { host: this.o.host, how: 'closed' });
+      }
       const was = this.ready;
       this.setReady(false);
       this.failAll(new ElectrumUnavailableError('connection to Electrum closed'));
@@ -526,6 +533,7 @@ export class ElectrumClient {
     }
     if (typeof msg.id === 'number' && this.pending.has(msg.id)) {
       const p = this.pending.get(msg.id)!;
+      if (p.batch !== undefined) this.batchAnswered = true;
       this.pending.delete(msg.id);
       clearTimeout(p.timer);
       if (msg.error !== undefined && msg.error !== null) {

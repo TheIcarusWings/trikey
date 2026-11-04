@@ -326,6 +326,19 @@ describe('live chain data (Electrum subscriptions)', () => {
     expect((await chain.walletSync(wallet)).confirmedSats).toBe(1_500n);
   });
 
+  it('a server that hangs up on a batch gets none again, and the calls one by one', async () => {
+    fake.hangUpOnBatch = true;
+    const chain = await open();
+    fundTx(fake, wallet.derive(0, 0).script, 1_700);
+    await chain.watchWallet(wallet); // the first batch: the server hangs up
+    await waitFor(() => chain.backend!.connected, 5000);
+    await waitFor(() => chain.liveStats().kind === 'electrum' && (chain.liveStats() as { current: number }).current >= 1, 5000).catch(() => undefined);
+    await chain.watchWallet(wallet);
+    expect(chain.electrum!.batchesRefused).toBe(true);
+    expect(chain.liveStats()).toMatchObject({ scripts: 41, current: 41 });
+    expect((await chain.walletSync(wallet)).confirmedSats).toBe(1_700n);
+  });
+
   it('a history that does not match the status the server gave is not served (the server is asked instead)', async () => {
     const chain = await open();
     const script = wallet.derive(0, 0).script;
@@ -347,10 +360,12 @@ describe('live chain data (Electrum subscriptions)', () => {
     expect(electrumStatus(h)).toBe(hex.encode(sha256(new TextEncoder().encode(`${'aa'.repeat(32)}:5:${'bb'.repeat(32)}:0:`))));
   });
 
-  it('measures wallet.sync from the subscriptions against a scan on a slow server', async () => {
-    // A slow Electrs: every script read takes 8 ms, one after the other (an Umbrel's electrs 0.11 took ~160 ms).
+  it('measures wallet.sync from the subscriptions against a scan on a slow server', { timeout: 300_000 }, async () => {
+    // A slow Electrs: every script read takes 8 ms, one after the other (an Umbrel's electrs 0.11 took ~160 ms:
+    // LIVE_MEASURE_DELAY_MS=160 to see that).
     for (let i = 0; i < 12; i++) fundTx(fake, wallet.derive(i % 2 === 0 ? 0 : 1, i).script, 1_000 + i);
-    fake.delayMs = 8;
+    const delay = Number(process.env.LIVE_MEASURE_DELAY_MS ?? 8);
+    fake.delayMs = delay;
     const live = await open();
     const plain = new ChainService({ backend: new ElectrumBackend(new ElectrumClient({ host: '127.0.0.1', port: fake.port, pingIntervalMs: 0 })) });
     plain.start();
@@ -368,7 +383,7 @@ describe('live chain data (Electrum subscriptions)', () => {
     const cached = await live.walletSync(wallet);
     const cacheMs = performance.now() - t;
     expect(cached.confirmedSats).toBe(scanned.confirmedSats);
-    console.log(`\nwallet.sync on a server taking 8 ms per script read (${fake.subscriptions} scripts): scan ${scanMs.toFixed(0)} ms, from subscriptions ${cacheMs.toFixed(1)} ms (subscribing once: ${subscribeMs.toFixed(0)} ms)`);
+    console.log(`\nwallet.sync on a server taking ${delay} ms per script read (${fake.subscriptions} scripts): scan ${scanMs.toFixed(0)} ms, from subscriptions ${cacheMs.toFixed(1)} ms (subscribing once: ${subscribeMs.toFixed(0)} ms)`);
     expect(cacheMs).toBeLessThan(scanMs / 5);
   });
 });
@@ -445,8 +460,11 @@ describe('live chain data (Bitcoin Core polled)', () => {
       await core.waitReady(3000);
       await core.prepare(wallet, 20);
       expect(chain.liveStats()).toEqual({ kind: 'core' });
-      await sleep(120);
-      expect(changes).toEqual([]); // nothing new yet
+      // The first read of the imported wallet counts as a change (it may all be new); then nothing until something is.
+      await waitFor(() => changes.includes('core'));
+      changes.length = 0;
+      await sleep(150);
+      expect(changes).toEqual([]);
       const script = hex.encode(wallet.derive(0, 0).script);
       rpc.txs.set('11'.repeat(32), { confirmations: 0, outputs: [{ script, amount: 0.0001 }], inputs: [] });
       await waitFor(() => changes.includes('core'));

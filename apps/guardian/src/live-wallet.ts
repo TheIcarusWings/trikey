@@ -29,6 +29,7 @@ import type { Guardian } from './guardian.js';
 import { errorText } from './log.js';
 import type { WalletChangeReason, WalletHistoryEntry, WalletSync } from './chain/chain.js';
 import type { AddressSource } from './singlekey.js';
+import { SAVINGS_SCAN_HISTORY } from './savings.js';
 
 export const LIVE_FILE = 'live-wallet.json';
 /** Transactions remembered per wallet (newest kept). Far more than a pass reads. */
@@ -41,6 +42,8 @@ export const MAX_OUTBOX = 100;
 export const ALERT_TTL_MS = 2 * 86_400_000;
 /** Changes are gathered this long before a pass. */
 export const DEFAULT_DEBOUNCE_MS = 150;
+/** A pass that could not read a wallet (the chain source catching up: Bitcoin Core importing) tries again this soon. */
+export const RETRY_MS = 10_000;
 
 export type WalletTxAlert = Extract<Alert, { type: 'wallet_tx' }>;
 type TxState = 'mempool' | 'confirmed';
@@ -154,6 +157,7 @@ export class LiveWallet {
   private stopped = true;
   private readonly debounceMs: number;
   private readonly deliverMutex = new Mutex();
+  private retryTimer?: ReturnType<typeof setTimeout>;
   /** The wallets the last pass watched: a tick starts a pass when they change (pairing, Savings registered, a rotation). */
   private lastTargets = '';
   /** Passes done (tests wait on it). */
@@ -191,6 +195,7 @@ export class LiveWallet {
   stop(): void {
     this.stopped = true;
     clearTimeout(this.timer);
+    clearTimeout(this.retryTimer);
     this.timer = undefined;
     for (const off of this.offs.splice(0)) off();
   }
@@ -220,7 +225,7 @@ export class LiveWallet {
   }
 
   /** Something may have changed: a pass soon. */
-  changed(_reason: WalletChangeReason | 'tip' | 'start' | 'wallets'): void {
+  changed(_reason: WalletChangeReason | 'tip' | 'start' | 'wallets' | 'retry'): void {
     if (this.stopped || this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
@@ -285,9 +290,14 @@ export class LiveWallet {
       if (!t.kind) continue;
       let r: WalletSync;
       try {
-        r = await g.chain.walletSync(t.wallet, { historyLimit: LIVE_HISTORY, minIndex: t.minIndex });
+        // Savings as far back as its own timed scan reads, so the tripwire sees the same.
+        r = await g.chain.walletSync(t.wallet, { historyLimit: t.kind === 'savings' ? SAVINGS_SCAN_HISTORY : LIVE_HISTORY, minIndex: t.minIndex });
       } catch (e) {
         g.log.debug('live.read_failed', { wallet: t.kind, error: errorText(e) });
+        // Not readable now (Bitcoin Core still importing, the server between answers): again soon, whatever else happens.
+        clearTimeout(this.retryTimer);
+        this.retryTimer = setTimeout(() => this.changed('retry'), RETRY_MS);
+        this.retryTimer.unref?.();
         continue;
       }
       if (t.kind === 'main') {
