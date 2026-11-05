@@ -157,6 +157,7 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
   | `guardian.unlock` | Unlock after a restart (refused after 5 failed tries in a row until the web UI unlocks, and while a recovery the phone did not start runs) |
   | `guardian.lock` | Lock the guardian remotely (alert contacts can lock it too, with a `LOCK` DM, when the owner allows it: rule 8) |
   | `guardian.status` | Read guardian state (with `warnings`, e.g. `no_alert_contacts`) |
+  | `labels.put`, `labels.get`, `labels.list`, `labels.delete` | Keep an encrypted copy of the phone's labels per wallet, opt-in, so they survive a recovery; a phone with recovery access may read it ("Notes that survive recovery") |
 
 - **Every request carries:**
   - an id, so retries are idempotent;
@@ -291,6 +292,7 @@ printed and kept with the hardware wallet.
   - Tell users to keep the hardware wallet's seed words outside the home.
 - **Remote compromise of the home server** gives up one key of three. That's the same exposure as Bitkey's server being breached.
 - **Savings (optional).** Phone + guardian, together or compromised, cannot move Savings: the guardian holds no Savings key. What can: the phone with the hardware wallet, or the Recovery Key with either of them. A burglar who finds the phone, a powered box and a Recovery Key kept at home takes Savings too, so the Recovery Key belongs away from home, apart from the hardware wallet's seed words. A compromised guardian can hide Savings' balance from the phone or stay silent when it moves (its tripwire), which costs nothing it was trusted with. Turning the Savings watch off or swapping it for another wallet (the paired phone alone can) is announced to the phone and every alert contact (`savings_unwatched`), so a phone thief cannot quietly blind the tripwire before moving Savings with a second key. The watched Savings record survives a recovery, so whoever completes one (normally the owner) can read Savings' descriptor and balance from the guardian; it moves nothing.
+- **Encrypted notes on the guardian (opt-in).** The guardian stores ciphertext it cannot open (the key comes from a hardware wallet signature that never leaves the phone). It learns **roughly how many notes the owner keeps** (the copy is padded to a size bucket: 4 KiB doubling to 512 KiB) and **when they change** (each upload, at most one stored version per 10 minutes), nothing of what they say. A thief holding the unlocked phone can overwrite or delete the copy (as they could the labels on that phone); the guardian keeps the three newest versions, and the money is never at stake.
 - **Phishing that imitates an alert.** Trikey alerts never carry a link or a button and never ask anyone to sign in,
   in nostr DMs, email, ntfy, Telegram or webhooks alike (the guardian breaks anything link-like before sending, and its name in
   messages may hold no dots); each message says so. A message with a link is not from the guardian. Email and ntfy are
@@ -670,7 +672,8 @@ Owner's decisions, and how they are built:
    a coin label is an `output` record, a freeze `spendable: false`, a payment label a `tx` record, each with the wallet's
    `origin`; records of another wallet are left out of an import, records Trikey does not use are kept for the next export.
    One store per phone (`labels-store.ts`, `<storageKey>.labels`, keyed by wallet id), owned by the `WalletSet` and handed
-   to every wallet; removing a wallet forgets its labels. Not synced to the guardian. The backup carries the whole document
+   to every wallet; removing a wallet forgets its labels. Not synced to the guardian (unless the owner turns on an
+   encrypted copy there: "Notes that survive recovery" below). The backup carries the whole document
    (`labels`): a backup with coin control (labels, or a consolidation in a send log) is **version 6**, so an older app
    says "update the app" instead of restoring without them; every other backup keeps its version byte for byte. The app
    says when labels changed after the last backup. Export and import go through the share sheet and the file picker
@@ -698,6 +701,55 @@ Owner's decisions, and how they are built:
   holding frozen coins can be emptied and removed without unfreezing them one by one. Every other quote still leaves them.
 
 Later: coin control in Recovery Key mode.
+
+## Notes that survive recovery (decided 2026-11-05, built)
+
+Labels live on the phone and in its backup. When both are lost, a recovery through the guardian (Delay & Notify with the
+hardware wallet on a new phone) brings the money back but not the labels. The owner's decision: an **encrypted copy of
+the labels on the guardian**, off by default, a Settings option (Wallet details, "Keep your notes safe with the
+guardian"). Protocol: PROTOCOL.md, "Encrypted notes".
+
+- **Per wallet.** Each wallet of the phone has its own copy, under its wallet id, encrypted with a key only **that
+  wallet's hardware wallet** can make again. A copy carries the wallet's labels, its Savings' (now and before), those of
+  wallets it replaced and those brought back from an earlier copy, with the send log's payment notes.
+- **The key.** The hardware wallet BIP 137-signs `Trikey labels key v1 wallet=<walletId> network=<network>` (one line:
+  Trikey's Ledger and Trezor signers take printable ASCII only) with the authorization key it signs approvals with
+  (docs/design/hardware-auth-path.md); key = HKDF-SHA256(`r || s` of the signature, salt = wallet id,
+  info = `trikey/labels/v1`), 32 bytes to encrypt and 32 for a key check. `r || s` rather than the 65 signature bytes,
+  with `s` in its low form, so a firmware that writes another header byte still makes the same key. The guardian knows
+  every xpub, so nothing public goes in. The phone keeps the derived key in its secure store (no biometrics: uploads run
+  in the background); it is not in the backup, so a restored phone turns the option on again.
+- **Deterministic signatures, checked.** It only works if the device signs the same text the same way on another phone.
+  Ledger's Bitcoin app signs messages with RFC 6979 (`crypto_ecdsa_sign_sha256_hash_with_key`, `CX_RND_RFC6979`);
+  Trezor signs with RFC 6979 too (`ecdsa_sign_digest` with `USE_RFC6979`, or libsecp256k1's RFC 6979 nonce function
+  with a deterministic retry counter): read from the firmware sources, not tested on devices. QR devices sign no messages
+  over QR, so the option is not offered with them. **The phone verifies it**: turning the option on asks for the
+  signature twice and refuses, in plain words, when the two differ (`hardware_not_deterministic`).
+- **The blob.** Version byte, 24-byte nonce, 16-byte key check (HMAC of a constant under the check key: a wrong key is
+  told apart before decrypting), then XChaCha20-Poly1305 over the plaintext padded to 4, 8, 16 ... 512 KiB, the header
+  and the wallet id as associated data (`packages/wallet/src/labels-crypto.ts`, with vectors).
+- **On the guardian** (`apps/guardian/src/labels.ts`): `labels/<walletId>.json`, the newest three versions (one within
+  10 minutes of the newest replaces it), at most 512 KiB plus overhead each and 30 uploads per wallet per hour, sent in
+  parts of 24 KiB (a gift wrap carries about 40 kB). `labels.put` and `labels.delete` from the paired phone only;
+  `labels.get` and `labels.list` also from a phone with recovery access. A wallet reads the copies of its line: its
+  own and those of the wallets a recovery swept into it. Retiring a wallet, a recovery to another guardian and a reset
+  delete its copies. Not announced on the alert channels; the web UI's Activity shows "Encrypted notes updated" at most
+  once a day per wallet.
+- **On the phone.** On: two device confirmations, then the copy is sent; after every label change it goes again 30 s
+  after the last edit, and when the app comes back to the front if it is still pending; unchanged notes are not sent.
+  A copy the guardian already holds for the wallet (another phone's) is merged in first. Off: the guardian deletes every
+  copy of the wallet's line, the labels stay on the phone.
+- **Bring back your notes.** After a recovery to a new phone (the recovery's last screen), or a restore from a backup
+  (Wallet details) whenever the guardian holds a copy this phone does not keep: one device signature, the newest version
+  that opens is merged into the phone's labels. **Merge rule: the phone's labels win.** A coin's mark (label and freeze
+  together), a payment note, an address label already on the phone stays as it is; only what it lacks is taken. So a
+  backup's labels win over the guardian's copy, which fills in what changed after the backup. The labels brought back
+  are carried in the wallet's later copies and backups.
+- **Older guardians and phones.** The option is offered only by a guardian that lists `labels_backup`; an older phone
+  never calls the methods. Never for a wallet hosted on someone else's guardian (guests): the host's guardian refuses
+  `labels.*` to guests and does not list the feature to them (later, in the guest's slot, same scheme).
+- **Not yet:** the app shows no history of a wallet a recovery swept (its coins were all moved), so the old wallet's
+  notes come back into the labels, the backup and later copies, but are not shown on that phone yet.
 
 ## Later: Taproot and threshold signatures (decided 2026-11-03: not now)
 
@@ -739,7 +791,7 @@ Several wallets on one phone and one guardian, where only the hardware wallet ch
 
 - `packages/core/`: descriptors (BIP380 checksum, BIP389 multipath), BIP48 wallets, PSBT build, sign, analyze and finalize, software signer. `tweak.ts` holds the BIP 89 tweak math family hosting uses; `keySetId` names a hosted wallet.
 - `packages/protocol/`: the nostr RPC (schemas, gift-wrap transport with per-peer NIP-44 conversation key caching, replay guard, client and server, pairing and recovery URIs, NIP-06 phone identity, an in-memory relay for tests). Spec in `PROTOCOL.md`.
-- `packages/wallet/`: the phone's side (key 2, pairing, payments, rules, recovery, backup), platform-agnostic; the app supplies storage and hardware adapters. It finishes a recovery (switching to the adopted wallet after checking it, then `confirmHardware()`), replaces the guardian (pair the new one, sweep, retire the old wallet, sweep stray coins later), locks the guardian remotely, parses every Trikey QR (`parseScannedCode`), and keeps a send log that travels in the backup. Chain data comes from the guardian.
+- `packages/wallet/`: the phone's side (key 2, pairing, payments, rules, recovery, backup, labels and their encrypted copy on the guardian), platform-agnostic; the app supplies storage and hardware adapters. It finishes a recovery (switching to the adopted wallet after checking it, then `confirmHardware()`), replaces the guardian (pair the new one, sweep, retire the old wallet, sweep stray coins later), locks the guardian remotely, parses every Trikey QR (`parseScannedCode`), and keeps a send log that travels in the backup. Chain data comes from the guardian.
 - `apps/guardian/`: the guardian. `src/policy/` is the policy engine (spend checks, daily limit, rule changes with BIP137 approvals, Delay & Notify, wallet rotation with one active wallet plus retired ones, state format version 2 with migration from version 1). Around it: key storage (Argon2id, m=64 MiB, t=3, then XChaCha20-Poly1305), lock/unlock (also from the phone), reset, the nostr RPC server and NIP-17 alert DMs behind one shared inbox, email, ntfy, webhook and Telegram alerts (`src/notify/`), an Electrum client (sweep completeness, broadcast, chain time) and the HTTP API for the web UI. `src/hosting/` hosts guests' wallets (family hosting): the slot registry and invites, one engine per hosted wallet, routing by sender, guests' alerts and recoveries. Entry point `src/main.ts`.
 - `apps/guardian-web/`: the guardian's web UI, including the recovery code and the reset. Its API is in `API.md`.
 - Savings (optional, docs/design/savings-and-limit-off.md): `SAVINGS_ACCOUNT` in core; `savings.*` in the protocol; the guardian's watch (`apps/guardian/src/savings.ts`); `TrikeyWallet.startSavings` ... `replaceSavingsKey` in `packages/wallet`; `apps/mobile/app/savings/`.
