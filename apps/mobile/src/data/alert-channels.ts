@@ -1,5 +1,5 @@
 /**
- * The guardian's extra alert channels (email, ntfy push, webhook) as Settings > Alert contacts shows them
+ * The guardian's extra alert channels (email, ntfy push, webhook, Telegram) as Settings > Alert contacts shows them
  * (docs/design/notifications.md). They are set up in the guardian's web page, never on the phone: read-only here.
  */
 import type { AlertChannel, AlertChannels } from './types';
@@ -16,9 +16,9 @@ export function groupAlertChannels(channels: readonly { kind: AlertChannel['kind
   return out;
 }
 
-const KIND: Record<AlertChannel['kind'], string> = { email: 'Email', ntfy: 'ntfy', webhook: 'Webhook' };
+const KIND: Record<AlertChannel['kind'], string> = { email: 'Email', ntfy: 'ntfy', webhook: 'Webhook', telegram: 'Telegram' };
 
-/** One channel in words: "Email m…@example.com", "ntfy (ntfy.example.com)", with "not reaching them" when failing. */
+/** One channel in words: "Email m…@example.com", "ntfy (ntfy.example.com)", "Telegram (M…)", with "not getting through" when failing. */
 export function alertChannelText(c: AlertChannel): string {
   const what = c.kind === 'email' ? `${KIND.email} ${c.hint}` : `${KIND[c.kind]} (${c.hint})`;
   return c.failing ? `${what}, not getting through` : what;
@@ -35,7 +35,7 @@ export function alertChannelsLine(list: readonly AlertChannel[], lead = 'Also by
 export const ALERT_CHANNELS = {
   title: 'Email and push alerts',
   where: "Set up in your guardian's web page, under Settings, Notifications.",
-  limits: 'Email, ntfy and webhooks carry warnings only, never links. Cancelling a recovery and locking the guardian stay with nostr.',
+  limits: 'Email, ntfy, Telegram and webhooks carry warnings only, never links. Cancelling a recovery and locking the guardian stay with nostr.',
   safety: "This phone can't change them, so a stolen phone can't silence them. Every change is announced on every channel.",
   withoutNostr: 'Without a nostr app: warnings only, told to contact you.',
 } as const;

@@ -321,14 +321,14 @@ export interface RelaysInput {
   relays: string[];
 }
 
-// --- notifications (email, ntfy, webhook) --------------------------------
+// --- notifications (email, ntfy, webhook, Telegram) ----------------------
 
 /**
  * Extra alert channels besides nostr (docs/design/notifications.md). Notify-only: they carry warnings, never controls
  * (`CANCEL` and `LOCK` stay nostr messages). Owner-side delivery settings, outside the hardware-approved rules: only this
  * web UI changes them (never the phone), and every change is announced on every channel before and after it.
  */
-export type NotifyChannelKind = 'email' | 'ntfy' | 'webhook';
+export type NotifyChannelKind = 'email' | 'ntfy' | 'webhook' | 'telegram';
 /** `owner`: the owner's own channels (the phone may be the stolen one); `contact`: an alert contact's. */
 export type NotifyAudience = 'owner' | 'contact';
 /** `tls`: implicit TLS (usually port 465); `starttls`: STARTTLS, required (usually port 587). No plain SMTP. */
@@ -361,6 +361,31 @@ export interface SmtpSettings {
   health: ChannelHealth;
 }
 
+/**
+ * The guardian's Telegram bot (one per guardian, made by the owner with @BotFather). Its token is never sent back; the
+ * bot is named as Telegram's `getMe` gave it when the token was saved.
+ */
+export interface TelegramSettings {
+  /** `username` without the `@`; `name` its display name. */
+  bot: { username: string; name: string };
+  tokenSet: true;
+  health: ChannelHealth;
+}
+
+/** `POST /api/notifications/telegram/find`: the private chats that sent `/start` to the bot lately, newest first. */
+export interface TelegramFindResult {
+  bot: { username: string; name: string };
+  chats: {
+    chatId: string;
+    /** First and last name as the person set them in Telegram (anyone can choose any: check before you pick). */
+    name: string;
+    /** Without the `@`; absent when they have none. */
+    username?: string;
+    /** When they last sent `/start`. */
+    at: ISODate;
+  }[];
+}
+
 /** One place alerts go. Secrets (ntfy topic and token, webhook URL and secret) are write-only: only hints come back. */
 export interface NotifyDestination {
   id: string;
@@ -381,6 +406,8 @@ export interface NotifyDestination {
   ntfy?: { server: string; topicHint: string; tokenSet: boolean };
   /** `kind: webhook`: where it posts (scheme, host and port only) and whether a signing secret is set. */
   webhook?: { origin: string; secretSet: boolean };
+  /** `kind: telegram`: the chat the bot writes to, and the name it had when it was picked. */
+  telegram?: { chatId: string; name: string };
   health: ChannelHealth;
 }
 
@@ -394,6 +421,8 @@ export interface NotificationSettings {
    */
   paymentAlerts: boolean;
   smtp?: SmtpSettings;
+  /** The Telegram bot, when one is set up: Telegram chats get their messages through it. */
+  telegram?: TelegramSettings;
   destinations: NotifyDestination[];
   /** The alert contacts in the rules (hex pubkey and npub), to attach an email or ntfy topic to. */
   contacts: { pubkey: string; npub: string }[];
@@ -418,6 +447,8 @@ export interface NotifyDestinationInput {
   email?: string;
   ntfy?: { server: string; topic?: string; token?: string | null };
   webhook?: { url?: string; secret?: string | null };
+  /** A chat "Find" listed (`name` as it showed it), or a stored channel's chat. */
+  telegram?: { chatId: string; name?: string };
 }
 
 export interface NotificationSettingsInput {
@@ -429,6 +460,11 @@ export interface NotificationSettingsInput {
    * SHA-256 fingerprint to pin; omitted keeps the stored pin, `null` removes it (public CAs again).
    */
   smtp: { host: string; port: number; security: SmtpSecurity; username: string; from: string; password?: string; pin?: string | null } | null;
+  /**
+   * The Telegram bot. Omitted (or `{}`): keep it as it is. `{ token }`: set it up or change it (the guardian checks the
+   * token with Telegram first and refuses one Telegram refuses). `null`: remove it (refused while a Telegram chat needs it).
+   */
+  telegram?: { token?: string } | null;
   destinations: NotifyDestinationInput[];
 }
 

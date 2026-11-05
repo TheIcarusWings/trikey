@@ -66,6 +66,8 @@ export interface GuardianRigOptions {
    * SMTP server with a self-signed certificate. Test seams only; a real guardian refuses both. Default false.
    */
   notifyTestServers?: boolean;
+  /** With `notifyTestServers`: the address of a fake Telegram Bot API (support/telegram-server.ts). */
+  telegramApi?: string;
   /** The guardian's TRIKEY_PLATFORM, as loadConfig sets it. Default unset (no setup code), as for embedders. */
   platform?: GuardianConfig['platform'];
   /** Builds the backend for a chain source the web UI chooses (Settings > Server): fakes instead of public servers. */
@@ -179,7 +181,9 @@ export class GuardianRig {
       broadcastLimit: this.opts.broadcastLimit,
       ...(this.opts.slowPingMs !== undefined ? { slowPingMs: this.opts.slowPingMs } : {}),
       ...(this.opts.chainBackend ? { chainBackend: this.opts.chainBackend } : {}),
-      ...(this.opts.notifyTestServers ? { notify: { net: { allowLoopback: true }, smtpTest: { tls: { rejectUnauthorized: false } } } } : {}),
+      ...(this.opts.notifyTestServers
+        ? { notify: { net: { allowLoopback: true }, smtpTest: { tls: { rejectUnauthorized: false } }, ...(this.opts.telegramApi ? { telegramApi: this.opts.telegramApi } : {}) } }
+        : {}),
     });
     await this.guardian.start(this.opts.http ? { port: 0, host: '127.0.0.1' } : false);
     await this.guardian.chain.electrum!.waitReady(3000);

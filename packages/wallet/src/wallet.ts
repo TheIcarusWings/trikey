@@ -1035,13 +1035,13 @@ function unregistered(dev: SavingsDevice): SavingsDevice {
   return { ...rest, addressVerified: false };
 }
 
-/** One extra alert channel (email, ntfy, webhook) as the guardian lists it for the phone: masked, read-only. */
+/** One extra alert channel (email, ntfy, webhook, Telegram) as the guardian lists it for the phone: masked, read-only. */
 export interface NotificationChannel {
-  kind: 'email' | 'ntfy' | 'webhook';
+  kind: 'email' | 'ntfy' | 'webhook' | 'telegram';
   audience: 'owner' | 'contact';
   /** The alert contact (nostr pubkey) the channel belongs to. */
   contact?: string;
-  /** `j…@example.com`, or the server's host name. */
+  /** `j…@example.com`, the server's host name, or (Telegram) the first letter of the chat's name. */
   hint: string;
   failing?: boolean;
 }
@@ -2300,7 +2300,10 @@ export class TrikeyWallet {
       ...(st.hardwareConfirmRequired !== undefined ? { hardwareConfirmRequired: st.hardwareConfirmRequired } : {}),
       ...(st.watchedWalletId ? { watchedWalletId: st.watchedWalletId } : {}),
       ...(st.hosting?.paused ? { paused: { ...st.hosting.paused } } : {}),
-      ...(st.notifications ? { notifications: { channels: st.notifications.channels.map((c) => ({ ...c })) } } : {}),
+      // Kinds added later (Telegram) come in `otherChannels`; kinds this app does not know are left out.
+      ...(st.notifications
+        ? { notifications: { channels: [...st.notifications.channels, ...(st.notifications.otherChannels ?? []).filter((c): c is typeof c & { kind: 'telegram' } => c.kind === 'telegram')].map((c) => ({ ...c })) } }
+        : {}),
       ...(st.chainSource ? { chainSource: { ...st.chainSource } } : {}),
     };
     await this.update((s) => {
@@ -3853,7 +3856,7 @@ export class TrikeyWallet {
   }
 
   /**
-   * The guardian can also send alerts by email, ntfy and webhook (`notifications` in `guardian.status.features`, as last
+   * The guardian can also send alerts by email, ntfy, webhook and Telegram (`notifications` in `guardian.status.features`, as last
    * read). They are set up in the guardian's web UI, never from the phone (docs/design/notifications.md).
    */
   get notificationsSupported(): boolean {

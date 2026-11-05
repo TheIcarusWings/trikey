@@ -1,8 +1,8 @@
 /**
  * Settings > Notifications: the checks the page makes before it saves (the guardian checks everything again,
  * apps/guardian/src/notify/settings.ts and net.ts), and how a change becomes the `PUT /api/notifications` body.
- * Secrets (the app password, ntfy topics and tokens, webhook URLs and secrets) are write-only: the guardian never
- * sends them back, and a body that omits one keeps the stored one.
+ * Secrets (the app password, ntfy topics and tokens, webhook URLs and secrets, the Telegram bot token) are write-only:
+ * the guardian never sends them back, and a body that omits one keeps the stored one.
  */
 import type {
   ChannelHealth,
@@ -87,6 +87,26 @@ export function urlError(raw: string): string | undefined {
   return undefined;
 }
 
+/** A Telegram bot token as @BotFather shows it: digits, a colon, then some 35 letters, digits, `-` and `_`. */
+const TELEGRAM_TOKEN_RE = /^\d{5,16}:[A-Za-z0-9_-]{30,64}$/;
+
+export function telegramTokenError(token: string): string | undefined {
+  const t = token.trim();
+  if (!t) return 'Paste the bot token @BotFather gave you.';
+  if (!TELEGRAM_TOKEN_RE.test(t)) return 'That is not a bot token. @BotFather shows it as digits, a colon and 35 letters and digits (123456789:AA…).';
+  return undefined;
+}
+
+/** Said wherever Telegram is offered, as the ntfy.sh topic warning is for ntfy. */
+export const TELEGRAM_PRIVACY = "Telegram bot messages aren't end-to-end encrypted: Telegram can read these alerts, as an email provider can.";
+
+/** How to make the guardian's bot, for the page. */
+export const TELEGRAM_STEPS = [
+  'In Telegram, open a chat with @BotFather (check the blue tick) and send /newbot.',
+  'Give it a name and a user name ending in "bot", such as home_vault_alerts_bot.',
+  'Copy the token it shows (digits, a colon, then letters and digits) and paste it here. Use this bot for the guardian only.',
+];
+
 export function webhookSecretError(secret: string): string | undefined {
   if (!secret) return undefined;
   if (secret.length < 16 || secret.length > 256 || !/^[\x21-\x7e]+$/.test(secret)) return 'A secret is 16 to 256 characters, without spaces.';
@@ -103,6 +123,7 @@ export function keepDestination(d: NotifyDestination): NotifyDestinationInput {
     ...(d.email ? { email: d.email } : {}),
     ...(d.ntfy ? { ntfy: { server: d.ntfy.server } } : {}),
     ...(d.webhook ? { webhook: {} } : {}),
+    ...(d.telegram ? { telegram: { chatId: d.telegram.chatId } } : {}),
   };
 }
 
@@ -164,7 +185,7 @@ export function passwordOnlyChange(stored: NonNullable<NotificationSettings['smt
 /** The body for `PUT /api/notifications` from the current settings and one change. */
 export function settingsInput(
   s: NotificationSettings,
-  change: { guardianName?: string; smtp?: SmtpDraft | null; add?: NotifyDestinationInput; remove?: string; paymentAlerts?: boolean },
+  change: { guardianName?: string; smtp?: SmtpDraft | null; add?: NotifyDestinationInput; remove?: string; paymentAlerts?: boolean; telegramToken?: string | null },
 ): NotificationSettingsInput {
   let smtp: NotificationSettingsInput['smtp'] = s.smtp
     ? { host: s.smtp.host, port: s.smtp.port, security: s.smtp.security, username: s.smtp.username, from: s.smtp.from }
@@ -182,7 +203,9 @@ export function settingsInput(
     };
   const destinations = s.destinations.filter((d) => d.id !== change.remove).map(keepDestination);
   if (change.add) destinations.push(change.add);
-  return { guardianName: (change.guardianName ?? s.guardianName).trim(), paymentAlerts: change.paymentAlerts ?? s.paymentAlerts, smtp, destinations };
+  // The Telegram bot: left out keeps it; a token sets or changes it; null removes it.
+  const telegram = change.telegramToken === null ? { telegram: null } : change.telegramToken ? { telegram: { token: change.telegramToken.trim() } } : {};
+  return { guardianName: (change.guardianName ?? s.guardianName).trim(), paymentAlerts: change.paymentAlerts ?? s.paymentAlerts, smtp, ...telegram, destinations };
 }
 
 /** The email account's form errors, or undefined. `hasPassword`: one is stored already. */
@@ -227,6 +250,7 @@ export function audienceLabel(d: Pick<NotifyDestination, 'audience' | 'contact' 
 export function channelLabel(d: NotifyDestination): string {
   if (d.kind === 'email') return d.email ?? 'Email';
   if (d.kind === 'ntfy') return `ntfy topic ${d.ntfy?.topicHint ?? ''} on ${d.ntfy ? new URL(d.ntfy.server).host : ''}${d.ntfy?.tokenSet ? ' (with token)' : ''}`;
+  if (d.kind === 'telegram') return `Telegram: ${d.telegram?.name ?? 'chat'}`;
   return `Webhook to ${d.webhook?.origin ?? ''}${d.webhook?.secretSet ? ' (signed)' : ''}`;
 }
 

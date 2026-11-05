@@ -487,6 +487,16 @@ export const NotifyChannel = z.object({
   failing: z.literal(true).optional(),
 });
 
+/**
+ * A channel of a kind added after `NotifyChannel` (`telegram`: a chat the guardian's Telegram bot writes to; `hint` is
+ * the first letter of the chat's name). In `guardian.status.notifications.otherChannels`, never in `channels`: phones
+ * from before a kind refuse a `channels` entry they do not know, and ignore this list. Kinds a phone does not know it
+ * may skip or show by name.
+ */
+export const NotifyOtherChannel = NotifyChannel.extend({
+  kind: z.string().regex(/^[a-z0-9_]{1,16}$/),
+});
+
 /* -------------------------------------------------------------------------- */
 /* Own wallets (docs/design/multi-wallet.md)                                  */
 /* -------------------------------------------------------------------------- */
@@ -688,6 +698,8 @@ export const GuardianStatusResult = z
     notifications: z
       .object({
         channels: z.array(NotifyChannel).max(32),
+        /** Channels of the kinds added later (`telegram`), as `NotifyOtherChannel`. Absent while there are none. */
+        otherChannels: z.array(NotifyOtherChannel).max(32).optional(),
       })
       .optional(),
     /**
@@ -1453,7 +1465,7 @@ export const Alert = z.discriminatedUnion('type', [
   stamped({
     ...alertBase,
     /**
-     * The extra alert channels (email, ntfy, webhook) were changed in the guardian's web UI: a channel or the email
+     * The extra alert channels (email, ntfy, webhook, Telegram) were changed in the guardian's web UI: a channel or the email
      * account added, removed or changed. Every channel before and after the change is told as well. The phone reads the
      * new list from `guardian.status.notifications`. Phones before this alert drop it (an unknown `type`).
      */

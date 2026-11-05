@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
-import { api, ApiError, type NotificationSettings, type NotifyChannelKind, type NotifyDestination, type NotifyDestinationInput } from '@/api';
+import { api, ApiError, type NotificationSettings, type NotifyChannelKind, type NotifyDestination, type NotifyDestinationInput, type TelegramFindResult } from '@/api';
 import { ErrorState } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -19,6 +19,9 @@ import {
   passwordOnlyChange,
   settingsInput,
   smtpError,
+  TELEGRAM_PRIVACY,
+  TELEGRAM_STEPS,
+  telegramTokenError,
   topicError,
   topicWarning,
   urlError,
@@ -210,6 +213,150 @@ function EmailAccount({ data, busy, save, test }: { data: NotificationSettings; 
   );
 }
 
+/**
+ * The guardian's Telegram bot: the owner makes one with @BotFather and pastes its token; the guardian checks it with
+ * Telegram (`getMe`) and shows the bot's name. Every Telegram chat gets its messages through it.
+ */
+function TelegramBot({ data, busy, save }: { data: NotificationSettings; busy: boolean; save: (token: string | null) => Promise<string | undefined> }) {
+  const t = data.telegram;
+  const [editing, setEditing] = useState(false);
+  const [token, setToken] = useState('');
+  const [error, setError] = useState<string>();
+  const used = data.destinations.some((d) => d.kind === 'telegram');
+  const onSave = async (e: FormEvent) => {
+    e.preventDefault();
+    const problem = telegramTokenError(token);
+    if (problem) return setError(problem);
+    setError(undefined);
+    const failed = await save(token.trim());
+    if (failed) return setError(failed);
+    setToken('');
+    setEditing(false);
+  };
+  return (
+    <div className="flex flex-col gap-3">
+      <h3 className="m-0 text-sm leading-5 font-medium">Telegram bot</h3>
+      {t && !editing ? (
+        <>
+          <p className="m-0 text-[15px] leading-5">
+            <span className="font-mono text-[13px]">@{t.bot.username}</span> ({t.bot.name})
+          </p>
+          <p className={cn(hint, t.health.state === 'failing' && 'text-bad')}>{healthLabel(t.health, formatDateTime)}</p>
+          <p className={cn(hint, 'text-warn')}>{TELEGRAM_PRIVACY}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => setEditing(true)}>
+              Change token
+            </Button>
+            {!used && (
+              <Button variant="outline-destructive" size="sm" disabled={busy || data.recoveryRunning} onClick={() => void save(null).then(setError)}>
+                Remove bot
+              </Button>
+            )}
+          </div>
+          <Problem text={error} />
+        </>
+      ) : !t && !editing ? (
+        <div className="flex flex-col gap-2">
+          <p className={hint}>
+            Alerts in Telegram, for you or for someone who won&rsquo;t install a nostr or ntfy app. You make a bot for the guardian once; each person then
+            sends it /start.
+          </p>
+          <div>
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => setEditing(true)}>
+              Add Telegram
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <form onSubmit={onSave} noValidate className="flex flex-col gap-3">
+          <ol className="m-0 flex max-w-[60ch] list-decimal flex-col gap-1 pl-5 text-[13px] leading-[18px] text-muted-foreground">
+            {TELEGRAM_STEPS.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+          <p className={hint}>
+            The guardian keeps the token on this box, sealed, so alerts still go out while it is locked; it is never shown again. If the box is lost, send
+            /revoke to @BotFather.{t ? ' A new token of the same bot can be saved even while a recovery runs; for a different bot, everyone must send it /start again.' : ''}
+          </p>
+          <p className={cn(hint, 'text-warn')}>{TELEGRAM_PRIVACY}</p>
+          <Field id="telegram-token" label="Bot token">
+            <Input id="telegram-token" type="password" autoComplete="off" spellCheck={false} placeholder="123456789:AA…" value={token} onChange={(e) => setToken(e.target.value)} />
+          </Field>
+          <Problem text={error} />
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" disabled={busy}>
+              {busy ? 'Checking with Telegram…' : 'Save bot'}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => {
+                setEditing(false);
+                setError(undefined);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+/** "Find": the chats that sent /start to the bot lately, to pick one from. */
+function TelegramFind({ data, busy, picked, pick }: { data: NotificationSettings; busy: boolean; picked: string | undefined; pick: (c: TelegramFindResult['chats'][number] | undefined) => void }) {
+  const bot = data.telegram?.bot;
+  const [found, setFound] = useState<TelegramFindResult>();
+  const [finding, setFinding] = useState(false);
+  const [error, setError] = useState<string>();
+  if (!bot) return <p className={hint}>Set up the Telegram bot above first.</p>;
+  const find = async () => {
+    setFinding(true);
+    setError(undefined);
+    try {
+      const r = await api.findTelegramChats();
+      setFound(r);
+      pick(r.chats.length === 1 ? r.chats[0] : undefined);
+      if (!r.chats.length) setError(`No one sent /start to @${r.bot.username} in the last day. Send it, then press Find again.`);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not ask Telegram.');
+    } finally {
+      setFinding(false);
+    }
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <p className={hint}>
+        A bot can&rsquo;t write first. In Telegram, open <span className="font-mono">@{bot.username}</span> (search for it) and send <span className="font-mono">/start</span>, then
+        press Find. For someone else, send them the bot&rsquo;s name and ask them to do the same.
+      </p>
+      <div>
+        <Button type="button" variant="outline" size="sm" disabled={busy || finding} onClick={() => void find()}>
+          {finding ? 'Asking Telegram…' : 'Find'}
+        </Button>
+      </div>
+      {found && found.chats.length > 0 && (
+        <fieldset className="m-0 flex flex-col gap-1.5 border-0 p-0">
+          <legend className="mb-1 text-[13px] leading-[18px] text-muted-foreground">Anyone can write to a bot: check the name and the time before you pick.</legend>
+          {found.chats.map((c) => (
+            <label key={c.chatId} className="flex items-center gap-2 text-[15px] leading-5">
+              <input type="radio" name="telegram-chat" value={c.chatId} checked={picked === c.chatId} onChange={() => pick(c)} />
+              <span className="break-all">
+                {c.name}
+                {c.username ? ` (@${c.username})` : ''}
+                <span className="text-[13px] text-muted-foreground"> · /start {formatDateTime(c.at)}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      )}
+      <Problem text={error} />
+    </div>
+  );
+}
+
 type Who = 'owner' | 'contact-only' | string;
 
 /** Adds one channel: who it is for, which kind, and its address (secrets typed here are never shown again). */
@@ -222,13 +369,24 @@ function AddChannel({ data, busy, add }: { data: NotificationSettings; busy: boo
   const [token, setToken] = useState('');
   const [url, setUrl] = useState('');
   const [secret, setSecret] = useState('');
+  const [chat, setChat] = useState<TelegramFindResult['chats'][number]>();
   const [error, setError] = useState<string>();
-  const kinds: NotifyChannelKind[] = who === 'owner' ? ['email', 'ntfy', 'webhook'] : ['email', 'ntfy'];
+  const kinds: NotifyChannelKind[] = who === 'owner' ? ['email', 'ntfy', 'webhook', 'telegram'] : ['email', 'ntfy', 'telegram'];
   const k = kinds.includes(kind) ? kind : 'email';
   const onAdd = async (e: FormEvent) => {
     e.preventDefault();
     const problem =
-      k === 'email' ? (emailError(email) ?? (!data.smtp ? 'Set up the email account first.' : undefined)) : k === 'ntfy' ? (urlError(server) ?? topicError(topic)) : (urlError(url) ?? webhookSecretError(secret));
+      k === 'email'
+        ? (emailError(email) ?? (!data.smtp ? 'Set up the email account first.' : undefined))
+        : k === 'ntfy'
+          ? (urlError(server) ?? topicError(topic))
+          : k === 'telegram'
+            ? !data.telegram
+              ? 'Set up the Telegram bot first.'
+              : !chat
+                ? 'Press Find and pick the chat.'
+                : undefined
+            : (urlError(url) ?? webhookSecretError(secret));
     if (problem) return setError(problem);
     const input: NotifyDestinationInput = {
       audience: who === 'owner' ? 'owner' : 'contact',
@@ -237,6 +395,7 @@ function AddChannel({ data, busy, add }: { data: NotificationSettings; busy: boo
       ...(k === 'email' ? { email: email.trim() } : {}),
       ...(k === 'ntfy' ? { ntfy: { server: server.trim(), topic: topic.trim(), ...(token.trim() ? { token: token.trim() } : {}) } } : {}),
       ...(k === 'webhook' ? { webhook: { url: url.trim(), ...(secret ? { secret } : {}) } } : {}),
+      ...(k === 'telegram' && chat ? { telegram: { chatId: chat.chatId, name: chat.name } } : {}),
     };
     setError(undefined);
     const failed = await add(input);
@@ -246,6 +405,7 @@ function AddChannel({ data, busy, add }: { data: NotificationSettings; busy: boo
     setToken('');
     setUrl('');
     setSecret('');
+    setChat(undefined);
   };
   const warn = k === 'ntfy' && topic ? topicWarning(topic, server) : undefined;
   return (
@@ -268,6 +428,7 @@ function AddChannel({ data, busy, add }: { data: NotificationSettings; busy: boo
             <option value="email">Email</option>
             <option value="ntfy">ntfy push</option>
             {who === 'owner' && <option value="webhook">Webhook (Home Assistant, Apprise, an SMS gateway…)</option>}
+            <option value="telegram">Telegram</option>
           </select>
         </Field>
       </div>
@@ -291,6 +452,12 @@ function AddChannel({ data, busy, add }: { data: NotificationSettings; busy: boo
             </Field>
           </div>
           {warn && <p className={cn(hint, 'text-warn')}>{warn}</p>}
+        </>
+      )}
+      {k === 'telegram' && (
+        <>
+          <TelegramFind data={data} busy={busy} picked={chat?.chatId} pick={setChat} />
+          <p className={cn(hint, 'text-warn')}>{TELEGRAM_PRIVACY}</p>
         </>
       )}
       {k === 'webhook' && (
@@ -373,7 +540,7 @@ function PaymentMessages({ data, busy, save }: { data: NotificationSettings; bus
 }
 
 /**
- * Settings > Notifications: email (through the owner's own account), ntfy and webhook, for the owner and the alert
+ * Settings > Notifications: email (through the owner's own account), ntfy, Telegram (through the owner's bot) and webhook, for the owner and the alert
  * contacts. Notify-only: they carry warnings, never controls. Every change is announced on every channel and to the
  * phone; while a recovery runs, channels can be added but not removed, and of the email account only the app password
  * can be changed.
@@ -427,13 +594,13 @@ export function NotificationsSection() {
         Notifications
       </h2>
       <p className={hint}>
-        Besides nostr, the guardian can send its alerts by email, ntfy push or a webhook: to you (your phone may be the one that was stolen) and to your
+        Besides nostr, the guardian can send its alerts by email, ntfy push, Telegram or a webhook: to you (your phone may be the one that was stolen) and to your
         alert contacts. These carry warnings only, never a link or a button; cancelling a recovery and locking the guardian stay with nostr. Every
         change here is announced on every channel, before and after, and to your phone.
         {data.pending > 0 ? ` ${data.pending} message${data.pending === 1 ? '' : 's'} waiting to go out (retried for 7 days).` : ''}
       </p>
       {data.recoveryRunning && (
-        <p className={cn(hint, 'text-warn')}>A recovery is running: you can add channels, but not remove or change them until it ends. Of the email account, only the app password can be changed.</p>
+        <p className={cn(hint, 'text-warn')}>A recovery is running: you can add channels, but not remove or change them until it ends. Of the email account, only the app password can be changed, and of the Telegram bot only its token.</p>
       )}
 
       <form onSubmit={saveName} noValidate className="flex flex-col gap-1.5">
@@ -448,6 +615,8 @@ export function NotificationsSection() {
       </form>
 
       <EmailAccount data={data} busy={busy} save={(draft) => put({ smtp: draft })} test={() => test({ smtp: true })} />
+
+      <TelegramBot data={data} busy={busy} save={(token) => put({ telegramToken: token })} />
 
       <div className="flex flex-col gap-1">
         <h3 className="m-0 text-sm leading-5 font-medium">Channels</h3>

@@ -1,21 +1,24 @@
 /**
- * Extra alert channels: email through the owner's own account, ntfy, a generic webhook (docs/design/notifications.md).
+ * Extra alert channels: email through the owner's own account, ntfy, a generic webhook, Telegram through the owner's
+ * bot (docs/design/notifications.md).
  * Notify-only: they carry the same warnings as the nostr alerts, never a control (`CANCEL` and `LOCK` stay nostr DMs).
  *
  * **Settings** (`notifications.json`, secrets sealed under `notifications-key.json`: secrets.ts) are the owner's
  * delivery settings, outside the hardware-approved rules: only the web UI changes them (a signed-in session on an
  * unlocked guardian), never the phone, and every change is announced on every channel, the removed ones included and
- * over the email account as it was before the change, plus the paired phone (`notifications_changed`). While a
- * recovery runs, removing or changing a channel or the email account is refused; adding is allowed, and so is changing
- * only the email account's app password (a revoked one must be fixable when warnings matter most), announced as well.
+ * over the email account and the Telegram bot as they were before the change, plus the paired phone
+ * (`notifications_changed`). While a recovery runs, removing or changing a channel, the email account or the bot is
+ * refused; adding is allowed, and so is changing only the email account's app password or the same bot's token (a
+ * revoked one must be fixable when warnings matter most), announced as well.
  *
  * **Delivery** has the semantics of the nostr notices (engine.ts `LimitNotice`): every alert becomes an outbox item
  * with one delivery per destination, persisted before the first try; a delivery is retried with backoff until it is
  * sent or `NOTIFY_TTL_MS` (7 days) old; an item counts once (its id is remembered for longer than the TTL, so the
  * engine listing the same alert again does not send it twice); a newer recovery reminder replaces an undelivered older
  * one. Per-channel failures are kept (`health`, shown in the web UI) and logged when a channel starts failing, works
- * again, or a message expires undelivered. Rate limits: per channel, for the email account as a whole, for test
- * messages and for settings changes.
+ * again, or a message expires undelivered. Rate limits: per channel, for the email account and the Telegram bot as a
+ * whole, for test messages and for settings changes; and a Telegram 429 holds every send through the bot for the
+ * `retry_after` it names.
  *
  * Works while the guardian is locked: nothing here needs key 3 or the passphrase.
  */
@@ -39,10 +42,13 @@ import {
   checkCaps,
   checkDestination,
   checkSmtp,
+  checkTelegram,
   type DestinationInput,
   type StoredDestination,
   type StoredSmtp,
+  type StoredTelegram,
 } from './settings.js';
+import { TelegramError, sendTelegram, telegramFindStarts, telegramGetMe, type TelegramBot, type TelegramChat, type TelegramOptions } from './telegram.js';
 
 export const NOTIFY_FILE = 'notifications.json';
 const DAY = 86_400_000;
@@ -57,6 +63,7 @@ export const MAX_OUTBOX_ITEMS = 100;
 /** Deliveries attempted per pass (a pass runs again at the next tick). */
 const MAX_SENDS_PER_PASS = 40;
 export const CHANNEL_LIMIT: RateLimitOptions = { max: 20, windowMs: 60 * MINUTE };
+/** Through the email account as a whole, and (its own count) through the Telegram bot. */
 export const SMTP_LIMIT: RateLimitOptions = { max: 60, windowMs: 60 * MINUTE };
 export const TEST_LIMIT: RateLimitOptions = { max: 10, windowMs: 10 * MINUTE };
 export const CHANGE_LIMIT: RateLimitOptions = { max: 30, windowMs: 60 * MINUTE };
@@ -99,9 +106,10 @@ interface Delivery {
   /**
    * A change announcement goes out over the channel and the email account as they were BEFORE the change (a removed
    * channel is told it was removed; a changed account cannot silence the announcement). Failing that, the current
-   * account is tried on every other attempt (the owner may have just fixed a wrong password).
+   * account is tried on every other attempt (the owner may have just fixed a wrong password). The same for the
+   * Telegram bot.
    */
-  via?: { dest: StoredDestination; smtp?: StoredSmtp };
+  via?: { dest: StoredDestination; smtp?: StoredSmtp; telegram?: StoredTelegram };
 }
 
 interface OutboxItem {
@@ -116,8 +124,10 @@ interface NotifyFile {
   version: 1;
   guardianName: string;
   smtp?: StoredSmtp;
+  /** The guardian's Telegram bot: Telegram destinations send through it. */
+  telegram?: StoredTelegram;
   destinations: StoredDestination[];
-  /** Per destination id, and `smtp` for the email account. */
+  /** Per destination id, `smtp` for the email account and `telegram` for the bot. */
   health: Record<string, Health>;
   outbox: OutboxItem[];
   done: { id: string; at: number }[];
@@ -166,18 +176,21 @@ export interface NotifierOptions {
   /** Test seams. */
   net?: NetPolicy;
   smtpTest?: SmtpTestOptions;
+  /** The Telegram Bot API's address (default `https://api.telegram.org`; tests: a fake). */
+  telegramApi?: string;
 }
 
 /** The web UI's view of one destination (types in apps/guardian-web/src/api/types.ts). */
 export interface DestinationView {
   id: string;
   audience: 'owner' | 'contact';
-  kind: 'email' | 'ntfy' | 'webhook';
+  kind: 'email' | 'ntfy' | 'webhook' | 'telegram';
   contact?: string;
   contactInRules?: boolean;
   email?: string;
   ntfy?: { server: string; topicHint: string; tokenSet: boolean };
   webhook?: { origin: string; secretSet: boolean };
+  telegram?: { chatId: string; name: string };
   health: Health & { state: HealthState };
 }
 
@@ -191,6 +204,8 @@ export interface SettingsView {
     passwordSet: true;
     health: Health & { state: HealthState };
   };
+  /** The Telegram bot (never its token). */
+  telegram?: { bot: { username: string; name: string }; tokenSet: true; health: Health & { state: HealthState } };
   destinations: DestinationView[];
   pending: number;
   limits: { destinations: number; ownerPerKind: number; contactOnly: number };
@@ -199,7 +214,7 @@ export interface SettingsView {
 
 /** The phone's read-only summary (`guardian.status.notifications`): kinds and masked hints, no secret, no full address. */
 export interface ChannelSummary {
-  kind: 'email' | 'ntfy' | 'webhook';
+  kind: 'email' | 'ntfy' | 'webhook' | 'telegram';
   audience: 'owner' | 'contact';
   contact?: string;
   hint: string;
@@ -211,19 +226,28 @@ export type UpdateOutcome =
   | { ok: true; changed: true; changes: string[] }
   | { ok: false; code: 'invalid' | 'recovery_pending' | 'rate_limited'; message: string; retryAfterSeconds?: number };
 
+/** "Find" (`POST /api/notifications/telegram/find`): the bot, and the private chats that sent it `/start` lately. */
+export type FindOutcome =
+  | { ok: true; bot: TelegramBot; chats: TelegramChat[] }
+  | { ok: false; code: 'not_found' | 'rate_limited' | 'failed'; message: string; retryAfterSeconds?: number };
+
 export type TestOutcome = { ok: true; health: Health & { state: HealthState } } | { ok: false; code: 'not_found' | 'rate_limited' | 'failed'; message: string; health?: Health & { state: HealthState }; retryAfterSeconds?: number };
 
 const newId = () => `d${hex.encode(secureRandomBytes(6))}`;
 const shortNpubText = (pk: string) => `${pk.slice(0, 8)}…`;
 
 function kindWords(d: Pick<StoredDestination, 'kind'>): string {
-  return d.kind === 'email' ? 'email address' : d.kind === 'ntfy' ? 'ntfy topic' : 'webhook';
+  return d.kind === 'email' ? 'email address' : d.kind === 'ntfy' ? 'ntfy topic' : d.kind === 'telegram' ? 'Telegram chat' : 'webhook';
 }
 
-/** A destination in a message (masked: no domain, no topic). */
+/** A Telegram chat's name as messages and the phone show it: its first letter (anyone can call themselves anything). */
+const maskName = (name: string) => `${[...name][0] ?? '?'}…`;
+
+/** A destination in a message (masked: no domain, no topic, no name). */
 function messageLabel(d: StoredDestination): string {
   if (d.kind === 'email') return `email ${maskEmail(d.email ?? '')}`;
   if (d.kind === 'ntfy') return `ntfy topic ${d.ntfy?.hint ?? ''}`;
+  if (d.kind === 'telegram') return `Telegram chat ${maskName(d.telegram?.name ?? '')}`;
   return 'webhook';
 }
 
@@ -246,6 +270,8 @@ export class Notifier {
   private readonly changeLimiter = new SlidingWindowLimiter(CHANGE_LIMIT);
   private readonly paymentLimiter = new SlidingWindowLimiter(PAYMENT_LIMIT);
   private readonly paymentSmtpLimiter = new SlidingWindowLimiter(PAYMENT_SMTP_LIMIT);
+  /** Telegram asked to wait (a 429's `retry_after`): nothing goes through the bot before this (ms). */
+  private telegramWaitUntil = 0;
 
   constructor(private readonly opts: NotifierOptions) {
     this.box = new SecretBox(opts.dataDir, opts.now);
@@ -324,6 +350,7 @@ export class Notifier {
             },
           }
         : {}),
+      ...(f.telegram ? { telegram: { bot: { username: f.telegram.bot.username, name: f.telegram.bot.name }, tokenSet: true as const, health: this.healthView('telegram') } } : {}),
       destinations: f.destinations.map((d) => ({
         id: d.id,
         audience: d.audience,
@@ -332,6 +359,7 @@ export class Notifier {
         ...(d.email ? { email: d.email } : {}),
         ...(d.ntfy ? { ntfy: { server: d.ntfy.server, topicHint: d.ntfy.hint, tokenSet: !!d.ntfy.token } } : {}),
         ...(d.webhook ? { webhook: { origin: d.webhook.origin, secretSet: !!d.webhook.secret } } : {}),
+        ...(d.telegram ? { telegram: { chatId: d.telegram.chatId, name: d.telegram.name } } : {}),
         health: this.healthView(d.id),
       })),
       pending: this.pending,
@@ -343,12 +371,16 @@ export class Notifier {
   /** For the paired phone: what is set up, masked (no topic, no URL, no full address). */
   summary(): ChannelSummary[] {
     return this.file.destinations.map((d) => {
-      const failing = healthState(this.file.health[d.id]) === 'failing' || (d.kind === 'email' && healthState(this.file.health.smtp) === 'failing');
+      const failing =
+        healthState(this.file.health[d.id]) === 'failing' ||
+        (d.kind === 'email' && healthState(this.file.health.smtp) === 'failing') ||
+        (d.kind === 'telegram' && healthState(this.file.health.telegram) === 'failing');
       let hint: string;
       if (d.kind === 'email') {
         const [local = '', domain = ''] = (d.email ?? '').split('@');
         hint = `${local.slice(0, 1)}…@${domain}`;
       } else if (d.kind === 'ntfy') hint = new URL(d.ntfy!.server).host;
+      else if (d.kind === 'telegram') hint = maskName(d.telegram?.name ?? '');
       else hint = new URL(d.webhook!.origin).host;
       return { kind: d.kind, audience: d.audience, ...(d.contact ? { contact: d.contact } : {}), hint: hint.slice(0, 64), ...(failing ? { failing: true as const } : {}) };
     });
@@ -356,7 +388,14 @@ export class Notifier {
 
   /** A destination as the activity log names it (the owner's own log: full address, topic hint, webhook origin). */
   describe(d: StoredDestination): string {
-    const what = d.kind === 'email' ? `email to ${d.email}` : d.kind === 'ntfy' ? `ntfy topic ${d.ntfy?.hint} on ${d.ntfy?.server}` : `webhook to ${d.webhook?.origin}`;
+    const what =
+      d.kind === 'email'
+        ? `email to ${d.email}`
+        : d.kind === 'ntfy'
+          ? `ntfy topic ${d.ntfy?.hint} on ${d.ntfy?.server}`
+          : d.kind === 'telegram'
+            ? `Telegram to ${d.telegram?.name} (chat ${d.telegram?.chatId})`
+            : `webhook to ${d.webhook?.origin}`;
     const who = d.audience === 'owner' ? 'you' : d.contact ? `alert contact ${shortNpubText(d.contact)}` : 'a contact without a nostr key';
     return `${what} (${who})`;
   }
@@ -371,11 +410,26 @@ export class Notifier {
    * caller logs it and tells the phone.
    */
   async update(input: unknown, ctx: { recoveryRunning: boolean }): Promise<UpdateOutcome> {
+    // A new Telegram bot token is checked with Telegram first (`getMe`, outside the lock), so the bot saved is a real one
+    // and the page can name it. The same token again needs no check.
+    let checkedBot: { token: string; bot: TelegramBot } | undefined;
+    try {
+      const t = checkTelegram((input as { telegram?: unknown } | null)?.telegram, !!this.file.telegram);
+      if (t?.token !== undefined) {
+        const stored = this.file.telegram;
+        const same = stored ? await this.box.open('telegram.token', stored.token).then((v) => v === t.token, () => false) : false;
+        checkedBot = { token: t.token, bot: same && stored ? stored.bot : await telegramGetMe(t.token, this.telegramOptions) };
+      }
+    } catch (e) {
+      if (e instanceof SettingsError || e instanceof TelegramError) return { ok: false, code: 'invalid', message: e.message };
+      throw e;
+    }
     let outcome = { ok: true, changed: false } as UpdateOutcome;
     await this.change(async (draft, now) => {
-      const r = (input ?? {}) as { guardianName?: unknown; smtp?: unknown; destinations?: unknown; paymentAlerts?: unknown };
+      const r = (input ?? {}) as { guardianName?: unknown; smtp?: unknown; destinations?: unknown; paymentAlerts?: unknown; telegram?: unknown };
       let name: string;
       let smtpIn: ReturnType<typeof checkSmtp> | null;
+      let tgIn: ReturnType<typeof checkTelegram>;
       let list: DestinationInput[];
       try {
         try {
@@ -390,8 +444,19 @@ export class Notifier {
         list = r.destinations.map((d) => checkDestination(d, typeof (d as { id?: unknown })?.id === 'string' ? byId.get((d as { id: string }).id) : undefined, this.opts.net));
         const ids = list.map((d) => d.id).filter(Boolean);
         if (new Set(ids).size !== ids.length) throw new SettingsError('A channel is in the list twice.');
-        checkCaps(list.map((d) => ({ ...d, key: d.kind === 'email' ? `${d.audience}:${d.contact ?? ''}:${d.email}` : undefined })));
+        checkCaps(
+          list.map((d) => ({
+            ...d,
+            key: d.kind === 'email' ? `${d.audience}:${d.contact ?? ''}:${d.email}` : d.kind === 'telegram' ? `${d.audience}:${d.contact ?? ''}:telegram:${d.telegram?.chatId}` : undefined,
+          })),
+        );
         if (list.some((d) => d.kind === 'email') && !smtpIn) throw new SettingsError('Set up the email account first: email channels send through it.');
+        tgIn = checkTelegram(r.telegram, !!draft.telegram);
+        if (tgIn?.token !== undefined && checkedBot?.token !== tgIn.token) throw new SettingsError('The Telegram bot was changed meanwhile: reload the page.');
+        if (list.some((d) => d.kind === 'telegram')) {
+          if (tgIn === null) throw new SettingsError('Remove the Telegram chats first: they get their messages through the bot.');
+          if (!(tgIn === undefined ? draft.telegram : tgIn)) throw new SettingsError('Set up the Telegram bot first: Telegram chats get their messages through it.');
+        }
         if (r.paymentAlerts !== undefined && typeof r.paymentAlerts !== 'boolean') throw new SettingsError('paymentAlerts is true or false.');
       } catch (e) {
         if (e instanceof SettingsError) {
@@ -409,6 +474,7 @@ export class Notifier {
         const id = old?.id ?? newId();
         const stored: StoredDestination = { id, audience: d.audience, kind: d.kind, ...(d.contact ? { contact: d.contact } : {}), createdAt: old?.createdAt ?? now };
         if (d.kind === 'email') stored.email = d.email;
+        if (d.kind === 'telegram' && d.telegram) stored.telegram = { chatId: d.telegram.chatId, name: d.telegram.name };
         if (d.kind === 'ntfy' && d.ntfy) {
           const topic = d.ntfy.topic !== undefined ? await this.sealOrKeep(`${id}.topic`, d.ntfy.topic, old?.ntfy?.topic) : old!.ntfy!.topic;
           const hint = d.ntfy.topic !== undefined ? topicHint(d.ntfy.topic) : old!.ntfy!.hint;
@@ -432,9 +498,13 @@ export class Notifier {
         const pin = smtpIn.pin === undefined ? oldPin : smtpIn.pin === null ? undefined : oldPin?.sha256 === smtpIn.pin.sha256 && !smtpIn.pin.pem ? oldPin : smtpIn.pin;
         smtp = { host: smtpIn.host, port: smtpIn.port, security: smtpIn.security, username: smtpIn.username, from: smtpIn.from, password, ...(pin ? { pin } : {}) };
       }
+      // The Telegram bot: absent or without a token keeps it, null removes it, a token (checked above) sets it.
+      let telegram: StoredTelegram | undefined = draft.telegram;
+      if (tgIn === null) telegram = undefined;
+      else if (tgIn?.token !== undefined) telegram = { token: await this.sealOrKeep('telegram.token', tgIn.token, draft.telegram?.token), bot: checkedBot!.bot };
 
       // What changed. A channel whose address changed counts as removed and added (the old address is told).
-      const where = (d: StoredDestination) => JSON.stringify([d.kind, d.audience, d.contact ?? '', d.email ?? '', d.ntfy?.server ?? '', d.ntfy?.topic.c ?? '', d.webhook?.url.c ?? '']);
+      const where = (d: StoredDestination) => JSON.stringify([d.kind, d.audience, d.contact ?? '', d.email ?? '', d.ntfy?.server ?? '', d.ntfy?.topic.c ?? '', d.webhook?.url.c ?? '', d.telegram?.chatId ?? '']);
       const secretsOf = (d: StoredDestination) => JSON.stringify([d.ntfy?.token?.c ?? '', d.webhook?.secret?.c ?? '']);
       const removed: StoredDestination[] = [];
       const updated: { old: StoredDestination; now: StoredDestination }[] = [];
@@ -470,6 +540,15 @@ export class Notifier {
       const smtpChanged = !!draft.smtp !== !!smtp || smtpParts.length > 0;
       // While a recovery runs, the one change of the account allowed: a new app password, everything else the same.
       const passwordOnly = smtpParts.length === 1 && smtpParts[0] === 'app password';
+      // The bot: another bot, or a new token of the same one (after /revoke in @BotFather: allowed during a recovery).
+      // Named without "@", which Telegram would turn into something to tap.
+      const tgParts: string[] = [];
+      if (draft.telegram && telegram) {
+        if (draft.telegram.bot.id !== telegram.bot.id) tgParts.push(`now the bot ${telegram.bot.username}`);
+        else if (draft.telegram.token.c !== telegram.token.c) tgParts.push('bot token');
+      }
+      const tgChanged = !!draft.telegram !== !!telegram || tgParts.length > 0;
+      const tokenOnly = tgParts.length === 1 && tgParts[0] === 'bot token';
       const nameChanged = draft.guardianName !== name;
       // Absent: as it was (an older web page does not send it).
       const payments = typeof r.paymentAlerts === 'boolean' ? r.paymentAlerts : !!draft.paymentAlerts;
@@ -479,6 +558,7 @@ export class Notifier {
       if (nameChanged) changes.push(`guardian name changed to ${name}`);
       if (paymentsChanged) changes.push(payments ? 'payment messages turned on (your own channels: amounts only)' : 'payment messages turned off');
       if (smtpChanged) changes.push(!smtp ? 'email account removed' : !draft.smtp ? `email account set up (${smtp.username}${smtp.pin ? ', with a pinned certificate' : ''})` : `email account changed: ${smtpParts.join(', ')}`);
+      if (tgChanged) changes.push(!telegram ? 'Telegram bot removed' : !draft.telegram ? `Telegram bot set up (${telegram.bot.username})` : `Telegram bot changed: ${tgParts.join(', ')}`);
       for (const d of removed) changes.push(`${messageLabel(d)} removed ${whoLabel(d)}`);
       for (const d of added) changes.push(`${messageLabel(d)} added ${whoLabel(d)}`);
       for (const u of updated) changes.push(`${messageLabel(u.now)} ${whoLabel(u.now)}: ${u.now.kind === 'ntfy' ? 'access token' : 'signing secret'} changed`);
@@ -486,11 +566,12 @@ export class Notifier {
         outcome = { ok: true, changed: false };
         return false;
       }
-      if (ctx.recoveryRunning && (removed.length || updated.length || (smtpChanged && draft.smtp && !passwordOnly))) {
+      if (ctx.recoveryRunning && (removed.length || updated.length || (smtpChanged && draft.smtp && !passwordOnly) || (tgChanged && draft.telegram && !tokenOnly))) {
         outcome = {
           ok: false,
           code: 'recovery_pending',
-          message: "A recovery is running: alert channels and the email account can be added to, not removed or changed, until it ends. Only the email account's app password can be changed meanwhile.",
+          message:
+            "A recovery is running: alert channels, the email account and the Telegram bot can be added to, not removed or changed, until it ends. Only the email account's app password and the bot's token can be changed meanwhile.",
         };
         return false;
       }
@@ -502,6 +583,7 @@ export class Notifier {
 
       // The announcement, to every channel before (over its old self and the old email account) and after the change.
       const oldSmtp = draft.smtp;
+      const oldTelegram = draft.telegram;
       const at = now;
       const deliveries: Delivery[] = [];
       const push = (dest: StoredDestination, text: string, via?: Delivery['via']) =>
@@ -513,7 +595,7 @@ export class Notifier {
         push(
           d,
           `This ${kindWords(d)} will no longer get alerts from ${name}: it was removed from the guardian's alert channels on ${when(at)}, in the guardian's web page.\n\n${d.audience === 'owner' ? `All changes:\n${list2}\n\n${ownerAction}` : contactAction}`,
-          { dest: d, ...(d.kind === 'email' && oldSmtp ? { smtp: oldSmtp } : {}) },
+          { dest: d, ...(d.kind === 'email' && oldSmtp ? { smtp: oldSmtp } : {}), ...(d.kind === 'telegram' && oldTelegram ? { telegram: oldTelegram } : {}) },
         );
       for (const { old, now: d } of [...kept, ...updated])
         push(
@@ -521,7 +603,7 @@ export class Notifier {
           d.audience === 'owner'
             ? `The alert channels of ${name} were changed in its web page on ${when(at)}:\n${list2}\n\n${ownerAction}`
             : `The owner of ${name} changed where the guardian sends its alerts, on ${when(at)}. This ${kindWords(d)} still gets them.\n\n${contactAction}`,
-          { dest: old, ...(d.kind === 'email' && oldSmtp && smtpChanged ? { smtp: oldSmtp } : {}) },
+          { dest: old, ...(d.kind === 'email' && oldSmtp && smtpChanged ? { smtp: oldSmtp } : {}), ...(d.kind === 'telegram' && oldTelegram && tgChanged ? { telegram: oldTelegram } : {}) },
         );
       for (const d of added)
         push(
@@ -547,8 +629,11 @@ export class Notifier {
       if (payments) draft.paymentAlerts = true;
       else delete draft.paymentAlerts;
       draft.smtp = smtp;
+      if (telegram) draft.telegram = telegram;
+      else delete draft.telegram;
       draft.destinations = next;
       if (smtpChanged) delete draft.health.smtp;
+      if (tgChanged) delete draft.health.telegram;
       for (const id of gone) delete draft.health[id];
       for (const u of updated) delete draft.health[u.now.id];
       outcome = { ok: true, changed: true, changes };
@@ -695,22 +780,36 @@ export class Notifier {
         results.set(key, { ok: false, at: now, retryAt: now + limit.retryAfterMs, healthKeys: [] });
         continue;
       }
-      // A change announcement tries the old email account first, the current one on every other attempt.
+      // A change announcement tries the old email account (or bot) first, the current one on every other attempt.
       const smtp = dest.kind === 'email' ? (d.via?.smtp && (d.attempts % 2 === 0 || !this.file.smtp) ? d.via.smtp : this.file.smtp) : undefined;
-      if (dest.kind === 'email') {
-        const s = (payment ? this.paymentSmtpLimiter : this.smtpLimiter).take('smtp', now);
+      const bot = dest.kind === 'telegram' ? (d.via?.telegram && (d.attempts % 2 === 0 || !this.file.telegram) ? d.via.telegram : this.file.telegram) : undefined;
+      if (dest.kind === 'telegram' && now < this.telegramWaitUntil) {
+        results.set(key, { ok: false, at: now, retryAt: this.telegramWaitUntil, healthKeys: [] });
+        continue;
+      }
+      if (dest.kind === 'email' || dest.kind === 'telegram') {
+        const s = (payment ? this.paymentSmtpLimiter : this.smtpLimiter).take(dest.kind === 'email' ? 'smtp' : 'telegram', now);
         if (!s.ok) {
           results.set(key, { ok: false, at: now, retryAt: now + s.retryAfterMs, healthKeys: [] });
           continue;
         }
       }
       sends++;
-      const healthKeys = dest.kind === 'email' && smtp === this.file.smtp ? [dest.id, 'smtp'] : [dest.id];
+      const healthKeys = dest.kind === 'email' && smtp === this.file.smtp ? [dest.id, 'smtp'] : dest.kind === 'telegram' && bot === this.file.telegram ? [dest.id, 'telegram'] : [dest.id];
       try {
-        await this.deliver(dest, smtp, d.msg, { id: `${item.id}/${dest.id}`, type: item.type, at: item.at, walletId: item.walletId });
+        await this.deliver(dest, smtp, d.msg, { id: `${item.id}/${dest.id}`, type: item.type, at: item.at, walletId: item.walletId }, bot);
         results.set(key, { ok: true, at: this.opts.now(), healthKeys });
       } catch (e) {
-        results.set(key, { ok: false, error: errorText(e).slice(0, 200), at: this.opts.now(), healthKeys });
+        const at = this.opts.now();
+        if (e instanceof TelegramError && e.code === 'rate') {
+          // Telegram's own limit: wait as long as it asks, with every message through the bot; not a failure.
+          this.telegramWaitUntil = Math.max(this.telegramWaitUntil, at + (e.retryAfterMs ?? MINUTE));
+          results.set(key, { ok: false, error: e.message, at, retryAt: this.telegramWaitUntil, healthKeys: [] });
+        } else {
+          // One person blocking the bot (or a chat Telegram does not know) is that chat's trouble, not the bot's.
+          const own = e instanceof TelegramError && (e.code === 'blocked' || e.code === 'chat');
+          results.set(key, { ok: false, error: errorText(e).slice(0, 200), at, healthKeys: own ? [dest.id] : healthKeys });
+        }
       }
     }
 
@@ -725,8 +824,10 @@ export class Notifier {
             d.droppedAt = r.at;
             continue;
           }
-          if (r.retryAt !== undefined && r.error === undefined && !r.ok) {
+          if (r.retryAt !== undefined && !r.ok) {
+            // Held back by a rate limit (ours, or Telegram's 429 with its words): not an attempt.
             d.nextAt = r.retryAt;
+            if (r.error) d.lastError = r.error;
             continue;
           }
           const dest = draft.destinations.find((x) => x.id === d.dest) ?? d.via?.dest;
@@ -740,7 +841,7 @@ export class Notifier {
           }
           for (const k of r.healthKeys) {
             // A removed channel's last message (its announcement) leaves no health record behind.
-            if (k !== 'smtp' && !draft.destinations.some((x) => x.id === k)) continue;
+            if (k !== 'smtp' && k !== 'telegram' && !draft.destinations.some((x) => x.id === k)) continue;
             const was = healthState(draft.health[k]);
             const h = (draft.health[k] ??= {});
             if (r.ok) h.lastOkAt = r.at;
@@ -750,7 +851,7 @@ export class Notifier {
             }
             h.failing = !r.ok;
             const is = healthState(h);
-            const label = k === 'smtp' ? `email account ${draft.smtp?.username ?? ''}`.trim() : dest ? this.describe(dest) : k;
+            const label = k === 'smtp' ? `email account ${draft.smtp?.username ?? ''}`.trim() : k === 'telegram' ? `Telegram bot ${draft.telegram?.bot.username ?? ''}`.trim() : dest ? this.describe(dest) : k;
             if (is === 'failing' && was !== 'failing') events.push({ type: 'notification_failing', channel: label, error: r.error ?? 'failed' });
             if (is === 'ok' && was === 'failing') events.push({ type: 'notification_ok', channel: label });
           }
@@ -781,12 +882,18 @@ export class Notifier {
   }
 
   /** Sends one message to one destination (secrets opened just for this send). */
-  private async deliver(dest: StoredDestination, smtp: StoredSmtp | undefined, msg: Message, meta: { id: string; type: string; at: number; walletId?: string }): Promise<void> {
+  private async deliver(dest: StoredDestination, smtp: StoredSmtp | undefined, msg: Message, meta: { id: string; type: string; at: number; walletId?: string }, bot: StoredTelegram | undefined): Promise<void> {
     if (dest.kind === 'email') {
       if (!smtp) throw new Error('No email account is set up.');
       const password = await this.box.open('smtp.password', smtp.password);
       const account: SmtpAccount = { host: smtp.host, port: smtp.port, security: smtp.security, username: smtp.username, from: smtp.from, password, ...(smtp.pin ? { pin: smtp.pin } : {}) };
       await sendEmail(account, dest.email!, msg, { guardianName: this.file.guardianName, type: meta.type }, this.opts.smtpTest);
+      return;
+    }
+    if (dest.kind === 'telegram') {
+      if (!bot) throw new Error('No Telegram bot is set up.');
+      const token = await this.box.open('telegram.token', bot.token);
+      await sendTelegram(token, dest.telegram!.chatId, msg, this.telegramOptions);
       return;
     }
     if (dest.kind === 'ntfy') {
@@ -841,17 +948,20 @@ export class Notifier {
         : 'The owner of this Trikey Guardian chose you as an alert contact. If you can read this, its alerts will reach you here. Nothing else is needed.',
     ].join('\n');
     const msg = finish({ title: TITLES.test!, body, priority: 'low' }, name);
-    const keys = dest.id === 'smtp' ? ['smtp'] : dest.kind === 'email' ? [dest.id, 'smtp'] : [dest.id];
+    let keys = dest.id === 'smtp' ? ['smtp'] : dest.kind === 'email' ? [dest.id, 'smtp'] : dest.kind === 'telegram' ? [dest.id, 'telegram'] : [dest.id];
     let error: string | undefined;
     try {
-      await this.deliver(dest, this.file.smtp, msg, { id: `test-${now}/${dest.id}`, type: 'test', at: now });
+      if (dest.kind === 'telegram' && now < this.telegramWaitUntil) throw new Error(`Telegram asked to wait: try again in ${Math.ceil((this.telegramWaitUntil - now) / 1000)} seconds`);
+      await this.deliver(dest, this.file.smtp, msg, { id: `test-${now}/${dest.id}`, type: 'test', at: now }, this.file.telegram);
     } catch (e) {
       error = errorText(e).slice(0, 200);
+      if (e instanceof TelegramError && e.code === 'rate') this.telegramWaitUntil = Math.max(this.telegramWaitUntil, this.opts.now() + (e.retryAfterMs ?? MINUTE));
+      if (e instanceof TelegramError && (e.code === 'blocked' || e.code === 'chat')) keys = [dest.id];
     }
     const at = this.opts.now();
     await this.change((draft) => {
       for (const k of keys) {
-        if (k !== 'smtp' && !draft.destinations.some((d) => d.id === k)) continue;
+        if (k !== 'smtp' && k !== 'telegram' && !draft.destinations.some((d) => d.id === k)) continue;
         const h = (draft.health[k] ??= {});
         if (error === undefined) h.lastOkAt = at;
         else {
@@ -866,6 +976,43 @@ export class Notifier {
     await this.opts.logEvent?.({ type: 'notification_test', channel: label, ok: error === undefined, ...(error ? { error } : {}) });
     const health = this.healthView(keys[0]!);
     return error === undefined ? { ok: true, health } : { ok: false, code: 'failed', message: error, health };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Telegram
+
+  private get telegramOptions(): TelegramOptions {
+    return { ...this.opts.net, ...(this.opts.telegramApi ? { api: this.opts.telegramApi } : {}) };
+  }
+
+  /**
+   * "Find" in the web UI: who sent `/start` to the bot lately (one short `getUpdates`, only when the owner asks; the
+   * guardian never polls otherwise). The owner picks one, and the page saves its chat id as a channel.
+   */
+  async findTelegramChats(): Promise<FindOutcome> {
+    const t = this.file.telegram;
+    if (!t) return { ok: false, code: 'not_found', message: 'Set up the Telegram bot first.' };
+    const now = this.opts.now();
+    const limit = this.testLimiter.take('telegram-find', now);
+    if (!limit.ok) return { ok: false, code: 'rate_limited', message: 'Too many tries. Wait a few minutes.', retryAfterSeconds: Math.ceil(limit.retryAfterMs / 1000) };
+    try {
+      const token = await this.box.open('telegram.token', t.token);
+      return { ok: true, bot: t.bot, chats: await telegramFindStarts(token, this.telegramOptions) };
+    } catch (e) {
+      return { ok: false, code: 'failed', message: e instanceof TelegramError ? e.message : errorText(e).slice(0, 200) };
+    }
+  }
+
+  /**
+   * `guardian.status.notifications` for the phone: `channels` holds the kinds every phone knows (email, ntfy, webhook);
+   * kinds added later (Telegram) go in `otherChannels`, because an older phone refuses a status whose `channels` hold a
+   * kind it does not know (PROTOCOL.md, "Extra alert channels").
+   */
+  phoneStatus(): { channels: (ChannelSummary & { kind: 'email' | 'ntfy' | 'webhook' })[]; otherChannels?: ChannelSummary[] } {
+    const all = this.summary();
+    const first = all.filter((c): c is ChannelSummary & { kind: 'email' | 'ntfy' | 'webhook' } => c.kind === 'email' || c.kind === 'ntfy' || c.kind === 'webhook');
+    const later = all.filter((c) => c.kind === 'telegram');
+    return { channels: first, ...(later.length ? { otherChannels: later } : {}) };
   }
 }
 

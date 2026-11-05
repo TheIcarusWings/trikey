@@ -27,7 +27,7 @@ export function isLimitOff(dailyLimitSats: number): boolean {
  * `family_hosting`: it hosts wallets for guests (`hosted.prepare`, `hosted.pair`, `hosted.coins`, `hosted.map.get`;
  * docs/design/family-hosting.md). Reported by `hosted.prepare` (an unpaired guest cannot call `guardian.status`) and in
  * `guardian.status`.
- * `notifications`: it can also send alerts by email, ntfy and webhook (set up in its web UI, never by the phone), lists
+ * `notifications`: it can also send alerts by email, ntfy, webhook and Telegram (set up in its web UI, never by the phone), lists
  * them masked in `guardian.status.notifications`, and raises `notifications_changed` when they change.
  */
 /**

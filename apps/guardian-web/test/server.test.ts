@@ -282,3 +282,17 @@ describe('Settings > Server: Save only when something changes', () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe('Electrs and Core 32 while the guardian covers it', () => {
+  const m = { mempoolCause: 'electrs_core32' as const, mempoolServerSlow: true, mempoolViaNode: true };
+  it('on Umbrel says nothing is needed and points at Umbrel, not at another server', () => {
+    const t = mempoolText(m, { onServerPage: true, platform: 'umbrel' });
+    expect(t.text).toContain('reads unconfirmed payments from Bitcoin Core');
+    expect(t.detail).toContain('Nothing to do');
+    expect(t.detail).toContain('Electrs update from Umbrel');
+    expect(t.detail).not.toContain('Bitcoin Core alone');
+  });
+  it('elsewhere keeps both fixes', () => {
+    expect(mempoolText(m, { onServerPage: true }).detail).toContain('choose Your own Bitcoin Core below');
+  });
+});

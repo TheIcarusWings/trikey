@@ -17,7 +17,7 @@
  *   (`live-wallet.json`), so a restart repeats nothing, and what happened while the guardian was down is announced once.
  * - **Delivery**: to the paired phone only, durable like the other alerts: queued with the record, retried at every
  *   pass and tick until a relay takes it, dropped after `ALERT_TTL_MS`. Opt-in (Settings > Notifications), a short line
- *   also goes to the owner's own email, ntfy or webhook channels: amounts only, no address, no link. Never to alert
+ *   also goes to the owner's own email, ntfy, webhook or Telegram channels: amounts only, no address, no link. Never to alert
  *   contacts: who pays whom is the owner's business.
  *
  * Nothing here needs key 3: it runs while the guardian is locked.

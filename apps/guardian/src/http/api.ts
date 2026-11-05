@@ -25,6 +25,7 @@ import type {
   GuardianStatus,
   NotificationSettings,
   NotifyTestResult,
+  TelegramFindResult,
   PairingSession,
   PublicStatus,
   RecoveryCode,
@@ -298,6 +299,7 @@ export function notificationSettings(g: Guardian): NotificationSettings {
     guardianName: v.guardianName,
     paymentAlerts: v.paymentAlerts,
     ...(v.smtp ? { smtp: { ...v.smtp, health: healthBody(v.smtp.health) } } : {}),
+    ...(v.telegram ? { telegram: { ...v.telegram, health: healthBody(v.telegram.health) } } : {}),
     destinations: v.destinations.map((d) => ({ ...d, ...(d.contact ? { contactNpub: npubEncode(d.contact) } : {}), health: healthBody(d.health) })),
     contacts: contacts.map((pubkey) => ({ pubkey, npub: npubEncode(pubkey) })),
     recoveryRunning: !!g.activeRecord(),
@@ -555,7 +557,7 @@ export function buildRoutes(g: Guardian): Route[] {
       },
     },
 
-    // Extra alert channels: email (the owner's own account), ntfy, webhook. Unlocked only, like the relays.
+    // Extra alert channels: email (the owner's own account), ntfy, webhook, Telegram (the owner's bot). Unlocked only, like the relays.
     {
       method: 'GET',
       path: '/notifications',
@@ -592,6 +594,22 @@ export function buildRoutes(g: Guardian): Route[] {
         // The send failed: an answer, not an error of the API (the page shows it next to the channel).
         const res: NotifyTestResult = { ok: false, error: r.message, health: healthBody(r.health ?? { state: 'failing' }) };
         return ok(res);
+      },
+    },
+    {
+      // "Find": the private chats that sent /start to the Telegram bot lately (one short poll, only now).
+      method: 'POST',
+      path: '/notifications/telegram/find',
+      handler: async () => {
+        requireUnlocked(g);
+        const r = await g.findTelegramChats();
+        if (r.ok) {
+          const res: TelegramFindResult = { bot: { username: r.bot.username, name: r.bot.name }, chats: r.chats.map((c) => ({ chatId: c.chatId, name: c.name, ...(c.username ? { username: c.username } : {}), at: iso(c.at) })) };
+          return ok(res);
+        }
+        if (r.code === 'not_found') throw new HttpError(409, 'not_found', r.message);
+        if (r.code === 'rate_limited') throw new HttpError(429, 'rate_limited', r.message, r.retryAfterSeconds);
+        throw new HttpError(502, 'telegram_failed', r.message);
       },
     },
 

@@ -7,7 +7,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { getPublicKey } from 'nostr-tools/pure';
 import type { Policy } from '@trikey/protocol';
-import { GuardianRig } from '@trikey/guardian/testing';
+import { BOT_TOKEN, GuardianRig, startTelegram, type FakeTelegram } from '@trikey/guardian/testing';
 import { TrikeyWallet, type WalletEvent } from '../src/index.js';
 import { MemoryCloudBackupStore, MemoryPasskeyPrf, SoftwareHardwareProvider, SoftwareHardwareSigner } from '../src/testing/index.js';
 import { MNEMONICS, phone, waitFor } from './helpers.js';
@@ -16,6 +16,7 @@ const contactPub = getPublicKey(new Uint8Array(32).fill(44));
 const RULES: Policy = { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [contactPub], sweepFeeCapSats: 20_000 };
 const device = new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware, network: 'regtest', kind: 'ledger', model: 'Nano X (simulated)' });
 let rig: GuardianRig;
+let tg: FakeTelegram;
 let w: TrikeyWallet;
 const events: WalletEvent[] = [];
 
@@ -23,7 +24,8 @@ const events: WalletEvent[] = [];
 const DEAD_HOOK = 'http://127.0.0.1:9/hook';
 
 beforeAll(async () => {
-  rig = await GuardianRig.start({ notifyTestServers: true });
+  tg = await startTelegram();
+  rig = await GuardianRig.start({ notifyTestServers: true, telegramApi: tg.url });
   const p = phone({ clock: rig.clock, hardware: new SoftwareHardwareProvider(device), cloud: new MemoryCloudBackupStore(), passkey: new MemoryPasskeyPrf() });
   w = await TrikeyWallet.create(p.deps, { deviceName: 'Notifications phone' });
   w.on((e) => events.push(e));
@@ -33,6 +35,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await w?.close().catch(() => undefined);
   await rig?.stop();
+  await tg?.stop();
 });
 
 describe('extra alert channels on the phone', { timeout: 60_000 }, () => {
@@ -60,6 +63,21 @@ describe('extra alert channels on the phone', { timeout: 60_000 }, () => {
       { kind: 'ntfy', audience: 'contact', contact: contactPub, hint: '127.0.0.1:9' },
     ]);
     expect(JSON.stringify(w.notificationChannels)).not.toMatch(/secret-path-id|maria-secret-topic/);
+  });
+
+  it('a Telegram chat (in the status otherChannels) shows by kind and first letter, never the whole name', async () => {
+    const before = w.notificationChannels.length;
+    const keep = rig.guardian.notifier.view().destinations.map((d) => ({ id: d.id, audience: d.audience, kind: d.kind, ...(d.contact ? { contact: d.contact } : {}), ...(d.ntfy ? { ntfy: { server: d.ntfy.server } } : {}), ...(d.webhook ? { webhook: {} } : {}) }));
+    const r = await rig.guardian.updateNotifications({
+      guardianName: 'Home vault',
+      smtp: null,
+      telegram: { token: BOT_TOKEN },
+      destinations: [...keep, { audience: 'contact', kind: 'telegram', contact: contactPub, telegram: { chatId: '424242', name: 'Maria Lopez' } }],
+    });
+    expect(r).toMatchObject({ ok: true, changed: true });
+    await waitFor(() => w.notificationChannels.length === before + 1, 'status read again');
+    expect(w.notificationChannels.at(-1)).toMatchObject({ kind: 'telegram', audience: 'contact', contact: contactPub, hint: 'M…' });
+    expect(JSON.stringify(w.notificationChannels)).not.toMatch(/Maria|Lopez|424242/);
   });
 
   it('a guardian without the feature: nothing to show', async () => {

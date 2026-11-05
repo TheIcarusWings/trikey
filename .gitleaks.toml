@@ -28,4 +28,7 @@ regexes = [
   # Trikey's publisher public key (hex npub) in site/.well-known/nostr.json, the NIP-05 file: public by design; the rule
   # reads the name "trikey" as a key ("Tri-key") with a value.
   '''^072104ced2b692c1c7502757f59befb428184086f5c7749c41984bb4beb9a495$''',
+  # A made-up Telegram bot token in the web page's tests (guardian-web test/notifications.test.ts): the mock refuses
+  # tokens starting with 000; no such bot exists.
+  '''000000001:AArefused-token-for-the-mock-api-x0''',
 ]

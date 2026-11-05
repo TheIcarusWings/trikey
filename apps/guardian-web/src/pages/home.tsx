@@ -198,8 +198,9 @@ export function HomePage() {
 
       <StatusCard status={status} />
 
-      {status.chain.state !== 'unavailable' && status.chain.mempoolUnseen ? (
-        // Not something to fix for the guardian to work: a note next to the status, not one of its issues.
+      {status.chain.state !== 'unavailable' && status.chain.mempoolUnseen && !status.chain.mempoolViaNode ? (
+        // Only while payments to you really go unseen until confirmed (no Bitcoin Core RPC to read them from). When the
+        // guardian reads them from Bitcoin Core, nothing is affected but sync speed: that is explained on Settings > Server.
         <p role="status" className="m-0 flex items-start gap-2 rounded-[10px] bg-warn-soft px-3 py-2.5 text-sm leading-5">
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warn" strokeWidth={2} aria-hidden="true" />
           {mempoolText(status.chain).core32 ? (
