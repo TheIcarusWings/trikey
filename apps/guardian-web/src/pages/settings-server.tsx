@@ -14,6 +14,7 @@ import {
   CORE_NOTE,
   FINGERPRINT_COMMAND,
   KIND_LABELS,
+  mempoolText,
   PUBLIC_WARNING,
   draftError,
   draftFrom,
@@ -61,6 +62,15 @@ function Status({ data }: { data: ChainSettings }) {
           {st.connected ? `Connected${st.server ? ` to ${st.server}` : ''}${st.height !== undefined ? `, block ${st.height.toLocaleString('en-US')}` : ''}` : `Not connected${st.error ? `: ${st.error}` : ''}`}
         </dd>
       </div>
+      {st.mempoolUnseen && (
+        <Alert variant="warning" className="mt-2">
+          <TriangleAlert aria-hidden="true" />
+          <div className="flex flex-col gap-1">
+            <p className="m-0 text-[13px] leading-[18px] font-medium">{mempoolText(st).text}</p>
+            <p className="m-0 text-[13px] leading-[18px]">{mempoolText(st).detail}</p>
+          </div>
+        </Alert>
+      )}
       {st.rescans.map((r) => (
         <p key={r.since} className={hint}>
           Bitcoin Core is scanning the chain for a wallet, from {formatDateYear(r.from)}. Its coins show once it is done.

@@ -6,6 +6,28 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## Unreleased
+
+- **A coin a payment just spent is never offered again.** With an Electrum server that shows no mempool, a payment's
+  coin looked unspent to every sync until a block, so the next payment could pick it: a double spend of the first one,
+  which the node refuses, or, paying more, which replaces (cancels) it. The phone now keeps the coins of its own
+  unconfirmed payments out of every payment and the balance until they confirm (or are known to be gone), shows their
+  change as pending and keeps them in Activity; the guardian keeps every payment it relayed as unconfirmed in its syncs
+  and live updates until its server lists it.
+- **Electrs with Bitcoin Core 32 shows no unconfirmed payments, and the guardian now works around it.** Core 32 no longer
+  gives a mempool field Electrs 0.11 needs, so Electrs' mempool stays empty (every Umbrel with Electrs and Core 32). The
+  guardian notices (an empty fee histogram while Core's mempool is not, or a payment it sent not listed), names the
+  cause on its web page (home and Settings > Server), and reads Core's mempool itself through its RPC: payments to you
+  show unconfirmed and are announced as before. The same bug makes Electrs answer every request about 7 s late; when its
+  pings are that slow the web page says so, with the two fixes: `deprecatedrpc=bip125` in Bitcoin Core's configuration,
+  or Settings > Server > Bitcoin Core alone. Without Core's RPC, they show once confirmed, and the app says so
+  quietly in Settings > Guardian.
+- **"Confirmed" arrives with the block** for payments the server did not list unconfirmed, instead of when a slow Electrs
+  gets round to notifying (about 25 s later); a new block's re-read of the wallet's scripts is one round trip to the
+  server instead of two.
+- Review picks Fast when every speed costs the same, and says so. The hardware wallet screen sketch shows the amount
+  and the fee with the same eight decimals, and the device sheet puts the fee on its own line.
+
 ## 0.1.12-alpha (2026-11-04)
 
 Live payments, a faster app, a way to unstick a payment, and family hosting. Update the guardian and the app; each

@@ -9,7 +9,7 @@ import { Body, Notice } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import {
-  SATS_PER_BTC,
+  deviceBtc,
   formatSats,
   groupAddress,
   shorten,
@@ -20,11 +20,6 @@ import {
 } from '@/data';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
-
-/** Seven decimals, as hardware wallets show a fee: 0.0000042 */
-function btcFee(sats: number): string {
-  return (sats / SATS_PER_BTC).toFixed(7);
-}
 
 export default function SendHardware() {
   const router = useRouter();
@@ -81,7 +76,8 @@ export default function SendHardware() {
     );
   }
 
-  const btc = (quote.request.amountSats / SATS_PER_BTC).toFixed(quote.request.amountSats % 100_000 === 0 ? 3 : 8);
+  // The amount and the fee with the same eight decimals, so they read alike.
+  const btc = deviceBtc(quote.request.amountSats);
   // A silent payment goes to a plain taproot address that only this phone worked out: that is what the device shows.
   const silent = quote.silentPayment;
   const shown = silent?.outputAddress ?? address;
@@ -135,7 +131,7 @@ export default function SendHardware() {
         width={220}
         height={140}
         label={`${brand} screen showing: Send ${btc} BTC to ${shorten(shown)}`}
-        lines={[`Send ${btc} BTC`, `to ${shorten(shown)}`, `fee ${btcFee(quote.feeSats)}`]}
+        lines={[`Send ${btc} BTC`, `to ${shorten(shown)}`, `Fee ${deviceBtc(quote.feeSats)} BTC`]}
       />
       {silent ? (
         <View className="gap-1.5">

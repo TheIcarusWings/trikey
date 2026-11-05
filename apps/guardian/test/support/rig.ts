@@ -36,6 +36,10 @@ export interface GuardianRigOptions {
   blocks?: number;
   /** Treat broadcasts as a mempool (default true). */
   applyBroadcasts?: boolean;
+  /** An Electrs that does not see the mempool (`FakeElectrum.hideMempool`). Default false. */
+  hideMempool?: boolean;
+  /** The ping round trip (ms) above which the guardian finds its chain server slow (default its own, 3 s). */
+  slowPingMs?: number;
   /** Also serve the web UI's HTTP API on a random local port (see `api`). Default false. */
   http?: boolean;
   /** `tx.broadcast` calls allowed per phone per window (default: the guardian's, 20 per 10 minutes). */
@@ -109,9 +113,16 @@ export class GuardianRig {
       rig.electrs.genesisHeader =
         '0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c';
     rig.electrs.applyBroadcasts = opts.applyBroadcasts ?? true;
+    rig.electrs.hideMempool = opts.hideMempool ?? false;
     await rig.electrs.start();
     if (opts.bitcoind) {
-      rig.bitcoind = new FakeBitcoind({ lookupTx: (txid) => rig.electrs.txs.get(txid), blocks, startTime: rig.nowSec() - blocks * 600 });
+      rig.bitcoind = new FakeBitcoind({
+        lookupTx: (txid) => rig.electrs.txs.get(txid),
+        blocks,
+        startTime: rig.nowSec() - blocks * 600,
+        mempool: () => rig.electrs.mempoolTxids(),
+        outputAt: (txid, vout) => rig.electrs.outputAt(txid, vout),
+      });
       await rig.bitcoind.start();
     }
     await rig.open();
@@ -166,6 +177,7 @@ export class GuardianRig {
       electrum: { minBackoffMs: 20, maxBackoffMs: 100 },
       discoverDmRelays: false,
       broadcastLimit: this.opts.broadcastLimit,
+      ...(this.opts.slowPingMs !== undefined ? { slowPingMs: this.opts.slowPingMs } : {}),
       ...(this.opts.chainBackend ? { chainBackend: this.opts.chainBackend } : {}),
       ...(this.opts.notifyTestServers ? { notify: { net: { allowLoopback: true }, smtpTest: { tls: { rejectUnauthorized: false } } } } : {}),
     });

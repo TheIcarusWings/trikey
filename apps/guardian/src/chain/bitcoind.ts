@@ -142,6 +142,44 @@ export class BitcoinRpc {
     return body.result as T;
   }
 
+  /**
+   * Several calls in one JSON-RPC batch (one HTTP request): each one's result, or its error. Bitcoin Core answers a batch
+   * in order. A transport failure throws, as `call` does.
+   */
+  async batch<T>(method: string, paramsList: unknown[][], opts: { timeoutMs?: number } = {}): Promise<({ ok: true; result: T } | { ok: false; code?: number; message: string })[]> {
+    if (!paramsList.length) return [];
+    await this.checkHost(method);
+    const first = this.id + 1;
+    const body = paramsList.map((params) => ({ jsonrpc: '1.0', id: ++this.id, method, params }));
+    let res: Response;
+    try {
+      res = await fetch(this.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: this.auth },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(opts.timeoutMs ?? this.timeoutMs),
+      });
+    } catch (e) {
+      throw new BitcoinRpcError(method, `node unreachable (${e instanceof Error ? e.name : 'error'})`);
+    }
+    if (res.status === 401 || res.status === 403) throw new BitcoinRpcError(method, 'the node rejected the RPC credentials');
+    let out: unknown;
+    try {
+      out = await res.json();
+    } catch {
+      throw new BitcoinRpcError(method, `HTTP ${res.status}`);
+    }
+    if (!Array.isArray(out)) throw new BitcoinRpcError(method, 'the node did not answer the batch');
+    const byId = new Map<number, { result?: T; error?: { code?: number; message?: string } | null }>();
+    for (const r of out as { id?: number; result?: T; error?: { code?: number; message?: string } | null }[]) if (typeof r?.id === 'number') byId.set(r.id, r);
+    return paramsList.map((_, k) => {
+      const r = byId.get(first + k);
+      if (!r) return { ok: false, message: 'no answer' };
+      if (r.error) return { ok: false, code: r.error.code, message: String(r.error.message ?? 'error') };
+      return { ok: true, result: r.result as T };
+    });
+  }
+
   getBlockchainInfo(): Promise<BlockchainInfo> {
     return this.call<BlockchainInfo>('getblockchaininfo');
   }

@@ -9,6 +9,7 @@ import { ErrorState, PageSkeleton } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { useApi, usePageTitle } from '@/hooks/use-api';
 import { LIMIT_OFF_TEXT, SAVINGS_NOTE, dailySpendSummary, formatSats, formatShortWhen, savingsBalanceText } from '@/lib/format';
+import { mempoolText } from '@/lib/server';
 import { cn } from '@/lib/utils';
 
 interface Issue {
@@ -196,6 +197,19 @@ export function HomePage() {
       <PageHeader title="Home" pill />
 
       <StatusCard status={status} />
+
+      {status.chain.state !== 'unavailable' && status.chain.mempoolUnseen ? (
+        // Not something to fix for the guardian to work: a note next to the status, not one of its issues.
+        <p role="status" className="m-0 flex items-start gap-2 rounded-[10px] bg-warn-soft px-3 py-2.5 text-sm leading-5">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warn" strokeWidth={2} aria-hidden="true" />
+          <span>
+            {mempoolText(status.chain).text}{' '}
+            <Link to="/settings" className="font-medium underline underline-offset-3">
+              Settings, Server
+            </Link>
+          </span>
+        </p>
+      ) : null}
 
       {status.savings ? <SavingsCard savings={status.savings} /> : null}
 

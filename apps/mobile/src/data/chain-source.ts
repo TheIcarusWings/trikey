@@ -7,6 +7,19 @@ export interface GuardianChainSource {
   kind: 'own' | 'public';
   backend: 'electrum' | 'core';
   host: string;
+  /** `unseen`: the guardian found that its Electrum server reports no unconfirmed transactions (`MEMPOOL_UNSEEN_NOTE`). */
+  mempool?: 'unseen';
+}
+
+/**
+ * The quiet note under "Chain data" while the guardian's Electrum server reports no unconfirmed transactions. Payments
+ * from this phone still show at once (the phone and the guardian keep them); payments to it wait for a block.
+ */
+export const MEMPOOL_UNSEEN_NOTE = "Your guardian's Electrum server doesn't report unconfirmed payments: payments to you show once confirmed.";
+
+/** Whether to show `MEMPOOL_UNSEEN_NOTE`. */
+export function mempoolUnseen(cs: GuardianChainSource | undefined): boolean {
+  return cs?.mempool === 'unseen';
 }
 
 /** The warning next to a public server. */

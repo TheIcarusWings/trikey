@@ -244,6 +244,26 @@ export class ElectrumBackend implements ChainBackend {
     return this.batch('blockchain.scripthash.get_history', hashes.map((h) => [h]), parseHistory);
   }
 
+  /**
+   * Each script's history AND unspent outputs, in ONE batch (`get_history` and `listunspent` side by side): one round
+   * trip instead of two. On a slow Electrs every round trip is one turn of its main loop (about 7 s for Electrs 0.11 with
+   * Bitcoin Core 32), whatever the batch holds.
+   */
+  async readScripts(hashes: string[]): Promise<{ history: Got<ElectrumHistoryItem[]>; unspent: Got<BackendUnspent[]> }[]> {
+    if (!this.connected) throw new BackendUnavailableError(this.lastError ? `the Electrum server is not connected: ${this.lastError}` : 'the Electrum server is not connected');
+    const out = await this.client.requestBatch(hashes.flatMap((h) => [{ method: 'blockchain.scripthash.get_history', params: [h] }, { method: 'blockchain.scripthash.listunspent', params: [h] }]));
+    const got = <T>(o: (typeof out)[number] | undefined, parse: (r: unknown) => T): Got<T> => {
+      if (!o) return { ok: false, error: 'no answer' };
+      if (!o.ok) return { ok: false, error: o.error.message };
+      try {
+        return { ok: true, value: parse(o.result) };
+      } catch (e) {
+        return { ok: false, error: errorText(e) };
+      }
+    };
+    return hashes.map((_, k) => ({ history: got(out[2 * k], parseHistory), unspent: got(out[2 * k + 1], parseUnspent) }));
+  }
+
   /** Unspent outputs by script hash, in one batch. */
   unspents(hashes: string[]): Promise<Got<BackendUnspent[]>[]> {
     return this.batch('blockchain.scripthash.listunspent', hashes.map((h) => [h]), parseUnspent);
@@ -334,6 +354,22 @@ export class ElectrumBackend implements ChainBackend {
   async estimateFee(target: number): Promise<number | null> {
     const v = await this.req<number>('blockchain.estimatefee', [target]);
     return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
+  }
+
+  /**
+   * `mempool.get_fee_histogram`: `[feeRate, vsize]` pairs of the server's mempool. Empty when the server holds no
+   * unconfirmed transaction (or does not see the mempool at all); undefined when it does not have the method.
+   */
+  async feeHistogram(): Promise<[number, number][] | undefined> {
+    let r: unknown;
+    try {
+      r = await this.req<unknown>('mempool.get_fee_histogram', []);
+    } catch (e) {
+      if (e instanceof ElectrumError) return undefined;
+      throw e;
+    }
+    if (!Array.isArray(r)) return undefined;
+    return r.filter((x): x is [number, number] => Array.isArray(x) && typeof x[0] === 'number' && typeof x[1] === 'number');
   }
 
   /** Every target's `blockchain.estimatefee` and `blockchain.relayfee`, in one batch. */

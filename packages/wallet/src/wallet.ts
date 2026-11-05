@@ -112,6 +112,7 @@ import {
 import { isHardwareDisconnect, type CloudBackupStore, type HardwareKind, type HardwareProvider, type HardwareSigner, type HardwareWalletPolicy, type KeyValueStore, type PasskeyPrf, type SecureKeyStore } from './platform.js';
 import { GuardianSilentPaymentScanner, GuardianSingleKeyChain } from './guardian-sp.js';
 import { TxCache } from './txcache.js';
+import { applyOwnSpends, ownSpendOf, reconcileOwnSpends, withOwnSpend } from './own-spends.js';
 import { parseScannedCode, type ScannedCode } from './scan.js';
 import {
   DEFAULT_SWEEP_MIN_SATS,
@@ -990,6 +991,7 @@ export class TrikeyWallet {
       contactNames: {},
       seenAlerts: [],
       sendLog: [],
+      ownSpends: [],
       liveTxs: [],
       liveCounter: 0,
       retiredWallets: [],
@@ -1938,6 +1940,7 @@ export class TrikeyWallet {
       s.recovery = { ...s.recovery!, recovery: r, updatedAt: now };
       s.chain = undefined;
       s.spends = [];
+      s.ownSpends = [];
       s.pending = undefined;
       s.retiredByGuardian = undefined;
     });
@@ -2041,7 +2044,8 @@ export class TrikeyWallet {
       throw new WalletError('guardian_mismatch', `The guardian now guards another wallet (${status.walletId}).`);
     const now = this.now();
     await this.update((s) => {
-      s.chain = { ...snap, syncedAt: now, liveSeq };
+      // This phone's own unconfirmed payments stay applied, whatever the guardian's server lists (own-spends.ts).
+      this.storeChain(s, { ...snap, syncedAt: now, liveSeq });
       s.spends = s.spends.filter((x) => x.at > now - LIMIT_WINDOW_MS);
       // Noted before this sync was asked for: it has them (or they are gone); and none about another wallet.
       const walletId = s.wallet?.walletId;
@@ -2224,8 +2228,10 @@ export class TrikeyWallet {
         };
       });
     const recent = this.now() - LIMIT_WINDOW_MS;
+    // Still waiting by this phone's own record (own-spends.ts): listed as long as that, whatever the sync's server sees.
+    const waiting = new Set(this.s.ownSpends.filter((r) => r.walletId === this.s.wallet?.walletId).map((r) => r.txid));
     const unlisted = this.s.sendLog
-      .filter((e) => !listed.has(e.txid) && e.at > recent && e.at > (c?.syncedAt ?? 0) - 10 * 60_000)
+      .filter((e) => !listed.has(e.txid) && (waiting.has(e.txid) || (e.at > recent && e.at > (c?.syncedAt ?? 0) - 10 * 60_000)))
       .map((e): WalletHistoryEntry => ({ txid: e.txid, height: 0, confirmations: 0, netSats: -(e.amountSats + e.feeSats), feeSats: e.feeSats, ...meta(e), local: true }));
     return withReplacements([...unlisted.reverse(), ...announced.reverse(), ...out], log, live, { speedUp: !this.isHosted });
   }
@@ -2308,37 +2314,42 @@ export class TrikeyWallet {
    * is an unconfirmed coin, and the change index moves on. A payment made right after then spends what is really left
    * (not the same coins again, which the node would refuse as a replacement paying no more).
    */
-  private async applyLocalSpend(txHex: string, txid: string, quote: SendQuote): Promise<void> {
+  private async applyLocalSpend(txHex: string, txid: string, opts: { uncertain?: boolean } = {}): Promise<void> {
     // Kept for "Speed up" (`quoteSpeedUp` reads it from the cache, not through the guardian); dropped with its last coin.
     await this.txs.put([{ txid, txHex }]).catch(() => undefined);
-    const c = this.s.chain;
-    if (!c) return;
-    const spent = new Set(quote.inputs.map((u) => `${u.txid}:${u.vout}`));
-    let change: WalletUtxo | undefined;
-    if (quote.changeSats > 0) {
-      const script = hex.encode(this.multisig().derive(1, quote.changeIndex).script);
-      const raw = btc.RawTx.decode(hex.decode(txHex));
-      const vout = raw.outputs.findIndex((o) => hex.encode(o.script) === script && Number(o.amount) === quote.changeSats);
-      if (vout >= 0) change = { txid, vout, valueSats: quote.changeSats, height: 0, confirmations: 0, chain: 1, index: quote.changeIndex };
+    await this.noteOwnSpend(txHex, txid, opts);
+  }
+
+  /**
+   * A transaction this phone broadcast (or may have: no answer), recorded until it confirms or is gone (own-spends.ts)
+   * and applied to the last synced view at once: its coins out of every payment and the balance, its outputs to the
+   * wallet in as unconfirmed coins. Every later sync applies it again, so a guardian whose server does not see the
+   * mempool cannot bring a spent coin back. `replaces`: the payment a "Speed up" replaced (its record goes).
+   */
+  private async noteOwnSpend(txHex: string, txid: string, opts: { replaces?: string; uncertain?: boolean } = {}): Promise<void> {
+    const walletId = this.s.wallet?.walletId;
+    if (!walletId) return;
+    let record;
+    try {
+      record = ownSpendOf(txHex, txid, walletId, this.now(), this.spendingScripts(this.multisig()), { uncertain: opts.uncertain });
+    } catch {
+      return; // not a transaction this wallet can read: nothing to keep
     }
+    // A "Speed up" that may not have gone out leaves the original's record as it is (its coins stay out either way), and
+    // adds no second change until a sync shows which one is waiting.
+    const sure = !(opts.uncertain && opts.replaces);
+    if (!sure) record = { ...record, outputs: [] };
     await this.update((s) => {
-      const chain = s.chain;
-      if (!chain) return;
-      let confirmed = chain.balance.confirmedSats;
-      let unconfirmed = chain.balance.unconfirmedSats;
-      for (const u of chain.utxos) {
-        if (!spent.has(`${u.txid}:${u.vout}`)) continue;
-        if (u.confirmations > 0) confirmed -= u.valueSats;
-        else unconfirmed -= u.valueSats;
-      }
-      chain.utxos = chain.utxos.filter((u) => !spent.has(`${u.txid}:${u.vout}`));
-      if (change && !chain.utxos.some((u) => u.txid === change.txid && u.vout === change.vout)) {
-        chain.utxos.push(change);
-        unconfirmed += change.valueSats;
-      }
-      chain.balance = { confirmedSats: Math.max(0, confirmed), unconfirmedSats: unconfirmed };
-      if (quote.changeSats > 0) chain.nextChangeIndex = Math.max(chain.nextChangeIndex, quote.changeIndex + 1);
+      s.ownSpends = withOwnSpend(s.ownSpends, record, sure ? opts.replaces : undefined);
+      if (s.chain) s.chain = applyOwnSpends(s.chain, [record]);
     });
+  }
+
+  /** Stores a sync's chain data with this phone's own unconfirmed spends applied, and keeps the records still current. */
+  private storeChain(s: WalletState, chain: NonNullable<WalletState['chain']>): void {
+    const r = reconcileOwnSpends(chain, s.ownSpends, s.wallet?.walletId, this.now());
+    s.chain = r.chain;
+    s.ownSpends = r.ownSpends;
   }
 
   private async logSend(entry: SendLogEntry): Promise<void> {
@@ -2575,14 +2586,14 @@ export class TrikeyWallet {
       // person does not pay again by mistake.
       if (refusal.kind === 'unreachable') {
         await this.logSend(entry);
-        await this.applyLocalSpend(txHex, txid, quote);
+        await this.applyLocalSpend(txHex, txid, { uncertain: true });
       }
       return { ok: false, refusal, signedTx: { txid, txHex } };
     }
     // In the history at once (as a payment the guardian has not listed yet), and its coins out of the wallet's view,
     // before any sync.
     await this.logSend(entry);
-    await this.applyLocalSpend(txHex, txid, quote);
+    await this.applyLocalSpend(txHex, txid);
     if (opts.syncAfter !== false) await this.sync().catch(() => undefined);
     return {
       ok: true,
@@ -2790,7 +2801,7 @@ export class TrikeyWallet {
       // No answer is not a refusal (see `send`): listed in the original's place until a sync says which one is waiting.
       if (refusal.kind === 'unreachable') {
         await this.logSend(entry);
-        await this.applyLocalBump(txHex, txid, quote);
+        await this.applyLocalBump(txHex, txid, quote, { uncertain: true });
       }
       return { ok: false, refusal, signedTx: { txid, txHex } };
     }
@@ -2816,7 +2827,7 @@ export class TrikeyWallet {
    * A replacement just sent, applied to the last synced view until the next sync: the original's coins back to the
    * wallet (its change) give way to the replacement's (the smaller change, or none when it went to the fee).
    */
-  private async applyLocalBump(txHex: string, txid: string, quote: SpeedUpQuote): Promise<void> {
+  private async applyLocalBump(txHex: string, txid: string, quote: SpeedUpQuote, opts: { uncertain?: boolean } = {}): Promise<void> {
     await this.txs.put([{ txid, txHex }]).catch(() => undefined);
     const wallet = this.multisig();
     const raw = btc.RawTx.decode(hex.decode(txHex));
@@ -2834,6 +2845,8 @@ export class TrikeyWallet {
       const delta = added.reduce((t, u) => t + u.valueSats, 0) - gone.reduce((t, u) => t + u.valueSats, 0);
       chain.balance = { ...chain.balance, unconfirmedSats: Math.max(0, chain.balance.unconfirmedSats + delta) };
     });
+    // The same coins as the original: its record gives way to the replacement's.
+    await this.noteOwnSpend(txHex, txid, { replaces: quote.replaces, uncertain: opts.uncertain });
   }
 
   /** The guardian's refusal is the truth: fold what it says into the cached status. */
@@ -3261,7 +3274,7 @@ export class TrikeyWallet {
       const liveSeq = this.s.liveCounter;
       const snap = await this.chain.sync().catch(() => undefined);
       if (snap) {
-        await this.update((s) => void (s.chain = { ...snap, syncedAt: this.now(), liveSeq }));
+        await this.update((s) => this.storeChain(s, { ...snap, syncedAt: this.now(), liveSeq }));
         await this.noticeRecoveryCoins(snap.utxos);
       }
     }
@@ -3403,7 +3416,7 @@ export class TrikeyWallet {
     const from = this.multisig();
     const liveSeq = this.s.liveCounter;
     const snap = await this.chain.sync();
-    await this.update((s) => void (s.chain = { ...snap, syncedAt: this.now(), liveSeq }));
+    await this.update((s) => this.storeChain(s, { ...snap, syncedAt: this.now(), liveSeq }));
     if (snap.utxosTruncated) throw new WalletError('utxos_truncated', 'The wallet has more coins than one sweep can list.');
     if (!snap.utxos.length) throw new WalletError('nothing_to_sweep', 'The wallet has no coins to move.');
     const fees = (await this.chain.estimateFees([3, 6]).catch(() => undefined)) ?? this.fees;
@@ -4814,6 +4827,8 @@ export class TrikeyWallet {
       h.nextChangeIndex = Math.max(h.nextChangeIndex, sp.helper.changeIndex + 1);
     });
     await this.txs.put([{ txid, txHex }]).catch(() => undefined);
+    // Its vault coins stay spent whatever a sync says, until it confirms (own-spends.ts).
+    await this.noteOwnSpend(txHex, txid);
     await this.sync().catch(() => undefined);
     return {
       ok: true,
@@ -4861,7 +4876,7 @@ export class TrikeyWallet {
     const wallet = this.multisig();
     const primary = this.hostedChainSource('primary', wallet);
     const snap = await primary.sync();
-    await this.update((s) => void (s.chain = { ...snap, syncedAt: this.now() }));
+    await this.update((s) => this.storeChain(s, { ...snap, syncedAt: this.now() }));
     const seen = new Set(snap.utxos.map((u) => `${u.txid}:${u.vout}`));
     if (snap.utxos.length || snap.utxosTruncated) blockers.push({ kind: 'money_left', server: 'primary', coins: snap.utxos.length, sats: snap.utxos.reduce((a, u) => a + u.valueSats, 0) });
     try {
@@ -5126,7 +5141,7 @@ export class TrikeyWallet {
   ): Promise<{ psbt: Uint8Array; abandon: string[]; coins: number }> {
     const primary = this.hostedChainSource('primary', from);
     const snap = await primary.sync();
-    await this.update((s) => void (s.chain = { ...snap, syncedAt: this.now() }));
+    await this.update((s) => this.storeChain(s, { ...snap, syncedAt: this.now() }));
     if (snap.utxosTruncated) throw new WalletError('utxos_truncated', 'The wallet has more coins than one sweep can list.');
     let extra: typeof snap.utxos = [];
     let check: ChainSource | undefined;
