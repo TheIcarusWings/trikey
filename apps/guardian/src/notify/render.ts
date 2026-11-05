@@ -1,5 +1,5 @@
 /**
- * What an email, ntfy or webhook alert says (docs/design/notifications.md, "Content").
+ * What an email, ntfy, webhook or Telegram alert says (docs/design/notifications.md, "Content").
  *
  * - Plain text only: no HTML, no links, no buttons. A message never asks for more than "contact the owner", or, to an
  *   alert contact with a nostr key, "reply CANCEL / LOCK to the guardian's nostr message", where the matching nostr

@@ -393,7 +393,7 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
         // A phone that missed a `relays_changed` alert catches up here (PROTOCOL.md, "Changing relays").
         ...(g.service.get().relays.length ? { relays: [...g.service.get().relays] } : {}),
         // The owner's extra alert channels, masked and read-only (PROTOCOL.md, "Extra alert channels").
-        ...(g.notifier.configured ? { notifications: { channels: g.notifier.summary() } } : {}),
+        ...(g.notifier.configured ? { notifications: g.notifier.phoneStatus() } : {}),
         // Where it reads the blockchain: the owner's own node or a public server (PROTOCOL.md, "Chain source").
         // `mempool: "unseen"`: unconfirmed payments to the wallet do not show (the server shows no mempool, and the
         // guardian cannot read Bitcoin Core's instead: chain.ts `incomingUnseen`).

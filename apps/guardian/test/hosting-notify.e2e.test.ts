@@ -1,6 +1,6 @@
 /**
  * Family hosting next to the extra alert channels (docs/design/family-hosting.md, docs/design/notifications.md): a guest's
- * alerts are never delivered on the HOST's email, ntfy or webhook channels, the owner's nor the host's contacts', even
+ * alerts are never delivered on the HOST's email, ntfy, webhook or Telegram channels, the owner's nor the host's contacts', even
  * when a host contact is also the guest's contact. Guests' alerts go to the guest's phone and the guest's own contacts
  * as nostr DMs only (guests have no extra channels in phases 1 and 2). Phase 2's guest events (the limit turned off, the
  * wallet paused by a contact's LOCK or by the guest's phone) stay off them as well. The host's channels keep working for
@@ -20,6 +20,7 @@ import { signMessage } from '../src/policy/index.js';
 import { AUTH_PATH, MNEMONICS, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from './helpers.js';
 import { GuardianRig } from './support/index.js';
 import { startHttp, startSmtp, type TestHttp, type TestSmtp } from './support/notify-servers.js';
+import { BOT_TOKEN, startTelegram, type FakeTelegram } from './support/telegram-server.js';
 import { destinationAfterHardwareLoss, fakeMap, hostedWallet, phoneSweep, type HostedFixture } from './support/hosted.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -37,6 +38,9 @@ let rig: GuardianRig;
 let smtp: TestSmtp;
 let hook: TestHttp;
 let ntfy: TestHttp;
+let tg: FakeTelegram;
+const HOST_CHAT = 41414141;
+const ALICE_CHAT = 42424242;
 const pool = new SimplePoolRelayPool();
 const clients: RpcClient[] = [];
 const person = (seed: number) => {
@@ -64,13 +68,15 @@ function client(secretKey: Uint8Array, alerts?: Alert[]): RpcClient {
 }
 
 /** Everything the host's extra channels received, as text. */
-const delivered = () => [...smtp.mails.map((m) => `${m.subject}\n${m.text}`), ...hook.requests.map((r) => r.body), ...ntfy.requests.map((r) => `${JSON.stringify(r.headers)}\n${r.body}`)].join('\n----\n');
+const delivered = () =>
+  [...smtp.mails.map((m) => `${m.subject}\n${m.text}`), ...hook.requests.map((r) => r.body), ...ntfy.requests.map((r) => `${JSON.stringify(r.headers)}\n${r.body}`), ...tg.sent.map((m) => JSON.stringify(m.body))].join('\n----\n');
 
 beforeAll(async () => {
   smtp = await startSmtp({ pass: PASSWORD });
   hook = await startHttp();
   ntfy = await startHttp();
-  rig = await GuardianRig.start({ http: true, notifyTestServers: true });
+  tg = await startTelegram();
+  rig = await GuardianRig.start({ http: true, notifyTestServers: true, telegramApi: tg.url });
   for (const p of [alice, guestContact])
     pool.subscribe(rig.relayUrls, { kinds: [1059], '#p': [p.pubkey] }, {
       onevent: (e: NostrEvent) => {
@@ -100,25 +106,30 @@ beforeAll(async () => {
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!)), hwAuthPrivateKey()),
     rules: HOST_RULES,
   });
-  // The host's extra channels: its own email, webhook and ntfy, and alice's email; payments too (live wallet).
+  // The host's extra channels: its own email, webhook, ntfy and Telegram, and alice's email and Telegram; payments too
+  // (live wallet).
   const r = await rig.api('PUT', '/notifications', {
     guardianName: 'Host box',
     paymentAlerts: true,
+    telegram: { token: BOT_TOKEN },
     smtp: { host: '127.0.0.1', port: smtp.port, security: 'starttls', username: 'owner@example.com', from: 'owner@example.com', password: PASSWORD },
     destinations: [
       { audience: 'owner', kind: 'email', email: 'owner@example.com' },
       { audience: 'owner', kind: 'webhook', webhook: { url: `${hook.url}/api/webhook/hosting-test-id`, secret: 'webhook-secret-for-tests' } },
       { audience: 'owner', kind: 'ntfy', ntfy: { server: ntfy.url, topic: 'hosting-test-topic-0123' } },
       { audience: 'contact', kind: 'email', contact: alice.pubkey, email: 'alice@example.com' },
+      { audience: 'owner', kind: 'telegram', telegram: { chatId: String(HOST_CHAT), name: 'Host' } },
+      { audience: 'contact', kind: 'telegram', contact: alice.pubkey, telegram: { chatId: String(ALICE_CHAT), name: 'Alice' } },
     ],
   });
   expect(r.status).toBe(200);
   // Let the channel-change announcements land, then start from nothing.
-  await waitFor(() => smtp.mails.length >= 2 && hook.requests.length >= 1, 'the announcements of the new channels');
+  await waitFor(() => smtp.mails.length >= 2 && hook.requests.length >= 1 && tg.sent.length >= 2, 'the announcements of the new channels');
   await sleep(300);
   smtp.mails.length = 0;
   hook.requests.length = 0;
   ntfy.requests.length = 0;
+  tg.sent.length = 0;
 }, 60_000);
 
 afterAll(async () => {
@@ -128,6 +139,7 @@ afterAll(async () => {
   await smtp?.stop();
   await hook?.stop();
   await ntfy?.stop();
+  await tg?.stop();
 });
 
 describe("a guest's alerts never reach the host's extra channels", { timeout: 60_000 }, () => {
@@ -179,6 +191,8 @@ describe("a guest's alerts never reach the host's extra channels", { timeout: 60
     for (const secret of [id, guest.walletId, GUEST_LABEL, 'Dad', '250,000', '250000', 'hosting_ending', 'recovery_started', 'recovery_cancelled'])
       expect(text, `the host's channels got "${secret}"`).not.toContain(secret);
     expect(smtp.mails.some((m) => m.to.includes('alice@example.com'))).toBe(false);
+    expect(tg.to(ALICE_CHAT)).toEqual([]);
+    expect(tg.to(HOST_CHAT)).toEqual([]);
   });
 
   it("phase 2: the guest's limit off, a contact's pause and its phone's pause go by nostr only, never on the host's channels", async () => {
@@ -200,6 +214,7 @@ describe("a guest's alerts never reach the host's extra channels", { timeout: 60
     const sent = delivered();
     for (const secret of [guest.walletId, GUEST_LABEL, 'Dad', 'limit_off', 'wallet_paused', 'paused']) expect(sent, `the host's channels got "${secret}"`).not.toContain(secret);
     expect(smtp.mails.some((m) => m.to.includes('alice@example.com'))).toBe(false);
+    expect(tg.to(ALICE_CHAT)).toEqual([]);
   });
 
   it("the host's channels still work for host-level events (a positive control), still without guest data", async () => {
@@ -207,14 +222,20 @@ describe("a guest's alerts never reach the host's extra channels", { timeout: 60
     expect(rig.guardian.notifier.paymentAlerts).toBe(true);
     rig.fund(hostWallet.derive(0, 0).script, 123_456n);
     await waitFor(() => /123,456 sats/.test(delivered()), "the host's own incoming payment on its channels");
+    await waitFor(() => tg.to(HOST_CHAT).some((t) => /123,456 sats/.test(t)), "the host's own incoming payment on its Telegram chat");
+    expect(tg.to(ALICE_CHAT)).toEqual([]); // payments never go to contacts
     await rig.guardian.notifier.idle();
     await sleep(300);
     for (const secret of [guest.walletId, GUEST_LABEL, 'Dad', '250,000']) expect(delivered()).not.toContain(secret);
     smtp.mails.length = 0;
     hook.requests.length = 0;
     ntfy.requests.length = 0;
+    tg.sent.length = 0;
     await hostPhone.call('guardian.lock', {});
-    await waitFor(() => smtp.mails.some((m) => m.to.includes('owner@example.com')) && hook.requests.length >= 1 && ntfy.requests.length >= 1, "the host's lock alert on its channels");
+    await waitFor(
+      () => smtp.mails.some((m) => m.to.includes('owner@example.com')) && hook.requests.length >= 1 && ntfy.requests.length >= 1 && tg.to(HOST_CHAT).length >= 1,
+      "the host's lock alert on its channels",
+    );
     const text = delivered();
     expect(text).toMatch(/locked/i);
     for (const secret of [guest.walletId, GUEST_LABEL, 'Dad']) expect(text).not.toContain(secret);
@@ -225,7 +246,7 @@ describe("a guest's alerts never reach the host's extra channels", { timeout: 60
     const notify = await readFile(join(rig.dir, 'notifications.json'), 'utf8');
     for (const secret of [guest.walletId, GUEST_LABEL, 'Dad', guestPhone.pubkey]) expect(notify).not.toContain(secret);
     const hosting = await readFile(join(rig.dir, 'hosting.json'), 'utf8');
-    for (const secret of ['owner@example.com', 'hosting-test-topic', 'webhook']) expect(hosting).not.toContain(secret);
+    for (const secret of ['owner@example.com', 'hosting-test-topic', 'webhook', BOT_TOKEN.split(':')[1]!, String(HOST_CHAT)]) expect(hosting).not.toContain(secret);
     for (const f of await readdir(join(rig.dir, 'hosted'), { recursive: true }))
       if (f.endsWith('.json')) expect(await readFile(join(rig.dir, 'hosted', f), 'utf8')).not.toMatch(/owner@example\.com|hosting-test-topic|webhook/);
   });
