@@ -6,7 +6,7 @@ tagline: Key 3 of your 2-of-3 bitcoin wallet, on your own node
 # TODO(verify): the icon is a placeholder (the web UI favicon). Replace with a proper icon URL.
 icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/guardian-web/public/favicon.svg
 category: bitcoin
-version: "0.1.14-alpha"
+version: "0.1.15-alpha"
 # TODO(verify): host-facing port for the app_proxy. Pick one that no other app in the store uses.
 port: 3010
 description: >-
@@ -26,10 +26,10 @@ support: https://github.com/TheIcarusWings/trikey/issues
 # TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
 gallery: []
 releaseNotes: >-
-  Several wallets: add another hardware wallet in the app, and this guardian guards it too, with its own daily
-  limit, contacts, recovery and Savings, and a wallet picker on the web page. Settings, Server now simply shows
-  that the guardian uses this Umbrel's Electrs and Bitcoin Core; other servers are under Advanced, and "Use the
-  server Umbrel set" undoes a server saved there. Update the guardian before the app.
+  Telegram alerts: make a bot with @BotFather and add it under Settings, Notifications, for you and your alert
+  contacts. Home no longer shows the Electrs note while the guardian reads unconfirmed payments from Bitcoin Core;
+  Settings, Server explains it. Addresses of wallets it stops watching are let go, and a ten-minute safety pass
+  catches lost payment notifications. With the 0.1.15 app: coin control (coin list, freeze, pick coins, consolidate).
 dependencies:
   - bitcoin
   - electrs

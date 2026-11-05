@@ -6,6 +6,46 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## 0.1.15-alpha (2026-11-05)
+
+Coin control, Telegram alerts, labels everywhere, and a calmer guardian home page. Update the guardian, then the app;
+each works with the other side's older version.
+
+- **Coin control.** Every payment into your wallet is a coin, and Home has a new **Coins** list (Savings has one too).
+  Open a coin to see where it came from, give it a label, or **freeze** it: a frozen coin is never spent until you
+  unfreeze it, which suits a tiny coin from a stranger (it may be there to track you) or a coin you keep apart. Send max
+  leaves frozen coins alone (#134, #135).
+- **Choose coins on Send.** Pick which coins pay. Trikey warns before coins with different labels go out together,
+  since that links them on chain (#135).
+- **Consolidate.** Merge small coins into one while fees are low (the app says when they are). Only the network fee
+  counts toward your daily limit. In Savings, your guardian announces "Savings consolidated" rather than "Money moved
+  out of Savings" (#134, #135).
+- **Labels in the backup, and BIP 329.** Labels and freezes stay on your phone and in its backup, never on the guardian.
+  Settings > Wallet details exports and imports them as a BIP 329 file that Sparrow and other wallets read. A backup with
+  labels or a consolidation uses a new format (version 6); older apps say "update the app" for it (#134, #135).
+- **Label an address before you share it** (Receive, Spending and Savings). The coin that arrives there shows the label
+  unless you give the coin its own. Labels also end their payment's row in Activity and show in its details (#140).
+- **Telegram alerts.** Next to email, ntfy and webhooks, the guardian can send its alerts to Telegram, for you and for
+  alert contacts who won't install a nostr or ntfy app. Make a bot with @BotFather, paste its token under Settings >
+  Notifications > "Add Telegram"; each person sends the bot /start once, then you press Find and pick them. Plain text,
+  no links, warnings only; cancelling and locking stay with nostr. Telegram can read these messages, as an email
+  provider can, and the page says so. Every change is announced on every channel; during a recovery you can only add
+  chats or give the same bot a new token. The app lists Telegram chats under Settings > Alert contacts. WhatsApp is not
+  built in (business account, templates and fees, or unofficial clients that break its terms); a webhook can reach it
+  through a gateway of your choice (#138).
+- **Several wallets, continued.** "Move everything" before removing a wallet can include frozen coins ("Include 1
+  frozen coin", off by default). "Print a recovery sheet" (Settings > Wallets or Guardian) prints each wallet's name,
+  hardware wallet, wallet id, your guardian's npub and relays and the code a new phone scans, one page per wallet or
+  all on one sheet, with no seed words, keys or recovery code (#140).
+- **A calmer guardian home page.** The Electrs and Bitcoin Core 32 note shows on Home only when payments to you really
+  go unseen until confirmed. When the guardian reads them from Bitcoin Core, Settings > Server explains it as
+  information, and on Umbrel or StartOS says there is nothing to do and the lasting fix is the platform's Electrs
+  update (#139).
+- **Guardian: live wallet housekeeping.** Addresses of a wallet it stops watching are let go at once (unsubscribing on
+  the server where supported), and a ten-minute safety pass catches a payment notification the server or the network
+  lost, in one round trip, re-reading only what changed (#141).
+- Demo: coins with labels, a frozen one, and coin picking in Savings.
+
 ## 0.1.14-alpha (2026-11-05)
 
 Several wallets in one app, and a clearer Server page. Update the guardian first, then the app: an app with several
