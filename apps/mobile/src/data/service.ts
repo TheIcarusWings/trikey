@@ -95,6 +95,17 @@ export interface WalletService {
   addWallet?(input: AddWalletInput): Promise<WalletListItem>;
   /** Renames a wallet on this phone (1 to 16 characters). */
   renameWallet?(account: number, name: string): Promise<void>;
+  /**
+   * Moves everything a wallet holds to another wallet of this phone ("send max" to its next address; within the daily
+   * limit the guardian co-signs, over it that wallet's hardware wallet signs): the explicit move before "Remove".
+   */
+  moveWalletFunds?(fromAccount: number, toAccount: number): Promise<{ movedSats: Sats }>;
+  /**
+   * "Remove" a wallet added after the first: only when it is empty (its Savings too). The guardian retires it first, with
+   * its hardware wallet's approval (it refuses while it still sees coins), and says so; its account stays taken. The
+   * first wallet goes last, with "Remove this wallet".
+   */
+  removeWallet?(account: number): Promise<void>;
 
   // -- onboarding ------------------------------------------------------
   /**

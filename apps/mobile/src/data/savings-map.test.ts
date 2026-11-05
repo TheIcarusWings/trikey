@@ -102,6 +102,13 @@ describe('Savings wallet map: the page', () => {
     expect(html).toContain('Savings made 2026-10-02');
   });
 
+  it("names the wallet when the phone holds several (an added wallet's Savings)", () => {
+    const named = renderSavingsMap({ ...data, walletName: 'Business' }, { date: DATE });
+    expect(named.html).toContain('<h1>Trikey Savings of &quot;Business&quot; — wallet map</h1>');
+    // HTML in a name is text, never markup.
+    expect(renderSavingsMap({ ...data, walletName: '<b>x</b>' }, { date: DATE }).html).not.toContain('<b>x</b>');
+  });
+
   it('has the full descriptor with its checksum, as text and as the QR code', () => {
     expect(s.descriptor).toMatch(/#[a-z0-9]{8}$/);
     expect(html).toContain(esc(s.descriptor));

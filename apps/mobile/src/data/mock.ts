@@ -10,6 +10,7 @@ import { DEMO_HELPER_FEE, DEMO_TAPROOT_OUTPUT, createMockSilentPayments, demoSil
 import { createMockSpeedUp } from './speed-up-mock';
 import { DEMO_SAVINGS_DESCRIPTOR, createMockSavings, creditDemoSavings, demoFilledSavings, emptySavings, isDemoSavingsAddress } from './savings-mock';
 import type { WalletService } from './service';
+import { demoBusinessWallet, demoWalletsView, sliceOf, type DemoWallet, type DemoWalletSlice } from './wallets-mock';
 import type {
   ActivityItem,
   AmountUnit,
@@ -282,13 +283,27 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
   let shownCode: string | null = null;
 
   let state = createDemoState(platform);
+  /** Several wallets in the demo: "Main" (shown) and "Business"; the others' fields are parked here (wallets-mock.ts). */
+  const demoWallets: DemoWallet[] = [{ account: 0, name: 'Main' }, demoBusinessWallet(MARIA)];
+  let shownAccount = 0;
+  const withWallets = (s: WalletState): WalletState => (s.mode === 'guardian' && s.onboarded && !s.hosted ? { ...s, wallets: demoWalletsView(demoWallets, shownAccount, s) } : s);
+  state = withWallets(state);
+  const sliceAt = (account: number): DemoWalletSlice => (account === shownAccount ? sliceOf(state) : demoWallets.find((w) => w.account === account)!.slice!);
+  const setSlice = (account: number, patch: Partial<DemoWalletSlice>) => {
+    if (account === shownAccount) update(patch);
+    else {
+      const w = demoWallets.find((x) => x.account === account)!;
+      w.slice = { ...w.slice!, ...patch };
+      update({});
+    }
+  };
   let counter = 100;
   const silentControl: MockSilentControl = { nodeRpc: true };
   const listeners = new Set<() => void>();
 
   function update(change: Partial<WalletState> | ((s: WalletState) => Partial<WalletState>)) {
     const patch = typeof change === 'function' ? change(state) : change;
-    state = { ...state, ...patch };
+    state = withWallets({ ...state, ...patch });
     listeners.forEach((listener) => listener());
   }
 
@@ -551,6 +566,78 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
       });
       addSecurityEvent({ id: nextId('ev'), kind: 'guardian-locked', host: state.guardian.host, byPhone: true, at: NOW.toISOString() });
     },
+    // -- several wallets ------------------------------------------------
+    async switchWallet(account: number) {
+      const next = demoWallets.find((w) => w.account === account);
+      if (!next) throw new WalletServiceError('invalid_input', 'There is no such wallet on this phone.');
+      if (account === shownAccount) return;
+      demoWallets.find((w) => w.account === shownAccount)!.slice = sliceOf(state);
+      const slice = next.slice!;
+      next.slice = undefined;
+      shownAccount = account;
+      update(slice);
+    },
+    async addWallet(input) {
+      const name = input.name.trim();
+      if (!name || name.length > 16) throw new WalletServiceError('invalid_input', 'Give the wallet a name of 1 to 16 characters.');
+      if (demoWallets.some((w) => w.name.toLowerCase() === name.toLowerCase())) throw new WalletServiceError('invalid_input', 'A wallet has this name already.');
+      if (input.hardware === state.hardware.kind || demoWallets.some((w) => w.slice?.hardware.kind === input.hardware))
+        throw new WalletServiceError('hardware_in_use', 'This hardware wallet is already in a wallet on this phone. Each wallet needs its own hardware wallet.');
+      await wait(deviceDelay);
+      const account = Math.max(...demoWallets.map((w) => w.account)) + 2;
+      const slice: DemoWalletSlice = {
+        hardware: HARDWARE[input.hardware] ?? HARDWARE.simulated,
+        balanceSats: 0,
+        activity: [],
+        dailyLimit: { limitSats: input.dailyLimitSats, usedSats: 0, cosignedCount: 0, canTurnOff: true },
+        savings: emptySavings('available'),
+        receiveAddress: 'tb1qnw6r8m2kd5vq3jw6hf9ztc0p7lsx0ahq4w3e2r1t9y8u7i6o5p4a3s2e',
+        contacts: state.contacts,
+      };
+      demoWallets.push({ account, name, slice });
+      addSecurityEvent({ id: nextId('ev'), kind: 'wallet-added', name, at: NOW.toISOString() });
+      return state.wallets!.list.find((w) => w.account === account)!;
+    },
+    async renameWallet(account: number, name: string) {
+      const w = demoWallets.find((x) => x.account === account);
+      if (!w) throw new WalletServiceError('invalid_input', 'There is no such wallet on this phone.');
+      const n = name.trim();
+      if (!n || n.length > 16) throw new WalletServiceError('invalid_input', 'Give the wallet a name of 1 to 16 characters.');
+      w.name = n;
+      update({});
+    },
+    async moveWalletFunds(fromAccount: number, toAccount: number) {
+      if (fromAccount === toAccount || !demoWallets.some((w) => w.account === fromAccount) || !demoWallets.some((w) => w.account === toAccount))
+        throw new WalletServiceError('invalid_input', 'Choose another wallet of this phone to move the money to.');
+      const from = sliceAt(fromAccount);
+      if (from.balanceSats <= 1_000) throw new WalletServiceError('invalid_input', 'There is nothing to move.');
+      await wait(from.balanceSats > from.dailyLimit.limitSats ? deviceDelay : networkDelay);
+      const feeSats = 300;
+      const movedSats = from.balanceSats - feeSats;
+      const at = NOW.toISOString();
+      setSlice(fromAccount, {
+        balanceSats: 0,
+        activity: [pay({ id: nextId('tx'), kind: 'sent', amountSats: movedSats, feeSats, status: 'pending', at, address: sliceAt(toAccount).receiveAddress, txid: txid(`a${fromAccount}c0`) }), ...from.activity],
+      });
+      const to = sliceAt(toAccount);
+      setSlice(toAccount, {
+        balanceSats: to.balanceSats + movedSats,
+        activity: [pay({ id: nextId('tx'), kind: 'received', amountSats: movedSats, status: 'pending', at, txid: txid(`a${fromAccount}c0`) }), ...to.activity],
+      });
+      return { movedSats };
+    },
+    async removeWallet(account: number) {
+      const w = demoWallets.find((x) => x.account === account);
+      if (!w) throw new WalletServiceError('invalid_input', 'There is no such wallet on this phone.');
+      if (account === 0) throw new WalletServiceError('wrong_state', 'Remove your other wallets first: the first wallet goes last.');
+      const slice = sliceAt(account);
+      if (slice.balanceSats > 0) throw new WalletServiceError('wrong_state', 'Move the money out of this wallet before you remove it.');
+      await wait(deviceDelay);
+      if (account === shownAccount) await service.switchWallet!(0);
+      demoWallets.splice(demoWallets.indexOf(w), 1);
+      addSecurityEvent({ id: nextId('ev'), kind: 'wallet-removed', name: w.name, at: NOW.toISOString() });
+    },
+
     async previewReplaceGuardian(code: string): Promise<ReplaceGuardianPlan> {
       await wait(networkDelay);
       const scanned = service.readCode(code);
@@ -577,7 +664,11 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
           },
           { step: 'switch', text: 'Switch this phone to the new wallet and guardian. The old wallet stays watched for coins sent to it later.' },
         ],
+        ...(demoWallets.length > 1
+          ? { wallets: demoWallets.map((w) => ({ name: w.name, device: sliceAt(w.account).hardware.model, movingSats: sliceAt(w.account).balanceSats, coins: sliceAt(w.account).balanceSats > 0 ? 1 : 0 })) }
+          : {}),
       };
+      if (plan.wallets) plan.movingSats = plan.wallets.reduce((a, w) => a + w.movingSats, 0);
       update((s) => ({ replace: { ...s.replace, plan } }));
       return plan;
     },
@@ -593,22 +684,44 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
         retire: 'Retiring the old wallet on the old guardian: approve on your hardware wallet',
         switch: 'Switching to the new wallet',
       };
-      for (const step of ['pair', 'sign', 'broadcast', 'retire', 'switch'] as ReplaceStep[]) {
-        if (step === 'retire' && !plan.oldGuardianReachable) continue;
-        update((s) => ({ progress: texts[step], replace: { ...s.replace, step } }));
-        await wait(step === 'broadcast' || step === 'switch' ? networkDelay : deviceDelay);
+      // Several wallets: each in turn, each with its own device.
+      const moving = demoWallets.length > 1 ? demoWallets.map((w) => w.account) : [shownAccount];
+      let movedAll = 0;
+      for (const [index, account] of moving.entries()) {
+        const name = demoWallets.find((w) => w.account === account)!.name;
+        const device = sliceAt(account).hardware.model;
+        for (const step of ['pair', 'sign', 'broadcast', 'retire', 'switch'] as ReplaceStep[]) {
+          if (step === 'retire' && !plan.oldGuardianReachable) continue;
+          update((s) => ({
+            progress: moving.length > 1 ? `"${name}" (${index + 1} of ${moving.length}): ${texts[step]}` : texts[step],
+            replace: { ...s.replace, step, ...(moving.length > 1 ? { moving: { name, device, index, total: moving.length } } : {}) },
+          }));
+          await wait(step === 'broadcast' || step === 'switch' ? networkDelay : deviceDelay);
+        }
+        if (account !== shownAccount) {
+          const sl = sliceAt(account);
+          const moved = Math.max(0, sl.balanceSats - (sl.balanceSats ? plan.feeSats : 0));
+          movedAll += moved;
+          setSlice(account, { balanceSats: moved });
+        }
       }
       const movedSats = state.balanceSats - plan.feeSats;
+      movedAll += movedSats;
       update((s) => ({
         progress: null,
-        replace: { plan: null, step: null, pending: null },
+        replace: { plan: null, step: null, pending: null, moving: null },
         guardian: { ...s.guardian, host: 'start9', label: 'Start9', npub: NEW_GUARDIAN_NPUB, status: 'online', lastSeenAt: NOW.toISOString() },
         balanceSats: movedSats,
         dailyLimit: { ...s.dailyLimit, usedSats: 0, cosignedCount: 0 },
         oldWallets: [...s.oldWallets, { id: 'demo-old-wallet', host: s.guardian.host, retiredOnGuardian: plan.oldGuardianReachable }],
       }));
-      addSecurityEvent({ id: nextId('ev'), kind: 'guardian-replaced', host: 'start9', movedSats, at: NOW.toISOString() });
-      return { status: 'done' as const, movedSats, oldWalletRetired: plan.oldGuardianReachable };
+      addSecurityEvent({ id: nextId('ev'), kind: 'guardian-replaced', host: 'start9', movedSats: moving.length > 1 ? movedAll : movedSats, at: NOW.toISOString() });
+      return {
+        status: 'done' as const,
+        movedSats: moving.length > 1 ? movedAll : movedSats,
+        oldWalletRetired: plan.oldGuardianReachable,
+        ...(moving.length > 1 ? { wallets: demoWallets.map((w) => ({ name: w.name, status: 'done' as const })) } : {}),
+      };
     },
     async cancelReplaceGuardian() {
       update((s) => ({ replace: { ...s.replace, plan: null } }));

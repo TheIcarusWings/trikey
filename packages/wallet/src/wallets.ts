@@ -12,10 +12,39 @@
  *   order, the names, every account ever used (an account is never used twice) and the wallet shown last.
  */
 import { z } from 'zod';
-import { type Policy } from '@trikey/protocol';
+import { GUARDIAN_FEATURES, type Policy } from '@trikey/protocol';
 import { WalletError } from './errors.js';
 import type { HardwareKind } from './platform.js';
-import { TrikeyWallet, type WalletDeps } from './wallet.js';
+import { TrikeyWallet, type ReplaceOutcome, type ReplacePlan, type WalletDeps, type WalletEvent } from './wallet.js';
+
+/** "Replace guardian" with several wallets: what moves, wallet by wallet (`WalletSet.previewReplaceGuardian`). */
+export interface MoveAllPlan {
+  /** The first wallet's plan: it pairs with the new guardian's code. */
+  first: ReplacePlan;
+  /** Every wallet of the phone, the first included, in the order they move. */
+  wallets: { account: number; name: string; hardwareKind: HardwareKind; balanceSats: number; coins: number; moved: boolean }[];
+}
+
+/** One wallet's part of the move (`WalletSet.replaceGuardian`). */
+export interface WalletMove {
+  account: number;
+  name: string;
+  /** `done`: on the new guardian, its coins moved; `awaiting_broadcast`: signed, no node took the sweep yet; `failed`: see `error`, nothing of it moved or it stopped half way (call again: every step is kept). */
+  status: 'done' | 'awaiting_broadcast' | 'failed';
+  outcome?: ReplaceOutcome;
+  error?: WalletError;
+}
+
+export interface MoveAllOutcome {
+  /** `done`: every wallet is on the new guardian with its money; `partial`: some still wait (`wallets`), call again. */
+  status: 'done' | 'partial';
+  /** "2 of 3 moved". */
+  moved: number;
+  total: number;
+  wallets: WalletMove[];
+  /** The old guardian retired the first wallet's old wallet (it goes last there, after every other wallet). */
+  firstRetiredOnOldGuardian: boolean;
+}
 
 /** Most wallets on one phone (and one guardian), the first included. */
 export const MAX_WALLETS = 8;
@@ -40,6 +69,12 @@ const emptyIndex = (): WalletIndex => ({ version: 1, wallets: [], accounts: [] }
 /** Where the index and each added wallet are kept, from the first wallet's storage key. */
 export function walletKeys(storageKey = 'trikey.wallet.v1', indexKey?: string): { index: string; ownWallet: (account: number) => string } {
   return { index: indexKey ?? `${storageKey}.wallets`, ownWallet: (account) => `${storageKey}.a${account}` };
+}
+
+/** The master fingerprints of a wallet's devices: its hardware wallet, and its Savings' (the same one, and the Recovery Key). */
+function devicesOf(w: TrikeyWallet): string[] {
+  const s = w.state;
+  return [s.hardware?.fingerprint, s.savings?.hardware.fingerprint, s.savings?.recoveryKey.fingerprint].filter((x): x is string => !!x);
 }
 
 export class WalletSet {
@@ -121,10 +156,17 @@ export class WalletSet {
     this.index = index;
   }
 
-  /** Every wallet's alerts about the others go to them, not to it (`TrikeyWallet.siblings`). */
+  /**
+   * Every wallet's alerts about the others go to them, not to it (`TrikeyWallet.siblings`: the others' wallet ids and
+   * their Savings' ids, which Savings alerts name), and no wallet takes another's device as a Savings Recovery Key
+   * (`TrikeyWallet.otherDevices`).
+   */
   private link(): void {
-    const ids = () => this.list.map((w) => w.state.wallet?.walletId).filter((x): x is string => !!x);
-    for (const w of this.list) w.siblings = () => ids().filter((id) => id !== w.state.wallet?.walletId);
+    const idsOf = (w: TrikeyWallet) => [w.state.wallet?.walletId, w.state.savings?.walletId].filter((x): x is string => !!x);
+    for (const w of this.list) {
+      w.siblings = () => this.list.filter((o) => o !== w).flatMap(idsOf);
+      w.otherDevices = () => this.list.filter((o) => o !== w).flatMap((o) => devicesOf(o));
+    }
   }
 
   /** The phone's wallets: the first, then the ones added, in order. */
@@ -141,8 +183,9 @@ export class WalletSet {
     return this.list.find((w) => w.account === account);
   }
 
+  /** The wallet whose id is `walletId`, or whose Savings it is (Savings alerts name the Savings wallet). */
   byWalletId(walletId: string): TrikeyWallet | undefined {
-    return this.list.find((w) => w.state.wallet?.walletId === walletId);
+    return this.list.find((w) => w.state.wallet?.walletId === walletId) ?? this.list.find((w) => w.state.savings?.walletId === walletId);
   }
 
   nameOf(w: TrikeyWallet): string {
@@ -184,16 +227,7 @@ export class WalletSet {
 
   /** Master fingerprints of every device already in a wallet of this phone (hardware wallets, Savings' devices). */
   takenFingerprints(): string[] {
-    const out = new Set<string>();
-    for (const w of this.list) {
-      const s = w.state;
-      if (s.hardware) out.add(s.hardware.fingerprint);
-      if (s.savings) {
-        out.add(s.savings.hardware.fingerprint);
-        out.add(s.savings.recoveryKey.fingerprint);
-      }
-    }
-    return [...out];
+    return [...new Set(this.list.flatMap((w) => devicesOf(w)))];
   }
 
   /**
@@ -264,20 +298,175 @@ export class WalletSet {
   }
 
   /**
-   * Removes an added wallet from this phone. Only when it is empty; the app first releases it on the guardian
-   * (`retireWallet`, its hardware approval). Its account stays taken. The first wallet goes last, with
-   * `TrikeyWallet.forget` (today's "Remove this wallet"), once it is the only one.
+   * "Remove" in Settings > Wallets: an added wallet leaves this phone and its guardian. Only when it is empty (on this
+   * phone's last sync and on the guardian's view: it refuses with `wallet_not_empty`), so first move its money out
+   * (`moveFunds`), and its Savings' too. Released on the guardian first (`wallet.retire`, with its hardware wallet's
+   * approval; the guardian announces it), unless the guardian no longer guards it (retired, recovered elsewhere, reset).
+   * Its account stays taken. The first wallet goes last, with `TrikeyWallet.forget` (today's "Remove this wallet"),
+   * once it is the only one.
    */
-  async removeWallet(w: TrikeyWallet): Promise<void> {
+  async removeWallet(w: TrikeyWallet, opts: { retire?: boolean } = {}): Promise<void> {
     if (w === this.first) throw new WalletError('wrong_state', 'Remove your other wallets first: the first wallet goes last.');
     if (!this.others.includes(w)) throw new WalletError('wrong_state', 'Not a wallet of this phone.');
     const snap = w.snapshot();
     if (snap && snap.balance.totalSats > 0) throw new WalletError('wrong_state', 'Move the money out of this wallet before you remove it.');
+    const sv = w.savingsSnapshot();
+    if (sv && sv.balance.totalSats > 0) throw new WalletError('wrong_state', "Move the money out of this wallet's Savings before you remove it.");
+    if (w.state.replacing) throw new WalletError('replace_in_progress', 'This wallet is moving to a new guardian: finish that first.');
+    if (opts.retire !== false && w.stage === 'paired' && !w.state.retiredByGuardian) await w.retireWallet();
     await w.forget();
     this.others.splice(this.others.indexOf(w), 1);
     if (this.index.shown === w.account) this.index = { ...this.index, shown: 0 };
     await this.saveIndex();
     this.link();
+  }
+
+  // ---------------------------------------------------------------------------
+  // "Replace guardian": every wallet moves (docs/design/multi-wallet.md, section 6)
+
+  /**
+   * Step 1 of "Replace guardian" with several wallets: the first wallet's plan (it pairs with the new guardian's code),
+   * and every other wallet with what it holds. A new guardian that cannot hold the phone's other wallets (no
+   * `own_wallets_2`) is refused before anything changes: the wallets would be split over two guardians.
+   */
+  async previewReplaceGuardian(newGuardianUri: string): Promise<MoveAllPlan> {
+    const first = await this.first.previewReplaceGuardian(newGuardianUri);
+    if (this.several && !first.newGuardian.features?.includes(GUARDIAN_FEATURES.ownWallets2)) {
+      await this.first.abandonReplaceGuardian().catch(() => undefined);
+      throw new WalletError('guardian_unsupported', "Your new guardian can't take several wallets yet. Update it, then scan its code again.");
+    }
+    return { first, wallets: this.list.map((w) => this.moveLine(w)) };
+  }
+
+  private moveLine(w: TrikeyWallet): MoveAllPlan['wallets'][number] {
+    const snap = w.snapshot();
+    const utxos = w.state.chain?.utxos ?? [];
+    return {
+      account: w.account,
+      name: this.nameOf(w),
+      hardwareKind: w.state.hardware?.kind ?? 'trezor',
+      balanceSats: snap?.balance.totalSats ?? utxos.reduce((a, u) => a + u.valueSats, 0),
+      coins: utxos.length,
+      moved: false,
+    };
+  }
+
+  /** The new guardian every wallet moves to: where the first wallet is moving, or moved. */
+  private moveTarget() {
+    return this.first.state.replacing?.guardian ?? this.first.state.guardian;
+  }
+
+  /** Wallets after the first still on another guardian than the first (a move under way or not finished). */
+  get moveUnfinished(): TrikeyWallet[] {
+    const target = this.moveTarget();
+    if (!target) return [];
+    return this.others.filter((w) => !w.state.retiredByGuardian && (!!w.state.replacing || w.state.guardian?.pubkey !== target.pubkey));
+  }
+
+  /**
+   * "Replace guardian" with several wallets: one pairing code, every wallet moves, each with its own hardware wallet.
+   *
+   * 1. The first wallet pairs with the new guardian (the code from `previewReplaceGuardian`, or `newGuardianUri`), sweeps
+   *    its coins into its new wallet and switches (`TrikeyWallet.replaceGuardian`). The old guardian does not retire it
+   *    yet: there the first wallet goes last.
+   * 2. Each other wallet, in order: added on the new guardian at its own account naming the wallet it replaces, its
+   *    coins swept with its own device, retired on the old guardian once empty, switched (`TrikeyWallet.moveToGuardian`).
+   *    `onWallet` says which one is next ("Connect the Ledger of 'Business'"). One wallet's failure does not stop the
+   *    others: it is reported (`failed`, with the error) and kept where it stopped.
+   * 3. Once every other wallet left, the old guardian retires the first wallet's old wallet (one more approval on its
+   *    device), when it answers.
+   *
+   * Call again to finish a `partial` move: done wallets are skipped, the others resume where they stopped. Nothing of a
+   * wallet moves until the new guardian holds its new wallet, so a wallet that failed before that is still guarded by the
+   * old guardian as before.
+   */
+  async replaceGuardian(
+    opts: {
+      newGuardianUri?: string;
+      oldGuardianReachable?: false;
+      onWallet?: (w: TrikeyWallet, index: number, total: number) => void;
+      onEvent?: (w: TrikeyWallet, e: WalletEvent) => void;
+    } = {},
+  ): Promise<MoveAllOutcome> {
+    const total = this.list.length;
+    const moves: WalletMove[] = [];
+    const watch = (w: TrikeyWallet) => (opts.onEvent ? w.on((e) => opts.onEvent!(w, e)) : () => undefined);
+    const failure = (w: TrikeyWallet, e: unknown): WalletMove => ({
+      account: w.account,
+      name: this.nameOf(w),
+      status: 'failed',
+      error: e instanceof WalletError ? e : new WalletError('internal', (e as Error)?.message ?? String(e), { cause: e }),
+    });
+    const ofOutcome = (w: TrikeyWallet, outcome: ReplaceOutcome): WalletMove => ({ account: w.account, name: this.nameOf(w), status: outcome.status, outcome });
+
+    // 1. The first wallet.
+    const firstStarted = !!this.first.state.replacing || !!opts.newGuardianUri || this.first.replaceSessionOpen;
+    // The first wallet's old wallet: the one it is leaving now, or the one its current wallet replaced.
+    const firstOldId = firstStarted ? this.first.state.wallet?.walletId : this.first.retiredWallets.find((r) => r.successorWalletId === this.first.state.wallet?.walletId)?.walletId;
+    if (firstStarted) {
+      opts.onWallet?.(this.first, 0, total);
+      const off = watch(this.first);
+      try {
+        moves.push(ofOutcome(this.first, await this.first.replaceGuardian({ ...(opts.newGuardianUri ? { newGuardianUri: opts.newGuardianUri } : {}), ...(opts.oldGuardianReachable === false ? { oldGuardianReachable: false as const } : {}) })));
+      } catch (e) {
+        // Not paired with the new guardian: nothing moved, and the other wallets cannot be added there.
+        if (!this.first.state.replacing) throw e;
+        moves.push(failure(this.first, e));
+      } finally {
+        off();
+      }
+    } else moves.push({ account: 0, name: this.nameOf(this.first), status: 'done' });
+    const target = this.moveTarget();
+    if (!target) throw new WalletError('wrong_state', 'No guardian is paired.');
+
+    // 2. Every other wallet, each with its own device.
+    for (const [i, w] of this.others.entries()) {
+      if (w.state.retiredByGuardian || (!w.state.replacing && w.state.guardian?.pubkey === target.pubkey)) {
+        moves.push({ account: w.account, name: this.nameOf(w), status: 'done' });
+        continue;
+      }
+      opts.onWallet?.(w, i + 1, total);
+      const off = watch(w);
+      try {
+        moves.push(ofOutcome(w, await w.moveToGuardian(target, opts.oldGuardianReachable === false ? { oldGuardianReachable: false } : {})));
+      } catch (e) {
+        moves.push(failure(w, e));
+      } finally {
+        off();
+      }
+    }
+
+    // 3. On the old guardian: any other wallet's old wallet a retire missed (it saw the sweep's coins a moment too early,
+    //    or did not answer), then the first wallet's, which goes last there.
+    if (opts.oldGuardianReachable !== false)
+      for (const w of this.others) {
+        const old = w.retiredWallets.find((r) => !r.retiredOnGuardian && r.successorWalletId === w.state.wallet?.walletId);
+        if (old && !w.state.replacing && w.state.guardian?.pubkey === target.pubkey) await w.retireOldWallet(old.walletId).catch(() => undefined);
+      }
+    let firstRetired = !firstOldId || !this.first.retiredWallets.some((r) => !r.retiredOnGuardian && r.walletId === firstOldId);
+    if (!firstRetired && moves.every((m) => m.status === 'done') && opts.oldGuardianReachable !== false) {
+      try {
+        await this.first.retireOldWallet(firstOldId);
+        firstRetired = true;
+      } catch {
+        // Offline, or the person declined: the old wallet is empty; `retireOldWallet()` later.
+      }
+    }
+    const moved = moves.filter((m) => m.status === 'done').length;
+    return { status: moved === total ? 'done' : 'partial', moved, total, wallets: moves, firstRetiredOnOldGuardian: firstRetired };
+  }
+
+  /**
+   * Moves everything `from` holds to `to` (another wallet of this phone): "send max" to `to`'s next address, signed as
+   * any payment (within `from`'s daily limit the guardian co-signs, over it `from`'s hardware wallet signs). The explicit
+   * move of funds before removing a wallet.
+   */
+  async moveFunds(from: TrikeyWallet, to: TrikeyWallet, opts: { speed?: 'slow' | 'normal' | 'fast' } = {}): ReturnType<TrikeyWallet['send']> {
+    if (from === to || !this.list.includes(from) || !this.list.includes(to)) throw new WalletError('wrong_state', 'Choose another wallet of this phone to move the money to.');
+    await from.sync();
+    const { address } = await to.receiveAddress();
+    const quote = from.quoteSendMax({ address, speed: opts.speed ?? 'normal', label: `Moved to ${this.nameOf(to)}` });
+    return from.send(quote, { fallbackToHardware: true });
   }
 
   /** One backup for every wallet (version 4 once there is more than one), made from the first wallet. */

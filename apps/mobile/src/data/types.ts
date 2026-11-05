@@ -256,6 +256,8 @@ export type SecurityEvent = { id: string; at: IsoDate } & (
   | { kind: 'wallet-retired'; reason: 'retired' | 'recovered' | 'reset' | 'hosting_ended' }
   /** Several wallets: this phone added a wallet with a new hardware wallet (it is in the first wallet's log). */
   | { kind: 'wallet-added'; name: string }
+  /** Several wallets: this phone removed a wallet (empty, retired on the guardian); it is in the first wallet's log. */
+  | { kind: 'wallet-removed'; name: string }
   /** The wallet moved to a new guardian. */
   | { kind: 'guardian-replaced'; host: GuardianHost; movedSats: Sats }
   /** A recovery finished: the guardian took over the new wallet and this phone switched to it. */
@@ -484,20 +486,40 @@ export interface ReplaceGuardianPlan {
   coins: number;
   feeSats: Sats;
   steps: { step: ReplaceStep; text: string }[];
+  /**
+   * Several wallets (docs/design/multi-wallet.md): every wallet moves with this one code, each with its own hardware
+   * wallet, the first wallet first. Absent with one wallet.
+   */
+  wallets?: { name: string; device: string; movingSats: Sats; coins: number }[];
+}
+
+/** One wallet's part of a move of several (`ReplaceGuardianResult`). */
+export interface WalletMoveResult {
+  name: string;
+  /** `waiting`: signed, nothing could send it yet; `failed`: it stopped (`error`) and waits where it was. */
+  status: 'done' | 'waiting' | 'failed';
+  error?: string;
 }
 
 export type ReplaceGuardianResult =
-  | { status: 'done'; movedSats: Sats; oldWalletRetired: boolean }
+  | { status: 'done'; movedSats: Sats; oldWalletRetired: boolean; wallets?: WalletMoveResult[] }
   /** Signed and kept, but nothing could send it to the network yet (the old guardian is offline). */
-  | { status: 'waiting'; movedSats: Sats };
+  | { status: 'waiting'; movedSats: Sats }
+  /** Several wallets: some moved, the others wait ("2 of 3 moved"). Run it again to go on. */
+  | { status: 'partial'; moved: number; total: number; wallets: WalletMoveResult[] };
 
 export interface ReplaceGuardianState {
   /** What the person was shown after scanning, until they confirm or leave. */
   plan: ReplaceGuardianPlan | null;
   /** The step running now. */
   step: ReplaceStep | null;
-  /** A move that started and has not finished: run it again to go on. */
-  pending: null | { guardianLabel?: string; signed: boolean; oldGuardianOffline: boolean };
+  /**
+   * A move that started and has not finished: run it again to go on. `wallets`: several wallets, the ones still to
+   * move (by name).
+   */
+  pending: null | { guardianLabel?: string; signed: boolean; oldGuardianOffline: boolean; wallets?: string[] };
+  /** Several wallets: the one moving now ("Business", 2 of 3) and the device it needs. */
+  moving?: { name: string; device: string; index: number; total: number } | null;
 }
 
 /** A wallet this phone moved away from with "Replace guardian". Coins sent to it later can still be moved. */
@@ -823,8 +845,10 @@ export interface WalletListItem {
   device: string;
   /** The wallet shown now. */
   current: boolean;
-  /** The last balance this phone knows (synced when shown). */
+  /** The last balance this phone knows (synced when shown, and in the background every 10 minutes). */
   balanceSats: Sats;
+  /** Its Savings' balance, when it has Savings. */
+  savingsSats?: Sats;
   dailyLimitSats: Sats;
   /** No daily limit (turned off with its hardware wallet). */
   limitOff?: true;
@@ -1032,6 +1056,8 @@ export interface SavingsMapData {
   /** Receive chain, index 0: to check an import against. */
   firstAddress: string;
   createdAt?: IsoDate;
+  /** Several wallets on the phone: the wallet this Savings belongs to ("Business"), named on the page. */
+  walletName?: string;
   /** Made-up data from the demo: the page says so. */
   demo?: true;
 }

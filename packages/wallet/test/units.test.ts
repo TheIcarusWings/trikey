@@ -34,7 +34,7 @@ import {
   selectCoins,
   spentTodayEstimate,
   verifyBip137Message,
-  type BackupPayload,
+  BackupPayload,
   type GuardianRpc,
 } from '../src/index.js';
 import { signMessage } from '../src/bip137.js';
@@ -124,6 +124,36 @@ describe('backup format', () => {
     const hb = new TextEncoder().encode(JSON.stringify(h));
     const heavy = new Uint8Array([...p.aad.slice(0, 5), 0, 0, (hb.length >> 8) & 0xff, hb.length & 0xff, ...hb, ...p.ciphertext]);
     expect(() => parseBackup(heavy)).toThrow(WalletError);
+  });
+});
+
+describe('backup payload versions with several wallets (golden)', () => {
+  const hw = {
+    kind: 'trezor' as const,
+    fingerprint: 'aabbccdd',
+    account: { fingerprint: 'aabbccdd', path: "m/48'/1'/0'/2'", xpub: `tpubD6NzVbkrYhZ4X${'a'.repeat(90)}` },
+    auth: { pubkey: `02${'11'.repeat(32)}`, path: "m/48'/1'/0'/2'/0/0" },
+    policyName: 'Trikey Business',
+    addressVerified: true,
+  };
+  const ownWallet = { account: 2, name: 'Business', descriptor: 'wsh(sortedmulti(2,A,B,C))', walletId: '0123456789abcdef', hardware: hw };
+  const dev = (fingerprint: string) => ({ kind: 'ledger' as const, fingerprint, account: { fingerprint, path: "m/48'/1'/1'/2'", xpub: `tpubD6NzVbkrYhZ4Y${'b'.repeat(90)}` }, policyName: 'Trikey savings', addressVerified: true });
+  const savings = { descriptor: 'wsh(sortedmulti(2,D,E,F))', walletId: 'fedcba9876543210', account: 3, createdAt: 1, nextReceiveIndex: 0, nextChangeIndex: 0, hardware: dev('aabbccdd'), recoveryKey: dev('11223344') };
+
+  it("a phase-1 version-4 payload (no wallet's Savings) still parses, unchanged", () => {
+    const p4 = { ...PAYLOAD, v: 4, wallets: [ownWallet] };
+    expect(BackupPayload.parse(p4)).toEqual(p4);
+  });
+
+  it("version 5 exactly when a wallet after the first has Savings, at its odd account", () => {
+    expect(BackupPayload.safeParse({ ...PAYLOAD, v: 5, wallets: [{ ...ownWallet, savings }] }).success).toBe(true);
+    // Savings of a second wallet in a version-4 payload: an app before phase 2 would drop it, so it is not one.
+    expect(BackupPayload.safeParse({ ...PAYLOAD, v: 4, wallets: [{ ...ownWallet, savings }] }).success).toBe(false);
+    expect(BackupPayload.safeParse({ ...PAYLOAD, v: 5, wallets: [ownWallet] }).success).toBe(false);
+    expect(BackupPayload.safeParse({ ...PAYLOAD, v: 5, wallets: [{ ...ownWallet, savings: { ...savings, account: 2 } }] }).success).toBe(false);
+    expect(BackupPayload.safeParse({ ...PAYLOAD, v: 5 }).success).toBe(false);
+    // A one-wallet backup stays version 1 (or 2 with Savings), as it always was.
+    expect(BackupPayload.parse(PAYLOAD)).toEqual(PAYLOAD);
   });
 });
 

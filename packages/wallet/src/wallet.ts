@@ -93,6 +93,7 @@ import {
   sealBackup,
   generateRecoveryCode,
   type Argon2Params,
+  type BackupOwnSavings,
   type BackupPayload,
   type SlotInput,
 } from './backup.js';
@@ -392,6 +393,8 @@ export interface GuardianPreview {
   descriptor: string;
   /** The pairing code expires at this time (unix seconds): pair before. */
   expiresAt: number;
+  /** What the guardian can do (`pair.prepare`'s features): several wallets move to it only with `own_wallets_2`. */
+  features?: string[];
 }
 
 export interface PairOutcome {
@@ -693,6 +696,11 @@ export const WALLET_ROUTED_METHODS: ReadonlySet<MethodName> = new Set<MethodName
   'wallet.sync',
   'tx.get',
   'tx.broadcast',
+  // Multi-wallet phase 2 (`own_wallets_2`): each wallet's Savings. Sent with `walletId` only to such a guardian
+  // (`savingsSupported`).
+  'savings.register',
+  'savings.unregister',
+  'savings.get',
 ]);
 
 /** Alerts whose `walletId` has a meaning of its own (the wallet retired, adopted, Savings, a hosted wallet). */
@@ -752,6 +760,46 @@ export interface OwnWalletSpec {
   sendLog?: SendLogEntry[];
   retiredWallets?: RetiredWallet[];
   addedAt?: number;
+  /** Its Savings (multi-wallet phase 2), at the wallet's odd account: backup version 5. */
+  savings?: BackupOwnSavings;
+}
+
+/**
+ * The BIP 48 account of a wallet's phone key (`m/48'/<coin>'/<account>'/2'`): an own wallet's even account (2 to 14),
+ * else 0 (every wallet before own wallets, and anything that does not parse).
+ */
+/** The account of a key 3 path (`m/48'/<coin>'/<account>'/2'`): an own wallet's even account, else 0. */
+function ownAccountOfKey3(path: string, network: Network): number {
+  const m = /^m\/48['h]\/(\d+)['h]\/(\d+)['h]\/2['h]$/.exec(path);
+  const a = m && Number(m[1]) === network.coinType ? Number(m[2]) : 0;
+  return a >= 2 && a <= 14 && a % 2 === 0 ? a : 0;
+}
+
+function phoneAccountOf(descriptor: string, network: Network): number {
+  try {
+    const m = /^48h\/(\d+)h\/(\d+)h\/2h$/.exec(MultisigWallet.fromDescriptor(descriptor, network).keys.app.originPath);
+    const a = m && Number(m[1]) === network.coinType ? Number(m[2]) : 0;
+    return a >= 2 && a <= 14 && a % 2 === 0 ? a : 0;
+  } catch {
+    return 0;
+  }
+}
+
+const HARDWARE_KINDS: readonly HardwareKind[] = ['ledger', 'trezor', 'coldcard', 'bitbox02', 'jade', 'qr'];
+const isHardwareKind = (k: unknown): k is HardwareKind => typeof k === 'string' && (HARDWARE_KINDS as readonly string[]).includes(k);
+
+/** A Savings record as a backup holds it (its account is set by the caller: 1 for the first wallet, 2n + 1 after). */
+function backupSavingsOf(sv: SavingsRecord): Omit<BackupOwnSavings, 'account'> {
+  return {
+    descriptor: sv.descriptor,
+    walletId: sv.walletId,
+    createdAt: Math.floor(sv.createdAt),
+    nextReceiveIndex: Math.max(sv.nextReceiveIndex, sv.chain?.nextReceiveIndex ?? 0),
+    nextChangeIndex: Math.max(sv.nextChangeIndex, sv.chain?.nextChangeIndex ?? 0),
+    hardware: sv.hardware,
+    recoveryKey: sv.recoveryKey,
+    ...(sv.sendLog.length ? { sendLog: sv.sendLog.slice(-MAX_SEND_LOG) } : {}),
+  };
 }
 
 /** `wallet_retired` in words for the person. */
@@ -1102,10 +1150,19 @@ export class TrikeyWallet {
     return this.s.stage;
   }
 
-  /** The wallet's BIP 48 account on this phone's seed: 0 for the first wallet, 2, 4, ... for the ones added. */
+  /**
+   * The wallet's BIP 48 account on this phone's seed: 0 for the first wallet, 2, 4, ... for the ones added. A phone's
+   * only wallet can sit at another account too: a new phone without a backup that recovered an added wallet keeps its
+   * account (multi-wallet phase 2); read from the phone key's path in the descriptor.
+   */
   get account(): number {
-    return this.s.own?.account ?? 0;
+    if (this.s.own) return this.s.own.account;
+    const d = this.s.wallet?.descriptor;
+    if (!d || this.s.guardian?.hosted) return 0;
+    if (this.accountCache?.descriptor !== d) this.accountCache = { descriptor: d, account: phoneAccountOf(d, this.network) };
+    return this.accountCache.account;
   }
+  private accountCache?: { descriptor: string; account: number };
 
   /** An own wallet the owner added after the first (docs/design/multi-wallet.md), with its name. */
   get ownWallet(): { account: number; name: string; addedAt: number } | undefined {
@@ -1277,7 +1334,7 @@ export class TrikeyWallet {
    * A client for the guardian `peer`. Its alerts drive the wallet (`onAlert`), except on `routeAlerts: false`
    * connections to an old guardian, whose alerts are about a wallet the phone has left.
    */
-  private async connect(peer: string, relays: string[], how: { routeAlerts?: boolean } = {}): Promise<{ rpc: GuardianRpc; pool: RelayPool }> {
+  private async connect(peer: string, relays: string[], how: { routeAlerts?: boolean; walletId?: () => string | undefined } = {}): Promise<{ rpc: GuardianRpc; pool: RelayPool }> {
     const pool = this.deps.relayPool();
     const secretKey = await this.nostrSecret();
     await this.seenWraps.load(); // before subscribing: what was handled before is skipped without any crypto
@@ -1292,8 +1349,9 @@ export class TrikeyWallet {
       seenWraps: this.seenWraps,
     };
     const raw = this.deps.createRpc ? this.deps.createRpc(opts) : new RpcClient(opts);
-    // An own wallet after the first names itself in every request that acts on a wallet (`walletId`).
-    const rpc = this.s.own ? onWallet(raw, () => this.s.wallet?.walletId) : raw;
+    // An own wallet after the first names itself in every request that acts on a wallet (`walletId`): the wallet it is
+    // now, or the one `how.walletId` names (its new wallet on a new guardian, its old one on the old guardian).
+    const rpc = this.s.own ? onWallet(raw, how.walletId ?? (() => this.s.wallet?.walletId)) : raw;
     // The client keeps the key for as long as it runs; it is not zeroed here.
     if (how.routeAlerts !== false) {
       rpc.onAlert((alert, meta) => void this.onAlert(alert, meta, peer));
@@ -1633,6 +1691,7 @@ export class TrikeyWallet {
       walletId: wallet.fingerprint(),
       descriptor: wallet.descriptor(),
       expiresAt: payload.expiresAt,
+      features: [...session.features],
     };
   }
 
@@ -1891,6 +1950,8 @@ export class TrikeyWallet {
         hardwareAuthProof: proof,
         rules,
         ...(opts.firstName ? { firstName: opts.firstName.slice(0, 16) } : {}),
+        // A guardian with phase 2 keeps the device's kind, so a phone rebuilding this wallet connects the right one.
+        ...(this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.ownWallets2) ? { hardwareKind: rec.kind } : {}),
       });
       if (res.walletId !== walletId || res.descriptor !== descriptor || res.guardianKey.xpub !== prep.guardianKey.xpub)
         throw new WalletError('guardian_mismatch', 'The guardian registered a different wallet than the phone built.');
@@ -1949,18 +2010,15 @@ export class TrikeyWallet {
   async restoreOwnWallet(spec: OwnWalletSpec, storageKey: string, mnemonic?: string): Promise<TrikeyWallet | undefined> {
     if (this.s.own || !this.s.guardian || this.s.guardian.hosted) throw new WalletError('wrong_state', 'Restore wallets from your first wallet.');
     if ((await this.deps.store.get(storageKey)) !== null) return undefined;
-    const key2 =
-      mnemonic !== undefined
-        ? (() => {
-            const k = deriveKey2(mnemonic, this.network, spec.account);
-            k.nostr.secretKey.fill(0);
-            return k.account;
-          })()
-        : await this.withKey2('Restore your other wallets', async (m) => {
-            const k = deriveKey2(m, this.network, spec.account);
-            k.nostr.secretKey.fill(0);
-            return k.account;
-          });
+    // Key 2 at the wallet's account, and at its Savings' (2n + 1) when it has Savings: from the mnemonic in hand, or behind
+    // one biometric prompt.
+    const keysOf = (m: string) => {
+      const k = deriveKey2(m, this.network, spec.account);
+      k.nostr.secretKey.fill(0);
+      const savingsKey = spec.savings ? keyExpressionFromMaster(HDKey.fromMasterSeed(mnemonicToSeedSync(m), this.network.bip32), bip48Path(this.network, spec.account + 1)) : undefined;
+      return { key2: k.account, savingsKey };
+    };
+    const { key2, savingsKey } = mnemonic !== undefined ? keysOf(mnemonic) : await this.withKey2('Restore your other wallets', async (m) => keysOf(m));
     const bad = () => new WalletError('backup_invalid', `The wallet "${spec.name}" does not belong to this phone's key.`);
     let w: MultisigWallet;
     try {
@@ -1972,6 +2030,39 @@ export class TrikeyWallet {
     if (!sameKey(w.keys.app, key2) || !sameKey(w.keys.hardware, keyExpressionOf(spec.hardware.account))) throw bad();
     const k3 = w.keys.cosigner;
     if (k3.fingerprint !== this.s.guardian.key.fingerprint || k3.originPath !== bip48Path(this.network, spec.account).replace(/^m\//, '').replace(/'/g, 'h')) throw bad();
+    let savings: SavingsRecord | undefined;
+    if (spec.savings) {
+      // Its Savings: the phone's key at the wallet's odd account, its hardware wallet's at 1', a Recovery Key of its own.
+      const sp = spec.savings;
+      let sw: MultisigWallet;
+      try {
+        sw = MultisigWallet.fromDescriptor(sp.descriptor, this.network);
+      } catch (e) {
+        throw new WalletError('backup_invalid', 'A wallet holds an invalid Savings descriptor.', { cause: e });
+      }
+      const ok =
+        sp.account === spec.account + 1 &&
+        sw.fingerprint() === sp.walletId &&
+        !!savingsKey &&
+        sameKey(sw.keys.app, savingsKey) &&
+        sameKey(sw.keys.hardware, keyExpressionOf(sp.hardware.account)) &&
+        sameKey(sw.keys.cosigner, keyExpressionOf(sp.recoveryKey.account)) &&
+        sp.hardware.fingerprint === spec.hardware.fingerprint &&
+        sp.recoveryKey.fingerprint !== sp.hardware.fingerprint;
+      if (!ok) throw new WalletError('backup_invalid', `The Savings of "${spec.name}" does not belong to this phone's key and that wallet's hardware wallet.`);
+      savings = {
+        descriptor: sp.descriptor,
+        walletId: sp.walletId,
+        createdAt: sp.createdAt,
+        phone: keyOriginOf(sw.keys.app),
+        hardware: sp.hardware,
+        recoveryKey: sp.recoveryKey,
+        nextReceiveIndex: sp.nextReceiveIndex,
+        nextChangeIndex: sp.nextChangeIndex,
+        sendLog: sp.sendLog ?? [],
+        previous: [],
+      };
+    }
     const now = this.now();
     const first = this.s;
     const state: WalletState = {
@@ -1988,6 +2079,7 @@ export class TrikeyWallet {
       wallet: { descriptor: w.descriptor(), walletId: spec.walletId, pairedAt: now },
       ...(spec.rules ? { rules: { policy: spec.rules, policyHash: policyHash(spec.rules), nextHardwareSequence: spec.nextHardwareSequence ?? 1, fetchedAt: 0 } } : {}),
       own: { account: spec.account, name: spec.name, addedAt: spec.addedAt ?? now },
+      ...(savings ? { savings } : {}),
       spends: [],
       contactNames: { ...first.contactNames },
       seenAlerts: [],
@@ -2014,6 +2106,7 @@ export class TrikeyWallet {
       ...(s.sendLog.length ? { sendLog: s.sendLog.slice(-MAX_SEND_LOG) } : {}),
       ...(s.retiredWallets.length ? { retiredWallets: s.retiredWallets } : {}),
       addedAt: Math.floor(s.own.addedAt),
+      ...(s.savings ? { savings: { ...backupSavingsOf(s.savings), account: this.savingsAccount } } : {}),
     };
   }
 
@@ -3895,7 +3988,20 @@ export class TrikeyWallet {
         refusal: { kind: 'recovery_in_progress', recoveryId: access.activeRecoveryId, message: 'A recovery is already running.' },
       });
 
-      const destination = new MultisigWallet(this.network, { app: keyExpressionOf(this.s.key2), hardware: old.keys.hardware, cosigner: old.keys.cosigner });
+      // The new wallet keeps the old one's account: an added wallet's phone key and key 3 sit at its own account (2n'),
+      // not at 0', or the new wallet would share keys with the phone's first wallet and link them on chain.
+      const account = ownAccountOfKey3(access.guardianKey.path, this.network);
+      const app =
+        account === 0
+          ? keyExpressionOf(this.s.key2)
+          : await this.withKey2('Recover your wallet', async (m) => {
+              const k = deriveKey2(m, this.network, account);
+              k.nostr.secretKey.fill(0);
+              return k.account;
+            });
+      // This phone's key for the wallet is the one at that account (as an added wallet's state keeps it).
+      if (account !== 0) await this.update((s) => void (s.key2 = keyOriginOf(app)));
+      const destination = new MultisigWallet(this.network, { app, hardware: old.keys.hardware, cosigner: old.keys.cosigner });
       const sweep = await this.buildSweepPsbt(destination, access.policy.sweepFeeCapSats);
       this.emit({ type: 'hardware_prompt', purpose: 'recovery-sweep', text: `Move every coin of the wallet to the new wallet ${destination.fingerprint()}` });
       const signed = await this.hardwareSignPsbt(hw, sweep, old, this.devicePolicy(hwRec, access.descriptor));
@@ -4006,6 +4112,8 @@ export class TrikeyWallet {
       // An added wallet: its own alerts name it; the box's name none.
       if (!id) return BOX_ALERTS.has(alert.type) ? undefined : 'first';
       if (id === mine || prev === mine) return undefined;
+      // Its own Savings' alerts name the Savings wallet (multi-wallet phase 2).
+      if (this.s.savings && id === this.s.savings.walletId && (alert.type === 'savings_moved' || alert.type === 'savings_unwatched')) return undefined;
       return id;
     }
     // The first wallet: everything as before, except what names another wallet of this phone.
@@ -5819,6 +5927,11 @@ export class TrikeyWallet {
     };
   }
 
+  /** A new guardian's pairing code was read for "Replace guardian" (`previewReplaceGuardian`) and not used yet. */
+  get replaceSessionOpen(): boolean {
+    return this.pairing?.purpose === 'replace';
+  }
+
   private dropPairing(): void {
     this.pairing?.rpc.close();
     this.pairing?.pool.close();
@@ -5925,10 +6038,147 @@ export class TrikeyWallet {
     });
   }
 
-  /** The new guardian's connection (reconnects after an app restart). */
+  /**
+   * The new guardian's connection (reconnects after an app restart). An own wallet names its new wallet there, and keeps
+   * doing so once it switched (the connection becomes its guardian connection).
+   */
   private async replacementRpc(r: ReplaceRecord): Promise<GuardianRpc> {
-    if (!this.replaceRpc) this.replaceRpc = await this.connect(r.guardian.pubkey, r.guardian.relays);
+    if (!this.replaceRpc) this.replaceRpc = await this.connect(r.guardian.pubkey, r.guardian.relays, this.replacementNaming(r.guardian.pubkey));
     return this.replaceRpc.rpc;
+  }
+
+  /**
+   * How an own wallet's connection to the new guardian `peer` names it: its new wallet there while it moves, its wallet
+   * once it switched (the connection becomes its guardian connection), nothing before the new guardian holds it.
+   */
+  private replacementNaming(peer: string): { walletId?: () => string | undefined } {
+    return this.s.own ? { walletId: () => this.s.replacing?.wallet.walletId ?? (this.s.guardian?.pubkey === peer ? this.s.wallet?.walletId : undefined) } : {};
+  }
+
+  /**
+   * "Replace guardian" for a wallet added after the first (multi-wallet phase 2; `WalletSet.replaceGuardian` runs it for
+   * each one once the first wallet is paired with the new guardian). No pairing code: the new guardian already knows this
+   * phone (the first wallet's pairing), so the wallet is added there at its own account (`wallet.add`, naming the wallet
+   * it replaces), with its own hardware wallet; then, as for the first wallet, the sweep of every coin (signed by the
+   * phone and this wallet's device), the broadcast, the retire on the old guardian and the switch.
+   *
+   * `target` is the new guardian as the first wallet records it. Every step is persisted: call again to resume (an
+   * `awaiting_broadcast` move, an app restart). Refused while this wallet's recovery runs, and when the old guardian does
+   * not answer unless the person confirmed it is gone (`oldGuardianReachable: false`).
+   */
+  async moveToGuardian(target: GuardianRecord, opts: { oldGuardianReachable?: false } = {}): Promise<ReplaceOutcome> {
+    this.requirePaired();
+    if (!this.s.own) throw new WalletError('wrong_state', 'The first wallet moves with the new guardian\'s pairing code ("Replace guardian").');
+    if (target.hosted) throw new WalletError('wrong_state', 'Wallets move to a guardian of your own, not to a hosted slot.');
+    return this.holdingHardwareIf(async () => {
+      if (!this.s.replacing) {
+        if (this.s.guardian?.pubkey === target.pubkey) throw new WalletError('wrong_state', 'This wallet is already on that guardian.');
+        if (this.hardwareConfirmRequired) throw new WalletError('hardware_unconfirmed', 'Confirm the recovered wallet on your hardware wallet first.');
+        const st = await this.probeGuardian();
+        if (st) {
+          await this.storeStatus(st);
+          if (st.activeRecoveryId)
+            throw new WalletError('guardian_refused', 'A recovery is running on this wallet. Cancel it or let it finish before you move it.', {
+              refusal: { kind: 'recovery_in_progress', recoveryId: st.activeRecoveryId, message: 'A recovery is running.' },
+            });
+          await this.sync().catch(() => undefined);
+        } else if (opts.oldGuardianReachable !== false)
+          throw new WalletError('old_guardian_unreachable', "Your old guardian isn't answering. If it is gone for good, confirm, and the move goes ahead without it.", {
+            refusal: { kind: 'unreachable', message: 'The old guardian did not answer.' },
+          });
+        await this.addAtNewGuardian(target, !st);
+      }
+      return this.continueReplace();
+    });
+  }
+
+  /** `moveToGuardian`'s first step: the wallet at its own account on the new guardian, naming the one it replaces. */
+  private async addAtNewGuardian(target: GuardianRecord, oldOffline: boolean): Promise<void> {
+    const own = this.s.own!;
+    const conn = await this.connect(target.pubkey, target.relays, this.replacementNaming(target.pubkey));
+    let keep = false;
+    try {
+      let st: Result<'guardian.status'>;
+      let prep: Result<'wallet.add.prepare'>;
+      try {
+        st = await conn.rpc.call('guardian.status', {}, { timeoutMs: this.deps.probeTimeoutMs ?? Math.min(10_000, this.deps.rpcTimeoutMs ?? 30_000) });
+        // Watching the old wallet (`replacesDescriptor`) needs phase 2; an older guardian could not relay the sweep.
+        if (!st.features?.includes(GUARDIAN_FEATURES.ownWallets2)) throw new WalletError('guardian_unsupported', 'Update your new guardian: it cannot take more than one wallet yet.');
+        prep = await conn.rpc.call('wallet.add.prepare', { account: own.account });
+      } catch (e) {
+        throw asWalletError(e, 'wallet.add.prepare');
+      }
+      const expectedPath = bip48Path(this.network, own.account);
+      if (prep.account !== own.account || prep.guardianKey.path.replace(/h/g, "'") !== expectedPath)
+        throw new WalletError('guardian_mismatch', `The new guardian's key is at ${prep.guardianKey.path}, expected ${expectedPath}.`);
+      // The same key 3 seed as the first wallet's on the new guardian.
+      if (prep.guardianKey.fingerprint !== target.key.fingerprint) throw new WalletError('guardian_mismatch', "The new guardian's key for this wallet is not from the same seed as your first wallet's.");
+      let cosigner: KeyExpression;
+      try {
+        cosigner = keyExpressionOf(prep.guardianKey);
+        HDKey.fromExtendedKey(cosigner.xpub, this.network.bip32);
+      } catch (e) {
+        throw new WalletError('guardian_mismatch', 'The new guardian sent a key for another network.', { cause: e });
+      }
+      const old = this.multisig();
+      if (sameKey(cosigner, old.keys.cosigner)) throw new WalletError('guardian_mismatch', 'That is the guardian this wallet already has.');
+      // The same phone key (this wallet's account) and hardware wallet; the new guardian's key.
+      const wallet = new MultisigWallet(this.network, { app: old.keys.app, hardware: old.keys.hardware, cosigner });
+      const walletId = wallet.fingerprint();
+      const descriptor = wallet.descriptor();
+      const name = policyNameOf(walletId);
+      const current = normalizePolicy(this.s.rules!.policy);
+      const limited = isLimitOff(current.dailyLimitSats) ? { ...current, dailyLimitSats: this.s.guardianStatus?.dailyLimit?.limitBeforeOffSats ?? 0 } : current;
+      const rules = isContactLockOn(limited) && !st.features?.includes(GUARDIAN_FEATURES.contactLock) ? normalizePolicy({ ...limited, contactLock: false }) : limited;
+      this.emitStep('pair');
+      const { proof, hmac } = await this.withHardware(async (hw, rec) => {
+        const reg = await hw.registerWallet({ name, descriptor });
+        const first = wallet.derive(0, 0).address;
+        const shown = await hw.displayAddress({ name, descriptor, ...(reg.hmac ? { registration: { hmac: reg.hmac } } : {}) }, 0, 0);
+        if (shown !== first) throw new WalletError('address_mismatch', `The hardware wallet shows ${shown}, but the new wallet's first address is ${first}. Nothing was moved.`);
+        const proof = await this.signWithAuthKey(hw, rec, pairingMessage(walletId, hex.encode(wallet.accountPubkeys().cosigner)), 'pairing');
+        return { proof, hmac: reg.hmac };
+      });
+      let res: Result<'wallet.add'>;
+      try {
+        res = await conn.rpc.call('wallet.add', {
+          account: own.account,
+          name: own.name,
+          descriptor,
+          hardwareAuth: this.s.hardware!.auth,
+          hardwareAuthProof: proof,
+          rules,
+          hardwareKind: this.s.hardware!.kind,
+          replacesWalletId: this.s.wallet!.walletId,
+          replacesDescriptor: this.s.wallet!.descriptor,
+        });
+      } catch (e) {
+        throw asWalletError(e, 'wallet.add');
+      }
+      if (res.walletId !== walletId || res.descriptor !== descriptor || res.guardianKey.xpub !== prep.guardianKey.xpub)
+        throw new WalletError('guardian_mismatch', 'The new guardian registered a different wallet than the phone built.');
+      // The new guardian holds the new wallet: persist before anything else can fail.
+      this.replaceRpc?.rpc.close();
+      this.replaceRpc?.pool.close();
+      this.replaceRpc = conn;
+      keep = true;
+      await this.update((s) => {
+        s.replacing = {
+          startedAt: this.now(),
+          phase: 'paired',
+          guardian: { pubkey: target.pubkey, relays: target.relays, ...(target.label ? { label: target.label } : {}), key: prep.guardianKey, ...(st.version ? { version: st.version } : {}), ...(target.key3Mixed ? { key3Mixed: true } : {}) },
+          wallet: { descriptor, walletId },
+          devicePolicy: { name, ...(hmac ? { registrationHmac: hmac } : {}) },
+          rules: { policy: rules, policyHash: policyHash(rules), nextHardwareSequence: 1 },
+          oldGuardianOffline: oldOffline,
+        };
+      });
+    } finally {
+      if (!keep) {
+        conn.rpc.close();
+        conn.pool.close();
+      }
+    }
   }
 
   private async continueReplace(): Promise<ReplaceOutcome> {
@@ -6152,7 +6402,8 @@ export class TrikeyWallet {
       }
     }
     if (!w.retiredOnGuardian) {
-      const conn = await this.connect(w.guardian.pubkey, w.guardian.relays, { routeAlerts: false });
+      // An added wallet names its old wallet there (`walletId`).
+      const conn = await this.connect(w.guardian.pubkey, w.guardian.relays, { routeAlerts: false, walletId: () => w.walletId });
       const st = await this.probeGuardian(conn.rpc).catch(() => undefined);
       if (st && (!st.walletId || st.walletId === w.walletId))
         return { source: new GuardianChainSource(() => conn.rpc, { syncTimeoutMs: () => this.syncTimeoutMs }), close: () => (conn.rpc.close(), conn.pool.close()), via: 'old-guardian' };
@@ -6254,7 +6505,7 @@ export class TrikeyWallet {
   async retireOldWallet(walletId?: string): Promise<{ walletId: string; retiredAt: number }> {
     const w = this.s.retiredWallets.find((x) => !x.retiredOnGuardian && (!walletId || x.walletId === walletId));
     if (!w) throw new WalletError('wrong_state', 'No old wallet is waiting to be retired on its old guardian.');
-    const conn = await this.connect(w.guardian.pubkey, w.guardian.relays, { routeAlerts: false });
+    const conn = await this.connect(w.guardian.pubkey, w.guardian.relays, { routeAlerts: false, walletId: () => w.walletId });
     try {
       const st = await this.probeGuardian(conn.rpc);
       if (!st) throw new WalletError('guardian_refused', "Your old guardian isn't answering.", { refusal: { kind: 'unreachable', message: 'The old guardian did not answer.' } });
@@ -6269,8 +6520,9 @@ export class TrikeyWallet {
           throw asWalletError(e, 'wallet.retire');
         }
       };
-      // The old guardian may still hold the scan key from before the move: take it back, then retire.
-      await conn.rpc.call('sp.unregister', {}, { timeoutMs: REGISTRATION_TIMEOUT_MS }).catch(() => undefined);
+      // The old guardian may still hold the scan key from before the move: take it back, then retire. (Silent payments are
+      // the first wallet's: an added wallet's request would reach the first wallet's scanner.)
+      if (!this.s.own) await conn.rpc.call('sp.unregister', {}, { timeoutMs: REGISTRATION_TIMEOUT_MS }).catch(() => undefined);
       const res = await call(await this.approve({ action: 'retire-wallet' }, { walletId: w.walletId, sequence: st.nextHardwareSequence }));
       if (res.walletId !== w.walletId) throw new WalletError('guardian_mismatch', 'The guardian retired another wallet.');
       await this.update((s) => void (s.retiredWallets = s.retiredWallets.map((x) => (x.walletId === w.walletId ? { ...x, retiredOnGuardian: true } : x))));
@@ -6292,10 +6544,24 @@ export class TrikeyWallet {
 
   /** The guardian can watch a Savings wallet (`savings` in `guardian.status.features`, as last read). */
   get savingsSupported(): boolean {
-    // Own wallets after the first get Savings in a later phase (docs/design/multi-wallet.md, section 9).
-    if (this.s.own) return false;
-    return !!this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.savings);
+    const features = this.s.guardianStatus?.features ?? [];
+    // An own wallet after the first: a guardian that watches each wallet's Savings (`own_wallets_2`, phase 2 of
+    // docs/design/multi-wallet.md); an older one would refuse the `walletId`, never watch another wallet's instead.
+    if (this.s.own && !features.includes(GUARDIAN_FEATURES.ownWallets2)) return false;
+    return features.includes(GUARDIAN_FEATURES.savings);
   }
+
+  /**
+   * The BIP 48 account of Savings' phone key on this phone's seed: 1' for the first wallet, the wallet's odd account
+   * (2n + 1) for the n-th added, so no two wallets' Savings share a phone key. The hardware wallet and the Recovery Key
+   * keep their own 1'.
+   */
+  get savingsAccount(): number {
+    return this.account + 1;
+  }
+
+  /** Master fingerprints of the devices in this phone's other wallets (`WalletSet`): never a Savings Recovery Key here. */
+  otherDevices: () => string[] = () => [];
 
   /** The Savings wallet, as `MultisigWallet` (keys in phone, hardware, Recovery Key order). */
   savingsWallet(): MultisigWallet | undefined {
@@ -6360,7 +6626,7 @@ export class TrikeyWallet {
     if (!this.savingsSupported) throw new WalletError('guardian_unsupported', 'Your guardian cannot watch a Savings wallet yet. Update the guardian app on your home server first.');
     if (!this.s.hardware) throw new WalletError('wrong_state', 'No hardware wallet is set up.');
     if (this.s.hardwareConfirm) throw new WalletError('hardware_unconfirmed', 'Confirm the new wallet on your hardware wallet first.');
-    const path = bip48Path(this.network, SAVINGS_ACCOUNT);
+    const path = bip48Path(this.network, this.savingsAccount);
     const phone = await this.withKey2('Set up Savings', async (m) => keyOriginOf(keyExpressionFromMaster(HDKey.fromMasterSeed(mnemonicToSeedSync(m), this.network.bip32), path)));
     this.savingsDraft = { phone };
     return this.draftView();
@@ -6388,6 +6654,9 @@ export class TrikeyWallet {
     try {
       if (hw.info.fingerprint === this.s.hardware!.fingerprint)
         throw new WalletError('hardware_mismatch', 'This is your hardware wallet. The Recovery Key must be a second hardware wallet, with its own seed words.');
+      // Several wallets: a device already in another wallet of this phone would hold a key in two wallets.
+      if (this.otherDevices().includes(hw.info.fingerprint))
+        throw new WalletError('hardware_in_use', 'This hardware wallet is already in another wallet on this phone. The Recovery Key must be a device of its own.');
       if (!/^[0-9a-f]{8}$/.test(hw.info.fingerprint)) throw new WalletError('hardware_invalid_response', 'The hardware wallet reported an invalid fingerprint.');
       const account = await this.readSavingsKey(hw);
       if (account.xpub === d.phone.xpub || account.xpub === d.hardware.account.xpub) throw new WalletError('hardware_invalid_response', 'The second hardware wallet returned a key Savings already has.');
@@ -6875,7 +7144,7 @@ export class TrikeyWallet {
     if (opts.lost !== 'phone' && !this.s.savings) throw new WalletError('no_savings', 'This wallet has no Savings.');
     const old = await this.oldSavingsFor(opts);
     const oldWallet = MultisigWallet.fromDescriptor(old.descriptor, this.network);
-    const path = bip48Path(this.network, SAVINGS_ACCOUNT);
+    const path = bip48Path(this.network, this.savingsAccount);
 
     // The keys of the new Savings: the two that survive, and the replacement.
     let phone = old.phone;
@@ -6906,6 +7175,8 @@ export class TrikeyWallet {
       try {
         if (hw.info.fingerprint === hardware.fingerprint || hw.info.fingerprint === old.recoveryKey.fingerprint)
           throw new WalletError('hardware_mismatch', 'Connect a new second hardware wallet: not your hardware wallet, not the Recovery Key that was lost.');
+        if (this.otherDevices().includes(hw.info.fingerprint))
+          throw new WalletError('hardware_in_use', 'This hardware wallet is already in another wallet on this phone. The Recovery Key must be a device of its own.');
         const account = await this.readSavingsKey(hw);
         const draft: SavingsDevice = { kind: hw.info.kind, ...(hw.info.model ? { model: hw.info.model } : {}), fingerprint: hw.info.fingerprint, account, policyName: SAVINGS_POLICY_NAME, addressVerified: false };
         newRk = await this.registerSavingsOn(hw, draft, draftWallet(this.network, phone, hardware, draft));
@@ -7054,9 +7325,9 @@ export class TrikeyWallet {
       const s = this.s;
       const sv = s.savings;
       const payload: BackupPayload = {
-        // Version 2 only with Savings, 3 only for a hosted wallet, 4 only with more than one wallet: everyone else's backup
-        // is byte for byte the format it always was.
-        v: opts.ownWallets?.length ? 4 : s.guardian?.hosted ? 3 : sv ? 2 : 1,
+        // Version 2 only with Savings, 3 only for a hosted wallet, 4 only with more than one wallet (5 when a wallet after
+        // the first has Savings): everyone else's backup is byte for byte the format it always was.
+        v: opts.ownWallets?.length ? (opts.ownWallets.some((w) => w.savings) ? 5 : 4) : s.guardian?.hosted ? 3 : sv ? 2 : 1,
         network: this.network.name,
         createdAt: this.nowSec(),
         mnemonic,
@@ -7073,21 +7344,7 @@ export class TrikeyWallet {
         ...(s.retiredWallets.length ? { retiredWallets: s.retiredWallets } : {}),
         ...(s.helper ? { helper: { nextReceiveIndex: s.helper.nextReceiveIndex, nextChangeIndex: s.helper.nextChangeIndex } } : {}),
         ...(s.silentPayments ? { silentPayments: { birthHeight: s.silentPayments.birthHeight, labels: s.silentPayments.labels } } : {}),
-        ...(sv
-          ? {
-              savings: {
-                descriptor: sv.descriptor,
-                walletId: sv.walletId,
-                account: SAVINGS_ACCOUNT as 1,
-                createdAt: Math.floor(sv.createdAt),
-                nextReceiveIndex: Math.max(sv.nextReceiveIndex, sv.chain?.nextReceiveIndex ?? 0),
-                nextChangeIndex: Math.max(sv.nextChangeIndex, sv.chain?.nextChangeIndex ?? 0),
-                hardware: sv.hardware,
-                recoveryKey: sv.recoveryKey,
-                ...(sv.sendLog.length ? { sendLog: sv.sendLog.slice(-MAX_SEND_LOG) } : {}),
-              },
-            }
-          : {}),
+        ...(sv ? { savings: { ...backupSavingsOf(sv), account: SAVINGS_ACCOUNT as 1 } } : {}),
         ...(opts.ownWallets?.length ? { wallets: opts.ownWallets.map((w) => ({ ...w })) } : {}),
       };
       return sealBackup(payload, slots, { now: this.now() });
@@ -7196,6 +7453,13 @@ export class TrikeyWallet {
       throw new WalletError('backup_invalid', 'The backup holds an invalid phone key.', { cause: e });
     }
     const recovering = p.stage === 'recovering';
+    /** Key 2's account the wallet sits at: 0, or an added wallet's own for a phone that recovered it without a backup. */
+    let holderAccount = 0;
+    const accountKey = (mnemonic: string, account: number) => {
+      const k = deriveKey2(mnemonic, network, account);
+      k.nostr.secretKey.fill(0);
+      return k.account;
+    };
     const parse = (descriptor: string) => {
       try {
         return MultisigWallet.fromDescriptor(descriptor, network);
@@ -7205,9 +7469,12 @@ export class TrikeyWallet {
     };
     if (p.wallet) {
       const w = parse(p.wallet.descriptor);
-      // Key 2 is the wallet's phone key; a recovering phone's key 2 is the destination's instead.
+      // Key 2 is the wallet's phone key; a recovering phone's key 2 is the destination's instead. At account 0, or at an
+      // added wallet's own account for a phone whose only wallet is one it recovered without a backup.
       const keyHolder = recovering && p.recoveryDestination ? parse(p.recoveryDestination.descriptor) : w;
-      if ((p.guardian?.hosted ? keySetId(w.accountPubkeys()) : w.fingerprint()) !== p.wallet.walletId || !sameKey(keyHolder.keys.app, key2.account) || !p.guardian || !p.hardware)
+      holderAccount = p.guardian?.hosted ? 0 : phoneAccountOf(keyHolder.descriptor(), network);
+      const phoneKey = holderAccount === 0 ? key2.account : accountKey(p.mnemonic, holderAccount);
+      if ((p.guardian?.hosted ? keySetId(w.accountPubkeys()) : w.fingerprint()) !== p.wallet.walletId || !sameKey(keyHolder.keys.app, phoneKey) || !p.guardian || !p.hardware)
         throw new WalletError('backup_invalid', 'The backup does not hold a consistent wallet.');
       const cosignerOk = p.guardian.hosted ? hex.encode(w.accountPubkeys().cosigner) === p.guardian.hosted.cosignerAccountPubkey : sameKey(w.keys.cosigner, keyExpressionOf(p.guardian.key));
       if (!sameKey(w.keys.hardware, keyExpressionOf(p.hardware.account)) || !cosignerOk)
@@ -7217,7 +7484,8 @@ export class TrikeyWallet {
       // Savings' phone key is key 2's seed at account 1', its hardware key the same device's, and its Recovery Key another
       // device: anything else is not this wallet's Savings.
       const sv = parse(p.savings.descriptor);
-      const phoneKey = keyExpressionFromMaster(HDKey.fromMasterSeed(mnemonicToSeedSync(p.mnemonic), network.bip32), bip48Path(network, SAVINGS_ACCOUNT));
+      const spendingAccount = p.wallet && !p.guardian?.hosted ? phoneAccountOf(p.wallet.descriptor, network) : 0;
+      const phoneKey = keyExpressionFromMaster(HDKey.fromMasterSeed(mnemonicToSeedSync(p.mnemonic), network.bip32), bip48Path(network, spendingAccount + SAVINGS_ACCOUNT));
       const ok =
         sv.fingerprint() === p.savings.walletId &&
         sameKey(sv.keys.app, phoneKey) &&
@@ -7231,6 +7499,7 @@ export class TrikeyWallet {
     const wallet = await TrikeyWallet.create(deps, { mnemonic: p.mnemonic, deviceName: p.deviceName });
     key2.nostr.secretKey.fill(0);
     try {
+      if (holderAccount !== 0) await wallet.update((s) => void (s.key2 = keyOriginOf(accountKey(p.mnemonic, holderAccount))));
       await wallet.restoreState(p, name, opened.header, cloud.provider, recovering);
     } catch (e) {
       // Leave nothing half-restored behind: the user can simply try again.
@@ -7296,8 +7565,9 @@ export class TrikeyWallet {
         descriptor: mw.descriptor(),
         walletId: w.walletId,
         hardware: {
-          // The kind is not on the guardian: the first wallet's is the best guess; the app asks again when it differs.
-          kind: hw?.kind ?? 'trezor',
+          // The kind the guardian kept at `wallet.add` (`own_wallets_2`); for an older entry the first wallet's is the best
+          // guess, and the app asks again when it differs.
+          kind: isHardwareKind(w.hardwareKind) ? w.hardwareKind : (hw?.kind ?? 'trezor'),
           fingerprint: k.fingerprint,
           account: keyOriginOf(k),
           auth: { pubkey: w.hardwareAuth.pubkey, path: w.hardwareAuth.path },

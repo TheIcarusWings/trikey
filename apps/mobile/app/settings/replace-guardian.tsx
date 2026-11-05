@@ -9,13 +9,26 @@ import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
 import { Switch } from '@/components/ui/switch';
 import { Text } from '@/components/ui/text';
-import { WalletServiceError, formatSats, useWallet, useWalletService, type ReplaceGuardianResult, type ReplaceStep } from '@/data';
+import { WalletServiceError, formatSats, movedText, useWallet, useWalletService, type ReplaceGuardianResult, type ReplaceStep, type WalletMoveResult } from '@/data';
 import { guardianBox, hostLabel } from '@/lib/labels';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
 
 const ORDER: ReplaceStep[] = ['pair', 'sign', 'broadcast', 'retire', 'switch'];
+
+const MOVE_STATUS: Record<WalletMoveResult['status'], string> = { done: 'Moved', waiting: 'Signed, waiting to be sent', failed: 'Not moved yet' };
+
+/** Several wallets: each wallet and how its move went. */
+function MovesPanel({ wallets }: { wallets: WalletMoveResult[] }) {
+  return (
+    <Panel>
+      {wallets.map((w) => (
+        <InfoRow key={w.name} plainLabel label={w.name} value={MOVE_STATUS[w.status]} tone={w.status === 'done' ? 'good' : 'warn'} />
+      ))}
+    </Panel>
+  );
+}
 
 /** One numbered step: a number before it starts, a spinner-free "now" while it runs, a check once done. */
 function Step({ n, title, detail, state }: { n: number; title: string; detail?: string; state: 'todo' | 'now' | 'done' }) {
@@ -85,9 +98,38 @@ export default function ReplaceGuardian() {
           <InfoRow plainLabel label="New guardian" value={guardianBox(guardian)} tone="good" />
           <InfoRow plainLabel label="Old wallet" value={result.oldWalletRetired ? 'Retired on the old guardian' : 'Not retired yet'} tone={result.oldWalletRetired ? 'muted' : 'warn'} />
         </Panel>
+        {result.wallets && result.wallets.length > 1 ? <MovesPanel wallets={result.wallets} /> : null}
         {result.oldWalletRetired ? null : (
           <Footnote>Your old guardian was offline, so it still knows the old wallet. Its key alone can't move anything. When it is back, retire the old wallet from Settings, Guardian.</Footnote>
         )}
+      </Screen>
+    );
+  }
+
+  // -- several wallets: some moved, the others wait ------------------------
+  if (result?.status === 'partial' && !busy) {
+    const failed = result.wallets.filter((w) => w.status === 'failed');
+    return (
+      <Screen
+        title="Moving your wallets"
+        backLabel="Guardian"
+        footer={
+          <>
+            <ActionNotice message={message} error={error} />
+            <AppButton title="Go on with the move" onPress={() => void start()} />
+          </>
+        }>
+        <Text role="heading" aria-level={1} className={cn('font-semibold tracking-[-0.6px]', pick('text-[28px] leading-9', 'text-[26px] leading-8'))}>
+          {movedText(result.moved, result.total)}
+        </Text>
+        <Body>Every wallet moved is guarded by the new guardian. The others are still where they were, with their money, until you go on.</Body>
+        <MovesPanel wallets={result.wallets} />
+        {failed.map((w) => (
+          <Notice key={w.name} icon={TriangleAlert} iconClass="text-warn" tone="warn-outline" title={`"${w.name}" didn't move`}>
+            {w.error ?? 'It stopped before its money moved.'}
+          </Notice>
+        ))}
+        <Footnote>Have each wallet's hardware wallet at hand. On your old guardian your first wallet is retired last, once the others left it.</Footnote>
       </Screen>
     );
   }
@@ -120,6 +162,14 @@ export default function ReplaceGuardian() {
           </>
         }>
         <Body>{busy ? (progress ?? 'Working…') : waiting ? 'The move is signed and kept on this phone.' : `The move to ${pending?.guardianLabel ?? 'the new guardian'} has started.`}</Body>
+        {replace.moving ? (
+          <Panel>
+            <InfoRow plainLabel label="Moving now" value={`${replace.moving.name} (${replace.moving.index + 1} of ${replace.moving.total})`} />
+            <InfoRow plainLabel label="Its hardware wallet" value={replace.moving.device} />
+          </Panel>
+        ) : pending?.wallets?.length && !busy ? (
+          <Footnote>{`Still to move: ${pending.wallets.join(', ')}.`}</Footnote>
+        ) : null}
         <View className={pick('gap-3.5', 'gap-4')}>
           {ORDER.map((step, i) => (
             <Step key={step} n={i + 1} title={titles[step]} state={i < at ? 'done' : i === at && busy ? 'now' : 'todo'} />
@@ -157,6 +207,17 @@ export default function ReplaceGuardian() {
           <InfoRow plainLabel label="Moving" value={`${formatSats(plan.movingSats)} sats`} tabular />
           <InfoRow plainLabel label="Network fee" value={plan.coins ? `about ${formatSats(plan.feeSats)} sats` : 'None'} tabular />
         </Panel>
+        {plan.wallets && plan.wallets.length > 1 ? (
+          <>
+            <Body>{`Every wallet moves with this one code, one after the other, each with its own hardware wallet:`}</Body>
+            <Panel>
+              {plan.wallets.map((w) => (
+                <InfoRow key={w.name} plainLabel label={`${w.name} · ${w.device}`} value={`${formatSats(w.movingSats)} sats`} tabular />
+              ))}
+            </Panel>
+            <Footnote>If one of them isn't at hand, the others move and that one waits, with its money, until you go on.</Footnote>
+          </>
+        ) : null}
         <View className={pick('gap-3.5', 'gap-4')}>
           {plan.steps.map((s, i) => (
             <Step key={s.step} n={i + 1} title={s.text} state="todo" />

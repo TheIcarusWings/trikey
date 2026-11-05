@@ -142,6 +142,14 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
         icon: Shield,
         iconTone: 'fill',
       };
+    case 'wallet-removed':
+      return {
+        title: `Wallet "${event.name}" removed`,
+        subtitle: `${when} · retired on the guardian; it co-signs nothing for it any more`,
+        subtitleTone: 'muted',
+        icon: Shield,
+        iconTone: 'fill',
+      };
     case 'guardian-replaced':
       return {
         title: 'Moved to a new guardian',

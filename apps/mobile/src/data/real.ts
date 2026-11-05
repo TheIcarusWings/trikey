@@ -16,6 +16,7 @@
  * and its secrets under random ids in the secure store.
  */
 import { decode as nip19Decode, npubEncode } from 'nostr-tools/nip19';
+import { OtherWalletSyncs } from './other-wallets-sync';
 import {
   BACKUP_FILE_PREFIX,
   BACKUP_FILE_SUFFIX,
@@ -112,6 +113,8 @@ import {
   type HostedWalletView,
   type LeaveHostCheck,
   type AddWalletInput,
+  type ReplaceGuardianState,
+  type WalletMoveResult,
   type WalletListItem,
   type WalletsView,
 } from './types';
@@ -166,6 +169,14 @@ export interface RealServiceDeps {
   rpcRetryIntervalMs?: number;
   /** Sync this often while the service lives (ms; default 60 s, 0 = only when asked). */
   syncIntervalMs?: number;
+  /**
+   * Several wallets: how often a wallet that is not shown syncs in the background (ms; default `OTHER_WALLET_SYNC_MS`,
+   * 10 minutes; 0 = never), the least gap after any sync before one starts (default `OTHER_WALLET_GAP_MS`), and how
+   * often the service looks whether one is due (default 15 s).
+   */
+  otherWalletSyncMs?: number;
+  otherWalletGapMs?: number;
+  otherWalletCheckMs?: number;
   /** `sync()` joins a sync that began less than this long ago (ms, the app's clock; default `SYNC_JOIN_MS`; 0 = never). */
   syncJoinMs?: number;
   /** How often screens re-read the clock (ms, default 30 s). */
@@ -202,6 +213,8 @@ export interface RealWalletService extends WalletService {
   resume(): Promise<void>;
   /** Resolves once no sync is running or due, its background part (`updating`) included. */
   idle(): Promise<void>;
+  /** Several wallets: resolves once no wallet that is not shown is syncing in the background (tests). */
+  othersIdle(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -405,6 +418,13 @@ class Service implements RealWalletService {
   /** The periodic sync's next turn (`armTimer`); set once the first sync is done. */
   private timer?: ReturnType<typeof setTimeout>;
   private timerOn = false;
+  /** Several wallets: the background syncs of the wallets not shown (other-wallets-sync.ts), and their turn's timer. */
+  private readonly others: OtherWalletSyncs;
+  private othersTimer?: ReturnType<typeof setTimeout>;
+  /** Wallets an operation is using (move the money, remove, replace guardian): no background sync touches them meanwhile. */
+  private readonly held = new Set<number>();
+  /** When the last sync of the wallet shown ended, background part included (ms). */
+  private lastSyncEndedAt?: number;
   private closed = false;
   private starting?: Promise<void>;
   private addressCache?: { key: string; address: string };
@@ -412,6 +432,8 @@ class Service implements RealWalletService {
   private readonly clock: { now(): number };
   private replacePlan: ReplaceGuardianPlan | null = null;
   private replaceStep: ReplaceStep | null = null;
+  /** Several wallets: the wallet moving to the new guardian now. */
+  private replaceMoving: ReplaceGuardianState['moving'] = null;
   /** The person accepted the mainnet warning (see `acceptMainnetRisk`). Cleared when the network changes. */
   private mainnetRiskAccepted = false;
   /** The hardware providers for the network `setNetwork` picked last are ready (Ledger's app, Trezor's coin follow it). */
@@ -425,6 +447,15 @@ class Service implements RealWalletService {
     this.clock = deps.clock ?? { now: () => Date.now() };
     this.clockTickMs = deps.clockTickMs ?? 30_000;
     this.network = deps.network ?? 'testnet';
+    this.others = new OtherWalletSyncs({
+      now: () => this.clock.now(),
+      run: (account) => this.syncOther(account),
+      accounts: () => this.otherAccounts(),
+      mainIdle: () => this.mainIdle(),
+      mainEndedAt: () => this.lastSyncEndedAt,
+      ...(deps.otherWalletSyncMs !== undefined ? { everyMs: deps.otherWalletSyncMs } : {}),
+      ...(deps.otherWalletGapMs !== undefined ? { gapMs: deps.otherWalletGapMs } : {}),
+    });
     this.prompts.subscribe(() => this.refresh());
     const self = this;
     this.dev = {
@@ -555,6 +586,7 @@ class Service implements RealWalletService {
     this.timerOn = true;
     await this.sync();
     if (this.isIdle()) this.armTimer();
+    this.armOthersTimer();
   }
 
   pause(state: 'inactive' | 'background' = 'background'): void {
@@ -608,7 +640,10 @@ class Service implements RealWalletService {
     clearTimeout(this.toastTimer);
     clearTimeout(this.timer);
     this.timer = undefined;
+    clearTimeout(this.othersTimer);
+    this.othersTimer = undefined;
     await this.starting?.catch(() => {}); // a connection opened after close() would never be closed
+    await this.others.idle().catch(() => {});
     this.unsubWallet?.();
     this.prompts.clearAll();
     // Every wallet of the phone (a restore connects them all); the one shown among them.
@@ -825,9 +860,8 @@ class Service implements RealWalletService {
       replace: {
         plan: this.replacePlan,
         step: this.replaceStep,
-        pending: s?.replacing
-          ? { ...(s.replacing.guardian.label ? { guardianLabel: s.replacing.guardian.label } : {}), signed: s.replacing.phase === 'signed', oldGuardianOffline: s.replacing.oldGuardianOffline }
-          : null,
+        pending: this.replacePending(),
+        moving: this.replaceMoving,
       },
       oldWallets: (s?.retiredWallets ?? []).map((o) => ({ id: o.walletId, host: hostFromLabel(o.guardian.label), retiredOnGuardian: o.retiredOnGuardian })),
       walletRetired: s?.retiredByGuardian && s.retiredByGuardian.walletId === s.wallet?.walletId ? { reason: s.retiredByGuardian.reason } : null,
@@ -878,6 +912,7 @@ class Service implements RealWalletService {
       device: names.model,
       current: w === this.w,
       balanceSats: snap?.balance.totalSats ?? 0,
+      ...(w.state.savings ? { savingsSats: w.savingsSnapshot()?.balance.totalSats ?? 0 } : {}),
       dailyLimitSats: limit >= LIMIT_OFF_SATS ? 0 : limit,
       ...(limit >= LIMIT_OFF_SATS ? { limitOff: true as const } : {}),
     };
@@ -902,23 +937,32 @@ class Service implements RealWalletService {
   switchWallet(account: number): Promise<void> {
     return this.exclusive(() =>
       this.guarded(async () => {
-        const set = this.set;
-        const next = set?.byAccount(account);
-        if (!set || !next) throw new WalletServiceError('invalid_input', 'There is no such wallet on this phone.');
-        if (next === this.w) return;
-        // The wallet shown pays, receives and syncs; the others wait (their alerts still reach the phone).
-        const before = this.w;
-        clearTimeout(this.timer);
-        this.timer = undefined;
-        this.quotes.clear();
-        await before?.close().catch(() => undefined);
-        await set.show(next);
-        this.attach(next);
-        this.log = await loadLog(this.deps.platform.kv, this.logKey);
-        this.refresh();
-        this.starting = this.startInBackground();
+        const next = this.set?.byAccount(account);
+        if (!this.set || !next) throw new WalletServiceError('invalid_input', 'There is no such wallet on this phone.');
+        await this.showWallet(next);
       }),
     );
+  }
+
+  /** Shows `next`: it pays, receives and syncs; the wallet shown before is disconnected and syncs in the background. */
+  private async showWallet(next: TrikeyWallet): Promise<void> {
+    const set = this.set!;
+    if (next === this.w) return;
+    // The wallet shown pays, receives and syncs; the others sync in the background (their alerts still reach the phone).
+    const before = this.w;
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    this.quotes.clear();
+    // A background sync of the wallet about to be shown ends first (it would close its connection after).
+    await this.others.settle(next.account);
+    await before?.close().catch(() => undefined);
+    // The wallet left synced while it was shown: its background turn comes 10 minutes after.
+    if (before && this.lastSyncEndedAt !== undefined) this.others.noteSynced(before.account, this.lastSyncEndedAt);
+    await set.show(next);
+    this.attach(next);
+    this.log = await loadLog(this.deps.platform.kv, this.logKey);
+    this.refresh();
+    this.starting = this.startInBackground();
   }
 
   addWallet(input: AddWalletInput): Promise<WalletListItem> {
@@ -943,6 +987,7 @@ class Service implements RealWalletService {
         this.setProgress(`Adding "${name}": approve on your new hardware wallet`);
         try {
           const added = await set.addWallet({ name, rules, ...(kind ? { hardwareKind: kind } : {}) });
+          this.armOthersTimer();
           addEvent(this.log, { kind: 'wallet-added', name, at: this.clock.now() });
           await this.saveLogNow();
           this.refresh();
@@ -950,6 +995,67 @@ class Service implements RealWalletService {
         } finally {
           this.setProgress(null);
         }
+      }),
+    );
+  }
+
+  moveWalletFunds(fromAccount: number, toAccount: number): Promise<{ movedSats: Sats }> {
+    return this.exclusive(() =>
+      this.guarded(async () => {
+        const set = this.set;
+        const from = set?.byAccount(fromAccount);
+        const to = set?.byAccount(toAccount);
+        if (!set || !from || !to || from === to) throw new WalletServiceError('invalid_input', 'Choose another wallet of this phone to move the money to.');
+        const names = from.state.hardware ? deviceNames(from.state.hardware.kind, from.state.hardware.model) : { model: 'hardware wallet' };
+        this.setProgress(`Moving the money of "${set.nameOf(from)}" to "${set.nameOf(to)}"`);
+        // A wallet that is not shown is connected for the move, and left as it was after.
+        const shown = from === this.w;
+        return this.holding([fromAccount, toAccount], async () => {
+          try {
+            if (!shown) await from.start();
+            if (to !== this.w) await to.start();
+            const res = await set.moveFunds(from, to);
+            if (!res.ok) throw new WalletServiceError('wrong_state', `The move was not signed. Approve it on the ${names.model}.`);
+            await this.saveLogNow();
+            return { movedSats: res.amountSats };
+          } finally {
+            if (!shown) await from.close().catch(() => undefined);
+            if (to !== this.w) await to.close().catch(() => undefined);
+            this.setProgress(null);
+            this.refresh();
+          }
+        });
+      }),
+    );
+  }
+
+  removeWallet(account: number): Promise<void> {
+    return this.exclusive(() =>
+      this.guarded(async () => {
+        const set = this.set;
+        const w = set?.byAccount(account);
+        if (!set || !w) throw new WalletServiceError('invalid_input', 'There is no such wallet on this phone.');
+        if (w === set.first) throw new WalletServiceError('wrong_state', 'Remove your other wallets first: the first wallet goes last.');
+        const name = set.nameOf(w);
+        this.setProgress(`Removing "${name}": approve on its hardware wallet`);
+        return this.holding([account], async () => {
+          try {
+            // The wallet shown goes: show the first wallet instead.
+            if (w === this.w) await this.showWallet(set.first);
+            await w.start();
+            await w.sync();
+            await set.removeWallet(w);
+            this.others.forget(account);
+            addEvent(this.log, { kind: 'wallet-removed', name, at: this.clock.now() });
+            await this.saveLogNow();
+          } catch (e) {
+            await w.close().catch(() => undefined);
+            throw e;
+          } finally {
+            this.setProgress(null);
+            this.refresh();
+          }
+        });
       }),
     );
   }
@@ -1132,8 +1238,13 @@ class Service implements RealWalletService {
         this.refresh();
         break;
       case 'other_wallet_alert': {
-        // Another wallet of this phone (several wallets): named, so it is not mistaken for the one shown.
+        // Another wallet of this phone (several wallets): named, so it is not mistaken for the one shown, and synced soon
+        // in the background (one under way for it is joined).
         const other = this.set?.byWalletId(e.walletId);
+        if (other && other !== this.w) {
+          this.others.request(other.account);
+          this.kickOthers();
+        }
         const a = e.alert;
         const fresh = Math.abs(this.clock.now() - e.atMs) < TOAST_FRESH_MS;
         if (other && fresh && a.message && (a.type.startsWith('recovery_') || a.type === 'limit_off' || a.type === 'wallet_adopted'))
@@ -1275,6 +1386,7 @@ class Service implements RealWalletService {
     this.lastSyncAt = startedAt;
     const done: Promise<void> = this.runCore(w, startedAt).finally(() => {
       if (this.core?.done === done) this.core = undefined;
+      this.lastSyncEndedAt = this.clock.now();
       if (this.isIdle()) this.armTimer();
       this.refresh();
     });
@@ -1337,15 +1449,88 @@ class Service implements RealWalletService {
         // In the same turn as the last look at `restNext`: one asked for from now on starts a new run.
         this.restRun = undefined;
         this.restNext = undefined;
+        this.lastSyncEndedAt = this.clock.now();
         if (this.isIdle()) this.armTimer();
         this.refresh();
       }
     })();
   }
 
-  /** No sync is running or due, background part included. */
+  /** No sync is running or due, background part included, and no wallet that is not shown is syncing. */
   private isIdle(): boolean {
+    return this.mainIdle() && this.others.running === undefined;
+  }
+
+  /** No sync of the wallet shown is running or due, background part included. */
+  private mainIdle(): boolean {
     return !this.core && !this.nextCore && !this.restRun;
+  }
+
+  // ===========================================================================
+  // Several wallets: the ones not shown sync in the background (other-wallets-sync.ts)
+
+  /** The phone's wallets that are not shown and may sync: paired, not moving to a new guardian, still guarded. */
+  private otherAccounts(): number[] {
+    const set = this.set;
+    if (!set?.several || this.closed) return [];
+    return set.list.filter((w) => w !== this.w && !this.held.has(w.account) && w.stage === 'paired' && !w.state.replacing && !w.recoveredElsewhere).map((w) => w.account);
+  }
+
+  /** Runs `fn` with the wallets at `accounts` kept from background syncs (one under way ends first). */
+  private async holding<T>(accounts: number[], fn: () => Promise<T>): Promise<T> {
+    for (const a of accounts) this.held.add(a);
+    try {
+      for (const a of accounts) await this.others.settle(a);
+      return await fn();
+    } finally {
+      for (const a of accounts) this.held.delete(a);
+    }
+  }
+
+  /** One background sync of a wallet not shown: connect it, read its chain data (and its Savings'), disconnect. */
+  private async syncOther(account: number): Promise<void> {
+    const w = this.set?.byAccount(account);
+    if (!w || w === this.w || this.closed) return;
+    try {
+      await w.start();
+      await w.sync();
+      if (w.state.savings) await w.syncSavings().catch(() => undefined);
+    } finally {
+      // Shown meanwhile (the switch connected it), or an operation took it: it stays connected.
+      if (w !== this.w && !this.held.has(account)) await w.close().catch(() => undefined);
+      this.refresh();
+    }
+  }
+
+  /**
+   * Looks whether a wallet not shown is due, every `otherWalletCheckMs`; starts it (one at a time, never back to back).
+   * Runs while the phone holds several wallets (armed at start, after "Add a wallet" and after a restore).
+   */
+  private armOthersTimer(): void {
+    clearTimeout(this.othersTimer);
+    this.othersTimer = undefined;
+    if (this.closed || this.deps.otherWalletSyncMs === 0 || !this.set?.several) return;
+    this.othersTimer = setTimeout(() => {
+      this.othersTimer = undefined;
+      this.kickOthers();
+      this.armOthersTimer();
+    }, this.deps.otherWalletCheckMs ?? 15_000);
+  }
+
+  private kickOthers(): void {
+    if (this.closed || this.deps.otherWalletSyncMs === 0) return;
+    const run = this.others.tick();
+    if (!run) return;
+    this.refresh();
+    void run.then(() => {
+      if (this.isIdle()) this.armTimer();
+      this.refresh();
+    });
+  }
+
+  /** Resolves once no wallet that is not shown is syncing (tests). */
+  othersIdle(): Promise<void> {
+    return this.others.idle();
   }
 
   /**
@@ -1851,6 +2036,21 @@ class Service implements RealWalletService {
     );
   }
 
+  /** A move that started and has not finished: the wallet shown's, or (several wallets) any wallet's still to move. */
+  private replacePending(): ReplaceGuardianState['pending'] {
+    const set = this.set;
+    const left = set?.several ? set.moveUnfinished : [];
+    const r = set?.several ? (set.first.state.replacing ?? left.find((x) => x.state.replacing)?.state.replacing) : this.w?.state.replacing;
+    if (!r && !left.length) return null;
+    const target = set?.several ? (set.first.state.replacing?.guardian ?? set.first.state.guardian) : r?.guardian;
+    return {
+      ...(target?.label ? { guardianLabel: target.label } : {}),
+      signed: r?.phase === 'signed',
+      oldGuardianOffline: r?.oldGuardianOffline ?? false,
+      ...(set?.several ? { wallets: [...(set.first.state.replacing ? [set.first] : []), ...left].map((x) => set.nameOf(x)) } : {}),
+    };
+  }
+
   private planView(p: ReplacePlan): ReplaceGuardianPlan {
     return {
       newGuardian: { ...(p.newGuardian.label ? { label: p.newGuardian.label } : {}), host: hostFromLabel(p.newGuardian.label), npub: p.newGuardian.guardianNpub },
@@ -1870,7 +2070,17 @@ class Service implements RealWalletService {
         if (code.kind !== 'pairing') throw new WalletServiceError('pairing_invalid', code.kind === 'unknown' ? code.reason : "That isn't a guardian's pairing code.");
         this.setProgress('Reaching your new guardian');
         try {
-          this.replacePlan = this.planView(await w.previewReplaceGuardian(code.uri));
+          const set = this.set;
+          if (set?.several) {
+            // Several wallets: one code, every wallet moves (the first pairs, the others are added at their accounts).
+            const plan = await set.previewReplaceGuardian(code.uri);
+            this.replacePlan = {
+              ...this.planView(plan.first),
+              movingSats: plan.wallets.reduce((a, x) => a + x.balanceSats, 0),
+              coins: plan.wallets.reduce((a, x) => a + x.coins, 0),
+              wallets: plan.wallets.map((x) => ({ name: x.name, device: deviceNames(x.hardwareKind, set.byAccount(x.account)?.state.hardware?.model).model, movingSats: x.balanceSats, coins: x.coins })),
+            };
+          } else this.replacePlan = this.planView(await w.previewReplaceGuardian(code.uri));
         } finally {
           this.setProgress(null);
         }
@@ -1879,10 +2089,61 @@ class Service implements RealWalletService {
     );
   }
 
+  /** "Replace guardian" with several wallets: every wallet, each with its own device, "2 of 3 moved" when one waits. */
+  private async replaceAll(set: WalletSet, opts: { oldGuardianGone?: boolean }): Promise<ReplaceGuardianResult> {
+    const host = hostFromLabel(set.first.state.replacing?.guardian.label ?? this.replacePlan?.newGuardian.label);
+    const run = () =>
+      set.replaceGuardian({
+        ...(opts.oldGuardianGone ? { oldGuardianReachable: false as const } : {}),
+        onWallet: (x, index, total) => {
+          const hw = x.state.hardware;
+          const device = hw ? deviceNames(hw.kind, hw.model).model : 'hardware wallet';
+          this.replaceMoving = { name: set.nameOf(x), device, index, total };
+          this.replaceStep = null;
+          this.setProgress(`"${set.nameOf(x)}" (${index + 1} of ${total}): connect its ${device}`);
+        },
+        onEvent: (x, e) => {
+          if (x !== this.w && e.type === 'progress' && e.operation === 'replace-guardian') {
+            this.replaceStep = e.step;
+            this.setProgress(`"${set.nameOf(x)}": ${REPLACE_PROGRESS[e.step]}`);
+          }
+        },
+      });
+    try {
+      // Every wallet is the move's while it runs: no background sync touches one.
+      const out = await this.holding(
+        set.list.map((x) => x.account),
+        run,
+      );
+      const wallets: WalletMoveResult[] = out.wallets.map((m) => ({
+        name: m.name,
+        status: m.status === 'awaiting_broadcast' ? 'waiting' : m.status,
+        ...(m.error ? { error: m.error.message } : {}),
+      }));
+      const movedSats = out.wallets.reduce((a, m) => a + (m.outcome?.movedSats ?? 0), 0);
+      if (out.status === 'partial') return { status: 'partial', moved: out.moved, total: out.total, wallets };
+      this.replacePlan = null;
+      this.answered(false);
+      addEvent(this.log, { kind: 'guardian-replaced', host, movedSats, at: this.clock.now() });
+      await this.saveLogNow();
+      return { status: 'done', movedSats, oldWalletRetired: out.firstRetiredOnOldGuardian, wallets };
+    } finally {
+      this.replaceMoving = null;
+      this.replaceStep = null;
+      this.setProgress(null);
+      this.refresh();
+    }
+  }
+
   replaceGuardian(opts: { oldGuardianGone?: boolean } = {}): Promise<ReplaceGuardianResult> {
     return this.exclusive(() =>
       this.guarded(async () => {
         const w = this.requireWallet();
+        const set = this.set;
+        if (set?.several) {
+          if (!this.replacePlan && !set.first.state.replacing && !set.moveUnfinished.length) throw new WalletServiceError('wrong_state', "Scan the new guardian's pairing code first.");
+          return this.replaceAll(set, opts);
+        }
         if (!this.replacePlan && !w.state.replacing) throw new WalletServiceError('wrong_state', "Scan the new guardian's pairing code first.");
         const host = hostFromLabel(w.state.replacing?.guardian.label ?? this.replacePlan?.newGuardian.label);
         try {
@@ -1903,7 +2164,8 @@ class Service implements RealWalletService {
 
   cancelReplaceGuardian(): Promise<void> {
     return this.guarded(async () => {
-      await this.w?.abandonReplaceGuardian();
+      // Several wallets: the first wallet holds the new guardian's pairing (it pairs first).
+      await (this.set?.several ? this.set.first : this.w)?.abandonReplaceGuardian();
       this.replacePlan = null;
       this.refresh();
     });
@@ -2226,6 +2488,8 @@ class Service implements RealWalletService {
         walletId: sv.walletId,
         createdAt: this.iso(sv.createdAt),
         models: { hardware: view.hardware?.model, recoveryKey: view.recoveryKey?.model },
+        // Several wallets: the map says whose Savings it is.
+        ...(this.set?.several && this.w ? { walletName: this.set.nameOf(this.w) } : {}),
       });
       return { ...data, ...renderSavingsMap(data, { date: new Date(this.clock.now()) }) };
     },

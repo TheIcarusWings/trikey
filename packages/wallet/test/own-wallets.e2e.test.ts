@@ -209,8 +209,18 @@ describe('paying from each wallet', { timeout: 60_000 }, () => {
     expect(set.totalDailyLimit()).toEqual({ sats: 150_000, off: false });
   });
 
-  it('Savings and silent payments stay with the first wallet for now', async () => {
-    expect(business.savingsSupported).toBe(false);
+  it('Savings needs a guardian with own_wallets_2; silent payments stay with the first wallet for now', async () => {
+    expect(business.savingsSupported).toBe(true);
+    const before = rig.guardian.features;
+    rig.guardian.features = before.filter((f) => f !== 'own_wallets_2');
+    try {
+      await business.refreshStatus();
+      expect(business.savingsSupported).toBe(false);
+      expect((await walletError(business.startSavings())).code).toBe('guardian_unsupported');
+    } finally {
+      rig.guardian.features = before;
+      await business.refreshStatus();
+    }
     expect((await walletError(business.enableSilentPayments())).code).toBe('wrong_state');
   });
 });
@@ -250,6 +260,8 @@ describe('one backup for both wallets', { timeout: 90_000 }, () => {
     const b3 = restored.byAccount(2);
     expect(b3?.state.wallet!.walletId).toBe(business.state.wallet!.walletId);
     expect(b3?.state.hardware?.fingerprint).toBe(trezor.info.fingerprint);
+    // The guardian kept the device's kind at wallet.add (own_wallets_2): the Trezor, not the first wallet's Ledger.
+    expect(b3?.state.hardware?.kind).toBe('trezor');
     expect((await b3!.sync()).balance.totalSats).toBe(business.snapshot()!.balance.totalSats);
   });
 });

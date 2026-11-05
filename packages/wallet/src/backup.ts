@@ -124,6 +124,15 @@ export const BackupSavings = z.strictObject({
 export type BackupSavings = z.infer<typeof BackupSavings>;
 
 /**
+ * An own wallet's Savings (multi-wallet phase 2), as `BackupSavings` but at the wallet's odd account: the phone's key at
+ * `account` (2n + 1 for the wallet at 2n), the hardware wallet's and the Recovery Key's at their own 1'.
+ */
+export const BackupOwnSavings = BackupSavings.extend({
+  account: z.int().min(3).max(15).refine((n) => n % 2 === 1, 'an own wallet\'s Savings sits at an odd account'),
+});
+export type BackupOwnSavings = z.infer<typeof BackupOwnSavings>;
+
+/**
  * Own wallets after the first (docs/design/multi-wallet.md), in a version-4 backup: everything public a wallet needs to
  * come back on a new phone. No key: its phone key derives from the mnemonic at `account`, its hardware key lives on its
  * own device, key 3 on the guardian.
@@ -140,6 +149,8 @@ export const BackupOwnWallet = z.strictObject({
   retiredWallets: z.array(RetiredWallet).max(50).optional(),
   /** ms */
   addedAt: z.int().min(0).optional(),
+  /** Version 5 only: this wallet's Savings (multi-wallet phase 2). */
+  savings: BackupOwnSavings.optional(),
 });
 export type BackupOwnWallet = z.infer<typeof BackupOwnWallet>;
 
@@ -148,12 +159,14 @@ export type BackupOwnWallet = z.infer<typeof BackupOwnWallet>;
  * version-2 payload (its schema is strict and knows only 1), so it never restores a wallet half, without its Savings;
  * this app says "update the app" for any version it does not know (`backup_invalid`, reason `too_new`). Version 4 only
  * when the phone holds more than one wallet (`wallets`): an older app refuses it rather than restore the first alone.
+ * Version 5 exactly when a wallet after the first has Savings (`wallets[].savings`): an app before that refuses it
+ * ("update the app") rather than restore that wallet without its Savings.
  */
-export const BACKUP_PAYLOAD_VERSION = 4;
+export const BACKUP_PAYLOAD_VERSION = 5;
 
 /** What the backup holds. */
 const BackupPayloadShape = z.strictObject({
-  v: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+  v: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
   network: Network,
   createdAt: z.int(),
   /** Key 2. */
@@ -193,12 +206,12 @@ const BackupPayloadShape = z.strictObject({
 export const BackupPayload = BackupPayloadShape.refine(
   (p) =>
     p.wallets !== undefined
-      ? p.v === 4 && !p.guardian?.hosted && new Set(p.wallets.map((w) => w.account)).size === p.wallets.length
+      ? (p.v === 4 || p.v === 5) && (p.v === 5) === p.wallets.some((w) => w.savings !== undefined) && !p.guardian?.hosted && new Set(p.wallets.map((w) => w.account)).size === p.wallets.length
       : p.guardian?.hosted
         ? p.v === 3 && p.savings === undefined
-        : p.v !== 3 && p.v !== 4 && (p.v === 2) === (p.savings !== undefined),
+        : p.v !== 3 && p.v !== 4 && p.v !== 5 && (p.v === 2) === (p.savings !== undefined),
   {
-    message: 'version 4 holds more than one wallet, and only it does; version 3 is a hosted wallet and only that; version 2 holds Savings',
+    message: 'version 4 holds more than one wallet, and only it does (5 when a wallet after the first has Savings); version 3 is a hosted wallet and only that; version 2 holds Savings',
     path: ['v'],
   },
 );

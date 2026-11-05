@@ -141,6 +141,8 @@ export const GuardianStatusCache = z.object({
         walletId: z.string(),
         account: z.number(),
         name: z.string().optional(),
+        /** The kind of hardware wallet `wallet.add` named (guardians with `own_wallets_2`). */
+        hardwareKind: z.string().optional(),
         descriptor: z.string(),
         hardwareAuth: z.object({ pubkey: z.string(), path: z.string() }).optional(),
         state: z.enum(['active', 'retired']).optional(),
