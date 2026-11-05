@@ -15,6 +15,10 @@
  * `wallet.sync` answers in milliseconds instead of one request per address. Bitcoin Core
  * reads its own wallet (core-backend.ts) and says when it changed. Either way
  * `onWalletChange` tells the live wallet watcher (live-wallet.ts) to look again.
+ *
+ * Fee estimates (`estimateFees`) are kept `FEE_CACHE_MS` (a new block or another chain source drops them sooner), and
+ * callers asking at the same time share one fetch: on Electrs every request waits its turn on the server, so asking
+ * for them on every phone sync held up the `wallet.sync` asked next to them.
  */
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hex } from '@scure/base';
@@ -41,6 +45,27 @@ import { RelayedTxs, type RelayedTx } from './relayed.js';
 export { scriptHash, type ElectrumHistoryItem };
 
 export const DEFAULT_GAP_LIMIT = 20;
+
+/**
+ * How long fee estimates are kept (ms). Bitcoin Core's estimates (what Electrs and Fulcrum pass on) move with blocks,
+ * and a new block, like another chain source, drops them at once: this is only the longest they are served.
+ */
+export const FEE_CACHE_MS = 60_000;
+/** Targets every fee fetch asks for (with the caller's): the phone's two asks, [1, 3, 6, 144] and [3, 6], are one fetch. */
+export const STANDARD_FEE_TARGETS = [1, 3, 6, 144];
+
+export interface FeeEstimates {
+  estimates: { target: number; satPerVb: number | null }[];
+  minRelaySatPerVb: number;
+}
+
+/** Fee estimates read from the chain source (sat/vB), when, and under which block / source (`feeEpoch`). */
+interface FeeSnapshot {
+  at: number;
+  epoch: number;
+  rates: Map<number, number | null>;
+  minRelaySatPerVb: number;
+}
 
 /** Where a scan of one chain ends (exclusive): `gap` unused addresses after the last used one, and past `mustReach`. */
 function scanEnd(lastUsed: number, mustReach: number, gap: number): number {
@@ -204,6 +229,16 @@ export function txidOf(txHex: string): string {
   return hex.encode(sha256(sha256(hex.decode(stripWitness(txHex)))).reverse());
 }
 
+/** BTC/kvB (what Electrum and Bitcoin Core say) as sat/vB; null for no estimate. */
+function toSatPerVb(btcPerKvb: unknown): number | null {
+  return typeof btcPerKvb === 'number' && Number.isFinite(btcPerKvb) && btcPerKvb > 0 ? Math.round(btcPerKvb * 1e8) / 1000 : null;
+}
+
+/** The answer for `targets`, in their order, from fee estimates read for (at least) them. */
+function feesFor(s: FeeSnapshot, targets: number[]): FeeEstimates {
+  return { estimates: targets.map((target) => ({ target, satPerVb: s.rates.get(target) ?? null })), minRelaySatPerVb: s.minRelaySatPerVb };
+}
+
 /** Backend errors as the service's own (callers know these). */
 async function mapped<T>(p: Promise<T>): Promise<T> {
   try {
@@ -226,7 +261,7 @@ export interface ChainServiceOptions {
   liveMaxScripts?: number;
   /** The owner's relayed transactions (relayed.ts), kept on disk by the guardian. Default: in memory only. */
   relayed?: RelayedTxs;
-  /** The guardian's clock (ms). Default `Date.now`. */
+  /** The guardian's clock (ms): fee estimates are kept by it (`FEE_CACHE_MS`), relayed transactions too. Default `Date.now`. */
   now?: () => number;
   /** How often Bitcoin Core's mempool is read while the Electrum server shows none. Default `NODE_MEMPOOL_POLL_MS`. */
   nodeMempoolPollMs?: number;
@@ -292,7 +327,6 @@ export class ChainService {
   private lastHeader?: { height: number; hash: string };
   /** The owner's transactions relayed here, applied to `walletSync` while the server does not list them (relayed.ts). */
   readonly relayed: RelayedTxs;
-  private readonly now: () => number;
   private mempoolView: MempoolView = { state: 'unknown' };
   private lastHistogramAt?: number;
   private checkingMempool?: Promise<void>;
@@ -304,11 +338,17 @@ export class ChainService {
   private nodeMempoolOk?: boolean;
   /** Bitcoin Core's version (`getnetworkinfo`), once read. */
   private nodeVersion?: number;
+  /** The fee estimates kept (`estimateFees`), and the fetch under way that callers join. */
+  private feeCache?: FeeSnapshot;
+  private feeFetch?: { targets: Set<number>; epoch: number; p: Promise<FeeSnapshot> };
+  /** Bumped by a new block and another chain source: estimates read before are not served (nor kept) after. */
+  private feeEpoch = 0;
+  private readonly now: () => number;
 
   constructor(private readonly opts: ChainServiceOptions) {
     this.log = opts.log ?? silentLogger;
-    this.current = opts.backend ?? (opts.electrum ? new ElectrumBackend(opts.electrum) : undefined);
     this.now = opts.now ?? Date.now;
+    this.current = opts.backend ?? (opts.electrum ? new ElectrumBackend(opts.electrum) : undefined);
     this.relayed = opts.relayed ?? new RelayedTxs({ now: this.now });
   }
 
@@ -370,6 +410,7 @@ export class ChainService {
     this.nodeLooked.clear();
     this.nodeMempoolOk = undefined;
     for (const r of this.relayed.list()) this.relayed.mark(r.txid, { seen: false, checked: false });
+    this.forgetFees();
     if (this.started) {
       this.attach();
       next.start();
@@ -413,18 +454,23 @@ export class ChainService {
    * themselves follow from the tip); anything else (a reorg, or blocks missed) re-checks every subscribed script.
    */
   private onNewHeader(h: HeaderNotification): void {
-    let hash: string;
-    let prev: string;
+    let parsed: ReturnType<typeof parseHeader>;
     try {
-      const parsed = parseHeader(h.hex);
-      hash = parsed.hash;
-      prev = parsed.prevHash;
+      parsed = parseHeader(h.hex);
     } catch {
       return;
     }
+    const { hash, prevHash: prev } = parsed;
     const last = this.lastHeader;
     this.lastHeader = { height: h.height, hash };
-    if (!this.live || !last || last.hash === hash) return;
+    if (last?.hash === hash) return;
+    // A new block: fee estimates move with it. Its time is known now (a coin confirmed in it needs no header read),
+    // and the tip a `wallet.sync` starts from is read now rather than while a phone waits for one.
+    this.forgetFees();
+    if (this.blockTimes.size > 10_000) this.blockTimes.clear();
+    this.blockTimes.set(h.height, { hash, time: parsed.time });
+    void this.tip().catch(() => undefined);
+    if (!this.live || !last) return;
     // With the scripts of what the guardian knows is unconfirmed though the server does not list it: their confirmation
     // is news now, not when a slow server gets round to notifying them.
     if (h.height === last.height + 1 && prev === last.hash) this.live.refreshUnconfirmed(this.pendingScriptHashes());
@@ -1096,16 +1142,54 @@ export class ChainService {
   }
 
   /**
-   * Fee rates from the node (Electrum `blockchain.estimatefee`, BTC/kvB) as
-   * sat/vB, `null` where the node has no estimate, plus the minimum relay fee.
+   * Fee rates from the node (Electrum `blockchain.estimatefee`, BTC/kvB) as sat/vB, `null` where the node has no
+   * estimate, plus the minimum relay fee. Kept `FEE_CACHE_MS`, until a new block or another chain source; a fetch asks
+   * for every target at once (one batch on an Electrum server), with `STANDARD_FEE_TARGETS`, and callers that come
+   * while it runs wait for it instead of asking again.
    */
-  async estimateFees(targets: number[]): Promise<{ estimates: { target: number; satPerVb: number | null }[]; minRelaySatPerVb: number }> {
-    const e = this.client();
-    const toSatPerVb = (btcPerKvb: unknown) =>
-      typeof btcPerKvb === 'number' && Number.isFinite(btcPerKvb) && btcPerKvb > 0 ? Math.round(btcPerKvb * 1e8) / 1000 : null;
-    const estimates = await Promise.all(targets.map(async (target) => ({ target, satPerVb: toSatPerVb(await mapped(e.estimateFee(target))) })));
-    const minRelay = toSatPerVb(await mapped(e.relayFee()));
-    return { estimates, minRelaySatPerVb: Math.max(minRelay ?? 1, 0.001) };
+  async estimateFees(targets: number[]): Promise<FeeEstimates> {
+    const want = [...new Set(targets)];
+    const kept = this.feeCache;
+    if (kept && kept.epoch === this.feeEpoch && this.now() - kept.at < FEE_CACHE_MS && want.every((t) => kept.rates.has(t))) return feesFor(kept, want);
+    let f = this.feeFetch;
+    if (!f || f.epoch !== this.feeEpoch || !want.every((t) => f!.targets.has(t))) f = this.fetchFees(want);
+    return feesFor(await f.p, want);
+  }
+
+  /** Drops the fee estimates kept: the next `estimateFees` asks the chain source (a fetch under way is not joined). */
+  forgetFees(): void {
+    this.feeEpoch++;
+    this.feeCache = undefined;
+  }
+
+  private fetchFees(want: number[]): NonNullable<ChainService['feeFetch']> {
+    const epoch = this.feeEpoch;
+    const joining = this.feeFetch?.epoch === epoch ? this.feeFetch.targets : [];
+    const targets = new Set([...STANDARD_FEE_TARGETS, ...joining, ...want]);
+    const list = [...targets];
+    const p = (async (): Promise<FeeSnapshot> => {
+      const e = this.client();
+      const got = await mapped(
+        e.estimateFees ? e.estimateFees(list) : Promise.all([Promise.all(list.map((t) => e.estimateFee(t))), e.relayFee()]).then(([rates, relay]) => ({ rates, relay })),
+      );
+      const snap: FeeSnapshot = {
+        at: this.now(),
+        epoch,
+        rates: new Map(list.map((t, i) => [t, toSatPerVb(got.rates[i])])),
+        minRelaySatPerVb: Math.max(toSatPerVb(got.relay) ?? 1, 0.001),
+      };
+      // Read before a new block (or on the old source): answered, not kept.
+      if (epoch === this.feeEpoch) this.feeCache = snap;
+      return snap;
+    })();
+    const entry = { targets, epoch, p };
+    this.feeFetch = entry;
+    void p
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.feeFetch === entry) this.feeFetch = undefined;
+      });
+    return entry;
   }
 
   /**

@@ -90,6 +90,11 @@ export interface ChainBackend {
   estimateFee(target: number): Promise<number | null>;
   /** BTC/kvB, or null if unknown. */
   relayFee(): Promise<number | null>;
+  /**
+   * `estimateFee` of each target and `relayFee`, asked together (one batch on an Electrum server). Optional: without it
+   * they are asked one by one, all at once.
+   */
+  estimateFees?(targets: number[]): Promise<{ rates: (number | null)[]; relay: number | null }>;
   /** Returns the txid. Throws `BackendRejectedError` when the server refused it. */
   broadcast(txHex: string): Promise<string>;
   /**
@@ -345,6 +350,20 @@ export class ElectrumBackend implements ChainBackend {
     }
     if (!Array.isArray(r)) return undefined;
     return r.filter((x): x is [number, number] => Array.isArray(x) && typeof x[0] === 'number' && typeof x[1] === 'number');
+  }
+
+  /** Every target's `blockchain.estimatefee` and `blockchain.relayfee`, in one batch. */
+  async estimateFees(targets: number[]): Promise<{ rates: (number | null)[]; relay: number | null }> {
+    if (!this.connected) throw new BackendUnavailableError(this.lastError ? `the Electrum server is not connected: ${this.lastError}` : 'the Electrum server is not connected');
+    const out = await this.client.requestBatch([...targets.map((t) => ({ method: 'blockchain.estimatefee', params: [t] })), { method: 'blockchain.relayfee', params: [] }]);
+    const rate = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
+    const rates = targets.map((_, i) => {
+      const o = out[i]!;
+      if (!o.ok) throw new BackendUnavailableError(`the Electrum server could not estimate a fee: ${o.error.message}`);
+      return rate(o.result);
+    });
+    const relay = out[targets.length]!;
+    return { rates, relay: relay.ok ? rate(relay.result) : null };
   }
 
   async relayFee(): Promise<number | null> {

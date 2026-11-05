@@ -24,7 +24,8 @@
  * `unspent` in place is caught within `pollMs`), and also when a test replaces a script's entry in `history` or
  * `unspent` (`set`). JSON-RPC batches (an array on one line) are answered as one array, unless `refuseBatches`.
  * `delayMs` makes every script read take that long (one after the other, as Electrs serves a connection), to measure
- * what the subscriptions save.
+ * what the subscriptions save; `requestDelayMs` makes every request of any method take that long, in turn on its
+ * connection (a ping waits behind fee estimates asked before it), to measure what a pull waits for.
  */
 import { createServer, type Server, type Socket } from 'node:net';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -98,6 +99,12 @@ export class FakeElectrum {
   /** Every script read (`get_history`, `listunspent`, `subscribe`) takes this long (ms), one after the other. */
   delayMs = 0;
   private busyUntil = 0;
+  /**
+   * Every request of any method (a ping, a fee estimate, a header too) takes this long (ms), and a connection's
+   * requests are answered one after the other, as Electrs serves a connection: an Umbrel's electrs 0.11 took ~160 ms.
+   */
+  requestDelayMs = 0;
+  private readonly connBusyUntil = new WeakMap<Socket, number>();
   /** Batches received (lines that were arrays). */
   batches = 0;
   readonly txs = new Map<string, string>();
@@ -454,12 +461,21 @@ export class FakeElectrum {
     await new Promise((r) => setTimeout(r, this.busyUntil - Date.now()));
   }
 
+  /** Waits `requestDelayMs` after the last request of this connection (one after the other). */
+  private async slowOn(socket: Socket): Promise<void> {
+    const start = Math.max(Date.now(), this.connBusyUntil.get(socket) ?? 0);
+    const until = start + this.requestDelayMs;
+    this.connBusyUntil.set(socket, until);
+    await new Promise((r) => setTimeout(r, until - Date.now()));
+  }
+
   private async onRequest(socket: Socket, req: { id: number; method: string; params: unknown[] }): Promise<unknown> {
     this.calls.push({ method: req.method, params: req.params });
     const ok = (result: unknown) => ({ jsonrpc: '2.0', id: req.id, result });
     const fail = (message: string, code = 1) => ({ jsonrpc: '2.0', id: req.id, error: { code, message } });
     const p = req.params ?? [];
     if (req.method.startsWith('blockchain.scripthash.')) await this.slow();
+    if (this.requestDelayMs > 0) await this.slowOn(socket);
     switch (req.method) {
       case 'server.version':
         return ok(['FakeElectrs 0.1', '1.4']);

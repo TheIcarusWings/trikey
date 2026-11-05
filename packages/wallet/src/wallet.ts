@@ -885,7 +885,11 @@ export class TrikeyWallet {
   private readonly hwReplaced = new WeakMap<HardwareSigner, HardwareSigner>();
   private pairing?: PairingSession;
   private chainSource?: ChainSource;
+  /** The last fee estimates read (`refreshFees`), kept when a read fails, and how many reads landed. */
   private fees?: FeeEstimates;
+  private feesRead = 0;
+  /** A read of the fee estimates under way, which callers join. */
+  private feeFetch?: Promise<FeeEstimates | undefined>;
   private saving: Promise<void> = Promise.resolve();
   private readonly txs: TxCache;
   /** `multisig()` parses the descriptor once per descriptor. */
@@ -1950,6 +1954,47 @@ export class TrikeyWallet {
   }
 
   /**
+   * Reads the fee estimates again (`fees.estimate`, `FEE_TARGETS`), joining a read under way. Until it lands quotes use
+   * the last ones (`feesPending`), and a failed read keeps them. Resolves to the estimates now (never rejects). A sync
+   * asks for them after its core (`syncCore`): a guardian on a slow Electrs answers the chain data first.
+   */
+  refreshFees(): Promise<FeeEstimates | undefined> {
+    if (this.feeFetch) return this.feeFetch;
+    const p = (async () => {
+      try {
+        const fees = await this.chain.estimateFees(FEE_TARGETS);
+        this.fees = fees;
+        this.feesRead++;
+      } catch {
+        /* the last ones stay */
+      }
+      return this.fees;
+    })().finally(() => {
+      if (this.feeFetch === p) this.feeFetch = undefined;
+      this.emit({ type: 'state' });
+    });
+    this.feeFetch = p;
+    this.emit({ type: 'state' });
+    return p;
+  }
+
+  /** A read of the fee estimates is under way (`refreshFees`): a quote made now may change when it lands. */
+  get feesPending(): boolean {
+    return !!this.feeFetch;
+  }
+
+  /** Bumped each time fee estimates land (`refreshFees`): a quote made before a change of it used other ones. */
+  get feesVersion(): number {
+    return this.feesRead;
+  }
+
+  /** The fee estimates once a read under way has landed (or failed): what a payment about to be made should use. */
+  async settledFees(): Promise<FeeEstimates | undefined> {
+    if (this.feeFetch) await this.feeFetch;
+    return this.fees;
+  }
+
+  /**
    * Chain data, guardian status and fee estimates, from the guardian. Works while the guardian is locked.
    *
    * The status and the chain data are asked for together, and the chain data can take much longer (the guardian
@@ -1964,11 +2009,15 @@ export class TrikeyWallet {
   }
 
   /**
-   * The part of `sync()` the balance and the activity need: the guardian's status, fee estimates and the wallet's
-   * chain data (`wallet.sync`), stored. It resolves as soon as they are, with the snapshot and `rest`: the rest of the
-   * sync (previous transactions kept for signing, the recovery followed, silent payments, Savings), which an app can
-   * let run in the background. `rest` never needs to be called for the snapshot to be right; call it at most once.
+   * The part of `sync()` the balance and the activity need: the guardian's status and the wallet's chain data
+   * (`wallet.sync`), stored. It resolves as soon as they are, with the snapshot and `rest`: the rest of the sync (fee
+   * estimates, previous transactions kept for signing, the recovery followed, silent payments, Savings), which an app
+   * can let run in the background. `rest` never needs to be called for the snapshot to be right; call it at most once.
    * Its parts are best effort, as in `sync()`.
+   *
+   * Fee estimates are asked for once the chain data is in (`refreshFees`), whether or not `rest` is called: on Electrs a
+   * guardian asks for them on the same connection as the chain data, one request after the other, and a pull waited for
+   * them (0.1.12, an Umbrel: 8-12 s). Until they land, quotes use the last ones (`feesPending`).
    */
   async syncCore(): Promise<WalletSyncCore> {
     if (this.s.stage === 'new') throw new WalletError('wrong_state', 'The wallet is not paired yet.');
@@ -1982,8 +2031,7 @@ export class TrikeyWallet {
     let liveSeq = this.s.liveCounter;
     const snapP = this.chain.sync({ historyLimit: this.deps.historyLimit });
     snapP.catch(() => undefined); // awaited below; a failed status must not leave it unhandled
-    const [status, fees] = await Promise.all([this.call('guardian.status', {}), this.chain.estimateFees(FEE_TARGETS).catch(() => undefined)]);
-    if (fees) this.fees = fees;
+    const status = await this.call('guardian.status', {});
     await this.storeStatus(status);
     // `wallet.sync` describes the wallet the guardian guards now: after an adoption that is the new one.
     const switched = await this.followGuardianWallet(status.walletId);
@@ -2004,12 +2052,14 @@ export class TrikeyWallet {
       s.liveTxs = s.liveTxs.filter((t) => (t.wallet === 'main' ? t.walletId === walletId && t.seq > liveSeq : t.walletId === s.savings?.walletId));
     });
     const utxos = snap.utxos;
+    const fees = this.refreshFees();
     const rest = async (): Promise<WalletSnapshot> => {
       await this.prefetchPrevTxs(utxos).catch(() => undefined);
       await this.trackRecovery(status.activeRecoveryId).catch(() => undefined);
       await this.syncSilentPayments();
       // Savings (only a wallet that has it): best effort, it never holds up Spending's sync.
       if (this.s.savings) await this.syncSavings().catch(() => undefined);
+      await fees;
       return this.snapshot()!;
     };
     return { snapshot: this.snapshot()!, rest };
@@ -2605,6 +2655,7 @@ export class TrikeyWallet {
    * change to take the fee from; `no_chain_data` before a sync; `no_fee_estimate` on mainnet without an estimate.
    */
   async quoteSpeedUp(txid: string, opts: { speed?: SendRequest['speed']; feeRate?: number; signer?: 'auto' | 'hardware' } = {}): Promise<SpeedUpQuote> {
+    if (opts.feeRate === undefined) await this.settledFees();
     const speed = opts.feeRate === undefined ? (opts.speed ?? 'fast') : undefined;
     const { wallet, feeRate, feeRateSource } = this.quoteBasics({ feeRate: opts.feeRate, speed });
     const cannot = (why: string) => new WalletError('cannot_speed_up', why);
@@ -4466,6 +4517,7 @@ export class TrikeyWallet {
     await this.syncSingleKey();
     const coins = this.s.silentPayments.coins.filter((c) => c.status === 'unspent');
     if (!coins.length) return [];
+    if (opts.feeRate === undefined) await this.settledFees();
     const estimated = this.fees?.estimates.some((e) => e.satPerVb !== null) ?? false;
     if (opts.feeRate === undefined && !estimated && this.network.name === 'bitcoin') throw new WalletError('no_fee_estimate', 'There is no fee estimate right now; sync again or choose a fee rate.');
     const feeRate = opts.feeRate ?? pickFeeRate(this.fees, 'normal', this.feeFloor);
@@ -6284,6 +6336,7 @@ export class TrikeyWallet {
    * to take the fee from (a "move everything"): the payments are never lowered.
    */
   async quoteSavingsSpeedUp(txid: string, opts: { speed?: SendRequest['speed']; feeRate?: number } = {}): Promise<SavingsSpeedUpQuote> {
+    if (opts.feeRate === undefined) await this.settledFees();
     const { record, wallet, feeRate, feeRateSource } = this.savingsQuoteBasics({ feeRate: opts.feeRate, speed: opts.speed ?? 'fast' });
     const listed = record.chain?.history.find((h) => h.txid === txid);
     const logged = record.sendLog.find((e) => e.txid === txid);
@@ -6501,7 +6554,7 @@ export class TrikeyWallet {
 
     let sweep: { txid: string; txHex: string; amountSats: number; feeSats: number } | undefined;
     if (snap.utxos.length) {
-      const feeRate = pickFeeRate(this.fees ?? (await this.chain.estimateFees(FEE_TARGETS).catch(() => undefined)), 'slow', this.feeFloor);
+      const feeRate = pickFeeRate((await this.settledFees()) ?? (await this.chain.estimateFees(FEE_TARGETS).catch(() => undefined)), 'slow', this.feeFloor);
       const utxos = snap.utxos.map((u) => ({ txid: u.txid, vout: u.vout, valueSats: u.valueSats, chain: u.chain, index: u.index }));
       const prevs = await this.prevTxs(utxos.map((u) => u.txid), this.savingsChain());
       const plan = selfCheck(() => buildSweep({ from: oldWallet, utxos: utxos.map((u, i) => toCoreUtxo(u, prevs[i])), destination: next, destinationIndex: 0, feeRate }));
