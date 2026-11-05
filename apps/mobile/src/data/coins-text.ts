@@ -3,7 +3,7 @@
  * Settings > Wallet details), kept in one place and tested.
  */
 import { formatSats, shorten } from './format';
-import type { CoinView, LabelsImportSummary } from './types';
+import type { CoinView, LabelsImportSummary, Sats } from './types';
 
 /** Under the Consolidate button, and on its Review: why only the fee counts. */
 export const CONSOLIDATE_LIMIT_NOTE = "Only the network fee counts toward today's limit: the coins stay in this wallet.";
@@ -36,11 +36,35 @@ export function mixedLabelsText(labels: readonly string[]): string {
 export function labelsImportText(r: LabelsImportSummary): string {
   const parts: string[] = [];
   const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
-  const read = r.coinLabels + r.txLabels;
+  const read = r.coinLabels + r.txLabels + r.addrLabels;
   parts.push(read || r.frozen || r.unfrozen ? `Read ${n(read, 'label', 'labels')}${r.frozen ? `, ${n(r.frozen, 'frozen coin', 'frozen coins')}` : ''}${r.unfrozen ? `, ${n(r.unfrozen, 'coin unfrozen', 'coins unfrozen')}` : ''}.` : 'No labels for this wallet in that file.');
   if (r.kept) parts.push(`${n(r.kept, 'other record', 'other records')} kept for the next export.`);
   if (r.otherWallet) parts.push(`${n(r.otherWallet, 'record', 'records')} of another wallet left out.`);
   if (r.truncated) parts.push(`${n(r.truncated, 'label', 'labels')} cut to 255 characters.`);
   if (r.errorCount) parts.push(`${n(r.errorCount, 'line', 'lines')} skipped${r.firstError ? ` (${r.firstError})` : ''}.`);
   return parts.join(' ');
+}
+
+/** "Move everything" before removing a wallet: the choice that takes its frozen coins too ("Include 1 frozen coin (3,000 sats)"). */
+export function includeFrozenText(f: { coins: number; sats: Sats }): string {
+  return `Include ${f.coins === 1 ? '1 frozen coin' : `${f.coins} frozen coins`} (${formatSats(f.sats)} sats)`;
+}
+
+/** Under that choice: what each way does. Off by default, since a frozen coin is often one kept apart on purpose. */
+export function includeFrozenNote(f: { coins: number }, on: boolean): string {
+  const it = f.coins === 1 ? 'it' : 'them';
+  return on
+    ? `The move takes ${it} too and empties the wallet, so it can be removed. Spent in one payment with your other coins, anyone reading the chain sees ${f.coins === 1 ? 'it belongs' : 'they belong'} with them.`
+    : `Left where ${f.coins === 1 ? 'it is' : 'they are'}: you froze ${it} so nothing spends ${it} by accident, often a coin from a stranger. The wallet can't be removed while ${f.coins === 1 ? 'it holds it' : 'it holds them'}: include ${it} here, or unfreeze ${it} in Coins.`;
+}
+
+/** Longest label an Activity row shows in full; longer ones end in "…" (the payment's details show it whole). */
+export const ROW_LABEL_CHARS = 32;
+
+/** A payment's label at the end of its Activity row's second line (" · Salary"), or nothing. */
+export function rowLabelSuffix(label: string | undefined): string {
+  const text = label?.trim();
+  if (!text) return '';
+  const chars = Array.from(text);
+  return ` · ${chars.length > ROW_LABEL_CHARS ? `${chars.slice(0, ROW_LABEL_CHARS - 1).join('').trimEnd()}…` : text}`;
 }

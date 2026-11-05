@@ -15,6 +15,13 @@ export interface CoinActions {
   list(wallet: CoinWallet): CoinListView | null;
   /** Sets a coin's label; an empty one clears it. */
   setLabel(wallet: CoinWallet, outpoint: string, label: string): Promise<void>;
+  /**
+   * The label of one of the wallet's addresses (Receive's "Label this address"), if it has one. No I/O. A coin received
+   * on a labeled address shows that label in the coin list when it has none of its own, and its payment in Activity.
+   */
+  addressLabel(wallet: CoinWallet, address: string): string | undefined;
+  /** Labels one of the wallet's addresses, as Receive does before it is shared (a BIP 329 `addr` record); empty clears it. */
+  setAddressLabel(wallet: CoinWallet, address: string, label: string): Promise<void>;
   /** Freezes a coin, or unfreezes it. */
   setFrozen(wallet: CoinWallet, outpoint: string, frozen: boolean): Promise<void>;
   /** "All small coins": the confirmed coins under 100,000 sats that are not frozen (the Consolidate screen's shortcut). */

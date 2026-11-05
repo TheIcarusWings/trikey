@@ -28,12 +28,14 @@ export default function CoinScreen() {
   const wallet: CoinWallet = params.wallet === 'savings' ? 'savings' : 'spending';
   const list = useCoins(wallet);
   const coin = list?.coins.find((c) => c.outpoint === params.outpoint);
-  const [label, setLabel] = useState(coin?.label ?? '');
+  // The coin's own label (one inherited from its address shows as the placeholder, and a label here wins over it).
+  const own = coin?.labelFromAddress ? undefined : coin?.label;
+  const [label, setLabel] = useState(own ?? '');
   const save = useAction();
   const freeze = useAction();
   useEffect(() => {
-    setLabel(coin?.label ?? '');
-  }, [coin?.label]);
+    setLabel(own ?? '');
+  }, [own]);
 
   // Spent meanwhile (or never this wallet's): back to the list.
   if (!service.coins || !list) return <Redirect href={{ pathname: '/coins', params: { wallet } }} />;
@@ -46,7 +48,7 @@ export default function CoinScreen() {
   }
 
   const coins = service.coins;
-  const changed = label.trim() !== (coin.label ?? '');
+  const changed = label.trim() !== (own ?? '');
   const payment = activity.find((a) => a.type === 'payment' && a.tx.txid === coin.txid);
   const s = coin.source;
 
@@ -65,11 +67,16 @@ export default function CoinScreen() {
           aria-labelledby="coin-label"
           value={label}
           onChangeText={setLabel}
-          placeholder="Where it came from, what it is for"
+          placeholder={coin.addressLabel ?? 'Where it came from, what it is for'}
           maxLength={255}
           returnKeyType="done"
           onSubmitEditing={() => (changed ? void save.run(coins.setLabel(wallet, coin.outpoint, label)) : undefined)}
         />
+        {coin.addressLabel ? (
+          <Text className="text-muted-foreground text-[13px] leading-[18px]">
+            {own ? `Its address is labeled "${coin.addressLabel}". This coin's own label shows instead.` : `From its address, labeled "${coin.addressLabel}" on Receive. A label here shows instead.`}
+          </Text>
+        ) : null}
         {changed ? <AppButton title={save.busy ? 'Saving…' : label.trim() ? 'Save label' : 'Remove label'} busy={save.busy} onPress={() => save.run(coins.setLabel(wallet, coin.outpoint, label))} /> : null}
         <ActionNotice message={save.message} error={save.error} />
       </View>

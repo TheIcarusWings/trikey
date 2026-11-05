@@ -36,6 +36,11 @@ export default function WalletsSettings() {
           ))}
         </ListGroup>
       ) : null}
+      {view ? (
+        <ListGroup>
+          <SettingsRow title="Print a recovery sheet" subtitle={several ? 'One per wallet, or all on one sheet' : 'Where your guardian is, for a new phone'} onPress={() => router.push('/settings/recovery-sheet')} />
+        </ListGroup>
+      ) : null}
       {several ? (
         <Notice icon={Smartphone} title="A shared phone is a shared key">
           {`${SHARED_PHONE_NOTICE} ${total ?? ''}`.trim()}

@@ -126,6 +126,12 @@ export interface SendRequest {
    * spent or waits in this phone's own payment, is refused (`coin_unavailable`).
    */
   coins?: string[];
+  /**
+   * Coin control: frozen coins may pay too (automatic selection and Send max take them, and a manual pick may name them).
+   * Only for a move that asks for them by name: "Move everything" before removing a wallet, with "Include 1 frozen
+   * coin" on (`WalletSet.moveFunds`). Absent: a frozen coin never pays.
+   */
+  includeFrozen?: true;
 }
 
 export interface QuoteInput {

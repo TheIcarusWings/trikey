@@ -311,7 +311,7 @@ describe('BIP 329 export and import', { timeout: 60_000 }, () => {
       'this line is not JSON',
     ].join('\n');
     const r = await w.importLabels(file);
-    expect(r).toMatchObject({ coinLabels: 1, frozen: 1, txLabels: 1, kept: 1, otherWallet: 1, errorCount: 1 });
+    expect(r).toMatchObject({ coinLabels: 1, frozen: 1, txLabels: 1, addrLabels: 1, kept: 0, otherWallet: 1, errorCount: 1 });
     // The gift was spent in the consolidation: its label stays for the history.
     expect(w.snapshot()!.history.find((h) => h.txid === gift.split(':')[0])).toMatchObject({ label: 'From grandma' });
     const back = parseBip329(w.exportLabels()).records;
@@ -353,6 +353,54 @@ describe('labels in the backup', { timeout: 60_000 }, () => {
     const q = w2.quoteSendMax({ address: externalAddress() });
     expect(q.inputs.some((u) => `${u.txid}:${u.vout}` === coin.dust)).toBe(false);
     expect(w2.exportLabels()).toBe(w.exportLabels());
+  });
+});
+
+describe('address labels (Receive) and labels in Activity', { timeout: 60_000 }, () => {
+  it('a label set on the address about to be shared shows on the coin received there, and on its payment in Activity', async () => {
+    const { address } = await w.receiveAddress();
+    expect(w.addressLabel(address)).toBeUndefined();
+    const before = events.length;
+    await w.setAddressLabel(address.toUpperCase(), 'Invoice 42 · Acme');
+    expect(events.slice(before).some((e) => e.type === 'labels_changed')).toBe(true);
+    expect(w.addressLabel(address)).toBe('Invoice 42 · Acme');
+    // Not this wallet's address: refused.
+    expect((await walletError(w.setAddressLabel(externalAddress(), 'x'))).code).toBe('labels_invalid');
+    const index = w.state.chain!.nextReceiveIndex;
+    const paid = rig.fund(w.multisig().derive(0, index).script, 12_345n);
+    await w.sync();
+    const c = w.coins().coins.find((x) => x.txid === paid.txid)!;
+    expect(c).toMatchObject({ label: 'Invoice 42 · Acme', labelFromAddress: true, addressLabel: 'Invoice 42 · Acme', source: { kind: 'received' } });
+    expect(w.snapshot()!.history.find((h) => h.txid === paid.txid)).toMatchObject({ label: 'Invoice 42 · Acme' });
+    // A label of its own wins, on the coin and in Activity; a label set on the payment wins over both.
+    await w.setCoinLabel(c.outpoint, 'Acme paid');
+    expect(w.coins().coins.find((x) => x.txid === paid.txid)).toMatchObject({ label: 'Acme paid', addressLabel: 'Invoice 42 · Acme' });
+    expect(w.snapshot()!.history.find((h) => h.txid === paid.txid)!.label).toBe('Acme paid');
+    await w.labels!.setTxLabel(w.state.wallet!.walletId, paid.txid, 'March invoice');
+    expect(w.snapshot()!.history.find((h) => h.txid === paid.txid)!.label).toBe('March invoice');
+    // A payment out never shows its change coin's label.
+    const out = w.snapshot()!.history.filter((h) => h.netSats < 0);
+    expect(out.every((h) => h.label === undefined || h.label === w.state.sendLog.find((e) => e.txid === h.txid)?.label)).toBe(true);
+    // In the BIP 329 export as an addr record with the wallet's origin.
+    const origin = parseBip329(w.exportLabels()).records[0]!.origin!;
+    expect(parseBip329(w.exportLabels()).records).toContainEqual({ type: 'addr', ref: address, label: 'Invoice 42 · Acme', origin });
+  });
+
+  it('Savings: an address label on its receive address', async () => {
+    const { address } = await w.savingsReceiveAddress();
+    await w.setAddressLabel(address, 'Inheritance', 'savings');
+    expect(w.addressLabel(address, 'savings')).toBe('Inheritance');
+    expect(w.addressLabel(address)).toBeUndefined();
+    expect((await walletError(w.setAddressLabel(address, 'x'))).code).toBe('labels_invalid');
+  });
+
+  it('Send max with includeFrozen ("Move everything" with the frozen coins) takes the frozen coin too', async () => {
+    const plain = w.quoteSendMax({ address: externalAddress() });
+    expect(plain.inputs.some((u) => `${u.txid}:${u.vout}` === coin.dust)).toBe(false);
+    const all = w.quoteSendMax({ address: externalAddress(), includeFrozen: true });
+    const key = (u: { txid: string; vout: number }) => `${u.txid}:${u.vout}`;
+    expect(all.inputs.map(key).sort()).toEqual([...plain.inputs.map(key), coin.dust].sort());
+    expect(all.request.includeFrozen).toBe(true);
   });
 });
 

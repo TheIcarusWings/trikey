@@ -7,7 +7,9 @@
  *   changes nothing when the sync already has them): a coin such a payment spends is never listed, whatever the
  *   guardian's server says, and that payment's change is listed as an unconfirmed coin (`pendingChange`).
  * - **Per coin:** amount, confirmations (0: unconfirmed), the payment it came from (`source`: a payment this phone
- *   made, a received payment, or change of a payment made elsewhere), its label and whether it is frozen.
+ *   made, a received payment, or change of a payment made elsewhere), its label and whether it is frozen. A coin without
+ *   a label of its own shows its address's label (set on Receive before the address was shared, or imported):
+ *   `labelFromAddress`.
  * - **Selection** (`selectableCoins`): automatic selection and Send max take every coin that is not frozen; a manual
  *   pick takes exactly the coins named, and refuses one that is frozen or not listed (`coin_unavailable`). Which of
  *   them pay, and whether unconfirmed ones may, stays with `send.ts`, which this does not change.
@@ -66,7 +68,12 @@ export interface Coin {
   /** Change of this phone's own payment that no sync has listed yet (`own-spends.ts`). */
   pendingChange: boolean;
   frozen: boolean;
+  /** The coin's label, or, when it has none of its own, its address's (`labelFromAddress`). */
   label?: string;
+  /** `label` is its address's label: the coin has none of its own. */
+  labelFromAddress?: true;
+  /** The label of the address it sits at, when that address has one (whether or not the coin has its own). */
+  addressLabel?: string;
   source: CoinSource;
 }
 
@@ -98,9 +105,14 @@ export interface CoinListInput {
   sendLog?: readonly CoinSourcePayment[];
   /** The wallet's labels (`LabelStore.view(walletId)`). */
   labels?: WalletLabelsView;
+  /**
+   * The wallet's address at a chain and index, for address labels. Called only when the wallet has an address label (an
+   * address takes a few key derivations), and at most once per coin.
+   */
+  addressOf?: (chain: 0 | 1, index: number) => string;
 }
 
-const NO_LABELS: WalletLabelsView = { coin: () => ({ frozen: false }), tx: () => undefined, frozen: new Set() };
+const NO_LABELS: WalletLabelsView = { coin: () => ({ frozen: false }), tx: () => undefined, frozen: new Set(), addr: () => undefined, hasAddressLabels: false, coinLabelsOfTx: () => [] };
 
 /** The wallet's coins as the coin list shows them. Pure. */
 export function coinList(input: CoinListInput): CoinList {
@@ -112,9 +124,11 @@ export function coinList(input: CoinListInput): CoinList {
   const ownTx = new Set(own.map((r) => r.txid));
   const history = new Map((chain?.history ?? []).map((h) => [h.txid, h]));
   const listedTx = new Set(input.chain?.utxos.map((u) => u.txid));
+  const addressOf = labels.hasAddressLabels ? input.addressOf : undefined;
   const coins = (chain?.utxos ?? []).map((u): Coin => {
     const outpoint = outpointRef(u.txid, u.vout);
     const mark = labels.coin(outpoint);
+    const addressLabel = addressOf ? labels.addr(addressOf(u.chain, u.index)) : undefined;
     const sent = log.get(u.txid);
     const h = history.get(u.txid);
     const kind: CoinSource['kind'] = sent || ownTx.has(u.txid) ? 'payment' : u.chain === 0 ? 'received' : 'change';
@@ -138,12 +152,26 @@ export function coinList(input: CoinListInput): CoinList {
       unconfirmed: u.confirmations === 0,
       pendingChange: ownTx.has(u.txid) && !listedTx.has(u.txid),
       frozen: mark.frozen,
-      ...(mark.label !== undefined ? { label: mark.label } : {}),
+      ...(mark.label !== undefined ? { label: mark.label } : addressLabel !== undefined ? { label: addressLabel, labelFromAddress: true as const } : {}),
+      ...(addressLabel !== undefined ? { addressLabel } : {}),
       source,
     };
   });
   coins.sort((a, b) => (a.height || Infinity) - (b.height || Infinity) || (a.txid < b.txid ? -1 : a.txid > b.txid ? 1 : a.vout - b.vout));
   return { walletId, coins, totals: totalsOf(coins), truncated: !!chain?.utxosTruncated };
+}
+
+/**
+ * The labels a received payment shows in Activity when it has no label of its own: those of the coins it brought in, in
+ * output order, without repeats. A coin's own label stays after it is spent (`WalletLabelsView.coinLabelsOfTx`); an
+ * address's label shows through a coin still in `list` (the guardian's history does not say which address a spent coin
+ * sat at). Pure.
+ */
+export function receivedLabels(txid: string, list: CoinList | readonly Coin[] | undefined, labels: WalletLabelsView | undefined): string[] {
+  const all = !list ? [] : 'coins' in list ? list.coins : list;
+  const out = [...(labels?.coinLabelsOfTx(txid) ?? [])];
+  for (const c of [...all].filter((x) => x.txid === txid).sort((a, b) => a.vout - b.vout)) if (c.label) out.push(c.label);
+  return [...new Set(out)];
 }
 
 /** The sums of a list of coins. */
@@ -170,9 +198,10 @@ export interface SelectableCoins {
  * The coins a payment may take. Without `manual`, every coin that is not frozen (automatic selection and Send max).
  * With `manual`, exactly those coins, in the order given; throws `coin_unavailable` (`reason: 'not_found'`) for one the
  * list does not have (spent, spent by this phone's own pending payment, or never the wallet's) and (`reason: 'frozen'`)
- * for a frozen one: the person unfreezes it first. Pure.
+ * for a frozen one: the person unfreezes it first. `includeFrozen` takes frozen coins too, for the one move that asks
+ * for them by name ("Move everything" before removing a wallet, with "Include 1 frozen coin" on). Pure.
  */
-export function selectableCoins(list: CoinList | readonly Coin[], opts: { manual?: readonly string[] } = {}): SelectableCoins {
+export function selectableCoins(list: CoinList | readonly Coin[], opts: { manual?: readonly string[]; includeFrozen?: boolean } = {}): SelectableCoins {
   const all = 'coins' in list ? list.coins : list;
   let chosen: Coin[];
   if (opts.manual) {
@@ -185,11 +214,11 @@ export function selectableCoins(list: CoinList | readonly Coin[], opts: { manual
       seen.add(op);
       const c = by.get(op);
       if (!c) throw new WalletError('coin_unavailable', `The coin ${raw} cannot pay: it is spent, or waits in a payment of this phone that has not confirmed.`, { reason: 'not_found' });
-      if (c.frozen) throw new WalletError('coin_unavailable', `The coin ${raw} is frozen. Unfreeze it to spend it.`, { reason: 'frozen' });
+      if (c.frozen && !opts.includeFrozen) throw new WalletError('coin_unavailable', `The coin ${raw} is frozen. Unfreeze it to spend it.`, { reason: 'frozen' });
       chosen.push(c);
     }
     if (!chosen.length) throw new WalletError('coin_unavailable', 'Pick at least one coin.', { reason: 'not_found' });
-  } else chosen = all.filter((c) => !c.frozen);
+  } else chosen = opts.includeFrozen ? [...all] : all.filter((c) => !c.frozen);
   const distinct = new Set(chosen.map((c) => c.label ?? ''));
   return {
     coins: chosen,

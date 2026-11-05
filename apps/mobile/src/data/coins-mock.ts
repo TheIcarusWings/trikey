@@ -6,6 +6,9 @@
  * The demo moves its balance by itself (payments, "Add to Savings"): the coin lists follow it the way a wallet would,
  * the largest coins that are not frozen paying and the change coming back as a coin (`reconcile`). A manual pick and a
  * consolidation change the list exactly. The coins hold nothing: their txids are samples.
+ *
+ * "Business", the demo's second wallet, starts with a frozen dust coin too, so "Move everything" before removing it
+ * offers "Include 1 frozen coin". An address labeled on Receive names the coins received there afterwards.
  */
 import { WalletServiceError } from './errors';
 import { planSend, remainingToday } from './rules';
@@ -33,6 +36,8 @@ interface DemoCoin {
   confirmations: number;
   change: boolean;
   source: CoinView['source'];
+  /** The receive address it came to (coins received in the demo after it started): for address labels. */
+  address?: string;
 }
 
 /** Spending's coins at the start: 4,210,000 sats, the demo's balance. */
@@ -55,6 +60,14 @@ function startingCoins(): DemoCoin[] {
   ];
 }
 
+/** "Business" (account 2) at the start: 850,000 sats, its balance, of which a 3,000 sats dust coin is frozen. */
+function businessCoins(): DemoCoin[] {
+  return [
+    { outpoint: `${sample('b1')}:0`, valueSats: 847_000, confirmations: 380, change: false, source: { kind: 'received', txid: sample('b1'), at: iso('2026-10-21T09:12:00') } },
+    { outpoint: `${sample('b2')}:0`, valueSats: 3_000, confirmations: 120, change: false, source: { kind: 'received', txid: sample('b2'), at: iso('2026-10-24T13:40:00') } },
+  ];
+}
+
 /** Labels and freezes the demo starts with: a few labels, the 3,000 sats coin frozen (it came from nobody the owner knows). */
 function startingMarks(coins: DemoCoin[]): Map<string, { label?: string; frozen?: true }> {
   const by = (seed: string) => coins.find((x) => x.outpoint.startsWith(sample(seed)))!.outpoint;
@@ -71,8 +84,16 @@ export interface CoinsMockHost extends MockHooks {
 
 export interface MockCoins {
   actions: CoinActions;
-  /** Spending's frozen coins (sats): left out of the demo's Send max. */
-  frozenSats(): Sats;
+  /** Spending's (or Savings') frozen coins (sats): left out of the demo's Send max. */
+  frozenSats(wallet?: CoinWallet): Sats;
+  /** A demo wallet's frozen Spending coins (`account`), shown or not: what "Move everything" leaves unless included. */
+  frozenOf(account: number): { coins: number; sats: Sats } | undefined;
+  /** "Move everything" with the frozen coins included went out of `account`: they are spent too. */
+  spentFrozen(account: number): void;
+  /** Savings' coins picked by hand: the quote counts only them (`savings.quote({ coins })`), as the real wallet does. */
+  savingsPick(coins: string[]): { sats: Sats; mixesLabels?: string[] } | { problem: string };
+  /** A Savings payment of picked coins went out: exactly those coins pay, the change comes back as a coin. */
+  paidFromSavings(coins: string[], totalSats: Sats): void;
   /** A quote with `request.coins` (or without, for automatic selection with the frozen coins left out). */
   quoteWithCoins(state: WalletState, request: SendRequest, base: QuoteOutcome): QuoteOutcome;
   /** A payment of the demo went out: a manual pick takes exactly its coins. */
@@ -84,10 +105,17 @@ export function createMockCoins(h: CoinsMockHost): MockCoins {
   const lists = new Map<string, DemoCoin[]>();
   const markMaps = new Map<string, Map<string, { label?: string; frozen?: true }>>();
   const keyOf = (wallet: CoinWallet, s: WalletState = h.get()) => `${s.wallets?.current.account ?? 0}:${wallet}`;
-  const marksOf = (wallet: CoinWallet) => {
-    const k = keyOf(wallet);
+  const marksAt = (k: string) => {
     if (!markMaps.has(k)) markMaps.set(k, new Map());
     return markMaps.get(k)!;
+  };
+  const marksOf = (wallet: CoinWallet) => marksAt(keyOf(wallet));
+  /** Address labels (Receive's "Label this address"), per demo wallet and Spending or Savings. */
+  const addrMaps = new Map<string, Map<string, string>>();
+  const addrsOf = (wallet: CoinWallet) => {
+    const k = keyOf(wallet);
+    if (!addrMaps.has(k)) addrMaps.set(k, new Map());
+    return addrMaps.get(k)!;
   };
   const quotes = new Map<string, ConsolidateQuote>();
   let counter = 0;
@@ -103,22 +131,29 @@ export function createMockCoins(h: CoinsMockHost): MockCoins {
       .reverse()
       .map((a) => ({ outpoint: `${a.txid}:0`, valueSats: a.amountSats, confirmations: a.status === 'confirmed' ? 30 : 0, change: false, source: { kind: 'received' as const, txid: a.txid, at: a.at } }));
 
+  /** A wallet's list as it started, made once (no reconciling with the balance: that is `coins`). */
+  const started = (key: string, wallet: CoinWallet, s: WalletState): DemoCoin[] => {
+    if (!lists.has(key)) {
+      // The first wallet's Spending starts with the seven coins, Business with its two; another demo wallet with whatever its balance is.
+      const start = wallet === 'savings' ? savingsStart(s) : key === '0:spending' ? startingCoins() : key === '2:spending' ? businessCoins() : [];
+      lists.set(key, start);
+      if (key === '0:spending') markMaps.set(key, startingMarks(start));
+      else if (key === '2:spending') markMaps.set(key, new Map([[start[1]!.outpoint, { label: 'Dust: unknown sender', frozen: true as const }]]));
+      else if (wallet === 'savings' && start[0]) marksAt(key).set(start[0].outpoint, { label: 'Cold storage' });
+    }
+    return lists.get(key)!;
+  };
+
   /** The coins as the balance stands now: what changed it by other means paid by the largest coins not frozen, or arrived. */
   const coins = (wallet: CoinWallet): DemoCoin[] => {
     const s = h.get();
     const key = keyOf(wallet, s);
-    if (!lists.has(key)) {
-      // The first wallet's Spending starts with the seven coins; another demo wallet with whatever its balance is.
-      const start = wallet === 'savings' ? savingsStart(s) : key.startsWith('0:') ? startingCoins() : [];
-      lists.set(key, start);
-      if (wallet === 'spending' && key.startsWith('0:')) markMaps.set(key, startingMarks(start));
-      else if (wallet === 'savings' && start[0]) marksOf(wallet).set(start[0].outpoint, { label: 'Cold storage' });
-    }
-    const list = lists.get(key)!;
+    const list = started(key, wallet, s);
     const diff = list.reduce((t, c) => t + c.valueSats, 0) - balanceOf(wallet, s);
     if (diff < 0) {
       const id = sample(h.nextId('rx').replace(/[^0-9a-f]/g, ''));
-      list.push({ outpoint: `${id}:0`, valueSats: -diff, confirmations: 0, change: false, source: { kind: 'received', txid: id, at: h.now.toISOString() } });
+      // Received at the address Receive shows now (Spending's): a label set on it there names this coin.
+      list.push({ outpoint: `${id}:0`, valueSats: -diff, confirmations: 0, change: false, source: { kind: 'received', txid: id, at: h.now.toISOString() }, ...(wallet === 'spending' && s.receiveAddress ? { address: s.receiveAddress } : {}) });
     } else if (diff > 0) {
       const payers = list.filter((c) => !frozen(wallet, c.outpoint)).sort((a, b) => b.valueSats - a.valueSats);
       let paid = 0;
@@ -138,6 +173,7 @@ export function createMockCoins(h: CoinsMockHost): MockCoins {
 
   const view = (wallet: CoinWallet, c: DemoCoin): CoinView => {
     const m = marksOf(wallet).get(c.outpoint);
+    const addressLabel = c.address ? addrsOf(wallet).get(c.address) : undefined;
     return {
       outpoint: c.outpoint,
       txid: c.outpoint.split(':')[0]!,
@@ -148,7 +184,8 @@ export function createMockCoins(h: CoinsMockHost): MockCoins {
       pendingChange: c.confirmations === 0 && c.change,
       change: c.change,
       frozen: !!m?.frozen,
-      ...(m?.label ? { label: m.label } : {}),
+      ...(m?.label ? { label: m.label } : addressLabel ? { label: addressLabel, labelFromAddress: true as const } : {}),
+      ...(addressLabel ? { addressLabel } : {}),
       source: c.source,
     };
   };
@@ -167,7 +204,7 @@ export function createMockCoins(h: CoinsMockHost): MockCoins {
     change(m);
     if (!m.label && !m.frozen) marksOf(wallet).delete(outpoint);
     else marksOf(wallet).set(outpoint, m);
-    h.update((s) => ({ labelsVersion: (s.labelsVersion ?? 0) + 1, ...(s.backup ? { backup: { ...s.backup, labelsNewer: true as const } } : {}) }));
+    bumpLabels();
   };
 
   /** The coins named (refused: frozen, gone), or every confirmed coin not frozen. */
@@ -182,12 +219,36 @@ export function createMockCoins(h: CoinsMockHost): MockCoins {
     });
   };
   const labelsOf = (wallet: CoinWallet, chosen: DemoCoin[]) => {
-    const set = new Set(chosen.map((c) => marksOf(wallet).get(c.outpoint)?.label ?? ''));
+    const set = new Set(chosen.map((c) => view(wallet, c).label ?? ''));
     return set.size > 1 ? [...set].filter(Boolean) : undefined;
+  };
+  const bumpLabels = () => h.update((s) => ({ labelsVersion: (s.labelsVersion ?? 0) + 1, ...(s.backup ? { backup: { ...s.backup, labelsNewer: true as const } } : {}) }));
+  /** The change of a payment of picked coins, back as an unconfirmed coin. */
+  const payWith = (wallet: CoinWallet, picked: string[], totalSats: Sats, source: Partial<CoinView['source']> = {}) => {
+    const list = coins(wallet);
+    let spent = 0;
+    for (const op of picked) {
+      const i = list.findIndex((c) => c.outpoint === op);
+      if (i >= 0) spent += list.splice(i, 1)[0]!.valueSats;
+    }
+    const back = spent - totalSats;
+    if (back > 0) {
+      const id = sample(h.nextId('chg').replace(/[^0-9a-f]/g, ''));
+      list.push({ outpoint: `${id}:1`, valueSats: back, confirmations: 0, change: true, source: { kind: 'payment', txid: id, at: h.now.toISOString(), ...source } });
+    }
   };
 
   const actions: CoinActions = {
     list,
+    addressLabel: (wallet, address) => addrsOf(wallet).get(address.trim()),
+    async setAddressLabel(wallet, address, label) {
+      await h.wait(150);
+      const text = label.trim().slice(0, 255);
+      if (!/^(tb1|bc1|bcrt1)[a-z0-9]{20,}$/i.test(address.trim())) throw new WalletServiceError('invalid_input', 'That is not an address of this wallet.');
+      if (text) addrsOf(wallet).set(address.trim(), text);
+      else addrsOf(wallet).delete(address.trim());
+      bumpLabels();
+    },
     async setLabel(wallet, outpoint, label) {
       await h.wait(150);
       mark(wallet, outpoint, (m) => {
@@ -283,13 +344,13 @@ export function createMockCoins(h: CoinsMockHost): MockCoins {
       // As if the person picked a file another wallet exported: one label for the largest coin, one record of another wallet.
       const largest = [...coins(wallet)].sort((a, b) => b.valueSats - a.valueSats)[0];
       if (largest) mark(wallet, largest.outpoint, (m) => void (m.label = m.label ?? 'Imported from Sparrow'));
-      return { coinLabels: largest ? 1 : 0, frozen: 0, unfrozen: 0, txLabels: 0, kept: 1, otherWallet: 1, errorCount: 0, truncated: 0 };
+      return { coinLabels: largest ? 1 : 0, frozen: 0, unfrozen: 0, txLabels: 0, addrLabels: 0, kept: 1, otherWallet: 1, errorCount: 0, truncated: 0 };
     },
   };
 
   return {
     actions,
-    frozenSats: () => (available('spending') ? coins('spending').filter((c) => frozen('spending', c.outpoint)).reduce((t, c) => t + c.valueSats, 0) : 0),
+    frozenSats: (wallet = 'spending') => (available(wallet) ? coins(wallet).filter((c) => frozen(wallet, c.outpoint)).reduce((t, c) => t + c.valueSats, 0) : 0),
     quoteWithCoins(state, request, base) {
       if (!base.ok || state.mode !== 'guardian' || !available('spending')) return base;
       if (!request.coins?.length) return base;
@@ -308,17 +369,33 @@ export function createMockCoins(h: CoinsMockHost): MockCoins {
     paid(quote) {
       const picked = quote.request.coins;
       if (!picked?.length) return;
-      const list = coins('spending');
-      let spent = 0;
-      for (const op of picked) {
-        const i = list.findIndex((c) => c.outpoint === op);
-        if (i >= 0) spent += list.splice(i, 1)[0]!.valueSats;
+      payWith('spending', picked, quote.totalSats, { amountSats: quote.request.amountSats, recipient: quote.request.address });
+    },
+    frozenOf(account) {
+      const key = `${account}:spending`;
+      const list = started(key, 'spending', h.get());
+      const marks = marksAt(key);
+      const frozen = list.filter((c) => marks.get(c.outpoint)?.frozen);
+      return frozen.length ? { coins: frozen.length, sats: frozen.reduce((t, c) => t + c.valueSats, 0) } : undefined;
+    },
+    spentFrozen(account) {
+      const key = `${account}:spending`;
+      const marks = marksAt(key);
+      const list = lists.get(key);
+      if (list) lists.set(key, list.filter((c) => !marks.get(c.outpoint)?.frozen));
+    },
+    savingsPick(picked) {
+      if (!available('savings')) return { problem: 'Set up Savings first.' };
+      try {
+        const chosen = pick('savings', picked);
+        const mixes = labelsOf('savings', chosen);
+        return { sats: chosen.reduce((t, c) => t + c.valueSats, 0), ...(mixes ? { mixesLabels: mixes } : {}) };
+      } catch (e) {
+        return { problem: (e as Error).message };
       }
-      const back = spent - quote.totalSats;
-      if (back > 0) {
-        const id = sample(h.nextId('chg').replace(/[^0-9a-f]/g, ''));
-        list.push({ outpoint: `${id}:1`, valueSats: back, confirmations: 0, change: true, source: { kind: 'payment', txid: id, amountSats: quote.request.amountSats, recipient: quote.request.address, at: h.now.toISOString() } });
-      }
+    },
+    paidFromSavings(picked, totalSats) {
+      if (picked.length) payWith('savings', picked, totalSats);
     },
   };
 }

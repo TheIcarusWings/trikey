@@ -151,7 +151,8 @@ function OldWallets() {
 export default function GuardianSettings() {
   const router = useRouter();
   const now = useNow();
-  const { guardian, dailyLimit, replace, hosted, hardware } = useWallet();
+  const service = useWalletService();
+  const { guardian, dailyLimit, replace, hosted, hardware, mode, wallets } = useWallet();
   const host = guardianBox(guardian);
 
   const status =
@@ -247,6 +248,15 @@ export default function GuardianSettings() {
         </View>
       ) : null}
       <OldWallets />
+      {service.recoverySheet && mode === 'guardian' ? (
+        <ListGroup>
+          <SettingsRow
+            title="Print a recovery sheet"
+            subtitle={(wallets?.list.length ?? 1) > 1 ? 'Your guardian and each wallet, for a new phone' : 'Your guardian and this wallet, for a new phone'}
+            onPress={() => router.push('/settings/recovery-sheet')}
+          />
+        </ListGroup>
+      ) : null}
       <Footnote>
         {hosted
           ? `Your host's guardian holds key 3. It locks itself after a restart, and only your host unlocks it. Keep this wallet's recovery code: a new phone needs it to recover with your hardware wallet.`
