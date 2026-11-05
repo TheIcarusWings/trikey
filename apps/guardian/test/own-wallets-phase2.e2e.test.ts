@@ -299,3 +299,37 @@ describe('own wallets phase 2: replacing the guardian moves both wallets', { tim
     expect(logged).toBe(true);
   });
 });
+
+describe('wallets.json from phase 1 (golden)', () => {
+  it('loads as it was; a hardware kind is kept, an unreadable one dropped rather than fatal', async () => {
+    const { mkdtemp, writeFile, readFile: read, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { WalletsRegistry } = await import('../src/wallets/registry.js');
+    const dir = await mkdtemp(join(tmpdir(), 'trikey-wallets-json-'));
+    try {
+      const phase1 = {
+        version: 1,
+        first: { name: 'Daily' },
+        wallets: [{ slotId: '0123456789abcdef', account: 2, name: 'Business', addedAt: 1_800_000_000_000 }],
+        accounts: [2],
+      };
+      await writeFile(join(dir, 'wallets.json'), `${JSON.stringify(phase1, null, 2)}\n`);
+      const reg = new WalletsRegistry(join(dir, 'wallets.json'));
+      await reg.load();
+      expect(reg.wallets).toEqual(phase1.wallets);
+      expect(reg.firstName).toBe('Daily');
+      // A change writes the same shape back, plus only what changed.
+      await reg.update((f) => void f.wallets.push({ slotId: 'fedcba9876543210', account: 4, name: 'Shop', addedAt: 1, hardwareKind: 'ledger' }));
+      const back = JSON.parse(await read(join(dir, 'wallets.json'), 'utf8'));
+      expect(back.wallets[0]).toEqual(phase1.wallets[0]);
+      expect(back.wallets[1]).toMatchObject({ hardwareKind: 'ledger' });
+      await writeFile(join(dir, 'wallets.json'), JSON.stringify({ ...phase1, wallets: [{ ...phase1.wallets[0], hardwareKind: 'Not A Kind!' }] }));
+      const again = new WalletsRegistry(join(dir, 'wallets.json'));
+      await again.load();
+      expect(again.wallets[0]?.hardwareKind).toBeUndefined();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
