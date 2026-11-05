@@ -778,6 +778,8 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
     // Paired phone only (Guardian.authorize). No key 3 and no approval: watching changes no rule and signs nothing.
 
     'savings.register': async (params) => {
+      // Several wallets on the box: each Savings at its wallet's own account, and no device in two wallets.
+      g.wallets.checkSavings(w, params.descriptor);
       const res = await w.engine.registerSavings(params.descriptor);
       if (!res.ok) throw refusalError(res.refusal);
       g.log.info('savings.registered', { walletId: res.savings.walletId, ...(res.replaced ? { replaced: res.replaced } : {}) });
@@ -879,6 +881,11 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
         // The first wallet holds the box's pairing (and the key 3 seed every own wallet's key 3 comes from): it goes last.
         if (first && g.wallets.active().length)
           throw new RpcError(ErrorCode.PolicyViolation, 'Retire the other wallets on this guardian first: the first wallet goes last.', { reason: 'own_wallets_active' });
+        // An own wallet is removed only once it is empty (phase 2), as a hosted wallet leaves only without co-signed coins.
+        if (!first) {
+          const own = g.wallets.bySlot(w.slotId!);
+          if (own) await chainCall(g, 'wallet.retire', () => g.wallets.requireEmpty(own));
+        }
         const res = await w.engine.retireWallet(params.approval);
         if (!res.ok) throw refusalError(res.refusal);
         await w.afterRetire(res.walletId, ctx.sender);

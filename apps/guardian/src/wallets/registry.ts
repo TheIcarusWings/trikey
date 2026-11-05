@@ -25,6 +25,11 @@ export interface OwnWalletRecord {
   addedAt: number;
   /** ms, once `wallet.retire` retired it (or a reset forgot it): it co-signs nothing any more; its account stays taken. */
   retiredAt?: number;
+  /**
+   * The kind of hardware wallet the phone named at `wallet.add` (`own_wallets_2`: "trezor", "ledger", ...), listed in
+   * `guardian.status.wallets` so a phone rebuilding the wallet connects the right device. Absent for older entries.
+   */
+  hardwareKind?: string;
 }
 
 export interface WalletsFile {
@@ -52,6 +57,8 @@ function parse(raw: unknown): WalletsFile {
   for (const w of f.wallets) {
     if (!w || !isSlotId(w.slotId) || !isOwnAccount(w.account) || typeof w.name !== 'string' || !w.name || w.name.length > 16 || !Number.isFinite(w.addedAt))
       throw new Error('unsupported wallets.json: bad wallet record');
+    // A kind this version cannot read is dropped, not fatal: the phone then asks which device it is.
+    if (w.hardwareKind !== undefined && (typeof w.hardwareKind !== 'string' || !/^[a-z0-9_-]{1,24}$/.test(w.hardwareKind))) delete w.hardwareKind;
   }
   if (!f.accounts.every(isOwnAccount)) throw new Error('unsupported wallets.json: bad account');
   return { version: 1, ...(f.first && typeof f.first.name === 'string' ? { first: { name: f.first.name } } : {}), wallets: f.wallets, accounts: f.accounts };

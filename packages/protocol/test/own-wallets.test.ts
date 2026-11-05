@@ -24,17 +24,18 @@ const routed: Partial<Record<MethodName, Record<string, unknown>>> = {
   'wallet.sync': { historyLimit: 50 },
   'tx.get': { txid: 'ab'.repeat(32) },
   'tx.broadcast': { txHex: RAW_TX },
+  // Phase 2 (`own_wallets_2`): each wallet's Savings.
+  'savings.register': { descriptor: 'wsh(sortedmulti(2,A,B,C))' },
+  'savings.unregister': {},
+  'savings.get': {},
 };
 
-/** Methods that stay the first wallet's (or the box's) in phase 1: `walletId` is refused as an unknown member. */
+/** Methods that stay the first wallet's (or the box's): `walletId` is refused as an unknown member. */
 const notRouted: Partial<Record<MethodName, Record<string, unknown>>> = {
   'guardian.unlock': { kind: 'passphrase', passphrase: 'correct horse' },
   'guardian.lock': {},
   'fees.estimate': { targets: [1] },
   'recovery.access': { approval: accessApproval },
-  'savings.register': { descriptor: 'wsh(sortedmulti(2,A,B,C))' },
-  'savings.unregister': {},
-  'savings.get': {},
   'sp.unregister': {},
   'relays.ack': { relays: ['wss://relay.example.com'] },
 };
@@ -104,6 +105,19 @@ describe('own wallets: wallet.add', () => {
 
   it('the feature name', () => {
     expect(GUARDIAN_FEATURES.ownWallets).toBe('own_wallets');
+    expect(GUARDIAN_FEATURES.ownWallets2).toBe('own_wallets_2');
+  });
+
+  it('phase 2: the hardware kind and the wallet it replaces ("Replace guardian")', () => {
+    const p = methods['wallet.add'].params;
+    expect(p.safeParse({ ...add, hardwareKind: 'ledger' }).success).toBe(true);
+    // A kind a later app knows passes; nonsense does not.
+    expect(p.safeParse({ ...add, hardwareKind: 'future-device' }).success).toBe(true);
+    expect(p.safeParse({ ...add, hardwareKind: 'Not A Kind!' }).success).toBe(false);
+    expect(p.safeParse({ ...add, replacesWalletId: OTHER, replacesDescriptor: 'wsh(sortedmulti(2,D,E,F))' }).success).toBe(true);
+    expect(p.safeParse({ ...add, replacesWalletId: OTHER }).success).toBe(true);
+    // The descriptor alone names nothing.
+    expect(p.safeParse({ ...add, replacesDescriptor: 'wsh(sortedmulti(2,D,E,F))' }).success).toBe(false);
   });
 });
 
@@ -122,7 +136,7 @@ describe('own wallets: status and alerts', () => {
     const r = methods['guardian.status'].result;
     const wallets = [
       { walletId: WALLET_ID, account: 0, name: 'Daily', descriptor: 'wsh(sortedmulti(2,A,B,C))', hardwareAuth },
-      { walletId: OTHER, account: 2, name: 'Business', descriptor: 'wsh(sortedmulti(2,D,E,F))', hardwareAuth, state: 'active' },
+      { walletId: OTHER, account: 2, name: 'Business', hardwareKind: 'trezor', descriptor: 'wsh(sortedmulti(2,D,E,F))', hardwareAuth, state: 'active' },
     ];
     const parsed = r.safeParse({ ...status, wallets });
     expect(parsed.success).toBe(true);

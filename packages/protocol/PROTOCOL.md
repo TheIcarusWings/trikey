@@ -116,9 +116,9 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `sp.register` | `scanPrivateKey: Hex32`, `spendPublicKey` (compressed), `labels` (1-1000 distinct integers 0..2^32-1, with 0), `birthHeight` | `registered: true`, `birthHeight`, `scannedHeight`, `tipHeight` |
 | `sp.unregister` | `{}` | `unregistered: boolean` |
 | `sp.scan` | `fromHeight?` | `tipHeight`, `birthHeight`, `scanning`, `matches: [{ txid, vout, valueSats, outputKey, tweak, label?, height }]` (at most 500, oldest first), `matchesTruncated` |
-| `savings.register` | `descriptor` (the phone's Savings wallet) | `walletId`, `since` (paired phone only; guardians with `savings`; see "Savings") |
-| `savings.unregister` | `{}` | `unregistered: boolean`, `walletId?` |
-| `savings.get` | `{}` | `savings: { walletId, descriptor, since } \| null` |
+| `savings.register` | `descriptor` (the phone's Savings wallet), `walletId?` (`own_wallets_2`) | `walletId`, `since` (paired phone only; guardians with `savings`; see "Savings") |
+| `savings.unregister` | `walletId?` (`own_wallets_2`) | `unregistered: boolean`, `walletId?` |
+| `savings.get` | `walletId?` (`own_wallets_2`) | `savings: { walletId, descriptor, since } \| null` |
 | `relays.ack` | `relays: RelayList` (the relays the phone uses now) | `current: boolean` (they are the guardian's current list, in any order), `relays: RelayList` (the guardian's current list) (paired phone only; see section 5, "Changing relays") |
 | `hosted.prepare` | `inviteSecret` (43 base64url chars), `network`, `entropy: Hex32` (required) | `cosignerAccountPubkey` (compressed, no chaincode), `guardianVersion`, `features?` (see "Family hosting") |
 | `hosted.pair` | `inviteSecret`, `deviceName`, `walletLabel` (1-64), `network`, `accountPubkeys: { app, hardware }`, `hardwareAuth: { pubkey, path, tweak: Hex32 }`, `hardwareAuthProof`, `rules: Policy`, `walletMap` (base64url, at most 4096 bytes decoded), `phoneNostrPubkey` | `walletId` (the key-set id), `cosignerAccountPubkey`, `guardianVersion` |
@@ -126,9 +126,9 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `hosted.map.get` | `walletId?` (default the hosted wallet; or a running recovery's destination) | `walletId`, `map` (or `null`) |
 | `hosted.access` | `approval: { kind: "bip137", expiresAt, signature }` (the version-2 access text only) | `walletId`, `network`, `accountPubkeys: { app, hardware, cosigner }`, `hardwareAuth`, `policy`, `nextHardwareSequence`, `phoneSpending`, `activeRecoveryId`, `accessExpiresAt` |
 | `wallet.add.prepare` | `account` (even, 2-14) | `account`, `guardianKey: KeyOrigin` (key 3 of the new wallet at that account; see "Own wallets") |
-| `wallet.add` | `account`, `name` (1-16), `descriptor`, `hardwareAuth: { pubkey, path }`, `hardwareAuthProof`, `rules: Policy`, `firstName?` (1-16, the first wallet's name) | `walletId`, `account`, `name`, `descriptor`, `guardianKey` (see "Own wallets") |
+| `wallet.add` | `account`, `name` (1-16), `descriptor`, `hardwareAuth: { pubkey, path }`, `hardwareAuthProof`, `rules: Policy`, `firstName?` (1-16, the first wallet's name), `hardwareKind?`, `replacesWalletId?`, `replacesDescriptor?` (the last three: guardians with `own_wallets_2`) | `walletId`, `account`, `name`, `descriptor`, `guardianKey` (see "Own wallets") |
 
-Guardians with `own_wallets` also take an optional **`walletId`** in the params of `guardian.status`, `sign`, `policy.get`, `policy.update`, `recovery.start` (the own form), `recovery.update`, `recovery.cancel`, `recovery.status`, `phone.resume`, `hardware.confirm`, `wallet.retire`, `wallet.sync`, `tx.get` and `tx.broadcast`: the request acts on that wallet of the box's owner. Absent, it means the first wallet, as before (see "Own wallets").
+Guardians with `own_wallets` also take an optional **`walletId`** in the params of `guardian.status`, `sign`, `policy.get`, `policy.update`, `recovery.start` (the own form), `recovery.update`, `recovery.cancel`, `recovery.status`, `phone.resume`, `hardware.confirm`, `wallet.retire`, `wallet.sync`, `tx.get` and `tx.broadcast`: the request acts on that wallet of the box's owner. Absent, it means the first wallet, as before (see "Own wallets"). Guardians with `own_wallets_2` take it in `savings.register`, `savings.unregister` and `savings.get` too.
 
 **Policy** is exactly the rules the guardian's policy engine enforces, and nothing else: four always, and one opt-in rule that is present only when it is on:
 
@@ -560,15 +560,36 @@ guard is refused (`-32602`, `data.reason: "unknown_wallet"`), never applied to t
 request is the first wallet's, exactly as before, except `recovery.cancel` naming an own wallet's recovery, and a sender
 that is only one own wallet's phone or recovery peer (after a recovery moved that wallet to a new phone): that wallet's.
 An own wallet's recovery ids are `<slotId>w<n>-<txid12>` (they fit `RecoveryId` and `CANCEL <id>`). `recovery.access` is
-tried against the first wallet's hardware authorization key, then each own wallet's. Savings, silent payments
-(`sp.*`), `singlekey.register` and `wallet.unwatch` stay the first wallet's for now: they take no `walletId`. The first
-wallet is retired last (`wallet.retire`: `1200`, `data.reason: "own_wallets_active"`).
+tried against the first wallet's hardware authorization key, then each own wallet's. Silent payments (`sp.*`),
+`singlekey.register` and `wallet.unwatch` stay the first wallet's for now: they take no `walletId`. Savings takes it from
+guardians with `own_wallets_2` (below). The first wallet is retired last (`wallet.retire`: `1200`, `data.reason:
+"own_wallets_active"`).
+
+**Phase 2 (`own_wallets_2`).** A guardian that also lists `own_wallets_2` (`GUARDIAN_FEATURES.ownWallets2`):
+
+- **Savings per wallet.** `savings.register`, `savings.unregister` and `savings.get` take `walletId`: that wallet's
+  Savings, watched in that wallet's runtime (its tripwire, `savings_moved` and `savings_unwatched` to the paired phone and
+  that wallet's alert contacts, `wallet.sync` with `wallet: "savings"` and `walletId`, its spends relayed by `tx.broadcast`).
+  An own wallet's Savings must hold the paired phone seed's key at the wallet's odd account
+  `m/48'/<coin>'/<account + 1>'/2'`, and none of its devices may be in another wallet of the box (`-32602`,
+  `data.reason: "hardware_in_use"`): the same hardware wallet is never in two wallets, also as a Savings Recovery Key.
+  Savings alerts keep naming the Savings wallet in `walletId`, as before; the phone knows which wallet holds it.
+- **The hardware wallet's kind.** `wallet.add` takes `hardwareKind` (`ledger`, `trezor`, ...): kept, and listed in
+  `guardian.status.wallets`, so a phone rebuilding the wallet connects the right device. Older entries have none.
+- **Moving every wallet ("Replace guardian").** `wallet.add` takes `replacesWalletId` and `replacesDescriptor`, as
+  `pair` does: the new guardian watches the replaced wallet of the old guardian, serves its coins (`wallet.sync` with
+  `wallet: "replaced"` and the new `walletId`) and relays a sweep of it into the new wallet (`tx.broadcast`). The phone
+  pairs the first wallet with `pair`, then adds every other wallet at its own account, each swept with its own device.
+- **Removing a wallet.** An own wallet's `wallet.retire` is refused while the guardian's view of it holds coins (`1200`,
+  `data.reason: "wallet_not_empty"`, `data.coins`, `data.sats`), as a hosted wallet's leaving is refused while a coin key 3
+  co-signed is unspent. Once empty, it retires with the hardware approval, as before; the phone, the owner's channels
+  and the web UI's Activity are told, and its account stays taken.
 
 **Box-wide.** One passphrase unlocks every wallet's key 3, `guardian.lock` locks them all; a contact's `LOCK` locks the
 box when a wallet that lists the contact lets its contacts lock it. `guardian.unlock` from the phone is refused while a
 recovery of **any** wallet runs that the phone did not start. A reset forgets every wallet (refused while any wallet's
 recovery runs or a sweep waits). `guardian.status` without `walletId` lists every wallet once there is more than one
-(`wallets: [{ walletId, account, name?, descriptor, hardwareAuth?, state? }]`), so a phone restored from a backup older
+(`wallets: [{ walletId, account, name?, hardwareKind?, descriptor, hardwareAuth?, state? }]`), so a phone restored from a backup older
 than its last wallet rebuilds it (after checking the descriptor holds its own key at `account`). With `walletId` it is
 that wallet's view.
 

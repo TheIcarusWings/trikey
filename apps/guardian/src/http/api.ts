@@ -86,12 +86,12 @@ function signedIn(g: Guardian, secure: boolean): Record<string, string> {
 }
 
 /** The watched Savings wallet for the web UI's card: the engine's record, the last scan, the last movement. */
-export function savingsSummary(g: Guardian): SavingsSummary | undefined {
-  const sv = g.engine.savings();
+export function savingsSummary(g: Guardian, w: WalletRuntime = g): SavingsSummary | undefined {
+  const sv = w.engine.savings();
   if (!sv) return undefined;
-  const last = g.savingsWatch.last?.walletId === sv.walletId ? g.savingsWatch.last : undefined;
+  const last = w.savingsWatch.last?.walletId === sv.walletId ? w.savingsWatch.last : undefined;
   // A fee bump (`savings_replaced`) is the latest form of the last movement: its txid and amount are what will confirm.
-  const moved = g.engine.activity({ limit: 5000 }).find((e) => (e.type === 'savings_moved' || e.type === 'savings_replaced') && e.walletId === sv.walletId);
+  const moved = w.engine.activity({ limit: 5000 }).find((e) => (e.type === 'savings_moved' || e.type === 'savings_replaced') && e.walletId === sv.walletId);
   return {
     id: sv.walletId,
     watchedSince: iso(sv.since),

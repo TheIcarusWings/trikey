@@ -20,7 +20,7 @@ import { errorText } from '../log.js';
 import { onceAcrossRestarts, walletHandlers, walletOf } from '../nostr/handlers.js';
 import { refusalError, rulesFromPolicy } from '../nostr/wire.js';
 import type { Registration } from '../policy/index.js';
-import { labelled } from '../runtime.js';
+import { labelled, type WalletRuntime } from '../runtime.js';
 import { WalletsRegistry, type OwnWalletRecord } from './registry.js';
 import { OwnWallet, WALLETS_DIR, type OwnWalletHost } from './runtime.js';
 
@@ -52,6 +52,10 @@ export const ROUTED_METHODS: readonly MethodName[] = [
   'wallet.sync',
   'tx.get',
   'tx.broadcast',
+  // Phase 2 (`own_wallets_2`): each wallet's Savings.
+  'savings.register',
+  'savings.unregister',
+  'savings.get',
 ];
 
 /** What the box shares: an own wallet's phone may call them as the first wallet's does. */
@@ -259,7 +263,7 @@ export class OwnWallets implements OwnWalletHost {
     if (first) out.push(summary(first, 0, this.registry.firstName));
     for (const w of own) {
       const reg = w.engine.registration() ?? w.engine.retiredWallets().at(-1)?.registration;
-      if (reg) out.push({ ...summary(reg, w.account, w.name), state: w.active ? 'active' : 'retired' });
+      if (reg) out.push({ ...summary(reg, w.account, w.name), ...(w.record.hardwareKind ? { hardwareKind: w.record.hardwareKind } : {}), state: w.active ? 'active' : 'retired' });
     }
     return out;
   }
@@ -325,7 +329,7 @@ export class OwnWallets implements OwnWalletHost {
 
     const key = g.ownKey3(first, params.account);
     const slotId = this.registry.newSlotId();
-    const rec: OwnWalletRecord = { slotId, account: params.account, name: params.name, addedAt: g.clock.now() };
+    const rec: OwnWalletRecord = { slotId, account: params.account, name: params.name, addedAt: g.clock.now(), ...(params.hardwareKind ? { hardwareKind: params.hardwareKind } : {}) };
     const w = new OwnWallet(g, rec, this);
     let res: Awaited<ReturnType<typeof w.engine.register>>;
     try {
@@ -340,6 +344,10 @@ export class OwnWallets implements OwnWalletHost {
         hardwareAuth: { kind: 'bip137', pubkey: params.hardwareAuth.pubkey, path: params.hardwareAuth.path },
         hardwareAuthProof: params.hardwareAuthProof,
         appNostrPubkey: sender,
+        // "Replace guardian" with several wallets: the wallet this one replaces on the old guardian, watched here so its
+        // coins are listed and its sweep relayed, as `pair` does for the first wallet.
+        ...(params.replacesWalletId ? { replacesWalletId: params.replacesWalletId } : {}),
+        ...(params.replacesDescriptor ? { replacesDescriptor: params.replacesDescriptor } : {}),
         // The same key 3 seed as the first wallet: one record covers every own wallet.
         ...(first.key3Mix ? { key3Mix: first.key3Mix } : {}),
         signer: key.signer,
@@ -368,7 +376,7 @@ export class OwnWallets implements OwnWalletHost {
     });
     const reg = w.engine.registration()!;
     g.log.info('wallets.added', { slot: slotId, account: rec.account, walletId: reg.walletId });
-    await g.logEvent({ type: 'wallet_added', name: rec.name, account: rec.account, walletId: reg.walletId });
+    await g.logEvent({ type: 'wallet_added', name: rec.name, account: rec.account, walletId: reg.walletId, ...(params.replacesWalletId ? { replaces: params.replacesWalletId } : {}) });
     await w.notifyPhone({
       type: 'wallet_added',
       walletId: reg.walletId,
@@ -383,26 +391,93 @@ export class OwnWallets implements OwnWalletHost {
     return { walletId: reg.walletId, account: rec.account, name: rec.name, descriptor: reg.descriptor, guardianKey: { fingerprint: key.pub.fingerprint, path: key.pub.path, xpub: key.pub.xpub } };
   }
 
-  /** Master fingerprints of every hardware key the box's wallets hold (the first's, its Savings', every own wallet's), and where. */
+  /** Master fingerprints of every hardware key the box's wallets hold (the first's, its Savings', every own wallet's and its Savings'), and where. */
   hardwareFingerprints(): Map<string, string> {
     const out = new Map<string, string>();
-    const first = this.g.engine.registration();
-    const firstName = this.registry.firstName ?? DEFAULT_FIRST_NAME;
-    if (first) {
-      const fw = walletOf(first);
-      out.set(fw.keys.hardware.fingerprint, `"${firstName}"`);
-      const sv = this.g.engine.savings();
-      if (sv) {
-        try {
-          const s = MultisigWallet.fromDescriptor(sv.descriptor, getNetwork(sv.network as NetworkName));
-          for (const k of [s.keys.app, s.keys.hardware, s.keys.cosigner]) if (k.fingerprint !== fw.keys.app.fingerprint && !out.has(k.fingerprint)) out.set(k.fingerprint, `the Savings of "${firstName}"`);
-        } catch {
-          /* not parsed: nothing to compare */
-        }
-      }
-    }
-    for (const w of this.active()) out.set(walletOf(w.engine.registration()!).keys.hardware.fingerprint, `"${w.name}"`);
+    for (const d of this.devices()) if (!out.has(d.fingerprint)) out.set(d.fingerprint, d.where);
     return out;
+  }
+
+  /**
+   * Every hardware device in a wallet of the box: each wallet's hardware wallet, and its Savings' devices (its own hardware
+   * wallet again, and the Recovery Key), with the wallet (`slot`: undefined for the first) they belong to.
+   */
+  private devices(): { fingerprint: string; where: string; slot: string | undefined }[] {
+    const out: { fingerprint: string; where: string; slot: string | undefined }[] = [];
+    const first = this.g.engine.registration();
+    if (!first) return out;
+    const phoneFp = walletOf(first).keys.app.fingerprint;
+    const key3Fp = walletOf(first).keys.cosigner.fingerprint;
+    const add = (reg: Registration, sv: { descriptor: string; network: string } | undefined, name: string, slot: string | undefined) => {
+      out.push({ fingerprint: walletOf(reg).keys.hardware.fingerprint, where: `"${name}"`, slot });
+      if (!sv) return;
+      try {
+        const s = MultisigWallet.fromDescriptor(sv.descriptor, getNetwork(sv.network as NetworkName));
+        for (const k of [s.keys.app, s.keys.hardware, s.keys.cosigner])
+          if (k.fingerprint !== phoneFp && k.fingerprint !== key3Fp) out.push({ fingerprint: k.fingerprint, where: `the Savings of "${name}"`, slot });
+      } catch {
+        /* not parsed: nothing to compare */
+      }
+    };
+    add(first, this.g.engine.savings(), this.registry.firstName ?? DEFAULT_FIRST_NAME, undefined);
+    for (const w of this.active()) add(w.engine.registration()!, w.engine.savings(), w.name, w.slotId);
+    return out;
+  }
+
+  /**
+   * `savings.register` on a box with own wallets (`own_wallets_2`): an own wallet's Savings holds the paired phone seed's
+   * key at the wallet's odd account (2n + 1), so it is not linked on chain to another wallet's Savings; no key of the key 3
+   * seed (the guardian could sign for it); and no device that is in another wallet of the box, as hardware wallet or as
+   * Savings key (the owner's decision: the same hardware wallet is never in two wallets). The first wallet on a box with
+   * one wallet is not checked here, as before.
+   */
+  checkSavings(w: WalletRuntime, descriptor: string): void {
+    const first = this.g.engine.registration();
+    if (!first || (w.slotId === undefined && !this.active().length)) return;
+    const reg = w.engine.registration();
+    if (!reg) throw refusalError({ reason: 'not_registered' });
+    const network = getNetwork(reg.network);
+    let sv: MultisigWallet;
+    try {
+      sv = MultisigWallet.fromDescriptor(descriptor, network);
+    } catch (e) {
+      throw refusalError({ reason: 'invalid_registration', detail: `the Savings descriptor does not parse on ${network.name} (${errorText(e)})` });
+    }
+    const fw = walletOf(first);
+    const keys = [sv.keys.app, sv.keys.hardware, sv.keys.cosigner];
+    if (keys.some((k) => k.fingerprint === fw.keys.cosigner.fingerprint))
+      throw refusalError({ reason: 'invalid_registration', detail: "a Savings wallet cannot hold the guardian's key: the guardian must not be able to sign for it" });
+    if (w.slotId !== undefined) {
+      const path = bip48Path(network.coinType, w.account + 1);
+      const phone = keys.filter((k) => k.fingerprint === fw.keys.app.fingerprint);
+      if (phone.length !== 1 || phone[0].originPath !== path)
+        throw new RpcError(ErrorCode.InvalidParams, `An own wallet's Savings holds this phone's key at account ${w.account + 1}' (m/48'/${network.coinType}'/${w.account + 1}'/2').`, { reason: 'invalid_savings' });
+    }
+    const mine = new Set([walletOf(reg).keys.hardware.fingerprint]);
+    for (const d of this.devices()) {
+      if (d.slot === w.slotId) continue;
+      if (mine.has(d.fingerprint)) continue;
+      if (keys.some((k) => k.fingerprint === d.fingerprint))
+        throw new RpcError(ErrorCode.InvalidParams, `A device of this Savings (${d.fingerprint}) already holds a key in ${d.where}. Each wallet needs its own hardware wallets.`, { reason: 'hardware_in_use' });
+    }
+  }
+
+  /**
+   * Phase 2: an own wallet is removed only when empty (as a hosted wallet leaves only once no coin key 3 co-signed is
+   * left): its coins as the guardian's chain source sees them, unconfirmed ones and those an unconfirmed spend has not
+   * taken included. Throws `wallet_not_empty`; a chain source that does not answer refuses too (`1501`).
+   */
+  async requireEmpty(w: OwnWallet): Promise<void> {
+    const reg = w.engine.registration();
+    if (!reg) return;
+    const r = await this.g.chain.walletSync(walletOf(reg), { historyLimit: 1, minIndex: w.scanFloor(reg.walletId) });
+    if (!r.utxos.length) return;
+    const sats = r.utxos.reduce((a, u) => a + u.value, 0n);
+    throw new RpcError(
+      ErrorCode.PolicyViolation,
+      `This wallet still holds ${r.utxos.length === 1 ? '1 coin' : `${r.utxos.length} coins`} (${sats} sats). Move the money to another wallet first, then remove it.`,
+      { reason: 'wallet_not_empty', coins: r.utxos.length, sats: Number(sats) },
+    );
   }
 }
 

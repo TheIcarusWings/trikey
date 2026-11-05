@@ -47,6 +47,12 @@ export const GUARDIAN_FEATURES = {
   liveWallet: 'live_wallet',
   /** Several wallets of the box's owner, each with its own hardware wallet (docs/design/multi-wallet.md): `walletId`, `wallet.add.*`. */
   ownWallets: 'own_wallets',
+  /**
+   * Own wallets, phase 2 (docs/design/multi-wallet.md): Savings for every own wallet (`walletId` on `savings.*`),
+   * `wallet.add`'s `hardwareKind` (listed in `guardian.status.wallets`) and `replacesWalletId` / `replacesDescriptor`
+   * ("Replace guardian" moves every wallet), and an own wallet's `wallet.retire` refused while it holds coins.
+   */
+  ownWallets2: 'own_wallets_2',
 } as const;
 
 /** True when the alert contacts may lock the guardian (`Policy.contactLock`). */

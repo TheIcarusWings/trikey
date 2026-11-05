@@ -506,10 +506,20 @@ export const OwnWalletAccount = z
 export const OwnWalletName = z.string().min(1).max(16);
 
 /** One own wallet as `guardian.status.wallets` lists it: everything public a phone needs to rebuild it. */
+/**
+ * The kind of hardware wallet a wallet was added with (`ledger`, `trezor`, `coldcard`, `bitbox02`, `jade`, `qr`), as the
+ * phone named it at `wallet.add`: a phone rebuilding the wallet from `guardian.status.wallets` connects that kind of
+ * device. Not checked against a list, so a kind a later app knows passes an older guardian; a phone that does not know it
+ * asks the person.
+ */
+export const HardwareKindName = z.string().regex(/^[a-z0-9_-]{1,24}$/, 'invalid hardware wallet kind');
+
 export const OwnWalletSummary = z.object({
   walletId: WalletId,
   account: OwnWalletAccount,
   name: OwnWalletName.optional(),
+  /** Guardians with `own_wallets_2`: the kind of hardware wallet `wallet.add` named (absent for older entries). */
+  hardwareKind: HardwareKindName.optional(),
   descriptor: Descriptor,
   /** The hardware wallet's authorization key (absent while a rotation waits for `hardware.confirm`). */
   hardwareAuth: HardwareAuthKey.optional(),
@@ -536,16 +546,30 @@ export const WalletAddPrepareResult = z.object({
  * and no key of the hardware wallet is in another wallet of this guardian (the first's hardware wallet or Savings keys,
  * another own wallet's hardware wallet). The guardian announces it (`wallet_added`, the owner's channels, Activity).
  */
-export const WalletAddParams = z.strictObject({
-  account: OwnWalletAccount,
-  name: OwnWalletName,
-  descriptor: Descriptor,
-  hardwareAuth: HardwareAuthKey,
-  hardwareAuthProof: Bip137Signature,
-  rules: Policy,
-  /** The first wallet's name on the phone, so the guardian's alerts can tell the two apart ("Daily"). */
-  firstName: OwnWalletName.optional(),
-});
+export const WalletAddParams = z
+  .strictObject({
+    account: OwnWalletAccount,
+    name: OwnWalletName,
+    descriptor: Descriptor,
+    hardwareAuth: HardwareAuthKey,
+    hardwareAuthProof: Bip137Signature,
+    rules: Policy,
+    /** The first wallet's name on the phone, so the guardian's alerts can tell the two apart ("Daily"). */
+    firstName: OwnWalletName.optional(),
+    /** Guardians with `own_wallets_2`: the kind of hardware wallet, kept and listed in `guardian.status.wallets`. */
+    hardwareKind: HardwareKindName.optional(),
+    /**
+     * Guardians with `own_wallets_2`, "Replace guardian" with several wallets: the wallet this one replaces on another
+     * guardian, as `pair`'s `replacesWalletId` / `replacesDescriptor` (the guardian watches it, serves its coins with
+     * `wallet.sync` `wallet: "replaced"` and relays a sweep of it into this wallet).
+     */
+    replacesWalletId: WalletId.optional(),
+    replacesDescriptor: Descriptor.optional(),
+  })
+  .refine((p) => p.replacesDescriptor === undefined || p.replacesWalletId !== undefined, {
+    message: 'replacesDescriptor needs replacesWalletId',
+    path: ['replacesDescriptor'],
+  });
 export const WalletAddResult = z.object({
   walletId: WalletId,
   account: OwnWalletAccount,
@@ -1026,6 +1050,8 @@ export const RecoveryAccessResult = z.object({
 // with `wallet: "savings"`), relays its spends (`tx.broadcast`) and alerts when a Savings coin moves (`savings_moved`).
 // Paired phone only, no approval: watching adds chain data and alerts, nothing else (it changes no rule and nothing
 // the daily limit counts). Only guardians that list `savings` in `guardian.status.features` know these methods.
+// Guardians with `own_wallets_2` also take `walletId` (an own wallet's Savings, the phone's key at the wallet's odd
+// account 2n + 1); without it, the first wallet's, as before.
 
 /**
  * Watch this Savings wallet for the paired phone. Replaces a Savings wallet registered before (a new one after a key
@@ -1033,7 +1059,7 @@ export const RecoveryAccessResult = z.object({
  * guardian's network, is the paired wallet or a wallet the guardian guards or guarded (the same key set), the replaced
  * wallet it watches, or holds the guardian's own key 3: a wallet the guardian can sign for is never "Savings".
  */
-export const SavingsRegisterParams = z.strictObject({ descriptor: Descriptor });
+export const SavingsRegisterParams = z.strictObject({ ...onWallet, descriptor: Descriptor });
 export const SavingsRegisterResult = z.object({
   /** `MultisigWallet.fingerprint()` of the descriptor. */
   walletId: WalletId,
@@ -1042,14 +1068,14 @@ export const SavingsRegisterResult = z.object({
 });
 
 /** Stop watching the Savings wallet. Nothing registered: `unregistered: false`. */
-export const SavingsUnregisterParams = z.strictObject({});
+export const SavingsUnregisterParams = z.strictObject({ ...onWallet });
 export const SavingsUnregisterResult = z.object({ unregistered: z.boolean(), walletId: WalletId.optional() });
 
 /**
  * The Savings wallet the guardian watches, if any, with its descriptor: how a new phone without a backup finds its
  * Savings after a recovery (the record moves to a wallet the guardian adopts). Paired phone only.
  */
-export const SavingsGetParams = z.strictObject({});
+export const SavingsGetParams = z.strictObject({ ...onWallet });
 export const SavingsGetResult = z.object({
   savings: z.object({ walletId: WalletId, descriptor: Descriptor, since: UnixSeconds }).nullable(),
 });
