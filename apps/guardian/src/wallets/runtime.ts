@@ -197,6 +197,8 @@ export class OwnWallet implements WalletRuntime {
   async tick(): Promise<void> {
     await this.engine.tick();
     await this.recovery.run();
+    // Before the alerts, so a Savings spend found now is announced in the same pass (as for the first wallet).
+    await this.savingsWatch.run();
     await this.alerts.run();
   }
 

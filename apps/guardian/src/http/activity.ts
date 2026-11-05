@@ -491,7 +491,9 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
       return {
         ...base,
         kind: 'system',
-        event: `Wallet "${e.name}" added with the paired phone and a new hardware wallet (wallet ${e.walletId}, account ${e.account}). It has its own rules, alert contacts and recoveries; the lock is shared.`,
+        event: e.replaces
+          ? `Wallet "${e.name}" moved here from another guardian with the paired phone and its hardware wallet (wallet ${e.walletId}, account ${e.account}, replacing ${e.replaces}). It has its own rules, alert contacts and recoveries; the lock is shared.`
+          : `Wallet "${e.name}" added with the paired phone and a new hardware wallet (wallet ${e.walletId}, account ${e.account}). It has its own rules, alert contacts and recoveries; the lock is shared.`,
         summary: `Wallet "${e.name}" added`,
         signedBy: 'Phone',
         sats: null,

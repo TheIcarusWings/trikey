@@ -27,9 +27,10 @@ describe('savings: the feature and the methods', () => {
     expect(r.safeParse({ walletId: 'nope', since: 1_900_000_000 }).success).toBe(false);
   });
 
-  it('savings.unregister and savings.get take no params', () => {
+  it('savings.unregister and savings.get take no params but an own wallet\'s id (own_wallets_2)', () => {
     expect(methods['savings.unregister'].params.safeParse({}).success).toBe(true);
-    expect(methods['savings.unregister'].params.safeParse({ walletId: SAVINGS_ID }).success).toBe(false);
+    expect(methods['savings.unregister'].params.safeParse({ walletId: SAVINGS_ID }).success).toBe(true);
+    expect(methods['savings.unregister'].params.safeParse({ other: 1 }).success).toBe(false);
     expect(methods['savings.unregister'].result.safeParse({ unregistered: true, walletId: SAVINGS_ID }).success).toBe(true);
     expect(methods['savings.unregister'].result.safeParse({ unregistered: false }).success).toBe(true);
     expect(methods['savings.get'].params.safeParse({}).success).toBe(true);

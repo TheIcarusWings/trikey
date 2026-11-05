@@ -113,7 +113,8 @@ export async function walletOverview(g: Guardian, w: WalletRuntime = g): Promise
           },
         }
       : {}),
-    ...(w === g && g.engine.savings() ? { savings: savingsSummary(g) } : {}),
+    // Each wallet's own Savings (own wallets get one in phase 2).
+    ...(w.engine.savings() ? { savings: savingsSummary(g, w) } : {}),
   };
   let read: Read;
   try {

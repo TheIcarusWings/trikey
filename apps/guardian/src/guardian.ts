@@ -562,6 +562,7 @@ export class Guardian implements WalletRuntime {
     GUARDIAN_FEATURES.notifications,
     GUARDIAN_FEATURES.shortWraps,
     GUARDIAN_FEATURES.ownWallets,
+    GUARDIAN_FEATURES.ownWallets2,
   ];
 
   /** The wallet object of a registration or a watched wallet (cached per descriptor). */

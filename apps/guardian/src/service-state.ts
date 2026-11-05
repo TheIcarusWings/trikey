@@ -99,7 +99,7 @@ export type ServiceEvent =
    */
   | { type: 'chain_source_changed'; from?: string; to: string; backTo?: 'umbrel' | 'start9' | 'docker' }
   /** Own wallets (docs/design/multi-wallet.md): the paired phone added a wallet with its new hardware wallet, or tried to. */
-  | { type: 'wallet_added'; name: string; account: number; walletId: string }
+  | { type: 'wallet_added'; name: string; account: number; walletId: string; replaces?: string }
   | { type: 'wallet_add_refused'; name: string; detail: string };
 
 /** A relay removed from `relays` that the guardian still watches (listens and publishes on) until the owner stops it. */
