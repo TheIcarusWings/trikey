@@ -55,8 +55,9 @@ export function sliceOf(s: WalletState): DemoWalletSlice {
   return { hardware: s.hardware, balanceSats: s.balanceSats, activity: s.activity, dailyLimit: s.dailyLimit, savings: s.savings, receiveAddress: s.receiveAddress, contacts: s.contacts };
 }
 
-function itemOf(w: DemoWallet, s: DemoWalletSlice, current: boolean): WalletListItem {
+function itemOf(w: DemoWallet, s: DemoWalletSlice, current: boolean, frozenOf?: (account: number) => WalletListItem['frozen']): WalletListItem {
   const limit = s.dailyLimit.limitSats;
+  const frozen = s.balanceSats > 0 ? frozenOf?.(w.account) : undefined;
   return {
     account: w.account,
     name: w.name,
@@ -64,14 +65,15 @@ function itemOf(w: DemoWallet, s: DemoWalletSlice, current: boolean): WalletList
     current,
     balanceSats: s.balanceSats,
     ...(s.savings.status === 'active' ? { savingsSats: s.savings.balanceSats } : {}),
+    ...(frozen ? { frozen } : {}),
     dailyLimitSats: limit >= LIMIT_OFF_SATS ? 0 : limit,
     ...(limit >= LIMIT_OFF_SATS ? { limitOff: true as const } : {}),
   };
 }
 
 /** `state.wallets` from the demo's wallets and the state of the one shown. */
-export function demoWalletsView(wallets: DemoWallet[], shown: number, state: WalletState): WalletsView {
-  const list = wallets.map((w) => itemOf(w, w.account === shown ? sliceOf(state) : w.slice!, w.account === shown));
+export function demoWalletsView(wallets: DemoWallet[], shown: number, state: WalletState, frozenOf?: (account: number) => WalletListItem['frozen']): WalletsView {
+  const list = wallets.map((w) => itemOf(w, w.account === shown ? sliceOf(state) : w.slice!, w.account === shown, frozenOf));
   let sats = 0;
   let off = false;
   for (const w of list) {

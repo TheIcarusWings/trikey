@@ -35,9 +35,20 @@ describe('the demo has a second wallet', () => {
     expect(svc.getState().wallets!.list[1]!.name).toBe('Shop');
     await expect(svc.removeWallet!(2)).rejects.toBeInstanceOf(WalletServiceError);
     await expect(svc.removeWallet!(0)).rejects.toBeInstanceOf(WalletServiceError);
+    // Business holds a frozen dust coin: "Move everything" leaves it unless it is included.
+    expect(svc.getState().wallets!.list[1]!.frozen).toEqual({ coins: 1, sats: 3_000 });
     const before = svc.getState().balanceSats;
     const { movedSats } = await svc.moveWalletFunds!(2, 0);
+    expect(movedSats).toBe(850_000 - 3_000 - 300);
     expect(svc.getState().balanceSats).toBe(before + movedSats);
+    expect(svc.getState().wallets!.list[1]).toMatchObject({ balanceSats: 3_000, frozen: { coins: 1, sats: 3_000 } });
+    await expect(svc.removeWallet!(2)).rejects.toThrow(/3,000 sats are in frozen coins, which "Move everything" leaves unless you include them/);
+    await expect(svc.moveWalletFunds!(2, 0)).rejects.toThrow(/nothing to move but frozen coins/);
+    // "Include 1 frozen coin (3,000 sats)": the wallet empties, and can go.
+    const rest = await svc.moveWalletFunds!(2, 0, { includeFrozen: true });
+    expect(rest.movedSats).toBe(3_000 - 300);
+    expect(svc.getState().wallets!.list[1]!.balanceSats).toBe(0);
+    expect(svc.getState().wallets!.list[1]!.frozen).toBeUndefined();
     await svc.removeWallet!(2);
     expect(svc.getState().wallets!.list.map((w) => w.name)).toEqual(['Main']);
     expect(svc.getState().activity.some((i) => i.type === 'security' && i.event.kind === 'wallet-removed')).toBe(true);

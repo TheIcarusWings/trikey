@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Platform, Share, View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
+import { AddressLabelField } from '@/components/address-label';
 import { AppButton } from '@/components/app-button';
 import { Check, Copy, Share2, ShieldCheck } from '@/components/icons';
 import { Body, ListGroup, Notice, SettingsRow, networkLabel } from '@/components/panels';
@@ -95,6 +96,7 @@ export default function SavingsReceive() {
         <Body>{load.busy ? 'Getting your next Savings address…' : ''}</Body>
       )}
       <ActionNotice message={load.message ?? check.message} error={load.error ?? check.error} />
+      {address ? <AddressLabelField wallet="savings" address={address} /> : null}
       <View className="flex-row gap-3">
         <AppButton title={copied ? 'Copied' : 'Copy'} icon={copied ? Check : Copy} className="flex-1 self-auto" onPress={copy} disabled={!address} accessibilityLabel={copied ? 'Address copied' : 'Copy address'} />
         <AppButton title="Share" icon={Share2} variant="outline" className="flex-1 self-auto" onPress={share} disabled={!address} accessibilityLabel="Share address" />

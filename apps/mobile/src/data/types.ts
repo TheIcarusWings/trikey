@@ -402,7 +402,12 @@ export interface CoinView {
   change: boolean;
   /** Left out of automatic selection, Send max and "Consolidate" until unfrozen. */
   frozen: boolean;
+  /** Its label, or its address's when it has none of its own (`labelFromAddress`). */
   label?: string;
+  /** `label` is the label of the address it was received on (set on Receive): the coin has none of its own. */
+  labelFromAddress?: true;
+  /** The label of the address it sits at, when that address has one. */
+  addressLabel?: string;
   source: CoinSourceView;
 }
 
@@ -449,7 +454,9 @@ export interface LabelsImportSummary {
   unfrozen: number;
   /** Payment labels. */
   txLabels: number;
-  /** Records Trikey keeps as read for the next export (addresses, xpubs, ...). */
+  /** Address labels: a coin received on such an address shows its label. */
+  addrLabels: number;
+  /** Records Trikey keeps as read for the next export (inputs, xpubs, ...). */
   kept: number;
   /** Records of another wallet in the same file: left out. */
   otherWallet: number;
@@ -961,6 +968,11 @@ export interface WalletListItem {
   balanceSats: Sats;
   /** Its Savings' balance, when it has Savings. */
   savingsSats?: Sats;
+  /**
+   * Coin control: its frozen coins (part of `balanceSats`), which "Move everything" leaves unless they are included.
+   * Absent: none, or not known yet (no sync).
+   */
+  frozen?: { coins: number; sats: Sats };
   dailyLimitSats: Sats;
   /** No daily limit (turned off with its hardware wallet). */
   limitOff?: true;
@@ -1186,6 +1198,35 @@ export interface SavingsWalletMap extends SavingsMapData {
   date: string;
 }
 
+/** One wallet on the printed recovery sheet (`recovery-sheet.ts`): public data only. */
+export interface RecoverySheetWallet {
+  name: string;
+  /** Its hardware wallet ("Trezor Safe 3"), which a recovery needs. */
+  device: string;
+  walletId: string;
+  network: NetworkName;
+  guardianNpub: string;
+  relays: string[];
+  /** `trikey://recover?...&wallet=<id>`: what a new phone scans ("My phone and its backup"). Also the QR code. */
+  recoveryCode: string;
+  /** Hosted on someone else's guardian. */
+  hosted?: true;
+}
+
+/** Several wallets: one page per wallet (`each`, each kept with its hardware wallet), or one sheet listing them all. */
+export type RecoverySheetLayout = 'each' | 'list';
+
+/** The recovery sheet ready to print: its page and the day it was made. */
+export interface RecoverySheet {
+  layout: RecoverySheetLayout;
+  wallets: RecoverySheetWallet[];
+  html: string;
+  /** YYYY-MM-DD. */
+  date: string;
+  /** Made-up data from the demo: the page says so. */
+  demo?: true;
+}
+
 export interface SavingsQuote {
   /** The wallet's own handle for this quote. Pass the whole quote back to `savings.send`. */
   ref?: string;
@@ -1196,6 +1237,8 @@ export interface SavingsQuote {
   /** The address is this phone's own Spending wallet. */
   toSpending: boolean;
   max?: true;
+  /** Coin control: the coins picked by hand ("Choose coins"), every one of them spent. Absent: the wallet chose. */
+  coins?: string[];
   /** Coin control: the coins picked carry different labels (see `SendQuote.mixesLabels`). */
   mixesLabels?: string[];
 }

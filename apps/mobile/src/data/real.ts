@@ -69,6 +69,7 @@ import { createCoinActions } from './real-coins';
 import type { CoinActions } from './coin-actions';
 import type { SpeedUpActions } from './speed-up-actions';
 import { renderSavingsMap, savingsMapData } from './savings-map';
+import { recoverySheetWallet, renderRecoverySheet } from './recovery-sheet';
 import {
   GUARDIAN_NETWORKS,
   type AppToast,
@@ -96,6 +97,8 @@ import {
   type RecoveryKeyKind,
   type RecoverySweepUpdate,
   type ReplaceGuardianPlan,
+  type RecoverySheet,
+  type RecoverySheetLayout,
   type ReplaceGuardianResult,
   type RestoreUnlock,
   type Sats,
@@ -924,9 +927,38 @@ class Service implements RealWalletService {
       current: w === this.w,
       balanceSats: snap?.balance.totalSats ?? 0,
       ...(w.state.savings ? { savingsSats: w.savingsSnapshot()?.balance.totalSats ?? 0 } : {}),
+      ...this.frozenOf(w),
       dailyLimitSats: limit >= LIMIT_OFF_SATS ? 0 : limit,
       ...(limit >= LIMIT_OFF_SATS ? { limitOff: true as const } : {}),
     };
+  }
+
+  /** Coin control: a wallet's frozen coins, which "Move everything" leaves unless they are included. Nothing before a sync. */
+  private frozenOf(w: TrikeyWallet): { frozen?: { coins: number; sats: Sats } } {
+    if (w.stage !== 'paired' || !w.state.chain) return {};
+    try {
+      const frozen = w.coins().coins.filter((c) => c.frozen);
+      return frozen.length ? { frozen: { coins: frozen.length, sats: frozen.reduce((t, c) => t + c.valueSats, 0) } } : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * The printed recovery sheet: every wallet of the phone (the first only, without a set), with what a new phone needs to
+   * find its guardian. Public data only (`recovery-sheet.ts`).
+   */
+  recoverySheet(layout?: RecoverySheetLayout): RecoverySheet | null {
+    const list = this.set ? this.set.list : this.w ? [this.w] : [];
+    const wallets = list.flatMap((w) => {
+      const g = w.state.guardian;
+      const id = w.state.wallet?.walletId;
+      if (w.stage !== 'paired' || !g || !id) return [];
+      const names = w.state.hardware ? deviceNames(w.state.hardware.kind, w.state.hardware.model) : { model: 'hardware wallet' };
+      return [recoverySheetWallet({ name: this.set ? this.set.nameOf(w) : 'Main', device: names.model, walletId: id, network: this.network, guardianPubkey: g.pubkey, relays: g.relays, hosted: w.isHosted })];
+    });
+    if (!wallets.length) return null;
+    return renderRecoverySheet(wallets, { layout: layout ?? 'each', date: new Date(this.clock.now()) });
   }
 
   private walletsView(): WalletsView | undefined {
@@ -1010,7 +1042,7 @@ class Service implements RealWalletService {
     );
   }
 
-  moveWalletFunds(fromAccount: number, toAccount: number): Promise<{ movedSats: Sats }> {
+  moveWalletFunds(fromAccount: number, toAccount: number, opts: { includeFrozen?: boolean } = {}): Promise<{ movedSats: Sats }> {
     return this.exclusive(() =>
       this.guarded(async () => {
         const set = this.set;
@@ -1025,7 +1057,7 @@ class Service implements RealWalletService {
           try {
             if (!shown) await from.start();
             if (to !== this.w) await to.start();
-            const res = await set.moveFunds(from, to);
+            const res = await set.moveFunds(from, to, opts.includeFrozen ? { includeFrozen: true } : {});
             if (!res.ok) throw new WalletServiceError('wrong_state', `The move was not signed. Approve it on the ${names.model}.`);
             await this.saveLogNow();
             return { movedSats: res.amountSats };

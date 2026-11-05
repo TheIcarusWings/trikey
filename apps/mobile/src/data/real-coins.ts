@@ -49,6 +49,8 @@ export function coinListView(list: CoinList, wallet: CoinWallet, iso: (ms: numbe
     change: c.chain === 1,
     frozen: c.frozen,
     ...(c.label !== undefined ? { label: c.label } : {}),
+    ...(c.labelFromAddress ? { labelFromAddress: true as const } : {}),
+    ...(c.addressLabel !== undefined ? { addressLabel: c.addressLabel } : {}),
     source: {
       kind: c.source.kind,
       txid: c.source.txid,
@@ -102,6 +104,8 @@ export function createCoinActions(host: CoinsHost): CoinActions {
     },
 
     setLabel: (wallet, outpoint, label) => change((w) => w.setCoinLabel(outpoint, label, which(wallet))),
+    addressLabel: (wallet, address) => ready()?.addressLabel(address, which(wallet)),
+    setAddressLabel: (wallet, address, label) => change((w) => w.setAddressLabel(address, label, which(wallet))),
     setFrozen: (wallet, outpoint, frozen) => change((w) => w.setCoinFrozen(outpoint, frozen, which(wallet))),
 
     smallCoins(wallet) {
@@ -216,6 +220,7 @@ export function createCoinActions(host: CoinsHost): CoinActions {
           frozen: r.frozen,
           unfrozen: r.unfrozen,
           txLabels: r.txLabels,
+          addrLabels: r.addrLabels,
           kept: r.kept,
           otherWallet: r.otherWallet,
           errorCount: r.errorCount,

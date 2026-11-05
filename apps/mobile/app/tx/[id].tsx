@@ -3,6 +3,7 @@ import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
+import { useCoins } from '@/components/coins';
 import { ArrowDownLeft, ArrowUpRight, Check, Copy, Vault } from '@/components/icons';
 import { InfoRow, Panel, Pill, QuietLink } from '@/components/panels';
 import { Screen } from '@/components/screen';
@@ -45,6 +46,8 @@ export default function TransactionDetail() {
   const state = useWallet();
   const now = useNow();
   const activity = useActivity();
+  // Coin control: a payment received here is a coin of the wallet, which can carry a label.
+  const coinList = useCoins('spending');
   const [copied, setCopied] = useState(false);
   // The transaction ID and the explorer are one tap away, not on the first screen.
   const [technical, setTechnical] = useState(false);
@@ -74,6 +77,8 @@ export default function TransactionDetail() {
                 ? 'Sent as a silent payment'
                 : 'Sent'
               : 'Received';
+  // The coin it brought in, while it is unspent: its label is set there (the payment's label row shows it).
+  const ownCoin = tx.kind === 'received' ? coinList?.coins.find((c) => c.txid === tx.txid) : undefined;
   // Guardian mode: the explorer on the guardian's box. Recovery Key mode: the chain server's own site, when it has one.
   const explorer = state.mode === 'recoveryKey' ? explorerOf(state.recoveryKey.server.url) : state.guardian.explorerUrl;
 
@@ -114,7 +119,14 @@ export default function TransactionDetail() {
         {tx.spedUp ? <InfoRow label="Sped up" value="Sent again with a higher fee" /> : null}
         {tx.consolidated && tx.consolidatedSats !== undefined ? <InfoRow label="Merged into one coin of" value={`${formatSats(tx.consolidatedSats)} sats`} tabular /> : null}
         {tx.label ? <InfoRow label="Label" value={tx.label} /> : null}
+        {ownCoin?.labelFromAddress ? <InfoRow label="Labeled on" value="Receive, before the address was shared" /> : null}
       </Panel>
+      {ownCoin ? (
+        <QuietLink
+          title={ownCoin.label ? 'Change the label of its coin' : 'Label its coin'}
+          onPress={() => router.push({ pathname: '/coins/[outpoint]', params: { outpoint: ownCoin.outpoint, wallet: 'spending' } })}
+        />
+      ) : null}
       {tx.consolidated ? <Text className="text-muted-foreground text-sm leading-5">The coins stayed in this wallet: only the network fee left it, and only the fee counted toward today's limit.</Text> : null}
       {/* Guardian mode: a payment waiting to confirm can go again with a higher fee (Recovery Key mode speeds up refills on Home). */}
       {sent && tx.status === 'pending' && tx.canSpeedUp && state.mode === 'guardian' && wallet.speedUp ? (

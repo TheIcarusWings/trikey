@@ -20,6 +20,8 @@ import type {
   RecoveryKeyKind,
   ReplaceGuardianPlan,
   AddWalletInput,
+  RecoverySheet,
+  RecoverySheetLayout,
   WalletListItem,
   ReplaceGuardianResult,
   RestoreUnlock,
@@ -99,14 +101,22 @@ export interface WalletService {
   /**
    * Moves everything a wallet holds to another wallet of this phone ("send max" to its next address; within the daily
    * limit the guardian co-signs, over it that wallet's hardware wallet signs): the explicit move before "Remove".
+   * Frozen coins stay unless `includeFrozen` (the person's "Include 1 frozen coin"), which empties the wallet.
    */
-  moveWalletFunds?(fromAccount: number, toAccount: number): Promise<{ movedSats: Sats }>;
+  moveWalletFunds?(fromAccount: number, toAccount: number, opts?: { includeFrozen?: boolean }): Promise<{ movedSats: Sats }>;
   /**
    * "Remove" a wallet added after the first: only when it is empty (its Savings too). The guardian retires it first, with
    * its hardware wallet's approval (it refuses while it still sees coins), and says so; its account stays taken. The
    * first wallet goes last, with "Remove this wallet".
    */
   removeWallet?(account: number): Promise<void>;
+  /**
+   * The printed recovery sheet, made now (no I/O): for each wallet of the phone its name, hardware wallet, guardian npub
+   * and relays, wallet id and "Recover on a new phone" code (text and QR), so a new phone without this one or its backup
+   * finds the guardian. With several wallets, one page per wallet (`each`) or one sheet listing them all (`list`). Public
+   * data only. Null before a wallet is paired (and in Recovery Key mode, whose Recovery Kit is the sheet).
+   */
+  recoverySheet?(layout?: RecoverySheetLayout): RecoverySheet | null;
 
   // -- onboarding ------------------------------------------------------
   /**

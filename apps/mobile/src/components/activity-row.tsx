@@ -11,6 +11,7 @@ import {
   formatSats,
   formatShortDate,
   formatTime,
+  rowLabelSuffix,
   type ActivityItem,
   type AmountUnit,
 } from '@/data';
@@ -80,6 +81,8 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
       else if (tx.silentOutputAddress) subtitle = `${subtitle} · silent payment`;
       else if (tx.consolidated) subtitle = `${subtitle} · network fee`;
     }
+    // Coin control: the payment's label (or, for one received, its coin's or its address's), last.
+    subtitle = `${subtitle}${rowLabelSuffix(tx.label)}`;
 
     return {
       title,
@@ -326,7 +329,9 @@ export function ActivityRow({
         <View className="flex-row items-center gap-1.5">
           {d.subtitleTone === 'warn' ? <View className="bg-warn size-1.5 rounded-full" /> : null}
           <Text
+            numberOfLines={1}
             className={cn(
+              'shrink',
               pick('text-[13px] leading-[18px]', 'text-sm leading-5'),
               d.subtitleTone === 'warn' ? 'text-warn' : 'text-muted-foreground'
             )}>
