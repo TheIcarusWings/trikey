@@ -15,6 +15,7 @@
  * secrets (notify/secrets.ts). Every change is announced (guardian.ts `changeChainSource`), and during a recovery the
  * guardian refuses to switch to a public server.
  */
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isIP } from 'node:net';
 import type { NetworkName } from '@trikey/core';
@@ -114,9 +115,11 @@ export function looksLocal(host: string): boolean {
 
 /**
  * What the web UI sends (`PUT /api/chain`, `POST /api/chain/test`), checked. `current` fills the RPC password when the
- * owner left it out (write-only, like the notification secrets). Throws `ChainSourceError` in plain words.
+ * owner left it out (write-only, like the notification secrets), and so does `nodeRpc`, the Bitcoin Core the guardian
+ * was started with (BITCOIN_RPC_*: Umbrel and StartOS pass it), for the same host and user. Throws `ChainSourceError`
+ * in plain words.
  */
-export function parseChainSource(input: unknown, current?: ChainSource): ChainSource {
+export function parseChainSource(input: unknown, current?: ChainSource, nodeRpc?: Omit<RpcSettings, 'allowPublic'>): ChainSource {
   const r = (input ?? {}) as Record<string, unknown>;
   switch (r['kind']) {
     case 'electrum': {
@@ -153,6 +156,7 @@ export function parseChainSource(input: unknown, current?: ChainSource): ChainSo
       if (!user || user.length > 128 || /[:\s]/.test(user)) throw new ChainSourceError('RPC user: enter the user name (no colon or spaces), or __cookie__ with the cookie’s password.');
       let pass = typeof rpc['pass'] === 'string' && rpc['pass'] !== '' ? rpc['pass'] : undefined;
       if (pass === undefined && current?.kind === 'core' && current.rpc.host === host && current.rpc.user === user) pass = current.rpc.pass;
+      if (pass === undefined && nodeRpc && nodeRpc.host === host && nodeRpc.user === user) pass = nodeRpc.pass;
       if (!pass) throw new ChainSourceError('RPC password: enter it (it is kept by the guardian and never shown again).');
       if (pass.length > 256) throw new ChainSourceError('RPC password: at most 256 characters.');
       const allowPublic = rpc['allowPublic'] === true;
@@ -165,6 +169,30 @@ export function parseChainSource(input: unknown, current?: ChainSource): ChainSo
     default:
       throw new ChainSourceError('Choose a kind of server: your own Electrum server, your own Bitcoin Core, or a public server.');
   }
+}
+
+/**
+ * Whether two sources are the same server with the same settings (a save that changes nothing is not a change): key
+ * order, host case, the default port and flags left out do not count. The RPC password does.
+ */
+export function sameChainSource(a: ChainSource, b: ChainSource): boolean {
+  const canon = (s: ChainSource): string => {
+    if (s.kind === 'core')
+      return JSON.stringify(['core', s.rpc.host.toLowerCase(), s.rpc.port, s.rpc.user, s.rpc.pass, !!s.rpc.allowPublic, s.wallet ?? '']);
+    if (s.kind === 'public') return JSON.stringify(['public', s.host.toLowerCase(), s.port, s.certSha256 ?? '']);
+    return JSON.stringify(['electrum', s.host.toLowerCase(), s.port, s.tls, s.certSha256 ?? '', !!s.allowPublicPlaintext]);
+  };
+  return canon(a) === canon(b);
+}
+
+/**
+ * "Use the server Umbrel set": how the guardian names the environment's choice, by TRIKEY_PLATFORM (`docker`: the
+ * compose file's `.env`).
+ */
+export function environmentSourceName(platform: 'umbrel' | 'start9' | 'docker' | undefined): string {
+  if (platform === 'umbrel') return 'the server Umbrel set';
+  if (platform === 'start9') return 'the server StartOS set';
+  return 'the server in the .env file';
 }
 
 /** For the activity log, the phone and the alerts: `own` or `public`, and the host (never a credential). */
@@ -260,6 +288,11 @@ export class ChainSourceStore {
     } catch (e) {
       throw new Error(`${CHAIN_SOURCE_FILE}: ${(e as Error).message}`);
     }
+  }
+
+  /** "Use the server <platform> set" (`DELETE /api/chain`): back to the environment's choice. */
+  async remove(): Promise<void> {
+    await rm(this.path, { force: true });
   }
 
   async save(s: ChainSource, now: number): Promise<void> {

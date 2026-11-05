@@ -80,11 +80,17 @@ export function confirmationsText(n: number): string {
   return `${formatSats(n)} confirmation${n === 1 ? '' : 's'}`;
 }
 
-/** The balance card: confirmed, and what is still unconfirmed apart (it can still change). */
-export function balanceLines(b: NonNullable<WalletOverview['balance']>): { confirmed: string; unconfirmed: string | null } {
+/**
+ * The balance card, in the phone's numbers: the big number is the whole balance, unconfirmed coins included (the phone's
+ * `balance.totalSats`: confirmed plus unconfirmed, from the same read with this guardian's own relayed payments applied,
+ * so a coin a pending payment spends is out and its change is in), and the line under it says how much of it is
+ * still waiting to confirm, as the phone's list says of those payments ("Waiting to confirm"): a payment to the wallet,
+ * or the change of one it made.
+ */
+export function balanceLines(b: NonNullable<WalletOverview['balance']>): { total: string; waiting: string | null } {
   return {
-    confirmed: `${formatSats(b.confirmedSats)} sats`,
-    unconfirmed: b.unconfirmedSats > 0 ? `${formatSats(b.unconfirmedSats)} sats unconfirmed` : null,
+    total: `${formatSats(b.confirmedSats + b.unconfirmedSats)} sats`,
+    waiting: b.unconfirmedSats > 0 ? `including ${formatSats(b.unconfirmedSats)} sats waiting to confirm` : null,
   };
 }
 

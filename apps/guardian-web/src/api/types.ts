@@ -672,6 +672,18 @@ export interface ChainSettings {
   summary?: { kind: 'own' | 'public'; backend: 'electrum' | 'core'; host: string; port: number };
   /** `environment`: the settings the guardian was started with (Umbrel, Start9, `.env`); `settings`: chosen here. */
   origin: 'environment' | 'settings';
+  /** Where the guardian runs (TRIKEY_PLATFORM): who set `environment`. Absent from guardians before 0.1.14. */
+  platform?: Platform;
+  /**
+   * The source the platform's settings set (Umbrel, StartOS, `.env`), whichever is in use: what "Use the server Umbrel
+   * set" (`DELETE /api/chain`) goes back to. Absent when the guardian was started without one.
+   */
+  environment?: { kind: 'own' | 'public'; backend: 'electrum' | 'core'; host: string; port: number };
+  /**
+   * The Bitcoin Core the guardian was started with (BITCOIN_RPC_*; Umbrel and StartOS pass it), never its password:
+   * choosing it as Your own Bitcoin Core with an empty password uses the one the guardian has.
+   */
+  nodeRpc?: { host: string; port: number; user: string };
   status: {
     connected: boolean;
     /** `electrs/0.12.0`, `Bitcoin Core 32.1`. */
