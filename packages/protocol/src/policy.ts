@@ -45,6 +45,8 @@ export const GUARDIAN_FEATURES = {
   shortWraps: 'short_wraps',
   familyHosting: 'family_hosting',
   liveWallet: 'live_wallet',
+  /** Several wallets of the box's owner, each with its own hardware wallet (docs/design/multi-wallet.md): `walletId`, `wallet.add.*`. */
+  ownWallets: 'own_wallets',
 } as const;
 
 /** True when the alert contacts may lock the guardian (`Policy.contactLock`). */

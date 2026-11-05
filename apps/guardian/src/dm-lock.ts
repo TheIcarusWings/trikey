@@ -63,7 +63,10 @@ export async function onLockDm(g: Guardian, dm: IncomingDm): Promise<void> {
   const rules = reg ? g.engine.status().rules : undefined;
   // The host's wallet's current alert contacts, and the guest wallets that list the sender as a current contact
   // (family hosting, section 16): anyone else gets no answer (no probing who is a contact, or the setting).
-  const hostContact = !!reg && !!rules && dm.sender !== reg.appNostrPubkey && rules.alertContacts.includes(dm.sender);
+  const firstContact = !!reg && !!rules && dm.sender !== reg.appNostrPubkey && rules.alertContacts.includes(dm.sender);
+  // The owner's own wallets that list the sender (docs/design/multi-wallet.md): their contacts lock the box too.
+  const ownOf = g.wallets.active().filter((w) => w.phone() !== dm.sender && !!w.engine.status().rules?.alertContacts.includes(dm.sender));
+  const hostContact = firstContact || ownOf.length > 0;
   const guestContact = g.hosting.contactOfSlots(dm.sender).length > 0;
   if (!hostContact && !guestContact) {
     g.log.debug('dm.lock_ignored', { reason: 'not an alert contact' });
@@ -89,7 +92,7 @@ export async function onLockDm(g: Guardian, dm: IncomingDm): Promise<void> {
   // Setting off (for the host's wallet and for every guest wallet that lists the sender): as if the command did not
   // exist, so no answer and nothing in the activity log. The message is still remembered (above): a relay handing it
   // over again after an owner turned the setting on must not lock or pause then.
-  const hostOn = hostContact && !!rules?.contactLock;
+  const hostOn = (firstContact && !!rules?.contactLock) || ownOf.some((w) => !!w.engine.status().rules?.contactLock);
   const guestOn = g.hosting.contactOfSlots(dm.sender).some(({ engine }) => engine.contactMayPause(dm.sender));
   if (!hostOn && !guestOn) {
     g.log.debug('dm.lock_ignored', { reason: 'setting off' });

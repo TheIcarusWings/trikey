@@ -17,6 +17,7 @@ import { refusalText } from './nostr/wire.js';
 import { isLockCommand, onLockDm } from './dm-lock.js';
 import { onHostedCancelDm } from './hosting/dm-cancel.js';
 import { slotOfRecoveryId } from './hosting/service.js';
+import type { WalletRuntime } from './runtime.js';
 
 const CANCEL_RE = /\bcancel\s+([0-9a-z]+-[0-9a-f]{12})\b/i;
 /** Only answer "no such recovery" to fresh messages, so old DMs re-delivered after a restart stay quiet. */
@@ -33,6 +34,12 @@ export async function onContactDm(g: Guardian, dm: IncomingDm): Promise<void> {
   if (!id) return;
   // A guest wallet's recovery id names its slot: that slot handles it (hosting/dm-cancel.ts), never the host's wallet.
   if (slotOfRecoveryId(id)) return onHostedCancelDm(g, dm, id);
+  // An own wallet's recovery id names its wallet (`<slotId>w<n>-...`): that wallet's engine handles it, nothing else.
+  const own = g.wallets.byRecoveryId(id);
+  return cancelByDm(g, own ?? g, dm, id);
+}
+
+async function cancelByDm(g: Guardian, w: WalletRuntime, dm: IncomingDm, id: string): Promise<void> {
   const reply = async (text: string) => {
     try {
       await g.dm?.send(dm.sender, text);
@@ -40,30 +47,30 @@ export async function onContactDm(g: Guardian, dm: IncomingDm): Promise<void> {
       /* best effort */
     }
   };
-  await g.recoveryMutex.run(async () => {
-    const reg = g.engine.registration();
+  await w.recoveryMutex.run(async () => {
+    const reg = w.engine.registration();
     if (!reg) return;
-    if (dm.sender !== reg.appNostrPubkey && !g.isAlertContact(dm.sender)) {
+    if (dm.sender !== reg.appNostrPubkey && !w.isAlertContact(dm.sender)) {
       g.log.info('dm.cancel_ignored', { reason: 'not an alert contact' });
       return;
     }
     const fresh = dm.createdAt >= g.nowSec() - ANSWER_WINDOW_SEC;
-    const active = g.activeRecord();
+    const active = w.activeRecord();
     if (!active || active.id !== id) {
       if (fresh) await reply(`Trikey: there is no running recovery ${id}, so nothing was cancelled.`);
       return;
     }
     // A reply written before the recovery even started cannot be about it.
     if (dm.createdAt < Math.floor(active.startedAt / 1000) - ANSWER_WINDOW_SEC) return;
-    const res = await g.engine.cancelRecovery({ kind: 'nostr', pubkey: dm.sender });
+    const res = await w.engine.cancelRecovery({ kind: 'nostr', pubkey: dm.sender });
     if (!res.ok) {
-      await g.logEvent({ type: 'cancel_by_dm', recoveryId: id, contact: dm.sender, ok: false, detail: res.refusal.reason });
+      await w.logEvent({ type: 'cancel_by_dm', recoveryId: id, contact: dm.sender, ok: false, detail: res.refusal.reason });
       await reply(`Trikey: could not cancel recovery ${id}: ${refusalText(res.refusal)}.`);
       return;
     }
     g.log.info('recovery.cancelled', { recoveryId: id, by: 'contact_dm', contested: res.contested });
-    await g.logEvent({ type: 'cancel_by_dm', recoveryId: id, contact: dm.sender, ok: true });
+    await w.logEvent({ type: 'cancel_by_dm', recoveryId: id, contact: dm.sender, ok: true });
     await reply(`Trikey: recovery ${id} is cancelled. No funds will move. Thank you for checking.`);
   });
-  void g.alerts.run();
+  void w.alerts.run();
 }

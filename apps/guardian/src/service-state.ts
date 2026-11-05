@@ -96,7 +96,10 @@ export type ServiceEvent =
    * Settings > Server switched the chain source (chain/source.ts): a security event, announced to the phone and on
    * every channel. `from` and `to` are `<own|public>:<electrum|core>:<host>:<port>` (no credential).
    */
-  | { type: 'chain_source_changed'; from?: string; to: string };
+  | { type: 'chain_source_changed'; from?: string; to: string }
+  /** Own wallets (docs/design/multi-wallet.md): the paired phone added a wallet with its new hardware wallet, or tried to. */
+  | { type: 'wallet_added'; name: string; account: number; walletId: string }
+  | { type: 'wallet_add_refused'; name: string; detail: string };
 
 /** A relay removed from `relays` that the guardian still watches (listens and publishes on) until the owner stops it. */
 export interface RetiringRelay {
@@ -129,7 +132,8 @@ export function normalizeRetiringRelays(raw: unknown, fallbackSince: number): Re
   return out;
 }
 
-export type ServiceActivity = { id: number; at: number } & ServiceEvent;
+/** `wallet`: the own wallet an entry is about, by name, once the box has several (docs/design/multi-wallet.md). */
+export type ServiceActivity = { id: number; at: number; wallet?: string } & ServiceEvent;
 
 export interface ServiceStateData {
   version: 1;
@@ -193,9 +197,9 @@ export class ServiceState {
     });
   }
 
-  log(at: number, event: ServiceEvent): Promise<void> {
+  log(at: number, event: ServiceEvent, wallet?: string): Promise<void> {
     return this.update((d) => {
-      d.activity.push({ id: d.nextActivityId++, at, ...event } as ServiceActivity);
+      d.activity.push({ id: d.nextActivityId++, at, ...event, ...(wallet ? { wallet } : {}) } as ServiceActivity);
     });
   }
 

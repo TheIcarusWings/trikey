@@ -97,13 +97,14 @@ export interface GuardianApi {
   lock(): Promise<GuardianStatus>;
 
   listActivity(query?: ActivityQuery): Promise<ActivityEntry[]>;
-  getRules(): Promise<Rules>;
+  /** The rules of the first wallet, or of `walletId` (own wallets: docs/design/multi-wallet.md). */
+  getRules(walletId?: string): Promise<Rules>;
 
   /**
    * The paired wallet, read-only: balance, payments, the daily limit used and left, the address to receive at (the
    * phone's), Savings. Works while the guardian is locked. `paired: false` before a phone is paired.
    */
-  getWallet(): Promise<WalletOverview>;
+  getWallet(walletId?: string): Promise<WalletOverview>;
 
   /**
    * Null when no recovery is running. Read-only: a recovery is cancelled from
@@ -111,7 +112,7 @@ export interface GuardianApi {
    * hardware wallet. The guardian's policy engine records who cancelled, and
    * the box's web UI is none of those parties.
    */
-  getRecovery(): Promise<RecoveryInProgress | null>;
+  getRecovery(walletId?: string): Promise<RecoveryInProgress | null>;
 
   /** The permanent "Recover on a new phone" code. `not_found` while no wallet is paired. */
   getRecoveryCode(): Promise<RecoveryCode>;

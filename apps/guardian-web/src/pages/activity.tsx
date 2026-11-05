@@ -3,6 +3,9 @@ import { ActivityRow } from '@/components/activity-row';
 import { PageHeader } from '@/components/page-header';
 import { ErrorState, PageSkeleton } from '@/components/states';
 import { useApi, usePageTitle } from '@/hooks/use-api';
+import { WalletPicker, useSelectedWallet } from '@/components/wallet-picker';
+import { useGuardian } from '@/components/guardian-provider';
+import { walletChoices } from '@/lib/wallets';
 
 const WEEK_MS = 7 * 24 * 3_600_000;
 
@@ -25,12 +28,17 @@ function Group({ label, entries }: { label: string; entries: ActivityEntry[] }) 
 
 export function ActivityPage() {
   usePageTitle('Activity');
-  const { data, error, loading, reload } = useApi(() => api.listActivity({ limit: 100 }), [], 30_000);
+  // Own wallets: every wallet's entries (each names its wallet), or the chosen wallet's and the box's own.
+  const { status } = useGuardian();
+  const { requested } = useSelectedWallet();
+  const only = requested && walletChoices(status).some((w) => w.id === requested) ? requested : undefined;
+  const { data, error, loading, reload } = useApi(() => api.listActivity({ limit: 100, ...(only ? { wallet: only } : {}) }), [only], 30_000);
   const cutoff = Date.now() - WEEK_MS;
 
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <PageHeader title="Activity" />
+      <WalletPicker label="Show the activity of" all />
       {loading ? (
         <PageSkeleton rows={2} />
       ) : !data ? (

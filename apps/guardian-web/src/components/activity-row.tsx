@@ -33,6 +33,8 @@ function approvedOn(signedBy: string): string {
 /** One line of activity: what happened and when, the amount, and the outcome in words and color. */
 export function ActivityRow({ entry, className }: { entry: ActivityEntry; className?: string }) {
   const meta = [formatWhen(entry.at)];
+  // Own wallets: the wallet an entry is about, once the guardian guards more than one.
+  if (entry.wallet) meta.unshift(entry.wallet);
   if (entry.kind === 'rules' && entry.signedBy) meta.push(approvedOn(entry.signedBy));
   const sats = entry.sats === null ? null : `${formatSats(entry.sats)} sats`;
   return (

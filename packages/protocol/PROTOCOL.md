@@ -125,6 +125,10 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `hosted.coins` | `offset?`, `limit?` (1-100) | `walletId`, `coins: [{ txid, vout, valueSats, script, tweaks: { app, hardware, cosigner }, at }]`, `total`, `nextOffset?` |
 | `hosted.map.get` | `walletId?` (default the hosted wallet; or a running recovery's destination) | `walletId`, `map` (or `null`) |
 | `hosted.access` | `approval: { kind: "bip137", expiresAt, signature }` (the version-2 access text only) | `walletId`, `network`, `accountPubkeys: { app, hardware, cosigner }`, `hardwareAuth`, `policy`, `nextHardwareSequence`, `phoneSpending`, `activeRecoveryId`, `accessExpiresAt` |
+| `wallet.add.prepare` | `account` (even, 2-14) | `account`, `guardianKey: KeyOrigin` (key 3 of the new wallet at that account; see "Own wallets") |
+| `wallet.add` | `account`, `name` (1-16), `descriptor`, `hardwareAuth: { pubkey, path }`, `hardwareAuthProof`, `rules: Policy`, `firstName?` (1-16, the first wallet's name) | `walletId`, `account`, `name`, `descriptor`, `guardianKey` (see "Own wallets") |
+
+Guardians with `own_wallets` also take an optional **`walletId`** in the params of `guardian.status`, `sign`, `policy.get`, `policy.update`, `recovery.start` (the own form), `recovery.update`, `recovery.cancel`, `recovery.status`, `phone.resume`, `hardware.confirm`, `wallet.retire`, `wallet.sync`, `tx.get` and `tx.broadcast`: the request acts on that wallet of the box's owner. Absent, it means the first wallet, as before (see "Own wallets").
 
 **Policy** is exactly the rules the guardian's policy engine enforces, and nothing else: four always, and one opt-in rule that is present only when it is on:
 
@@ -528,6 +532,55 @@ its contacts; at `endsAt` (or at once, behind a typed confirmation) the slot end
 `hosting_ended`, and the slot's key 3 record is deleted. Refused while that wallet's recovery runs. The owner's reset is
 refused while any guest wallet is hosted.
 
+### Own wallets
+
+A guardian that lists `own_wallets` (`GUARDIAN_FEATURES.ownWallets`) guards up to 8 wallets of its owner, apart from the
+hosted ones (docs/design/multi-wallet.md). They share the paired phone (one seed, one nostr identity) and the key 3 seed
+of the first pairing (the setup seed, or `seed3` of "Key 3 from both sides"); only the hardware wallet differs. Each
+wallet sits at its own hardened **BIP 48 account** of both seeds: the first wallet at `0'` (its Savings at `1'`), the
+wallet added n-th at `(2n)'` (its Savings, later, at `(2n+1)'`): `m/48'/<coin>'/<2n>'/2'` for the phone's key and for key
+3. The hardware wallet keeps its own `0'`. So the wallets' phone keys and key 3s are unrelated keys and nothing on chain
+links two wallets; off chain, their descriptors carry the same phone and key 3 master fingerprints.
+
+**Adding a wallet.** From the first wallet's paired phone, while the guardian is unlocked: `wallet.add.prepare { account }`
+answers key 3 at that account (an even account from 2 up that no wallet ever used: an account is never used twice, also
+after a wallet is retired; refused with `-32602`, `data.reason: "account_unavailable"`, `data.nextAccount`). The phone
+builds `wsh(sortedmulti(2, key2@account, key1@0', key3@account))`, registers it on the new hardware wallet, shows its first
+address there, and has the device sign the pairing proof `pairingMessage(walletId, cosignerAccountPubkey)`. `wallet.add`
+checks what `pair` checks (three distinct keys, key 3 in its slot, the authorization key below the hardware xpub, the
+proof, the rules: an alert contact on mainnet, no limit off), and that the phone's key is the paired seed's (the first
+wallet's phone fingerprint) at `account`, and that no key of the new device is in another wallet of the box (the first
+wallet's hardware wallet, its Savings keys, another own wallet's device: `data.reason: "hardware_in_use"`). It answers the
+new wallet's id and announces it: `wallet_added` to the phone, the owner's channels, the web UI's Activity.
+
+**Routing.** A request naming a wallet (`walletId`) reaches that wallet's engine (its own key 3, rules, daily limit window,
+alert contacts, Delay & Notify, recoveries, hardware sequence) and nothing else; only its paired phone, a phone with
+recovery access to it (the recovery methods) or its alert contacts (`recovery.cancel`) may. An id the guardian does not
+guard is refused (`-32602`, `data.reason: "unknown_wallet"`), never applied to the first wallet. Without `walletId` the
+request is the first wallet's, exactly as before, except `recovery.cancel` naming an own wallet's recovery, and a sender
+that is only one own wallet's phone or recovery peer (after a recovery moved that wallet to a new phone): that wallet's.
+An own wallet's recovery ids are `<slotId>w<n>-<txid12>` (they fit `RecoveryId` and `CANCEL <id>`). `recovery.access` is
+tried against the first wallet's hardware authorization key, then each own wallet's. Savings, silent payments
+(`sp.*`), `singlekey.register` and `wallet.unwatch` stay the first wallet's for now: they take no `walletId`. The first
+wallet is retired last (`wallet.retire`: `1200`, `data.reason: "own_wallets_active"`).
+
+**Box-wide.** One passphrase unlocks every wallet's key 3, `guardian.lock` locks them all; a contact's `LOCK` locks the
+box when a wallet that lists the contact lets its contacts lock it. `guardian.unlock` from the phone is refused while a
+recovery of **any** wallet runs that the phone did not start. A reset forgets every wallet (refused while any wallet's
+recovery runs or a sweep waits). `guardian.status` without `walletId` lists every wallet once there is more than one
+(`wallets: [{ walletId, account, name?, descriptor, hardwareAuth?, state? }]`), so a phone restored from a backup older
+than its last wallet rebuilds it (after checking the descriptor holds its own key at `account`). With `walletId` it is
+that wallet's view.
+
+**Alerts.** Alerts about a wallet after the first carry its `walletId` (alerts that already name a wallet keep their
+member), and once the box has more than one wallet every text names the wallet (`"Business: ..."`), on the phone, in the
+contacts' DMs and on the owner's channels. The live wallet (`wallet_tx`) covers every own wallet.
+
+**Older guardians and phones.** Params are strict, so a guardian before own wallets refuses a request carrying `walletId`
+(`-32602`) and answers `-32601` to `wallet.add.*`: it never acts on the first wallet in another's place. A phone sends
+them only to a guardian that lists `own_wallets`. A phone before own wallets sends no `walletId`: the first wallet, as
+always. Alerts' `walletId` is an optional member such phones drop.
+
 ### Recovery access
 
 "Lost phone, no backup": the user has a new phone, the hardware wallet and the guardian. The new phone has a fresh nostr key that the guardian does not know, and it knows neither the descriptor nor the guardian's key, only the guardian's `npub` and relays (the web UI's "Recover on a new phone" code, section 6). `recovery.access` lets the hardware wallet vouch for it:
@@ -540,7 +593,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 
 ### Alerts
 
-`params` is `{ type, at, atMs?, message? , ...}` (`at` in unix seconds; `atMs` the same moment in unix milliseconds, sent on every alert, see "Time") with `type` one of the engine's alert kinds (`AlertKind`), plus `guardian_locked`, `wallet_adopted`, `wallet_retired`, `sp_received`, `relays_changed`, `notifications_changed`, `chain_source_changed` and `wallet_tx`, which the service raises itself. The `type` set is closed: a phone drops an alert whose `type` it does not know as malformed (section 4), so a new type reaches only phones that know it, and must never be needed by an older one to keep working:
+`params` is `{ type, at, atMs?, message?, walletId?, ...}` (`walletId`: guardians with `own_wallets`, on alerts about a wallet after the first, see "Own wallets") (`at` in unix seconds; `atMs` the same moment in unix milliseconds, sent on every alert, see "Time") with `type` one of the engine's alert kinds (`AlertKind`), plus `guardian_locked`, `wallet_adopted`, `wallet_retired`, `sp_received`, `relays_changed`, `notifications_changed`, `chain_source_changed` and `wallet_tx`, which the service raises itself. The `type` set is closed: a phone drops an alert whose `type` it does not know as malformed (section 4), so a new type reaches only phones that know it, and must never be needed by an older one to keep working:
 
 | `type` | extra members |
 |---|---|
@@ -561,6 +614,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 | `wallet_paused` | `walletId`, `by` (`contact`), `contact?`: a guest's hosted wallet was paused by one of its alert contacts' `LOCK`; its slot co-signs no payment until the guest's hardware wallet resumes it (`phone.resume`). To the guest's phone; the wallet's other contacts get a NIP-17 DM. Phones before it drop it and see `guardian.status.hosting.paused`. See "Family hosting" |
 | `chain_source_changed` | `kind` (`own`\|`public`), `backend` (`electrum`\|`core`), `host`: the owner switched where the guardian reads the chain (its web UI, Settings > Server). Also announced on the extra alert channels and in Activity. To a guest wallet's phone: `host` is `"own"` for the owner's own node, and nothing goes on the owner's channels (see "Family hosting"). See "Chain data", "Chain source" |
 | `wallet_tx` | `txid`, `direction` (`in`\|`out`\|`self`), `amountSats`, `feeSats?`, `confirmations`, `wallet` (`main`\|`savings`), `replaces?` (the unconfirmed transaction it replaced, RBF): a transaction touching the paired wallet or Savings was first seen (mempool or block), or first confirmed. Paired phone only. Guardians with `live_wallet`; see "Chain data", "Live wallet" |
+| `wallet_added` | `walletId`, `account`, `name`: the owner added a wallet with the paired phone and a new hardware wallet (`wallet.add`). Guardians with `own_wallets`; see "Own wallets" |
 | `wallet_retired` | `walletId`, `reason` (`retired`\|`recovered`\|`reset`), `successorWalletId?`. Sent to the phone that was paired to the wallet: `retired` after `wallet.retire`; `reset` after the web UI's reset; `recovered` when a recovery swept the wallet and the phone paired to the new wallet is a different one (a lost phone's replacement), or the guardian adopted none (`successorWalletId` is the adopted wallet when there is one). The phone that started the recovery and is adopted gets `wallet_adopted` instead |
 
 Names match the engine (`daily_reminder` was renamed `recovery_reminder`; `daysRemaining` is now `daysLeft`, `executeAfter` is `readyAt`). The engine's `DueAlert` carries `dueAt` and `readyAt` in milliseconds; the service converts both to seconds (`at` and `readyAt`). `daysLeft` is already in days. The engine's due-alert record does not hold `cancelledBy`, the cancel's `contested` flag or the txid; the service reads them from the recovery record (`status().recovery`) when it builds those alerts.

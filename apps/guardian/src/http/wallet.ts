@@ -23,7 +23,8 @@ import type { Guardian } from '../guardian.js';
 import type { WalletSync } from '../chain/chain.js';
 import { describeTx, LIVE_HISTORY } from '../live-wallet.js';
 import type { NetworkName } from '@trikey/core';
-import { savingsSummary } from './api.js';
+import { savingsSummary, walletNameOf } from './api.js';
+import type { WalletRuntime } from '../runtime.js';
 import type { WalletOverview, WalletPayment } from './types.js';
 
 /** A read the page made itself (no live read yet) is reused this long. */
@@ -60,48 +61,48 @@ interface Read {
   sync: WalletSync;
 }
 
-const coldReads = new WeakMap<Guardian, Read>();
-const reading = new WeakMap<Guardian, Promise<Read>>();
+const coldReads = new WeakMap<WalletRuntime, Read>();
+const reading = new WeakMap<WalletRuntime, Promise<Read>>();
 
-/** The paired wallet's latest read: the live wallet's, else one of its own (shared by concurrent requests). */
-async function readWallet(g: Guardian, reg: { walletId: string; descriptor: string; network: NetworkName }): Promise<Read> {
+/** A wallet's latest read: the live wallet's, else one of its own (shared by concurrent requests). */
+async function readWallet(g: Guardian, w: WalletRuntime, reg: { walletId: string; descriptor: string; network: NetworkName }): Promise<Read> {
   // A read from before the guardian relayed (or let go of) a transaction may still count a coin a payment spends as
   // spendable, or miss its pending change: not served (chain/relayed.ts; the phone applies the same records).
   const current = (r: { sync: WalletSync }) => (r.sync.relayedVersion ?? 0) === g.chain.relayed.version;
   const lastLive = g.live?.lastRead.get(reg.walletId);
   const live = lastLive && current(lastLive) ? lastLive : undefined;
-  const cold = coldReads.get(g);
+  const cold = coldReads.get(w);
   const fresh = cold && cold.walletId === reg.walletId && g.clock.now() - cold.at < COLD_READ_TTL_MS && current(cold) ? cold : undefined;
   if (live && (!fresh || live.at >= fresh.at)) return { walletId: reg.walletId, ...live };
   if (fresh) return fresh;
-  let p = reading.get(g);
+  let p = reading.get(w);
   if (!p) {
     p = (async () => {
-      const sync = await g.chain.walletSync(g.walletOf(reg), { historyLimit: LIVE_HISTORY, minIndex: g.scanFloor(reg.walletId) });
+      const sync = await g.chain.walletSync(g.walletOf(reg), { historyLimit: LIVE_HISTORY, minIndex: w.scanFloor(reg.walletId) });
       const read = { walletId: reg.walletId, at: g.clock.now(), sync };
-      coldReads.set(g, read);
+      coldReads.set(w, read);
       return read;
-    })().finally(() => reading.delete(g));
-    reading.set(g, p);
+    })().finally(() => reading.delete(w));
+    reading.set(w, p);
   }
   const read = await p;
   if (read.walletId !== reg.walletId) throw new Error('the paired wallet changed during the read');
   return read;
 }
 
-/** `GET /api/wallet`. */
-export async function walletOverview(g: Guardian): Promise<WalletOverview> {
+/** `GET /api/wallet` (the first wallet), and `GET /api/wallets/:id` (any wallet of the box). */
+export async function walletOverview(g: Guardian, w: WalletRuntime = g): Promise<WalletOverview> {
   const state = g.locked ? 'locked' : 'unlocked';
-  const reg = g.engine.registration();
+  const reg = w.engine.registration();
   if (!reg) return { paired: false, state, network: g.config.network };
-  const s = g.engine.status();
+  const s = w.engine.status();
   const limit = s.dailyLimit;
   const base: WalletOverview = {
     paired: true,
     state,
     network: g.config.network,
     walletId: reg.walletId,
-    walletName: 'Main',
+    walletName: walletNameOf(g, w),
     ...(limit
       ? {
           dailyLimit: {
@@ -112,11 +113,11 @@ export async function walletOverview(g: Guardian): Promise<WalletOverview> {
           },
         }
       : {}),
-    ...(g.engine.savings() ? { savings: savingsSummary(g) } : {}),
+    ...(w === g && g.engine.savings() ? { savings: savingsSummary(g) } : {}),
   };
   let read: Read;
   try {
-    read = await readWallet(g, reg);
+    read = await readWallet(g, w, reg);
   } catch {
     // The error's words can name the owner's own node: the page says it plainly instead.
     return { ...base, chainError: "The guardian can't read the blockchain right now, so it can't show the balance, the payments or an address to receive at. Your phone can." };

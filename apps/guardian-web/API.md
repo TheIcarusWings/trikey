@@ -141,6 +141,19 @@ logs request bodies.
 `rule-changed`. `kind` is one of `payment`, `recovery`, `rules`, `system`.
 `summary` is optional; the dashboard shows it instead of `event` when present.
 
+### Own wallets (several wallets of the box's owner)
+
+A guardian may guard more than one wallet of its owner, each with its own hardware wallet, rules and recoveries
+(docs/design/multi-wallet.md). The first wallet keeps every endpoint above; the others are named by their wallet id.
+
+| Request | Response | Notes |
+|---|---|---|
+| `GET /api/wallets` | `{ "wallets": WalletSummary[] }` | Signed in; works while locked. The first wallet, then each wallet added, with `name`, `account` (its BIP 48 account on the shared phone and key 3 seeds), `hardwareFingerprint`, `recoveryInProgress` and `dailySpend` (those four only once there is more than one wallet). `GET /api/status`'s `wallets` is the same list. |
+| `GET /api/wallets/:id` | `WalletOverview` | As `GET /api/wallet`, for that wallet (the first by its id, too). `404 not_found` for an id the guardian does not guard. |
+| `GET /api/rules?wallet=<id>` | `Rules` | That wallet's rules (`walletName` is its name). Without `wallet`: the first wallet's, as before. |
+| `GET /api/recovery?wallet=<id>` | `{ "recovery": RecoveryInProgress \| null }` | That wallet's running recovery. Without `wallet`: the first wallet's. `GET /api/status`'s `recoveryInProgress` is true while any wallet's runs. |
+| `GET /api/activity?wallet=<id>` | `{ "entries": ActivityEntry[] }` | That wallet's entries and the box's own. Without `wallet`: every wallet's; once there is more than one, each entry about a wallet names it (`wallet`). |
+
 ### Recovery
 
 | Method and path | Response | Notes |

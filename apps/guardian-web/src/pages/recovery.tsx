@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/page-header';
 import { ErrorState, PageSkeleton } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { useApi, useNow, usePageTitle } from '@/hooks/use-api';
+import { WalletPicker, useSelectedWallet } from '@/components/wallet-picker';
 import { formatCountdownLong, formatDateAt, formatDateTime, formatDayList, formatSats } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -98,7 +99,8 @@ function Details({ recovery }: { recovery: RecoveryInProgress }) {
 
 export function RecoveryPage() {
   usePageTitle('Recovery');
-  const { data: recovery, error, loading, reload } = useApi(() => api.getRecovery(), [], 30_000);
+  const { walletId } = useSelectedWallet();
+  const { data: recovery, error, loading, reload } = useApi(() => api.getRecovery(walletId), [walletId], 30_000);
   const now = useNow(30_000);
 
   if (loading) return <PageSkeleton rows={2} />;
@@ -108,6 +110,7 @@ export function RecoveryPage() {
     return (
       <div className="flex flex-col gap-5 md:gap-6">
         <PageHeader title="Recovery" pill />
+        <WalletPicker />
         <p className="m-0 text-sm text-muted-foreground">No recovery is in progress.</p>
         <Button asChild variant="outline" className="w-fit">
           <Link to="/">Back to Home</Link>
@@ -123,6 +126,7 @@ export function RecoveryPage() {
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <PageHeader title="Recovery in progress" pill />
+      <WalletPicker />
 
       <section aria-label="Countdown" className="flex flex-col gap-1">
         <p className="m-0 text-sm leading-5 text-muted-foreground">

@@ -35,6 +35,11 @@
  *   live-wallet.json     the live wallet (live-wallet.ts): which transactions
  *                        `wallet_tx` alerts announced, and those still waiting
  *                        for a relay
+ *   wallets.json, wallets/<slotId>/guardian-state.json, wallets/<slotId>/service.json
+ *                        the owner's own wallets after the first (wallets/):
+ *                        the registry (names, accounts ever used), and each
+ *                        wallet's engine state and co-signed sweeps. Only once
+ *                        the owner adds a wallet (docs/design/multi-wallet.md)
  */
 import { join } from 'node:path';
 import type { Server } from 'node:http';
@@ -112,6 +117,8 @@ import type { HostedKey3Mix } from './keystore.js';
 import { Notifier, type NotifyEvent, type TestOutcome, type UpdateOutcome } from './notify/notifier.js';
 import type { NetPolicy } from './notify/net.js';
 import type { SmtpTestOptions } from './notify/channels.js';
+import { activeRecovery, labelled, type WalletRuntime } from './runtime.js';
+import { OwnWallets } from './wallets/service.js';
 
 export const FILES = {
   keystore: 'keystore.json',
@@ -260,16 +267,13 @@ function browserEntropyOk(v: unknown): boolean {
 const BAD_ENTROPY = `entropy must be ${SETUP_ENTROPY_BYTES} random bytes as ${SETUP_ENTROPY_BYTES * 2} lowercase hex characters.`;
 
 /** The running (pending or ready) recovery of wallet `walletId` (the active one) in the engine's state, if any. */
-export function activeRecovery(recoveries: readonly RecoveryRecord[] | undefined, walletId: string | undefined): RecoveryRecord | undefined {
-  if (!recoveries || !walletId) return undefined;
-  for (let i = recoveries.length - 1; i >= 0; i--) {
-    const r = recoveries[i];
-    if (r.walletId === walletId) return r.status === 'pending' || r.status === 'ready' ? r : undefined;
-  }
-  return undefined;
-}
+export { activeRecovery };
 
-export class Guardian {
+export class Guardian implements WalletRuntime {
+  /** The first wallet has no slot: its files are where they always were. */
+  readonly slotId = undefined;
+  /** The first wallet's BIP 48 account on the phone seed and the key 3 seed. */
+  readonly account = 0;
   readonly config: GuardianConfig;
   readonly clock: Clock;
   readonly log: Logger;
@@ -289,6 +293,11 @@ export class Guardian {
   readonly savingsWatch: SavingsMonitor;
   /** Guests' wallets (docs/design/family-hosting.md): one engine per slot, next to the host's untouched engine. */
   readonly hosting: Hosting;
+  /**
+   * The owner's own wallets after the first (docs/design/multi-wallet.md): one engine and runtime each, key 3 at their
+   * account of the first pairing's key 3 seed. The first wallet is this `Guardian` itself, unchanged.
+   */
+  readonly wallets: OwnWallets;
   /** Email, ntfy and webhook alerts (notify/notifier.ts): owner-side settings from the web UI; works while locked. */
   readonly notifier: Notifier;
   /** Keeps the wallets' chain data live and sends `wallet_tx` alerts (live-wallet.ts). Undefined when turned off. */
@@ -302,6 +311,13 @@ export class Guardian {
   engine!: PolicyEngine;
   store!: ObservedStore;
   service!: ServiceState;
+  /** The chain's tip as every engine reads it (recovery delay, daily limit window): the chain source's. */
+  readonly engineChain = {
+    tip: async () => {
+      const t = await this.chain.tip();
+      return { height: t.height, medianTimePastMs: t.medianTimePast * 1000 };
+    },
+  };
   /**
    * Passphrase attempts, each with its own throttle so one cannot starve another: the web UI's unlock
    * (and setup), the phone's `guardian.unlock`, and the web UI's reset. A stolen phone guessing away
@@ -387,6 +403,10 @@ export class Guardian {
   private walletBirthday(fingerprint: string): number | undefined {
     const setupAt = this.service?.get().setupAt;
     const mine = new Set([this.engine?.registration()?.walletId, ...(this.engine?.retiredWallets().map((r) => r.registration.walletId) ?? [])]);
+    for (const w of this.wallets?.all ?? []) {
+      const reg = w.engine.registration();
+      if (reg && reg.walletId === fingerprint) return Math.floor(w.record.addedAt / 1000);
+    }
     if (setupAt !== undefined && mine.has(fingerprint)) return Math.floor(setupAt / 1000);
     const sv = this.engine?.savings();
     if (sv && sv.walletId === fingerprint) return Math.floor(sv.since / 1000);
@@ -423,10 +443,11 @@ export class Guardian {
       stamp: () => this.stampNow(),
       scanThreads: opts.config.spScanThreads,
     });
-    this.alerts = new Alerter(this);
-    this.recovery = new RecoveryRunner(this);
-    this.savingsWatch = new SavingsMonitor(this, opts.savingsScanIntervalMs);
+    this.alerts = new Alerter(this, this);
+    this.recovery = new RecoveryRunner(this, this);
+    this.savingsWatch = new SavingsMonitor(this, this, opts.savingsScanIntervalMs);
     this.hosting = new Hosting(this);
+    this.wallets = new OwnWallets(this);
     if (opts.liveWallet !== false) {
       this.live = new LiveWallet(this, opts.liveWallet ?? {});
       this.features.push(GUARDIAN_FEATURES.liveWallet);
@@ -436,7 +457,8 @@ export class Guardian {
       now: () => this.clock.now(),
       log: this.log,
       logEvent: (e) => this.logEvent(e),
-      contacts: () => this.engine?.status().rules?.alertContacts ?? [],
+      // Every wallet's alert contacts (own wallets too: docs/design/multi-wallet.md).
+      contacts: () => [...new Set([...(this.engine?.status().rules?.alertContacts ?? []), ...(this.wallets?.active().flatMap((w) => w.engine.status().rules?.alertContacts ?? []) ?? [])])],
       net: opts.notify?.net,
       smtpTest: opts.notify?.smtpTest,
     });
@@ -469,13 +491,7 @@ export class Guardian {
     await g.sessionThrottle.load();
     g.store = new ObservedStore(opts.store ?? new JsonFileStore(g.path('engine')));
     // The engine checks its clock against the chain (recovery delay, daily limit window): Electrs' tip.
-    const chainTime = {
-      tip: async () => {
-        const t = await g.chain.tip();
-        return { height: t.height, medianTimePastMs: t.medianTimePast * 1000 };
-      },
-    };
-    g.engine = await PolicyEngine.open({ store: g.store, clock: g.clock, chain: chainTime });
+    g.engine = await PolicyEngine.open({ store: g.store, clock: g.clock, chain: g.engineChain });
     const net = g.config.network;
     if (g.keystore && g.keystore.public.network !== net)
       throw new ConfigError(`key 3 was created for ${g.keystore.public.network}, but BITCOIN_NETWORK is ${net}`);
@@ -495,6 +511,8 @@ export class Guardian {
     await g.sp.load();
     // Guests' slots: nothing to load without hosting.json (every guardian before family hosting).
     await g.hosting.load();
+    // The owner's own wallets: nothing to load without wallets.json (every guardian before them).
+    await g.wallets.load();
     await g.notifier.load();
     await g.live?.load();
     const stored = await g.chainSourceStore.load();
@@ -533,6 +551,7 @@ export class Guardian {
     GUARDIAN_FEATURES.savings,
     GUARDIAN_FEATURES.notifications,
     GUARDIAN_FEATURES.shortWraps,
+    GUARDIAN_FEATURES.ownWallets,
   ];
 
   /** The wallet object of a registration or a watched wallet (cached per descriptor). */
@@ -578,9 +597,25 @@ export class Guardian {
     return activeRecovery(this.records, this.engine.registration()?.walletId);
   }
 
-  async logEvent(event: ServiceEvent): Promise<void> {
+  /** The first wallet's co-signed sweeps (and paired phone record) are in `service.json`, as always. */
+  get sweepStore(): ServiceState {
+    return this.service;
+  }
+
+  /** The first wallet's name in alerts once the box has several wallets (`wallet.add`'s `firstName`). */
+  label(): string | undefined {
+    return this.wallets.firstLabel();
+  }
+
+  /** Alerts about the first wallet carry no `walletId`: as before own wallets. */
+  alertWalletId(): string | undefined {
+    return undefined;
+  }
+
+  /** An entry in the box's Activity log; `wallet`: the own wallet it is about (by name), once the box has several. */
+  async logEvent(event: ServiceEvent, wallet?: string): Promise<void> {
     try {
-      await this.service.log(this.clock.now(), event);
+      await this.service.log(this.clock.now(), event, wallet);
     } catch (e) {
       this.log.error('service_log.write_failed', { error: errorText(e) });
     }
@@ -745,7 +780,27 @@ export class Guardian {
     // Guests' phones, recovery peers, contacts and invitees (hosting/service.ts); undefined leaves it to the host's rules.
     const hosted = this.hosting.authorize(sender, method);
     if (hosted !== undefined) return hosted;
-    return this.authorizeHost(sender, method);
+    if (this.authorizeHost(sender, method)) return true;
+    // The owner's own wallets (wallets/service.ts): their phones, recovery peers and contacts.
+    return this.wallets.authorize(sender, method) ?? false;
+  }
+
+  /** Forgets `pubkey` as an RPC peer unless it is still a wallet's phone (the box's phones are shared by its wallets). */
+  dropPeerIfUnused(pubkey: string): void {
+    if (this.engine.registration()?.appNostrPubkey === pubkey) return;
+    if (this.wallets.active().some((w) => w.phone() === pubkey)) return;
+    this.rpc?.removePeer(pubkey);
+  }
+
+  /**
+   * Key 3 of an own wallet (docs/design/multi-wallet.md): the first pairing's key 3 seed (its `key3Mix`, or the setup
+   * seed for a pairing without the phone's entropy) at BIP 48 `account`. Needs the guardian unlocked. The caller wipes
+   * `signer`.
+   */
+  ownKey3(first: { key3Mix?: Key3Mix }, account: number): { signer: KeystoreSigner; pub: CosignerPublic } {
+    const seed = this.seed;
+    if (!seed || seed.wiped || this.locked) throw new Error('the guardian is locked');
+    return seed.key3(this.config.network, first.key3Mix, account);
   }
 
   /** The host's own rules, exactly as before family hosting. */
@@ -762,7 +817,7 @@ export class Guardian {
   /** The paired phone, an alert contact (or a running recovery's recipient), or a phone with recovery access: not a stranger. */
   isKnownSender(sender: string): boolean {
     const reg = this.engine.registration();
-    return (!!reg && sender === reg.appNostrPubkey) || this.isAlertContact(sender) || this.hasRecoveryAccess(sender) || this.hosting.isKnownSender(sender);
+    return (!!reg && sender === reg.appNostrPubkey) || this.isAlertContact(sender) || this.hasRecoveryAccess(sender) || this.hosting.isKnownSender(sender) || this.wallets.isKnownSender(sender);
   }
 
   /** Phones holding an unexpired `recovery.access` grant for the active wallet. */
@@ -891,7 +946,12 @@ export class Guardian {
       message: 'Your guardian moved to other relays. The app switches by itself; the old ones stay watched until you stop them.',
     };
     // Guests' phones too: they reach this box over the same relays.
-    const to = new Set([...(reg ? [reg.appNostrPubkey] : []), ...this.recoveryPeers(), ...this.hosting.phones()]);
+    const to = new Set([
+      ...(reg ? [reg.appNostrPubkey] : []),
+      ...this.recoveryPeers(),
+      ...this.hosting.phones(),
+      ...this.wallets.active().flatMap((w) => [...(w.phone() ? [w.phone()!] : []), ...w.recoveryPeers()]),
+    ]);
     for (const peer of to) await this.notifyPeer(peer, alert);
     this.notifyOwner('relays_changed', `${alert.message} If you did not change them in the guardian's web page, check the guardian now.`);
   }
@@ -989,7 +1049,7 @@ export class Guardian {
    */
   async updateNotifications(input: unknown): Promise<UpdateOutcome> {
     if (!this.setupComplete) return { ok: false, code: 'invalid', message: 'Set up the guardian first.' };
-    const r = await this.notifier.update(input, { recoveryRunning: !!this.activeRecord() });
+    const r = await this.notifier.update(input, { recoveryRunning: !!this.activeRecord() || !!this.wallets.recoveryRunning() });
     if (r.ok && r.changed) {
       await this.notifyPhone({
         type: 'notifications_changed',
@@ -1031,7 +1091,7 @@ export class Guardian {
         throw e;
       }
       // A guest wallet's recovery too: its coin check (hosting/recovery.ts) runs on this chain source.
-      if (next.kind === 'public' && (this.activeRecord() || this.hosting.recoveryRunning()))
+      if (next.kind === 'public' && (this.activeRecord() || this.hosting.recoveryRunning() || this.wallets.recoveryRunning()))
         return {
           ok: false,
           code: 'recovery_pending',
@@ -1137,7 +1197,7 @@ export class Guardian {
     if (adopted) {
       this.rpc?.addPeer(adopted.appNostrPubkey);
       this.log.info('wallet.adopted', { recoveryId, from: res.retiredWalletId, to: adopted.walletId, revokedGrants: res.revokedGrants });
-      this.notifyOwner('wallet_adopted', `The guardian now protects the wallet recovery ${recoveryId} moved the funds to (${adopted.walletId}).`, adopted.walletId);
+      this.notifyOwner('wallet_adopted', labelled(this, `The guardian now protects the wallet recovery ${recoveryId} moved the funds to (${adopted.walletId}).`), adopted.walletId);
       await this.notifyPeer(adopted.appNostrPubkey, {
         type: 'wallet_adopted',
         walletId: adopted.walletId,
@@ -1153,7 +1213,7 @@ export class Guardian {
     // The phone that was paired to the swept wallet and is not the new wallet's phone (a lost phone's
     // successor, or no successor at all) is told the wallet is gone from here, and stops being a peer.
     if (previousPhone && previousPhone !== adopted?.appNostrPubkey) {
-      this.rpc?.removePeer(previousPhone);
+      this.dropPeerIfUnused(previousPhone);
       await this.notifyPeer(previousPhone, {
         type: 'wallet_retired',
         walletId: res.retiredWalletId,
@@ -1169,7 +1229,7 @@ export class Guardian {
 
   /** After `wallet.retire`: the retired wallet's phone is no longer a peer; tell it (best effort). */
   async afterRetire(walletId: string, phone: string): Promise<void> {
-    this.rpc?.removePeer(phone);
+    this.dropPeerIfUnused(phone);
     await this.sp.unregister('wallet retired');
     this.pairing.invalidate();
     await this.service.update((d) => {
@@ -1194,6 +1254,8 @@ export class Guardian {
           await this.engine.tick();
           await this.recovery.run();
           await this.hosting.tick();
+          // The owner's own wallets after the first: each its engine, recovery and alerts.
+          await this.wallets.tick();
           // Before the alerts, so a Savings spend found now is announced in the same pass.
           await this.savingsWatch.run();
           await this.alerts.run();
@@ -1295,6 +1357,8 @@ export class Guardian {
     this.signer = signer;
     // Every guest slot's key 3, derived from the same seed and the slot's record.
     this.hosting.installSigners(seed);
+    // Every own wallet's key 3: the first pairing's key 3 seed at the wallet's account.
+    this.wallets.installSigners(seed);
     this.lockedAt = undefined;
     this.lockReason = undefined;
     this.lockedBy = undefined;
@@ -1302,6 +1366,7 @@ export class Guardian {
 
   private dropSigner(): void {
     this.hosting.dropSigners();
+    this.wallets.dropSigners();
     this.engine.setSigner(undefined);
     this.signer?.wipe();
     this.signer = undefined;
@@ -1363,6 +1428,10 @@ export class Guardian {
     const startedByPhone = rec && (rec.initiator !== undefined ? rec.initiator === phone : rec.survivingRole === 'app');
     if (rec && !startedByPhone)
       return { ok: false, code: 'recovery_pending', message: `Recovery ${rec.id} is running. The phone cannot unlock the guardian meanwhile; unlock it in its web UI.` };
+    // The phone holds every own wallet's phone key: a recovery of any of them it did not start keeps it from unlocking.
+    const other = this.wallets.recoveryNotStartedBy(phone ?? this.wallets.active()[0]?.phone());
+    if (other)
+      return { ok: false, code: 'recovery_pending', message: `Recovery ${other.id} of "${other.wallet.name}" is running. The phone cannot unlock the guardian meanwhile; unlock it in its web UI.` };
     return undefined;
   }
 
@@ -1472,11 +1541,21 @@ export class Guardian {
    * delivered); unlocking stays with the owner (web UI passphrase, or the phone's `guardian.unlock`).
    */
   async lockByContact(contact: string): Promise<ContactLockOutcome> {
+    // The wallets whose rules let this contact lock the box: the first (as before), and every own wallet that lists it.
+    const lockers = (): WalletRuntime[] => [
+      ...(this.engine.status().rules?.contactLock && (!this.wallets.active().length || this.isAlertContact(contact)) ? [this as WalletRuntime] : []),
+      ...this.wallets.active().filter((w) => {
+        const r = w.engine.status().rules;
+        return !!r?.contactLock && r.alertContacts.includes(contact);
+      }),
+    ];
+    let noted: WalletRuntime[] = [];
     const outcome = await this.unlockMutex.run(async (): Promise<ContactLockOutcome> => {
-      if (!this.engine.status().rules?.contactLock) return 'not_allowed';
+      const may = lockers();
+      if (!may.length) return 'not_allowed';
       if (this.locked) return 'already_locked';
-      const noted = await this.engine.noteContactLock(contact);
-      if (!noted.ok) return 'not_allowed';
+      for (const w of may) if ((await w.engine.noteContactLock(contact)).ok) noted.push(w);
+      if (!noted.length) return 'not_allowed';
       this.dropSigner();
       this.pairing.invalidate();
       this.lockedAt = this.clock.now();
@@ -1486,7 +1565,8 @@ export class Guardian {
       return 'locked';
     });
     // The paired phone and the other contacts learn it from the notice the engine queued.
-    if (outcome === 'locked') void this.alerts.run();
+    if (outcome === 'locked') for (const w of noted) void w.alerts.run();
+    noted = [];
     return outcome;
   }
 
@@ -1524,6 +1604,11 @@ export class Guardian {
           };
           const running = this.activeRecord();
           if (running) return refuse('recovery_pending', `Recovery ${running.id} is running. It must be cancelled or completed before the guardian can be reset.`);
+          // Reset forgets every own wallet too: not while one of them is being recovered or its sweep waits.
+          const ownRunning = this.wallets.recoveryRunning();
+          if (ownRunning) return refuse('recovery_pending', `Recovery ${ownRunning.id} of "${ownRunning.wallet.name}" is running. It must be cancelled or completed before the guardian can be reset.`);
+          const ownUnsent = this.wallets.unsentSweep();
+          if (ownUnsent) return refuse('sweep_pending', `The sweep of recovery ${ownUnsent.recoveryId} ("${ownUnsent.wallet.name}") has not been broadcast yet. Wait until it is.`);
           // A reset makes a new seed: every guest's key 3 would vanish (decision 9).
           const hosted = this.hosting.blocksReset();
           if (hosted)
@@ -1573,7 +1658,7 @@ export class Guardian {
               held.wipe();
               return refuse('recovery_pending', 'A recovery is running.');
             }
-            forgotten = res.forgotten;
+            forgotten = [...res.forgotten, ...(await this.wallets.reset())];
             this.dropSigner();
             await this.service.update((d) => {
               d.phones = [];

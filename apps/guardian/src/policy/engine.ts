@@ -141,6 +141,11 @@ export interface PolicyEngineOptions {
   maxActivity?: number;
   /** Refusal entries kept, in their own bucket (oldest dropped first). */
   maxRefusals?: number;
+  /**
+   * Put in front of every recovery id this engine makes: an own wallet's `<slotId>w` (docs/design/multi-wallet.md), so
+   * an alert contact's `CANCEL <id>` finds its wallet. Absent for the first wallet: ids as they always were.
+   */
+  recoveryIdPrefix?: string;
 }
 
 export interface RegisterInput {
@@ -355,6 +360,7 @@ export class PolicyEngine {
   private readonly maxRefusals: number;
   private readonly chain?: ChainTimeSource;
   private readonly blocksPerDayOverride?: number;
+  private readonly recoveryIdPrefix: string;
   private signer?: CosignerSigner;
   /** Set by `register` with its own key 3; installed by `mutate` after the save. */
   private nextSigner?: CosignerSigner;
@@ -370,6 +376,7 @@ export class PolicyEngine {
     this.authorizers = new Map((opts.authorizers ?? [bip137Authorizer]).map((a) => [a.kind, a]));
     this.maxActivity = opts.maxActivity ?? DEFAULT_MAX_ACTIVITY;
     this.maxRefusals = opts.maxRefusals ?? DEFAULT_MAX_REFUSALS;
+    this.recoveryIdPrefix = opts.recoveryIdPrefix ?? '';
     this.setSigner(opts.signer);
   }
 
@@ -1424,7 +1431,7 @@ export class PolicyEngine {
 
       const initiator = typeof req.initiator === 'string' && isNostrPubkey(req.initiator.toLowerCase()) ? req.initiator.toLowerCase() : undefined;
       const rec: RecoveryRecord = {
-        id: `${draft.recoveries.length + 1}-${analysis.txid.slice(0, 12)}`,
+        id: `${this.recoveryIdPrefix}${draft.recoveries.length + 1}-${analysis.txid.slice(0, 12)}`,
         walletId: reg.walletId,
         status: 'pending',
         survivingRole: surviving,

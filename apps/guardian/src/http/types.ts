@@ -35,4 +35,5 @@ export type {
   SetupPreflight,
   WalletOverview,
   WalletPayment,
+  WalletSummary,
 } from '../../../guardian-web/src/api/types.js';
