@@ -9,6 +9,8 @@ export * from './wallets.js';
 export * from './labels-bip329.js';
 export * from './labels-store.js';
 export * from './coins.js';
+// Notes that survive recovery (DESIGN.md): the labels encrypted for the guardian with a key only the hardware wallet makes.
+export * from './labels-crypto.js';
 export { GuardianSilentPaymentScanner, GuardianSingleKeyChain, type GuardianScanResult, type RpcLike } from './guardian-sp.js';
 export { parseScannedCode, type ScannedCode, type ScanOptions } from './scan.js';
 export {

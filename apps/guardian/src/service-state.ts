@@ -100,7 +100,13 @@ export type ServiceEvent =
   | { type: 'chain_source_changed'; from?: string; to: string; backTo?: 'umbrel' | 'start9' | 'docker' }
   /** Own wallets (docs/design/multi-wallet.md): the paired phone added a wallet with its new hardware wallet, or tried to. */
   | { type: 'wallet_added'; name: string; account: number; walletId: string; replaces?: string }
-  | { type: 'wallet_add_refused'; name: string; detail: string };
+  | { type: 'wallet_add_refused'; name: string; detail: string }
+  /**
+   * Encrypted notes (labels.ts): the phone stored a new version of a wallet's notes (logged at most once a day per
+   * wallet), or they were deleted (the phone turned the option off, or the wallet left this guardian).
+   */
+  | { type: 'labels_updated'; walletId: string }
+  | { type: 'labels_deleted'; walletIds: string[]; by: 'phone' | 'retired' };
 
 /** A relay removed from `relays` that the guardian still watches (listens and publishes on) until the owner stops it. */
 export interface RetiringRelay {

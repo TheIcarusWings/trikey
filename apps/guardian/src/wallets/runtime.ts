@@ -234,6 +234,7 @@ export class OwnWallet implements WalletRuntime {
       g.log.warn('wallet.retired_after_recovery', { slot: this.slotId, recoveryId, walletId: res.retiredWalletId, detail: res.detail });
       await this.host.markRetired(this.slotId, now);
     }
+    await g.pruneLabels(this);
     if (previousPhone && previousPhone !== adopted?.appNostrPubkey) {
       await g.notifyPeer(previousPhone, {
         type: 'wallet_retired',
@@ -252,6 +253,7 @@ export class OwnWallet implements WalletRuntime {
     const now = g.clock.now();
     this.dropSigner();
     await this.host.markRetired(this.slotId, now);
+    await g.pruneLabels(this);
     await this.sweepStore.update((d) => {
       d.phones = [];
     });

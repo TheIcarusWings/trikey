@@ -121,6 +121,7 @@ import type { NetPolicy } from './notify/net.js';
 import type { SmtpTestOptions } from './notify/channels.js';
 import { activeRecovery, labelled, type WalletRuntime } from './runtime.js';
 import { OwnWallets } from './wallets/service.js';
+import { LabelsVault, strayLabelIds } from './labels.js';
 
 export const FILES = {
   keystore: 'keystore.json',
@@ -157,6 +158,8 @@ export interface GuardianOptions {
   refusalLimit?: RateLimitOptions;
   /** `LOCK` DMs handled per alert contact per window (dm-lock.ts). Default 5 per hour. */
   contactLockLimit?: RateLimitOptions;
+  /** Encrypted notes: uploads per wallet per hour (labels.ts `DEFAULT_LABELS_UPLOAD_LIMIT`). */
+  labelsUploadLimit?: RateLimitOptions;
   /** How often the watched Savings wallet is scanned when no block came (savings.ts). Default 2 minutes. */
   savingsScanIntervalMs?: number;
   /**
@@ -250,6 +253,9 @@ export const RECOVERY_PEER_METHODS: ReadonlySet<MethodName> = new Set<MethodName
   'recovery.update',
   'recovery.status',
   'recovery.cancel',
+  // Encrypted notes: a new phone without a backup brings the wallet's notes back (the hardware wallet decrypts them).
+  'labels.get',
+  'labels.list',
 ]);
 /** What the web UI's reset must be confirmed with, typed exactly. */
 export const RESET_CONFIRMATION = 'RESET GUARDIAN';
@@ -306,6 +312,8 @@ export class Guardian implements WalletRuntime {
    * account of the first pairing's key 3 seed. The first wallet is this `Guardian` itself, unchanged.
    */
   readonly wallets: OwnWallets;
+  /** Encrypted notes of every own wallet (labels.ts): ciphertext the phone stores here to survive a recovery. */
+  readonly labels: LabelsVault;
   /** Email, ntfy, webhook and Telegram alerts (notify/notifier.ts): owner-side settings from the web UI; works while locked. */
   readonly notifier: Notifier;
   /** Keeps the wallets' chain data live and sends `wallet_tx` alerts (live-wallet.ts). Undefined when turned off. */
@@ -461,6 +469,7 @@ export class Guardian implements WalletRuntime {
     this.savingsWatch = new SavingsMonitor(this, this, opts.savingsScanIntervalMs);
     this.hosting = new Hosting(this);
     this.wallets = new OwnWallets(this);
+    this.labels = new LabelsVault(opts.config.dataDir, () => this.clock.now(), opts.labelsUploadLimit);
     if (opts.liveWallet !== false) {
       this.live = new LiveWallet(this, opts.liveWallet ?? {});
       this.features.push(GUARDIAN_FEATURES.liveWallet);
@@ -567,6 +576,7 @@ export class Guardian implements WalletRuntime {
     GUARDIAN_FEATURES.shortWraps,
     GUARDIAN_FEATURES.ownWallets,
     GUARDIAN_FEATURES.ownWallets2,
+    GUARDIAN_FEATURES.labelsBackup,
   ];
 
   /** The wallet object of a registration or a watched wallet (cached per descriptor). */
@@ -1267,6 +1277,7 @@ export class Guardian implements WalletRuntime {
     } else {
       this.log.warn('wallet.retired_after_recovery', { recoveryId, walletId: res.retiredWalletId, detail: res.detail });
     }
+    await this.pruneLabels(this);
     // The phone that was paired to the swept wallet and is not the new wallet's phone (a lost phone's
     // successor, or no successor at all) is told the wallet is gone from here, and stops being a peer.
     if (previousPhone && previousPhone !== adopted?.appNostrPubkey) {
@@ -1284,8 +1295,26 @@ export class Guardian implements WalletRuntime {
     }
   }
 
+  /**
+   * Deletes the encrypted notes `w` keeps for wallets outside the line it guards now (labels.ts `labelLine`): after a
+   * retirement every copy of it, after a recovery to another guardian the swept wallet's. Best effort: a failure is
+   * logged, and the next retirement or rotation tries again.
+   */
+  async pruneLabels(w: WalletRuntime): Promise<void> {
+    try {
+      const gone = await this.labels.deleteIds(strayLabelIds(w.engine));
+      if (gone.length) {
+        this.log.info('labels.deleted', { walletIds: gone.join(','), reason: 'retired' });
+        await w.logEvent({ type: 'labels_deleted', walletIds: gone, by: 'retired' });
+      }
+    } catch (e) {
+      this.log.error('labels.delete_failed', { error: errorText(e) });
+    }
+  }
+
   /** After `wallet.retire`: the retired wallet's phone is no longer a peer; tell it (best effort). */
   async afterRetire(walletId: string, phone: string): Promise<void> {
+    await this.pruneLabels(this);
     this.dropPeerIfUnused(phone);
     await this.sp.unregister('wallet retired');
     this.pairing.invalidate();
@@ -1723,6 +1752,7 @@ export class Guardian implements WalletRuntime {
               d.recoveryPeers = [];
             });
             await this.sp.unregister('guardian reset');
+            await this.labels.deleteAll();
             await replaceKeystore(this.path('keystore'), next);
           } catch (e) {
             signer.wipe();

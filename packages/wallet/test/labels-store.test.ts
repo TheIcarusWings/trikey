@@ -319,3 +319,58 @@ describe('label store: backup', () => {
     expect(calls).toBe(2);
   });
 });
+
+describe('encrypted notes: a wallet\'s labels as a document of their own, and merging a copy back', () => {
+  it('exportWallets: only the wallets named that have labels, with the send log\'s notes where the store has none', async () => {
+    const { store } = await open();
+    await store.setCoinLabel(W, `${A}:0`, 'Rent');
+    await store.setTxLabel(W, B, 'Set here');
+    await store.setCoinLabel(SAVINGS, `${B}:1`, 'Cold');
+    await store.setCoinLabel('1111222233334444', `${A}:2`, 'Another wallet');
+    const doc = store.exportWallets([W, SAVINGS, 'aaaabbbbccccdddd'], { [W]: [{ txid: B, label: 'From the send log' }, { txid: A, label: ' Paid Bob ' }] });
+    expect(Object.keys(doc.wallets).sort()).toEqual([SAVINGS, W].sort());
+    expect(doc.wallets[W]).toEqual({ coins: { [`${A}:0`]: { label: 'Rent' } }, txs: { [B]: 'Set here', [A]: 'Paid Bob' }, kept: [] });
+    expect(doc.version).toBe(LABELS_VERSION);
+    expect(doc.changedAt).toBeUndefined();
+  });
+
+  it('mergeFromCopy: the phone\'s labels win; only what it lacks comes in, and that is a change (the backup is older)', async () => {
+    const { store } = await open();
+    await store.setCoinLabel(W, `${A}:0`, 'From the backup');
+    await store.setFrozen(W, `${A}:1`, true);
+    await store.setAddressLabel(W, 'bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080', 'Mine');
+    const { store: other } = await open();
+    await other.setCoinLabel(W, `${A}:0`, 'Newer, on the guardian');
+    await other.setCoinLabel(W, `${A}:1`, 'Label of a frozen coin');
+    await other.setCoinLabel(W, `${A}:2`, 'Only on the guardian');
+    await other.setTxLabel(W, B, 'Payment');
+    await other.setAddressLabel(W, 'bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080', 'Theirs');
+    await other.setAddressLabel(W, 'bcrt1qg975h6gdx5mryeac72h6lj2nzygugxhy5n57q2', 'New address');
+    await other.setCoinLabel(SAVINGS, `${B}:0`, 'Savings coin');
+    const r = await store.mergeFromCopy(other.exportForBackup());
+    expect(r).toEqual({ wallets: [W, SAVINGS], coins: 2, txs: 1, addrs: 1, kept: 0 });
+    const v = store.view(W);
+    expect(v.coin(`${A}:0`)).toEqual({ label: 'From the backup', frozen: false });
+    expect(v.coin(`${A}:1`)).toEqual({ frozen: true });
+    expect(v.coin(`${A}:2`)).toEqual({ label: 'Only on the guardian', frozen: false });
+    expect(v.tx(B)).toBe('Payment');
+    expect(v.addr('bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080')).toBe('Mine');
+    expect(v.addr('bcrt1qg975h6gdx5mryeac72h6lj2nzygugxhy5n57q2')).toBe('New address');
+    expect(store.view(SAVINGS).coin(`${B}:0`).label).toBe('Savings coin');
+    expect(store.changedAt).toBe(NOW);
+    // Twice: nothing more.
+    expect(await store.mergeFromCopy(other.exportForBackup())).toEqual({ wallets: [], coins: 0, txs: 0, addrs: 0, kept: 0 });
+  });
+
+  it('mergeFromCopy refuses a copy it cannot read, and one past the limits, changing nothing', async () => {
+    const { store, kv } = await open();
+    await store.setCoinLabel(W, `${A}:0`, 'Kept');
+    const before = kv.data.get(KEY);
+    await expect(store.mergeFromCopy({ version: 2, wallets: {} })).rejects.toMatchObject({ code: 'labels_invalid' });
+    await expect(store.mergeFromCopy({ nonsense: true })).rejects.toMatchObject({ code: 'labels_invalid' });
+    const many = Object.fromEntries(Array.from({ length: MAX_COIN_MARKS }, (_, i) => [`${B}:${i}`, { label: 'x' }]));
+    await expect(store.mergeFromCopy({ version: 1, wallets: { [W]: { coins: many, txs: {}, kept: [] } } })).rejects.toMatchObject({ code: 'labels_full' });
+    expect(kv.data.get(KEY)).toBe(before);
+    expect(store.view(W).coin(`${A}:0`).label).toBe('Kept');
+  });
+});
