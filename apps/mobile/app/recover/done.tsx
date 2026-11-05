@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { Check } from '@/components/icons';
+import { BringBackNotes } from '@/components/notes';
 import { InfoRow, Panel } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
@@ -73,6 +74,8 @@ export default function RecoverDone() {
           <InfoRow plainLabel label="Guardian" value={finishedRecovery ? `Same · ${guardianBox(guardian)}` : `New key · ${guardianBox(guardian)}`} tone="good" />
           {backup || !finishedRecovery ? null : <InfoRow plainLabel label="Backup" value="Make one for this wallet" tone="warn" />}
         </Panel>
+        {/* Lost the phone and its backup: the guardian may have kept the notes (labels) of the wallet recovered from. */}
+        {finishedRecovery && !backup ? <BringBackNotes compact /> : null}
       </View>
     </Screen>
   );

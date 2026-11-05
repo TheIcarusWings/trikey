@@ -6,6 +6,7 @@ import { AppButton } from '@/components/app-button';
 import { ActionNotice } from '@/components/action-notice';
 import { Check, Copy, Download, Eye, FileText, Share2, Tag } from '@/components/icons';
 import { Body, Footnote, InfoRow, Notice, Panel, QuietLink, SectionLabel } from '@/components/panels';
+import { NotesSection } from '@/components/notes';
 import { AddressQr } from '@/components/qr';
 import { Screen } from '@/components/screen';
 import { Segmented } from '@/components/segmented';
@@ -135,6 +136,7 @@ export default function WalletDetailsScreen() {
           <Footnote>The file says which coins and payments are yours. Keep it as private as the descriptor.</Footnote>
         </>
       ) : null}
+      {details ? <NotesSection /> : null}
     </Screen>
   );
 }

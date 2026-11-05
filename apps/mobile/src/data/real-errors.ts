@@ -199,6 +199,12 @@ export function mapError(e: unknown): WalletServiceError {
         return make('invalid_input', `Those labels can't be read. ${e.message}`);
       case 'labels_full':
         return make('refused', `Nothing was changed: ${e.message}`);
+      case 'labels_wrong_key':
+        return make('hardware_mismatch', `${e.message} Connect the hardware wallet of that wallet. Nothing on this phone was changed.`);
+      case 'hardware_not_deterministic':
+        return make('refused', e.message);
+      case 'labels_too_large':
+        return make('refused', e.message);
       case 'recovery_update_refused':
         return make('refused', e.message);
       case 'silent_payment_needs_helper':

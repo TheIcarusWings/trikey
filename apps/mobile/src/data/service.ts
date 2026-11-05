@@ -42,6 +42,7 @@ import type { SilentPaymentActions } from './sp-actions';
 import type { SavingsActions } from './savings-actions';
 import type { SpeedUpActions } from './speed-up-actions';
 import type { CoinActions } from './coin-actions';
+import type { NotesActions } from './notes-actions';
 
 export type { RecoveryKeyActions, SilentPaymentActions, SavingsActions, SpeedUpActions, CoinActions };
 
@@ -292,6 +293,11 @@ export interface WalletService {
    * BIP 329 export and import. The guardian mode's wallet and the demo have it; Recovery Key mode does not.
    */
   readonly coins?: CoinActions;
+  /**
+   * Notes that survive recovery (DESIGN.md): an encrypted copy of the wallet's labels on the guardian, off by default,
+   * and "Bring back your notes" after a recovery or a restore. The guardian mode's wallet and the demo have it.
+   */
+  readonly notes?: NotesActions;
   /**
    * Makes a quote exact when the wallet needs the chain for it (Recovery Key mode picks the coins). Optional: the
    * quote `quoteSend` gave stays valid, with `estimate: true`. Screens that show the final fee call it.
