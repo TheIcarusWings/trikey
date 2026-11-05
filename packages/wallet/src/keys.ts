@@ -82,12 +82,16 @@ export interface Key2Public {
   nostr: NostrIdentity;
 }
 
-export function deriveKey2(mnemonic: string, network: Network): Key2Public {
+/**
+ * `account`: the wallet's BIP 48 account on the phone seed (docs/design/multi-wallet.md): 0 for the first wallet, as
+ * always; 2n for the n-th wallet added (its Savings, later, at 2n + 1). The nostr identity is the same for every account.
+ */
+export function deriveKey2(mnemonic: string, network: Network, account = 0): Key2Public {
   if (!isValidMnemonic(mnemonic)) throw new Error('invalid key 2 mnemonic');
   const seed = mnemonicToSeedSync(mnemonic);
   try {
     const master = HDKey.fromMasterSeed(seed, network.bip32);
-    return { account: keyExpressionFromMaster(master, bip48Path(network)), nostr: identityFromSeed(seed) };
+    return { account: keyExpressionFromMaster(master, bip48Path(network, account)), nostr: identityFromSeed(seed) };
   } finally {
     seed.fill(0);
   }

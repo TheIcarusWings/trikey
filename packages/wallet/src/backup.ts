@@ -124,15 +124,36 @@ export const BackupSavings = z.strictObject({
 export type BackupSavings = z.infer<typeof BackupSavings>;
 
 /**
+ * Own wallets after the first (docs/design/multi-wallet.md), in a version-4 backup: everything public a wallet needs to
+ * come back on a new phone. No key: its phone key derives from the mnemonic at `account`, its hardware key lives on its
+ * own device, key 3 on the guardian.
+ */
+export const BackupOwnWallet = z.strictObject({
+  account: z.int().min(2).max(14),
+  name: z.string().min(1).max(16),
+  descriptor: z.string().max(2000),
+  walletId: z.string().regex(/^[0-9a-f]{16}$/),
+  hardware: HardwareRecord,
+  rules: Policy.optional(),
+  nextHardwareSequence: z.int().min(1).optional(),
+  sendLog: z.array(SendLogEntry).max(1000).optional(),
+  retiredWallets: z.array(RetiredWallet).max(50).optional(),
+  /** ms */
+  addedAt: z.int().min(0).optional(),
+});
+export type BackupOwnWallet = z.infer<typeof BackupOwnWallet>;
+
+/**
  * Payload versions: 1, and 2 only when the wallet has Savings (`savings` present). An app from before Savings refuses a
  * version-2 payload (its schema is strict and knows only 1), so it never restores a wallet half, without its Savings;
- * this app says "update the app" for any version it does not know (`backup_invalid`, reason `too_new`).
+ * this app says "update the app" for any version it does not know (`backup_invalid`, reason `too_new`). Version 4 only
+ * when the phone holds more than one wallet (`wallets`): an older app refuses it rather than restore the first alone.
  */
-export const BACKUP_PAYLOAD_VERSION = 3;
+export const BACKUP_PAYLOAD_VERSION = 4;
 
 /** What the backup holds. */
 const BackupPayloadShape = z.strictObject({
-  v: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  v: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
   network: Network,
   createdAt: z.int(),
   /** Key 2. */
@@ -159,18 +180,28 @@ const BackupPayloadShape = z.strictObject({
    * and spend keys derive from the mnemonic.
    */
   silentPayments: z.strictObject({ birthHeight: z.int().min(0), labels: z.array(z.int().min(1)).max(10_000) }).optional(),
-  /** Version 2 only: the Savings wallet. */
+  /** Version 2 (and 4): the Savings wallet. */
   savings: BackupSavings.optional(),
+  /** Version 4 only: the phone's other wallets on the same guardian (own wallets), each at its own account. */
+  wallets: z.array(BackupOwnWallet).min(1).max(7).optional(),
 });
 /**
  * Version 3 exactly when the wallet is hosted on someone else's guardian (`guardian.hosted`): the guardian record, the
  * chain server setting and the descriptor with its key 3 chaincode. An app from before hosting refuses it (its schema
  * knows 1 and 2), as for Savings' version 2. A hosted wallet has no Savings in phase 1.
  */
-export const BackupPayload = BackupPayloadShape.refine((p) => (p.guardian?.hosted ? p.v === 3 && p.savings === undefined : p.v !== 3 && (p.v === 2) === (p.savings !== undefined)), {
-  message: 'version 3 is a hosted wallet and only that; version 2 holds Savings, and only it does',
-  path: ['v'],
-});
+export const BackupPayload = BackupPayloadShape.refine(
+  (p) =>
+    p.wallets !== undefined
+      ? p.v === 4 && !p.guardian?.hosted && new Set(p.wallets.map((w) => w.account)).size === p.wallets.length
+      : p.guardian?.hosted
+        ? p.v === 3 && p.savings === undefined
+        : p.v !== 3 && p.v !== 4 && (p.v === 2) === (p.savings !== undefined),
+  {
+    message: 'version 4 holds more than one wallet, and only it does; version 3 is a hosted wallet and only that; version 2 holds Savings',
+    path: ['v'],
+  },
+);
 export type BackupPayload = z.infer<typeof BackupPayload>;
 
 export type SlotInput =

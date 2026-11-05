@@ -132,6 +132,22 @@ export const GuardianStatusCache = z.object({
   /** The replaced wallet this guardian watches ("Replace guardian"): its coins can be read and swept through the guardian. */
   watchedWalletId: z.string().optional(),
   /**
+   * Own wallets: every wallet of the box as the guardian lists them (`guardian.status.wallets`), once there is more than
+   * one. How a phone restored from an older backup finds a wallet added since. Absent from older guardians.
+   */
+  wallets: z
+    .array(
+      z.object({
+        walletId: z.string(),
+        account: z.number(),
+        name: z.string().optional(),
+        descriptor: z.string(),
+        hardwareAuth: z.object({ pubkey: z.string(), path: z.string() }).optional(),
+        state: z.enum(['active', 'retired']).optional(),
+      }),
+    )
+    .optional(),
+  /**
    * A hosted wallet that is paused (family hosting phase 2, `guardian.status.hosting.paused`): its slot co-signs no
    * payment until the hardware wallet resumes it. `contact`: the alert contact who sent `LOCK`; `phone`: this phone asked.
    */
@@ -559,6 +575,13 @@ export const WalletState = z.object({
   silentPayments: SilentPaymentsRecord.optional(),
   /** The optional Savings wallet (absent for everyone who never creates one). */
   savings: SavingsRecord.optional(),
+  /**
+   * Own wallets (docs/design/multi-wallet.md): set on a wallet the owner added after the first. Its phone key is the same
+   * seed's at BIP 48 `account` (2, 4, ...), its key 3 the guardian's at that account, its hardware wallet its own device.
+   * It shares the first wallet's secrets (`secrets`, the nostr identity) and guardian, and talks to the guardian with its
+   * `walletId`. Absent: the first wallet (account 0), as every wallet before own wallets.
+   */
+  own: z.object({ account: z.int().min(2).max(14), name: z.string().min(1).max(16), addedAt: z.number() }).optional(),
   /** The guardian said it retired this phone's wallet (`wallet_retired`): it co-signs nothing for it any more. */
   retiredByGuardian: z.object({ walletId: z.string(), reason: z.enum(['retired', 'recovered', 'reset', 'hosting_ended']), successorWalletId: z.string().optional(), at: z.number() }).optional(),
 });
