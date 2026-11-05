@@ -74,9 +74,13 @@ describe('payments', () => {
 });
 
 describe('balance and limit', () => {
-  it('the confirmed balance, the unconfirmed apart', () => {
-    expect(balanceLines({ confirmedSats: 3_429_270, unconfirmedSats: 120_000 })).toEqual({ confirmed: '3,429,270 sats', unconfirmed: '120,000 sats unconfirmed' });
-    expect(balanceLines({ confirmedSats: 0, unconfirmedSats: 0 })).toEqual({ confirmed: '0 sats', unconfirmed: null });
+  it('the whole balance as the phone shows it, with what is waiting to confirm under it', () => {
+    // The phone's big number: confirmed and unconfirmed together (the owner's Umbrel: 2,268 confirmed, 1,000 incoming).
+    expect(balanceLines({ confirmedSats: 2_268, unconfirmedSats: 1_000 })).toEqual({ total: '3,268 sats', waiting: 'including 1,000 sats waiting to confirm' });
+    expect(balanceLines({ confirmedSats: 3_429_270, unconfirmedSats: 120_000 })).toEqual({ total: '3,549,270 sats', waiting: 'including 120,000 sats waiting to confirm' });
+    // Only the change of a payment still on its way: the spent coin is out already, the change in and waiting.
+    expect(balanceLines({ confirmedSats: 0, unconfirmedSats: 41_000 })).toEqual({ total: '41,000 sats', waiting: 'including 41,000 sats waiting to confirm' });
+    expect(balanceLines({ confirmedSats: 0, unconfirmedSats: 0 })).toEqual({ total: '0 sats', waiting: null });
   });
 
   it('used and left, as the phone counts them; no number for a limit that is off', () => {
