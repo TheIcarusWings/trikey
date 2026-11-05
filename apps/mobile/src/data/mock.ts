@@ -2,17 +2,20 @@ import { parseScannedCode } from '@trikey/wallet/scan';
 import { NODE_RPC_TEXT, WalletServiceError } from './errors';
 import { SIMULATED_OPTION, hardwareOptionTable, type UiOs } from './hardware-options';
 import { LIMIT_OFF_SATS, buildRefillSchedule, limitChangeNeedsHardware, quoteSend as quoteSendRule, quoteSendMax as quoteSendMaxRule } from './rules';
-import { CONTACT_LOCK } from './format';
+import { CONTACT_LOCK, formatSats } from './format';
 import { emptyRecoveryKeyState } from './rk-empty';
 import { DEMO_FINGERPRINT, createMockRecoveryKey } from './rk-mock';
 import { looksLikeSilentPaymentAddress } from './sp-empty';
 import { DEMO_HELPER_FEE, DEMO_TAPROOT_OUTPUT, createMockSilentPayments, demoSilentActivity, demoSilentPayments, type MockSilentControl } from './sp-mock';
 import { createMockSpeedUp } from './speed-up-mock';
 import { createMockCoins } from './coins-mock';
+import { recoverySheetWallet, renderRecoverySheet } from './recovery-sheet';
 import { DEMO_SAVINGS_DESCRIPTOR, createMockSavings, creditDemoSavings, demoFilledSavings, emptySavings, isDemoSavingsAddress } from './savings-mock';
 import type { WalletService } from './service';
 import { demoBusinessWallet, demoWalletsView, sliceOf, type DemoWallet, type DemoWalletSlice } from './wallets-mock';
 import type {
+  RecoverySheet,
+  RecoverySheetLayout,
   ActivityItem,
   AmountUnit,
   BackupOptions,
@@ -120,6 +123,7 @@ function guardianActivity(): ActivityItem[] {
       address: ADDRESS_MARIA_SHOP,
       txid: txid('4f2a9c0e7b1d'),
       signedBy: 'phone+guardian',
+      label: 'Shop',
     }),
     security({ id: 'ev-1', kind: 'guardian-restarted', host: 'umbrel', at: '2026-10-29T03:12:00' }),
     ...demoSilentActivity().filter((i) => i.at > '2026-10-28'),
@@ -130,6 +134,8 @@ function guardianActivity(): ActivityItem[] {
       status: 'confirmed',
       at: '2026-10-27T18:30:00',
       txid: txid('b91e03d77a5c'),
+      // Coin control: a received payment shows its coin's label (here, as on the address it was paid to).
+      label: 'From the exchange',
     }),
     ...demoSilentActivity().filter((i) => i.at <= '2026-10-28' && i.at > '2026-10-22'),
     security({
@@ -287,7 +293,9 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
   /** Several wallets in the demo: "Main" (shown) and "Business"; the others' fields are parked here (wallets-mock.ts). */
   const demoWallets: DemoWallet[] = [{ account: 0, name: 'Main' }, demoBusinessWallet(MARIA)];
   let shownAccount = 0;
-  const withWallets = (s: WalletState): WalletState => (s.mode === 'guardian' && s.onboarded && !s.hosted ? { ...s, wallets: demoWalletsView(demoWallets, shownAccount, s) } : s);
+  /** Coin control: each demo wallet's frozen coins (set once the coin lists exist, just below). */
+  let frozenOf: ((account: number) => { coins: number; sats: number } | undefined) | undefined;
+  const withWallets = (s: WalletState): WalletState => (s.mode === 'guardian' && s.onboarded && !s.hosted ? { ...s, wallets: demoWalletsView(demoWallets, shownAccount, s, frozenOf) } : s);
   state = withWallets(state);
   const sliceAt = (account: number): DemoWalletSlice => (account === shownAccount ? sliceOf(state) : demoWallets.find((w) => w.account === account)!.slice!);
   const setSlice = (account: number, patch: Partial<DemoWalletSlice>) => {
@@ -330,6 +338,8 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
   }
   /** Coin control in the demo (./coins-mock.ts): its coins follow the demo's balance. */
   const coins = createMockCoins({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW, nextId });
+  frozenOf = (account) => coins.frozenOf(account);
+  state = withWallets(state);
 
   /** A payment's quote. To a silent payment address the helper coin pays its share of the fee, and the vault cannot make one. */
   function quoteSendMock(request: SendRequest): QuoteOutcome {
@@ -621,17 +631,21 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
       w.name = n;
       update({});
     },
-    async moveWalletFunds(fromAccount: number, toAccount: number) {
+    async moveWalletFunds(fromAccount: number, toAccount: number, opts: { includeFrozen?: boolean } = {}) {
       if (fromAccount === toAccount || !demoWallets.some((w) => w.account === fromAccount) || !demoWallets.some((w) => w.account === toAccount))
         throw new WalletServiceError('invalid_input', 'Choose another wallet of this phone to move the money to.');
       const from = sliceAt(fromAccount);
-      if (from.balanceSats <= 1_000) throw new WalletServiceError('invalid_input', 'There is nothing to move.');
-      await wait(from.balanceSats > from.dailyLimit.limitSats ? deviceDelay : networkDelay);
+      // Coin control: frozen coins stay unless the person included them ("Include 1 frozen coin").
+      const frozen = opts.includeFrozen ? 0 : (coins.frozenOf(fromAccount)?.sats ?? 0);
+      const moving = from.balanceSats - frozen;
+      if (moving <= 1_000) throw new WalletServiceError('invalid_input', frozen ? 'There is nothing to move but frozen coins. Include them to move them too.' : 'There is nothing to move.');
+      await wait(moving > from.dailyLimit.limitSats ? deviceDelay : networkDelay);
       const feeSats = 300;
-      const movedSats = from.balanceSats - feeSats;
+      const movedSats = moving - feeSats;
       const at = NOW.toISOString();
+      if (opts.includeFrozen) coins.spentFrozen(fromAccount);
       setSlice(fromAccount, {
-        balanceSats: 0,
+        balanceSats: frozen,
         activity: [pay({ id: nextId('tx'), kind: 'sent', amountSats: movedSats, feeSats, status: 'pending', at, address: sliceAt(toAccount).receiveAddress, txid: txid(`a${fromAccount}c0`) }), ...from.activity],
       });
       const to = sliceAt(toAccount);
@@ -641,12 +655,36 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
       });
       return { movedSats };
     },
+    recoverySheet(layout?: RecoverySheetLayout): RecoverySheet | null {
+      if (state.mode !== 'guardian' || !state.onboarded) return null;
+      // Made-up guardian key and wallet ids (the page says DEMO): a new phone would find nothing with them.
+      const wallets = demoWallets.map((w) =>
+        recoverySheetWallet({
+          name: w.name,
+          device: sliceAt(w.account).hardware.model,
+          walletId: `de${String(w.account).padStart(14, '0')}`,
+          network: state.network ?? 'testnet',
+          guardianPubkey: '0de0'.repeat(16),
+          relays: state.guardian.relays.slice(0, 2),
+          ...(state.hosted ? { hosted: true } : {}),
+        }),
+      );
+      return renderRecoverySheet(wallets, { layout: layout ?? 'each', date: NOW, demo: true });
+    },
     async removeWallet(account: number) {
       const w = demoWallets.find((x) => x.account === account);
       if (!w) throw new WalletServiceError('invalid_input', 'There is no such wallet on this phone.');
       if (account === 0) throw new WalletServiceError('wrong_state', 'Remove your other wallets first: the first wallet goes last.');
       const slice = sliceAt(account);
-      if (slice.balanceSats > 0) throw new WalletServiceError('wrong_state', 'Move the money out of this wallet before you remove it.');
+      if (slice.balanceSats > 0) {
+        const frozen = coins.frozenOf(account);
+        throw new WalletServiceError(
+          'wrong_state',
+          frozen
+            ? `Move the money out of this wallet before you remove it. ${formatSats(frozen.sats)} sats are in frozen coins, which "Move everything" leaves unless you include them: move everything again with the frozen coins included, or unfreeze them in Coins.`
+            : 'Move the money out of this wallet before you remove it.',
+        );
+      }
       await wait(deviceDelay);
       if (account === shownAccount) await service.switchWallet!(0);
       demoWallets.splice(demoWallets.indexOf(w), 1);
@@ -878,7 +916,11 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     },
     rk: createMockRecoveryKey({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }),
     silentPayments: createMockSilentPayments({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }, silentControl, nextId),
-    savings: createMockSavings({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }, nextId),
+    savings: createMockSavings({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }, nextId, {
+      pick: (picked) => coins.savingsPick(picked),
+      paid: (picked, totalSats) => coins.paidFromSavings(picked, totalSats),
+      frozenSats: () => coins.frozenSats('savings'),
+    }),
     coins: coins.actions,
     speedUp: createMockSpeedUp({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW, nextId, nextTxid: () => txid((++counter * 7919).toString(16).padStart(12, '0')) }),
 

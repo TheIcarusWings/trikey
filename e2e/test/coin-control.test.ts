@@ -186,12 +186,15 @@ describeE2e('coin control on a real chain: freeze, a manual pick, consolidation,
     const origin = mine[0]!.origin!;
     const file = [...BIP_VECTORS, JSON.stringify({ type: 'output', ref: coins[4]!, label: 'From Sparrow', origin })].join('\n');
     const r = await w.importLabels(file);
-    // Two tx records name another wallet (wpkh origins): left out. The five without an origin are kept as read (the
-    // output among them names a coin that is not this wallet's: its label is kept for the export all the same).
-    expect(r).toMatchObject({ otherWallet: 2, errorCount: 0, coinLabels: 2, frozen: 1, txLabels: 0, kept: 4 });
+    // Two tx records name another wallet (wpkh origins): left out. The five without an origin are this wallet's: the
+    // address label is read as one (a coin there would show it), the rest kept as read (the output among them names a
+    // coin that is not this wallet's: its label is kept for the export all the same).
+    expect(r).toMatchObject({ otherWallet: 2, errorCount: 0, coinLabels: 2, frozen: 1, txLabels: 0, addrLabels: 1, kept: 3 });
     expect(w.coins().coins.find((c) => c.outpoint === coins[4])).toBeUndefined(); // merged above
     const out = parseBip329(w.exportLabels()).records;
-    for (const v of [1, 2, 3, 5]) expect(out).toContainEqual(parseBip329(BIP_VECTORS[v]!).records[0]);
+    for (const v of [2, 3, 5]) expect(out).toContainEqual(parseBip329(BIP_VECTORS[v]!).records[0]);
+    // The address label had no origin, so it was taken as this wallet's: exported with the wallet's origin.
+    expect(out).toContainEqual({ ...parseBip329(BIP_VECTORS[1]!).records[0], origin });
     expect(out.find((x) => x.ref === coins[4])).toMatchObject({ label: 'From Sparrow' });
     expect(out.some((x) => x.ref === 'f546156d9044844e02b181026a1a407abfca62e7ea1159f87bbeaa77b4286c74')).toBe(false);
   });

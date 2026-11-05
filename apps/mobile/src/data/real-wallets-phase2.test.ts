@@ -101,15 +101,55 @@ describe('several wallets, phase 2', { timeout: 90_000 }, () => {
     expect((await failure(svc.renameWallet!(2, ''))).kind).toBe('invalid_input');
   });
 
+  it('prints a recovery sheet per wallet, or one listing both: names, devices, the guardian, the wallet ids and their codes', () => {
+    const each = svc.recoverySheet!('each')!;
+    const ids = [svc.wallet!.state.wallet!.walletId, (svc as unknown as { set: { byAccount(a: number): { state: { wallet: { walletId: string } } } } }).set.byAccount(2).state.wallet.walletId];
+    expect(each).toMatchObject({ layout: 'each', wallets: [{ name: 'Main' }, { name: 'Shop' }] });
+    expect(each.wallets.map((w) => w.walletId)).toEqual(ids);
+    expect(new Set(each.wallets.map((w) => w.guardianNpub)).size).toBe(1);
+    expect(each.wallets.every((w) => w.network === 'regtest' && w.recoveryCode.includes(`wallet=${w.walletId}`) && w.relays.length > 0)).toBe(true);
+    // A new phone reads each code as the guardian's own "Recover on a new phone" code, bound to that wallet.
+    for (const w of each.wallets) expect(svc.readCode(w.recoveryCode)).toMatchObject({ kind: 'recovery', guardian: { npub: w.guardianNpub, walletId: w.walletId } });
+    expect(each.html.match(/class="sheet/g)).toHaveLength(2);
+    expect(each.html).toContain('page-break-after: always');
+    const list = svc.recoverySheet!('list')!;
+    expect(list.layout).toBe('list');
+    expect(list.html).toContain('every wallet');
+    expect(list.html).not.toContain('class="sheet');
+    // Nothing secret: no seed, no nsec, no backup recovery code.
+    expect(each.html + list.html).not.toMatch(/nsec1|xprv|tprv|secret=/);
+  });
+
   it('refuses to remove a wallet with money or the first; moves the money, then removes it on the guardian too', async () => {
     const item = () => svc.getState().wallets!.list.find((w) => w.account === 2);
     expect(removeBlocker(item()!)).toBe('money');
+    expect(item()!.frozen).toBeUndefined();
     provider.device = trezor;
     expect((await failure(svc.removeWallet!(2))).kind).toBe('wrong_state');
     expect((await failure(svc.removeWallet!(0))).kind).toBe('wrong_state');
-    // Over Business's limit: its own device signs the move.
+    // Coin control: a small coin of Business frozen, as a coin from a stranger would be.
+    const set = (svc as unknown as { set: { byAccount(a: number): { multisig(): { derive(c: number, i: number): { script: Uint8Array } } } } }).set;
+    const dust = rig.fund(set.byAccount(2).multisig().derive(0, 1).script, 4_000n);
+    await svc.switchWallet!(2);
+    await svc.sync();
+    await svc.idle();
+    await svc.coins!.setFrozen('spending', `${dust.txid}:${dust.vout}`, true);
+    expect(item()!.frozen).toEqual({ coins: 1, sats: 4_000 });
+    // Over Business's limit: its own device signs the move. Frozen coins stay, as with any Send max.
     const moved = await svc.moveWalletFunds!(2, 0);
     expect(moved.movedSats).toBeGreaterThan(100_000);
+    await svc.sync();
+    await svc.idle();
+    expect(item()).toMatchObject({ balanceSats: 4_000, frozen: { coins: 1, sats: 4_000 } });
+    expect((await failure(svc.removeWallet!(2))).message).toMatch(/4000 sats are in frozen coins/);
+    // "Include 1 frozen coin": the move takes it too and empties the wallet (within the limit: the guardian co-signs).
+    const rest = await svc.moveWalletFunds!(2, 0, { includeFrozen: true });
+    expect(rest.movedSats).toBeGreaterThan(2_000);
+    expect(rest.movedSats).toBeLessThan(4_000);
+    await svc.sync();
+    await svc.idle();
+    expect(item()!.balanceSats).toBe(0);
+    expect(item()!.frozen).toBeUndefined();
     const slot = rig.guardian.wallets.all.find((w) => w.account === 2)!;
     expect(slot.active).toBe(true);
     await svc.removeWallet!(2);

@@ -313,7 +313,7 @@ export class WalletSet {
     if (!this.others.includes(w)) throw new WalletError('wrong_state', 'Not a wallet of this phone.');
     const snap = w.snapshot();
     if (snap && snap.balance.totalSats > 0) {
-      // "Move everything" (`moveFunds`, a send max) leaves frozen coins where they are: say so, or the person is stuck.
+      // "Move everything" (`moveFunds`, a send max) leaves frozen coins where they are unless asked: say so, or the person is stuck.
       let frozen = 0;
       try {
         frozen = w.coins().totals.frozenSats;
@@ -323,7 +323,7 @@ export class WalletSet {
       throw new WalletError(
         'wrong_state',
         frozen > 0
-          ? `Move the money out of this wallet before you remove it. ${frozen} sats are in frozen coins, which "Move everything" leaves: unfreeze them in Coins, then move them too.`
+          ? `Move the money out of this wallet before you remove it. ${frozen} sats are in frozen coins, which "Move everything" leaves unless you include them: move everything again with the frozen coins included, or unfreeze them in Coins.`
           : 'Move the money out of this wallet before you remove it.',
       );
     }
@@ -480,12 +480,16 @@ export class WalletSet {
    * Moves everything `from` holds to `to` (another wallet of this phone): "send max" to `to`'s next address, signed as
    * any payment (within `from`'s daily limit the guardian co-signs, over it `from`'s hardware wallet signs). The explicit
    * move of funds before removing a wallet.
+   *
+   * Frozen coins stay where they are, as with any Send max, unless `includeFrozen`: then they go too, in the same
+   * payment, so the move empties the wallet and it can be removed without unfreezing them one by one. The person asks for
+   * it by name ("Include 1 frozen coin"), since spending a coin kept apart with the others links them on chain.
    */
-  async moveFunds(from: TrikeyWallet, to: TrikeyWallet, opts: { speed?: 'slow' | 'normal' | 'fast' } = {}): ReturnType<TrikeyWallet['send']> {
+  async moveFunds(from: TrikeyWallet, to: TrikeyWallet, opts: { speed?: 'slow' | 'normal' | 'fast'; includeFrozen?: boolean } = {}): ReturnType<TrikeyWallet['send']> {
     if (from === to || !this.list.includes(from) || !this.list.includes(to)) throw new WalletError('wrong_state', 'Choose another wallet of this phone to move the money to.');
     await from.sync();
     const { address } = await to.receiveAddress();
-    const quote = from.quoteSendMax({ address, speed: opts.speed ?? 'normal', label: `Moved to ${this.nameOf(to)}` });
+    const quote = from.quoteSendMax({ address, speed: opts.speed ?? 'normal', label: `Moved to ${this.nameOf(to)}`, ...(opts.includeFrozen ? { includeFrozen: true as const } : {}) });
     return from.send(quote, { fallbackToHardware: true });
   }
 

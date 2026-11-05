@@ -4,7 +4,7 @@
  * import's summary in words.
  */
 import { describe, expect, it } from 'vitest';
-import { coinSourceText, coinTitle, labelsImportText, mixedLabelsText } from './coins-text';
+import { coinSourceText, coinTitle, includeFrozenNote, includeFrozenText, labelsImportText, mixedLabelsText, rowLabelSuffix } from './coins-text';
 import { createMockWalletService } from './mock';
 
 const fast = () => createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0 });
@@ -96,7 +96,81 @@ describe('coin control in the demo', () => {
   });
 });
 
+describe('coin control in the demo: the follow-ups', () => {
+  it("Savings: picking coins changes the quote (only those coins pay, one more input's fee each), as in the real wallet", async () => {
+    const svc = fast();
+    svc.dev!.setDemoSavings!(true);
+    const coins = svc.coins!.list('savings')!.coins;
+    const [big, small] = [...coins].sort((a, b) => b.valueSats - a.valueSats);
+    const all = svc.savings!.quote({ address: ADDRESS, amountSats: 0, max: true });
+    const one = svc.savings!.quote({ address: ADDRESS, amountSats: 0, max: true, coins: [small!.outpoint] });
+    if (!all.ok || !one.ok) throw new Error('no quote');
+    expect(all.quote.totalSats).toBe(48_000_000);
+    expect(one.quote).toMatchObject({ totalSats: small!.valueSats, coins: [small!.outpoint], max: true });
+    const both = svc.savings!.quote({ address: ADDRESS, amountSats: 0, max: true, coins: [small!.outpoint, big!.outpoint] });
+    if (!both.ok) throw new Error(both.message);
+    expect(both.quote.totalSats).toBe(48_000_000);
+    expect(both.quote.feeSats).toBeGreaterThan(one.quote.feeSats);
+    // Their labels differ ("Cold storage" and none): the warning, as in the real wallet.
+    expect(both.quote.mixesLabels).toEqual(['Cold storage']);
+    // An amount the picked coins can't pay is refused in words, though Savings holds it.
+    expect(svc.savings!.quote({ address: ADDRESS, amountSats: small!.valueSats, coins: [small!.outpoint] })).toMatchObject({ ok: false, problem: 'insufficient_funds', message: expect.stringMatching(/coins you picked/) });
+    // A frozen coin can't be picked; Send max without a pick leaves it.
+    await svc.coins!.setFrozen('savings', small!.outpoint, true);
+    expect(svc.savings!.quote({ address: ADDRESS, amountSats: 1_000, coins: [small!.outpoint] })).toMatchObject({ ok: false, message: expect.stringMatching(/frozen/) });
+    const unfrozen = svc.savings!.quote({ address: ADDRESS, amountSats: 0, max: true });
+    expect(unfrozen.ok && unfrozen.quote.totalSats).toBe(big!.valueSats);
+    // Paid with a pick: exactly that coin went, its change came back.
+    await svc.coins!.setFrozen('savings', small!.outpoint, false);
+    const pay = svc.savings!.quote({ address: ADDRESS, amountSats: 10_000, coins: [small!.outpoint] });
+    if (!pay.ok) throw new Error(pay.message);
+    await svc.savings!.send(pay.quote, 'phone+hardware');
+    const after = svc.coins!.list('savings')!;
+    expect(after.coins.some((c) => c.outpoint === small!.outpoint)).toBe(false);
+    expect(after.coins.some((c) => c.outpoint === big!.outpoint)).toBe(true);
+    expect(after.coins.find((c) => c.change)).toMatchObject({ valueSats: small!.valueSats - pay.quote.totalSats, unconfirmed: true });
+    expect(after.totals.totalSats).toBe(svc.getState().savings.balanceSats);
+  });
+
+  it('Receive: a label on the address names the coin received there later; its own label wins', async () => {
+    const svc = fast();
+    const address = svc.getState().receiveAddress;
+    await svc.coins!.setAddressLabel('spending', address, 'From Business');
+    expect(svc.coins!.addressLabel('spending', address)).toBe('From Business');
+    // Money arrives at that address: Business moves its money to Main.
+    await svc.moveWalletFunds!(2, 0);
+    const coin = svc.coins!.list('spending')!.coins.find((c) => c.unconfirmed && !c.change)!;
+    expect(coin).toMatchObject({ label: 'From Business', labelFromAddress: true, addressLabel: 'From Business' });
+    await svc.coins!.setLabel('spending', coin.outpoint, 'Shop takings');
+    expect(svc.coins!.list('spending')!.coins.find((c) => c.outpoint === coin.outpoint)).toMatchObject({ label: 'Shop takings', addressLabel: 'From Business' });
+    expect(svc.coins!.list('spending')!.coins.find((c) => c.outpoint === coin.outpoint)!.labelFromAddress).toBeUndefined();
+    await svc.coins!.setAddressLabel('spending', address, '');
+    expect(svc.coins!.addressLabel('spending', address)).toBeUndefined();
+  });
+
+  it('Activity rows: the demo payments carry their labels', () => {
+    const labels = fast()
+      .getState()
+      .activity.flatMap((a) => (a.type === 'payment' && a.tx.label ? [a.tx.label] : []));
+    expect(labels).toEqual(expect.arrayContaining(['Shop', 'From the exchange']));
+  });
+});
+
 describe('coin control words', () => {
+  it('a label at the end of an Activity row, cut when long', () => {
+    expect(rowLabelSuffix(undefined)).toBe('');
+    expect(rowLabelSuffix('   ')).toBe('');
+    expect(rowLabelSuffix(' Salary ')).toBe(' · Salary');
+    expect(rowLabelSuffix('x'.repeat(40))).toBe(` · ${'x'.repeat(31)}…`);
+  });
+
+  it('"Move everything" with frozen coins, in words', () => {
+    expect(includeFrozenText({ coins: 1, sats: 3_000 })).toBe('Include 1 frozen coin (3,000 sats)');
+    expect(includeFrozenText({ coins: 2, sats: 12_500 })).toBe('Include 2 frozen coins (12,500 sats)');
+    expect(includeFrozenNote({ coins: 1 }, false)).toMatch(/^Left where it is: you froze it so nothing spends it by accident.*The wallet can't be removed while it holds it/);
+    expect(includeFrozenNote({ coins: 2 }, true)).toBe('The move takes them too and empties the wallet, so it can be removed. Spent in one payment with your other coins, anyone reading the chain sees they belong with them.');
+  });
+
   const coin = { pendingChange: false, source: { kind: 'payment' as const, txid: 'a'.repeat(64), recipient: ADDRESS, amountSats: 20_000, label: 'Rent' } };
   it('a coin is named by its label, else by where it came from', () => {
     expect(coinTitle({ ...coin, label: 'Salary' })).toBe('Salary');
@@ -114,10 +188,12 @@ describe('coin control words', () => {
   });
 
   it("an import's summary, in words", () => {
-    const none = { coinLabels: 0, frozen: 0, unfrozen: 0, txLabels: 0, kept: 0, otherWallet: 0, errorCount: 0, truncated: 0 };
+    const none = { coinLabels: 0, frozen: 0, unfrozen: 0, txLabels: 0, addrLabels: 0, kept: 0, otherWallet: 0, errorCount: 0, truncated: 0 };
     expect(labelsImportText(none)).toBe('No labels for this wallet in that file.');
     expect(labelsImportText({ ...none, coinLabels: 3, txLabels: 1, frozen: 1, kept: 2, otherWallet: 4, errorCount: 1, firstError: 'line 7: not JSON', truncated: 1 })).toBe(
       'Read 4 labels, 1 frozen coin. 2 other records kept for the next export. 4 records of another wallet left out. 1 label cut to 255 characters. 1 line skipped (line 7: not JSON).',
     );
+    // Address labels count as labels read.
+    expect(labelsImportText({ ...none, addrLabels: 2 })).toBe('Read 2 labels.');
   });
 });

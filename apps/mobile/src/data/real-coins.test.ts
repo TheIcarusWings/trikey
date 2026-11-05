@@ -178,4 +178,41 @@ describe('coin control in the app', { timeout: 120_000 }, () => {
     await svc.idle();
     expect(svc.getState().savings.activity.find((a) => a.txid === r.txid)).toMatchObject({ kind: 'consolidated', amountSats: q.quote.feeSats });
   });
+
+  it('Receive: a label on the address about to be shared names the coin received there, and its payment in Activity', async () => {
+    const address = svc.getState().receiveAddress;
+    expect(address).toMatch(/^bcrt1/);
+    expect(svc.coins!.addressLabel('spending', address)).toBeUndefined();
+    const v = svc.getState().labelsVersion ?? 0;
+    await svc.coins!.setAddressLabel('spending', address, 'Invoice 42');
+    expect(svc.getState().labelsVersion).toBeGreaterThan(v);
+    expect(svc.coins!.addressLabel('spending', address)).toBe('Invoice 42');
+    // Not an address of this wallet: refused in words.
+    await expect(svc.coins!.setAddressLabel('spending', 'bcrt1qq6hag67dl53wl99vzg42z8eyzfz2xlkvwk6f7m', 'x')).rejects.toMatchObject({ message: expect.stringMatching(/not an address of this wallet/) });
+    const index = svc.wallet!.state.chain!.nextReceiveIndex;
+    const paid = rig.fund(svc.wallet!.multisig().derive(0, index).script, 21_000n);
+    expect(svc.wallet!.multisig().derive(0, index).address).toBe(address);
+    await svc.sync();
+    await svc.idle();
+    const coin = svc.coins!.list('spending')!.coins.find((c) => c.txid === paid.txid);
+    expect(coin).toMatchObject({ label: 'Invoice 42', labelFromAddress: true, addressLabel: 'Invoice 42' });
+    const row = svc.getState().activity.find((a) => a.type === 'payment' && a.tx.txid === paid.txid);
+    expect(row).toMatchObject({ tx: { kind: 'received', label: 'Invoice 42' } });
+    // The coin's own label wins, in the list and in Activity.
+    await svc.coins!.setLabel('spending', coin!.outpoint, 'Acme paid');
+    expect(svc.coins!.list('spending')!.coins.find((c) => c.txid === paid.txid)).toMatchObject({ label: 'Acme paid', addressLabel: 'Invoice 42' });
+    expect(svc.getState().activity.find((a) => a.type === 'payment' && a.tx.txid === paid.txid)).toMatchObject({ tx: { label: 'Acme paid' } });
+    // Receive shows the next address now: unlabeled.
+    expect(svc.coins!.addressLabel('spending', svc.getState().receiveAddress)).toBeUndefined();
+    // In the BIP 329 export as an addr record.
+    await svc.coins!.exportLabels('spending');
+    expect(shared.at(-1)!.text).toContain(`"type":"addr","ref":"${address}","label":"Invoice 42"`);
+  });
+
+  it("Savings' Receive: a label on its address", async () => {
+    const { address } = await svc.savings!.receiveAddress();
+    await svc.coins!.setAddressLabel('savings', address, 'Inheritance');
+    expect(svc.coins!.addressLabel('savings', address)).toBe('Inheritance');
+    expect(svc.coins!.addressLabel('spending', address)).toBeUndefined();
+  });
 });

@@ -29,6 +29,8 @@ const DEMO_SAVINGS_FEE: Sats = 640;
 const DEMO_SAVINGS_VSIZE = 180;
 const DEMO_FAST_RATE = 20;
 const MIN_PAYMENT: Sats = 546;
+/** What each further coin picked by hand adds to that fee (one 2-of-3 input, about 105 vB, at the same rate). */
+const DEMO_INPUT_FEE: Sats = 370;
 
 export const isDemoSavingsAddress = (address: string) => DEMO_SAVINGS_ADDRESSES.includes(address.trim());
 
@@ -61,7 +63,17 @@ export function demoFilledSavings(hardware: { brand: string; model: string }): S
   };
 }
 
-export function createMockSavings(h: MockHooks, nextId: (prefix: string) => string): SavingsActions {
+/** Savings' coins in the demo (./coins-mock.ts), so "Choose coins" changes the quote as it does in the real wallet. */
+export interface SavingsCoinHooks {
+  /** The coins picked: what they hold and whether their labels differ, or why they can't pay. */
+  pick(coins: string[]): { sats: Sats; mixesLabels?: string[] } | { problem: string };
+  /** A payment of picked coins went out (called before the balance drops): exactly those coins pay. */
+  paid(coins: string[], totalSats: Sats): void;
+  /** Savings' frozen coins: Send max leaves them. */
+  frozenSats(): Sats;
+}
+
+export function createMockSavings(h: MockHooks, nextId: (prefix: string) => string, coinHooks?: SavingsCoinHooks): SavingsActions {
   const sv = (): SavingsState => h.get().savings;
   const patch = (change: Partial<SavingsState> | ((s: SavingsState) => Partial<SavingsState>)) =>
     h.update((s) => ({ savings: { ...s.savings, ...(typeof change === 'function' ? change(s.savings) : change) } }));
@@ -121,21 +133,32 @@ export function createMockSavings(h: MockHooks, nextId: (prefix: string) => stri
       const address = DEMO_SAVINGS_ADDRESSES[Math.min(receiveIndex, DEMO_SAVINGS_ADDRESSES.length - 1)]!;
       return { address, verifiedOnDevice: !!opts.verifyOnDevice };
     },
-    quote({ address, amountSats, max }) {
+    quote({ address, amountSats, max, coins }) {
       if (sv().status !== 'active') return { ok: false, problem: 'not_ready', message: 'Set up Savings first.' };
       if (!/^(tb1|bc1|bcrt1)[a-z0-9]{20,}$/i.test(address.trim())) return { ok: false, problem: 'invalid_address', message: 'Not a valid address.' };
-      const balance = sv().balanceSats;
-      const amount = max ? balance - DEMO_SAVINGS_FEE : amountSats;
-      if (max && amount < MIN_PAYMENT) return { ok: false, problem: 'amount_too_small', message: 'After the network fee, what is left in Savings is less than the smallest payment.' };
+      // Coin control, as the real wallet: picked coins pay alone (every one of them, one more input each), and Send max
+      // otherwise leaves the frozen coins.
+      const picked = coins?.length && coinHooks ? coinHooks.pick(coins) : undefined;
+      if (picked && 'problem' in picked) return { ok: false, problem: 'other', message: picked.problem };
+      const balance = picked ? picked.sats : sv().balanceSats - (coinHooks?.frozenSats() ?? 0);
+      const fee = picked ? DEMO_SAVINGS_FEE + DEMO_INPUT_FEE * Math.max(0, coins!.length - 1) : DEMO_SAVINGS_FEE;
+      const amount = max ? balance - fee : amountSats;
+      if (max && amount < MIN_PAYMENT)
+        return { ok: false, problem: 'amount_too_small', message: picked ? 'After the network fee, the coins you picked hold less than the smallest payment.' : 'After the network fee, what is left in Savings is less than the smallest payment.' };
       if (amount < MIN_PAYMENT) return { ok: false, problem: 'amount_too_small', message: `The smallest payment is ${MIN_PAYMENT} sats.` };
-      if (amount + DEMO_SAVINGS_FEE > balance) return { ok: false, problem: 'insufficient_funds', message: `Not enough in Savings: ${balance} sats.` };
+      if (amount + fee > balance)
+        return picked
+          ? { ok: false, problem: 'insufficient_funds', message: "The coins you picked don't hold enough for that and the network fee. Pick more, or let Trikey choose." }
+          : { ok: false, problem: 'insufficient_funds', message: `Not enough in Savings: ${balance} sats.` };
       const quote: SavingsQuote = {
         address: address.trim(),
         amountSats: amount,
-        feeSats: DEMO_SAVINGS_FEE,
-        totalSats: amount + DEMO_SAVINGS_FEE,
+        feeSats: fee,
+        totalSats: amount + fee,
         toSpending: address.trim() === h.get().receiveAddress,
         ...(max ? { max: true as const } : {}),
+        ...(picked ? { coins: [...new Set(coins)] } : {}),
+        ...(picked?.mixesLabels ? { mixesLabels: picked.mixesLabels } : {}),
       };
       return { ok: true, quote };
     },
@@ -155,6 +178,8 @@ export function createMockSavings(h: MockHooks, nextId: (prefix: string) => stri
         signedBy: signers,
         ...(quote.max ? {} : { canSpeedUp: true as const }),
       };
+      // Picked coins pay exactly (before the balance drops, which the other coins follow by themselves).
+      if (quote.coins?.length) coinHooks?.paid(quote.coins, quote.totalSats);
       patch((s) => ({ balanceSats: s.balanceSats - quote.totalSats, activity: [item, ...s.activity] }));
       if (quote.toSpending) h.update((s) => ({ balanceSats: s.balanceSats + quote.amountSats }));
       return { txid: item.txid, amountSats: quote.amountSats, feeSats: quote.feeSats };

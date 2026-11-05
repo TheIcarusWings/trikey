@@ -190,10 +190,19 @@ describe('removing a wallet', { timeout: 60_000 }, () => {
     await spare.sync();
     // "Move everything" left the frozen coin: the refusal says so.
     const stuck = await walletError(set.removeWallet(spare));
-    expect(stuck.message).toMatch(/9000 sats are in frozen coins/);
-    await spare.setCoinFrozen(`${kept.txid}:${kept.vout}`, false);
-    expect(await set.moveFunds(spare, daily)).toMatchObject({ ok: true });
+    expect(stuck.message).toMatch(/9000 sats are in frozen coins, which "Move everything" leaves unless you include them/);
+    // Without it, nothing is left to send: the frozen coin is all the wallet holds.
+    expect((await walletError(set.moveFunds(spare, daily))).code).toBe('nothing_to_send');
+    // "Include 1 frozen coin": the move takes it too, still frozen in the store, and empties the wallet.
+    const before = (await daily.sync()).balance.totalSats;
+    const all = await set.moveFunds(spare, daily, { includeFrozen: true });
+    expect(all).toMatchObject({ ok: true });
+    expect(all.ok && all.amountSats).toBeGreaterThan(5_000);
     await spare.sync();
+    expect(spare.snapshot()!.balance.totalSats).toBe(0);
+    expect(spare.coins().coins).toEqual([]);
+    expect(set.first.labels!.view(spare.state.wallet!.walletId).frozen.has(`${kept.txid}:${kept.vout}`)).toBe(true);
+    expect((await daily.sync()).balance.totalSats).toBe(before + (all.ok ? all.amountSats : 0));
     const spareId = spare.state.wallet!.walletId;
     await spare.setCoinLabel(`${kept.txid}:${kept.vout}`, 'gone with the wallet');
     expect(Object.keys(set.first.labels!.exportForBackup()!.wallets)).toContain(spareId);

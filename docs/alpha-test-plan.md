@@ -838,6 +838,15 @@ Do:
 7. **Rename and remove.** Settings, Wallets, "Business": rename it. Then **Remove this wallet**: refused while it holds
    money; **Move everything to "Main"** (over its limit, its own device signs), then remove it (one approval on its device).
    You should see: the guardian's Activity says the wallet was retired; the account is not offered again to a new wallet.
+   **With a frozen coin** (step 18b): before moving, freeze a small coin of "Business" in its Coins. You should see:
+   **Include 1 frozen coin (N sats)**, off, saying the coin stays and the wallet can't be removed while it holds it. Move
+   with it off: the frozen coin stays, and Remove says so. Switch it on and move again: the wallet is empty in one
+   payment (no unfreezing), and Remove works.
+9. **Print the recovery sheets.** Settings, Wallets (or Settings, Guardian), **Print a recovery sheet**. With two wallets,
+   try **One per wallet** (one page each, to keep with that wallet's device) and **All on one sheet**. You should see: each
+   wallet's name, hardware wallet, wallet id, the guardian's npub and relays and a QR code; no seed words, keys or backup
+   recovery code. On a spare phone, "I already have a Trikey wallet", "My phone and its backup", scan one sheet's QR
+   code: it reads as that wallet's guardian (stop there, unless you mean to start a recovery).
 8. **Replace the guardian with two wallets** (a second guardian box): Settings, Guardian, **Replace guardian**, scan the
    new box's code. You should see: the plan lists every wallet with its device and balance; the move asks for each
    wallet's own device in turn ("Business (2 of 2): connect its Trezor"). Unplug the second device on purpose once: the
@@ -883,6 +892,13 @@ Do:
    (if the file had any) left out.
 8. **Back up and restore** (step 11 again). You should see: on the restored phone the labels are back and the coin you
    froze is still frozen. A phone with an older app says the backup needs a newer version of Trikey.
+9. **Label an address on Receive.** Receive, **Label this address**, "Invoice 42", save; then pay that address from
+   another wallet. You should see: in Coins, the new coin is named "Invoice 42" (it has no label of its own); its row in
+   Activity ends in "· Invoice 42", and its payment details show the label and "Label its coin". Give the coin its own
+   label: it shows instead, in Coins and in Activity. Receive now shows the next address, unlabeled. Export labels again:
+   the file has an `addr` record for it. The same works on Savings' Receive.
+10. **Labels in Activity.** A payment you labeled (a note on Send, or a received payment whose coin you labeled) ends its
+   Activity row in "· its label"; a long one is cut with "…" and shown whole in the payment's details.
 
 If it goes wrong, collect: the coin's amount and confirmations (not its label), the screen and message, which wallet
 (Spending or Savings), for a consolidation the transaction id and the daily limit before and after, and the guardian's

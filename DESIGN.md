@@ -684,8 +684,20 @@ Owner's decisions, and how they are built:
    and every alert contact (its notification title too), instead of "Money moved out of Savings". The protocol alert is
    unchanged, so older phones read it as before.
 
-Later: labels shown in Activity rows and on the Receive screen (an address label before it is paid), labels for an
-address (`addr` records are kept, not used), and coin control in Recovery Key mode.
+**Follow-ups (built 2026-11-05):**
+- **Address labels.** Receive (Spending and Savings) labels the address about to be shared (`setAddressLabel`): a BIP 329
+  `addr` record, kept with the records an older app keeps as read, so the store's document and the backup keep their
+  shape (an older app keeps and exports them). A coin without a label of its own shows its address's (`labelFromAddress`;
+  the coin list works out each coin's address only when the wallet has an address label). Imported `addr` records work
+  the same way.
+- **Labels in Activity.** A payment's label (set on it, or the send log's note) ends its Activity row and shows in its
+  details; a received payment without one shows its coins' labels (their own, or their address's while the coin is
+  unspent: the guardian's history does not say which address a spent coin sat at).
+- **Frozen coins and "Move everything".** `WalletSet.moveFunds({ includeFrozen })` (`SendRequest.includeFrozen`) takes
+  the frozen coins too, when the owner asks by name ("Include 1 frozen coin (3,000 sats)", off by default), so a wallet
+  holding frozen coins can be emptied and removed without unfreezing them one by one. Every other quote still leaves them.
+
+Later: coin control in Recovery Key mode.
 
 ## Later: Taproot and threshold signatures (decided 2026-11-03: not now)
 

@@ -2,6 +2,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, Share, View } from 'react-native';
+import { AddressLabelField } from '@/components/address-label';
 import { AppButton } from '@/components/app-button';
 import { Check, Copy, Share2 } from '@/components/icons';
 import { Card } from '@/components/ui/card';
@@ -118,6 +119,8 @@ export default function Receive() {
           {rkMode ? "Finish setting up the wallet first: the vault and the spending balance get their addresses when your Recovery Key is saved." : `Your ${hardware.brand} hasn't confirmed this wallet's addresses yet, so Trikey won't show one. Finish setting up the wallet first.`}
         </Notice>
       )}
+      {/* Coin control: a label for the address about to be shared (guardian mode; not the vault of Recovery Key mode). */}
+      {receiveAddress && !rkMode ? <AddressLabelField wallet="spending" address={receiveAddress} /> : null}
       <View className="flex-row gap-3">
         <AppButton
           title={copied ? 'Copied' : 'Copy'}

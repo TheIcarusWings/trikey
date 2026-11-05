@@ -12,9 +12,10 @@ export type { SilentPaymentActions } from './sp-actions';
 export type { SavingsActions } from './savings-actions';
 export type { SpeedUpActions } from './speed-up-actions';
 export type { CoinActions } from './coin-actions';
-export { coinTitle, coinSourceText, mixedLabelsText, labelsImportText, CONSOLIDATE_LIMIT_NOTE } from './coins-text';
+export { coinTitle, coinSourceText, mixedLabelsText, labelsImportText, includeFrozenText, includeFrozenNote, rowLabelSuffix, CONSOLIDATE_LIMIT_NOTE } from './coins-text';
 export { emptySavings, suggestSavings } from './savings-empty';
 export { groupWalletId } from './savings-map';
+export { renderRecoverySheet, recoverySheetWallet } from './recovery-sheet';
 export { emptySilentPayments, looksLikeSilentPaymentAddress } from './sp-empty';
 export { WalletProvider, useWallet, useWalletService, useNow, useActivity } from './provider';
 // The mock is exported for the app root only. Screens must go through useWallet().

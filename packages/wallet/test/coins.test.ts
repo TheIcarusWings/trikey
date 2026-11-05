@@ -2,8 +2,8 @@
  * coins.ts: the coin list a wallet's Coins screen will show, and the coins a payment may take. Pure; made-up txids.
  */
 import { describe, expect, it } from 'vitest';
-import { hex } from '@scure/base';
-import { SMALL_COIN_SATS, coinList, selectableCoins, smallCoins, totalsOf, type CoinSourcePayment } from '../src/coins.js';
+import { bech32, hex } from '@scure/base';
+import { SMALL_COIN_SATS, coinList, receivedLabels, selectableCoins, smallCoins, totalsOf, type CoinSourcePayment } from '../src/coins.js';
 import { LabelStore } from '../src/labels-store.js';
 import type { OwnSpend } from '../src/own-spends.js';
 import { selectAllCoins } from '../src/send.js';
@@ -115,6 +115,61 @@ describe('coin list', () => {
   });
 });
 
+describe('address labels', () => {
+  /** A made-up (valid) regtest P2WSH address per chain and index. */
+  const addr = (chain: number, index: number) => bech32.encode('bcrt', [0, ...bech32.toWords(new Uint8Array(32).fill(chain * 16 + index + 1))]);
+  /** The address of each chain and index, and the calls the list made. */
+  const addresses = () => {
+    const calls: string[] = [];
+    return { calls, addressOf: (chain: 0 | 1, index: number) => (calls.push(`${chain}/${index}`), addr(chain, index)) };
+  };
+
+  it("a coin without a label of its own shows its address's; its own label wins; the address's is still there", async () => {
+    const store = await LabelStore.open(new MemoryKeyValueStore());
+    await store.setAddressLabel(W, addr(0, 0).toUpperCase(), 'Invoice 42');
+    await store.setAddressLabel(W, addr(0, 3), 'Donations');
+    await store.setCoinLabel(W, `${INCOMING}:0`, 'From Maria');
+    const a = addresses();
+    const list = coinList({ walletId: W, chain: chain(), sendLog, labels: store.view(W), addressOf: a.addressOf });
+    const by = (op: string) => list.coins.find((c) => c.outpoint === op)!;
+    expect(by(`${RECV}:0`)).toMatchObject({ label: 'Invoice 42', labelFromAddress: true, addressLabel: 'Invoice 42' });
+    expect(by(`${INCOMING}:0`)).toMatchObject({ label: 'From Maria', addressLabel: 'Donations' });
+    expect(by(`${INCOMING}:0`).labelFromAddress).toBeUndefined();
+    expect(by(`${PAID}:1`).label).toBeUndefined();
+    // Once per coin.
+    expect(a.calls.sort()).toEqual(['0/0', '0/3', '1/0', '1/1']);
+    // The inherited label counts as the coin's when picking: two different labels.
+    expect(selectableCoins(list, { manual: [`${RECV}:0`, `${INCOMING}:0`] })).toMatchObject({ mixesLabels: true, labels: ['Invoice 42', 'From Maria'] });
+  });
+
+  it('without any address label no address is worked out', async () => {
+    const store = await LabelStore.open(new MemoryKeyValueStore());
+    await store.setCoinLabel(W, `${RECV}:0`, 'Salary');
+    const a = addresses();
+    coinList({ walletId: W, chain: chain(), labels: store.view(W), addressOf: a.addressOf });
+    expect(a.calls).toEqual([]);
+  });
+
+  it("a received payment's labels for Activity: its coins' own (spent ones too), then its address's while the coin is listed", async () => {
+    const store = await LabelStore.open(new MemoryKeyValueStore());
+    await store.setAddressLabel(W, addr(0, 0), 'Invoice 42');
+    const { addressOf } = addresses();
+    let list = coinList({ walletId: W, chain: chain(), labels: store.view(W), addressOf });
+    expect(receivedLabels(RECV, list, store.view(W))).toEqual(['Invoice 42']);
+    await store.setCoinLabel(W, `${RECV}:0`, 'Salary');
+    await store.setCoinLabel(W, `${RECV}:5`, 'Bonus');
+    list = coinList({ walletId: W, chain: chain(), labels: store.view(W), addressOf });
+    expect(receivedLabels(RECV, list, store.view(W))).toEqual(['Salary', 'Bonus']);
+    // Spent (no longer listed): the coins' own labels stay, the address's goes with the coin.
+    const spent = coinList({ walletId: W, chain: chain({ utxos: [] }), labels: store.view(W), addressOf });
+    expect(receivedLabels(RECV, spent, store.view(W))).toEqual(['Salary', 'Bonus']);
+    await store.setCoinLabel(W, `${RECV}:0`, '');
+    await store.setCoinLabel(W, `${RECV}:5`, '');
+    expect(receivedLabels(RECV, spent, store.view(W))).toEqual([]);
+    expect(receivedLabels(RECV, undefined, undefined)).toEqual([]);
+  });
+});
+
 describe('selectable coins', () => {
   const labeled = async () => {
     const store = await LabelStore.open(new MemoryKeyValueStore());
@@ -168,6 +223,14 @@ describe('selectable coins', () => {
     const held = coinList({ walletId: W, chain: chain(), ownSpends: own });
     expect(() => selectableCoins(held, { manual: [`${RECV}:0`] })).toThrow(expect.objectContaining({ code: 'coin_unavailable', reason: 'not_found' }));
     expect(() => selectableCoins(list, { manual: [] })).toThrow(expect.objectContaining({ code: 'coin_unavailable' }));
+  });
+
+  it('includeFrozen ("Move everything" with the frozen coins included): every coin, and a manual pick may name a frozen one', async () => {
+    const list = await labeled();
+    expect(selectableCoins(list, { includeFrozen: true }).coins.map((c) => c.outpoint)).toEqual(list.coins.map((c) => c.outpoint));
+    expect(selectableCoins(list, { manual: [`${ELSEWHERE}:2`], includeFrozen: true }).coins.map((c) => c.outpoint)).toEqual([`${ELSEWHERE}:2`]);
+    // A spent coin stays refused.
+    expect(() => selectableCoins(list, { manual: [`${id('7')}:0`], includeFrozen: true })).toThrow(expect.objectContaining({ code: 'coin_unavailable', reason: 'not_found' }));
   });
 
   it('totalsOf sums any subset', async () => {
