@@ -1,0 +1,17 @@
+// The Android security patch level for the phone-safety note (Security tab). Linked in both Android builds: it uses
+// nothing but the Android framework (no Google library).
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'app.trikey'
+version = '1.0.0'
+
+android {
+  namespace 'app.trikey.phonesafety'
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
