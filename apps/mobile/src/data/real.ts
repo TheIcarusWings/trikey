@@ -1310,6 +1310,11 @@ class Service implements RealWalletService {
         this.refresh();
         break;
       }
+      case 'speed_up_refused':
+        // The check before a "Speed up" is signed failed (the screen shows why in words). One log line with the reason
+        // code only: no txid, amount or address.
+        console.warn(`speedup.check_failed wallet=${e.wallet} reason=${e.reason}`);
+        break;
       case 'payment_signed':
         // Signed (the hardware wallet is done): the screen says "Sending…" now, not "Waiting for your Ledger".
         this.paymentSending = true;

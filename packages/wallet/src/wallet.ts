@@ -115,6 +115,7 @@ import {
 import { isHardwareDisconnect, type CloudBackupStore, type HardwareKind, type HardwareProvider, type HardwareSigner, type HardwareWalletPolicy, type KeyValueStore, type PasskeyPrf, type SecureKeyStore } from './platform.js';
 import { GuardianSilentPaymentScanner, GuardianSingleKeyChain } from './guardian-sp.js';
 import { TxCache } from './txcache.js';
+import { FEE_BUMP_DATA_REASONS, FeeBumpCheckError, checkFeeBump, type FeeBumpCheckReason } from './fee-bump-check.js';
 import { applyOwnSpends, ownSpendOf, reconcileOwnSpends, withOwnSpend } from './own-spends.js';
 import { coinList, receivedLabels, selectableCoins, type CoinList, type SelectableCoins } from './coins.js';
 import { bip329Origin } from './labels-bip329.js';
@@ -322,7 +323,12 @@ export type WalletEvent =
   /** Coin control: a coin's label or freeze changed, or labels were imported (the coin list and quotes read them again). */
   | { type: 'labels_changed' }
   /** Encrypted notes on the guardian: turned on or off, a copy sent (or it failed), notes brought back (`notesView`). */
-  | { type: 'notes_changed' };
+  | { type: 'notes_changed' }
+  /**
+   * "Speed up" refused a replacement before signing it: the check of the original and the replacement failed
+   * (fee-bump-check.ts). Only the reason code, never transaction data: for a log line.
+   */
+  | { type: 'speed_up_refused'; wallet: 'spending' | 'savings'; reason: FeeBumpCheckReason };
 
 /** Encrypted notes on the guardian (`TrikeyWallet.notesView`). */
 export interface NotesView {
@@ -3895,6 +3901,65 @@ export class TrikeyWallet {
   }
 
   /**
+   * The check a "Speed up" replacement passes before anything signs it (fee-bump-check.ts, DESIGN.md "Speed up"): the
+   * original as broadcast (with its signatures: from the phone's cache, else `tx.get` with witness data) hashes to the
+   * recorded txid, spends only coins of `wallet` (their previous transactions checked against their txids) and was
+   * signed by its keys; the replacement spends all of them, pays every payment unchanged and lowers only the change.
+   * A failure is logged by its reason code (`speed_up_refused`, no transaction data) and throws `cannot_speed_up` in
+   * words. A guardian that does not answer keeps its own error (try again).
+   */
+  private async checkSpeedUp(
+    kind: 'spending' | 'savings',
+    opts: { wallet: MultisigWallet; scripts: Map<string, { chain: 0 | 1; index: number }>; replaces: string; psbt: Uint8Array; source: ChainSource },
+  ): Promise<void> {
+    const { original, fetched } = await this.signedOriginal(opts.replaces, opts.source);
+    const parents = new Map<string, string>();
+    if (original) {
+      let ids: string[] = [];
+      try {
+        ids = [...new Set(btc.RawTx.decode(hex.decode(original)).inputs.map((i) => hex.encode(i.txid)))];
+      } catch {
+        /* unreadable: the check says so */
+      }
+      for (const id of ids) {
+        const txHex = await softFetch(() => this.prevTxs([id], opts.source).then((r) => r[0]));
+        if (txHex) parents.set(id, txHex);
+      }
+    }
+    try {
+      checkFeeBump({
+        wallet: opts.wallet,
+        pathOf: (script) => opts.scripts.get(hex.encode(script)),
+        originalTxid: opts.replaces,
+        originalTxHex: original ?? '',
+        parents,
+        replacementPsbt: opts.psbt,
+      });
+    } catch (e) {
+      if (!(e instanceof FeeBumpCheckError)) throw e;
+      this.emit({ type: 'speed_up_refused', wallet: kind, reason: e.reason });
+      const message = FEE_BUMP_DATA_REASONS.includes(e.reason)
+        ? 'Trikey could not get what it needs to check this faster payment against the one you sent, so it did not sign it. Nothing was sent. Try again in a moment.'
+        : 'This faster payment does not match the payment you sent, so Trikey did not sign it. Nothing was sent. Sync and try again; if it happens again, report a problem.';
+      throw new WalletError('cannot_speed_up', message, { reason: e.reason, cause: e });
+    }
+    // Checked: kept with its signatures, so the next quote and the signing need no round trip.
+    if (fetched && original) await this.txs.put([{ txid: opts.replaces, txHex: original }]).catch(() => undefined);
+  }
+
+  /**
+   * The payment `txid` as it was broadcast, with its witness data: the phone's cache when it holds it so (a payment
+   * this phone sent), else `tx.get` with witness data. Undefined when neither has it (the check then refuses).
+   */
+  private async signedOriginal(txid: string, source: ChainSource): Promise<{ original?: string; fetched: boolean }> {
+    const cached = await this.txs.get(txid);
+    if (cached && hasWitnessData(cached)) return { original: cached, fetched: false };
+    const got = await softFetch(() => (source.getSignedTransaction ? source.getSignedTransaction(txid) : source.getTransaction(txid)));
+    if (got && hasWitnessData(got)) return { original: got, fetched: true };
+    return { original: got ?? cached, fetched: false };
+  }
+
+  /**
    * "Speed up" of an unconfirmed payment out of the wallet (DESIGN.md, "Speed up"): plans a replacement (BIP 125) that
    * spends the same coins and pays the same outputs to everyone else (the amount and the address never change), with a
    * higher fee taken out of the change: at the estimate for `speed` (default `fast`; never under 1 sat/vB on mainnet) or
@@ -3944,6 +4009,8 @@ export class TrikeyWallet {
     });
     // What the guardian would count: its own measure of what leaves the wallet (inputs minus change), of the PSBT it would see.
     const psbt = selfCheck(() => buildBumpPsbt({ wallet, plan, prevTxHexes: prevs }));
+    // Refused here already when the original is not what this wallet signed (`speedUp` checks again before signing).
+    await this.checkSpeedUp('spending', { wallet, scripts, replaces: txid, psbt, source: this.chain });
     const outflow = Number(selfCheck(() => analyzePsbt(psbt, wallet.accountPubkeys(), this.network, { requireNonWitnessUtxo: true })).outflow);
     const before = this.cosignedAncestor(txid);
     const limitSats = before ? Math.max(0, outflow - before.outflowSats) : outflow;
@@ -3996,6 +4063,8 @@ export class TrikeyWallet {
     const a = selfCheck(() => analyzePsbt(psbt, wallet.accountPubkeys(), this.network, { requireNonWitnessUtxo: true }));
     if (a.inputs.length !== quote.inputs.length || a.fee !== BigInt(quote.feeSats) || a.fee <= BigInt(quote.oldFeeSats) || a.externalOut + a.selfOut + a.fee !== BigInt(quote.inputs.reduce((s, u) => s + u.valueSats, 0)))
       throw new WalletError('internal', 'The replacement does not match its quote; quote it again.');
+    // Before key 2 or any other key sees it: the original is this wallet's own payment, and the replacement only adds fee.
+    await this.checkSpeedUp('spending', { wallet, scripts: this.spendingScripts(wallet), replaces: quote.replaces, psbt, source: this.chain });
     const outflow = Number(a.outflow);
     const signed = await this.withKey2('Approve the faster payment', async (m) => new SoftwareSigner('app', m).signPsbt(psbt, this.network));
 
@@ -7901,6 +7970,9 @@ export class TrikeyWallet {
       feeRate,
       incrementalSatPerVb: Math.max(1, this.fees?.minRelaySatPerVb ?? 1),
     });
+    // Refused here already when the original is not what Savings signed (`speedUpSavingsSpend` checks again before signing).
+    const psbt = selfCheck(() => buildBumpPsbt({ wallet, plan, prevTxHexes: prevs }));
+    await this.checkSpeedUp('savings', { wallet, scripts, replaces: txid, psbt, source });
     const payments = plan.outputs.filter((o) => !o.change);
     const recipient = logged?.recipient ?? (payments[0] ? btc.Address(this.network.btc).encode(btc.OutScript.decode(hex.decode(payments[0].script))) : '');
     return {
@@ -7938,6 +8010,8 @@ export class TrikeyWallet {
     const changeAfter = quote.change.afterSats ?? 0;
     if (a.inputs.length !== quote.inputs.length || a.fee !== BigInt(quote.feeSats) || a.selfOut !== BigInt(changeAfter) || a.externalOut !== BigInt(quote.amountSats) || a.fee <= BigInt(quote.oldFeeSats))
       throw new WalletError('internal', 'The replacement does not match its quote; quote it again.');
+    // Before key 2 or a Savings device sees it: the original is Savings' own payment, and the replacement only adds fee.
+    await this.checkSpeedUp('savings', { wallet, scripts: this.savingsScripts(wallet, record), replaces: quote.replaces, psbt, source: this.savingsChain() });
     const detail = `Speed up the Savings payment of ${quote.amountSats} sats to ${quote.recipient}${quote.toSpending ? ' (your Spending wallet)' : ''}: network fee ${quote.oldFeeSats} -> ${quote.feeSats} sats (${quote.extraFeeSats} more)`;
     const final = await this.signSavings(psbt, wallet, record, signers, detail);
     const { txHex, txid } = finalizePsbt(final);
@@ -8617,6 +8691,30 @@ function checkMixedSignedBy(
     return merged;
   } catch (e) {
     throw new WalletError(code, message, { cause: e });
+  }
+}
+
+/** A raw transaction that carries witness data (signatures), as a payment this wallet signed does. */
+function hasWitnessData(txHex: string): boolean {
+  try {
+    const raw = btc.RawTx.decode(hex.decode(txHex));
+    return !!raw.segwitFlag && !!raw.witnesses?.some((w) => w.length > 0);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A lookup for the "Speed up" check: undefined when the source does not have it (the check then refuses with its reason),
+ * but a guardian that does not answer, is busy or asks to wait keeps its own error, which says to try again.
+ */
+async function softFetch(fn: () => Promise<string | undefined>): Promise<string | undefined> {
+  try {
+    return await fn();
+  } catch (e) {
+    const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
+    if (refusal && (refusal.kind === 'unreachable' || refusal.kind === 'unavailable' || refusal.kind === 'rate_limited')) throw e;
+    return undefined;
   }
 }
 

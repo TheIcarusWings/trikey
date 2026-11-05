@@ -409,6 +409,13 @@ If it goes wrong, collect:
 - The guardian's Activity page (screenshot) and its log.
 - Whether the npub you pasted is the one from your own nostr app (it starts with `npub1`).
 
+#### The phone itself (Security tab)
+
+- Check: with no screen lock on the phone, the **Security** tab says "Set a screen lock"; set one,
+  come back to Trikey, and the note is gone. On an Android phone whose last security update is more than 6 months old
+  it says "Look for a system update"; in an emulator or the iOS simulator it says the app is fine for testing, not for
+  real money on mainnet. None of this is sent anywhere (the guardian's Activity page shows nothing about it).
+
 ### 5. Backup: the recovery code and the backup file
 
 Do:
@@ -511,6 +518,10 @@ side by side, not even for a moment while the guardian's alert comes in); the ex
 old one gone; on the Guardian page, "Phone-only today" goes up by the **extra fee only** for the co-signed speed-up, and
 not at all for the hardware one. A send-max payment has no change to pay from, and an incoming payment is not yours to
 speed up: the app should say so. On mainnet the new fee is never under 1 sat/vB.
+
+- Check: every speed-up above went through the phone's check of the original before signing; none was refused with
+  "This faster payment does not match the payment you sent" (if one was, note the `speedup.check_failed` log line: it
+  holds only a reason code).
 
 If it goes wrong, collect: both transaction ids, the fees the screen showed, the guardian's Activity page and the log
 lines starting with `tx.broadcast` and `live.wallet_tx`, and whether Activity showed two rows.

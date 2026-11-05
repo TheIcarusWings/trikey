@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import { View } from 'react-native';
 import { Check, TriangleAlert } from '@/components/icons';
 import { ListGroup, SectionLabel, SettingsRow } from '@/components/panels';
+import { PhoneSafetySection } from '@/components/phone-safety';
 import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
@@ -67,6 +68,8 @@ export default function SecurityScreen() {
   return (
     <Screen tab title="Security" gap={pick(12, 0)} onRefresh={() => wallet.sync()}>
       <StatusCard issues={needsYou(state)} />
+      {/* Calm advice about the phone itself (no screen lock, an old security patch, an emulator); read on the phone, sent nowhere. */}
+      <PhoneSafetySection />
 
       <SectionLabel>Your keys</SectionLabel>
       <ListGroup>
