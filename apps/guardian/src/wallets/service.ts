@@ -56,6 +56,11 @@ export const ROUTED_METHODS: readonly MethodName[] = [
   'savings.register',
   'savings.unregister',
   'savings.get',
+  // Encrypted notes (`labels_backup`): each wallet's own copy, encrypted with its own hardware wallet.
+  'labels.put',
+  'labels.get',
+  'labels.list',
+  'labels.delete',
 ];
 
 /** What the box shares: an own wallet's phone may call them as the first wallet's does. */
