@@ -8266,11 +8266,6 @@ function checkMixedSignedBy(
   }
 }
 
-/**
- * Runs core's PSBT analysis on a PSBT the wallet built from the guardian's
- * chain data. A failure means that data was wrong (a coin at another index, a
- * previous transaction that does not match): refuse before anything is signed.
- */
 /** A raw transaction that carries witness data (signatures), as a payment this wallet signed does. */
 function hasWitnessData(txHex: string): boolean {
   try {
@@ -8295,6 +8290,11 @@ async function softFetch(fn: () => Promise<string | undefined>): Promise<string 
   }
 }
 
+/**
+ * Runs core's PSBT analysis on a PSBT the wallet built from the guardian's
+ * chain data. A failure means that data was wrong (a coin at another index, a
+ * previous transaction that does not match): refuse before anything is signed.
+ */
 function selfCheck<T>(fn: () => T): T {
   try {
     return fn();
