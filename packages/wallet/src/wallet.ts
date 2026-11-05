@@ -88,6 +88,7 @@ import {
 import {
   BACKUP_FILE_PREFIX,
   BACKUP_FILE_SUFFIX,
+  backupVersionFor,
   openBackup,
   parseBackup,
   sealBackup,
@@ -114,6 +115,9 @@ import { isHardwareDisconnect, type CloudBackupStore, type HardwareKind, type Ha
 import { GuardianSilentPaymentScanner, GuardianSingleKeyChain } from './guardian-sp.js';
 import { TxCache } from './txcache.js';
 import { applyOwnSpends, ownSpendOf, reconcileOwnSpends, withOwnSpend } from './own-spends.js';
+import { coinList, selectableCoins, type CoinList, type SelectableCoins } from './coins.js';
+import { bip329Origin } from './labels-bip329.js';
+import { LabelStore, labelStoreKey, type Bip329ImportResult } from './labels-store.js';
 import { parseScannedCode, type ScannedCode } from './scan.js';
 import {
   DEFAULT_SWEEP_MIN_SATS,
@@ -144,7 +148,10 @@ import {
   LIMIT_WINDOW_MS,
   MIN_PAYMENT_SATS,
   buildBumpPsbt,
+  buildConsolidationPsbt,
   buildSendMaxPsbt,
+  feesLowNow,
+  planConsolidation,
   guardianBlocker,
   outputScriptOf,
   pickFeeRate,
@@ -157,6 +164,7 @@ import {
   spentTodayEstimate,
   toCoreUtxo,
   type BumpPlan,
+  type ConsolidationInfo,
   type HardwareReason,
   type SendQuote,
   type SendRequest,
@@ -302,7 +310,9 @@ export type WalletEvent =
    * A scan found silent payments (checked against the spend key). They wait in the phone's silent payments balance;
    * `sweepSilentPayments` moves them into the vault (the wallet never does that by itself: it needs the biometric prompt).
    */
-  | { type: 'silent_payments_found'; coins: SilentPaymentCoin[] };
+  | { type: 'silent_payments_found'; coins: SilentPaymentCoin[] }
+  /** Coin control: a coin's label or freeze changed, or labels were imported (the coin list and quotes read them again). */
+  | { type: 'labels_changed' };
 
 /** The steps of "Replace guardian", in order. */
 export type ReplaceStep = 'pair' | 'sign' | 'broadcast' | 'retire' | 'switch';
@@ -315,10 +325,12 @@ export interface WalletHistoryEntry extends HistoryEntry {
   recipient?: string;
   /** What was paid, without the fee (payments from this phone). */
   amountSats?: number;
+  /** The payment's label: one set on it in the labels store (a received payment, an import), else the send log's note. */
   label?: string;
   /** The key that signed next to the phone's. */
   signedBy?: 'guardian' | 'hardware';
-  purpose?: 'payment' | 'sweep';
+  /** `consolidate` (coin control): coins merged into one of this wallet's own (`amountSats` what it holds); only the fee left. */
+  purpose?: SendLogEntry['purpose'];
   /** Sent by this phone and not in the guardian's history yet. */
   local?: true;
   /** Announced by the guardian (`wallet_tx`) a moment ago, not in the last sync yet. */
@@ -925,6 +937,28 @@ export interface SavingsSendRequest {
   speed?: SendRequest['speed'];
   feeRate?: number;
   label?: string;
+  /** Coin control: the Savings coins that pay (`txid:vout`), every one spent; as `SendRequest.coins`. */
+  coins?: string[];
+}
+
+/** Which of a wallet's two wallets coin control works on: Spending (`main`) or its Savings. */
+export type CoinWallet = 'main' | 'savings';
+
+/** What `quoteConsolidate` / `quoteSavingsConsolidate` merge, and at what fee. */
+export interface ConsolidateRequest {
+  /**
+   * The coins to merge (`txid:vout`, two or more, none frozen). Absent: every confirmed coin that is not frozen (the app
+   * offers "all small coins", `smallCoins`).
+   */
+  coins?: string[];
+  /** Default `slow`: a consolidation is never urgent. Ignored when `feeRate` is set. */
+  speed?: SendRequest['speed'];
+  /** sat/vB. */
+  feeRate?: number;
+  /** Spending only: `hardware` skips the guardian. */
+  signer?: 'auto' | 'hardware';
+  /** A note for the send log (default none: Activity names it a consolidation). */
+  label?: string;
 }
 
 export interface SavingsQuote {
@@ -939,6 +973,14 @@ export interface SavingsQuote {
   /** The address is this phone's own Spending wallet ("Move to Spending"): the device shows it as an outgoing payment. */
   toSpending: boolean;
   sendMax?: true;
+  /** As `SendQuote.mixesLabels`: the coins picked by hand carry different labels. */
+  mixesLabels?: { labels: string[] };
+  /**
+   * Set by `quoteSavingsConsolidate`: Savings coins merged into one at Savings' next change address (`request.address`),
+   * `request.amountSats` what the new coin holds. Only the fee leaves Savings (`totalSats`). The guardian still says
+   * Savings moved (by the fee): it watches every Savings coin.
+   */
+  consolidate?: ConsolidationInfo;
 }
 
 export type SavingsSendResult =
@@ -1004,6 +1046,40 @@ export interface NotificationChannel {
   failing?: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Coin control helpers
+
+/** The BIP 329 `origin` of a wallet's descriptor, when it is the plain 2-of-3 one (`bip329Origin`); else none. */
+function originOf(descriptor: string): { origin?: string } {
+  try {
+    return { origin: bip329Origin(descriptor) };
+  } catch {
+    return {};
+  }
+}
+
+/** The `mixesLabels` of a quote: the coins picked by hand carry different labels. */
+function mixed(pick: SelectableCoins): { mixesLabels?: { labels: string[] } } {
+  return pick.mixesLabels ? { mixesLabels: { labels: pick.labels } } : {};
+}
+
+/** `e` with a word on the frozen coins it could not use, when there are some (and the coins were not picked by hand). */
+function withFrozenText(e: WalletError, pick: SelectableCoins & { frozenSats?: number }): WalletError {
+  const frozen = pick.frozenSats ?? 0;
+  if (!frozen) return e;
+  return new WalletError(e.code, `${e.message} ${frozen} sats are in frozen coins: unfreeze them in Coins to spend them.`, { frozenSats: frozen, ...(e.feeSats !== undefined ? { feeSats: e.feeSats } : {}) });
+}
+
+/** Runs a coin selection; an `insufficient_funds`, `nothing_to_send` or `send_max_too_small` mentions the frozen coins. */
+function withFrozenNote<T>(pick: SelectableCoins & { frozenSats?: number }, select: () => T): T {
+  try {
+    return select();
+  } catch (e) {
+    if (e instanceof WalletError && (e.code === 'insufficient_funds' || e.code === 'nothing_to_send' || e.code === 'send_max_too_small')) throw withFrozenText(e, pick);
+    throw e;
+  }
+}
+
 export class TrikeyWallet {
   readonly network: Network;
   private readonly clock: Clock;
@@ -1059,6 +1135,13 @@ export class TrikeyWallet {
   private readonly seenWrapsKey: string;
   /** A `guardian.status` read after a relay connection came back, while it runs. */
   private reconnectRefresh?: Promise<unknown>;
+  /**
+   * Coin control: the phone's labels and freezes (`labels-store.ts`), one store for every wallet of the phone (`WalletSet`
+   * hands the first wallet's to the others). Undefined when it could not be read (`labelsProblem`): coins are then shown
+   * and spent without labels or freezes, and changing one says why it cannot.
+   */
+  private labelStore?: LabelStore;
+  private labelsUnreadable?: WalletError;
 
   private constructor(
     private readonly deps: WalletDeps,
@@ -1129,7 +1212,9 @@ export class TrikeyWallet {
       retiredWallets: [],
     };
     await store.save(state);
-    return new TrikeyWallet(deps, state, store);
+    const w = new TrikeyWallet(deps, state, store);
+    await w.loadLabels();
+    return w;
   }
 
   /** The wallet saved on this phone, or undefined if there is none. */
@@ -1138,7 +1223,20 @@ export class TrikeyWallet {
     const state = await store.load();
     if (!state) return undefined;
     if (state.network !== deps.network) throw new WalletError('network_mismatch', `The saved wallet is on ${state.network}, not ${deps.network}.`);
-    return new TrikeyWallet(deps, state, store);
+    const w = new TrikeyWallet(deps, state, store);
+    await w.loadLabels();
+    return w;
+  }
+
+  /** Reads the labels kept next to this wallet's state (`<storageKey>.labels`). A damaged store does not stop the wallet. */
+  private async loadLabels(): Promise<void> {
+    try {
+      this.labelStore = await LabelStore.open(this.deps.store, labelStoreKey(this.deps.storageKey), { now: () => this.now() });
+      this.labelsUnreadable = undefined;
+    } catch (e) {
+      this.labelStore = undefined;
+      this.labelsUnreadable = e instanceof WalletError ? e : new WalletError('labels_invalid', 'The labels on this phone could not be read.', { cause: e });
+    }
   }
 
   /** The current state (read-only snapshot). */
@@ -1301,6 +1399,8 @@ export class TrikeyWallet {
     await this.store.clear();
     await this.txs.clear();
     await this.deps.store.remove(this.seenWrapsKey).catch(() => undefined);
+    // The phone's labels go with its first (last) wallet.
+    await this.deps.store.remove(labelStoreKey(this.deps.storageKey)).catch(() => undefined);
   }
 
   // ===========================================================================
@@ -1979,7 +2079,7 @@ export class TrikeyWallet {
         liveCounter: 0,
         retiredWallets: [],
       };
-      const added = await TrikeyWallet.keep({ ...this.deps, storageKey: opts.storageKey }, state);
+      const added = await TrikeyWallet.keep({ ...this.deps, storageKey: opts.storageKey }, state, this.labelStore);
 
       // 5. The first address on the device.
       if (opts.verifyAddress !== false) {
@@ -1995,11 +2095,17 @@ export class TrikeyWallet {
     }
   }
 
-  /** Saves `state` at `deps.storageKey` (an own wallet added, restored or rebuilt) and opens it. */
-  private static async keep(deps: WalletDeps, state: WalletState): Promise<TrikeyWallet> {
+  /**
+   * Saves `state` at `deps.storageKey` (an own wallet added, restored or rebuilt) and opens it, with the phone's label
+   * store (`labels`, the first wallet's: one for every wallet of the phone).
+   */
+  private static async keep(deps: WalletDeps, state: WalletState, labels: LabelStore | undefined): Promise<TrikeyWallet> {
     const store = new StateStore(deps.store, deps.storageKey);
     await store.save(state);
-    return new TrikeyWallet(deps, state, store);
+    const w = new TrikeyWallet(deps, state, store);
+    if (labels) w.useLabelStore(labels);
+    else await w.loadLabels();
+    return w;
   }
 
   /**
@@ -2089,7 +2195,7 @@ export class TrikeyWallet {
       liveCounter: 0,
       retiredWallets: spec.retiredWallets ?? [],
     };
-    return TrikeyWallet.keep({ ...this.deps, storageKey }, state);
+    return TrikeyWallet.keep({ ...this.deps, storageKey }, state, this.labelStore);
   }
 
   /** This wallet as a backup holds it, for an own wallet after the first (`createBackup`'s `ownWallets`). */
@@ -2663,8 +2769,21 @@ export class TrikeyWallet {
     const waiting = new Set(this.s.ownSpends.filter((r) => r.walletId === this.s.wallet?.walletId).map((r) => r.txid));
     const unlisted = this.s.sendLog
       .filter((e) => !listed.has(e.txid) && (waiting.has(e.txid) || (e.at > recent && e.at > (c?.syncedAt ?? 0) - 10 * 60_000)))
-      .map((e): WalletHistoryEntry => ({ txid: e.txid, height: 0, confirmations: 0, netSats: -(e.amountSats + e.feeSats), feeSats: e.feeSats, ...meta(e), local: true }));
-    return withReplacements([...unlisted.reverse(), ...announced.reverse(), ...out], log, live, { speedUp: !this.isHosted });
+      // A consolidation sends to the wallet itself: only its fee leaves.
+      .map((e): WalletHistoryEntry => ({ txid: e.txid, height: 0, confirmations: 0, netSats: -((e.purpose === 'consolidate' ? 0 : e.amountSats) + e.feeSats), feeSats: e.feeSats, ...meta(e), local: true }));
+    const all = withReplacements([...unlisted.reverse(), ...announced.reverse(), ...out], log, live, { speedUp: !this.isHosted });
+    return this.withPaymentLabels(all, this.s.wallet?.walletId);
+  }
+
+  /** Coin control: a label set on a payment in the labels store (a received payment, an import) wins over the send log's. */
+  private withPaymentLabels<T extends { txid: string; label?: string }>(entries: T[], walletId: string | undefined): T[] {
+    const store = this.labelStore;
+    if (!store || !walletId) return entries;
+    const view = store.view(walletId);
+    return entries.map((h) => {
+      const label = view.tx(h.txid);
+      return label ? { ...h, label } : h;
+    });
   }
 
   /** The last synced view of the wallet, or undefined before the first sync. */
@@ -2818,8 +2937,10 @@ export class TrikeyWallet {
     if (looksLikeSilentPaymentAddress(req.address)) return this.quoteSilentPayment(req);
     const { feeRate, feeRateSource, wallet, chain: c } = this.quoteBasics(req);
     const changeIndex = c.nextChangeIndex;
-    const sel = selectCoins({ wallet, utxos: c.utxos, address: req.address, amountSats: req.amountSats, feeRate, changeIndex });
-    return this.makeQuote(req, { feeRate, feeRateSource, feeSats: sel.feeSats, amountSats: req.amountSats, changeSats: sel.changeSats, changeIndex, inputs: sel.inputs });
+    // Coin control: never a frozen coin, and with `coins` exactly those (every one spent).
+    const pick = this.spendable('main', req.coins);
+    const sel = withFrozenNote(pick, () => selectCoins({ wallet, utxos: pick.utxos, address: req.address, amountSats: req.amountSats, feeRate, changeIndex, ...(req.coins ? { useAll: true } : {}) }));
+    return this.makeQuote(req, { feeRate, feeRateSource, feeSats: sel.feeSats, amountSats: req.amountSats, changeSats: sel.changeSats, changeIndex, inputs: sel.inputs, ...mixed(pick) });
   }
 
   /**
@@ -2838,8 +2959,13 @@ export class TrikeyWallet {
   quoteSendMax(req: Omit<SendRequest, 'amountSats'>): SendQuote {
     if (looksLikeSilentPaymentAddress(req.address)) return this.quoteSilentPayment({ ...req, amountSats: 0 }, { max: true });
     const { feeRate, feeRateSource, wallet, chain: c } = this.quoteBasics(req);
-    const sel = selectAllCoins({ utxos: c.utxos, outputScript: outputScriptOf(req.address, wallet), feeRate });
-    return this.makeQuote({ ...req, amountSats: sel.amountSats }, { feeRate, feeRateSource, feeSats: sel.feeSats, amountSats: sel.amountSats, changeSats: 0, changeIndex: c.nextChangeIndex, inputs: sel.inputs, sendMax: true });
+    // Frozen coins stay (coin control); with `coins`, exactly those go.
+    const pick = this.spendable('main', req.coins);
+    const sel = withFrozenNote(pick, () => selectAllCoins({ utxos: pick.utxos, outputScript: outputScriptOf(req.address, wallet), feeRate, ...(req.coins ? { useAll: true } : {}) }));
+    return this.makeQuote(
+      { ...req, amountSats: sel.amountSats },
+      { feeRate, feeRateSource, feeSats: sel.feeSats, amountSats: sel.amountSats, changeSats: 0, changeIndex: c.nextChangeIndex, inputs: sel.inputs, sendMax: true, ...mixed(pick) },
+    );
   }
 
   /** What every quote starts from: the paired wallet, its last sync, and the fee rate (the caller's, or the estimate for the speed). */
@@ -2873,7 +2999,17 @@ export class TrikeyWallet {
 
   private makeQuote(
     req: SendRequest,
-    q: { feeRate: number; feeRateSource: SendQuote['feeRateSource']; feeSats: number; amountSats: number; changeSats: number; changeIndex: number; inputs: SendQuote['inputs']; sendMax?: true },
+    q: {
+      feeRate: number;
+      feeRateSource: SendQuote['feeRateSource'];
+      feeSats: number;
+      amountSats: number;
+      changeSats: number;
+      changeIndex: number;
+      inputs: SendQuote['inputs'];
+      sendMax?: true;
+      mixesLabels?: SendQuote['mixesLabels'];
+    },
   ): SendQuote {
     const totalSats = q.amountSats + q.feeSats;
     const { plan, limit, remainingAfterSats } = this.signingPlan(req, totalSats);
@@ -2891,6 +3027,7 @@ export class TrikeyWallet {
       dailyLimitSats: limit,
       ...(q.sendMax ? { sendMax: true as const } : {}),
       ...(q.feeRateSource === 'caller' && feeRateBelowFloor(q.feeRate, this.network.name) ? { lowFeeRate: true as const } : {}),
+      ...(q.mixesLabels ? { mixesLabels: q.mixesLabels } : {}),
     };
   }
 
@@ -2898,26 +3035,29 @@ export class TrikeyWallet {
   private async buildPayment(quote: SendQuote) {
     const wallet = this.multisig();
     const prevs = await this.prevTxs(quote.inputs.map((u) => u.txid), this.chain);
-    // A send max spends exactly the quoted coins to one output: `buildSpend` would stop early and leave a coin behind.
-    const psbt = quote.sendMax
-      ? selfCheck(() => buildSendMaxPsbt({ wallet, inputs: quote.inputs, prevTxHexes: prevs, outputScript: outputScriptOf(quote.request.address, wallet), amountSats: quote.request.amountSats }))
-      : selfCheck(() =>
-          buildSpend({
-            wallet,
-            utxos: quote.inputs.map((u, i) => toCoreUtxo(u, prevs[i])),
-            recipients: [{ address: quote.request.address, amount: BigInt(quote.request.amountSats) }],
-            feeRate: quote.feeRate,
-            changeIndex: quote.changeIndex,
-          }).psbt,
-        );
+    // A send max spends exactly the quoted coins to one output: `buildSpend` would stop early and leave a coin behind. A
+    // consolidation pays its one output to the wallet's own change address, with the derivation the guardian reads.
+    // Every other payment spends exactly the quoted coins too (`useAll`: a manual pick may hold more than enough).
+    const psbt = quote.consolidate
+      ? selfCheck(() => buildConsolidationPsbt({ wallet, inputs: quote.inputs, prevTxHexes: prevs, changeIndex: quote.changeIndex, amountSats: quote.request.amountSats }))
+      : quote.sendMax
+        ? selfCheck(() => buildSendMaxPsbt({ wallet, inputs: quote.inputs, prevTxHexes: prevs, outputScript: outputScriptOf(quote.request.address, wallet), amountSats: quote.request.amountSats }))
+        : selfCheck(
+            () =>
+              buildSpend({
+                wallet,
+                utxos: quote.inputs.map((u, i) => toCoreUtxo(u, prevs[i])),
+                recipients: [{ address: quote.request.address, amount: BigInt(quote.request.amountSats) }],
+                feeRate: quote.feeRate,
+                changeIndex: quote.changeIndex,
+                useAll: true,
+              }).psbt,
+          );
     // Self-check before key 2 signs: every input is ours with its real previous output, and the outputs are what the user asked.
     const a = selfCheck(() => analyzePsbt(psbt, wallet.accountPubkeys(), this.network, { requireNonWitnessUtxo: true }));
-    if (
-      a.inputs.length !== quote.inputs.length ||
-      a.externalOut !== BigInt(quote.request.amountSats) ||
-      a.fee !== BigInt(quote.feeSats) ||
-      a.selfOut !== BigInt(quote.changeSats)
-    )
+    const external = quote.consolidate ? 0 : quote.request.amountSats;
+    const self = quote.consolidate ? quote.request.amountSats : quote.changeSats;
+    if (a.inputs.length !== quote.inputs.length || a.externalOut !== BigInt(external) || a.fee !== BigInt(quote.feeSats) || a.selfOut !== BigInt(self))
       throw new WalletError('internal', 'The payment does not match its quote; quote it again.');
     return { wallet, psbt, outflow: Number(a.outflow) };
   }
@@ -2927,10 +3067,13 @@ export class TrikeyWallet {
    * (a coin arrived or was spent), so no coin is left behind that the person was told was going.
    */
   private checkSendMaxStillMax(quote: SendQuote): void {
-    const c = this.s.chain!;
+    // The same coins the quote chose from: never a frozen one (or a coin frozen since would make every send max stale),
+    // and with a manual pick, those coins.
+    const pick = this.spendable('main', quote.request.coins);
+    const all = { feeRate: quote.feeRate, ...(quote.request.coins ? { useAll: true } : {}) };
     const now = quote.silentPayment
-      ? selectAllCoins({ utxos: c.utxos, outputScript: outputScriptOf(placeholderTaprootAddress(this.network), this.multisig()), feeRate: quote.feeRate })
-      : selectAllCoins({ utxos: c.utxos, outputScript: outputScriptOf(quote.request.address, this.multisig()), feeRate: quote.feeRate });
+      ? selectAllCoins({ utxos: pick.utxos, outputScript: outputScriptOf(placeholderTaprootAddress(this.network), this.multisig()), ...all })
+      : selectAllCoins({ utxos: pick.utxos, outputScript: outputScriptOf(quote.request.address, this.multisig()), ...all });
     const key = (u: { txid: string; vout: number }) => `${u.txid}:${u.vout}`;
     const quoted = new Set(quote.inputs.map(key));
     if (now.inputs.length !== quoted.size || now.inputs.some((u) => !quoted.has(key(u)))) throw new WalletError('quote_stale', "The wallet's coins changed since this quote; quote the payment again.");
@@ -2948,6 +3091,8 @@ export class TrikeyWallet {
     // Spending a coin that is already gone would still use up the daily limit at the guardian: refresh a stale view first.
     if (!this.s.chain || this.now() - this.s.chain.syncedAt > STALE_CHAIN_MS) await this.sync();
     const quote = 'plan' in quoteOrRequest ? quoteOrRequest : this.quoteSend(quoteOrRequest);
+    // A coin frozen since the quote (coin control) stays where it is: quote again.
+    this.checkStillSpendable('main', quote.inputs);
     if (quote.silentPayment) return this.sendSilentPayment(quote, opts);
     const live = new Set(this.s.chain!.utxos.map((u) => `${u.txid}:${u.vout}`));
     if (quote.inputs.some((u) => !live.has(`${u.txid}:${u.vout}`))) throw new WalletError('quote_stale', 'The wallet\'s coins changed since this quote; quote the payment again.');
@@ -2989,7 +3134,9 @@ export class TrikeyWallet {
       this.emit({
         type: 'hardware_prompt',
         purpose: 'payment',
-        text: `Send ${quote.request.amountSats} sats to ${quote.request.address}, fee ${quote.feeSats} sats`,
+        text: quote.consolidate
+          ? `Merge ${quote.consolidate.coinCount} coins into one of ${quote.request.amountSats} sats at this wallet's own address ${quote.request.address}, fee ${quote.feeSats} sats`
+          : `Send ${quote.request.amountSats} sats to ${quote.request.address}, fee ${quote.feeSats} sats`,
       });
       final = await this.withHardware((hw, rec) => this.hardwareSignPsbt(hw, signed, wallet, this.devicePolicy(rec)));
     }
@@ -3005,6 +3152,7 @@ export class TrikeyWallet {
       feeSats: quote.feeSats,
       ...(label ? { label } : {}),
       signedBy: signedBy === 'phone+guardian' ? 'guardian' : 'hardware',
+      ...(quote.consolidate ? { purpose: 'consolidate' as const } : {}),
       ...(this.isSavingsAddress(quote.request.address) ? { toSavings: true as const } : {}),
     };
     try {
@@ -3042,6 +3190,190 @@ export class TrikeyWallet {
   async broadcast(txHex: string): Promise<string> {
     await this.client();
     return this.chain.broadcast(txHex);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Coin control (DESIGN.md, "Coin control"): the coin list, labels and freezes, a manual pick, consolidation
+
+  /**
+   * The phone's labels and freezes (`labels-store.ts`): one store for every wallet of the phone, Spending, Savings and
+   * own wallets alike, keyed by wallet id. `WalletSet` hands the first wallet's to every other (`useLabelStore`).
+   * Undefined when the stored labels could not be read (`labelsProblem` says why).
+   */
+  get labels(): LabelStore | undefined {
+    return this.labelStore;
+  }
+
+  /** Why the labels could not be read (a damaged or newer document), when they could not. */
+  get labelsProblem(): WalletError | undefined {
+    return this.labelStore ? undefined : this.labelsUnreadable;
+  }
+
+  /** Shares the phone's label store with this wallet (`WalletSet`: the first wallet's, for every wallet of the phone). */
+  useLabelStore(store: LabelStore): void {
+    this.labelStore = store;
+    this.labelsUnreadable = undefined;
+  }
+
+  /**
+   * A label or freeze changed after the last backup (`backup.createdAt`): a new backup would carry it. False without a
+   * backup (the app asks for one anyway) or without any change since.
+   */
+  get labelsNewerThanBackup(): boolean {
+    const changed = this.labelStore?.changedAt;
+    const backup = this.s.backup?.createdAt;
+    return changed !== undefined && backup !== undefined && changed > backup;
+  }
+
+  private requireLabels(): LabelStore {
+    if (this.labelStore) return this.labelStore;
+    throw this.labelsUnreadable ?? new WalletError('labels_invalid', 'The labels on this phone could not be read.');
+  }
+
+  /** The wallet id, descriptor and send log of Spending (`main`) or its Savings. */
+  private coinTarget(wallet: CoinWallet): { walletId: string; descriptor: string; payments: { txid: string; label?: string }[] } {
+    if (wallet === 'savings') {
+      const { record } = this.requireSavings();
+      return { walletId: record.walletId, descriptor: record.descriptor, payments: record.sendLog };
+    }
+    const w = this.s.wallet;
+    if (!w) throw new WalletError('wrong_state', 'The wallet is not paired yet.');
+    return { walletId: w.walletId, descriptor: w.descriptor, payments: this.s.sendLog };
+  }
+
+  /**
+   * The coins of Spending (`main`, default) or of its Savings, from the last sync: each with its amount, confirmations,
+   * the payment it came from, its label and whether it is frozen (`coins.ts`). A coin this phone's own pending payment
+   * spends is never listed, whatever the sync says (`own-spends.ts`); that payment's change is (`pendingChange`).
+   * Throws `no_chain_data` before the first sync, `no_savings` for Savings without one.
+   */
+  coins(wallet: CoinWallet = 'main'): CoinList {
+    if (wallet === 'savings') {
+      const { record } = this.requireSavings();
+      if (!record.chain) throw new WalletError('no_chain_data', 'Sync Savings first.');
+      return coinList({ walletId: record.walletId, chain: record.chain, sendLog: record.sendLog, ...(this.labelStore ? { labels: this.labelStore.view(record.walletId) } : {}) });
+    }
+    const w = this.s.wallet;
+    if (!w) throw new WalletError('wrong_state', 'The wallet is not paired yet.');
+    if (!this.s.chain) throw new WalletError('no_chain_data', 'Sync the wallet first.');
+    return coinList({ walletId: w.walletId, chain: this.s.chain, ownSpends: this.s.ownSpends, sendLog: this.s.sendLog, ...(this.labelStore ? { labels: this.labelStore.view(w.walletId) } : {}) });
+  }
+
+  /**
+   * The coins a payment may take: every coin that is not frozen, or exactly `manual` (refused with `coin_unavailable`
+   * when one is frozen, spent, or held by this phone's own pending payment). Every quote reads its coins here.
+   */
+  private spendable(wallet: CoinWallet, manual?: readonly string[]): SelectableCoins & { frozenSats: number } {
+    const list = this.coins(wallet);
+    return { ...selectableCoins(list, manual ? { manual } : {}), frozenSats: manual ? 0 : list.totals.frozenSats };
+  }
+
+  /** Refuses (`quote_stale`) a quote whose coins are no longer all free to spend: one was frozen, or spent, since. */
+  private checkStillSpendable(wallet: CoinWallet, inputs: readonly { txid: string; vout: number }[]): void {
+    const free = new Set(this.coins(wallet).coins.filter((c) => !c.frozen).map((c) => c.outpoint));
+    if (inputs.some((u) => !free.has(`${u.txid}:${u.vout}`)))
+      throw new WalletError('quote_stale', 'A coin this payment would spend was frozen or spent since it was quoted; quote it again.');
+  }
+
+  /** Sets (or with an empty `label`, clears) a coin's label. The coin may be spent already (the history keeps it). */
+  async setCoinLabel(outpoint: string, label: string, wallet: CoinWallet = 'main'): Promise<void> {
+    await this.requireLabels().setCoinLabel(this.coinTarget(wallet).walletId, outpoint, label);
+    this.emit({ type: 'labels_changed' });
+  }
+
+  /** Freezes a coin (left out of automatic selection, Send max and consolidation by default) or unfreezes it. */
+  async setCoinFrozen(outpoint: string, frozen: boolean, wallet: CoinWallet = 'main'): Promise<void> {
+    await this.requireLabels().setFrozen(this.coinTarget(wallet).walletId, outpoint, frozen);
+    this.emit({ type: 'labels_changed' });
+  }
+
+  /**
+   * The labels of Spending (`main`) or its Savings as a BIP 329 file (JSON Lines): a `tx` record per labeled payment
+   * (the send log's notes included), an `output` record per labeled or frozen coin (`spendable: false` when frozen), and
+   * the records an import brought that Trikey keeps as read. Every record carries the wallet's `origin`.
+   */
+  exportLabels(wallet: CoinWallet = 'main'): string {
+    const store = this.requireLabels();
+    const t = this.coinTarget(wallet);
+    return store.exportBip329(t.walletId, { payments: t.payments, ...originOf(t.descriptor) });
+  }
+
+  /**
+   * Reads a BIP 329 file (from Sparrow, Nunchuk, another Trikey, ...) into the labels of Spending (`main`) or its Savings:
+   * coin labels and freezes (`output`), payment labels (`tx`); records of another wallet (their `origin`) are left out,
+   * records Trikey does not use are kept for the next export. Lines that break the format are skipped and counted.
+   * All or nothing on `labels_full` / `labels_invalid`.
+   */
+  async importLabels(file: string | Uint8Array, wallet: CoinWallet = 'main'): Promise<Bip329ImportResult> {
+    const store = this.requireLabels();
+    const t = this.coinTarget(wallet);
+    const r = await store.importBip329(t.walletId, file, originOf(t.descriptor));
+    this.emit({ type: 'labels_changed' });
+    return r;
+  }
+
+  /** The coins a consolidation merges: those named, or every confirmed coin that is not frozen. */
+  private consolidationCoins(wallet: CoinWallet, coins: readonly string[] | undefined): SelectableCoins {
+    if (coins) return this.spendable(wallet, coins);
+    const all = this.spendable(wallet);
+    const confirmed = all.coins.filter((c) => !c.unconfirmed);
+    return selectableCoins(confirmed);
+  }
+
+  /**
+   * "Consolidate": many coins of Spending into one, at the wallet's own next change address, while fees are low (a 2-of-3
+   * input costs about 105 vB, so each coin merged now is cheaper to spend later). No I/O. Only the fee leaves the
+   * wallet (`totalSats`), and only the fee counts against the daily limit: the output carries its BIP 32 derivation and
+   * sits at the next change index, so the guardian treats it as change (owner's decision 2). Signed like any payment:
+   * the guardian within what is left of today's limit, else the hardware wallet. `consolidate` carries it out.
+   *
+   * `consolidate.feesLow` says whether the fees are low now (the slow estimate at most `LOW_FEE_SAT_PER_VB`). Throws
+   * `nothing_to_send` with fewer than two coins, `send_max_too_small` when the fee would eat them, `coin_unavailable`
+   * for a frozen or spent coin named.
+   */
+  quoteConsolidate(req: ConsolidateRequest = {}): SendQuote {
+    const { feeRate, feeRateSource, wallet, chain: c } = this.quoteBasics({ ...(req.feeRate !== undefined ? { feeRate: req.feeRate } : {}), speed: req.speed ?? 'slow' });
+    const pick = this.consolidationCoins('main', req.coins);
+    const changeIndex = c.nextChangeIndex;
+    const plan = planConsolidation({ wallet, utxos: pick.utxos, feeRate, changeIndex });
+    const label = req.label?.trim();
+    const request: SendRequest = {
+      address: wallet.derive(1, changeIndex).address,
+      amountSats: plan.amountSats,
+      speed: req.speed ?? 'slow',
+      ...(req.feeRate !== undefined ? { feeRate: req.feeRate } : {}),
+      ...(req.signer ? { signer: req.signer } : {}),
+      ...(label ? { label } : {}),
+      coins: plan.inputs.map((u) => `${u.txid}:${u.vout}`),
+    };
+    const { plan: signing, limit, remainingAfterSats } = this.signingPlan(request, plan.feeSats);
+    return {
+      request,
+      feeRate,
+      feeRateSource,
+      feeSats: plan.feeSats,
+      totalSats: plan.feeSats,
+      changeSats: 0,
+      changeIndex,
+      inputs: plan.inputs,
+      plan: signing,
+      remainingAfterSats,
+      dailyLimitSats: limit,
+      consolidate: { coinCount: plan.inputs.length, inputSats: plan.inputSats, feesLow: feesLowNow(this.fees, this.feeFloor) },
+      ...mixed(selectableCoins(pick.coins, { manual: pick.coins.map((x) => x.outpoint) })),
+      ...(feeRateSource === 'caller' && feeRateBelowFloor(feeRate, this.network.name) ? { lowFeeRate: true as const } : {}),
+    };
+  }
+
+  /** Carries out a `quoteConsolidate` quote: signed and sent as any payment (`send`), logged as `purpose: 'consolidate'`. */
+  async consolidate(quote: SendQuote, opts: { fallbackToHardware?: boolean; syncAfter?: boolean } = {}): Promise<SendResult> {
+    if (!quote.consolidate) throw new WalletError('wrong_state', 'This is not a consolidation: quote it with quoteConsolidate.');
+    return this.send(quote, opts);
+  }
+
+  /** Whether the fees are low now, a good time to consolidate (`feesLowNow` on the last estimates). */
+  get feesAreLow(): boolean {
+    return feesLowNow(this.fees, this.feeFloor);
   }
 
   // ---------------------------------------------------------------------------
@@ -5082,8 +5414,11 @@ export class TrikeyWallet {
         `${why} Paying a silent payment address needs Trikey's helper coin: your vault's coins cannot make one on their own. ` +
           `Send a small amount (10,000 to 50,000 sats) to your helper address${h ? ` ${this.helperAddress(0, h.nextReceiveIndex).address}` : ' (Settings, Silent payments)'}, wait for it to confirm, and try again.`,
       );
+    // Coin control: the vault's coins that may pay (never a frozen one; with `coins`, exactly those).
+    const pick = this.spendable('main', req.coins);
+    const useAll = req.coins ? { useAll: true } : {};
     // A send max with nothing to send says so before it talks about the helper.
-    if (opts.max && !c.utxos.length) throw new WalletError('nothing_to_send', 'The wallet has no coins to send.');
+    if (opts.max && !pick.utxos.length) throw withFrozenText(new WalletError('nothing_to_send', 'The wallet has no coins to send.'), pick);
     if (!h) throw fundIt('There is no helper coin yet.');
     const coin = [...h.utxos].sort((a, b) => Number(b.confirmations > 0) - Number(a.confirmations > 0) || b.valueSats - a.valueSats)[0];
     if (!coin) throw fundIt('There is no helper coin.');
@@ -5096,12 +5431,14 @@ export class TrikeyWallet {
     // Vault coins are chosen to a placeholder output of the real one's size (a taproot key): for a send max, all of them,
     // and the amount is what is left after the vault's own fee, never the helper's.
     const placeholder = placeholderTaprootAddress(this.network);
-    const sel = opts.max
-      ? (() => {
-          const all = selectAllCoins({ utxos: c.utxos, outputScript: outputScriptOf(placeholder, wallet), feeRate });
-          return { inputs: all.inputs, feeSats: all.feeSats, changeSats: 0, amountSats: all.amountSats };
-        })()
-      : { ...selectCoins({ wallet, utxos: c.utxos, address: placeholder, amountSats: req.amountSats, feeRate, changeIndex: c.nextChangeIndex }), amountSats: req.amountSats };
+    const sel = withFrozenNote(pick, () =>
+      opts.max
+        ? (() => {
+            const all = selectAllCoins({ utxos: pick.utxos, outputScript: outputScriptOf(placeholder, wallet), feeRate, ...useAll });
+            return { inputs: all.inputs, feeSats: all.feeSats, changeSats: 0, amountSats: all.amountSats };
+          })()
+        : { ...selectCoins({ wallet, utxos: pick.utxos, address: placeholder, amountSats: req.amountSats, feeRate, changeIndex: c.nextChangeIndex, ...useAll }), amountSats: req.amountSats },
+    );
     const helperKey = helperChild(this.helperKey, coin.chain, coin.index);
     const output = silentPaymentOutput({
       address: recipient.address,
@@ -5132,6 +5469,7 @@ export class TrikeyWallet {
         helper: { txid: coin.txid, vout: coin.vout, valueSats: coin.valueSats, chain: coin.chain, index: coin.index, feeSats: helperFee, changeSats: helperChange, changeIndex: h.nextChangeIndex },
       },
       ...(opts.max ? { sendMax: true as const } : {}),
+      ...mixed(pick),
     };
   }
 
@@ -6600,7 +6938,22 @@ export class TrikeyWallet {
     const replaced = new Set(sv.sendLog.flatMap((e) => (e.replaces ? [e.replaces] : [])));
     const unlisted = sv.sendLog
       .filter((e) => !listed.has(e.txid) && !replaced.has(e.txid) && e.at > (c?.syncedAt ?? 0) - 10 * 60_000)
-      .map((e): SavingsHistoryEntry => ({ txid: e.txid, height: 0, confirmations: 0, netSats: -(e.amountSats + e.feeSats), feeSats: e.feeSats, sentAt: e.at, recipient: e.recipient, amountSats: e.amountSats, signedBy: e.signedBy, ...(e.purpose ? { purpose: e.purpose } : {}), ...(e.replaces ? { replaces: e.replaces } : {}), local: true }));
+      .map((e): SavingsHistoryEntry => ({
+        txid: e.txid,
+        height: 0,
+        confirmations: 0,
+        // A consolidation pays Savings itself: only its fee leaves.
+        netSats: -((e.purpose === 'consolidate' ? 0 : e.amountSats) + e.feeSats),
+        feeSats: e.feeSats,
+        sentAt: e.at,
+        recipient: e.recipient,
+        amountSats: e.amountSats,
+        signedBy: e.signedBy,
+        ...(e.purpose ? { purpose: e.purpose } : {}),
+        ...(e.label ? { label: e.label } : {}),
+        ...(e.replaces ? { replaces: e.replaces } : {}),
+        local: true,
+      }));
     return {
       walletId: sv.walletId,
       descriptor: sv.descriptor,
@@ -6608,7 +6961,7 @@ export class TrikeyWallet {
       balance: { ...balance, totalSats: balance.confirmedSats + balance.unconfirmedSats },
       ...(c ? { syncedAt: c.syncedAt, tipHeight: c.tipHeight } : {}),
       utxos: c?.utxos ?? [],
-      history: [...unlisted.reverse(), ...history],
+      history: this.withPaymentLabels([...unlisted.reverse(), ...history], sv.walletId),
       hardware: { kind: sv.hardware.kind, ...(sv.hardware.model ? { model: sv.hardware.model } : {}), fingerprint: sv.hardware.fingerprint },
       recoveryKey: { kind: sv.recoveryKey.kind, ...(sv.recoveryKey.model ? { model: sv.recoveryKey.model } : {}), fingerprint: sv.recoveryKey.fingerprint },
       watchedByGuardian: !!sv.registration && sv.registration.walletId === sv.walletId && sv.registration.guardian === this.s.guardian?.pubkey,
@@ -6860,7 +7213,9 @@ export class TrikeyWallet {
   quoteSavingsSpend(req: SavingsSendRequest): SavingsQuote {
     const { wallet, chain, feeRate, feeRateSource } = this.savingsQuoteBasics(req);
     if (looksLikeSilentPaymentAddress(req.address)) throw new WalletError('invalid_address', 'Savings cannot pay a silent payment address. Move the amount to Spending first.');
-    const sel = selectCoins({ wallet, utxos: chain.utxos, address: req.address, amountSats: req.amountSats, feeRate, changeIndex: chain.nextChangeIndex });
+    // Coin control: never a frozen coin; with `coins`, exactly those, every one spent.
+    const pick = this.spendable('savings', req.coins);
+    const sel = withFrozenNote(pick, () => selectCoins({ wallet, utxos: pick.utxos, address: req.address, amountSats: req.amountSats, feeRate, changeIndex: chain.nextChangeIndex, ...(req.coins ? { useAll: true } : {}) }));
     return {
       request: req,
       feeRate,
@@ -6871,6 +7226,7 @@ export class TrikeyWallet {
       changeIndex: chain.nextChangeIndex,
       inputs: sel.inputs,
       toSpending: this.isSpendingAddress(req.address),
+      ...mixed(pick),
     };
   }
 
@@ -6878,7 +7234,9 @@ export class TrikeyWallet {
   quoteSavingsSendMax(req: Omit<SavingsSendRequest, 'amountSats'>): SavingsQuote {
     const { wallet, chain, feeRate, feeRateSource } = this.savingsQuoteBasics(req);
     if (looksLikeSilentPaymentAddress(req.address)) throw new WalletError('invalid_address', 'Savings cannot pay a silent payment address. Move the amount to Spending first.');
-    const sel = selectAllCoins({ utxos: chain.utxos, outputScript: outputScriptOf(req.address, wallet), feeRate });
+    // Frozen coins stay in Savings (coin control); with `coins`, exactly those go.
+    const pick = this.spendable('savings', req.coins);
+    const sel = withFrozenNote(pick, () => selectAllCoins({ utxos: pick.utxos, outputScript: outputScriptOf(req.address, wallet), feeRate, ...(req.coins ? { useAll: true } : {}) }));
     return {
       request: { ...req, amountSats: sel.amountSats },
       feeRate,
@@ -6890,6 +7248,41 @@ export class TrikeyWallet {
       inputs: sel.inputs,
       toSpending: this.isSpendingAddress(req.address),
       sendMax: true,
+      ...mixed(pick),
+    };
+  }
+
+  /**
+   * "Consolidate" in Savings: as `quoteConsolidate`, Savings coins into one at Savings' own next change address, signed
+   * by two of Savings' keys (`sendFromSavings`, logged `purpose: 'consolidate'`). Only the fee leaves Savings. The guardian
+   * holds no Savings key and counts nothing against a limit, but it watches every Savings coin: it says "Savings
+   * consolidated" (the fee) to the phone and the alert contacts, as for any Savings spend.
+   */
+  quoteSavingsConsolidate(req: Omit<ConsolidateRequest, 'signer'> = {}): SavingsQuote {
+    const { wallet, chain, feeRate, feeRateSource } = this.savingsQuoteBasics({ ...(req.feeRate !== undefined ? { feeRate: req.feeRate } : {}), speed: req.speed ?? 'slow' });
+    const pick = this.consolidationCoins('savings', req.coins);
+    const changeIndex = chain.nextChangeIndex;
+    const plan = planConsolidation({ wallet, utxos: pick.utxos, feeRate, changeIndex });
+    const label = req.label?.trim();
+    return {
+      request: {
+        address: wallet.derive(1, changeIndex).address,
+        amountSats: plan.amountSats,
+        speed: req.speed ?? 'slow',
+        ...(req.feeRate !== undefined ? { feeRate: req.feeRate } : {}),
+        ...(label ? { label } : {}),
+        coins: plan.inputs.map((u) => `${u.txid}:${u.vout}`),
+      },
+      feeRate,
+      feeRateSource,
+      feeSats: plan.feeSats,
+      totalSats: plan.feeSats,
+      changeSats: 0,
+      changeIndex,
+      inputs: plan.inputs,
+      toSpending: false,
+      consolidate: { coinCount: plan.inputs.length, inputSats: plan.inputSats, feesLow: feesLowNow(this.fees, this.feeFloor) },
+      ...mixed(selectableCoins(pick.coins, { manual: pick.coins.map((x) => x.outpoint) })),
     };
   }
 
@@ -6917,22 +7310,31 @@ export class TrikeyWallet {
     if (!c || this.now() - c.syncedAt > STALE_CHAIN_MS) await this.syncSavings();
     const live = new Set((this.s.savings?.chain?.utxos ?? []).map((u) => `${u.txid}:${u.vout}`));
     if (quote.inputs.some((u) => !live.has(`${u.txid}:${u.vout}`))) throw new WalletError('quote_stale', "Savings' coins changed since this quote; quote the payment again.");
+    this.checkStillSpendable('savings', quote.inputs);
     const prevs = await this.prevTxs(quote.inputs.map((u) => u.txid), this.savingsChain());
-    const psbt = quote.sendMax
-      ? selfCheck(() => buildSendMaxPsbt({ wallet, inputs: quote.inputs, prevTxHexes: prevs, outputScript: outputScriptOf(quote.request.address, wallet), amountSats: quote.request.amountSats }))
-      : selfCheck(() =>
-          buildSpend({
-            wallet,
-            utxos: quote.inputs.map((u, i) => toCoreUtxo(u, prevs[i])),
-            recipients: [{ address: quote.request.address, amount: BigInt(quote.request.amountSats) }],
-            feeRate: quote.feeRate,
-            changeIndex: quote.changeIndex,
-          }).psbt,
-        );
+    const psbt = quote.consolidate
+      ? selfCheck(() => buildConsolidationPsbt({ wallet, inputs: quote.inputs, prevTxHexes: prevs, changeIndex: quote.changeIndex, amountSats: quote.request.amountSats }))
+      : quote.sendMax
+        ? selfCheck(() => buildSendMaxPsbt({ wallet, inputs: quote.inputs, prevTxHexes: prevs, outputScript: outputScriptOf(quote.request.address, wallet), amountSats: quote.request.amountSats }))
+        : selfCheck(
+            () =>
+              buildSpend({
+                wallet,
+                utxos: quote.inputs.map((u, i) => toCoreUtxo(u, prevs[i])),
+                recipients: [{ address: quote.request.address, amount: BigInt(quote.request.amountSats) }],
+                feeRate: quote.feeRate,
+                changeIndex: quote.changeIndex,
+                useAll: true,
+              }).psbt,
+          );
     const a = selfCheck(() => analyzePsbt(psbt, wallet.accountPubkeys(), this.network, { requireNonWitnessUtxo: true }));
-    if (a.inputs.length !== quote.inputs.length || a.externalOut !== BigInt(quote.request.amountSats) || a.fee !== BigInt(quote.feeSats) || a.selfOut !== BigInt(quote.changeSats))
+    const external = quote.consolidate ? 0 : quote.request.amountSats;
+    const self = quote.consolidate ? quote.request.amountSats : quote.changeSats;
+    if (a.inputs.length !== quote.inputs.length || a.externalOut !== BigInt(external) || a.fee !== BigInt(quote.feeSats) || a.selfOut !== BigInt(self))
       throw new WalletError('internal', 'The payment does not match its quote; quote it again.');
-    const detail = `Send ${quote.request.amountSats} sats from Savings to ${quote.request.address}${quote.toSpending ? ' (your Spending wallet)' : ''}, fee ${quote.feeSats} sats`;
+    const detail = quote.consolidate
+      ? `Merge ${quote.consolidate.coinCount} Savings coins into one of ${quote.request.amountSats} sats at Savings' own address ${quote.request.address}, fee ${quote.feeSats} sats`
+      : `Send ${quote.request.amountSats} sats from Savings to ${quote.request.address}${quote.toSpending ? ' (your Spending wallet)' : ''}, fee ${quote.feeSats} sats`;
     const final = await this.signSavings(psbt, wallet, record, signers, detail);
     const { txHex, txid } = finalizePsbt(final);
     try {
@@ -6951,7 +7353,7 @@ export class TrikeyWallet {
       feeSats: quote.feeSats,
       ...(label ? { label } : {}),
       signedBy: signers,
-      ...(quote.toSpending ? { purpose: 'to_spending' as const } : {}),
+      ...(quote.toSpending ? { purpose: 'to_spending' as const } : quote.consolidate ? { purpose: 'consolidate' as const } : {}),
     });
     await this.syncSavings().catch(() => undefined);
     if (quote.toSpending) await this.sync().catch(() => undefined);
@@ -7324,10 +7726,9 @@ export class TrikeyWallet {
     const sealed = await this.withKey2('Back up your phone key', async (mnemonic) => {
       const s = this.s;
       const sv = s.savings;
-      const payload: BackupPayload = {
-        // Version 2 only with Savings, 3 only for a hosted wallet, 4 only with more than one wallet (5 when a wallet after
-        // the first has Savings): everyone else's backup is byte for byte the format it always was.
-        v: opts.ownWallets?.length ? (opts.ownWallets.some((w) => w.savings) ? 5 : 4) : s.guardian?.hosted ? 3 : sv ? 2 : 1,
+      // Coin control: the labels and freezes of every wallet of the phone (this store is the phone's, `WalletSet`).
+      const labels = this.labelStore?.exportForBackup();
+      const contents: Omit<BackupPayload, 'v'> = {
         network: this.network.name,
         createdAt: this.nowSec(),
         mnemonic,
@@ -7346,7 +7747,12 @@ export class TrikeyWallet {
         ...(s.silentPayments ? { silentPayments: { birthHeight: s.silentPayments.birthHeight, labels: s.silentPayments.labels } } : {}),
         ...(sv ? { savings: { ...backupSavingsOf(sv), account: SAVINGS_ACCOUNT as 1 } } : {}),
         ...(opts.ownWallets?.length ? { wallets: opts.ownWallets.map((w) => ({ ...w })) } : {}),
+        ...(labels ? { labels } : {}),
       };
+      // Version 2 only with Savings, 3 only for a hosted wallet, 4 only with more than one wallet (5 when a wallet after
+      // the first has Savings), 6 with coin control (labels, a consolidation): everyone else's backup is byte for byte the
+      // format it always was.
+      const payload: BackupPayload = { v: backupVersionFor(contents), ...contents };
       return sealBackup(payload, slots, { now: this.now() });
     });
     for (const s of slots) if (s.type === 'passkey-prf') s.prfOutput.fill(0);
@@ -7501,6 +7907,8 @@ export class TrikeyWallet {
     try {
       if (holderAccount !== 0) await wallet.update((s) => void (s.key2 = keyOriginOf(accountKey(p.mnemonic, holderAccount))));
       await wallet.restoreState(p, name, opened.header, cloud.provider, recovering);
+      // Coin control: the labels and freezes of every wallet of the phone, as backed up (none: an empty store).
+      await wallet.restoreLabels(p.labels);
     } catch (e) {
       // Leave nothing half-restored behind: the user can simply try again.
       await wallet.forget().catch(() => {});
@@ -7537,6 +7945,15 @@ export class TrikeyWallet {
       }
     }
     return wallet;
+  }
+
+  /** A restore's labels into the phone's store, replacing whatever an earlier wallet left there (even an unreadable one). */
+  private async restoreLabels(doc: BackupPayload['labels']): Promise<void> {
+    if (!this.labelStore) {
+      await this.deps.store.remove(labelStoreKey(this.deps.storageKey));
+      await this.loadLabels();
+    }
+    await this.requireLabels().importFromBackup(doc);
   }
 
   /** Own wallets brought back by the last `restoreFromBackup` (empty otherwise): `WalletSet` lists them. */

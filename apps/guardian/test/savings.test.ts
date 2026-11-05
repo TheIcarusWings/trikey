@@ -242,6 +242,45 @@ describe('the savings_moved tripwire', () => {
   });
 });
 
+describe('a Savings consolidation (coin control): announced, in its own words', () => {
+  it('spendsOf: a spend that pays out nothing (every output back to Savings) is a consolidation', () => {
+    const [x] = spendsOf({ history: [{ txid: TXID(20), height: 0, confirmations: 0, net: -1_260n, spent: [`${TXID(1)}:0`, `${TXID(2)}:1`], paidOut: [] }] });
+    expect(x).toEqual({ txid: TXID(20), amountSats: 1_260n, outpoints: [`${TXID(1)}:0`, `${TXID(2)}:1`], payment: paymentDigest([]), consolidated: true });
+    // Outputs not seen (a scan without them): not called one.
+    expect(spendsOf({ history: [{ txid: TXID(21), height: 0, confirmations: 0, net: -1_260n }] })[0]).not.toHaveProperty('consolidated');
+  });
+
+  it('the phone and every contact are told it was consolidated, and that only the fee left; a fee bump of it is not news', async () => {
+    const ctx = await setup({ rules: { alertContacts: [CONTACT_A] } });
+    const sv = await registered(ctx);
+    await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 3, nextChangeIndex: 0, spends: [] });
+    const spend = { txid: TXID(22), amountSats: 1_575n, outpoints: [`${TXID(1)}:0`, `${TXID(2)}:0`, `${TXID(3)}:0`], payment: paymentDigest([]), consolidated: true as const };
+    expect(await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 3, nextChangeIndex: 1, spends: [spend] })).toEqual([{ txid: TXID(22), amountSats: 1_575n, announced: true, consolidated: true }]);
+    const n = ctx.engine.dueNotices()[0]!;
+    expect(n).toMatchObject({ kind: 'savings_moved', txid: TXID(22), amountSats: 1_575n, consolidated: true, recipients: [APP_NOSTR, CONTACT_A] });
+    const wire = noticeToWire(n)!;
+    // The protocol alert is unchanged (older phones read it as before); its words say what happened.
+    expect(wire).toMatchObject({ type: 'savings_moved', txid: TXID(22), amountSats: 1_575 });
+    expect(wire).not.toHaveProperty('consolidated');
+    expect(wire.message).toMatch(/^Savings consolidated: coins merged into one, still in Savings\. Only the network fee, 1,575 sats, left\./);
+    expect(wire.message).toMatch(/if you did not do this, act now/);
+    expect(wire.message!.length).toBeLessThanOrEqual(500);
+    const dm = noticeText(n);
+    expect(dm).toMatch(/Savings wallet of the bitcoin wallet you help protect was consolidated/);
+    expect(dm).toMatch(/Only the network fee, 0\.00001575 BTC \(1,575 sats\), left Savings/);
+    expect(dm).toMatch(/cannot sign for Savings/);
+    expect(dm).not.toMatch(/money moved out/);
+    const entry = ctx.engine.activity({ limit: 1 })[0]!;
+    expect(entry).toMatchObject({ type: 'savings_moved', txid: TXID(22), amountSats: 1_575n, consolidated: true });
+    expect(engineEntry(entry)).toMatchObject({ summary: 'Savings consolidated', sats: 1_575 });
+    expect(engineEntry(entry).event).toMatch(/merged into one, still in Savings/);
+    // Sped up: the same coins, again paying nothing out. Logged, not announced.
+    const bump = await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 3, nextChangeIndex: 1, spends: [{ ...spend, txid: TXID(23), amountSats: 3_150n }] });
+    expect(bump).toEqual([{ txid: TXID(23), amountSats: 3_150n, announced: false, replaces: TXID(22) }]);
+    expect(ctx.engine.dueNotices()).toHaveLength(1);
+  });
+});
+
 describe('a replaced Savings spend (RBF): one outflow, one alert', () => {
   const COIN = (n: number, vout = 0) => `${TXID(n)}:${vout}`;
   const PAY = 'a1'.repeat(16);

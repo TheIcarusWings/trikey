@@ -96,3 +96,27 @@ describe('nSequence and nLockTime options', () => {
     expect(() => buildSpend({ ...spendOpts(), lockTime: 2 ** 32 })).toThrow(RangeError);
   });
 });
+
+describe('useAll: every coin given is spent (a manual pick)', () => {
+  it('spends both coins where largest-first would stop at one, with the change back to the wallet', () => {
+    const o = spendOpts();
+    // 150,000 out of a 200,000 coin: the default stops at the first coin.
+    expect(buildSpend(o).inputs).toHaveLength(1);
+    const plan = buildSpend({ ...o, useAll: true });
+    expect(plan.inputs.map((u) => u.txid)).toEqual([o.utxos[0]!.txid, o.utxos[1]!.txid]);
+    const tx = parsePsbt(plan.psbt);
+    expect(tx.inputsLength).toBe(2);
+    // Change: both coins, less the payment and the fee for two inputs and two outputs.
+    expect(plan.change).toEqual({ index: 4, amount: 290_000n - 150_000n - plan.fee });
+    expect(tx.getOutput(1).bip32Derivation?.length).toBe(3);
+  });
+
+  it('is the default, byte for byte, when the default would take every coin anyway', () => {
+    const o = { ...spendOpts(), recipients: [{ address: dest, amount: 250_000n }] };
+    expect(hex.encode(buildSpend({ ...o, useAll: true }).psbt)).toBe(hex.encode(buildSpend(o).psbt));
+  });
+
+  it('refuses coins that cannot pay the amount and the fee', () => {
+    expect(() => buildSpend({ ...spendOpts(), recipients: [{ address: dest, amount: 289_900n }], useAll: true })).toThrow(/insufficient funds/);
+  });
+});

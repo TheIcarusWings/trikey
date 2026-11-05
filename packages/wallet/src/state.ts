@@ -240,8 +240,11 @@ export const SendLogEntry = z.object({
   label: z.string().max(200).optional(),
   /** The second key next to the phone's: the guardian, or the hardware wallet. */
   signedBy: z.enum(['guardian', 'hardware']),
-  /** Why it was sent, when it was not an ordinary payment. */
-  purpose: z.enum(['payment', 'sweep']).optional(),
+  /**
+   * Why it was sent, when it was not an ordinary payment. `consolidate` (coin control): coins merged into one at the
+   * wallet's own change address (`recipient`), `amountSats` what the new coin holds; only the fee left the wallet.
+   */
+  purpose: z.enum(['payment', 'sweep', 'consolidate']).optional(),
   /** The recipient was this phone's own Savings wallet ("Add to Savings"): counted against the daily limit like any payment. */
   toSavings: z.literal(true).optional(),
   /** A payment to a silent payment address (`recipient` is the `sp1…` address): the output it made. */
@@ -427,8 +430,12 @@ export const SavingsSendEntry = z.object({
   feeSats: z.number(),
   label: z.string().max(200).optional(),
   signedBy: SavingsSigners,
-  /** `to_spending`: back into this phone's own Spending wallet; `key_replacement`: the move to a new Savings wallet. */
-  purpose: z.enum(['payment', 'to_spending', 'key_replacement']).optional(),
+  /**
+   * `to_spending`: back into this phone's own Spending wallet; `key_replacement`: the move to a new Savings wallet;
+   * `consolidate` (coin control): Savings coins merged into one at Savings' own change address (`recipient`), only the fee
+   * leaving Savings.
+   */
+  purpose: z.enum(['payment', 'to_spending', 'key_replacement', 'consolidate']).optional(),
   /** "Speed up": this replaced (RBF) the unconfirmed Savings spend `replaces`, same payment, higher fee. */
   replaces: Hex32.optional(),
 });

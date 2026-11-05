@@ -205,7 +205,9 @@ export function noticeToWire(n: LimitNotice): Alert | undefined {
           ...(n.replacesTxid ? { replaces: n.replacesTxid, ...(n.previousAmountSats !== undefined ? { previousAmountSats: Number(n.previousAmountSats) } : {}) } : {}),
           message: n.replacesTxid
             ? `A payment out of Savings was replaced: it now moves ${satsText(n.amountSats ?? 0n)}${n.previousAmountSats !== undefined ? ` instead of ${satsText(n.previousAmountSats)}` : ''}, and pays out something else. Only one of the two can confirm. That needs your hardware wallet or your Recovery Key with another key: if you did not do this, act now.`
-            : `${satsText(n.amountSats ?? 0n)} moved out of Savings. That needs your hardware wallet or your Recovery Key with another key: if you did not do this, act now.`,
+            : n.consolidated
+              ? `Savings consolidated: coins merged into one, still in Savings. Only the network fee, ${satsText(n.amountSats ?? 0n)}, left. That needs your hardware wallet or your Recovery Key with another key: if you did not do this, act now.`
+              : `${satsText(n.amountSats ?? 0n)} moved out of Savings. That needs your hardware wallet or your Recovery Key with another key: if you did not do this, act now.`,
         }
       : undefined;
   if (n.kind === 'contact_lock')
@@ -264,6 +266,15 @@ export function noticeText(n: LimitNotice, canLock = false, reach: ContactReach 
       "The guardian cannot sign for Savings: this took two of the owner's other keys (their phone with their hardware wallet, or one of them with their Recovery Key).",
       '',
       'If the owner changed the payment, nothing else is needed. If not, or you are not sure, call them now: they may need to move what is left with their hardware wallet and Recovery Key.',
+    ].join('\n');
+  if (n.kind === 'savings_moved' && n.consolidated)
+    return [
+      'Trikey alert: the Savings wallet of the bitcoin wallet you help protect was consolidated.',
+      '',
+      `What happened: on ${formatWhen(n.at)}, coins of the Savings wallet were merged into one, still in Savings, in transaction ${n.txid ?? '(unknown)'}. Only the network fee, ${formatBtc(n.amountSats ?? 0n)}, left Savings.`,
+      "The guardian cannot sign for Savings: this took two of the owner's other keys (their phone with their hardware wallet, or one of them with their Recovery Key).",
+      '',
+      'If the owner did this (tidying up small coins while fees are low), nothing else is needed. If not, or you are not sure, call them now: someone may hold two of their keys.',
     ].join('\n');
   if (n.kind === 'savings_moved')
     return [
@@ -419,6 +430,7 @@ export class Alerter {
       const queued = await g.notifier.enqueue({
         id: n.id,
         type: n.kind,
+        ...(n.kind === 'savings_moved' && n.consolidated && !n.replacesTxid ? { title: 'Savings consolidated' } : {}),
         at: n.at,
         walletId: n.kind === 'savings_moved' || n.kind === 'savings_unwatched' ? (n.savingsWalletId ?? n.walletId) : n.walletId,
         ...(all.includes(phone ?? '') ? { owner: this.noticeWire(n)?.message } : {}),

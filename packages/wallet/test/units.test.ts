@@ -32,6 +32,11 @@ import {
   sweepBroadcastError,
   selectAllCoins,
   selectCoins,
+  planConsolidation,
+  buildConsolidationPsbt,
+  feesLowNow,
+  backupVersionFor,
+  LOW_FEE_SAT_PER_VB,
   spentTodayEstimate,
   verifyBip137Message,
   BackupPayload,
@@ -155,6 +160,27 @@ describe('backup payload versions with several wallets (golden)', () => {
     // A one-wallet backup stays version 1 (or 2 with Savings), as it always was.
     expect(BackupPayload.parse(PAYLOAD)).toEqual(PAYLOAD);
   });
+
+  it('version 6 exactly with coin control: labels, or a consolidation in any send log; whatever else it holds', () => {
+    const labels = { version: 1 as const, wallets: { '0123456789abcdef': { coins: { [`${'ab'.repeat(32)}:0`]: { frozen: true as const } }, txs: {}, kept: [] } } };
+    const entry = { txid: 'cd'.repeat(32), at: 1, recipient: 'bcrt1qself', amountSats: 90_000, feeSats: 600, signedBy: 'guardian' as const };
+    expect(backupVersionFor({ ...PAYLOAD, labels })).toBe(6);
+    expect(backupVersionFor({ ...PAYLOAD, wallets: [{ ...ownWallet, savings }], labels })).toBe(6);
+    expect(backupVersionFor({ ...PAYLOAD, sendLog: [{ ...entry, purpose: 'consolidate' }] })).toBe(6);
+    expect(backupVersionFor({ ...PAYLOAD, wallets: [{ ...ownWallet, sendLog: [{ ...entry, purpose: 'consolidate' }] }] })).toBe(6);
+    expect(backupVersionFor({ ...PAYLOAD, sendLog: [entry] })).toBe(1);
+    expect(backupVersionFor({ ...PAYLOAD, wallets: [ownWallet] })).toBe(4);
+    expect(BackupPayload.safeParse({ ...PAYLOAD, v: 6, labels }).success).toBe(true);
+    expect(BackupPayload.safeParse({ ...PAYLOAD, v: 6, wallets: [ownWallet], labels }).success).toBe(true);
+    // Labels in an older version: an app before coin control would drop them, so it is not one. Nor is 6 without them.
+    expect(BackupPayload.safeParse({ ...PAYLOAD, v: 1, labels }).success).toBe(false);
+    expect(BackupPayload.safeParse({ ...PAYLOAD, v: 5, wallets: [{ ...ownWallet, savings }], labels }).success).toBe(false);
+    expect(BackupPayload.safeParse({ ...PAYLOAD, v: 6 }).success).toBe(false);
+    expect(BackupPayload.safeParse({ ...PAYLOAD, v: 1, sendLog: [{ ...entry, purpose: 'consolidate' }] }).success).toBe(false);
+    // The labels document is checked like the stored one.
+    expect(BackupPayload.safeParse({ ...PAYLOAD, v: 6, labels: { version: 2, wallets: {} } }).success).toBe(false);
+  });
+
 });
 
 describe('recovery codes', () => {
@@ -280,6 +306,72 @@ describe('fees, limit estimate and coin selection', () => {
     expect((await walletError(() => selectCoins({ ...base, amountSats: 100 }))).code).toBe('amount_too_small');
     expect((await walletError(() => selectCoins({ ...base, address: 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', amountSats: 10_000 }))).code).toBe('invalid_address');
     void buildSpend;
+  });
+
+  it('a manual pick (useAll) spends every coin given, unconfirmed ones included, with change; send max too', async () => {
+    const master = (m: string) => HDKey.fromMasterSeed(mnemonicToSeedSync(m), network.bip32);
+    const wallet = new MultisigWallet(network, {
+      app: keyExpressionFromMaster(master(MNEMONICS.hardware2), "m/48'/1'/0'/2'"),
+      hardware: keyExpressionFromMaster(master(MNEMONICS.hardware), "m/48'/1'/0'/2'"),
+      cosigner: cosignerKeyExpression(secp256k1.getPublicKey(new Uint8Array(32).fill(7), true), new Uint8Array(32).fill(1), network),
+    });
+    const u = (value: number, confirmations: number, vout: number) => ({ txid: 'ab'.repeat(32), vout, valueSats: value, height: confirmations ? 100 : 0, confirmations, chain: 0 as const, index: vout });
+    const utxos = [u(50_000, 0, 0), u(30_000, 3, 1)];
+    const base = { wallet, utxos, address: externalAddress(), feeRate: 2, changeIndex: 0 };
+    // 10,000 needs one coin: largest-first takes the confirmed 30k alone; a manual pick spends both.
+    expect(selectCoins({ ...base, amountSats: 10_000 }).inputs.map((i) => i.vout)).toEqual([1]);
+    const all = selectCoins({ ...base, amountSats: 10_000, useAll: true });
+    expect(all.inputs.map((i) => i.vout).sort()).toEqual([0, 1]);
+    expect(all.changeSats).toBe(80_000 - 10_000 - all.feeSats);
+    const short = await walletError(() => selectCoins({ ...base, amountSats: 80_000, useAll: true }));
+    expect(short.code).toBe('insufficient_funds');
+    expect(short.message).toMatch(/coins you picked hold 80000 sats/);
+    const script = btc.OutScript.encode(btc.Address(network.btc).decode(externalAddress()));
+    expect(selectAllCoins({ utxos, outputScript: script, feeRate: 2 }).inputs.map((i) => i.vout)).toEqual([1]);
+    expect(selectAllCoins({ utxos, outputScript: script, feeRate: 2, useAll: true }).inputs.map((i) => i.vout)).toEqual([0, 1]);
+  });
+
+  it('a consolidation: every coin into one at the next change address with its derivation; too few coins or dust refused', async () => {
+    const master = (m: string) => HDKey.fromMasterSeed(mnemonicToSeedSync(m), network.bip32);
+    const wallet = new MultisigWallet(network, {
+      app: keyExpressionFromMaster(master(MNEMONICS.hardware2), "m/48'/1'/0'/2'"),
+      hardware: keyExpressionFromMaster(master(MNEMONICS.hardware), "m/48'/1'/0'/2'"),
+      cosigner: cosignerKeyExpression(secp256k1.getPublicKey(new Uint8Array(32).fill(7), true), new Uint8Array(32).fill(1), network),
+    });
+    const prev = (value: number, index: number) => {
+      const raw = btc.RawTx.encode({ version: 2, segwitFlag: false, inputs: [{ txid: new Uint8Array(32).fill(index + 1), index: 0, finalScriptSig: new Uint8Array([0x51]), sequence: 0xffffffff }], outputs: [{ script: wallet.derive(0, index).script, amount: BigInt(value) }], lockTime: 0 });
+      return { raw: hex.encode(raw), txid: btc.Transaction.fromRaw(raw, { allowUnknownInputs: true, disableScriptCheck: true }).id };
+    };
+    const coins = [prev(20_000, 0), prev(15_000, 1), prev(9_000, 2)];
+    const utxos = coins.map((c, i) => ({ txid: c.txid, vout: 0, valueSats: [20_000, 15_000, 9_000][i]!, height: 100, confirmations: 2, chain: 0 as const, index: i }));
+    const plan = planConsolidation({ wallet, utxos, feeRate: 2, changeIndex: 4 });
+    expect(plan.inputSats).toBe(44_000);
+    expect(plan.feeSats).toBe(Math.ceil(estimateVsize(3, [wallet.derive(1, 4).script]) * 2));
+    expect(plan.amountSats).toBe(44_000 - plan.feeSats);
+    const psbt = buildConsolidationPsbt({ wallet, inputs: plan.inputs, prevTxHexes: coins.map((c) => c.raw), changeIndex: 4, amountSats: plan.amountSats });
+    const tx = btc.Transaction.fromPSBT(psbt);
+    expect(tx.inputsLength).toBe(3);
+    expect(tx.outputsLength).toBe(1);
+    const out = tx.getOutput(0);
+    expect(hex.encode(out.script!)).toBe(hex.encode(wallet.derive(1, 4).script));
+    expect(out.amount).toBe(BigInt(plan.amountSats));
+    // Its derivation, as change carries it: the guardian then counts only the fee.
+    expect(out.bip32Derivation?.length).toBe(3);
+    expect((await walletError(() => planConsolidation({ wallet, utxos: utxos.slice(0, 1), feeRate: 2, changeIndex: 4 }))).code).toBe('nothing_to_send');
+    const tiny = utxos.map((x) => ({ ...x, valueSats: 300 }));
+    expect((await walletError(() => planConsolidation({ wallet, utxos: tiny, feeRate: 2, changeIndex: 4 }))).code).toBe('send_max_too_small');
+  });
+
+  it('fees are low for a consolidation when the slow estimate is at most 3 sat/vB (never without an estimate)', () => {
+    const at = (slow: number) => ({ estimates: [{ target: 1, satPerVb: 40 }, { target: 6, satPerVb: slow }], minRelaySatPerVb: 1 });
+    expect(LOW_FEE_SAT_PER_VB).toBe(3);
+    expect(feesLowNow(at(2))).toBe(true);
+    expect(feesLowNow(at(3))).toBe(true);
+    expect(feesLowNow(at(3.5))).toBe(false);
+    expect(feesLowNow(undefined)).toBe(false);
+    expect(feesLowNow({ estimates: [{ target: 6, satPerVb: null }], minRelaySatPerVb: 1 })).toBe(false);
+    // Mainnet's floor keeps a 0.1 sat/vB estimate at 1: still low.
+    expect(feesLowNow(at(0.1), { minSatPerVb: 1 })).toBe(true);
   });
 
   it('send max takes every confirmed coin, charges the fee buildSpend would and leaves the rest as the amount', async () => {

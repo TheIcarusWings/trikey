@@ -159,13 +159,16 @@ export class WalletSet {
   /**
    * Every wallet's alerts about the others go to them, not to it (`TrikeyWallet.siblings`: the others' wallet ids and
    * their Savings' ids, which Savings alerts name), and no wallet takes another's device as a Savings Recovery Key
-   * (`TrikeyWallet.otherDevices`).
+   * (`TrikeyWallet.otherDevices`). Coin control: every wallet uses the first wallet's label store, the phone's one
+   * document of labels and freezes (keyed by wallet id), so one backup carries them all.
    */
   private link(): void {
     const idsOf = (w: TrikeyWallet) => [w.state.wallet?.walletId, w.state.savings?.walletId].filter((x): x is string => !!x);
+    const labels = this.first.labels;
     for (const w of this.list) {
       w.siblings = () => this.list.filter((o) => o !== w).flatMap(idsOf);
       w.otherDevices = () => this.list.filter((o) => o !== w).flatMap((o) => devicesOf(o));
+      if (labels && w !== this.first && w.labels !== labels) w.useLabelStore(labels);
     }
   }
 
@@ -314,7 +317,10 @@ export class WalletSet {
     if (sv && sv.balance.totalSats > 0) throw new WalletError('wrong_state', "Move the money out of this wallet's Savings before you remove it.");
     if (w.state.replacing) throw new WalletError('replace_in_progress', 'This wallet is moving to a new guardian: finish that first.');
     if (opts.retire !== false && w.stage === 'paired' && !w.state.retiredByGuardian) await w.retireWallet();
+    const ids = [w.state.wallet?.walletId, w.state.savings?.walletId].filter((x): x is string => !!x);
     await w.forget();
+    // Its labels and freezes leave the phone with it.
+    for (const id of ids) await this.first.labels?.forgetWallet(id).catch(() => undefined);
     this.others.splice(this.others.indexOf(w), 1);
     if (this.index.shown === w.account) this.index = { ...this.index, shown: 0 };
     await this.saveIndex();

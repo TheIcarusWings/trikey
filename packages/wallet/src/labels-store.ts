@@ -70,6 +70,8 @@ export const LabelsDocument = z
   .strictObject({
     version: z.literal(LABELS_VERSION),
     wallets: z.record(WalletIdKey, WalletLabels),
+    /** ms, the phone's clock: the last change made on this phone (not a restore), so the app can tell the backup is older. */
+    changedAt: z.number().int().min(0).optional(),
   })
   .refine((d) => Object.keys(d.wallets).length <= MAX_LABELED_WALLETS, `at most ${MAX_LABELED_WALLETS} wallets`)
   .refine(
@@ -161,24 +163,41 @@ function readDocument(json: unknown, where: string): LabelsDocument {
 
 export class LabelStore {
   private queue: Promise<unknown> = Promise.resolve();
+  private readonly listeners = new Set<() => void>();
 
   private constructor(
     private readonly kv: KeyValueStore,
     readonly key: string,
     private doc: LabelsDocument,
+    private readonly now: () => number,
   ) {}
 
-  /** Opens the phone's labels (none yet: an empty store, nothing written until a change). Throws `labels_invalid`. */
-  static async open(kv: KeyValueStore, key: string = labelStoreKey()): Promise<LabelStore> {
+  /**
+   * Opens the phone's labels (none yet: an empty store, nothing written until a change). Throws `labels_invalid`.
+   * `now` (ms) stamps each change (`changedAt`).
+   */
+  static async open(kv: KeyValueStore, key: string = labelStoreKey(), opts: { now?: () => number } = {}): Promise<LabelStore> {
+    const now = opts.now ?? (() => Date.now());
     const raw = await kv.get(key);
-    if (raw === null) return new LabelStore(kv, key, emptyDoc());
+    if (raw === null) return new LabelStore(kv, key, emptyDoc(), now);
     let json: unknown;
     try {
       json = JSON.parse(raw);
     } catch (e) {
       throw new WalletError('labels_invalid', 'The stored labels are not valid JSON.', { cause: e });
     }
-    return new LabelStore(kv, key, readDocument(json, 'stored'));
+    return new LabelStore(kv, key, readDocument(json, 'stored'), now);
+  }
+
+  /** When a label or freeze was last changed on this phone (ms), or undefined: none since the store began or was restored. */
+  get changedAt(): number | undefined {
+    return this.doc.changedAt;
+  }
+
+  /** Called after every change that landed (labels, freezes, an import, a restore). Returns an unsubscribe function. */
+  onChange(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   /** One wallet's labels, as a snapshot for the coin list. */
@@ -241,6 +260,7 @@ export class LabelStore {
     await this.enqueue(async () => {
       const next = copy(this.doc);
       delete next.wallets[walletId];
+      next.changedAt = this.now();
       await this.save(next);
     });
   }
@@ -321,9 +341,13 @@ export class LabelStore {
     return copy({ version: LABELS_VERSION, wallets: Object.fromEntries(wallets) });
   }
 
-  /** Puts a backup's labels back (a restore), replacing what the store held. `undefined`: a backup without labels. */
+  /**
+   * Puts a backup's labels back (a restore), replacing what the store held. `undefined`: a backup without labels. The
+   * restored labels are the backup's, so nothing is newer than it (`changedAt` cleared).
+   */
   async importFromBackup(doc: unknown): Promise<void> {
     const next = doc === undefined ? emptyDoc() : readDocument(doc, 'backed-up');
+    delete next.changedAt;
     await this.enqueue(() => this.save(next));
   }
 
@@ -337,6 +361,7 @@ export class LabelStore {
       if (Object.keys(w.coins).length || Object.keys(w.txs).length || w.kept.length) next.wallets[walletId] = w;
       else delete next.wallets[walletId];
       checkLimits(next);
+      next.changedAt = this.now();
       await this.save(next);
     });
   }
@@ -345,6 +370,13 @@ export class LabelStore {
     const valid = LabelsDocument.parse(next);
     await this.kv.set(this.key, JSON.stringify(valid));
     this.doc = valid;
+    for (const l of this.listeners) {
+      try {
+        l();
+      } catch {
+        // a listener's failure is its own
+      }
+    }
   }
 
   private enqueue<T>(job: () => Promise<T>): Promise<T> {

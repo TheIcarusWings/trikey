@@ -120,6 +120,12 @@ export interface SendRequest {
   memo?: string;
   /** The person's own note for this payment, kept on the phone (the send log) and in the backup. */
   label?: string;
+  /**
+   * Coin control: the coins that pay (`txid:vout`, from `TrikeyWallet.coins()`), every one of them spent, with the change
+   * back to the wallet. Absent: the wallet chooses among the coins that are not frozen. A frozen coin, or one that is
+   * spent or waits in this phone's own payment, is refused (`coin_unavailable`).
+   */
+  coins?: string[];
 }
 
 export interface QuoteInput {
@@ -163,6 +169,27 @@ export interface SendQuote {
    * relay the payment, and it may never confirm. The wallet never picks such a rate by itself; show a warning.
    */
   lowFeeRate?: true;
+  /**
+   * Coin control: the coins picked by hand (`request.coins`) carry different labels (a coin without one counts as its
+   * own), so spending them together links them on chain: worth a warning. `labels` lists them.
+   */
+  mixesLabels?: { labels: string[] };
+  /**
+   * Set by `quoteConsolidate`: a payment to the wallet itself. `request.address` is its next change address
+   * (`changeIndex`), `request.amountSats` what the one new coin holds, `inputs` the coins merged. Only the fee leaves the
+   * wallet (`totalSats`), and only the fee counts against the daily limit.
+   */
+  consolidate?: ConsolidationInfo;
+}
+
+/** What a consolidation merges (`SendQuote.consolidate`, `SavingsQuote.consolidate`). */
+export interface ConsolidationInfo {
+  /** How many coins go into the one new coin. */
+  coinCount: number;
+  /** Their sum: the new coin holds this minus the fee. */
+  inputSats: number;
+  /** The fees are low now: a good time to consolidate (`feesLowNow`). */
+  feesLow: boolean;
 }
 
 export interface SilentPaymentQuote {
@@ -189,7 +216,10 @@ export function checkAddress(address: string, wallet: MultisigWallet): void {
   }
 }
 
-/** Largest-first selection over confirmed coins, then over all coins if those are not enough. */
+/**
+ * Largest-first selection over confirmed coins, then over all coins if those are not enough. With `useAll` (a manual
+ * pick, `SendRequest.coins`), every coin of `utxos` pays, unconfirmed ones included, and the rest is change.
+ */
 export function selectCoins(opts: {
   wallet: MultisigWallet;
   utxos: WalletUtxo[];
@@ -197,6 +227,7 @@ export function selectCoins(opts: {
   amountSats: number;
   feeRate: number;
   changeIndex: number;
+  useAll?: boolean;
 }): { inputs: QuoteInput[]; feeSats: number; changeSats: number } {
   const { wallet, address, amountSats, feeRate, changeIndex } = opts;
   if (!Number.isSafeInteger(amountSats) || amountSats < MIN_PAYMENT_SATS)
@@ -205,10 +236,11 @@ export function selectCoins(opts: {
   const asInput = (u: WalletUtxo): QuoteInput => ({ txid: u.txid, vout: u.vout, valueSats: u.valueSats, chain: u.chain, index: u.index });
   const confirmed = opts.utxos.filter((u) => u.confirmations > 0).map(asInput);
   const all = opts.utxos.map(asInput);
-  for (const set of confirmed.length < all.length ? [confirmed, all] : [all]) {
+  const sets = opts.useAll ? [all] : confirmed.length < all.length ? [confirmed, all] : [all];
+  for (const set of sets) {
     if (!set.length) continue;
     try {
-      const plan = buildSpend({ wallet, utxos: set.map((u) => toCoreUtxo(u)), recipients: [{ address, amount: BigInt(amountSats) }], feeRate, changeIndex });
+      const plan = buildSpend({ wallet, utxos: set.map((u) => toCoreUtxo(u)), recipients: [{ address, amount: BigInt(amountSats) }], feeRate, changeIndex, ...(opts.useAll ? { useAll: true } : {}) });
       const inputs = plan.inputs.map((u) => set.find((x) => x.txid === u.txid && x.vout === u.vout)!);
       return { inputs, feeSats: Number(plan.fee), changeSats: Number(plan.change?.amount ?? 0n) };
     } catch (e) {
@@ -216,7 +248,7 @@ export function selectCoins(opts: {
     }
   }
   const have = all.reduce((s, u) => s + u.valueSats, 0);
-  throw new WalletError('insufficient_funds', `Not enough funds: ${have} sats available.`);
+  throw new WalletError('insufficient_funds', opts.useAll ? `Not enough funds: the coins you picked hold ${have} sats.` : `Not enough funds: ${have} sats available.`);
 }
 
 /**
@@ -227,10 +259,11 @@ export function selectCoins(opts: {
  * `outputScript` is the recipient's script (for a silent payment, a placeholder of the same size). Throws
  * `nothing_to_send` with no coins, and `send_max_too_small` when the amount would be below dust.
  */
-export function selectAllCoins(opts: { utxos: WalletUtxo[]; outputScript: Uint8Array; feeRate: number }): { inputs: QuoteInput[]; amountSats: number; feeSats: number } {
+export function selectAllCoins(opts: { utxos: WalletUtxo[]; outputScript: Uint8Array; feeRate: number; useAll?: boolean }): { inputs: QuoteInput[]; amountSats: number; feeSats: number } {
   const asInput = (u: WalletUtxo): QuoteInput => ({ txid: u.txid, vout: u.vout, valueSats: u.valueSats, chain: u.chain, index: u.index });
-  const confirmed = opts.utxos.filter((u) => u.confirmations > 0).map(asInput);
   const all = opts.utxos.map(asInput);
+  // A manual pick (`useAll`): exactly those coins, confirmed or not.
+  const confirmed = opts.useAll ? all : opts.utxos.filter((u) => u.confirmations > 0).map(asInput);
   if (!all.length) throw new WalletError('nothing_to_send', 'The wallet has no coins to send.');
   const fit = (set: QuoteInput[]) => {
     const total = set.reduce((s, u) => s + u.valueSats, 0);
@@ -266,6 +299,68 @@ export function buildSendMaxPsbt(opts: { wallet: MultisigWallet; inputs: QuoteIn
     });
   });
   tx.addOutput({ script: opts.outputScript, amount: BigInt(opts.amountSats) });
+  return tx.toPSBT();
+}
+
+// ---------------------------------------------------------------------------
+// Consolidation (coin control): many coins into one, back to the wallet
+
+/** The fewest coins a consolidation merges. */
+export const MIN_CONSOLIDATION_COINS = 2;
+/** Most coins in one consolidation: a standard transaction stays well under 100 kvB (about 105 vB per 2-of-3 input). */
+export const MAX_CONSOLIDATION_COINS = 400;
+/**
+ * At or under this rate (sat/vB) for the slow speed, fees count as low: a good time to consolidate (`feesLowNow`). A
+ * 2-of-3 input costs about 105 vB, so merging ten coins at 2 sat/vB costs about 2,200 sats; the same at 30 sat/vB, 33,000.
+ */
+export const LOW_FEE_SAT_PER_VB = 3;
+
+/** True when the fees are low now (the slow speed's estimate at most `LOW_FEE_SAT_PER_VB`), so consolidating costs little. */
+export function feesLowNow(fees: FeeEstimates | undefined, opts: FeeRateOptions = {}): boolean {
+  if (!fees?.estimates.some((e) => e.satPerVb !== null)) return false;
+  return pickFeeRate(fees, 'slow', opts) <= LOW_FEE_SAT_PER_VB;
+}
+
+/**
+ * A consolidation: every coin of `utxos` (`MIN_CONSOLIDATION_COINS` or more, up to `MAX_CONSOLIDATION_COINS`) into one
+ * output at the wallet's change address `changeIndex`, the fee taken from them. Throws `nothing_to_send` with too few
+ * coins (or too many) and `send_max_too_small` when the fee would leave less than the smallest payment.
+ */
+export function planConsolidation(opts: { wallet: MultisigWallet; utxos: WalletUtxo[]; feeRate: number; changeIndex: number }): { inputs: QuoteInput[]; inputSats: number; amountSats: number; feeSats: number } {
+  if (opts.utxos.length < MIN_CONSOLIDATION_COINS) throw new WalletError('nothing_to_send', `Pick at least ${MIN_CONSOLIDATION_COINS} coins to merge into one.`);
+  if (opts.utxos.length > MAX_CONSOLIDATION_COINS) throw new WalletError('nothing_to_send', `At most ${MAX_CONSOLIDATION_COINS} coins go into one consolidation. Pick fewer, and merge the rest after.`);
+  const inputs: QuoteInput[] = opts.utxos.map((u) => ({ txid: u.txid, vout: u.vout, valueSats: u.valueSats, chain: u.chain, index: u.index }));
+  const script = opts.wallet.derive(1, opts.changeIndex).script;
+  const inputSats = inputs.reduce((s, u) => s + u.valueSats, 0);
+  const feeSats = Math.ceil(estimateVsize(inputs.length, [script]) * opts.feeRate);
+  const amountSats = inputSats - feeSats;
+  if (!Number.isSafeInteger(amountSats) || amountSats < MIN_PAYMENT_SATS)
+    throw new WalletError('send_max_too_small', `After the ${feeSats} sats network fee, these ${inputSats} sats would leave ${Math.max(0, amountSats)} sats: less than the smallest coin (${MIN_PAYMENT_SATS} sats).`, { feeSats });
+  return { inputs, inputSats, amountSats, feeSats };
+}
+
+/**
+ * The PSBT of a consolidation: every input, then one output to the wallet's change address `changeIndex` with its BIP 32
+ * derivation, as a change output carries. The guardian counts an output to the wallet's own address as staying in it
+ * only with that derivation, and only within its window of the chain's highest used index (the next change index always
+ * is): then the fee alone counts against the daily limit (`apps/guardian/test/consolidation.test.ts`).
+ */
+export function buildConsolidationPsbt(opts: { wallet: MultisigWallet; inputs: QuoteInput[]; prevTxHexes: string[]; changeIndex: number; amountSats: number }): Uint8Array {
+  const tx = new btc.Transaction(TX_OPTS);
+  opts.inputs.forEach((u, i) => {
+    const d = opts.wallet.derive(u.chain, u.index);
+    tx.addInput({
+      txid: u.txid,
+      index: u.vout,
+      sequence: SEQUENCE_RBF,
+      witnessUtxo: { script: d.script, amount: BigInt(u.valueSats) },
+      nonWitnessUtxo: hex.decode(opts.prevTxHexes[i]!),
+      sighashType: btc.SigHash.ALL,
+      ...opts.wallet.psbtFields(d),
+    });
+  });
+  const d = opts.wallet.derive(1, opts.changeIndex);
+  tx.addOutput({ script: d.script, amount: BigInt(opts.amountSats), ...opts.wallet.psbtFields(d) });
   return tx.toPSBT();
 }
 

@@ -32,6 +32,7 @@ import { base64, utf8 } from '@scure/base';
 import { z } from 'zod';
 import { Network, Policy } from '@trikey/protocol';
 import { WalletError } from './errors.js';
+import { LabelsDocument } from './labels-store.js';
 import { GuardianRecord, HardwareRecord, RetiredWallet, SavingsDevice, SavingsSendEntry, SendLogEntry } from './state.js';
 import { secureRandomBytes } from '@trikey/core/random';
 import { assertRandomSourceHealthy } from '@trikey/core/random-health';
@@ -160,13 +161,15 @@ export type BackupOwnWallet = z.infer<typeof BackupOwnWallet>;
  * this app says "update the app" for any version it does not know (`backup_invalid`, reason `too_new`). Version 4 only
  * when the phone holds more than one wallet (`wallets`): an older app refuses it rather than restore the first alone.
  * Version 5 exactly when a wallet after the first has Savings (`wallets[].savings`): an app before that refuses it
- * ("update the app") rather than restore that wallet without its Savings.
+ * ("update the app") rather than restore that wallet without its Savings. Version 6 exactly when the backup carries coin
+ * control (`labels`, or a consolidation in a send log, `purpose: 'consolidate'`), whatever else it holds: an app before
+ * coin control refuses it ("update the app") rather than restore the wallets without their labels and freezes.
  */
-export const BACKUP_PAYLOAD_VERSION = 5;
+export const BACKUP_PAYLOAD_VERSION = 6;
 
 /** What the backup holds. */
 const BackupPayloadShape = z.strictObject({
-  v: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
+  v: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6)]),
   network: Network,
   createdAt: z.int(),
   /** Key 2. */
@@ -197,21 +200,46 @@ const BackupPayloadShape = z.strictObject({
   savings: BackupSavings.optional(),
   /** Version 4 only: the phone's other wallets on the same guardian (own wallets), each at its own account. */
   wallets: z.array(BackupOwnWallet).min(1).max(7).optional(),
+  /**
+   * Version 6 (coin control): the phone's coin labels, freezes and payment labels, every wallet's (Spending, Savings,
+   * own wallets) keyed by wallet id: `LabelStore.exportForBackup()`. Absent when there are none.
+   */
+  labels: LabelsDocument.optional(),
 });
+
+type PayloadContents = Omit<z.input<typeof BackupPayloadShape>, 'v'>;
+
+/** A consolidation in one of the payload's send logs (coin control): an app before it cannot read the entry. */
+function hasConsolidation(p: PayloadContents): boolean {
+  const logs = [p.sendLog, p.savings?.sendLog, ...(p.wallets ?? []).flatMap((w) => [w.sendLog, w.savings?.sendLog])];
+  return logs.some((log) => (log ?? []).some((e) => e.purpose === 'consolidate'));
+}
+
+/**
+ * The payload version its contents call for: 6 with coin control (labels, or a consolidation), else 4 or 5 with more
+ * than one wallet (5 when one after the first has Savings), else 3 for a hosted wallet, 2 with Savings, 1. The oldest
+ * version that holds it, so every backup without these is byte for byte the format it always was.
+ */
+export function backupVersionFor(p: PayloadContents): 1 | 2 | 3 | 4 | 5 | 6 {
+  if (p.labels !== undefined || hasConsolidation(p)) return 6;
+  if (p.wallets !== undefined) return p.wallets.some((w) => w.savings !== undefined) ? 5 : 4;
+  if (p.guardian?.hosted) return 3;
+  return p.savings !== undefined ? 2 : 1;
+}
+
 /**
  * Version 3 exactly when the wallet is hosted on someone else's guardian (`guardian.hosted`): the guardian record, the
  * chain server setting and the descriptor with its key 3 chaincode. An app from before hosting refuses it (its schema
- * knows 1 and 2), as for Savings' version 2. A hosted wallet has no Savings in phase 1.
+ * knows 1 and 2), as for Savings' version 2. A hosted wallet has no Savings in phase 1. Every payload's version is the
+ * one its contents call for (`backupVersionFor`).
  */
 export const BackupPayload = BackupPayloadShape.refine(
   (p) =>
-    p.wallets !== undefined
-      ? (p.v === 4 || p.v === 5) && (p.v === 5) === p.wallets.some((w) => w.savings !== undefined) && !p.guardian?.hosted && new Set(p.wallets.map((w) => w.account)).size === p.wallets.length
-      : p.guardian?.hosted
-        ? p.v === 3 && p.savings === undefined
-        : p.v !== 3 && p.v !== 4 && p.v !== 5 && (p.v === 2) === (p.savings !== undefined),
+    (p.wallets !== undefined ? !p.guardian?.hosted && new Set(p.wallets.map((w) => w.account)).size === p.wallets.length : p.guardian?.hosted ? p.savings === undefined : true) &&
+    p.v === backupVersionFor(p),
   {
-    message: 'version 4 holds more than one wallet, and only it does (5 when a wallet after the first has Savings); version 3 is a hosted wallet and only that; version 2 holds Savings',
+    message:
+      'version 6 holds coin control (labels or a consolidation); otherwise version 4 holds more than one wallet, and only it does (5 when a wallet after the first has Savings); version 3 is a hosted wallet and only that; version 2 holds Savings',
     path: ['v'],
   },
 );
