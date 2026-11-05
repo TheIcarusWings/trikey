@@ -54,6 +54,11 @@ export interface SavingsSpend {
    * A fee bump keeps it (it only lowers the change); a replacement that pays someone else, or another amount, does not.
    */
   payment?: string;
+  /**
+   * Every output pays Savings itself (coin control's "Consolidate": coins merged into one): only the fee left. Known only
+   * when the scan saw the outputs (`paidOut`).
+   */
+  consolidated?: true;
 }
 
 /** The digest of what a transaction pays out (`SavingsSpend.payment`): its non-Savings outputs, order left out. */
@@ -74,6 +79,7 @@ export function spendsOf(r: { history: (Omit<WalletHistoryEntry, 'spent' | 'paid
       amountSats: -h.net,
       ...(h.spent?.length ? { outpoints: h.spent } : {}),
       ...(h.paidOut ? { payment: paymentDigest(h.paidOut) } : {}),
+      ...(h.paidOut && h.paidOut.length === 0 ? { consolidated: true as const } : {}),
     }));
 }
 
@@ -147,7 +153,7 @@ export class SavingsMonitor {
     try {
       const fresh = await w.engine.noteSavingsScan(walletId, { nextReceiveIndex: r.nextReceiveIndex, nextChangeIndex: r.nextChangeIndex, spends: spendsOf(r) });
       for (const x of fresh) {
-        const fields = { walletId, txid: x.txid, amountSats: Number(x.amountSats), ...(x.replaces ? { replaces: x.replaces } : {}) };
+        const fields = { walletId, txid: x.txid, amountSats: Number(x.amountSats), ...(x.replaces ? { replaces: x.replaces } : {}), ...(x.consolidated ? { consolidated: true } : {}) };
         // A fee bump of a spend already announced is the same payment: logged, not announced again.
         if (x.announced) g.log.warn('savings.moved', fields);
         else g.log.info('savings.replaced', fields);

@@ -5,7 +5,7 @@ export * from './send.js';
 export * from './keys.js';
 export * from './wallet.js';
 export * from './wallets.js';
-// Coin control groundwork (DESIGN.md, "Next: coin control"): not wired into send.ts, wallet.ts or the backup yet.
+// Coin control (DESIGN.md, "Coin control"): BIP 329 labels, the label and freeze store, the coin list.
 export * from './labels-bip329.js';
 export * from './labels-store.js';
 export * from './coins.js';
@@ -35,6 +35,7 @@ export {
   BackupOwnWallet,
   BackupHeader,
   BackupPayload,
+  backupVersionFor,
   DEFAULT_RECOVERY_CODE_KDF,
   generateRecoveryCode,
   normalizeRecoveryCode,

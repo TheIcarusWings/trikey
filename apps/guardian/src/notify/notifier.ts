@@ -140,6 +140,8 @@ export interface NotifyEvent {
   id: string;
   /** The alert type (render.ts `TITLES`). */
   type: string;
+  /** A title for this one alert, in place of its type's (`TITLES`): "Savings consolidated" for a `savings_moved` that moved only a fee. */
+  title?: string;
   /** When it happened (ms). */
   at: number;
   walletId?: string;
@@ -603,7 +605,7 @@ export class Notifier {
         return false;
       }
       const inRules = new Set(this.opts.contacts());
-      const title = TITLES[ev.type] ?? 'Alert';
+      const title = ev.title ?? TITLES[ev.type] ?? 'Alert';
       const priority = PRIORITIES[ev.type] ?? 'default';
       const deliveries: Delivery[] = [];
       for (const d of draft.destinations) {

@@ -179,13 +179,27 @@ describe('removing a wallet', { timeout: 60_000 }, () => {
     expect(spare.account).toBe(4);
     await spare.start();
     R1.fund(spare.multisig().derive(0, 0).script, 60_000n);
+    // Coin control: a frozen coin, in the phone's one label store (the set handed it to the new wallet).
+    const kept = R1.fund(spare.multisig().derive(0, 1).script, 9_000n);
     await spare.sync();
+    expect(spare.labels).toBe(set.first.labels);
+    await spare.setCoinFrozen(`${kept.txid}:${kept.vout}`, true);
     expect((await walletError(set.removeWallet(spare))).code).toBe('wrong_state');
     const moved = await set.moveFunds(spare, daily);
     expect(moved).toMatchObject({ ok: true });
     await spare.sync();
+    // "Move everything" left the frozen coin: the refusal says so.
+    const stuck = await walletError(set.removeWallet(spare));
+    expect(stuck.message).toMatch(/9000 sats are in frozen coins/);
+    await spare.setCoinFrozen(`${kept.txid}:${kept.vout}`, false);
+    expect(await set.moveFunds(spare, daily)).toMatchObject({ ok: true });
+    await spare.sync();
     const spareId = spare.state.wallet!.walletId;
+    await spare.setCoinLabel(`${kept.txid}:${kept.vout}`, 'gone with the wallet');
+    expect(Object.keys(set.first.labels!.exportForBackup()!.wallets)).toContain(spareId);
     await set.removeWallet(spare);
+    // Its labels left the phone with it.
+    expect(Object.keys(set.first.labels!.exportForBackup()?.wallets ?? {})).not.toContain(spareId);
     expect(set.list.map((w) => w.account)).toEqual([0, 2]);
     // The guardian retired it (and says so); the next wallet would never take account 4 again.
     expect(R1.guardian.wallets.all.find((w) => w.account === 4)?.active).toBe(false);

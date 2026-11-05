@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { hex } from '@scure/base';
-import { coinList, selectableCoins, totalsOf, type CoinSourcePayment } from '../src/coins.js';
+import { SMALL_COIN_SATS, coinList, selectableCoins, smallCoins, totalsOf, type CoinSourcePayment } from '../src/coins.js';
 import { LabelStore } from '../src/labels-store.js';
 import type { OwnSpend } from '../src/own-spends.js';
 import { selectAllCoins } from '../src/send.js';
@@ -135,6 +135,14 @@ describe('selectable coins', () => {
     const max = selectAllCoins({ utxos: s.utxos, outputScript: hex.decode(`0014${'11'.repeat(20)}`), feeRate: 1 });
     expect(max.inputs.map((u) => `${u.txid}:${u.vout}`)).toEqual([`${RECV}:0`, `${PAID}:1`]);
     expect(selectAllCoins({ utxos: selectableCoins(list.coins.filter((c) => !c.unconfirmed)).utxos, outputScript: hex.decode(`0014${'11'.repeat(20)}`), feeRate: 1 }).amountSats).toBe(max.amountSats);
+  });
+
+  it('"all small coins" for a consolidation: confirmed, not frozen, under 100,000 sats', async () => {
+    const list = await labeled();
+    expect(SMALL_COIN_SATS).toBe(100_000);
+    // RECV is 100,000 (not under), INCOMING unconfirmed, ELSEWHERE frozen: only PAID's change.
+    expect(smallCoins(list).map((c) => c.outpoint)).toEqual([`${PAID}:1`]);
+    expect(smallCoins(list, 200_000).map((c) => c.outpoint)).toEqual([`${RECV}:0`, `${PAID}:1`]);
   });
 
   it('a manual pick: exactly those coins, in that order, once each, with a warning when their labels differ', async () => {

@@ -198,3 +198,15 @@ export function selectableCoins(list: CoinList | readonly Coin[], opts: { manual
     labels: [...distinct].filter((l) => l !== ''),
   };
 }
+
+/**
+ * Under this a coin counts as small (sats): the Consolidate screen's "all small coins". A 2-of-3 input is about 105 vB,
+ * so at 50 sat/vB spending a 100,000 sats coin costs about 5% of it; merged now, while fees are low, that cost is paid once.
+ */
+export const SMALL_COIN_SATS = 100_000;
+
+/** The coins worth merging: confirmed, not frozen, under `maxSats` (default `SMALL_COIN_SATS`), oldest first. Pure. */
+export function smallCoins(list: CoinList | readonly Coin[], maxSats: number = SMALL_COIN_SATS): Coin[] {
+  const all = 'coins' in list ? list.coins : list;
+  return all.filter((c) => !c.frozen && !c.unconfirmed && c.valueSats < maxSats);
+}

@@ -352,11 +352,23 @@ export class WalletError extends Error {
   readonly reason?: string;
   /** `not_safe_to_release`: what is still left. */
   readonly blockers?: HostedLeaveBlocker[];
+  /** `insufficient_funds`, `nothing_to_send`, `send_max_too_small` (coin control): what frozen coins hold, left out. */
+  readonly frozenSats?: number;
 
   constructor(
     code: WalletErrorCode,
     message: string,
-    opts: { refusal?: GuardianRefusal; cause?: unknown; backupNetwork?: string; retryAfterSeconds?: number; feeSats?: number; capSats?: number; reason?: string; blockers?: HostedLeaveBlocker[] } = {},
+    opts: {
+      refusal?: GuardianRefusal;
+      cause?: unknown;
+      backupNetwork?: string;
+      retryAfterSeconds?: number;
+      feeSats?: number;
+      capSats?: number;
+      reason?: string;
+      blockers?: HostedLeaveBlocker[];
+      frozenSats?: number;
+    } = {},
   ) {
     super(message, opts.cause === undefined ? undefined : { cause: opts.cause });
     this.name = 'WalletError';
@@ -368,6 +380,7 @@ export class WalletError extends Error {
     if (opts.capSats !== undefined) this.capSats = opts.capSats;
     if (opts.reason !== undefined) this.reason = opts.reason;
     if (opts.blockers) this.blockers = opts.blockers;
+    if (opts.frozenSats !== undefined) this.frozenSats = opts.frozenSats;
   }
 }
 
