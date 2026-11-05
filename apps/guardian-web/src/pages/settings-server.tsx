@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ChevronRight, TriangleAlert } from 'lucide-react';
+import { ChevronRight, Info, TriangleAlert } from 'lucide-react';
 import { api, ApiError, type ChainSettings } from '@/api';
 import { ErrorState } from '@/components/states';
 import { Alert } from '@/components/ui/alert';
@@ -55,13 +55,18 @@ function PublicWarning() {
   );
 }
 
+/** Umbrel or StartOS, with the server it set in use: there the lasting fix is the platform's Electrs, not another server. */
+function onPlatform(data: ChainSettings): boolean {
+  return (data.platform === 'umbrel' || data.platform === 'start9') && data.origin === 'environment';
+}
+
 /**
  * The server in use and how it is doing. `headline`: the platform's line ("Connected to this Umbrel's Electrs and
  * Bitcoin Core (set up by Umbrel).") in place of "In use". `onUseCore`: the Core 32 warning's "Use Bitcoin Core alone".
  */
 function Status({ data, headline, onUseCore }: { data: ChainSettings; headline?: string; onUseCore?: () => void }) {
   const st = data.status;
-  const mempool = st.mempoolUnseen ? mempoolText(st, { onServerPage: true }) : undefined;
+  const mempool = st.mempoolUnseen ? mempoolText(st, { onServerPage: true, platform: onPlatform(data) ? (data.platform as 'umbrel' | 'start9') : undefined }) : undefined;
   return (
     <dl className="m-0 flex flex-col gap-1 text-[15px] leading-5">
       {headline ? (
@@ -82,12 +87,14 @@ function Status({ data, headline, onUseCore }: { data: ChainSettings; headline?:
         </dd>
       </div>
       {mempool && (
-        <Alert variant="warning" className="mt-2">
-          <TriangleAlert aria-hidden="true" />
+        // Information while the guardian covers it (unconfirmed payments read from Bitcoin Core); a warning only while
+        // payments to you really show once confirmed.
+        <Alert variant={st.mempoolViaNode ? 'default' : 'warning'} className="mt-2">
+          {st.mempoolViaNode ? <Info aria-hidden="true" /> : <TriangleAlert aria-hidden="true" />}
           <div className="flex flex-col items-start gap-1">
             <p className="m-0 text-[13px] leading-[18px] font-medium">{mempool.text}</p>
             <p className="m-0 text-[13px] leading-[18px]">{mempool.detail}</p>
-            {mempool.core32 && onUseCore && data.source?.kind !== 'core' && (
+            {mempool.core32 && onUseCore && data.source?.kind !== 'core' && !(st.mempoolViaNode && onPlatform(data)) && (
               <Button type="button" variant="outline" size="sm" className="mt-1" onClick={onUseCore}>
                 Use Bitcoin Core alone
               </Button>
