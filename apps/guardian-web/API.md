@@ -50,7 +50,7 @@ when the guardian restarts. Without one, everything else answers `401 unauthenti
   `Sec-Fetch-Site: same-origin` when the browser sends it, else `Origin` against
   `Host` / `X-Forwarded-Host` (`403 forbidden`). Bodies are limited to 16 KiB.
 - The UI is a single-page app with client-side routes (`/` Home, `/setup`, `/sign-in`, `/locked`,
-  `/activity`, `/rules`, `/recovery`, `/phones`, `/settings`, `/reset`; `/pair` and `/recover-phone`
+  `/wallet` (also while locked), `/activity`, `/rules`, `/recovery`, `/phones`, `/settings`, `/reset`; `/pair` and `/recover-phone`
   redirect to `/phones`; `/host` exists only in a build with `VITE_FEATURE_HOST_FOR_SOMEONE=true`). The guardian serves
   `index.html` for every non-`/api` path that is not a file in `dist/` (a missing
   file under `/assets/` is a `404`).
@@ -71,7 +71,7 @@ when the guardian restarts. Without one, everything else answers `401 unauthenti
 |---|---|
 | Setup not complete | `GET /status`, `GET /setup/preflight`, `POST /setup/code`, `POST /setup` (no session needed; setup signs the browser in; on plain Docker setup needs the setup code) |
 | No session (after setup) | `GET /status` (as `PublicStatus`), `POST /session`, `DELETE /session` |
-| Locked, signed in | `GET /status`, `POST /unlock`, `POST /reset`, the session endpoints |
+| Locked, signed in | `GET /status`, `GET /wallet` (read-only), `POST /unlock`, `POST /reset`, the session endpoints |
 | Unlocked, signed in | everything |
 
 Without a session anything else answers `401 unauthenticated`; with one, `409 locked`
@@ -130,6 +130,12 @@ logs request bodies.
 |---|---|---|
 | `GET /api/activity?limit=100` | `{ "entries": ActivityEntry[] }` | Newest first. `limit` defaults to 100 and is capped at 500. Entries merge the policy engine's log (ids `e…`) and the service's (ids `s…`: unlocks, pairing, broadcasts, why a recovery is waiting). The UI filters by `kind` itself. |
 | `GET /api/rules` | `Rules` | Read-only. The guardian changes rules only via the phone app over nostr (`policy.update`), so the UI has no write endpoint. `404 not_found` before a wallet is paired. `sweepFeeCapSats` is the absolute fee cap the engine enforces. `dailyLimitOff: true` while there is no daily limit (the phone turned it off with a hardware approval; `dailyLimitSats` is then the protocol maximum, 21 million BTC, and should not be shown as a number). Contacts are named by their shortened `npub` (the guardian knows no names). `contactLock`: whether the alert contacts may lock this guardian with a `LOCK` DM (opt-in, set from the phone; turning it off needs the hardware wallet); absent from older guardians, meaning off. |
+
+### Wallet (view and receive only)
+
+| Method and path | Response | Notes |
+|---|---|---|
+| `GET /api/wallet` | `WalletOverview` | Signed in; **works while locked** (public chain data and the limit's counters, nothing needs key 3); `409 setup_required` before setup. Nothing here spends: payments are made from the phone. Before pairing: `{ paired: false, state, network }`. Else `walletId`, `walletName`, `balance` (`confirmedSats`, and `unconfirmedSats` apart), `payments[]` (unconfirmed first, then newest first, at most 100, `paymentsTruncated` when there are more: `txid`, `direction` `in`\|`out`\|`self`, `amountSats` (out: paid to others, the fee apart when known, as in the phone's `wallet_tx`), `feeSats?` (when every input was the wallet's), `confirmations`, `at?` (block time; absent while unconfirmed)), `receive` (`address`, `index`), `readAt` and `tipHeight` (when the chain data was read), `dailyLimit` (`limitSats`, `usedSats`, `leftSats`, `limitOff?`: the policy engine's numbers, the same as `GET /status`'s `dailySpend` and the phone's), `savings?` (as in `GET /status`). Answered from the live wallet's last read (no chain call); with none yet (just started or paired) the guardian reads the chain once (one read for concurrent requests, reused 15 s). If it cannot read the chain, `chainError` (plain words, never the node's address) and no `balance`, `payments` or `receive`. **The receive address** follows the phone's rule: the first unused address of the receive chain after the highest used one (the `nextReceiveIndex` of `wallet.sync`), derived from the stored descriptor; a visit never moves it on, a payment to it does. **Family hosting:** only the host's own wallet, nothing of a guest's (the guardian does not know a guest's addresses) and no guest counts. No explorer links: the page shows a txid with a copy button. |
 
 `ActivityEntry.result` is one of `co-signed`, `refused`, `locked`, `ok`,
 `rule-changed`. `kind` is one of `payment`, `recovery`, `rules`, `system`.
@@ -257,6 +263,8 @@ The mock keeps state in memory (a reload starts over). Pick the starting state w
 | `/?mock=oldrelays` | Two old relays still watched after a change months ago; the phone switched |
 | `/?mock=publicserver` | The guardian reads the chain from a public server (Settings > Server) |
 | `/?mock=notify` | Email, ntfy and a webhook set up in Settings > Notifications; the webhook is failing |
+
+The Wallet page (`/wallet?mock=…`) follows the scenario: the demo wallet (a pending payment in, two phone payments today) in most, no wallet yet with `unpaired`, a chain the guardian cannot read with `syncing`, no daily limit with `limitoff`, Savings with `savings`, read-only with `locked`. Its address is a golden vector of a wallet made of published test mnemonics on signet.
 
 In the mock any unlock passphrase works except the literal `wrong` (also for the reset). In dev, run
 `trikeyMock.completePairing()` in the browser console to pretend a phone scanned

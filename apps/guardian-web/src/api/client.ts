@@ -26,6 +26,7 @@ import type {
   SetupPreflight,
   SignInInput,
   UnlockInput,
+  WalletOverview,
 } from './types';
 
 /** Stable error codes the UI reacts to. Anything else is shown as a generic failure. */
@@ -97,6 +98,12 @@ export interface GuardianApi {
 
   listActivity(query?: ActivityQuery): Promise<ActivityEntry[]>;
   getRules(): Promise<Rules>;
+
+  /**
+   * The paired wallet, read-only: balance, payments, the daily limit used and left, the address to receive at (the
+   * phone's), Savings. Works while the guardian is locked. `paired: false` before a phone is paired.
+   */
+  getWallet(): Promise<WalletOverview>;
 
   /**
    * Null when no recovery is running. Read-only: a recovery is cancelled from

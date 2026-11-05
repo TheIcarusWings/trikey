@@ -73,6 +73,7 @@ Hardware (key 1) ───┘   outbound only           └── alerts: nostr 
   - pairing QR;
   - status (locked or unlocked);
   - activity log;
+  - wallet, view and receive only (also while locked): balance, payments, the daily limit used and left, the receive address by the phone's rule (`GET /api/wallet`);
   - current rules;
   - recoveries in progress;
   - notifications: email, ntfy and webhook alerts ("Alerts beyond nostr").

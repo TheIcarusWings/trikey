@@ -446,6 +446,19 @@ If it goes wrong, collect:
 - The guardian log and Electrs's own log in Umbrel.
 - The guardian's Dashboard, "Chain data" line.
 
+**Check the guardian's Wallet page** (web UI, **Wallet**, between Home and Activity; view and receive only):
+
+- The balance matches the phone's (an unconfirmed payment is shown apart), the payment is listed under Pending then
+  Confirmed with its confirmations, and "Daily limit" shows the same used and left as the phone.
+- The address under **Receive** is **the same as the phone's Receive** (compare every character). Reload the page a few
+  times: it stays the same. Once your payment to it arrives, both the page and the phone (after a refresh) move to the
+  same next address.
+- Lock the guardian (step 9): the page still opens (from the Locked screen, **View the wallet**) and the header says
+  **Locked**. A txid has a copy button and no link.
+
+If they differ, collect both addresses, a screenshot of each, and the guardian log: the page must never show an address
+the phone does not.
+
 ### 7. A payment inside the limit
 
 Do:
