@@ -813,6 +813,21 @@ Do:
    (its own device signs). You should see: Send's review starts with "From: Business"; Receive names the wallet; the
    guardian's Wallet, Rules and Activity pages have a wallet picker, and each wallet's limit counts on its own.
 4. **Back up again** and restore (step 11): both wallets come back with one recovery code.
+5. **Savings for the second wallet** (a guardian with `own_wallets_2`, and a third device as its Recovery Key). Shown
+   "Business", Savings, **Set up Savings**. You should see: the phone's Savings key at `m/48'/<coin>'/3'/2'`, the second
+   wallet's own device at `1'`; the first wallet's device is refused as Recovery Key. Send a little in and out: the
+   guardian's Wallet page for "Business" shows its Savings card, and the phone gets "Savings moved" under "Business".
+   Print its Savings wallet map: the title names "Business".
+6. **Background sync.** With "Main" shown, receive into "Business" from another wallet. Within about ten minutes the
+   switcher shows Business's new balance without switching.
+7. **Rename and remove.** Settings, Wallets, "Business": rename it. Then **Remove this wallet**: refused while it holds
+   money; **Move everything to "Main"** (over its limit, its own device signs), then remove it (one approval on its device).
+   You should see: the guardian's Activity says the wallet was retired; the account is not offered again to a new wallet.
+8. **Replace the guardian with two wallets** (a second guardian box): Settings, Guardian, **Replace guardian**, scan the
+   new box's code. You should see: the plan lists every wallet with its device and balance; the move asks for each
+   wallet's own device in turn ("Business (2 of 2): connect its Trezor"). Unplug the second device on purpose once: the
+   first wallet moves, the screen says "1 of 2 moved", and **Go on with the move** finishes the other. On the old box
+   both wallets end retired, the first last.
 
 If it goes wrong, collect: both devices' models and firmware, which wallet was shown, the screen and message, and the
 guardian's Activity page.

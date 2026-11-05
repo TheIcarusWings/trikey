@@ -337,6 +337,20 @@ phone uses it, so it can ship in the release before the phone's, or in the same 
 Savings for wallets after the first (odd accounts), "Move all wallets" for Replace guardian, per-wallet recovery
 sheets printed from the app.
 
+**Built (2026-11-05),** behind the guardian feature `own_wallets_2` (PROTOCOL.md, "Own wallets"):
+
+| Topic | What it does |
+|---|---|
+| Savings per wallet | `walletId` on `savings.*`; the phone's key at the wallet's odd account (2*n*+1), its device at `1'`, a Recovery Key of its own; the guardian checks the account and that no device is in two wallets (`hardware_in_use`), and watches each wallet's Savings in its runtime. Savings alerts keep naming the Savings wallet; the phone files them under the wallet that holds it. Backup version 5 holds them (only then: an older app says "update the app"). The Savings wallet map names the wallet. |
+| Replace guardian | One pairing code: the first wallet pairs (`pair`), every other wallet is added at its own account naming the wallet it replaces (`wallet.add` with `replacesWalletId` / `replacesDescriptor`), each swept with its own device. One wallet failing (its device not at hand) leaves it where it was, with its money; "2 of 3 moved", and the move goes on later. On the old guardian the first wallet is retired last. |
+| Background sync | Wallets not shown sync every 10 minutes and soon after an alert of theirs, one at a time, never back to back with the shown wallet's sync (#116's rules), joining a sync under way. |
+| Rename, remove | Settings > Wallets > a wallet. Remove only when empty (Savings too): the money moves to another wallet first, then the guardian retires the wallet (refused while it sees coins: `wallet_not_empty`), announces it, and keeps its account taken. |
+| A new phone without a backup | Recovering an added wallet with its hardware wallet builds the new wallet at that wallet's own account (from key 3's path), not at `0'`. |
+| Rebuilding from the guardian's list | `wallet.add` keeps the device's kind; `guardian.status.wallets` lists it, so a rebuilt wallet asks for the right device (older entries fall back to the first wallet's kind). |
+| Demo | A second wallet ("Business" on a Trezor). |
+
+Still later: silent payments and the helper coin per wallet (clear refusals), per-wallet recovery sheets.
+
 ### Later
 
 Silent payments and the helper coin per wallet (at an account per wallet; the guardian's scanner costs CPU per scan

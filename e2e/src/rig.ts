@@ -84,6 +84,11 @@ export interface RigOptions {
    */
   chainSource?: 'electrum' | 'core';
   coreWallet?: string;
+  /**
+   * A second guardian on the same chain as `sameChainAs` ("Replace guardian"): the same node and Electrs (the fake ones
+   * too), and that rig's clock, so the phone and both guardians move together.
+   */
+  sameChainAs?: E2eRig;
 }
 
 const FORBIDDEN = /pass|secret|seed|mnemonic|priv|key|psbt|token|auth|cookie/i;
@@ -114,7 +119,7 @@ export class RegtestRig implements E2eRig {
     private readonly opts: RigOptions,
     startSec: number,
   ) {
-    this.clock = new ManualClock(startSec * 1000);
+    this.clock = opts.sameChainAs?.clock ?? new ManualClock(startSec * 1000);
     this.passphrase = opts.passphrase ?? 'correct horse battery staple';
   }
 
@@ -122,8 +127,9 @@ export class RegtestRig implements E2eRig {
   static async start(chain: RegtestChain, opts: RigOptions = {}): Promise<RegtestRig> {
     const { height } = await chain.prepare();
     await chain.waitForElectrs(height);
-    // All tests share one chain whose clock only moves forward: begin at the real time or just after the tip, whichever is later.
-    const startSec = await chain.syncTime(Math.floor(Date.now() / 1000));
+    // All tests share one chain whose clock only moves forward: begin at the real time or just after the tip, whichever is
+    // later. A second guardian on the chain keeps the first one's clock.
+    const startSec = opts.sameChainAs ? opts.sameChainAs.nowSec() : await chain.syncTime(Math.floor(Date.now() / 1000));
     const rig = new RegtestRig(chain, opts, startSec);
     try {
       rig.dir = await mkdtemp(join(tmpdir(), 'trikey-e2e-guardian-'));
@@ -284,7 +290,19 @@ export class FakeRig implements E2eRig {
   private constructor(private readonly inner: GuardianRig) {}
 
   static async start(opts: RigOptions = {}): Promise<FakeRig> {
-    return new FakeRig(await GuardianRig.start({ bitcoind: true, passphrase: opts.passphrase, relayCount: opts.relayCount }));
+    const other = opts.sameChainAs;
+    if (other && !(other instanceof FakeRig)) throw new Error('a fake rig shares a fake chain only');
+    const inner = await GuardianRig.start({ bitcoind: true, passphrase: opts.passphrase, relayCount: opts.relayCount, ...(other ? { clock: other.clock } : {}) });
+    if (other) {
+      // One (fake) Bitcoin network for both boxes: point this one at the other's Electrs and node.
+      const orphans = [inner.electrs, inner.bitcoind];
+      inner.electrs = other.inner.electrs;
+      inner.bitcoind = other.inner.bitcoind;
+      await inner.restart();
+      await inner.unlock();
+      for (const o of orphans) await o?.stop();
+    }
+    return new FakeRig(inner);
   }
 
   get clock(): ManualClock {
