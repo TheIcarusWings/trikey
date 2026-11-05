@@ -349,7 +349,13 @@ sheets printed from the app.
 | Rebuilding from the guardian's list | `wallet.add` keeps the device's kind; `guardian.status.wallets` lists it, so a rebuilt wallet asks for the right device (older entries fall back to the first wallet's kind). |
 | Demo | A second wallet ("Business" on a Trezor). |
 
-Still later: silent payments and the helper coin per wallet (clear refusals), per-wallet recovery sheets.
+**Per-wallet recovery sheets (built 2026-11-05):** Settings > Wallets (or Settings > Guardian), "Print a recovery
+sheet": each wallet's name, hardware wallet, wallet id, the guardian's npub and relays, and its "Recover on a new
+phone" code (`trikey://recover?...&wallet=<id>`, text and QR code), one page per wallet (kept with that wallet's device)
+or all on one sheet. Public data only (`apps/mobile/src/data/recovery-sheet.ts`), printed in memory like the Recovery
+Kit and the Savings map.
+
+Still later: silent payments and the helper coin per wallet (clear refusals).
 
 ### Later
 
