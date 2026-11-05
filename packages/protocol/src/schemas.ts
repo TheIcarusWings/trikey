@@ -20,6 +20,14 @@ export const CompressedPubkey = z.string().regex(/^0[23][0-9a-f]{64}$/, 'expecte
 export const WalletId = z.string().regex(/^[0-9a-f]{16}$/, 'expected 8 bytes of lowercase hex');
 /** The guardian's recovery ids look like `3-1a2b3c4d5e6f`; the hardware approval text allows `[0-9a-z-]{1,40}`. */
 export const RecoveryId = z.string().regex(/^[0-9a-z-]{1,40}$/, 'invalid recovery id');
+
+/**
+ * Own wallets (guardians with `own_wallets`, docs/design/multi-wallet.md): the request acts on the box owner's wallet
+ * `walletId`. Absent: the first wallet, exactly as before the member existed. Request params are strict, so a guardian
+ * before own wallets refuses a request carrying it (`-32602`) and never acts on the first wallet in its place. The
+ * phone sends it only to a guardian that lists `own_wallets`.
+ */
+const onWallet = { walletId: WalletId.optional() };
 /** A BIP 32 path with an `m/` prefix, e.g. `m/48'/0'/0'/2'` (`h` also accepted for hardened steps). */
 export const DerivationPath = z.string().regex(/^m(\/\d+['h]?)+$/, 'invalid derivation path');
 
@@ -288,6 +296,7 @@ export const PairResult = z.object({
 });
 
 export const SignParams = z.strictObject({
+  ...onWallet,
   psbt: PsbtBase64,
   /** Free-text label for the guardian's log. */
   memo: z.string().max(200).optional(),
@@ -304,7 +313,7 @@ export const SignResult = z.object({
  */
 export const PolicyWarning = z.enum(['no_alert_contacts']);
 
-export const PolicyGetParams = z.strictObject({});
+export const PolicyGetParams = z.strictObject({ ...onWallet });
 export const PolicyGetResult = z.object({
   policy: Policy,
   /** The next hardware approval, for any action, must use a sequence at least this (the engine's `nextHardwareSequence`). */
@@ -316,6 +325,7 @@ export const PolicyGetResult = z.object({
 });
 
 export const PolicyUpdateParams = z.strictObject({
+  ...onWallet,
   /** The complete new policy. */
   policy: Policy,
   /**
@@ -352,6 +362,7 @@ export const WalletMap = z
 export const MAX_ABANDON = 500;
 
 const RecoveryStartOwn = z.strictObject({
+  ...onWallet,
   /** The sweep transaction, signed on every input by ONE surviving key, the phone's or the hardware wallet's. */
   sweepPsbt: PsbtBase64,
   /** The descriptor of the new wallet the funds are swept to. It must keep the surviving key and drop the other user key. */
@@ -378,6 +389,7 @@ export const RecoveryStartResult = z.object({ recovery: Recovery });
  * the wallet's coins), and keeps the fee within the cap; it re-checks everything at completion.
  */
 export const RecoveryUpdateParams = z.strictObject({
+  ...onWallet,
   recoveryId: RecoveryId,
   sweepPsbt: PsbtBase64,
   /** Hosted wallets only: the ledger coins the new sweep leaves behind on purpose (replaces the list given before). */
@@ -386,6 +398,7 @@ export const RecoveryUpdateParams = z.strictObject({
 export const RecoveryUpdateResult = z.object({ recovery: Recovery });
 
 export const RecoveryCancelParams = z.strictObject({
+  ...onWallet,
   recoveryId: RecoveryId,
   /**
    * A hardware approval of `{ action: 'cancel-recovery', recoveryId }`. For when the hardware wallet cancels:
@@ -401,6 +414,7 @@ export const RecoveryCancelResult = z.object({
 });
 
 export const RecoveryStatusParams = z.strictObject({
+  ...onWallet,
   /** Omit to ask for the active recovery. */
   recoveryId: RecoveryId.optional(),
 });
@@ -412,6 +426,7 @@ export const RecoveryStatusResult = z.object({
 
 /** Re-enables phone-only payments after a contested cancel. */
 export const PhoneResumeParams = z.strictObject({
+  ...onWallet,
   /** A hardware approval of `{ action: 'resume-phone' }`. */
   approval: HardwareApproval,
 });
@@ -433,7 +448,7 @@ export const GuardianLockResult = z.object({ state: z.literal('locked') });
  * co-signs nothing for it, and pairing is open for a new wallet. Needs a hardware approval of
  * `{ action: 'retire-wallet' }` and no running recovery.
  */
-export const WalletRetireParams = z.strictObject({ approval: HardwareApproval });
+export const WalletRetireParams = z.strictObject({ ...onWallet, approval: HardwareApproval });
 export const WalletRetireResult = z.object({
   walletId: WalletId,
   retiredAt: UnixSeconds,
@@ -445,6 +460,7 @@ export const WalletRetireResult = z.object({
  * BIP 137 signature over `pairingMessage(walletId, cosignerAccountPubkey)`, as at pairing.
  */
 export const HardwareConfirmParams = z.strictObject({
+  ...onWallet,
   /**
    * `tweak`: hosted wallets only (the guardian never sees the hardware xpub): the hardware account key's BIP 32 tweak
    * for `/0/0`, so the guardian checks `pubkey == hardware account key + tweak·G` (docs/design/family-hosting.md).
@@ -471,7 +487,75 @@ export const NotifyChannel = z.object({
   failing: z.literal(true).optional(),
 });
 
-export const GuardianStatusParams = z.strictObject({});
+/* -------------------------------------------------------------------------- */
+/* Own wallets (docs/design/multi-wallet.md)                                  */
+/* -------------------------------------------------------------------------- */
+
+/** Most own wallets one guardian keeps for its owner (the first included), apart from the hosted ones. */
+export const MAX_OWN_WALLETS = 8;
+/**
+ * The BIP 48 account of an own wallet on the shared phone seed and key 3 seed: the first wallet at 0 (Savings at 1), the
+ * n-th added one at 2n (its Savings at 2n + 1). Even, 0 to 14.
+ */
+export const OwnWalletAccount = z
+  .int()
+  .min(0)
+  .max(2 * (MAX_OWN_WALLETS - 1))
+  .refine((n) => n % 2 === 0, 'an own wallet sits at an even account');
+/** The name a wallet goes by on the phone, the guardian and the hardware wallet's registration ("Daily", "Business"). */
+export const OwnWalletName = z.string().min(1).max(16);
+
+/** One own wallet as `guardian.status.wallets` lists it: everything public a phone needs to rebuild it. */
+export const OwnWalletSummary = z.object({
+  walletId: WalletId,
+  account: OwnWalletAccount,
+  name: OwnWalletName.optional(),
+  descriptor: Descriptor,
+  /** The hardware wallet's authorization key (absent while a rotation waits for `hardware.confirm`). */
+  hardwareAuth: HardwareAuthKey.optional(),
+  /** `retired`: `wallet.retire`; nothing is co-signed for it any more. */
+  state: z.enum(['active', 'retired']).optional(),
+});
+
+/**
+ * Step 1 of adding a wallet (paired phone only, unlocked guardian with `own_wallets`): key 3 of the new wallet, at
+ * `account` of the key 3 seed the first wallet's pairing made. Reserves nothing; refused when the account is taken
+ * (now or ever), odd, 0, or the box already holds `MAX_OWN_WALLETS`.
+ */
+export const WalletAddPrepareParams = z.strictObject({ account: OwnWalletAccount });
+export const WalletAddPrepareResult = z.object({
+  account: OwnWalletAccount,
+  /** Key 3 of the new wallet: `m/48'/<coin>'/<account>'/2'` of the key 3 seed. */
+  guardianKey: KeyOrigin,
+});
+
+/**
+ * Step 2: registers the new wallet, as `pair` registers the first (distinct keys, key 3 in its slot, the authorization key
+ * below the hardware xpub, the pairing proof `pairingMessage(walletId, cosignerAccountPubkey)`, the rules: a contact on
+ * mainnet, no limit off). Also: the phone's key is the paired phone seed's (the first wallet's fingerprint) at `account`,
+ * and no key of the hardware wallet is in another wallet of this guardian (the first's hardware wallet or Savings keys,
+ * another own wallet's hardware wallet). The guardian announces it (`wallet_added`, the owner's channels, Activity).
+ */
+export const WalletAddParams = z.strictObject({
+  account: OwnWalletAccount,
+  name: OwnWalletName,
+  descriptor: Descriptor,
+  hardwareAuth: HardwareAuthKey,
+  hardwareAuthProof: Bip137Signature,
+  rules: Policy,
+  /** The first wallet's name on the phone, so the guardian's alerts can tell the two apart ("Daily"). */
+  firstName: OwnWalletName.optional(),
+});
+export const WalletAddResult = z.object({
+  walletId: WalletId,
+  account: OwnWalletAccount,
+  name: OwnWalletName,
+  /** The registered descriptor, normalized by the guardian. */
+  descriptor: Descriptor,
+  guardianKey: KeyOrigin,
+});
+
+export const GuardianStatusParams = z.strictObject({ ...onWallet });
 export const GuardianStatusResult = z
   .object({
     state: z.enum(['locked', 'unlocked']),
@@ -604,6 +688,13 @@ export const GuardianStatusResult = z
         mempool: z.literal('unseen').optional(),
       })
       .optional(),
+    /**
+     * Guardians with `own_wallets`, asked without `walletId`, once the owner added a wallet (`wallet.add`): every own
+     * wallet of the box, the first one included (`account: 0`). A phone restored from a backup made before a wallet was
+     * added rebuilds that wallet from it, after checking that the descriptor holds its own key at `account`. Absent while
+     * the box has one wallet, and from older guardians.
+     */
+    wallets: z.array(OwnWalletSummary).max(MAX_OWN_WALLETS).optional(),
   })
   .refine((r) => sameMoment(r.time, r.atMs), { message: SAME_MOMENT, path: ['atMs'] });
 
@@ -688,6 +779,7 @@ export const ScriptUtxo = z.object({
 });
 
 export const WalletSyncParams = z.strictObject({
+  ...onWallet,
   /** Most history entries to return, newest first (default 100, at most 500). */
   historyLimit: z.int().min(1).max(MAX_SYNC_HISTORY).optional(),
   /**
@@ -728,6 +820,7 @@ export const WalletSyncResult = z.object({
 });
 
 export const TxGetParams = z.strictObject({
+  ...onWallet,
   txid: Hex32,
   /**
    * `false`: the transaction without its witness data (the legacy serialization). It has the same txid and
@@ -738,6 +831,7 @@ export const TxGetParams = z.strictObject({
 export const TxGetResult = z.object({ txHex: RawTxHex });
 
 export const TxBroadcastParams = z.strictObject({
+  ...onWallet,
   /**
    * A fully signed transaction. The guardian relays it only if it spends at least one of the paired
    * wallet's coins, is a sweep of the watched (replaced) wallet's coins into the paired wallet, a
@@ -1119,6 +1213,8 @@ export const methods = {
   'hosted.coins': { params: HostedCoinsParams, result: HostedCoinsResult },
   'hosted.map.get': { params: HostedMapGetParams, result: HostedMapGetResult },
   'hosted.access': { params: HostedAccessParams, result: HostedAccessResult },
+  'wallet.add.prepare': { params: WalletAddPrepareParams, result: WalletAddPrepareResult },
+  'wallet.add': { params: WalletAddParams, result: WalletAddResult },
 } as const;
 
 export type MethodName = keyof typeof methods;
@@ -1145,6 +1241,12 @@ const alertBase = {
    * optional here only so that alerts from older guardians still parse.
    */
   atMs: UnixMillis.optional(),
+  /**
+   * Guardians with `own_wallets`: the own wallet an alert is about, for every wallet after the first (absent for the
+   * first, as before). Alerts that name a wallet anyway (`wallet_adopted`, `wallet_retired`, `savings_moved`, ...) keep
+   * their own meaning of the member.
+   */
+  walletId: WalletId.optional(),
 };
 /** An alert variant: its members, and `atMs` agreeing with `at`. */
 const stamped = <T extends z.ZodRawShape>(shape: T) =>
@@ -1368,6 +1470,18 @@ export const Alert = z.discriminatedUnion('type', [
     wallet: z.enum(['main', 'savings']),
     replaces: Hex32.optional(),
   }),
+  stamped({
+    ...alertBase,
+    /**
+     * Guardians with `own_wallets`: the owner added a wallet with the paired phone and its new hardware wallet
+     * (`wallet.add`). Sent to the paired phone (also the owner's channels and the web UI's Activity): a phone that did not
+     * add it learns of it here. Phones before it drop it (an unknown `type`).
+     */
+    type: z.literal('wallet_added'),
+    walletId: WalletId,
+    account: OwnWalletAccount,
+    name: OwnWalletName,
+  }),
 ]);
 
 export type AlertType = z.infer<typeof Alert>['type'];
@@ -1416,6 +1530,8 @@ export const RequestSchema = z.discriminatedUnion('method', [
   requestOf('hosted.coins', HostedCoinsParams),
   requestOf('hosted.map.get', HostedMapGetParams),
   requestOf('hosted.access', HostedAccessParams),
+  requestOf('wallet.add.prepare', WalletAddPrepareParams),
+  requestOf('wallet.add', WalletAddParams),
 ]);
 export type Request = z.infer<typeof RequestSchema>;
 

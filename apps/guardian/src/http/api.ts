@@ -31,6 +31,7 @@ import type {
   RecoveryInProgress,
   RelaySettings,
   Rules,
+  WalletSummary,
   SavingsSummary,
   SetupPreflight,
 } from './types.js';
@@ -38,6 +39,8 @@ import type { Health, HealthState } from '../notify/notifier.js';
 import { sessionCookie } from './sessions.js';
 import { hostingRoutes } from '../hosting/http.js';
 import { walletOverview } from './wallet.js';
+import type { WalletRuntime } from '../runtime.js';
+import type { OwnWallet } from '../wallets/runtime.js';
 import { publicServersFor, publicView } from '../chain/source.js';
 import type { ChainSettings, ChainTestResult } from './types.js';
 
@@ -109,7 +112,7 @@ export async function guardianStatus(g: Guardian): Promise<GuardianStatus> {
     ...(locked && g.lockReason === 'contact' && g.lockedBy ? { lockedBy: npubEncode(g.lockedBy) } : {}),
     relays: g.relayStatus(),
     chain: await g.chain.syncStatus(),
-    wallets: reg ? [{ id: reg.walletId, name: 'Main', phonesPaired: 1 }] : [],
+    wallets: walletList(g),
     retiredWallets: g.engine.retiredWallets().map((r) => ({
       id: r.registration.walletId,
       retiredAt: iso(r.retiredAt),
@@ -119,7 +122,7 @@ export async function guardianStatus(g: Guardian): Promise<GuardianStatus> {
     ...(reg ? { hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
     dailySpend: { usedSats: Number(s.dailyLimit?.used ?? 0n), limitSats: Number(s.dailyLimit?.limit ?? 0n), ...(s.dailyLimit?.off ? { limitOff: true as const } : {}) },
     ...(reg && g.engine.savings() ? { savings: savingsSummary(g) } : {}),
-    recoveryInProgress: s.recoveryStatus !== 'none',
+    recoveryInProgress: s.recoveryStatus !== 'none' || !!g.wallets.recoveryRunning(),
     ...(reg ? { phoneSpending: s.phoneSpending } : {}),
     network: g.config.network,
     ...(g.setupComplete && g.identity ? { npub: g.identity.npub } : {}),
@@ -132,16 +135,52 @@ function phoneName(g: Guardian): string {
   return g.service.get().phones[0]?.name ?? 'Paired phone';
 }
 
-function recipientName(g: Guardian, pubkey: string): string {
-  return pubkey === g.engine.registration()?.appNostrPubkey ? `${phoneName(g)} (paired phone)` : `Contact ${shortNpub(pubkey)}`;
+function recipientName(g: Guardian, pubkey: string, w: WalletRuntime = g): string {
+  return pubkey === w.engine.registration()?.appNostrPubkey ? `${phoneName(g)} (paired phone)` : `Contact ${shortNpub(pubkey)}`;
 }
 
-function rules(g: Guardian): Rules {
-  const r = g.engine.status().rules;
-  const reg = g.engine.registration();
+/** A wallet's name on the web UI: the first wallet's ("Main" until the phone names it), an own wallet's own. */
+export function walletNameOf(g: Guardian, w: WalletRuntime): string {
+  return w === g ? (g.wallets.registry.firstName ?? 'Main') : (w as OwnWallet).name;
+}
+
+/**
+ * The wallet a request names (`?wallet=<walletId>`, or a path's `:id`): the first wallet without one or by its id, an own
+ * wallet by its current id. 404 otherwise.
+ */
+export function runtimeOf(g: Guardian, id: string | null | undefined): WalletRuntime {
+  if (!id || id === g.engine.registration()?.walletId) return g;
+  const w = g.wallets.byWalletId(id);
+  if (!w) throw new HttpError(404, 'not_found', 'This guardian guards no such wallet.');
+  return w;
+}
+
+/** The web UI's list of the box's wallets: the first, then every own wallet that co-signs. */
+export function walletList(g: Guardian): WalletSummary[] {
+  const out: WalletSummary[] = [];
+  for (const w of [g as WalletRuntime, ...g.wallets.active()]) {
+    const reg = w.engine.registration();
+    if (!reg) continue;
+    const s = w.engine.status();
+    out.push({
+      id: reg.walletId,
+      name: walletNameOf(g, w),
+      phonesPaired: 1,
+      ...(g.wallets.active().length ? { account: w.account, hardwareFingerprint: g.walletOf(reg).keys.hardware.fingerprint, recoveryInProgress: s.recoveryStatus !== 'none' } : {}),
+      ...(g.wallets.active().length
+        ? { dailySpend: { usedSats: Number(s.dailyLimit?.used ?? 0n), limitSats: Number(s.dailyLimit?.limit ?? 0n), ...(s.dailyLimit?.off ? { limitOff: true as const } : {}) } }
+        : {}),
+    });
+  }
+  return out;
+}
+
+function rules(g: Guardian, w: WalletRuntime = g): Rules {
+  const r = w.engine.status().rules;
+  const reg = w.engine.registration();
   if (!r || !reg) throw new HttpError(404, 'not_found', 'No wallet is paired with this guardian yet.');
   return {
-    walletName: 'Main',
+    walletName: walletNameOf(g, w),
     dailyLimitSats: Number(r.dailyLimitSats),
     ...(isLimitOff(r) ? { dailyLimitOff: true as const } : {}),
     recoveryDelayDays: r.recoveryDelayDays,
@@ -170,15 +209,15 @@ function sweepDestination(g: Guardian, rec: RecoveryRecord): string {
   }
 }
 
-export function recoveryInProgress(g: Guardian): RecoveryInProgress | null {
-  const rec = g.activeRecord();
+export function recoveryInProgress(g: Guardian, w: WalletRuntime = g): RecoveryInProgress | null {
+  const rec = w.activeRecord();
   if (!rec) return null;
   const now = g.clock.now();
-  const sentLog = g.engine
+  const sentLog = w.engine
     .activity({ limit: 5000 })
     .filter((e) => e.type === 'alert_sent' && e.alertId.startsWith(`${rec.id}/`))
     .reverse();
-  const wait = g.recovery.wait?.recoveryId === rec.id ? g.recovery.wait.detail : undefined;
+  const wait = w.recovery.wait?.recoveryId === rec.id ? w.recovery.wait.detail : undefined;
   return {
     id: rec.id,
     state: rec.status === 'ready' || now >= rec.readyAt ? 'ready' : 'pending',
@@ -193,24 +232,36 @@ export function recoveryInProgress(g: Guardian): RecoveryInProgress | null {
     feeSats: Number(rec.feeSats),
     feeCapSats: Number(rec.feeCapSats),
     alertsSent: rec.recipients.map((r) => ({
-      recipient: recipientName(g, r),
+      recipient: recipientName(g, r, w),
       sentAt: sentLog.filter((e) => e.type === 'alert_sent' && e.recipients.includes(r)).map((e) => iso(e.at)),
     })),
     ...(wait ? { waitingFor: wait } : g.locked && now >= rec.readyAt ? { waitingFor: 'The guardian is locked. Unlock it so it can co-sign the recovery.' } : {}),
   };
 }
 
-export function activity(g: Guardian, limit: number): ActivityEntry[] {
-  const engine = g.engine.activity({ limit }).map((e) => {
-    const entry = engineEntry(e);
-    // A repeated identical refusal is one entry with a count (engine.ts, `log`).
-    const repeated = e.count && e.count > 1 ? { ...entry, event: `${entry.event} (${e.count} times, the last ${iso(e.lastAt ?? e.at)})` } : entry;
-    return { at: e.lastAt ?? e.at, entry: repeated };
-  });
+/**
+ * The Activity page: every wallet's engine log and the box's own log, newest first. Once the box guards several wallets,
+ * each entry names its wallet (`wallet`); `only` (a wallet id) keeps that wallet's entries and the box's own.
+ */
+export function activity(g: Guardian, limit: number, only?: WalletRuntime): ActivityEntry[] {
+  const several = g.wallets.active().length > 0;
+  const runtimes = only ? [only] : [g as WalletRuntime, ...g.wallets.all];
+  const engine = runtimes.flatMap((w) =>
+    w.engine.activity({ limit }).map((e) => {
+      const entry = engineEntry(e);
+      // A repeated identical refusal is one entry with a count (engine.ts, `log`).
+      const repeated = e.count && e.count > 1 ? { ...entry, event: `${entry.event} (${e.count} times, the last ${iso(e.lastAt ?? e.at)})` } : entry;
+      // Ids stay unique across wallets: an own wallet's entries carry its slot.
+      const named = w.slotId ? { ...repeated, id: `${w.slotId}-${repeated.id}` } : repeated;
+      return { at: e.lastAt ?? e.at, entry: several ? { ...named, wallet: walletNameOf(g, w) } : named };
+    }),
+  );
+  const onlyName = only ? walletNameOf(g, only) : undefined;
   const service = g.service
     .get()
     .activity.slice(-limit)
-    .map((e) => ({ at: e.at, entry: serviceEntry(e) }));
+    .filter((e) => !only || !e.wallet || e.wallet === onlyName)
+    .map((e) => ({ at: e.at, entry: e.wallet ? { ...serviceEntry(e), wallet: e.wallet } : serviceEntry(e) }));
   return [...engine, ...service]
     .sort((a, b) => b.at - a.at)
     .slice(0, limit)
@@ -405,7 +456,27 @@ export function buildRoutes(g: Guardian): Route[] {
         requireUnlocked(g);
         const raw = Number(query.get('limit') ?? 100);
         const limit = Number.isFinite(raw) ? Math.max(1, Math.min(MAX_ACTIVITY, Math.floor(raw))) : 100;
-        return ok({ entries: activity(g, limit) });
+        const only = query.get('wallet');
+        return ok({ entries: activity(g, limit, only ? runtimeOf(g, only) : undefined) });
+      },
+    },
+
+    // Own wallets (docs/design/multi-wallet.md): the box's wallets, and each one's Wallet page. View and receive only.
+    {
+      method: 'GET',
+      path: '/wallets',
+      handler: () => {
+        if (!g.setupComplete) throw new HttpError(409, 'setup_required', 'Set up the guardian first.');
+        return ok({ wallets: walletList(g) });
+      },
+    },
+
+    {
+      method: 'GET',
+      path: '/wallets/:id',
+      handler: async ({ params }) => {
+        if (!g.setupComplete) throw new HttpError(409, 'setup_required', 'Set up the guardian first.');
+        return ok(await walletOverview(g, runtimeOf(g, params.id)));
       },
     },
 
@@ -422,18 +493,18 @@ export function buildRoutes(g: Guardian): Route[] {
     {
       method: 'GET',
       path: '/rules',
-      handler: () => {
+      handler: ({ query }) => {
         requireUnlocked(g);
-        return ok(rules(g));
+        return ok(rules(g, runtimeOf(g, query.get('wallet'))));
       },
     },
 
     {
       method: 'GET',
       path: '/recovery',
-      handler: () => {
+      handler: ({ query }) => {
         requireUnlocked(g);
-        return ok({ recovery: recoveryInProgress(g) });
+        return ok({ recovery: recoveryInProgress(g, runtimeOf(g, query.get('wallet'))) });
       },
     },
 

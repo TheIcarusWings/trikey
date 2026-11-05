@@ -4,6 +4,8 @@ import { useGuardian } from '@/components/guardian-provider';
 import { PageHeader } from '@/components/page-header';
 import { ErrorState, PageSkeleton } from '@/components/states';
 import { useApi, usePageTitle } from '@/hooks/use-api';
+import { WalletPicker, useSelectedWallet } from '@/components/wallet-picker';
+import { totalLimitText, walletChoices } from '@/lib/wallets';
 import { LIMIT_OFF_TEXT, contactLockDetail, contactLockText, dailyLimitText, formatSats } from '@/lib/format';
 
 function RuleRow({ title, value, children }: { title: string; value: ReactNode; children: ReactNode }) {
@@ -21,15 +23,20 @@ function RuleRow({ title, value, children }: { title: string; value: ReactNode; 
 export function RulesPage() {
   usePageTitle('Rules');
   const { status } = useGuardian();
-  const { data: rules, error, loading, reload } = useApi(() => api.getRules());
-
-  const used = status?.dailySpend.usedSats;
+  const { walletId } = useSelectedWallet();
+  const { data: rules, error, loading, reload } = useApi(() => api.getRules(walletId), [walletId]);
+  // Own wallets: each has its own limit; the used amount is the shown wallet's.
+  const several = walletChoices(status).length > 0;
+  const shown = several ? walletChoices(status).find((w) => w.name === rules?.walletName) : undefined;
+  const used = several ? shown?.dailySpend?.usedSats : status?.dailySpend.usedSats;
+  const total = totalLimitText(status);
   const contacts = rules?.contacts.filter((c) => c.kind === 'contact') ?? [];
   const phoneToo = rules?.contacts.some((c) => c.kind === 'paired-phone');
 
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <PageHeader title="Rules" />
+      <WalletPicker />
       {loading ? (
         <PageSkeleton rows={2} />
       ) : !rules ? (
@@ -76,6 +83,7 @@ export function RulesPage() {
           </ul>
           <p className="m-0 text-sm leading-5 text-muted-foreground">
             Change these in the Trikey app. Loosening a rule needs your hardware wallet.
+            {total ? ` Each wallet has its own rules. ${total}` : ''}
           </p>
         </>
       )}

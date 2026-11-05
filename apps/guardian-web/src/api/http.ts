@@ -112,15 +112,19 @@ export function createHttpApi(base = ''): GuardianApi {
     lock: () => request<GuardianStatus>('POST', '/lock'),
 
     async listActivity(query) {
-      const qs = query?.limit ? `?limit=${encodeURIComponent(String(query.limit))}` : '';
+      const params = new URLSearchParams();
+      if (query?.limit) params.set('limit', String(query.limit));
+      if (query?.wallet) params.set('wallet', query.wallet);
+      const qs = params.size ? `?${params.toString()}` : '';
       const res = await request<{ entries: ActivityEntry[] }>('GET', `/activity${qs}`);
       return res.entries;
     },
-    getRules: () => request<Rules>('GET', '/rules'),
-    getWallet: () => request<WalletOverview>('GET', '/wallet'),
+    // Own wallets: the first wallet without an id, as before; another wallet by its id.
+    getRules: (walletId) => request<Rules>('GET', walletId ? `/rules?wallet=${encodeURIComponent(walletId)}` : '/rules'),
+    getWallet: (walletId) => request<WalletOverview>('GET', walletId ? `/wallets/${encodeURIComponent(walletId)}` : '/wallet'),
 
-    async getRecovery() {
-      const res = await request<{ recovery: RecoveryInProgress | null }>('GET', '/recovery');
+    async getRecovery(walletId) {
+      const res = await request<{ recovery: RecoveryInProgress | null }>('GET', walletId ? `/recovery?wallet=${encodeURIComponent(walletId)}` : '/recovery');
       return res.recovery;
     },
 

@@ -515,7 +515,8 @@ export function withHosting(g: Guardian, host: Handlers): Handlers {
           return guest['recovery.cancel']!(params, ctx, { ...live, role: 'peer' });
         }
         // A host recovery id from someone the host's rules do not let cancel (a guest's contact only): not the host's business.
-        if (!g.authorizeHost(sender, method)) throw new RpcError(ErrorCode.Unauthorized);
+        // (The owner's own wallets' contacts cancel their own wallet's recoveries: wallets/handlers.ts decides.)
+        if (!g.authorizeHost(sender, method) && !g.wallets.authorize(sender, method)) throw new RpcError(ErrorCode.Unauthorized);
       }
       if (!hostHandler) throw new RpcError(ErrorCode.MethodNotFound);
       return hostHandler(params, ctx);

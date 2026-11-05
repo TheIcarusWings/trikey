@@ -100,6 +100,16 @@ describe('request schemas', () => {
     'hosted.coins': { offset: 0, limit: 50 },
     'hosted.map.get': {},
     'hosted.access': { approval: accessApproval },
+    'wallet.add.prepare': { account: 2 },
+    'wallet.add': {
+      account: 2,
+      name: 'Business',
+      descriptor: 'wsh(sortedmulti(2,A,B,C))',
+      hardwareAuth,
+      hardwareAuthProof: pairParams.hardwareAuthProof,
+      rules: policy,
+      firstName: 'Daily',
+    },
   };
 
   it('has a sample for every method', () => {

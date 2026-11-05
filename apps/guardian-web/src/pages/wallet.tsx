@@ -9,6 +9,7 @@ import { ErrorState, PageSkeleton } from '@/components/states';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useApi, usePageTitle } from '@/hooks/use-api';
+import { WalletPicker, useSelectedWallet } from '@/components/wallet-picker';
 import { LIMIT_OFF_TEXT, SAVINGS_NOTE, formatShortWhen, formatWhen, savingsBalanceText, shortenMiddle } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import {
@@ -226,13 +227,16 @@ function Payments({ wallet }: { wallet: WalletOverview }) {
 export function WalletPage() {
   usePageTitle('Wallet');
   const { status } = useGuardian();
-  const wallet = useApi(() => api.getWallet(), [status?.state], POLL_MS);
+  // Own wallets: the one the picker chose (the first without a choice).
+  const { walletId } = useSelectedWallet();
+  const wallet = useApi(() => api.getWallet(walletId), [status?.state, walletId], POLL_MS);
   const locked = (wallet.data?.state ?? status?.state) === 'locked';
 
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col gap-3">
         <PageHeader title="Wallet" description={VIEW_ONLY_TEXT} />
+        <WalletPicker />
         {locked ? (
           <div role="note" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[10px] bg-warn-soft px-4 py-3 text-sm leading-5">
             <Lock className="size-4 shrink-0 text-warn" strokeWidth={2} aria-hidden="true" />

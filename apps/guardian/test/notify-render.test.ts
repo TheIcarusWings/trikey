@@ -13,7 +13,7 @@ import { DEFAULT_GUARDIAN_NAME, TITLES, checkGuardianName, defang, finish, isLin
 const T = Date.UTC(2026, 10, 1, 12, 0, 0);
 const CONTACT = 'c1'.repeat(32);
 const fakeGuardian = (contactLock: boolean) =>
-  ({ engine: { status: () => ({ rules: { contactLock } }), activity: () => [] } }) as unknown as Guardian;
+  ({ engine: { status: () => ({ rules: { contactLock } }), activity: () => [] }, label: () => undefined, alertWalletId: () => undefined }) as unknown as Guardian;
 
 const rec = {
   id: '1-0123456789ab',

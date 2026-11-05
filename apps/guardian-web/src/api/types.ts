@@ -48,6 +48,17 @@ export interface WalletSummary {
   id: string;
   name: string;
   phonesPaired: number;
+  /**
+   * Own wallets (docs/design/multi-wallet.md): the wallet's BIP 48 account on the shared phone and key 3 seeds (0 for the
+   * first wallet, 2, 4, ... for the ones added). Absent from guardians before own wallets.
+   */
+  account?: number;
+  /** The master fingerprint of its hardware wallet (each wallet has its own). */
+  hardwareFingerprint?: string;
+  /** True while a recovery of this wallet runs. */
+  recoveryInProgress?: boolean;
+  /** Phone payments counted over the rolling 24 hours, and the wallet's own daily limit. */
+  dailySpend?: DailySpend;
 }
 
 /** A wallet this guardian guarded before. It co-signs nothing for it any more. */
@@ -467,11 +478,15 @@ export interface ActivityEntry {
   signedBy: string | null;
   sats: number | null;
   result: ActivityResult;
+  /** Own wallets: the wallet an entry is about, by name, once the guardian guards more than one. */
+  wallet?: string;
 }
 
 export interface ActivityQuery {
   /** Newest first. The server caps this (documented in API.md). Default 100. */
   limit?: number;
+  /** Own wallets: only this wallet's entries (and the box's own), by wallet id. */
+  wallet?: string;
 }
 
 // --- rules --------------------------------------------------------------

@@ -30,6 +30,7 @@ import { errorText } from './log.js';
 import type { WalletChangeReason, WalletHistoryEntry, WalletSync } from './chain/chain.js';
 import type { AddressSource } from './singlekey.js';
 import { SAVINGS_SCAN_HISTORY } from './savings.js';
+import { labelled, type WalletRuntime } from './runtime.js';
 
 export const LIVE_FILE = 'live-wallet.json';
 /** Transactions remembered per wallet (newest kept). Far more than a pass reads. */
@@ -150,6 +151,8 @@ interface Target {
   /** Announced as (main, savings); others are only kept live. */
   kind?: Kind;
   minIndex?: Partial<Record<0 | 1, number>>;
+  /** The wallet it belongs to: the first (the `Guardian`) unless an own wallet's (docs/design/multi-wallet.md). */
+  runtime?: WalletRuntime;
 }
 
 export interface LiveWalletOptions {
@@ -232,8 +235,9 @@ export class LiveWallet {
     if (this.opts.targets) return this.opts.targets().map((t) => t.walletId).join(',');
     const e = this.g.engine;
     const reg = e.registration();
-    if (!reg) return '';
-    return [reg.walletId, e.savings()?.walletId ?? '', e.watchedWallet()?.walletId ?? '', e.singleKey()?.helper?.xpub ?? ''].join(',');
+    const own = this.g.wallets.active().map((w) => w.engine.registration()?.walletId ?? '');
+    if (!reg) return own.join(',');
+    return [reg.walletId, e.savings()?.walletId ?? '', e.watchedWallet()?.walletId ?? '', e.singleKey()?.helper?.xpub ?? '', ...own].join(',');
   }
 
   /** Something may have changed: a pass soon. */
@@ -273,14 +277,21 @@ export class LiveWallet {
     if (this.opts.targets) return this.opts.targets();
     const g = this.g;
     const reg = g.engine.registration();
-    if (!reg) return [];
-    const out: Target[] = [{ walletId: reg.walletId, wallet: g.walletOf(reg), kind: 'main', minIndex: g.scanFloor(reg.walletId) }];
-    const sv = g.engine.savings();
-    if (sv) out.push({ walletId: sv.walletId, wallet: g.savingsWalletOf(sv), kind: 'savings', minIndex: g.savingsWatch.scanFloor(sv) });
-    const watched = g.engine.watchedWallet();
-    if (watched) out.push({ walletId: watched.walletId, wallet: g.walletOf(watched) });
-    const helper = g.helperWallet();
-    if (helper) out.push({ walletId: `helper:${helper.fingerprint()}`, wallet: helper });
+    const out: Target[] = [];
+    if (reg) {
+      out.push({ walletId: reg.walletId, wallet: g.walletOf(reg), kind: 'main', minIndex: g.scanFloor(reg.walletId), runtime: g });
+      const sv = g.engine.savings();
+      if (sv) out.push({ walletId: sv.walletId, wallet: g.savingsWalletOf(sv), kind: 'savings', minIndex: g.savingsWatch.scanFloor(sv) });
+      const watched = g.engine.watchedWallet();
+      if (watched) out.push({ walletId: watched.walletId, wallet: g.walletOf(watched) });
+      const helper = g.helperWallet();
+      if (helper) out.push({ walletId: `helper:${helper.fingerprint()}`, wallet: helper });
+    }
+    // Every own wallet the owner added: kept live and announced like the first (with its `walletId`).
+    for (const w of g.wallets.active()) {
+      const r = w.engine.registration()!;
+      out.push({ walletId: r.walletId, wallet: g.walletOf(r), kind: 'main', minIndex: w.scanFloor(r.walletId), runtime: w });
+    }
     return out;
   }
 
@@ -315,8 +326,9 @@ export class LiveWallet {
       }
       this.lastRead.set(t.walletId, { at: g.clock.now(), sync: r });
       if (t.kind === 'main') {
-        await g.noteScan(t.walletId, r);
-        g.knownCoins.set(t.walletId, r.utxos, r.history);
+        const w = t.runtime ?? g;
+        await w.noteScan(t.walletId, r);
+        w.knownCoins.set(t.walletId, r.utxos, r.history);
       } else if (g.engine.savings()?.walletId === t.walletId) {
         // The Savings tripwire hears of a spend now, not at its next timed scan.
         await g.savingsWatch.note(t.walletId, r);
@@ -374,8 +386,10 @@ export class LiveWallet {
           wallet: t.kind,
           ...(replaced ? { replaces: replaced } : {}),
           ...g.stampNow(),
+          // An own wallet's: the phone files it under that wallet.
+          ...(t.runtime?.alertWalletId() ? { walletId: t.runtime.alertWalletId() } : {}),
         };
-        alert.message = walletTxText(alert, prev === undefined);
+        alert.message = t.runtime ? labelled(t.runtime, walletTxText(alert, prev === undefined)) : walletTxText(alert, prev === undefined);
         out.push({ alert, firstSeen: prev === undefined });
       }
       const ids = Object.keys(rec.seen);
@@ -407,12 +421,13 @@ export class LiveWallet {
     const savingsId = g.engine.savings()?.walletId;
     const done = new Set<string>();
     for (const q of waiting) {
+      const own = q.walletId !== phoneWallet && q.walletId !== savingsId ? g.wallets.byWalletId(q.walletId) : undefined;
       // Too old, or about a wallet that is not this phone's any more (a rotation): dropped.
-      if (q.at <= now - ALERT_TTL_MS || (q.walletId !== phoneWallet && q.walletId !== savingsId)) {
+      if (q.at <= now - ALERT_TTL_MS || (q.walletId !== phoneWallet && q.walletId !== savingsId && !own)) {
         done.add(q.id);
         continue;
       }
-      if (await g.notifyPhone(q.alert)) done.add(q.id);
+      if (await (own ?? g).notifyPhone(q.alert)) done.add(q.id);
     }
     if (done.size) await this.store.change((draft) => ({ save: true, value: (draft.outbox = draft.outbox.filter((q) => !done.has(q.id))) }));
   }

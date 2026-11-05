@@ -19,6 +19,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { hex } from '@scure/base';
 import { MultisigWallet, getNetwork } from '@trikey/core';
 import type { Guardian } from './guardian.js';
+import type { WalletRuntime } from './runtime.js';
 import type { WalletHistoryEntry, WalletSync } from './chain/chain.js';
 import { errorText } from './log.js';
 import type { SavingsWatch } from './policy/index.js';
@@ -94,6 +95,7 @@ export class SavingsMonitor {
 
   constructor(
     private readonly g: Guardian,
+    private readonly w: WalletRuntime,
     private readonly everyMs = SAVINGS_SCAN_INTERVAL_MS,
   ) {}
 
@@ -111,7 +113,8 @@ export class SavingsMonitor {
 
   private async once(opts: { force?: boolean }): Promise<void> {
     const g = this.g;
-    const sv = g.engine.savings();
+    const w = this.w;
+    const sv = w.engine.savings();
     if (!sv) {
       this.last = undefined;
       return;
@@ -138,17 +141,18 @@ export class SavingsMonitor {
   /** Hands a scan of Savings (the tick's, or a `wallet.sync` the phone asked for) to the engine; logs what was news. */
   async note(walletId: string, r: WalletSync): Promise<void> {
     const g = this.g;
-    if (g.engine.savings()?.walletId !== walletId) return;
+    const w = this.w;
+    if (w.engine.savings()?.walletId !== walletId) return;
     this.last = { walletId, confirmedSats: r.confirmedSats, unconfirmedSats: r.unconfirmedSats, at: g.clock.now() };
     try {
-      const fresh = await g.engine.noteSavingsScan(walletId, { nextReceiveIndex: r.nextReceiveIndex, nextChangeIndex: r.nextChangeIndex, spends: spendsOf(r) });
+      const fresh = await w.engine.noteSavingsScan(walletId, { nextReceiveIndex: r.nextReceiveIndex, nextChangeIndex: r.nextChangeIndex, spends: spendsOf(r) });
       for (const x of fresh) {
         const fields = { walletId, txid: x.txid, amountSats: Number(x.amountSats), ...(x.replaces ? { replaces: x.replaces } : {}) };
         // A fee bump of a spend already announced is the same payment: logged, not announced again.
         if (x.announced) g.log.warn('savings.moved', fields);
         else g.log.info('savings.replaced', fields);
       }
-      if (fresh.some((x) => x.announced)) void g.alerts.run();
+      if (fresh.some((x) => x.announced)) void w.alerts.run();
     } catch (e) {
       g.log.error('savings.note_failed', { error: errorText(e) });
     }

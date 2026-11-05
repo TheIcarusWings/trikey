@@ -14,6 +14,7 @@
  */
 import type { Alert } from '@trikey/protocol';
 import type { Guardian } from './guardian.js';
+import { labelled, type WalletRuntime } from './runtime.js';
 import { errorText } from './log.js';
 import type { DueAlert, LimitNotice, RecoveryRecord } from './policy/index.js';
 import { stampOf, toSeconds } from './nostr/wire.js';
@@ -33,8 +34,8 @@ export function formatWhen(ms: number): string {
 const SURVIVOR: Record<RecoveryRecord['survivingRole'], string> = { hardware: 'hardware wallet', app: 'phone' };
 const CANCELLER = { app: "the owner's phone", contact: 'an alert contact', hardware: 'the hardware wallet', superseded: 'the guardian, because another recovery already swept the wallet' } as const;
 
-function contestedOf(g: Guardian, rec: RecoveryRecord): boolean {
-  const entry = g.engine.activity({ limit: 5000 }).find((e) => e.type === 'recovery_cancelled' && e.recoveryId === rec.id);
+function contestedOf(w: WalletRuntime, rec: RecoveryRecord): boolean {
+  const entry = w.engine.activity({ limit: 5000 }).find((e) => e.type === 'recovery_cancelled' && e.recoveryId === rec.id);
   if (entry && entry.type === 'recovery_cancelled') return entry.contested;
   // Same rule as the engine: only the key that started the recovery cancels it uncontested.
   const by = rec.cancelledBy?.kind;
@@ -43,9 +44,11 @@ function contestedOf(g: Guardian, rec: RecoveryRecord): boolean {
 }
 
 /** The wire alert for the phone. */
-export function alertToWire(g: Guardian, a: DueAlert, rec: RecoveryRecord | undefined): Alert {
-  const stamp = stampOf(a.dueAt);
-  const message = alertText(g, a, rec, 'short');
+export function alertToWire(w: WalletRuntime, a: DueAlert, rec: RecoveryRecord | undefined): Alert {
+  // Wallets after the first: the wallet the alert is about, so the phone files it there.
+  const walletId = w.alertWalletId();
+  const stamp = { ...stampOf(a.dueAt), ...(walletId ? { walletId } : {}) };
+  const message = alertText(w, a, rec, 'short');
   switch (a.kind) {
     case 'recovery_started':
     case 'recovery_ready':
@@ -67,7 +70,7 @@ export function alertToWire(g: Guardian, a: DueAlert, rec: RecoveryRecord | unde
         ...stamp,
         recoveryId: a.recoveryId,
         cancelledBy: rec?.cancelledBy?.kind ?? 'app',
-        ...(rec ? { contested: contestedOf(g, rec) } : {}),
+        ...(rec ? { contested: contestedOf(w, rec) } : {}),
         message,
       };
     case 'recovery_completed':
@@ -86,13 +89,18 @@ export type ContactReach = 'dm' | 'nostr' | 'none';
  * Plain-language text: `long` for contacts' DMs, `short` (at most 500 chars) for the phone's `message`. `reach`: where
  * a contact reads the long text (`ContactReach`); only the "how to stop it" part differs.
  */
-export function alertText(g: Guardian, a: DueAlert, rec: RecoveryRecord | undefined, form: 'long' | 'short' = 'long', reach: ContactReach = 'dm'): string {
+export function alertText(w: WalletRuntime, a: DueAlert, rec: RecoveryRecord | undefined, form: 'long' | 'short' = 'long', reach: ContactReach = 'dm'): string {
+  // Once the box has several wallets, every text names the wallet ("Business: ..."); with one it reads as before.
+  return labelled(w, plainAlertText(w, a, rec, form, reach));
+}
+
+function plainAlertText(w: WalletRuntime, a: DueAlert, rec: RecoveryRecord | undefined, form: 'long' | 'short', reach: ContactReach): string {
   const id = a.recoveryId;
   const amount = formatBtc(a.amountSats);
   const ends = formatWhen(a.readyAt);
   // While the rules let the contacts lock the guardian (rule 8), a running recovery's DMs say so too: locking does
   // not stop the recovery, but it stops the guardian co-signing anything, the recovery's sweep included.
-  const canLock = !!g.engine.status().rules?.contactLock;
+  const canLock = !!w.engine.status().rules?.contactLock;
   const lockHint = canLock ? `\n\nCANCEL stops this recovery. ${reach === 'nostr' ? LOCK_HINT_NOSTR : LOCK_HINT}` : '';
   const howToCancel =
     reach === 'dm'
@@ -143,7 +151,7 @@ export function alertText(g: Guardian, a: DueAlert, rec: RecoveryRecord | undefi
     case 'recovery_cancelled': {
       const by = rec?.cancelledBy ? CANCELLER[rec.cancelledBy.kind] : 'someone';
       const when = rec?.cancelledAt !== undefined ? ` on ${formatWhen(rec.cancelledAt)}` : '';
-      const paused = rec && contestedOf(g, rec) ? ' Phone-only payments stay paused until the owner confirms with their hardware wallet.' : '';
+      const paused = rec && contestedOf(w, rec) ? ' Phone-only payments stay paused until the owner confirms with their hardware wallet.' : '';
       return `Trikey: the recovery ${id} was cancelled by ${by}${when}. No funds moved.${paused}`;
     }
     case 'recovery_completed': {
@@ -302,7 +310,23 @@ export class Alerter {
   private running?: Promise<void>;
   private again = false;
 
-  constructor(private readonly g: Guardian) {}
+  constructor(
+    private readonly g: Guardian,
+    private readonly w: WalletRuntime,
+  ) {}
+
+  /** A notice as the phone gets it: with this wallet's id and name once the box has several. */
+  private noticeWire(n: LimitNotice): Alert | undefined {
+    const wire = noticeToWire(n);
+    if (!wire) return undefined;
+    const walletId = this.w.alertWalletId();
+    return { ...wire, ...(walletId && !('walletId' in wire) ? { walletId } : {}), ...(wire.message ? { message: labelled(this.w, wire.message).slice(0, 500) } : {}) } as Alert;
+  }
+
+  /** A notice as the contacts get it: named once the box has several wallets. */
+  private noticeDm(n: LimitNotice, canLock: boolean, reach: ContactReach = 'dm'): string {
+    return labelled(this.w, noticeText(n, canLock, reach));
+  }
 
   /** Sends every due alert. Overlapping calls coalesce into one more pass. */
   run(): Promise<void> {
@@ -331,16 +355,17 @@ export class Alerter {
    */
   private async sendNotices(): Promise<void> {
     const g = this.g;
-    const canLock = !!g.engine.status().rules?.contactLock;
-    for (const n of g.engine.dueNotices()) {
+    const w = this.w;
+    const canLock = !!w.engine.status().rules?.contactLock;
+    for (const n of w.engine.dueNotices()) {
       await this.queueNotice(n, canLock);
       if (!g.rpc || !g.dm) continue;
-      const phone = g.engine.walletById(n.walletId)?.appNostrPubkey;
+      const phone = w.engine.walletById(n.walletId)?.appNostrPubkey;
       const delivered: string[] = [];
       for (const to of n.recipients) {
         try {
-          const wire = to === phone ? noticeToWire(n) : undefined;
-          const ok = to === phone ? !!wire && (await g.notifyPeer(to, wire)) : (await g.dm!.send(to, noticeText(n, canLock))).some((o) => o.ok);
+          const wire = to === phone ? this.noticeWire(n) : undefined;
+          const ok = to === phone ? !!wire && (await g.notifyPeer(to, wire)) : (await g.dm!.send(to, this.noticeDm(n, canLock))).some((o) => o.ok);
           if (ok) delivered.push(to);
           else g.log.warn('alert.not_delivered', { alertId: n.id, to: to === phone ? 'phone' : 'contact' });
         } catch (e) {
@@ -348,7 +373,7 @@ export class Alerter {
         }
       }
       if (delivered.length) {
-        const res = await g.engine.markNoticeSent(n.id, delivered);
+        const res = await w.engine.markNoticeSent(n.id, delivered);
         if (res.ok) g.log.info('alert.sent', { alertId: n.id, kind: n.kind, recipients: delivered.length });
       }
     }
@@ -364,6 +389,7 @@ export class Alerter {
    */
   private async queueAlert(a: DueAlert, rec: RecoveryRecord | undefined): Promise<void> {
     const g = this.g;
+    const w = this.w;
     if (!g.notifier.configured) return;
     try {
       const queued = await g.notifier.enqueue({
@@ -371,8 +397,8 @@ export class Alerter {
         type: a.kind,
         at: a.dueAt,
         ...(rec ? { walletId: rec.walletId } : {}),
-        owner: alertText(g, a, rec, 'short'),
-        contacts: { text: (reach) => alertText(g, a, rec, 'long', reach), ...(rec ? { recipients: rec.recipients } : {}) },
+        owner: alertText(w, a, rec, 'short'),
+        contacts: { text: (reach) => alertText(w, a, rec, 'long', reach), ...(rec ? { recipients: rec.recipients } : {}) },
       });
       if (queued) g.notifier.kick();
     } catch (e) {
@@ -383,10 +409,11 @@ export class Alerter {
   /** As `queueAlert`, for an engine notice. `contact_lock_on` / `_off` are about a nostr control: nostr DMs only. */
   private async queueNotice(n: LimitNotice, canLock: boolean): Promise<void> {
     const g = this.g;
+    const w = this.w;
     if (!g.notifier.configured || n.kind === 'contact_lock_on' || n.kind === 'contact_lock_off') return;
     // Who the notice is for, as queued (the due list holds only those not reached yet).
-    const all = g.store.state?.notices?.find((x) => x.id === n.id)?.recipients ?? n.recipients;
-    const phone = g.engine.walletById(n.walletId)?.appNostrPubkey;
+    const all = w.store.state?.notices?.find((x) => x.id === n.id)?.recipients ?? n.recipients;
+    const phone = w.engine.walletById(n.walletId)?.appNostrPubkey;
     const contacts = all.filter((r) => r !== phone && r !== n.contact);
     try {
       const queued = await g.notifier.enqueue({
@@ -394,8 +421,8 @@ export class Alerter {
         type: n.kind,
         at: n.at,
         walletId: n.kind === 'savings_moved' || n.kind === 'savings_unwatched' ? (n.savingsWalletId ?? n.walletId) : n.walletId,
-        ...(all.includes(phone ?? '') ? { owner: noticeToWire(n)?.message } : {}),
-        ...(contacts.length || n.kind !== 'limit_on' ? { contacts: { text: (reach) => noticeText(n, canLock, reach), recipients: contacts } } : {}),
+        ...(all.includes(phone ?? '') ? { owner: this.noticeWire(n)?.message } : {}),
+        ...(contacts.length || n.kind !== 'limit_on' ? { contacts: { text: (reach) => this.noticeDm(n, canLock, reach), recipients: contacts } } : {}),
       });
       if (queued) g.notifier.kick();
     } catch (e) {
@@ -405,17 +432,18 @@ export class Alerter {
 
   private async once(): Promise<void> {
     const g = this.g;
-    const due = g.engine.dueAlerts();
-    for (const a of due) await this.queueAlert(a, g.records.find((r) => r.id === a.recoveryId));
+    const w = this.w;
+    const due = w.engine.dueAlerts();
+    for (const a of due) await this.queueAlert(a, w.records.find((r) => r.id === a.recoveryId));
     await this.sendNotices();
     if (!g.rpc || !g.dm) return;
     if (!due.length) return;
-    const current = g.engine.registration()?.appNostrPubkey;
+    const current = w.engine.registration()?.appNostrPubkey;
     for (const a of due) {
-      const rec = g.records.find((r) => r.id === a.recoveryId);
+      const rec = w.records.find((r) => r.id === a.recoveryId);
       // Phones get protocol alerts, contacts NIP-17 DMs. After a rotation the swept wallet's phone is no
       // longer the paired one, but it is still a phone.
-      const phones = new Set([current, rec ? g.engine.walletById(rec.walletId)?.appNostrPubkey : undefined].filter((x): x is string => !!x));
+      const phones = new Set([current, rec ? w.engine.walletById(rec.walletId)?.appNostrPubkey : undefined].filter((x): x is string => !!x));
       // A phone recovering the wallet with the hardware wallet (recovery.access), and the phone that started
       // this recovery, get the protocol alert too, best effort.
       const extra = new Set([...g.recoveryPeers(), ...(rec?.initiator ? [rec.initiator] : [])]);
@@ -423,7 +451,7 @@ export class Alerter {
         const key = `${a.id}:${peer}`;
         if (phones.has(peer) || a.recipients.includes(peer) || rec?.recipients.includes(peer) || this.sentToPeers.has(key)) continue;
         try {
-          if ((await g.rpc.notify(peer, alertToWire(g, a, rec))).some((o) => o.ok)) this.sentToPeers.add(key);
+          if ((await g.rpc.notify(peer, alertToWire(w, a, rec))).some((o) => o.ok)) this.sentToPeers.add(key);
         } catch (e) {
           g.log.warn('alert.peer_failed', { alertId: a.id, error: errorText(e) });
         }
@@ -431,7 +459,7 @@ export class Alerter {
       const delivered: string[] = [];
       for (const to of a.recipients) {
         try {
-          const ok = phones.has(to) ? await g.notifyPeer(to, alertToWire(g, a, rec)) : (await g.dm.send(to, alertText(g, a, rec))).some((o) => o.ok);
+          const ok = phones.has(to) ? await g.notifyPeer(to, alertToWire(w, a, rec)) : (await g.dm.send(to, alertText(w, a, rec))).some((o) => o.ok);
           if (ok) delivered.push(to);
           else g.log.warn('alert.not_delivered', { alertId: a.id, to: phones.has(to) ? 'phone' : 'contact' });
         } catch (e) {
@@ -439,7 +467,7 @@ export class Alerter {
         }
       }
       if (delivered.length) {
-        const res = await g.engine.markAlertSent(a.id, delivered);
+        const res = await w.engine.markAlertSent(a.id, delivered);
         if (res.ok) g.log.info('alert.sent', { alertId: a.id, kind: a.kind, recipients: delivered.length });
       }
     }

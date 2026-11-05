@@ -32,6 +32,7 @@ import { base64, hex } from '@scure/base';
 import { MultisigWallet, analyzePsbt, finalizePsbt, getNetwork, parsePsbt, sighashAll } from '@trikey/core';
 import { parseRawTx } from './chain/chain.js';
 import type { Guardian } from './guardian.js';
+import type { WalletRuntime } from './runtime.js';
 import { errorText } from './log.js';
 import { HOUR, MAX_SELF_INDEX, type RecoveryRecord, type Registration } from './policy/index.js';
 import { refusalText } from './nostr/wire.js';
@@ -77,16 +78,20 @@ export class RecoveryRunner {
   wait?: RecoveryWait;
   private lastSkewWarning?: string;
 
-  constructor(private readonly g: Guardian) {}
+  constructor(
+    private readonly g: Guardian,
+    private readonly w: WalletRuntime,
+  ) {}
 
   async run(): Promise<void> {
     const g = this.g;
-    const rec = g.activeRecord();
+    const w = this.w;
+    const rec = w.activeRecord();
     if (!rec || g.clock.now() < rec.readyAt) {
       this.wait = undefined;
     } else {
-      await g.recoveryMutex.run(async () => {
-        const again = g.activeRecord();
+      await w.recoveryMutex.run(async () => {
+        const again = w.activeRecord();
         if (again && again.id === rec.id) await this.tryComplete(again);
       });
     }
@@ -98,12 +103,13 @@ export class RecoveryRunner {
   /** Completed recoveries of the active wallet whose sweep a node accepted: rotate (once). */
   private async rotateBroadcast(): Promise<void> {
     const g = this.g;
-    const active = g.engine.registration()?.walletId;
+    const w = this.w;
+    const active = w.engine.registration()?.walletId;
     if (!active) return;
-    for (const rec of g.records) {
+    for (const rec of w.records) {
       if (rec.status !== 'completed' || rec.rotatedAt !== undefined || rec.walletId !== active) continue;
-      if (g.service.sweep(rec.id)?.broadcastAt === undefined) continue;
-      await g.recoveryMutex.run(() => g.rotateAfterSweep(rec.id));
+      if (w.sweepStore.sweep(rec.id)?.broadcastAt === undefined) continue;
+      await w.recoveryMutex.run(() => w.rotateAfterSweep(rec.id));
       return; // the active wallet changed; anything else waits for the next tick
     }
   }
@@ -113,13 +119,14 @@ export class RecoveryRunner {
     this.wait = { recoveryId: rec.id, reason, detail, since: same ? this.wait!.since : this.g.clock.now() };
     if (!same) {
       this.g.log.warn('recovery.waiting', { recoveryId: rec.id, reason, detail });
-      await this.g.logEvent({ type: 'recovery_waiting', recoveryId: rec.id, reason, detail });
+      await this.w.logEvent({ type: 'recovery_waiting', recoveryId: rec.id, reason, detail });
     }
   }
 
   private async tryComplete(rec: RecoveryRecord): Promise<void> {
     const g = this.g;
-    const reg = g.engine.registration();
+    const w = this.w;
+    const reg = w.engine.registration();
     if (!reg) return;
     if (g.locked) return this.block(rec, 'locked', 'The guardian is locked. Unlock it so it can co-sign the recovery.');
 
@@ -138,7 +145,7 @@ export class RecoveryRunner {
       if (this.lastSkewWarning !== key) {
         this.lastSkewWarning = key;
         g.log.warn('clock.disagrees_with_chain', { systemTime: new Date(now).toISOString(), chainTime: new Date(mtp).toISOString() });
-        await g.logEvent({ type: 'clock_skew', systemTime: now, chainTime: mtp });
+        await w.logEvent({ type: 'clock_skew', systemTime: now, chainTime: mtp });
       }
     }
     const effective = Math.min(now, mtp);
@@ -149,7 +156,7 @@ export class RecoveryRunner {
         `The recovery delay ends ${formatWhen(rec.readyAt)}, but the chain's median time is ${formatWhen(mtp)}. Waiting for more blocks.`,
       );
     // The delay must span its blocks too (the engine checks this again).
-    const needed = g.engine.heightNeeded(rec);
+    const needed = w.engine.heightNeeded(rec);
     if (needed !== undefined && height < needed)
       return this.block(rec, 'chain_time', `The recovery delay must also span ${needed - (rec.startHeight ?? 0)} blocks; the chain is at block ${height} of ${needed}. Waiting for more blocks.`);
 
@@ -161,7 +168,7 @@ export class RecoveryRunner {
     }
     if (!coverage.ok) return this.block(rec, coverage.reason, coverage.detail);
 
-    const res = await g.engine.completeRecovery();
+    const res = await w.engine.completeRecovery();
     if (!res.ok) return this.block(rec, 'refused', refusalText(res.refusal));
     this.wait = undefined;
     const sweep: SweepRecord = {
@@ -173,11 +180,11 @@ export class RecoveryRunner {
       completedAt: now,
       attempts: 0,
     };
-    await g.service.update((d) => {
+    await w.sweepStore.update((d) => {
       d.sweeps = [...d.sweeps.filter((s) => s.recoveryId !== rec.id), sweep];
     });
     g.log.info('recovery.completed', { recoveryId: rec.id, txid: res.txid });
-    void g.alerts.run();
+    void w.alerts.run();
   }
 
   /** Does the stored sweep spend exactly the wallet's unspent outputs? */
@@ -185,7 +192,7 @@ export class RecoveryRunner {
     const wallet = MultisigWallet.fromDescriptor(reg.descriptor, getNetwork(reg.network));
     const { outpoints, maxIndex } = sweepInputs(base64.decode(rec.sweepPsbt));
     // At least to the wallet's high-water marks: every change output key 3 ever co-signed is in range.
-    const floor = this.g.scanFloor(reg.walletId);
+    const floor = this.w.scanFloor(reg.walletId);
     const minIndex = { 0: Math.max(maxIndex[0] ?? -1, floor[0] ?? -1), 1: Math.max(maxIndex[1] ?? -1, floor[1] ?? -1) };
     const utxos = await this.g.chain.walletUtxos(wallet, { minIndex });
     const unspent = new Set(utxos.map((u) => `${u.txid}:${u.vout}`));
@@ -219,12 +226,13 @@ export class RecoveryRunner {
    */
   private async recreateMissingSweeps(): Promise<void> {
     const g = this.g;
-    const signer = g.unlockedSigner;
+    const w = this.w;
+    const signer = w.unlockedSigner;
     if (!signer) return;
-    for (const rec of g.records) {
-      if (rec.status !== 'completed' || g.service.sweep(rec.id)) continue;
+    for (const rec of w.records) {
+      if (rec.status !== 'completed' || w.sweepStore.sweep(rec.id)) continue;
       // The swept wallet: the active one, or a retired one after the rotation.
-      const reg = g.engine.walletById(rec.walletId);
+      const reg = w.engine.walletById(rec.walletId);
       if (!reg) continue;
       try {
         const net = getNetwork(reg.network);
@@ -243,7 +251,7 @@ export class RecoveryRunner {
         }
         const psbt = tx.toPSBT();
         const { txHex, txid } = finalizePsbt(psbt);
-        await g.service.update((d) => {
+        await w.sweepStore.update((d) => {
           d.sweeps.push({
             recoveryId: rec.id,
             txid,
@@ -269,6 +277,7 @@ export class RecoveryRunner {
    */
   private async deadReason(s: SweepRecord): Promise<{ reason: NonNullable<SweepRecord['deadReason']>; detail: string } | undefined> {
     const g = this.g;
+    const w = this.w;
     let inputs: { txid: string; vout: number }[];
     try {
       inputs = parseRawTx(s.txHex).inputs;
@@ -276,12 +285,12 @@ export class RecoveryRunner {
     } catch {
       return { reason: 'invalid', detail: 'the stored sweep is not a valid transaction' };
     }
-    const order = (id: string) => g.records.findIndex((r) => r.id === id);
-    const mine = g.records[order(s.recoveryId)];
+    const order = (id: string) => w.records.findIndex((r) => r.id === id);
+    const mine = w.records[order(s.recoveryId)];
     if (mine) {
-      const later = g.service
+      const later = w.sweepStore
         .get()
-        .sweeps.find((o) => o.recoveryId !== s.recoveryId && o.broadcastAt !== undefined && order(o.recoveryId) > order(s.recoveryId) && g.records[order(o.recoveryId)]?.walletId === mine.walletId);
+        .sweeps.find((o) => o.recoveryId !== s.recoveryId && o.broadcastAt !== undefined && order(o.recoveryId) > order(s.recoveryId) && w.records[order(o.recoveryId)]?.walletId === mine.walletId);
       if (later) return { reason: 'superseded', detail: `the sweep of the later recovery ${later.recoveryId} (${later.txid}) was broadcast` };
     }
     for (const i of inputs) {
@@ -298,18 +307,20 @@ export class RecoveryRunner {
 
   private async markDead(s: SweepRecord, dead: { reason: NonNullable<SweepRecord['deadReason']>; detail: string }): Promise<void> {
     const g = this.g;
+    const w = this.w;
     const now = g.clock.now();
-    await g.service.update((d) => {
+    await w.sweepStore.update((d) => {
       const x = d.sweeps.find((y) => y.recoveryId === s.recoveryId);
       if (x) Object.assign(x, { deadAt: now, deadReason: dead.reason, deadDetail: dead.detail });
     });
-    await g.logEvent({ type: 'sweep_dead', recoveryId: s.recoveryId, txid: s.txid, reason: dead.reason, detail: dead.detail });
+    await w.logEvent({ type: 'sweep_dead', recoveryId: s.recoveryId, txid: s.txid, reason: dead.reason, detail: dead.detail });
     g.log.warn('recovery.sweep_dead', { recoveryId: s.recoveryId, txid: s.txid, reason: dead.reason });
   }
 
   private async broadcastPending(): Promise<void> {
     const g = this.g;
-    for (const s of g.service.get().sweeps) {
+    const w = this.w;
+    for (const s of w.sweepStore.get().sweeps) {
       if (s.broadcastAt !== undefined || s.deadAt !== undefined) continue;
       let via: 'electrum' | 'bitcoind' | undefined;
       let error: string | undefined;
@@ -331,11 +342,11 @@ export class RecoveryRunner {
       }
       const now = g.clock.now();
       if (via) {
-        await g.service.update((d) => {
+        await w.sweepStore.update((d) => {
           const x = d.sweeps.find((y) => y.recoveryId === s.recoveryId);
           if (x) Object.assign(x, { broadcastAt: now, broadcastVia: via, lastError: undefined, attempts: x.attempts + 1 });
         });
-        await g.logEvent({ type: 'sweep_broadcast', recoveryId: s.recoveryId, txid: s.txid, via, amountSats: s.amountSats });
+        await w.logEvent({ type: 'sweep_broadcast', recoveryId: s.recoveryId, txid: s.txid, via, amountSats: s.amountSats });
         g.log.info('recovery.sweep_broadcast', { recoveryId: s.recoveryId, txid: s.txid, via });
       } else {
         const dead = await this.deadReason(s);
@@ -344,12 +355,12 @@ export class RecoveryRunner {
           continue;
         }
         const changed = s.lastError !== error;
-        await g.service.update((d) => {
+        await w.sweepStore.update((d) => {
           const x = d.sweeps.find((y) => y.recoveryId === s.recoveryId);
           if (x) Object.assign(x, { lastError: error, attempts: x.attempts + 1 });
         });
         if (changed) {
-          await g.logEvent({ type: 'sweep_broadcast_failed', recoveryId: s.recoveryId, txid: s.txid, detail: error ?? 'unknown error' });
+          await w.logEvent({ type: 'sweep_broadcast_failed', recoveryId: s.recoveryId, txid: s.txid, detail: error ?? 'unknown error' });
           g.log.warn('recovery.sweep_broadcast_failed', { recoveryId: s.recoveryId, txid: s.txid, error });
         }
       }

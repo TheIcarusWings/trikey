@@ -293,24 +293,28 @@ export class KeystoreSigner implements CosignerSigner {
   }
 }
 
-/** Derives key 3 (the BIP48 account key) from the seed. Does not keep or zero `seed`. */
-export function cosignerFromSeed(seed: Uint8Array, network: NetworkName): { signer: KeystoreSigner; pub: CosignerPublic } {
+/**
+ * Derives key 3 (the BIP48 account key) from the seed. Does not keep or zero `seed`. `account`: the own wallet's BIP 48
+ * account (docs/design/multi-wallet.md): 0 for the first wallet, as always; 2n for the n-th wallet added.
+ */
+export function cosignerFromSeed(seed: Uint8Array, network: NetworkName, account = 0): { signer: KeystoreSigner; pub: CosignerPublic } {
+  if (!Number.isSafeInteger(account) || account < 0 || account >= 0x80000000) throw new Error('bad account');
   const net = getNetwork(network);
-  const path = bip48Path(net);
+  const path = bip48Path(net, account);
   const master = HDKey.fromMasterSeed(seed, net.bip32);
-  const account = master.derive(path);
+  const key = master.derive(path);
   try {
-    const signer = new KeystoreSigner(account.privateKey!);
+    const signer = new KeystoreSigner(key.privateKey!);
     const pub: CosignerPublic = {
       network,
       fingerprint: master.fingerprint.toString(16).padStart(8, '0'),
       path,
-      xpub: account.publicExtendedKey,
-      accountPubkey: hex.encode(account.publicKey!),
+      xpub: key.publicExtendedKey,
+      accountPubkey: hex.encode(key.publicKey!),
     };
     return { signer, pub };
   } finally {
-    account.wipePrivateData();
+    key.wipePrivateData();
     master.wipePrivateData();
   }
 }
@@ -431,13 +435,16 @@ export class GuardianSeed {
     return this.#seed === undefined;
   }
 
-  /** Key 3 for a wallet: the guardian's own key without `mix`, else the `trikey/key3/v1` key. */
-  key3(network: NetworkName, mix?: Key3Mix): { signer: KeystoreSigner; pub: CosignerPublic } {
+  /**
+   * Key 3 for a wallet: the guardian's own key without `mix`, else the `trikey/key3/v1` key; at BIP 48 `account` of that
+   * seed (0, the first wallet, unless an own wallet says otherwise: docs/design/multi-wallet.md).
+   */
+  key3(network: NetworkName, mix?: Key3Mix, account = 0): { signer: KeystoreSigner; pub: CosignerPublic } {
     if (!this.#seed) throw new Error('the guardian is locked');
-    if (!mix) return cosignerFromSeed(this.#seed, network);
+    if (!mix) return cosignerFromSeed(this.#seed, network, account);
     const seed3 = mixedKey3Seed(this.#seed, mix);
     try {
-      return cosignerFromSeed(seed3, network);
+      return cosignerFromSeed(seed3, network, account);
     } finally {
       seed3.fill(0);
     }

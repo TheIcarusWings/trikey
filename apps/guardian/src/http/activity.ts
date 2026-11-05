@@ -486,6 +486,18 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
         sats: null,
         result: e.ok ? 'ok' : 'refused',
       };
+    case 'wallet_added':
+      return {
+        ...base,
+        kind: 'system',
+        event: `Wallet "${e.name}" added with the paired phone and a new hardware wallet (wallet ${e.walletId}, account ${e.account}). It has its own rules, alert contacts and recoveries; the lock is shared.`,
+        summary: `Wallet "${e.name}" added`,
+        signedBy: 'Phone',
+        sats: null,
+        result: 'ok',
+      };
+    case 'wallet_add_refused':
+      return { ...base, kind: 'system', event: `Adding wallet "${e.name}" was refused: ${e.detail}`, summary: 'Adding a wallet refused', signedBy: null, sats: null, result: 'refused' };
     default:
       return hostingEntry(base, e);
   }

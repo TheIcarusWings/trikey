@@ -28,6 +28,7 @@ import {
 } from '../chain/chain.js';
 import { ElectrumError } from '../chain/electrum.js';
 import type { Guardian } from '../guardian.js';
+import type { WalletRuntime } from '../runtime.js';
 import { errorText } from '../log.js';
 import { isContactLockOn, isLimitOff, policyHash, type CancelActor, type RecoveryRecord, type WatchedWallet } from '../policy/index.js';
 import { helperAccount } from '../singlekey.js';
@@ -35,6 +36,7 @@ import { NodeRpcRequiredError, NotRegisteredError } from '../silent/service.js';
 import { savingsWallet } from '../savings.js';
 import { policyToWire, recoveryToWire, refusalError, rulesFromPolicy } from './wire.js';
 import { withHosting } from '../hosting/handlers.js';
+import { withOwnWallets } from '../wallets/handlers.js';
 
 const normPath = (p: string) => p.replace(/^m\//, '').replace(/'/g, 'h');
 const hexToBytes = (h: string) => hex.decode(h);
@@ -47,8 +49,8 @@ function ownKey(g: Guardian): KeyOrigin {
 }
 
 /** Key 3 of the paired wallet, as its descriptor holds it (a mixed key 3 is not the guardian's own key). */
-function guardianKey(g: Guardian): KeyOrigin {
-  const reg = g.engine.registration();
+function guardianKey(g: Guardian, w: WalletRuntime): KeyOrigin {
+  const reg = w.engine.registration();
   if (!reg) return ownKey(g);
   const k = walletOf(reg).keys.cosigner;
   return { fingerprint: k.fingerprint, path: `m/${k.originPath.replace(/h/g, "'")}`, xpub: k.xpub };
@@ -69,10 +71,10 @@ const PAIRING_REJECTIONS = {
 } as const;
 
 /** Looks up a recovery for `recovery.cancel`: 1300 if unknown, 1302 if it exists but is not running. */
-function runningRecovery(g: Guardian, id: string): RecoveryRecord {
-  const active = g.activeRecord();
+function runningRecovery(w: WalletRuntime, id: string): RecoveryRecord {
+  const active = w.activeRecord();
   if (active && active.id === id) return active;
-  const known = g.records.some((r) => r.id === id);
+  const known = w.records.some((r) => r.id === id);
   throw new RpcError(known ? ErrorCode.RecoveryNotActive : ErrorCode.RecoveryNotFound);
 }
 
@@ -93,16 +95,16 @@ export function walletOf(w: { descriptor: string; network: Parameters<typeof get
 }
 
 /** The paired wallet, for the chain methods. */
-function pairedWallet(g: Guardian): MultisigWallet {
-  const reg = g.engine.registration();
+function pairedWallet(w: WalletRuntime): MultisigWallet {
+  const reg = w.engine.registration();
   if (!reg) throw refusalError({ reason: 'not_registered' });
   return walletOf(reg);
 }
 
 /** The phone's registered single-key coins: the helper account (if any) and outpoint -> script of every coin and match. */
-function singleKeyCoins(g: Guardian): { helper?: ReturnType<typeof helperAccount>; coins: Map<string, string> } {
-  const reg = g.engine.registration()!;
-  const sk = g.engine.singleKey();
+function singleKeyCoins(g: Guardian, w: WalletRuntime): { helper?: ReturnType<typeof helperAccount>; coins: Map<string, string> } {
+  const reg = w.engine.registration()!;
+  const sk = w.engine.singleKey();
   const coins = g.sp.matchScripts();
   for (const c of sk?.coins ?? []) coins.set(`${c.txid}:${c.vout}`, c.script);
   return { ...(sk?.helper ? { helper: helperAccount(sk.helper.xpub, reg.network) } : {}), coins };
@@ -135,11 +137,11 @@ async function spCall<T>(fn: () => Promise<T>): Promise<T> {
  * The wallet `wallet.sync` reads: the paired one by default (or by its id); the watched one (the wallet
  * the paired wallet replaced) as `replaced` or by its id; anything else is 1005.
  */
-function syncTarget(g: Guardian, which: string | undefined): { wallet: MultisigWallet; walletId: string } {
-  const paired = pairedWallet(g);
-  const reg = g.engine.registration()!;
+function syncTarget(w: WalletRuntime, which: string | undefined): { wallet: MultisigWallet; walletId: string } {
+  const paired = pairedWallet(w);
+  const reg = w.engine.registration()!;
   if (which === undefined || which === reg.walletId) return { wallet: paired, walletId: reg.walletId };
-  const watched = g.engine.watchedWallet();
+  const watched = w.engine.watchedWallet();
   if (watched && (which === 'replaced' || which === watched.walletId)) return { wallet: walletOf(watched), walletId: watched.walletId };
   throw new RpcError(ErrorCode.WalletNotWatched, which === 'replaced' ? 'This guardian watches no replaced wallet.' : `This guardian does not watch wallet ${which}.`);
 }
@@ -151,9 +153,9 @@ function syncTarget(g: Guardian, which: string | undefined): { wallet: MultisigW
  * `replacesWalletId`; every input a coin of it; every output an address of the paired wallet; the fee
  * within the sweep fee cap.
  */
-async function replacementRefusal(g: Guardian, paired: MultisigWallet, txHex: string): Promise<{ code: number; message: string; reason: string; data?: Record<string, unknown> } | undefined> {
-  const reg = g.engine.registration()!;
-  const watched: WatchedWallet | undefined = g.engine.watchedWallet();
+async function replacementRefusal(g: Guardian, w: WalletRuntime, paired: MultisigWallet, txHex: string): Promise<{ code: number; message: string; reason: string; data?: Record<string, unknown> } | undefined> {
+  const reg = w.engine.registration()!;
+  const watched: WatchedWallet | undefined = w.engine.watchedWallet();
   if (!watched || reg.origin.kind !== 'paired' || reg.origin.replacesWalletId !== watched.walletId)
     return { code: ErrorCode.ForeignTransaction, reason: 'spends_no_wallet_coin', message: 'The transaction spends none of the wallet\'s coins.' };
   const check = await g.chain.checkReplacementSweep(walletOf(watched), paired, txHex);
@@ -167,7 +169,7 @@ async function replacementRefusal(g: Guardian, paired: MultisigWallet, txHex: st
     }[check.reason];
     return { code: ErrorCode.ForeignTransaction, reason: check.reason, message };
   }
-  const cap = g.engine.status().rules?.sweepFeeCapSats;
+  const cap = w.engine.status().rules?.sweepFeeCapSats;
   if (cap !== undefined && check.feeSats > cap)
     return {
       code: ErrorCode.PolicyViolation,
@@ -361,12 +363,18 @@ async function spendsKnownCoin(g: Guardian, wallet: MultisigWallet, known: Known
   return false;
 }
 
-export function buildHandlers(g: Guardian): Handlers {
+/**
+ * The protocol methods of one wallet (`w`): the first wallet's are the `Guardian`'s own, an own wallet's act on its
+ * engine only (wallets/handlers.ts routes a request there by its `walletId`). What the box shares (lock, relays, chain)
+ * stays on `g`.
+ */
+export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
   const cosigned = new RecentlyCosigned();
-  const known = g.knownCoins;
+  const known = w.knownCoins;
+  const first = w.slotId === undefined;
   const handlers: Handlers = {
     'guardian.status': () => {
-      const s = g.engine.status();
+      const s = w.engine.status();
       const stamp = g.stampNow(); // `time` and `atMs` from one reading of the clock
       return {
         state: g.locked ? 'locked' : 'unlocked',
@@ -377,11 +385,11 @@ export function buildHandlers(g: Guardian): Handlers {
         version: g.version,
         time: stamp.at,
         atMs: stamp.atMs,
-        ...(g.engine.watchedWallet() ? { watchedWalletId: g.engine.watchedWallet()!.walletId } : {}),
-        ...(g.engine.savings() ? { savingsWalletId: g.engine.savings()!.walletId } : {}),
+        ...(w.engine.watchedWallet() ? { watchedWalletId: w.engine.watchedWallet()!.walletId } : {}),
+        ...(w.engine.savings() ? { savingsWalletId: w.engine.savings()!.walletId } : {}),
         ...(s.warnings.length ? { warnings: s.warnings } : {}),
         ...(s.walletId ? { walletId: s.walletId, hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
-        ...(s.registered ? { key3Mixed: !!g.engine.registration()?.key3Mix } : {}),
+        ...(s.registered ? { key3Mixed: !!w.engine.registration()?.key3Mix } : {}),
         // A phone that missed a `relays_changed` alert catches up here (PROTOCOL.md, "Changing relays").
         ...(g.service.get().relays.length ? { relays: [...g.service.get().relays] } : {}),
         // The owner's extra alert channels, masked and read-only (PROTOCOL.md, "Extra alert channels").
@@ -409,6 +417,8 @@ export function buildHandlers(g: Guardian): Handlers {
         ...(g.locked && g.lockedAt !== undefined && g.lockReason
           ? { lock: { reason: g.lockReason, at: Math.floor(g.lockedAt / 1000), ...(g.lockReason === 'contact' && g.lockedBy ? { contact: g.lockedBy } : {}) } }
           : {}),
+        // Own wallets: every wallet of the box, so a phone restored from an older backup finds them (multi-wallet.md).
+        ...(first && g.wallets.summaries() ? { wallets: g.wallets.summaries() } : {}),
       };
     },
 
@@ -437,7 +447,7 @@ export function buildHandlers(g: Guardian): Handlers {
       const check = g.pairing.check(params.pairingSecret, ctx.sender, g.clock.now());
       if (!check.ok) throw new RpcError(ErrorCode.PairingRejected, PAIRING_REJECTIONS[check.reason]);
       requireUnlocked(g);
-      if (g.engine.registration()) throw new RpcError(ErrorCode.AlreadyPaired);
+      if (w.engine.registration()) throw new RpcError(ErrorCode.AlreadyPaired);
       if (params.network !== g.config.network)
         throw new RpcError(ErrorCode.InvalidParams, `This guardian runs on ${g.config.network}, not ${params.network}.`);
       // A contribution that is one byte value repeated (all zeros included) cannot come from a working generator,
@@ -466,7 +476,7 @@ export function buildHandlers(g: Guardian): Handlers {
         const check = g.pairing.check(params.pairingSecret, ctx.sender, now);
         if (!check.ok) throw new RpcError(ErrorCode.PairingRejected, PAIRING_REJECTIONS[check.reason]);
         requireUnlocked(g);
-        if (g.engine.registration()) throw new RpcError(ErrorCode.AlreadyPaired);
+        if (w.engine.registration()) throw new RpcError(ErrorCode.AlreadyPaired);
         const session = check.session;
         const reject = async (message: string, data?: unknown): Promise<never> => {
           g.pairing.fail(session.id, now);
@@ -487,9 +497,9 @@ export function buildHandlers(g: Guardian): Handlers {
         // This wallet's key 3: from the phone's `pair.prepare` contribution when it sent one (it must then be
         // the key in the descriptor), else the guardian's own key.
         const key = g.key3ForPairing({ entropy: session.key3Entropy, pairingId: session.id, phonePubkey: ctx.sender });
-        let res: Awaited<ReturnType<typeof g.engine.register>>;
+        let res: Awaited<ReturnType<typeof w.engine.register>>;
         try {
-          res = await g.engine.register({
+          res = await w.engine.register({
             network: params.network,
             descriptor: params.descriptor,
             cosignerAccountPubkey: key.pub.accountPubkey,
@@ -524,7 +534,7 @@ export function buildHandlers(g: Guardian): Handlers {
         g.log.info('guardian.paired', { walletId: res.walletId, key3Mixed: !!key.mix });
         return {
           guardianKey: originOf(key.pub),
-          descriptor: g.engine.registration()!.descriptor,
+          descriptor: w.engine.registration()!.descriptor,
           walletId: res.walletId,
           guardianVersion: g.version,
           key3Mixed: !!key.mix,
@@ -532,16 +542,16 @@ export function buildHandlers(g: Guardian): Handlers {
       }),
 
     sign: async (params, ctx) => {
-      const res = await refusable(g, ctx.sender, () => g.engine.cosign(base64.decode(params.psbt)));
+      const res = await refusable(g, ctx.sender, () => w.engine.cosign(base64.decode(params.psbt)));
       if (!res.ok) throw refusalError(res.refusal);
       g.log.info('cosign.signed', { txid: res.txid, outflow: Number(res.outflow), replay: res.replay });
-      const walletId = g.engine.registration()?.walletId;
+      const walletId = w.engine.registration()?.walletId;
       if (walletId) cosigned.add(walletId, res.txid, g.clock.now());
       return { psbt: base64.encode(res.psbt) };
     },
 
     'policy.get': () => {
-      const s = g.engine.status();
+      const s = w.engine.status();
       if (!s.rules) throw refusalError({ reason: 'not_registered' });
       return {
         policy: policyToWire(s.rules),
@@ -553,47 +563,47 @@ export function buildHandlers(g: Guardian): Handlers {
 
     'policy.update': async (params) => {
       const auth = params.approval ? { authenticatedBy: 'hardware' as const, approval: params.approval } : { authenticatedBy: 'app' as const };
-      const before = g.engine.status().rules;
+      const before = w.engine.status().rules;
       const wasOff = isLimitOff(before ?? { dailyLimitSats: 0n });
       const lockWas = isContactLockOn(before ?? {});
-      const res = await g.engine.changeRules(rulesFromPolicy(params.policy), auth);
+      const res = await w.engine.changeRules(rulesFromPolicy(params.policy), auth);
       if (!res.ok) throw refusalError(res.refusal);
       g.log.info('rules.changed', { by: auth.authenticatedBy });
       // The alert contacts may now lock the guardian, or no longer may: they are told (the engine queued it).
       if (isContactLockOn(res.rules) !== lockWas) {
         g.log.warn('rules.contact_lock', { on: !lockWas, by: auth.authenticatedBy, sequence: params.approval?.sequence });
-        void g.alerts.run();
+        void w.alerts.run();
       }
       // A security event: from now on phone + guardian can send everything (or no longer can).
       if (isLimitOff(res.rules) !== wasOff) {
         if (wasOff) g.log.info('rules.limit_on', { by: auth.authenticatedBy, limitSats: Number(res.rules.dailyLimitSats) });
         else g.log.warn('rules.limit_off', { by: auth.authenticatedBy, sequence: params.approval?.sequence });
         // The engine queued the alerts (the phone, and for "off" every alert contact): send them now.
-        void g.alerts.run();
+        void w.alerts.run();
       }
       return {
         policy: policyToWire(res.rules),
-        nextHardwareSequence: g.engine.status().nextHardwareSequence,
+        nextHardwareSequence: w.engine.status().nextHardwareSequence,
         policyHash: policyHash(res.rules),
       };
     },
 
     'recovery.start': (params, ctx) =>
-      g.recoveryMutex.run(async () => {
+      w.recoveryMutex.run(async () => {
         // The hosted form (destination by account pubkeys) is for guests' wallets only.
         if (!('newDescriptor' in params)) throw new RpcError(ErrorCode.InvalidParams, 'newDescriptor is required.');
         // The sender becomes the new wallet's paired phone if the guardian adopts it after the sweep.
-        const res = await refusable(g, ctx.sender, () => g.engine.startRecovery({ psbt: base64.decode(params.sweepPsbt), destinationDescriptor: params.newDescriptor, initiator: ctx.sender }));
+        const res = await refusable(g, ctx.sender, () => w.engine.startRecovery({ psbt: base64.decode(params.sweepPsbt), destinationDescriptor: params.newDescriptor, initiator: ctx.sender }));
         if (!res.ok) throw refusalError(res.refusal);
         g.log.info('recovery.started', { recoveryId: res.recovery.id, survivingRole: res.recovery.survivingRole });
-        void g.alerts.run();
+        void w.alerts.run();
         return { recovery: recoveryToWire(res.recovery, g.clock.now()) };
       }),
 
     'recovery.update': (params, ctx) =>
-      g.recoveryMutex.run(async () => {
-        const rec = runningRecovery(g, params.recoveryId);
-        const res = await refusable(g, ctx.sender, () => g.engine.updateRecovery({ recoveryId: rec.id, psbt: base64.decode(params.sweepPsbt) }));
+      w.recoveryMutex.run(async () => {
+        const rec = runningRecovery(w, params.recoveryId);
+        const res = await refusable(g, ctx.sender, () => w.engine.updateRecovery({ recoveryId: rec.id, psbt: base64.decode(params.sweepPsbt) }));
         if (!res.ok) throw refusalError(res.refusal);
         g.log.info('recovery.updated', { recoveryId: rec.id, addedInputs: res.addedInputs });
         void g.tick();
@@ -601,20 +611,20 @@ export function buildHandlers(g: Guardian): Handlers {
       }),
 
     'recovery.cancel': (params, ctx) =>
-      g.recoveryMutex.run(async () => {
-        runningRecovery(g, params.recoveryId);
+      w.recoveryMutex.run(async () => {
+        runningRecovery(w, params.recoveryId);
         const actor: CancelActor = params.approval ? { kind: 'hardware', approval: params.approval } : { kind: 'nostr', pubkey: ctx.sender };
-        const res = await g.engine.cancelRecovery(actor);
+        const res = await w.engine.cancelRecovery(actor);
         if (!res.ok) throw refusalError(res.refusal);
         g.log.info('recovery.cancelled', { recoveryId: res.recovery.id, by: res.recovery.cancelledBy?.kind, contested: res.contested });
-        void g.alerts.run();
+        void w.alerts.run();
         return { recovery: recoveryToWire(res.recovery, g.clock.now()), contested: res.contested };
       }),
 
     'recovery.status': (params) => {
-      const rec = params.recoveryId ? g.records.find((r) => r.id === params.recoveryId) : g.activeRecord();
+      const rec = params.recoveryId ? w.records.find((r) => r.id === params.recoveryId) : w.activeRecord();
       if (params.recoveryId && !rec) throw new RpcError(ErrorCode.RecoveryNotFound);
-      const psbt = rec?.status === 'completed' ? g.service.sweep(rec.id)?.psbt : undefined;
+      const psbt = rec?.status === 'completed' ? w.sweepStore.sweep(rec.id)?.psbt : undefined;
       return { recovery: rec ? recoveryToWire(rec, g.clock.now()) : null, ...(psbt ? { psbt } : {}) };
     },
 
@@ -623,23 +633,23 @@ export function buildHandlers(g: Guardian): Handlers {
     'wallet.sync': (params, ctx) =>
       chainCall(g, 'wallet.sync', async () => {
         if (params.wallet === 'helper') return helperSync(params.historyLimit);
-        const sv = g.engine.savings();
+        const sv = w.engine.savings();
         if (params.wallet === 'savings' || (sv && params.wallet === sv.walletId)) {
           // Savings is the paired phone's: a phone with recovery access (whoever holds the hardware wallet) reads the
           // wallet it may recover, not Savings.
-          if (ctx.sender !== g.engine.registration()?.appNostrPubkey) throw new RpcError(ErrorCode.WalletNotWatched, 'Only the paired phone reads its Savings wallet.');
+          if (ctx.sender !== w.engine.registration()?.appNostrPubkey) throw new RpcError(ErrorCode.WalletNotWatched, 'Only the paired phone reads its Savings wallet.');
           return savingsSync(params.historyLimit);
         }
-        const { wallet, walletId } = syncTarget(g, params.wallet);
+        const { wallet, walletId } = syncTarget(w, params.wallet);
         // The paired wallet's scan reaches its high-water marks, and raises them to what it finds.
-        const paired = walletId === g.engine.registration()?.walletId;
+        const paired = walletId === w.engine.registration()?.walletId;
         const r = await g.chain.walletSync(wallet, {
           historyLimit: params.historyLimit ?? DEFAULT_SYNC_HISTORY,
           maxUtxos: MAX_SYNC_UTXOS,
-          ...(paired ? { minIndex: g.scanFloor(walletId) } : {}),
+          ...(paired ? { minIndex: w.scanFloor(walletId) } : {}),
         });
         if (paired) {
-          await g.noteScan(walletId, r);
+          await w.noteScan(walletId, r);
           known.set(walletId, r.utxos, r.history);
         }
         return {
@@ -674,7 +684,7 @@ export function buildHandlers(g: Guardian): Handlers {
 
     'tx.get': (params) =>
       chainCall(g, 'tx.get', async () => {
-        pairedWallet(g);
+        pairedWallet(w);
         const txHex = await g.chain.getTransaction(params.txid, { witness: params.witness });
         if (txHex.length > MAX_TX_HEX_LENGTH)
           throw new RpcError(ErrorCode.TxTooLarge, params.witness === false ? undefined : 'The transaction is too large to send; ask for it without witness data.');
@@ -683,7 +693,7 @@ export function buildHandlers(g: Guardian): Handlers {
 
     'tx.broadcast': (params, ctx) =>
       chainCall(g, 'tx.broadcast', async () => {
-        const wallet = pairedWallet(g);
+        const wallet = pairedWallet(w);
         // Each call may scan wallets on Electrs: per paired phone, at most so many per window.
         const turn = g.broadcastLimiter.take(ctx.sender, g.clock.now());
         if (!turn.ok) {
@@ -694,25 +704,25 @@ export function buildHandlers(g: Guardian): Handlers {
         // Not an open relay: only a spend of this wallet's coins, a sweep of the phone's single-key coins
         // (silent payments, the helper coin) into it, or a sweep of the watched (replaced) wallet into it.
         let via = 'wallet';
-        const sv = g.engine.savings();
-        const walletId = g.engine.registration()!.walletId;
+        const sv = w.engine.savings();
+        const walletId = w.engine.registration()!.walletId;
         // Co-signed here a moment ago: its inputs were checked to be the wallet's coins then (`RecentlyCosigned`). Else
         // a coin the last sync listed (a payment the hardware wallet signed), checked against its previous transaction
         // (`spendsKnownCoin`). Only then the full scan, which can take long on a slow Electrs.
         if (cosigned.has(walletId, txid, g.clock.now())) via = 'cosigned';
         else if (await spendsKnownCoin(g, wallet, known, walletId, params.txHex)) via = 'known_coin';
-        else if (!(await g.chain.spendsWalletCoin(wallet, params.txHex, { minIndex: g.scanFloor(walletId) }))) {
+        else if (!(await g.chain.spendsWalletCoin(wallet, params.txHex, { minIndex: w.scanFloor(walletId) }))) {
           // (d) A spend of the watched Savings wallet: the guardian did not sign it and cannot; it only relays it, and
           // its tripwire announces it like any other Savings spend.
-          if (sv && (await g.chain.spendsWalletCoin(savingsWallet(sv), params.txHex, { minIndex: g.savingsWatch.scanFloor(sv) }))) {
+          if (sv && (await g.chain.spendsWalletCoin(savingsWallet(sv), params.txHex, { minIndex: w.savingsWatch.scanFloor(sv) }))) {
             const r = await g.chain.broadcast(params.txHex, { track: true });
             if (r.txid !== txid) g.log.warn('tx.broadcast_txid_mismatch', { txid, reported: r.txid });
             g.log.info('tx.broadcast', { txid, via: r.via, spends: 'savings' });
-            void g.savingsWatch.run({ force: true }).then(() => g.alerts.run());
+            void w.savingsWatch.run({ force: true }).then(() => w.alerts.run());
             return { txid };
           }
-          const single = await singleKeyRefusal(g, wallet, params.txHex);
-          const refusal = single === 'not_applicable' ? await replacementRefusal(g, wallet, params.txHex) : single;
+          const single = await singleKeyRefusal(g, w, wallet, params.txHex);
+          const refusal = single === 'not_applicable' ? await replacementRefusal(g, w, wallet, params.txHex) : single;
           if (refusal) {
             g.log.warn('tx.broadcast_refused', { reason: refusal.reason });
             throw new RpcError(refusal.code, refusal.message, { reason: refusal.reason, ...refusal.data });
@@ -728,7 +738,7 @@ export function buildHandlers(g: Guardian): Handlers {
 
     // Only the paired phone (Guardian.authorize). No approval: it only takes capability away.
     'wallet.unwatch': async (params) => {
-      const res = await g.engine.unwatch(params.walletId);
+      const res = await w.engine.unwatch(params.walletId);
       if (!res.ok) throw refusalError(res.refusal);
       if (res.unwatched) g.log.info('wallet.unwatched', { walletId: res.walletId });
       return { unwatched: res.unwatched, ...(res.walletId ? { walletId: res.walletId } : {}) };
@@ -738,7 +748,7 @@ export function buildHandlers(g: Guardian): Handlers {
     // Paired phone only (Guardian.authorize). No key 3: they work while the guardian is locked.
 
     'singlekey.register': async (params) => {
-      const res = await g.engine.registerSingleKey({
+      const res = await w.engine.registerSingleKey({
         ...(params.helper ? { helper: { xpub: params.helper.xpub, fingerprint: params.helper.fingerprint, path: params.helper.path } } : {}),
         ...(params.coins ? { coins: params.coins } : {}),
       });
@@ -750,7 +760,7 @@ export function buildHandlers(g: Guardian): Handlers {
     'sp.register': (params, ctx) =>
       spCall(async () => {
         requireNodeRpc(g);
-        if (!g.engine.registration()) throw refusalError({ reason: 'not_registered' });
+        if (!w.engine.registration()) throw refusalError({ reason: 'not_registered' });
         const r = await g.sp.register({
           phone: ctx.sender,
           scanPrivateKey: hexToBytes(params.scanPrivateKey),
@@ -768,24 +778,24 @@ export function buildHandlers(g: Guardian): Handlers {
     // Paired phone only (Guardian.authorize). No key 3 and no approval: watching changes no rule and signs nothing.
 
     'savings.register': async (params) => {
-      const res = await g.engine.registerSavings(params.descriptor);
+      const res = await w.engine.registerSavings(params.descriptor);
       if (!res.ok) throw refusalError(res.refusal);
       g.log.info('savings.registered', { walletId: res.savings.walletId, ...(res.replaced ? { replaced: res.replaced } : {}) });
       // The first scan is the baseline: the coins and spends it finds are history, not news.
-      void g.savingsWatch.run({ force: true });
+      void w.savingsWatch.run({ force: true });
       return { walletId: res.savings.walletId, since: Math.floor(res.savings.since / 1000) };
     },
 
     'savings.unregister': async () => {
-      const res = await g.engine.unregisterSavings();
+      const res = await w.engine.unregisterSavings();
       if (!res.ok) throw refusalError(res.refusal);
       if (res.unregistered) g.log.info('savings.unregistered', { walletId: res.walletId });
       return { unregistered: res.unregistered, ...(res.walletId ? { walletId: res.walletId } : {}) };
     },
 
     'savings.get': () => {
-      if (!g.engine.registration()) throw refusalError({ reason: 'not_registered' });
-      const sv = g.engine.savings();
+      if (!w.engine.registration()) throw refusalError({ reason: 'not_registered' });
+      const sv = w.engine.savings();
       return { savings: sv ? { walletId: sv.walletId, descriptor: sv.descriptor, since: Math.floor(sv.since / 1000) } : null };
     },
 
@@ -819,29 +829,29 @@ export function buildHandlers(g: Guardian): Handlers {
 
     'fees.estimate': (params) =>
       chainCall(g, 'fees.estimate', async () => {
-        pairedWallet(g);
+        pairedWallet(w);
         return g.chain.estimateFees([...new Set(params.targets ?? [1, 3, 6, 144])]);
       }),
 
     // -- a new phone without the old one or its backup -------------------------
 
     'recovery.access': async (params, ctx) => {
-      if (!g.engine.registration() || !g.identity) throw refusalError({ reason: 'not_registered' });
-      const known = g.hasRecoveryAccess(ctx.sender);
+      if (!w.engine.registration() || !g.identity) throw refusalError({ reason: 'not_registered' });
+      const known = w.hasRecoveryAccess(ctx.sender);
       // The engine rebuilds the text with this guardian's key and the sender's, and checks it against the hardware key.
-      const res = await g.engine.grantRecoveryAccess({ phonePubkey: ctx.sender, guardianPubkey: g.identity.pubkey, approval: params.approval });
+      const res = await w.engine.grantRecoveryAccess({ phonePubkey: ctx.sender, guardianPubkey: g.identity.pubkey, approval: params.approval });
       if (!res.ok) {
         g.log.warn('recovery.access_refused', { reason: res.refusal.reason });
         throw refusalError(res.refusal);
       }
-      const reg = g.engine.registration()!;
+      const reg = w.engine.registration()!;
       if (!known && ctx.sender !== reg.appNostrPubkey) g.log.warn('recovery.access_granted', { until: params.approval.expiresAt });
-      const s = g.engine.status();
+      const s = w.engine.status();
       return {
         descriptor: reg.descriptor,
         walletId: reg.walletId,
         network: reg.network,
-        guardianKey: guardianKey(g),
+        guardianKey: guardianKey(g, w),
         hardwareAuth: { pubkey: reg.hardwareAuth!.pubkey, path: reg.hardwareAuth!.path },
         policy: policyToWire(s.rules!),
         nextHardwareSequence: s.nextHardwareSequence,
@@ -854,26 +864,29 @@ export function buildHandlers(g: Guardian): Handlers {
     // -- wallet rotation and "Replace guardian" ---------------------------------
 
     'hardware.confirm': async (params) => {
-      const res = await g.engine.confirmHardwareAuth({
+      const res = await w.engine.confirmHardwareAuth({
         hardwareAuth: { kind: 'bip137', pubkey: params.hardwareAuth.pubkey, path: params.hardwareAuth.path },
         proof: params.hardwareAuthProof,
       });
       if (!res.ok) throw refusalError(res.refusal);
       if (res.changed) g.log.info('hardware.confirmed', { walletId: res.registration.walletId });
       const key = res.registration.hardwareAuth!;
-      return { walletId: res.registration.walletId, hardwareAuth: { pubkey: key.pubkey, path: key.path }, nextHardwareSequence: g.engine.status().nextHardwareSequence };
+      return { walletId: res.registration.walletId, hardwareAuth: { pubkey: key.pubkey, path: key.path }, nextHardwareSequence: w.engine.status().nextHardwareSequence };
     },
 
     'wallet.retire': (params, ctx) =>
-      g.recoveryMutex.run(async () => {
-        const res = await g.engine.retireWallet(params.approval);
+      w.recoveryMutex.run(async () => {
+        // The first wallet holds the box's pairing (and the key 3 seed every own wallet's key 3 comes from): it goes last.
+        if (first && g.wallets.active().length)
+          throw new RpcError(ErrorCode.PolicyViolation, 'Retire the other wallets on this guardian first: the first wallet goes last.', { reason: 'own_wallets_active' });
+        const res = await w.engine.retireWallet(params.approval);
         if (!res.ok) throw refusalError(res.refusal);
-        await g.afterRetire(res.walletId, ctx.sender);
+        await w.afterRetire(res.walletId, ctx.sender);
         return { walletId: res.walletId, retiredAt: Math.floor(res.retiredAt / 1000) };
       }),
 
     'phone.resume': async (params) => {
-      const res = await g.engine.resumePhoneSpending(params.approval);
+      const res = await w.engine.resumePhoneSpending(params.approval);
       if (!res.ok) throw refusalError(res.refusal);
       g.log.info('phone.resumed');
       return { phoneSpending: 'enabled' as const };
@@ -881,8 +894,8 @@ export function buildHandlers(g: Guardian): Handlers {
   };
   /** `wallet.sync` with `wallet: "helper"`: the helper account like a wallet, the other single-key coins by script. */
   async function helperSync(historyLimit: number | undefined) {
-    pairedWallet(g);
-    const { helper, coins } = singleKeyCoins(g);
+    pairedWallet(w);
+    const { helper, coins } = singleKeyCoins(g, w);
     if (!helper && !coins.size) throw new RpcError(ErrorCode.WalletNotWatched, 'The phone registered no single-key coins with this guardian (singlekey.register).');
     const scripts = [...new Set(coins.values())].map(hexToBytes);
     const outpoints = [...coins.keys()].map((k) => ({ txid: k.slice(0, k.lastIndexOf(':')), vout: Number(k.slice(k.lastIndexOf(':') + 1)) }));
@@ -944,15 +957,15 @@ export function buildHandlers(g: Guardian): Handlers {
 
   /** `wallet.sync` of the watched Savings wallet: scanned like a wallet, from its high-water marks; the tripwire sees it too. */
   async function savingsSync(historyLimit: number | undefined) {
-    pairedWallet(g);
-    const sv = g.engine.savings();
+    pairedWallet(w);
+    const sv = w.engine.savings();
     if (!sv) throw new RpcError(ErrorCode.WalletNotWatched, 'This guardian watches no Savings wallet (savings.register).');
     const r = await g.chain.walletSync(savingsWallet(sv), {
       historyLimit: historyLimit ?? DEFAULT_SYNC_HISTORY,
       maxUtxos: MAX_SYNC_UTXOS,
-      minIndex: g.savingsWatch.scanFloor(sv),
+      minIndex: w.savingsWatch.scanFloor(sv),
     });
-    await g.savingsWatch.note(sv.walletId, r);
+    await w.savingsWatch.note(sv.walletId, r);
     return {
       walletId: sv.walletId,
       tipHeight: r.tipHeight,
@@ -975,8 +988,18 @@ export function buildHandlers(g: Guardian): Handlers {
     };
   }
 
-  // Guests' requests are routed to their own slots in front of these (hosting/handlers.ts); the host's are unchanged.
-  return withHosting(g, runOnceAcrossRestarts(g, handlers));
+  return handlers;
+}
+
+/** Runs each state-changing request of a wallet's handlers at most once per (sender, id), across restarts too. */
+export function onceAcrossRestarts(g: Guardian, handlers: Handlers): Handlers {
+  return runOnceAcrossRestarts(g, handlers);
+}
+
+export function buildHandlers(g: Guardian): Handlers {
+  // Own wallets' requests are routed by `walletId` in front of the first wallet's (wallets/handlers.ts); guests' to their
+  // own slots in front of all of them (hosting/handlers.ts). The first wallet's are unchanged.
+  return withHosting(g, withOwnWallets(g, runOnceAcrossRestarts(g, walletHandlers(g, g))));
 }
 
 /**
@@ -987,10 +1010,11 @@ export function buildHandlers(g: Guardian): Handlers {
  */
 async function singleKeyRefusal(
   g: Guardian,
+  w: WalletRuntime,
   paired: MultisigWallet,
   txHex: string,
 ): Promise<{ code: number; message: string; reason: string; data?: Record<string, unknown> } | undefined | 'not_applicable'> {
-  const { helper, coins } = singleKeyCoins(g);
+  const { helper, coins } = singleKeyCoins(g, w);
   if (!helper && !coins.size) return 'not_applicable';
   const check = await g.chain.checkSingleKeySweep(paired, { coins, ...(helper ? { helper } : {}) }, txHex);
   if (!check) return 'not_applicable';
@@ -1004,7 +1028,7 @@ async function singleKeyRefusal(
     }[check.reason];
     return { code: ErrorCode.ForeignTransaction, reason: check.reason, message };
   }
-  const cap = g.engine.status().rules?.sweepFeeCapSats;
+  const cap = w.engine.status().rules?.sweepFeeCapSats;
   if (cap !== undefined && check.feeSats > cap)
     return {
       code: ErrorCode.PolicyViolation,
