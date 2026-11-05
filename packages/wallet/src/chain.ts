@@ -38,6 +38,12 @@ export interface ChainSource {
   sync(opts?: { historyLimit?: number }): Promise<ChainSnapshot>;
   /** Raw transaction hex (witness data may be left out), checked to hash to `txid`. For PSBT `nonWitnessUtxo`. */
   getTransaction(txid: string): Promise<string>;
+  /**
+   * Optional: the raw transaction hex with its witness data, as it was broadcast, for the check of a "Speed up"
+   * (`checkFeeBump`: who signed the original). Not checked here: the caller hashes it against `txid`. Without this
+   * method the wallet uses `getTransaction` and refuses a speed-up when the witness data is left out.
+   */
+  getSignedTransaction?(txid: string): Promise<string>;
   /** Broadcasts a fully signed transaction; resolves with its txid. */
   broadcast(txHex: string): Promise<string>;
   estimateFees(targets?: number[]): Promise<FeeEstimates>;
@@ -148,6 +154,12 @@ export class GuardianChainSource implements ChainSource {
     const { txHex } = await this.call('tx.get', { txid, witness: false });
     // The guardian checked this too; a phone does not take a previous transaction on trust.
     if (txidOfRaw(txHex) !== txid) throw new WalletError('guardian_mismatch', `tx.get returned a transaction that is not ${txid}`);
+    return txHex;
+  }
+
+  async getSignedTransaction(txid: string): Promise<string> {
+    // With witness data (the default): the signatures the "Speed up" check reads. The caller checks the txid.
+    const { txHex } = await this.call('tx.get', { txid });
     return txHex;
   }
 

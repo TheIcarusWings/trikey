@@ -512,6 +512,10 @@ old one gone; on the Guardian page, "Phone-only today" goes up by the **extra fe
 not at all for the hardware one. A send-max payment has no change to pay from, and an incoming payment is not yours to
 speed up: the app should say so. On mainnet the new fee is never under 1 sat/vB.
 
+- Check: every speed-up above went through the phone's check of the original before signing; none was refused with
+  "This faster payment does not match the payment you sent" (if one was, note the `speedup.check_failed` log line: it
+  holds only a reason code).
+
 If it goes wrong, collect: both transaction ids, the fees the screen showed, the guardian's Activity page and the log
 lines starting with `tx.broadcast` and `live.wallet_tx`, and whether Activity showed two rows.
 

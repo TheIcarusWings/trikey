@@ -335,6 +335,24 @@ describe('speeding up a Savings payment (RBF)', { timeout: 90_000 }, () => {
     expect(w.snapshot()!.balance.totalSats).toBe(spendingBefore + 40_000);
     expect(w.savingsSnapshot()!.history[0]).toMatchObject({ purpose: 'to_spending', replaces: paid.txid, confirmations: 1 });
   });
+
+  it('a quote changed after it was made (the payment sent elsewhere) is refused before the phone or any device signs it', async () => {
+    const paid = await w.sendFromSavings(w.quoteSavingsSpend({ address: externalAddress(8), amountSats: 30_000 }));
+    if (!paid.ok) throw new Error('refused');
+    const q = await w.quoteSavingsSpeedUp(paid.txid);
+    const elsewhere = hex.encode(btc.OutScript.encode(btc.Address(regtest.btc).decode(externalAddress(9))));
+    const redirected = { ...q, outputs: q.outputs.map((o) => (o.change ? o : { ...o, script: elsewhere })) };
+    const signs = ledger.calls.length + recoveryKey.calls.length;
+    const broadcasts = rig.electrs.broadcasts.length;
+    const seen = events.length;
+    const e = await walletError(w.speedUpSavingsSpend(redirected));
+    expect(e).toMatchObject({ code: 'cannot_speed_up', reason: 'output_changed' });
+    expect(ledger.calls.length + recoveryKey.calls.length).toBe(signs);
+    expect(rig.electrs.broadcasts.length).toBe(broadcasts);
+    expect(events.slice(seen).filter((x) => x.type === 'speed_up_refused')).toEqual([{ type: 'speed_up_refused', wallet: 'savings', reason: 'output_changed' }]);
+    // The quote as it was made goes through.
+    expect(await w.speedUpSavingsSpend(q)).toMatchObject({ ok: true, replaces: paid.txid });
+  });
 });
 
 describe('the watch turned off behind the phone\'s back', { timeout: 60_000 }, () => {
