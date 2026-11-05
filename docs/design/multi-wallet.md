@@ -1,391 +1,377 @@
 # Several wallets in one phone app: design proposal
 
 Status: **proposal**, written 2026-11-05 against `main` at `b0c3bb5` (after family hosting phases 1 and 2, Savings,
-the live wallet and the web Wallet page). Nothing here is built. The owner's questions are in section 9.
+the live wallet and the web Wallet page), revised the same day to the owner's decision. Nothing here is built. The
+owner's decisions and the few questions they raise are in section 10.
 
 The owner's ask (2026-11-01, deferred then in favour of family hosting): "Allow the same phone app to have multiple
 wallets where the only key that changes is the hardware wallet."
+
+The owner's decision (2026-11-05): "the best solution is same phone and guardian wallet, only change the hardware
+wallet for now; this keeps things simple."
 
 **The short answer.**
 
 | Question | Verdict |
 |---|---|
-| What changes per wallet | The hardware wallet, as asked. Under the hood each wallet also gets **its own phone key** (its own 24 words) and **its own key 3**. The person sees one phone and one guardian; the keys stay apart so the wallets are not linked on chain and one wallet's backup never holds another's key (section 2). |
-| The phone | `@trikey/wallet` already keeps a wallet under a storage key of the app's choosing and its secrets under random ids. The app holds several such wallets, shows one at a time and listens for all (section 4). |
-| The guardian | Today it guards one wallet of its owner plus hosted guests. It gains **own wallets**: more wallets of its owner, each in its own slot with today's engine (full descriptor, full rule 3, live wallet, Savings). They pair with an ordinary pairing code, so phones need no protocol change (section 3). |
-| BIP 89 | Not for own wallets: the owner's guardian just knows both, as it knows the first. Someone who wants privacy from the box's owner uses family hosting, which already exists and works from the same phone. |
-| Smallest slice | Phase 1 is the phone only: several wallets in the app, each with its own guardian, a hosted wallet next to your own, or a second wallet on your own guardian through your own invite. Phase 2 adds own wallets on the guardian (section 8). |
+| What changes per wallet | Only the hardware wallet. Every wallet uses **the same phone seed** and **the same guardian key 3 seed**. |
+| Unlinkable on chain anyway | Each wallet sits at **its own BIP 48 account** on the phone seed and on the key 3 seed (wallet 2 at 2', wallet 3 at 4', ...). The phone's and the guardian's keys differ per wallet, so nothing on chain links the wallets. The person never sees the account: one phone backup, one recovery code, one guardian. |
+| The phone | One seed, one nostr identity, one backup holding the list of wallets. The app shows one wallet at a time with a switcher (section 5). |
+| The guardian | "Own wallets": more wallets of its owner, each with its own policy engine (daily limit, contacts, Delay & Notify) and its key 3 at its account. Lock stays box-wide. BIP 89 stays for family hosting only (section 3). |
+| The protocol | Requests that act on a wallet carry an optional `walletId`; without it they mean the first wallet, as today. Old guardians refuse the unknown member, so they never act on the wrong wallet (section 4). |
+| Order | The guardian goes first: with one identity and a shared seed, a second wallet cannot exist without it. The phone follows in the same or the next release (section 9). |
 
 ## 0. What exists today
 
 | Assumption | Where |
 |---|---|
 | One wallet per app, per mode and network: `trikey.wallet.<mode>.<network>`, the app's notes under `.app` | `apps/mobile/src/data/real.ts` (`walletKey`, `RealWalletService.w`) |
-| The wallet package takes any storage key; secrets get random ids (`trikey.key2.<tag>`, `trikey.nostr.<tag>`), recorded in the state | `packages/wallet/src/wallet.ts` (`WalletDeps.storageKey`, `TrikeyWallet.create`), `state.ts` (`WalletState.secrets`) |
-| Key 2 is one 24-word seed: the vault at BIP 48 account 0', Savings at account 1', the helper coin at `m/84'/c'/1'`, silent payments at BIP 352's paths, the nostr identity at NIP-06 account 0 | `packages/wallet/src/keys.ts`, `packages/core/src/network.ts` (`SAVINGS_ACCOUNT`), `packages/protocol/src/identity.ts` |
-| The guardian knows a phone only by the nostr pubkey that signs its gift wraps; `pair` requires `phoneNostrPubkey` to equal the sender | PROTOCOL.md sections 1 and 3 ("Pairing"); `apps/guardian/src/service-state.ts` (`phones[]`) |
-| The guardian guards one active wallet of its owner (`register` refuses `already_registered`), plus up to 8 hosted guests, each in its own engine, routed by the sender's pubkey; a pubkey belongs to one slot | docs/design/family-hosting.md sections 0 and 2; `apps/guardian/src/hosting/` |
-| Key 3 per pairing: `trikey/key3/v1` binds the network, the pairing session and the phone's nostr pubkey; a guest's is `trikey/key3-hosted/v1` | DESIGN.md "Entropy"; `apps/guardian/src/keystore.ts` |
-| The backup is one file per wallet, `trikey-backup-<random id>.tkb`; the header names no wallet; a new backup replaces only that wallet's previous file; restore picks the newest file | `packages/wallet/src/backup.ts`; `TrikeyWallet.createBackup`, `findBackup` |
-| Savings is a second wallet inside a wallet (same phone seed at account 1', the same hardware wallet, a Recovery Key), shown next to Spending | DESIGN.md "Savings"; docs/design/savings-and-limit-off.md |
+| One seed per wallet; the state records the secrets' ids (`trikey.key2.<tag>`, `trikey.nostr.<tag>`); removing the wallet deletes them | `packages/wallet/src/wallet.ts` (`TrikeyWallet.create`, `forget`), `state.ts` (`WalletState.secrets`) |
+| Paths on the phone seed: the vault at `m/48'/c'/0'/2'`, Savings at `m/48'/c'/1'/2'`, the helper coin at `m/84'/c'/1'`, silent payments at `m/352'/c'/0'/...`, the nostr identity at NIP-06 `m/44'/1237'/0'/0/0`. `m/84'/c'/0'` is unused in guardian mode (Recovery Key mode's spending balance, on its own seed) | `packages/wallet/src/keys.ts`, `packages/core/src/network.ts` (`SAVINGS_ACCOUNT`), `packages/protocol/src/identity.ts`, DESIGN.md "Silent payments" |
+| Paths on a hardware wallet: the vault at its account 0', Savings at 1' (a Recovery Key device also at 1'); the authorization key at `<account 0'>/0/0` | DESIGN.md rule 4 and "Savings"; `keys.ts` (`authKeyPath`) |
+| Key 3: `seed3 = HMAC-SHA512(setup seed, "trikey/key3/v1" || context || c)` per pairing, then account `m/48'/c'/0'/2'` of it (or of the setup seed for a pairing without `entropy`) | DESIGN.md "Entropy"; `apps/guardian/src/keystore.ts` (`cosignerFromSeed`) |
+| The guardian knows a phone by the nostr pubkey that signs its gift wraps, guards one wallet of its owner (`register` refuses `already_registered`) plus up to 8 hosted guests; a pubkey belongs to one slot | PROTOCOL.md sections 1 and 3; docs/design/family-hosting.md section 2 |
+| Request params are strict schemas: an unknown member is refused | `packages/protocol/src/schemas.ts` (`z.strictObject`) |
+| The backup is one file per wallet; payload version 1, 2 with Savings, 3 hosted; restore picks the newest file | `packages/wallet/src/backup.ts`; `TrikeyWallet.createBackup`, `findBackup` |
 | Key 2 sits behind the phone's biometrics; viewing balances needs no unlock | `SecureKeyStore.save(..., { requireBiometrics: true })` for key 2 only |
 
 ## 1. Goal and scope
 
-**What "several wallets" means here.** One phone app holds several guardian-mode wallets. Each is a whole Trikey
-wallet as today: its own hardware wallet (key 1), its own phone key (key 2), its own key 3, its own rules, alert
-contacts, recoveries, backup, and optionally its own Savings. The app shows one at a time and switches between them.
+**What "several wallets" means here.** One phone app holds several guardian-mode wallets of one guardian. Each has its
+own hardware wallet, its own rules, alert contacts, recoveries and history, and optionally its own Savings. They share
+the phone seed, the phone's nostr identity, the backup and the guardian. The app shows one at a time.
 
-**The literal reading**, and the two cases it fits:
+The two cases it fits:
 
 1. **A household sharing one phone and one guardian**, two people each with their own hardware wallet.
 2. **One person with two hardware wallets** for separate purposes ("Daily" on a Trezor, "Business" on a Ledger).
 
-**The nearby readings:**
+**Not for now:**
 
-| Reading | Covered? |
+| Reading | Why not now |
 |---|---|
-| Several guardians: one wallet on your box, one on your parents' box | **Yes, phase 1.** Each wallet pairs with its own guardian as today. |
-| A hosted wallet next to your own (you are a guest on someone's guardian and also have your own) | **Yes, phase 1.** One wallet is an ordinary pairing, the other an accepted invite. |
-| Savings | **Unchanged.** It stays part of each wallet (each wallet may have its own), not an entry in the switcher. |
-| A second wallet with the same hardware wallet | **No** in phase 1 (section 2). Savings already covers "a second pot with the same device". |
-| Recovery Key mode wallets in the switcher | **Later.** It is its own service in the app (`rk-service.ts`) and stays on test networks. |
-| Wallets on different networks side by side | **No.** All wallets in the app share the network the app runs on. |
-| One wallet on several phones | **No.** A wallet has one phone key. |
-| Two guardians sharing key 3 of one wallet | **No.** Another script, a separate design (family-hosting.md section 1). |
-
-**Out of scope:** hiding a wallet, a cap across wallets (section 9, question 7), moving coins between wallets other
-than as an ordinary payment.
+| Wallets of several guardians in one app; a hosted wallet next to your own | One phone identity is paired with one guardian, and a host refuses a phone pubkey it already knows. Later (question 3). |
+| A second wallet with the same hardware wallet | Its key would appear in both wallets. Savings is the second pot for one device. |
+| Recovery Key mode wallets in the switcher | Its own service and seed; test networks only. |
+| Wallets on different networks side by side; one wallet on several phones; two guardians sharing key 3 | Out of scope. |
+| Silent payments and the helper coin for wallets after the first | The helper coin rides along in payments, so sharing it would link the wallets on chain. Later, at an account per wallet. |
 
 ## 2. Keys and scripts
 
-Every wallet stays `wsh(sortedmulti(2, key2, key1, key3))` on BIP 48, exactly as today.
+Every wallet stays `wsh(sortedmulti(2, key2, key1, key3))` on BIP 48.
 
-### The phone key (key 2): its own seed per wallet
+### Why accounts, not one shared key
 
-| | How | For | Against |
-|---|---|---|---|
-| L. The same key 2 in every wallet (the ask read literally) | Every wallet uses the same phone account xpub | One seed | **Links the wallets on chain**: the phone's child key at the same index is the same pubkey in both scripts, visible in every spend's witness. One backup holds both people's key 2. One nostr identity for all, so the guardian cannot route by sender. Rejected. |
-| A. One seed, one BIP 48 account per wallet | Wallet *n* at account 2*n* (account 1' is Savings), Savings at 2*n*+1 | One set of 24 words | Every path scheme changes: Savings' fixed account 1', the helper's `m/84'/c'/1'`, the silent payment paths, the nostr identity's NIP-06 account. A restore must scan accounts. A household's two members share one backup, so each holds the other's key 2. |
-| **S. One seed per wallet** (recommended) | `TrikeyWallet.create` once per wallet | Each wallet is today's wallet: every path, the backup format and Savings unchanged. Its own nostr identity comes from its own seed. Removing a wallet forgets one seed. A household member's backup holds only their own key. | One more backup per wallet (section 4 keeps it to one step). |
+Read literally, "the same phone key and the same key 3" means the same account xpubs in every wallet. Then the
+phone's child key at index *i* is the same pubkey in both wallets' scripts, and so is key 3's: every spend's witness
+shows them, and anyone can link the wallets on chain. A separate BIP 48 account per wallet gives unrelated keys from
+the same seed. It costs the person nothing: one seed, one backup, one guardian, one pairing.
 
-**Recommendation: S.** The person still sees "only the hardware wallet changes": the new phone key is made and backed
-up by the app in the same flow.
+### The account layout (recommended, question 1)
 
-### The hardware wallet (key 1)
+Wallet *n* (the first is *n* = 0) uses account **2*n*** for Spending and **2*n*+1** for its Savings. The first wallet
+is exactly today's.
 
-Each wallet's own device at BIP 48 account 0', with its authorization key at `<account>/0/0`, as today. The app
-refuses a device whose master fingerprint already belongs to another wallet on this phone ("This Ledger already holds
-'Daily'. Use Savings for a second pot with it."). Two reasons: the same device at account 0' would put the same
-hardware pubkeys in both wallets (linked on chain), and the same authorization key in two wallets makes an old
-`recovery.access` text (version 1, without a wallet id) ambiguous. A second wallet on the same device at account 2'
-and up is possible later; it needs a new account rule and a device test.
-
-The device registers each wallet under its own name ("Trikey Daily", at most 16 characters), so its screen says which
-wallet it signs for.
-
-### Key 3: always its own
-
-Key 3 is per wallet whatever the guardian does: `trikey/key3/v1` binds the pairing session and the phone's nostr
-pubkey, and each wallet has its own of both. A guest slot's key is `trikey/key3-hosted/v1`. No new derivation.
-
-### On the guardian: a second wallet of the owner, against a hosting slot
-
-| | What the guardian knows | Rule 3 | Chain data for the phone | Features |
+| | Wallet 1 (today) | Wallet 2 | Wallet 3 | Wallet *n*+1 |
 |---|---|---|---|---|
-| **Own wallet** (new, recommended for the owner's wallets) | The full descriptor, as for the first wallet | Full (change within the gap window, coverage scan) | From the guardian (live wallet, `wallet.sync`) | All of today's: limit off, contact lock, Savings watch, live wallet, owner channels; silent payments later |
-| **Hosted wallet** (built) | Account pubkeys only (BIP 89) | Tweak-proven change plus the ledger | The phone's own or a public Esplora | Limit, delay, contacts, limit off, per-slot pause; no Savings, no silent payments, no live wallet, no Speed up |
+| Phone, Spending | `m/48'/c'/0'/2'` | `2'` | `4'` | `2n'` |
+| Phone, Savings | `m/48'/c'/1'/2'` | `3'` | `5'` | `(2n+1)'` |
+| Key 3 (the key 3 seed) | `m/48'/c'/0'/2'` | `2'` | `4'` | `2n'`, the Spending number |
+| Hardware wallet, Spending / Savings | its own `0'` / `1'` | its own `0'` / `1'` | its own `0'` / `1'` | each a different device |
+| Hardware authorization key | `<0'>/0/0` of its device | the same on its device | | |
+| Helper coin, silent payments | `m/84'/c'/1'`, `m/352'/c'/0'/...` | none for now | none for now | later, per account |
+| Phone nostr identity | NIP-06 `m/44'/1237'/0'/0/0` | the same | the same | the same |
 
-An own wallet is the "shared mode" family-hosting.md left for later (decision 1), for a wallet the box's owner answers
-for. **BIP 89 does not apply to it:** BIP 89 hides a wallet from the box's owner, and here the owner is the one who
-adds it. A household member who wants privacy from the box's owner takes a hosted slot instead (an invite from the
-Host page), from the same phone or their own.
+- **One number per wallet:** "the wallet at account 2'" means the phone's Spending key and key 3 at 2'. Key 3 needs no
+  Savings account (the guardian holds no Savings key), so odd key 3 accounts stay unused.
+- **The first wallet keeps 0' and 1'**, so every existing wallet, backup and Savings is untouched.
+- **An account is never reused.** A removed or retired wallet's account stays taken (the phone and the guardian both
+  remember it), so an old address can never receive into a new wallet.
+- **Hardware wallets** keep their own account 0' (and 1' for Savings): each wallet has a different device. The app
+  refuses a device whose fingerprint already holds a key in another wallet on this phone, as hardware wallet or as a
+  Savings Recovery Key; that key would appear in two wallets.
+- **The device registers each wallet under its own name** ("Trikey Daily", 16 characters at most), so its screen says
+  which wallet it signs for.
+- **Device check:** cosigner keys at account 2' and up (the device's own key stays at 0', so no new path warning).
+  The alpha test plan gets a step per device.
 
-**Reusing the slot engine.** Hosting's `HostedEngine` is a separate engine for wallets without a descriptor; an own
-wallet needs the host's `PolicyEngine`, which already is a single-wallet state machine with rotation and retirement.
-So: one `PolicyEngine` per own wallet, with hosting's pattern around it (a slot registry, a directory per slot, routing
-by sender). Per-wallet key 3 and per-wallet rules come with the engine.
+### Key 3: one seed, an account per wallet
+
+The key 3 seed is the paired phone's `seed3` (or, for a pairing without `entropy`, the setup seed), as today. The
+guardian derives wallet *n*'s key 3 at `m/48'/c'/(2n)'/2'` of it (`cosignerFromSeed` gains the account). No new
+mix record, no new label: the record of the first pairing covers every own wallet. A rotation after a recovery keeps
+the wallet's key 3 and account, as today. Reset makes a new setup seed, so every key 3 changes.
+
+### On the guardian: own wallets, not hosting slots
+
+| | What the guardian knows | Rule 3 | Chain data for the phone | Key 3 |
+|---|---|---|---|---|
+| **Own wallet** (new) | The full descriptor, as for the first wallet | Full | From the guardian (live wallet, `wallet.sync`) | The key 3 seed at the wallet's account |
+| Hosted wallet (built, unchanged) | Account pubkeys only (BIP 89) | Tweak-proven change plus the ledger | The guest's own or a public Esplora | `trikey/key3-hosted/v1`, its own |
+
+BIP 89 stays for family hosting only: it hides a wallet from the box's owner, and an own wallet is the owner's.
 
 ## 3. Guardian side
 
 ### Storage
 
 ```
-<dataDir>/guardian-state.json            the first wallet, unchanged (version 2, the golden file)
-<dataDir>/service.json                   unchanged (relays, phones, sweeps)
-<dataDir>/hosting.json, hosted/<slotId>/ unchanged (guests)
-<dataDir>/wallets.json                   NEW: own wallets: slot id, the owner's name for it, state, phone pubkey, key-3 mix record
-<dataDir>/wallets/<slotId>/guardian-state.json   NEW: that wallet's engine state, the same version-2 format
-<dataDir>/wallets/<slotId>/live-wallet.json      NEW: its live wallet cache (likewise its Savings watch and sweeps)
+<dataDir>/guardian-state.json                  the first wallet, unchanged (version 2, the golden file)
+<dataDir>/service.json                         unchanged (relays, phones, sweeps)
+<dataDir>/hosting.json, hosted/<slotId>/       unchanged (guests)
+<dataDir>/wallets.json                         NEW: own wallets: slot id, account, name, state; accounts ever used
+<dataDir>/wallets/<slotId>/guardian-state.json NEW: that wallet's engine state, the same version-2 format
+<dataDir>/wallets/<slotId>/...                 NEW: its live wallet cache, Savings watch and sweeps
 ```
 
-Absent `wallets.json`: no own wallets, which is every guardian today, and every code path runs as before. Own wallets
-are counted apart from guests: at most 4 own wallets next to the first, and 8 hosted (question 12).
+Absent `wallets.json`: no own wallets, which is every guardian today, and every code path runs as before. At most 8
+own wallets in all (accounts 0' to 14'), counted apart from the 8 hosted.
 
-### What runs per wallet, and what stays shared
+### One engine per wallet
 
-Today the `Guardian` class wires one engine to its helpers: the recovery runner, the live wallet, the Savings monitor,
-`RecentlyCosigned` and `KnownCoins`, the silent payment scanner, the single-key coins. That wiring becomes a
-**per-wallet runtime** (engine plus helpers); the first wallet is runtime 0 with its files where they are. This is
-the bulk of the work.
+The host's `PolicyEngine` is already a single-wallet state machine (rules, limit window, recoveries, rotation,
+retirement). Each own wallet gets one, with hosting's pattern around it (a registry, a directory per slot). The
+`Guardian` class today wires one engine to its helpers (recovery runner, live wallet, Savings monitor,
+`RecentlyCosigned` and `KnownCoins`); that wiring becomes a **per-wallet runtime**, the first wallet being runtime 0
+with its files where they are. This is the bulk of the work.
 
 | Per wallet | Shared by the box |
 |---|---|
-| Key 3, rules, daily limit window, delay, fee cap, alert contacts, contact-lock setting, limit off | The guardian's nostr identity and relays (`relays_changed` goes to every wallet's phone, as it does to guests') |
-| Recoveries (ids carry the slot as guests' do, `<slotId>w<n>-<txid12>`, which fits `RecoveryId` and `CANCEL <id>`), Delay & Notify, rotation, retirement | Lock and unlock (key 3 of every wallet in memory or none), the passphrase |
-| Live wallet scripts, `wallet_tx` to that wallet's phone, Savings watch, `tx.broadcast` shortcuts by wallet id | The chain source and its tip; the three clocks |
-| Activity log (the web UI merges them) | Reset (forgets every own wallet) |
+| Key 3 at its account, rules, daily limit window, delay, fee cap, alert contacts, contact-lock setting, limit off | The nostr identity, relays, chain source and its tip, the three clocks |
+| Recoveries (ids `<slotId>w<n>-<txid12>`, which fit `RecoveryId` and `CANCEL <id>`), Delay & Notify, rotation, retirement | Lock and unlock (every key 3 in memory, or none), the passphrase |
+| Its paired phone (normally the one identity; see section 6), live wallet scripts, `wallet_tx`, Savings watch | Reset (forgets every wallet) |
+| Activity log (the web UI merges them) | The owner's email, ntfy and webhook channels |
 
-### Pairing an own wallet
+### Adding a wallet
 
-1. **Web UI**, Wallets page: "Add a wallet", with a name ("Ben", "Business"). The guardian makes a pairing code bound
-   to a new slot: the same `trikey://pair` code, same rules (24 hours at most, single use, the secret kept as a hash,
-   surviving a restart as invites do).
-2. **Phone**: an ordinary pairing (`pair.prepare`, `pair`) from the new wallet's own nostr identity. The guardian sees
-   which code was used and registers the wallet in that slot's engine. Key 3 is `trikey/key3/v1` with that pairing's
-   session id.
+From the paired phone (recommended, question 2), in two requests like pairing:
 
-So **phones need no protocol change**: an older app can pair an own wallet too (on its own phone). The guardian checks
-what `register` checks today, plus: the phone pubkey is in no other slot (host, own or guest), and the hardware account
-key is in no other active wallet on this box.
+1. **`wallet.add.prepare`** `{ account }`: the guardian checks the account is free and even, and answers key 3's xpub
+   at that account.
+2. The phone builds the descriptor (its key at the same account, the new hardware wallet at 0', key 3), registers it on
+   the device, shows the first address there, and has the device sign the pairing proof over the new wallet id.
+3. **`wallet.add`** `{ account, name, descriptor, hardwareAuth, hardwareAuthProof, rules }`: the guardian checks what
+   `register` checks today (distinct keys, key 3 in its slot at that account, the authorization key under the hardware
+   xpub, the proof, the rules, a contact on mainnet, no limit off), and that no hardware key is in another of its
+   wallets. It creates the slot and announces it: `wallet_added` to the phone, a line to the owner's channels and in
+   the web UI's activity.
 
-Why a code from the web UI, and not a request from an already paired phone: adding a wallet is the box owner's call,
-the same as the first pairing. A phone thief should not be able to add wallets to the owner's box. (Alternative in
-question 9.)
+A thief holding the phone gains nothing by adding a wallet: it is a new wallet with new keys; the others are untouched.
 
 ### Routing
 
-By sender, as for guests. Each own wallet's phone gets every method the first wallet's phone gets, on its own
-wallet: `sign`, `policy.*`, `recovery.*`, `wallet.sync`, `tx.*`, `savings.*`, `phone.resume`, `hardware.confirm`,
-`wallet.retire`, `guardian.status` (its wallet's view). A wallet's phone never reaches another wallet. Alert contacts:
-`recovery.cancel` and `CANCEL <id>` find the wallet by the recovery id. `recovery.access` is tried against each
-wallet's hardware authorization key; the version-2 text names the wallet id.
+The sender must be the wallet's paired phone; `walletId` picks the engine (absent: the first wallet). Every method
+the first wallet's phone has today works per wallet: `sign`, `policy.*`, `recovery.*`, `phone.resume`,
+`hardware.confirm`, `wallet.retire`, `wallet.sync`, `tx.get`, `tx.broadcast`, `savings.*`, `guardian.status`.
+`sp.*`, `singlekey.register` and `wallet.unwatch` stay the first wallet's for now. Alert contacts' `recovery.cancel`
+and `CANCEL <id>` find the wallet by the recovery id. `recovery.access` is tried against each wallet's hardware
+authorization key; the version-2 text names the wallet id.
 
 ### Rules per wallet
 
 - **Daily limit:** per wallet, each with its own window. A payment from one own wallet to another counts like any
-  payment, as payments into Savings do (owner's decision, 2026-11-01): a thief gains nothing by calling a wallet of
-  their own "the other wallet". The app shows the total a phone thief could reach (section 6).
-- **Alert contacts:** per wallet. One person can be a contact of several. On mainnet each wallet needs at least one.
-  Contacts' DMs name the wallet by the name the owner gave it when the box has more than one wallet ("Business:
-  recovery started"); with one wallet they stay as today.
+  payment, as payments into Savings do (owner's decision, 2026-11-01). The app shows the total a phone thief could reach.
+- **Alert contacts:** per wallet; one person may be a contact of several; on mainnet each wallet needs at least one.
 - **Delay & Notify:** per wallet. A recovery of one wallet pauses phone-only payments of that wallet only.
-- **Limit off, contact lock:** per wallet, with today's rules and approval texts (`wallet=` names that wallet).
+- **Limit off, contact lock:** per wallet, with today's rules and approval texts (`wallet=` names the wallet).
 
-### Lock, pause and unlock
+### Lock and unlock: box-wide
 
-- **Lock stays global.** One passphrase unlocks every key 3; a restart locks them all.
-- **An own wallet's phone acts like the first wallet's phone** (recommended, question 6): `guardian.lock` locks the
-  box, `guardian.unlock` with the passphrase unlocks it (the per-phone throttle as today), and its contacts' `LOCK`
-  locks the box when its contact lock is on. Locking only removes capability, and own wallets are the owner's.
-- **One extra rule:** `guardian.unlock` is refused while a recovery of **any** wallet runs that this phone did not
-  start (today: of its wallet). A thief holding the phone holds every wallet's phone key.
-- The alternative is hosting's per-wallet **pause** for own wallets too: the phone and its contacts stop only that
-  wallet, its hardware wallet resumes it. Better when the wallets belong to different people; more code paths.
+- One passphrase unlocks every key 3; a restart locks them all; the phone's `guardian.lock` locks the box.
+- A contact's `LOCK` locks the box when the contact is listed by a wallet whose contact lock is on.
+- `guardian.unlock` from the phone is refused while a recovery of **any** wallet runs that this phone did not start
+  (today: of its wallet), since the phone holds every wallet's phone key.
+- No per-wallet pause for own wallets: hosting's pause stays for guests.
 
-### Notifications
+### Alerts
 
-- **Nostr alerts** go to the wallet's own phone identity and the wallet's contacts.
-- **The owner's channels** (email, ntfy, webhook) carry every own wallet's alerts, each line naming the wallet,
-  with a per-wallet "send to the owner's channels" switch in the web UI (on by default). A contact's email or ntfy
-  carries the alerts of the wallets that list that contact. Guests stay as they are (no channels).
-- Changes to these settings are announced as today, on every channel and to every wallet's phone.
+- To the phone: the alert carries `walletId` for wallets after the first, and the app files it under that wallet.
+- Contacts' DMs and the owner's channels name the wallet ("Business: recovery started") once the box has more than one
+  wallet; with one wallet they stay as today. The owner's channels carry every own wallet's alerts.
 
 ### Web UI
 
-- **Wallets page** (new): each wallet with its name, its phone, its state (paired, recovering, retired), "Add a
-  wallet", and a recovery code per wallet (`trikey://recover?...&wallet=<id>`).
-- **Wallet page per wallet** (the page from #120): a wallet picker at the top; `GET /api/wallet` stays the first
-  wallet's, `GET /api/wallets` and `GET /api/wallets/:id` serve the others, view and receive only, also while locked.
-- **Rules and Recovery:** per wallet, with the same picker. **Activity:** merged, with a wallet column and a filter.
-- **Reset:** lists every wallet it forgets; refused while any wallet's recovery runs or a sweep waits (today's rule
-  over every wallet). Hosting's refusal is unchanged.
+- **Wallets page** (new): each wallet with its name, account, hardware wallet, state, and its recovery code
+  (`trikey://recover?...&wallet=<id>`, printed and kept with that hardware wallet).
+- **Wallet, Rules and Recovery pages:** a wallet picker at the top. `GET /api/wallet` stays the first wallet's;
+  `GET /api/wallets` and `GET /api/wallets/:id` serve the list and each wallet, view and receive only, also while
+  locked. **Activity:** merged, with a wallet column and a filter.
+- **Reset:** lists every wallet it forgets; refused while any wallet's recovery runs or a sweep waits. Hosting's
+  refusal is unchanged.
 
-## 4. Phone side
+## 4. Protocol
 
-### Storage and the switcher
+- **`walletId`** (optional) in the params of the methods listed under "Routing". Absent: the first wallet, so every
+  request an existing phone sends means what it meant.
+- **New methods** `wallet.add.prepare`, `wallet.add`; new alert `wallet_added`; `walletId` (optional) on alerts about
+  a wallet after the first.
+- **`guardian.status`** without `walletId` gains `wallets: [{ walletId, account, name }]` (a lenient result member),
+  so a phone restored from an old backup finds every wallet (section 5).
+- **Feature** `own_wallets` in `guardian.status.features`. The phone sends `walletId` and the new methods only to a
+  guardian that lists it.
+- **Old guardians refuse safely.** Request params are strict schemas, so an older guardian refuses a request carrying
+  `walletId` (invalid params) and answers `-32601` to the new methods. It never acts on the first wallet instead.
+- **Unchanged:** the envelope, `PROTOCOL_VERSION`, pairing, approval texts (`wallet=` already names the wallet),
+  recovery codes (`&wallet=` exists).
 
-- Each wallet is one `TrikeyWallet` under its own storage key: the first keeps `trikey.wallet.<mode>.<network>`
-  untouched; the others take `trikey.wallet.<mode>.<network>.<tag>` (8 random bytes). Secrets already have their own
-  ids.
-- A small index, `trikey.wallets.<mode>.<network>`: the order, each wallet's storage key and name, and the one shown
-  last. No index: one wallet, which is every install today.
-- **Home** gets a switcher at the top: the wallet's name and its device ("Daily · Trezor Safe 3"). Tapping it opens a
-  sheet with every wallet and its balance, and "Add a wallet".
-- At most 8 wallets per phone.
+## 5. Phone side
 
-### Which wallet pays and receives
+### State
 
-- **The wallet shown pays and receives.** Send's review screen starts with "From: Daily" and the device it will need;
-  Receive shows the wallet's name above the address. Switching wallets cancels a quote in progress.
-- A scanned or opened payment request (`bitcoin:` URI) opens Send in the wallet shown, with "From" changeable before
-  review.
-- The wrong device is caught: the app checks the connected device's fingerprint and says "This is the Ledger of
-  'Business'. Connect the Trezor of 'Daily'." (The device could not sign anyway: it holds the other registration.)
-- Alerts for a wallet not shown name it ("Business: payment received") and tapping one switches to it.
+- **One seed, one nostr identity**, in the secure store as today, now shared by every wallet. They are deleted only
+  with the last wallet.
+- **Each wallet is one `TrikeyWallet` state document** with its account index and its `walletId` for the guardian:
+  the first keeps `trikey.wallet.<mode>.<network>` untouched; the others take `trikey.wallet.<mode>.<network>.a<account>`.
+  `deriveKey2` and the hardware, pairing and Savings paths take the account.
+- **An index**, `trikey.wallets.<mode>.<network>`: the order, names, accounts ever used, the wallet shown last. A
+  separate key, so an older app saving the first wallet cannot strip it. No index: one wallet, every install today.
+- **One connection to the guardian** for all wallets: one subscription for the one identity; alerts are dispatched by
+  `walletId`. The wallet shown syncs as today; the others on their `wallet_tx` alerts and every 10 minutes.
 
-### Background
+### The switcher, paying and receiving
 
-Every wallet stays open for alerts: one relay connection per relay, shared by all wallets, with each wallet's own
-subscription. The wallet shown syncs as today; the others sync on their `wallet_tx` alerts and every 10 minutes, so
-the switcher's balances stay fresh.
+- **Home** gets a switcher at the top: the wallet's name and its device ("Daily · Trezor Safe 3"); a sheet lists
+  every wallet with its balance, and "Add a wallet". Home shows the current wallet's Spending and Savings.
+- **The wallet shown pays and receives.** Send's review starts with "From: Daily" and the device it needs; Receive
+  shows the wallet's name above the address; switching cancels a quote in progress. A scanned `bitcoin:` request opens
+  in the wallet shown, with "From" changeable before review.
+- **The wrong device is caught:** "This is the Ledger of 'Business'. Connect the Trezor of 'Daily'."
+- **Alerts** for another wallet name it; tapping one switches.
 
 ### Adding a wallet
 
-Settings > Wallets > "Add a wallet": a name, then the usual onboarding steps for a new wallet: connect the hardware
-wallet, make the phone key, then one of:
+Settings > Wallets > "Add a wallet": a name, connect the new hardware wallet, then `wallet.add.prepare` / `wallet.add`
+at the next free even account. Then rules and alert contacts (offering the other wallets' contacts), then a new backup
+(asked for, as after Savings). A guardian without `own_wallets`: "Update your guardian to add a wallet."
 
-- **"With my guardian"**: scan the "Add a wallet" code from the guardian's web UI (phase 2). The app recognises the
-  guardian (same npub as another wallet) and keeps its relays. An older guardian answers `already_registered`; the app
-  says "Your guardian guards one wallet. Update it, or make an invite on its Host page."
-- **"With another guardian"**: scan its pairing code (phase 1).
-- **"With an invite"**: a family-hosting invite (phase 1), including one from your own guardian's Host page.
+### Backups: one for all
 
-Then rules, alert contacts (offering the other wallets' contacts), and the backup.
-
-### Backups
-
-- **One file per wallet**, today's format (payload version 1, 2 with Savings, 3 hosted), so an older app can restore
-  each file.
-- **"Back up all wallets"** makes them in one step. The same passkey seals every file (each with its own PRF salt).
-  The recovery code: one per wallet by default; the person may use **one code for the wallets they choose** (theirs,
-  not their partner's): the app keeps it in memory during that one step, never on disk (question 8).
-- **Restore** lists every backup in the cloud store, opens each with the passkey or a code, and restores the newest
-  file per wallet id. Today's `findBackup` picks one newest file; it gains a "list all" sibling.
-- The guardian's recovery code is per wallet (`&wallet=<id>`); the printed sheet names the wallet.
-
-### The phone's nostr identity
-
-**One per wallet** (recommended, question 3), from each wallet's own seed (NIP-06 account 0, as today).
-
-| | Privacy | Simplicity |
-|---|---|---|
-| **Per wallet** | The guardian treats each wallet as if it had its own phone. Relays can still link them (one IP, one connection, the same moments) | No protocol change: routing by sender works as for guests; a restored backup finds its slot by itself |
-| One for all | Relays and the guardian see one pubkey for all wallets | Needs a wallet field in every request and a new pairing for every wallet but the first; the guardian's "a pubkey belongs to one slot" goes |
+- **One file, one recovery code, one passkey.** A single-wallet backup stays byte for byte what it is (version 1, 2
+  with Savings, 3 hosted). With more than one wallet the payload is **version 4**: today's fields for the first wallet
+  plus `wallets: [{ account, name, descriptor, walletId, hardware, rules, nextHardwareSequence, sendLog, savings,
+  retiredWallets, recoveryDestination }]`, every member public, no new secret. An older app refuses version 4 ("update
+  the app"), as it refuses Savings' version 2.
+- **A restore brings every wallet back**, each in its own state document, and the guardian recognises the one
+  identity.
+- **A backup older than the last wallet added** still recovers it: the restored phone reads `guardian.status.wallets`,
+  checks each descriptor holds its own key at that account, and rebuilds the wallet (the device registration, such as
+  Ledger's HMAC, is made again on first use).
 
 ### Removing a wallet
 
-Settings > Wallets > a wallet > "Remove from this phone". Allowed when the wallet is empty, or when its backup is newer
-than its last change (the app checks and says so). If it is empty, the app first offers to release it on the guardian
-(`wallet.retire`, hardware approval), so the slot frees up. Removing deletes that wallet's state, its secrets and its
-index entry; nothing of the other wallets is touched.
+Settings > Wallets > a wallet > "Remove". Allowed when it is empty; the app first releases it on the guardian
+(`wallet.retire`, its hardware approval). Its account stays taken. The first wallet can be removed only last (it holds
+the guardian pairing); removing the last wallet is today's "Remove this wallet".
 
 ### Savings per wallet
 
-Each wallet may have its own Savings: its own seed at account 1', its own hardware wallet and its own Recovery Key.
-Home shows the current wallet's Spending and Savings. Own wallets on the guardian get the Savings watch; hosted
-wallets still do not (family-hosting decision 12).
+Each wallet may have its own Savings: the phone at the wallet's odd account, its hardware wallet at 1', and its own
+Recovery Key device. The guardian watches each wallet's Savings in that wallet's runtime.
 
-## 5. Recovery
+## 6. Recovery
 
 | Situation | What happens |
 |---|---|
-| Lost phone, backups | Restore every wallet's file on the new phone (one passkey opens them all). Nothing changes on the guardian: each wallet's identity comes from its seed. |
-| Lost phone, no backup | Per wallet, as today: its recovery code, its hardware wallet's `recovery.access`, Delay & Notify, a sweep to a new wallet that the guardian adopts. Several recoveries can run at once, each with its own delay and alerts. A household's members each recover their own. |
-| Lost phone, some backups | Restore those; recover the others with their hardware wallets. |
-| Lost one hardware wallet | Only that wallet: its seed words, or Delay & Notify with phone + guardian. The other wallets are untouched. |
-| Guardian dies or is stolen | Every wallet's money still moves with the phone and that wallet's hardware wallet. "Replace guardian" runs per wallet; the app offers "Move all wallets" and walks through them one device at a time ("2 of 3 moved"). The new guardian needs one pairing code per wallet in phase 2 (question 10). |
-| Guardian reset | Forgets every own wallet, as it forgets the first today; refused while any recovery runs. |
+| Lost phone, backup | Restore the one file: every wallet comes back. Nothing changes on the guardian. |
+| Lost phone, no backup | A new phone (a new seed) recovers each wallet with its own hardware wallet: its recovery code, `recovery.access` naming the wallet, Delay & Notify, a sweep to a new wallet with the new seed's key at the same account. Recoveries run side by side. Until one completes, that wallet's paired phone is the old identity; so the guardian keeps the paired phone per wallet, and the phone's identity is the same for all again once every recovery is done. |
+| Lost one hardware wallet | That wallet only: its seed words, or Delay & Notify with phone + guardian. |
+| Guardian dies or is stolen | Every wallet still moves with the phone and its hardware wallet. "Replace guardian" runs per wallet: pair the new guardian with the first, `wallet.add` (naming the replaced wallet) for each other one, and sweep each with its own device. The app walks through them ("2 of 3 moved"). |
+| Guardian reset | Forgets every wallet and makes a new seed; refused while any recovery runs. |
 
-## 6. Privacy and threat model
+## 7. Privacy and threat model
 
+- **On chain, the wallets are not linked.** Their phone keys and key 3s come from different hardened accounts, and
+  their hardware wallets are different devices.
+- **Off chain they are.** Every descriptor carries the same phone master fingerprint and the same key 3 fingerprint.
+  Whoever sees two descriptors (a printed wallet map, a hardware wallet's registration, an export to another wallet
+  app) can tell they belong together. PSBTs carry the fingerprints to the devices.
+- **One seed holds every wallet's phone key.** The backup, its recovery code and its passkey give key 2 of every
+  wallet. Each wallet's money still needs its hardware wallet or the guardian's rules.
 - **A shared phone is a shared key.** Phone biometrics are per device, not per person: everyone who can unlock the
-  phone can see every wallet's balance and history, and can spend from each wallet up to its daily limit with phone +
-  guardian. The hardware wallets keep the rest apart: nobody raises another's limit, turns it off or approves a rule
-  change without that wallet's device. The app says this when a second wallet is added to a phone that already has
-  one: "Anyone who can unlock this phone can see this wallet and spend up to its daily limit."
-- **Recoveries between household members.** With the phone, one member can start a recovery of the other's wallet
-  (phone key survives, a new "hardware" key). Its alert reaches the shared phone, which both use, and the wallet's
-  alert contacts, who can cancel. Mainnet already requires a contact; for a household the app suggests one outside it.
-- **The box's owner sees every own wallet**: balances, addresses, payments, Savings, as for the first. Someone who must
-  not be seen by the owner uses a hosted slot (BIP 89), ideally from their own phone.
-- **A stolen phone now exposes every wallet on it:** the sum of their daily limits per day (the app shows it), every
-  wallet's history, and every wallet's contested-recovery stalemate. Each wallet's alerts and contacts still work.
-  Locking the guardian from the web UI stops all of them at once.
-- **Per-wallet app lock?** OS biometrics cannot tell household members apart, so a per-wallet Face ID adds nothing. A
-  per-wallet passcode mixed into key 2's encryption could; it is a later option (question 11).
-- **Relays** can link one phone's wallets (one IP, one connection, the same moments). They see ciphertext only.
-- **The guardian keeps wallets apart:** a wallet's phone cannot read, sign for or recover another wallet; only lock
-  and unlock are box-wide.
+  phone sees every wallet and can spend from each up to its daily limit with phone + guardian. Nobody raises another's
+  limit or changes their rules without that wallet's hardware wallet. The app says so when a second wallet is added:
+  "Anyone who can unlock this phone can see this wallet and spend up to its daily limit."
+- **Recoveries between household members.** With the phone, one member can start a recovery of the other's wallet. Its
+  alert reaches the shared phone and that wallet's contacts, who can cancel. The app suggests a contact outside the
+  household.
+- **A stolen phone exposes every wallet:** the sum of their daily limits per day (the app shows it), every history,
+  every wallet's contested-recovery stalemate. Locking the guardian, from the web UI or by a contact, stops them all.
+- **Per-wallet passcode: later.** With one seed it could only gate the app's screens, not key 2 itself.
+- **The box's owner sees every own wallet**, as the first. Relays see one identity, as today.
+- **The guardian keeps wallets apart:** a request reaches only the engine its `walletId` names, and that wallet's key
+  3; only lock and unlock are box-wide. A box compromise gives key 3 of every wallet, as any design on one box would.
 
-## 7. Compatibility and migration
+## 8. Compatibility and migration
 
 | Combination | What happens |
 |---|---|
-| Existing single-wallet install | Unchanged: same storage key, no index. Adding a wallet writes the index and leaves the first wallet's state as it is. |
-| App downgraded with several wallets | The older app opens the first wallet only; the others' state and secrets stay untouched until the newer app is back. |
-| Older app restoring from a cloud with several backups | It restores the newest file only (`findBackup`). The others stay in the store; the release notes say so. |
-| New app, older guardian (phase 2 feature missing) | A second `pair` is refused with `already_registered`; the app explains. Other guardians and invites work. |
-| Guardian downgraded with own wallets | The older version ignores `wallets.json`: those wallets' phones get no answers; their money moves with phone + hardware wallet. The release notes say so. |
-| Older app pairing an own wallet | Works: it is an ordinary pairing. |
-| Backups, recovery codes, approval texts | No format change. |
-| Protocol | No new method or field for phones. PROTOCOL.md notes that one guardian may guard several wallets of its owner, routed by the sender's pubkey, and that contacts' DMs may name a wallet. |
+| Existing single-wallet install | Unchanged: same storage, paths, identity and backup format. |
+| New phone, older guardian | No `own_wallets`: the app does not offer "Add a wallet". A stray request with `walletId` is refused, never applied to the first wallet. |
+| Older phone, new guardian | It sends no `walletId`: the first wallet, as today. |
+| Guardian downgraded with own wallets | The older version ignores `wallets.json` and refuses `walletId`: the first wallet works; the others' money moves with phone + hardware wallet. The release notes say so. |
+| App downgraded with several wallets | The older app opens the first wallet only. Its "Remove this wallet" would delete the shared seed: the release notes say to keep the backup, which brings every wallet back. |
+| Older app, version 4 backup | Refused ("update the app"). |
+| Approval texts, recovery codes, the envelope | No change. |
 
-## 8. Phasing
+## 9. Phasing
 
-### Phase 1: the phone only (no guardian change)
+**Phase 1 can no longer be the phone alone.** With one identity and a shared seed, a second wallet needs the
+guardian to derive key 3 at an account and to route by `walletId`; the earlier stopgap (your own invite) is gone too,
+since a host refuses a phone pubkey it already knows. So the guardian goes first. Its change is invisible until a
+phone uses it, so it can ship in the release before the phone's, or in the same one.
 
-The app holds several wallets: the index, the switcher, "From" and wallet names in Send and Receive, alerts for every
-wallet, "Add a wallet" with another guardian or with an invite, per-wallet backups with "Back up all", restore of
-every file, removal, the shared-phone notice.
-
-What it covers: several guardians; a hosted wallet next to your own; and the literal ask through **your own invite**: a
-second wallet hosted on your own guardian. That second wallet has hosting's limits (no Savings, no live wallet, chain
-data from an Esplora server of your own or a public one; key 2 backup required), and the invite
-screen, recognising your own guardian, says so plainly instead of warning about a dishonest host.
+### Phase 1: two Spending wallets on one guardian
 
 | Package | Changes | Tests |
 |---|---|---|
-| `packages/wallet` | `listBackups` next to `findBackup`; a relay pool several wallets can share (a wallet closes only a pool it opened); otherwise one `TrikeyWallet` per wallet, unchanged | Several wallets on one store and secure store, apart; list and restore of several files |
-| `apps/mobile` | The index, a wallet set in the real service, the switcher, Send/Receive wallet names, background listening, add / remove / rename, "Back up all", restore of several, the device-fingerprint check, the shared-phone notice, the demo | Screen tests; the real service against the rig with two wallets on two guardians and a hosted one |
-| Docs | DESIGN.md, the alpha test plan (two wallets on one phone) | |
+| `packages/core` | Nothing new (`bip48Path` already takes an account) | Vectors: phone and key 3 at 0', 2', 4' are unrelated keys |
+| `packages/protocol` | `walletId` on the routed methods, `wallet.add.prepare`, `wallet.add`, `wallet_added`, `walletId` on alerts, `guardian.status.wallets`, `own_wallets`; PROTOCOL.md | Strict schemas; requests without `walletId` unchanged |
+| `apps/guardian` | `wallets.json`, a `PolicyEngine` and runtime per own wallet, `cosignerFromSeed` with an account, routing, box-wide lock rules, alerts naming the wallet, per-wallet live wallet | The first wallet's `guardian-state.json` byte for byte the same through everything another wallet does; isolation; key 3 per account; accounts never reused; an older client's requests unchanged |
+| `apps/guardian-web` | Wallets page; picker on Wallet, Rules, Recovery; merged Activity; Reset text | Page tests |
+| `packages/wallet` | The account in key and path derivation; `walletId` on requests; shared secrets; backup version 4 and its restore; rebuilding wallets from `guardian.status.wallets` | Two wallets on one seed against the guardian in-process; backup round trip; restore from an older backup |
+| `apps/mobile` | The index, the wallet set in the real service, the switcher, "From" and names in Send and Receive, alert dispatch, add / remove / rename, the device check, the shared-phone notice, the demo | Screen tests; the real service against the rig with two wallets |
+| `e2e` | Two wallets on regtest: co-sign each under its own limit, a recovery of one while the other pays, every transaction through `tools/consensus-verify` | |
 
-### Phase 2: own wallets on the guardian
+### Phase 2
 
-`wallets.json`, a `PolicyEngine` and runtime per own wallet, codes from "Add a wallet", routing, per-wallet live
-wallet and Savings watch, box-wide lock rules, owner channels per wallet, the Wallets page, the Wallet, Rules and
-Recovery pages per wallet. The phone gains nothing but the "With my guardian" path, already shaped in phase 1.
-
-Tests as hosting's: the first wallet's `guardian-state.json` byte for byte the same through everything an own wallet
-does; isolation between wallets; key 3 differs per wallet; a phone pubkey in one slot only; reset, relays and lock over
-every wallet.
+Savings for wallets after the first (odd accounts), "Move all wallets" for Replace guardian, per-wallet recovery
+sheets printed from the app.
 
 ### Later
 
-Silent payments per own wallet (the scanner's CPU grows with every scan key), a per-wallet passcode, Recovery Key mode
-wallets in the switcher, one pairing code for several wallets (Replace guardian for a household), a second wallet on the
-same hardware wallet at another account.
+Silent payments and the helper coin per wallet (at an account per wallet; the guardian's scanner costs CPU per scan
+key), wallets of other guardians and hosted wallets in the switcher (question 3), a per-wallet passcode for the
+screens, a cap across all wallets of one phone, Recovery Key mode wallets.
 
-## 9. Open questions for the owner
+## 10. Owner's decisions (2026-11-05)
 
-1. **What "only the hardware wallet changes" means.** *Recommendation:* to the person, yes: same phone, same guardian,
-   another hardware wallet. Under the hood each wallet gets its own phone key and key 3. *Alternative:* literally the
-   same phone key in every wallet: one backup, but the wallets are linked on chain and a household shares one key.
-2. **Phone key per wallet.** *Recommendation:* its own 24 words per wallet. *Alternative:* one seed, a BIP 48 account
-   per wallet: one set of words, every path scheme changes, household members share a backup.
-3. **Nostr identity.** *Recommendation:* one per wallet, from its seed; no protocol change. *Alternative:* one for all
-   with a wallet field in every request.
-4. **A second own wallet on the guardian.** *Recommendation:* own wallets in shared mode (the guardian knows the
-   descriptor; every feature). *Alternative:* only hosted slots (BIP 89) for yourself, which works today with
-   hosting's limits.
-5. **Phasing.** *Recommendation:* the phone first (phase 1), with your own invite as the stopgap for the literal ask;
-   own wallets on the guardian in phase 2. *Alternative:* ship both together.
-6. **Lock for own wallets.** *Recommendation:* box-wide, like the first wallet's (phone lock, contacts' `LOCK`,
-   passphrase unlock). *Alternative:* hosting's per-wallet pause, better when the wallets belong to different people.
-7. **Daily limits.** *Recommendation:* per wallet; the app shows the total a phone thief could reach. *Alternative:* an
-   extra cap across all wallets of one phone (the guardian would have to be told which wallets share a phone).
-8. **Backups.** *Recommendation:* one file per wallet, one passkey for all, one recovery code per wallet unless the
-   person chooses one for several of their own. *Alternatives:* strictly one code per wallet; or one combined file (a
-   new format, and members of a household share it).
-9. **Who may add a wallet on the guardian.** *Recommendation:* a code from the web UI, like the first pairing.
-   *Alternative:* an existing wallet's phone with its hardware approval, no trip to the web UI.
-10. **Replace guardian for several wallets.** *Recommendation:* one code per wallet in phase 2; a code for several
-    later. *Alternative:* build the multi-wallet code in phase 2.
-11. **Per-wallet passcode on a shared phone.** *Recommendation:* later; phase 1 states plainly what a shared phone
-    means. *Alternative:* a passcode per wallet in phase 1.
-12. **Caps.** *Recommendation:* 8 wallets per phone; 4 own wallets per guardian next to the first, apart from the 8
-    hosted. *Alternative:* own wallets share hosting's 8.
-13. **The owner's email, ntfy and webhook for own wallets.** *Recommendation:* every own wallet's alerts, named, with
-    a per-wallet switch (on by default). *Alternative:* the first wallet's only, as for guests.
-14. **The same hardware wallet in two wallets.** *Recommendation:* refused; Savings is the second pot for one device.
-    *Alternative:* allow it at BIP 48 account 2' and up.
+"The best solution is same phone and guardian wallet, only change the hardware wallet for now; this keeps things
+simple." What follows from it:
+
+| Topic | Decision |
+|---|---|
+| Keys | The same phone seed and the same key 3 seed for every wallet; only the hardware wallet differs. |
+| Unlinkability | A BIP 48 account per wallet on the phone and on key 3 (section 2), invisible to the person. A literally shared xpub would link the wallets on chain; accounts avoid that at no cost to simplicity. Hardware wallets stay at their own 0'. |
+| Nostr identity | One for the phone; `walletId` in the requests that act on a wallet; old guardians refuse it. |
+| Backup | One file, one recovery code: the seed plus the list of wallets; a restore brings them all back. |
+| Guardian | Own wallets sharing the key 3 seed at their account, each with its own policy (daily limit, contacts, Delay & Notify); the lock box-wide. BIP 89 for family hosting only. |
+| A shared phone | Everyone who unlocks it sees and can spend each wallet up to its limit; the app says so. |
+| Daily limits | Per wallet; the app shows the total. No cap across wallets for now. |
+| Caps | 8 own wallets per guardian, apart from the 8 hosted; the same 8 per phone. |
+| Alerts | Name the wallet once there is more than one; the owner's channels carry them all. |
+| The same hardware wallet in two wallets | Refused, also as another wallet's Savings Recovery Key. |
+| Per-wallet passcode | Later (and with one seed, a screen lock only). |
+| Order | The guardian first, then the phone (section 9). |
+
+### Questions this decision raises
+
+1. **Account numbers.** *Recommendation:* Spending at 2*n*, Savings at 2*n*+1 (wallet 2 at 2' and 3', wallet 3 at
+   4' and 5'), key 3 at the Spending number: each wallet's pair stays together and Savings works for every wallet.
+   *Alternative:* the example's 2', 3', 4' for wallets 2, 3, 4, with their Savings elsewhere (such as 100' + *n*) or
+   no Savings for them.
+2. **Who may add a wallet.** *Recommendation:* the paired phone with the new hardware wallet's pairing proof,
+   announced to the phone, the owner's channels and the web UI's activity; no trip to the box. *Alternative:* a code
+   from the web UI, like the first pairing.
+3. **Wallets of other guardians, and hosted wallets, in the same app.** *Recommendation:* later; for now the app holds
+   the wallets of one guardian. *Alternative:* now, with a second seed and identity per other guardian, which gives
+   up "one backup".

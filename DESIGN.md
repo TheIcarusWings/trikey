@@ -661,7 +661,7 @@ signatures plus the script cost more than one key's signature. Two ways to fix t
 
 ## Later: several wallets in one app (proposal)
 
-Several wallets on one phone, each with its own hardware wallet, phone key and key 3, on one guardian or several: docs/design/multi-wallet.md (proposal, not built; the owner's questions are in its section 9).
+Several wallets on one phone and one guardian, where only the hardware wallet changes: the same phone seed and key 3 seed at a BIP 48 account per wallet, one backup: docs/design/multi-wallet.md (proposal, not built; the owner's decisions of 2026-11-05 are in its section 10).
 
 ## Open questions
 
