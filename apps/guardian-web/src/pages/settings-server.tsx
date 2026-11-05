@@ -66,8 +66,8 @@ function Status({ data }: { data: ChainSettings }) {
         <Alert variant="warning" className="mt-2">
           <TriangleAlert aria-hidden="true" />
           <div className="flex flex-col gap-1">
-            <p className="m-0 text-[13px] leading-[18px] font-medium">{mempoolText(st).text}</p>
-            <p className="m-0 text-[13px] leading-[18px]">{mempoolText(st).detail}</p>
+            <p className="m-0 text-[13px] leading-[18px] font-medium">{mempoolText(st, { onServerPage: true }).text}</p>
+            <p className="m-0 text-[13px] leading-[18px]">{mempoolText(st, { onServerPage: true }).detail}</p>
           </div>
         </Alert>
       )}

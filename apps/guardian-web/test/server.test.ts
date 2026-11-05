@@ -120,3 +120,16 @@ describe('an Electrum server that reports no unconfirmed payments', () => {
     expect((await createMockApi('default').getChain()).status.mempoolUnseen).toBeUndefined();
   });
 });
+
+describe('Settings > Server from the platform settings', () => {
+  it('fills the form from the source in use when nothing was chosen here (Umbrel)', () => {
+    const env = settings({ source: null, summary: { kind: 'own', backend: 'electrum', host: '192.168.1.158', port: 50001 }, origin: 'environment' });
+    expect(draftFrom(env)).toMatchObject({ kind: 'electrum', host: '192.168.1.158', port: '50001' });
+  });
+  it('words the Core 32 fix for the page it is on', () => {
+    const m = { mempoolCause: 'electrs_core32' as const, mempoolServerSlow: true, mempoolViaNode: true };
+    expect(mempoolText(m).detail).toContain('switch Settings > Server to Bitcoin Core alone');
+    expect(mempoolText(m, { onServerPage: true }).detail).toContain('choose Your own Bitcoin Core below');
+    expect(mempoolText(m, { onServerPage: true }).detail).not.toContain('Settings > Server');
+  });
+});

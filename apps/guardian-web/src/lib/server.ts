@@ -37,29 +37,38 @@ export const CORE_NOTE =
 export const CORE32_FIXES =
   "Fix it by adding deprecatedrpc=bip125 to Bitcoin Core's configuration (bitcoin.conf) and restarting Bitcoin Core and Electrs, or switch Settings > Server to Bitcoin Core alone.";
 
+/** The same, worded for Settings > Server itself, where the choice is right below. */
+export const CORE32_FIXES_HERE =
+  "Fix it by adding deprecatedrpc=bip125 to Bitcoin Core's configuration (bitcoin.conf) and restarting Bitcoin Core and Electrs, or choose Your own Bitcoin Core below.";
+
 /**
  * The home status's note and Settings > Server's warning while the Electrum server reports no unconfirmed payments
  * (`mempoolUnseen`): `text` names the cause when the guardian knows it, `detail` says what still works and what fixes it.
  * `mempoolServerSlow`: its pings took seconds too (Electrs 0.11 rereads Core 32's whole mempool on the loop that answers
  * requests).
  */
-export function mempoolText(m: { mempoolCause?: MempoolCause; mempoolViaNode?: boolean; mempoolServerSlow?: boolean }): { text: string; detail: string } {
+export function mempoolText(
+  m: { mempoolCause?: MempoolCause; mempoolViaNode?: boolean; mempoolServerSlow?: boolean },
+  opts: { onServerPage?: boolean } = {},
+): { text: string; detail: string } {
+  const fixes = opts.onServerPage ? CORE32_FIXES_HERE : CORE32_FIXES;
+  const coreAlone = opts.onServerPage ? 'or choose Your own Bitcoin Core below' : 'or switch Settings > Server to Bitcoin Core alone';
   const own = 'Payments your phone makes still show at once (the guardian remembers the ones it sent).';
   const meanwhile = m.mempoolViaNode ? 'Meanwhile the guardian reads unconfirmed payments from Bitcoin Core itself, so they still show at once.' : 'Until then, payments to you show once confirmed.';
   if (m.mempoolCause === 'electrs_core32') {
     if (m.mempoolServerSlow)
       return {
         text: "Electrs is slowed down and can't see unconfirmed payments: it doesn't work with Bitcoin Core 32's mempool.",
-        detail: `Every request to Electrs waits several seconds, so syncs are slow. ${CORE32_FIXES} ${meanwhile} ${own}`,
+        detail: `Every request to Electrs waits several seconds, so syncs are slow. ${fixes} ${meanwhile} ${own}`,
       };
     if (m.mempoolViaNode)
       return {
         text: "Electrs can't read Bitcoin Core 32's mempool, so the guardian reads unconfirmed payments from Bitcoin Core itself.",
-        detail: `They still show at once. ${CORE32_FIXES} ${own}`,
+        detail: `They still show at once. ${fixes} ${own}`,
       };
     return {
-      text: "Electrs can't read Bitcoin Core 32's mempool; unconfirmed payments show once confirmed, or switch Settings > Server to Bitcoin Core alone.",
-      detail: `Bitcoin Core 32 no longer gives a field Electrs 0.11 needs. ${CORE32_FIXES} ${own}`,
+      text: `Electrs can't read Bitcoin Core 32's mempool; unconfirmed payments show once confirmed, ${coreAlone}.`,
+      detail: `Bitcoin Core 32 no longer gives a field Electrs 0.11 needs. ${fixes} ${own}`,
     };
   }
   if (m.mempoolViaNode)
@@ -78,7 +87,13 @@ export const FINGERPRINT_COMMAND = 'openssl s_client -connect HOST:PORT </dev/nu
 export function draftFrom(settings: ChainSettings): ServerDraft {
   const s = settings.source;
   const base: ServerDraft = { kind: 'electrum', host: '', port: '', tls: false, certSha256: '', user: '', pass: '', wallet: '', preset: '' };
-  if (!s) return base;
+  if (!s) {
+    // Started from the platform's settings (Umbrel, Start9, .env) with nothing chosen here: show what is in use.
+    const u = settings.summary;
+    if (u?.kind === 'own' && u.backend === 'electrum') return { ...base, host: u.host, port: String(u.port) };
+    if (u?.kind === 'own' && u.backend === 'core') return { ...base, kind: 'core', host: u.host, port: String(u.port) };
+    return base;
+  }
   if (s.kind === 'core') return { ...base, kind: 'core', host: s.rpc.host, port: String(s.rpc.port), user: s.rpc.user, wallet: s.wallet ?? '' };
   if (s.kind === 'public') {
     const preset = settings.publicServers.find((p) => p.host === s.host && p.port === s.port);
