@@ -6,7 +6,7 @@ tagline: Key 3 of your 2-of-3 bitcoin wallet, on your own node
 # TODO(verify): the icon is a placeholder (the web UI favicon). Replace with a proper icon URL.
 icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/guardian-web/public/favicon.svg
 category: bitcoin
-version: "0.1.12-alpha"
+version: "0.1.13-alpha"
 # TODO(verify): host-facing port for the app_proxy. Pick one that no other app in the store uses.
 port: 3010
 description: >-
@@ -26,10 +26,10 @@ support: https://github.com/TheIcarusWings/trikey/issues
 # TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
 gallery: []
 releaseNotes: >-
-  Payments show up on your phone the moment they reach the mempool, from any device, and again when they
-  confirm, and syncs take milliseconds instead of seconds. Optional: payment notices on your own email, ntfy or
-  webhook (Settings, Notifications, Payments). A payment waiting to confirm can be sped up. New: host a guardian
-  for family members you invite ("Host for someone"); you never see their addresses or balances.
+  On Umbrel, Electrs 0.11.1 can't read Bitcoin Core 32's mempool, so it sees no unconfirmed payments and answers
+  every request about 7 s late. The guardian now reads unconfirmed payments from Bitcoin Core itself, warns on its
+  page with both fixes (deprecatedrpc=bip125, or Settings, Server, Bitcoin Core alone), and treats its own
+  broadcasts as pending. New Wallet page: balance, payments, the daily limit and the address to receive at.
 dependencies:
   - bitcoin
   - electrs
