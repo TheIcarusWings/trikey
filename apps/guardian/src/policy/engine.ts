@@ -980,8 +980,8 @@ export class PolicyEngine {
    */
   async noteSavingsScan(
     walletId: string,
-    scan: { nextReceiveIndex: number; nextChangeIndex: number; spends: { txid: string; amountSats: bigint; outpoints?: string[]; payment?: string }[] },
-  ): Promise<{ txid: string; amountSats: bigint; announced: boolean; replaces?: string }[]> {
+    scan: { nextReceiveIndex: number; nextChangeIndex: number; spends: { txid: string; amountSats: bigint; outpoints?: string[]; payment?: string; consolidated?: true }[] },
+  ): Promise<{ txid: string; amountSats: bigint; announced: boolean; replaces?: string; consolidated?: true }[]> {
     const used: HighWater = { receive: scan.nextReceiveIndex - 1, change: scan.nextChangeIndex - 1 };
     const ok = (n: number) => Number.isSafeInteger(n) && n <= MAX_SELF_INDEX;
     const pending = (st: GuardianState) => {
@@ -1016,7 +1016,7 @@ export class PolicyEngine {
         return [];
       }
       const recipients = [w.registration.appNostrPubkey, ...w.rules.alertContacts.filter((c) => c !== w.registration.appNostrPubkey)];
-      const out: { txid: string; amountSats: bigint; announced: boolean; replaces?: string }[] = [];
+      const out: { txid: string; amountSats: bigint; announced: boolean; replaces?: string; consolidated?: true }[] = [];
       for (const x of fresh) {
         const coins = new Set(x.outpoints ?? []);
         // The latest earlier spend of one of these coins: the one this replaces (the newest of a chain of bumps).
@@ -1029,7 +1029,9 @@ export class PolicyEngine {
           continue;
         }
         const replaced = prior ? { replaces: prior.txid, previousAmountSats: prior.amountSats } : {};
-        this.log(draft, now, { type: 'savings_moved', walletId, txid: x.txid, amountSats: x.amountSats, ...replaced });
+        // A consolidation (every output back to Savings) is still announced: only two of the owner's keys could sign it.
+        const consolidated = x.consolidated ? { consolidated: true as const } : {};
+        this.log(draft, now, { type: 'savings_moved', walletId, txid: x.txid, amountSats: x.amountSats, ...replaced, ...consolidated });
         this.addNotice(draft, now, {
           id: `savings-${draft.nextActivityId}`,
           kind: 'savings_moved',
@@ -1039,10 +1041,11 @@ export class PolicyEngine {
           txid: x.txid,
           amountSats: x.amountSats,
           ...(prior ? { replacesTxid: prior.txid, previousAmountSats: prior.amountSats } : {}),
+          ...consolidated,
           recipients,
           sent: [],
         });
-        out.push({ txid: x.txid, amountSats: x.amountSats, announced: true, ...(prior ? { replaces: prior.txid } : {}) });
+        out.push({ txid: x.txid, amountSats: x.amountSats, announced: true, ...(prior ? { replaces: prior.txid } : {}), ...consolidated });
       }
       sv.spendDetails = details.slice(-MAX_SAVINGS_SPEND_DETAILS);
       return out;

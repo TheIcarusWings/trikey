@@ -16,6 +16,7 @@ import type { HardwareKind, HardwareProvider, KeyValueStore } from '@trikey/wall
 import { createHardwareProviders } from '@/hardware';
 import { getPlatform, type TrikeyPlatform } from '@/platform';
 import { clearSharedBackups, pickBackupFile, shareBackupFile } from '@/platform/backup-files';
+import { clearSharedLabels, pickLabelsFile, shareLabelsFile } from '@/platform/labels-files';
 import { passkeyRpId } from '@/platform/config';
 import { runStartupRandomCheck } from '@/platform/rng-startup';
 import { createMemoryKeyValueStore } from '@/platform/memory';
@@ -106,6 +107,7 @@ export async function bootWallet(mode: AppMode, platform: TrikeyPlatform = getPl
   runStartupRandomCheck();
   // Backup files shared in an earlier session are not kept (platform/backup-files.native.ts).
   void clearSharedBackups();
+  void clearSharedLabels();
 
   const [{ createRealWalletService }, { createRkWalletService }, { createRoutedWalletService, pickInitialKind }] = await Promise.all([
     import('./real'),
@@ -159,6 +161,8 @@ export async function bootWallet(mode: AppMode, platform: TrikeyPlatform = getPl
       network: 'regtest',
       shareBackupFile,
       pickBackupFile,
+      shareLabelsFile,
+      pickLabelsFile,
       info,
       devTools,
       // Savings' Recovery Key is the second simulated device, as Recovery Key mode's.
@@ -188,6 +192,8 @@ export async function bootWallet(mode: AppMode, platform: TrikeyPlatform = getPl
     deviceName,
     shareBackupFile,
     pickBackupFile,
+    shareLabelsFile,
+    pickLabelsFile,
   });
   const recoveryKey = await createRkWalletService({
     mode: 'real',

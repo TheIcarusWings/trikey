@@ -25,7 +25,7 @@ export default function SendHardware() {
   const router = useRouter();
   const wallet = useWalletService();
   const state = useWallet();
-  const { address = '', amount = '0', speed = 'normal', signer } = useLocalSearchParams<{ address?: string; amount?: string; speed?: string; signer?: string }>();
+  const { address = '', amount = '0', speed = 'normal', signer, coins } = useLocalSearchParams<{ address?: string; amount?: string; speed?: string; signer?: string; coins?: string }>();
   const [attempt, setAttempt] = useState(0);
   // A payment that comes with a warning (it ends the refills) waits for the person to say they read it.
   const [acknowledged, setAcknowledged] = useState(false);
@@ -35,13 +35,15 @@ export default function SendHardware() {
   // The plan the wallet makes for this payment; if it would not need the hardware wallet after all (or the person asked
   // for it), the quote is made for the hardware wallet, so this screen never signs with anything else.
   const outcome = useMemo<QuoteOutcome>(() => {
-    const request = { address, amountSats: Number(amount), speed: feeSpeed };
+    // Coin control: the coins picked on Send, every one of them spent.
+    const picked = coins ? coins.split(',').filter(Boolean) : [];
+    const request = { address, amountSats: Number(amount), speed: feeSpeed, ...(picked.length ? { coins: picked } : {}) };
     const auto = wallet.quoteSend(request);
     if (signer !== 'hardware' && auto.ok && auto.quote.plan.signer === 'hardware') return auto;
     return wallet.quoteSend({ ...request, signer: 'hardware' });
     // The quote is fixed for this screen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wallet, address, amount, feeSpeed, signer]);
+  }, [wallet, address, amount, feeSpeed, signer, coins]);
   const quote = outcome.ok ? outcome.quote : null;
   const brand = state.hardware.brand;
 

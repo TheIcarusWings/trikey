@@ -67,11 +67,13 @@ export default function TransactionDetail() {
         ? `Refill ${tx.refillIndex ?? ''}`.trim()
         : tx.kind === 'speed_up'
           ? 'Speed up'
-          : sent
-            ? tx.silentOutputAddress
-              ? 'Sent as a silent payment'
-              : 'Sent'
-            : 'Received';
+          : tx.consolidated
+            ? 'Coins consolidated: the network fee'
+            : sent
+              ? tx.silentOutputAddress
+                ? 'Sent as a silent payment'
+                : 'Sent'
+              : 'Received';
   // Guardian mode: the explorer on the guardian's box. Recovery Key mode: the chain server's own site, when it has one.
   const explorer = state.mode === 'recoveryKey' ? explorerOf(state.recoveryKey.server.url) : state.guardian.explorerUrl;
 
@@ -110,7 +112,10 @@ export default function TransactionDetail() {
         {tx.signedBy ? <InfoRow label="Approved by" value={SIGNERS[tx.signedBy]} /> : null}
         {tx.fromVault ? <InfoRow label="Paid from" value="The vault" /> : null}
         {tx.spedUp ? <InfoRow label="Sped up" value="Sent again with a higher fee" /> : null}
+        {tx.consolidated && tx.consolidatedSats !== undefined ? <InfoRow label="Merged into one coin of" value={`${formatSats(tx.consolidatedSats)} sats`} tabular /> : null}
+        {tx.label ? <InfoRow label="Label" value={tx.label} /> : null}
       </Panel>
+      {tx.consolidated ? <Text className="text-muted-foreground text-sm leading-5">The coins stayed in this wallet: only the network fee left it, and only the fee counted toward today's limit.</Text> : null}
       {/* Guardian mode: a payment waiting to confirm can go again with a higher fee (Recovery Key mode speeds up refills on Home). */}
       {sent && tx.status === 'pending' && tx.canSpeedUp && state.mode === 'guardian' && wallet.speedUp ? (
         <View className="gap-2">

@@ -12,6 +12,7 @@ import {
   useNewWallet,
 } from '@/components/home';
 import { RecoveryKeyNotices, VaultCard } from '@/components/home-rk';
+import { CoinsLink } from '@/components/coins';
 import { SavingsRow, SavingsSuggestion } from '@/components/savings';
 import { Screen } from '@/components/screen';
 import { WalletSwitcher } from '@/components/wallet-switcher';
@@ -78,6 +79,8 @@ export default function HomeScreen() {
       <SilentPaymentsRow />
       <SavingsSuggestion />
       <ActivityPreview limit={3} newWallet={newWallet} />
+      {/* Coin control: the coins, their labels and freezes, Consolidate. */}
+      {newWallet ? null : <CoinsLink />}
     </Screen>
   );
 }

@@ -96,15 +96,19 @@ export function buildActivity(history: WalletHistoryEntry[], log: AppLog, nowMs:
     const fee = h.feeSats;
     // A received silent payment moved into the vault shows as the move, not as a payment from somebody.
     const move = h.silentSweep ? silentReceived.find((c) => c.txid === h.silentSweep!.fromTxid && c.vout === h.silentSweep!.fromVout) : undefined;
+    // Coin control's "Consolidate": the coins stayed in the wallet, only the fee left; that is what it shows.
+    const consolidated = h.purpose === 'consolidate';
     const tx: Transaction = {
       id: h.txid,
       kind: h.silentSweep ? 'silent_sweep' : sent ? 'sent' : 'received',
-      amountSats: sent ? (h.amountSats ?? Math.max(0, -h.netSats - (fee ?? 0))) : h.netSats,
+      amountSats: consolidated ? (fee ?? -h.netSats) : sent ? (h.amountSats ?? Math.max(0, -h.netSats - (fee ?? 0))) : h.netSats,
+      ...(consolidated ? { consolidated: true as const, ...(h.amountSats !== undefined ? { consolidatedSats: h.amountSats } : {}) } : {}),
+      ...(h.label ? { label: h.label } : {}),
       ...(sent ? { feeSats: fee } : {}),
       ...(h.silentSweep && move ? { feeSats: Math.max(0, move.valueSats - h.netSats) } : {}),
       status: confirmed ? 'confirmed' : 'pending',
       at: iso(at),
-      ...(sent && h.recipient ? { address: h.recipient } : {}),
+      ...(sent && h.recipient && !consolidated ? { address: h.recipient } : {}),
       ...(sent && h.signedBy ? { signedBy: h.signedBy === 'guardian' ? ('phone+guardian' as const) : ('phone+hardware' as const) } : {}),
       ...(sent && h.silentPayment ? { silentOutputAddress: h.silentPayment.outputAddress } : {}),
       // "Speed up": the wallet lists a replacement in place of the payment it replaced (one row), and says which can be.

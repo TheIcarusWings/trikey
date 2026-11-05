@@ -224,6 +224,15 @@ describe('who receives what', () => {
     expect(tos).toEqual(['alice@example.com:Limit off.', 'carol@example.org:Limit off.', 'owner@example.com:Relays moved.']);
   });
 
+  it("an alert's own title replaces its type's: a Savings consolidation is not \"Money moved out of Savings\"", async () => {
+    await configured();
+    await n.enqueue({ id: 's/1', type: 'savings_moved', title: 'Savings consolidated', at: now, owner: 'Savings consolidated: only the fee left.' });
+    await n.enqueue({ id: 's/2', type: 'savings_moved', at: now, owner: '0.01 BTC moved out of Savings.' });
+    await flush();
+    const subjects = smtp.mails.filter((m) => m.to.includes('owner@example.com')).map((m) => m.subject).sort();
+    expect(subjects).toEqual(['Home vault: Money moved out of Savings', 'Home vault: Savings consolidated']);
+  });
+
   it('a channel of a contact no longer in the rules gets nothing by default', async () => {
     await configured();
     rules = [CONTACT_B];

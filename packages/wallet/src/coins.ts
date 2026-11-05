@@ -1,5 +1,5 @@
 /**
- * The coin list (DESIGN.md, "Next: coin control"): what the Coins screen of a wallet (Spending or Savings) shows, and
+ * The coin list (DESIGN.md, "Coin control"): what the Coins screen of a wallet (Spending or Savings) shows, and
  * which coins a payment may take. Pure: it reads the wallet's last sync, this phone's own pending spends
  * (`own-spends.ts`), the send log and the labels (`labels-store.ts`), and changes none of them.
  *
@@ -197,4 +197,16 @@ export function selectableCoins(list: CoinList | readonly Coin[], opts: { manual
     mixesLabels: !!opts.manual && distinct.size > 1,
     labels: [...distinct].filter((l) => l !== ''),
   };
+}
+
+/**
+ * Under this a coin counts as small (sats): the Consolidate screen's "all small coins". A 2-of-3 input is about 105 vB,
+ * so at 50 sat/vB spending a 100,000 sats coin costs about 5% of it; merged now, while fees are low, that cost is paid once.
+ */
+export const SMALL_COIN_SATS = 100_000;
+
+/** The coins worth merging: confirmed, not frozen, under `maxSats` (default `SMALL_COIN_SATS`), oldest first. Pure. */
+export function smallCoins(list: CoinList | readonly Coin[], maxSats: number = SMALL_COIN_SATS): Coin[] {
+  const all = 'coins' in list ? list.coins : list;
+  return all.filter((c) => !c.frozen && !c.unconfirmed && c.valueSats < maxSats);
 }

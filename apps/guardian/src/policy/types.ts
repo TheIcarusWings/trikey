@@ -317,7 +317,16 @@ export type ActivityEvent =
    * sign it. `replaces`: it replaced (RBF) the Savings spend `replaces`, announced before with `previousAmountSats`, and
    * pays out something else (another address or amount), so it is announced again.
    */
-  | { type: 'savings_moved'; walletId: string; txid: string; amountSats: bigint; replaces?: string; previousAmountSats?: bigint }
+  | {
+      type: 'savings_moved';
+      walletId: string;
+      txid: string;
+      amountSats: bigint;
+      replaces?: string;
+      previousAmountSats?: bigint;
+      /** Every output pays Savings itself (a consolidation, coin control): `amountSats` is the fee alone. */
+      consolidated?: true;
+    }
   /**
    * A Savings spend already announced was replaced (RBF) by `txid` paying out the same (a fee bump: only the change back
    * to Savings is smaller): the same outflow, so nobody is told again. `amountSats` now, `previousAmountSats` before.
@@ -451,6 +460,8 @@ export interface LimitNotice {
   /** `savings_moved` of a replacement (RBF) that pays out something else: the spend it replaced, and what that one moved. */
   replacesTxid?: string;
   previousAmountSats?: bigint;
+  /** `savings_moved` of a consolidation (coin control): Savings coins merged into one, only the fee (`amountSats`) left. */
+  consolidated?: true;
   /** The paired phone first, then the contacts (nostr pubkeys). */
   recipients: string[];
   /** Recipients it reached. */

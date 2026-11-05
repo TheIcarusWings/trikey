@@ -16,7 +16,8 @@ const B = id('b');
 const ORIGIN = "wsh(sortedmulti(2,[aabbccdd/48'/1'/0'/2'],[11223344/48'/1'/0'/2'],[55667788/48'/1'/0'/2']))";
 const KEY = labelStoreKey();
 
-const open = async (kv = new MemoryKeyValueStore()) => ({ kv, store: await LabelStore.open(kv) });
+const NOW = 1_790_000_000_000;
+const open = async (kv = new MemoryKeyValueStore()) => ({ kv, store: await LabelStore.open(kv, KEY, { now: () => NOW }) });
 const stored = (kv: MemoryKeyValueStore) => JSON.parse(kv.data.get(KEY)!);
 
 /** The BIP's test vectors (bips/bip-0329.mediawiki). */
@@ -46,7 +47,10 @@ describe('label store', () => {
         [W]: { coins: { [`${A}:0`]: { label: 'From the exchange' }, [`${B}:1`]: { frozen: true } }, txs: {}, kept: [] },
         [SAVINGS]: { coins: { [`${A}:0`]: { frozen: true } }, txs: {}, kept: [] },
       },
+      // The last change made here: the app tells whether the backup is older.
+      changedAt: NOW,
     });
+    expect(store.changedAt).toBe(NOW);
     // Another wallet's marks never show: the same outpoint is frozen in Savings only.
     const view = store.view(W);
     expect(view.coin(`${A}:0`)).toEqual({ label: 'From the exchange', frozen: false });
@@ -236,6 +240,8 @@ describe('label store: backup', () => {
     expect(restored.exportForBackup()).toEqual(store.exportForBackup());
     expect(restored.view(W).coin(`${id('d')}:0`).label).toBeUndefined();
     expect((await LabelStore.open(kv2)).exportForBackup()).toEqual(store.exportForBackup());
+    // Restored labels are the backup's: nothing on this phone is newer than it.
+    expect(restored.changedAt).toBeUndefined();
     // A backup without labels: none after the restore.
     await restored.importFromBackup(undefined);
     expect(restored.exportForBackup()).toBeUndefined();
@@ -248,5 +254,18 @@ describe('label store: backup', () => {
     await expect(store.importFromBackup({ version: 1, wallets: { nope: {} } })).rejects.toMatchObject({ code: 'labels_invalid' });
     await expect(store.importFromBackup('labels')).rejects.toMatchObject({ code: 'labels_invalid' });
     expect(store.view(W).coin(`${A}:0`).label).toBe('mine');
+  });
+
+  it('tells its listeners about every change that landed, not about one refused', async () => {
+    const { store } = await open();
+    let calls = 0;
+    const off = store.onChange(() => calls++);
+    await store.setCoinLabel(W, `${A}:0`, 'a');
+    await store.setFrozen(W, `${A}:0`, true);
+    await expect(store.setCoinLabel(W, 'not a coin', 'x')).rejects.toMatchObject({ code: 'labels_invalid' });
+    expect(calls).toBe(2);
+    off();
+    await store.setFrozen(W, `${A}:0`, false);
+    expect(calls).toBe(2);
   });
 });

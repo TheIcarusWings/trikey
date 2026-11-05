@@ -159,13 +159,16 @@ export class WalletSet {
   /**
    * Every wallet's alerts about the others go to them, not to it (`TrikeyWallet.siblings`: the others' wallet ids and
    * their Savings' ids, which Savings alerts name), and no wallet takes another's device as a Savings Recovery Key
-   * (`TrikeyWallet.otherDevices`).
+   * (`TrikeyWallet.otherDevices`). Coin control: every wallet uses the first wallet's label store, the phone's one
+   * document of labels and freezes (keyed by wallet id), so one backup carries them all.
    */
   private link(): void {
     const idsOf = (w: TrikeyWallet) => [w.state.wallet?.walletId, w.state.savings?.walletId].filter((x): x is string => !!x);
+    const labels = this.first.labels;
     for (const w of this.list) {
       w.siblings = () => this.list.filter((o) => o !== w).flatMap(idsOf);
       w.otherDevices = () => this.list.filter((o) => o !== w).flatMap((o) => devicesOf(o));
+      if (labels && w !== this.first && w.labels !== labels) w.useLabelStore(labels);
     }
   }
 
@@ -309,12 +312,29 @@ export class WalletSet {
     if (w === this.first) throw new WalletError('wrong_state', 'Remove your other wallets first: the first wallet goes last.');
     if (!this.others.includes(w)) throw new WalletError('wrong_state', 'Not a wallet of this phone.');
     const snap = w.snapshot();
-    if (snap && snap.balance.totalSats > 0) throw new WalletError('wrong_state', 'Move the money out of this wallet before you remove it.');
+    if (snap && snap.balance.totalSats > 0) {
+      // "Move everything" (`moveFunds`, a send max) leaves frozen coins where they are: say so, or the person is stuck.
+      let frozen = 0;
+      try {
+        frozen = w.coins().totals.frozenSats;
+      } catch {
+        // no coin list: the plain message
+      }
+      throw new WalletError(
+        'wrong_state',
+        frozen > 0
+          ? `Move the money out of this wallet before you remove it. ${frozen} sats are in frozen coins, which "Move everything" leaves: unfreeze them in Coins, then move them too.`
+          : 'Move the money out of this wallet before you remove it.',
+      );
+    }
     const sv = w.savingsSnapshot();
     if (sv && sv.balance.totalSats > 0) throw new WalletError('wrong_state', "Move the money out of this wallet's Savings before you remove it.");
     if (w.state.replacing) throw new WalletError('replace_in_progress', 'This wallet is moving to a new guardian: finish that first.');
     if (opts.retire !== false && w.stage === 'paired' && !w.state.retiredByGuardian) await w.retireWallet();
+    const ids = [w.state.wallet?.walletId, w.state.savings?.walletId].filter((x): x is string => !!x);
     await w.forget();
+    // Its labels and freezes leave the phone with it.
+    for (const id of ids) await this.first.labels?.forgetWallet(id).catch(() => undefined);
     this.others.splice(this.others.indexOf(w), 1);
     if (this.index.shown === w.account) this.index = { ...this.index, shown: 0 };
     await this.saveIndex();

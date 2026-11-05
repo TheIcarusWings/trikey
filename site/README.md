@@ -11,6 +11,7 @@ a plain stack of cards and reads the same.
 |---|---|
 | `index.html`, `style.css` | The landing page |
 | `media/films/` | The films for the web: "Nobody in the middle" in the hero, the three "If a key goes missing" episodes in the key picker, and in "Watch" the three short explainers (`v1`–`v3`) and the six setup tutorials (`t1`–`t6`). 720p H.264, a poster and a WebVTT captions file each. The films and explainers have captions burned in too. Nothing loads until someone presses play. Exported from the marketing repo with `render/web-export.py` |
+| `media/social/` | Vertical (9:16) cuts of the films for the launch-week posts on nostr, linked from the notes rather than shown on the site. 720×1280 H.264 with captions burned in. Re-encoded from the marketing repo's `out/` renders. |
 | `js/story.js` | Scroll scenes: sticky stages, shot timing, video scrubbing. Progressive enhancement only |
 | `404.html` | Not-found page (Vercel serves it automatically) |
 | `img/` | Phone screenshots, rendered from `design/screens` (light and dark WebP). The four `phone-onb-*` images are the app's own setup steps, captured from its web build in Demo mode without the demo strip |

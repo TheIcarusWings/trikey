@@ -102,7 +102,10 @@ export interface SpendPlan {
   inputs: Utxo[];
 }
 
-/** Largest-first coin selection with an optional change output back to the wallet. */
+/**
+ * Largest-first coin selection with an optional change output back to the wallet. With `useAll`, every coin given is
+ * spent (a coin picked by hand: "coin control"), in the same largest-first order, with the change as usual.
+ */
 export function buildSpend(
   opts: {
     wallet: MultisigWallet;
@@ -110,6 +113,8 @@ export function buildSpend(
     recipients: Recipient[];
     feeRate: number; // sat/vB
     changeIndex: number;
+    /** Spend every coin of `utxos`, not just enough of them. */
+    useAll?: boolean;
   } & TimelockOpts,
 ): SpendPlan {
   const { wallet, recipients, feeRate } = opts;
@@ -129,7 +134,7 @@ export function buildSpend(
     chosen.push(u);
     total += u.value;
     const feeWithChange = BigInt(Math.ceil(estimateVsize(chosen.length, [...recipientScripts, changeAddr.script]) * feeRate));
-    if (total >= target + feeWithChange) break;
+    if (!opts.useAll && total >= target + feeWithChange) break;
   }
   const feeNoChange = BigInt(Math.ceil(estimateVsize(chosen.length, recipientScripts) * feeRate));
   if (total < target + feeNoChange) throw new Error(`insufficient funds: have ${total}, need ${target + feeNoChange}`);

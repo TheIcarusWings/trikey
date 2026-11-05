@@ -849,6 +849,47 @@ guardian's Activity page.
 
 ---
 
+### 18b. Coin control: labels, freeze, picking coins, consolidate (optional; a guardian with this release)
+
+Every payment into the wallet is a **coin**. Coin control lets you label coins, freeze one (dust from a stranger, a coin
+kept apart), choose which coins pay, and merge small coins into one while fees are low (DESIGN.md, "Coin control").
+Labels and freezes stay on this phone and in its backup; the guardian never sees them.
+
+Do:
+
+1. **Get a few coins.** Receive three or four small payments (5,000 to 50,000 sats each) into Spending, and wait for them
+   to confirm. On Home, tap **Coins**. You should see: one row per coin, with its amount and confirmations; the totals at
+   the top.
+2. **Label and freeze.** Open a coin, give it a label ("Salary"), give another one a different label, and switch
+   **Frozen** on for the smallest one. You should see: the labels and a "Frozen" section in the list; Security says the
+   backup doesn't have your latest labels yet.
+3. **Send max leaves the frozen coin.** Send, any address of yours, **Send max**. You should see: the amount is the
+   balance minus the frozen coin minus the fee. Don't send it: go back.
+4. **Pick coins.** Send a small amount, tap **Choose coins**, pick the two labeled coins (one alone would be enough),
+   then **Pay with these 2 coins**. You should see: the frozen coin cannot be picked; the warning "These coins carry
+   different labels"; Review shows "Paid with 2 coins you chose"; after sending, both coins are gone from the list and
+   the change comes back as a new coin. On the explorer, the transaction spends exactly those two coins.
+5. **Consolidate.** Receive two or three more small coins and let them confirm. Coins, **Consolidate coins**, **All small
+   coins**, Slow. You should see: "Fees are low now" or "Fees are not low right now" with the rate; the coins merged,
+   the fee and the new coin; "Only the network fee counts toward today's limit". Approve it even if the coins hold more
+   than what is left of today's limit: the guardian co-signs, and the daily limit used goes up by **the fee only** (Home,
+   and the guardian's Rules page). Activity shows "Coins consolidated" with the fee.
+6. **Savings** (if you did step 17). Savings, **Coins**: label one, then **Consolidate coins** with your hardware wallet
+   (or the Recovery Key). You should see: the phone, every alert contact and the email and ntfy channels get **"Savings
+   consolidated"** saying only the network fee left (not "Money moved out of Savings").
+7. **BIP 329 export and import.** Settings, Advanced, **Wallet details**, **Export labels**: save the file. Open it in
+   Sparrow (File, Import, Labels) on the same wallet's descriptor: the labels show there. Label something in Sparrow,
+   export its labels, and **Import labels** here. You should see: "Read N labels…", and the records of another wallet
+   (if the file had any) left out.
+8. **Back up and restore** (step 11 again). You should see: on the restored phone the labels are back and the coin you
+   froze is still frozen. A phone with an older app says the backup needs a newer version of Trikey.
+
+If it goes wrong, collect: the coin's amount and confirmations (not its label), the screen and message, which wallet
+(Spending or Savings), for a consolidation the transaction id and the daily limit before and after, and the guardian's
+Activity page.
+
+---
+
 ### 18. Host a family member (optional; two phones and two hardware wallets)
 
 Family hosting (docs/design/family-hosting.md): your guardian holds key 3 for someone else's wallet. You need a second

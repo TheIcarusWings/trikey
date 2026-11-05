@@ -33,6 +33,8 @@ function needsYou(state: WalletState): string[] {
   // A backup made before Savings existed does not know it.
   else if (state.savings.status === 'active' && state.savings.createdAt && state.backup.lastBackedUpAt < state.savings.createdAt)
     out.push("Your backup doesn't include Savings yet. Back up this phone again.");
+  // Coin control: labels and freezes changed since (they come back with a restore only if they are in it).
+  else if (state.backup.labelsNewer) out.push("Your backup doesn't have your latest coin labels and freezes. Back up this phone again.");
   if (state.contacts.length === 0) out.push('Nobody would be alerted about a recovery. Add an alert contact.');
   return out;
 }
