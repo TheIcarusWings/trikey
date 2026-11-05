@@ -52,6 +52,8 @@ export function savingsMapData(input: {
   walletId: string;
   createdAt?: IsoDate;
   models?: { hardware?: string; recoveryKey?: string };
+  /** The wallet's name when the phone holds several (its Savings' keys sit at that wallet's own accounts). */
+  walletName?: string;
 }): SavingsMapData {
   if (PRIVATE_IN_DESCRIPTOR.test(input.descriptor)) throw new Error('A Savings wallet map holds public keys only.');
   const wallet = MultisigWallet.fromDescriptor(input.descriptor, getNetwork(input.network));
@@ -69,6 +71,7 @@ export function savingsMapData(input: {
     keys: [key('phone', wallet.keys.app), key('hardware', wallet.keys.hardware, input.models?.hardware), key('recoveryKey', wallet.keys.cosigner, input.models?.recoveryKey)],
     firstAddress: wallet.derive(0, 0).address,
     ...(input.createdAt ? { createdAt: input.createdAt } : {}),
+    ...(input.walletName ? { walletName: input.walletName } : {}),
   };
 }
 
@@ -85,7 +88,7 @@ export function renderSavingsMap(data: SavingsMapData, opts: { date?: Date } = {
   const date = (opts.date ?? new Date()).toISOString().slice(0, 10);
   const network = NETWORK_LABEL[data.network];
   const testnet = data.network !== 'bitcoin';
-  const title = 'Trikey Savings — wallet map';
+  const title = data.walletName ? `Trikey Savings of "${data.walletName}" — wallet map` : 'Trikey Savings — wallet map';
   const hardware = data.keys.find((k) => k.role === 'hardware');
   const hw = esc(hardware?.model ?? 'hardware wallet');
   const svg = qrSvg(data.descriptor, { ecc: SAVINGS_MAP_QR_ECC, title: 'Savings descriptor QR code' });

@@ -30,6 +30,8 @@ export default function WalletsSettings() {
               title={w.name}
               subtitle={`${w.device} · ${w.limitOff ? 'no daily limit' : `${formatSats(w.dailyLimitSats)} sats a day`}`}
               value={w.current ? 'Shown' : `${formatSats(w.balanceSats)} sats`}
+              accessibilityHint="Rename or remove this wallet"
+              onPress={() => router.push({ pathname: '/settings/wallets/[account]', params: { account: String(w.account) } })}
             />
           ))}
         </ListGroup>
@@ -40,7 +42,7 @@ export default function WalletsSettings() {
         </Notice>
       ) : null}
       {view?.guardianUpdateNeeded ? <Footnote>{GUARDIAN_UPDATE_NOTICE}</Footnote> : null}
-      <Footnote>Savings and silent payments stay with your first wallet for now.</Footnote>
+      <Footnote>Each wallet can have its own Savings, with its own Recovery Key. Silent payments stay with your first wallet for now.</Footnote>
     </Screen>
   );
 }

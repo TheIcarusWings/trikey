@@ -52,3 +52,18 @@ export function walletNameProblem(name: string, view: WalletsView | undefined): 
   if (view?.list.some((w) => w.name.toLowerCase() === n.toLowerCase())) return 'A wallet has this name already.';
   return undefined;
 }
+
+/**
+ * Why a wallet can't be removed yet ("Remove" in Settings > Wallets): `money` (move it to another wallet first),
+ * `savings` (its Savings are not empty), or null when it can be. The first wallet goes last and has no "Remove" here.
+ */
+export function removeBlocker(w: Pick<WalletListItem, 'balanceSats' | 'savingsSats'>): 'money' | 'savings' | null {
+  if (w.balanceSats > 0) return 'money';
+  if ((w.savingsSats ?? 0) > 0) return 'savings';
+  return null;
+}
+
+/** "Replace guardian" with several wallets: "2 of 3 moved". */
+export function movedText(moved: number, total: number): string {
+  return `${moved} of ${total} moved`;
+}
