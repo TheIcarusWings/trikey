@@ -115,9 +115,9 @@ import { isHardwareDisconnect, type CloudBackupStore, type HardwareKind, type Ha
 import { GuardianSilentPaymentScanner, GuardianSingleKeyChain } from './guardian-sp.js';
 import { TxCache } from './txcache.js';
 import { applyOwnSpends, ownSpendOf, reconcileOwnSpends, withOwnSpend } from './own-spends.js';
-import { coinList, selectableCoins, type CoinList, type SelectableCoins } from './coins.js';
+import { coinList, receivedLabels, selectableCoins, type CoinList, type SelectableCoins } from './coins.js';
 import { bip329Origin } from './labels-bip329.js';
-import { LabelStore, labelStoreKey, type Bip329ImportResult } from './labels-store.js';
+import { LabelStore, addressKey, labelStoreKey, type Bip329ImportResult } from './labels-store.js';
 import { parseScannedCode, type ScannedCode } from './scan.js';
 import {
   DEFAULT_SWEEP_MIN_SATS,
@@ -1142,6 +1142,8 @@ export class TrikeyWallet {
    */
   private labelStore?: LabelStore;
   private labelsUnreadable?: WalletError;
+  /** Addresses worked out for the coin list's address labels (`addressAt`), by descriptor, chain and index. */
+  private readonly addressMemo = new Map<string, string>();
 
   private constructor(
     private readonly deps: WalletDeps,
@@ -2772,17 +2774,36 @@ export class TrikeyWallet {
       // A consolidation sends to the wallet itself: only its fee leaves.
       .map((e): WalletHistoryEntry => ({ txid: e.txid, height: 0, confirmations: 0, netSats: -((e.purpose === 'consolidate' ? 0 : e.amountSats) + e.feeSats), feeSats: e.feeSats, ...meta(e), local: true }));
     const all = withReplacements([...unlisted.reverse(), ...announced.reverse(), ...out], log, live, { speedUp: !this.isHosted });
-    return this.withPaymentLabels(all, this.s.wallet?.walletId);
+    return this.withPaymentLabels(all, this.s.wallet?.walletId, 'main');
   }
 
-  /** Coin control: a label set on a payment in the labels store (a received payment, an import) wins over the send log's. */
-  private withPaymentLabels<T extends { txid: string; label?: string }>(entries: T[], walletId: string | undefined): T[] {
+  /**
+   * Coin control: a label set on a payment in the labels store (a received payment, an import) wins over the send log's.
+   * A received payment without one shows its coins' labels (their own, or their address's: `receivedLabels`), so a
+   * coin labeled in Coins, or paid to an address labeled on Receive, is named in Activity too.
+   */
+  private withPaymentLabels<T extends { txid: string; label?: string; netSats: number; silentSweep?: unknown; purpose?: string }>(entries: T[], walletId: string | undefined, wallet: CoinWallet): T[] {
     const store = this.labelStore;
     if (!store || !walletId) return entries;
     const view = store.view(walletId);
+    let list: CoinList | undefined | null = null;
+    const coinsNow = () => {
+      if (list === null) {
+        try {
+          list = this.coins(wallet);
+        } catch {
+          list = undefined;
+        }
+      }
+      return list ?? undefined;
+    };
     return entries.map((h) => {
       const label = view.tx(h.txid);
-      return label ? { ...h, label } : h;
+      if (label) return { ...h, label };
+      if (h.label || h.netSats <= 0 || h.silentSweep || h.purpose) return h;
+      // The coin list (and its addresses) only when an address label could name a coin; a coin's own label is in the store.
+      const fromCoins = receivedLabels(h.txid, view.hasAddressLabels ? coinsNow() : undefined, view);
+      return fromCoins.length ? { ...h, label: fromCoins.join(', ') } : h;
     });
   }
 
@@ -2938,7 +2959,7 @@ export class TrikeyWallet {
     const { feeRate, feeRateSource, wallet, chain: c } = this.quoteBasics(req);
     const changeIndex = c.nextChangeIndex;
     // Coin control: never a frozen coin, and with `coins` exactly those (every one spent).
-    const pick = this.spendable('main', req.coins);
+    const pick = this.spendable('main', req.coins, req.includeFrozen);
     const sel = withFrozenNote(pick, () => selectCoins({ wallet, utxos: pick.utxos, address: req.address, amountSats: req.amountSats, feeRate, changeIndex, ...(req.coins ? { useAll: true } : {}) }));
     return this.makeQuote(req, { feeRate, feeRateSource, feeSats: sel.feeSats, amountSats: req.amountSats, changeSats: sel.changeSats, changeIndex, inputs: sel.inputs, ...mixed(pick) });
   }
@@ -2960,7 +2981,7 @@ export class TrikeyWallet {
     if (looksLikeSilentPaymentAddress(req.address)) return this.quoteSilentPayment({ ...req, amountSats: 0 }, { max: true });
     const { feeRate, feeRateSource, wallet, chain: c } = this.quoteBasics(req);
     // Frozen coins stay (coin control); with `coins`, exactly those go.
-    const pick = this.spendable('main', req.coins);
+    const pick = this.spendable('main', req.coins, req.includeFrozen);
     const sel = withFrozenNote(pick, () => selectAllCoins({ utxos: pick.utxos, outputScript: outputScriptOf(req.address, wallet), feeRate, ...(req.coins ? { useAll: true } : {}) }));
     return this.makeQuote(
       { ...req, amountSats: sel.amountSats },
@@ -3069,7 +3090,7 @@ export class TrikeyWallet {
   private checkSendMaxStillMax(quote: SendQuote): void {
     // The same coins the quote chose from: never a frozen one (or a coin frozen since would make every send max stale),
     // and with a manual pick, those coins.
-    const pick = this.spendable('main', quote.request.coins);
+    const pick = this.spendable('main', quote.request.coins, quote.request.includeFrozen);
     const all = { feeRate: quote.feeRate, ...(quote.request.coins ? { useAll: true } : {}) };
     const now = quote.silentPayment
       ? selectAllCoins({ utxos: pick.utxos, outputScript: outputScriptOf(placeholderTaprootAddress(this.network), this.multisig()), ...all })
@@ -3092,7 +3113,7 @@ export class TrikeyWallet {
     if (!this.s.chain || this.now() - this.s.chain.syncedAt > STALE_CHAIN_MS) await this.sync();
     const quote = 'plan' in quoteOrRequest ? quoteOrRequest : this.quoteSend(quoteOrRequest);
     // A coin frozen since the quote (coin control) stays where it is: quote again.
-    this.checkStillSpendable('main', quote.inputs);
+    this.checkStillSpendable('main', quote.inputs, quote.request.includeFrozen);
     if (quote.silentPayment) return this.sendSilentPayment(quote, opts);
     const live = new Set(this.s.chain!.utxos.map((u) => `${u.txid}:${u.vout}`));
     if (quote.inputs.some((u) => !live.has(`${u.txid}:${u.vout}`))) throw new WalletError('quote_stale', 'The wallet\'s coins changed since this quote; quote the payment again.');
@@ -3251,26 +3272,68 @@ export class TrikeyWallet {
     if (wallet === 'savings') {
       const { record } = this.requireSavings();
       if (!record.chain) throw new WalletError('no_chain_data', 'Sync Savings first.');
-      return coinList({ walletId: record.walletId, chain: record.chain, sendLog: record.sendLog, ...(this.labelStore ? { labels: this.labelStore.view(record.walletId) } : {}) });
+      return coinList({ walletId: record.walletId, chain: record.chain, sendLog: record.sendLog, ...(this.labelStore ? { labels: this.labelStore.view(record.walletId) } : {}), addressOf: this.addressAt(record.descriptor) });
     }
     const w = this.s.wallet;
     if (!w) throw new WalletError('wrong_state', 'The wallet is not paired yet.');
     if (!this.s.chain) throw new WalletError('no_chain_data', 'Sync the wallet first.');
-    return coinList({ walletId: w.walletId, chain: this.s.chain, ownSpends: this.s.ownSpends, sendLog: this.s.sendLog, ...(this.labelStore ? { labels: this.labelStore.view(w.walletId) } : {}) });
+    return coinList({ walletId: w.walletId, chain: this.s.chain, ownSpends: this.s.ownSpends, sendLog: this.s.sendLog, ...(this.labelStore ? { labels: this.labelStore.view(w.walletId) } : {}), addressOf: this.addressAt(w.descriptor) });
+  }
+
+  /** A wallet's address at a chain and index, remembered (an address takes six key derivations; the coin list asks often). */
+  private addressAt(descriptor: string): (chain: 0 | 1, index: number) => string {
+    return (chain, index) => {
+      const key = `${descriptor}/${chain}/${index}`;
+      let a = this.addressMemo.get(key);
+      if (a === undefined) {
+        const wallet = this.s.savings?.descriptor === descriptor ? this.savingsWallet()! : this.walletOf(descriptor);
+        a = wallet.derive(chain, index).address;
+        if (this.addressMemo.size >= 4096) this.addressMemo.clear();
+        this.addressMemo.set(key, a);
+      }
+      return a;
+    };
+  }
+
+  /**
+   * Labels an address of Spending (`main`) or its Savings (a BIP 329 `addr` record), as Receive does before the address
+   * is shared; an empty `label` clears it. A coin received there later shows it in the coin list when it has no label of
+   * its own, and its payment shows it in Activity. Refuses (`labels_invalid`) an address that is not the wallet's own (its
+   * receive chain, scanned range plus the gap).
+   */
+  async setAddressLabel(address: string, label: string, wallet: CoinWallet = 'main'): Promise<void> {
+    const t = this.coinTarget(wallet);
+    const own = wallet === 'savings' ? this.isSavingsAddress(addressKey(address)) : this.isSpendingAddress(addressKey(address));
+    if (!own) throw new WalletError('labels_invalid', wallet === 'savings' ? 'That is not an address of Savings.' : 'That is not an address of this wallet.');
+    await this.requireLabels().setAddressLabel(t.walletId, address, label);
+    this.emit({ type: 'labels_changed' });
+  }
+
+  /** The label of one of the wallet's addresses, if it has one (no I/O). Undefined while the labels can't be read. */
+  addressLabel(address: string, wallet: CoinWallet = 'main'): string | undefined {
+    if (!this.labelStore) return undefined;
+    try {
+      return this.labelStore.view(this.coinTarget(wallet).walletId).addr(address);
+    } catch {
+      return undefined;
+    }
   }
 
   /**
    * The coins a payment may take: every coin that is not frozen, or exactly `manual` (refused with `coin_unavailable`
    * when one is frozen, spent, or held by this phone's own pending payment). Every quote reads its coins here.
    */
-  private spendable(wallet: CoinWallet, manual?: readonly string[]): SelectableCoins & { frozenSats: number } {
+  private spendable(wallet: CoinWallet, manual?: readonly string[], includeFrozen?: boolean): SelectableCoins & { frozenSats: number } {
     const list = this.coins(wallet);
-    return { ...selectableCoins(list, manual ? { manual } : {}), frozenSats: manual ? 0 : list.totals.frozenSats };
+    return { ...selectableCoins(list, { ...(manual ? { manual } : {}), ...(includeFrozen ? { includeFrozen } : {}) }), frozenSats: manual || includeFrozen ? 0 : list.totals.frozenSats };
   }
 
-  /** Refuses (`quote_stale`) a quote whose coins are no longer all free to spend: one was frozen, or spent, since. */
-  private checkStillSpendable(wallet: CoinWallet, inputs: readonly { txid: string; vout: number }[]): void {
-    const free = new Set(this.coins(wallet).coins.filter((c) => !c.frozen).map((c) => c.outpoint));
+  /**
+   * Refuses (`quote_stale`) a quote whose coins are no longer all free to spend: one was frozen, or spent, since. With
+   * `includeFrozen` (a request that took frozen coins by name), only spent ones.
+   */
+  private checkStillSpendable(wallet: CoinWallet, inputs: readonly { txid: string; vout: number }[], includeFrozen?: boolean): void {
+    const free = new Set(this.coins(wallet).coins.filter((c) => includeFrozen || !c.frozen).map((c) => c.outpoint));
     if (inputs.some((u) => !free.has(`${u.txid}:${u.vout}`)))
       throw new WalletError('quote_stale', 'A coin this payment would spend was frozen or spent since it was quoted; quote it again.');
   }
@@ -6961,7 +7024,7 @@ export class TrikeyWallet {
       balance: { ...balance, totalSats: balance.confirmedSats + balance.unconfirmedSats },
       ...(c ? { syncedAt: c.syncedAt, tipHeight: c.tipHeight } : {}),
       utxos: c?.utxos ?? [],
-      history: this.withPaymentLabels([...unlisted.reverse(), ...history], sv.walletId),
+      history: this.withPaymentLabels([...unlisted.reverse(), ...history], sv.walletId, 'savings'),
       hardware: { kind: sv.hardware.kind, ...(sv.hardware.model ? { model: sv.hardware.model } : {}), fingerprint: sv.hardware.fingerprint },
       recoveryKey: { kind: sv.recoveryKey.kind, ...(sv.recoveryKey.model ? { model: sv.recoveryKey.model } : {}), fingerprint: sv.recoveryKey.fingerprint },
       watchedByGuardian: !!sv.registration && sv.registration.walletId === sv.walletId && sv.registration.guardian === this.s.guardian?.pubkey,

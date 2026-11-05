@@ -159,7 +159,7 @@ describe('label store: BIP 329', () => {
   it("imports the BIP's vectors: this wallet's records, another wallet's left out, the rest kept for the next export", async () => {
     const { store } = await open();
     const r = await store.importBip329(W, BIP_VECTORS, { origin: "wpkh([d34db33f/84h/0h/0h])" });
-    expect(r).toEqual({ coinLabels: 1, frozen: 1, unfrozen: 0, txLabels: 1, kept: 5, otherWallet: 1, errorCount: 0, errors: [], truncated: 0 });
+    expect(r).toEqual({ coinLabels: 1, frozen: 1, unfrozen: 0, txLabels: 1, addrLabels: 1, kept: 4, otherWallet: 1, errorCount: 0, errors: [], truncated: 0 });
     const view = store.view(W);
     expect(view.tx(BIP_TX)).toBe('Transaction');
     expect(view.coin(`${BIP_TX}:1`)).toEqual({ label: 'Output', frozen: true });
@@ -167,7 +167,9 @@ describe('label store: BIP 329', () => {
     // Exported again: the same records (with this wallet's origin on Trikey's own), the kept ones as read.
     const again = parseBip329(store.exportBip329(W, { origin: "wpkh([d34db33f/84'/0'/0'])" })).records;
     const original = parseBip329(BIP_VECTORS).records.filter((x) => !x.label?.startsWith('Account #1'));
-    expect(again).toEqual(expect.arrayContaining(original.map((x) => (x.type === 'tx' || x.type === 'output' ? { ...x, origin: "wpkh([d34db33f/84'/0'/0'])" } : x))));
+    // The address label had no origin: it is this wallet's, so it gets the wallet's origin too.
+    expect(view.addr('bc1q34aq5drpuwy3wgl9lhup9892qp6svr8ldzyy7c')).toBe('Address');
+    expect(again).toEqual(expect.arrayContaining(original.map((x) => (x.type === 'tx' || x.type === 'output' || x.type === 'addr' ? { ...x, origin: "wpkh([d34db33f/84'/0'/0'])" } : x))));
     expect(again).toHaveLength(original.length);
   });
 
@@ -217,6 +219,54 @@ describe('label store: BIP 329', () => {
     const { kv, store } = await open();
     await expect(store.importBip329(W, new Uint8Array([0xff, 0xfe]))).rejects.toBeInstanceOf(WalletError);
     expect(kv.data.size).toBe(0);
+  });
+});
+
+describe('label store: address labels', () => {
+  const ADDR = 'bc1q34aq5drpuwy3wgl9lhup9892qp6svr8ldzyy7c';
+
+  it('labels an address (an addr record, as BIP 329 has it), case-insensitive for bech32; empty clears; one per address', async () => {
+    const { kv, store } = await open();
+    expect(store.view(W).hasAddressLabels).toBe(false);
+    await store.setAddressLabel(W, ADDR.toUpperCase(), '  Invoice 42 ');
+    expect(store.view(W).addr(ADDR)).toBe('Invoice 42');
+    expect(store.view(W).addr(ADDR.toUpperCase())).toBe('Invoice 42');
+    expect(store.view(W).hasAddressLabels).toBe(true);
+    expect(store.view(SAVINGS).addr(ADDR)).toBeUndefined();
+    // Kept with the records an older app keeps as read: the document's shape is unchanged.
+    expect(stored(kv).wallets[W]).toEqual({ coins: {}, txs: {}, kept: [{ type: 'addr', ref: ADDR, label: 'Invoice 42' }] });
+    await store.setAddressLabel(W, ADDR, 'Invoice 43');
+    expect(stored(kv).wallets[W].kept).toEqual([{ type: 'addr', ref: ADDR, label: 'Invoice 43' }]);
+    await store.setAddressLabel(W, ADDR, '   ');
+    expect(store.view(W).addr(ADDR)).toBeUndefined();
+    expect(stored(kv).wallets[W]).toBeUndefined();
+  });
+
+  it('refuses something that is not an address', async () => {
+    const { store } = await open();
+    await expect(store.setAddressLabel(W, 'not an address', 'x')).rejects.toMatchObject({ code: 'labels_invalid' });
+  });
+
+  it('replaces an imported label of the same address; exported with the origin; a later import replaces it again', async () => {
+    const { store } = await open();
+    await store.importBip329(W, JSON.stringify({ type: 'addr', ref: ADDR, label: 'From Sparrow', origin: ORIGIN }), { origin: ORIGIN });
+    expect(store.view(W).addr(ADDR)).toBe('From Sparrow');
+    await store.setAddressLabel(W, ADDR, 'Mine');
+    expect(parseBip329(store.exportBip329(W, { origin: ORIGIN })).records).toEqual([{ type: 'addr', ref: ADDR, label: 'Mine', origin: ORIGIN }]);
+    const r = await store.importBip329(W, JSON.stringify({ type: 'addr', ref: ADDR.toUpperCase(), label: 'Again' }), { origin: ORIGIN });
+    expect(r).toMatchObject({ addrLabels: 1, kept: 0 });
+    expect(store.view(W).addr(ADDR)).toBe('Again');
+    expect(parseBip329(store.exportBip329(W)).records).toHaveLength(1);
+  });
+
+  it("the labels of a transaction's coins, in output order, spent ones included", async () => {
+    const { store } = await open();
+    await store.setCoinLabel(W, `${A}:3`, 'three');
+    await store.setFrozen(W, `${A}:2`, true);
+    await store.setCoinLabel(W, `${A}:0`, 'zero');
+    await store.setCoinLabel(W, `${B}:0`, 'other');
+    expect(store.view(W).coinLabelsOfTx(A)).toEqual(['zero', 'three']);
+    expect(store.view(W).coinLabelsOfTx(id('c'))).toEqual([]);
   });
 });
 

@@ -9,8 +9,10 @@
  *   them all (`exportForBackup` / `importFromBackup`).
  * - **Per wallet:** `coins`, keyed by outpoint (`txid:vout`), each a label and/or `frozen`; `txs`, labels of payments
  *   keyed by txid (received payments, and labels imported for this phone's own payments, which win over the send log's,
- *   `paymentLabel`); `kept`, the BIP 329 records Trikey does not use (addresses, inputs, xpubs, other wallets' types),
- *   kept so an export gives them back.
+ *   `paymentLabel`); `kept`, the BIP 329 records Trikey does not use (inputs, xpubs, other wallets' types), kept so an
+ *   export gives them back, and the `addr` records: address labels (set on Receive before an address is shared, or
+ *   imported), which a coin received on that address shows when it has no label of its own (`coins.ts`). They stay
+ *   in `kept` so the document keeps the shape an older app reads (it keeps and exports them as they are).
  * - **Versioned** (`version: 1`) and validated on load: a document from a newer app is refused (`labels_invalid`)
  *   rather than overwritten.
  * - **Bounded** (`MAX_COIN_MARKS`, `MAX_TX_LABELS`, `MAX_KEPT_RECORDS` per wallet, `MAX_LABELED_WALLETS`): a change
@@ -20,7 +22,7 @@
  */
 import { z } from 'zod';
 import { WalletError } from './errors.js';
-import { MAX_LABEL_CHARS, outpointRef, parseBip329, parseOutpoint, sameOrigin, serializeBip329, type Bip329LineError, type Bip329Record } from './labels-bip329.js';
+import { MAX_LABEL_CHARS, checkBip329Record, outpointRef, parseBip329, parseOutpoint, sameOrigin, serializeBip329, type Bip329LineError, type Bip329Record } from './labels-bip329.js';
 import type { KeyValueStore } from './platform.js';
 import { DEFAULT_STORAGE_KEY } from './state.js';
 
@@ -88,6 +90,12 @@ export interface WalletLabelsView {
   tx(txid: string): string | undefined;
   /** Every frozen coin's outpoint. */
   readonly frozen: ReadonlySet<string>;
+  /** The label of one of the wallet's addresses (an `addr` record), if it has one. */
+  addr(address: string): string | undefined;
+  /** At least one address has a label: only then does the coin list work out each coin's address. */
+  readonly hasAddressLabels: boolean;
+  /** The labels set on the coins of one transaction (`txid:*`), spent ones included, in output order. */
+  coinLabelsOfTx(txid: string): string[];
 }
 
 /** A payment of the send log (Spending's or Savings'), for its label. */
@@ -103,7 +111,9 @@ export interface Bip329ImportResult {
   frozen: number;
   unfrozen: number;
   txLabels: number;
-  /** Records kept as read, for the next export (addresses, inputs, xpubs, ...). */
+  /** Address labels (`addr` records): a coin received on such an address shows its label. */
+  addrLabels: number;
+  /** Records kept as read, for the next export (inputs, xpubs, ...). */
   kept: number;
   /** Records of another wallet (their `origin` is not this wallet's): left out. */
   otherWallet: number;
@@ -119,6 +129,15 @@ export function cleanLabel(label: string | undefined): string | undefined {
   if (label === undefined) return undefined;
   const text = Array.from(label.trim()).slice(0, MAX_LABEL_CHARS).join('').trim();
   return text || undefined;
+}
+
+/**
+ * An address as the labels keep it: bech32 addresses are case-insensitive (BIP 173), so they are kept lowercase and
+ * looked up that way; base58 ones are case-sensitive and kept as they are.
+ */
+export function addressKey(address: string): string {
+  const a = address.trim();
+  return /^(bc|tb|bcrt)1/i.test(a) ? a.toLowerCase() : a;
 }
 
 /** A deep copy (Hermes has no structuredClone; the document is plain JSON). */
@@ -206,6 +225,21 @@ export class LabelStore {
     const coins = new Map(Object.entries(w.coins));
     const txs = new Map(Object.entries(w.txs));
     const frozen = new Set([...coins].filter(([, m]) => m.frozen).map(([op]) => op));
+    // Address labels: the last `addr` record of an address wins (an import, then one set here, replace each other).
+    const addrs = new Map<string, string>();
+    for (const r of w.kept) {
+      if (r.type !== 'addr') continue;
+      const text = cleanLabel(r.label);
+      if (text) addrs.set(addressKey(r.ref), text);
+      else if (r.label !== undefined) addrs.delete(addressKey(r.ref));
+    }
+    const byTx = new Map<string, { vout: number; label: string }[]>();
+    for (const [op, m] of coins) {
+      if (!m.label) continue;
+      const o = parseOutpoint(op);
+      if (!o) continue;
+      byTx.set(o.txid, [...(byTx.get(o.txid) ?? []), { vout: o.vout, label: m.label }]);
+    }
     return {
       coin: (outpoint) => {
         const m = coins.get(outpoint);
@@ -213,6 +247,9 @@ export class LabelStore {
       },
       tx: (txid) => txs.get(txid),
       frozen,
+      addr: (address) => addrs.get(addressKey(address)),
+      hasAddressLabels: addrs.size > 0,
+      coinLabelsOfTx: (txid) => (byTx.get(txid) ?? []).sort((a, b) => a.vout - b.vout).map((x) => x.label),
     };
   }
 
@@ -254,6 +291,21 @@ export class LabelStore {
     });
   }
 
+  /**
+   * Labels one of the wallet's addresses (a BIP 329 `addr` record), as Receive does before the address is shared; an
+   * empty `label` clears it. A coin later received there shows it when it has no label of its own. Replaces any earlier
+   * label of that address (one imported included). Throws `labels_invalid` for something that is not an address.
+   */
+  async setAddressLabel(walletId: string, address: string, label: string): Promise<void> {
+    const ref = addressKey(address);
+    const text = cleanLabel(label);
+    checkBip329Record({ type: 'addr', ref, ...(text ? { label: text } : {}) });
+    await this.change(walletId, (w) => {
+      w.kept = w.kept.filter((r) => !(r.type === 'addr' && addressKey(r.ref) === ref));
+      if (text) w.kept.push({ type: 'addr', ref, label: text });
+    });
+  }
+
   /** Drops every label of a wallet (removed from the phone). */
   async forgetWallet(walletId: string): Promise<void> {
     if (!this.doc.wallets[walletId]) return;
@@ -268,7 +320,8 @@ export class LabelStore {
   /**
    * The wallet's labels as a BIP 329 file: a `tx` record per labeled payment (this store's, then the send log's
    * `payments`), an `output` record per labeled or frozen coin (`spendable: false` when frozen), then every record kept
-   * from an import. `origin` (`bip329Origin` of the wallet's descriptor) goes on every Trikey record.
+   * from an import and the address labels. `origin` (`bip329Origin` of the wallet's descriptor) goes on every Trikey
+   * record, and on an address label that has none (one set on this phone).
    */
   exportBip329(walletId: string, opts: { origin?: string; payments?: readonly LabeledPayment[] } = {}): string {
     const w = this.doc.wallets[walletId] ?? emptyWallet();
@@ -281,20 +334,20 @@ export class LabelStore {
     }
     for (const [txid, label] of txs) records.push({ type: 'tx', ref: txid, label, ...origin });
     for (const [op, m] of Object.entries(w.coins)) records.push({ type: 'output', ref: op, ...(m.label ? { label: m.label } : {}), ...origin, ...(m.frozen ? { spendable: false } : {}) });
-    records.push(...w.kept);
+    records.push(...w.kept.map((r) => (r.type === 'addr' && !r.origin ? { ...r, ...origin } : r)));
     return serializeBip329(records);
   }
 
   /**
    * Reads a BIP 329 file into a wallet's labels. Per the BIP, a record without `label` (or `spendable`) leaves that value
-   * as it is; an empty label clears it. `output` records set coin labels and freezes, `tx` records payment labels, and
-   * every other record is kept for the next export. A record whose `origin` is not `opts.origin` (another wallet in the
+   * as it is; an empty label clears it. `output` records set coin labels and freezes, `tx` records payment labels, `addr`
+   * records address labels, and every other record is kept for the next export. A record whose `origin` is not `opts.origin` (another wallet in the
    * same file) is left out; one without `origin` is taken as this wallet's. Lines that break the format are skipped
    * and reported. All or nothing: `labels_full` (a limit) or `labels_invalid` (an unreadable file) change nothing.
    */
   async importBip329(walletId: string, file: string | Uint8Array, opts: { origin?: string } = {}): Promise<Bip329ImportResult> {
     const parsed = parseBip329(file);
-    const result: Bip329ImportResult = { coinLabels: 0, frozen: 0, unfrozen: 0, txLabels: 0, kept: 0, otherWallet: 0, errorCount: parsed.errorCount, errors: parsed.errors, truncated: parsed.truncated };
+    const result: Bip329ImportResult = { coinLabels: 0, frozen: 0, unfrozen: 0, txLabels: 0, addrLabels: 0, kept: 0, otherWallet: 0, errorCount: parsed.errorCount, errors: parsed.errors, truncated: parsed.truncated };
     await this.change(walletId, (w) => {
       const kept = new Map(w.kept.map((r) => [keptKey(r), r]));
       for (const r of parsed.records) {
@@ -324,6 +377,11 @@ export class LabelStore {
           if (text) w.txs[r.ref] = text;
           else delete w.txs[r.ref];
           result.txLabels++;
+        } else if (r.type === 'addr') {
+          // An address label: kept as a record (the shape older apps read), one per address, read by `view`.
+          for (const [k, x] of kept) if (x.type === 'addr' && addressKey(x.ref) === addressKey(r.ref)) kept.delete(k);
+          kept.set(keptKey(r), r);
+          result.addrLabels++;
         } else {
           kept.set(keptKey(r), r);
           result.kept++;
