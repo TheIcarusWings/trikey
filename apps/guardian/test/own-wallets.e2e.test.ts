@@ -324,6 +324,8 @@ describe('own wallets: two wallets of one owner on one guardian', { timeout: 90_
     });
     expect(adopted).toMatchObject({ walletId: dest.fingerprint(), previousWalletId: second.walletId });
     expect((await phone.rpc.call('guardian.status', { walletId: dest.fingerprint() })).walletId).toBe(dest.fingerprint());
+    // A phone that has not switched yet names the old wallet: its requests still reach that wallet's slot.
+    expect((await phone.rpc.call('guardian.status', { walletId: second.walletId })).walletId).toBe(dest.fingerprint());
     expect((await phone.rpc.call('guardian.status', {})).walletId).toBe(first.walletId);
     expect(await pay(rig, phone, first.wallet, 22, 1_000n)).toEqual(['app,cosigner']);
   });

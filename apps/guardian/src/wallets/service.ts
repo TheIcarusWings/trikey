@@ -93,9 +93,12 @@ export class OwnWallets implements OwnWalletHost {
     return this.runtimes.get(slotId);
   }
 
-  /** The active own wallet whose current wallet id is `walletId`. */
+  /**
+   * The own wallet whose current wallet id is `walletId`, or whose slot guarded it before a recovery moved it to the
+   * wallet the slot guards now (a phone that has not switched yet names the old id: its requests reach the slot).
+   */
   byWalletId(walletId: string): OwnWallet | undefined {
-    return this.active().find((w) => w.engine.registration()?.walletId === walletId);
+    return this.active().find((w) => w.engine.registration()?.walletId === walletId) ?? this.active().find((w) => !!w.engine.walletById(walletId));
   }
 
   /** The own wallet a recovery id belongs to (`<slotId>w<n>-...`). */
