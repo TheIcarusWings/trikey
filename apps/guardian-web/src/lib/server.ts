@@ -56,11 +56,19 @@ export const CORE_LINK = '/settings?server=core';
  */
 export function mempoolText(
   m: { mempoolCause?: MempoolCause; mempoolViaNode?: boolean; mempoolServerSlow?: boolean },
-  opts: { onServerPage?: boolean } = {},
+  opts: { onServerPage?: boolean; platform?: 'umbrel' | 'start9' } = {},
 ): { text: string; detail: string; core32: boolean } {
   const fixes = opts.onServerPage ? CORE32_FIXES_HERE : CORE32_FIXES;
   const own = 'Payments your phone makes still show at once (the guardian remembers the ones it sent).';
   const meanwhile = m.mempoolViaNode ? 'Meanwhile the guardian reads unconfirmed payments from Bitcoin Core itself, so they still show at once.' : 'Until then, payments to you show once confirmed.';
+  if (m.mempoolCause === 'electrs_core32' && m.mempoolViaNode && opts.platform) {
+    const name = opts.platform === 'umbrel' ? 'Umbrel' : 'StartOS';
+    return {
+      text: "Electrs is slowed down by Bitcoin Core 32; the guardian reads unconfirmed payments from Bitcoin Core instead.",
+      detail: `Nothing to do: payments still show at once, only syncs are slower (Electrs answers each request a few seconds late). The lasting fix is an Electrs update from ${name}. Meanwhile, deprecatedrpc=bip125 in Bitcoin Core's configuration also fixes it.`,
+      core32: true,
+    };
+  }
   if (m.mempoolCause === 'electrs_core32') {
     if (m.mempoolServerSlow)
       return {
