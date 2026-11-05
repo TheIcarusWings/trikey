@@ -58,6 +58,21 @@ npm test
 See [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately as
 described in [SECURITY.md](SECURITY.md).
 
+## Support
+
+Trikey has no company behind it. It's an open source project (MIT), built in public.
+Donations pay for one thing: the Google Play and Apple developer accounts, so people can
+install Trikey from the stores like any other app. They go to one public bitcoin address,
+so anyone can see what comes in: donations are public.
+
+```
+bc1qktf58cunadszkd2hq8uttrtezcm7nj3mwurw2z
+```
+
+Please read before donating: you get nothing in return. There are no guarantees: you're
+trusting the founder to spend it on the project. Treat it as money you've lost, and only
+give what you'd be fine never seeing again.
+
 ## License
 
 [MIT](LICENSE)

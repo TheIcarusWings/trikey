@@ -14,7 +14,7 @@ a plain stack of cards and reads the same.
 | `media/social/` | Vertical (9:16) cuts of the films for the launch-week posts on nostr, linked from the notes rather than shown on the site. 720×1280 H.264 with captions burned in. Re-encoded from the marketing repo's `out/` renders. |
 | `js/story.js` | Scroll scenes: sticky stages, shot timing, video scrubbing. Progressive enhancement only |
 | `404.html` | Not-found page (Vercel serves it automatically) |
-| `img/` | Phone screenshots, rendered from `design/screens` (light and dark WebP). The four `phone-onb-*` images are the app's own setup steps, captured from its web build in Demo mode without the demo strip |
+| `img/` | Phone screenshots, rendered from `design/screens` (light and dark WebP). The four `phone-onb-*` images are the app's own setup steps, captured from its web build in Demo mode without the demo strip. `donate-qr.svg` is the QR code of `bitcoin:` plus the donation address, made with the `qrcode` package (re-make it if the address changes) |
 | `media/` | Photos (WebP) and three short muted video loops (H.264 MP4, under 1 MB each) taken from the launch film footage, plus one generated still of the three keys. Loops are hidden for people who prefer reduced motion; the poster image stays. |
 | `fonts/` | Geist and Geist Mono (latin, variable `woff2`) with their OFL license texts |
 | `favicon.svg` | The logo |
