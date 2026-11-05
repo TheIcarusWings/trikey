@@ -72,6 +72,8 @@ export interface GuardianRigOptions {
   platform?: GuardianConfig['platform'];
   /** Builds the backend for a chain source the web UI chooses (Settings > Server): fakes instead of public servers. */
   chainBackend?: GuardianOptions['chainBackend'];
+  /** The live wallet's options (live-wallet.ts), e.g. a short `recheckMs`; `false` turns it off. Default the guardian's. */
+  liveWallet?: GuardianOptions['liveWallet'];
 }
 
 export interface FundedOutput {
@@ -181,6 +183,7 @@ export class GuardianRig {
       broadcastLimit: this.opts.broadcastLimit,
       ...(this.opts.slowPingMs !== undefined ? { slowPingMs: this.opts.slowPingMs } : {}),
       ...(this.opts.chainBackend ? { chainBackend: this.opts.chainBackend } : {}),
+      ...(this.opts.liveWallet !== undefined ? { liveWallet: this.opts.liveWallet } : {}),
       ...(this.opts.notifyTestServers
         ? { notify: { net: { allowLoopback: true }, smtpTest: { tls: { rejectUnauthorized: false } }, ...(this.opts.telegramApi ? { telegramApi: this.opts.telegramApi } : {}) } }
         : {}),

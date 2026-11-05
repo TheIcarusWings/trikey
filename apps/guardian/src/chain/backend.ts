@@ -151,6 +151,11 @@ function parseUnspent(list: unknown): BackendUnspent[] {
   });
 }
 
+/** The server's answer to a method it does not have (JSON-RPC -32601; Electrs, Fulcrum and ElectrumX all say so). */
+function isUnknownMethod(e: ElectrumError): boolean {
+  return e.code === -32601 || /unknown method|method not found|not implemented|unsupported/i.test(e.message);
+}
+
 /** A batch call's outcome: its value, or why it has none (the server's error, a malformed answer). */
 export type Got<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -212,9 +217,9 @@ export class ElectrumBackend implements ChainBackend {
     return this.client.onScriptStatus(fn);
   }
 
-  private async batch<T>(method: string, paramsList: unknown[][], parse: (r: unknown) => T): Promise<Got<T>[]> {
+  private async batch<T>(method: string, paramsList: unknown[][], parse: (r: unknown) => T, opts: { timeoutMs?: number } = {}): Promise<Got<T>[]> {
     if (!this.connected) throw new BackendUnavailableError(this.lastError ? `the Electrum server is not connected: ${this.lastError}` : 'the Electrum server is not connected');
-    const out = await this.client.requestBatch(paramsList.map((params) => ({ method, params })));
+    const out = await this.client.requestBatch(paramsList.map((params) => ({ method, params })), opts);
     return out.map((o): Got<T> => {
       if (!o.ok) return { ok: false, error: o.error.message };
       try {
@@ -230,13 +235,32 @@ export class ElectrumBackend implements ChainBackend {
     await this.req('server.ping', []);
   }
 
-  /** Subscribes to scripts by hash (one batch): each one's status now (null: no history), or why not. */
-  subscribeScripts(hashes: string[]): Promise<Got<string | null>[]> {
-    return this.batch('blockchain.scripthash.subscribe', hashes.map((h) => [h]), (r) => {
-      if (r === null) return null;
-      if (typeof r !== 'string' || !/^[0-9a-f]{64}$/i.test(r)) throw new Error('malformed status');
-      return r.toLowerCase();
-    });
+  /**
+   * Subscribes to scripts by hash (one batch): each one's status now (null: no history), or why not. Subscribing again
+   * to a script already subscribed only answers its status (the safety pass, live.ts `recheck`).
+   */
+  subscribeScripts(hashes: string[], opts: { timeoutMs?: number } = {}): Promise<Got<string | null>[]> {
+    return this.batch(
+      'blockchain.scripthash.subscribe',
+      hashes.map((h) => [h]),
+      (r) => {
+        if (r === null) return null;
+        if (typeof r !== 'string' || !/^[0-9a-f]{64}$/i.test(r)) throw new Error('malformed status');
+        return r.toLowerCase();
+      },
+      opts,
+    );
+  }
+
+  /**
+   * `blockchain.scripthash.unsubscribe` (protocol 1.4.2) for each script hash, in one batch. Resolves false when the
+   * server does not have the method (an older server: its subscriptions then last until the connection ends), true
+   * otherwise (a script it did not have subscribed answers false, which is fine). Rejects only when the connection fails.
+   */
+  async unsubscribeScripts(hashes: string[]): Promise<boolean> {
+    if (!this.connected) throw new BackendUnavailableError(this.lastError ? `the Electrum server is not connected: ${this.lastError}` : 'the Electrum server is not connected');
+    const out = await this.client.requestBatch(hashes.map((h) => ({ method: 'blockchain.scripthash.unsubscribe', params: [h] })));
+    return !out.some((o) => !o.ok && isUnknownMethod(o.error));
   }
 
   /** Histories by script hash, in one batch. */

@@ -87,7 +87,8 @@ function spendElsewhere(coins: { txid: string; vout: number }[], outputs: { scri
 beforeAll(async () => {
   hook = await startHttp();
   contactHook = await startHttp();
-  rig = await GuardianRig.start({ http: true, notifyTestServers: true });
+  // A safety pass every half second (ten minutes in real life), so a lost notification is caught within the test.
+  rig = await GuardianRig.start({ http: true, notifyTestServers: true, liveWallet: { recheckMs: 500 } });
   const p = decodePairingUri(rig.pairingUri(), rig.nowSec());
   phone = new RpcClient({ pool, relays: rig.relayUrls, secretKey: phoneKey, peer: rig.pubkey, now: () => rig.nowSec(), defaultTimeoutMs: 5000 });
   phone.onAlert((a) => alerts.push(a));
@@ -289,6 +290,41 @@ describe('the live wallet', { timeout: 60_000 }, () => {
     expect(msg.body).not.toMatch(/bcrt1|tb1|bc1|https?:/);
     expect(contactHook.requests.some((r) => r.body.includes('2,000 sats'))).toBe(false);
     expect((await put(false)).body.paymentAlerts).toBe(false);
+  });
+
+  it('a payment whose notification was lost is announced at the next safety pass', async () => {
+    rig.electrs.loseNotifications = true;
+    const coin = pay(wallet.derive(0, 9).script, 1_234);
+    await sleep(100);
+    rig.electrs.loseNotifications = false;
+    const a = await waitFor(() => txAlerts().find((x) => x.txid === coin.txid), 'the alert after the safety pass');
+    expect(a).toMatchObject({ direction: 'in', amountSats: 1_234, confirmations: 0 });
+    expect(rig.logLines.some((l) => l.includes('chain.live_recheck_changed'))).toBe(true);
+  });
+
+  it('while nothing changes, the safety pass asks the statuses and reads nothing', async () => {
+    await rig.guardian.live!.idle();
+    const reads = () => rig.electrs.calls.filter((c) => c.method === 'blockchain.scripthash.get_history' || c.method === 'blockchain.scripthash.listunspent').length;
+    const before = reads();
+    const batches = rig.electrs.batchMethods.length;
+    await sleep(1_200);
+    const passes = rig.electrs.batchMethods.slice(batches).filter((b) => b.every((m) => m === 'blockchain.scripthash.subscribe'));
+    expect(passes.length).toBeGreaterThanOrEqual(1);
+    expect(reads()).toBe(before);
+  });
+
+  it('lets go of Savings once unregistered: unsubscribed, and a payment to it is no news', async () => {
+    const script = savings.derive(RECEIVE, 0).script;
+    expect(rig.electrs.subscribedTo(script)).toBe(true);
+    expect(await phone.call('savings.unregister', {})).toMatchObject({ unregistered: true });
+    await rig.guardian.tick();
+    await waitFor(() => !rig.electrs.subscribedTo(script), 'Savings unsubscribed');
+    expect(rig.electrs.subscribedTo(wallet.derive(0, 0).script)).toBe(true);
+    expect(rig.logLines.some((l) => l.includes('live.released'))).toBe(true);
+    const coin = pay(savings.derive(RECEIVE, 2).script, 3_333);
+    await sleep(300);
+    await rig.guardian.live!.idle();
+    expect(txAlerts().some((x) => x.txid === coin.txid)).toBe(false);
   });
 });
 

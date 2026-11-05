@@ -39,10 +39,10 @@ import {
 import { BitcoinRpc, BitcoinRpcError, type BlockchainInfo } from './bitcoind.js';
 import { ElectrumClient, ElectrumUnavailableError, type HeaderNotification } from './electrum.js';
 import { isLinked, medianTimePast, parseHeader, splitHeaders } from './headers.js';
-import { ScriptWatch, type LiveStats } from './live.js';
+import { ScriptWatch, type LiveStats, type RecheckResult } from './live.js';
 import { RelayedTxs, type RelayedTx } from './relayed.js';
 
-export { scriptHash, type ElectrumHistoryItem };
+export { scriptHash, type ElectrumHistoryItem, type RecheckResult };
 
 export const DEFAULT_GAP_LIMIT = 20;
 
@@ -516,9 +516,9 @@ export class ChainService {
    * Keeps `wallet` live: on an Electrum server, subscribes to its scripts on both chains up to `gapLimit` past the last
    * used one (and past `minIndex`), extending as subscriptions show more used addresses. Bitcoin Core follows the
    * wallets it imported by itself (`prepare`, on the first scan). Never throws for an unavailable chain: the next call
-   * (a reconnect, a change) tries again.
+   * (a reconnect, a change) tries again. `owner` names who watches it (`keepWatching` lets go of it).
    */
-  async watchWallet(wallet: AddressSource, opts: { gapLimit?: number; minIndex?: Partial<Record<0 | 1, number>> } = {}): Promise<void> {
+  async watchWallet(wallet: AddressSource, opts: { gapLimit?: number; minIndex?: Partial<Record<0 | 1, number>>; owner?: string } = {}): Promise<void> {
     const live = this.live;
     if (!live || !this.current?.connected) return;
     const gap = Math.max(1, opts.gapLimit ?? this.opts.gapLimit ?? DEFAULT_GAP_LIMIT);
@@ -528,7 +528,10 @@ export class ChainService {
       let next = 0;
       let end = scanEnd(-1, mustReach, gap);
       while (next < end) {
-        await live.watch(Array.from({ length: end - next }, (_, k) => this.script(wallet, chain, next + k)));
+        await live.watch(
+          Array.from({ length: end - next }, (_, k) => this.script(wallet, chain, next + k)),
+          opts.owner,
+        );
         if (live !== this.live) return; // the chain source changed meanwhile
         let lastUsed = -1;
         for (let i = 0; i < end; i++) {
@@ -543,9 +546,37 @@ export class ChainService {
     }
   }
 
-  /** Keeps single scripts live (the phone's registered single-key coins), like `watchWallet`. */
-  async watchScripts(scripts: Uint8Array[]): Promise<void> {
-    if (this.live && this.current?.connected) await this.live.watch(scripts);
+  /**
+   * Keeps single scripts live (the phone's registered single-key coins), like `watchWallet`. With `only`, they are all
+   * `owner` watches: the others it watched are let go (`ScriptWatch.release`), connected or not.
+   */
+  async watchScripts(scripts: Uint8Array[], opts: { owner?: string; only?: boolean } = {}): Promise<void> {
+    const live = this.live;
+    if (!live) return;
+    if (opts.only) live.release(opts.owner ?? '', new Set(scripts.map(scriptHash)));
+    if (this.current?.connected) await live.watch(scripts, opts.owner);
+  }
+
+  /**
+   * Lets go of every owner's scripts but those of `owners` (a wallet no longer watched: Savings unregistered, a
+   * rotation's old wallet, an own wallet removed, the replaced wallet's watch over). Scripts watched without an owner
+   * stay. Their subscriptions end at once (live.ts, "Owners and release"). Returns how many scripts were dropped.
+   */
+  keepWatching(owners: Iterable<string>): number {
+    const live = this.live;
+    if (!live) return 0;
+    const keep = new Set(owners);
+    let dropped = 0;
+    for (const o of live.owners()) if (o !== '' && !keep.has(o)) dropped += live.release(o);
+    return dropped;
+  }
+
+  /**
+   * The safety pass on an Electrum server (live.ts `recheck`): every watched script's status in one round trip, and
+   * what changed read again. Undefined with Bitcoin Core (it polls its wallet anyway) or nothing to check.
+   */
+  recheckLive(): Promise<RecheckResult | undefined> {
+    return this.live && this.current?.connected ? this.live.recheck() : Promise.resolve(undefined);
   }
 
   /** Calls `fn` on every new tip the chain source announces (whichever source is in use). */

@@ -11,6 +11,16 @@
  *   wallet), on every new block (confirmations), after a reconnect and after a switch of the chain source. Changes are
  *   gathered for `debounceMs`, and passes never overlap. A pass reads the wallet with `ChainService.walletSync`, which is
  *   answered from the subscriptions when they are current (milliseconds) and from the server otherwise.
+ * - **When it lets go**: a wallet no longer among the targets (Savings unregistered, a rotation's old wallet, an own
+ *   wallet removed, the replaced wallet's watch over; a single-key coin no longer registered) has its subscriptions
+ *   released at the next pass, connected or not (`ChainService.keepWatching`, chain/live.ts "Owners and release"):
+ *   unsubscribed where the server can, and in any case no longer followed nor subscribed again after a reconnect.
+ * - **Safety pass** (`recheck`): every `recheckMs` (ten minutes) on an Electrum server, every watched script's status is
+ *   asked again in one batched round trip and compared with the one held; only scripts whose status differs are read
+ *   again, and a pass follows only then. It catches a notification the server or the network lost, without a rescan.
+ *   It runs in turn with the passes (never beside one, the pass after a block included) and never twice at once; a
+ *   reconnect restarts its timer, since re-subscribing compared every status already. Not with Bitcoin Core, whose
+ *   wallet is polled anyway.
  * - **What is news** (`LiveStore`): per wallet, each transaction's last announced state (`mempool` or `confirmed`). A
  *   transaction is announced when first seen (unconfirmed, or already confirmed) and once when it first confirms. What a
  *   wallet holds the first time the guardian reads it is history: recorded, not announced. The record is on disk
@@ -45,6 +55,10 @@ export const ALERT_TTL_MS = 2 * 86_400_000;
 export const DEFAULT_DEBOUNCE_MS = 150;
 /** A pass that could not read a wallet (the chain source catching up: Bitcoin Core importing) tries again this soon. */
 export const RETRY_MS = 10_000;
+/** How often the safety pass re-checks every subscription's status (see the file comment). */
+export const RECHECK_MS = 10 * 60_000;
+/** The owner the phone's registered single-key coins are watched under (chain/live.ts, "Owners and release"). */
+const COINS_OWNER = 'singlekey-coins';
 
 export type WalletTxAlert = Extract<Alert, { type: 'wallet_tx' }>;
 type TxState = 'mempool' | 'confirmed';
@@ -159,6 +173,8 @@ export interface LiveWalletOptions {
   debounceMs?: number;
   /** Tests: the targets instead of the guardian's (default: `Guardian`'s wallets). */
   targets?: () => Target[];
+  /** How often the safety pass runs (ms). Default `RECHECK_MS`; 0 turns it off. */
+  recheckMs?: number;
 }
 
 export class LiveWallet {
@@ -171,6 +187,11 @@ export class LiveWallet {
   private readonly debounceMs: number;
   private readonly deliverMutex = new Mutex();
   private retryTimer?: ReturnType<typeof setTimeout>;
+  /** Passes and safety passes run in turn, never side by side. */
+  private readonly lane = new Mutex();
+  private recheckTimer?: ReturnType<typeof setTimeout>;
+  private rechecking?: Promise<void>;
+  private readonly recheckMs: number;
   /** The wallets the last pass watched: a tick starts a pass when they change (pairing, Savings registered, a rotation). */
   private lastTargets = '';
   /** Passes done (tests wait on it). */
@@ -184,6 +205,7 @@ export class LiveWallet {
   ) {
     this.store = new LiveStore(g.config.dataDir);
     this.debounceMs = opts.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+    this.recheckMs = opts.recheckMs ?? RECHECK_MS;
   }
 
   load(): Promise<void> {
@@ -193,7 +215,13 @@ export class LiveWallet {
   start(): void {
     if (!this.stopped) return;
     this.stopped = false;
-    this.offs.push(this.g.chain.onWalletChange((reason) => this.changed(reason)));
+    this.offs.push(
+      this.g.chain.onWalletChange((reason) => {
+        // Re-subscribing (a reconnect) compared every status already; another chain source starts afresh.
+        if (reason === 'reconnect' || reason === 'reset') this.armRecheck();
+        this.changed(reason);
+      }),
+    );
     this.offs.push(this.g.chain.onTip(() => this.changed('tip')));
     // A wallet paired, Savings registered, a rotation: look at once, not at the next tick.
     this.offs.push(
@@ -205,12 +233,14 @@ export class LiveWallet {
       }),
     );
     this.changed('start');
+    this.armRecheck();
   }
 
   stop(): void {
     this.stopped = true;
     clearTimeout(this.timer);
     clearTimeout(this.retryTimer);
+    clearTimeout(this.recheckTimer);
     this.timer = undefined;
     for (const off of this.offs.splice(0)) off();
   }
@@ -260,7 +290,7 @@ export class LiveWallet {
       do {
         this.again = false;
         try {
-          await this.pass();
+          await this.lane.run(() => this.pass());
         } catch (e) {
           this.g.log.error('live.pass_failed', { error: errorText(e) });
         }
@@ -270,6 +300,37 @@ export class LiveWallet {
       this.running = undefined;
     });
     return this.running;
+  }
+
+  private armRecheck(): void {
+    clearTimeout(this.recheckTimer);
+    if (this.stopped || this.recheckMs <= 0) return;
+    this.recheckTimer = setTimeout(() => void this.recheck(), this.recheckMs);
+    this.recheckTimer.unref?.();
+  }
+
+  /**
+   * The safety pass now (see the file comment), in turn with the passes; joins one under way. Scripts whose status
+   * changed are read again, and the change they make starts a pass as a notification would.
+   */
+  recheck(): Promise<void> {
+    return (this.rechecking ??= this.lane
+      .run(() => this.recheckNow())
+      .catch((e: unknown) => this.g.log.warn('live.recheck_failed', { error: errorText(e) }))
+      .finally(() => {
+        this.rechecking = undefined;
+        this.armRecheck();
+      }));
+  }
+
+  private async recheckNow(): Promise<void> {
+    const g = this.g;
+    // Bitcoin Core polls its wallet anyway; nothing to check while disconnected (a reconnect re-checks everything).
+    if (this.stopped || g.chain.backend?.kind !== 'electrum' || !g.chain.backend.connected) return;
+    const r = await g.chain.recheckLive();
+    if (!r?.checked) return;
+    if (r.changed) g.log.info('live.recheck', { scripts: r.checked, changed: r.changed });
+    else g.log.debug('live.recheck', { scripts: r.checked, changed: 0 });
   }
 
   /** The wallets kept live: the paired one, Savings, the watched replaced wallet, the helper account. */
@@ -297,19 +358,22 @@ export class LiveWallet {
 
   private async pass(): Promise<void> {
     const g = this.g;
-    if (!g.chain.backend?.connected) return;
     const targets = this.targets();
+    // Wallets watched no more: their subscriptions go now, connected or not (a reconnect does not bring them back).
+    const released = g.chain.keepWatching([...targets.map((t) => t.walletId), COINS_OWNER]);
+    if (released) g.log.info('live.released', { scripts: released });
+    if (!g.chain.backend?.connected) return;
     this.lastTargets = this.targetsKey();
     for (const id of this.lastRead.keys()) if (!targets.some((t) => t.walletId === id)) this.lastRead.delete(id);
     for (const t of targets) {
       try {
-        await g.chain.watchWallet(t.wallet, { minIndex: t.minIndex });
+        await g.chain.watchWallet(t.wallet, { minIndex: t.minIndex, owner: t.walletId });
       } catch (e) {
         g.log.debug('live.watch_failed', { error: errorText(e) });
       }
     }
-    const coins = g.singleKeyScripts();
-    if (coins.length) await g.chain.watchScripts(coins).catch(() => undefined);
+    // Exactly the coins registered now: one swept or no longer registered is let go.
+    await g.chain.watchScripts(g.singleKeyScripts(), { owner: COINS_OWNER, only: true }).catch(() => undefined);
     for (const t of targets) {
       if (!t.kind) continue;
       let r: WalletSync;

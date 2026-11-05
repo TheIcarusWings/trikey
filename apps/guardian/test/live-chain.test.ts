@@ -316,6 +316,140 @@ describe('live chain data (Electrum subscriptions)', () => {
     expect(chain.liveStats()).toMatchObject({ limited: true, scripts: 30 });
   });
 
+  it('lets go of a wallet no longer watched: unsubscribed, nothing heard of it, not subscribed again after a reconnect', async () => {
+    const chain = await open({ maxScripts: 60 });
+    const changes: WalletChangeReason[] = [];
+    chain.onWalletChange((r) => changes.push(r));
+    const other = await makeWallet();
+    await chain.watchWallet(wallet, { owner: 'a' });
+    await chain.watchWallet(other, { owner: 'b' });
+    expect(chain.liveStats()).toMatchObject({ scripts: 60, limited: true });
+    expect(chain.keepWatching(['a'])).toBe(20);
+    // Room under the cap again, and the server holds only the wallet still watched.
+    expect(chain.liveStats()).toMatchObject({ scripts: 40, limited: false });
+    await waitFor(() => fake.subscriptions === 40);
+    expect(scriptCalls(fake, 'blockchain.scripthash.unsubscribe')).toBe(20);
+    expect(fake.subscribedTo(other.derive(0, 0).script)).toBe(false);
+    expect(fake.subscribedTo(wallet.derive(0, 0).script)).toBe(true);
+    // Nothing more to let go; a wallet watched under no owner is never let go.
+    expect(chain.keepWatching(['a'])).toBe(0);
+    // A reconnect subscribes again what is watched, nothing else.
+    fake.dropConnections();
+    await waitFor(() => changes.includes('reconnect'), 5000);
+    expect(fake.subscriptions).toBe(40);
+    expect(fake.subscribedTo(other.derive(0, 0).script)).toBe(false);
+    // Single scripts watched as "only these": one dropped from the list is let go.
+    const [s1, s2] = [other.derive(0, 0).script, other.derive(0, 1).script];
+    await chain.watchScripts([s1, s2], { owner: 'coins', only: true });
+    expect(fake.subscribedTo(s2)).toBe(true);
+    await chain.watchScripts([s1], { owner: 'coins', only: true });
+    await waitFor(() => !fake.subscribedTo(s2));
+    expect(fake.subscribedTo(s1)).toBe(true);
+    expect(chain.liveStats()).toMatchObject({ scripts: 41 });
+  });
+
+  it('a server without unsubscribe: asked once per connection, the scripts dropped here and ignored, counted until a reconnect', async () => {
+    fake.unsubscribe = false;
+    const chain = await open({ maxScripts: 90 });
+    const changes: WalletChangeReason[] = [];
+    chain.onWalletChange((r) => changes.push(r));
+    const other = await makeWallet();
+    await chain.watchWallet(wallet, { owner: 'a' });
+    await chain.watchWallet(other, { owner: 'b' });
+    expect(chain.keepWatching(['a'])).toBe(40);
+    await waitFor(() => scriptCalls(fake, 'blockchain.scripthash.unsubscribe') === 40);
+    await sleep(50);
+    expect(chain.liveStats()).toMatchObject({ scripts: 40 });
+    expect(fake.subscriptions).toBe(80); // the server keeps them until the connection ends
+    // It still notifies a payment to the wallet let go: nothing is read, nothing said.
+    changes.length = 0;
+    const reads = scriptCalls(fake);
+    fundTx(fake, other.derive(0, 0).script, 1_000, 0);
+    await sleep(200);
+    expect(scriptCalls(fake)).toBe(reads);
+    expect(changes).toEqual([]);
+    // What the server still holds counts against the cap: 40 watched + 40 held leave room for 10 of 90.
+    const third = await makeWallet();
+    await chain.watchWallet(third, { owner: 'c' });
+    expect(chain.liveStats()).toMatchObject({ scripts: 50, limited: true });
+    // Learnt once for this connection: letting go of the third wallet asks the server nothing.
+    expect(chain.keepWatching(['a'])).toBe(10);
+    await sleep(50);
+    expect(scriptCalls(fake, 'blockchain.scripthash.unsubscribe')).toBe(40);
+    expect(chain.liveStats()).toMatchObject({ scripts: 40, limited: true });
+    // A reconnect: the server forgot them all, only the wallet watched is subscribed again, and there is room.
+    fake.dropConnections();
+    await waitFor(() => changes.includes('reconnect'), 5000);
+    expect(fake.subscriptions).toBe(40);
+    expect(fake.subscribedTo(other.derive(0, 0).script)).toBe(false);
+    expect(chain.liveStats()).toMatchObject({ scripts: 40, limited: false });
+    // A new connection learns again: asked once more.
+    await chain.watchWallet(third, { owner: 'c' });
+    chain.keepWatching(['a']);
+    await waitFor(() => scriptCalls(fake, 'blockchain.scripthash.unsubscribe') > 40);
+  });
+
+  it('the safety pass: one batched round trip; nothing read when no status changed, a lost notification picked up', async () => {
+    const chain = await open();
+    const changes: WalletChangeReason[] = [];
+    chain.onWalletChange((r) => changes.push(r));
+    await chain.watchWallet(wallet);
+    const batches = fake.batchMethods.length;
+    const reads = [scriptCalls(fake), scriptCalls(fake, 'blockchain.scripthash.listunspent')];
+    expect(await chain.recheckLive()).toEqual({ checked: 40, changed: 0 });
+    expect(fake.batchMethods.slice(batches)).toEqual([Array(40).fill('blockchain.scripthash.subscribe')]);
+    expect([scriptCalls(fake), scriptCalls(fake, 'blockchain.scripthash.listunspent')]).toEqual(reads);
+    expect(fake.subscriptions).toBe(40);
+    // A payment whose notification is lost: the subscriptions do not show it...
+    changes.length = 0;
+    fake.loseNotifications = true;
+    const coin = fundTx(fake, wallet.derive(0, 3).script, 3_000, 0);
+    await sleep(100);
+    fake.loseNotifications = false;
+    expect((await chain.walletSync(wallet)).unconfirmedSats).toBe(0n);
+    expect(changes).toEqual([]);
+    // ... until the safety pass: that one script is read, and the change is told as a notification's would be.
+    expect(await chain.recheckLive()).toEqual({ checked: 40, changed: 1 });
+    expect(scriptCalls(fake) - reads[0]!).toBe(1);
+    expect(changes).toContain('scripts');
+    const r = await chain.walletSync(wallet);
+    expect(r.unconfirmedSats).toBe(3_000n);
+    expect(r.history[0]).toMatchObject({ txid: coin.txid });
+  });
+
+  it('the safety pass never runs twice at once, nor beside a new block\'s refresh', async () => {
+    const chain = await open();
+    await chain.watchWallet(wallet);
+    fundTx(fake, wallet.derive(0, 0).script, 9_000, 0);
+    await waitFor(async () => (await chain.walletSync(wallet)).unconfirmedSats === 9_000n);
+    fake.delayMs = 5; // every script call 5 ms, one after the other: the safety pass's batch takes ~200 ms
+    // Two at once are one.
+    let batches = fake.batchMethods.length;
+    const [a, b] = await Promise.all([chain.recheckLive(), chain.recheckLive()]);
+    expect(a).toEqual(b);
+    expect(fake.batchMethods.length - batches).toBe(1);
+    // A block while the safety pass is on the wire: its refresh is sent once the safety pass is answered.
+    batches = fake.batchMethods.length;
+    const pass = chain.recheckLive();
+    await sleep(30);
+    fake.mine(1, 1_700_500_000);
+    await pass;
+    await waitFor(() => fake.batchMethods.length >= batches + 2);
+    expect(fake.batchMethods[batches]![0]).toBe('blockchain.scripthash.subscribe');
+    expect(fake.batchMethods[batches + 1]![0]).toBe('blockchain.scripthash.get_history');
+    expect(fake.batchPending[batches + 1]).toBe(0);
+    // A safety pass asked while a block's refresh is under way waits for it.
+    await sleep(100);
+    batches = fake.batchMethods.length;
+    fake.mine(1, 1_700_600_000);
+    await waitFor(() => fake.batchMethods.length > batches); // the refresh's read is on the wire
+    await chain.recheckLive();
+    expect(fake.batchMethods[batches]![0]).toBe('blockchain.scripthash.get_history');
+    expect(fake.batchMethods[batches + 1]![0]).toBe('blockchain.scripthash.subscribe');
+    expect(fake.batchPending[batches + 1]).toBe(0);
+    fake.delayMs = 0;
+  });
+
   it('a server without batches gets the calls one by one', async () => {
     fake.refuseBatches = true;
     const chain = await open();
@@ -460,6 +594,8 @@ describe('live chain data (Bitcoin Core polled)', () => {
       await core.waitReady(3000);
       await core.prepare(wallet, 20);
       expect(chain.liveStats()).toEqual({ kind: 'core' });
+      // No safety pass: Bitcoin Core's wallet is polled anyway.
+      expect(await chain.recheckLive()).toBeUndefined();
       // The first read of the imported wallet counts as a change (it may all be new); then nothing until something is.
       await waitFor(() => changes.includes('core'));
       changes.length = 0;

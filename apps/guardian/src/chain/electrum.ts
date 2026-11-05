@@ -280,13 +280,15 @@ export class ElectrumClient {
   /**
    * Several calls in one JSON-RPC batch (one line; Electrs, Fulcrum and ElectrumX take them), each with its own outcome.
    * A server that answers the batch with one error (it takes no batches) gets the calls one by one, now and from then
-   * on. Rejects (`ElectrumUnavailableError`) only when the connection fails.
+   * on. Rejects (`ElectrumUnavailableError`) only when the connection fails. `timeoutMs` overrides the request timeout
+   * for this batch (a large one a slow server takes long to answer).
    */
-  async requestBatch<T = unknown>(calls: { method: string; params: unknown[] }[]): Promise<BatchOutcome<T>[]> {
+  async requestBatch<T = unknown>(calls: { method: string; params: unknown[] }[], opts: { timeoutMs?: number } = {}): Promise<BatchOutcome<T>[]> {
     if (!calls.length) return [];
     if (!this.ready) throw new ElectrumUnavailableError('Electrum is not connected');
+    const timeoutMs = opts.timeoutMs ?? this.o.requestTimeoutMs;
     const one = (c: { method: string; params: unknown[] }) =>
-      this.send<T>(c.method, c.params).then(
+      this.send<T>(c.method, c.params, timeoutMs).then(
         (result): BatchOutcome<T> => ({ ok: true, result }),
         (e: unknown): BatchOutcome<T> => {
           if (e instanceof ElectrumError) return { ok: false, error: e };
@@ -295,7 +297,7 @@ export class ElectrumClient {
       );
     if (this.batchRefused || calls.length === 1) return Promise.all(calls.map(one));
     try {
-      return await this.sendBatch<T>(calls);
+      return await this.sendBatch<T>(calls, timeoutMs);
     } catch (e) {
       if (!(e instanceof BatchRefusedError)) throw e;
       if (!this.batchRefused) this.o.log.info('electrum.batch_refused', { host: this.o.host });
@@ -304,7 +306,7 @@ export class ElectrumClient {
     }
   }
 
-  private sendBatch<T>(calls: { method: string; params: unknown[] }[]): Promise<BatchOutcome<T>[]> {
+  private sendBatch<T>(calls: { method: string; params: unknown[] }[], timeoutMs: number): Promise<BatchOutcome<T>[]> {
     const socket = this.socket;
     if (!socket || socket.destroyed) return Promise.reject(new ElectrumUnavailableError('Electrum is not connected'));
     const batch = this.nextBatch++;
@@ -317,7 +319,7 @@ export class ElectrumClient {
           const timer = setTimeout(() => {
             this.pending.delete(id);
             reject(new ElectrumUnavailableError(`${c.method} timed out`));
-          }, this.o.requestTimeoutMs);
+          }, timeoutMs);
           this.pending.set(id, {
             method: c.method,
             batch,
@@ -331,7 +333,7 @@ export class ElectrumClient {
     return Promise.all(out);
   }
 
-  private send<T>(method: string, params: unknown[]): Promise<T> {
+  private send<T>(method: string, params: unknown[], timeoutMs = this.o.requestTimeoutMs): Promise<T> {
     const socket = this.socket;
     if (!socket || socket.destroyed) return Promise.reject(new ElectrumUnavailableError('Electrum is not connected'));
     const id = this.nextId++;
@@ -339,7 +341,7 @@ export class ElectrumClient {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new ElectrumUnavailableError(`${method} timed out`));
-      }, this.o.requestTimeoutMs);
+      }, timeoutMs);
       this.pending.set(id, { method, resolve: resolve as (v: unknown) => void, reject, timer });
       socket.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
     });
