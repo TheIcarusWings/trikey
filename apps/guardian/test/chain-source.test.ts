@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { ElectrumBackend } from '../src/chain/backend.js';
 import { CoreBackend, descriptorsOf } from '../src/chain/core-backend.js';
-import { ChainSourceStore, PUBLIC_SERVERS, buildBackend, describe as describeSource, parseChainSource, publicServersFor, publicView, summarize } from '../src/chain/source.js';
+import { ChainSourceStore, PUBLIC_SERVERS, buildBackend, describe as describeSource, environmentSourceName, parseChainSource, sameChainSource, publicServersFor, publicView, summarize } from '../src/chain/source.js';
 import { HelperAccount } from '../src/singlekey.js';
 import { makeWallet } from './helpers.js';
 
@@ -135,5 +135,39 @@ describe('CHAIN_SOURCE from the environment', () => {
     expect(umbrel.bitcoinRpc).toEqual({ host: '10.21.21.8', port: 8332, user: 'umbrel', pass: 'x' });
     const start9 = loadConfig({ TRIKEY_PLATFORM: 'start9', ELECTRUM_HOST: '10.0.3.1', ELECTRUM_PORT: '50001', BITCOIN_NETWORK: 'bitcoin' });
     expect(start9.chainSource).toEqual({ kind: 'electrum', host: '10.0.3.1', port: 50001, tls: false });
+  });
+});
+
+describe('a save that changes nothing, and the server the platform set', () => {
+  it('compares sources by what they connect to, not by how the input was written', () => {
+    const a = parseChainSource({ kind: 'electrum', host: 'electrs.local', tls: false });
+    expect(sameChainSource(a, parseChainSource({ kind: 'electrum', host: 'Electrs.LOCAL', port: 50001, tls: false }))).toBe(true);
+    expect(sameChainSource(a, { tls: false, port: 50001, host: 'electrs.local', kind: 'electrum' })).toBe(true);
+    expect(sameChainSource(a, parseChainSource({ kind: 'electrum', host: 'electrs.local', port: 50002, tls: false }))).toBe(false);
+    expect(sameChainSource(a, parseChainSource({ kind: 'electrum', host: 'electrs.local', port: 50001, tls: true }))).toBe(false);
+    const pinned = parseChainSource({ kind: 'electrum', host: 'f.lan', tls: true, certSha256: FP });
+    expect(sameChainSource(pinned, parseChainSource({ kind: 'electrum', host: 'f.lan', tls: true, certSha256: FP.replace(/:/g, '').toLowerCase() }))).toBe(true);
+    expect(sameChainSource(pinned, parseChainSource({ kind: 'electrum', host: 'f.lan', tls: true }))).toBe(false);
+    expect(sameChainSource(parseChainSource({ kind: 'public', preset: 'blockstream' }), parseChainSource({ kind: 'public', host: 'electrum.blockstream.info' }))).toBe(true);
+    expect(sameChainSource(parseChainSource({ kind: 'public', host: 'electrs.example.org' }), parseChainSource({ kind: 'electrum', host: 'electrs.example.org', tls: true }))).toBe(false);
+    // Bitcoin Core: an empty password keeps the stored one (the same source); a new one is a change.
+    const core = parseChainSource({ kind: 'core', rpc: { host: 'node.lan', port: 8332, user: 'u', pass: 'p' } });
+    expect(sameChainSource(core, parseChainSource({ kind: 'core', rpc: { host: 'node.lan', port: 8332, user: 'u' } }, core))).toBe(true);
+    expect(sameChainSource(core, parseChainSource({ kind: 'core', rpc: { host: 'node.lan', port: 8332, user: 'u', pass: 'q' } }, core))).toBe(false);
+    expect(sameChainSource(core, parseChainSource({ kind: 'core', rpc: { host: 'node.lan', port: 8332, user: 'u' }, wallet: 'w' }, core))).toBe(false);
+  });
+
+  it("uses the password of the guardian's own Bitcoin Core (BITCOIN_RPC_*) for its host and user", () => {
+    const node = { host: '10.21.21.8', port: 8332, user: 'umbrel', pass: 'secret' };
+    expect(parseChainSource({ kind: 'core', rpc: { host: '10.21.21.8', port: 8332, user: 'umbrel' } }, undefined, node)).toEqual({ kind: 'core', rpc: { host: '10.21.21.8', port: 8332, user: 'umbrel', pass: 'secret' } });
+    expect(() => parseChainSource({ kind: 'core', rpc: { host: '10.21.21.9', port: 8332, user: 'umbrel' } }, undefined, node)).toThrow(/RPC password/);
+    expect(() => parseChainSource({ kind: 'core', rpc: { host: '10.21.21.8', port: 8332, user: 'other' } }, undefined, node)).toThrow(/RPC password/);
+  });
+
+  it('names the platform that set the server', () => {
+    expect(environmentSourceName('umbrel')).toBe('the server Umbrel set');
+    expect(environmentSourceName('start9')).toBe('the server StartOS set');
+    expect(environmentSourceName('docker')).toBe('the server in the .env file');
+    expect(environmentSourceName(undefined)).toBe('the server in the .env file');
   });
 });

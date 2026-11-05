@@ -4,11 +4,13 @@
  * on every alert channel; a public server is refused while a recovery runs; and the switch takes effect at once (the
  * guardian reads the new server, and keeps it after a restart).
  */
+import { access } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RECEIVE, buildSweep } from '@trikey/core';
 import { ElectrumBackend } from '../../src/chain/backend.js';
 import { ElectrumClient } from '../../src/chain/electrum.js';
-import { buildBackend, type ChainSource } from '../../src/chain/source.js';
+import { CHAIN_SOURCE_FILE, buildBackend, type ChainSource } from '../../src/chain/source.js';
 import { FakeElectrum, GuardianRig } from '../support/index.js';
 import { MNEMONICS, hwSigner, makeWallet, network, nostrKey } from '../helpers.js';
 import { pairInRig } from './support.js';
@@ -23,7 +25,7 @@ afterEach(async () => {
 });
 
 /** Public servers and anything named `other.lan` go to the second fake Electrs; the rest as in production. */
-async function rigWithTwoServers() {
+async function rigWithTwoServers(opts: { platform?: 'umbrel' | 'start9' | 'docker' } = {}) {
   other = new FakeElectrum({ blocks: 40, startTime: Math.floor(Date.now() / 1000) - 40 * 600 });
   const port = await other.start();
   const factory = (s: ChainSource, o: { probe: boolean }) => {
@@ -31,7 +33,7 @@ async function rigWithTwoServers() {
       return new ElectrumBackend(new ElectrumClient({ host: '127.0.0.1', port, minBackoffMs: 20, maxBackoffMs: 100 }));
     return buildBackend(s, { network: 'regtest', electrum: { minBackoffMs: 20, maxBackoffMs: 100 }, probe: o.probe });
   };
-  rig = await GuardianRig.start({ http: true, chainBackend: factory });
+  rig = await GuardianRig.start({ http: true, chainBackend: factory, ...opts });
   return { rig, port };
 }
 
@@ -133,4 +135,131 @@ describe('security: changing where the guardian reads the chain', () => {
     const refused = await rig.api('POST', '/chain/test', { kind: 'electrum', host: '127.0.0.1', port: 1, tls: false });
     expect(refused.body.ok).toBe(false);
   }, 30_000);
+
+  it('a save that changes nothing logs, announces and pins nothing (the source in use, as the page sends it back)', async () => {
+    const { rig } = await rigWithTwoServers({ platform: 'umbrel' });
+    const g = rig.guardian;
+    await pairInRig(rig);
+    const phone = vi.spyOn(g, 'notifyPhone');
+    const enqueue = vi.spyOn(g.notifier, 'enqueue');
+    const log = vi.spyOn(g, 'logEvent');
+    Object.defineProperty(g.notifier, 'configured', { get: () => true, configurable: true });
+    const fileThere = () => access(join(rig.dir, CHAIN_SOURCE_FILE)).then(() => true, () => false);
+
+    // Umbrel's Electrs, saved twice as the form shows it.
+    const { source } = (await rig.api('GET', '/chain')).body;
+    for (let i = 0; i < 2; i++) {
+      const r = await rig.api('PUT', '/chain', { kind: 'electrum', host: source.host, port: source.port, tls: false });
+      expect(r.body).toMatchObject({ origin: 'environment', platform: 'umbrel' });
+    }
+    expect(await fileThere()).toBe(false);
+
+    // A server chosen here, then saved again: the default port left out, the host in capitals.
+    expect((await rig.api('PUT', '/chain', { kind: 'electrum', host: 'other.lan', tls: false })).status).toBe(200);
+    expect(phone).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledTimes(1);
+    phone.mockClear();
+    log.mockClear();
+    enqueue.mockClear();
+    for (const body of [{ kind: 'electrum', host: 'other.lan', port: 50001, tls: false }, { kind: 'electrum', host: 'OTHER.lan', tls: false }]) {
+      const r = await rig.api('PUT', '/chain', body);
+      expect(r.status).toBe(200);
+      expect(r.body.origin).toBe('settings');
+    }
+    expect(phone).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+    const changes = (await rig.api('GET', '/activity')).body.entries.filter((e: { summary: string }) => e.summary === 'Server changed');
+    expect(changes).toHaveLength(1);
+  }, 60_000);
+
+  it('"Use the server Umbrel set" goes back to the environment, announces it, and keeps it after a restart', async () => {
+    const { rig } = await rigWithTwoServers({ platform: 'umbrel' });
+    const g = rig.guardian;
+    await pairInRig(rig);
+    const envHost = g.chainSource!.kind === 'electrum' ? g.chainSource!.host : '';
+    const before = (await rig.api('GET', '/chain')).body;
+    expect(before).toMatchObject({ origin: 'environment', platform: 'umbrel', environment: { kind: 'own', backend: 'electrum', host: envHost } });
+
+    // Nothing chosen here: nothing to do.
+    expect((await rig.api('DELETE', '/chain')).body.origin).toBe('environment');
+    expect((await rig.api('DELETE', '/chain', undefined, { session: false })).status).toBe(401);
+
+    expect((await rig.api('PUT', '/chain', { kind: 'public', host: 'electrum.example.org' })).status).toBe(200);
+    await g.chain.backend!.waitReady(3000);
+    expect((await g.chain.tip()).height).toBe(39);
+    const phone = vi.spyOn(g, 'notifyPhone');
+    const enqueue = vi.spyOn(g.notifier, 'enqueue');
+    Object.defineProperty(g.notifier, 'configured', { get: () => true, configurable: true });
+
+    const r = await rig.api('DELETE', '/chain');
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ origin: 'environment', source: { kind: 'electrum', host: envHost }, summary: { kind: 'own' } });
+    await g.chain.backend!.waitReady(3000);
+    expect((await g.chain.tip()).height).toBe(29); // the environment's Electrs again
+    await expect(access(join(rig.dir, CHAIN_SOURCE_FILE))).rejects.toThrow();
+
+    const alert = phone.mock.calls.find((c) => c[0].type === 'chain_source_changed')![0] as { message: string; kind: string };
+    expect(alert.kind).toBe('own');
+    expect(alert.message).toMatch(/back on the server Umbrel set: it now reads the blockchain from your own Electrum server 127\.0\.0\.1:\d+ \(before: the public server electrum\.example\.org:50002\)/);
+    const ev = enqueue.mock.calls.map((c) => c[0]).find((e) => e.type === 'chain_source_changed')!;
+    expect(ev.owner).toMatch(/back on the server Umbrel set/);
+    expect(ev.contacts?.text('nostr')).toMatch(/alert contact for changed where it reads the blockchain: it is back on the server Umbrel set/);
+    const entry = (await rig.api('GET', '/activity')).body.entries.find((e: { summary: string }) => e.summary === "Server back to Umbrel's setting");
+    expect(entry.event).toMatch(/The guardian is back on the server Umbrel set: it now reads the blockchain from your own Electrum server/);
+
+    await rig.restart();
+    expect(rig.guardian.chainSourceOrigin).toBe('environment');
+    expect(rig.guardian.chainSource).toMatchObject({ kind: 'electrum', host: envHost });
+  }, 60_000);
+
+  it('going back to the same server only unpins it, with nothing to announce', async () => {
+    const { rig } = await rigWithTwoServers({ platform: 'start9' });
+    const g = rig.guardian;
+    await pairInRig(rig);
+    expect((await rig.api('PUT', '/chain', { kind: 'electrum', host: 'other.lan', tls: false })).status).toBe(200);
+    // The environment now names the same server (StartOS changed its setting meanwhile).
+    (g.config as { chainSource?: ChainSource }).chainSource = { kind: 'electrum', host: 'other.lan', port: 50001, tls: false };
+    const phone = vi.spyOn(g, 'notifyPhone');
+    const log = vi.spyOn(g, 'logEvent');
+    const r = await rig.api('DELETE', '/chain');
+    expect(r.body).toMatchObject({ origin: 'environment', platform: 'start9', source: { host: 'other.lan' } });
+    expect(phone).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+    await expect(access(join(rig.dir, CHAIN_SOURCE_FILE))).rejects.toThrow();
+  }, 60_000);
+
+  it('going back: refused to a public server while a recovery runs, always allowed to the own node; 404 without one', async () => {
+    const { rig } = await rigWithTwoServers();
+    const g = rig.guardian;
+    const { wallet } = await pairInRig(rig);
+    expect((await rig.api('PUT', '/chain', { kind: 'electrum', host: 'other.lan', tls: false })).status).toBe(200);
+    const coin = rig.fund(wallet.derive(RECEIVE, 0).script, 500_000n);
+    const dest = await makeWallet({ app: MNEMONICS.app2 });
+    const plan = buildSweep({ from: wallet, utxos: [{ txid: coin.txid, vout: 0, value: coin.value, chain: RECEIVE, index: 0, prevTxHex: coin.rawTx }], destination: dest, destinationIndex: 0, feeRate: 2 });
+    expect((await g.engine.startRecovery({ psbt: await hwSigner().signPsbt(plan.psbt, network), destinationDescriptor: dest.descriptor(), initiator: nostrKey(21) })).ok).toBe(true);
+
+    const config = g.config as { chainSource?: ChainSource; electrum?: unknown };
+    const electrum = config.electrum;
+    // The environment's source is a public server (CHAIN_SOURCE=public): refused, the choice made here stays.
+    config.chainSource = { kind: 'public', host: 'electrum.example.org', port: 50002 };
+    const refused = await rig.api('DELETE', '/chain');
+    expect(refused).toMatchObject({ status: 409, body: { error: { code: 'recovery_pending' } } });
+    expect(g.chainSourceOrigin).toBe('settings');
+    expect(g.chainSource).toMatchObject({ host: 'other.lan' });
+    await access(join(rig.dir, CHAIN_SOURCE_FILE));
+
+    // No source in the environment at all: nothing to go back to.
+    delete config.chainSource;
+    delete config.electrum;
+    expect(await rig.api('DELETE', '/chain')).toMatchObject({ status: 404, body: { error: { code: 'not_found' } } });
+    expect((await rig.api('GET', '/chain')).body.environment).toBeUndefined();
+
+    // Its own Electrs: allowed during the recovery.
+    config.electrum = electrum;
+    const back = await rig.api('DELETE', '/chain');
+    expect(back.status).toBe(200);
+    expect(back.body).toMatchObject({ origin: 'environment', platform: 'docker', source: { kind: 'electrum', host: '127.0.0.1' } });
+    expect((await rig.api('GET', '/activity')).body.entries.some((e: { summary: string }) => e.summary === "Server back to the .env file's setting")).toBe(true);
+  }, 60_000);
 });
