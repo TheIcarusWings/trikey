@@ -5,7 +5,8 @@ export const current = VersionInfo.of({
   // release, and it equals the image tag in manifest/index.ts.
   version: '0.1.13:0',
   releaseNotes: {
-    en_US: 'Fixes for Umbrels where Electrs cannot see the mempool of Bitcoin Core 32: the guardian reads unconfirmed payments from Core itself and warns on its page; the app never reuses coins of its own unconfirmed payments. New Wallet page (view and receive). Quicker pull to refresh.',
+    en_US:
+      'Fixes for Umbrels where Electrs cannot see the mempool of Bitcoin Core 32: the guardian reads unconfirmed payments from Core itself and warns on its page; the app never reuses coins of its own unconfirmed payments. New Wallet page (view and receive). Quicker pull to refresh.',
   },
   migrations: {
     up: async ({ effects }) => {},

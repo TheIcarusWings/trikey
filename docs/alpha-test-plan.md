@@ -166,9 +166,13 @@ uses it. This follows `packaging/README.md`. I have not run it on a real Umbrel,
    update; repeat this step if the app disappears. The guardian's data lives in the app's own data folder.
 5. Open it from the home screen, as above. Uninstall it before you install from the store, so there is only one Trikey Guardian.
 
-**Start9 variant.** The steps in the app are the same, but the Start9 package cannot be used for this round: it is written for
-Start9's Bitcoin package, which runs mainnet only, and `packaging/start9/startos/main.ts` hard-codes `BITCOIN_NETWORK: 'bitcoin'`.
-It has not been tried for this round, and Start9 is out of it (see "Known limits").
+**Start9 variant.** The steps in the app are the same, but Start9 is out of this round (see "Known limits"). The package
+(`packaging/start9`) now builds in CI: every pull request that touches it, and every release, makes an x86_64 and an aarch64
+`.s9pk` (workflow artifacts of `.github/workflows/start9.yml`). Nobody has installed one on a Start9 server yet, and they are
+signed with a throwaway key, so they are not attached to releases (`packaging/start9/README.md`, "CI"). It is written for
+Start9's Bitcoin package, which runs mainnet only (`BITCOIN_NETWORK: 'bitcoin'` in `startos/main.ts`), so it would only fit
+Path A. A maintainer who sideloads one: report the install flow (the web UI password task, then the setup screen without a
+setup code) and whether the guardian sees Bitcoin and Electrs.
 
 ### Without Umbrel or Start9: plain Docker (a Mac, a PC, Linux, a NAS)
 

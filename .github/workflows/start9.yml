@@ -1,0 +1,251 @@
+name: Start9 package
+
+# Type-checks the StartOS package (packaging/start9) and builds its .s9pk for x86_64 and aarch64 with start-cli.
+# Runs on pull requests that touch the package or what it wraps (the guardian's environment contract in
+# apps/guardian/src/config.ts, the image's Dockerfile), on release tags (release.yml dispatches it on the tag it
+# creates, since a tag made with GITHUB_TOKEN does not start `push` workflows) and by hand.
+#
+# Nothing is published. Each build is signed with a throwaway key made in the job (`start-cli init-key`, then the
+# minimal packaging workspace Start9's own CI provisions: `.startos/build.key.pem`), so the .s9pk files are workflow
+# artifacts for maintainers to sideload and test, not release assets: see packaging/start9/README.md, "CI", for why.
+# No secrets.
+#
+# start-cli: a pinned release of Start9Labs/start-technologies (tag start-cli/v<version>), checked against the SHA-256
+# below. Start9's own package CI (the reusable build.yml in start-technologies, used by hello-world-startos) installs
+# the newest release with its install-start-cli action instead; this pins it so a new start-cli cannot change a build
+# without a commit here. To update: download both assets of the new release, put their SHA-256 here, run this workflow.
+#
+# The image: the package pulls ghcr.io/theicaruswings/trikey-guardian:<version> by the tag in
+# packaging/start9/startos/manifest/index.ts, and `s9pk pack` copies it into the .s9pk. On a release tag the job waits
+# for docker.yml to publish that tag (as umbrel-store.yml does) and packs exactly the published image. On a pull
+# request it uses the published image when the tag exists; when it does not yet (a release PR that bumps the version)
+# it builds the image from the checkout for the runner's own architecture and tags it with that name, so the pack
+# finds it locally. Each architecture builds on a runner of that architecture, so nothing is emulated.
+
+on:
+  pull_request:
+    paths:
+      - 'packaging/start9/**'
+      - 'apps/guardian/src/config.ts'
+      - 'packaging/docker/Dockerfile'
+      - 'packaging/umbrel/trikey-guardian/docker-compose.yml'
+      - '.github/workflows/start9.yml'
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: start9-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  START_CLI_VERSION: 2.7.0
+  START_CLI_SHA256_X86_64: 07689176e2775fcd44f8bd0248f322898f19d8af2095970960eb27f511a92150
+  START_CLI_SHA256_AARCH64: 2390dbb7ce082d7f532a3865bcaa25fc9e4db1dfb2025d6de3a8478bdb24a754
+  IMAGE: ghcr.io/theicaruswings/trikey-guardian
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packaging/start9/package-lock.json
+
+      - name: Install
+        working-directory: packaging/start9
+        run: npm ci
+
+      - name: Type-check
+        working-directory: packaging/start9
+        run: npx tsc --noEmit
+
+      - name: SDK lint
+        working-directory: packaging/start9
+        run: node node_modules/@start9labs/start-sdk/lint.mjs
+
+      # The guardian's environment is its contract with every platform (apps/guardian/src/config.ts). Fail when the
+      # package passes a variable the guardian does not read (a typo, a renamed variable), when it leaves out one that
+      # the Umbrel package passes, or when it does not say it is Start9 (the guardian would then ask for a setup code).
+      - name: Environment contract
+        run: |
+          set -euo pipefail
+          main=packaging/start9/startos/main.ts
+          config=apps/guardian/src/config.ts
+          compose=packaging/umbrel/trikey-guardian/docker-compose.yml
+          # The keys of the guardian daemon's `env: { ... }` block, comments left out.
+          passed=$(awk '/^ *env: \{/{on=1;next} on && /^ *\},? *$/{exit} on' "$main" | grep -v '^\s*//' \
+            | grep -oE "\b[A-Z][A-Z0-9_]{2,}:" | tr -d : | sort -u)
+          [ -n "$passed" ] || { echo "::error file=$main::Could not find the guardian's env block"; exit 1; }
+          read_vars=$(grep -oE "(env\[|get\()'[A-Z][A-Z0-9_]+'" "$config" | grep -oE "[A-Z][A-Z0-9_]+" | sort -u)
+          umbrel=$(yq -r '.services.server.environment | keys | .[]' "$compose" | sort -u)
+          echo "Start9 passes: $(echo $passed)"
+          echo "Umbrel passes: $(echo $umbrel)"
+          fail=0
+          for v in $passed; do
+            grep -qx "$v" <<<"$read_vars" || { echo "::error file=$main::$v is not read by $config"; fail=1; }
+          done
+          for v in $umbrel; do
+            grep -qx "$v" <<<"$passed" || { echo "::error file=$main::$v is passed on Umbrel ($compose) but not on Start9"; fail=1; }
+          done
+          grep -Eq "TRIKEY_PLATFORM: 'start9'" "$main" \
+            || { echo "::error file=$main::TRIKEY_PLATFORM must be 'start9'"; fail=1; }
+          exit $fail
+
+      # The image tag and the package version name the same release (packaging/start9/README.md, "Updating"), and a
+      # tag build packs the tag's own image.
+      - name: Versions
+        run: |
+          set -euo pipefail
+          tag=$(grep -oE "${IMAGE}:[^'\"]+" packaging/start9/startos/manifest/index.ts | head -1)
+          image_version=${tag#"${IMAGE}:"}
+          package_version=$(grep -oE "version: '[^']+'" packaging/start9/startos/versions/current.ts | head -1 | cut -d"'" -f2)
+          echo "Image ${tag}, package version ${package_version}"
+          [ "${package_version%%:*}" = "${image_version%-alpha}" ] \
+            || { echo "::error::versions/current.ts (${package_version}) and the image tag (${image_version}) name different releases"; exit 1; }
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${image_version}" != "${GITHUB_REF_NAME#v}" ]; then
+            echo "::error::The manifest uses ${tag}, but this is the tag ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
+  build:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86
+            runner: ubuntu-latest
+          - arch: aarch64
+            target: arm
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: packaging/start9
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packaging/start9/package-lock.json
+
+      # `s9pk pack` writes the images and the JavaScript as squashfs: mksquashfs (squashfs-tools) and tar2sqfs
+      # (squashfs-tools-ng).
+      - name: Install start-cli and squashfs tools
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends squashfs-tools squashfs-tools-ng
+          [ "$(uname -m)" = "${ARCH}" ] || { echo "::error::Runner is $(uname -m), expected ${ARCH}"; exit 1; }
+          case "${ARCH}" in
+            x86_64) sum="${START_CLI_SHA256_X86_64}" ;;
+            aarch64) sum="${START_CLI_SHA256_AARCH64}" ;;
+          esac
+          curl -fsSL --retry 3 -o "${RUNNER_TEMP}/start-cli" \
+            "https://github.com/Start9Labs/start-technologies/releases/download/start-cli%2Fv${START_CLI_VERSION}/start-cli_${ARCH}-linux"
+          echo "${sum}  ${RUNNER_TEMP}/start-cli" | sha256sum -c -
+          sudo install -m 755 "${RUNNER_TEMP}/start-cli" /usr/local/bin/start-cli
+          start-cli --version
+
+      - name: Install
+        run: npm ci
+
+      # A throwaway key, made here and gone with the runner: the .s9pk is signed, but by no key anyone could trust.
+      # `init-key` makes the identity key; `s9pk pack` signs with the workspace build key in the nearest `.startos/`.
+      - name: Throwaway signing key
+        run: |
+          set -euo pipefail
+          start-cli init-key
+          mkdir -p .startos
+          cp ~/.startos/id.key.pem .startos/build.key.pem
+          echo "Signed by this run's throwaway key:"
+          start-cli pubkey
+
+      - name: Guardian image
+        id: image
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          tag=$(grep -oE "${IMAGE}:[^'\"]+" startos/manifest/index.ts | head -1)
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            # docker.yml pushes the same tag at the same time.
+            for attempt in $(seq 1 60); do
+              if digest=$(docker buildx imagetools inspect "${tag}" --format '{{.Manifest.Digest}}' 2>/dev/null) && [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+                echo "${tag} is ${digest}"
+                echo "source=published ${digest}" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "Waiting for ${tag} (${attempt}/60)"
+              sleep 30
+            done
+            echo "::error::${tag} was not published within 30 minutes"
+            exit 1
+          fi
+          if digest=$(docker buildx imagetools inspect "${tag}" --format '{{.Manifest.Digest}}' 2>/dev/null) && [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Using the published ${tag} (${digest})"
+            echo "source=published ${digest}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=Image built here::${tag} is not published yet, so this build packs an image built from this checkout (${ARCH} only)."
+            docker build -f "${GITHUB_WORKSPACE}/packaging/docker/Dockerfile" --build-arg VERSION="${tag#"${IMAGE}:"}" -t "${tag}" "${GITHUB_WORKSPACE}"
+            echo "source=built from ${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # FORMAT=true: the build must not rewrite the sources (prettier is a local step), so the manifest's gitHash
+      # stays clean.
+      - name: Build the .s9pk
+        run: make ${{ matrix.target }} FORMAT=true
+
+      - name: Check the .s9pk
+        id: s9pk
+        env:
+          ARCH: ${{ matrix.arch }}
+          SOURCE: ${{ steps.image.outputs.source }}
+          TAG: ${{ steps.image.outputs.tag }}
+        run: |
+          set -euo pipefail
+          file="trikey-guardian_${ARCH}.s9pk"
+          manifest=$(start-cli s9pk inspect "${file}" manifest)
+          echo "${manifest}" | jq '{id, version, osVersion, sdkVersion, gitHash, images, volumes, dependencies}'
+          echo "${manifest}" | jq -e --arg arch "${ARCH}" '
+            .id == "trikey-guardian"
+            and (.images.guardian.arch == [$arch])
+            and (.volumes == ["main", "startos"])
+            and (.dependencies | has("bitcoind") and has("electrs"))
+            and (.gitHash | endswith("-modified") | not)' > /dev/null \
+            || { echo "::error::Unexpected manifest in ${file}"; exit 1; }
+          start-cli s9pk inspect "${file}" file-tree | jq -e --arg arch "${ARCH}" 'index("images/\($arch)/guardian.squashfs") != null' > /dev/null \
+            || { echo "::error::${file} has no guardian image for ${ARCH}"; exit 1; }
+          sha256sum "${file}" > "${file}.sha256"
+          {
+            echo "### ${file}"
+            echo
+            echo "- Version $(echo "${manifest}" | jq -r .version), StartOS $(echo "${manifest}" | jq -r .osVersion), SDK $(echo "${manifest}" | jq -r .sdkVersion), start-cli ${START_CLI_VERSION}"
+            echo "- Image ${TAG}: ${SOURCE}"
+            echo "- SHA-256 $(cut -d' ' -f1 "${file}.sha256"), $(du -h "${file}" | cut -f1)"
+            echo "- Signed with a throwaway key: for testing only (packaging/start9/README.md, \"CI\")"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: trikey-guardian-s9pk-${{ matrix.arch }}
+          path: |
+            packaging/start9/trikey-guardian_${{ matrix.arch }}.s9pk
+            packaging/start9/trikey-guardian_${{ matrix.arch }}.s9pk.sha256
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: error

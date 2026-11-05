@@ -9,8 +9,19 @@ import { sdk } from '../sdk'
 // clear text to enforce basic auth, and it is not a key: it cannot unlock or spend anything. The
 // guardian's own unlock passphrase is separate, is chosen by the user in the web interface, and
 // is never stored here.
+//
+// extraEntropy is 32 random bytes (64 hex characters) drawn once by the package at install
+// (init/seedEntropy.ts) and passed to the guardian as TRIKEY_EXTRA_ENTROPY, the Start9 stand-in
+// for Umbrel's APP_SEED. The guardian mixes it into every new key-3 setup seed next to its own
+// OS draw and the browser's bytes (DESIGN.md, "Entropy"). It is not a key: knowing it does not
+// weaken the seed, which stays as strong as the guardian's own draw.
 const shape = z.looseObject({
   uiPassword: z.string().optional().catch(undefined),
+  extraEntropy: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional()
+    .catch(undefined),
 })
 
 export const storeJson = FileHelper.json(

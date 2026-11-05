@@ -1,4 +1,5 @@
 import { FileHelper, T } from '@start9labs/start-sdk'
+import { storeJson } from './fileModels/store.json'
 import { i18n } from './i18n'
 import { sdk } from './sdk'
 import {
@@ -80,12 +81,23 @@ export const main = sdk.setupMain(async ({ effects }) => {
     'guardian',
   )
 
-  // Bitcoin Core on StartOS authenticates with a cookie file, `__cookie__:<password>`, that it
-  // writes again on every start. The guardian takes a user and a password, and Bitcoin Core's RPC
-  // proxy accepts the cookie as the user `__cookie__`. The cookie is read here, in the package
-  // runtime, and goes to the guardian as environment only, so it is never written to a volume.
-  // Main runs again when a replacement cookie appears. The gap while bitcoind restarts, when the
-  // file is gone, is not a change (the same pattern as electrs-startos).
+  // The guardian uses Bitcoin Core's RPC (all four BITCOIN_RPC_* or none) for sync status, as a
+  // broadcast fallback, for the silent payment scanner (`getblock <hash> 3`), and to read the
+  // mempool itself when Electrs cannot (Bitcoin Core 32 dropped the `bip125-replaceable` field
+  // that electrs 0.11 needs, so its mempool stays empty). Umbrel passes the same four.
+  //
+  // Bitcoin Core on StartOS authenticates dependents with a cookie file, `__cookie__:<password>`,
+  // that it writes again on every start; `rpcuser`/`rpcpassword` are not supported
+  // (bitcoin-core-startos README). Its RPC proxy on 8332 accepts the cookie user with every call
+  // allowed (btc-rpc-proxy `passthrough_rpccookie`), batches included. mempool-startos,
+  // electrs-startos, lnd-startos and btcpayserver-startos read the same file from the same mount.
+  // The cookie is read here, in the package runtime, and goes to the guardian as environment
+  // only, so it is never written to a volume.
+  //
+  // Main runs again when a replacement cookie appears, which restarts the guardian (and so locks
+  // key 3 until it is unlocked) whenever Bitcoin restarts: the old password stops working at that
+  // moment. The gap while bitcoind restarts, when the file is gone, is not a change (the same
+  // pattern as electrs-startos).
   const rootfs = await guardianSub.rootfs
   const cookie = await FileHelper.string(`${rootfs}${btcMountpoint}/.cookie`)
     .read(
@@ -106,6 +118,8 @@ export const main = sdk.setupMain(async ({ effects }) => {
   }
   const rpcAddress = splitAddress(rpc)
   const electrumAddress = splitAddress(electrum)
+  // Drawn once at install (init/seedEntropy.ts). Read once: it never changes afterwards.
+  const extraEntropy = await storeJson.read((s) => s.extraEntropy).once()
 
   return (
     sdk.Daemons.of(effects)
@@ -126,8 +140,9 @@ export const main = sdk.setupMain(async ({ effects }) => {
           env: {
             PORT: String(uiPort),
             TRIKEY_DATA_DIR: dataDir,
-            // The interface's basic-auth gate guards the web UI, so first-run setup needs no setup code
-            // (plain Docker's default, packaging/compose/README.md).
+            // The interface's basic-auth gate guards the web UI, so first-run setup asks for no
+            // setup code (plain Docker's default, packaging/compose/README.md). Without this the
+            // guardian would assume plain Docker and wait for a code from its log.
             TRIKEY_PLATFORM: 'start9',
             // StartOS runs Bitcoin Core on mainnet only.
             BITCOIN_NETWORK: 'bitcoin',
@@ -137,6 +152,8 @@ export const main = sdk.setupMain(async ({ effects }) => {
             BITCOIN_RPC_PORT: rpcAddress.port,
             BITCOIN_RPC_USER: cookie.slice(0, sep),
             BITCOIN_RPC_PASS: cookie.slice(sep + 1),
+            // Umbrel passes its APP_SEED here; on StartOS it is the package's own draw.
+            ...(extraEntropy ? { TRIKEY_EXTRA_ENTROPY: extraEntropy } : {}),
           },
         },
         // Ready when GET /api/status answers 2xx on the UI port: the same check as the image's
