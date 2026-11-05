@@ -1478,6 +1478,9 @@ export class TrikeyWallet {
    * first removes only its own state: key 2 and the nostr key are the first wallet's too (`WalletSet.removeWallet`).
    */
   async forget(): Promise<void> {
+    // The phone's label store outlives an own wallet removed from it: this wallet stops following it (no upload for a wallet gone).
+    this.labelStoreOff?.();
+    this.labelStoreOff = undefined;
     await this.close();
     if (this.s.notes?.on) await this.deps.secureStore.remove(this.s.notes.on.keyId).catch(() => undefined);
     if (this.s.own) {
