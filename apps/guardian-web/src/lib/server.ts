@@ -2,7 +2,7 @@
  * Settings > Server: the form's checks and words (the guardian checks everything again, apps/guardian/src/chain/source.ts).
  * Three kinds, as in Sparrow Wallet: your own Electrum server, your own Bitcoin Core, or a public server.
  */
-import type { ChainSettings, ChainSourceInput, ChainSourceView, MempoolCause, PublicServerOption } from '../api/types';
+import type { ChainSettings, ChainSourceInput, ChainSourceView, MempoolCause, Platform, PublicServerOption } from '../api/types';
 
 export type ServerKind = 'electrum' | 'core' | 'public';
 
@@ -41,44 +41,57 @@ export const CORE32_FIXES =
 export const CORE32_FIXES_HERE =
   "Fix it by adding deprecatedrpc=bip125 to Bitcoin Core's configuration (bitcoin.conf) and restarting Bitcoin Core and Electrs, or choose Your own Bitcoin Core below.";
 
+/** The home status's Core 32 fix, before its link to Settings > Server with Your own Bitcoin Core chosen. */
+export const HOME_CORE32_FIX = 'Fix it with deprecatedrpc=bip125 in bitcoin.conf, or';
+export const HOME_CORE32_LINK = 'use Bitcoin Core alone';
+/** Where that link goes: Settings > Server's Advanced section, Your own Bitcoin Core chosen (`useCoreLink`). */
+export const CORE_LINK = '/settings?server=core';
+
 /**
  * The home status's note and Settings > Server's warning while the Electrum server reports no unconfirmed payments
- * (`mempoolUnseen`): `text` names the cause when the guardian knows it, `detail` says what still works and what fixes it.
- * `mempoolServerSlow`: its pings took seconds too (Electrs 0.11 rereads Core 32's whole mempool on the loop that answers
- * requests).
+ * (`mempoolUnseen`): `text` names the cause when the guardian knows it and must read right on its own (the home page
+ * shows only it), `detail` says what still works and what fixes it. `mempoolServerSlow`: its pings took seconds too
+ * (Electrs 0.11 rereads Core 32's whole mempool on the loop that answers requests). `core32`: Bitcoin Core alone is a
+ * fix (the home page links to it).
  */
 export function mempoolText(
   m: { mempoolCause?: MempoolCause; mempoolViaNode?: boolean; mempoolServerSlow?: boolean },
   opts: { onServerPage?: boolean } = {},
-): { text: string; detail: string } {
+): { text: string; detail: string; core32: boolean } {
   const fixes = opts.onServerPage ? CORE32_FIXES_HERE : CORE32_FIXES;
-  const coreAlone = opts.onServerPage ? 'or choose Your own Bitcoin Core below' : 'or switch Settings > Server to Bitcoin Core alone';
   const own = 'Payments your phone makes still show at once (the guardian remembers the ones it sent).';
   const meanwhile = m.mempoolViaNode ? 'Meanwhile the guardian reads unconfirmed payments from Bitcoin Core itself, so they still show at once.' : 'Until then, payments to you show once confirmed.';
   if (m.mempoolCause === 'electrs_core32') {
     if (m.mempoolServerSlow)
       return {
-        text: "Electrs is slowed down and can't see unconfirmed payments: it doesn't work with Bitcoin Core 32's mempool.",
-        detail: `Every request to Electrs waits several seconds, so syncs are slow. ${fixes} ${meanwhile} ${own}`,
+        text: m.mempoolViaNode
+          ? 'Electrs is slowed down by Bitcoin Core 32; unconfirmed payments are read from Bitcoin Core instead.'
+          : "Electrs is slowed down by Bitcoin Core 32 and can't see unconfirmed payments, so payments to you show only once confirmed.",
+        detail: `Electrs 0.11 doesn't work with Bitcoin Core 32's mempool: every request to it waits several seconds, so syncs are slow. ${fixes} ${meanwhile} ${own}`,
+        core32: true,
       };
     if (m.mempoolViaNode)
       return {
         text: "Electrs can't read Bitcoin Core 32's mempool, so the guardian reads unconfirmed payments from Bitcoin Core itself.",
         detail: `They still show at once. ${fixes} ${own}`,
+        core32: true,
       };
     return {
-      text: `Electrs can't read Bitcoin Core 32's mempool; unconfirmed payments show once confirmed, ${coreAlone}.`,
+      text: "Electrs can't read Bitcoin Core 32's mempool, so payments to you show only once confirmed.",
       detail: `Bitcoin Core 32 no longer gives a field Electrs 0.11 needs. ${fixes} ${own}`,
+      core32: true,
     };
   }
   if (m.mempoolViaNode)
     return {
       text: "Your Electrum server doesn't report unconfirmed payments, so the guardian reads them from Bitcoin Core itself.",
       detail: `They still show at once. ${own} Restarting Electrs may help, or choose another server here.`,
+      core32: false,
     };
   return {
-    text: "Your Electrum server doesn't report unconfirmed payments; they will show once confirmed.",
+    text: "Your Electrum server doesn't report unconfirmed payments, so payments to you show only once confirmed.",
     detail: `${own} Payments to you appear only after a block. Electrs may be catching up, or have its mempool turned off; restarting it usually helps, or choose another server here.`,
+    core32: false,
   };
 }
 
@@ -105,6 +118,50 @@ export function draftFrom(settings: ChainSettings): ServerDraft {
 const portOk = (p: string) => /^\d{1,5}$/.test(p.trim()) && Number(p) >= 1 && Number(p) <= 65535;
 const hostOk = (h: string) => /^[A-Za-z0-9.:[\]-]+$/.test(h.trim()) && !h.includes('://');
 const fingerprintOk = (f: string) => /^[0-9a-f]{64}$/i.test(f.trim().replace(/^sha-?256(\s*fingerprint)?\s*[=:]?\s*/i, '').replace(/[\s:]/g, ''));
+
+/**
+ * Your own Bitcoin Core, filled in for "use Bitcoin Core alone": the one in use, else the one the guardian was started
+ * with (Umbrel's and StartOS's own node: its password stays in the guardian, the field can stay empty).
+ */
+export function coreDraft(settings: ChainSettings): ServerDraft {
+  const d = draftFrom(settings);
+  if (d.kind === 'core') return d;
+  const n = settings.nodeRpc;
+  return { ...d, kind: 'core', host: n?.host ?? '', port: n ? String(n.port) : '', user: n?.user ?? '', pass: '', tls: false, certSha256: '', preset: '', wallet: '' };
+}
+
+/** Whether the guardian already has Bitcoin Core's password for the draft's host and user (the field may stay empty). */
+export function passKnown(d: ServerDraft, settings: ChainSettings): boolean {
+  const host = d.host.trim();
+  const user = d.user.trim();
+  const s = settings.source;
+  if (s?.kind === 'core' && s.rpc.host === host && s.rpc.user === user) return true;
+  return !!settings.nodeRpc && settings.nodeRpc.host === host && settings.nodeRpc.user === user;
+}
+
+const defaultPort = (d: ServerDraft) => (d.kind === 'core' ? '' : d.tls || d.kind === 'public' ? '50002' : '50001');
+const canonFp = (f: string) => f.trim().replace(/^sha-?256(\s*fingerprint)?\s*[=:]?\s*/i, '').replace(/[\s:]/g, '').toUpperCase();
+
+/**
+ * Whether the draft is the source in use, as the guardian would see it (Save then has nothing to do): the default port
+ * left out, the host's case, the fingerprint's colons do not count. A typed RPC password always counts as a change
+ * (it is write-only: an empty field means "unchanged").
+ */
+export function draftUnchanged(d: ServerDraft, settings: ChainSettings): boolean {
+  const s = settings.source;
+  if (!s) return false;
+  const host = d.host.trim().toLowerCase();
+  const port = Number(d.port.trim() || defaultPort(d));
+  if (d.kind !== s.kind) return false;
+  if (s.kind === 'core')
+    return !d.pass && host === s.rpc.host.toLowerCase() && port === s.rpc.port && d.user.trim() === s.rpc.user && d.wallet.trim() === (s.wallet ?? '');
+  if (s.kind === 'public') {
+    const preset = d.preset ? settings.publicServers.find((p) => p.id === d.preset) : undefined;
+    if (preset) return preset.host.toLowerCase() === s.host.toLowerCase() && preset.port === s.port && !s.certSha256;
+    return host === s.host.toLowerCase() && port === s.port && canonFp(d.certSha256) === canonFp(s.certSha256 ?? '');
+  }
+  return host === s.host.toLowerCase() && port === s.port && d.tls === s.tls && canonFp(d.certSha256) === canonFp(s.certSha256 ?? '');
+}
 
 /** The first problem with the draft, in plain words, or undefined. `passStored`: Bitcoin Core's password is already kept. */
 export function draftError(d: ServerDraft, passStored: boolean): string | undefined {
@@ -150,4 +207,59 @@ export function recoveryBlock(d: ServerDraft, settings: ChainSettings): string |
   return d.kind === 'public' && settings.recoveryRunning
     ? 'A recovery is running: the guardian switches to a public server only after it ends. You can switch to your own node now.'
     : undefined;
+}
+
+// --- Who set the server: Umbrel, StartOS or the .env file ----------------------------------------------------------
+
+const PLATFORM_NAME: Record<Platform, string> = { umbrel: 'Umbrel', start9: 'StartOS', docker: 'the .env file' };
+
+/**
+ * How Settings > Server shows itself:
+ * - `platform`: Umbrel or StartOS set the server and nothing was chosen here: one line and the state, the choice of
+ *   another server folded under "Advanced: use a different server";
+ * - `chosen`: a server chosen here, with "Use the server Umbrel set" when there is one to go back to;
+ * - `form`: plain Docker (the owner sets the server up), or no server at all: the form, as before.
+ */
+export function serverPageMode(settings: ChainSettings): 'platform' | 'chosen' | 'form' {
+  if (settings.origin === 'settings') return 'chosen';
+  if ((settings.platform === 'umbrel' || settings.platform === 'start9') && settings.environment) return 'platform';
+  return 'form';
+}
+
+const lowerFirst = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
+
+/** What the platform set, in words: "this Umbrel's Electrs and Bitcoin Core", "the server in your .env file (...)". */
+function environmentWords(settings: ChainSettings): string | undefined {
+  const env = settings.environment;
+  if (!env) return undefined;
+  const platform = settings.platform ?? 'docker';
+  if (platform === 'docker') return `the server in your .env file (${lowerFirst(sourceLabel(settings.source))})`;
+  if (env.kind === 'public') return `the public server ${env.host}:${env.port}`;
+  const box = platform === 'umbrel' ? "this Umbrel's" : "this StartOS server's";
+  return env.backend === 'core' ? `${box} Bitcoin Core` : `${box} Electrs${settings.nodeRpc ? ' and Bitcoin Core' : ''}`;
+}
+
+/**
+ * The line Settings > Server leads with while the platform's setting is in use: "Connected to this Umbrel's Electrs and
+ * Bitcoin Core (set up by Umbrel)." Undefined once a server was chosen here (or none is set).
+ */
+export function environmentLine(settings: ChainSettings): string | undefined {
+  if (settings.origin !== 'environment') return undefined;
+  const words = environmentWords(settings);
+  if (!words) return undefined;
+  const platform = settings.platform ?? 'docker';
+  const by = platform === 'docker' ? '' : ` (set up by ${PLATFORM_NAME[platform]})`;
+  return settings.status.connected ? `Connected to ${words}${by}.` : `Not connected to ${words}${by}.`;
+}
+
+/** "Use the server Umbrel set": only once a server was chosen here and the platform set one to go back to. */
+export function backButton(settings: ChainSettings): { label: string; note: string } | undefined {
+  if (settings.origin !== 'settings' || !settings.environment) return undefined;
+  const platform = settings.platform ?? 'docker';
+  const env = settings.environment;
+  const what = env.kind === 'public' ? `the public server ${env.host}:${env.port}` : `your own ${env.backend === 'core' ? 'Bitcoin Core' : 'Electrum server'} ${env.host}:${env.port}`;
+  if (platform === 'docker')
+    return { label: 'Use the server in the .env file', note: `Chosen here, so the .env file's server (${what}) is not used. Going back is announced like any change.` };
+  const name = PLATFORM_NAME[platform];
+  return { label: `Use the server ${name} set`, note: `Chosen here, so the guardian no longer follows ${name}'s setting (${what}). Going back is announced like any change.` };
 }

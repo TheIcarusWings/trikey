@@ -41,7 +41,7 @@ import { hostingRoutes } from '../hosting/http.js';
 import { walletOverview } from './wallet.js';
 import type { WalletRuntime } from '../runtime.js';
 import type { OwnWallet } from '../wallets/runtime.js';
-import { publicServersFor, publicView } from '../chain/source.js';
+import { publicServersFor, publicView, summarize } from '../chain/source.js';
 import type { ChainSettings, ChainTestResult } from './types.js';
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -311,10 +311,14 @@ export function notificationSettings(g: Guardian): NotificationSettings {
 export function chainSettings(g: Guardian): ChainSettings {
   const b = g.chain.backend;
   const summary = g.chainSourceSummary();
+  const env = g.environmentChainSource;
   return {
     source: g.chainSource ? (publicView(g.chainSource) as unknown as ChainSettings['source']) : null,
     ...(summary ? { summary } : {}),
     origin: g.chainSourceOrigin,
+    platform: g.config.platform ?? 'docker',
+    ...(env ? { environment: summarize(env) } : {}),
+    ...(g.config.bitcoinRpc ? { nodeRpc: { host: g.config.bitcoinRpc.host, port: g.config.bitcoinRpc.port, user: g.config.bitcoinRpc.user } } : {}),
     status: {
       connected: !!b?.connected,
       ...(b?.serverVersion ? { server: b.serverVersion } : {}),
@@ -327,8 +331,8 @@ export function chainSettings(g: Guardian): ChainSettings {
     },
     publicServers: publicServersFor(g.config.network).map((p) => ({ id: p.id, host: p.host, port: p.port, operator: p.operator, ...(p.chain ? { chain: p.chain } : {}) })),
     network: g.config.network,
-    // A guest wallet's recovery counts too: its coin check runs on this chain source.
-    recoveryRunning: !!g.activeRecord() || g.hosting.recoveryRunning(),
+    // A guest wallet's recovery, or one of the owner's other wallets', counts too: its coin check runs on this chain source.
+    recoveryRunning: g.recoveryBlocksPublicSource(),
   };
 }
 
@@ -607,6 +611,17 @@ export function buildRoutes(g: Guardian): Route[] {
         requireUnlocked(g);
         const r = await g.changeChainSource(body);
         if (!r.ok) throw new HttpError(r.code === 'invalid' ? 400 : 409, r.code, r.message);
+        return ok(chainSettings(g));
+      },
+    },
+    {
+      // "Use the server Umbrel set": back to the platform's own setting (guardian.ts `useEnvironmentChainSource`).
+      method: 'DELETE',
+      path: '/chain',
+      handler: async () => {
+        requireUnlocked(g);
+        const r = await g.useEnvironmentChainSource();
+        if (!r.ok) throw new HttpError(r.code === 'not_found' ? 404 : 409, r.code, r.message);
         return ok(chainSettings(g));
       },
     },

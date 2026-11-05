@@ -59,7 +59,9 @@ import {
   ChainSourceError,
   ChainSourceStore,
   describe as describeSource,
+  environmentSourceName,
   parseChainSource,
+  sameChainSource,
   summarize,
   type ChainSource,
   type ChainSourceSummary,
@@ -171,7 +173,10 @@ export interface GuardianOptions {
 
 export type ChainSourceOutcome =
   | { ok: true; changed: boolean }
-  | { ok: false; code: 'invalid' | 'setup_required' | 'recovery_pending'; message: string };
+  | { ok: false; code: 'invalid' | 'setup_required' | 'recovery_pending' | 'not_found'; message: string };
+
+const RECOVERY_BLOCKS_PUBLIC = 'A recovery is running: the guardian switches to a public server only after it ends. You can switch to your own node now.';
+
 
 export interface ChainTestOutcome {
   ok: boolean;
@@ -382,6 +387,11 @@ export class Guardian implements WalletRuntime {
     return e ? { kind: 'electrum', host: e.host, port: e.port, tls: !!e.tls, ...(e.certSha256 ? { certSha256: e.certSha256 } : {}), ...(e.allowPublicPlaintext ? { allowPublicPlaintext: true } : {}) } : undefined;
   }
 
+  /** The chain source the environment sets (CHAIN_SOURCE, ELECTRUM_*: Umbrel, StartOS, `.env`), whatever is in use. */
+  get environmentChainSource(): ChainSource | undefined {
+    return this.opts.config.chainSource ?? this.envElectrumSource();
+  }
+
   /** The backend for a chain source, with this guardian's network, log and wallet birthdays. */
   private makeBackend(source: ChainSource, probe: boolean): ChainBackend {
     if (this.opts.chainBackend) return this.opts.chainBackend(source, { probe });
@@ -421,7 +431,7 @@ export class Guardian implements WalletRuntime {
     if (opts.config.platform === 'docker') this.setupCode = new SetupCode();
     const rpc = opts.config.bitcoinRpc ? new BitcoinRpc(opts.config.bitcoinRpc, { allowPublic: opts.config.bitcoinRpc.allowPublic }) : undefined;
     // The environment's choice; `open` swaps in the web UI's, if the owner made one (chain-source.json).
-    this.chainSource = opts.config.chainSource ?? this.envElectrumSource();
+    this.chainSource = this.environmentChainSource;
     this.chainSourceStore = new ChainSourceStore(opts.config.dataDir);
     this.chain = new ChainService({
       backend: this.chainSource ? this.makeBackend(this.chainSource, false) : undefined,
@@ -1085,38 +1095,75 @@ export class Guardian implements WalletRuntime {
       if (!this.setupComplete) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
       let next: ChainSource;
       try {
-        next = parseChainSource(input, this.chainSource);
+        next = parseChainSource(input, this.chainSource, this.opts.config.bitcoinRpc);
       } catch (e) {
         if (e instanceof ChainSourceError) return { ok: false, code: 'invalid', message: e.message };
         throw e;
       }
-      // A guest wallet's recovery too: its coin check (hosting/recovery.ts) runs on this chain source.
-      if (next.kind === 'public' && (this.activeRecord() || this.hosting.recoveryRunning() || this.wallets.recoveryRunning()))
-        return {
-          ok: false,
-          code: 'recovery_pending',
-          message: 'A recovery is running: the guardian switches to a public server only after it ends. You can switch to your own node now.',
-        };
-      const before = this.chainSource;
-      if (before && JSON.stringify(before) === JSON.stringify(next)) return { ok: true, changed: false };
+      if (next.kind === 'public' && this.recoveryBlocksPublicSource()) return { ok: false, code: 'recovery_pending', message: RECOVERY_BLOCKS_PUBLIC };
+      // The source in use again (saved twice, or the form left as it was): nothing to log, announce or pin.
+      if (this.chainSource && sameChainSource(this.chainSource, next)) return { ok: true, changed: false };
       await this.chainSourceStore.save(next, this.clock.now());
-      this.chainSource = next;
       this.chainSourceOrigin = 'settings';
-      this.chain.setBackend(this.makeBackend(next, false));
-      const from = before ? summarize(before) : undefined;
-      const to = summarize(next);
-      await this.logEvent({ type: 'chain_source_changed', ...(from ? { from: `${from.kind}:${from.backend}:${from.host}:${from.port}` } : {}), to: `${to.kind}:${to.backend}:${to.host}:${to.port}` });
-      this.log.warn('chain.source_changed', { from: from ? `${from.backend}:${from.host}` : 'none', to: `${to.backend}:${to.host}`, public: to.kind === 'public' });
-      const text =
-        `Your guardian now reads the blockchain from ${describeSource(next)}${before ? ` (before: ${describeSource(before)})` : ''}.` +
-        (to.kind === 'public' ? ' A public server sees your wallet\'s addresses and could hide coins or delay confirmations; it cannot spend or change rules.' : '') +
-        ' If you did not change this in the guardian\'s web page, check the guardian.';
-      await this.notifyPhone({ type: 'chain_source_changed', kind: to.kind, backend: to.backend, host: to.host.slice(0, 255), ...this.stampNow(), message: text.slice(0, 500) });
-      this.announceChainSource(text);
-      // Guests' phones, in their own words; never through the host's channels above (hosting/service.ts).
-      await this.hosting.announceChainSource(to);
+      await this.switchChainSource(next);
       return { ok: true, changed: true };
     });
+  }
+
+  /**
+   * "Use the server Umbrel set" (`DELETE /api/chain`): forgets the owner's choice (chain-source.json) and goes back to
+   * the environment's source, which the guardian then follows again (Umbrel, StartOS or `.env` may change it). The same
+   * rules as a change: announced and logged when the server changes, a public one refused while a recovery runs (the
+   * environment's own node is always allowed). `not_found` when the environment sets no source to go back to.
+   */
+  useEnvironmentChainSource(): Promise<ChainSourceOutcome> {
+    return this.chainMutex.run(async (): Promise<ChainSourceOutcome> => {
+      if (!this.setupComplete) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
+      if (this.chainSourceOrigin === 'environment') return { ok: true, changed: false };
+      const env = this.environmentChainSource;
+      if (!env) return { ok: false, code: 'not_found', message: 'The guardian was started without a server of its own: there is no other setting to go back to.' };
+      if (env.kind === 'public' && this.recoveryBlocksPublicSource()) return { ok: false, code: 'recovery_pending', message: RECOVERY_BLOCKS_PUBLIC };
+      await this.chainSourceStore.remove();
+      this.chainSourceOrigin = 'environment';
+      // The same server as the one chosen here: the guardian follows the environment again, nothing else changes.
+      if (this.chainSource && sameChainSource(this.chainSource, env)) {
+        this.chainSource = env;
+        return { ok: true, changed: false };
+      }
+      await this.switchChainSource(env, this.config.platform ?? 'docker');
+      return { ok: true, changed: true };
+    });
+  }
+
+  /** A recovery is running, the host's or a guest wallet's (hosting/recovery.ts checks its coins on this chain source). */
+  recoveryBlocksPublicSource(): boolean {
+    return !!this.activeRecord() || this.hosting.recoveryRunning() || !!this.wallets.recoveryRunning();
+  }
+
+  /** Switches to `next` and announces it: Activity, the phone, the owner's and the contacts' channels, guests' phones. */
+  private async switchChainSource(next: ChainSource, backTo?: NonNullable<GuardianConfig['platform']>): Promise<void> {
+    const before = this.chainSource;
+    this.chainSource = next;
+    this.chain.setBackend(this.makeBackend(next, false));
+    const from = before ? summarize(before) : undefined;
+    const to = summarize(next);
+    await this.logEvent({
+      type: 'chain_source_changed',
+      ...(from ? { from: `${from.kind}:${from.backend}:${from.host}:${from.port}` } : {}),
+      to: `${to.kind}:${to.backend}:${to.host}:${to.port}`,
+      ...(backTo ? { backTo } : {}),
+    });
+    this.log.warn('chain.source_changed', { from: from ? `${from.backend}:${from.host}` : 'none', to: `${to.backend}:${to.host}`, public: to.kind === 'public', ...(backTo ? { environment: true } : {}) });
+    const text =
+      (backTo
+        ? `Your guardian is back on ${environmentSourceName(backTo)}: it now reads the blockchain from ${describeSource(next)}${before ? ` (before: ${describeSource(before)})` : ''}.`
+        : `Your guardian now reads the blockchain from ${describeSource(next)}${before ? ` (before: ${describeSource(before)})` : ''}.`) +
+      (to.kind === 'public' ? ' A public server sees your wallet\'s addresses and could hide coins or delay confirmations; it cannot spend or change rules.' : '') +
+      ' If you did not change this in the guardian\'s web page, check the guardian.';
+    await this.notifyPhone({ type: 'chain_source_changed', kind: to.kind, backend: to.backend, host: to.host.slice(0, 255), ...this.stampNow(), message: text.slice(0, 500) });
+    this.announceChainSource(text);
+    // Guests' phones, in their own words; never through the host's channels above (hosting/service.ts).
+    await this.hosting.announceChainSource(to);
   }
 
   /** The owner's channels and the alert contacts' channels (email, ntfy, webhook), like a change of the alert channels. */
@@ -1128,7 +1175,7 @@ export class Guardian implements WalletRuntime {
       type: 'chain_source_changed',
       at,
       owner: text,
-      contacts: { text: () => `The guardian of a Trikey wallet you are an alert contact for changed where it reads the blockchain: ${text.replace(/^Your guardian now reads/, 'it now reads')}` },
+      contacts: { text: () => `The guardian of a Trikey wallet you are an alert contact for changed where it reads the blockchain: ${text.replace(/^Your guardian now reads/, 'it now reads').replace(/^Your guardian is back/, 'it is back')}` },
     };
     void this.notifier
       .enqueue(ev)
@@ -1143,7 +1190,7 @@ export class Guardian implements WalletRuntime {
   async testChainSource(input: unknown, timeoutMs = 10_000): Promise<ChainTestOutcome> {
     let source: ChainSource;
     try {
-      source = parseChainSource(input, this.chainSource);
+      source = parseChainSource(input, this.chainSource, this.opts.config.bitcoinRpc);
     } catch (e) {
       if (e instanceof ChainSourceError) return { ok: false, error: e.message };
       throw e;
