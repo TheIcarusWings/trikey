@@ -74,8 +74,8 @@ guardian mixes it into every new setup seed, next to its OS draw and the browser
 (DESIGN.md, "Entropy", `trikey/guardian-seed/v1`), so a guardian whose generator turns out predictable
 still gets a seed nobody can guess from relay traffic. It changes nothing for a guardian already set
 up. If a future umbrelOS passed `APP_SEED` in another format, the guardian hashes it to 32 bytes with
-SHA-256 and carries on: it never stops starting over this value. The Start9 package sets nothing; StartOS has
-no per-service seed we could confirm.
+SHA-256 and carries on: it never stops starting over this value. StartOS has no per-service seed, so the Start9
+package draws 32 bytes itself, once at install, and keeps them on its own `startos` volume (`start9/README.md`).
 
 ## Build and sideload the Start9 package
 
@@ -90,4 +90,9 @@ make            # trikey-guardian_x86_64.s9pk and trikey-guardian_aarch64.s9pk
 
 Sideload an `.s9pk` from StartOS (System, Sideload Service) or with `start-cli package install -s`.
 The package pulls `ghcr.io/theicaruswings/trikey-guardian:<version>`, so the image of that version
-has to be published first.
+has to be published first (or built locally under that name).
+
+`.github/workflows/start9.yml` type-checks the package and builds both `.s9pk` files on every pull
+request that touches it (or the guardian's environment contract) and on every release tag, and keeps
+them as workflow artifacts. They are signed with a throwaway key, so they are for testing, not
+attached to releases: `start9/README.md`, "CI".

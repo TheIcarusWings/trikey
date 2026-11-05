@@ -26,6 +26,8 @@ silent payments reads whole blocks from your node, so let Bitcoin and Electrs fi
   guardian's screen. It is set by the StartOS action.
 - The **passphrase for key 3** unlocks the key. You choose it in the guardian's screen. It is never
   stored anywhere, and after every restart the guardian is locked until you or your phone unlock it.
+  That includes a restart of **Bitcoin** (an update, a change of its settings): Bitcoin gives the
+  guardian a new password for its node every time it starts, so StartOS restarts the guardian too.
 
 ## Backups
 

@@ -10,19 +10,67 @@ the root `npm install` does not see it; install here with `npm ci`.
 
 ## Build
 
-Needs Docker (running), `make`, `jq`, Node.js and npm, `start-cli`, and a packaging workspace for
-the signing key (`start-cli s9pk init-workspace`; see Start9's environment setup guide).
+Needs Docker (running), `make`, `jq`, Node.js and npm, `mksquashfs` and `tar2sqfs` (Debian and
+Ubuntu: `squashfs-tools` and `squashfs-tools-ng`), `start-cli` (CI uses 2.7.0), and a packaging
+workspace for the signing key: `start-cli s9pk init-workspace` in the folder *above* the package
+(here `packaging/`; see Start9's environment setup guide), or, without the guide checkout it
+clones, a `.startos/build.key.pem` next to this README (what CI does, below; `.startos/` is
+ignored by git).
 
 ```sh
 npm ci
 npx tsc --noEmit    # type-check
 make                # trikey-guardian_x86_64.s9pk, trikey-guardian_aarch64.s9pk
 make x86            # one architecture
+make x86 FORMAT=true  # without running prettier over startos/ first
 ```
 
 The `Makefile` includes the SDK's `s9pk.mk`. The image is built for amd64 and arm64 only, so
-`ARCHES` leaves out riscv64. The package pulls the image by tag; publish the image of the same
-version first (`.github/workflows/docker.yml` on a tag).
+`ARCHES` leaves out riscv64. The package pulls the image by tag and `s9pk pack` copies it into the
+`.s9pk`: publish the image of the same version first (`.github/workflows/docker.yml` on a tag), or
+build it locally with that tag (`packaging/README.md`, "Build the image locally"); a local image of
+that name is used as is. `assets/` is empty (`.gitkeep`): `s9pk pack` expects the folder.
+
+## CI
+
+`.github/workflows/start9.yml` runs on pull requests that touch this folder, the guardian's
+environment contract (`apps/guardian/src/config.ts`), the Dockerfile or the Umbrel compose file,
+on release tags (`release.yml` dispatches it) and by hand. It:
+
+- runs `npm ci`, `npx tsc --noEmit` and the SDK's `lint.mjs`;
+- checks the environment `main.ts` passes against `config.ts` (every variable is one the guardian
+  reads), against the Umbrel package (every variable Umbrel passes is passed here too) and that
+  `TRIKEY_PLATFORM` is `start9`; checks that the image tag and `versions/current.ts` name the same
+  release, and on a tag that it is the tag's;
+- installs `start-cli` from a pinned release of `Start9Labs/start-technologies` (tag
+  `start-cli/v<version>`, checked against a SHA-256 in the workflow). Start9's own package CI
+  (`start-technologies/.github/workflows/build.yml`, used by `hello-world-startos`) downloads the
+  newest release with its `install-start-cli` action; pinning keeps a new `start-cli` from
+  changing the build without a commit;
+- builds `trikey-guardian_x86_64.s9pk` on `ubuntu-latest` and `trikey-guardian_aarch64.s9pk` on
+  `ubuntu-24.04-arm`, each on its own architecture, nothing emulated;
+- inspects each manifest (id, architecture, volumes, dependencies, a clean git hash) and uploads
+  the `.s9pk` with its `.sha256` as a workflow artifact for 14 days.
+
+The image: on a tag the job waits for `docker.yml` to publish the tag's image and packs exactly
+that one. On a pull request it packs the published image of the manifest's tag when it exists, and
+otherwise (a release PR, before the tag) builds the image from the checkout for the runner's
+architecture under that name. So a pull request that changes the guardian but not the version
+packs the *published* image: the build checks the package, not the guardian.
+
+### Signing, and why the .s9pk is not attached to releases
+
+Every build is signed with a throwaway key made in the job (`start-cli init-key`, copied to
+`.startos/build.key.pem`, the minimal workspace Start9's CI provisions). No secrets are involved.
+That is fine for checking that the package builds and for a maintainer sideloading a test build,
+but not for users: StartOS 0.4.1.2 and later keep a list of trusted signing keys (System, Trusted
+Keys) and warn before installing a package that no trusted key signed. With a new key every run,
+every release would carry that warning, nobody could pin Trikey's key, and users would learn to
+click through the one warning that could tell them a package is not ours. So releases do not
+attach the `.s9pk`. To ship them, the maintainers first need one long-lived package key (kept as a
+repository secret and used as `.startos/build.key.pem` on tags only, the way Start9's own release
+workflow uses its `DEV_KEY`), with its public key published next to the releases so users can add
+it under Trusted Keys; then the tag build can upload the files to the release like the APKs.
 
 ## What the package defines
 
@@ -30,29 +78,52 @@ version first (`.github/workflows/docker.yml` on a tag).
 |---|---|
 | Package id | `trikey-guardian` |
 | Image | `guardian`: `ghcr.io/theicaruswings/trikey-guardian:<version>` (`manifest/index.ts`) |
-| Volumes | `main` at `/data` (the guardian's state and key 3's encrypted keystore); `startos` (the web UI password, not mounted into the container) |
+| Volumes | `main` at `/data` (the guardian's state and key 3's encrypted keystore); `startos` (`store.json`: the web UI password and the extra entropy, not mounted into the container) |
 | Daemons | `chown-data` (oneshot, root: the volume is root-owned, the image runs as uid 1000), then `guardian` (the image's own CMD, `node --import tsx apps/guardian/src/main.ts`) |
 | Interface | `ui`, HTTP on port 3000. The only listener. |
 | Health check | `Web Interface`: `GET /api/status` on port 3000 answers 2xx (runs in the container, like the image's `HEALTHCHECK`) |
 | Dependencies | `bitcoind` and `electrs`, both required and `running` |
 | Actions | `set-web-password` |
+| Init | `init/seedEntropy.ts` (once: 32 random bytes for `TRIKEY_EXTRA_ENTROPY`), `init/watchPassword.ts` (the critical task until a web UI password exists) |
 | Backups | none, on purpose (see below) |
 
 ### Dependencies and the guardian's environment
 
-`main.ts` resolves both dependencies on the internal bridge and passes them to the guardian:
+`apps/guardian/src/config.ts` is the contract. `main.ts` resolves both dependencies on the internal
+bridge and passes the guardian the same variables as the Umbrel package (CI checks both):
 
 | Variable | From |
 |---|---|
+| `PORT`, `TRIKEY_DATA_DIR` | `3000`, `/data` |
+| `TRIKEY_PLATFORM` | `start9`: the basic-auth gate (below) guards the web UI, so first-run setup asks for no setup code. Without it the guardian assumes plain Docker and waits for a code from its log |
+| `TRIKEY_EXTRA_ENTROPY` | 32 random bytes the package draws once at install (`init/seedEntropy.ts`) and keeps in `store.json` on the `startos` volume; Umbrel passes its `APP_SEED`. Mixed into every new key-3 setup seed (DESIGN.md, "Entropy"); never weakens it |
 | `ELECTRUM_HOST`, `ELECTRUM_PORT` | `sdk.host.getBridgeAddress` of Electrs' plaintext Electrum binding (host id `electrum`, port 50001) |
 | `BITCOIN_RPC_HOST`, `BITCOIN_RPC_PORT` | the bridge address of Bitcoin's RPC binding (host id `rpc`, port 8332, the RPC proxy that also serves pruned blocks) |
 | `BITCOIN_RPC_USER`, `BITCOIN_RPC_PASS` | Bitcoin's RPC cookie `/.cookie` on the `bitcoind` volume (mounted read-only in the guardian's container), `__cookie__:<password>`, read by the package runtime and passed only as environment |
 | `BITCOIN_NETWORK` | `bitcoin`: Start9's Bitcoin package runs mainnet only |
 
-All of them are needed for silent payment scanning (`getblock <hash> 3`). Addresses and cookie are
-read with `.const()`, so the service restarts by itself when one appears or changes (including when
-Bitcoin restarts and writes a new cookie). While one is missing, `main` runs only a failing health
-check that says which: the guardian is never started with a made-up address.
+The four `BITCOIN_RPC_*` go together (the guardian takes all or none). With them it reports sync
+progress, broadcasts as a fallback, scans for silent payments (`getblock <hash> 3`), and reads
+Bitcoin Core's mempool itself whenever they are set, because electrs 0.11 cannot read the mempool
+of Bitcoin Core 32 (Core dropped `bip125-replaceable`; getumbrel/umbrel-apps#6307,
+romanz/electrs#1361). They come from the `bitcoind` dependency's own interfaces and volume: the
+bridge address of its `rpc` host (as mempool-startos resolves it) and the RPC cookie from its
+`main` volume (as mempool, electrs, lnd and btcpayserver read it). Bitcoin's package supports no
+`rpcuser`/`rpcpassword`, and its RPC proxy accepts the cookie user with every call allowed
+(`passthrough_rpccookie` in btc-rpc-proxy), JSON-RPC batches included.
+
+Left at the guardian's defaults, as on Umbrel: `CHAIN_SOURCE` (the Electrum server above; the web
+UI's Settings, Server can change it), `FAMILY_HOSTING` (on), `TRIKEY_RELAYS` (the built-in list),
+`SP_SCAN_THREADS` (one less than the cores).
+
+Addresses and cookie are read with `.const()`, so the service restarts by itself when one appears
+or changes. That includes every Bitcoin restart (an update, a settings change), because bitcoind
+writes a new cookie on every start and the old one stops working; the guardian then starts locked,
+like after any restart, until it is unlocked from the phone or the web UI. A dedicated RPC user
+would avoid this (Bitcoin's hidden `generate-rpc-dependent` action registers an `rpcauth` user for
+a dependent), but no StartOS package uses that path yet and it needs a task on Bitcoin; it is left
+for a test on a device. While a dependency is missing, `main` runs only a failing health check
+that says which: the guardian is never started with a made-up address.
 
 ### The web UI is behind a password
 
@@ -86,20 +157,24 @@ Checked, with the source:
 - Package ids (`bitcoind`, `electrs`), health check ids (`bitcoind`, `sync-progress`, `electrs`,
   `sync`), host ids and ports (`rpc` 8332, `electrum` 50001), the RPC cookie at `/.cookie` on
   bitcoind's `main` volume: `electrs-startos` and `mempool-startos` `startos/*.ts`, and
-  `bitcoin-core-startos` `startos/utils.ts` and README (the `next/31.x` branch).
+  `bitcoin-core-startos` `startos/utils.ts`, `main.ts` and README (`31.x`, November 2026).
+- The version ranges: copied from `mempool-startos` `startos/dependencies.ts`, which reaches both
+  services the same way (bitcoind's StartOS 0.4 revisions of each major line, Knots' `knotsprerdts`
+  flavor included; electrs `>=0.11.1:11`, today 0.12.0).
+- That Bitcoin's RPC proxy on 8332 lets the cookie user make any call, batches included:
+  `btc-rpc-proxy` 0.8.2 (`passthrough_rpccookie` users have no `allowed_calls`; the password is
+  re-read from the cookie file at every comparison).
 - Version format `<upstream>:<revision>`: SDK docs, `versions.md`.
+- `s9pk pack` with `start-cli` 2.7.0: the manifest, icon, license, instructions and the image are
+  accepted and packed for x86_64 and aarch64 (CI, above; locally for x86_64). The built manifest
+  has the expected id, version, volumes, image and dependencies.
 
-Not checked, because there is no StartOS server or `start-cli` here (nothing was packed or run):
+Not checked, because there is no StartOS server here (nothing was installed or run):
 
-- `TODO(verify)` `s9pk pack`: that `start-cli` accepts the manifest, icon, license and
-  instructions, and pulls `ghcr.io/theicaruswings/trikey-guardian:0.1.0-alpha` (the tag exists only
-  after the first release).
-- `TODO(verify)` that the version ranges (`>=28.4:0` for Bitcoin, `>=0.11.1:0` for Electrs) match
-  what the Start9 registry publishes. They are looser than the ones in `mempool-startos`.
 - `TODO(verify)` that the basic-auth gate on `addSsl` also protects the plaintext HTTP address the
   way the SDK's newer docs describe (`proxy.auth`). SDK 3.1.1 only has `addSsl.auth`.
-- `TODO(verify)` that Bitcoin's RPC proxy on port 8332 accepts the cookie as user `__cookie__` for
-  `getblock <hash> 3` (mempool-startos reads the same cookie for the same proxy).
+- `TODO(verify)` that the guardian reaches Bitcoin's RPC proxy with the cookie, and Electrs, over
+  the bridge (`getblock <hash> 3`, the mempool calls), and that the seeded extra entropy reaches it.
 - `TODO(verify)` that the chown oneshot and `uid 1000` are right for the `main` volume, and that
   `sdk.useEntrypoint()` runs the image's CMD (no ENTRYPOINT) as expected.
 - `TODO(verify)` the install flow: critical task for the password, then Open UI, basic-auth
@@ -110,5 +185,6 @@ Not checked, because there is no StartOS server or `start-cli` here (nothing was
 
 Bump the version in three places, in the same commit: `startos/manifest/index.ts` (the image
 tag), `startos/versions/current.ts` (`<version>:0`; raise the revision after the colon for a
-change that touches only the package), and, for Umbrel, `packaging/umbrel/`. Then publish the
-image for that tag before building the `.s9pk`.
+change that touches only the package), and, for Umbrel, `packaging/umbrel/`. CI fails when the
+first two name different releases. Then publish the image for that tag before building the
+`.s9pk` (on a tag, CI waits for it).

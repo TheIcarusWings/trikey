@@ -16,7 +16,7 @@ const dict = {
   'The Trikey Guardian web interface: set up, pair your phone, unlock and lock key 3': 9,
 
   // dependencies.ts
-  'Chain data, the broadcast fallback and the silent payment scanner': 10,
+  'Chain data, the mempool, the broadcast fallback and the silent payment scanner': 10,
   'Address and transaction lookups': 11,
 
   // actions/setWebPassword.ts, init/watchPassword.ts
