@@ -22,7 +22,10 @@
  * Script subscriptions (`blockchain.scripthash.subscribe`) are notified like a real server's: whenever a subscribed
  * script's status changes (every method here that changes the chain notifies at once; a test that edits `history` or
  * `unspent` in place is caught within `pollMs`), and also when a test replaces a script's entry in `history` or
- * `unspent` (`set`). JSON-RPC batches (an array on one line) are answered as one array, unless `refuseBatches`.
+ * `unspent` (`set`). `blockchain.scripthash.unsubscribe` (protocol 1.4.2) ends one, unless `unsubscribe` is false (an
+ * older server: "unknown method"). With `loseNotifications`, a change is recorded as told but never sent: a
+ * notification lost by the server or the network. JSON-RPC batches (an array on one line) are answered as one array,
+ * unless `refuseBatches`.
  * `delayMs` makes every script read take that long (one after the other, as Electrs serves a connection), to measure
  * what the subscriptions save; `requestDelayMs` makes every request of any method take that long, in turn on its
  * connection (a ping waits behind fee estimates asked before it), to measure what a pull waits for.
@@ -88,6 +91,14 @@ export class FakeElectrum {
   private poller?: ReturnType<typeof setInterval>;
   /** Notify subscribers of script changes (default true). */
   notifyScripts = true;
+  /** Lose script notifications: the subscriber is taken as told, but nothing is sent (see the file comment). */
+  loseNotifications = false;
+  /** Has `blockchain.scripthash.unsubscribe` (default true); false answers it as an unknown method. */
+  unsubscribe = true;
+  /** Requests (or batches) received and not answered yet, over all connections. */
+  private pending = 0;
+  /** For each batch received (`batchMethods`), how many requests or batches were still unanswered when it came. */
+  readonly batchPending: number[] = [];
   /** How often in-place edits are looked for (ms). */
   pollMs = 20;
   /** Answer a batch with one error, as a server without batch support does. */
@@ -234,7 +245,7 @@ export class FakeElectrum {
         const now = this.statusOf(sh);
         if (now === last && !this.touched.has(sh)) continue;
         subs.set(sh, now);
-        this.write(socket, { jsonrpc: '2.0', method: 'blockchain.scripthash.subscribe', params: [sh, now] });
+        if (!this.loseNotifications) this.write(socket, { jsonrpc: '2.0', method: 'blockchain.scripthash.subscribe', params: [sh, now] });
       }
     this.touched.clear();
   }
@@ -439,12 +450,14 @@ export class FakeElectrum {
 
   private async onLine(socket: Socket, msg: unknown): Promise<void> {
     if (!Array.isArray(msg)) {
-      const r = await this.onRequest(socket, msg as { id: number; method: string; params: unknown[] });
+      this.pending++;
+      const r = await this.onRequest(socket, msg as { id: number; method: string; params: unknown[] }).finally(() => this.pending--);
       if (!socket.destroyed) this.write(socket, r);
       return;
     }
     this.batches++;
     this.batchMethods.push((msg as { method: string }[]).map((r) => r.method));
+    this.batchPending.push(this.pending);
     if (this.hangUpOnBatch) {
       socket.destroy();
       return;
@@ -454,7 +467,12 @@ export class FakeElectrum {
       return;
     }
     const out: unknown[] = [];
-    for (const req of msg) out.push(await this.onRequest(socket, req as { id: number; method: string; params: unknown[] }));
+    this.pending++;
+    try {
+      for (const req of msg) out.push(await this.onRequest(socket, req as { id: number; method: string; params: unknown[] }));
+    } finally {
+      this.pending--;
+    }
     if (!socket.destroyed) this.write(socket, out);
   }
 
@@ -509,6 +527,10 @@ export class FakeElectrum {
         const status = this.statusOf(sh);
         subs.set(sh, status);
         return ok(status);
+      }
+      case 'blockchain.scripthash.unsubscribe': {
+        if (!this.unsubscribe) return fail(`unknown method ${req.method}`, -32601);
+        return ok(this.scriptSubs.get(socket)?.delete(p[0] as string) ?? false);
       }
       case 'blockchain.scripthash.get_history':
         return ok(this.visibleHistory(p[0] as string));
