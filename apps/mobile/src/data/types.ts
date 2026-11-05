@@ -82,6 +82,8 @@ export interface PhoneBackup {
   lastBackedUpAt: IsoDate;
   /** What unlocks it. Without a passkey (no developer accounts yet) the recovery code is the only way. */
   unlockedBy?: ('passkey' | 'recovery-code')[];
+  /** Coin control: a label or freeze changed after this backup was made, so it does not have it yet. */
+  labelsNewer?: true;
 }
 
 /** One place a backup can be written: shown on the Backup screen. */
@@ -243,6 +245,14 @@ export interface Transaction {
   canSpeedUp?: true;
   /** This is a sped-up payment: it replaced an earlier version of itself (same payment, lower fee), which is not listed. */
   spedUp?: true;
+  /**
+   * Coin control's "Consolidate": coins merged into one of this wallet's own (`kind: 'sent'`, `amountSats` the fee: the
+   * only thing that left). `consolidatedSats`: what the new coin holds.
+   */
+  consolidated?: true;
+  consolidatedSats?: Sats;
+  /** The payment's label (a note set on it here, or imported). */
+  label?: string;
 }
 
 export type SecurityEvent = { id: string; at: IsoDate } & (
@@ -302,6 +312,11 @@ export interface SendRequest {
   speed: FeeSpeed;
   /** `hardware` skips the guardian: the user chose to approve on the hardware wallet. */
   signer?: 'auto' | 'hardware';
+  /**
+   * Coin control: the coins that pay (`CoinView.outpoint`), every one of them spent, the rest back as change. Absent: the
+   * wallet chooses among the coins that are not frozen. Guardian mode only.
+   */
+  coins?: string[];
 }
 
 /** Why the hardware wallet has to sign instead of phone + guardian. */
@@ -346,6 +361,103 @@ export interface SendQuote {
    * the fee), `totalSats` is that whole balance, and nothing is left in the vault. Pass the whole quote to `sendPayment`.
    */
   max?: true;
+  /**
+   * Coin control: the coins picked (`request.coins`) carry different labels, so spending them together links them on
+   * chain. Review warns first. The distinct labels.
+   */
+  mixesLabels?: string[];
+}
+
+// ---------------------------------------------------------------- coin control
+
+/** Coin control works on one wallet at a time: Spending, or its Savings. */
+export type CoinWallet = 'spending' | 'savings';
+
+/** Where a coin came from. */
+export interface CoinSourceView {
+  /** `payment`: change of a payment this phone made; `received`: a payment in; `change`: change of a payment made elsewhere. */
+  kind: 'payment' | 'received' | 'change';
+  txid: string;
+  /** That payment's label (or note). */
+  label?: string;
+  /** `payment`: whom it paid, and how much. */
+  recipient?: string;
+  amountSats?: Sats;
+  /** When it confirmed (block time), or when this phone sent it. */
+  at?: IsoDate;
+}
+
+/** One coin (UTXO) of the wallet. */
+export interface CoinView {
+  /** `txid:vout`: the coin's key everywhere (labels, freezes, a manual pick, BIP 329). */
+  outpoint: string;
+  txid: string;
+  vout: number;
+  valueSats: Sats;
+  confirmations: number;
+  unconfirmed: boolean;
+  /** Change of this phone's own payment that no sync has listed yet. */
+  pendingChange: boolean;
+  /** At a change address of the wallet (else a receive address). */
+  change: boolean;
+  /** Left out of automatic selection, Send max and "Consolidate" until unfrozen. */
+  frozen: boolean;
+  label?: string;
+  source: CoinSourceView;
+}
+
+export interface CoinListView {
+  wallet: CoinWallet;
+  /** Oldest first; unconfirmed last. Never a coin this phone's own pending payment spends. */
+  coins: CoinView[];
+  totals: { count: number; totalSats: Sats; spendableSats: Sats; frozenSats: Sats; unconfirmedSats: Sats };
+  /** The guardian listed only part of the coins: a manual pick may miss some. */
+  truncated: boolean;
+  /** The labels and freezes on this phone could not be read: the coins show without them, and none can be set. */
+  labelsProblem?: string;
+}
+
+/** "Consolidate": coins merged into one at the wallet's own next address, while fees are low. */
+export interface ConsolidateQuote {
+  /** The wallet's own handle for this quote. Pass the whole quote back to `coins.consolidate`. */
+  ref?: string;
+  wallet: CoinWallet;
+  speed: FeeSpeed;
+  /** The coins merged. */
+  coins: string[];
+  inputSats: Sats;
+  /** What the one new coin holds: `inputSats - feeSats`. */
+  amountSats: Sats;
+  feeSats: Sats;
+  feeRateSatPerVb?: number;
+  /** The fees are low now (the slow estimate at most 3 sat/vB): a good time. */
+  feesLow: boolean;
+  /** Spending: who signs. Only the fee counts against today's limit. */
+  plan?: SigningPlan;
+  /** Spending: today's limit left after it (the fee only). */
+  remainingAfterSats?: Sats;
+  /** The coins carry different labels: merging them links them on chain. */
+  mixesLabels?: string[];
+}
+
+export type ConsolidateOutcome = { ok: true; quote: ConsolidateQuote } | { ok: false; message: string };
+
+/** What a BIP 329 import did. */
+export interface LabelsImportSummary {
+  coinLabels: number;
+  frozen: number;
+  unfrozen: number;
+  /** Payment labels. */
+  txLabels: number;
+  /** Records Trikey keeps as read for the next export (addresses, xpubs, ...). */
+  kept: number;
+  /** Records of another wallet in the same file: left out. */
+  otherWallet: number;
+  /** Lines skipped, and the first one's reason. */
+  errorCount: number;
+  firstError?: string;
+  /** Labels cut to 255 characters. */
+  truncated: number;
 }
 
 /** Why no quote could be made. The amount screen turns these into the line under the amount. */
@@ -904,6 +1016,8 @@ export interface WalletState {
   feesUpdating?: boolean;
   /** Changes each time new fee estimates land: quotes are made again with them. Absent: never changes. */
   feesVersion?: number;
+  /** Coin control: changes each time a label or freeze changes (the coin list and quotes read them again). Absent: never. */
+  labelsVersion?: number;
   /** Has the wallet heard from the guardian at least once? */
   synced: boolean;
   /**
@@ -997,8 +1111,11 @@ export interface SavingsDevice {
 export interface SavingsActivityItem {
   id: string;
   txid: string;
-  /** `to-spending`: moved into this phone's Spending wallet; `key-replacement`: the move to a new Savings after a lost key. */
-  kind: 'received' | 'sent' | 'to-spending' | 'key-replacement';
+  /**
+   * `to-spending`: moved into this phone's Spending wallet; `key-replacement`: the move to a new Savings after a lost key;
+   * `consolidated`: Savings coins merged into one, still in Savings (`amountSats` the fee, the only thing that left).
+   */
+  kind: 'received' | 'sent' | 'to-spending' | 'key-replacement' | 'consolidated';
   amountSats: Sats;
   feeSats?: Sats;
   at: IsoDate;
@@ -1079,6 +1196,8 @@ export interface SavingsQuote {
   /** The address is this phone's own Spending wallet. */
   toSpending: boolean;
   max?: true;
+  /** Coin control: the coins picked carry different labels (see `SendQuote.mixesLabels`). */
+  mixesLabels?: string[];
 }
 
 export type SavingsQuoteOutcome = { ok: true; quote: SavingsQuote } | { ok: false; problem: QuoteProblem; message: string };

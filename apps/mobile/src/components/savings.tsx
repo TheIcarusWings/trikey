@@ -100,6 +100,7 @@ const KIND_TITLE: Record<SavingsActivityItem['kind'], string> = {
   sent: 'Sent from Savings',
   'to-spending': 'Moved to Spending',
   'key-replacement': 'Moved to your new Savings',
+  consolidated: 'Coins consolidated',
 };
 
 /**
@@ -111,7 +112,15 @@ export function SavingsActivityRow({ item, brand }: { item: SavingsActivityItem;
   const incoming = item.kind === 'received';
   const when = new Date(item.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
   const speedUp = item.status === 'pending' && !!item.canSpeedUp;
-  const detail = [item.status === 'pending' ? 'Pending' : when, item.spedUp ? 'sped up' : null, item.signedBy ? signersText(item.signedBy, brand) : item.address ? shorten(item.address) : null].filter(Boolean).join(' · ');
+  const detail = [
+    item.status === 'pending' ? 'Pending' : when,
+    item.spedUp ? 'sped up' : null,
+    // A consolidation stays in Savings: what it cost is the fee (the amount shown).
+    item.kind === 'consolidated' ? 'network fee' : null,
+    item.signedBy ? signersText(item.signedBy, brand) : item.address && item.kind !== 'consolidated' ? shorten(item.address) : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
   const row = (
     <View
       className={cn('flex-row items-center gap-3', pick('min-h-[60px] px-4 py-2.5', 'min-h-[64px] py-2.5'))}

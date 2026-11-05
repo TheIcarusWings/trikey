@@ -38,6 +38,7 @@ export {
   ShieldCheck,
   SlidersHorizontal,
   Smartphone,
+  Tag,
   TriangleAlert,
   UserPlus,
   Vault,

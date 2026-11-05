@@ -65,6 +65,8 @@ import { emptySilentPayments } from './sp-empty';
 import type { SavingsActions } from './savings-actions';
 import { emptySavings } from './savings-empty';
 import { createSpeedUpActions } from './real-speed-up';
+import { createCoinActions } from './real-coins';
+import type { CoinActions } from './coin-actions';
 import type { SpeedUpActions } from './speed-up-actions';
 import { renderSavingsMap, savingsMapData } from './savings-map';
 import {
@@ -185,6 +187,10 @@ export interface RealServiceDeps {
   shareBackupFile?: (name: string, bytes: Uint8Array) => Promise<void>;
   /** Lets the person choose a backup file. Null: they cancelled. */
   pickBackupFile?: () => Promise<{ name: string; bytes: Uint8Array } | null>;
+  /** Coin control: hands a BIP 329 labels file (text) to the OS share sheet. */
+  shareLabelsFile?: (name: string, text: string) => Promise<void>;
+  /** Coin control: lets the person choose a BIP 329 labels file. Null: they cancelled. */
+  pickLabelsFile?: () => Promise<{ name: string; bytes: Uint8Array } | null>;
   /** Gives the UI thread a turn before heavy work (default: a short timer). */
   yieldToUi?: () => Promise<void>;
   /** Facts for Settings > Developer. */
@@ -441,6 +447,8 @@ class Service implements RealWalletService {
   /** "Create Savings" in progress, as the screens show it. */
   private savingsCreating: SavingsState['creating'] = null;
   private readonly savingsQuotes = new Map<string, WalletSavingsQuote>();
+  /** Coin control: bumped on every label or freeze change (`WalletState.labelsVersion`). */
+  private labelsVersion = 0;
   private readonly speedUpQuotes = new Map<string, WalletSpeedUpQuote>();
 
   constructor(private readonly deps: RealServiceDeps) {
@@ -818,6 +826,7 @@ class Service implements RealWalletService {
       updating: !!this.restRun,
       feesUpdating: !!this.w?.feesPending,
       feesVersion: this.w?.feesVersion ?? 0,
+      labelsVersion: this.labelsVersion,
       synced: !!s?.chain,
       guardianSlow: this.slow && this.reachable,
       guardianReconnecting: this.reconnecting,
@@ -837,6 +846,8 @@ class Service implements RealWalletService {
             provider: backup.provider === 'icloud' || backup.provider === 'google-drive' ? backup.provider : 'file',
             lastBackedUpAt: this.iso(backup.createdAt),
             unlockedBy: backup.slots.map((x) => (x === 'passkey-prf' ? 'passkey' : 'recovery-code')),
+            // Coin control: a label or freeze changed after this backup (one store for every wallet: the first holds it).
+            ...((this.set?.first ?? this.w)?.labelsNewerThanBackup ? { labelsNewer: true as const } : {}),
           }
         : null,
       guardian: this.guardianView(snap),
@@ -1093,13 +1104,15 @@ class Service implements RealWalletService {
       recoveryKey: this.mode === 'simulator' ? { brand: 'simulated device', model: 'Second simulated device', fingerprint: snap.recoveryKey.fingerprint } : dev(snap.recoveryKey),
       watchedByGuardian: snap.watchedByGuardian,
       activity: snap.history.map((h): SavingsActivityItem => {
-        const kind: SavingsActivityItem['kind'] = h.purpose === 'to_spending' ? 'to-spending' : h.purpose === 'key_replacement' ? 'key-replacement' : h.netSats > 0 ? 'received' : 'sent';
+        const kind: SavingsActivityItem['kind'] =
+          h.purpose === 'to_spending' ? 'to-spending' : h.purpose === 'key_replacement' ? 'key-replacement' : h.purpose === 'consolidate' ? 'consolidated' : h.netSats > 0 ? 'received' : 'sent';
         const at = h.time ? h.time * 1000 : (h.sentAt ?? this.clock.now());
         return {
           id: h.txid,
           txid: h.txid,
           kind,
-          amountSats: kind === 'received' ? h.netSats : (h.amountSats ?? Math.max(0, -h.netSats - (h.feeSats ?? 0))),
+          // A consolidation keeps the coins in Savings: only its fee left.
+          amountSats: kind === 'received' ? h.netSats : kind === 'consolidated' ? (h.feeSats ?? -h.netSats) : (h.amountSats ?? Math.max(0, -h.netSats - (h.feeSats ?? 0))),
           ...(h.feeSats !== undefined && kind !== 'received' ? { feeSats: h.feeSats } : {}),
           at: this.iso(at),
           status: h.confirmations > 0 ? 'confirmed' : 'pending',
@@ -1213,6 +1226,11 @@ class Service implements RealWalletService {
     switch (e.type) {
       case 'state':
       case 'pending_settled':
+        this.refresh();
+        break;
+      case 'labels_changed':
+        // Coin control: the coin list, quotes and the backup's "not in your backup yet" read the labels again.
+        this.labelsVersion++;
         this.refresh();
         break;
       case 'hardware_prompt':
@@ -1871,8 +1889,8 @@ class Service implements RealWalletService {
     };
   }
 
-  quoteSendMax(request: { address: string; speed: FeeSpeed }): QuoteOutcome {
-    return this.quoted({ address: request.address, speed: request.speed, amountSats: 0 }, true);
+  quoteSendMax(request: { address: string; speed: FeeSpeed; coins?: string[] }): QuoteOutcome {
+    return this.quoted({ address: request.address, speed: request.speed, amountSats: 0, ...(request.coins?.length ? { coins: request.coins } : {}) }, true);
   }
 
   private quoted(request: SendRequest, max: boolean): QuoteOutcome {
@@ -1885,6 +1903,8 @@ class Service implements RealWalletService {
       request.amountSats,
       request.speed,
       request.signer ?? 'auto',
+      request.coins?.join(',') ?? '',
+      this.labelsVersion, // a coin frozen or unfrozen
       st.chain?.syncedAt,
       w.feesVersion, // fee estimates that landed after the sync
       // the coins themselves: a send max is made of all of them, and a clock that does not move would hide a sync
@@ -1908,7 +1928,12 @@ class Service implements RealWalletService {
 
   private makeQuote(w: TrikeyWallet, request: SendRequest, max: boolean): QuoteOutcome {
     try {
-      const asked = { address: request.address, speed: request.speed, ...(request.signer === 'hardware' ? { signer: 'hardware' as const } : {}) };
+      const asked = {
+        address: request.address,
+        speed: request.speed,
+        ...(request.signer === 'hardware' ? { signer: 'hardware' as const } : {}),
+        ...(request.coins?.length ? { coins: request.coins } : {}),
+      };
       const q = max ? w.quoteSendMax(asked) : w.quoteSend({ ...asked, amountSats: request.amountSats });
       const ref = `q${++this.quoteCounter}`;
       this.quotes.set(ref, q);
@@ -1924,6 +1949,7 @@ class Service implements RealWalletService {
         ref,
         ...(q.sendMax ? { max: true as const } : {}),
         ...(q.silentPayment ? { silentPayment: { outputAddress: q.silentPayment.outputAddress, helperFeeSats: q.silentPayment.helper.feeSats } } : {}),
+        ...(q.mixesLabels ? { mixesLabels: q.mixesLabels.labels } : {}),
       };
       return { ok: true, quote };
     } catch (e) {
@@ -1949,6 +1975,7 @@ class Service implements RealWalletService {
               amountSats: quote.request.amountSats,
               speed: quote.request.speed,
               ...(plan.signer === 'phone+hardware' ? { signer: 'hardware' as const } : {}),
+              ...(quote.request.coins?.length ? { coins: quote.request.coins } : {}),
             };
         // The person decides when the hardware wallet steps in: no silent fallback after a refusal. The payment is in
         // Activity as soon as it is broadcast (the wallet's send log); the sync that follows runs on its own, so a
@@ -1999,6 +2026,38 @@ class Service implements RealWalletService {
     broadcastError: (refusal) => broadcastError(refusal, 'listed'),
     iso: (ms) => this.iso(ms),
     now: () => this.clock.now(),
+  });
+
+  /** Coin control (./real-coins.ts): the coin list, labels and freezes, "Consolidate", BIP 329 export and import. */
+  readonly coins: CoinActions = createCoinActions({
+    wallet: () => this.w,
+    requireWallet: () => this.requireWallet(),
+    walletName: () => (this.w && this.set?.several ? this.set.nameOf(this.w) : undefined),
+    run: (job) => this.exclusive(() => this.guarded(job)),
+    sendingDone: () => {
+      this.paymentSending = false;
+    },
+    sent: (wallet) => {
+      // As after a payment: shown at once, and a new sync on its own (Savings' own sync ran in `sendFromSavings`).
+      this.refresh();
+      if (wallet === 'spending') void this.requestSync(true);
+    },
+    changed: () => {
+      this.labelsVersion++;
+      this.refresh();
+    },
+    broadcastError: (refusal) => broadcastError(refusal, 'listed'),
+    iso: (ms) => this.iso(ms),
+    now: () => this.clock.now(),
+    // The platform's file sharing and picker, read when used (the deps are set after this field).
+    shareTextFile: (name, text) => {
+      if (!this.deps.shareLabelsFile) throw notAvailableYet('Sharing a labels file');
+      return this.deps.shareLabelsFile(name, text);
+    },
+    pickFile: () => {
+      if (!this.deps.pickLabelsFile) throw notAvailableYet('Opening a labels file');
+      return this.deps.pickLabelsFile();
+    },
   });
 
   async receiveAddress(opts: { verifyOnDevice?: boolean } = {}): Promise<ReceiveAddress> {
@@ -2373,11 +2432,12 @@ class Service implements RealWalletService {
         });
       return opts.verifyOnDevice ? this.exclusive(run) : run();
     },
-    quote: ({ address, amountSats, max }) => {
+    quote: ({ address, amountSats, max, coins }) => {
       const w = this.w;
       if (!w?.state.savings) return { ok: false, problem: 'not_ready', message: 'Set up Savings first.' };
       try {
-        const q = max ? w.quoteSavingsSendMax({ address: address.trim() }) : w.quoteSavingsSpend({ address: address.trim(), amountSats });
+        const picked = coins?.length ? { coins } : {};
+        const q = max ? w.quoteSavingsSendMax({ address: address.trim(), ...picked }) : w.quoteSavingsSpend({ address: address.trim(), amountSats, ...picked });
         const ref = `s${++this.quoteCounter}`;
         this.savingsQuotes.set(ref, q);
         if (this.savingsQuotes.size > 20) this.savingsQuotes.delete(this.savingsQuotes.keys().next().value!);
@@ -2389,6 +2449,7 @@ class Service implements RealWalletService {
           totalSats: q.totalSats,
           toSpending: q.toSpending,
           ...(q.sendMax ? { max: true as const } : {}),
+          ...(q.mixesLabels ? { mixesLabels: q.mixesLabels.labels } : {}),
         };
         return { ok: true, quote };
       } catch (e) {

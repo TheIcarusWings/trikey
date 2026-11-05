@@ -33,8 +33,11 @@ export interface SavingsActions {
   cancelCreate(): void;
   /** The next Savings address. With `verifyOnDevice` the hardware wallet shows it too and it must match. */
   receiveAddress(opts?: { verifyOnDevice?: boolean }): Promise<ReceiveAddress>;
-  /** A payment out of Savings, from the last sync (no I/O). `max`: everything in Savings, no change. */
-  quote(req: { address: string; amountSats: Sats; max?: boolean }): SavingsQuoteOutcome;
+  /**
+   * A payment out of Savings, from the last sync (no I/O). `max`: everything in Savings (but frozen coins), no change.
+   * `coins`: exactly these Savings coins pay (coin control).
+   */
+  quote(req: { address: string; amountSats: Sats; max?: boolean; coins?: string[] }): SavingsQuoteOutcome;
   /** Signs with the two keys `signers` names and sends. The guardian relays it and tells you and your contacts. */
   send(quote: SavingsQuote, signers: SavingsSigners): Promise<{ txid: string; amountSats: Sats; feeSats: Sats }>;
   /**

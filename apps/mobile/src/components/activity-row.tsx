@@ -55,9 +55,11 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
           ? `Refill ${tx.refillIndex ?? ''}`.trim()
           : tx.kind === 'speed_up'
             ? 'Speed up'
-            : sent
-              ? 'Sent'
-              : 'Received';
+            : tx.consolidated
+              ? 'Coins consolidated'
+              : sent
+                ? 'Sent'
+                : 'Received';
 
     let subtitle: string;
     let subtitleTone: 'muted' | 'warn' = 'muted';
@@ -76,6 +78,7 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
       if (silentIn) subtitle = `${subtitle} · ${tx.silentLabel !== undefined ? `label ${tx.silentLabel}` : 'silent payment'}`;
       else if (silentMove) subtitle = `${subtitle} · from silent payments${tx.feeSats !== undefined ? `, fee ${formatSats(tx.feeSats)}` : ''}`;
       else if (tx.silentOutputAddress) subtitle = `${subtitle} · silent payment`;
+      else if (tx.consolidated) subtitle = `${subtitle} · network fee`;
     }
 
     return {

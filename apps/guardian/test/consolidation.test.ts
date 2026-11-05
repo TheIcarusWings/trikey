@@ -1,5 +1,5 @@
 /**
- * Coin control's "Consolidate" (DESIGN.md, "Next: coin control", owner's decision 2): many small coins in one payment
+ * Coin control's "Consolidate" (DESIGN.md, "Coin control", owner's decision 2): many small coins in one payment
  * to the wallet itself counts against the daily limit only by its fee, because every output pays one of the wallet's own
  * addresses, which the guardian already treats as change. No rule change: these tests pin the rule as it is
  * (policy/inspect.ts `paysDerivedAddress`, engine.ts `cosign`).

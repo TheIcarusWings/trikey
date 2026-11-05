@@ -11,6 +11,8 @@ export type { RecoveryKeyActions } from './rk-actions';
 export type { SilentPaymentActions } from './sp-actions';
 export type { SavingsActions } from './savings-actions';
 export type { SpeedUpActions } from './speed-up-actions';
+export type { CoinActions } from './coin-actions';
+export { coinTitle, coinSourceText, mixedLabelsText, labelsImportText, CONSOLIDATE_LIMIT_NOTE } from './coins-text';
 export { emptySavings, suggestSavings } from './savings-empty';
 export { groupWalletId } from './savings-map';
 export { emptySilentPayments, looksLikeSilentPaymentAddress } from './sp-empty';

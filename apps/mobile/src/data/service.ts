@@ -39,8 +39,9 @@ import type { RecoveryKeyActions } from './rk-actions';
 import type { SilentPaymentActions } from './sp-actions';
 import type { SavingsActions } from './savings-actions';
 import type { SpeedUpActions } from './speed-up-actions';
+import type { CoinActions } from './coin-actions';
 
-export type { RecoveryKeyActions, SilentPaymentActions, SavingsActions, SpeedUpActions };
+export type { RecoveryKeyActions, SilentPaymentActions, SavingsActions, SpeedUpActions, CoinActions };
 
 export interface ReceiveAddress {
   address: string;
@@ -161,14 +162,14 @@ export interface WalletService {
   /** From the last sync; no I/O. */
   quoteSend(request: SendRequest): QuoteOutcome;
   /**
-   * "Send max": the most that can be sent to `address` at `speed` (the confirmed balance minus the fee), from the last
-   * sync, with no I/O. On success the quote carries the amount in `request.amountSats` and `max: true`, and goes to
+   * "Send max": the most that can be sent to `address` at `speed` (the confirmed balance minus the fee; frozen coins left
+   * out; with `coins`, exactly those coins), from the last sync, with no I/O. On success the quote carries the amount in `request.amountSats` and `max: true`, and goes to
    * `sendPayment` like any quote: it spends every coin, with no change, signed by the keys its `plan` names.
    * Fails with `amount_too_small` when the balance minus the fee is below the smallest payment, `insufficient_funds`
    * when there is nothing to send, `needs_helper` for a silent payment address when the helper coin is missing, and
    * `other` where it is not available yet (Recovery Key mode).
    */
-  quoteSendMax(request: { address: string; speed: FeeSpeed }): QuoteOutcome;
+  quoteSendMax(request: { address: string; speed: FeeSpeed; coins?: string[] }): QuoteOutcome;
   /** The wallet descriptor and key fingerprints, to recover in another wallet; `null` until the wallet is set up. */
   getWalletDetails(): WalletDetails | null;
   /** Signs with whichever keys the quote's plan names, then broadcasts. */
@@ -276,6 +277,11 @@ export interface WalletService {
    * can be used now); Recovery Key mode does not.
    */
   readonly savings?: SavingsActions;
+  /**
+   * Coin control (DESIGN.md, "Coin control"): the coin list of Spending and Savings, labels and freezes, "Consolidate" and
+   * BIP 329 export and import. The guardian mode's wallet and the demo have it; Recovery Key mode does not.
+   */
+  readonly coins?: CoinActions;
   /**
    * Makes a quote exact when the wallet needs the chain for it (Recovery Key mode picks the coins). Optional: the
    * quote `quoteSend` gave stays valid, with `estimate: true`. Screens that show the final fee call it.
