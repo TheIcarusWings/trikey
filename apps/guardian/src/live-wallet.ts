@@ -172,6 +172,8 @@ export class LiveWallet {
   private lastTargets = '';
   /** Passes done (tests wait on it). */
   passes = 0;
+  /** Each announced wallet's last read (wallet id -> when, ms, and what): the web UI's Wallet page answers from it (http/wallet.ts). */
+  readonly lastRead = new Map<string, { at: number; sync: WalletSync }>();
 
   constructor(
     private readonly g: Guardian,
@@ -287,6 +289,7 @@ export class LiveWallet {
     if (!g.chain.backend?.connected) return;
     const targets = this.targets();
     this.lastTargets = this.targetsKey();
+    for (const id of this.lastRead.keys()) if (!targets.some((t) => t.walletId === id)) this.lastRead.delete(id);
     for (const t of targets) {
       try {
         await g.chain.watchWallet(t.wallet, { minIndex: t.minIndex });
@@ -310,6 +313,7 @@ export class LiveWallet {
         this.retryTimer.unref?.();
         continue;
       }
+      this.lastRead.set(t.walletId, { at: g.clock.now(), sync: r });
       if (t.kind === 'main') {
         await g.noteScan(t.walletId, r);
         g.knownCoins.set(t.walletId, r.utxos, r.history);

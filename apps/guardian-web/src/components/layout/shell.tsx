@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Clock, House, List, LogOut, Menu, Settings, SlidersHorizontal, Smartphone, UserPlus, X } from 'lucide-react';
+import { Clock, House, List, Lock, LockOpen, LogOut, Menu, Settings, SlidersHorizontal, Smartphone, UserPlus, Wallet, X } from 'lucide-react';
 import { api, usingMockApi } from '@/api';
 import { useGuardian, useNetwork } from '@/components/guardian-provider';
 import { Logo } from '@/components/logo';
 import { NetworkStrip, isTestNetwork } from '@/components/network-pill';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { Badge } from '@/components/ui/badge';
 import { useApi } from '@/hooks/use-api';
 import { cn } from '@/lib/utils';
 
@@ -17,20 +18,28 @@ interface NavItem {
   tone?: 'warn';
 }
 
-/** Whether this guardian hosts wallets for others (`GET /api/hosting`); hidden when it does not, or cannot say. */
-function useHostingAvailable(): boolean {
-  const hosting = useApi(() => api.getHosting(), [], 300_000);
-  return !!hosting.data?.available;
+/** Whether this guardian hosts wallets for others (`GET /api/hosting`); hidden when it does not, or cannot say (locked). */
+function useHostingAvailable(locked: boolean): boolean {
+  const hosting = useApi(() => (locked ? Promise.resolve(undefined) : api.getHosting()), [locked], 300_000);
+  return !locked && !!hosting.data?.available;
 }
 
 function useNavItems(): NavItem[] {
   const { status } = useGuardian();
-  const hosting = useHostingAvailable();
+  const locked = status?.state === 'locked';
+  const hosting = useHostingAvailable(locked);
+  // Locked: only the read-only Wallet page works, and the way to unlock.
+  if (locked)
+    return [
+      { to: '/wallet', label: 'Wallet', Icon: Wallet },
+      { to: '/locked', label: 'Unlock', Icon: LockOpen },
+    ];
   const items: NavItem[] = [];
   // While a recovery runs it comes first: it is the one thing that needs a look.
   if (status?.recoveryInProgress) items.push({ to: '/recovery', label: 'Recovery', Icon: Clock, tone: 'warn' });
   items.push(
     { to: '/', label: 'Home', Icon: House, end: true },
+    { to: '/wallet', label: 'Wallet', Icon: Wallet },
     { to: '/activity', label: 'Activity', Icon: List },
     { to: '/rules', label: 'Rules', Icon: SlidersHorizontal },
     { to: '/phones', label: 'Phones', Icon: Smartphone },
@@ -99,6 +108,18 @@ function SidebarFooter() {
   );
 }
 
+/** "Locked" next to the logo while the guardian is locked (only the read-only pages are open then). */
+function LockedBadge() {
+  const { status } = useGuardian();
+  if (status?.state !== 'locked') return null;
+  return (
+    <Badge variant="warning" className="gap-1">
+      <Lock className="size-3" strokeWidth={2.4} aria-hidden="true" />
+      Locked
+    </Badge>
+  );
+}
+
 /** Sidebar on wide screens; a header with a collapsible menu on narrow ones. */
 export function Shell() {
   const items = useNavItems();
@@ -139,8 +160,9 @@ export function Shell() {
           )}
         >
           <div className="flex flex-col gap-[18px]">
-            <div className="px-2">
+            <div className="flex flex-wrap items-center gap-2 px-2">
               <Logo size={28} />
+              <LockedBadge />
             </div>
             <NavList items={items} />
           </div>
@@ -150,7 +172,10 @@ export function Shell() {
         {/* Narrow screens */}
         <header className="md:hidden print:hidden">
           <div className="flex h-14 items-center justify-between pr-2 pl-5">
-            <Logo size={28} />
+            <span className="flex min-w-0 items-center gap-2">
+              <Logo size={28} />
+              <LockedBadge />
+            </span>
             <button
               type="button"
               aria-expanded={open}

@@ -4,7 +4,7 @@
  *
  *   without a session: GET /status (reduced: `PublicStatus`), POST /session, DELETE /session,
  *                      and before setup GET /setup/preflight, POST /setup/code, POST /setup (which signs the browser in)
- *   locked:            GET /status, POST /unlock, POST /reset
+ *   locked:            GET /status, GET /wallet (read-only), POST /unlock, POST /reset
  *   unlocked:          everything (GET and PUT /relays included)
  *
  * Without a session anything else answers 401 `unauthenticated`; with one, 409 `setup_required` or
@@ -37,6 +37,7 @@ import type {
 import type { Health, HealthState } from '../notify/notifier.js';
 import { sessionCookie } from './sessions.js';
 import { hostingRoutes } from '../hosting/http.js';
+import { walletOverview } from './wallet.js';
 import { publicServersFor, publicView } from '../chain/source.js';
 import type { ChainSettings, ChainTestResult } from './types.js';
 
@@ -405,6 +406,16 @@ export function buildRoutes(g: Guardian): Route[] {
         const raw = Number(query.get('limit') ?? 100);
         const limit = Number.isFinite(raw) ? Math.max(1, Math.min(MAX_ACTIVITY, Math.floor(raw))) : 100;
         return ok({ entries: activity(g, limit) });
+      },
+    },
+
+    // The Wallet page: view and receive only (http/wallet.ts). Public chain data and the limit's counters: works while locked.
+    {
+      method: 'GET',
+      path: '/wallet',
+      handler: async () => {
+        if (!g.setupComplete) throw new HttpError(409, 'setup_required', 'Set up the guardian first.');
+        return ok(await walletOverview(g));
       },
     },
 

@@ -17,6 +17,8 @@ import type {
   RelaySettings,
   RetiringRelay,
   Rules,
+  WalletOverview,
+  WalletPayment,
 } from './types';
 import { relayListError } from '../lib/relays';
 import { emailError, guardianNameError, pinError, topicError, urlError, webhookSecretError } from '../lib/notifications';
@@ -41,6 +43,9 @@ import { emailError, guardianNameError, pinError, topicError, urlError, webhookS
  *   notify     email, ntfy and a webhook are set up (Settings > Notifications); the webhook is failing
  *   publicserver  the guardian reads the chain from a public server (Settings > Server)
  *   nomempool  Electrs can't read Bitcoin Core 32's mempool; the guardian reads Core's itself (home note, Settings > Server)
+ *
+ * The Wallet page follows the scenario: the demo wallet in most, no wallet yet in `unpaired`, a chain the guardian
+ * cannot read yet in `syncing`, the limit off in `limitoff`, Savings in `savings`, read-only while locked.
  *
  * State lives in memory only, so a page reload starts the scenario over. In the
  * mock, any unlock passphrase works except the literal `wrong`, which is
@@ -136,6 +141,48 @@ function demoActivity(): ActivityEntry[] {
     },
   ];
 }
+
+/** A throwaway demo txid (64 hex digits) from `seed`: never a real transaction. */
+function demoTxid(seed: number): string {
+  let x = (seed * 2_654_435_761) >>> 0;
+  let out = '';
+  while (out.length < 64) {
+    x = (Math.imul(x, 1_664_525) + 1_013_904_223) >>> 0;
+    out += x.toString(16).padStart(8, '0');
+  }
+  return out.slice(0, 64);
+}
+
+/** The demo chain's height (Settings > Server says the same). */
+const DEMO_TIP = 271_042;
+
+/** Confirmations of a payment made `ms` ago, ten-minute blocks (at least 1). */
+const confirmationsSince = (ms: number) => Math.max(1, Math.floor(ms / 600_000));
+
+/**
+ * The demo wallet's payments, unconfirmed first then newest first: the two phone payments of the demo activity (70,420
+ * sats today, fees included), an incoming payment waiting for its first confirmation, earlier deposits and a move.
+ */
+function demoPayments(): WalletPayment[] {
+  const at = (daysAgo: number, hhmm: string) => {
+    const iso = localAt(daysAgo, hhmm);
+    return { at: iso, confirmations: confirmationsSince(Date.now() - Date.parse(iso)) };
+  };
+  return [
+    { txid: demoTxid(7), direction: 'in', amountSats: 120_000, confirmations: 0 },
+    { txid: demoTxid(6), direction: 'out', amountSats: 50_000, feeSats: 420, ...at(0, '14:20') },
+    { txid: demoTxid(5), direction: 'out', amountSats: 19_780, feeSats: 220, ...at(0, '09:42') },
+    { txid: demoTxid(4), direction: 'in', amountSats: 1_000_000, ...at(3, '11:05') },
+    { txid: demoTxid(3), direction: 'self', amountSats: 0, feeSats: 310, ...at(8, '10:20') },
+    { txid: demoTxid(2), direction: 'in', amountSats: 2_500_000, ...at(9, '17:02') },
+  ];
+}
+
+/**
+ * The demo wallet's address to receive at: index 4 of a wallet made of published BIP 39 test mnemonics on signet (the
+ * guardian's golden vectors, apps/guardian/test/web-wallet.e2e.test.ts). Nobody holds these keys' coins.
+ */
+const DEMO_RECEIVE = { index: 4, address: 'tb1qqevant99hafz2emw7qd9sg66nzvmjs4qnyl0a6urgvg3mmfacxls97sq9a' };
 
 function demoRecovery(ready = false): RecoveryInProgress {
   const endsAt = ready ? Date.now() - 2 * HOUR : Date.now() + 5 * DAY + 14 * HOUR;
@@ -483,6 +530,42 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
     async getRecovery() {
       await wait();
       return clone(recovery);
+    },
+
+    // Read-only and public: answered while locked too. Never a hosted guest's wallet.
+    async getWallet() {
+      await wait();
+      if (!(setupDone || setupFinished)) throw new ApiError('setup_required', 'Set up the guardian first.', 409);
+      const state = locked ? 'locked' : 'unlocked';
+      const walletId = walletIds[0];
+      if (!walletId) return { paired: false, state, network: 'signet' };
+      const st = status();
+      const used = st.dailySpend.usedSats;
+      const base: WalletOverview = {
+        paired: true,
+        state,
+        network: 'signet',
+        walletId,
+        walletName: 'Main',
+        dailyLimit: {
+          limitSats: rules.dailyLimitSats,
+          usedSats: used,
+          leftSats: Math.max(0, rules.dailyLimitSats - used),
+          ...(rules.dailyLimitOff ? { limitOff: true as const } : {}),
+        },
+        ...(st.savings ? { savings: clone(st.savings) } : {}),
+      };
+      if (syncing)
+        return { ...base, chainError: "The guardian can't read the blockchain right now, so it can't show the balance, the payments or an address to receive at. Your phone can." };
+      const payments = demoPayments();
+      return {
+        ...base,
+        balance: { confirmedSats: 3_429_270, unconfirmedSats: 120_000 },
+        payments,
+        receive: { ...DEMO_RECEIVE },
+        readAt: new Date(Date.now() - 20_000).toISOString(),
+        tipHeight: DEMO_TIP,
+      };
     },
 
     async getRecoveryCode() {
