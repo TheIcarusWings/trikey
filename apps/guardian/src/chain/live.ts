@@ -4,7 +4,7 @@
  * transaction (mempool or block).
  *
  * - **Subscribing** (`watch`) asks the server for each script's status in batches of `BATCH_SIZE`: null means no history
- *   (nothing to read); otherwise the history and the unspent outputs are read, also in batches.
+ *   (nothing to read); otherwise the history and the unspent outputs are read, side by side in one batch per round trip.
  * - **A notification** (a new status) marks the script stale at once and reads it again. Until that read is done the
  *   script is not served from here: a reader waits for it (`read`) or, if it fails, asks the server itself.
  * - **Checked**: a history is kept only when its Electrum status (backend.ts `electrumStatus`) is the status the server
@@ -235,11 +235,29 @@ export class ScriptWatch {
     return this.resubscribe();
   }
 
-  /** Reads again every script with an unconfirmed transaction (a new block may have confirmed or dropped it). */
-  refreshUnconfirmed(): void {
+  /** Whether the script with this Electrum script hash is subscribed here. */
+  watches(hash: string): boolean {
+    return this.entries.has(hash);
+  }
+
+  /** Every unspent output the watched scripts' current data lists (`txid:vout`). */
+  unspentOutpoints(): Set<string> {
+    const out = new Set<string>();
+    for (const e of this.entries.values()) if (this.isCurrent(e)) for (const u of e.data!.unspent) out.add(`${u.txid}:${u.vout}`);
+    return out;
+  }
+
+  /**
+   * Reads again every script with an unconfirmed transaction (a new block may have confirmed or dropped it), and the
+   * scripts in `also` (by script hash): those of transactions the guardian knows are unconfirmed though the server does
+   * not list them (chain/relayed.ts), which a server that does not see the mempool only lists once a block has them.
+   * Without this, their confirmation waited for the server's own notification, which a slow Electrs sends long after
+   * the block (about 25 s on an Umbrel's electrs 0.11).
+   */
+  refreshUnconfirmed(also: ReadonlySet<string> = new Set()): void {
     if (!this.up) return;
     for (const e of this.entries.values()) {
-      if (!this.isCurrent(e) || !e.data!.history.some((h) => h.height <= 0)) continue;
+      if (!this.isCurrent(e) || !(also.has(e.hash) || e.data!.history.some((h) => h.height <= 0))) continue;
       e.dirty = true;
       const p = this.schedule(e);
       e.busy = p;
@@ -337,19 +355,22 @@ export class ScriptWatch {
 
   private async flush(): Promise<void> {
     while (this.queue.size && this.up && !this.stopped) {
-      const batch = [...this.queue].slice(0, BATCH_SIZE);
+      // Each script's history and unspent outputs side by side in one batch of about `BATCH_SIZE` calls: one round trip,
+      // not two. A slow Electrs answers each round trip after a turn of its main loop (about 7 s for Electrs 0.11 with
+      // Bitcoin Core 32), so a new block's refresh was two such turns before the scan that waits for it could go on.
+      const batch = [...this.queue].slice(0, Math.ceil(BATCH_SIZE / 2));
       for (const e of batch) this.queue.delete(e);
       const want = batch.map((e) => ({ gen: e.gen, status: e.status, epoch: e.epoch }));
       const hashes = batch.map((e) => e.hash);
-      let histories, unspents;
+      let read;
       try {
-        // One after the other: a slow server answers in order anyway, and the second batch's timeout starts later.
-        histories = await this.b.histories(hashes);
-        unspents = await this.b.unspents(hashes);
+        read = await this.b.readScripts(hashes);
       } catch (err) {
         this.log.debug('chain.live_read_failed', { error: errorText(err) });
         return; // the connection dropped: the reconnect reads them again
       }
+      const histories = read.map((r) => r.history);
+      const unspents = read.map((r) => r.unspent);
       const changed: string[] = [];
       batch.forEach((e, k) => {
         const w = want[k]!;

@@ -36,10 +36,11 @@ import {
   type ChainBackend,
   type ElectrumHistoryItem,
 } from './backend.js';
-import { BitcoinRpc, type BlockchainInfo } from './bitcoind.js';
+import { BitcoinRpc, BitcoinRpcError, type BlockchainInfo } from './bitcoind.js';
 import { ElectrumClient, ElectrumUnavailableError, type HeaderNotification } from './electrum.js';
 import { isLinked, medianTimePast, parseHeader, splitHeaders } from './headers.js';
 import { ScriptWatch, type LiveStats } from './live.js';
+import { RelayedTxs, type RelayedTx } from './relayed.js';
 
 export { scriptHash, type ElectrumHistoryItem };
 
@@ -143,6 +144,14 @@ export interface ChainSyncStatus {
   progress?: number;
   source: string;
   height?: number;
+  /** The Electrum server reports no unconfirmed transactions (`ChainService.mempool`). */
+  mempoolUnseen?: boolean;
+  /** Why (`MempoolView.cause`). */
+  mempoolCause?: 'electrs_core32';
+  /** The guardian reads Bitcoin Core's mempool instead (`MempoolView.viaNode`). */
+  mempoolViaNode?: boolean;
+  /** The server takes seconds to answer anything too (`MempoolView.serverSlow`). */
+  mempoolServerSlow?: boolean;
 }
 
 export interface ChainPreflight {
@@ -192,6 +201,8 @@ export interface WalletSync {
   nextReceiveIndex: number;
   nextChangeIndex: number;
   gapLimit: number;
+  /** The version of the relayed records this read applied (relayed.ts `RelayedTxs.version`). */
+  relayedVersion?: number;
 }
 
 function decodeRawTx(txHex: string) {
@@ -252,16 +263,61 @@ export interface ChainServiceOptions {
   gapLimit?: number;
   /** Most scripts subscribed on an Electrum server (live.ts). Default `DEFAULT_MAX_SCRIPTS`. */
   liveMaxScripts?: number;
-  /** The clock fee estimates are kept by (ms; `FEE_CACHE_MS`). Default `Date.now`. */
+  /** The owner's relayed transactions (relayed.ts), kept on disk by the guardian. Default: in memory only. */
+  relayed?: RelayedTxs;
+  /** The guardian's clock (ms): fee estimates are kept by it (`FEE_CACHE_MS`), relayed transactions too. Default `Date.now`. */
   now?: () => number;
+  /** How often Bitcoin Core's mempool is read while the Electrum server shows none. Default `NODE_MEMPOOL_POLL_MS`. */
+  nodeMempoolPollMs?: number;
+  /** A ping slower than this (ms) makes the server slow (`MempoolView.serverSlow`). Default `SLOW_PING_MS`. */
+  slowPingMs?: number;
+}
+
+/** A server whose ping takes longer than this (ms) is slowed down (Electrs 0.11 with Bitcoin Core 32: about 7 s). */
+export const SLOW_PING_MS = 3000;
+
+/** How often Bitcoin Core's mempool is read while the Electrum server shows none (`pollNodeMempool`). */
+export const NODE_MEMPOOL_POLL_MS = 10_000;
+/** Transactions per `getrawtransaction` batch. */
+export const NODE_MEMPOOL_BATCH = 250;
+/** Bitcoin Core 32.0: the first version whose mempool entries Electrs 0.11 cannot read (no `bip125-replaceable`). */
+export const CORE_WITHOUT_BIP125 = 320000;
+
+/** A relayed transaction the chain source has not listed after this long tells that it does not see the mempool. */
+export const MEMPOOL_UNSEEN_AFTER_MS = 60_000;
+/** How often the Electrum server's fee histogram is compared with Bitcoin Core's mempool (with Core's RPC). */
+export const MEMPOOL_HISTOGRAM_EVERY_MS = 10 * 60_000;
+/** Bitcoin Core holding at least this many transactions while the server's fee histogram is empty: the server sees none. */
+export const MEMPOOL_MIN_NODE_TXS = 5;
+
+/**
+ * Whether the chain source reports unconfirmed transactions (`ChainService.mempool`): `unknown` until something told,
+ * `seen` once it listed one, `unseen` when it did not list a transaction this guardian relayed within
+ * `MEMPOOL_UNSEEN_AFTER_MS`, or its fee histogram is empty while Bitcoin Core's mempool is not.
+ */
+export interface MempoolView {
+  state: 'unknown' | 'seen' | 'unseen';
+  reason?: 'relayed_tx_not_listed' | 'fee_histogram_empty';
+  /**
+   * Why, when the guardian can tell: `electrs_core32`, Electrs with Bitcoin Core 32 or later, whose mempool entries it
+   * cannot read (Core dropped `bip125-replaceable`; no fixed Electrs release yet).
+   */
+  cause?: 'electrs_core32';
+  /** The guardian reads unconfirmed transactions from Bitcoin Core's mempool itself meanwhile (`pollNodeMempool`). */
+  viaNode?: boolean;
+  /** The server also takes more than `SLOW_PING_MS` to answer a ping: every request to it waits that long. */
+  serverSlow?: boolean;
+  /** When it last changed (ms). */
+  since?: number;
 }
 
 /**
  * Why the watched wallets may have changed (`ChainService.onWalletChange`): `scripts`, an Electrum server notified some
  * of their scripts; `reconnect`, it is connected again (things may have happened meanwhile); `reset`, another chain
- * source is in use (nothing is watched on it yet); `core`, Bitcoin Core's wallet read something new.
+ * source is in use (nothing is watched on it yet); `core`, Bitcoin Core's wallet read something new; `relayed`, the
+ * guardian relayed a transaction of the owner's, or learned that one it relayed is gone (relayed.ts).
  */
-export type WalletChangeReason = 'scripts' | 'reconnect' | 'reset' | 'core';
+export type WalletChangeReason = 'scripts' | 'reconnect' | 'reset' | 'core' | 'relayed';
 
 /** What `liveStats` reports: Electrum subscriptions, or Bitcoin Core's own wallet. */
 export type ChainLiveStats = ({ kind: 'electrum' } & LiveStats) | { kind: 'core' } | { kind: 'none' };
@@ -280,6 +336,19 @@ export class ChainService {
   private readonly changeListeners = new Set<(reason: WalletChangeReason) => void>();
   /** The last header announced, to tell a block on top of it from a reorg. */
   private lastHeader?: { height: number; hash: string };
+  /** The owner's transactions relayed here, applied to `walletSync` while the server does not list them (relayed.ts). */
+  readonly relayed: RelayedTxs;
+  private mempoolView: MempoolView = { state: 'unknown' };
+  private lastHistogramAt?: number;
+  private checkingMempool?: Promise<void>;
+  private nodeTimer?: ReturnType<typeof setInterval>;
+  private pollingNode?: Promise<void>;
+  /** Txids of Bitcoin Core's mempool read already (`pollNodeMempool`): only new ones are read. */
+  private readonly nodeLooked = new Set<string>();
+  /** The last read of Core's mempool worked (undefined: none yet). */
+  private nodeMempoolOk?: boolean;
+  /** Bitcoin Core's version (`getnetworkinfo`), once read. */
+  private nodeVersion?: number;
   /** The fee estimates kept (`estimateFees`), and the fetch under way that callers join. */
   private feeCache?: FeeSnapshot;
   private feeFetch?: { targets: Set<number>; epoch: number; p: Promise<FeeSnapshot> };
@@ -291,6 +360,7 @@ export class ChainService {
     this.log = opts.log ?? silentLogger;
     this.now = opts.now ?? Date.now;
     this.current = opts.backend ?? (opts.electrum ? new ElectrumBackend(opts.electrum) : undefined);
+    this.relayed = opts.relayed ?? new RelayedTxs({ now: this.now });
   }
 
   /** The chain source in use. */
@@ -312,9 +382,18 @@ export class ChainService {
     this.started = true;
     this.attach();
     this.current?.start();
+    // Bitcoin Core's mempool, read only while the Electrum server shows none (`pollNodeMempool`).
+    if (this.opts.rpc && !this.nodeTimer) {
+      this.nodeTimer = setInterval(() => {
+        if (this.nodeMempoolWanted) void this.pollNodeMempool();
+      }, this.opts.nodeMempoolPollMs ?? NODE_MEMPOOL_POLL_MS);
+      this.nodeTimer.unref?.();
+    }
   }
 
   stop(): void {
+    clearInterval(this.nodeTimer);
+    this.nodeTimer = undefined;
     this.started = false;
     this.offHeader?.();
     this.offHeader = undefined;
@@ -336,6 +415,13 @@ export class ChainService {
     this.tipCache = undefined;
     this.lastHeader = undefined;
     this.blockTimes.clear();
+    // What the old server listed says nothing of the new one.
+    this.mempoolView = { state: 'unknown' };
+    this.lastHistogramAt = undefined;
+    this.nodeLooked.clear();
+    this.nodeMempoolOk = undefined;
+    this.pingMs = undefined;
+    for (const r of this.relayed.list()) this.relayed.mark(r.txid, { seen: false, checked: false });
     this.forgetFees();
     if (this.started) {
       this.attach();
@@ -397,7 +483,9 @@ export class ChainService {
     this.blockTimes.set(h.height, { hash, time: parsed.time });
     void this.tip().catch(() => undefined);
     if (!this.live || !last) return;
-    if (h.height === last.height + 1 && prev === last.hash) this.live.refreshUnconfirmed();
+    // With the scripts of what the guardian knows is unconfirmed though the server does not list it: their confirmation
+    // is news now, not when a slow server gets round to notifying them.
+    if (h.height === last.height + 1 && prev === last.hash) this.live.refreshUnconfirmed(this.pendingScriptHashes());
     else void this.live.revalidate();
   }
 
@@ -613,6 +701,12 @@ export class ChainService {
     const id = txid.toLowerCase();
     const cached = this.txCache.get(id);
     if (cached) return cached;
+    // Relayed here: known even to a server that does not see the mempool (checked against its txid when relayed).
+    const relayed = this.relayed.get(id);
+    if (relayed) {
+      this.txCache.set(id, relayed.txHex);
+      return relayed.txHex;
+    }
     const raw = await mapped(this.client().transaction(id));
     if (typeof raw !== 'string' || !/^(?:[0-9a-fA-F]{2})+$/.test(raw)) throw new ChainUnavailableError('the chain server returned a malformed transaction');
     const txHex = raw.toLowerCase();
@@ -643,9 +737,12 @@ export class ChainService {
   async walletSync(wallet: AddressSource, opts: { historyLimit?: number; maxUtxos?: number; minIndex?: Partial<Record<0 | 1, number>> } = {}): Promise<WalletSync> {
     const tip = await this.tip();
     const scan = await this.scanWallet(wallet, { minIndex: opts.minIndex });
-    const utxos = await this.unspentOf(scan);
+    const listed = await this.unspentOf(scan);
     // A coin at a height past our (slightly stale) tip is confirmed all the same.
     const confirmations = (height: number) => (height > 0 ? Math.max(1, tip.height - height + 1) : 0);
+    // What this guardian relayed and the server does not list (yet): its coins spent, its outputs to the wallet pending.
+    const relayed = await this.applyRelayed(wallet, scan, listed);
+    const utxos = [...listed.filter((u) => !relayed.spent.has(`${u.txid}:${u.vout}`)), ...relayed.utxos];
 
     let confirmedSats = 0n;
     let unconfirmedSats = 0n;
@@ -666,7 +763,7 @@ export class ChainService {
       const ub = hb === 0 ? 1 : 0;
       return ub - ua || hb - ha || (ta < tb ? -1 : ta > tb ? 1 : 0);
     });
-    const limit = opts.historyLimit ?? ordered.length;
+    const limit = Math.max(0, (opts.historyLimit ?? ordered.length + relayed.history.length) - relayed.history.length);
     const scripts = this.walletScripts(wallet, scan);
     const isOurs = (script: Uint8Array) => scripts.has(hex.encode(script));
 
@@ -716,6 +813,9 @@ export class ChainService {
       });
     }
 
+    // Past an address the relayed transaction pays (the server has no history for it yet).
+    const next = { 0: scan.chains[0].nextIndex, 1: scan.chains[1].nextIndex };
+    for (const u of relayed.utxos) next[u.chain] = Math.max(next[u.chain], u.index + 1);
     return {
       tipHeight: tip.height,
       tipHash: tip.hash,
@@ -723,12 +823,133 @@ export class ChainService {
       utxosTruncated: sorted.length > maxUtxos,
       confirmedSats,
       unconfirmedSats,
-      history,
+      // Unconfirmed, so first; newest first.
+      history: [...relayed.history, ...history],
       historyTruncated: ordered.length > limit,
-      nextReceiveIndex: scan.chains[0].nextIndex,
-      nextChangeIndex: scan.chains[1].nextIndex,
+      nextReceiveIndex: next[0],
+      nextChangeIndex: next[1],
       gapLimit: scan.gapLimit,
+      relayedVersion: relayed.version,
     };
+  }
+
+  /**
+   * The owner's relayed transactions that touch `wallet` and that the server does not list, as `walletSync` applies them
+   * (relayed.ts): the outpoints they spend, their outputs paying the wallet (unconfirmed coins, unless another one spends
+   * them), and their history entries (newest first). On the way, it ends the records the server's answer settles: listed
+   * confirmed (it has them), listed unconfirmed before and not any more (a server that sees the mempool dropped them), or
+   * a coin of the wallet they spend that the server says is spent otherwise (replaced, or a conflict that won), and those
+   * spending an output of one that is gone.
+   */
+  private async applyRelayed(
+    wallet: AddressSource,
+    scan: WalletScan,
+    listed: readonly WalletUtxo[],
+  ): Promise<{ spent: Set<string>; utxos: WalletUtxo[]; history: WalletHistoryEntry[]; version: number }> {
+    const out = { spent: new Set<string>(), utxos: [] as WalletUtxo[], history: [] as WalletHistoryEntry[], version: this.relayed.version };
+    const records = this.relayed.list();
+    if (!records.length) return { ...out, version: this.relayed.version };
+    const heights = new Map<string, number>();
+    for (const chain of [0, 1] as const) for (const u of scan.chains[chain].used) for (const h of u.history) heights.set(h.tx_hash, Math.max(0, h.height));
+    const scripts = this.walletScripts(wallet, scan);
+    const unspent = new Set(listed.map((u) => `${u.txid}:${u.vout}`));
+    const byId = new Map(records.map((r) => [r.txid, r]));
+    type Applied = { r: RelayedTx; tx: ReturnType<typeof parseRawTx>; spent: { op: string; amount: bigint; parent?: string }[]; all: boolean };
+    const kept = new Map<string, Applied>();
+    const gone = new Set<string>();
+    for (const r of records) {
+      const height = heights.get(r.txid);
+      if (height !== undefined) {
+        // The server has it: confirmed (done), or in its mempool (it sees the mempool; nothing to add).
+        if (height > 0) this.relayed.drop([r.txid]);
+        else {
+          this.relayed.mark(r.txid, { seen: true });
+          this.noteMempool('seen');
+        }
+        continue;
+      }
+      let tx: ReturnType<typeof parseRawTx>;
+      try {
+        tx = parseRawTx(r.txHex);
+      } catch {
+        this.relayed.drop([r.txid]);
+        continue;
+      }
+      const spent: Applied['spent'] = [];
+      let all = tx.inputs.length > 0;
+      for (const inp of tx.inputs) {
+        const op = `${inp.txid}:${inp.vout}`;
+        let prev: { script: Uint8Array; amount: bigint } | undefined;
+        try {
+          prev = parseRawTx(byId.get(inp.txid)?.txHex ?? (await this.getTransaction(inp.txid))).outputs[inp.vout];
+        } catch {
+          prev = undefined; // not known to the server either: not a coin of this wallet it could tell
+        }
+        if (prev && scripts.has(hex.encode(prev.script))) spent.push({ op, amount: prev.amount, ...(byId.has(inp.txid) || gone.has(inp.txid) || this.relayed.isGone(inp.txid) ? { parent: inp.txid } : {}) });
+        else all = false;
+      }
+      const pays = tx.outputs.some((o) => scripts.has(hex.encode(o.script)));
+      if (!spent.length && !pays) continue; // another wallet's
+      // Listed unconfirmed before, by a server that sees the mempool, and not now: dropped from it.
+      // A coin it spends that the server lists as spent (and not by a transaction relayed here): spent otherwise.
+      if (r.seen || spent.some((s) => !s.parent && !unspent.has(s.op))) {
+        gone.add(r.txid);
+        continue;
+      }
+      kept.set(r.txid, { r, tx, spent, all });
+    }
+    // A transaction spending an output of one that is gone is gone with it (the node evicts descendants).
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const [id, a] of kept)
+        if (a.spent.some((s) => s.parent && (gone.has(s.parent) || this.relayed.isGone(s.parent)))) {
+          kept.delete(id);
+          gone.add(id);
+          changed = true;
+        }
+    }
+    // Two kept that spend the same coin (a replacement made elsewhere, read from the node after the original): the newer.
+    const claimed = new Set<string>();
+    for (const [id, a] of [...kept].sort(([, x], [, y]) => y.r.at - x.r.at)) {
+      const ops = a.tx.inputs.map((i) => `${i.txid}:${i.vout}`);
+      if (ops.some((op) => claimed.has(op))) kept.delete(id);
+      else for (const op of ops) claimed.add(op);
+    }
+    if (gone.size) {
+      this.relayed.drop(gone, { gone: true });
+      this.log.info('chain.relayed_gone', { count: gone.size });
+    }
+    // What this read applied, its own endings included.
+    out.version = this.relayed.version;
+    const spentByKept = new Set<string>();
+    for (const a of kept.values()) for (const i of a.tx.inputs) spentByKept.add(`${i.txid}:${i.vout}`);
+    for (const a of kept.values()) {
+      for (const op of a.tx.inputs) out.spent.add(`${op.txid}:${op.vout}`);
+      let received = 0n;
+      let totalOut = 0n;
+      const paidOut: WalletHistoryEntry['paidOut'] = [];
+      a.tx.outputs.forEach((o, vout) => {
+        totalOut += o.amount;
+        const at = scripts.get(hex.encode(o.script));
+        if (!at) {
+          paidOut.push({ script: hex.encode(o.script), amount: o.amount });
+          return;
+        }
+        received += o.amount;
+        if (!spentByKept.has(`${a.r.txid}:${vout}`)) out.utxos.push({ txid: a.r.txid, vout, value: o.amount, height: 0, chain: at.chain, index: at.index });
+      });
+      const spentSats = a.spent.reduce((t, s) => t + s.amount, 0n);
+      out.history.unshift({
+        txid: a.r.txid,
+        height: 0,
+        confirmations: 0,
+        net: received - spentSats,
+        fee: a.all && spentSats >= totalOut ? spentSats - totalOut : undefined,
+        spent: a.spent.map((s) => s.op),
+        paidOut,
+      });
+    }
+    return out;
   }
 
   private async prefetch(txids: string[], batch = 16): Promise<void> {
@@ -747,6 +968,8 @@ export class ChainService {
     const scan = await this.scanWallet(wallet, { minIndex: opts.minIndex });
     const ours = new Set<string>();
     for (const chain of [0, 1] as const) for (const u of scan.chains[chain].used) for (const h of u.history) ours.add(h.tx_hash);
+    // The pending change of a payment relayed here, which a server that does not see the mempool has no history for.
+    for (const r of this.relayed.list()) ours.add(r.txid);
     const candidates = tx.inputs.filter((i) => ours.has(i.txid));
     if (!candidates.length) return false;
     const scripts = this.walletScripts(wallet, scan);
@@ -1011,7 +1234,158 @@ export class ChainService {
    * the server reported. Throws `BroadcastRejectedError` when a server answered
    * and refused the transaction, `ChainUnavailableError` when none could be asked.
    */
-  async broadcast(txHex: string): Promise<{ txid: string; via: 'electrum' | 'bitcoind' }> {
+  async broadcast(txHex: string, opts: { track?: boolean } = {}): Promise<{ txid: string; via: 'electrum' | 'bitcoind' }> {
+    const r = await this.relay(txHex);
+    if (opts.track) {
+      // Known mempool state from now on, whatever the server lists (relayed.ts); the live wallet looks again at once.
+      this.track(txidOf(txHex), txHex);
+      this.emitChange('relayed');
+    }
+    return r;
+  }
+
+  /**
+   * Keeps `txHex` as known mempool state (relayed.ts). The node took it (or holds it), so a record spending one of the
+   * same coins was replaced (RBF, "Speed up"): it ends, as gone.
+   */
+  private track(txid: string, txHex: string, via?: 'node'): void {
+    const raw = txHex.toLowerCase();
+    let inputs: Set<string>;
+    try {
+      inputs = new Set(parseRawTx(raw).inputs.map((i) => `${i.txid}:${i.vout}`));
+    } catch {
+      return;
+    }
+    const replaced = this.relayed.list().filter((r) => {
+      if (r.txid === txid) return false;
+      try {
+        return parseRawTx(r.txHex).inputs.some((i) => inputs.has(`${i.txid}:${i.vout}`));
+      } catch {
+        return false;
+      }
+    });
+    if (replaced.length) this.relayed.drop(replaced.map((r) => r.txid), { gone: true });
+    this.relayed.add(txid, raw, via ? { via } : {});
+    this.txCache.set(txid, raw);
+  }
+
+  /**
+   * Reads Bitcoin Core's mempool for the watched wallets, while the Electrum server shows none (`mempool` unseen) and
+   * Core's RPC is configured (always on Umbrel and Start9): every `NODE_MEMPOOL_POLL_MS`, the txid list
+   * (`getrawmempool`, never its verbose form, whose `bip125-replaceable` Core 32 dropped), then each transaction not
+   * looked at yet (`getrawtransaction`, in batches). One that pays a watched script, spends a coin a watched script
+   * lists, or spends an output of one kept already, is kept as known mempool state (relayed.ts, `via: 'node'`): an
+   * incoming payment shows unconfirmed, with its `wallet_tx`, as with a server that sees the mempool. A kept one that
+   * left Core's mempool is checked as in `checkMempool` (dropped, or replaced: gone; confirmed: kept until the server
+   * lists it). Nothing is imported into Core and no wallet of it is asked: only what the guardian watches anyway.
+   */
+  pollNodeMempool(): Promise<void> {
+    this.pollingNode ??= this.doPollNodeMempool()
+      .then(
+        () => {
+          if (!this.nodeMempoolOk) this.log.info('chain.node_mempool_reading', { watching: this.nodeLooked.size });
+          this.nodeMempoolOk = true;
+        },
+        (e) => {
+          if (this.nodeMempoolOk !== false) this.log.warn('chain.node_mempool_failed', { error: errorText(e) });
+          this.nodeMempoolOk = false;
+        },
+      )
+      .finally(() => {
+        this.pollingNode = undefined;
+      });
+    return this.pollingNode;
+  }
+
+  /** Whether the node's mempool should be read now (`pollNodeMempool`). */
+  private get nodeMempoolWanted(): boolean {
+    return !!this.opts.rpc && this.current instanceof ElectrumBackend && !!this.current.connected && !!this.live && this.mempoolView.state === 'unseen';
+  }
+
+  private async doPollNodeMempool(): Promise<void> {
+    const rpc = this.opts.rpc;
+    const live = this.live;
+    if (!rpc || !live || !this.nodeMempoolWanted) return;
+    const txids = await rpc.call<string[]>('getrawmempool', [false], { timeoutMs: 30_000 });
+    if (!Array.isArray(txids)) throw new Error('getrawmempool did not answer a list');
+    const inMempool = new Set(txids.map((t) => String(t).toLowerCase()));
+    for (const id of this.nodeLooked) if (!inMempool.has(id)) this.nodeLooked.delete(id);
+    let changed = false;
+    // Kept ones that left Core's mempool: dropped or replaced (gone), or confirmed (the server lists them soon).
+    for (const r of this.relayed.list()) {
+      if (r.seen || inMempool.has(r.txid)) continue;
+      if ((await this.nodeMempoolState(rpc, r).catch(() => undefined)) === 'gone') {
+        this.relayed.drop([r.txid], { gone: true });
+        changed = true;
+      }
+    }
+    const fresh = [...inMempool].filter((id) => !this.nodeLooked.has(id) && !this.relayed.get(id));
+    const scripts = (script: Uint8Array) => live.watches(scriptHash(script));
+    const unspent = live.unspentOutpoints();
+    const kept = new Set(this.relayed.list().map((r) => r.txid));
+    const found: { txid: string; txHex: string; inputs: { txid: string; vout: number }[] }[] = [];
+    const later: typeof found = [];
+    for (let i = 0; i < fresh.length; i += NODE_MEMPOOL_BATCH) {
+      if (live !== this.live || !this.nodeMempoolWanted) return;
+      const chunk = fresh.slice(i, i + NODE_MEMPOOL_BATCH);
+      const got = await rpc.batch<string>('getrawtransaction', chunk.map((id) => [id, false]), { timeoutMs: 30_000 });
+      got.forEach((g, k) => {
+        const txid = chunk[k]!;
+        this.nodeLooked.add(txid);
+        if (!g.ok || typeof g.result !== 'string') return; // gone meanwhile
+        let tx: ReturnType<typeof parseRawTx>;
+        try {
+          tx = parseRawTx(g.result);
+        } catch {
+          return;
+        }
+        if (txidOf(g.result) !== txid) return;
+        const t = { txid, txHex: g.result.toLowerCase(), inputs: tx.inputs };
+        if (tx.outputs.some((o) => scripts(o.script)) || tx.inputs.some((x) => unspent.has(`${x.txid}:${x.vout}`))) found.push(t);
+        else later.push(t);
+      });
+    }
+    // Spending an output of one kept (a payment from its change): kept too, whatever order the list came in.
+    for (const t of found) kept.add(t.txid);
+    for (let more = true; more; ) {
+      more = false;
+      for (let k = later.length - 1; k >= 0; k--)
+        if (later[k]!.inputs.some((x) => kept.has(x.txid))) {
+          found.push(later[k]!);
+          kept.add(later[k]!.txid);
+          later.splice(k, 1);
+          more = true;
+        }
+    }
+    for (const t of found) this.track(t.txid, t.txHex, 'node');
+    if (found.length) this.log.info('chain.node_mempool_found', { count: found.length });
+    if (found.length || changed) this.emitChange('relayed');
+  }
+
+  /**
+   * The script hashes of the transactions kept as known mempool state (relayed.ts): the scripts they pay and the ones
+   * whose coins they spend (as far as their previous transactions are known here). A new block re-reads them at once.
+   */
+  private pendingScriptHashes(): Set<string> {
+    const out = new Set<string>();
+    for (const r of this.relayed.list()) {
+      let tx: ReturnType<typeof parseRawTx>;
+      try {
+        tx = parseRawTx(r.txHex);
+      } catch {
+        continue;
+      }
+      for (const o of tx.outputs) out.add(scriptHash(o.script));
+      for (const i of tx.inputs) {
+        const prev = this.txCache.get(i.txid) ?? this.relayed.get(i.txid)?.txHex;
+        const script = prev ? parseRawTx(prev).outputs[i.vout]?.script : undefined;
+        if (script) out.add(scriptHash(script));
+      }
+    }
+    return out;
+  }
+
+  private async relay(txHex: string): Promise<{ txid: string; via: 'electrum' | 'bitcoind' }> {
     const errors: string[] = [];
     let rejected: string | undefined;
     const e = this.current;
@@ -1040,6 +1414,170 @@ export class ChainService {
     throw new ChainUnavailableError(`broadcast failed (${errors.join('; ')})`);
   }
 
+  /** Whether the chain source reports unconfirmed transactions, as far as the guardian could tell (`MempoolView`). */
+  get mempool(): MempoolView {
+    if (this.current?.kind === 'core') return { state: 'seen' };
+    const v = this.mempoolView;
+    if (v.state !== 'unseen') return { ...v };
+    const electrs = /electrs/i.test(this.current?.serverVersion ?? '');
+    return {
+      ...v,
+      ...(electrs && (this.nodeVersion ?? 0) >= CORE_WITHOUT_BIP125 ? { cause: 'electrs_core32' as const } : {}),
+      ...(this.nodeMempoolWanted && this.nodeMempoolOk ? { viaNode: true } : {}),
+      ...(this.pingMs !== undefined && this.pingMs > (this.opts.slowPingMs ?? SLOW_PING_MS) ? { serverSlow: true } : {}),
+    };
+  }
+
+  /** True when the chain source was found not to report unconfirmed transactions (`mempool`). */
+  get mempoolUnseen(): boolean {
+    return this.mempool.state === 'unseen';
+  }
+
+  /**
+   * True when unconfirmed payments TO the wallet do not show: the server shows no mempool and the guardian cannot read
+   * Bitcoin Core's instead (no RPC, or it fails). What the phone's `chainSource.mempool` says.
+   */
+  get incomingUnseen(): boolean {
+    const m = this.mempool;
+    return m.state === 'unseen' && !m.viaNode;
+  }
+
+  private noteMempool(state: 'seen' | 'unseen', reason?: MempoolView['reason']): void {
+    const was = this.mempoolView;
+    if (was.state === state && was.reason === reason) return;
+    // One transaction listed proves the server sees the mempool; an empty histogram does not undo that by itself.
+    if (state === 'unseen' && reason === 'fee_histogram_empty' && this.relayed.list().some((r) => r.seen)) return;
+    this.mempoolView = { state, ...(reason ? { reason } : {}), since: this.now() };
+    if (state === 'unseen') {
+      this.log.warn('chain.mempool_unseen', { reason, server: this.current?.serverVersion, node: this.nodeVersion });
+      // Bitcoin Core's mempool instead, at once.
+      if (this.nodeMempoolWanted) void this.pollNodeMempool();
+    }
+    else if (was.state === 'unseen') this.log.info('chain.mempool_seen', { server: this.current?.serverVersion });
+  }
+
+  /**
+   * What the guardian checks about the mempool, from its tick (cheap; runs one at a time):
+   *
+   * - With Bitcoin Core's RPC, each relayed transaction the server does not list: still in Core's mempool
+   *   (`getmempoolentry`), or gone, when Core holds a coin it spends as unspent (`gettxout` with the mempool): then the
+   *   record ends and the wallet shows that coin again (dropped, expired, or replaced by a payment made elsewhere).
+   * - Once per relayed transaction, a minute after it was relayed: does the Electrum server list it (`get_history` of a
+   *   script it pays, asked of the server itself, not the subscriptions)? Not listed while Core still has it (or with no
+   *   Core to ask): the server does not see the mempool (`mempool`).
+   * - With Core's RPC, every `MEMPOOL_HISTOGRAM_EVERY_MS`: the server's fee histogram (`mempool.get_fee_histogram`)
+   *   empty while Core holds at least `MEMPOOL_MIN_NODE_TXS` transactions: the same finding; a histogram with entries
+   *   says the server sees the mempool.
+   */
+  checkMempool(): Promise<void> {
+    this.checkingMempool ??= this.doCheckMempool()
+      .catch((e) => this.log.debug('chain.mempool_check_failed', { error: errorText(e) }))
+      .finally(() => {
+        this.checkingMempool = undefined;
+      });
+    return this.checkingMempool;
+  }
+
+  private async doCheckMempool(): Promise<void> {
+    const b = this.current;
+    if (!b?.connected) return;
+    const rpc = this.opts.rpc;
+    const now = this.now();
+    let dropped = false;
+    const due: { r: RelayedTx; inNode?: 'mempool' | 'gone' | 'spent' }[] = [];
+    for (const r of this.relayed.list()) {
+      if (r.seen) continue;
+      let inNode: 'mempool' | 'gone' | 'spent' | undefined;
+      if (rpc) {
+        inNode = await this.nodeMempoolState(rpc, r).catch(() => undefined);
+        if (inNode === 'gone') {
+          this.relayed.drop([r.txid], { gone: true });
+          this.log.info('chain.relayed_gone', { count: 1, via: 'bitcoind' });
+          dropped = true;
+          continue;
+        }
+      }
+      if (!(b instanceof ElectrumBackend) || r.checked || now - r.at < MEMPOOL_UNSEEN_AFTER_MS) continue;
+      due.push({ r, inNode });
+    }
+    // The script of a coin each spends (the owner's, which the server knows the guardian watches anyway): from the cache,
+    // else all fetched at once.
+    const ask: { r: RelayedTx; inNode?: 'mempool' | 'gone' | 'spent'; script: Uint8Array }[] = [];
+    await Promise.all(
+      due.map(async (d) => {
+        const first = parseRawTx(d.r.txHex).inputs[0];
+        const prevHex = first ? await this.getTransaction(first.txid).catch(() => undefined) : undefined;
+        const script = prevHex && first ? parseRawTx(prevHex).outputs[first.vout]?.script : undefined;
+        if (script) ask.push({ ...d, script }); // else not known yet: the next tick tries again
+      }),
+    );
+    if (dropped) this.emitChange('relayed');
+    // Every Electrs request at once (pipelined): a slow server answers them all after one turn of its loop.
+    const electrs = b instanceof ElectrumBackend ? b : undefined;
+    const histogramDue = !!rpc && !!electrs && (this.lastHistogramAt === undefined || now - this.lastHistogramAt >= MEMPOOL_HISTOGRAM_EVERY_MS);
+    if (histogramDue) this.lastHistogramAt = now;
+    const pingStart = Date.now();
+    const [listed, found] = await Promise.all([
+      Promise.all(ask.map((a) => electrs!.history(a.script).then((h) => h.find((x) => x.tx_hash === a.r.txid), () => null))),
+      histogramDue
+        ? Promise.all([
+            electrs!.feeHistogram(),
+            // Only the mempool's size: never an entry, whose fields changed in Core 32 (`bip125-replaceable`).
+            rpc!.call<{ size?: number }>('getmempoolinfo'),
+            this.nodeVersion === undefined ? rpc!.call<{ version?: number }>('getnetworkinfo').catch(() => undefined) : undefined,
+            // How long the server takes to answer anything: Electrs 0.11 with Core 32 rereads Core's whole mempool on the
+            // loop that answers requests (about 7 s each).
+            electrs!.ping().then(() => Date.now() - pingStart),
+          ])
+        : undefined,
+    ]);
+    ask.forEach((a, k) => {
+      const l = listed[k];
+      if (l === null) return; // not answered: the next tick asks again
+      this.relayed.mark(a.r.txid, { checked: true });
+      if (l && l.height <= 0) {
+        this.relayed.mark(a.r.txid, { seen: true });
+        this.noteMempool('seen');
+      } else if (!l && (a.inNode === undefined || a.inNode === 'mempool')) this.noteMempool('unseen', 'relayed_tx_not_listed');
+    });
+    if (!found) return;
+    const [histogram, info, net, pingMs] = found;
+    if (net?.version !== undefined) this.nodeVersion = net.version;
+    this.notePing(pingMs);
+    if (histogram === undefined) return; // a server without the method: no finding
+    if (histogram.length > 0) this.noteMempool('seen');
+    else if ((info?.size ?? 0) >= MEMPOOL_MIN_NODE_TXS) this.noteMempool('unseen', 'fee_histogram_empty');
+  }
+
+  /** The server's last ping round trip (ms), from the mempool check; logged once when it turns slow. */
+  private pingMs?: number;
+
+  private notePing(ms: number): void {
+    const slow = ms > (this.opts.slowPingMs ?? SLOW_PING_MS);
+    const was = this.pingMs !== undefined && this.pingMs > (this.opts.slowPingMs ?? SLOW_PING_MS);
+    this.pingMs = ms;
+    if (slow && !was) this.log.warn('chain.server_slow', { pingMs: ms, server: this.current?.serverVersion });
+  }
+
+  /**
+   * Where Bitcoin Core has a relayed transaction: in its mempool; `gone` when a coin it spends is unspent in Core's view,
+   * mempool included (dropped or replaced: that coin can be spent again), or when it spends an output of a relayed
+   * transaction that is gone; else `spent` (confirmed, or replaced by another spend of the same coins).
+   */
+  private async nodeMempoolState(rpc: BitcoinRpc, r: RelayedTx): Promise<'mempool' | 'gone' | 'spent'> {
+    try {
+      await rpc.call('getmempoolentry', [r.txid]);
+      return 'mempool';
+    } catch (e) {
+      if (!(e instanceof BitcoinRpcError) || e.code !== -5) throw e; // -5: not in the mempool
+    }
+    for (const inp of parseRawTx(r.txHex).inputs) {
+      if (this.relayed.isGone(inp.txid)) return 'gone';
+      if ((await rpc.call<unknown>('gettxout', [inp.txid, inp.vout, true])) !== null) return 'gone';
+    }
+    return 'spent';
+  }
+
   private async nodeInfo(): Promise<{ info?: BlockchainInfo; error?: string } | undefined> {
     if (!this.opts.rpc) return undefined;
     const now = Date.now();
@@ -1059,10 +1597,12 @@ export class ChainService {
     if (!e || !e.connected || !e.tip) return { state: 'unavailable', source };
     const node = await this.nodeInfo();
     const info = node?.info;
+    const m = this.mempool;
+    const unseen = m.state === 'unseen' ? { mempoolUnseen: true, ...(m.cause ? { mempoolCause: m.cause } : {}), ...(m.viaNode ? { mempoolViaNode: true } : {}), ...(m.serverSlow ? { mempoolServerSlow: true } : {}) } : {};
     if (info && (info.initialblockdownload || info.blocks < info.headers - 1)) {
-      return { state: 'syncing', progress: Math.max(0, Math.min(1, info.verificationprogress)), source, height: e.tip.height };
+      return { state: 'syncing', progress: Math.max(0, Math.min(1, info.verificationprogress)), source, height: e.tip.height, ...unseen };
     }
-    return { state: 'synced', source, height: e.tip.height };
+    return { state: 'synced', source, height: e.tip.height, ...unseen };
   }
 
   async preflight(): Promise<ChainPreflight> {

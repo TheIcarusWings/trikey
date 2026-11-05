@@ -6,6 +6,9 @@
  *   source reports and on every block; the page answers from its last read (`LiveWallet.lastRead`). Only when there is
  *   none yet (just started, just paired, live wallet off) does it read the chain itself, once at a time, and keeps that
  *   for `COLD_READ_TTL_MS`.
+ * - **Pending spends** as the phone shows them: the read applies the transactions the guardian relayed (or read from
+ *   Bitcoin Core's mempool) that the chain server does not list yet (chain/relayed.ts): their coins are not in the
+ *   balance, their change is unconfirmed, and they are payments. A read older than the last such change is not served.
  * - **The receive address** is the phone's rule, not a new one: the first unused address of the receive chain after the
  *   highest used one (`WalletSync.nextReceiveIndex`, which the phone's `wallet.sync` carries too and its Receive screen
  *   derives from), derived from the stored descriptor. A web visit never moves the index on, and the index is never past
@@ -62,9 +65,13 @@ const reading = new WeakMap<Guardian, Promise<Read>>();
 
 /** The paired wallet's latest read: the live wallet's, else one of its own (shared by concurrent requests). */
 async function readWallet(g: Guardian, reg: { walletId: string; descriptor: string; network: NetworkName }): Promise<Read> {
-  const live = g.live?.lastRead.get(reg.walletId);
+  // A read from before the guardian relayed (or let go of) a transaction may still count a coin a payment spends as
+  // spendable, or miss its pending change: not served (chain/relayed.ts; the phone applies the same records).
+  const current = (r: { sync: WalletSync }) => (r.sync.relayedVersion ?? 0) === g.chain.relayed.version;
+  const lastLive = g.live?.lastRead.get(reg.walletId);
+  const live = lastLive && current(lastLive) ? lastLive : undefined;
   const cold = coldReads.get(g);
-  const fresh = cold && cold.walletId === reg.walletId && g.clock.now() - cold.at < COLD_READ_TTL_MS ? cold : undefined;
+  const fresh = cold && cold.walletId === reg.walletId && g.clock.now() - cold.at < COLD_READ_TTL_MS && current(cold) ? cold : undefined;
   if (live && (!fresh || live.at >= fresh.at)) return { walletId: reg.walletId, ...live };
   if (fresh) return fresh;
   let p = reading.get(g);

@@ -26,6 +26,18 @@ export const FEE_SPEEDS: { speed: FeeSpeed; label: string }[] = [
   { speed: 'fast', label: '~10 min' },
 ];
 
+/**
+ * True when every speed the wallet quoted costs the same fee (a quiet mempool, or every estimate at the 1 sat/vB floor):
+ * Review then picks Fast, and the speed sheet says so. False with fewer than two quotes to compare.
+ */
+export function sameFeeEverySpeed(fees: Partial<Record<FeeSpeed, Sats>>): boolean {
+  const known = Object.values(fees).filter((f): f is Sats => typeof f === 'number');
+  return known.length >= 2 && known.every((f) => f === known[0]);
+}
+
+/** The speed sheet's note when `sameFeeEverySpeed`. */
+export const SAME_FEE_NOTE = 'All speeds cost the same right now, so Fast it is.';
+
 export const DELAY_OPTIONS: RecoveryDelayDays[] = [7, 14, 30];
 export const LIMIT_PRESETS: Sats[] = [100_000, 200_000, 500_000];
 

@@ -325,6 +325,22 @@ address of the wallet and the box's IP address and could hide coins or delay con
 cannot spend or change a rule); the phone shows that warning while `kind` is `public`. During a recovery the guardian
 refuses to switch to a public server.
 
+**Unconfirmed transactions.** Some Electrum servers report no mempool at all: Electrs 0.11 reads none of Bitcoin Core
+32's (Core dropped `bip125-replaceable` from mempool entries, Electrs requires it and skips every entry), so every
+Umbrel with Electrs and Core 32 or later shows an empty fee histogram and no unconfirmed history while Core holds the
+transactions (and Electrs answers every request about 7 s late; `deprecatedrpc=bip125` in Core's configuration, or
+Bitcoin Core alone as the chain server, fixes both). The guardian therefore keeps every transaction it relayed for the owner through `tx.broadcast` as known
+mempool state: until the server lists it (or Bitcoin Core, when configured, says it is gone, or Core's mempool expiry
+passed), `wallet.sync` shows its inputs spent, its outputs to the wallet as unconfirmed coins and the transaction
+itself in `history` as unconfirmed, and the live wallet announces it (`wallet_tx`). A relayed transaction not listed by
+the server within a minute, or an empty fee histogram while Bitcoin Core's mempool is not, tells the guardian that the
+server shows no mempool. With Bitcoin Core's RPC configured (always on Umbrel and Start9) it then reads Core's mempool
+itself (`getrawmempool`, the txid list only, and the new transactions' raw hex) and keeps those touching its watched
+wallets the same way, so payments to the wallet show unconfirmed too. A hosted guest's transactions are never kept.
+`guardian.status.chainSource` carries `mempool: "unseen"` only when payments to the wallet show once confirmed (no
+mempool on the server and no Core RPC to read instead). The phone also keeps the coins its own payments spent out of
+every payment and balance until they confirm, whatever a sync says.
+
 **Live wallet.** Guardians that list `live_wallet` in `guardian.status.features` keep the paired wallet's chain data
 live instead of reading it per `wallet.sync`: on an Electrum server they subscribe (`blockchain.scripthash.subscribe`)
 to every script of both chains up to `gapLimit` past the last used one (extending as addresses get used), and of the

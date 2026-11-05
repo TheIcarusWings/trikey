@@ -5,7 +5,7 @@ import { GUTTER, useScreenInsets } from '@/components/screen';
 import { Card } from '@/components/ui/card';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
-import { useWallet, useWalletService } from '@/data';
+import { promptDetailText, useWallet, useWalletService } from '@/data';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -44,7 +44,7 @@ export function DevicePromptHost() {
           {prompt?.detail ? (
             <Card className="px-4 py-3">
               <Text selectable className="font-mono text-[13px] leading-5">
-                {prompt.detail}
+                {promptDetailText(prompt.detail)}
               </Text>
             </Card>
           ) : null}

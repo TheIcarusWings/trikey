@@ -11,7 +11,7 @@ import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { formatSats, hostLockedLine, serverHost, shorten, useNow, useWallet, useWalletService, walletPausedLine } from '@/data';
 import { guardianBox, hostLabel } from '@/lib/labels';
-import { PUBLIC_SERVER_WARNING, chainDataLabel, hostChainDataLabel } from '@/data/chain-source';
+import { MEMPOOL_UNSEEN_NOTE, PUBLIC_SERVER_WARNING, chainDataLabel, hostChainDataLabel, mempoolUnseen } from '@/data/chain-source';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
@@ -211,6 +211,8 @@ export default function GuardianSettings() {
         )}
         <InfoRow label="Guardian ID" value={shorten(guardian.npub, 8, 4)} mono />
       </Panel>
+      {/* Quiet: nothing to do on the phone, and its own payments still show at once. */}
+      {!hosted && mempoolUnseen(guardian.chainSource) ? <Text className="text-muted-foreground text-sm leading-5">{MEMPOOL_UNSEEN_NOTE}</Text> : null}
       {hosted ? <AppButton title="Chain server" variant="outline" onPress={() => router.push('/settings/hosted-server')} /> : null}
       {hosted?.endsAt ? (
         <Text className="text-warn text-sm leading-5">

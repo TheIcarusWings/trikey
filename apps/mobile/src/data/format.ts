@@ -92,6 +92,23 @@ export function formatBtc(sats: Sats): string {
   return `${whole}.${decimals.slice(0, end)}`;
 }
 
+/**
+ * An amount as the hardware wallet screen sketch shows it: BTC with all eight decimals, the same for the amount and the
+ * fee, so the two read alike (3000 sats -> "0.00003000", a 190 sats fee -> "0.00000190").
+ */
+export function deviceBtc(sats: Sats): string {
+  return (Math.abs(sats) / SATS_PER_BTC).toFixed(8);
+}
+
+/**
+ * What the device is about to show (the wallet's `hardware_prompt` text), for the sheet: the fee on a line of its own,
+ * so it never wraps after a long address with its comma or colon at the start of a line.
+ * "Send 3000 sats to bc1q…, fee 190 sats" -> "Send 3000 sats to bc1q…" + newline + "Fee 190 sats".
+ */
+export function promptDetailText(text: string): string {
+  return text.replace(/[,:]\s+(network fee|fee)\b/gi, (_m, w: string) => `\n${w[0]!.toUpperCase()}${w.slice(1)}`);
+}
+
 /** "4,210,000" or "0.0421" depending on the unit the user picked. */
 export function formatAmount(sats: Sats, unit: AmountUnit): string {
   return unit === 'btc' ? formatBtc(sats) : formatSats(sats);

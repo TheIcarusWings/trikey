@@ -6,6 +6,35 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## 0.1.13-alpha (2026-11-05)
+
+Fixes from testing 0.1.12 on an Umbrel on mainnet, and a Wallet page on the guardian. Update the guardian and the
+app; each works with the other side's older version.
+
+- **Your own unconfirmed payment's coins are never used again.** After a payment, the next sync could list the coin it
+  had just spent as unspent again, when the guardian's chain server hadn't seen the payment yet, and a second payment
+  could pick it. At the same fee the node refuses that payment; at a higher fee it would have replaced (cancelled) the
+  first one. The app now keeps the coins of its own unconfirmed payments out of every payment and of the balance, and
+  shows their change as pending, whatever a sync says, until the payment confirms or drops (#121).
+- **Electrs on Umbrel can't see Bitcoin Core 32's mempool.** Core 32 dropped a field (`bip125-replaceable`) that Electrs
+  0.11.1 requires, so Electrs skips every unconfirmed transaction and answers every request about 7 s late. Incoming
+  payments then appear only once confirmed. The guardian now:
+  - reads unconfirmed payments from Bitcoin Core itself when it has Core's RPC (Umbrel passes it), so they show and
+    alert again before they confirm;
+  - treats the payments it broadcast itself as pending until the server lists them;
+  - warns on its web page, naming the cause and the two fixes: `deprecatedrpc=bip125` in Bitcoin Core's config, or
+    Settings > Server > Bitcoin Core alone;
+  - sends the "confirmed" alert sooner after a block (one round trip instead of three).
+
+  Reported upstream: getumbrel/umbrel-apps#6307 and romanz/electrs#1361 (#121).
+- **A Wallet page on the guardian's web page** (view and receive only): the balance with unconfirmed apart, payments
+  in and out with fee and confirmations, the daily limit used and left, Savings, and the address to receive at, always
+  the same one the phone shows. It also works while the guardian is locked, and never shows a hosted guest (#120).
+- **Pull to refresh no longer waits for fee estimates.** The guardian keeps them for a minute or until the next block
+  and asks for all of them at once; Review waits for fresh ones before it offers to send (#119).
+- When every fee speed costs the same, Review picks Fast and says so. The hardware wallet sketch shows the amount and
+  the fee with the same decimals, and the fee gets its own line (#121).
+
 ## 0.1.12-alpha (2026-11-04)
 
 Live payments, a faster app, a way to unstick a payment, and family hosting. Update the guardian and the app; each
