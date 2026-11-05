@@ -2,7 +2,7 @@
 
 Status: **proposal**, written 2026-11-05 against `main` at `b0c3bb5` (after family hosting phases 1 and 2, Savings,
 the live wallet and the web Wallet page), revised the same day to the owner's decision. Nothing here is built. The
-owner's decisions and the few questions they raise are in section 10.
+owner's decisions are in section 10.
 
 The owner's ask (2026-11-01, deferred then in favour of family hosting): "Allow the same phone app to have multiple
 wallets where the only key that changes is the hardware wallet."
@@ -50,7 +50,7 @@ The two cases it fits:
 
 | Reading | Why not now |
 |---|---|
-| Wallets of several guardians in one app; a hosted wallet next to your own | One phone identity is paired with one guardian, and a host refuses a phone pubkey it already knows. Later (question 3). |
+| Wallets of several guardians in one app; a hosted wallet next to your own | One phone identity is paired with one guardian, and a host refuses a phone pubkey it already knows. Later (section 10). |
 | A second wallet with the same hardware wallet | Its key would appear in both wallets. Savings is the second pot for one device. |
 | Recovery Key mode wallets in the switcher | Its own service and seed; test networks only. |
 | Wallets on different networks side by side; one wallet on several phones; two guardians sharing key 3 | Out of scope. |
@@ -67,7 +67,7 @@ phone's child key at index *i* is the same pubkey in both wallets' scripts, and 
 shows them, and anyone can link the wallets on chain. A separate BIP 48 account per wallet gives unrelated keys from
 the same seed. It costs the person nothing: one seed, one backup, one guardian, one pairing.
 
-### The account layout (recommended, question 1)
+### The account layout
 
 Wallet *n* (the first is *n* = 0) uses account **2*n*** for Spending and **2*n*+1** for its Savings. The first wallet
 is exactly today's.
@@ -144,7 +144,7 @@ with its files where they are. This is the bulk of the work.
 
 ### Adding a wallet
 
-From the paired phone (recommended, question 2), in two requests like pairing:
+From the paired phone, in two requests like pairing:
 
 1. **`wallet.add.prepare`** `{ account }`: the guardian checks the account is free and even, and answers key 3's xpub
    at that account.
@@ -340,7 +340,7 @@ sheets printed from the app.
 ### Later
 
 Silent payments and the helper coin per wallet (at an account per wallet; the guardian's scanner costs CPU per scan
-key), wallets of other guardians and hosted wallets in the switcher (question 3), a per-wallet passcode for the
+key), wallets of other guardians and hosted wallets in the switcher, a per-wallet passcode for the
 screens, a cap across all wallets of one phone, Recovery Key mode wallets.
 
 ## 10. Owner's decisions (2026-11-05)
@@ -362,16 +362,6 @@ simple." What follows from it:
 | The same hardware wallet in two wallets | Refused, also as another wallet's Savings Recovery Key. |
 | Per-wallet passcode | Later (and with one seed, a screen lock only). |
 | Order | The guardian first, then the phone (section 9). |
-
-### Questions this decision raises
-
-1. **Account numbers.** *Recommendation:* Spending at 2*n*, Savings at 2*n*+1 (wallet 2 at 2' and 3', wallet 3 at
-   4' and 5'), key 3 at the Spending number: each wallet's pair stays together and Savings works for every wallet.
-   *Alternative:* the example's 2', 3', 4' for wallets 2, 3, 4, with their Savings elsewhere (such as 100' + *n*) or
-   no Savings for them.
-2. **Who may add a wallet.** *Recommendation:* the paired phone with the new hardware wallet's pairing proof,
-   announced to the phone, the owner's channels and the web UI's activity; no trip to the box. *Alternative:* a code
-   from the web UI, like the first pairing.
-3. **Wallets of other guardians, and hosted wallets, in the same app.** *Recommendation:* later; for now the app holds
-   the wallets of one guardian. *Alternative:* now, with a second seed and identity per other guardian, which gives
-   up "one backup".
+| Accounts (2026-11-05, accepted) | A hidden BIP 48 account per wallet on the shared phone and key 3 seeds: Spending at 2*n*, Savings at 2*n*+1 (wallet 2 at 2' and 3', wallet 3 at 4' and 5'), key 3 at the Spending number (section 2). |
+| Adding a wallet (2026-11-05, accepted) | By the paired phone with the new hardware wallet's pairing proof, announced on the phone, the owner's channels and the web UI's Activity (section 3). |
+| Other guardians and hosted wallets in the same app (2026-11-05, accepted) | Later. For now the app holds the wallets of one guardian. |
