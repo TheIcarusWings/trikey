@@ -346,7 +346,9 @@ describe('fee estimates, off the pull', { timeout: 60_000 }, () => {
       // The quote is made again with the new fees (not the one kept for the same coins): what Review shows and sends.
       expect(rateOf(to)).toBe(50);
       // The fees were asked for once the chain data was answered: on Electrs their requests would hold up its ping.
-      expect(order.slice(0, 2)).toEqual(['wallet.sync answered', 'fees.estimate asked']);
+      // (Another wallet's sync, Savings, may answer in between; what matters is that none was asked first.)
+      expect(order[0]).toBe('wallet.sync answered');
+      expect(order.filter((e) => e === 'fees.estimate asked')).toHaveLength(1);
       // "Updating…" lasted until they landed.
       const last = rec.states.findLastIndex((s) => s.feesUpdating);
       expect(rec.states.slice(0, last + 1).every((s) => s.syncing || s.updating)).toBe(true);
