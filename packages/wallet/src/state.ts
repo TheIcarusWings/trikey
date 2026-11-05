@@ -155,14 +155,15 @@ export const GuardianStatusCache = z.object({
    */
   paused: z.object({ by: z.enum(['contact', 'phone']), at: z.number(), contact: z.string().optional() }).optional(),
   /**
-   * The extra alert channels (email, ntfy, webhook) the owner set up in the guardian's web UI, masked
-   * (`guardian.status.notifications`). Read-only on the phone. Absent from older guardians and while there are none.
+   * The extra alert channels (email, ntfy, webhook, Telegram) the owner set up in the guardian's web UI, masked
+   * (`guardian.status.notifications`, its `otherChannels` merged in). Read-only on the phone. Absent from older
+   * guardians and while there are none.
    */
   notifications: z
     .object({
       channels: z.array(
         z.object({
-          kind: z.enum(['email', 'ntfy', 'webhook']),
+          kind: z.enum(['email', 'ntfy', 'webhook', 'telegram']),
           audience: z.enum(['owner', 'contact']),
           contact: z.string().optional(),
           hint: z.string(),

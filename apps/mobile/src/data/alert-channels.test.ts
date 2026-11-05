@@ -42,6 +42,8 @@ describe('grouping and words', () => {
     expect(alertChannelText({ kind: 'webhook', hint: 'homeassistant.local:8123', failing: true })).toBe('Webhook (homeassistant.local:8123), not getting through');
     expect(alertChannelsLine([{ kind: 'email', hint: 'm…@example.com' }, { kind: 'ntfy', hint: 'ntfy.example.com' }])).toBe('Also by email m…@example.com and ntfy (ntfy.example.com)');
     expect(alertChannelsLine([])).toBe('');
+    expect(alertChannelText({ kind: 'telegram', hint: 'M…' })).toBe('Telegram (M…)');
+    expect(alertChannelsLine([{ kind: 'email', hint: 'm…@example.com' }, { kind: 'telegram', hint: 'M…', failing: true }])).toBe('Also by email m…@example.com and Telegram (M…), not getting through');
     expect(ALERT_CHANNELS.safety).toMatch(/can't change them/);
     expect(ALERT_CHANNELS.limits).toMatch(/Cancelling a recovery and locking the guardian stay with nostr/);
   });

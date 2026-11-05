@@ -188,12 +188,12 @@ export interface Contact {
 }
 
 /**
- * One extra alert channel (email, ntfy push, webhook) the owner set up in the guardian's web page
+ * One extra alert channel (email, ntfy push, webhook, Telegram) the owner set up in the guardian's web page
  * (docs/design/notifications.md). Masked and read-only on the phone: a stolen phone cannot silence or redirect them.
  */
 export interface AlertChannel {
-  kind: 'email' | 'ntfy' | 'webhook';
-  /** `m…@example.com`, or the server's host name. */
+  kind: 'email' | 'ntfy' | 'webhook' | 'telegram';
+  /** `m…@example.com`, the server's host name, or (Telegram) the first letter of the chat's name. */
   hint: string;
   /** The last message to it failed. */
   failing?: boolean;
@@ -205,7 +205,7 @@ export interface AlertChannels {
   you: AlertChannel[];
   /** By contact id (the contact's nostr pubkey, hex): channels next to the nostr key. */
   byContact: Record<string, AlertChannel[]>;
-  /** People reachable only by email or ntfy: warnings, no cancel or lock. */
+  /** People reachable only by email, ntfy or Telegram: warnings, no cancel or lock. */
   withoutNostr: AlertChannel[];
 }
 
