@@ -659,6 +659,10 @@ signatures plus the script cost more than one key's signature. Two ways to fix t
   does not sign and other devices have to be checked for. A choice next to the default, never a replacement while
   devices are missing. Revisit with the device list.
 
+## Later: several wallets in one app (proposal)
+
+Several wallets on one phone, each with its own hardware wallet, phone key and key 3, on one guardian or several: docs/design/multi-wallet.md (proposal, not built; the owner's questions are in its section 9).
+
 ## Open questions
 
 1. **How the hardware wallet unlocks the guardian.** Rule changes now use BIP137 message signatures (see rule 4); which signing paths each device allows still has to be tested on real hardware. Unlocking with the hardware wallet is still open: Trezor has CipherKeyValue (SLIP-11), Ledger has no symmetric-key API. Until then, unlocking uses the passphrase.
