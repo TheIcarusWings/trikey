@@ -24,6 +24,10 @@ export type ServiceErrorKind =
   // the hardware wallet
   | 'hardware'
   | 'hardware_mismatch'
+  /** Several wallets: this hardware wallet is already in another wallet of this phone (each wallet needs its own). */
+  | 'hardware_in_use'
+  /** The guardian is too old for what was asked (more than one wallet): update it first. */
+  | 'guardian_update_needed'
   | 'address_mismatch'
   // sending
   | 'insufficient_funds'

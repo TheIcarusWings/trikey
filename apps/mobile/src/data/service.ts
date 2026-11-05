@@ -19,6 +19,8 @@ import type {
   RecoveryInProgress,
   RecoveryKeyKind,
   ReplaceGuardianPlan,
+  AddWalletInput,
+  WalletListItem,
   ReplaceGuardianResult,
   RestoreUnlock,
   ScannedCode,
@@ -80,6 +82,19 @@ export interface WalletService {
   pause?(state?: 'inactive' | 'background'): void;
   /** Hides `state.toast` now (a tap on it). Optional: a toast also goes away by itself. */
   dismissToast?(): void;
+
+  // -- several wallets (guardian mode, docs/design/multi-wallet.md) -------------
+  /** Shows another wallet of this phone (`state.wallets`): it then pays, receives and syncs. */
+  switchWallet?(account: number): Promise<void>;
+  /**
+   * "Add a wallet": the new hardware wallet is connected, its first address checked on it, and the guardian takes the
+   * wallet. Rejects with kind `guardian_update_needed` when the guardian cannot hold more than one wallet, and
+   * `hardware_in_use` for a device already in a wallet of this phone. The wallet shown does not change. Ask for a new
+   * backup next: the old one does not hold the new wallet.
+   */
+  addWallet?(input: AddWalletInput): Promise<WalletListItem>;
+  /** Renames a wallet on this phone (1 to 16 characters). */
+  renameWallet?(account: number, name: string): Promise<void>;
 
   // -- onboarding ------------------------------------------------------
   /**

@@ -22,7 +22,9 @@ import {
   KEY3_MIXED_NOTE,
   TrikeyWallet,
   WalletError,
+  WalletSet,
   leaveBlockerText,
+  walletKeys,
   parseBackup,
   type Argon2Params,
   type CloudBackupStore,
@@ -109,6 +111,9 @@ import {
   type WalletState,
   type HostedWalletView,
   type LeaveHostCheck,
+  type AddWalletInput,
+  type WalletListItem,
+  type WalletsView,
 } from './types';
 
 /** What the real wallet needs from the phone. `createPlatform()` fits; tests pass the in-memory stand-ins. */
@@ -341,6 +346,11 @@ class Service implements RealWalletService {
   readonly dev: NonNullable<WalletService['dev']>;
 
   private w?: TrikeyWallet;
+  /**
+   * The phone's wallets on its guardian (docs/design/multi-wallet.md): the first wallet (at `storageKey`) and the ones
+   * added. `w` is the one shown. Undefined until the first wallet is paired.
+   */
+  private set?: WalletSet;
   private unsubWallet?: () => void;
   private network: NetworkName;
   private state!: WalletState;
@@ -437,8 +447,10 @@ class Service implements RealWalletService {
     return walletKey(this.mode, this.network);
   }
 
+  /** The app's own log of the wallet shown: the first wallet's where it always was, an added wallet's next to its state. */
   private get logKey() {
-    return `${this.storageKey}.app`;
+    const own = this.w?.ownWallet;
+    return `${own ? walletKeys(this.storageKey).ownWallet(own.account) : this.storageKey}.app`;
   }
 
   async init(): Promise<void> {
@@ -476,8 +488,13 @@ class Service implements RealWalletService {
     this.state = this.project();
 
     if (found) {
-      const w = await TrikeyWallet.open(this.walletDeps());
-      if (w) this.attach(w);
+      // Every wallet of the phone; the one shown last is shown again.
+      const set = await WalletSet.open(this.walletDeps());
+      if (set) {
+        this.set = set;
+        this.attach(set.shown);
+        if (set.shown !== set.first) this.log = await loadLog(kv, this.logKey);
+      }
     }
     if (this.w) this.starting = this.startInBackground();
   }
@@ -534,6 +551,7 @@ class Service implements RealWalletService {
     } catch (e) {
       this.noteGuardianResult(e, startedAt);
     }
+    await this.ensureSet().catch(() => undefined);
     this.timerOn = true;
     await this.sync();
     if (this.isIdle()) this.armTimer();
@@ -593,7 +611,9 @@ class Service implements RealWalletService {
     await this.starting?.catch(() => {}); // a connection opened after close() would never be closed
     this.unsubWallet?.();
     this.prompts.clearAll();
+    // Every wallet of the phone (a restore connects them all); the one shown among them.
     await this.w?.close().catch(() => {});
+    await this.set?.close().catch(() => {});
   }
 
   get wallet(): TrikeyWallet | undefined {
@@ -834,7 +854,113 @@ class Service implements RealWalletService {
       ...(this.w && s?.stage === 'paired' ? { contactLock: { on: this.w.contactLockOn, supported: this.w.contactLockSupported } } : {}),
       // Email, ntfy and webhook alerts set up in the guardian's web page: shown, never changed, here.
       ...(this.w && s?.stage === 'paired' && this.w.notificationsSupported ? { alertChannels: groupAlertChannels(this.w.notificationChannels) } : {}),
+      ...(this.walletsView() ? { wallets: this.walletsView()! } : {}),
     };
+  }
+
+  // ===========================================================================
+  // Several wallets (docs/design/multi-wallet.md)
+
+  /** The first wallet, once paired, as a set of one (or the set it is in). */
+  private async ensureSet(): Promise<void> {
+    if (this.set || !this.w || this.w.ownWallet || this.w.state.stage !== 'paired' || this.w.isHosted) return;
+    this.set = await WalletSet.of(this.walletDeps(), this.w);
+  }
+
+  private itemOf(w: TrikeyWallet): WalletListItem {
+    const s = w.state;
+    const snap = w.snapshot();
+    const limit = s.rules?.policy.dailyLimitSats ?? snap?.dailyLimit?.limitSats ?? 0;
+    const names = s.hardware ? deviceNames(s.hardware.kind, s.hardware.model) : { model: 'Hardware wallet' };
+    return {
+      account: w.account,
+      name: this.set ? this.set.nameOf(w) : 'Main',
+      device: names.model,
+      current: w === this.w,
+      balanceSats: snap?.balance.totalSats ?? 0,
+      dailyLimitSats: limit >= LIMIT_OFF_SATS ? 0 : limit,
+      ...(limit >= LIMIT_OFF_SATS ? { limitOff: true as const } : {}),
+    };
+  }
+
+  private walletsView(): WalletsView | undefined {
+    const set = this.set;
+    if (!set || !this.w || this.w.isHosted) return undefined;
+    const list = set.list.map((w) => this.itemOf(w));
+    const current = list.find((x) => x.current) ?? list[0]!;
+    const total = set.several ? set.totalDailyLimit() : undefined;
+    const supported = set.first.ownWalletsSupported;
+    return {
+      list,
+      current,
+      canAdd: set.canAdd,
+      guardianUpdateNeeded: !supported && set.first.state.guardianStatus !== undefined,
+      ...(total ? { total: { sats: total.sats, off: total.off } } : {}),
+    };
+  }
+
+  switchWallet(account: number): Promise<void> {
+    return this.exclusive(() =>
+      this.guarded(async () => {
+        const set = this.set;
+        const next = set?.byAccount(account);
+        if (!set || !next) throw new WalletServiceError('invalid_input', 'There is no such wallet on this phone.');
+        if (next === this.w) return;
+        // The wallet shown pays, receives and syncs; the others wait (their alerts still reach the phone).
+        const before = this.w;
+        clearTimeout(this.timer);
+        this.timer = undefined;
+        this.quotes.clear();
+        await before?.close().catch(() => undefined);
+        await set.show(next);
+        this.attach(next);
+        this.log = await loadLog(this.deps.platform.kv, this.logKey);
+        this.refresh();
+        this.starting = this.startInBackground();
+      }),
+    );
+  }
+
+  addWallet(input: AddWalletInput): Promise<WalletListItem> {
+    return this.exclusive(() =>
+      this.guarded(async () => {
+        await this.ensureSet();
+        const set = this.set;
+        const first = set?.first;
+        if (!set || !first) throw new WalletServiceError('wrong_state', 'Pair your first wallet before you add another.');
+        if (!first.ownWalletsSupported) throw new WalletServiceError('guardian_update_needed', 'Update your guardian to add a wallet.');
+        const name = input.name.trim();
+        if (!name || name.length > 16) throw new WalletServiceError('invalid_input', 'Give the wallet a name of 1 to 16 characters.');
+        const kind = toWalletKind(input.hardware);
+        // The other rules are the first wallet's: its waiting period, alert contacts and fee cap.
+        const base = first.state.rules?.policy;
+        const rules: Policy = {
+          dailyLimitSats: input.dailyLimitSats,
+          recoveryDelayDays: base?.recoveryDelayDays ?? 7,
+          alertContacts: [...(base?.alertContacts ?? [])],
+          sweepFeeCapSats: base?.sweepFeeCapSats ?? DEFAULT_SWEEP_FEE_CAP_SATS,
+        };
+        this.setProgress(`Adding "${name}": approve on your new hardware wallet`);
+        try {
+          const added = await set.addWallet({ name, rules, ...(kind ? { hardwareKind: kind } : {}) });
+          addEvent(this.log, { kind: 'wallet-added', name, at: this.clock.now() });
+          await this.saveLogNow();
+          this.refresh();
+          return this.itemOf(added);
+        } finally {
+          this.setProgress(null);
+        }
+      }),
+    );
+  }
+
+  renameWallet(account: number, name: string): Promise<void> {
+    return this.guarded(async () => {
+      const w = this.set?.byAccount(account);
+      if (!this.set || !w) throw new WalletServiceError('invalid_input', 'There is no such wallet on this phone.');
+      await this.set.rename(w, name);
+      this.refresh();
+    });
   }
 
   /** The Savings part of the state: whether it can be had, and, once it exists, its balance, devices and activity. */
@@ -1005,6 +1131,16 @@ class Service implements RealWalletService {
       case 'silent_payments_found':
         this.refresh();
         break;
+      case 'other_wallet_alert': {
+        // Another wallet of this phone (several wallets): named, so it is not mistaken for the one shown.
+        const other = this.set?.byWalletId(e.walletId);
+        const a = e.alert;
+        const fresh = Math.abs(this.clock.now() - e.atMs) < TOAST_FRESH_MS;
+        if (other && fresh && a.message && (a.type.startsWith('recovery_') || a.type === 'limit_off' || a.type === 'wallet_adopted'))
+          this.showToast(`${this.set!.nameOf(other)}: ${a.message.replace(/^[^:]{1,16}: /, '')}`);
+        this.refresh();
+        break;
+      }
       case 'payment_signed':
         // Signed (the hardware wallet is done): the screen says "Sending…" now, not "Waiting for your Ledger".
         this.paymentSending = true;
@@ -1438,6 +1574,7 @@ class Service implements RealWalletService {
         this.setProgress('Pairing: approve on your hardware wallet');
         try {
           await w.pair({ rules, deviceName: this.deps.deviceName });
+          await this.ensureSet().catch(() => undefined);
           this.preview = undefined;
           for (const c of contacts) if (c.name) await w.nameAlertContact(c.pubkey, c.name);
           this.onboardingContacts = [];
@@ -1485,7 +1622,8 @@ class Service implements RealWalletService {
         this.setProgress('Encrypting your backup');
         try {
           await this.yieldToUi(); // paint the progress before the key stretching starts
-          const r = await w.createBackup({ passkey, recoveryCode: true, cloud: store });
+          // One backup for every wallet of the phone (version 4 once there is more than one).
+          const r = this.set ? await this.set.createBackup({ passkey, recoveryCode: true, cloud: store }) : await w.createBackup({ passkey, recoveryCode: true, cloud: store });
           this.recoveryCodeValue = r.recoveryCode ?? null;
         } finally {
           this.setProgress(null);
@@ -2238,9 +2376,11 @@ class Service implements RealWalletService {
         this.setProgress('Unlocking your backup');
         try {
           await this.yieldToUi();
-          const w = await TrikeyWallet.restoreFromBackup(this.walletDeps(), unlock, { name: hit.found.name, cloud: hit.store });
+          // Every wallet in the backup comes back (and any the guardian lists that the backup is older than).
+          const set = await WalletSet.restoreFromBackup(this.walletDeps(), unlock, { name: hit.found.name, cloud: hit.store });
+          this.set = set;
           this.log = emptyLog();
-          this.attach(w);
+          this.attach(set.first);
         } finally {
           this.setProgress(null);
         }
@@ -2373,7 +2513,13 @@ class Service implements RealWalletService {
 
   private async forgetWallet(): Promise<void> {
     const w = this.w;
-    if (w) await w.forget();
+    // Every wallet of the phone goes (Settings > Developer): the added ones first, the first one (with the keys) last.
+    if (this.set) {
+      for (const o of this.set.list.slice(1)) await o.forget().catch(() => undefined);
+      await this.deps.platform.kv.remove(walletKeys(this.storageKey).index).catch(() => undefined);
+      await this.set.first.forget();
+      this.set = undefined;
+    } else if (w) await w.forget();
     this.unsubWallet?.();
     this.w = undefined;
     this.preview = undefined;

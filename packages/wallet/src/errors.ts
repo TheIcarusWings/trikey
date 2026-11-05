@@ -157,6 +157,8 @@ export type WalletErrorCode =
   /** No hardware provider, or the connected device is not this wallet's hardware wallet. */
   | 'hardware_unavailable'
   | 'hardware_mismatch'
+  /** Own wallets: this hardware wallet is already in another wallet of this phone (each wallet needs its own device). */
+  | 'hardware_in_use'
   /** The device returned something that does not check out (signature, PSBT, address). */
   | 'hardware_invalid_response'
   /** The device showed a different address than the wallet computed. Do not use the wallet until this is understood. */

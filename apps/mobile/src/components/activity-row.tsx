@@ -134,6 +134,14 @@ export function describeActivity(item: ActivityItem, variant: 'home' | 'activity
         icon: Shield,
         iconTone: 'warn',
       };
+    case 'wallet-added':
+      return {
+        title: `Wallet "${event.name}" added`,
+        subtitle: `${when} · its own hardware wallet, rules and alerts; the same phone key and guardian`,
+        subtitleTone: 'muted',
+        icon: Shield,
+        iconTone: 'fill',
+      };
     case 'guardian-replaced':
       return {
         title: 'Moved to a new guardian',

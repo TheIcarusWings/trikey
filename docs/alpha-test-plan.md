@@ -796,6 +796,29 @@ message, the guardian's Activity page and the log lines starting with `savings`.
 
 ---
 
+### 18a. A second wallet in the same app (optional; needs a second hardware wallet and a guardian with `own_wallets`)
+
+Every wallet shares this phone's key, its backup and your guardian; only the hardware wallet differs. Each sits at its own
+BIP 48 account (the second at `2'`), so nothing on chain links them (docs/design/multi-wallet.md).
+
+Do:
+
+1. **Add it.** Settings, **Wallets**, **Add a wallet**: a name ("Business"), a daily limit, then connect the **new**
+   hardware wallet. You should see: the device registers the wallet as "Trikey Business" and shows its first address, which
+   matches the phone; the guardian's Activity shows "Wallet "Business" added"; the phone says anyone who can unlock it can
+   spend up to each wallet's daily limit. Connecting the first wallet's device instead must be refused.
+2. **Device check.** Note what each device says when it signs for the second wallet: its own key stays at `0'` (no new
+   path warning), the phone's and the guardian's keys show at account `2'`. Report the model and firmware.
+3. **Pay from each.** Switch at the top of Home. Pay inside each wallet's own limit, then over the second one's limit
+   (its own device signs). You should see: Send's review starts with "From: Business"; Receive names the wallet; the
+   guardian's Wallet, Rules and Activity pages have a wallet picker, and each wallet's limit counts on its own.
+4. **Back up again** and restore (step 11): both wallets come back with one recovery code.
+
+If it goes wrong, collect: both devices' models and firmware, which wallet was shown, the screen and message, and the
+guardian's Activity page.
+
+---
+
 ### 18. Host a family member (optional; two phones and two hardware wallets)
 
 Family hosting (docs/design/family-hosting.md): your guardian holds key 3 for someone else's wallet. You need a second

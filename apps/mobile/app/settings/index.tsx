@@ -59,6 +59,21 @@ export default function SettingsScreen() {
         <SettingsRow title="Show amounts in" value={state.unit === 'btc' ? 'BTC' : 'sats'} onPress={() => router.push('/settings/units')} />
       </ListGroup>
 
+      {!rk && state.wallets ? (
+        <>
+          <SectionLabel>Wallets</SectionLabel>
+          <ListGroup>
+            <SettingsRow
+              title="Wallets"
+              value={state.wallets.list.length > 1 ? `${state.wallets.current.name} of ${state.wallets.list.length}` : state.wallets.current.name}
+              subtitle="Each with its own hardware wallet"
+              onPress={() => router.push('/settings/wallets')}
+              accessibilityHint="This phone's wallets, and adding one"
+            />
+          </ListGroup>
+        </>
+      ) : null}
+
       <SectionLabel>Payments</SectionLabel>
       <ListGroup>
         <SettingsRow

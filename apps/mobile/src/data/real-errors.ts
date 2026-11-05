@@ -155,6 +155,8 @@ export function mapError(e: unknown): WalletServiceError {
         return make('hardware', "This phone can't connect to a hardware wallet.");
       case 'hardware_mismatch':
         return make('hardware_mismatch', e.message);
+      case 'hardware_in_use':
+        return make('hardware_in_use', 'This hardware wallet is already in a wallet on this phone. Each wallet needs its own hardware wallet.');
       case 'hardware_invalid_response':
         return make('hardware', cause ? describeHardwareError(cause) : `The hardware wallet's answer didn't check out. ${e.message}`);
       case 'address_mismatch':

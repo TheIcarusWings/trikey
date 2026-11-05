@@ -4,6 +4,7 @@ export * from './chain.js';
 export * from './send.js';
 export * from './keys.js';
 export * from './wallet.js';
+export * from './wallets.js';
 export { GuardianSilentPaymentScanner, GuardianSingleKeyChain, type GuardianScanResult, type RpcLike } from './guardian-sp.js';
 export { parseScannedCode, type ScannedCode, type ScanOptions } from './scan.js';
 export {
@@ -27,6 +28,7 @@ export {
   BACKUP_PAYLOAD_VERSION,
   BACKUP_VERSION,
   BackupSavings,
+  BackupOwnWallet,
   BackupHeader,
   BackupPayload,
   DEFAULT_RECOVERY_CODE_KDF,
