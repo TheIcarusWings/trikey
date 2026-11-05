@@ -201,6 +201,8 @@ export interface WalletSync {
   nextReceiveIndex: number;
   nextChangeIndex: number;
   gapLimit: number;
+  /** The version of the relayed records this read applied (relayed.ts `RelayedTxs.version`). */
+  relayedVersion?: number;
 }
 
 function decodeRawTx(txHex: string) {
@@ -827,6 +829,7 @@ export class ChainService {
       nextReceiveIndex: next[0],
       nextChangeIndex: next[1],
       gapLimit: scan.gapLimit,
+      relayedVersion: relayed.version,
     };
   }
 
@@ -842,10 +845,10 @@ export class ChainService {
     wallet: AddressSource,
     scan: WalletScan,
     listed: readonly WalletUtxo[],
-  ): Promise<{ spent: Set<string>; utxos: WalletUtxo[]; history: WalletHistoryEntry[] }> {
-    const out = { spent: new Set<string>(), utxos: [] as WalletUtxo[], history: [] as WalletHistoryEntry[] };
+  ): Promise<{ spent: Set<string>; utxos: WalletUtxo[]; history: WalletHistoryEntry[]; version: number }> {
+    const out = { spent: new Set<string>(), utxos: [] as WalletUtxo[], history: [] as WalletHistoryEntry[], version: this.relayed.version };
     const records = this.relayed.list();
-    if (!records.length) return out;
+    if (!records.length) return { ...out, version: this.relayed.version };
     const heights = new Map<string, number>();
     for (const chain of [0, 1] as const) for (const u of scan.chains[chain].used) for (const h of u.history) heights.set(h.tx_hash, Math.max(0, h.height));
     const scripts = this.walletScripts(wallet, scan);
@@ -916,6 +919,8 @@ export class ChainService {
       this.relayed.drop(gone, { gone: true });
       this.log.info('chain.relayed_gone', { count: gone.size });
     }
+    // What this read applied, its own endings included.
+    out.version = this.relayed.version;
     const spentByKept = new Set<string>();
     for (const a of kept.values()) for (const i of a.tx.inputs) spentByKept.add(`${i.txid}:${i.vout}`);
     for (const a of kept.values()) {

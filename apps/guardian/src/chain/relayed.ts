@@ -54,6 +54,11 @@ interface RelayedFile {
 export class RelayedTxs {
   private readonly byId = new Map<string, RelayedTx>();
   private readonly goneIds = new Set<string>();
+  /**
+   * Bumped whenever a record is added or ends: a read of a wallet that applied an older version may still show a coin
+   * as unspent that a relayed payment spends (`WalletSync.relayedVersion`; the web Wallet page reads again then).
+   */
+  version = 0;
   private readonly mutex = new Mutex();
 
   constructor(private readonly opts: { dir?: string; now: () => number }) {}
@@ -89,6 +94,7 @@ export class RelayedTxs {
     const via = was && !was.via ? undefined : opts.via;
     this.byId.set(txid, { txid, txHex, at: was?.at ?? this.opts.now(), ...(was?.seen ? { seen: true } : {}), ...(was?.checked ? { checked: true } : {}), ...(via ? { via } : {}) });
     while (this.byId.size > MAX_RELAYED) this.byId.delete(this.byId.keys().next().value!);
+    this.version++;
     this.save();
   }
 
@@ -114,7 +120,10 @@ export class RelayedTxs {
       }
     }
     while (this.goneIds.size > MAX_RELAYED) this.goneIds.delete(this.goneIds.values().next().value!);
-    if (changed) this.save();
+    if (changed) {
+      this.version++;
+      this.save();
+    }
   }
 
   /** Dropped as gone since the guardian started (`drop` with `gone`). */

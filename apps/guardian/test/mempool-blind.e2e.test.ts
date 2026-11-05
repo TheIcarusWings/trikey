@@ -131,6 +131,30 @@ describe('an Electrum server that does not see the mempool', { timeout: 60_000 }
     expect(alert).toMatchObject({ direction: 'out', amountSats: 3_000, feeSats: 190, confirmations: 0 });
   });
 
+  it("the web Wallet page shows it as the phone does, at once: the coin not spendable, the change pending, the phone's address", async () => {
+    const { rig, phone, wallet } = s;
+    const page = async () => (await rig.api('GET', '/wallet')).body;
+    await page(); // a read from before the next payment
+    const coin = (await phone.call('wallet.sync', {})).utxos.find((u) => u.valueSats === 50_000)!;
+    const pay = spend([coin], [
+      { script: stranger, amount: 1_000 },
+      { script: wallet.derive(1, 5).script, amount: 48_800 },
+    ]);
+    await phone.call('tx.broadcast', { txHex: pay.txHex });
+    // Asked straight away, before the live wallet read again: never the read from before.
+    const w = await page();
+    const r = await phone.call('wallet.sync', {});
+    expect(w.balance).toEqual(r.balance);
+    expect(w.balance).toEqual({ confirmedSats: 0, unconfirmedSats: 1_268 + 48_800 });
+    expect(w.payments[0]).toMatchObject({ txid: pay.txid, direction: 'out', amountSats: 1_000, feeSats: 200, confirmations: 0 });
+    expect(w.receive).toEqual({ address: wallet.derive(0, r.nextReceiveIndex).address, index: r.nextReceiveIndex });
+    // Undone for the tests after this one: the node drops it, and the coin is back.
+    rig.electrs.dropFromMempool(pay.txid);
+    await rig.guardian.chain.checkMempool();
+    expect(rig.guardian.chain.relayed.get(pay.txid)).toBeUndefined();
+    expect((await page()).balance).toEqual({ confirmedSats: 50_000, unconfirmedSats: 1_268 });
+  });
+
   it('a payment from that pending change is relayed (the guardian knows its coin), and applied on top', async () => {
     const { phone, wallet } = s;
     const before = await phone.call('wallet.sync', {});
