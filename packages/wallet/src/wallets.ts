@@ -312,7 +312,21 @@ export class WalletSet {
     if (w === this.first) throw new WalletError('wrong_state', 'Remove your other wallets first: the first wallet goes last.');
     if (!this.others.includes(w)) throw new WalletError('wrong_state', 'Not a wallet of this phone.');
     const snap = w.snapshot();
-    if (snap && snap.balance.totalSats > 0) throw new WalletError('wrong_state', 'Move the money out of this wallet before you remove it.');
+    if (snap && snap.balance.totalSats > 0) {
+      // "Move everything" (`moveFunds`, a send max) leaves frozen coins where they are: say so, or the person is stuck.
+      let frozen = 0;
+      try {
+        frozen = w.coins().totals.frozenSats;
+      } catch {
+        // no coin list: the plain message
+      }
+      throw new WalletError(
+        'wrong_state',
+        frozen > 0
+          ? `Move the money out of this wallet before you remove it. ${frozen} sats are in frozen coins, which "Move everything" leaves: unfreeze them in Coins, then move them too.`
+          : 'Move the money out of this wallet before you remove it.',
+      );
+    }
     const sv = w.savingsSnapshot();
     if (sv && sv.balance.totalSats > 0) throw new WalletError('wrong_state', "Move the money out of this wallet's Savings before you remove it.");
     if (w.state.replacing) throw new WalletError('replace_in_progress', 'This wallet is moving to a new guardian: finish that first.');
