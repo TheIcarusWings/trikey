@@ -20,6 +20,9 @@ import {
   pinError,
   settingsInput,
   smtpError,
+  TELEGRAM_PRIVACY,
+  TELEGRAM_STEPS,
+  telegramTokenError,
   topicError,
   topicWarning,
   urlError,
@@ -257,5 +260,87 @@ describe('the mock', () => {
     await expect(api.setNotifications(settingsInput(n, { smtp: { ...base, pin: 'AB:CD' } }))).rejects.toMatchObject({ code: 'invalid' });
     const cleared = await api.setNotifications(settingsInput(withCert, { smtp: { ...base, clearPin: true } }));
     expect(cleared.smtp).not.toHaveProperty('pin');
+  });
+});
+
+const TOKEN = '7000000001:AAtest-token-for-the-web-page-tests00';
+
+describe('Telegram', () => {
+  const withBot: NotificationSettings = {
+    ...settings,
+    telegram: { bot: { username: 'home_vault_alerts_bot', name: 'Home vault alerts' }, tokenSet: true, health: { state: 'ok', lastOkAt: '2026-11-01T10:00:00.000Z' } },
+    destinations: [...settings.destinations, { id: 'd4', audience: 'contact', kind: 'telegram', telegram: { chatId: '700000002', name: 'Grandma Rosa' }, health: { state: 'untested' } }],
+  };
+
+  it('checks the token as @BotFather shows it, and says Telegram can read the alerts', () => {
+    expect(telegramTokenError(TOKEN)).toBeUndefined();
+    expect(telegramTokenError(` ${TOKEN} `)).toBeUndefined();
+    expect(telegramTokenError('')).toMatch(/Paste the bot token/);
+    for (const bad of ['123:abc', 'AAtest-token-for-the-web-page-tests00', `${TOKEN} extra`, 'https://t.me/home_vault_alerts_bot']) expect(telegramTokenError(bad), bad).toMatch(/not a bot token/);
+    expect(TELEGRAM_PRIVACY).toBe("Telegram bot messages aren't end-to-end encrypted: Telegram can read these alerts, as an email provider can.");
+    expect(TELEGRAM_STEPS.join(' ')).toMatch(/@BotFather.*\/newbot/);
+  });
+
+  it('the PUT body: the token only when typed, null to remove the bot, chats by id without anything else', () => {
+    expect(settingsInput(withBot, {})).not.toHaveProperty('telegram');
+    expect(settingsInput(withBot, { remove: 'd1' })).not.toHaveProperty('telegram');
+    expect(settingsInput(withBot, { telegramToken: ` ${TOKEN} ` }).telegram).toEqual({ token: TOKEN });
+    expect(settingsInput(withBot, { telegramToken: null }).telegram).toBeNull();
+    const body = settingsInput(withBot, { add: { audience: 'owner', kind: 'telegram', telegram: { chatId: '700000001', name: 'Maria Lopez' } } });
+    expect(body.destinations.slice(-2)).toEqual([
+      { id: 'd4', audience: 'contact', kind: 'telegram', telegram: { chatId: '700000002' } },
+      { audience: 'owner', kind: 'telegram', telegram: { chatId: '700000001', name: 'Maria Lopez' } },
+    ]);
+    expect(channelLabel(withBot.destinations[3]!)).toBe('Telegram: Grandma Rosa');
+  });
+
+  it('the HTTP client finds chats with a POST', async () => {
+    const sent: string[] = [];
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      sent.push(`${String(init.method)} ${url}`);
+      return new Response(JSON.stringify({ bot: { username: 'b_bot', name: 'B' }, chats: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    expect(await createHttpApi().findTelegramChats()).toEqual({ bot: { username: 'b_bot', name: 'B' }, chats: [] });
+    expect(sent).toEqual(['POST /api/notifications/telegram/find']);
+  });
+
+  it('the mock: set up a bot, find, add a chat for someone without nostr; the token never comes back', async () => {
+    const api = createMockApi();
+    const s = await api.getNotifications();
+    expect(s.telegram).toBeUndefined();
+    await expect(api.findTelegramChats()).rejects.toMatchObject({ code: 'not_found' });
+    await expect(api.setNotifications(settingsInput(s, { telegramToken: '000000001:AArefused-token-for-the-mock-api-x0' }))).rejects.toMatchObject({ code: 'invalid', message: expect.stringMatching(/refused the bot token/) });
+    await expect(api.setNotifications(settingsInput(s, { add: { audience: 'owner', kind: 'telegram', telegram: { chatId: '1' } } }))).rejects.toMatchObject({ message: expect.stringMatching(/bot first/) });
+    const set = await api.setNotifications(settingsInput(s, { telegramToken: TOKEN }));
+    expect(set.telegram).toMatchObject({ bot: { username: 'home_vault_alerts_bot' }, tokenSet: true });
+    expect(JSON.stringify(set)).not.toContain(TOKEN.split(':')[1]);
+    const found = await api.findTelegramChats();
+    expect(found.chats.length).toBeGreaterThan(0);
+    const chat = found.chats[0]!;
+    const added = await api.setNotifications(settingsInput(set, { add: { audience: 'contact', kind: 'telegram', telegram: { chatId: chat.chatId, name: chat.name } } }));
+    expect(added.destinations).toEqual([expect.objectContaining({ kind: 'telegram', audience: 'contact', telegram: { chatId: chat.chatId, name: chat.name } })]);
+    await expect(api.setNotifications(settingsInput(added, { telegramToken: null }))).rejects.toMatchObject({ message: expect.stringMatching(/Remove the Telegram chats first/) });
+  });
+
+  it('the mock: a bot whose webhook another service set cannot be read, said plainly', async () => {
+    const api = createMockApi();
+    await api.setNotifications(settingsInput(await api.getNotifications(), { telegramToken: '111111111:AAbot-with-a-webhook-set-elsewhere-x' }));
+    await expect(api.findTelegramChats()).rejects.toMatchObject({ code: 'telegram_failed', message: expect.stringMatching(/webhook set.*new bot with @BotFather/) });
+  });
+
+  it('the mock: during a recovery a chat can be added and the same bot get a new token; another bot cannot', async () => {
+    const during = createMockApi('recovery');
+    const s = await during.getNotifications();
+    const set = await during.setNotifications(settingsInput(s, { telegramToken: TOKEN })); // adding the bot is an addition
+    const added = await during.setNotifications(settingsInput(set, { add: { audience: 'owner', kind: 'telegram', telegram: { chatId: '700000001', name: 'Me' } } }));
+    await during.setNotifications(settingsInput(added, { telegramToken: '7000000001:AAa-new-token-of-the-same-bot-after-revoke' }));
+    await expect(during.setNotifications(settingsInput(added, { telegramToken: '7000000002:AAa-token-of-another-bot-entirely-xyz' }))).rejects.toMatchObject({ code: 'recovery_pending' });
+    await expect(during.setNotifications(settingsInput(added, { remove: added.destinations[0]!.id }))).rejects.toMatchObject({ code: 'recovery_pending' });
+  });
+
+  it('the demo guardian (notify) has a bot and a Telegram chat for someone without nostr', async () => {
+    const s = await createMockApi('notify').getNotifications();
+    expect(s.telegram?.bot.username).toBe('home_vault_alerts_bot');
+    expect(s.destinations.some((d) => d.kind === 'telegram' && d.audience === 'contact' && !d.contact)).toBe(true);
   });
 });
