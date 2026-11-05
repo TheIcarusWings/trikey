@@ -400,6 +400,76 @@ export class LabelStore {
   }
 
   /**
+   * The labels of some wallets as a document of their own (encrypted notes on the guardian: `labels-crypto.ts`): those of
+   * `walletIds` that have any, plus `payments` (the send logs' notes, by wallet id) as payment labels where the store has
+   * none, as `exportBip329` does.
+   */
+  exportWallets(walletIds: readonly string[], payments: Readonly<Record<string, readonly LabeledPayment[]>> = {}): LabelsDocument {
+    const wallets: Record<string, WalletLabels> = {};
+    for (const id of new Set(walletIds)) {
+      const w = copy(this.doc.wallets[id] ?? emptyWallet());
+      for (const p of payments[id] ?? []) {
+        const label = cleanLabel(p.label);
+        if (label && /^[0-9a-f]{64}$/.test(p.txid) && w.txs[p.txid] === undefined && Object.keys(w.txs).length < MAX_TX_LABELS) w.txs[p.txid] = label;
+      }
+      if (Object.keys(w.coins).length || Object.keys(w.txs).length || w.kept.length) wallets[id] = w;
+    }
+    return { version: LABELS_VERSION, wallets };
+  }
+
+  /**
+   * Brings labels back from a copy (encrypted notes on the guardian, after a recovery or a restore) without losing any
+   * the phone has: **the phone's win.** A coin's mark (label and freeze together), a payment's label, an address's label
+   * or any other kept record the phone already has stays as it is; only what it lacks is taken from the copy. So labels
+   * a backup restored win over the guardian's copy, and the copy fills in what changed after that backup. A change, so
+   * the backup is older afterwards (`changedAt`). Throws `labels_invalid` for a copy this app cannot read and
+   * `labels_full` past a limit (nothing changed).
+   */
+  async mergeFromCopy(doc: unknown): Promise<{ wallets: string[]; coins: number; txs: number; addrs: number; kept: number }> {
+    const incoming = readDocument(doc, "guardian's");
+    const result = { wallets: [] as string[], coins: 0, txs: 0, addrs: 0, kept: 0 };
+    await this.enqueue(async () => {
+      const next = copy(this.doc);
+      for (const [id, from] of Object.entries(incoming.wallets)) {
+        const w = next.wallets[id] ?? emptyWallet();
+        let changed = false;
+        for (const [op, m] of Object.entries(from.coins)) {
+          if (w.coins[op]) continue;
+          w.coins[op] = m;
+          result.coins++;
+          changed = true;
+        }
+        for (const [txid, label] of Object.entries(from.txs)) {
+          if (w.txs[txid] !== undefined) continue;
+          w.txs[txid] = label;
+          result.txs++;
+          changed = true;
+        }
+        const keys = new Set(w.kept.map(keptKey));
+        const addrs = new Set(w.kept.filter((r) => r.type === 'addr').map((r) => addressKey(r.ref)));
+        for (const r of from.kept) {
+          if (r.type === 'addr' ? addrs.has(addressKey(r.ref)) : keys.has(keptKey(r))) continue;
+          w.kept.push(r);
+          keys.add(keptKey(r));
+          if (r.type === 'addr') {
+            addrs.add(addressKey(r.ref));
+            result.addrs++;
+          } else result.kept++;
+          changed = true;
+        }
+        if (!changed) continue;
+        next.wallets[id] = w;
+        result.wallets.push(id);
+      }
+      if (!result.wallets.length) return;
+      checkLimits(next);
+      next.changedAt = this.now();
+      await this.save(next);
+    });
+    return result;
+  }
+
+  /**
    * Puts a backup's labels back (a restore), replacing what the store held. `undefined`: a backup without labels. The
    * restored labels are the backup's, so nothing is newer than it (`changedAt` cleared).
    */

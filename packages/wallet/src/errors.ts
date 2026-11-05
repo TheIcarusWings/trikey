@@ -193,6 +193,18 @@ export type WalletErrorCode =
   | 'labels_invalid'
   /** The labels and freezes would pass what the phone keeps per wallet (`labels-store.ts` limits): nothing was changed. */
   | 'labels_full'
+  /**
+   * Encrypted notes on the guardian (`labels-crypto.ts`): the copy does not open with the key this hardware wallet makes
+   * (another wallet's device, or a copy that was changed). Nothing on the phone was changed.
+   */
+  | 'labels_wrong_key'
+  /**
+   * Turning on notes on the guardian: the hardware wallet signed the same text twice and gave two different signatures,
+   * so the key it makes could not be made again after a recovery. The feature stays off.
+   */
+  | 'hardware_not_deterministic'
+  /** The notes are larger than the guardian keeps (`MAX_LABELS_BYTES`, about 512 kB once padded): nothing was sent. */
+  | 'labels_too_large'
   /** On mainnet the wallet will not guess a fee: the node has no estimate. */
   | 'no_fee_estimate'
   | 'no_chain_data'
