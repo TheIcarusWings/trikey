@@ -695,6 +695,9 @@ export const WALLET_ROUTED_METHODS: ReadonlySet<MethodName> = new Set<MethodName
   'tx.broadcast',
 ]);
 
+/** Alerts whose `walletId` has a meaning of its own (the wallet retired, adopted, Savings, a hosted wallet). */
+const NAMES_A_WALLET: ReadonlySet<Alert['type']> = new Set<Alert['type']>(['wallet_adopted', 'wallet_retired', 'savings_moved', 'savings_unwatched', 'hosting_ending', 'wallet_paused', 'wallet_added']);
+
 /** Alerts about the whole box (its lock, relays, channels, chain source): every wallet of the phone takes them. */
 const BOX_ALERTS: ReadonlySet<Alert['type']> = new Set<Alert['type']>(['guardian_locked', 'relays_changed', 'notifications_changed', 'chain_source_changed']);
 
@@ -4010,6 +4013,9 @@ export class TrikeyWallet {
     others.delete(mine ?? '');
     if (prev && others.has(prev)) return prev;
     if (id && others.has(id) && prev === undefined) return id;
+    // A `walletId` on an alert that names no wallet by itself is about a wallet after the first (own wallets), whether
+    // or not this phone lists it yet.
+    if (id && id !== mine && !NAMES_A_WALLET.has(alert.type)) return id;
     return undefined;
   }
 
