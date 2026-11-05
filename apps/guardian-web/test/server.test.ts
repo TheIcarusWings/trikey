@@ -6,7 +6,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHttpApi } from '../src/api/http';
 import { createMockApi, readScenario } from '../src/api/mock';
 import type { ChainSettings } from '../src/api/types';
-import { PUBLIC_WARNING, mempoolText, draftError, draftFrom, inputFrom, presetLabel, recoveryBlock, sourceLabel, type ServerDraft } from '../src/lib/server';
+import {
+  CORE_LINK,
+  HOME_CORE32_FIX,
+  PUBLIC_WARNING,
+  backButton,
+  coreDraft,
+  draftError,
+  draftFrom,
+  draftUnchanged,
+  environmentLine,
+  inputFrom,
+  mempoolText,
+  passKnown,
+  presetLabel,
+  recoveryBlock,
+  serverPageMode,
+  sourceLabel,
+  type ServerDraft,
+} from '../src/lib/server';
 
 const settings = (over: Partial<ChainSettings> = {}): ChainSettings => ({
   source: { kind: 'electrum', host: '10.21.21.10', port: 50001, tls: false },
@@ -101,22 +119,166 @@ describe('an Electrum server that reports no unconfirmed payments', () => {
   });
 
   it('names the cause: Electrs and Bitcoin Core 32, with or without the guardian reading Core itself', () => {
-    expect(mempoolText({ mempoolCause: 'electrs_core32' }).text).toBe(
-      "Electrs can't read Bitcoin Core 32's mempool; unconfirmed payments show once confirmed, or switch Settings > Server to Bitcoin Core alone.",
-    );
+    expect(mempoolText({ mempoolCause: 'electrs_core32' }).text).toBe("Electrs can't read Bitcoin Core 32's mempool, so payments to you show only once confirmed.");
     expect(mempoolText({ mempoolCause: 'electrs_core32', mempoolViaNode: true }).text).toMatch(/reads unconfirmed payments from Bitcoin Core itself/);
     // Slow too (pings of seconds): said plainly, with both fixes.
     const slow = mempoolText({ mempoolCause: 'electrs_core32', mempoolViaNode: true, mempoolServerSlow: true });
-    expect(slow.text).toBe("Electrs is slowed down and can't see unconfirmed payments: it doesn't work with Bitcoin Core 32's mempool.");
+    expect(slow.text).toBe('Electrs is slowed down by Bitcoin Core 32; unconfirmed payments are read from Bitcoin Core instead.');
     expect(slow.detail).toMatch(/deprecatedrpc=bip125/);
     expect(slow.detail).toMatch(/Settings > Server to Bitcoin Core alone/);
-    expect(mempoolText({}).text).toBe("Your Electrum server doesn't report unconfirmed payments; they will show once confirmed.");
+    expect(mempoolText({ mempoolCause: 'electrs_core32', mempoolServerSlow: true }).text).toBe(
+      "Electrs is slowed down by Bitcoin Core 32 and can't see unconfirmed payments, so payments to you show only once confirmed.",
+    );
+    expect(mempoolText({}).text).toBe("Your Electrum server doesn't report unconfirmed payments, so payments to you show only once confirmed.");
     for (const m of [{}, { mempoolViaNode: true }, { mempoolCause: 'electrs_core32' as const }]) expect(mempoolText(m).detail).toMatch(/Payments your phone makes still show at once/);
+  });
+
+  it('every title reads right on its own (the home page shows only it): unconfirmed payments are seen exactly when Core covers them', () => {
+    for (const mempoolCause of [undefined, 'electrs_core32' as const])
+      for (const mempoolViaNode of [false, true])
+        for (const mempoolServerSlow of [false, true]) {
+          const { text, core32 } = mempoolText({ mempoolCause, mempoolViaNode, mempoolServerSlow });
+          expect(text).toMatch(/\.$/);
+          expect(core32).toBe(mempoolCause === 'electrs_core32');
+          if (mempoolViaNode) {
+            expect(text).toMatch(/from Bitcoin Core/);
+            expect(text).not.toMatch(/once confirmed|can't see/);
+          } else {
+            expect(text).toMatch(/payments to you show only once confirmed/);
+          }
+          if (mempoolCause && mempoolServerSlow) expect(text).toMatch(/slowed down by Bitcoin Core 32/);
+          expect(text).not.toMatch(/Settings > Server|below/);
+        }
+  });
+
+  it('the home note for Core 32 keeps the bip125 fix and links to Bitcoin Core alone, on the Server page', () => {
+    expect(HOME_CORE32_FIX).toMatch(/deprecatedrpc=bip125/);
+    expect(CORE_LINK).toBe('/settings?server=core');
   });
 
   it('every other scenario: nothing to say', async () => {
     const st = await createMockApi('default').getStatus();
     expect('chain' in st ? st.chain.mempoolUnseen : undefined).toBeUndefined();
     expect((await createMockApi('default').getChain()).status.mempoolUnseen).toBeUndefined();
+  });
+});
+
+describe('Settings > Server from the platform settings', () => {
+  it('fills the form from the source in use when nothing was chosen here (Umbrel)', () => {
+    const env = settings({ source: null, summary: { kind: 'own', backend: 'electrum', host: '192.168.1.158', port: 50001 }, origin: 'environment' });
+    expect(draftFrom(env)).toMatchObject({ kind: 'electrum', host: '192.168.1.158', port: '50001' });
+  });
+  it('words the Core 32 fix for the page it is on', () => {
+    const m = { mempoolCause: 'electrs_core32' as const, mempoolServerSlow: true, mempoolViaNode: true };
+    expect(mempoolText(m).detail).toContain('switch Settings > Server to Bitcoin Core alone');
+    expect(mempoolText(m, { onServerPage: true }).detail).toContain('choose Your own Bitcoin Core below');
+    expect(mempoolText(m, { onServerPage: true }).detail).not.toContain('Settings > Server');
+  });
+});
+
+const umbrel = (over: Partial<ChainSettings> = {}): ChainSettings =>
+  settings({ platform: 'umbrel', environment: { kind: 'own', backend: 'electrum', host: '10.21.21.10', port: 50001 }, nodeRpc: { host: '10.21.21.8', port: 8332, user: 'umbrel' }, ...over });
+const chosen = (over: Partial<ChainSettings> = {}): ChainSettings =>
+  umbrel({ origin: 'settings', source: { kind: 'electrum', host: 'fulcrum.lan', port: 50002, tls: true }, summary: { kind: 'own', backend: 'electrum', host: 'fulcrum.lan', port: 50002 }, ...over });
+
+describe('Settings > Server: the server Umbrel or StartOS set', () => {
+  it('Umbrel and StartOS with their own setting: one line, the form folded under Advanced', () => {
+    expect(serverPageMode(umbrel())).toBe('platform');
+    expect(environmentLine(umbrel())).toBe("Connected to this Umbrel's Electrs and Bitcoin Core (set up by Umbrel).");
+    expect(environmentLine(umbrel({ nodeRpc: undefined }))).toBe("Connected to this Umbrel's Electrs (set up by Umbrel).");
+    expect(environmentLine(umbrel({ status: { connected: false, rescans: [] } }))).toBe("Not connected to this Umbrel's Electrs and Bitcoin Core (set up by Umbrel).");
+    expect(serverPageMode(umbrel({ platform: 'start9' }))).toBe('platform');
+    expect(environmentLine(umbrel({ platform: 'start9' }))).toBe("Connected to this StartOS server's Electrs and Bitcoin Core (set up by StartOS).");
+    const core = umbrel({ environment: { kind: 'own', backend: 'core', host: '10.21.21.8', port: 8332 } });
+    expect(environmentLine(core)).toBe("Connected to this Umbrel's Bitcoin Core (set up by Umbrel).");
+    expect(backButton(umbrel())).toBeUndefined();
+  });
+
+  it('plain Docker keeps the form, with the .env file named', () => {
+    const docker = umbrel({ platform: 'docker' });
+    expect(serverPageMode(docker)).toBe('form');
+    expect(environmentLine(docker)).toBe('Connected to the server in your .env file (your own Electrum server 10.21.21.10:50001).');
+    // Older guardians say nothing of the platform: the form, as before.
+    expect(serverPageMode(settings())).toBe('form');
+    expect(serverPageMode(umbrel({ environment: undefined }))).toBe('form');
+  });
+
+  it('a server chosen here: shown, with the way back named for the platform', () => {
+    expect(serverPageMode(chosen())).toBe('chosen');
+    expect(environmentLine(chosen())).toBeUndefined();
+    expect(backButton(chosen())).toEqual({
+      label: 'Use the server Umbrel set',
+      note: "Chosen here, so the guardian no longer follows Umbrel's setting (your own Electrum server 10.21.21.10:50001). Going back is announced like any change.",
+    });
+    expect(backButton(chosen({ platform: 'start9' }))?.label).toBe('Use the server StartOS set');
+    expect(backButton(chosen({ platform: 'docker' }))?.label).toBe('Use the server in the .env file');
+    // Nothing to go back to.
+    expect(backButton(chosen({ environment: undefined }))).toBeUndefined();
+  });
+
+  it('"use Bitcoin Core alone" fills in the guardian\'s own node, whose password the guardian has', () => {
+    const d = coreDraft(umbrel());
+    expect(d).toMatchObject({ kind: 'core', host: '10.21.21.8', port: '8332', user: 'umbrel', pass: '' });
+    expect(passKnown(d, umbrel())).toBe(true);
+    expect(draftError(d, passKnown(d, umbrel()))).toBeUndefined();
+    expect(inputFrom(d)).toEqual({ kind: 'core', rpc: { host: '10.21.21.8', port: 8332, user: 'umbrel' } });
+    expect(passKnown({ ...d, user: 'other' }, umbrel())).toBe(false);
+    expect(coreDraft(umbrel({ nodeRpc: undefined }))).toMatchObject({ kind: 'core', host: '', user: '' });
+  });
+});
+
+describe('Settings > Server: Save only when something changes', () => {
+  it('disables Save while the form is the server in use', () => {
+    const s = umbrel();
+    const d = draftFrom(s);
+    expect(draftUnchanged(d, s)).toBe(true);
+    expect(draftUnchanged({ ...d, port: '' }, s)).toBe(true); // the default port
+    expect(draftUnchanged({ ...d, host: ' 10.21.21.10 ' }, s)).toBe(true);
+    expect(draftUnchanged({ ...d, port: '50002' }, s)).toBe(false);
+    expect(draftUnchanged({ ...d, tls: true }, s)).toBe(false);
+    expect(draftUnchanged({ ...d, host: 'electrs.lan' }, s)).toBe(false);
+    expect(draftUnchanged(coreDraft(s), s)).toBe(false);
+    expect(draftUnchanged(d, settings({ source: null }))).toBe(false);
+  });
+
+  it('a pinned certificate, a public server and Bitcoin Core: the same choice written another way is unchanged', () => {
+    const FP = 'AB'.repeat(32);
+    const pinned = settings({ source: { kind: 'electrum', host: 'f.lan', port: 50002, tls: true, certSha256: FP.replace(/(..)(?!$)/g, '$1:') } });
+    expect(draftUnchanged({ ...draftFrom(pinned), certSha256: FP.toLowerCase() }, pinned)).toBe(true);
+    expect(draftUnchanged({ ...draftFrom(pinned), certSha256: '' }, pinned)).toBe(false);
+    const pub = settings({ source: { kind: 'public', host: 'mempool.space', port: 60602 } });
+    expect(draftUnchanged(draftFrom(pub), pub)).toBe(true);
+    expect(draftUnchanged({ ...draftFrom(pub), preset: '', host: 'electrum.example.org', port: '' }, pub)).toBe(false);
+    // The RPC password is write-only: empty means unchanged, anything typed is a change.
+    const core = settings({ source: { kind: 'core', rpc: { host: 'node', port: 8332, user: 'u', passSet: true } } });
+    expect(draftUnchanged(draftFrom(core), core)).toBe(true);
+    expect(draftUnchanged({ ...draftFrom(core), pass: 'p' }, core)).toBe(false);
+    expect(draftUnchanged({ ...draftFrom(core), wallet: 'w' }, core)).toBe(false);
+  });
+
+  it('the mock: the same server again changes nothing; going back to Umbrel\'s is announced', async () => {
+    const api = createMockApi('default');
+    const s = await api.getChain();
+    expect(s).toMatchObject({ origin: 'environment', platform: 'umbrel', environment: { host: '10.21.21.10' } });
+    expect((await api.setChain(inputFrom(draftFrom(s)))).origin).toBe('environment');
+    const changed = await api.setChain({ kind: 'electrum', host: 'fulcrum.lan', tls: true });
+    expect(changed.origin).toBe('settings');
+    const back = await api.resetChain();
+    expect(back).toMatchObject({ origin: 'environment', source: { host: '10.21.21.10' } });
+    const entries = (await api.listActivity({ limit: 10 })).map((e) => e.summary);
+    expect(entries.filter((x) => x === 'Server changed')).toHaveLength(1);
+    expect(entries).toContain("Server back to Umbrel's setting");
+  }, 20_000);
+
+  it('DELETE /api/chain', async () => {
+    const sent: string[] = [];
+    vi.stubGlobal('window', { dispatchEvent: () => true });
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      sent.push(`${String(init.method)} ${url}`);
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    await createHttpApi().resetChain();
+    expect(sent).toEqual(['DELETE /api/chain']);
+    vi.unstubAllGlobals();
   });
 });

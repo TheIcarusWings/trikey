@@ -271,7 +271,8 @@ describe('GET /api/wallet', { timeout: 60_000 }, () => {
       expect(done.map((p: { direction: string; confirmations: number }) => words.paymentTitle(p))).toEqual(['Received', 'Received', 'Received']);
       expect(words.paymentAmountText(pending[0])).toBe('−30,000 sats');
       expect(words.paymentFeeText(pending[0])).toBe('Fee 500 sats');
-      expect(words.balanceLines(w.balance)).toEqual({ confirmed: '25,000 sats', unconfirmed: '119,500 sats unconfirmed' });
+      // The phone's big number: confirmed and unconfirmed together (the pending payment's change is in the 119,500).
+      expect(words.balanceLines(w.balance)).toEqual({ total: '144,500 sats', waiting: 'including 119,500 sats waiting to confirm' });
       expect(words.limitLines(w.dailyLimit)).toMatchObject({ used: '0 of 100,000 sats used today', left: '100,000 sats left for phone-only payments' });
       expect(words.receiveUri(w.receive.address)).toBe(`bitcoin:${wallet.derive(0, 5).address}`);
       expect(words.testNetworkWarning(w.network)).toMatch(/^Regtest address/);

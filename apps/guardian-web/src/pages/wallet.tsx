@@ -37,17 +37,17 @@ const card = 'flex min-w-0 flex-col gap-3 rounded-[14px] border border-border px
 
 function BalanceCard({ wallet }: { wallet: WalletOverview }) {
   if (!wallet.balance) return null;
-  const { confirmed, unconfirmed } = balanceLines(wallet.balance);
+  const { total, waiting } = balanceLines(wallet.balance);
   return (
     <section aria-labelledby="balance-heading" className={card}>
       <h2 id="balance-heading" className="m-0 text-sm leading-5 font-medium text-muted-foreground">
         Balance
       </h2>
-      <p className="m-0 text-[28px] leading-[34px] font-semibold tracking-[-0.02em] tabular-nums sm:text-[32px] sm:leading-[38px]">{confirmed}</p>
-      {unconfirmed ? (
+      <p className="m-0 text-[28px] leading-[34px] font-semibold tracking-[-0.02em] tabular-nums sm:text-[32px] sm:leading-[38px]">{total}</p>
+      {waiting ? (
         <p className="m-0 flex items-center gap-1.5 text-sm leading-5 text-muted-foreground tabular-nums">
           <Clock className="size-4 shrink-0" aria-hidden="true" />
-          {unconfirmed}
+          {waiting}
         </p>
       ) : null}
       {wallet.readAt ? <p className="m-0 text-xs leading-4 text-muted-foreground">As of {formatShortWhen(wallet.readAt)}{wallet.tipHeight ? ` · block ${wallet.tipHeight.toLocaleString('en-US')}` : ''}</p> : null}

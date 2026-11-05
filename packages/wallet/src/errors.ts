@@ -184,6 +184,15 @@ export type WalletErrorCode =
   | 'send_max_too_small'
   /** The coins a quote spends changed (spent or replaced) since it was made. */
   | 'quote_stale'
+  /**
+   * Coin control: a coin picked by hand cannot pay (`reason`: `not_found`, it is spent, waits in this phone's own
+   * unconfirmed payment, or was never the wallet's; `frozen`, the owner froze it: unfreeze it first).
+   */
+  | 'coin_unavailable'
+  /** A BIP 329 labels file this wallet cannot read at all (too large, not UTF-8 text, too many records, a newer format). */
+  | 'labels_invalid'
+  /** The labels and freezes would pass what the phone keeps per wallet (`labels-store.ts` limits): nothing was changed. */
+  | 'labels_full'
   /** On mainnet the wallet will not guess a fee: the node has no estimate. */
   | 'no_fee_estimate'
   | 'no_chain_data'

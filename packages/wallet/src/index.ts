@@ -5,6 +5,10 @@ export * from './send.js';
 export * from './keys.js';
 export * from './wallet.js';
 export * from './wallets.js';
+// Coin control groundwork (DESIGN.md, "Next: coin control"): not wired into send.ts, wallet.ts or the backup yet.
+export * from './labels-bip329.js';
+export * from './labels-store.js';
+export * from './coins.js';
 export { GuardianSilentPaymentScanner, GuardianSingleKeyChain, type GuardianScanResult, type RpcLike } from './guardian-sp.js';
 export { parseScannedCode, type ScannedCode, type ScanOptions } from './scan.js';
 export {

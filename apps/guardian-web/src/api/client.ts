@@ -152,6 +152,12 @@ export interface GuardianApi {
    * with `recovery_pending` for a public server while a recovery runs (your own node is always allowed).
    */
   setChain(input: ChainSourceInput): Promise<ChainSettings>;
+  /**
+   * "Use the server Umbrel set" (`DELETE /api/chain`): forgets the server chosen here and goes back to the platform's
+   * (`environment`). Announced like a change when the server changes. Rejects with `recovery_pending` when that is a
+   * public server and a recovery runs, `not_found` when the platform set none.
+   */
+  resetChain(): Promise<ChainSettings>;
   /** "Test connection": connects to `input` without switching to it. */
   testChain(input: ChainSourceInput): Promise<ChainTestResult>;
 

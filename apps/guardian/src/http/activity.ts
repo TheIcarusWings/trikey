@@ -2,6 +2,7 @@
 import { npubEncode } from 'nostr-tools/nip19';
 import { isContactLockOn, isLimitOff, type ActivityEntry as EngineEntry } from '../policy/index.js';
 import type { ServiceActivity } from '../service-state.js';
+import { environmentSourceName } from '../chain/source.js';
 import { refusalText } from '../nostr/wire.js';
 import { formatWhen } from '../alerts.js';
 import type { ActivityEntry } from './types.js';
@@ -455,8 +456,8 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
       return {
         ...base,
         kind: 'system',
-        event: `The guardian now reads the blockchain from ${words(e.to)}${e.from ? ` (before: ${words(e.from)})` : ''}.${toPublic ? ' A public server sees the wallets\' addresses and this box\'s IP address.' : ''} The paired phone and every alert channel are told.`,
-        summary: toPublic ? 'Server changed to a public one' : 'Server changed',
+        event: `${e.backTo ? `The guardian is back on ${environmentSourceName(e.backTo)}: it now reads` : 'The guardian now reads'} the blockchain from ${words(e.to)}${e.from ? ` (before: ${words(e.from)})` : ''}.${toPublic ? ' A public server sees the wallets\' addresses and this box\'s IP address.' : ''} The paired phone and every alert channel are told.`,
+        summary: toPublic ? 'Server changed to a public one' : e.backTo ? `Server back to ${e.backTo === 'umbrel' ? "Umbrel's" : e.backTo === 'start9' ? "StartOS's" : "the .env file's"} setting` : 'Server changed',
         signedBy: null,
         sats: null,
         result: 'ok',

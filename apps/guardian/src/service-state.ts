@@ -94,9 +94,10 @@ export type ServiceEvent =
   | { type: 'notification_test'; channel: string; ok: boolean; error?: string }
   /**
    * Settings > Server switched the chain source (chain/source.ts): a security event, announced to the phone and on
-   * every channel. `from` and `to` are `<own|public>:<electrum|core>:<host>:<port>` (no credential).
+   * every channel. `from` and `to` are `<own|public>:<electrum|core>:<host>:<port>` (no credential). `backTo`: the
+   * owner went back to the environment's source ("Use the server Umbrel set"), on this platform.
    */
-  | { type: 'chain_source_changed'; from?: string; to: string }
+  | { type: 'chain_source_changed'; from?: string; to: string; backTo?: 'umbrel' | 'start9' | 'docker' }
   /** Own wallets (docs/design/multi-wallet.md): the paired phone added a wallet with its new hardware wallet, or tried to. */
   | { type: 'wallet_added'; name: string; account: number; walletId: string; replaces?: string }
   | { type: 'wallet_add_refused'; name: string; detail: string };

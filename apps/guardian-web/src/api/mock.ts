@@ -423,15 +423,28 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
     };
   };
 
-  let chainSource: ChainSourceView =
-    scenario === 'publicserver' ? { kind: 'public', host: 'mempool.space', port: 60602 } : { kind: 'electrum', host: '10.21.21.10', port: 50001, tls: false };
+  // As on an Umbrel: its own Electrs and Bitcoin Core, set by Umbrel (Settings > Server shows one line).
+  const envChainSource: ChainSourceView = { kind: 'electrum', host: '10.21.21.10', port: 50001, tls: false };
+  let chainSource: ChainSourceView = scenario === 'publicserver' ? { kind: 'public', host: 'mempool.space', port: 60602 } : clone(envChainSource);
   let chainOrigin: ChainSettings['origin'] = scenario === 'publicserver' ? 'settings' : 'environment';
+  const summaryOf = (s: ChainSourceView): NonNullable<ChainSettings['summary']> =>
+    s.kind === 'core' ? { kind: 'own', backend: 'core', host: s.rpc.host, port: s.rpc.port } : { kind: s.kind === 'public' ? 'public' : 'own', backend: 'electrum', host: s.host, port: s.port };
+  const announceChain = (backTo: boolean) =>
+    pushActivity({
+      kind: 'system',
+      event: `${backTo ? "The guardian is back on the server Umbrel set: it now reads" : 'The guardian now reads'} the blockchain from ${chainSource.kind === 'public' ? 'a public server' : 'your own node'}.`,
+      summary: backTo ? "Server back to Umbrel's setting" : chainSource.kind === 'public' ? 'Server changed to a public one' : 'Server changed',
+      signedBy: null,
+      sats: null,
+      result: 'ok',
+    });
   const chainView = (): ChainSettings => ({
     source: clone(chainSource),
-    summary: chainSource.kind === 'core'
-      ? { kind: 'own', backend: 'core', host: chainSource.rpc.host, port: chainSource.rpc.port }
-      : { kind: chainSource.kind === 'public' ? 'public' : 'own', backend: 'electrum', host: chainSource.host, port: chainSource.port },
+    summary: summaryOf(chainSource),
     origin: chainOrigin,
+    platform: 'umbrel',
+    environment: summaryOf(envChainSource),
+    nodeRpc: { host: '10.21.21.8', port: 8332, user: 'umbrel' },
     status: {
       connected: true,
       server: chainSource.kind === 'core' ? 'Bitcoin Core 32.1' : 'electrs/0.12.0',
@@ -728,8 +741,10 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       if (locked) throw new ApiError('locked', 'The guardian is locked. Unlock it first.', 409);
       if (input.kind === 'public' && recovery !== null)
         throw new ApiError('recovery_pending', 'A recovery is running: the guardian switches to a public server only after it ends. You can switch to your own node now.', 409);
+      const before = JSON.stringify(chainSource);
       if (input.kind === 'core') {
-        if (!input.rpc.pass && chainSource.kind !== 'core') throw new ApiError('invalid', 'RPC password: enter it.', 400);
+        const known = (chainSource.kind === 'core' && chainSource.rpc.host === input.rpc.host) || (input.rpc.host === '10.21.21.8' && input.rpc.user === 'umbrel');
+        if (!input.rpc.pass && !known) throw new ApiError('invalid', 'RPC password: enter it.', 400);
         chainSource = { kind: 'core', rpc: { host: input.rpc.host, port: input.rpc.port, user: input.rpc.user, passSet: true }, ...(input.wallet ? { wallet: input.wallet } : {}) };
       } else if (input.kind === 'public') {
         const p = PUBLIC_SERVERS_DEMO.find((x) => x.id === input.preset);
@@ -737,8 +752,21 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       } else {
         chainSource = { kind: 'electrum', host: input.host, port: input.port ?? (input.tls ? 50002 : 50001), tls: input.tls, ...(input.certSha256 ? { certSha256: input.certSha256 } : {}) };
       }
+      // The source in use again: nothing to log or pin (the guardian compares the same way, chain/source.ts).
+      if (JSON.stringify(chainSource) === before && !(input.kind === 'core' && input.rpc.pass)) return chainView();
       chainOrigin = 'settings';
-      pushActivity({ kind: 'system', event: `The guardian now reads the blockchain from ${chainSource.kind === 'public' ? 'a public server' : 'your own node'}.`, signedBy: null, sats: null, result: 'ok' });
+      announceChain(false);
+      return chainView();
+    },
+
+    async resetChain() {
+      await wait(400);
+      if (locked) throw new ApiError('locked', 'The guardian is locked. Unlock it first.', 409);
+      if (chainOrigin === 'environment') return chainView();
+      const changed = JSON.stringify(chainSource) !== JSON.stringify(envChainSource);
+      chainSource = clone(envChainSource);
+      chainOrigin = 'environment';
+      if (changed) announceChain(true);
       return chainView();
     },
 

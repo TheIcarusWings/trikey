@@ -9,7 +9,7 @@ import { ErrorState, PageSkeleton } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { useApi, usePageTitle } from '@/hooks/use-api';
 import { LIMIT_OFF_TEXT, SAVINGS_NOTE, dailySpendSummary, formatSats, formatShortWhen, savingsBalanceText } from '@/lib/format';
-import { mempoolText } from '@/lib/server';
+import { CORE_LINK, HOME_CORE32_FIX, HOME_CORE32_LINK, mempoolText } from '@/lib/server';
 import { cn } from '@/lib/utils';
 
 interface Issue {
@@ -202,12 +202,23 @@ export function HomePage() {
         // Not something to fix for the guardian to work: a note next to the status, not one of its issues.
         <p role="status" className="m-0 flex items-start gap-2 rounded-[10px] bg-warn-soft px-3 py-2.5 text-sm leading-5">
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warn" strokeWidth={2} aria-hidden="true" />
-          <span>
-            {mempoolText(status.chain).text}{' '}
-            <Link to="/settings" className="font-medium underline underline-offset-3">
-              Settings, Server
-            </Link>
-          </span>
+          {mempoolText(status.chain).core32 ? (
+            // Electrs and Bitcoin Core 32: both fixes, the second one a click away (Settings > Server, Bitcoin Core chosen).
+            <span>
+              {mempoolText(status.chain).text} {HOME_CORE32_FIX}{' '}
+              <Link to={CORE_LINK} className="font-medium underline underline-offset-3">
+                {HOME_CORE32_LINK}
+              </Link>
+              .
+            </span>
+          ) : (
+            <span>
+              {mempoolText(status.chain).text}{' '}
+              <Link to="/settings" className="font-medium underline underline-offset-3">
+                Settings, Server
+              </Link>
+            </span>
+          )}
         </p>
       ) : null}
 

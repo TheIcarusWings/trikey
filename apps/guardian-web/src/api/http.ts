@@ -137,6 +137,7 @@ export function createHttpApi(base = ''): GuardianApi {
     testNotification: (input) => request<NotifyTestResult>('POST', '/notifications/test', input),
     getChain: () => request<ChainSettings>('GET', '/chain'),
     setChain: (input) => request<ChainSettings>('PUT', '/chain', input),
+    resetChain: () => request<ChainSettings>('DELETE', '/chain'),
     testChain: (input) => request<ChainTestResult>('POST', '/chain/test', input),
     resetGuardian: async (input) => request<GuardianStatus>('POST', '/reset', withBrowserEntropy(input)),
 
