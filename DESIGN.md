@@ -638,6 +638,26 @@ is left are in docs/design/family-hosting.md.
 - **Later:** extra alert channels for guests; the host's view of a guest's recovery code; shared mode (the full
   descriptor, opt-in); two hosts sharing the key 3 role (another script, a separate design).
 
+## Next: coin control (decided 2026-11-05)
+
+The owner asked for UTXO management. Planned right after several wallets phase 2, since both change coin selection
+and Send; one wallet at a time, Spending and Savings alike.
+
+- **Coin list** per wallet: amount, confirmations, the payment it came from, unconfirmed coins marked (and the
+  phone's own pending spends, `own-spends.ts`, never listed as spendable), and a label the owner sets.
+- **Freeze:** a frozen coin is skipped by automatic selection and by Send max (dust attacks, coins kept apart).
+- **Pick coins on Send:** the person chooses which coins pay; the app warns before merging coins with different labels,
+  since spending them together links them on chain.
+- **Consolidate:** many small coins into one payment to the wallet itself while fees are low. A 2-of-3 P2WSH input is
+  about 105 vB (P2WPKH about 68 vB), so this matters more here than in a single-key wallet.
+
+Owner's decisions:
+1. Labels and freezes live on the phone and in its backup (a restore brings them back), with export and import in
+   BIP 329, the label format other wallets read. Not synced to the guardian for now.
+2. A consolidation counts against the daily limit only by its fee: every output goes back to the wallet's own
+   addresses, which the guardian already treats as change (a test confirms it rather than a rule change).
+3. Coin control covers Savings too.
+
 ## Later: Taproot and threshold signatures (decided 2026-11-03: not now)
 
 Today every Trikey spend is a visible 2-of-3 (`wsh(sortedmulti)`): anyone reading the chain sees a multisig, and two
