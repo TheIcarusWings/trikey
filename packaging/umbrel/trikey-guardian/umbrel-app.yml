@@ -6,7 +6,7 @@ tagline: Key 3 of your 2-of-3 bitcoin wallet, on your own node
 # TODO(verify): the icon is a placeholder (the web UI favicon). Replace with a proper icon URL.
 icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/guardian-web/public/favicon.svg
 category: bitcoin
-version: "0.1.13-alpha"
+version: "0.1.14-alpha"
 # TODO(verify): host-facing port for the app_proxy. Pick one that no other app in the store uses.
 port: 3010
 description: >-
@@ -26,10 +26,10 @@ support: https://github.com/TheIcarusWings/trikey/issues
 # TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
 gallery: []
 releaseNotes: >-
-  On Umbrel, Electrs 0.11.1 can't read Bitcoin Core 32's mempool, so it sees no unconfirmed payments and answers
-  every request about 7 s late. The guardian now reads unconfirmed payments from Bitcoin Core itself, warns on its
-  page with both fixes (deprecatedrpc=bip125, or Settings, Server, Bitcoin Core alone), and treats its own
-  broadcasts as pending. New Wallet page: balance, payments, the daily limit and the address to receive at.
+  Several wallets: add another hardware wallet in the app, and this guardian guards it too, with its own daily
+  limit, contacts, recovery and Savings, and a wallet picker on the web page. Settings, Server now simply shows
+  that the guardian uses this Umbrel's Electrs and Bitcoin Core; other servers are under Advanced, and "Use the
+  server Umbrel set" undoes a server saved there. Update the guardian before the app.
 dependencies:
   - bitcoin
   - electrs

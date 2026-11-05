@@ -6,6 +6,36 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## 0.1.14-alpha (2026-11-05)
+
+Several wallets in one app, and a clearer Server page. Update the guardian first, then the app: an app with several
+wallets needs a guardian with this release.
+
+- **Several wallets in one app.** Add a wallet with another hardware wallet (Settings > Wallets, or the switcher at the
+  top of Home). Each wallet has its own daily limit, alert contacts, recoveries and Savings (with its own Recovery Key),
+  on the same phone and the same guardian. Behind the scenes each wallet uses its own hidden BIP 48 account of the same
+  phone and guardian keys, so nothing on chain links the wallets, and one backup and one recovery code hold them all.
+  - Send and Receive name the wallet. The app shows the total of the daily limits, because anyone who unlocks the
+    phone can spend up to each wallet's limit.
+  - Wallets you are not looking at stay up to date in the background.
+  - Rename a wallet, or remove one once its money is moved to another (the guardian retires it).
+  - "Replace guardian" moves every wallet with one pairing code, each with its own hardware wallet; if one device
+    isn't at hand, the others move and that one waits ("1 of 2 moved").
+  - On the guardian's web page, a wallet picker on Wallet, Rules, Recovery and Activity; alerts name the wallet.
+  - The demo has a second wallet. Silent payments stay with the first wallet for now (#126, #127, #131, #132).
+- **Backups:** once there is more than one wallet, the backup uses a new format (version 4, or 5 with an added wallet's
+  Savings); older apps say "update the app" for it. An older app on a phone with several wallets opens only the first
+  wallet: keep the backup, it brings every wallet back. A guardian downgraded after a wallet was added keeps serving the
+  first wallet; the others move with phone + hardware wallet.
+- **Settings > Server, simpler on Umbrel and StartOS.** It now says "Connected to this Umbrel's Electrs and Bitcoin
+  Core (set up by Umbrel)", with the status and the Electrs warning; choosing another server sits under "Advanced".
+  "Use the server Umbrel set" undoes a server saved in the page, so the guardian follows Umbrel again. Saving without a
+  change is greyed out and never announced. The home warning says when unconfirmed payments are read from Bitcoin Core,
+  and links straight to the "Bitcoin Core alone" option (#128).
+- **The Wallet page's balance matches the phone:** the total, with "including … sats waiting to confirm" under it (#128).
+- Coin control is on the way: its plan and decisions are in DESIGN.md (#129), and its groundwork (BIP 329 labels, a
+  label and freeze store, the coin list) is in (#130); the screens come next.
+
 ## 0.1.13-alpha (2026-11-05)
 
 Fixes from testing 0.1.12 on an Umbrel on mainnet, and a Wallet page on the guardian. Update the guardian and the
