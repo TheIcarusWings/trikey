@@ -40,6 +40,7 @@ import { emailError, guardianNameError, pinError, topicError, urlError, webhookS
  *   savings    the phone has a Savings wallet this guardian watches; some of it moved yesterday
  *   notify     email, ntfy and a webhook are set up (Settings > Notifications); the webhook is failing
  *   publicserver  the guardian reads the chain from a public server (Settings > Server)
+ *   nomempool  Electrs can't read Bitcoin Core 32's mempool; the guardian reads Core's itself (home note, Settings > Server)
  *
  * State lives in memory only, so a page reload starts the scenario over. In the
  * mock, any unlock passphrase works except the literal `wrong`, which is
@@ -60,7 +61,8 @@ export type MockScenario =
   | 'contactlocked'
   | 'savings'
   | 'notify'
-  | 'publicserver';
+  | 'publicserver'
+  | 'nomempool';
 
 /** The public servers the mock offers (a signet guardian's list). */
 const PUBLIC_SERVERS_DEMO = [{ id: 'mempool-signet', host: 'mempool.space', port: 60602, operator: 'mempool.space' }];
@@ -158,7 +160,7 @@ function demoRecovery(ready = false): RecoveryInProgress {
 
 export function readScenario(search: string): MockScenario {
   const value = new URLSearchParams(search).get('mock');
-  const known: MockScenario[] = ['firstrun', 'dockerfirstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout', 'oldrelays', 'limitoff', 'contactlocked', 'savings', 'notify', 'publicserver'];
+  const known: MockScenario[] = ['firstrun', 'dockerfirstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout', 'oldrelays', 'limitoff', 'contactlocked', 'savings', 'notify', 'publicserver', 'nomempool'];
   return known.find((s) => s === value) ?? 'default';
 }
 
@@ -244,6 +246,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
     relaysChange = { at, phoneConfirmedAt: new Date(Date.now() - 120 * DAY + HOUR).toISOString() };
   }
   const syncing = scenario === 'syncing';
+  const mempoolUnseen = scenario === 'nomempool';
   let setupFinished = false;
   // `?mock=signedout`: the browser has no session yet (the sign-in screen first).
   let signedIn = scenario !== 'signedout';
@@ -351,7 +354,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       relays,
       chain: syncing
         ? { state: 'syncing', progress: 0.87, source: 'Bitcoin Node + Electrs' }
-        : { state: 'synced', source: 'Bitcoin Node + Electrs' },
+        : { state: 'synced', source: 'Bitcoin Node + Electrs', ...(mempoolUnseen ? { mempoolUnseen: true, mempoolCause: 'electrs_core32' as const, mempoolViaNode: true } : {}) },
       wallets: setupDone || setupFinished ? walletIds.map((id) => ({ id, name: 'Main', phonesPaired: phones.length })) : [],
       dailySpend: { usedSats: 70_420, limitSats: rules.dailyLimitSats, ...(rules.dailyLimitOff ? { limitOff: true as const } : {}) },
       ...(savingsScenario
@@ -382,7 +385,13 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       ? { kind: 'own', backend: 'core', host: chainSource.rpc.host, port: chainSource.rpc.port }
       : { kind: chainSource.kind === 'public' ? 'public' : 'own', backend: 'electrum', host: chainSource.host, port: chainSource.port },
     origin: chainOrigin,
-    status: { connected: true, server: chainSource.kind === 'core' ? 'Bitcoin Core 32.1' : 'electrs/0.12.0', height: 271_042, rescans: [] },
+    status: {
+      connected: true,
+      server: chainSource.kind === 'core' ? 'Bitcoin Core 32.1' : 'electrs/0.12.0',
+      height: 271_042,
+      rescans: [],
+      ...(mempoolUnseen && chainSource.kind !== 'core' ? { mempoolUnseen: true, mempoolCause: 'electrs_core32' as const, mempoolViaNode: true } : {}),
+    },
     publicServers: clone(PUBLIC_SERVERS_DEMO),
     network: 'signet',
     recoveryRunning: recovery !== null,

@@ -4,9 +4,9 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHttpApi } from '../src/api/http';
-import { createMockApi } from '../src/api/mock';
+import { createMockApi, readScenario } from '../src/api/mock';
 import type { ChainSettings } from '../src/api/types';
-import { PUBLIC_WARNING, draftError, draftFrom, inputFrom, presetLabel, recoveryBlock, sourceLabel, type ServerDraft } from '../src/lib/server';
+import { PUBLIC_WARNING, mempoolText, draftError, draftFrom, inputFrom, presetLabel, recoveryBlock, sourceLabel, type ServerDraft } from '../src/lib/server';
 
 const settings = (over: Partial<ChainSettings> = {}): ChainSettings => ({
   source: { kind: 'electrum', host: '10.21.21.10', port: 50001, tls: false },
@@ -88,4 +88,30 @@ describe('the server API', () => {
     await expect(createMockApi('recovery').setChain({ kind: 'public', preset: 'mempool-signet' })).rejects.toMatchObject({ code: 'recovery_pending' });
     expect((await createMockApi('publicserver').getChain()).summary?.kind).toBe('public');
   }, 20_000);
+});
+
+describe('an Electrum server that reports no unconfirmed payments', () => {
+  it('?mock=nomempool: the home status and Settings > Server say so, in the words asked for', async () => {
+    expect(readScenario('?mock=nomempool')).toBe('nomempool');
+    const api = createMockApi('nomempool');
+    const st = await api.getStatus();
+    if (!('chain' in st)) throw new Error('signed in');
+    expect(st.chain).toMatchObject({ state: 'synced', mempoolUnseen: true, mempoolCause: 'electrs_core32', mempoolViaNode: true });
+    expect((await api.getChain()).status).toMatchObject({ mempoolUnseen: true, mempoolCause: 'electrs_core32' });
+  });
+
+  it('names the cause: Electrs and Bitcoin Core 32, with or without the guardian reading Core itself', () => {
+    expect(mempoolText({ mempoolCause: 'electrs_core32' }).text).toBe(
+      "Electrs can't read Bitcoin Core 32's mempool; unconfirmed payments show once confirmed, or switch Settings > Server to Bitcoin Core alone.",
+    );
+    expect(mempoolText({ mempoolCause: 'electrs_core32', mempoolViaNode: true }).text).toMatch(/reads unconfirmed payments from Bitcoin Core itself/);
+    expect(mempoolText({}).text).toBe("Your Electrum server doesn't report unconfirmed payments; they will show once confirmed.");
+    for (const m of [{}, { mempoolViaNode: true }, { mempoolCause: 'electrs_core32' as const }]) expect(mempoolText(m).detail).toMatch(/Payments your phone makes still show at once/);
+  });
+
+  it('every other scenario: nothing to say', async () => {
+    const st = await createMockApi('default').getStatus();
+    expect('chain' in st ? st.chain.mempoolUnseen : undefined).toBeUndefined();
+    expect((await createMockApi('default').getChain()).status.mempoolUnseen).toBeUndefined();
+  });
 });

@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
@@ -13,7 +13,7 @@ import { Icon } from '@/components/ui/icon';
 import { RadioGroup } from '@/components/ui/radio-group';
 import { Text } from '@/components/ui/text';
 import { useQuote } from '@/data/use-quote';
-import { FEE_SPEEDS, WalletServiceError, formatSats, groupAddress, shorten, useWallet, useWalletService, type FeeSpeed } from '@/data';
+import { SAME_FEE_NOTE, WalletServiceError, formatSats, groupAddress, sameFeeEverySpeed, shorten, useWallet, useWalletService, type FeeSpeed } from '@/data';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
@@ -36,6 +36,8 @@ export default function SendReview() {
   const toSavings = savings === '1';
   const sendMax = max === '1';
   const [speed, setSpeed] = useState<FeeSpeed>('normal');
+  // The person chose a speed in the sheet: never changed for them after that.
+  const pickedSpeed = useRef(false);
   const [choosingSpeed, setChoosingSpeed] = useState(false);
   const [aboutFees, setAboutFees] = useState(false);
   const { busy, run, message, error } = useAction();
@@ -55,9 +57,8 @@ export default function SendReview() {
   const quote = outcome.ok ? outcome.quote : null;
   const hardware = quote?.plan.signer === 'hardware';
 
-  // The fee of each speed, for the sheet; worked out only while it is open.
+  // The fee of each speed: for the sheet, and to tell when they all cost the same.
   const speedFees = useMemo(() => {
-    if (!choosingSpeed) return {} as Partial<Record<FeeSpeed, number>>;
     const out: Partial<Record<FeeSpeed, number>> = {};
     for (const s of SPEEDS) {
       const q = sendMax ? wallet.quoteSendMax({ address, speed: s }) : wallet.quoteSend({ address, amountSats: Number(amount), speed: s, ...forced });
@@ -65,7 +66,12 @@ export default function SendReview() {
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [choosingSpeed, wallet, address, amount, signer, sendMax]);
+  }, [wallet, address, amount, signer, sendMax, state.balanceSats, state.guardian.status]);
+  // Every speed costs the same (a quiet mempool, or all at the 1 sat/vB floor): no reason to wait, so Fast.
+  const sameFee = sameFeeEverySpeed(speedFees);
+  useEffect(() => {
+    if (sameFee && !pickedSpeed.current && !sending.current) setSpeed('fast');
+  }, [sameFee]);
 
   if (!quote) {
     return (
@@ -176,7 +182,14 @@ export default function SendReview() {
       ) : null}
 
       <Sheet visible={choosingSpeed} title="Arrival time" onClose={() => setChoosingSpeed(false)}>
-        <RadioGroup value={speed} onValueChange={(v) => setSpeed(v as FeeSpeed)} aria-label="Arrival time" className="gap-2">
+        <RadioGroup
+          value={speed}
+          onValueChange={(v) => {
+            pickedSpeed.current = true;
+            setSpeed(v as FeeSpeed);
+          }}
+          aria-label="Arrival time"
+          className="gap-2">
           {SPEEDS.map((s) => (
             <RadioRow
               key={s}
@@ -188,6 +201,7 @@ export default function SendReview() {
             />
           ))}
         </RadioGroup>
+        {sameFee ? <Text className="text-[13px] leading-[18px]">{SAME_FEE_NOTE}</Text> : null}
         <Text className="text-muted-foreground text-[13px] leading-[18px]">Network fees go to the miners who confirm your payment. Trikey takes nothing.</Text>
         <AppButton title="Done" onPress={() => setChoosingSpeed(false)} />
       </Sheet>

@@ -687,7 +687,9 @@ class Service implements RealWalletService {
       lastSeenAt: this.iso(gs?.checkedAt ?? snap?.syncedAt ?? this.clock.now()),
       relays,
       chainData: gs?.chainSource?.kind === 'public' ? 'public' : 'your-node',
-      ...(gs?.chainSource ? { chainSource: { kind: gs.chainSource.kind, backend: gs.chainSource.backend, host: gs.chainSource.host } } : {}),
+      ...(gs?.chainSource
+        ? { chainSource: { kind: gs.chainSource.kind, backend: gs.chainSource.backend, host: gs.chainSource.host, ...(gs.chainSource.mempool ? { mempool: gs.chainSource.mempool } : {}) } }
+        : {}),
       npub,
       ...(g?.key3Mixed ? { key3Note: KEY3_MIXED_NOTE } : {}),
       ...(lockedBy ? { lockedByContact: { name: contactName(lockedBy), npub: lockedBy.npub } } : {}),

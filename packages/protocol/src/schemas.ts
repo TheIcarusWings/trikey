@@ -594,6 +594,14 @@ export const GuardianStatusResult = z
         kind: z.enum(['own', 'public']),
         backend: z.enum(['electrum', 'core']),
         host: z.string().min(1).max(255),
+        /**
+         * `unseen`: the guardian found that this Electrum server reports no unconfirmed transaction (it did not list a
+         * payment the guardian relayed within a minute, or its fee histogram is empty while Bitcoin Core's mempool is
+         * not: Electrs 0.11 with Core 32), and it cannot read Bitcoin Core's mempool instead (no RPC). Incoming payments
+         * then show only once confirmed; the guardian still shows the payments it relayed as pending. Absent otherwise,
+         * and from older guardians.
+         */
+        mempool: z.literal('unseen').optional(),
       })
       .optional(),
   })

@@ -269,6 +269,9 @@ export function chainSettings(g: Guardian): ChainSettings {
       ...(b?.connected && b.tip ? { height: b.tip.height } : {}),
       ...(!b?.connected && b?.lastError ? { error: b.lastError } : {}),
       rescans: g.chainRescans.map((r) => ({ since: iso(r.since), from: iso(r.birthday * 1000) })),
+      ...(b?.connected && g.chain.mempoolUnseen
+        ? { mempoolUnseen: true, ...(g.chain.mempool.cause ? { mempoolCause: g.chain.mempool.cause } : {}), ...(g.chain.mempool.viaNode ? { mempoolViaNode: true } : {}) }
+        : {}),
     },
     publicServers: publicServersFor(g.config.network).map((p) => ({ id: p.id, host: p.host, port: p.port, operator: p.operator, ...(p.chain ? { chain: p.chain } : {}) })),
     network: g.config.network,

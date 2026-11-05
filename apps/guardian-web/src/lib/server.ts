@@ -2,7 +2,7 @@
  * Settings > Server: the form's checks and words (the guardian checks everything again, apps/guardian/src/chain/source.ts).
  * Three kinds, as in Sparrow Wallet: your own Electrum server, your own Bitcoin Core, or a public server.
  */
-import type { ChainSettings, ChainSourceInput, ChainSourceView, PublicServerOption } from '../api/types';
+import type { ChainSettings, ChainSourceInput, ChainSourceView, MempoolCause, PublicServerOption } from '../api/types';
 
 export type ServerKind = 'electrum' | 'core' | 'public';
 
@@ -32,6 +32,34 @@ export const PUBLIC_WARNING =
 
 export const CORE_NOTE =
   'Bitcoin Core 24 or later. The guardian creates a watch-only wallet in it (no keys) and imports your wallet’s addresses; the first import scans the chain from the wallet’s start, which takes a while on mainnet. A pruned node works only if it still has those blocks. Its RPC has no encryption: use it on your own network or over Tailscale.';
+
+/**
+ * The home status's note and Settings > Server's warning while the Electrum server reports no unconfirmed payments
+ * (`mempoolUnseen`): `text` names the cause when the guardian knows it, `detail` says what still works and what fixes it.
+ */
+export function mempoolText(m: { mempoolCause?: MempoolCause; mempoolViaNode?: boolean }): { text: string; detail: string } {
+  const own = 'Payments your phone makes still show at once (the guardian remembers the ones it sent).';
+  if (m.mempoolCause === 'electrs_core32') {
+    if (m.mempoolViaNode)
+      return {
+        text: "Electrs can't read Bitcoin Core 32's mempool, so the guardian reads unconfirmed payments from Bitcoin Core itself.",
+        detail: `They still show at once. Electrs has no fix yet; Settings > Server > Bitcoin Core alone avoids it. ${own}`,
+      };
+    return {
+      text: "Electrs can't read Bitcoin Core 32's mempool; unconfirmed payments show once confirmed, or switch Settings > Server to Bitcoin Core alone.",
+      detail: `Bitcoin Core 32 no longer gives a field Electrs 0.11 needs, and Electrs has no fix yet. ${own}`,
+    };
+  }
+  if (m.mempoolViaNode)
+    return {
+      text: "Your Electrum server doesn't report unconfirmed payments, so the guardian reads them from Bitcoin Core itself.",
+      detail: `They still show at once. ${own} Restarting Electrs may help, or choose another server here.`,
+    };
+  return {
+    text: "Your Electrum server doesn't report unconfirmed payments; they will show once confirmed.",
+    detail: `${own} Payments to you appear only after a block. Electrs may be catching up, or have its mempool turned off; restarting it usually helps, or choose another server here.`,
+  };
+}
 
 export const FINGERPRINT_COMMAND = 'openssl s_client -connect HOST:PORT </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256';
 

@@ -44,6 +44,7 @@ import { normalizeURL } from 'nostr-tools/utils';
 import { GUARDIAN_FEATURES, RpcServer, SeenWraps, SimplePoolRelayPool, checkRelayList, checkRelayUrl, createSimplePool, sameRelays, type Alert, type MethodName } from '@trikey/protocol';
 import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 import { ChainService } from './chain/chain.js';
+import { RelayedTxs } from './chain/relayed.js';
 import { BitcoinRpc } from './chain/bitcoind.js';
 import { type ElectrumClientOptions } from './chain/electrum.js';
 import type { ChainBackend } from './chain/backend.js';
@@ -400,7 +401,15 @@ export class Guardian {
     // The environment's choice; `open` swaps in the web UI's, if the owner made one (chain-source.json).
     this.chainSource = opts.config.chainSource ?? this.envElectrumSource();
     this.chainSourceStore = new ChainSourceStore(opts.config.dataDir);
-    this.chain = new ChainService({ backend: this.chainSource ? this.makeBackend(this.chainSource, false) : undefined, rpc, log: this.log, liveMaxScripts: opts.liveMaxScripts });
+    this.chain = new ChainService({
+      backend: this.chainSource ? this.makeBackend(this.chainSource, false) : undefined,
+      rpc,
+      log: this.log,
+      liveMaxScripts: opts.liveMaxScripts,
+      // The owner's payments relayed here, until the chain source shows them (chain/relayed.ts).
+      relayed: new RelayedTxs({ dir: opts.config.dataDir, now: () => this.clock.now() }),
+      now: () => this.clock.now(),
+    });
     this.sp = new SilentPaymentService({
       dataDir: opts.config.dataDir,
       rpc,
@@ -491,6 +500,7 @@ export class Guardian {
       g.chainSourceOrigin = 'settings';
       g.chain.setBackend(g.makeBackend(stored, false));
     }
+    await g.chain.relayed.load();
     g.lockedAt = g.clock.now();
     g.lockReason = 'restart';
     return g;
@@ -1186,6 +1196,8 @@ export class Guardian {
           await this.alerts.run();
           // `wallet_tx` alerts no relay took yet, and a first look at wallets new since the last pass.
           await this.live?.tick();
+          // In the background: the relayed payments Bitcoin Core says are gone, and whether the server sees the mempool.
+          void this.chain.checkMempool();
           // Email, ntfy, webhook: in the background, so a slow mail server never holds back the tick.
           this.notifier.kick();
           // In the background: a long catch-up must not hold back alerts or recoveries.

@@ -13,6 +13,12 @@
  * the relay fee for its own size) and in fee rate; else refused as Bitcoin Core
  * words it.
  *
+ * With `hideMempool`, it is an Electrum server that does not see the mempool (an Umbrel's electrs 0.11 was seen so):
+ * broadcasts still go to the (fake) node's mempool, with the rules above, but every answer leaves unconfirmed
+ * transactions out (histories, unspent outputs as if nothing spent them, statuses, `transaction.get`, an empty fee
+ * histogram) until a block confirms them. The node's view stays available to the fake Bitcoin Core (`mempoolTxids`,
+ * `outputAt`).
+ *
  * Script subscriptions (`blockchain.scripthash.subscribe`) are notified like a real server's: whenever a subscribed
  * script's status changes (every method here that changes the chain notifies at once; a test that edits `history` or
  * `unspent` in place is caught within `pollMs`), and also when a test replaces a script's entry in `history` or
@@ -107,6 +113,8 @@ export class FakeElectrum {
   rejectBroadcast?: string;
   /** Treat broadcasts as a mempool (see the file comment). */
   applyBroadcasts = false;
+  /** Answer as a server that does not see the mempool (see the file comment). */
+  hideMempool = false;
   /** `blockchain.estimatefee` answers, BTC/kvB by target; targets not listed answer -1 (no estimate). */
   feeRates = new Map<number, number>([
     [1, 0.0002],
@@ -158,9 +166,40 @@ export class FakeElectrum {
     this.notifyChanges();
   }
 
-  /** The Electrum status of a script hash now. */
+  /** The Electrum status of a script hash now, as this server answers it. */
   statusOf(sh: string): string | null {
-    return electrumStatus(this.history.get(sh) ?? []);
+    return electrumStatus(this.visibleHistory(sh));
+  }
+
+  /** A script's history as answered: without the mempool's transactions while `hideMempool`. */
+  private visibleHistory(sh: string): { tx_hash: string; height: number }[] {
+    const list = this.history.get(sh) ?? [];
+    return this.hideMempool ? list.filter((h) => h.height > 0) : list;
+  }
+
+  /** A script's unspent outputs as answered: while `hideMempool`, confirmed ones, also those the mempool spends. */
+  private visibleUnspent(sh: string): FakeUtxo[] {
+    const list = this.unspent.get(sh) ?? [];
+    if (!this.hideMempool) return list;
+    const spentInMempool = [...this.mempool.values()].flatMap((m) => m.spent.filter((x) => x.sh === sh && x.utxo.height > 0).map((x) => x.utxo));
+    return [...list.filter((u) => u.height > 0), ...spentInMempool];
+  }
+
+  /** The (fake) node's mempool: what a fake Bitcoin Core reports, whatever this server answers. */
+  mempoolTxids(): string[] {
+    return [...this.mempool.keys()];
+  }
+
+  /** An output unspent in the node's view, mempool included (`gettxout` with the mempool), or undefined. */
+  outputAt(txid: string, vout: number): { value: number; height: number } | undefined {
+    const u = this.findUtxo(txid, vout)?.utxo;
+    return u ? { value: u.value, height: u.height } : undefined;
+  }
+
+  /** Drops an unconfirmed transaction from the node's mempool (expiry, eviction), with its descendants. */
+  dropFromMempool(txid: string): void {
+    this.evict(txid);
+    this.notifyChanges();
   }
 
   private touch(sh: string): void {
@@ -450,13 +489,16 @@ export class FakeElectrum {
         return ok(status);
       }
       case 'blockchain.scripthash.get_history':
-        return ok(this.history.get(p[0] as string) ?? []);
+        return ok(this.visibleHistory(p[0] as string));
       case 'blockchain.scripthash.listunspent':
-        return ok((this.unspent.get(p[0] as string) ?? []).map((u) => ({ tx_hash: u.txid, tx_pos: u.vout, height: u.height, value: u.value })));
+        return ok(this.visibleUnspent(p[0] as string).map((u) => ({ tx_hash: u.txid, tx_pos: u.vout, height: u.height, value: u.value })));
       case 'blockchain.transaction.get': {
-        const tx = this.txs.get(p[0] as string);
+        const tx = this.hideMempool && this.mempool.has(p[0] as string) ? undefined : this.txs.get(p[0] as string);
         return tx ? ok(tx) : fail('No such mempool or blockchain transaction', 2);
       }
+      case 'mempool.get_fee_histogram':
+        // One bucket per transaction is enough for the guardian's "does it see the mempool" check.
+        return ok(this.hideMempool ? [] : [...this.mempool.keys()].map(() => [1, 200]));
       case 'blockchain.transaction.broadcast': {
         if (this.rejectBroadcast) return fail(this.rejectBroadcast, 1);
         const raw = p[0] as string;

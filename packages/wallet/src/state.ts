@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import { HardwareAuthKey, HistoryEntry, KeyOrigin, Network, PhoneSpendingState, Policy, Recovery, WalletUtxo } from '@trikey/protocol';
 import type { KeyValueStore } from './platform.js';
+import { OwnSpend } from './own-spends.js';
 import { WalletError } from './errors.js';
 
 const Hex32 = z.string().regex(/^[0-9a-f]{64}$/);
@@ -156,7 +157,15 @@ export const GuardianStatusCache = z.object({
    * Where the guardian reads the blockchain (`guardian.status.chainSource`): the owner's own node or a public server,
    * chosen in the guardian's web UI. Absent from older guardians, which use the box's own node.
    */
-  chainSource: z.object({ kind: z.enum(['own', 'public']), backend: z.enum(['electrum', 'core']), host: z.string() }).optional(),
+  chainSource: z
+    .object({
+      kind: z.enum(['own', 'public']),
+      backend: z.enum(['electrum', 'core']),
+      host: z.string(),
+      /** `unseen`: that Electrum server reports no unconfirmed transactions (incoming payments show once confirmed). */
+      mempool: z.literal('unseen').optional(),
+    })
+    .optional(),
 });
 export type GuardianStatusCache = z.infer<typeof GuardianStatusCache>;
 
@@ -530,6 +539,11 @@ export const WalletState = z.object({
   seenAlerts: z.array(z.string()).default([]),
   /** Payments this phone made (newest last), merged into the history. */
   sendLog: z.array(SendLogEntry).default([]),
+  /**
+   * The coins this phone's own unconfirmed transactions spend, kept out of payments and the balance until they confirm
+   * or are gone, whatever a sync says (own-spends.ts). Newest last.
+   */
+  ownSpends: z.array(OwnSpend).default([]),
   /** Transactions the guardian announced (`wallet_tx`) that a sync may not list yet, newest last. */
   liveTxs: z.array(LiveTx).default([]),
   /** The last `LiveTx.seq` given. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PUBLIC_SERVER_WARNING, chainDataLabel, hostChainDataLabel } from './chain-source';
+import { MEMPOOL_UNSEEN_NOTE, PUBLIC_SERVER_WARNING, chainDataLabel, hostChainDataLabel, mempoolUnseen } from './chain-source';
 
 describe("Settings > Guardian: where the guardian reads the chain", () => {
   it('says "Your node" for the owner\'s own server, and for guardians that do not say (they use the box\'s node)', () => {
@@ -19,5 +19,13 @@ describe("Settings > Guardian: where the guardian reads the chain", () => {
     expect(hostChainDataLabel(undefined)).toBe("Host's own node");
     expect(hostChainDataLabel({ kind: 'own', backend: 'core', host: 'own' })).toBe("Host's own node");
     expect(hostChainDataLabel({ kind: 'public', backend: 'electrum', host: 'electrum.blockstream.info' })).toBe('Public server: electrum.blockstream.info');
+  });
+
+  it("says quietly when the guardian's Electrum server reports no unconfirmed payments", () => {
+    expect(mempoolUnseen(undefined)).toBe(false);
+    expect(mempoolUnseen({ kind: 'own', backend: 'electrum', host: '10.21.21.10' })).toBe(false);
+    expect(mempoolUnseen({ kind: 'own', backend: 'electrum', host: '10.21.21.10', mempool: 'unseen' })).toBe(true);
+    expect(MEMPOOL_UNSEEN_NOTE).toMatch(/doesn't report unconfirmed payments/);
+    expect(MEMPOOL_UNSEEN_NOTE).toMatch(/show once confirmed/);
   });
 });

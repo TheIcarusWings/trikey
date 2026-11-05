@@ -387,7 +387,11 @@ export function buildHandlers(g: Guardian): Handlers {
         // The owner's extra alert channels, masked and read-only (PROTOCOL.md, "Extra alert channels").
         ...(g.notifier.configured ? { notifications: { channels: g.notifier.summary() } } : {}),
         // Where it reads the blockchain: the owner's own node or a public server (PROTOCOL.md, "Chain source").
-        ...(g.chainSourceSummary() ? { chainSource: { kind: g.chainSourceSummary()!.kind, backend: g.chainSourceSummary()!.backend, host: g.chainSourceSummary()!.host.slice(0, 255) } } : {}),
+        // `mempool: "unseen"`: unconfirmed payments to the wallet do not show (the server shows no mempool, and the
+        // guardian cannot read Bitcoin Core's instead: chain.ts `incomingUnseen`).
+        ...(g.chainSourceSummary()
+          ? { chainSource: { kind: g.chainSourceSummary()!.kind, backend: g.chainSourceSummary()!.backend, host: g.chainSourceSummary()!.host.slice(0, 255), ...(g.chain.incomingUnseen ? { mempool: 'unseen' as const } : {}) } }
+          : {}),
         ...(s.dailyLimit
           ? {
               dailyLimit: {
@@ -701,7 +705,7 @@ export function buildHandlers(g: Guardian): Handlers {
           // (d) A spend of the watched Savings wallet: the guardian did not sign it and cannot; it only relays it, and
           // its tripwire announces it like any other Savings spend.
           if (sv && (await g.chain.spendsWalletCoin(savingsWallet(sv), params.txHex, { minIndex: g.savingsWatch.scanFloor(sv) }))) {
-            const r = await g.chain.broadcast(params.txHex);
+            const r = await g.chain.broadcast(params.txHex, { track: true });
             if (r.txid !== txid) g.log.warn('tx.broadcast_txid_mismatch', { txid, reported: r.txid });
             g.log.info('tx.broadcast', { txid, via: r.via, spends: 'savings' });
             void g.savingsWatch.run({ force: true }).then(() => g.alerts.run());
@@ -715,7 +719,8 @@ export function buildHandlers(g: Guardian): Handlers {
           }
           via = single === 'not_applicable' ? 'replaced_wallet_sweep' : 'single_key_sweep';
         }
-        const r = await g.chain.broadcast(params.txHex);
+        // Known mempool state from now on (chain/relayed.ts): a server that does not see the mempool still shows it spent.
+        const r = await g.chain.broadcast(params.txHex, { track: true });
         if (r.txid !== txid) g.log.warn('tx.broadcast_txid_mismatch', { txid, reported: r.txid });
         g.log.info('tx.broadcast', { txid, via: r.via, spends: via });
         return { txid };

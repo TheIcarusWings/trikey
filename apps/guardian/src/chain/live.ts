@@ -218,11 +218,29 @@ export class ScriptWatch {
     return this.resubscribe();
   }
 
-  /** Reads again every script with an unconfirmed transaction (a new block may have confirmed or dropped it). */
-  refreshUnconfirmed(): void {
+  /** Whether the script with this Electrum script hash is subscribed here. */
+  watches(hash: string): boolean {
+    return this.entries.has(hash);
+  }
+
+  /** Every unspent output the watched scripts' current data lists (`txid:vout`). */
+  unspentOutpoints(): Set<string> {
+    const out = new Set<string>();
+    for (const e of this.entries.values()) if (this.isCurrent(e)) for (const u of e.data!.unspent) out.add(`${u.txid}:${u.vout}`);
+    return out;
+  }
+
+  /**
+   * Reads again every script with an unconfirmed transaction (a new block may have confirmed or dropped it), and the
+   * scripts in `also` (by script hash): those of transactions the guardian knows are unconfirmed though the server does
+   * not list them (chain/relayed.ts), which a server that does not see the mempool only lists once a block has them.
+   * Without this, their confirmation waited for the server's own notification, which a slow Electrs sends long after
+   * the block (about 25 s on an Umbrel's electrs 0.11).
+   */
+  refreshUnconfirmed(also: ReadonlySet<string> = new Set()): void {
     if (!this.up) return;
     for (const e of this.entries.values()) {
-      if (!this.isCurrent(e) || !e.data!.history.some((h) => h.height <= 0)) continue;
+      if (!this.isCurrent(e) || !(also.has(e.hash) || e.data!.history.some((h) => h.height <= 0))) continue;
       e.dirty = true;
       const p = this.schedule(e);
       e.busy = p;

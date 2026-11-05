@@ -253,6 +253,8 @@ describe('family hosting, end to end', { timeout: 60_000 }, () => {
     // host's phone cannot relay a guest's transaction through them.
     expect((await rpcError(host.call('tx.broadcast', { txHex: final.txHex }))).code).toBe(ErrorCode.ForeignTransaction);
     expect((await dad().rpc.call('tx.broadcast', { txHex: final.txHex })).txid).toBe(final.txid);
+    // Relayed, never kept as the host's mempool state (chain/relayed.ts): nothing of a guest's wallet on the host's disk.
+    expect(rig.guardian.chain.relayed.get(final.txid)).toBeUndefined();
     const strange = rig.fund(externalScript(5), 1000n);
     const e = await rpcError(dad().rpc.call('tx.broadcast', { txHex: strange.rawTx }));
     expect(e.code).toBe(ErrorCode.ForeignTransaction);

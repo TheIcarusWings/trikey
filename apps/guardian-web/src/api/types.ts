@@ -29,7 +29,18 @@ export interface ChainStatus {
   source: string;
   /** Height of the latest block, when known. */
   height?: number;
+  /**
+   * True when the guardian found that its Electrum server reports no unconfirmed transactions (guardians from 0.1.13).
+   * The words: `mempoolText` (lib/server.ts).
+   */
+  mempoolUnseen?: boolean;
+  /** Why, when known: `electrs_core32`, Electrs cannot read the mempool of Bitcoin Core 32 or later. */
+  mempoolCause?: MempoolCause;
+  /** The guardian reads unconfirmed payments from Bitcoin Core itself meanwhile: they still show at once. */
+  mempoolViaNode?: boolean;
 }
+
+export type MempoolCause = 'electrs_core32';
 
 export interface WalletSummary {
   id: string;
@@ -581,6 +592,10 @@ export interface ChainSettings {
     error?: string;
     /** Bitcoin Core only: wallet imports still scanning the chain, since when, from which date. */
     rescans: { since: ISODate; from: ISODate }[];
+    /** As `ChainStatus`: the Electrum server reports no unconfirmed transactions, why, and whether Core covers it. */
+    mempoolUnseen?: boolean;
+    mempoolCause?: MempoolCause;
+    mempoolViaNode?: boolean;
   };
   /** Well-known public servers for this network. */
   publicServers: PublicServerOption[];

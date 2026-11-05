@@ -331,6 +331,22 @@ export class ElectrumBackend implements ChainBackend {
     return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
   }
 
+  /**
+   * `mempool.get_fee_histogram`: `[feeRate, vsize]` pairs of the server's mempool. Empty when the server holds no
+   * unconfirmed transaction (or does not see the mempool at all); undefined when it does not have the method.
+   */
+  async feeHistogram(): Promise<[number, number][] | undefined> {
+    let r: unknown;
+    try {
+      r = await this.req<unknown>('mempool.get_fee_histogram', []);
+    } catch (e) {
+      if (e instanceof ElectrumError) return undefined;
+      throw e;
+    }
+    if (!Array.isArray(r)) return undefined;
+    return r.filter((x): x is [number, number] => Array.isArray(x) && typeof x[0] === 'number' && typeof x[1] === 'number');
+  }
+
   async relayFee(): Promise<number | null> {
     try {
       const v = await this.req<number>('blockchain.relayfee', []);
