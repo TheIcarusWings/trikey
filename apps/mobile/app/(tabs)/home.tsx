@@ -14,6 +14,7 @@ import {
 import { RecoveryKeyNotices, VaultCard } from '@/components/home-rk';
 import { SavingsRow, SavingsSuggestion } from '@/components/savings';
 import { Screen } from '@/components/screen';
+import { WalletSwitcher } from '@/components/wallet-switcher';
 import { useWallet, useWalletService } from '@/data';
 import { IS_IOS, pick } from '@/lib/platform';
 
@@ -58,6 +59,8 @@ export default function HomeScreen() {
   return (
     <Screen {...screen}>
       {top}
+      {/* Several wallets: the wallet shown and its device; a tap switches or adds one. */}
+      <WalletSwitcher />
       {/* With Savings, the main balance is Spending's; Savings has its own row below. */}
       <BalanceHeader label={state.savings.status === 'active' ? 'Spending' : 'Balance'} sats={state.balanceSats} />
       {paused ? <StatusLine tone="warn" text={state.recovery ? 'Phone-only payments paused during recovery' : 'Phone-only payments paused'} /> : <LimitLine newWallet={newWallet} />}

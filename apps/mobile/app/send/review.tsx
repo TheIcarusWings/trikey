@@ -13,7 +13,7 @@ import { Icon } from '@/components/ui/icon';
 import { RadioGroup } from '@/components/ui/radio-group';
 import { Text } from '@/components/ui/text';
 import { useQuote } from '@/data/use-quote';
-import { SAME_FEE_NOTE, WalletServiceError, formatSats, groupAddress, sameFeeEverySpeed, shorten, useWallet, useWalletService, type FeeSpeed } from '@/data';
+import { SAME_FEE_NOTE, WalletServiceError, formatSats, groupAddress, sameFeeEverySpeed, shorten, useWallet, useWalletService, type FeeSpeed, fromLine } from '@/data';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
@@ -137,6 +137,8 @@ export default function SendReview() {
           )}
         </>
       }>
+      {/* Several wallets: the wallet this pays from, and so the device it may need. */}
+      {fromLine(state.wallets) ? <Text className="text-muted-foreground text-center text-[15px] font-medium">{`${fromLine(state.wallets)} · ${state.hardware.model}`}</Text> : null}
       <Panel>
         <View className={pick('flex-row justify-between gap-4 px-4 py-3.5', 'flex-row justify-between gap-4 p-4')}>
           <Text className="text-muted-foreground text-[15px] leading-5">To</Text>

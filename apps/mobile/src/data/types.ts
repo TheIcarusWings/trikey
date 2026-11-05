@@ -254,6 +254,8 @@ export type SecurityEvent = { id: string; at: IsoDate } & (
   | { kind: 'contact-lock-off' }
   /** The guardian stopped guarding this phone's wallet: retired (Replace guardian), swept by a recovery, or reset. */
   | { kind: 'wallet-retired'; reason: 'retired' | 'recovered' | 'reset' | 'hosting_ended' }
+  /** Several wallets: this phone added a wallet with a new hardware wallet (it is in the first wallet's log). */
+  | { kind: 'wallet-added'; name: string }
   /** The wallet moved to a new guardian. */
   | { kind: 'guardian-replaced'; host: GuardianHost; movedSats: Sats }
   /** A recovery finished: the guardian took over the new wallet and this phone switched to it. */
@@ -812,6 +814,44 @@ export interface AppToast {
   text: string;
 }
 
+/** One wallet of the phone, as the switcher and Settings > Wallets list it. */
+export interface WalletListItem {
+  /** Its BIP 48 account on the phone's seed: 0 for the first wallet, 2, 4, ... for the ones added. Its id here. */
+  account: number;
+  name: string;
+  /** Its hardware wallet ("Trezor Safe 3"): each wallet has its own. */
+  device: string;
+  /** The wallet shown now. */
+  current: boolean;
+  /** The last balance this phone knows (synced when shown). */
+  balanceSats: Sats;
+  dailyLimitSats: Sats;
+  /** No daily limit (turned off with its hardware wallet). */
+  limitOff?: true;
+}
+
+export interface WalletsView {
+  list: WalletListItem[];
+  /** The wallet shown, from `list`. */
+  current: WalletListItem;
+  /** "Add a wallet" works now: the guardian can hold more (`own_wallets`) and there is room (8 at most). */
+  canAdd: boolean;
+  /** The guardian is too old for more than one wallet: "Update your guardian to add a wallet." */
+  guardianUpdateNeeded: boolean;
+  /**
+   * With more than one wallet: what someone who unlocks this phone can send in a day with the guardian, every wallet's
+   * limit added up (`off`: one wallet has no daily limit).
+   */
+  total?: { sats: Sats; off: boolean };
+}
+
+/** "Add a wallet": its name, the new hardware wallet, its daily limit (the other rules are the first wallet's). */
+export interface AddWalletInput {
+  name: string;
+  hardware: HardwareKind;
+  dailyLimitSats: Sats;
+}
+
 export interface WalletState {
   /** Which wallet is behind the screens. */
   backing: AppMode;
@@ -908,6 +948,11 @@ export interface WalletState {
   alertChannels?: AlertChannels;
   /** The optional Savings wallet (docs/design/savings-and-limit-off.md). `status: 'available'` for everyone who has none. */
   savings: SavingsState;
+  /**
+   * Several wallets in one app (guardian mode, docs/design/multi-wallet.md): the phone's wallets on its guardian, the one
+   * shown, and whether another can be added. Absent in the other modes and before a wallet is paired.
+   */
+  wallets?: WalletsView;
 }
 
 // ---------------------------------------------------------------- Savings (optional)

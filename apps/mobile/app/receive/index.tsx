@@ -8,7 +8,7 @@ import { Card } from '@/components/ui/card';
 import { AddressQr } from '@/components/qr';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
-import { groupAddress, useWallet, useWalletService } from '@/data';
+import { groupAddress, useWallet, useWalletService, toLine } from '@/data';
 import { ListGroup, Notice, SettingsRow, networkLabel } from '@/components/panels';
 import { SilentReceiveScreen } from '@/components/silent-receive';
 import { Segmented } from '@/components/segmented';
@@ -93,6 +93,8 @@ export default function Receive() {
           ]}
         />
       ) : null}
+      {/* Several wallets: the wallet this address belongs to, above it. */}
+      {!rkMode && toLine(state.wallets) ? <Text className="text-center text-[17px] font-semibold">{toLine(state.wallets)}</Text> : null}
       {receiveAddress ? (
         <View className="mt-1 items-center gap-4">
           <AddressQr address={receiveAddress} />
