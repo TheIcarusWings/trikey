@@ -1,8 +1,9 @@
-# Email, ntfy and webhook alerts
+# Email, ntfy, webhook and Telegram alerts
 
 Status: built. Written 2026-11-01, against `main` after 0.1.7; the owner's answers to its open questions (same day) are
 built too: a pinned certificate for self-signed email servers and a password-only fix during a recovery ("Decisions"
-at the end). DESIGN.md ("Alerts beyond nostr", threat model), PROTOCOL.md ("Extra alert channels") and
+at the end). Telegram (a bot the owner makes, for the owner and alert contacts) was added on 2026-11-05, after 0.1.14
+("Telegram" below); WhatsApp stays out ("Rejected alternatives"). DESIGN.md ("Alerts beyond nostr", threat model), PROTOCOL.md ("Extra alert channels") and
 `apps/guardian-web/API.md` ("Notifications") describe it as built.
 
 Until now the guardian's alerts reached two places: the paired phone (nostr RPC) and the alert contacts (NIP-17 DMs).
@@ -18,21 +19,26 @@ guardian** (no separate Umbrel apps) and **all notify-only**:
 They go to the **owner** (their own addresses: the phone may be in a thief's hands) and to **alert contacts** (an email
 address and/or an ntfy topic next to a contact's nostr key, or a contact reachable only by email or ntfy).
 
+A fourth channel came later, for the people the first three still miss: **Telegram**, through a bot the owner makes with
+@BotFather, for the owner and for alert contacts who won't install a nostr or ntfy app but already use Telegram
+("Telegram" below).
+
 ## What was built
 
 | Part | What it does |
 |---|---|
-| Channels | Email (SMTP through the owner's account), ntfy, webhook. A flat list of destinations, each one channel for one audience: `owner`, `contact` with a nostr key (`contact`), or `contact` without one. Webhooks are for the owner only. |
-| Settings | Web UI, Settings > Notifications (`GET`/`PUT /api/notifications`, `POST /api/notifications/test`): the guardian's name in messages, the email account (host, port, TLS or STARTTLS, user name, app password, From, an optional pinned certificate), channels with their health and a test button. Unlocked and signed in only. |
-| Storage | `notifications.json`, every secret sealed (XChaCha20-Poly1305) under a random key in `notifications-key.json` (mode 0600). Works while the guardian is locked. Secrets are write-only over the API. |
+| Channels | Email (SMTP through the owner's account), ntfy, webhook, Telegram (through the owner's bot). A flat list of destinations, each one channel for one audience: `owner`, `contact` with a nostr key (`contact`), or `contact` without one. Webhooks are for the owner only. |
+| Settings | Web UI, Settings > Notifications (`GET`/`PUT /api/notifications`, `POST /api/notifications/test`, `POST /api/notifications/telegram/find`): the guardian's name in messages, the email account (host, port, TLS or STARTTLS, user name, app password, From, an optional pinned certificate), the Telegram bot (its token, checked with Telegram), channels with their health and a test button. Unlocked and signed in only. |
+| Storage | `notifications.json`, every secret (the Telegram bot token included) sealed (XChaCha20-Poly1305) under a random key in `notifications-key.json` (mode 0600). Works while the guardian is locked. Secrets are write-only over the API. |
 | Content | Plain text, no links, no buttons. The owner's channels get the phone's alert text; a contact's channels the contact's DM text, with "reply CANCEL / LOCK to the guardian's nostr message" (nostr contacts) or "contact the owner" (others). Named by the owner's short name for the guardian. |
 | Delivery | A durable outbox: one delivery per alert and channel, retried (1, 2, 5, 10, 30, 60 minutes, then hourly) for 7 days, each alert once, a newer recovery reminder replacing an older undelivered one. Per-channel health in the web UI; activity log entries when a channel starts failing, works again, or loses a message. |
-| Changes | Announced on every channel before and after (removed ones and the old email account included), to the paired phone (`notifications_changed`) and in the activity log. While a recovery runs only additions are accepted, and a new app password for the same email account. |
-| Phone | Read-only: `guardian.status.notifications` (masked), feature `notifications`; Settings > Alert contacts lists them next to each contact; an activity line when they change. No method changes them. |
+| Changes | Announced on every channel before and after (removed ones, the old email account and the old bot included), to the paired phone (`notifications_changed`) and in the activity log. While a recovery runs only additions are accepted, a new app password for the same email account, and a new token of the same bot. |
+| Phone | Read-only: `guardian.status.notifications` (masked; Telegram chats in its `otherChannels`), feature `notifications`; Settings > Alert contacts lists them next to each contact; an activity line when they change. No method changes them. |
 | Policy | Unchanged: `Policy`, `policyHash`, every approval text and rule 4 (who may cancel and lock, the mainnet minimum of one nostr contact) are exactly as before. |
 
-Code: `apps/guardian/src/notify/` (`notifier.ts` the outbox and settings, `secrets.ts`, `channels.ts` the three senders,
-`net.ts` the address rules and the HTTP client, `render.ts` the words and the link check, `settings.ts` the checks), the
+Code: `apps/guardian/src/notify/` (`notifier.ts` the outbox and settings, `secrets.ts`, `channels.ts` the email, ntfy and
+webhook senders, `telegram.ts` the Bot API calls, `net.ts` the address rules and the HTTP client, `render.ts` the words
+and the link check, `settings.ts` the checks), the
 queueing in `alerts.ts` (`queueAlert`, `queueNotice`) and `Guardian.notifyOwner` / `updateNotifications`;
 `apps/guardian-web/src/pages/settings-notifications.tsx` and `src/lib/notifications.ts`; `packages/protocol`
 (`GUARDIAN_FEATURES.notifications`, `NotifyChannel`, the `notifications_changed` alert);
@@ -142,9 +148,10 @@ Health per channel (and for the email account): `ok`, `failing` (with the error 
 the web UI and, masked, on the phone. The activity log says when a channel starts failing (once, not per retry), works
 again, or loses a message after 7 days.
 
-**Rate limits and caps:** 20 messages an hour per channel and 60 an hour through the email account (more wait; nothing is
-dropped), 10 test messages per 10 minutes, 30 settings changes an hour. At most 24 channels; for the owner 3 of each
-kind; one email and one ntfy topic per alert contact; 10 contacts without a nostr key; at most 100 queued alerts.
+**Rate limits and caps:** 20 messages an hour per channel and 60 an hour through the email account, and as many through
+the Telegram bot (more wait; nothing is dropped), 10 test messages per 10 minutes (and 10 "Find" per 10 minutes), 30
+settings changes an hour. At most 24 channels; for the owner 3 of each kind; one email, one ntfy topic and one Telegram
+chat per alert contact; 10 contacts without a nostr key; at most 100 queued alerts.
 
 ## Addresses (ntfy servers, webhooks)
 
@@ -254,6 +261,57 @@ and post fake alerts to it: the web UI warns about topics shorter than 20 charac
 server (the ntfy app on Umbrel) with an access token. A forged ntfy message can at worst say something false; it carries
 no link, and the guardian's nostr messages, which are signed, remain the reference.
 
+## Telegram
+
+**Why:** the main gain is alert contacts who won't install a nostr app or ntfy but already use Telegram. It adds no new
+power: like the other channels it carries warnings only, never a way to cancel or lock (those stay on signed nostr
+messages).
+
+**How it works: the Bot API, outbound only.** The owner makes a bot with @BotFather and pastes its token in the web UI
+(Settings > Notifications, "Add Telegram"). The guardian checks the token with `getMe` before saving it and shows the
+bot's `@name`; a token Telegram refuses is not saved. One bot per guardian; each destination is a chat id (the owner's,
+an alert contact's, or someone's without a nostr app). Everything goes to `https://api.telegram.org` over the same HTTPS
+client, address checks and 15-second timeout as ntfy and webhooks (`net.ts`): no webhook, no open port, no long poll.
+
+- **Finding the chat.** A bot cannot write first, so each person sends `/start` to the bot once. The page says "Send
+  /start to @<bot>, then press Find"; Find makes **one short poll** (`getUpdates`, no wait, the last 100 updates; Telegram
+  keeps them a day) and lists the private chats that sent `/start`, newest first, with their names, user names and when.
+  The owner picks one and the page saves its chat id. Nothing polls afterwards: the guardian reads nothing more from the
+  bot (a contact's reply to the bot goes nowhere, as the contact's text already says). Anyone can write to a bot, so the
+  page asks to check the name and time before picking. Groups are not offered (every member would read the alerts).
+- **A bot used elsewhere.** If another service set a webhook on the bot, Telegram refuses `getUpdates`; Find says so
+  plainly ("This bot has a webhook set: another service already uses it ... Make a new bot with @BotFather just for the
+  guardian"), and the same for another program polling it. Sending would still work, but a bot shared with another
+  service shares its token too, so the page asks for a bot made for the guardian.
+- **The token** is sealed like the app password (`telegram.token`, write-only over the API, never in a view, a log line or
+  an error: it sits in the URL path, and every error here names the host only). If the box is lost, `/revoke` in
+  @BotFather. A chat id is stored as it is: on its own it lets nobody write to the chat. The chat's name (as Telegram
+  showed it at Find) is shown in full only in the owner's web UI and activity log; messages and the phone show its first
+  letter (`Telegram chat M…`), since anyone can call themselves anything.
+- **Sending:** `sendMessage` with plain text, **no `parse_mode`** (nothing is read as Markdown or HTML), link previews off
+  (`disable_web_page_preview`, and `link_preview_options`), the title, a blank line and the body, cut to Telegram's 4,096
+  characters. The same words as every channel: link-free, amounts only, never an address. Low-priority messages (payments,
+  tests) arrive silently (`disable_notification`). Announcements never write the bot as `@name`, which Telegram would make
+  tappable.
+- **Telegram's limits:** a 429 carries `retry_after`; every message through the bot then waits that long (at most an hour)
+  and is retried, without counting as a failure. Our own limits are the other channels'.
+- **Failures** are reported like the others ("Failing", "works again", lost after 7 days). The bot has its own health (a
+  revoked token, Telegram unreachable); one person blocking the bot, or a chat Telegram does not know, is that chat's
+  failure only.
+- **Changes** are announced on every channel like the others: the bot set up or removed, a new token of the same bot
+  ("bot token"), another bot, a chat added or removed. As with the email account, a change of the bot goes out over the
+  old bot first and only then the new one. While a recovery runs, the one change of the bot allowed is a **new token for
+  the same bot** (after `/revoke`; the same bot id, so the chats keep working); removing a chat or the bot, or another
+  bot, waits until it ends. The bot cannot be removed while a chat uses it.
+- **Family hosting and own wallets:** as for the other channels, guests' alerts never use the host's bot or chats; alerts
+  about one of several own wallets name it, as on every channel. The opt-in Payments messages go to the owner's Telegram
+  chats too, never to contacts'.
+- **Privacy, said in the UI** (as the ntfy.sh topic warning is): "Telegram bot messages aren't end-to-end encrypted:
+  Telegram can read these alerts, as an email provider can."
+- **The phone** lists Telegram chats next to the others in Settings > Alert contacts, read-only. In
+  `guardian.status.notifications` they come in `otherChannels`, not `channels`: a phone from before Telegram refuses a
+  status whose `channels` hold a kind it does not know, and ignores the new list.
+
 ## Dependencies
 
 - **nodemailer 10.1.2** (runtime, pinned exactly; released 2026-10-16, two weeks before this was written; zero
@@ -265,7 +323,8 @@ no link, and the guardian's nostr messages, which are signed, remain the referen
   checks off through a test-only seam, and one test checks that the default refuses that certificate. The pinning tests
   run without the seam, against throwaway self-signed certificates made at test time (`test/support/self-signed.ts`, a
   P-256 certificate written in DER; no key is committed).
-- ntfy and webhooks use Node's own `http`/`https` (no client library): one small function with the address checks.
+- ntfy, webhooks and Telegram use Node's own `http`/`https` (no client library, no Telegram SDK): one small function with
+  the address checks.
 
 ## Rejected alternatives
 
@@ -275,6 +334,13 @@ no link, and the guardian's nostr messages, which are signed, remain the referen
 - **Built-in SMS providers** (Twilio and the like): an account with a company, credentials to hold, costs per message,
   and per-country quirks, for a project whose rule is "we run nothing and depend on no company". A webhook reaches an SMS
   gateway the owner chooses, without the guardian knowing any provider.
+- **WhatsApp.** The official way, the WhatsApp Business Platform, needs a business account, a phone number for it,
+  message templates approved in advance and fees per message: the same company account, credentials and costs as the SMS
+  providers above. The unofficial libraries that drive a personal account instead break WhatsApp's terms, risk the
+  number being banned, break whenever WhatsApp changes, and keep a logged-in WhatsApp session on the box (a credential
+  far more valuable than an alert channel). So the guardian does not speak WhatsApp; an owner who wants it can point a
+  webhook at a gateway of their choice, as for SMS. Telegram is built because its Bot API needs none of that: a free bot,
+  one token, documented HTTPS calls.
 - **Sending email directly from the box** (its own mail server): home connections usually block outgoing port 25, and
   mail from a home IP without SPF, DKIM and reverse DNS lands in spam or is refused. Alerts must arrive, so the guardian
   sends through the owner's own account, which providers trust.
@@ -286,8 +352,9 @@ no link, and the guardian's nostr messages, which are signed, remain the referen
 
 ## Family hosting
 
-A guardian that hosts guests' wallets (docs/design/family-hosting.md) keeps these channels for its owner's own wallet and
-host-level events. A guest's alerts never go to them (the owner's nor the owner's contacts'): they go to the guest's phone
+A guardian that hosts guests' wallets (docs/design/family-hosting.md) keeps these channels (the Telegram bot and chats
+included) for its owner's own wallet and host-level events. A guest's alerts never go to them (the owner's nor the owner's
+contacts'): they go to the guest's phone
 and the guest's own contacts as nostr DMs. Channels for guests are not built (family hosting phase 2 left them out: see
 section 16 there); phase 2's guest events (the limit turned off, a paused wallet) stay off the owner's channels as well.
 

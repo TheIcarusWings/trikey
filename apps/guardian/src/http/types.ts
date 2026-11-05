@@ -23,6 +23,8 @@ export type {
   NotifyTestInput,
   NotifyTestResult,
   SmtpSettings,
+  TelegramFindResult,
+  TelegramSettings,
   PairedPhone,
   PairingSession,
   RecoveryCode,

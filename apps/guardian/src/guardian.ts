@@ -22,7 +22,7 @@
  *                        encrypted under (so it scans while locked)
  *   notifications.json, notifications-key.json
  *                        extra alert channels (notify/notifier.ts): email,
- *                        ntfy and webhook settings, their delivery outbox, and
+ *                        ntfy, webhook and Telegram settings, their outbox, and
  *                        the key their secrets are sealed under (so alerts go
  *                        out while locked)
  *   seen-wraps.json      ids of gift wraps already handled (`FILES.seenWraps`).
@@ -116,7 +116,7 @@ import { SilentPaymentService } from './silent/service.js';
 import { SavingsMonitor } from './savings.js';
 import { Hosting } from './hosting/service.js';
 import type { HostedKey3Mix } from './keystore.js';
-import { Notifier, type NotifyEvent, type TestOutcome, type UpdateOutcome } from './notify/notifier.js';
+import { Notifier, type FindOutcome, type NotifyEvent, type TestOutcome, type UpdateOutcome } from './notify/notifier.js';
 import type { NetPolicy } from './notify/net.js';
 import type { SmtpTestOptions } from './notify/channels.js';
 import { activeRecovery, labelled, type WalletRuntime } from './runtime.js';
@@ -159,8 +159,11 @@ export interface GuardianOptions {
   contactLockLimit?: RateLimitOptions;
   /** How often the watched Savings wallet is scanned when no block came (savings.ts). Default 2 minutes. */
   savingsScanIntervalMs?: number;
-  /** Test seams for the extra alert channels (notify/): local test servers on 127.0.0.1, a self-signed SMTP server. */
-  notify?: { net?: NetPolicy; smtpTest?: SmtpTestOptions };
+  /**
+   * Test seams for the extra alert channels (notify/): local test servers on 127.0.0.1, a self-signed SMTP server, a
+   * fake Telegram Bot API.
+   */
+  notify?: { net?: NetPolicy; smtpTest?: SmtpTestOptions; telegramApi?: string };
   /** Builds the backend for a chain source (tests: fakes instead of public servers). Default: chain/source.ts `buildBackend`. */
   chainBackend?: (source: ChainSource, opts: { probe: boolean }) => ChainBackend;
   /** The live wallet (live-wallet.ts): `false` turns it off (no subscriptions, no `wallet_tx`); else its options. */
@@ -303,7 +306,7 @@ export class Guardian implements WalletRuntime {
    * account of the first pairing's key 3 seed. The first wallet is this `Guardian` itself, unchanged.
    */
   readonly wallets: OwnWallets;
-  /** Email, ntfy and webhook alerts (notify/notifier.ts): owner-side settings from the web UI; works while locked. */
+  /** Email, ntfy, webhook and Telegram alerts (notify/notifier.ts): owner-side settings from the web UI; works while locked. */
   readonly notifier: Notifier;
   /** Keeps the wallets' chain data live and sends `wallet_tx` alerts (live-wallet.ts). Undefined when turned off. */
   readonly live?: LiveWallet;
@@ -471,6 +474,7 @@ export class Guardian implements WalletRuntime {
       contacts: () => [...new Set([...(this.engine?.status().rules?.alertContacts ?? []), ...(this.wallets?.active().flatMap((w) => w.engine.status().rules?.alertContacts ?? []) ?? [])])],
       net: opts.notify?.net,
       smtpTest: opts.notify?.smtpTest,
+      telegramApi: opts.notify?.telegramApi,
     });
     this.broadcastLimiter = new SlidingWindowLimiter(opts.broadcastLimit ?? DEFAULT_BROADCAST_LIMIT);
     this.refusalLimiter = new SlidingWindowLimiter(opts.refusalLimit ?? DEFAULT_REFUSAL_LIMIT);
@@ -1041,7 +1045,7 @@ export class Guardian implements WalletRuntime {
   }
 
   /**
-   * Queues an alert for the owner's own email, ntfy and webhook channels (not the contacts'), the same words as the
+   * Queues an alert for the owner's own email, ntfy, webhook and Telegram channels (not the contacts'), the same words as the
    * phone's alert, and starts delivering in the background. Durable and retried like the engine's alerts.
    */
   notifyOwner(type: string, text: string, walletId?: string, id?: string): void {
@@ -1065,7 +1069,7 @@ export class Guardian implements WalletRuntime {
       await this.notifyPhone({
         type: 'notifications_changed',
         ...this.stampNow(),
-        message: "Your guardian's email, ntfy or webhook alerts were changed in its web page. If you did not do this, check the guardian.",
+        message: "Your guardian's email, ntfy, Telegram or webhook alerts were changed in its web page. If you did not do this, check the guardian.",
       });
       this.notifier.kick();
     }
@@ -1075,6 +1079,11 @@ export class Guardian implements WalletRuntime {
   /** "Send a test message" (`POST /api/notifications/test`). */
   testNotification(input: unknown): Promise<TestOutcome> {
     return this.notifier.test(input);
+  }
+
+  /** "Find" (`POST /api/notifications/telegram/find`): who sent `/start` to the Telegram bot lately. */
+  findTelegramChats(): Promise<FindOutcome> {
+    return this.notifier.findTelegramChats();
   }
 
   /** What the phone and the web UI are told about the chain source (no credential). */
@@ -1167,7 +1176,7 @@ export class Guardian implements WalletRuntime {
     await this.hosting.announceChainSource(to);
   }
 
-  /** The owner's channels and the alert contacts' channels (email, ntfy, webhook), like a change of the alert channels. */
+  /** The owner's channels and the alert contacts' channels (email, ntfy, webhook, Telegram), like a change of the alert channels. */
   private announceChainSource(text: string): void {
     if (!this.notifier.configured) return;
     const at = this.clock.now();
@@ -1311,7 +1320,7 @@ export class Guardian implements WalletRuntime {
           await this.live?.tick();
           // In the background: the relayed payments Bitcoin Core says are gone, and whether the server sees the mempool.
           void this.chain.checkMempool();
-          // Email, ntfy, webhook: in the background, so a slow mail server never holds back the tick.
+          // Email, ntfy, webhook, Telegram: in the background, so a slow mail server never holds back the tick.
           this.notifier.kick();
           // In the background: a long catch-up must not hold back alerts or recoveries.
           this.sp.kick();

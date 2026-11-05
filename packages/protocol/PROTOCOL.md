@@ -425,7 +425,8 @@ know these methods, and only to them does a phone send them (an older one answer
 ### Extra alert channels
 
 Guardians that list `notifications` in `guardian.status.features` can also send their alerts by **email** (through the
-owner's own email account, SMTP), **ntfy** and a **webhook** (docs/design/notifications.md). They are notify-only: the
+owner's own email account, SMTP), **ntfy**, a **webhook** and **Telegram** (through a bot the owner makes)
+(docs/design/notifications.md). They are notify-only: the
 same warnings as the nostr alerts, never a control; `CANCEL` and `LOCK` stay NIP-17 DMs. Nothing about them is on the
 wire between phone and guardian except:
 
@@ -434,13 +435,17 @@ wire between phone and guardian except:
   or a whole address: anyone who knows a topic on a public ntfy server can read it and post fake alerts to it).
   `audience: "contact"` with `contact` (an alert contact's pubkey) is that contact's extra channel; without `contact`, a
   contact reachable only by that channel. Absent while there are none, and from older guardians.
-* **`notifications_changed`** (alert, no extra members): the channels or the email account were changed in the web UI.
+  **`otherChannels`** (optional, same members, `kind` any `[a-z0-9_]{1,16}`) holds the channels of kinds added after
+  `channels` was defined: `telegram` (a chat the guardian's Telegram bot writes to; `hint` is the first letter of the
+  chat's name). They are kept apart because a phone validates `channels[].kind` against the first three kinds and would
+  refuse the whole status otherwise; older phones ignore `otherChannels`. A phone may skip a kind it does not know.
+* **`notifications_changed`** (alert, no extra members): the channels, the email account or the Telegram bot were changed in the web UI.
 
 **They are not in the policy.** Channels are the owner's delivery settings in the guardian, changed only in its web UI
 (a signed-in session with the unlock passphrase, on an unlocked guardian), never by any phone, so a stolen phone can
 neither remove nor redirect them; every change is announced on every channel before and after it (over the email
-account as it was before) and to the paired phone, and while a recovery runs only additions are accepted (and a new
-app password for the same email account). The policy,
+account and the Telegram bot as they were before) and to the paired phone, and while a recovery runs only additions are
+accepted (and a new app password for the same email account, or a new token for the same bot). The policy,
 its hash and every approval text are unchanged, and the contacts who can cancel and lock are still exactly
 `Policy.alertContacts` (rule 4 unchanged, including the mainnet minimum of one).
 
@@ -631,7 +636,7 @@ Anyone holding the hardware wallet can thus start a recovery from any phone, whi
 | `savings_moved` | `walletId` (the Savings wallet), `txid`, `amountSats` (what left Savings, fee included), `replaces?` and `previousAmountSats?` (a replacement of a spend announced before that pays out something else; a fee bump is not announced): a Savings coin was spent. To the paired phone; alert contacts get a NIP-17 DM. Guardians with `savings`; see "Savings" |
 | `savings_unwatched` | `walletId` (the Savings wallet no longer watched), `replacedBy?` (the one watched instead): `savings.unregister`, or `savings.register` with another wallet. To the paired phone; alert contacts get a NIP-17 DM. See "Savings" |
 | `relays_changed` | `relays` (`RelayList`): the guardian moved to these relays (its web UI). Sent to the paired phone (and phones with recovery access) over the old and the new relays. See section 5, "Changing relays" |
-| `notifications_changed` | none: the extra alert channels (email, ntfy, webhook) were changed in the guardian's web UI; read the new list from `guardian.status.notifications`. Guardians with `notifications`; see "Extra alert channels" |
+| `notifications_changed` | none: the extra alert channels (email, ntfy, webhook, Telegram) were changed in the guardian's web UI; read the new list from `guardian.status.notifications`. Guardians with `notifications`; see "Extra alert channels" |
 | `wallet_paused` | `walletId`, `by` (`contact`), `contact?`: a guest's hosted wallet was paused by one of its alert contacts' `LOCK`; its slot co-signs no payment until the guest's hardware wallet resumes it (`phone.resume`). To the guest's phone; the wallet's other contacts get a NIP-17 DM. Phones before it drop it and see `guardian.status.hosting.paused`. See "Family hosting" |
 | `chain_source_changed` | `kind` (`own`\|`public`), `backend` (`electrum`\|`core`), `host`: the owner switched where the guardian reads the chain (its web UI, Settings > Server). Also announced on the extra alert channels and in Activity. To a guest wallet's phone: `host` is `"own"` for the owner's own node, and nothing goes on the owner's channels (see "Family hosting"). See "Chain data", "Chain source" |
 | `wallet_tx` | `txid`, `direction` (`in`\|`out`\|`self`), `amountSats`, `feeSats?`, `confirmations`, `wallet` (`main`\|`savings`), `replaces?` (the unconfirmed transaction it replaced, RBF): a transaction touching the paired wallet or Savings was first seen (mempool or block), or first confirmed. Paired phone only. Guardians with `live_wallet`; see "Chain data", "Live wallet" |

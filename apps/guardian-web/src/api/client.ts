@@ -13,6 +13,7 @@ import type {
   NotificationSettingsInput,
   NotifyTestInput,
   NotifyTestResult,
+  TelegramFindResult,
   PairedPhone,
   PairingSession,
   RecoveryCode,
@@ -132,7 +133,7 @@ export interface GuardianApi {
   stopWatchingRelays(url?: string): Promise<RelaySettings>;
 
   /**
-   * The extra alert channels: the owner's email account (SMTP), and email, ntfy and webhook channels for the owner and
+   * The extra alert channels: the owner's email account (SMTP), the Telegram bot, and email, ntfy, webhook and Telegram channels for the owner and
    * the alert contacts. Secrets are write-only: only "set" and hints come back.
    */
   getNotifications(): Promise<NotificationSettings>;
@@ -144,6 +145,12 @@ export interface GuardianApi {
   setNotifications(input: NotificationSettingsInput): Promise<NotificationSettings>;
   /** "Send a test message" to one channel, or to the email account's own From address. Resolves with what happened. */
   testNotification(input: NotifyTestInput): Promise<NotifyTestResult>;
+  /**
+   * "Find": who sent `/start` to the Telegram bot lately (one short poll of Telegram, only now). Rejects with
+   * `not_found` (no bot set up), `rate_limited` and `telegram_failed` (Telegram's refusal in plain words, such as a bot
+   * that has a webhook set elsewhere).
+   */
+  findTelegramChats(): Promise<TelegramFindResult>;
 
   /** Settings > Server: where the guardian reads the blockchain. */
   getChain(): Promise<ChainSettings>;

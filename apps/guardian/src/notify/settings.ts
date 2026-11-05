@@ -3,19 +3,22 @@
  * (`PUT /api/notifications`). Pure: no I/O; the notifier seals the secrets (secrets.ts).
  *
  * The model (docs/design/notifications.md, "Who receives what"): a flat list of destinations, each ONE channel
- * (an email address, an ntfy topic, a webhook) for one audience:
+ * (an email address, an ntfy topic, a webhook, a Telegram chat) for one audience:
  *   - `owner`: the owner's own channels, up to `MAX_OWNER_PER_KIND` of each kind (the phone may be the stolen one);
- *   - `contact` with `contact` set: an alert contact of the rules (a nostr pubkey), one email and one ntfy topic each;
- *     its messages may say "reply CANCEL / LOCK to the guardian's nostr message";
- *   - `contact` without `contact`: someone reachable only by email or ntfy (`MAX_CONTACT_ONLY`): warnings, no controls.
- * Webhooks are for the owner only. At most `MAX_DESTINATIONS` in all.
+ *   - `contact` with `contact` set: an alert contact of the rules (a nostr pubkey), one email, one ntfy topic and one
+ *     Telegram chat each; its messages may say "reply CANCEL / LOCK to the guardian's nostr message";
+ *   - `contact` without `contact`: someone reachable only by email, ntfy or Telegram (`MAX_CONTACT_ONLY`): warnings, no
+ *     controls.
+ * Webhooks are for the owner only. At most `MAX_DESTINATIONS` in all. Email goes through the owner's email account and
+ * Telegram through the guardian's one bot (`StoredTelegram`), each set up once.
  */
 import { X509Certificate } from 'node:crypto';
 import type { SmtpPin } from './channels.js';
 import { AddressError, checkHttpUrl, type NetPolicy } from './net.js';
 import type { Sealed } from './secrets.js';
+import { TELEGRAM_CHAT_RE, TELEGRAM_TOKEN_RE, cleanText, type TelegramBot } from './telegram.js';
 
-export type ChannelKind = 'email' | 'ntfy' | 'webhook';
+export type ChannelKind = 'email' | 'ntfy' | 'webhook' | 'telegram';
 export type Audience = 'owner' | 'contact';
 
 export const MAX_DESTINATIONS = 24;
@@ -38,6 +41,15 @@ export interface StoredSmtp {
   pin?: SmtpPin;
 }
 
+/**
+ * The guardian's Telegram bot (one per guardian, made by the owner with @BotFather): its token, sealed like the app
+ * password, and who it is (`getMe` when the token was saved). Every Telegram destination sends through it.
+ */
+export interface StoredTelegram {
+  token: Sealed;
+  bot: TelegramBot;
+}
+
 export interface StoredDestination {
   /** `d` and 12 hex characters, random, stable. */
   id: string;
@@ -50,6 +62,11 @@ export interface StoredDestination {
   ntfy?: { server: string; topic: Sealed; hint: string; token?: Sealed };
   /** The URL may carry a secret (Home Assistant's webhook id): sealed, with its origin for display. */
   webhook?: { url: Sealed; origin: string; secret?: Sealed };
+  /**
+   * The chat the bot writes to, and the name it had when the owner picked it ("Find"). A chat id is no secret on its
+   * own (only the bot's token can write to it), so it is stored as it is.
+   */
+  telegram?: { chatId: string; name: string };
   createdAt: number;
 }
 
@@ -147,6 +164,27 @@ export interface DestinationInput {
   email?: string;
   ntfy?: { server: string; origin: string; topic?: string; token?: string | null };
   webhook?: { url?: string; origin?: string; secret?: string | null };
+  telegram?: { chatId: string; name: string };
+}
+
+export interface TelegramInput {
+  /** Absent: keep the stored token (and bot). */
+  token?: string;
+}
+
+/** The Telegram bot part of the input: `null` removes the bot; absent (an older page) keeps it; else a token or none (keep). */
+export function checkTelegram(raw: unknown, hasStored: boolean): TelegramInput | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r !== 'object') throw new SettingsError('Telegram: send the bot token, or nothing to keep it.');
+  if (r.token === undefined || r.token === null || r.token === '') {
+    if (!hasStored) throw new SettingsError('Telegram: paste the bot token @BotFather gave you.');
+    return {};
+  }
+  const token = typeof r.token === 'string' ? r.token.trim() : '';
+  if (!TELEGRAM_TOKEN_RE.test(token)) throw new SettingsError('Telegram: that is not a bot token. @BotFather shows it as digits, a colon and 35 letters and digits (123456789:AA…).');
+  return { token };
 }
 
 /**
@@ -159,7 +197,7 @@ export function checkDestination(raw: unknown, existing: StoredDestination | und
   const audience = r.audience;
   if (audience !== 'owner' && audience !== 'contact') throw new SettingsError('Say who a channel is for: you or an alert contact.');
   const kind = r.kind;
-  if (kind !== 'email' && kind !== 'ntfy' && kind !== 'webhook') throw new SettingsError('A channel is email, ntfy or a webhook.');
+  if (kind !== 'email' && kind !== 'ntfy' && kind !== 'webhook' && kind !== 'telegram') throw new SettingsError('A channel is email, ntfy, a webhook or Telegram.');
   if (existing && (existing.kind !== kind || existing.audience !== audience)) throw new SettingsError('A channel cannot change its kind: remove it and add a new one.');
   let contact: string | undefined;
   if (audience === 'contact' && r.contact !== undefined && r.contact !== null && r.contact !== '') {
@@ -170,6 +208,12 @@ export function checkDestination(raw: unknown, existing: StoredDestination | und
   const out: DestinationInput = { ...(existing ? { id: existing.id } : {}), audience, kind, ...(contact ? { contact } : {}) };
   if (kind === 'email') {
     out.email = checkEmail(r.email);
+  } else if (kind === 'telegram') {
+    const t = (r.telegram ?? {}) as Record<string, unknown>;
+    const chatId = typeof t.chatId === 'string' ? t.chatId.trim() : typeof t.chatId === 'number' && Number.isSafeInteger(t.chatId) ? String(t.chatId) : '';
+    if (!TELEGRAM_CHAT_RE.test(chatId)) throw new SettingsError('Telegram: pick the chat with "Find" (after they sent /start to the bot).');
+    // A stored chat keeps its name; a new one takes the name "Find" showed (only the owner sees it in full).
+    out.telegram = { chatId, name: existing?.telegram && existing.telegram.chatId === chatId ? existing.telegram.name : cleanText(t.name) || 'Telegram chat' };
   } else if (kind === 'ntfy') {
     const n = (r.ntfy ?? {}) as Record<string, unknown>;
     let server;
@@ -216,18 +260,20 @@ export function checkDestination(raw: unknown, existing: StoredDestination | und
   return out;
 }
 
+const PLURAL: Record<ChannelKind, string> = { email: 'email addresses', ntfy: 'ntfy topics', webhook: 'webhooks', telegram: 'Telegram chats' };
+const SINGULAR: Record<ChannelKind, string> = { email: 'email address', ntfy: 'ntfy topic', webhook: 'webhook', telegram: 'Telegram chat' };
+
 /** The caps on a whole list (and no channel twice). Throws `SettingsError`. */
 export function checkCaps(list: { audience: Audience; kind: ChannelKind; contact?: string; email?: string; key?: string }[]): void {
   if (list.length > MAX_DESTINATIONS) throw new SettingsError(`Use at most ${MAX_DESTINATIONS} channels.`);
-  for (const kind of ['email', 'ntfy', 'webhook'] as const)
-    if (list.filter((d) => d.audience === 'owner' && d.kind === kind).length > MAX_OWNER_PER_KIND)
-      throw new SettingsError(`Use at most ${MAX_OWNER_PER_KIND} ${kind === 'email' ? 'email addresses' : kind === 'ntfy' ? 'ntfy topics' : 'webhooks'} for yourself.`);
+  for (const kind of ['email', 'ntfy', 'webhook', 'telegram'] as const)
+    if (list.filter((d) => d.audience === 'owner' && d.kind === kind).length > MAX_OWNER_PER_KIND) throw new SettingsError(`Use at most ${MAX_OWNER_PER_KIND} ${PLURAL[kind]} for yourself.`);
   const linked = new Map<string, number>();
   for (const d of list) {
     if (d.audience !== 'contact' || !d.contact) continue;
     const k = `${d.contact}:${d.kind}`;
     linked.set(k, (linked.get(k) ?? 0) + 1);
-    if (linked.get(k)! > 1) throw new SettingsError(`An alert contact has at most one ${d.kind === 'email' ? 'email address' : 'ntfy topic'}.`);
+    if (linked.get(k)! > 1) throw new SettingsError(`An alert contact has at most one ${SINGULAR[d.kind]}.`);
   }
   if (list.filter((d) => d.audience === 'contact' && !d.contact).length > MAX_CONTACT_ONLY)
     throw new SettingsError(`Add at most ${MAX_CONTACT_ONLY} contacts without a nostr key.`);

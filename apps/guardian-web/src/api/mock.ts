@@ -21,7 +21,7 @@ import type {
   WalletPayment,
 } from './types';
 import { relayListError } from '../lib/relays';
-import { emailError, guardianNameError, pinError, topicError, urlError, webhookSecretError } from '../lib/notifications';
+import { emailError, guardianNameError, pinError, telegramTokenError, topicError, urlError, webhookSecretError } from '../lib/notifications';
 
 /**
  * In-memory guardian with demo data matching design/screens/Guardian-*.
@@ -40,7 +40,7 @@ import { emailError, guardianNameError, pinError, topicError, urlError, webhookS
  *   limitoff   the owner turned the daily limit off with the hardware wallet yesterday
  *   contactlocked  the owner lets the alert contacts lock the guardian, and one of them just did (LOCK over nostr)
  *   savings    the phone has a Savings wallet this guardian watches; some of it moved yesterday
- *   notify     email, ntfy and a webhook are set up (Settings > Notifications); the webhook is failing
+ *   notify     email, ntfy, a webhook and a Telegram bot are set up (Settings > Notifications); the webhook is failing
  *   publicserver  the guardian reads the chain from a public server (Settings > Server)
  *   nomempool  Electrs can't read Bitcoin Core 32's mempool; the guardian reads Core's itself (home note, Settings > Server)
  *
@@ -354,13 +354,20 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
         },
         { id: 'd000000000004', audience: 'contact', kind: 'email', contact: DEMO_CONTACTS[0]!.pubkey, contactNpub: DEMO_CONTACTS[0]!.npub, contactInRules: true, email: 'maria@example.com', health: never },
         { id: 'd000000000005', audience: 'contact', kind: 'email', email: 'dad@example.org', health: never },
+        { id: 'd000000000006', audience: 'contact', kind: 'telegram', telegram: { chatId: '700000002', name: 'Grandma Rosa' }, health: { state: 'ok', lastOkAt: localAt(1, '09:12') } },
       ]
     : [];
-  let nextDest = 6;
+  let nextDest = 7;
+  // The Telegram bot (a made-up one; the mock never talks to Telegram). A token starting with 000 stands for one
+  // Telegram refuses, 111 for a bot whose webhook another service set.
+  const DEMO_BOT = { username: 'home_vault_alerts_bot', name: 'Home vault alerts' };
+  let telegramSettings: NotificationSettings['telegram'] = notifyScenario ? { bot: { ...DEMO_BOT }, tokenSet: true, health: { state: 'ok', lastOkAt: localAt(1, '09:12') } } : undefined;
+  let telegramToken = notifyScenario ? '7000000001:AAdemo-token-for-the-mock-only-xxxxxx' : '';
   const notificationSettings = (): NotificationSettings => ({
     guardianName: notifyName,
     paymentAlerts,
     ...(smtpSettings ? { smtp: clone(smtpSettings) } : {}),
+    ...(telegramSettings ? { telegram: clone(telegramSettings) } : {}),
     destinations: clone(destinations),
     contacts: clone(DEMO_CONTACTS),
     recoveryRunning: !!recovery,
@@ -659,8 +666,17 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       if (input.smtp && !input.smtp.password && !smtpSettings) throw bad('Email server: enter an app password (not your account password).');
       const pinProblem = input.smtp?.pin ? pinError(input.smtp.pin) : undefined;
       if (pinProblem) throw bad(`Pinned certificate: ${pinProblem}`);
+      const tokenProblem = input.telegram?.token !== undefined ? telegramTokenError(input.telegram.token) : undefined;
+      if (tokenProblem) throw bad(tokenProblem);
+      if (input.telegram?.token?.startsWith('000')) throw bad('Telegram refused the bot token: copy it again from @BotFather (it may have been revoked).');
+      const botAfter = input.telegram === undefined ? !!telegramSettings : input.telegram === null ? false : !!telegramSettings || !!input.telegram.token;
+      if (input.telegram && !input.telegram.token && !telegramSettings) throw bad('Telegram: paste the bot token @BotFather gave you.');
+      if (input.destinations.some((d) => d.kind === 'telegram') && !botAfter)
+        throw bad(input.telegram === null ? 'Remove the Telegram chats first: they get their messages through the bot.' : 'Set up the Telegram bot first: Telegram chats get their messages through it.');
       const kept = new Set(input.destinations.map((d) => d.id).filter(Boolean));
       const removing = destinations.some((d) => !kept.has(d.id));
+      // Of the bot, only a new token (the same bot, after /revoke) may change during a recovery.
+      const changingBot = !!telegramSettings && (input.telegram === null || (!!input.telegram?.token && input.telegram.token.split(':')[0] !== telegramToken.split(':')[0]));
       // Of the email account, only the app password may change during a recovery.
       const was = smtpSettings;
       const changingAccount =
@@ -672,8 +688,12 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
           input.smtp.username !== was.username ||
           input.smtp.from !== was.from ||
           (input.smtp.pin !== undefined && !(input.smtp.pin === null && !was.pin)));
-      if (recovery && (removing || changingAccount))
-        throw new ApiError('recovery_pending', "A recovery is running: alert channels and the email account can be added to, not removed or changed, until it ends. Only the email account's app password can be changed meanwhile.", 409);
+      if (recovery && (removing || changingAccount || changingBot))
+        throw new ApiError(
+          'recovery_pending',
+          "A recovery is running: alert channels, the email account and the Telegram bot can be added to, not removed or changed, until it ends. Only the email account's app password and the bot's token can be changed meanwhile.",
+          409,
+        );
       const next: NotifyDestination[] = [];
       for (const d of input.destinations) {
         const old = d.id ? destinations.find((x) => x.id === d.id) : undefined;
@@ -693,6 +713,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
           const p = urlError(d.webhook?.url ?? '') ?? webhookSecretError(d.webhook?.secret ?? '');
           if (p) throw bad(p);
         }
+        if (d.kind === 'telegram' && !/^-?\d{1,16}$/.test(d.telegram?.chatId ?? '')) throw bad('Telegram: pick the chat with "Find" (after they sent /start to the bot).');
         const contactNpub = d.contact ? DEMO_CONTACTS.find((c) => c.pubkey === d.contact)?.npub : undefined;
         next.push({
           id: `d${String(nextDest++).padStart(12, '0')}`,
@@ -702,6 +723,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
           ...(d.email ? { email: d.email.trim() } : {}),
           ...(d.ntfy ? { ntfy: { server: d.ntfy.server, topicHint: `${(d.ntfy.topic ?? '').slice(0, 3)}…`, tokenSet: !!d.ntfy.token } } : {}),
           ...(d.webhook ? { webhook: { origin: new URL(d.webhook.url ?? 'http://x').origin, secretSet: !!d.webhook.secret } } : {}),
+          ...(d.telegram ? { telegram: { chatId: d.telegram.chatId, name: d.telegram.name ?? 'Telegram chat' } } : {}),
           health: never,
         });
       }
@@ -725,9 +747,31 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
             health: input.smtp.password || input.smtp.pin !== undefined ? never : (smtpSettings?.health ?? never),
           }
         : undefined;
+      if (input.telegram === null) {
+        telegramSettings = undefined;
+        telegramToken = '';
+      } else if (input.telegram?.token && input.telegram.token !== telegramToken) {
+        telegramToken = input.telegram.token;
+        telegramSettings = { bot: { ...DEMO_BOT }, tokenSet: true, health: never };
+      }
       destinations = next;
       pushActivity({ kind: 'system', event: 'Alert channels changed on this box. Every channel, before and after the change, and the paired phone are told.', summary: 'Alert channels changed', signedBy: null, sats: null, result: 'ok' });
       return notificationSettings();
+    },
+
+    async findTelegramChats() {
+      await wait(400);
+      if (locked) throw new ApiError('locked', 'The guardian is locked. Unlock it first.', 409);
+      if (!telegramSettings) throw new ApiError('not_found', 'Set up the Telegram bot first.', 409);
+      if (telegramToken.startsWith('111'))
+        throw new ApiError('telegram_failed', "This bot has a webhook set: another service already uses it, so the guardian can't read who wrote to it. Make a new bot with @BotFather just for the guardian.", 502);
+      return {
+        bot: { ...telegramSettings.bot },
+        chats: [
+          { chatId: '700000001', name: 'Maria Lopez', username: 'maria_l', at: new Date(Date.now() - 2 * 60_000).toISOString() },
+          { chatId: '700000002', name: 'Grandma Rosa', at: new Date(Date.now() - 3 * 3_600_000).toISOString() },
+        ],
+      };
     },
 
     async getChain() {
