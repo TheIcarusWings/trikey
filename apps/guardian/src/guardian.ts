@@ -157,6 +157,8 @@ export interface GuardianOptions {
   /** The live wallet (live-wallet.ts): `false` turns it off (no subscriptions, no `wallet_tx`); else its options. */
   liveWallet?: false | LiveWalletOptions;
   /** Most scripts subscribed on an Electrum server (chain/live.ts). */
+  /** Tests: the ping round trip (ms) above which the chain server counts as slow (chain.ts `SLOW_PING_MS`). */
+  slowPingMs?: number;
   liveMaxScripts?: number;
 }
 
@@ -406,6 +408,7 @@ export class Guardian {
       rpc,
       log: this.log,
       liveMaxScripts: opts.liveMaxScripts,
+      ...(opts.slowPingMs !== undefined ? { slowPingMs: opts.slowPingMs } : {}),
       // The owner's payments relayed here, until the chain source shows them (chain/relayed.ts).
       relayed: new RelayedTxs({ dir: opts.config.dataDir, now: () => this.clock.now() }),
       now: () => this.clock.now(),

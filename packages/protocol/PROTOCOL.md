@@ -328,7 +328,8 @@ refuses to switch to a public server.
 **Unconfirmed transactions.** Some Electrum servers report no mempool at all: Electrs 0.11 reads none of Bitcoin Core
 32's (Core dropped `bip125-replaceable` from mempool entries, Electrs requires it and skips every entry), so every
 Umbrel with Electrs and Core 32 or later shows an empty fee histogram and no unconfirmed history while Core holds the
-transactions. The guardian therefore keeps every transaction it relayed for the owner through `tx.broadcast` as known
+transactions (and Electrs answers every request about 7 s late; `deprecatedrpc=bip125` in Core's configuration, or
+Bitcoin Core alone as the chain server, fixes both). The guardian therefore keeps every transaction it relayed for the owner through `tx.broadcast` as known
 mempool state: until the server lists it (or Bitcoin Core, when configured, says it is gone, or Core's mempool expiry
 passed), `wallet.sync` shows its inputs spent, its outputs to the wallet as unconfirmed coins and the transaction
 itself in `history` as unconfirmed, and the live wallet announces it (`wallet_tx`). A relayed transaction not listed by

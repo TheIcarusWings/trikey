@@ -38,6 +38,8 @@ export interface GuardianRigOptions {
   applyBroadcasts?: boolean;
   /** An Electrs that does not see the mempool (`FakeElectrum.hideMempool`). Default false. */
   hideMempool?: boolean;
+  /** The ping round trip (ms) above which the guardian finds its chain server slow (default its own, 3 s). */
+  slowPingMs?: number;
   /** Also serve the web UI's HTTP API on a random local port (see `api`). Default false. */
   http?: boolean;
   /** `tx.broadcast` calls allowed per phone per window (default: the guardian's, 20 per 10 minutes). */
@@ -175,6 +177,7 @@ export class GuardianRig {
       electrum: { minBackoffMs: 20, maxBackoffMs: 100 },
       discoverDmRelays: false,
       broadcastLimit: this.opts.broadcastLimit,
+      ...(this.opts.slowPingMs !== undefined ? { slowPingMs: this.opts.slowPingMs } : {}),
       ...(this.opts.chainBackend ? { chainBackend: this.opts.chainBackend } : {}),
       ...(this.opts.notifyTestServers ? { notify: { net: { allowLoopback: true }, smtpTest: { tls: { rejectUnauthorized: false } } } } : {}),
     });

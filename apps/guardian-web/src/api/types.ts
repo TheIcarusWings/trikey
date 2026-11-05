@@ -38,6 +38,8 @@ export interface ChainStatus {
   mempoolCause?: MempoolCause;
   /** The guardian reads unconfirmed payments from Bitcoin Core itself meanwhile: they still show at once. */
   mempoolViaNode?: boolean;
+  /** The Electrum server also takes seconds to answer a ping (Electrs 0.11 with Core 32 does: about 7 s). */
+  mempoolServerSlow?: boolean;
 }
 
 export type MempoolCause = 'electrs_core32';
@@ -596,6 +598,7 @@ export interface ChainSettings {
     mempoolUnseen?: boolean;
     mempoolCause?: MempoolCause;
     mempoolViaNode?: boolean;
+    mempoolServerSlow?: boolean;
   };
   /** Well-known public servers for this network. */
   publicServers: PublicServerOption[];

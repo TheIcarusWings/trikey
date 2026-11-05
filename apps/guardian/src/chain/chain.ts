@@ -150,6 +150,8 @@ export interface ChainSyncStatus {
   mempoolCause?: 'electrs_core32';
   /** The guardian reads Bitcoin Core's mempool instead (`MempoolView.viaNode`). */
   mempoolViaNode?: boolean;
+  /** The server takes seconds to answer anything too (`MempoolView.serverSlow`). */
+  mempoolServerSlow?: boolean;
 }
 
 export interface ChainPreflight {
@@ -265,7 +267,12 @@ export interface ChainServiceOptions {
   now?: () => number;
   /** How often Bitcoin Core's mempool is read while the Electrum server shows none. Default `NODE_MEMPOOL_POLL_MS`. */
   nodeMempoolPollMs?: number;
+  /** A ping slower than this (ms) makes the server slow (`MempoolView.serverSlow`). Default `SLOW_PING_MS`. */
+  slowPingMs?: number;
 }
+
+/** A server whose ping takes longer than this (ms) is slowed down (Electrs 0.11 with Bitcoin Core 32: about 7 s). */
+export const SLOW_PING_MS = 3000;
 
 /** How often Bitcoin Core's mempool is read while the Electrum server shows none (`pollNodeMempool`). */
 export const NODE_MEMPOOL_POLL_MS = 10_000;
@@ -296,6 +303,8 @@ export interface MempoolView {
   cause?: 'electrs_core32';
   /** The guardian reads unconfirmed transactions from Bitcoin Core's mempool itself meanwhile (`pollNodeMempool`). */
   viaNode?: boolean;
+  /** The server also takes more than `SLOW_PING_MS` to answer a ping: every request to it waits that long. */
+  serverSlow?: boolean;
   /** When it last changed (ms). */
   since?: number;
 }
@@ -409,6 +418,7 @@ export class ChainService {
     this.lastHistogramAt = undefined;
     this.nodeLooked.clear();
     this.nodeMempoolOk = undefined;
+    this.pingMs = undefined;
     for (const r of this.relayed.list()) this.relayed.mark(r.txid, { seen: false, checked: false });
     this.forgetFees();
     if (this.started) {
@@ -1409,6 +1419,7 @@ export class ChainService {
       ...v,
       ...(electrs && (this.nodeVersion ?? 0) >= CORE_WITHOUT_BIP125 ? { cause: 'electrs_core32' as const } : {}),
       ...(this.nodeMempoolWanted && this.nodeMempoolOk ? { viaNode: true } : {}),
+      ...(this.pingMs !== undefined && this.pingMs > (this.opts.slowPingMs ?? SLOW_PING_MS) ? { serverSlow: true } : {}),
     };
   }
 
@@ -1468,6 +1479,7 @@ export class ChainService {
     const rpc = this.opts.rpc;
     const now = this.now();
     let dropped = false;
+    const due: { r: RelayedTx; inNode?: 'mempool' | 'gone' | 'spent' }[] = [];
     for (const r of this.relayed.list()) {
       if (r.seen) continue;
       let inNode: 'mempool' | 'gone' | 'spent' | undefined;
@@ -1481,29 +1493,65 @@ export class ChainService {
         }
       }
       if (!(b instanceof ElectrumBackend) || r.checked || now - r.at < MEMPOOL_UNSEEN_AFTER_MS) continue;
-      // The script of a coin it spends (the owner's, which the server knows the guardian watches anyway).
-      const tx = parseRawTx(r.txHex);
-      const first = tx.inputs[0];
-      const prevHex = first ? await this.getTransaction(first.txid).catch(() => undefined) : undefined;
-      const script = prevHex && first ? parseRawTx(prevHex).outputs[first.vout]?.script : undefined;
-      if (!script) continue; // its previous transaction not known yet: the next tick tries again
-      const listed = (await b.history(script)).find((h) => h.tx_hash === r.txid);
-      this.relayed.mark(r.txid, { checked: true });
-      if (listed && listed.height <= 0) {
-        this.relayed.mark(r.txid, { seen: true });
-        this.noteMempool('seen');
-      } else if (!listed && (inNode === undefined || inNode === 'mempool')) this.noteMempool('unseen', 'relayed_tx_not_listed');
+      due.push({ r, inNode });
     }
+    // The script of a coin each spends (the owner's, which the server knows the guardian watches anyway): from the cache,
+    // else all fetched at once.
+    const ask: { r: RelayedTx; inNode?: 'mempool' | 'gone' | 'spent'; script: Uint8Array }[] = [];
+    await Promise.all(
+      due.map(async (d) => {
+        const first = parseRawTx(d.r.txHex).inputs[0];
+        const prevHex = first ? await this.getTransaction(first.txid).catch(() => undefined) : undefined;
+        const script = prevHex && first ? parseRawTx(prevHex).outputs[first.vout]?.script : undefined;
+        if (script) ask.push({ ...d, script }); // else not known yet: the next tick tries again
+      }),
+    );
     if (dropped) this.emitChange('relayed');
-    if (rpc && b instanceof ElectrumBackend && (this.lastHistogramAt === undefined || now - this.lastHistogramAt >= MEMPOOL_HISTOGRAM_EVERY_MS)) {
-      this.lastHistogramAt = now;
-      this.nodeVersion ??= (await rpc.call<{ version?: number }>('getnetworkinfo').catch(() => undefined))?.version;
-      // Only the mempool's size: never an entry, whose fields changed in Core 32 (`bip125-replaceable`).
-      const [histogram, info] = await Promise.all([b.feeHistogram(), rpc.call<{ size?: number }>('getmempoolinfo')]);
-      if (histogram === undefined) return; // a server without the method: no finding
-      if (histogram.length > 0) this.noteMempool('seen');
-      else if ((info?.size ?? 0) >= MEMPOOL_MIN_NODE_TXS) this.noteMempool('unseen', 'fee_histogram_empty');
-    }
+    // Every Electrs request at once (pipelined): a slow server answers them all after one turn of its loop.
+    const electrs = b instanceof ElectrumBackend ? b : undefined;
+    const histogramDue = !!rpc && !!electrs && (this.lastHistogramAt === undefined || now - this.lastHistogramAt >= MEMPOOL_HISTOGRAM_EVERY_MS);
+    if (histogramDue) this.lastHistogramAt = now;
+    const pingStart = Date.now();
+    const [listed, found] = await Promise.all([
+      Promise.all(ask.map((a) => electrs!.history(a.script).then((h) => h.find((x) => x.tx_hash === a.r.txid), () => null))),
+      histogramDue
+        ? Promise.all([
+            electrs!.feeHistogram(),
+            // Only the mempool's size: never an entry, whose fields changed in Core 32 (`bip125-replaceable`).
+            rpc!.call<{ size?: number }>('getmempoolinfo'),
+            this.nodeVersion === undefined ? rpc!.call<{ version?: number }>('getnetworkinfo').catch(() => undefined) : undefined,
+            // How long the server takes to answer anything: Electrs 0.11 with Core 32 rereads Core's whole mempool on the
+            // loop that answers requests (about 7 s each).
+            electrs!.ping().then(() => Date.now() - pingStart),
+          ])
+        : undefined,
+    ]);
+    ask.forEach((a, k) => {
+      const l = listed[k];
+      if (l === null) return; // not answered: the next tick asks again
+      this.relayed.mark(a.r.txid, { checked: true });
+      if (l && l.height <= 0) {
+        this.relayed.mark(a.r.txid, { seen: true });
+        this.noteMempool('seen');
+      } else if (!l && (a.inNode === undefined || a.inNode === 'mempool')) this.noteMempool('unseen', 'relayed_tx_not_listed');
+    });
+    if (!found) return;
+    const [histogram, info, net, pingMs] = found;
+    if (net?.version !== undefined) this.nodeVersion = net.version;
+    this.notePing(pingMs);
+    if (histogram === undefined) return; // a server without the method: no finding
+    if (histogram.length > 0) this.noteMempool('seen');
+    else if ((info?.size ?? 0) >= MEMPOOL_MIN_NODE_TXS) this.noteMempool('unseen', 'fee_histogram_empty');
+  }
+
+  /** The server's last ping round trip (ms), from the mempool check; logged once when it turns slow. */
+  private pingMs?: number;
+
+  private notePing(ms: number): void {
+    const slow = ms > (this.opts.slowPingMs ?? SLOW_PING_MS);
+    const was = this.pingMs !== undefined && this.pingMs > (this.opts.slowPingMs ?? SLOW_PING_MS);
+    this.pingMs = ms;
+    if (slow && !was) this.log.warn('chain.server_slow', { pingMs: ms, server: this.current?.serverVersion });
   }
 
   /**
@@ -1545,7 +1593,7 @@ export class ChainService {
     const node = await this.nodeInfo();
     const info = node?.info;
     const m = this.mempool;
-    const unseen = m.state === 'unseen' ? { mempoolUnseen: true, ...(m.cause ? { mempoolCause: m.cause } : {}), ...(m.viaNode ? { mempoolViaNode: true } : {}) } : {};
+    const unseen = m.state === 'unseen' ? { mempoolUnseen: true, ...(m.cause ? { mempoolCause: m.cause } : {}), ...(m.viaNode ? { mempoolViaNode: true } : {}), ...(m.serverSlow ? { mempoolServerSlow: true } : {}) } : {};
     if (info && (info.initialblockdownload || info.blocks < info.headers - 1)) {
       return { state: 'syncing', progress: Math.max(0, Math.min(1, info.verificationprogress)), source, height: e.tip.height, ...unseen };
     }

@@ -354,7 +354,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       relays,
       chain: syncing
         ? { state: 'syncing', progress: 0.87, source: 'Bitcoin Node + Electrs' }
-        : { state: 'synced', source: 'Bitcoin Node + Electrs', ...(mempoolUnseen ? { mempoolUnseen: true, mempoolCause: 'electrs_core32' as const, mempoolViaNode: true } : {}) },
+        : { state: 'synced', source: 'Bitcoin Node + Electrs', ...(mempoolUnseen ? { mempoolUnseen: true, mempoolCause: 'electrs_core32' as const, mempoolViaNode: true, mempoolServerSlow: true } : {}) },
       wallets: setupDone || setupFinished ? walletIds.map((id) => ({ id, name: 'Main', phonesPaired: phones.length })) : [],
       dailySpend: { usedSats: 70_420, limitSats: rules.dailyLimitSats, ...(rules.dailyLimitOff ? { limitOff: true as const } : {}) },
       ...(savingsScenario
@@ -390,7 +390,7 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       server: chainSource.kind === 'core' ? 'Bitcoin Core 32.1' : 'electrs/0.12.0',
       height: 271_042,
       rescans: [],
-      ...(mempoolUnseen && chainSource.kind !== 'core' ? { mempoolUnseen: true, mempoolCause: 'electrs_core32' as const, mempoolViaNode: true } : {}),
+      ...(mempoolUnseen && chainSource.kind !== 'core' ? { mempoolUnseen: true, mempoolCause: 'electrs_core32' as const, mempoolViaNode: true, mempoolServerSlow: true } : {}),
     },
     publicServers: clone(PUBLIC_SERVERS_DEMO),
     network: 'signet',

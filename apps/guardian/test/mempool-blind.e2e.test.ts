@@ -65,8 +65,8 @@ interface Setup {
   alerts: Alert[];
 }
 
-async function setUp(opts: { hideMempool: boolean; bitcoind: boolean }): Promise<Setup> {
-  const rig = await GuardianRig.start({ http: true, hideMempool: opts.hideMempool, bitcoind: opts.bitcoind });
+async function setUp(opts: { hideMempool: boolean; bitcoind: boolean; slowPingMs?: number }): Promise<Setup> {
+  const rig = await GuardianRig.start({ http: true, hideMempool: opts.hideMempool, bitcoind: opts.bitcoind, ...(opts.slowPingMs !== undefined ? { slowPingMs: opts.slowPingMs } : {}) });
   const phoneKey = generateSecretKey();
   const p = decodePairingUri(rig.pairingUri(), rig.nowSec());
   const phone = new RpcClient({ pool, relays: rig.relayUrls, secretKey: phoneKey, peer: rig.pubkey, now: () => rig.nowSec(), defaultTimeoutMs: 5000 });
@@ -212,12 +212,18 @@ describe('an Electrum server that does not see the mempool', { timeout: 60_000 }
     expect(pending).toHaveLength(3);
     // A slow Electrs notifies scripts long after the block (about 25 s on an Umbrel): here, never.
     rig.electrs.notifyScripts = false;
+    const before = rig.electrs.batchMethods.length;
     try {
       await rig.mine(1);
       for (const txid of pending) await waitFor(() => alerts.find((x) => x.type === 'wallet_tx' && x.txid === txid && x.confirmations > 0), `the confirmation of ${txid}`, 3000);
     } finally {
       rig.electrs.notifyScripts = true;
     }
+    // Each script re-read in ONE round trip: its history and unspent outputs side by side, never one batch after the other.
+    const reads = rig.electrs.batchMethods.slice(before).filter((m) => m.some((x) => x.startsWith('blockchain.scripthash.')));
+    expect(reads.length).toBeGreaterThan(0);
+    for (const m of reads) if (m.includes('blockchain.scripthash.get_history')) expect(m).toContain('blockchain.scripthash.listunspent');
+    expect(reads.some((m) => m.every((x) => x === 'blockchain.scripthash.listunspent'))).toBe(false);
     await rig.guardian.live!.idle();
     const r = await phone.call('wallet.sync', {});
     expect(r.balance).toEqual({ confirmedSats: 57_600, unconfirmedSats: 0 });
@@ -275,7 +281,7 @@ describe('the fee histogram against Bitcoin Core', { timeout: 60_000 }, () => {
   });
 
   it("an empty histogram while Core's mempool has transactions: unseen", async () => {
-    s = await setUp({ hideMempool: true, bitcoind: true });
+    s = await setUp({ hideMempool: true, bitcoind: true, slowPingMs: 60 });
     const { rig } = s;
     for (let i = 0; i < 6; i++) {
       const f = rig.fund(stranger, 10_000n);
@@ -285,7 +291,16 @@ describe('the fee histogram against Bitcoin Core', { timeout: 60_000 }, () => {
     // The tick at pairing looked already (Core's mempool was empty then: no finding); the next look is ten minutes on.
     rig.clock.advance(10 * 60_000);
     await rig.guardian.chain.checkMempool();
-    expect(rig.guardian.chain.mempool).toMatchObject({ state: 'unseen', reason: 'fee_histogram_empty' });
+    expect(rig.guardian.chain.mempool).toMatchObject({ state: 'unseen', reason: 'fee_histogram_empty', cause: 'electrs_core32' });
+    expect(rig.guardian.chain.mempool.serverSlow).toBeUndefined();
+    // Slowed down too (Electrs 0.11 rereads Core 32's whole mempool on the loop that answers requests): said so.
+    rig.electrs.pingDelayMs = 120;
+    rig.clock.advance(10 * 60_000);
+    await rig.guardian.chain.checkMempool();
+    expect(rig.guardian.chain.mempool.serverSlow).toBe(true);
+    expect((await rig.api('GET', '/status')).body.chain).toMatchObject({ mempoolUnseen: true, mempoolCause: 'electrs_core32', mempoolServerSlow: true });
+    expect(rig.logLines.some((l) => l.includes('chain.server_slow'))).toBe(true);
+    rig.electrs.pingDelayMs = 0;
     // Asked again only every ten minutes.
     const asked = () => rig.electrs.calls.filter((c) => c.method === 'mempool.get_fee_histogram').length;
     const n = asked();

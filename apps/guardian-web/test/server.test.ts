@@ -105,6 +105,11 @@ describe('an Electrum server that reports no unconfirmed payments', () => {
       "Electrs can't read Bitcoin Core 32's mempool; unconfirmed payments show once confirmed, or switch Settings > Server to Bitcoin Core alone.",
     );
     expect(mempoolText({ mempoolCause: 'electrs_core32', mempoolViaNode: true }).text).toMatch(/reads unconfirmed payments from Bitcoin Core itself/);
+    // Slow too (pings of seconds): said plainly, with both fixes.
+    const slow = mempoolText({ mempoolCause: 'electrs_core32', mempoolViaNode: true, mempoolServerSlow: true });
+    expect(slow.text).toBe("Electrs is slowed down and can't see unconfirmed payments: it doesn't work with Bitcoin Core 32's mempool.");
+    expect(slow.detail).toMatch(/deprecatedrpc=bip125/);
+    expect(slow.detail).toMatch(/Settings > Server to Bitcoin Core alone/);
     expect(mempoolText({}).text).toBe("Your Electrum server doesn't report unconfirmed payments; they will show once confirmed.");
     for (const m of [{}, { mempoolViaNode: true }, { mempoolCause: 'electrs_core32' as const }]) expect(mempoolText(m).detail).toMatch(/Payments your phone makes still show at once/);
   });

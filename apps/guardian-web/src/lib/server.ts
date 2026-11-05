@@ -33,21 +33,33 @@ export const PUBLIC_WARNING =
 export const CORE_NOTE =
   'Bitcoin Core 24 or later. The guardian creates a watch-only wallet in it (no keys) and imports your wallet’s addresses; the first import scans the chain from the wallet’s start, which takes a while on mainnet. A pruned node works only if it still has those blocks. Its RPC has no encryption: use it on your own network or over Tailscale.';
 
+/** The two ways out of the Electrs and Bitcoin Core 32 incompatibility, in words. */
+export const CORE32_FIXES =
+  "Fix it by adding deprecatedrpc=bip125 to Bitcoin Core's configuration (bitcoin.conf) and restarting Bitcoin Core and Electrs, or switch Settings > Server to Bitcoin Core alone.";
+
 /**
  * The home status's note and Settings > Server's warning while the Electrum server reports no unconfirmed payments
  * (`mempoolUnseen`): `text` names the cause when the guardian knows it, `detail` says what still works and what fixes it.
+ * `mempoolServerSlow`: its pings took seconds too (Electrs 0.11 rereads Core 32's whole mempool on the loop that answers
+ * requests).
  */
-export function mempoolText(m: { mempoolCause?: MempoolCause; mempoolViaNode?: boolean }): { text: string; detail: string } {
+export function mempoolText(m: { mempoolCause?: MempoolCause; mempoolViaNode?: boolean; mempoolServerSlow?: boolean }): { text: string; detail: string } {
   const own = 'Payments your phone makes still show at once (the guardian remembers the ones it sent).';
+  const meanwhile = m.mempoolViaNode ? 'Meanwhile the guardian reads unconfirmed payments from Bitcoin Core itself, so they still show at once.' : 'Until then, payments to you show once confirmed.';
   if (m.mempoolCause === 'electrs_core32') {
+    if (m.mempoolServerSlow)
+      return {
+        text: "Electrs is slowed down and can't see unconfirmed payments: it doesn't work with Bitcoin Core 32's mempool.",
+        detail: `Every request to Electrs waits several seconds, so syncs are slow. ${CORE32_FIXES} ${meanwhile} ${own}`,
+      };
     if (m.mempoolViaNode)
       return {
         text: "Electrs can't read Bitcoin Core 32's mempool, so the guardian reads unconfirmed payments from Bitcoin Core itself.",
-        detail: `They still show at once. Electrs has no fix yet; Settings > Server > Bitcoin Core alone avoids it. ${own}`,
+        detail: `They still show at once. ${CORE32_FIXES} ${own}`,
       };
     return {
       text: "Electrs can't read Bitcoin Core 32's mempool; unconfirmed payments show once confirmed, or switch Settings > Server to Bitcoin Core alone.",
-      detail: `Bitcoin Core 32 no longer gives a field Electrs 0.11 needs, and Electrs has no fix yet. ${own}`,
+      detail: `Bitcoin Core 32 no longer gives a field Electrs 0.11 needs. ${CORE32_FIXES} ${own}`,
     };
   }
   if (m.mempoolViaNode)

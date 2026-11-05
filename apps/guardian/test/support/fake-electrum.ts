@@ -107,6 +107,10 @@ export class FakeElectrum {
   private readonly connBusyUntil = new WeakMap<Socket, number>();
   /** Batches received (lines that were arrays). */
   batches = 0;
+  /** The methods of each batch received, in order (what a slow server answers in one round trip). */
+  readonly batchMethods: string[][] = [];
+  /** `server.ping` takes this long (ms): a server slowed down as Electrs 0.11 is with Bitcoin Core 32. */
+  pingDelayMs = 0;
   readonly txs = new Map<string, string>();
   /** Unconfirmed transactions applied as a mempool: the outputs each spent (to put back if it is replaced). */
   private readonly mempool = new Map<string, { spent: { sh: string; utxo: FakeUtxo }[] }>();
@@ -440,6 +444,7 @@ export class FakeElectrum {
       return;
     }
     this.batches++;
+    this.batchMethods.push((msg as { method: string }[]).map((r) => r.method));
     if (this.hangUpOnBatch) {
       socket.destroy();
       return;
@@ -480,6 +485,7 @@ export class FakeElectrum {
       case 'server.version':
         return ok(['FakeElectrs 0.1', '1.4']);
       case 'server.ping':
+        if (this.pingDelayMs > 0) await new Promise((r) => setTimeout(r, this.pingDelayMs));
         return ok(null);
       case 'blockchain.headers.subscribe':
         this.subscribed.add(socket);

@@ -18,10 +18,13 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
   gives a mempool field Electrs 0.11 needs, so Electrs' mempool stays empty (every Umbrel with Electrs and Core 32). The
   guardian notices (an empty fee histogram while Core's mempool is not, or a payment it sent not listed), names the
   cause on its web page (home and Settings > Server), and reads Core's mempool itself through its RPC: payments to you
-  show unconfirmed and are announced as before. Without Core's RPC, they show once confirmed, and the app says so
+  show unconfirmed and are announced as before. The same bug makes Electrs answer every request about 7 s late; when its
+  pings are that slow the web page says so, with the two fixes: `deprecatedrpc=bip125` in Bitcoin Core's configuration,
+  or Settings > Server > Bitcoin Core alone. Without Core's RPC, they show once confirmed, and the app says so
   quietly in Settings > Guardian.
 - **"Confirmed" arrives with the block** for payments the server did not list unconfirmed, instead of when a slow Electrs
-  gets round to notifying (about 25 s later).
+  gets round to notifying (about 25 s later); a new block's re-read of the wallet's scripts is one round trip to the
+  server instead of two.
 - Review picks Fast when every speed costs the same, and says so. The hardware wallet screen sketch shows the amount
   and the fee with the same eight decimals, and the device sheet puts the fee on its own line.
 

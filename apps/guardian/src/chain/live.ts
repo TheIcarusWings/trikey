@@ -4,7 +4,7 @@
  * transaction (mempool or block).
  *
  * - **Subscribing** (`watch`) asks the server for each script's status in batches of `BATCH_SIZE`: null means no history
- *   (nothing to read); otherwise the history and the unspent outputs are read, also in batches.
+ *   (nothing to read); otherwise the history and the unspent outputs are read, side by side in one batch per round trip.
  * - **A notification** (a new status) marks the script stale at once and reads it again. Until that read is done the
  *   script is not served from here: a reader waits for it (`read`) or, if it fails, asks the server itself.
  * - **Checked**: a history is kept only when its Electrum status (backend.ts `electrumStatus`) is the status the server
@@ -355,19 +355,22 @@ export class ScriptWatch {
 
   private async flush(): Promise<void> {
     while (this.queue.size && this.up && !this.stopped) {
-      const batch = [...this.queue].slice(0, BATCH_SIZE);
+      // Each script's history and unspent outputs side by side in one batch of about `BATCH_SIZE` calls: one round trip,
+      // not two. A slow Electrs answers each round trip after a turn of its main loop (about 7 s for Electrs 0.11 with
+      // Bitcoin Core 32), so a new block's refresh was two such turns before the scan that waits for it could go on.
+      const batch = [...this.queue].slice(0, Math.ceil(BATCH_SIZE / 2));
       for (const e of batch) this.queue.delete(e);
       const want = batch.map((e) => ({ gen: e.gen, status: e.status, epoch: e.epoch }));
       const hashes = batch.map((e) => e.hash);
-      let histories, unspents;
+      let read;
       try {
-        // One after the other: a slow server answers in order anyway, and the second batch's timeout starts later.
-        histories = await this.b.histories(hashes);
-        unspents = await this.b.unspents(hashes);
+        read = await this.b.readScripts(hashes);
       } catch (err) {
         this.log.debug('chain.live_read_failed', { error: errorText(err) });
         return; // the connection dropped: the reconnect reads them again
       }
+      const histories = read.map((r) => r.history);
+      const unspents = read.map((r) => r.unspent);
       const changed: string[] = [];
       batch.forEach((e, k) => {
         const w = want[k]!;

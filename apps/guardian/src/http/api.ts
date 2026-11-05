@@ -270,7 +270,7 @@ export function chainSettings(g: Guardian): ChainSettings {
       ...(!b?.connected && b?.lastError ? { error: b.lastError } : {}),
       rescans: g.chainRescans.map((r) => ({ since: iso(r.since), from: iso(r.birthday * 1000) })),
       ...(b?.connected && g.chain.mempoolUnseen
-        ? { mempoolUnseen: true, ...(g.chain.mempool.cause ? { mempoolCause: g.chain.mempool.cause } : {}), ...(g.chain.mempool.viaNode ? { mempoolViaNode: true } : {}) }
+        ? { mempoolUnseen: true, ...(g.chain.mempool.cause ? { mempoolCause: g.chain.mempool.cause } : {}), ...(g.chain.mempool.viaNode ? { mempoolViaNode: true } : {}), ...(g.chain.mempool.serverSlow ? { mempoolServerSlow: true } : {}) }
         : {}),
     },
     publicServers: publicServersFor(g.config.network).map((p) => ({ id: p.id, host: p.host, port: p.port, operator: p.operator, ...(p.chain ? { chain: p.chain } : {}) })),
