@@ -66,6 +66,8 @@ import type { SavingsActions } from './savings-actions';
 import { emptySavings } from './savings-empty';
 import { createSpeedUpActions } from './real-speed-up';
 import { createCoinActions } from './real-coins';
+import { createNotesActions } from './real-notes';
+import type { NotesActions } from './notes-actions';
 import type { CoinActions } from './coin-actions';
 import type { SpeedUpActions } from './speed-up-actions';
 import { renderSavingsMap, savingsMapData } from './savings-map';
@@ -631,6 +633,8 @@ class Service implements RealWalletService {
     const force = background || away >= FORCE_RECONNECT_AFTER_MS;
     await this.w?.reconnect({ force, waitMs: force ? RELAYS_BACK_WAIT_MS : 0 }).catch(() => undefined);
     if (this.closed) return;
+    // Encrypted notes: labels changed before the app left (and not sent yet) go out now, every wallet's.
+    for (const w of this.set?.list ?? (this.w ? [this.w] : [])) void w.flushNotes();
     return this.requestSync(true);
   }
 
@@ -1263,6 +1267,10 @@ class Service implements RealWalletService {
       case 'labels_changed':
         // Coin control: the coin list, quotes and the backup's "not in your backup yet" read the labels again.
         this.labelsVersion++;
+        this.refresh();
+        break;
+      case 'notes_changed':
+        // Encrypted notes on the guardian: Settings > Wallet details shows whether the copy is up to date.
         this.refresh();
         break;
       case 'hardware_prompt':
@@ -2058,6 +2066,18 @@ class Service implements RealWalletService {
     broadcastError: (refusal) => broadcastError(refusal, 'listed'),
     iso: (ms) => this.iso(ms),
     now: () => this.clock.now(),
+  });
+
+  /** Notes that survive recovery (./real-notes.ts): an encrypted copy of the labels on the guardian. */
+  readonly notes: NotesActions = createNotesActions({
+    wallet: () => this.w,
+    requireWallet: () => this.requireWallet(),
+    run: (job) => this.exclusive(() => this.guarded(job)),
+    changed: () => {
+      this.labelsVersion++;
+      this.refresh();
+    },
+    iso: (ms) => this.iso(ms),
   });
 
   /** Coin control (./real-coins.ts): the coin list, labels and freezes, "Consolidate", BIP 329 export and import. */

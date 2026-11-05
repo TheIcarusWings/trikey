@@ -8,6 +8,7 @@ import { DEMO_FINGERPRINT, createMockRecoveryKey } from './rk-mock';
 import { looksLikeSilentPaymentAddress } from './sp-empty';
 import { DEMO_HELPER_FEE, DEMO_TAPROOT_OUTPUT, createMockSilentPayments, demoSilentActivity, demoSilentPayments, type MockSilentControl } from './sp-mock';
 import { createMockSpeedUp } from './speed-up-mock';
+import { createMockNotes } from './notes-mock';
 import { createMockCoins } from './coins-mock';
 import { recoverySheetWallet, renderRecoverySheet } from './recovery-sheet';
 import { DEMO_SAVINGS_DESCRIPTOR, createMockSavings, creditDemoSavings, demoFilledSavings, emptySavings, isDemoSavingsAddress } from './savings-mock';
@@ -922,6 +923,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
       frozenSats: () => coins.frozenSats('savings'),
     }),
     coins: coins.actions,
+    notes: createMockNotes({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }),
     speedUp: createMockSpeedUp({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW, nextId, nextTxid: () => txid((++counter * 7919).toString(16).padStart(12, '0')) }),
 
     // -- preferences --------------------------------------------------

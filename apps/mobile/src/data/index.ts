@@ -12,6 +12,7 @@ export type { SilentPaymentActions } from './sp-actions';
 export type { SavingsActions } from './savings-actions';
 export type { SpeedUpActions } from './speed-up-actions';
 export type { CoinActions } from './coin-actions';
+export type { NotesActions, NotesState, NotesCopyView, NotesBroughtBackView } from './notes-actions';
 export { coinTitle, coinSourceText, mixedLabelsText, labelsImportText, includeFrozenText, includeFrozenNote, rowLabelSuffix, CONSOLIDATE_LIMIT_NOTE } from './coins-text';
 export { emptySavings, suggestSavings } from './savings-empty';
 export { groupWalletId } from './savings-map';
