@@ -110,6 +110,10 @@ describe('request schemas', () => {
       rules: policy,
       firstName: 'Daily',
     },
+    'labels.put': { walletId: '0123456789abcdef', upload: 'ab'.repeat(16), part: 0, parts: 1, bytes: 3, sha256: 'cd'.repeat(32), data: 'AAAA' },
+    'labels.get': { of: '0123456789abcdef', version: 0, part: 0 },
+    'labels.list': {},
+    'labels.delete': {},
   };
 
   it('has a sample for every method', () => {

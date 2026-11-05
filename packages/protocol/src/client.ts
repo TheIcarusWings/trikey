@@ -62,6 +62,8 @@ const READ_ONLY_METHODS: ReadonlySet<MethodName> = new Set<MethodName>([
   'policy.get',
   'recovery.status',
   'savings.get',
+  'labels.get',
+  'labels.list',
 ]);
 /** A request is re-dated (read-only methods) when less than this is left of its TTL (s). */
 const REDATE_MARGIN_SEC = 60;

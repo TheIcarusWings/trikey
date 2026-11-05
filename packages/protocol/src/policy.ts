@@ -53,6 +53,12 @@ export const GUARDIAN_FEATURES = {
    * ("Replace guardian" moves every wallet), and an own wallet's `wallet.retire` refused while it holds coins.
    */
   ownWallets2: 'own_wallets_2',
+  /**
+   * Encrypted notes (PROTOCOL.md, "Encrypted notes"): it keeps an encrypted copy of each own wallet's labels
+   * (`labels.put`, `labels.get`, `labels.list`, `labels.delete`), which a phone with recovery access may read. Never
+   * listed to a guest: guests' notes are not kept (yet).
+   */
+  labelsBackup: 'labels_backup',
 } as const;
 
 /** True when the alert contacts may lock the guardian (`Policy.contactLock`). */
