@@ -8,6 +8,7 @@ import { DEMO_FINGERPRINT, createMockRecoveryKey } from './rk-mock';
 import { looksLikeSilentPaymentAddress } from './sp-empty';
 import { DEMO_HELPER_FEE, DEMO_TAPROOT_OUTPUT, createMockSilentPayments, demoSilentActivity, demoSilentPayments, type MockSilentControl } from './sp-mock';
 import { createMockSpeedUp } from './speed-up-mock';
+import { createMockCoins } from './coins-mock';
 import { DEMO_SAVINGS_DESCRIPTOR, createMockSavings, creditDemoSavings, demoFilledSavings, emptySavings, isDemoSavingsAddress } from './savings-mock';
 import type { WalletService } from './service';
 import { demoBusinessWallet, demoWalletsView, sliceOf, type DemoWallet, type DemoWalletSlice } from './wallets-mock';
@@ -327,15 +328,27 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     counter += 1;
     return `${prefix}-${counter}`;
   }
+  /** Coin control in the demo (./coins-mock.ts): its coins follow the demo's balance. */
+  const coins = createMockCoins({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW, nextId });
 
   /** A payment's quote. To a silent payment address the helper coin pays its share of the fee, and the vault cannot make one. */
   function quoteSendMock(request: SendRequest): QuoteOutcome {
-    return withSilentPayment(request.address, quoteSendRule(state, request));
+    return withSilentPayment(request.address, coins.quoteWithCoins(state, request, quoteSendRule(state, request)));
   }
 
-  /** "Send max" to the same places: the helper coin's share comes on top of the vault's fee, and what leaves the vault stays the whole balance. */
-  function quoteSendMaxMock(request: { address: string; speed: FeeSpeed }): QuoteOutcome {
-    return withSilentPayment(request.address, quoteSendMaxRule(state, request));
+  /**
+   * "Send max" to the same places: the helper coin's share comes on top of the vault's fee, and what leaves the vault stays
+   * the whole balance. Coin control: frozen coins stay; with `coins`, those coins are what is sent.
+   */
+  function quoteSendMaxMock(request: { address: string; speed: FeeSpeed; coins?: string[] }): QuoteOutcome {
+    if (state.mode === 'guardian' && request.coins?.length) {
+      const list = coins.actions.list('spending');
+      const sum = (list?.coins ?? []).filter((c) => request.coins!.includes(c.outpoint)).reduce((t, c) => t + c.valueSats, 0);
+      const base = quoteSendMaxRule({ ...state, balanceSats: sum }, request);
+      return withSilentPayment(request.address, coins.quoteWithCoins(state, { ...request, amountSats: base.ok ? base.quote.request.amountSats : 0 }, base));
+    }
+    const frozen = state.mode === 'guardian' ? coins.frozenSats() : 0;
+    return withSilentPayment(request.address, quoteSendMaxRule(frozen ? { ...state, balanceSats: state.balanceSats - frozen } : state, request));
   }
 
   function withSilentPayment(address: string, base: QuoteOutcome): QuoteOutcome {
@@ -520,6 +533,8 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
         ...(state.mode === 'guardian' && !silent && !quote.max ? { canSpeedUp: true as const } : {}),
       };
       if (silent && state.mode === 'guardian') update((s) => ({ silentPayments: { ...s.silentPayments, helper: { ...s.silentPayments.helper, sats: Math.max(0, s.silentPayments.helper.sats - DEMO_HELPER_FEE) } } }));
+      // Coin control: a manual pick spends exactly its coins (the others follow the balance by themselves).
+      if (state.mode === 'guardian') coins.paid(quote);
       // "Add to Savings": a payment like any other (it counted against the limit above), and it lands in Savings.
       if (state.mode === 'guardian' && state.savings.status === 'active' && isDemoSavingsAddress(request.address))
         update((s) => ({ savings: creditDemoSavings(s.savings, request.amountSats, tx.txid!, tx.at, nextId('sv')) }));
@@ -864,6 +879,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     rk: createMockRecoveryKey({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }),
     silentPayments: createMockSilentPayments({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }, silentControl, nextId),
     savings: createMockSavings({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }, nextId),
+    coins: coins.actions,
     speedUp: createMockSpeedUp({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW, nextId, nextTxid: () => txid((++counter * 7919).toString(16).padStart(12, '0')) }),
 
     // -- preferences --------------------------------------------------

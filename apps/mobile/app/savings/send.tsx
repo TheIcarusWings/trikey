@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { Check, HardwareWallet, Info } from '@/components/icons';
+import { Check, HardwareWallet, Info, TriangleAlert } from '@/components/icons';
 import { RadioRow } from '@/components/choice';
 import { Body, FieldLabel, InfoRow, Notice, Panel, QuietLink } from '@/components/panels';
 import { signersText } from '@/components/savings';
@@ -11,7 +11,7 @@ import { Screen } from '@/components/screen';
 import { Input } from '@/components/ui/input';
 import { RadioGroup } from '@/components/ui/radio-group';
 import { Text } from '@/components/ui/text';
-import { formatSats, groupAddress, shorten, useWallet, useWalletService, type SavingsSigners } from '@/data';
+import { formatSats, groupAddress, mixedLabelsText, shorten, useWallet, useWalletService, type SavingsSigners } from '@/data';
 import { useAction } from '@/lib/use-action';
 
 const SIGNERS: SavingsSigners[] = ['phone+hardware', 'phone+recoveryKey', 'hardware+recoveryKey'];
@@ -27,7 +27,9 @@ export default function SavingsSend() {
   const wallet = useWalletService();
   const state = useWallet();
   const brand = state.hardware.brand;
-  const { to } = useLocalSearchParams<{ to?: string }>();
+  const { to, coins } = useLocalSearchParams<{ to?: string; coins?: string }>();
+  // Coin control: the Savings coins picked on "Choose coins", every one of them spent.
+  const picked = useMemo(() => (coins ? coins.split(',').filter(Boolean) : []), [coins]);
   const toSpending = to === 'spending';
   const [address, setAddress] = useState(toSpending ? state.receiveAddress : '');
   const [amount, setAmount] = useState('');
@@ -45,9 +47,9 @@ export default function SavingsSend() {
 
   const amountSats = Number(amount.replace(/[^0-9]/g, '')) || 0;
   const outcome = useMemo(
-    () => (savings && address ? savings.quote({ address, amountSats, max: everything }) : null),
+    () => (savings && address ? savings.quote({ address, amountSats, max: everything, ...(picked.length ? { coins: picked } : {}) }) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [savings, address, amountSats, everything, state.savings.balanceSats, state.feesVersion],
+    [savings, address, amountSats, everything, picked, state.savings.balanceSats, state.feesVersion, state.labelsVersion],
   );
   const quote = outcome?.ok ? outcome.quote : null;
 
@@ -103,7 +105,13 @@ export default function SavingsSend() {
           keyboardType="number-pad"
           placeholder={`Up to ${formatSats(state.savings.balanceSats)}`}
         />
-        <QuietLink title={everything ? 'Type an amount instead' : 'Everything in Savings'} onPress={() => setEverything((e) => !e)} />
+        <QuietLink title={everything ? 'Type an amount instead' : picked.length ? 'Everything in the coins you chose' : 'Everything in Savings'} onPress={() => setEverything((e) => !e)} />
+        {wallet.coins ? (
+          <QuietLink
+            title={picked.length ? `Paying with ${picked.length === 1 ? '1 coin' : `${picked.length} coins`} you chose · change` : 'Choose coins'}
+            onPress={() => router.push({ pathname: '/send/coins', params: { wallet: 'savings', ...(to ? { to } : {}), ...(picked.length ? { coins: picked.join(',') } : {}) } })}
+          />
+        ) : null}
       </View>
       {outcome && !outcome.ok && (amountSats > 0 || everything) ? <Notice tone="warn-outline">{outcome.message}</Notice> : null}
       {quote ? (
@@ -113,6 +121,11 @@ export default function SavingsSend() {
           <InfoRow label="Network fee" value={`${formatSats(quote.feeSats)} sats`} tabular />
           <InfoRow label="Total from Savings" value={`${formatSats(quote.totalSats)} sats`} strong tabular />
         </Panel>
+      ) : null}
+      {quote?.mixesLabels ? (
+        <Notice icon={TriangleAlert} iconClass="text-warn" tone="warn-outline" title="Coins with different labels">
+          {mixedLabelsText(quote.mixesLabels)}
+        </Notice>
       ) : null}
       {quote?.toSpending && usesHardware ? (
         <Notice icon={HardwareWallet} tone="fill">

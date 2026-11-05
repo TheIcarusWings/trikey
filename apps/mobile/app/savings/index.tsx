@@ -101,6 +101,7 @@ export default function SavingsScreen() {
       <ListGroup>
         <SettingsRow title="Receive into Savings" onPress={() => router.push('/savings/receive')} />
         <SettingsRow title="Send from Savings" subtitle="To any address, with two of Savings' keys" onPress={() => router.push('/savings/send')} />
+        <SettingsRow title="Coins" subtitle="Labels, frozen coins, consolidate" onPress={() => router.push({ pathname: '/coins', params: { wallet: 'savings' } })} />
         <SettingsRow title="Recovery Key" value={savings.recoveryKey ? pick(savings.recoveryKey.model, `${savings.recoveryKey.model} · ${savings.recoveryKey.fingerprint}`) : '—'} />
         <SettingsRow title="Lost a Savings key?" subtitle="Move Savings to a new set of keys" onPress={() => router.push('/savings/replace')} />
         <SettingsRow title="Savings descriptor" subtitle="To recover Savings in another wallet" onPress={() => router.push('/settings/wallet-details')} />

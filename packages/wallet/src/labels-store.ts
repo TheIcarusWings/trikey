@@ -1,5 +1,5 @@
 /**
- * Coin labels, frozen coins and payment labels, per wallet (DESIGN.md, "Next: coin control"). Owner's decision 1: they
+ * Coin labels, frozen coins and payment labels, per wallet (DESIGN.md, "Coin control"). Owner's decision 1: they
  * live on the phone and in its backup, with export and import in BIP 329 (`labels-bip329.ts`), and are not sent to the
  * guardian.
  *

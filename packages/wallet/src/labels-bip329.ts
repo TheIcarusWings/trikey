@@ -3,7 +3,7 @@
  * Safe, ...). JSON Lines, UTF-8, one record per line: `type`, `ref`, and optional `label`, `origin`, `spendable`, plus
  * the BIP's optional "Additional Fields" (`height`, `time`, `fee`, `value`, `rate`, `keypath`, `fmv`, `heights`).
  *
- * How Trikey maps onto it (DESIGN.md, "Next: coin control"):
+ * How Trikey maps onto it (DESIGN.md, "Coin control"):
  * - a coin's label: an `output` record, ref `txid:vout`;
  * - a frozen coin: that `output` record with `spendable: false` (unfrozen: `true`, or no `spendable` at all);
  * - a payment's label (the send log's, or one set on a received payment): a `tx` record, ref the txid;

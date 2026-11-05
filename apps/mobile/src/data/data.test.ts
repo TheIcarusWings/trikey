@@ -287,9 +287,12 @@ describe('the demo wallet\'s send max', () => {
     expect(Object.keys(d.fingerprints)).toEqual(['phone', 'hardware', 'guardian']);
   });
 
-  it('quotes the whole balance minus the fee at each speed, and sends it', async () => {
+  it('quotes the whole balance minus the fee at each speed, and sends it (the frozen coin stays)', async () => {
     const w = fresh();
-    const balance = w.getState().balanceSats;
+    // Coin control: the demo starts with one tiny coin frozen (3,000 sats), which Send max leaves where it is.
+    const frozen = w.coins!.list('spending')!.totals.frozenSats;
+    expect(frozen).toBe(3_000);
+    const balance = w.getState().balanceSats - frozen;
     const fees = { slow: 210, normal: 420, fast: 840 };
     for (const speed of ['slow', 'normal', 'fast'] as const) {
       const q = w.quoteSendMax({ address: 'bc1qxyz', speed });
@@ -301,8 +304,9 @@ describe('the demo wallet\'s send max', () => {
     expect(q.quote.plan).toEqual({ signer: 'hardware', reason: 'over-limit' });
     const tx = await w.sendPayment(q.quote);
     expect(tx).toMatchObject({ kind: 'sent', amountSats: balance - 420, feeSats: 420, signedBy: 'phone+hardware' });
-    expect(w.getState().balanceSats).toBe(0);
-    // Nothing left: the same words as the real wallet.
+    expect(w.getState().balanceSats).toBe(frozen);
+    expect(w.coins!.list('spending')!.coins.map((c) => [c.valueSats, c.frozen])).toEqual([[3_000, true]]);
+    // Nothing left but the frozen coin: the same words as the real wallet.
     expect(w.quoteSendMax({ address: 'bc1qxyz', speed: 'normal' })).toMatchObject({ ok: false, problem: 'insufficient_funds' });
   });
 
@@ -314,7 +318,7 @@ describe('the demo wallet\'s send max', () => {
     expect(mockQuoteMax({ ...w.getState(), balanceSats: 700 }, { address: 'bc1qxyz', speed: 'normal' })).toMatchObject({ ok: false, problem: 'amount_too_small' });
     expect(mockQuoteMax({ ...w.getState(), balanceSats: 966 }, { address: 'bc1qxyz', speed: 'normal' })).toMatchObject({ ok: true, quote: { request: { amountSats: 546 } } });
     const sp = w.quoteSendMax({ address: DEMO_SP_RECIPIENT, speed: 'normal' });
-    expect(sp).toMatchObject({ ok: true, quote: { max: true, totalSats: w.getState().balanceSats, silentPayment: { outputAddress: DEMO_TAPROOT_OUTPUT, helperFeeSats: 396 } } });
+    expect(sp).toMatchObject({ ok: true, quote: { max: true, totalSats: w.getState().balanceSats - 3_000, silentPayment: { outputAddress: DEMO_TAPROOT_OUTPUT, helperFeeSats: 396 } } });
     if (sp.ok) expect(sp.quote.feeSats).toBe(420 + 396);
     w.dev!.setHelperFunded!(false);
     expect(w.quoteSendMax({ address: DEMO_SP_RECIPIENT, speed: 'normal' })).toMatchObject({ ok: false, problem: 'needs_helper' });

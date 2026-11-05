@@ -3,22 +3,25 @@ import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Platform, Share, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
-import { Check, Copy, Eye, FileText, Share2 } from '@/components/icons';
-import { Body, Footnote, InfoRow, Notice, Panel, QuietLink } from '@/components/panels';
+import { ActionNotice } from '@/components/action-notice';
+import { Check, Copy, Download, Eye, FileText, Share2, Tag } from '@/components/icons';
+import { Body, Footnote, InfoRow, Notice, Panel, QuietLink, SectionLabel } from '@/components/panels';
 import { AddressQr } from '@/components/qr';
 import { Screen } from '@/components/screen';
 import { Segmented } from '@/components/segmented';
 import { Text } from '@/components/ui/text';
-import { useWalletService, type NetworkName } from '@/data';
+import { labelsImportText, useWalletService, type LabelsImportSummary, type NetworkName } from '@/data';
 import { pick } from '@/lib/platform';
 import { haptic } from '@/lib/haptics';
+import { useAction } from '@/lib/use-action';
 
 const NETWORK: Record<NetworkName, string> = { bitcoin: 'Bitcoin', testnet: 'Testnet', signet: 'Signet', regtest: 'Regtest' };
 
 /**
  * Settings > Advanced > Wallet details: the wallet's descriptor, so any multisig wallet can recover the money without
  * Trikey. It moves nothing, but it shows every address and the balance, so the screen says so and keeps it one tap away.
- * With Savings there are two wallets, each with its own descriptor: "Spending" and "Savings".
+ * With Savings there are two wallets, each with its own descriptor: "Spending" and "Savings". Coin control: each wallet's
+ * labels and freezes as a BIP 329 file (the share sheet), and a file from another wallet read back in (the file picker).
  */
 export default function WalletDetailsScreen() {
   const router = useRouter();
@@ -30,6 +33,14 @@ export default function WalletDetailsScreen() {
   // The one shown: Spending's, or Savings' (its own keys at account 1': this phone's, the hardware wallet's, the Recovery Key's).
   const details = all && which === 'savings' && savings ? { ...all, descriptor: savings.descriptor, walletId: savings.walletId } : all;
   const [copied, setCopied] = useState(false);
+  const labels = useAction();
+  const [imported, setImported] = useState<{ which: 'spending' | 'savings'; result: LabelsImportSummary } | null>(null);
+  const exportLabels = () => void labels.run(wallet.coins!.exportLabels(which));
+  const importLabels = async () => {
+    setImported(null);
+    const r = await labels.run(wallet.coins!.importLabels(which));
+    if (r.ok && r.value) setImported({ which, result: r.value });
+  };
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
 
@@ -104,6 +115,26 @@ export default function WalletDetailsScreen() {
           <QuietLink title="Hide" onPress={() => setShown(false)} />
         </>
       )}
+      {details && wallet.coins ? (
+        <>
+          <SectionLabel>{savings ? (which === 'savings' ? "Savings' labels" : "Spending's labels") : 'Labels'}</SectionLabel>
+          <Body>
+            Your coin labels, frozen coins and payment notes as a BIP 329 file, the format Sparrow and other wallets read. Import one to bring labels from
+            another wallet: only this wallet's are taken.
+          </Body>
+          <View className="flex-row gap-3">
+            <AppButton title="Export labels" icon={Share2} variant={pick('secondary', 'outline')} className="flex-1 self-auto" busy={labels.busy} onPress={exportLabels} />
+            <AppButton title="Import labels" icon={Download} variant={pick('secondary', 'outline')} className="flex-1 self-auto" busy={labels.busy} onPress={() => void importLabels()} />
+          </View>
+          <ActionNotice message={labels.message} error={labels.error} />
+          {imported && imported.which === which ? (
+            <Notice icon={Tag} tone="fill" title="Labels imported">
+              {labelsImportText(imported.result)}
+            </Notice>
+          ) : null}
+          <Footnote>The file says which coins and payments are yours. Keep it as private as the descriptor.</Footnote>
+        </>
+      ) : null}
     </Screen>
   );
 }

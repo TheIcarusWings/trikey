@@ -118,6 +118,11 @@ function platformCause(e: unknown): PlatformError<string> | undefined {
   return undefined;
 }
 
+/** Coin control: what frozen coins hold, left out of a payment, as a sentence to add (empty when none). */
+function frozenNote(e: { frozenSats?: number }): string {
+  return e.frozenSats ? ` ${formatSats(e.frozenSats)} sats are in frozen coins: unfreeze them in Coins to spend them.` : '';
+}
+
 /** Any error from the wallet, the adapters or the platform, as a `WalletServiceError`. Never throws. */
 export function mapError(e: unknown): WalletServiceError {
   if (e instanceof WalletServiceError) return e;
@@ -178,11 +183,22 @@ export function mapError(e: unknown): WalletServiceError {
       case 'amount_too_small':
         return make('invalid_input', e.message);
       case 'insufficient_funds':
-        return make('insufficient_funds', "There isn't enough bitcoin for that and the network fee.");
+        return make(
+          'insufficient_funds',
+          /coins you picked/.test(e.message)
+            ? "The coins you picked don't hold enough for that and the network fee. Pick more, or let Trikey choose."
+            : `There isn't enough bitcoin for that and the network fee.${frozenNote(e)}`,
+        );
       case 'nothing_to_send':
-        return make('insufficient_funds', 'There is nothing to send.');
+        return make('insufficient_funds', `There is nothing to send.${frozenNote(e)}`);
       case 'send_max_too_small':
         return make('invalid_input', e.message);
+      case 'coin_unavailable':
+        return make('invalid_input', e.message);
+      case 'labels_invalid':
+        return make('invalid_input', `Those labels can't be read. ${e.message}`);
+      case 'labels_full':
+        return make('refused', `Nothing was changed: ${e.message}`);
       case 'recovery_update_refused':
         return make('refused', e.message);
       case 'silent_payment_needs_helper':

@@ -1,5 +1,5 @@
 /**
- * The coin list (DESIGN.md, "Next: coin control"): what the Coins screen of a wallet (Spending or Savings) shows, and
+ * The coin list (DESIGN.md, "Coin control"): what the Coins screen of a wallet (Spending or Savings) shows, and
  * which coins a payment may take. Pure: it reads the wallet's last sync, this phone's own pending spends
  * (`own-spends.ts`), the send log and the labels (`labels-store.ts`), and changes none of them.
  *

@@ -24,7 +24,7 @@ export function useQuote(request: SendRequest, debounceMs = 0, opts: { exact?: b
     const id = setTimeout(() => setSettled(request), debounceMs);
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request.address, request.amountSats, request.speed, request.signer, debounceMs]);
+  }, [request.address, request.amountSats, request.speed, request.signer, request.coins?.join(','), debounceMs]);
 
   const current = debounceMs <= 0 ? request : settled;
   // Everything the plan depends on besides the form. (A progress text or a device prompt changing is not one of them.)
@@ -40,13 +40,22 @@ export function useQuote(request: SendRequest, debounceMs = 0, opts: { exact?: b
     state.mode,
     state.mode === 'recoveryKey' ? `${state.recoveryKey.spendingSats}|${state.recoveryKey.vaultSats}` : '',
     state.feesVersion ?? '',
+    state.labelsVersion ?? '',
   ].join('|');
-  const formKey = [current.address, current.amountSats, current.speed, current.signer ?? ''].join('|');
+  const coinsKey = current.coins?.join(',') ?? '';
+  const formKey = [current.address, current.amountSats, current.speed, current.signer ?? '', coinsKey].join('|');
 
   const outcome = useMemo(
-    () => wallet.quoteSend({ address: current.address, amountSats: current.amountSats, speed: current.speed, ...(current.signer ? { signer: current.signer } : {}) }),
+    () =>
+      wallet.quoteSend({
+        address: current.address,
+        amountSats: current.amountSats,
+        speed: current.speed,
+        ...(current.signer ? { signer: current.signer } : {}),
+        ...(current.coins?.length ? { coins: current.coins } : {}),
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [wallet, planKey, current.address, current.amountSats, current.speed, current.signer],
+    [wallet, planKey, current.address, current.amountSats, current.speed, current.signer, coinsKey],
   );
 
   const key = `${planKey}#${formKey}`;
@@ -65,6 +74,8 @@ export function useQuote(request: SendRequest, debounceMs = 0, opts: { exact?: b
 
   const exactOutcome = refined?.key === key ? refined.outcome : null;
   const pending =
-    (debounceMs > 0 && (settled.address !== request.address || settled.amountSats !== request.amountSats)) || (refining && !exactOutcome) || (!!opts.exact && !!state.feesUpdating);
+    (debounceMs > 0 && (settled.address !== request.address || settled.amountSats !== request.amountSats || (settled.coins?.join(',') ?? '') !== (request.coins?.join(',') ?? ''))) ||
+    (refining && !exactOutcome) ||
+    (!!opts.exact && !!state.feesUpdating);
   return { outcome: exactOutcome ?? outcome, pending };
 }

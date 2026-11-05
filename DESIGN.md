@@ -638,33 +638,52 @@ is left are in docs/design/family-hosting.md.
 - **Later:** extra alert channels for guests; the host's view of a guest's recovery code; shared mode (the full
   descriptor, opt-in); two hosts sharing the key 3 role (another script, a separate design).
 
-## Next: coin control (decided 2026-11-05)
+## Coin control (decided 2026-11-05, built)
 
-The owner asked for UTXO management. Planned right after several wallets phase 2, since both change coin selection
-and Send; one wallet at a time, Spending and Savings alike.
+The owner asked for UTXO management. Built after several wallets phase 2, since both change coin selection and Send;
+one wallet at a time, Spending and Savings alike, for every wallet of the phone.
 
-- **Coin list** per wallet: amount, confirmations, the payment it came from, unconfirmed coins marked (and the
-  phone's own pending spends, `own-spends.ts`, never listed as spendable), and a label the owner sets.
-- **Freeze:** a frozen coin is skipped by automatic selection and by Send max (dust attacks, coins kept apart).
-- **Pick coins on Send:** the person chooses which coins pay; the app warns before merging coins with different labels,
-  since spending them together links them on chain.
-- **Consolidate:** many small coins into one payment to the wallet itself while fees are low. A 2-of-3 P2WSH input is
-  about 105 vB (P2WPKH about 68 vB), so this matters more here than in a single-key wallet.
+- **Coin list** per wallet (`TrikeyWallet.coins('main' | 'savings')`, `coins.ts`; the app's `app/coins/`): amount,
+  confirmations, the payment it came from (a payment this phone made, with recipient and amount; a payment received;
+  change of a payment made elsewhere), unconfirmed coins marked, and a label the owner sets. The phone's own pending spends
+  (`own-spends.ts`) are applied again, so a coin they spend is never listed, whatever the sync says; their change is.
+- **Freeze:** a frozen coin is skipped by automatic selection, Send max and Consolidate, and a manual pick of it is refused
+  (`coin_unavailable`): the owner unfreezes it first. When the rest is not enough, the error says what the frozen coins hold.
+  A coin frozen after a quote makes that quote stale.
+- **One way to the coins.** Every quote reads its coins through one helper (`spendable`): `quoteSend`, `quoteSendMax`,
+  the send-max check before sending, both silent payment branches, and Savings' send and send max. `selectCoins` and
+  `selectAllCoins` are unchanged but for `useAll`. Speed-ups reuse the original's coins, as RBF must.
+- **Pick coins on Send** (`SendRequest.coins`, `SavingsSendRequest.coins`; `app/send/coins.tsx`): every coin picked is
+  spent (core `buildSpend({ useAll })`), the rest back as change; Send max of a pick sends those coins. The quote carries
+  `mixesLabels` when the coins have different labels, and Review warns that spending them together links them on chain.
+- **Consolidate** (`quoteConsolidate` / `consolidate`, `quoteSavingsConsolidate` → `sendFromSavings`;
+  `app/coins/consolidate.tsx`): the coins chosen (default every confirmed coin not frozen; the app offers "all small
+  coins", under 100,000 sats) into one output at the wallet's next change address, at the slow speed by default. The app
+  says whether fees are low now (the slow estimate at most 3 sat/vB). A 2-of-3 P2WSH input is about 105 vB (P2WPKH about
+  68 vB), so this matters more here than in a single-key wallet. In the send log it is `purpose: 'consolidate'`; the
+  history and Activity show only the fee as leaving.
 
-Owner's decisions:
-1. Labels and freezes live on the phone and in its backup (a restore brings them back), with export and import in
-   BIP 329, the label format other wallets read. Not synced to the guardian for now.
-2. A consolidation counts against the daily limit only by its fee: every output goes back to the wallet's own
-   addresses, which the guardian already treats as change (a test confirms it rather than a rule change).
-3. Coin control covers Savings too.
+Owner's decisions, and how they are built:
+1. **Labels and freezes live on the phone and in its backup**, with export and import in BIP 329 (`labels-bip329.ts`):
+   a coin label is an `output` record, a freeze `spendable: false`, a payment label a `tx` record, each with the wallet's
+   `origin`; records of another wallet are left out of an import, records Trikey does not use are kept for the next export.
+   One store per phone (`labels-store.ts`, `<storageKey>.labels`, keyed by wallet id), owned by the `WalletSet` and handed
+   to every wallet; removing a wallet forgets its labels. Not synced to the guardian. The backup carries the whole document
+   (`labels`): a backup with coin control (labels, or a consolidation in a send log) is **version 6**, so an older app
+   says "update the app" instead of restoring without them; every other backup keeps its version byte for byte. The app
+   says when labels changed after the last backup. Export and import go through the share sheet and the file picker
+   (Settings > Wallet details).
+2. **A consolidation counts against the daily limit only by its fee**: its one output pays the wallet's next change
+   address with its BIP 32 derivation, which the guardian already treats as change (within `CHANGE_WINDOW` of the chain's
+   highest used index). No rule change: `apps/guardian/test/consolidation.test.ts` pins it, and the regtest e2e checks a
+   consolidation the app built.
+3. **Coin control covers Savings too.** A Savings consolidation is signed by two of Savings' keys. The guardian, which
+   watches every Savings coin, sees that nothing was paid out and says "Savings consolidated", with the fee, to the phone
+   and every alert contact (its notification title too), instead of "Money moved out of Savings". The protocol alert is
+   unchanged, so older phones read it as before.
 
-Groundwork built, not wired in yet (it waits for several wallets phase 2, which changes the same send paths, screens and
-backup): `packages/wallet/src/labels-bip329.ts` (the BIP 329 reader and writer: coin labels as `output` records, a
-freeze as `spendable: false`, payment labels as `tx` records, everything else kept as read), `labels-store.ts` (labels
-and freezes per wallet id and coin, one versioned document at `<storageKey>.labels`, with `exportForBackup` /
-`importFromBackup` for the backup field to come) and `coins.ts` (the coin list and the coins a payment may take). The
-guardian's `test/consolidation.test.ts` pins decision 2: outputs to the wallet's own addresses count only by the fee,
-provided the PSBT carries their derivation and they are within `CHANGE_WINDOW` of the chain's high-water mark.
+Later: labels shown in Activity rows and on the Receive screen (an address label before it is paid), labels for an
+address (`addr` records are kept, not used), and coin control in Recovery Key mode.
 
 ## Later: Taproot and threshold signatures (decided 2026-11-03: not now)
 

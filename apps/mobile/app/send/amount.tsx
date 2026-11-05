@@ -1,5 +1,5 @@
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
 import { Delete } from '@/components/icons';
@@ -68,7 +68,7 @@ export default function SendAmount() {
   const router = useRouter();
   const state = useWallet();
   const wallet = useWalletService();
-  const params = useLocalSearchParams<{ address?: string; amount?: string; vault?: string; savings?: string }>();
+  const params = useLocalSearchParams<{ address?: string; amount?: string; vault?: string; savings?: string; coins?: string }>();
   // "Add to Savings": the address is this wallet's own Savings; the payment counts against the daily limit like any other.
   const toSavings = params.savings === '1';
   const address = (params.address ?? '').trim();
@@ -82,8 +82,18 @@ export default function SendAmount() {
 
   const amountSats = digits ? Number(digits) : 0;
   const tooMuch = amountSats > state.balanceSats;
+  // Coin control: the coins picked on "Choose coins" (guardian mode). Every one of them pays.
+  const picked = useMemo(() => (params.coins ? params.coins.split(',').filter(Boolean) : []), [params.coins]);
+  const coinPick = picked.length ? { coins: picked } : {};
+  const canPick = state.mode === 'guardian' && !fromVault && !!wallet.coins;
+  const pickedSats = useMemo(() => {
+    if (!picked.length) return 0;
+    const list = wallet.coins?.list('spending');
+    return (list?.coins ?? []).filter((c) => picked.includes(c.outpoint)).reduce((t, c) => t + c.valueSats, 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallet, picked, state.labelsVersion, state.balanceSats]);
   // Planning a payment is real work: quote once the form has been still for a moment, not on every digit.
-  const { outcome, pending } = useQuote({ address, amountSats, speed: 'normal', ...(fromVault ? { signer: 'hardware' as const } : {}) }, state.backing === 'demo' ? 0 : 250);
+  const { outcome, pending } = useQuote({ address, amountSats, speed: 'normal', ...(fromVault ? { signer: 'hardware' as const } : {}), ...coinPick }, state.backing === 'demo' ? 0 : 250);
   // Opened without a recipient (an old link, a back gesture): ask who it goes to first.
   if (!looksLikeBitcoinAddress(address)) return <Redirect href={{ pathname: '/send/to', params: fromVault ? { vault: '1' } : {} }} />;
 
@@ -96,7 +106,7 @@ export default function SendAmount() {
   const sendMax = fromVault || state.mode === 'recoveryKey'
     ? undefined
     : () => {
-        const q = wallet.quoteSendMax({ address, speed: 'normal' });
+        const q = wallet.quoteSendMax({ address, speed: 'normal', ...coinPick });
         if (q.ok) {
           setDigits(String(q.quote.request.amountSats).slice(0, MAX_DIGITS));
           setMax(true);
@@ -121,7 +131,14 @@ export default function SendAmount() {
       if (needsHelper) router.push({ pathname: '/send/helper', params: { address, amount: String(amountSats), why: outcome.message } });
       return;
     }
-    const next = { address, amount: String(amountSats), ...(fromVault ? { signer: 'hardware' } : {}), ...(max ? { max: '1' } : {}), ...(toSavings ? { savings: '1' } : {}) };
+    const next = {
+      address,
+      amount: String(amountSats),
+      ...(fromVault ? { signer: 'hardware' } : {}),
+      ...(max ? { max: '1' } : {}),
+      ...(toSavings ? { savings: '1' } : {}),
+      ...(picked.length ? { coins: picked.join(',') } : {}),
+    };
     // Every payment stops on Review first, the ones the hardware wallet signs included.
     router.push({ pathname: '/send/review', params: next });
   };
@@ -144,10 +161,33 @@ export default function SendAmount() {
         <Text className={cn('text-muted-foreground', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{secondary}</Text>
       </View>
       <StatusLine tone={pill.dot} text={maxProblem ?? (tooMuch ? "That's more than your balance" : pending ? 'Checking…' : max ? `Everything you can send · ${pill.text}` : pill.text)} />
-      {sendMax ? (
-        <Pressable role="button" onPress={sendMax} className="-mt-3 min-h-11 items-center justify-center self-center px-3 active:opacity-60">
-          <Text className="text-muted-foreground text-sm font-medium underline">Send max</Text>
-        </Pressable>
+      {sendMax || canPick ? (
+        <View className="-mt-3 flex-row justify-center gap-2">
+          {sendMax ? (
+            <Pressable role="button" onPress={sendMax} className="min-h-11 items-center justify-center px-3 active:opacity-60">
+              <Text className="text-muted-foreground text-sm font-medium underline">Send max</Text>
+            </Pressable>
+          ) : null}
+          {canPick ? (
+            <Pressable
+              role="button"
+              accessibilityHint="Pick which coins pay for this payment"
+              onPress={() =>
+                router.push({
+                  pathname: '/send/coins',
+                  params: { address, ...(amountSats ? { amount: String(amountSats) } : {}), ...(toSavings ? { savings: '1' } : {}), ...(picked.length ? { coins: picked.join(',') } : {}) },
+                })
+              }
+              className="min-h-11 items-center justify-center px-3 active:opacity-60">
+              <Text className="text-muted-foreground text-sm font-medium underline">{picked.length ? 'Change coins' : 'Choose coins'}</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+      {picked.length ? (
+        <Text className="text-muted-foreground -mt-2 text-center text-[13px] leading-[18px]">
+          {`Paying with ${picked.length === 1 ? 'the coin' : `the ${picked.length} coins`} you chose · ${formatSats(pickedSats)} sats`}
+        </Text>
       ) : null}
       <View className="flex-1" />
 

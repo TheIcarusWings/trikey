@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { HardwareWallet, Info, ShieldCheck } from '@/components/icons';
+import { HardwareWallet, Info, ShieldCheck, TriangleAlert } from '@/components/icons';
 import { explainHardware } from '@/components/hardware-reason';
 import { InfoRow, Notice, Panel } from '@/components/panels';
 import { RadioRow } from '@/components/choice';
@@ -13,7 +13,7 @@ import { Icon } from '@/components/ui/icon';
 import { RadioGroup } from '@/components/ui/radio-group';
 import { Text } from '@/components/ui/text';
 import { useQuote } from '@/data/use-quote';
-import { SAME_FEE_NOTE, WalletServiceError, formatSats, groupAddress, sameFeeEverySpeed, shorten, useWallet, useWalletService, type FeeSpeed, fromLine } from '@/data';
+import { SAME_FEE_NOTE, WalletServiceError, formatSats, groupAddress, mixedLabelsText, sameFeeEverySpeed, shorten, useWallet, useWalletService, type FeeSpeed, fromLine } from '@/data';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
@@ -31,7 +31,10 @@ export default function SendReview() {
   const router = useRouter();
   const wallet = useWalletService();
   const state = useWallet();
-  const { address = '', amount = '0', signer, max, savings } = useLocalSearchParams<{ address?: string; amount?: string; signer?: string; max?: string; savings?: string }>();
+  const { address = '', amount = '0', signer, max, savings, coins } = useLocalSearchParams<{ address?: string; amount?: string; signer?: string; max?: string; savings?: string; coins?: string }>();
+  // Coin control: the coins picked on "Choose coins", every one of them spent.
+  const picked = useMemo(() => (coins ? coins.split(',').filter(Boolean) : []), [coins]);
+  const coinPick = picked.length ? { coins: picked } : {};
   // "Add to Savings": a payment from Spending like any other, so it counts toward today's limit (the owner's decision).
   const toSavings = savings === '1';
   const sendMax = max === '1';
@@ -46,12 +49,12 @@ export default function SendReview() {
   const forced = signer === 'hardware' ? { signer: 'hardware' as const } : {};
 
   // Re-quoted when the speed or what the plan depends on changes (the daily limit may have moved).
-  const typed = useQuote({ address, amountSats: Number(amount), speed, ...forced }, 0, { exact: true });
+  const typed = useQuote({ address, amountSats: Number(amount), speed, ...forced, ...coinPick }, 0, { exact: true });
   // "Send max": everything after the fee, at the speed chosen here, with no change; again whenever the coins change.
   const maxOutcome = useMemo(
-    () => (sendMax ? wallet.quoteSendMax({ address, speed }) : null),
+    () => (sendMax ? wallet.quoteSendMax({ address, speed, ...coinPick }) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sendMax, wallet, address, speed, state.balanceSats, state.dailyLimit.usedSats, state.guardian.status, state.feesVersion],
+    [sendMax, wallet, address, speed, coins, state.balanceSats, state.dailyLimit.usedSats, state.guardian.status, state.feesVersion, state.labelsVersion],
   );
   const outcome = maxOutcome ?? typed.outcome;
   const quote = outcome.ok ? outcome.quote : null;
@@ -63,12 +66,12 @@ export default function SendReview() {
   const speedFees = useMemo(() => {
     const out: Partial<Record<FeeSpeed, number>> = {};
     for (const s of SPEEDS) {
-      const q = sendMax ? wallet.quoteSendMax({ address, speed: s }) : wallet.quoteSend({ address, amountSats: Number(amount), speed: s, ...forced });
+      const q = sendMax ? wallet.quoteSendMax({ address, speed: s, ...coinPick }) : wallet.quoteSend({ address, amountSats: Number(amount), speed: s, ...forced, ...coinPick });
       if (q.ok) out[s] = q.quote.feeSats;
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wallet, address, amount, signer, sendMax, state.balanceSats, state.guardian.status, state.feesVersion]);
+  }, [wallet, address, amount, signer, sendMax, coins, state.balanceSats, state.guardian.status, state.feesVersion]);
   // Every speed costs the same (a quiet mempool, or all at the 1 sat/vB floor): no reason to wait, so Fast.
   const sameFee = sameFeeEverySpeed(speedFees);
   useEffect(() => {
@@ -90,13 +93,17 @@ export default function SendReview() {
   };
 
   // The hardware wallet signs this one (over the limit, guardian away, from the vault): Review says why, then hands over.
-  const reviewOnDevice = () => router.push({ pathname: '/send/hardware', params: { address, amount, speed, ...forced, ...(toSavings ? { savings: '1' } : {}) } });
+  const reviewOnDevice = () =>
+    router.push({ pathname: '/send/hardware', params: { address, amount, speed, ...forced, ...(toSavings ? { savings: '1' } : {}), ...(picked.length ? { coins: picked.join(',') } : {}) } });
 
   // The guardian said no (over the limit, locked, away, a recovery, paused): the hardware wallet can still approve it.
   const offerHardware = error instanceof WalletServiceError && error.suggestsHardware;
   const about = quote.estimate ? 'about ' : '';
   const total = quote.silentPayment ? quote.request.amountSats + quote.feeSats : quote.totalSats;
   const silent = quote.silentPayment;
+  // The coins picked: how many, and what they hold (the change comes back to the wallet).
+  const pickedList = picked.length ? (wallet.coins?.list('spending')?.coins ?? []).filter((c) => picked.includes(c.outpoint)) : [];
+  const pickedLine = `${picked.length === 1 ? '1 coin you chose' : `${picked.length} coins you chose`} · ${formatSats(pickedList.reduce((t, c) => t + c.valueSats, 0))} sats`;
 
   return (
     <Screen
@@ -126,7 +133,7 @@ export default function SendReview() {
           ) : offerHardware ? (
             <AppButton
               title={`Approve with your ${state.hardware.brand} instead`}
-              onPress={() => router.replace({ pathname: '/send/hardware', params: { address, amount, speed, signer: 'hardware' } })}
+              onPress={() => router.replace({ pathname: '/send/hardware', params: { address, amount, speed, signer: 'hardware', ...(picked.length ? { coins: picked.join(',') } : {}) } })}
             />
           ) : (
             <AppButton
@@ -176,7 +183,13 @@ export default function SendReview() {
           </Pressable>
         </View>
         <InfoRow label="Total" value={`${about}${formatSats(total)} sats`} strong tabular />
+        {picked.length ? <InfoRow label="Paid with" value={pickedLine} /> : null}
       </Panel>
+      {quote.mixesLabels ? (
+        <Notice icon={TriangleAlert} tone="warn-outline" title="Coins with different labels">
+          {mixedLabelsText(quote.mixesLabels)}
+        </Notice>
+      ) : null}
       {silent?.helperFeeSats !== undefined ? (
         <Notice icon={Info} tone="fill">
           A silent payment also spends your helper coin, a small coin of this phone. It pays {formatSats(silent.helperFeeSats)} sats of the fee, and the rest comes back to it.
