@@ -671,7 +671,7 @@ Simulator is regtest only.
 
 ### 15. Email and push alerts (optional)
 
-The guardian can also send its alerts by email (through your own email account), ntfy push and a webhook
+The guardian can also send its alerts by email (through your own email account), ntfy push, Telegram and a webhook
 (docs/design/notifications.md). They carry warnings only: cancelling a recovery and locking the guardian stay with nostr.
 Set them up on the Guardian page, **Settings**, **Notifications**.
 
@@ -711,18 +711,32 @@ signing secret is optional; Home Assistant cannot check it). To see a payload wi
 use `http://<that computer's address>:8099/`: the request (headers and JSON) prints in the terminal; the test then reports
 a failure after 15 seconds, since `nc` does not answer.
 
-**Alert contacts.** Under **Add a channel**, pick an alert contact (by npub) and add their email or ntfy topic, or pick
-"Someone without a nostr app" for a person who only reads email. Each new address gets a welcome message, so tell them first.
+**Telegram.** In Telegram, open a chat with **@BotFather** (blue tick), send `/newbot`, give it a name and a user name
+ending in `bot`, and copy the token it shows. In the guardian, **Add Telegram**, paste the token and **Save bot**: the page
+shows the bot's `@name` (a wrong token is refused with "Telegram refused the bot token"). Make a new bot for the guardian;
+don't reuse one another service uses. Then under **Add a channel**, choose **Telegram**, open the bot in Telegram
+(search its `@name`), send `/start`, press **Find** and pick your name. For an alert contact, send them the bot's `@name`
+and ask them to send `/start` too, then Find and pick theirs (check the name and the time: anyone can write to a bot).
+The page says it plainly: Telegram can read these alerts, as an email provider can.
 
-Do: set up one email channel for yourself and one ntfy topic, press **Send a test message** on each, then do step 9 again
-(lock from the phone) and restart the guardian app on the Umbrel.
+**Alert contacts.** Under **Add a channel**, pick an alert contact (by npub) and add their email, ntfy topic or Telegram,
+or pick "Someone without a nostr app" for a person who only reads email or Telegram. Each new address gets a welcome
+message, so tell them first.
+
+Do: set up one email channel for yourself, one ntfy topic and one Telegram chat, press **Send a test message** on each,
+then do step 9 again (lock from the phone) and restart the guardian app on the Umbrel.
 
 You should see:
 - The test messages arrive, named with the guardian's name you set, plain text, no links.
 - The phone's Settings, **Alert contacts** lists them under "Email and push alerts" (masked), and its Activity shows
   "Email and push alerts changed" after each change.
-- "Guardian locked" (from the phone) and "Guardian restarted and is locked" arrive by email and ntfy, the second one while
-  the guardian is still locked.
+- "Guardian locked" (from the phone) and "Guardian restarted and is locked" arrive by email, ntfy and Telegram, the second
+  one while the guardian is still locked.
+- Telegram messages are plain text: no bold, no link preview, nothing to tap; payments and test messages arrive silently.
+  The phone lists the Telegram chat as "Telegram (M…)" (the first letter of the name) under "Email and push alerts".
+- **Find** on a bot that another service uses with a webhook says so ("This bot has a webhook set ...") instead of
+  listing chats. A Telegram chat whose person blocked the bot shows **Failing** ("blocked the bot"); the bot itself stays
+  working.
 - Every change you make is announced on every channel; a channel you remove gets a last message saying so.
 - A wrong app password shows as **Failing** next to the email account with the server's answer, and in Activity as
   "Alert channel failing"; fixing it shows "works again".
@@ -732,11 +746,12 @@ You should see:
   announced like any change.
 - During a recovery (step 12a, before you cancel it): the email account can still get a **new app password** (announced
   as "email account changed: app password"), but changing its server or user name, removing a channel or the pin is
-  refused until the recovery ends.
+  refused until the recovery ends. The same for the Telegram bot: a new token of the same bot (after `/revoke` in
+  @BotFather) is accepted and announced as "Telegram bot changed: bot token"; another bot, or removing a chat, is refused.
 
 If it goes wrong, collect: the error shown next to the channel, the guardian's Activity page and log lines starting with
 `notify.`, your provider, and the server, port and encryption you used, and with Bridge the pinned fingerprint (never
-the password or token).
+the password or token; never the Telegram bot token either).
 
 ### 16. Alert contacts can lock the guardian (optional)
 

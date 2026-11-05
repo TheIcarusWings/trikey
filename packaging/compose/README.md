@@ -416,7 +416,7 @@ server (switching to your own node is always allowed).
 
 The guardian's web page has **Settings > Server**, like Sparrow Wallet's Server preferences: it shows the server in use
 and whether it is connected, lets you choose another one of the three kinds, and has **Test connection** (which connects
-without switching). A change is announced to your phone, on every alert channel (email, ntfy, webhook, yours and your
+without switching). A change is announced to your phone, on every alert channel (email, ntfy, webhook, Telegram, yours and your
 contacts') and in Activity, because a change of server is a change of whom the guardian trusts for chain data. The
 phone shows the kind in Settings > Guardian ("Your node", or "Public server: <host>" with the warning above).
 
