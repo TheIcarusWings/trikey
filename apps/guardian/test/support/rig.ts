@@ -44,6 +44,8 @@ export interface GuardianRigOptions {
   http?: boolean;
   /** `tx.broadcast` calls allowed per phone per window (default: the guardian's, 20 per 10 minutes). */
   broadcastLimit?: RateLimitOptions;
+  /** Encrypted notes: uploads per wallet per hour (default: the guardian's, 30). */
+  labelsUploadLimit?: RateLimitOptions;
   /**
    * Also run a fake Bitcoin Core RPC (`bitcoind`) and give the guardian its settings, as
    * BITCOIN_RPC_HOST/PORT/USER/PASS would. Its blocks follow the fake Electrs: `mine()` puts the
@@ -181,6 +183,7 @@ export class GuardianRig {
       electrum: { minBackoffMs: 20, maxBackoffMs: 100 },
       discoverDmRelays: false,
       broadcastLimit: this.opts.broadcastLimit,
+      ...(this.opts.labelsUploadLimit ? { labelsUploadLimit: this.opts.labelsUploadLimit } : {}),
       ...(this.opts.slowPingMs !== undefined ? { slowPingMs: this.opts.slowPingMs } : {}),
       ...(this.opts.chainBackend ? { chainBackend: this.opts.chainBackend } : {}),
       ...(this.opts.liveWallet !== undefined ? { liveWallet: this.opts.liveWallet } : {}),

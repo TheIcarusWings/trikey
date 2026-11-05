@@ -13,7 +13,7 @@
  */
 import { HDKey } from '@scure/bip32';
 import { mnemonicToSeedSync } from '@scure/bip39';
-import { base64, hex } from '@scure/base';
+import { base64, base64urlnopad, hex } from '@scure/base';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import * as btc from '@scure/btc-signer';
@@ -58,6 +58,7 @@ import {
   decodeRecoveryUri,
   generateMessageId,
   GUARDIAN_FEATURES,
+  LABELS_PART_BYTES,
   isContactLockOn,
   isLimitOff,
   LIMIT_OFF_SATS,
@@ -118,7 +119,8 @@ import { FEE_BUMP_DATA_REASONS, FeeBumpCheckError, checkFeeBump, type FeeBumpChe
 import { applyOwnSpends, ownSpendOf, reconcileOwnSpends, withOwnSpend } from './own-spends.js';
 import { coinList, receivedLabels, selectableCoins, type CoinList, type SelectableCoins } from './coins.js';
 import { bip329Origin } from './labels-bip329.js';
-import { LabelStore, addressKey, labelStoreKey, type Bip329ImportResult } from './labels-store.js';
+import { LabelStore, LabelsDocument, addressKey, labelStoreKey, type Bip329ImportResult } from './labels-store.js';
+import { deriveLabelsKey, labelsKeyMessage, openLabels, sameLabelsSignature, sealLabels } from './labels-crypto.js';
 import { parseScannedCode, type ScannedCode } from './scan.js';
 import {
   DEFAULT_SWEEP_MIN_SATS,
@@ -188,6 +190,7 @@ import {
   type SavingsSigners,
   type SendLogEntry,
   type SilentPaymentCoin,
+  type NotesRecord,
   type WalletState,
 } from './state.js';
 import { secureRandomBytes } from '@trikey/core/random';
@@ -275,6 +278,11 @@ export interface WalletDeps {
   /** A received silent payment waits while it would bring less than this into the vault after the fee (default 1,000 sats). */
   silentPaymentSweepMinSats?: number;
   /**
+   * Encrypted notes on the guardian: how long after the last label change the copy is sent (ms, default 30 s), so a burst
+   * of edits makes one upload. 0 sends at once (tests).
+   */
+  notesDebounceMs?: number;
+  /**
    * Chain data for a wallet hosted on someone else's guardian (docs/design/family-hosting.md, section 6): the hosting
    * guardian never serves it (it would learn every address). `server` is the guest's own Esplora when set, else the
    * app's public default; `role: 'check'` asks for a SECOND, independent server, which the phone compares the coins
@@ -298,7 +306,7 @@ export type WalletEvent =
    */
   | { type: 'alert'; alert: Alert; id: string; atMs: number }
   /** The hardware wallet is about to be asked to sign this exact text: show it, so the user can compare it with the device screen. */
-  | { type: 'hardware_prompt'; purpose: 'pairing' | 'approval' | 'recovery-access' | 'payment' | 'recovery-sweep' | 'register' | 'savings'; text: string }
+  | { type: 'hardware_prompt'; purpose: 'pairing' | 'approval' | 'recovery-access' | 'payment' | 'recovery-sweep' | 'register' | 'savings' | 'notes'; text: string }
   /** A request left over from before the app restarted was settled (or given up). */
   | { type: 'pending_settled'; method: string; ok: boolean; refusal?: GuardianRefusal }
   /** A step of a long operation ("Replace guardian"), for a progress line. */
@@ -314,11 +322,94 @@ export type WalletEvent =
   | { type: 'silent_payments_found'; coins: SilentPaymentCoin[] }
   /** Coin control: a coin's label or freeze changed, or labels were imported (the coin list and quotes read them again). */
   | { type: 'labels_changed' }
+  /** Encrypted notes on the guardian: turned on or off, a copy sent (or it failed), notes brought back (`notesView`). */
+  | { type: 'notes_changed' }
   /**
    * "Speed up" refused a replacement before signing it: the check of the original and the replacement failed
    * (fee-bump-check.ts). Only the reason code, never transaction data: for a log line.
    */
   | { type: 'speed_up_refused'; wallet: 'spending' | 'savings'; reason: FeeBumpCheckReason };
+
+/** Encrypted notes on the guardian (`TrikeyWallet.notesView`). */
+export interface NotesView {
+  /** It can be offered: the guardian lists `labels_backup`, the wallet is the owner's own, its device signs messages. */
+  available: boolean;
+  /** Why not: the wallet is not set up, it is hosted on someone else's guardian, the guardian is older, the device signs no messages (QR). */
+  unavailable?: 'not_paired' | 'hosted' | 'guardian' | 'hardware';
+  /** On for this wallet: every label change is sent. */
+  on: boolean;
+  /** It was on for the wallet before a recovery: this wallet needs it turned on again (its own key, one device confirmation). */
+  onForEarlierWallet?: true;
+  /** When the guardian last stored a copy (ms). */
+  uploadedAt?: number;
+  /** Labels changed since: sent after a pause, or when the app comes back. */
+  pending: boolean;
+  /** Why the last upload failed, until one works. */
+  error?: { code: string; message: string; at: number };
+  /** Copies brought back to this phone (wallet id, version time). */
+  broughtBack: { of: string; at: number }[];
+}
+
+/** A copy of notes on the guardian (`TrikeyWallet.notesOnGuardian`). */
+export interface NotesCopy {
+  /** The wallet it was made for: this one, or one it was recovered from. */
+  of: string;
+  /** Its newest version: when the guardian stored it (ms) and its size (padded: a rough size only). */
+  at: number;
+  bytes: number;
+  thisWallet: boolean;
+  /** This phone brought that version (or a newer one) back already. */
+  broughtBack: boolean;
+  /** This phone keeps it up to date (nothing to bring back). */
+  keptByThisPhone?: true;
+}
+
+/** What "Bring back your notes" did (`TrikeyWallet.bringBackNotes`). */
+export interface NotesBroughtBack {
+  /** The copy's wallet, and when the guardian stored that version (ms). */
+  of: string;
+  at: number;
+  /** When the phone that made it saved it (ms, that phone's clock). */
+  savedAt: number;
+  /** Labels this phone lacked and now has (its own were kept where both had one). */
+  coins: number;
+  payments: number;
+  addresses: number;
+  other: number;
+  /** The wallets the copy held labels of. */
+  wallets: string[];
+}
+
+/** How long after the last label change the copy goes to the guardian (ms). */
+export const NOTES_DEBOUNCE_MS = 30_000;
+/** Devices whose message signatures make the notes key: Ledger and Trezor (RFC 6979, checked when turned on). */
+const NOTES_HARDWARE: readonly HardwareKind[] = ['ledger', 'trezor'];
+
+/** What the encrypted blob carries (plaintext, before padding). */
+interface NotesPayload {
+  version: 1;
+  walletId: string;
+  network: string;
+  /** When the phone saved it (ms). */
+  at: number;
+  labels: LabelsDocument;
+}
+
+/** The decrypted plaintext of a copy of `of`, checked. Throws `labels_invalid`. */
+function parseNotesPayload(plain: Uint8Array, of: string, network: string): NotesPayload {
+  let json: unknown;
+  try {
+    json = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(plain));
+  } catch (e) {
+    throw new WalletError('labels_invalid', 'The notes on the guardian are not readable.', { cause: e });
+  }
+  const p = json as Partial<NotesPayload> | null;
+  if (!p || typeof p !== 'object') throw new WalletError('labels_invalid', 'The notes on the guardian are not readable.');
+  if (typeof p.version === 'number' && p.version > 1) throw new WalletError('labels_invalid', 'The notes on the guardian were saved by a newer version of Trikey. Update the app.');
+  if (p.version !== 1 || p.walletId !== of || p.network !== network || typeof p.at !== 'number' || !p.labels)
+    throw new WalletError('labels_invalid', `The notes on the guardian are not those of wallet ${of} on ${network}.`);
+  return p as NotesPayload;
+}
 
 /** The steps of "Replace guardian", in order. */
 export type ReplaceStep = 'pair' | 'sign' | 'broadcast' | 'retire' | 'switch';
@@ -1239,8 +1330,7 @@ export class TrikeyWallet {
   /** Reads the labels kept next to this wallet's state (`<storageKey>.labels`). A damaged store does not stop the wallet. */
   private async loadLabels(): Promise<void> {
     try {
-      this.labelStore = await LabelStore.open(this.deps.store, labelStoreKey(this.deps.storageKey), { now: () => this.now() });
-      this.labelsUnreadable = undefined;
+      this.useLabelStore(await LabelStore.open(this.deps.store, labelStoreKey(this.deps.storageKey), { now: () => this.now() }));
     } catch (e) {
       this.labelStore = undefined;
       this.labelsUnreadable = e instanceof WalletError ? e : new WalletError('labels_invalid', 'The labels on this phone could not be read.', { cause: e });
@@ -1332,10 +1422,13 @@ export class TrikeyWallet {
     if (this.recoveredElsewhere) return; // the guardian no longer answers this phone; there is nothing to settle or watch
     await this.client();
     await this.resumePending();
+    if (this.s.notes?.on?.dirty) this.scheduleNotes();
   }
 
   /** Disconnects from the guardian and the hardware wallet. */
   async close(): Promise<void> {
+    clearTimeout(this.notesTimer);
+    this.notesTimer = undefined;
     await this.seenWraps.flush().catch(() => undefined);
     this.rpc?.close();
     this.pool?.close();
@@ -1391,7 +1484,11 @@ export class TrikeyWallet {
    * first removes only its own state: key 2 and the nostr key are the first wallet's too (`WalletSet.removeWallet`).
    */
   async forget(): Promise<void> {
+    // The phone's label store outlives an own wallet removed from it: this wallet stops following it (no upload for a wallet gone).
+    this.labelStoreOff?.();
+    this.labelStoreOff = undefined;
     await this.close();
+    if (this.s.notes?.on) await this.deps.secureStore.remove(this.s.notes.on.keyId).catch(() => undefined);
     if (this.s.own) {
       await this.store.clear();
       await this.txs.clear();
@@ -1733,7 +1830,7 @@ export class TrikeyWallet {
   }
 
   /** Asks the device to BIP 137-sign `text` with the authorization key, and checks the signature. */
-  private async signWithAuthKey(hw: HardwareSigner, rec: HardwareRecord, text: string, purpose: 'pairing' | 'approval' | 'recovery-access'): Promise<string> {
+  private async signWithAuthKey(hw: HardwareSigner, rec: HardwareRecord, text: string, purpose: 'pairing' | 'approval' | 'recovery-access' | 'notes'): Promise<string> {
     this.emit({ type: 'hardware_prompt', purpose, text });
     const sig = await hw.signMessage(rec.auth.path, text);
     if (!verifyMessage(text, hex.decode(rec.auth.pubkey), sig))
@@ -3241,9 +3338,13 @@ export class TrikeyWallet {
 
   /** Shares the phone's label store with this wallet (`WalletSet`: the first wallet's, for every wallet of the phone). */
   useLabelStore(store: LabelStore): void {
+    this.labelStoreOff?.();
     this.labelStore = store;
     this.labelsUnreadable = undefined;
+    // Encrypted notes on the guardian follow every change (this wallet's labels, or another's: the copy is compared first).
+    this.labelStoreOff = store.onChange(() => this.notesChanged());
   }
+  private labelStoreOff?: () => void;
 
   /**
    * A label or freeze changed after the last backup (`backup.createdAt`): a new backup would carry it. False without a
@@ -3382,6 +3483,333 @@ export class TrikeyWallet {
     const r = await store.importBip329(t.walletId, file, originOf(t.descriptor));
     this.emit({ type: 'labels_changed' });
     return r;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Notes that survive recovery (DESIGN.md): an encrypted copy of the wallet's labels on the guardian
+
+  /**
+   * "Keep your notes safe with the guardian" (Settings > Wallet details): whether it can be offered, whether it is on,
+   * and how the last upload went. No I/O.
+   */
+  notesView(): NotesView {
+    const n = this.s.notes;
+    const on = n?.on;
+    const current = this.s.wallet?.walletId;
+    const unavailable = this.notesUnavailable();
+    return {
+      available: !unavailable,
+      ...(unavailable ? { unavailable } : {}),
+      on: !!on && on.walletId === current,
+      ...(on && on.walletId !== current ? { onForEarlierWallet: true as const } : {}),
+      ...(on?.uploadedAt !== undefined ? { uploadedAt: on.uploadedAt } : {}),
+      pending: !!on?.dirty,
+      ...(on?.error ? { error: on.error } : {}),
+      broughtBack: n?.broughtBack ?? [],
+    };
+  }
+
+  /** Why encrypted notes cannot be offered for this wallet now, or undefined when they can. */
+  private notesUnavailable(): NotesView['unavailable'] {
+    if (!this.s.wallet || (this.s.stage !== 'paired' && this.s.stage !== 'recovering')) return 'not_paired';
+    if (this.isHosted) return 'hosted';
+    if (!this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.labelsBackup)) return 'guardian';
+    // QR devices sign no messages over QR (apps/mobile/src/hardware/qr): the key could not be made.
+    const kind = this.s.hardware?.kind;
+    if (!kind || !NOTES_HARDWARE.includes(kind)) return 'hardware';
+    return undefined;
+  }
+
+  private requireNotesAvailable(): void {
+    const why = this.notesUnavailable();
+    if (!why) return;
+    const text = {
+      not_paired: 'Set the wallet up with your guardian first.',
+      hosted: 'Notes are not kept for a wallet hosted on someone else\'s guardian yet.',
+      guardian: 'Update your guardian to keep your notes there.',
+      hardware: 'This needs a hardware wallet that signs messages over USB or Bluetooth (Ledger, Trezor).',
+    }[why];
+    throw new WalletError(why === 'guardian' ? 'guardian_unsupported' : 'wrong_state', text);
+  }
+
+  /** The wallets whose labels go in this wallet's copy: it, its Savings (now and before), the wallets it replaced, and notes brought back. */
+  private notesWalletIds(): string[] {
+    const s = this.s;
+    return [
+      ...new Set(
+        [s.wallet?.walletId, s.savings?.walletId, ...(s.savings?.previous ?? []).map((p) => p.walletId), ...s.retiredWallets.map((r) => r.walletId), ...(s.notes?.carried ?? [])].filter(
+          (x): x is string => !!x,
+        ),
+      ),
+    ];
+  }
+
+  /** The send logs' notes, by wallet id: payment labels the copy carries as well. */
+  private notesPayments(): Record<string, { txid: string; label?: string }[]> {
+    const out: Record<string, { txid: string; label?: string }[]> = {};
+    if (this.s.wallet) out[this.s.wallet.walletId] = this.s.sendLog;
+    if (this.s.savings) out[this.s.savings.walletId] = this.s.savings.sendLog;
+    return out;
+  }
+
+  /**
+   * Turns encrypted notes on for this wallet: the hardware wallet signs `labelsKeyMessage` twice (one confirmation each),
+   * and the two signatures must be the same (`hardware_not_deterministic` otherwise: a key it cannot make again would be
+   * useless after a recovery). The key is kept in the phone's secure store, a copy the guardian already has for this
+   * wallet (another phone's, before a restore) is merged in first (the phone's labels win), and the notes are sent.
+   * From then on every label change is sent after a pause (`notesDebounceMs`) and when the app comes back
+   * (`flushNotes`). Resolves once on, whether or not that first upload worked (`notesView().error` says).
+   */
+  async enableNotes(): Promise<NotesView> {
+    this.requireNotesAvailable();
+    if (this.s.stage !== 'paired') throw new WalletError('wrong_state', 'Finish the recovery first.');
+    const walletId = this.s.wallet!.walletId;
+    const text = labelsKeyMessage(walletId, this.network.name);
+    const key = await this.withHardware(async (hw, rec) => {
+      const a = await this.signWithAuthKey(hw, rec, text, 'notes');
+      const b = await this.signWithAuthKey(hw, rec, text, 'notes');
+      if (!sameLabelsSignature(a, b))
+        throw new WalletError(
+          'hardware_not_deterministic',
+          "Your hardware wallet signed the same text twice and gave two different signatures, so it could not make the same key again after a recovery. Your notes stay on this phone and in its backup. A firmware update may fix it.",
+        );
+      return deriveLabelsKey(a, walletId);
+    });
+    try {
+      // A copy already on the guardian for this wallet (made on another phone): brought in before it is replaced.
+      await this.mergeCopy(walletId, key).catch(() => undefined);
+      const before = this.s.notes?.on;
+      const keyId = `trikey.notes.${hex.encode(secureRandomBytes(8))}`;
+      await this.deps.secureStore.save(keyId, key, { requireBiometrics: false });
+      const now = this.now();
+      await this.update((s) => {
+        s.notes = { carried: s.notes?.carried ?? [], broughtBack: s.notes?.broughtBack ?? [], on: { walletId, keyId, since: now, dirty: true } };
+      });
+      if (before && before.keyId !== keyId) await this.deps.secureStore.remove(before.keyId).catch(() => undefined);
+    } finally {
+      key.fill(0);
+    }
+    this.emit({ type: 'notes_changed' });
+    await this.uploadNotes({ force: true }).catch(() => undefined);
+    return this.notesView();
+  }
+
+  /**
+   * Turns encrypted notes off: the guardian deletes every copy of this wallet's notes (its earlier wallets' too), then
+   * the key leaves the phone. The labels on the phone and in its backup stay. Throws when the guardian does not answer
+   * (the option stays on, so nothing is left behind on the guardian unnoticed).
+   */
+  async disableNotes(): Promise<NotesView> {
+    const on = this.s.notes?.on;
+    if (!on) return this.notesView();
+    if (this.s.wallet) await this.call('labels.delete', { walletId: this.s.wallet.walletId });
+    clearTimeout(this.notesTimer);
+    this.notesTimer = undefined;
+    await this.update((s) => {
+      if (s.notes) s.notes = { ...s.notes, on: undefined };
+    });
+    await this.deps.secureStore.remove(on.keyId).catch(() => undefined);
+    this.emit({ type: 'notes_changed' });
+    return this.notesView();
+  }
+
+  /** A label changed somewhere on the phone: this wallet's copy goes out after a pause (if it changed). */
+  private notesChanged(): void {
+    const on = this.s.notes?.on;
+    if (!on || on.walletId !== this.s.wallet?.walletId) return;
+    this.notesGeneration++;
+    if (!on.dirty) void this.update((s) => void (s.notes!.on && (s.notes!.on.dirty = true))).catch(() => undefined);
+    this.scheduleNotes();
+  }
+
+  private notesGeneration = 0;
+  private notesTimer?: ReturnType<typeof setTimeout>;
+  private notesRun: Promise<unknown> = Promise.resolve();
+
+  private scheduleNotes(delayMs = this.deps.notesDebounceMs ?? NOTES_DEBOUNCE_MS): void {
+    clearTimeout(this.notesTimer);
+    this.notesTimer = setTimeout(() => {
+      this.notesTimer = undefined;
+      void this.flushNotes();
+    }, delayMs);
+  }
+
+  /** Sends the copy now if labels changed since the last one (the app calls it when it comes back to the front). Never throws. */
+  async flushNotes(): Promise<void> {
+    if (!this.s.notes?.on?.dirty) return;
+    clearTimeout(this.notesTimer);
+    this.notesTimer = undefined;
+    await this.uploadNotes().catch(() => undefined);
+  }
+
+  /**
+   * Sends this wallet's notes to the guardian, encrypted (`labels-crypto.ts`), in parts (`labels.put`). Skipped when they
+   * did not change since the last upload, unless `force`. One upload at a time. A failure is kept in
+   * `notesView().error` and the notes stay pending; a guardian that limits uploads is asked again when it says.
+   */
+  uploadNotes(opts: { force?: boolean } = {}): Promise<void> {
+    const run = this.notesRun.then(() => this.uploadNotesNow(opts));
+    this.notesRun = run.catch(() => undefined);
+    return run;
+  }
+
+  private async uploadNotesNow(opts: { force?: boolean }): Promise<void> {
+    const on = this.s.notes?.on;
+    const w = this.s.wallet;
+    if (!on || !w || on.walletId !== w.walletId || this.s.stage !== 'paired' || !this.labelStore) return;
+    const generation = this.notesGeneration;
+    const doc = this.labelStore.exportWallets(this.notesWalletIds(), this.notesPayments());
+    const hash = hex.encode(sha256(new TextEncoder().encode(JSON.stringify(doc))));
+    const settle = (patch: Partial<NonNullable<NotesRecord['on']>>) =>
+      this.update((s) => {
+        if (s.notes?.on && s.notes.on.keyId === on.keyId) s.notes.on = { ...s.notes.on, ...patch };
+      });
+    if (!opts.force && on.uploadedHash === hash) {
+      if (on.dirty && generation === this.notesGeneration) await settle({ dirty: false });
+      return;
+    }
+    try {
+      const key = await this.deps.secureStore.load(on.keyId, 'Keep your notes safe');
+      if (!key || key.length !== 64) throw new WalletError('key_unavailable', 'The key of your notes is missing from this phone: turn the option off and on again.');
+      let blob: Uint8Array;
+      try {
+        const payload: NotesPayload = { version: 1, walletId: w.walletId, network: this.network.name, at: this.now(), labels: doc };
+        blob = sealLabels(key, w.walletId, new TextEncoder().encode(JSON.stringify(payload)));
+      } finally {
+        key.fill(0);
+      }
+      const parts = Math.ceil(blob.length / LABELS_PART_BYTES);
+      const upload = hex.encode(secureRandomBytes(16));
+      const sha = hex.encode(sha256(blob));
+      let stored: number | undefined;
+      for (let i = 0; i < parts; i++) {
+        const r = await this.call('labels.put', {
+          walletId: w.walletId,
+          upload,
+          part: i,
+          parts,
+          bytes: blob.length,
+          sha256: sha,
+          data: base64urlnopad.encode(blob.subarray(i * LABELS_PART_BYTES, (i + 1) * LABELS_PART_BYTES)),
+        });
+        if (r.stored) stored = r.stored.at;
+      }
+      if (stored === undefined) throw new WalletError('internal', 'The guardian took every part but stored no version.');
+      // Changed again while it was sent: still pending, sent after the next pause.
+      const again = generation !== this.notesGeneration;
+      await settle({ uploadedAt: stored, uploadedHash: hash, dirty: again, error: undefined });
+      if (again) this.scheduleNotes();
+    } catch (e) {
+      const wrapped = e instanceof WalletError ? e : asWalletError(e, 'labels.put');
+      const err = wrapped instanceof WalletError ? wrapped : new WalletError('internal', (e as Error)?.message ?? String(e), { cause: e });
+      await settle({ dirty: true, error: { code: err.refusal?.kind ?? err.code, message: err.message, at: this.now() } }).catch(() => undefined);
+      const retry = err.refusal?.kind === 'rate_limited' ? err.refusal.retryAfterSeconds : undefined;
+      if (retry !== undefined) this.scheduleNotes(retry * 1000);
+      throw err;
+    } finally {
+      this.emit({ type: 'notes_changed' });
+    }
+  }
+
+  /**
+   * The copies of this wallet's notes the guardian keeps (`labels.list`): this wallet's, and those of the wallets it was
+   * recovered from. A phone with recovery access (no backup, a recovery under way) may read them too. Empty from a
+   * guardian without `labels_backup`.
+   */
+  async notesOnGuardian(): Promise<NotesCopy[]> {
+    const w = this.s.wallet;
+    if (!w || this.isHosted || !this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.labelsBackup)) return [];
+    const r = await this.call('labels.list', { walletId: w.walletId });
+    const brought = this.s.notes?.broughtBack ?? [];
+    return r.copies.map((c) => ({
+      of: c.of,
+      at: c.versions[0]!.at,
+      bytes: c.versions[0]!.bytes,
+      thisWallet: c.of === w.walletId,
+      broughtBack: brought.some((b) => b.of === c.of && b.at >= c.versions[0]!.at),
+      // This phone keeps that copy up to date: nothing to bring back from it.
+      ...(this.s.notes?.on?.walletId === c.of ? { keptByThisPhone: true as const } : {}),
+    }));
+  }
+
+  /**
+   * "Bring back your notes": after a recovery to a new phone, or a restore from a backup older than the guardian's copy.
+   * The hardware wallet signs the key text of that copy's wallet once (no device needed for a copy this phone keeps), the
+   * newest version that opens is merged into the phone's labels, and **the phone's labels win** where both have one
+   * (`LabelStore.mergeFromCopy`: a backup's labels over the guardian's). `of`: which copy (default the newest one this
+   * phone does not keep itself). Throws `labels_wrong_key` for a copy another hardware wallet made, `wrong_state` when
+   * the guardian keeps none.
+   */
+  async bringBackNotes(opts: { of?: string } = {}): Promise<NotesBroughtBack> {
+    const copies = await this.notesOnGuardian();
+    const pick = opts.of
+      ? copies.find((c) => c.of === opts.of)
+      : [...copies].filter((c) => !c.keptByThisPhone).sort((a, b) => b.at - a.at)[0] ?? [...copies].sort((a, b) => b.at - a.at)[0];
+    if (!pick) throw new WalletError('wrong_state', 'Your guardian keeps no notes for this wallet.');
+    const on = this.s.notes?.on;
+    let key: Uint8Array | null = on?.walletId === pick.of ? await this.deps.secureStore.load(on.keyId, 'Bring back your notes').catch(() => null) : null;
+    if (!key || key.length !== 64) {
+      const text = labelsKeyMessage(pick.of, this.network.name);
+      key = await this.withHardware(async (hw, rec) => deriveLabelsKey(await this.signWithAuthKey(hw, rec, text, 'notes'), pick.of));
+    }
+    try {
+      const merged = await this.mergeCopy(pick.of, key);
+      if (!merged) throw new WalletError('wrong_state', 'Your guardian keeps no notes for this wallet.');
+      return merged;
+    } finally {
+      key.fill(0);
+    }
+  }
+
+  /**
+   * Reads the newest version of the copy of `of` that opens with `key` and merges it into the phone's labels (the phone's
+   * win); undefined when the guardian keeps none. Older versions are tried when a newer one is damaged.
+   */
+  private async mergeCopy(of: string, key: Uint8Array): Promise<NotesBroughtBack | undefined> {
+    const store = this.requireLabels();
+    const walletId = this.s.wallet?.walletId;
+    const head = await this.call('labels.get', { ...(walletId ? { walletId } : {}), of });
+    if (!head.versions.length) return undefined;
+    let lastError: unknown;
+    for (let v = 0; v < head.versions.length; v++) {
+      try {
+        const info = head.versions[v]!;
+        const blob = await this.fetchNotesBlob(walletId, of, v, info.bytes, info.sha256);
+        const payload = parseNotesPayload(openLabels(key, of, blob), of, this.network.name);
+        const r = await store.mergeFromCopy(payload.labels);
+        const ids = Object.keys(payload.labels.wallets);
+        await this.update((s) => {
+          const n = s.notes ?? { carried: [], broughtBack: [] };
+          s.notes = {
+            ...n,
+            carried: [...new Set([...n.carried, ...ids])].slice(-64),
+            broughtBack: [...n.broughtBack.filter((b) => b.of !== of), { of, at: info.at }].slice(-64),
+          };
+        });
+        this.emit({ type: 'labels_changed' });
+        this.emit({ type: 'notes_changed' });
+        return { of, at: info.at, savedAt: payload.at, coins: r.coins, payments: r.txs, addresses: r.addrs, other: r.kept, wallets: ids };
+      } catch (e) {
+        // The wrong hardware wallet opens no version; a damaged one may leave an older one that opens.
+        if (e instanceof WalletError && e.code === 'labels_wrong_key') throw e;
+        lastError = e;
+      }
+    }
+    throw lastError instanceof WalletError ? lastError : new WalletError('labels_invalid', 'No copy of your notes on the guardian could be read.', { cause: lastError });
+  }
+
+  /** One version of a copy, part by part, checked against its size and hash. */
+  private async fetchNotesBlob(walletId: string | undefined, of: string, version: number, bytes: number, sha: string): Promise<Uint8Array> {
+    const blob = new Uint8Array(bytes);
+    const parts = Math.ceil(bytes / LABELS_PART_BYTES);
+    for (let i = 0; i < parts; i++) {
+      const r = await this.call('labels.get', { ...(walletId ? { walletId } : {}), of, version, part: i });
+      const data = r.part ? base64urlnopad.decode(r.part.data) : undefined;
+      if (!data || r.part!.parts !== parts || i * LABELS_PART_BYTES + data.length > bytes) throw new WalletError('labels_invalid', 'The guardian sent a copy of your notes that does not fit together.');
+      blob.set(data, i * LABELS_PART_BYTES);
+    }
+    if (hex.encode(sha256(blob)) !== sha) throw new WalletError('labels_invalid', 'The guardian sent a copy of your notes that does not match its hash.');
+    return blob;
   }
 
   /** The coins a consolidation merges: those named, or every confirmed coin that is not frozen. */

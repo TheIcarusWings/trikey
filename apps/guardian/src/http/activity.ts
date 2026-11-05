@@ -503,6 +503,29 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
       };
     case 'wallet_add_refused':
       return { ...base, kind: 'system', event: `Adding wallet "${e.name}" was refused: ${e.detail}`, summary: 'Adding a wallet refused', signedBy: null, sats: null, result: 'refused' };
+    case 'labels_updated':
+      return {
+        ...base,
+        kind: 'system',
+        event: `The paired phone updated its encrypted notes of wallet ${e.walletId} (labels of coins and payments). This guardian keeps them for a recovery and cannot read them. Shown at most once a day.`,
+        summary: 'Encrypted notes updated',
+        signedBy: 'Phone',
+        sats: null,
+        result: 'ok',
+      };
+    case 'labels_deleted':
+      return {
+        ...base,
+        kind: 'system',
+        event:
+          e.by === 'phone'
+            ? `The paired phone turned off keeping its notes here: the encrypted notes of ${e.walletIds.map((id) => `wallet ${id}`).join(', ')} were deleted.`
+            : `The encrypted notes of ${e.walletIds.map((id) => `wallet ${id}`).join(', ')} were deleted: the wallet no longer uses this guardian.`,
+        summary: 'Encrypted notes deleted',
+        signedBy: e.by === 'phone' ? 'Phone' : null,
+        sats: null,
+        result: 'ok',
+      };
     default:
       return hostingEntry(base, e);
   }

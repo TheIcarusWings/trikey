@@ -31,4 +31,10 @@ regexes = [
   # A made-up Telegram bot token in the web page's tests (guardian-web test/notifications.test.ts): the mock refuses
   # tokens starting with 000; no such bot exists.
   '''000000001:AArefused-token-for-the-mock-api-x0''',
+  # Encrypted notes (packages/wallet/src/labels-crypto.ts): the HKDF info string "trikey/labels/v1" (a public label, read
+  # as a key because the constant's name holds "KEY"), the key material of the test vector made from the throwaway private
+  # key 0x11...11, and a made-up second wallet id ("fedcba9876543210") in its tests.
+  '''^trikey/labels/v1$''',
+  '''^0e45904aea76eede0b7a98612e3235f9e42b1fec3bd1658030f5fb999199482caf3176f968993dc4630296dd0a9c74ecefc6c8e386592e69b9b3f8088a2d9c8f$''',
+  '''^fedcba9876543210$''',
 ]

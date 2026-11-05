@@ -22,7 +22,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { MultisigWallet, ROLES, SoftwareSigner, getNetwork, parseSortedMultiDescriptor, type Network, type NetworkName } from '@trikey/core';
 import { analyzeMixedPsbt } from '../silent.js';
-import { signMessage } from '../bip137.js';
+import { messageHash, signMessage } from '../bip137.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { isValidMnemonic } from '../keys.js';
 import type {
   CloudBackupStore,
@@ -64,6 +65,15 @@ export type DeviceCall =
 
 const REGISTERING_KINDS: HardwareKind[] = ['ledger', 'bitbox02', 'jade', 'coldcard'];
 
+/** A BIP 137 signature (p2pkh header) with a random nonce: valid, never the same twice. */
+function signMessageWithNonce(message: string, privateKey: Uint8Array): string {
+  const rec = secp256k1.sign(messageHash(message), privateKey, { prehash: false, lowS: true, format: 'recovered', extraEntropy: secureRandomBytes(32) });
+  const out = new Uint8Array(65);
+  out[0] = 31 + rec[0]!;
+  out.set(rec.subarray(1), 1);
+  return base64.encode(out);
+}
+
 /** A hardware wallet in software. Regtest/testnet/signet only. */
 export class SoftwareHardwareSigner implements HardwareSigner {
   readonly info: HardwareDeviceInfo;
@@ -73,6 +83,11 @@ export class SoftwareHardwareSigner implements HardwareSigner {
   displayOverride?: string;
   /** Test hook: the next signMessage returns a signature by another key. */
   signWithWrongKeyOnce = false;
+  /**
+   * Test hook: sign messages with a random nonce (valid signatures by the device's key, but never the same twice), as a
+   * device without RFC 6979 would. Encrypted notes refuse such a device.
+   */
+  randomMessageNonces = false;
   private readonly master: HDKey;
   private readonly mnemonic: string;
   private readonly requireRegistration: boolean;
@@ -156,6 +171,7 @@ export class SoftwareHardwareSigner implements HardwareSigner {
       this.signWithWrongKeyOnce = false;
       return signMessage(message, sha256(utf8ToBytes('not the device key')));
     }
+    if (this.randomMessageNonces) return signMessageWithNonce(message, this.master.derive(path).privateKey!);
     return signMessage(message, this.master.derive(path).privateKey!);
   }
 

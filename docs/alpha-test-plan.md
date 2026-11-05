@@ -917,6 +917,42 @@ Activity page.
 
 ---
 
+### 18c. Notes that survive recovery (optional; a guardian with this release, a Ledger or a Trezor)
+
+Labels (step 18b) normally live on the phone and in its backup only. This option keeps an **encrypted copy** on the
+guardian, so a recovery without the phone and its backup brings them back too (DESIGN.md, "Notes that survive recovery").
+Only your hardware wallet can unlock it; the guardian learns roughly how many notes you keep and when you change them.
+
+Do:
+
+1. **Turn it on.** Settings, Advanced, **Wallet details**, **Keep your notes safe with the guardian**. You should see:
+   your device asks you to sign the text `Trikey labels key v1 wallet=<id> network=<network>` **twice** (check it on
+   the device screen; an older Trezor or a Model One shows its path warning first, as for approvals); then "On. Last copy
+   <time>". The guardian's web page, Activity: "Encrypted notes updated". **Write down your device and firmware**, and
+   whether the two signatures were accepted: if the app says the device "gave two different signatures", report it
+   (device model, firmware, Ledger Bitcoin app version), as that device cannot be used for this.
+2. **Edit.** Label a coin. You should see: "Your latest changes go out in a moment", then a new "Last copy" time about
+   30 seconds later. Close the app right after a change and open it again: the copy goes out when it comes back.
+   Activity shows the update at most once a day.
+3. **Lose the phone and its backup** (on a test network, with step 12's short delay). Delete the app (and do not restore
+   the backup), recover on the "new" phone with the recovery code and the hardware wallet, and let the recovery finish.
+   You should see: on "Your money is safe", **Bring back your notes** with the copy's size and date; one signature on the
+   device; then "N coin labels, M payment notes ... came back". The app does not show the old wallet's history after
+   a recovery (its coins were swept): the notes are kept in the phone's labels, its next backup and its next copy on
+   the guardian. Make a backup of the new phone: it carries them.
+4. **Restore from an older backup.** Make a backup, change a label and add another, then restore that backup on another
+   phone (step 11). Wallet details: **Bring back your notes** offers the guardian's copy. You should see: the label you
+   added after the backup comes back; the one you changed keeps the backup's text (the phone's labels win).
+5. **The recovered wallet.** On the recovered phone, Wallet details says to turn it on again for the recovered wallet:
+   turn it on (two signatures). The guardian's Activity shows the update.
+6. **Turn it off.** Switch it off and confirm "Turn off and delete the copy". You should see: the guardian's Activity
+   says "Encrypted notes deleted"; your labels are still on the phone.
+
+If it goes wrong, collect: the device model and firmware, the step and the exact message, and the guardian's Activity
+page (it shows no label: the guardian cannot read them).
+
+---
+
 ### 18. Host a family member (optional; two phones and two hardware wallets)
 
 Family hosting (docs/design/family-hosting.md): your guardian holds key 3 for someone else's wallet. You need a second

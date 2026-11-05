@@ -37,6 +37,7 @@ import { savingsWallet } from '../savings.js';
 import { policyToWire, recoveryToWire, refusalError, rulesFromPolicy } from './wire.js';
 import { withHosting } from '../hosting/handlers.js';
 import { withOwnWallets } from '../wallets/handlers.js';
+import { labelLine } from '../labels.js';
 
 const normPath = (p: string) => p.replace(/^m\//, '').replace(/'/g, 'h');
 const hexToBytes = (h: string) => hex.decode(h);
@@ -891,6 +892,57 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
         await w.afterRetire(res.walletId, ctx.sender);
         return { walletId: res.walletId, retiredAt: Math.floor(res.retiredAt / 1000) };
       }),
+
+    // -- encrypted notes (labels.ts; PROTOCOL.md, "Encrypted notes") ------------
+    // The paired phone puts and deletes; it, and a phone with recovery access to the wallet, read (Guardian.authorize).
+    // Answered while locked too: the guardian only stores ciphertext, nothing here touches key 3.
+
+    'labels.put': async (params) => {
+      const reg = w.engine.registration();
+      if (!reg) throw refusalError({ reason: 'not_registered' });
+      // The blob is encrypted for one wallet id: a phone that has not switched to a recovery's new wallet yet would
+      // otherwise store the old wallet's notes under the new id, where they would never open.
+      if (params.walletId !== reg.walletId)
+        throw new RpcError(ErrorCode.InvalidParams, `This guardian guards wallet ${reg.walletId} now: encrypt the notes for it.`, { reason: 'labels_wallet_changed', walletId: reg.walletId });
+      const { walletId: _, ...part } = params;
+      const res = await g.labels.put(reg.walletId, part);
+      if (res.stored) {
+        g.log.info('labels.stored', { walletId: reg.walletId, bytes: res.stored.bytes });
+        if (await g.labels.shouldLog(reg.walletId).catch(() => false)) await w.logEvent({ type: 'labels_updated', walletId: reg.walletId });
+      }
+      return res;
+    },
+
+    'labels.get': async (params) => {
+      const line = labelLine(w.engine);
+      if (!line.length) throw refusalError({ reason: 'not_registered' });
+      const of = params.of ?? line[0]!;
+      if (!line.includes(of))
+        throw new RpcError(ErrorCode.InvalidParams, `Wallet ${of} is not this wallet or one it was recovered from.`, { reason: 'labels_not_this_wallet' });
+      return g.labels.get(of, params.version, params.part);
+    },
+
+    'labels.list': async () => {
+      const line = labelLine(w.engine);
+      if (!line.length) throw refusalError({ reason: 'not_registered' });
+      const copies: { of: string; versions: Awaited<ReturnType<typeof g.labels.versions>> }[] = [];
+      for (const of of line) {
+        const versions = await g.labels.versions(of);
+        if (versions.length) copies.push({ of, versions });
+      }
+      return { copies };
+    },
+
+    'labels.delete': async () => {
+      const line = labelLine(w.engine);
+      if (!line.length) throw refusalError({ reason: 'not_registered' });
+      const deleted = await g.labels.deleteIds(line);
+      if (deleted.length) {
+        g.log.info('labels.deleted', { walletIds: deleted.join(','), reason: 'phone' });
+        await w.logEvent({ type: 'labels_deleted', walletIds: deleted, by: 'phone' });
+      }
+      return { deleted };
+    },
 
     'phone.resume': async (params) => {
       const res = await w.engine.resumePhoneSpending(params.approval);

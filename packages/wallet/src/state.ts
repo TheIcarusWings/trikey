@@ -510,6 +510,39 @@ export const LiveTx = z.object({
 });
 export type LiveTx = z.infer<typeof LiveTx>;
 
+/**
+ * Encrypted notes on the guardian. Not in the backup: a restored phone turns the option on again (one hardware wallet
+ * confirmation) and can bring the guardian's copy back first.
+ */
+export const NotesRecord = z.object({
+  /** On: the copy is kept up to date. Absent: off (the record may still say which notes were brought back). */
+  on: z
+    .object({
+      /** The wallet the key is for: a recovery's new wallet needs the option turned on again (its own key). */
+      walletId: z.string().regex(/^[0-9a-f]{16}$/),
+      /** Secure store id of the 64 bytes of key material (no biometrics: uploads run in the background). */
+      keyId: z.string(),
+      /** ms */
+      since: z.number(),
+      /** The last upload the guardian stored (ms), and the sha256 of what it carried (unchanged notes are not sent again). */
+      uploadedAt: z.number().optional(),
+      uploadedHash: z.string().optional(),
+      /** Labels changed since the last upload: sent after a pause, or when the app comes back. */
+      dirty: z.boolean().default(false),
+      /** Why the last upload failed (a guardian that did not answer, a limit), until one works. */
+      error: z.object({ code: z.string(), message: z.string(), at: z.number() }).optional(),
+    })
+    .optional(),
+  /**
+   * Wallet ids whose notes came back from a guardian copy ("Bring back your notes", after a recovery): the earlier
+   * wallets' notes, carried in every later copy too, so a second recovery keeps them.
+   */
+  carried: z.array(z.string().regex(/^[0-9a-f]{16}$/)).max(64).default([]),
+  /** Copies already brought back (wallet id and the version's time), so the app does not offer them again. */
+  broughtBack: z.array(z.object({ of: z.string().regex(/^[0-9a-f]{16}$/), at: z.number() })).max(64).default([]),
+});
+export type NotesRecord = z.infer<typeof NotesRecord>;
+
 export const WalletState = z.object({
   version: z.literal(1),
   network: Network,
@@ -594,6 +627,8 @@ export const WalletState = z.object({
   own: z.object({ account: z.int().min(2).max(14), name: z.string().min(1).max(16), addedAt: z.number() }).optional(),
   /** The guardian said it retired this phone's wallet (`wallet_retired`): it co-signs nothing for it any more. */
   retiredByGuardian: z.object({ walletId: z.string(), reason: z.enum(['retired', 'recovered', 'reset', 'hosting_ended']), successorWalletId: z.string().optional(), at: z.number() }).optional(),
+  /** Encrypted notes on the guardian (labels-crypto.ts; DESIGN.md, "Notes that survive recovery"). Absent: never used. */
+  notes: NotesRecord.optional(),
 });
 export type WalletState = z.infer<typeof WalletState>;
 

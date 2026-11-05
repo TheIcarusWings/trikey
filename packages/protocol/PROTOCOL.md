@@ -127,8 +127,12 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `hosted.access` | `approval: { kind: "bip137", expiresAt, signature }` (the version-2 access text only) | `walletId`, `network`, `accountPubkeys: { app, hardware, cosigner }`, `hardwareAuth`, `policy`, `nextHardwareSequence`, `phoneSpending`, `activeRecoveryId`, `accessExpiresAt` |
 | `wallet.add.prepare` | `account` (even, 2-14) | `account`, `guardianKey: KeyOrigin` (key 3 of the new wallet at that account; see "Own wallets") |
 | `wallet.add` | `account`, `name` (1-16), `descriptor`, `hardwareAuth: { pubkey, path }`, `hardwareAuthProof`, `rules: Policy`, `firstName?` (1-16, the first wallet's name), `hardwareKind?`, `replacesWalletId?`, `replacesDescriptor?` (the last three: guardians with `own_wallets_2`) | `walletId`, `account`, `name`, `descriptor`, `guardianKey` (see "Own wallets") |
+| `labels.put` | `walletId` (required: the wallet's current id), `upload` (16 random bytes, hex), `part`, `parts`, `bytes`, `sha256: Hex32` (of the whole blob), `data` (base64url, at most 24 KiB decoded) | `walletId`, `received` (parts held), `stored?: { at, bytes, sha256 }` (once the last part arrived) (paired phone only; guardians with `labels_backup`; see "Encrypted notes") |
+| `labels.get` | `walletId?`, `of?: WalletId` (default the wallet's current id), `version?` (0 newest, 0-2), `part?` | `of`, `versions: [{ at, bytes, sha256 }]` (newest first; empty: no copy), `part?: { version, index, parts, data }` (paired phone, or a phone with recovery access) |
+| `labels.list` | `walletId?` | `copies: [{ of, versions }]` (the wallet's copy and those of the wallets it was recovered from) (paired phone, or a phone with recovery access) |
+| `labels.delete` | `walletId?` | `deleted: WalletId[]` (every copy of the wallet's line) (paired phone only) |
 
-Guardians with `own_wallets` also take an optional **`walletId`** in the params of `guardian.status`, `sign`, `policy.get`, `policy.update`, `recovery.start` (the own form), `recovery.update`, `recovery.cancel`, `recovery.status`, `phone.resume`, `hardware.confirm`, `wallet.retire`, `wallet.sync`, `tx.get` and `tx.broadcast`: the request acts on that wallet of the box's owner. Absent, it means the first wallet, as before (see "Own wallets"). Guardians with `own_wallets_2` take it in `savings.register`, `savings.unregister` and `savings.get` too.
+Guardians with `own_wallets` also take an optional **`walletId`** in the params of `guardian.status`, `sign`, `policy.get`, `policy.update`, `recovery.start` (the own form), `recovery.update`, `recovery.cancel`, `recovery.status`, `phone.resume`, `hardware.confirm`, `wallet.retire`, `wallet.sync`, `tx.get` and `tx.broadcast`: the request acts on that wallet of the box's owner. Absent, it means the first wallet, as before (see "Own wallets"). Guardians with `own_wallets_2` take it in `savings.register`, `savings.unregister` and `savings.get` too, and guardians with `labels_backup` in `labels.*`.
 
 **Policy** is exactly the rules the guardian's policy engine enforces, and nothing else: four always, and one opt-in rule that is present only when it is on:
 
@@ -613,9 +617,45 @@ always. Alerts' `walletId` is an optional member such phones drop.
 
 1. The phone asks the device for the authorization key (the same path the wallet used at pairing; it is derived the same way on every phone, see the guardian README) and has it BIP 137-sign `recoveryAccessMessage({ guardianPubkey, phonePubkey, expiresAt, walletId? })`, with `expiresAt` at most 24 h ahead. With `walletId` (the recovery code carries it since the 2026-10 security review; a phone renewing its access knows it) the text is version 2 and binds the wallet too; without it, version 1.
 2. **`recovery.access`** from any sender, once a wallet is paired. The guardian rebuilds the text with *its own* nostr key and the *sender's* key, so the signature is no use to another phone or against another guardian, and verifies it against the paired `hardwareAuth`. Wrong signature `1202`, expired `1203`, too far ahead `1206`. It does not consume a hardware sequence number. Both versions are accepted; a version-1 signature whose grant a wallet rotation or retirement revoked is refused until it expires (`1202`, `data.reason: "approval_revoked"`), whatever its encoding, so the next wallet does not honour it. BIP 137 signatures with a high S are refused (signers only make low-S ones).
-3. The sender may then, until `accessExpiresAt` (durably, across guardian restarts), call `guardian.status`, `wallet.sync`, `tx.get`, `fees.estimate`, `recovery.start`, `recovery.status`, `recovery.cancel` (only with a hardware approval) and `recovery.access` again. Not `sign`, `policy.*`, `tx.broadcast`, `phone.resume` or `guardian.unlock`. The result gives the phone everything it needs to sweep: the descriptor, the wallet id, the guardian's key and the rules (for the sweep fee cap).
+3. The sender may then, until `accessExpiresAt` (durably, across guardian restarts), call `guardian.status`, `wallet.sync`, `tx.get`, `fees.estimate`, `recovery.start`, `recovery.status`, `recovery.cancel` (only with a hardware approval), `recovery.access` again, and (guardians with `labels_backup`) `labels.get` and `labels.list`, to bring the wallet's encrypted notes back ("Encrypted notes"). Not `sign`, `policy.*`, `tx.broadcast`, `phone.resume` or `guardian.unlock`. The result gives the phone everything it needs to sweep: the descriptor, the wallet id, the guardian's key and the rules (for the sweep fee cap).
 
 Anyone holding the hardware wallet can thus start a recovery from any phone, which is the design: a recovery is announced to the paired phone and every alert contact, and any of them can cancel it (DESIGN.md, threat model). The web UI's activity log shows every access grant. While its access lasts, a phone with recovery access also gets the protocol alerts (best effort; it is not one of the recovery's recorded recipients), and it can poll `recovery.status`.
+
+### Encrypted notes
+
+Guardians that list **`labels_backup`** (`GUARDIAN_FEATURES.labelsBackup`) keep, for each of the owner's wallets, an encrypted copy of the phone's labels (coin labels and freezes, payment notes, address labels: `packages/wallet/src/labels-store.ts`), so a recovery to a new phone without a backup brings them back too (DESIGN.md, "Notes that survive recovery"). Off by default; the phone offers it only to such a guardian, and never for a wallet hosted on someone else's guardian (a guest's `labels.*` gets `1001`, "A hosted wallet cannot use labels.put on this guardian", and guests are never told the feature).
+
+**The key never reaches the guardian.** The phone has the wallet's hardware wallet BIP 137-sign, with its authorization key (`hardwareAuth`, the key it signs approvals with), the one-line text
+
+```
+Trikey labels key v1 wallet=<walletId> network=<network>
+```
+
+(printable ASCII only: Trikey's Ledger and Trezor signers sign nothing else) and derives `okm = HKDF-SHA256(ikm = r || s, salt = walletId, info = "trikey/labels/v1", 64)` from the signature's `r` and low-form `s` (not its header byte); the first 32 bytes encrypt, the last 32 make the key check. The signature is deterministic on the supported devices (RFC 6979), so the same device makes the same key on any phone; the phone checks it when the owner turns the option on (two signatures of the text must be equal, else `hardware_not_deterministic` and the option stays off). The signature and the key stay on the phone; the guardian, which knows every xpub, could not derive the key from anything public.
+
+**The blob** (what `labels.put` carries; the guardian checks only its size and hash):
+
+```
+0x01 || nonce (24) || check (16) || XChaCha20-Poly1305(key, nonce, padded, aad) (ciphertext and tag)
+check  = HMAC-SHA256(check key, "trikey/labels/check/v1")[0..16)   -- a wrong key is told apart before decrypting
+aad    = the 41 header bytes || utf8(JSON ["trikey-labels", 1, walletId])
+padded = u32be(n) || plaintext (n bytes) || zeros, to the smallest of 4, 8, 16 ... 512 KiB that holds it
+plaintext = JSON { version: 1, walletId, network, at (ms), labels: <labels document, version 1> }
+```
+
+The labels document carries the wallet's own labels, its Savings' (now and before), those of wallets it replaced, and those brought back from an earlier copy, so a second recovery keeps them too.
+
+**Transfer in parts.** A gift wrap carries at most about 40 kB (NIP-44 encrypts at most 65,535 bytes, and the rumor is encrypted twice), so a blob (at most `MAX_LABELS_BYTES`, 525,312) travels in parts of `LABELS_PART_BYTES` (24 KiB; at most 22). `labels.put`: the parts of one `upload` in any order, each naming the whole blob's `bytes` and `sha256`; the guardian holds them in memory and stores a version when the last one arrives and the whole matches (`-32602` with `data.reason` `labels_upload_mismatch` or `labels_hash_mismatch` otherwise). A new upload drops one that never finished; one idle for 10 minutes, or interrupted by a restart, is dropped too (the phone sends it again). `labels.get` returns one part of one version.
+
+**What the guardian keeps.** `labels/<walletId>.json` under its data directory: the newest **three** versions, each with when it was stored, its size and its hash. A version stored within 10 minutes of the newest replaces it, so a burst of edits makes one version. At most 30 uploads per wallet per hour (`1500` with `data.retryAfterSeconds`). `labels.put` is refused unless `walletId` is the wallet's current id (`labels_wallet_changed`), so a phone that has not yet followed a recovery never stores notes where they could not be opened. Uploads, reads and deletes work while the guardian is locked (only ciphertext is involved).
+
+**Who.** `labels.put` and `labels.delete`: the wallet's paired phone. `labels.get` and `labels.list`: the paired phone, and a phone with recovery access to the wallet ("Recovery access"). A wallet may read the copies of its **line**: its own, and those of the wallets a recovery swept into it, back to the first (a retired wallet whose `successorWalletId` is the next); `of` outside it is `-32602` (`labels_not_this_wallet`). So the new phone of a "lost phone, no backup" recovery reads the old wallet's copy while the recovery waits and after the guardian adopted its new wallet. Strangers get no answer.
+
+**When copies go.** `labels.delete` (the phone turned the option off) deletes the copies of the whole line. Retiring a wallet (`wallet.retire`) deletes its copies; a recovery to another guardian's wallet deletes the swept wallet's; a reset deletes every copy.
+
+**Not announced.** No alert to the phone and nothing on the alert channels (uploads are frequent and harmless); the web UI's Activity shows "Encrypted notes updated" at most once a day per wallet, and "Encrypted notes deleted".
+
+**Older guardians and phones.** A guardian without the feature answers `-32601` to `labels.*`; the phone does not offer the option. An older phone never calls them; the copy then simply stops being updated.
 
 ### Alerts
 

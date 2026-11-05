@@ -1196,6 +1196,104 @@ export const HostedMapGetParams = z.strictObject({ walletId: WalletId.optional()
 export const HostedMapGetResult = z.object({ walletId: WalletId, map: WalletMap.nullable() });
 
 /* -------------------------------------------------------------------------- */
+/* Encrypted notes (guardians with `labels_backup`)                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The phone's notes (labels, freezes, address labels: `packages/wallet/src/labels-store.ts`) as one encrypted blob per
+ * wallet, kept by the guardian so they survive a recovery (PROTOCOL.md, "Encrypted notes"). The key comes from a
+ * signature only the wallet's hardware wallet can make (`packages/wallet/src/labels-crypto.ts`); the guardian stores
+ * ciphertext and never sees the key. A blob travels in parts, since one gift wrap carries at most about 40 kB (NIP-44
+ * encrypts at most 65,535 bytes, and the rumor is encrypted twice, as seal and wrap).
+ */
+/** Bytes of a blob per part (the last may be shorter): 32,768 base64url characters, well inside one gift wrap. */
+export const LABELS_PART_BYTES = 24 * 1024;
+/** Largest blob a guardian stores: the 512 KiB padding bucket plus the blob's header and tag. */
+export const MAX_LABELS_BYTES = 512 * 1024 + 1024;
+/** Most parts of one blob. */
+export const MAX_LABELS_PARTS = Math.ceil(MAX_LABELS_BYTES / LABELS_PART_BYTES);
+/** Versions of a wallet's notes a guardian keeps, newest first. */
+export const LABELS_VERSIONS_KEPT = 3;
+
+/** One part of a blob: base64url without padding. */
+export const LabelsPart = z
+  .string()
+  .min(1)
+  .max(Math.ceil((LABELS_PART_BYTES * 4) / 3))
+  .regex(/^[A-Za-z0-9_-]+$/, 'expected base64url');
+
+/** A stored version of a wallet's notes. */
+export const LabelsVersionInfo = z.object({
+  /** When the guardian stored it (unix ms, its clock). */
+  at: UnixMillis,
+  /** Its size: what the guardian learns of how many notes there are (the phone pads to a size bucket). */
+  bytes: z.int().min(1).max(MAX_LABELS_BYTES),
+  /** sha256 of the blob, so the phone can tell it put the parts back together right. */
+  sha256: Hex32,
+});
+export type LabelsVersionInfo = z.infer<typeof LabelsVersionInfo>;
+
+/**
+ * One part of a new version of the wallet's notes. The paired phone only; `walletId` is the wallet's current id (the
+ * blob is encrypted for it). Parts may come in any order; the version is stored when the last one arrives and the whole
+ * matches `bytes` and `sha256`. A new upload (another `upload` id) drops one that never finished. Replace-only: the new
+ * version is the newest, and only `LABELS_VERSIONS_KEPT` are kept.
+ */
+export const LabelsPutParams = z
+  .strictObject({
+    walletId: WalletId,
+    /** Names this upload: 16 random bytes in hex, the same in every part. */
+    upload: z.string().regex(/^[0-9a-f]{32}$/, 'expected 16 bytes of lowercase hex'),
+    part: z.int().min(0).max(MAX_LABELS_PARTS - 1),
+    parts: z.int().min(1).max(MAX_LABELS_PARTS),
+    /** Size of the whole blob. */
+    bytes: z.int().min(1).max(MAX_LABELS_BYTES),
+    /** sha256 of the whole blob. */
+    sha256: Hex32,
+    data: LabelsPart,
+  })
+  .refine((p) => p.part < p.parts, { message: 'part must be below parts', path: ['part'] })
+  .refine((p) => p.parts === Math.ceil(p.bytes / LABELS_PART_BYTES), { message: `parts must be bytes / ${LABELS_PART_BYTES}, rounded up`, path: ['parts'] });
+export const LabelsPutResult = z.object({
+  walletId: WalletId,
+  /** Parts of this upload the guardian holds. */
+  received: z.int().min(0).max(MAX_LABELS_PARTS),
+  /** The version this upload made, once its last part arrived. */
+  stored: LabelsVersionInfo.optional(),
+});
+
+/**
+ * One part of a stored version. The paired phone, or a phone with recovery access to the wallet. `of`: the wallet the
+ * notes were written for, the current one by default, or an earlier wallet of the same line (the one a recovery swept,
+ * which the guardian replaced by its destination). `version` 0 is the newest.
+ */
+export const LabelsGetParams = z.strictObject({
+  ...onWallet,
+  of: WalletId.optional(),
+  version: z.int().min(0).max(LABELS_VERSIONS_KEPT - 1).optional(),
+  part: z.int().min(0).max(MAX_LABELS_PARTS - 1).optional(),
+});
+export const LabelsGetResult = z.object({
+  of: WalletId,
+  /** Newest first; empty when the guardian keeps no notes for that wallet. */
+  versions: z.array(LabelsVersionInfo).max(LABELS_VERSIONS_KEPT),
+  /** The part asked for, when that version exists. */
+  part: z
+    .object({ version: z.int().min(0), index: z.int().min(0), parts: z.int().min(1).max(MAX_LABELS_PARTS), data: LabelsPart })
+    .optional(),
+});
+
+/** The wallet's notes on the guardian: its current wallet's and its earlier wallets' (before a recovery). */
+export const LabelsListParams = z.strictObject({ ...onWallet });
+export const LabelsListResult = z.object({
+  copies: z.array(z.object({ of: WalletId, versions: z.array(LabelsVersionInfo).min(1).max(LABELS_VERSIONS_KEPT) })).max(64),
+});
+
+/** Deletes every copy of the wallet's notes (its current and earlier wallets'): the phone turned the option off. Paired phone only. */
+export const LabelsDeleteParams = z.strictObject({ ...onWallet });
+export const LabelsDeleteResult = z.object({ deleted: z.array(WalletId).max(64) });
+
+/* -------------------------------------------------------------------------- */
 /* Relay changes                                                              */
 /* -------------------------------------------------------------------------- */
 
@@ -1253,6 +1351,10 @@ export const methods = {
   'hosted.access': { params: HostedAccessParams, result: HostedAccessResult },
   'wallet.add.prepare': { params: WalletAddPrepareParams, result: WalletAddPrepareResult },
   'wallet.add': { params: WalletAddParams, result: WalletAddResult },
+  'labels.put': { params: LabelsPutParams, result: LabelsPutResult },
+  'labels.get': { params: LabelsGetParams, result: LabelsGetResult },
+  'labels.list': { params: LabelsListParams, result: LabelsListResult },
+  'labels.delete': { params: LabelsDeleteParams, result: LabelsDeleteResult },
 } as const;
 
 export type MethodName = keyof typeof methods;
@@ -1570,6 +1672,10 @@ export const RequestSchema = z.discriminatedUnion('method', [
   requestOf('hosted.access', HostedAccessParams),
   requestOf('wallet.add.prepare', WalletAddPrepareParams),
   requestOf('wallet.add', WalletAddParams),
+  requestOf('labels.put', LabelsPutParams),
+  requestOf('labels.get', LabelsGetParams),
+  requestOf('labels.list', LabelsListParams),
+  requestOf('labels.delete', LabelsDeleteParams),
 ]);
 export type Request = z.infer<typeof RequestSchema>;
 
