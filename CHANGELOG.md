@@ -6,6 +6,29 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## 0.1.16-alpha (2026-11-05)
+
+Notes that survive losing your phone, a check on every Speed up, and a note about the phone itself. Update the
+guardian, then the app; each works with the other side's older version.
+
+- **Keep your notes safe with the guardian** (Settings > Wallet details, off by default). Your labels, frozen coins,
+  payment notes and address labels can be kept as an encrypted copy on your guardian, so they survive losing the phone
+  and its backup. The key comes from your hardware wallet (it confirms the same text twice, so any phone can make the
+  key again); the guardian stores the copy but cannot read it, and learns only roughly how many notes you keep and when
+  they change. It keeps the last three versions. Turning it off deletes the copy. Ledger and Trezor; not yet for
+  QR devices or a wallet hosted on someone else's guardian (#143, #144).
+- **Bring back your notes.** After a recovery (on its last screen, when the phone has no backup) or a restore, the app
+  offers the copy on the guardian: one confirmation on the hardware wallet and the notes come back. Where the phone or
+  its backup already has a label, that one is kept. After a recovery, turn the option on again for the recovered
+  wallet (#144).
+- **Speed up checks the payment first.** Before your phone signs a faster version of a payment (Spending or Savings),
+  it checks that the original is really the payment this wallet signed, from its own coins, and that the new version
+  only adds fee from your change: same coins, same recipients, same amounts. If anything doesn't match, nothing is
+  signed or sent, and the app says so (#145).
+- **A note about this phone.** The Security tab tells you, calmly, when the phone has no screen lock, when its Android
+  security update is more than 6 months old, or when Trikey runs in an emulator or simulator (fine for testing, not for
+  real money). It is worked out on the phone and never sent anywhere (#145).
+
 ## 0.1.15-alpha (2026-11-05)
 
 Coin control, Telegram alerts, labels everywhere, and a calmer guardian home page. Update the guardian, then the app;
