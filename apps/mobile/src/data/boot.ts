@@ -17,6 +17,7 @@ import { createHardwareProviders } from '@/hardware';
 import { getPlatform, type TrikeyPlatform } from '@/platform';
 import { clearSharedBackups, pickBackupFile, shareBackupFile } from '@/platform/backup-files';
 import { clearSharedLabels, pickLabelsFile, shareLabelsFile } from '@/platform/labels-files';
+import { clearSharedDeviceFiles } from '@/platform/device-files';
 import { passkeyRpId } from '@/platform/config';
 import { runStartupRandomCheck } from '@/platform/rng-startup';
 import { createMemoryKeyValueStore } from '@/platform/memory';
@@ -108,6 +109,7 @@ export async function bootWallet(mode: AppMode, platform: TrikeyPlatform = getPl
   // Backup files shared in an earlier session are not kept (platform/backup-files.native.ts).
   void clearSharedBackups();
   void clearSharedLabels();
+  void clearSharedDeviceFiles();
 
   const [{ createRealWalletService }, { createRkWalletService }, { createRoutedWalletService, pickInitialKind }] = await Promise.all([
     import('./real'),

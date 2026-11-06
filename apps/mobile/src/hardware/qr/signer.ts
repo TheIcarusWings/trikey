@@ -7,12 +7,14 @@ import { HDKey } from '@scure/bip32';
 import {
   QR_MODEL_INFO,
   messageProblemFor,
+  qrMessageMethod,
   qrModelInfo,
   type HardwareDeviceInfo,
   type HardwareKind,
   type HardwareSigner,
   type HardwareWalletPolicy,
   type QrModel,
+  type QrModelInfo,
   type SignMessageContext,
 } from '@trikey/wallet';
 import { getNetwork, type NetworkName } from '@trikey/core';
@@ -37,6 +39,7 @@ import { checkMessageAnswer, messageAddresses, parseMessageAnswer, signMessageRe
 import { signedFromPayload } from './payload';
 import { coldcardMultisigConfig } from './registration';
 import { acceptFrames } from './scan';
+import { baseName, parseSignedFile, sdFormatOf, sdRequestFile } from './sd-message';
 import type { QrFormat } from './types';
 import { encodePsbtUr } from './ur';
 
@@ -59,7 +62,7 @@ export interface QrSignerOptions {
   maxBbqrVersion?: number;
 }
 
-/** QR models that cannot sign Trikey's texts over QR. They are named in the error so the UI can say so. */
+/** QR models that cannot sign Trikey's texts (by QR code or from a microSD card). They are named in the error so the UI can say so. */
 export const QR_DEVICES_WITHOUT_MESSAGE_SIGNING: readonly string[] = Object.values(QR_MODEL_INFO)
   .filter((i) => !i.qr || !i.signsMessages)
   .map((i) => i.name);
@@ -194,50 +197,64 @@ export class QrSigner implements HardwareSigner {
   }
 
   /**
-   * BIP 137 over a text QR (message.ts): shows `signmessage <path> ascii:<text>`, scans the base64 signature (or
-   * Coldcard's armored block) and checks it against the key at `path`, derived from the account key the device
-   * exported. A model that cannot do this (qr-devices.ts) is refused with its reason before anything is shown.
+   * BIP 137 with the key at `path`, the way the model signs a text (qr-devices.ts, `qrMessageMethod`): over a text QR
+   * (message.ts: shows `signmessage <path> ascii:<text>`, scans the base64 signature or Coldcard's armored block), or
+   * from a microSD card (sd-message.ts: hands over the request file, reads the signed file the device wrote, or its
+   * QR). Either way the answer is checked against the key at `path`, derived from the account key the device exported,
+   * before it is returned. A model that cannot sign a text is refused with its reason before anything is shown.
    */
   async signMessage(path: string, message: string, context: SignMessageContext = {}): Promise<string> {
     const info = qrModelInfo(this.opts.model);
-    if (!info.qr || !info.signsMessages)
+    const method = qrMessageMethod(info.model);
+    if (method === 'none')
       throw new HardwareNotSupportedError('signMessage', info.whyNot ?? `The ${info.name} can't sign a text by QR code.`, { kind: this.kind, devices: QR_DEVICES_WITHOUT_MESSAGE_SIGNING });
     const problem = messageProblemFor(info.model, message);
     if (problem) throw new HardwareError('invalid-request', problem, { kind: this.kind });
     const numbers = parsePath(path);
-    const request = signMessageRequest(path, message);
     const pubkey = await this.pubkeyAt(numbers);
     const shownPath = formatPath(numbers);
     const account = numbers[2] !== undefined && numbers[2] >= HARDENED ? numbers[2] - HARDENED : 0;
     const label = info.name;
-    const fill = (t: string) => t.replace('{path}', shownPath).replace('{account}', String(account));
     const { p2pkh } = messageAddresses(pubkey, this.opts.network);
-
     const round = context.round && context.round.of > 1 ? context.round : undefined;
-    const notes = [
+    const check = { text: message, pubkey, network: this.opts.network, path, label, ...(info.signsFromAccount ? { account } : {}) };
+    const notes = (how: 'qr' | 'file') => [
       ...(context.purpose ? [PURPOSE_NOTE[context.purpose]] : []),
       ...(round
         ? [
             round.n === 1
-              ? `Your ${label} will show the same text ${round.of === 2 ? 'twice' : `${round.of} times`}. Sign it each time: Trikey checks that it signs the same way every time, so the same key can be made again later.`
-              : `Round ${round.n} of ${round.of}: the same text again. Sign it once more.`,
+              ? how === 'file'
+                ? `Your ${label} signs the same text ${round.of === 2 ? 'twice' : `${round.of} times`}, from ${round.of === 2 ? 'two files' : `${round.of} files`}: this is the first. Trikey checks that it signs the same way every time, so the same key can be made again later.`
+                : `Your ${label} will show the same text ${round.of === 2 ? 'twice' : `${round.of} times`}. Sign it each time: Trikey checks that it signs the same way every time, so the same key can be made again later.`
+              : how === 'file'
+                ? `Round ${round.n} of ${round.of}: the same text again, in a new file. Sign it once more and bring back the new signed file.`
+                : `Round ${round.n} of ${round.of}: the same text again. Sign it once more.`,
           ]
         : []),
       `Your ${label} shows the text before it signs: check that it is exactly the text above.`,
       ...(info.displayLength && message.length > info.displayLength
-        ? [`This text is ${message.length} characters. The ${label} shows about the first ${info.displayLength} and then "...": check that part, and the path.`]
+        ? [
+            info.model === 'krux'
+              ? `This text is ${message.length} characters. On a small screen the ${label} shows about the first ${info.displayLength} and then "…" (a larger screen shows more): check that part, and the address.`
+              : `This text is ${message.length} characters. The ${label} shows about the first ${info.displayLength} and then "...": check that part, and the path.`,
+          ]
         : []),
       ...(info.showsAddress === 'p2pkh' ? [`It shows this address for the key: ${p2pkh}`] : []),
     ];
+    const title = round ? `Sign on your ${label} (${round.n} of ${round.of})` : `Sign on your ${label}`;
 
+    if (method === 'microsd') return this.signMessageFromCard(info, path, message, { shownPath, account, round, title, notes: notes('file'), check, purpose: context.purpose });
+
+    const request = signMessageRequest(path, message);
+    const fill = (t: string) => t.replaceAll('{path}', shownPath).replaceAll('{account}', String(account));
     await this.opts.bridge.show({
       purpose: 'message',
-      title: round ? `Sign on your ${label} (${round.n} of ${round.of})` : `Sign on your ${label}`,
+      title,
       instructions: `Scan this code with your ${label}. It asks it to sign the short text below with the key ${shownPath}, the key that approves changes for this wallet.`,
       frames: [request],
       detail: message,
       steps: (info.messageSteps ?? []).map(fill),
-      notes,
+      notes: notes('qr'),
       continueLabel: 'Scan the signature',
     });
 
@@ -246,16 +263,54 @@ export class QrSigner implements HardwareSigner {
       title: 'Scan the signature',
       instructions: `Show the signature on your ${label} as a QR code and point this camera at it.`,
       // A wrong key or another text becomes a hint: the owner can sign again on the device and scan the new one.
-      accept: acceptFrames((payload) =>
-        checkMessageAnswer(parseMessageAnswer(payload), {
-          text: message,
-          pubkey,
-          network: this.opts.network,
-          path,
-          label,
-          ...(info.signsFromAccount ? { account } : {}),
-        }),
-      ),
+      accept: acceptFrames((payload) => checkMessageAnswer(parseMessageAnswer(payload), check)),
+    });
+  }
+
+  /**
+   * The microSD round trip (sd-message.ts): one file request on the bridge. The owner saves the request file to the
+   * card (or shares it to a computer), signs on the device, and picks the signed file it wrote (or, on Krux, scans the
+   * signature QR). A wrong file, key or text stays on the screen as a hint; only a signature that verifies returns.
+   */
+  private async signMessageFromCard(
+    info: QrModelInfo,
+    path: string,
+    message: string,
+    o: {
+      shownPath: string;
+      account: number;
+      round?: { n: number; of: number };
+      title: string;
+      notes: string[];
+      check: Parameters<typeof checkMessageAnswer>[1];
+      purpose?: SignMessageContext['purpose'];
+    },
+  ): Promise<string> {
+    const format = sdFormatOf(info.model);
+    if (!format) throw new HardwareNotSupportedError('signMessage', `Trikey doesn't know the ${info.name}'s microSD file format.`, { kind: this.kind, devices: QR_DEVICES_WITHOUT_MESSAGE_SIGNING });
+    const file = sdRequestFile(format, path, message, { ...(o.purpose ? { purpose: o.purpose } : {}), ...(o.round ? { round: o.round } : {}) });
+    const label = info.name;
+    const fill = (t: string) =>
+      t.replaceAll('{path}', o.shownPath).replaceAll('{account}', String(o.account)).replaceAll('{file}', file.name).replaceAll('{base}', baseName(file.name));
+    return this.opts.bridge.file({
+      purpose: 'message-file',
+      title: o.title,
+      instructions: `Your ${label} signs this text from a file on its microSD card. Save ${file.name} to the card, sign it on the ${label}, then open the signed file it writes. It signs with the key ${o.shownPath}, the key that approves changes for this wallet.`,
+      file,
+      detail: message,
+      steps: [
+        `Save ${file.name} to the microSD card: tap “Save the file” and pick the card (in a card reader on this phone), or share it to a computer and copy it onto the card.`,
+        ...(info.messageSteps ?? []).map(fill),
+      ],
+      notes: o.notes,
+      acceptFile: (picked) => {
+        try {
+          return { done: true, value: checkMessageAnswer(parseSignedFile(picked, file, label, o.round), { ...o.check, via: 'file' }) };
+        } catch (e) {
+          return { done: false, hint: e instanceof Error ? e.message : String(e) };
+        }
+      },
+      ...(info.answersByQr ? { acceptFrame: acceptFrames((payload) => checkMessageAnswer(parseMessageAnswer(payload), o.check)) } : {}),
     });
   }
 

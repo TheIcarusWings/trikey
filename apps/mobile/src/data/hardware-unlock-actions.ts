@@ -9,8 +9,11 @@ import type { IsoDate } from './types';
 export interface HardwareUnlockState {
   /** It can be turned on for the wallet shown. */
   available: boolean;
-  /** Why not: `guardian` (an older guardian: the option is hidden), or a reason said in `unavailableText`. */
-  unavailable?: 'not_paired' | 'hosted' | 'guardian' | 'hardware';
+  /**
+   * Why not: `guardian` (an older guardian: the option is hidden), `microsd` (a device that signs only from a microSD
+   * card: the switch is hidden, the sentence says why), or a reason said in `unavailableText`.
+   */
+  unavailable?: 'not_paired' | 'hosted' | 'guardian' | 'hardware' | 'microsd';
   /** Why not, in words (a hosted wallet, a QR hardware wallet). */
   unavailableText?: string;
   /** On: the hardware wallet can unlock the guardian. */
@@ -31,13 +34,16 @@ export interface HardwareUnlockActions {
 }
 
 /** Why it cannot be offered, in words. */
-export const HARDWARE_UNLOCK_UNAVAILABLE: Record<'not_paired' | 'hosted' | 'guardian' | 'hardware', string> = {
+export const HARDWARE_UNLOCK_UNAVAILABLE: Record<'not_paired' | 'hosted' | 'guardian' | 'hardware' | 'microsd', string> = {
   not_paired: 'Finish setting up this wallet with your guardian first.',
   hosted: "Only your host unlocks their guardian. Your hardware wallet resumes this wallet if it is paused.",
   guardian: 'Update your guardian to unlock it with your hardware wallet.',
-  // Some QR devices (Passport gen 2, SeedSigner, Krux, "Other") sign no text by QR code: there is nothing to unlock with.
+  // Some QR devices (SeedSigner, "Other") sign no text: there is nothing to unlock with.
   hardware:
     'This needs a hardware wallet that signs a short text: a Ledger or a Trezor, or by QR code a Coldcard Q, Jade, Keystone 3, Passport Prime or Specter DIY. A QR device set up before Trikey asked for its model counts as "Other": pick it in Settings, Hardware wallet model. Until then, use the passphrase.',
+  // Passport gen 2 and Krux sign Trikey's texts only from a microSD card: a card round trip after every restart is too much.
+  microsd:
+    'Your hardware wallet signs Trikey’s texts only from a microSD card, so it doesn’t unlock the guardian: carrying the card back and forth after every guardian restart would be too clunky. The passphrase unlocks your guardian, on the box or here.',
 };
 
 /** What turning it on does and does not do, in the words every screen uses. */

@@ -7,7 +7,7 @@ import { HARDENED } from '../common/path';
 import { decodeXpub, encodeXpub } from '../common/xpub';
 import { parseWalletPolicy } from '../common/wallet';
 import { makeFixture, network, type Fixture } from '../test/fixtures';
-import { QrBridge, type QrRequest, type QrScanRequest, type QrShowRequest } from './bridge';
+import { QrBridge, type DeviceFileIo, type QrFileRequest, type QrRequest, type QrScanRequest, type QrShowRequest } from './bridge';
 import { encodeBbqr } from './bbqr';
 import { signedFromPayload } from './payload';
 import { QrFrameAssembler } from './frames';
@@ -25,7 +25,10 @@ const ACCOUNT = [48 + H, 1 + H, 0 + H, 2 + H];
 const tick = () => new Promise<void>((r) => setTimeout(r, 0));
 
 /** Plays the user and the device: answers every request the bridge shows. */
-function drive(bridge: QrBridge, handlers: { show?: (r: QrShowRequest) => void | Promise<void>; scan?: (r: QrScanRequest) => void | Promise<void> }) {
+function drive(
+  bridge: QrBridge,
+  handlers: { show?: (r: QrShowRequest) => void | Promise<void>; scan?: (r: QrScanRequest) => void | Promise<void>; file?: (r: QrFileRequest) => void | Promise<void> },
+) {
   const seen = new WeakSet<QrRequest>();
   const log: QrRequest[] = [];
   const check = () => {
@@ -35,6 +38,7 @@ function drive(bridge: QrBridge, handlers: { show?: (r: QrShowRequest) => void |
     log.push(snap.request);
     queueMicrotask(() => {
       if (snap.request.type === 'show') void handlers.show?.(snap.request);
+      else if (snap.request.type === 'file') void handlers.file?.(snap.request);
       else void handlers.scan?.(snap.request as QrScanRequest);
     });
   };
@@ -407,15 +411,17 @@ describe('QrSigner.signMessage', () => {
     return { f, bridge, signer };
   }
 
-  it.each(['seedsigner', 'krux', 'passport', 'other', 'coldcard-mk4', undefined] as const)('%s: refused with the reason, before anything is shown', async (model) => {
+  it.each(['seedsigner', 'other', 'coldcard-mk4', undefined] as const)('%s: refused with the reason, before anything is shown', async (model) => {
     const { signer, bridge } = await messageSetup(model);
     const shown = drive(bridge, {});
     const err = await signer.signMessage(AUTH, TEXT).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(HardwareNotSupportedError);
     expect(err).toMatchObject({ code: 'not-supported', operation: 'signMessage', devices: QR_DEVICES_WITHOUT_MESSAGE_SIGNING });
-    expect((err as Error).message).toMatch(model === 'seedsigner' ? /m\/48'/ : model === 'coldcard-mk4' ? /no camera/ : model === 'other' || !model ? /doesn.t know/ : /microSD/);
+    expect((err as Error).message).toMatch(model === 'seedsigner' ? /m\/48'.*co-signs payments only/ : model === 'coldcard-mk4' ? /no camera/ : /doesn.t know/);
     expect(shown.log).toEqual([]);
-    expect(QR_DEVICES_WITHOUT_MESSAGE_SIGNING).toEqual(expect.arrayContaining(['SeedSigner', 'Krux', 'Passport (2nd generation)', 'Coldcard Mk4', 'Other QR device']));
+    expect(QR_DEVICES_WITHOUT_MESSAGE_SIGNING).toEqual(expect.arrayContaining(['SeedSigner', 'Coldcard Mk4', 'Other QR device']));
+    expect(QR_DEVICES_WITHOUT_MESSAGE_SIGNING).not.toContain('Krux');
+    expect(QR_DEVICES_WITHOUT_MESSAGE_SIGNING).not.toContain('Passport (2nd generation)');
     shown.stop();
   });
 
@@ -526,6 +532,141 @@ describe('QrSigner.signMessage', () => {
     await expect(signer.signMessage(AUTH, 'caf\u00e9')).rejects.toMatchObject({ code: 'invalid-request' });
     drive(bridge, { show: () => bridge.cancel() });
     await expect(signer.signMessage(AUTH, TEXT)).rejects.toMatchObject({ code: 'cancelled' });
+  });
+
+  // ---------------------------------------------------------------------------------------------- microSD (sd-message.ts)
+
+  /** The signed file Passport gen 2 writes: its RFC template (public_constants.py), with a trailing newline. */
+  const passportSigned = (text: string, address: string, sig: string) =>
+    `-----BEGIN BITCOIN SIGNED MESSAGE-----\n${text}\n-----BEGIN BITCOIN SIGNATURE-----\n${address}\n${sig}\n-----END BITCOIN SIGNATURE-----\n`;
+  const fileOf = (name: string, text: string) => ({ name, bytes: new TextEncoder().encode(text) });
+  const legacy = () => messageAddresses(hwSigner().master(network).derive(AUTH).publicKey!, 'regtest').p2pkh;
+
+  it('dispatch: Passport gen 2 and Krux sign from a microSD file (one file request, no QR shown); QR models never get a file request', async () => {
+    for (const model of ['passport', 'krux'] as const) {
+      const { signer, bridge } = await messageSetup(model);
+      const d = drive(bridge, { file: (r) => void bridge.submitFile(fileOf(`${r.file.name.replace('.txt', '')}-signed.txt`, passportSigned(TEXT, legacy(), sign(TEXT)))) });
+      expect(await signer.signMessage(AUTH, TEXT, { purpose: 'pairing' })).toBe(sign(TEXT));
+      expect(d.log.map((r) => r.type)).toEqual(['file']);
+      d.stop();
+    }
+    const { signer, bridge } = await messageSetup('keystone-3');
+    const d = drive(bridge, { show: () => bridge.finishShow(), scan: () => void feed(bridge, [sign(TEXT)]) });
+    await signer.signMessage(AUTH, TEXT);
+    expect(d.log.map((r) => r.type)).toEqual(['show', 'scan']);
+  });
+
+  it('Passport gen 2: the 2-line request file, the device steps and the address; the signed file comes back through the file I/O', async () => {
+    const { signer, bridge } = await messageSetup('passport');
+    let req: QrFileRequest | undefined;
+    const card = new Map<string, string>();
+    const io: DeviceFileIo = {
+      saveToFolder: async (name, text) => (card.set(name, text), true),
+      share: async () => {},
+      pick: async () => fileOf('trikey-pair-signed-001.txt', passportSigned(TEXT, legacy(), sign(TEXT))),
+    };
+    drive(bridge, {
+      file: async (r) => {
+        req = r;
+        expect(await bridge.saveFile(io)).toBe(true);
+        expect(bridge.getSnapshot()!.saved).toBe(true);
+        await bridge.pickFile(io);
+      },
+    });
+    expect(await signer.signMessage(AUTH, TEXT, { purpose: 'pairing' })).toBe(sign(TEXT));
+    expect(card.get('trikey-pair.txt')).toBe(`${TEXT}\nm/48h/1h/0h/2h/0/0\n`);
+    expect(req).toMatchObject({ purpose: 'message-file', title: 'Sign on your Passport (2nd generation)', file: { name: 'trikey-pair.txt' }, detail: TEXT });
+    expect(req!.acceptFrame).toBeUndefined();
+    const steps = req!.steps!.join(' ');
+    expect(steps).toMatch(/Save trikey-pair.txt to the microSD card/);
+    expect(steps).toMatch(/Sign a Message > Sign with microSD, and pick trikey-pair.txt/);
+    expect(steps).toMatch(/trikey-pair-signed- and a number/);
+    expect(req!.notes!.join(' ')).toMatch(new RegExp(`It shows this address for the key: ${legacy()}$`));
+  });
+
+  it('Krux: the 3-line request file (p2pkh), and its signature QR is taken instead of the file', async () => {
+    const { signer, bridge } = await messageSetup('krux');
+    let req: QrFileRequest | undefined;
+    drive(bridge, {
+      file: (r) => {
+        req = r;
+        bridge.submitFrame(sign(TEXT));
+      },
+    });
+    expect(await signer.signMessage(AUTH, TEXT)).toBe(sign(TEXT));
+    expect(req!.file).toEqual({ name: 'trikey-sign.txt', text: `${TEXT}\nm/48h/1h/0h/2h/0/0\np2pkh\n` });
+    expect(req!.acceptFrame).toBeTypeOf('function');
+    expect(req!.steps!.join(' ')).toMatch(/Sign > Message > Load from SD card.*SHA256.*Sign to SD card.*trikey-sign-signed.txt.*Scan the signature instead/);
+    expect(req!.notes!.join(' ')).toMatch(/It shows this address for the key/);
+    // A text past what a small Krux screen shows: the note says so.
+    const long = `${TEXT} ${'x'.repeat(40)}`;
+    const k = await messageSetup('krux');
+    let longReq: QrFileRequest | undefined;
+    drive(k.bridge, { file: (r) => ((longReq = r), k.bridge.cancel()) });
+    await k.signer.signMessage(AUTH, long).catch(() => {});
+    expect(longReq!.notes!.join(' ')).toMatch(/This text is 155 characters. On a small screen the Krux shows about the first 120 and then "…"/);
+  });
+
+  it('a wrong file, another key, an altered text or garbage stay hints; only a signature that verifies is returned', async () => {
+    const { signer, bridge } = await messageSetup('passport');
+    const hints: Array<string | undefined> = [];
+    const otherKey = new Uint8Array(32).fill(3);
+    drive(bridge, {
+      file: (r) => {
+        const tries = [
+          fileOf('trikey-pair.txt', r.file.text), // Trikey's own request
+          fileOf('trikey-pair-signed-001.txt', passportSigned(`${TEXT}x`, legacy(), sign(`${TEXT}x`))), // altered text
+          fileOf('trikey-pair-signed-001.txt', passportSigned(TEXT, legacy(), sign(TEXT, otherKey))), // another key, our address
+          fileOf('notes.txt', 'shopping list'), // garbage
+          { name: 'trikey-pair-signed.sig', bytes: new Uint8Array([0x30, 0x44, 0x02, 0x20, 0xff, 0xfe]) }, // Krux signed a hash
+          { name: 'photo.jpg', bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x80, 0x81]) }, // binary
+          fileOf('empty.txt', ''),
+        ];
+        for (const t of tries) hints.push(bridge.submitFile(t).hint);
+        bridge.submitFile(fileOf('trikey-pair-signed-002.txt', passportSigned(TEXT, legacy(), sign(TEXT))));
+      },
+    });
+    expect(await signer.signMessage(AUTH, TEXT, { purpose: 'pairing' })).toBe(sign(TEXT));
+    expect(hints[0]).toMatch(/file Trikey made \(the request\).*-signed/);
+    expect(hints[1]).toMatch(/holds a different text/);
+    expect(hints[2]).toMatch(/not from this wallet.s key m\/48'\/1'\/0'\/2'\/0\/0.*pick the new signed file/);
+    expect(hints[3]).toMatch(/not a signed message/);
+    expect(hints[4]).toMatch(/\.sig file.*did not read the file/);
+    expect(hints[5]).toMatch(/not text/);
+    expect(hints[6]).toMatch(/empty/);
+  });
+
+  it('notes: two rounds, two files named by round; the other round’s signed file is refused', async () => {
+    const { signer, bridge } = await messageSetup('passport');
+    const reqs: QrFileRequest[] = [];
+    const hints: Array<string | undefined> = [];
+    drive(bridge, {
+      file: (r) => {
+        reqs.push(r);
+        if (reqs.length === 2) hints.push(bridge.submitFile(fileOf('trikey-notes-1of2-signed-001.txt', passportSigned(TEXT, legacy(), sign(TEXT)))).hint);
+        bridge.submitFile(fileOf(`${r.file.name.replace('.txt', '')}-signed-001.txt`, passportSigned(TEXT, legacy(), sign(TEXT))));
+      },
+    });
+    await signer.signMessage(AUTH, TEXT, { purpose: 'notes', round: { n: 1, of: 2 } });
+    await signer.signMessage(AUTH, TEXT, { purpose: 'notes', round: { n: 2, of: 2 } });
+    expect(reqs.map((r) => [r.title, r.file.name])).toEqual([
+      ['Sign on your Passport (2nd generation) (1 of 2)', 'trikey-notes-1of2.txt'],
+      ['Sign on your Passport (2nd generation) (2 of 2)', 'trikey-notes-2of2.txt'],
+    ]);
+    expect(reqs[0]!.notes!.join(' ')).toMatch(/signs the same text twice, from two files: this is the first/);
+    expect(reqs[1]!.notes!.join(' ')).toMatch(/Round 2 of 2: the same text again, in a new file/);
+    expect(hints[0]).toMatch(/signed file of the other round.*round 2 of 2/);
+  });
+
+  it('microSD: refuses a text either firmware would change or refuse, before anything is shown; a cancel rejects', async () => {
+    const { signer, bridge } = await messageSetup('passport');
+    const d = drive(bridge, { file: () => bridge.cancel() });
+    await expect(signer.signMessage(AUTH, `${TEXT} `)).rejects.toMatchObject({ code: 'invalid-request', message: expect.stringMatching(/starts or ends with a space/) });
+    await expect(signer.signMessage(AUTH, 'Trikey    four spaces')).rejects.toMatchObject({ code: 'invalid-request', message: expect.stringMatching(/more than 3 spaces/) });
+    expect(d.log).toEqual([]);
+    await expect(signer.signMessage(AUTH, TEXT)).rejects.toMatchObject({ code: 'cancelled' });
+    const krux = await messageSetup('krux');
+    await expect(krux.signer.signMessage(AUTH, ` ${TEXT}`)).rejects.toMatchObject({ code: 'invalid-request', message: expect.stringMatching(/Krux does not sign a text that starts or ends with a space/) });
   });
 });
 

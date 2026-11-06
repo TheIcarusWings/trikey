@@ -74,30 +74,71 @@ ASCII characters, `MAX_APPROVAL_MESSAGE_LENGTH`) with the authorization key `m/4
 (docs/design/hardware-auth-path.md). QR devices do it over a text QR: the phone shows
 `signmessage m/48h/<coin>h/<account>h/2h/0/0 ascii:<text>`, the device shows the text, signs, and shows the base64
 signature as a QR (Coldcard's armored block is read too); the phone checks it against the key it derived from the
-device's xpub before using it. The owner picks the QR device's model when adding it (a key export that names its device
+device's xpub before using it. Passport (2nd generation) and Krux refuse that key over a text QR but sign it from a file
+on their microSD card: the phone writes the request file, the owner copies it to the card (a card reader on the phone, or
+a computer), signs on the device, and brings back the signed file it wrote, which the phone checks the same way ("microSD
+message signing" below). The owner picks the QR device's model when adding it (a key export that names its device
 fills in "Other"); Settings, "Hardware wallet model" changes it, and wallets made before models existed read as "Other".
-The table is `packages/wallet/src/qr-devices.ts`. **Message signing over QR is read from each firmware's source, not
-tested on devices yet** (docs/alpha-test-plan.md, "QR message signing").
+The table is `packages/wallet/src/qr-devices.ts` (`messageMethod`: `qr-text`, `microsd` or `none`). **Message signing
+over QR and from microSD is read from each firmware's source, not tested on devices yet** (docs/alpha-test-plan.md, "QR
+message signing" and "microSD message signing").
 
-| Device | Payments | Guardian pairing, approvals, recovery access | Notes on the guardian, hardware unlock | Limits and notes |
-|---|---|---|---|---|
-| Ledger (Bluetooth) | Yes | Yes | Yes | Shows texts up to 640 bytes in full |
-| Trezor (Suite Lite) | Yes | Yes | Yes | Older firmware warns about the path first |
-| Coldcard Q (QR) | Yes | Yes | Yes | 240 characters at most (Trikey's maximum exactly); no space at either end, never three in a row; shows the text, the path and a legacy `1…` address |
-| Jade, Jade Plus (QR mode) | Yes | Yes | Yes | Signs the whole text but shows only about the first 188 characters, then "..." (policy approvals and recovery access are longer) |
-| Keystone 3 (QR) | Yes | Yes | Yes | Shows no address for this key |
-| Passport Prime (QR) | Yes | Yes | Yes | Signs only from the account the path names: open that account first |
-| Specter DIY (QR) | Yes | Yes | Yes | Shows the text, the path and a legacy address |
-| Passport gen 2 (QR) | Yes | No: its QR flow refuses a `48'` path; microSD only, not built | No | Recovery Key mode |
-| Krux (QR) | Yes | No: its QR flow refuses a `48'` path; microSD only, not built | No | Recovery Key mode |
-| SeedSigner (QR) | Yes | No: it signs no message at a `48'` path | No | Recovery Key mode |
-| Other QR device | Yes | No (unknown): pick the model in Settings | No | Recovery Key mode |
-| Coldcard Mk4 | No: no camera; needs NFC or USB, not built | No | No | |
-| BitBox02 | No provider yet | | | |
+| Device | Payments | Guardian pairing, approvals, recovery access | Notes on the guardian | Hardware unlock | Limits and notes |
+|---|---|---|---|---|---|
+| Ledger (Bluetooth) | Yes | Yes | Yes | Yes | Shows texts up to 640 bytes in full |
+| Trezor (Suite Lite) | Yes | Yes | Yes | Yes | Older firmware warns about the path first |
+| Coldcard Q (QR) | Yes | Yes | Yes | Yes | 240 characters at most (Trikey's maximum exactly); no space at either end, never three in a row; shows the text, the path and a legacy `1…` address |
+| Jade, Jade Plus (QR mode) | Yes | Yes | Yes | Yes | Signs the whole text but shows only about the first 188 characters, then "..." (policy approvals and recovery access are longer) |
+| Keystone 3 (QR) | Yes | Yes | Yes | Yes | Shows no address for this key |
+| Passport Prime (QR) | Yes | Yes | Yes | Yes | Signs only from the account the path names: open that account first |
+| Specter DIY (QR) | Yes | Yes | Yes | Yes | Shows the text, the path and a legacy address |
+| Passport gen 2 (payments by QR) | Yes | Yes, from a microSD file | Yes, from a microSD file (two files when turned on) | No: a card round trip after every guardian restart; the passphrase works | Shows the whole text and a legacy address; no space at either end, at most 3 in a row; the file is at most 4096 bytes |
+| Krux (payments by QR) | Yes | Yes, from a microSD file (the signature comes back as a file or a QR) | Yes, from a microSD file (two files when turned on) | No: as Passport gen 2 | Shows about 10 lines of the text (on the M5StickV about the first 120 characters, on larger screens about 210), then "…", and a legacy address |
+| SeedSigner (QR) | Yes | No: decided, payments only (below) | No | No | Recovery Key mode |
+| Other QR device | Yes | No (unknown): pick the model in Settings | No | No | Recovery Key mode |
+| Coldcard Mk4 | No: no camera; needs NFC or USB, not built | No | No | No | |
+| BitBox02 | No provider yet | | | | |
 
 A model that cannot sign a text is refused with its reason (`QrSigner.signMessage`), and the connect screen says so
-before a guardian wallet is started, offering Recovery Key mode. Not built: microSD files (Passport gen 2, Krux), NFC
-(Coldcard Mk4 and Q), BLE or USB for Jade, BIP 322 proofs, BitBox02.
+before a guardian wallet is started, offering Recovery Key mode. Not built: NFC (Coldcard Mk4 and Q), BLE or USB for
+Jade, BIP 322 proofs, BitBox02.
+
+**SeedSigner co-signs payments only (decided 2026-11-06).** Its firmware refuses a message at any `m/48'` path
+("Not implemented" in `parse_derivation_path`, and custom paths are "not supported"), so it cannot sign Trikey's texts
+with the key the guardian checks. The only way around it is a BIP 322 proof (a PSBT that spends a virtual output),
+which SeedSigner would sign *blind*: it shows a 0-sat spend to an empty OP_RETURN with fee 0, never the text. A blind
+signature turns each confirmation into a blank cheque for whatever runs on the phone at that moment (malware could swap
+a loosening approval in for "pairing"), which is what rule 4 exists to prevent. A key at another path (BIP 84) loses
+the guardian's binding to the hardware xpub (docs/design/hardware-auth-path.md §5). So SeedSigner is offered for
+Recovery Key mode and as a payment co-signer; a guardian wallet needs another device.
+
+**microSD message signing (Passport gen 2, Krux; built 2026-11-06, untested on devices).** Both firmwares sign at
+Trikey's key from a file, with the address type the file names (`apps/mobile/src/hardware/qr/sd-message.ts`, sources in
+docs/design/hardware-auth-path.md §7):
+
+- **The request.** Passport: 2 lines, the text then the path (`m/48h/<coin>h/<account>h/2h/0/0`), legacy address by
+  default. Krux: 3 lines, the text, the path, `p2pkh` (its signature header is P2PKH's whatever the type, so the
+  armored file checks in any BIP 137 tool). `\n` line endings; named for what it is (`trikey-pair.txt`,
+  `trikey-approve.txt`, `trikey-access.txt`, `trikey-notes-1of2.txt`), never with `-signed`, which both hide.
+- **Handing it over.** "Save the file" asks for a folder (the card through a USB-C or Lightning reader, or Files), or
+  "Share the file" opens the share sheet (to a computer). The system folder and file pickers and the share sheet need no
+  Google code, so the Android build without Google has them. The copy made for the share sheet is deleted before each
+  share and at start.
+- **Bringing it back.** "Open the signed file": Passport writes `<name>-signed-001.txt`, Krux `<name>-signed.txt` (or,
+  "Sign to QR code", a QR of the signature: "Scan the signature instead"). The phone reads the armored block, checks
+  that its text is Trikey's, that its address is the key's, and that the signature verifies against the key derived
+  from the device's xpub; then `signWithAuthKey` checks it again. Trikey's own request file, a Krux `.sig` (it signed
+  the file's hash with another key because it did not read the file as a message), anything not text, another key or
+  another text stay on the screen as a hint, so the owner can pick again or sign again. Nothing that does not verify is
+  ever used.
+- **Notes: two round trips.** The same text twice, as for every device: "1 of 2" and "2 of 2", two files with the round
+  in their names, and the other round's signed file is refused by its name. Both firmwares sign with RFC 6979 and no
+  extra entropy (Passport: trezor-crypto `ecdsa_sign_digest` with `USE_RFC6979`, or libsecp256k1's default nonce;
+  Krux: embit's libsecp256k1 `ecdsa_sign_recoverable` with no nonce data), so skipping the second signature would
+  probably be safe, but the check is what proves it on the owner's own device and firmware, and notes are turned on
+  once: it stays. What it cannot catch: an owner who signs once and picks a renamed copy of the first file for round 2.
+- **Hardware unlock: not offered.** Every guardian restart would need a card round trip. The switch is hidden and one
+  sentence says why and that the passphrase unlocks the guardian.
 
 ### Trikey Guardian (Docker container)
 - **Packaging:** one image, shipped as an Umbrel app (`umbrel-app.yml`, depending on `bitcoin` + `electrs`), a Start9 service package, and a Docker Compose file for plain Docker (`packaging/compose`), with an optional node profile.
@@ -136,7 +177,7 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
    - **Payments into the optional Savings wallet count like any payment** (the owner's decision, 2026-11-01): the guardian is not told which wallet is Savings for this rule and counts an output to it as leaving the wallet. A phone thief registering their own wallet as "Savings" therefore gains nothing.
    - **The limit can be turned off** (strictly opt-in; docs/design/savings-and-limit-off.md, section 4). "Off" is the largest limit there is, all bitcoin there will ever be, so the policy and its hash are unchanged; every other rule stays, and the guardian still counts what it co-signs. It is a loosening: only with a fresh hardware approval whose text says it in words (`Trikey policy v2 ... limit=off ...`, rule 4), never at pairing and never while a recovery is pending or ready. Turning it back on is tightening: the phone alone, at once. The guardian alerts the paired phone (`limit_off`) and every alert contact (a NIP-17 DM) when it is turned off, logs it as a warning, and tells the phone when it is on again (`limit_on`). It remembers the limit before (`limitBeforeOff`): after a recovery the adopted wallet starts with the limit **on** at that value (rotation, below). The phone offers it only to a guardian that reports the `limit_off` feature. With the limit off the guardian is a second signature, not a brake: a thief who gets into the phone sends everything at once.
 4. **Loosening the rules needs the hardware wallet.** That covers raising the limit, shortening the delay, changing the sweep fee cap, adding or removing alert contacts, and stopping the alert contacts from locking the guardian (rule 8). The phone alone can only tighten: lower the limit, lengthen the delay or let the alert contacts lock the guardian, **also while a recovery runs** (tightening never helps a thief; a running recovery keeps the delay and fee cap it started with). On mainnet the rules must name at least one alert contact: a pairing without one, or any change that removes the last one, is refused even with a hardware approval; test networks allow it and report `warnings: ['no_alert_contacts']`.
-   - **How the hardware wallet approves:** a BIP137 `signmessage` signature from a single-sig key recorded at pairing. Ledger and Trezor sign it over USB or Bluetooth; Coldcard Q, Jade, Keystone 3, Passport Prime and Specter DIY over a text QR (see "Hardware wallets by feature"). The signed text is one line that shows the new values in clear, so the user checks them on the device screen:
+   - **How the hardware wallet approves:** a BIP137 `signmessage` signature from a single-sig key recorded at pairing. Ledger and Trezor sign it over USB or Bluetooth; Coldcard Q, Jade, Keystone 3, Passport Prime and Specter DIY over a text QR; Passport gen 2 and Krux from a file on their microSD card (see "Hardware wallets by feature"). The signed text is one line that shows the new values in clear, so the user checks them on the device screen:
      `Trikey policy v1 wallet=<id> seq=<n> limit=<sats> delay=<d>d feecap=<sats> contacts=<k> hash=<policyHash> expires=<ISO8601Z>`
      and, for no daily limit only, version 2 with the limit in words (older guardians refuse it, `1202`):
      `Trikey policy v2 wallet=<id> seq=<n> limit=off delay=<d>d feecap=<sats> contacts=<k> hash=<policyHash> expires=<ISO8601Z>`
@@ -777,9 +818,9 @@ guardian"). Protocol: PROTOCOL.md, "Encrypted notes".
   Ledger's Bitcoin app signs messages with RFC 6979 (`crypto_ecdsa_sign_sha256_hash_with_key`, `CX_RND_RFC6979`);
   Trezor signs with RFC 6979 too (`ecdsa_sign_digest` with `USE_RFC6979`, or libsecp256k1's RFC 6979 nonce function
   with a deterministic retry counter); Coldcard Q, Jade (QR mode, never anti-exfil), Keystone 3, Passport Prime and
-  Specter DIY sign with RFC 6979 too, over a text QR: read from the firmware sources, not tested on devices. The QR
-  models that cannot sign a text by QR (Passport gen 2, SeedSigner, Krux, the Coldcard Mk4, "Other") are not offered
-  the option ("Hardware wallets by feature"). **The phone verifies it**: turning the option on asks for the
+  Specter DIY sign with RFC 6979 too, over a text QR, and Passport gen 2 and Krux from a microSD file (two files when
+  the option is turned on): read from the firmware sources, not tested on devices. The QR models that cannot sign a
+  text (SeedSigner, the Coldcard Mk4, "Other") are not offered the option ("Hardware wallets by feature"). **The phone verifies it**: turning the option on asks for the
   signature twice and refuses, in plain words, when the two differ (`hardware_not_deterministic`).
 - **The blob.** Version byte, 24-byte nonce, 16-byte key check (HMAC of a constant under the check key: a wrong key is
   told apart before decrypting), then XChaCha20-Poly1305 over the plaintext padded to 4, 8, 16 ... 512 KiB, the header
@@ -857,9 +898,10 @@ wallet"; code: `apps/guardian/src/unlock-slots.ts`, `TrikeyWallet.enableHardware
   change (not built yet) needs nothing: the slots do not depend on the passphrase. Family hosting: never; a guest's
   hardware wallet must not unlock the host's guardian, so guests cannot call the methods and are not told the feature.
 - **QR devices: only the models that sign a text by QR.** Coldcard Q, Jade, Keystone 3, Passport Prime and Specter DIY
-  sign the unlock text over a text QR (two round trips when it is turned on, one per unlock). Passport gen 2, SeedSigner,
-  Krux, "Other" and the Coldcard Mk4 do not (as for the notes), so there is no signature to unlock with; the app says
-  so and keeps the passphrase.
+  sign the unlock text over a text QR (two round trips when it is turned on, one per unlock). SeedSigner, "Other" and
+  the Coldcard Mk4 do not (as for the notes), so there is no signature to unlock with; the app says so and keeps the
+  passphrase. Passport gen 2 and Krux sign texts only from a microSD card: a card round trip after every restart is too
+  clunky, so the option is hidden for them, with one sentence saying why and that the passphrase works.
 - **Seen and said.** The web UI's Activity: "Hardware unlock turned on / off", "Unlocked with the hardware wallet" and
   failed attempts, never the signature. Offered only by a guardian that lists `hardware_unlock`; an older phone never
   calls it. The app: Settings > Guardian, "Unlock with your <device>" (a switch), and on the locked guardian the same
@@ -949,7 +991,7 @@ Bitkey's hardware wallets were checked as Trikey's key 1, from Bitkey's open-sou
 
 ## Open questions
 
-1. **How the hardware wallet unlocks the guardian.** Built, opt-in ("Unlocking the guardian with the hardware wallet"): Ledger and Trezor BIP 137-sign a fixed unlock text deterministically, and the guardian, after checking the signature against the wallet's authorization key, derives an unlock slot's key from it, as the notes do. Trezor's CipherKeyValue (SLIP-11) was not needed, and Ledger needs no symmetric-key API. Still open: checking on real devices (firmware versions) that two signatures of the same text are equal, which the app checks each time the option is turned on; QR devices that sign a text by QR (Coldcard Q, Jade, Keystone 3, Passport Prime, Specter DIY) do it over two QR round trips, the others keep the passphrase. Rule changes use BIP137 message signatures too (see rule 4); which signing paths each device allows still has to be tested on real hardware.
+1. **How the hardware wallet unlocks the guardian.** Built, opt-in ("Unlocking the guardian with the hardware wallet"): Ledger and Trezor BIP 137-sign a fixed unlock text deterministically, and the guardian, after checking the signature against the wallet's authorization key, derives an unlock slot's key from it, as the notes do. Trezor's CipherKeyValue (SLIP-11) was not needed, and Ledger needs no symmetric-key API. Still open: checking on real devices (firmware versions) that two signatures of the same text are equal, which the app checks each time the option is turned on; QR devices that sign a text by QR (Coldcard Q, Jade, Keystone 3, Passport Prime, Specter DIY) do it over two QR round trips; the others, including Passport gen 2 and Krux (microSD only), keep the passphrase. Rule changes use BIP137 message signatures too (see rule 4); which signing paths each device allows still has to be tested on real hardware.
 2. **Notifications when the phone app is asleep.**
    - Nostr DMs reach the user's regular nostr app (zero infrastructure).
    - Real push on iOS needs Apple's push service, called with credentials only the app's publisher holds. That means running a stateless "empty ping" bridge, which conflicts with "we run nothing".
