@@ -242,6 +242,14 @@ function TelegramBot({ data, busy, save }: { data: NotificationSettings; busy: b
             <span className="font-mono text-[13px]">@{t.bot.username}</span> ({t.bot.name})
           </p>
           <p className={cn(hint, t.health.state === 'failing' && 'text-bad')}>{healthLabel(t.health, formatDateTime)}</p>
+          {!used && (
+            <p className={cn(hint, 'text-foreground')}>
+              The bot is ready but sends nothing yet. Next, under <strong>Add a channel</strong> below: choose who it is for and{' '}
+              <strong>Telegram</strong>, have that person send <span className="font-mono">/start</span> to{' '}
+              <span className="font-mono">@{t.bot.username}</span>, press <strong>Find</strong>, pick the chat and add it. Each
+              channel then has <strong>Send a test message</strong>.
+            </p>
+          )}
           <p className={cn(hint, 'text-warn')}>{TELEGRAM_PRIVACY}</p>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" disabled={busy} onClick={() => setEditing(true)}>
