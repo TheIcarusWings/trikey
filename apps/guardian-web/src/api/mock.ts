@@ -838,6 +838,23 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       return ok ? { ok: true, health: clone(d.health) } : { ok: false, error: d.health.lastError ?? 'failed', health: clone(d.health) };
     },
 
+    async changePassphrase(input) {
+      await wait(600);
+      if (locked) throw new ApiError('locked', 'The guardian is locked. Unlock it first.', 409);
+      if (input.passphrase === 'wrong') throw new ApiError('bad_passphrase', 'That is not the current passphrase.', 401);
+      if ([...input.newPassphrase.normalize('NFKC')].length < 12) throw new ApiError('invalid', 'New passphrase: use at least 12 characters.', 400);
+      if (input.newPassphrase.normalize('NFKC') === input.passphrase.normalize('NFKC')) throw new ApiError('same_passphrase', 'The new passphrase is the same as the current one.', 400);
+      pushActivity({
+        kind: 'system',
+        event: 'Passphrase changed on this box: the old passphrase no longer unlocks the guardian or signs in to this page, and every other browser was signed out. Key 3 and the hardware wallet unlock are unchanged',
+        summary: 'Passphrase changed',
+        signedBy: null,
+        sats: null,
+        result: 'ok',
+      });
+      return status();
+    },
+
     async resetGuardian(input) {
       await wait(400);
       if (input.confirm !== RESET_CONFIRMATION) throw new ApiError('invalid', `Type ${RESET_CONFIRMATION} to confirm.`, 400);

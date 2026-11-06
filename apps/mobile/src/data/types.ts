@@ -154,6 +154,11 @@ export interface Guardian {
    */
   key3Note?: string;
   /**
+   * The guardian lists `passphrase_change`: its web page can change its passphrase (the phone cannot), so Settings >
+   * Guardian says where.
+   */
+  passphraseInWebPage?: boolean;
+  /**
    * While locked: an alert contact locked it by sending it `LOCK` over nostr (`contactLock` on). `name` is the name this
    * phone keeps for that contact, else its shortened npub.
    */
@@ -301,6 +306,8 @@ export type SecurityEvent = { id: string; at: IsoDate } & (
   | { kind: 'savings-unwatched'; replaced: boolean }
   /** The guardian's email, ntfy or webhook alerts were changed in its web page (never from this phone). */
   | { kind: 'alert-channels-changed' }
+  /** The guardian's passphrase was changed in its web page (never from this phone): `passphrase_changed`. */
+  | { kind: 'guardian-passphrase-changed' }
   /** Where the guardian reads the blockchain was changed in its web page (never from this phone): `public` for a public server. */
   /** `hosted`: the host changed its guardian's server (a hosted wallet), not the person's own guardian. */
   | { kind: 'guardian-server-changed'; public: boolean; host: string; hosted?: true }

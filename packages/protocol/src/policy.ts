@@ -72,6 +72,12 @@ export const GUARDIAN_FEATURES = {
    * the secret sealed to such a guardian, and in the clear only to one without it. Never listed to a guest.
    */
   sealedUnlock: 'sealed_unlock',
+  /**
+   * Changing the passphrase (DESIGN.md, "Changing the passphrase"): the owner can change it in the guardian's web page
+   * (never over nostr: there is no method for it), and the guardian then sends the paired phone a `passphrase_changed`
+   * alert. The phone only says where to change it. Never listed to a guest.
+   */
+  passphraseChange: 'passphrase_change',
 } as const;
 
 /** True when the alert contacts may lock the guardian (`Policy.contactLock`). */

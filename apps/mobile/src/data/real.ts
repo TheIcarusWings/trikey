@@ -51,7 +51,7 @@ import {
   type WalletSnapshot,
 } from '@trikey/wallet';
 import { parseScannedCode } from '@trikey/wallet/scan';
-import { SimplePoolRelayPool, encodeRecoveryUri, type Policy, type RelayPool } from '@trikey/protocol';
+import { GUARDIAN_FEATURES, SimplePoolRelayPool, encodeRecoveryUri, type Policy, type RelayPool } from '@trikey/protocol';
 import { hostedChainFactory, publicServer } from './hosted';
 import { parseServerUrl } from './rk-server';
 import { addEvent, buildActivity, emptyLog, hostFromLabel, loadLog, saveLog, takeLegacySends, type AppLog } from './app-log';
@@ -789,6 +789,7 @@ class Service implements RealWalletService {
         : {}),
       npub,
       ...(g?.key3Mixed ? { key3Note: KEY3_MIXED_NOTE } : {}),
+      ...(gs?.features?.includes(GUARDIAN_FEATURES.passphraseChange) ? { passphraseInWebPage: true } : {}),
       ...(lockedBy ? { lockedByContact: { name: contactName(lockedBy), npub: lockedBy.npub } } : {}),
     };
   }
@@ -1373,6 +1374,11 @@ class Service implements RealWalletService {
           // hosted wallet it is the host's choice (this phone still reads the wallet from its own chain server).
           const hosted = this.w?.isHosted ? ({ hosted: true } as const) : {};
           addEvent(this.log, { kind: 'guardian-server-changed', public: a.kind === 'public', host: a.host, ...hosted, at: e.atMs });
+          void this.saveLogNow();
+          this.refresh();
+        } else if (a.type === 'passphrase_changed') {
+          // Changed in the guardian's web page (this phone cannot): a security line, as for the alert channels.
+          addEvent(this.log, { kind: 'guardian-passphrase-changed', at: e.atMs });
           void this.saveLogNow();
           this.refresh();
         } else if (a.type === 'notifications_changed') {

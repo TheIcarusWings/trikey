@@ -51,6 +51,13 @@ export type ServiceEvent =
   | { type: 'locked'; reason: 'manual' | 'remote' }
   | { type: 'reset' }
   | { type: 'reset_refused'; detail: string }
+  /**
+   * The owner changed the passphrase in the web UI (DESIGN.md, "Changing the passphrase"): the same key 3 under the new
+   * passphrase, every other web session ended. `failed`: the current passphrase given was wrong (counted by the web
+   * unlock throttle). Never the passphrase itself.
+   */
+  | { type: 'passphrase_changed' }
+  | { type: 'passphrase_change_failed' }
   | { type: 'paired'; name: string }
   | { type: 'pair_refused'; detail: string }
   | { type: 'sweep_broadcast'; recoveryId: string; txid: string; via: 'electrum' | 'bitcoind'; amountSats: number }

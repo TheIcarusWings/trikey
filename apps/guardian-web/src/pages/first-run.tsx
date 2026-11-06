@@ -11,11 +11,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useApi, usePageTitle } from '@/hooks/use-api';
+import { MIN_PASSPHRASE, PASSPHRASE_HINT, newPassphraseErrors } from '@/lib/passphrase';
 import { passwordRules } from '@/lib/password-manager';
 import { SETUP_CODE_HELP, STAY_ON_NOTE, chainCheckCopy, setupCodeFormatError } from '@/lib/setup';
 import { cn } from '@/lib/utils';
-
-const MIN_PASSPHRASE = 12;
 
 function ChainCheck({ preflight }: { preflight: SetupPreflight }) {
   const copy = chainCheckCopy(preflight);
@@ -134,9 +133,8 @@ export function FirstRunPage() {
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    const next: typeof errors = {};
-    if (passphrase.length < MIN_PASSPHRASE) next.passphrase = `Use at least ${MIN_PASSPHRASE} characters. A few random words work well.`;
-    if (confirm !== passphrase) next.confirm = "The two passphrases don't match.";
+    // The guardian's own rule (lib/passphrase.ts), the same as "Change passphrase" checks.
+    const next: typeof errors = { ...newPassphraseErrors({ passphrase, confirm }) };
     const chosen = preflight.relayOptions.filter((r) => relays[r.url]).map((r) => r.url);
     if (chosen.length === 0) next.relays = 'Choose at least one relay so your phone can reach this guardian.';
     setErrors(next);
@@ -196,7 +194,7 @@ export function FirstRunPage() {
             </p>
           ) : (
             <p id="g-pass-hint" className="m-0 text-[13px] leading-[18px] text-muted-foreground">
-              At least {MIN_PASSPHRASE} characters. A few random words work well.
+              {PASSPHRASE_HINT}
             </p>
           )}
         </div>

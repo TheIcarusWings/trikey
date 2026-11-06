@@ -12,6 +12,7 @@ import { FirstRunPage } from '@/pages/first-run';
 import { HomePage } from '@/pages/home';
 import { HostPage } from '@/pages/host';
 import { LockedPage } from '@/pages/locked';
+import { PassphrasePage } from '@/pages/passphrase';
 import { PhonesPage } from '@/pages/phones';
 import { RecoveryPage } from '@/pages/recovery';
 import { ResetPage } from '@/pages/reset';
@@ -114,6 +115,7 @@ export function App() {
                 <Route path="/recovery" element={<RecoveryPage />} />
                 <Route path="/phones" element={<PhonesPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/passphrase" element={<PassphrasePage />} />
                 <Route path="/reset" element={<ResetPage />} />
                 <Route path="/host" element={<HostPage />} />
                 {/* Earlier addresses of the pages that became Phones, Home and Settings. */}

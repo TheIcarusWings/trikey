@@ -5,7 +5,7 @@
  *   without a session: GET /status (reduced: `PublicStatus`), POST /session, DELETE /session,
  *                      and before setup GET /setup/preflight, POST /setup/code, POST /setup (which signs the browser in)
  *   locked:            GET /status, GET /wallet (read-only), POST /unlock, POST /reset
- *   unlocked:          everything (GET and PUT /relays included)
+ *   unlocked:          everything (GET and PUT /relays, POST /passphrase included)
  *
  * Without a session anything else answers 401 `unauthenticated`; with one, 409 `setup_required` or
  * `locked` as before (security review 2026-10, finding 10b).
@@ -671,6 +671,22 @@ export function buildRoutes(g: Guardian): Route[] {
           walletId: reg.walletId,
         };
         return ok(body);
+      },
+    },
+
+    // Change the passphrase (unlocked only): the current one through the web unlock's throttle, the new one by setup's
+    // rules. Every session ends; the browser that changed it is signed in again with a fresh cookie.
+    {
+      method: 'POST',
+      path: '/passphrase',
+      handler: async ({ body, session }) => {
+        requireUnlocked(g);
+        const input = (body ?? {}) as { passphrase?: unknown; newPassphrase?: unknown };
+        const r = await g.changePassphrase({ passphrase: input.passphrase, newPassphrase: input.newPassphrase });
+        if (r.ok) return { status: 200, body: await guardianStatus(g), headers: signedIn(g, session.secure) };
+        if (r.code === 'bad_passphrase') throw new HttpError(401, 'bad_passphrase', 'That is not the current passphrase.', r.retryAfterSeconds);
+        if (r.code === 'rate_limited') throw new HttpError(429, 'rate_limited', 'Too many tries. Wait and try again.', r.retryAfterSeconds);
+        throw new HttpError(r.code === 'invalid' || r.code === 'same_passphrase' ? 400 : 409, r.code, 'message' in r ? r.message : 'Passphrase change refused.');
       },
     },
 

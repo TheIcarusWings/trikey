@@ -87,7 +87,8 @@ export interface FundedOutput {
 
 export class GuardianRig {
   readonly clock: ManualClock;
-  readonly passphrase: string;
+  /** The unlock passphrase: set at setup; a test that changes it (`POST /api/passphrase`) sets the new one here. */
+  passphrase: string;
   readonly relays: DevRelay[] = [];
   /** Relays started later (`addRelay`), which the guardian was not set up with: for changing its relays. */
   readonly extraRelays: DevRelay[] = [];

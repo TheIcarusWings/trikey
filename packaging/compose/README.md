@@ -317,7 +317,9 @@ in the phone app: set up a new guardian, then the phone and the hardware wallet 
 the new guardian's key (alpha test plan, step 13).
 
 So you do not need to back the volume up. Do not restore an old copy over a running guardian either: it would carry
-out-of-date limits and recovery state.
+out-of-date limits and recovery state. And a copy you did make holds key 3 under the passphrase of its day: after you
+change the passphrase (the web page, Settings, Passphrase) an older copy still opens with the old one, so delete it or
+keep it as safe as the old passphrase.
 
 - **Never** run `docker compose down -v` (the `-v` deletes the volume) unless you mean to delete the guardian.
   `docker compose down` and `up` keep it.

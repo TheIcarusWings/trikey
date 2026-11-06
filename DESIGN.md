@@ -205,9 +205,10 @@ docs/design/hardware-auth-path.md §9.
   - wallet, view and receive only (also while locked): balance, payments, the daily limit used and left, the receive address by the phone's rule (`GET /api/wallet`);
   - current rules;
   - recoveries in progress;
-  - notifications: email, ntfy, webhook and Telegram alerts ("Alerts beyond nostr").
+  - notifications: email, ntfy, webhook and Telegram alerts ("Alerts beyond nostr");
+  - the passphrase: changed here and only here ("Changing the passphrase").
 - **Keeps key 3 only in memory.** On disk it is encrypted. After any restart the guardian is *locked* until the user unlocks it with:
-  - **a passphrase:** stretched with Argon2id, in the web UI or typed on the phone; always there, never removable;
+  - **a passphrase:** stretched with Argon2id, in the web UI or typed on the phone; always there, never removable, changed in the web UI only ("Changing the passphrase");
   - **or, if the owner turned it on, the hardware wallet:** one confirmation on a Ledger or Trezor through the phone, which opens an extra unlock slot ("Unlocking the guardian with the hardware wallet").
   
   A stolen, unplugged box is useless.
@@ -430,6 +431,22 @@ printed and kept with the hardware wallet.
   - *A compromised phone* (malware on it). It sees the signature in transit and could keep it, so it could unlock the guardian later without the device, until the slot changes: the same as it already sees the passphrase whenever the owner types it on the phone. Unlike the passphrase, the signature opens nothing else (no other use, no other wallet, no other guardian; the text says so) and costs only an off-and-on to replace. A phone suspected of malware: turn the option off, or off and on again from a clean phone.
   - *Replay of a signature elsewhere.* The text names the wallet, the guardian's nostr key, the network and a random slot id, and its prefix is no approval's (rule 4), so it is worthless anywhere else, and no other text of the device unlocks anything.
   - *A guest's hardware wallet* (family hosting) never unlocks the host's box: guests cannot call the methods and are never told the feature.
+- **Changing the passphrase** ("Changing the passphrase"). Who could use it, and what for:
+  - *Someone with a web session and the passphrase* (a browser left signed in, a leaked passphrase) can change it and
+    so keep the owner out of the web UI and out of unlocking after a restart. They could already reset the guardian,
+    which costs the owner more (a new key 3); the change is announced to the phone and the owner's channels, the
+    hardware unlock still works if it was on, and the money stays with the phone and the hardware wallet (Replace
+    guardian). The change cannot touch key 3, the rules or the wallet.
+  - *A phone thief* cannot change it: there is no phone method ("Not from the phone" there says why).
+  - *Guessing the current passphrase through the change form* is counted by the web unlock's throttle like a wrong
+    unlock, so it is no faster than guessing at the unlock form; it can delay the owner's web unlock, as wrong unlocks
+    already can ("Nuisances").
+  - *A stolen disk or an old copy of the data.* A disk or a copy taken after the change needs the new passphrase. One
+    taken before still opens with the old passphrase and gives the same key 3: the change protects the future, not
+    copies already made (a backup of the box, a copied volume, a snapshot). If both the old passphrase and such a copy
+    may be out, use Replace guardian.
+  - *A crash in the middle* leaves the old keystore or the new one (one atomic rename), and the unlock slots are bound to
+    either (the same key 3 and `createdAt`).
 - **Phishing that imitates an alert.** Trikey alerts never carry a link or a button and never ask anyone to sign in,
   in nostr DMs, email, ntfy, Telegram or webhooks alike (the guardian breaks anything link-like before sending, and its name in
   messages may hold no dots); each message says so. A message with a link is not from the guardian. Email and ntfy are
@@ -455,7 +472,7 @@ printed and kept with the hardware wallet.
 - **First run without a platform login (plain Docker).** Before setup there is no passphrase, so whoever reached the web UI first could set the guardian up and own key 3. On plain Docker the guardian therefore asks for a one-time setup code (80 bits, new at every start, in memory only) that it prints in its log: reading it takes the Docker access only the owner has. The compose file publishes the web UI on 127.0.0.1 by default; on a LAN the passphrase crosses it over plain HTTP, so the guide points to Tailscale or the NAS's HTTPS proxy. A DNS-rebinding page gets no session (its origin is not the guardian's) and so no more than a signed-out client.
 - **The guardian's nostr key is stored unencrypted** (mode 0600), so a locked guardian can still answer the phone and receive an unlock. It can't sign transactions.
 - **The guardian's disk plus archived gift wraps** (closed for unlocks from this release; "Sealed unlock"). Every request to the guardian is a gift wrap to its nostr key, which is on its disk. Gift wraps are short-lived on the relays from 0.1.10, but a relay may keep them. Someone who steals the disk *and* holds such an archive could open every past request: before sealing, a `guardian.unlock` gave them the passphrase (and so key 3's seed from `keystore.json`), and a `guardian.unlock` or `unlock.hardware.add` the slot signature (and so the seed from `unlock-slots.json`). Now the phone seals those secrets to a key the guardian holds in memory only and replaces at every lock and unlock and after every use: the disk never holds what opens a seal, and once the key is replaced nothing anywhere does. The key it was locked with is zeroed the moment it unlocks; the one an add used, right after the add. The phone's one-time key is zeroed at once too, so a stolen phone cannot open its own old seals. What remains:
-  - **Unlocks and adds before this release, and from older apps.** Their wraps were or are in the clear (the guardian accepts them, and its Activity says "sent it unsealed" so the owner updates the app). A passphrase once typed on a phone before sealing stays exposed to this attack until the passphrase changes, which is not built yet. A slot signature sent in the clear stops mattering once the option is turned off and on again from an updated app (a new slot, its signature sealed).
+  - **Unlocks and adds before this release, and from older apps.** Their wraps were or are in the clear (the guardian accepts them, and its Activity says "sent it unsealed" so the owner updates the app). A passphrase once typed on a phone before sealing stays exposed to this attack until the owner changes it (web UI, Settings > Passphrase; "Changing the passphrase"), after which it opens no keystore written since; a copy of the disk taken before the change still opens with it (see there). A slot signature sent in the clear stops mattering once the option is turned off and on again from an updated app (a new slot, its signature sealed).
   - **An attacker who holds the nostr key and acts live.** With the disk's nostr key they can answer the phone as the guardian (from the stolen box or a copy) and show it their own unlock key; the phone then seals the next unlock to them. Sealing defeats a passive archive, not impersonation: a stolen box is "Replace guardian", never unlock a box you no longer hold. The phone does not pin `sealed_unlock` once seen: an impersonator would show the feature anyway, and pinning would only strand a guardian rolled back to an older version.
   - **The running box's memory.** Whoever reads the guardian's memory holds the current sealing key, and would see the next unlock or add anyway (and, unlocked, key 3 itself); the key is replaced after every use and every failed try, so near-miss passphrases sealed earlier cannot be read from it later.
   - **The web UI's passphrase over plain HTTP on the LAN** is a separate exposure (a device on the same network can read it in transit), outside the relays and unchanged here: keep the web UI behind the platform's proxy, `127.0.0.1`, Tailscale or an HTTPS proxy ("First run without a platform login").
@@ -464,7 +481,7 @@ printed and kept with the hardware wallet.
 - **Nuisances, not thefts:**
   - Anyone who knows a wallet address can send a coin after a recovery starts. That blocks completion, because the sweep must spend every coin, until the surviving key adds it with `recovery.update` (the delay runs on).
   - Anyone who sees the guardian's npub on a relay can burn a 5-minute pairing code with wrong attempts (at no disk write: a wrong secret is refused before anything is recorded).
-  - Anyone with a web session can delay unlocks through the web throttle; without one, only sign-ins, which have their own throttle. A stolen phone's guesses never delay the web UI.
+  - Anyone with a web session can delay unlocks through the web throttle (wrong unlocks, or wrong current passphrases in "Change passphrase", which share it); without one, only sign-ins, which have their own throttle. A stolen phone's guesses never delay the web UI.
   - A flood of refused requests costs no state write and only pushes out older refusals in the activity log, never co-signatures or other entries.
 
 ## Entropy
@@ -949,7 +966,8 @@ wallet"; code: `apps/guardian/src/unlock-slots.ts`, `TrikeyWallet.enableHardware
   it on again with its own hardware wallet, once confirmed with `hardware.confirm`: a lost or stolen device must not
   keep unlocking); a slot of a wallet the box no longer guards is also dropped at start. A reset deletes every slot
   before it replaces key 3 (they hold the old seed), and a slots file bound to another keystore is dropped. A passphrase
-  change (not built yet) needs nothing: the slots do not depend on the passphrase. Family hosting: never; a guest's
+  change needs nothing: the slots do not depend on the passphrase, and the change keeps the keystore's `createdAt`
+  they are bound to ("Changing the passphrase"). Family hosting: never; a guest's
   hardware wallet must not unlock the host's guardian, so guests cannot call the methods and are not told the feature.
 - **QR devices: only the models that sign a text by QR.** Coldcard Q, Jade, Keystone 3, Passport Prime and Specter DIY
   sign the unlock text over a text QR (two round trips when it is turned on, one per unlock); a Coldcard Mk4 or Q over NFC
@@ -1004,6 +1022,73 @@ PROTOCOL.md, "Sealed unlock"; code: `packages/protocol/src/sealed-unlock.ts`, `G
   logs `guardian.unlock_unsealed` and adds "sent it unsealed (an older Trikey app): update the app" to the Activity line;
   not refused, because the passphrase is how the owner gets back in after a restart. A newer phone seals whenever the
   guardian lists the feature and sends in the clear only to a guardian without it, which answers `sealed` `-32602`.
+
+## Changing the passphrase (decided 2026-11-06, built)
+
+Until now the passphrase chosen at setup could never change, so one typed into an app before sealed unlock, read over
+someone's shoulder or kept in a password manager that leaked stayed good for the life of the box. The owner can now
+change it, **in the web UI only** (Settings, Passphrase). Code: `keystore.ts` `changeKeystorePassphrase`,
+`Guardian.changePassphrase`, `POST /api/passphrase` (apps/guardian-web/API.md), the page `apps/guardian-web/src/pages/passphrase.tsx`;
+protocol: PROTOCOL.md, "Changing the passphrase" (a feature and an alert, no method).
+
+- **The same key 3, encrypted again.** The guardian opens `keystore.json` with the current passphrase, checks the seed
+  gives the key on file and is the very seed it holds unlocked, seals it again under the new passphrase with a **fresh
+  Argon2id salt and a fresh nonce** (and today's KDF parameters, so an old keystore gets them too), opens the new file
+  with the new passphrase and compares the seed, and only then replaces `keystore.json` with one atomic rename
+  (`writeFileAtomic`: a temp file in the same directory, fsync, rename, fsync of the directory). A crash leaves the old
+  file or the new one, never neither and never half of one (a test simulates a crash between the fsync and the rename).
+  Nothing else is written: key 3, its public data, the wallets, the rules, the relays and the nostr identity stay as
+  they are. A new key 3 is a reset, not a passphrase change.
+- **The unlock slots keep working because `createdAt` is kept.** A hardware unlock slot is bound to the keystore by key
+  3's account pubkey and the keystore's `createdAt` ("Unlocking the guardian with the hardware wallet"). The change keeps
+  both, so `unlock-slots.json` is not touched and every slot still opens to the same seed, before and after a restart.
+  The alternative, a new `createdAt` and every slot re-bound in the same step, would write two files that cannot be
+  replaced together: a crash between them would leave a slots file bound to "another keystore", which the next start
+  drops, silently turning the owner's hardware unlock off. `createdAt` now reads as "when this key 3 was made", which is
+  what it always meant to the slots; a reset still changes it (and key 3).
+- **Only while unlocked, the current passphrase through the unlock's throttle.** The page is behind a web session
+  already, but a session is not the passphrase (a browser left signed in), so the current passphrase is asked again and
+  counted by the web unlock's throttle exactly as a wrong unlock is (persisted, backoff after 3 failures); a wrong one is
+  logged ("Passphrase change refused"). The new passphrase follows setup's rule, at least 12 characters after NFKC (the
+  page and the guardian share it, a test holds them to the same answers), and must differ from the current one. Locked,
+  the change is refused: unlock first.
+- **Sessions.** The passphrase also signs browsers in, so every web session made with the old one ends; the browser that
+  changed it gets a fresh session cookie in the same answer (its old token ends too). Anyone else signs in again with the
+  new passphrase.
+- **Seen and said.** Activity: "Passphrase changed" (and that other browsers were signed out); the paired phone gets a
+  `passphrase_changed` alert and shows a security line ("Guardian passphrase changed … if that wasn't you, lock the
+  guardian and use Replace guardian"); the owner's own email, ntfy, webhook and Telegram channels get the same words,
+  like the other changes made in the web UI (relays, alert channels, chain source). Alert contacts are not told: the
+  passphrase is the owner's box credential, not a wallet rule. Neither passphrase is logged, stored outside the keystore
+  or kept by the page after the request (tests scan the log, the data directory and the Activity).
+- **What the page says afterwards.** The old passphrase no longer unlocks the guardian or signs in; every copy of it
+  (a password manager, paper, one typed into an app older than 0.1.17, which sent it unsealed) is worthless against the
+  running box. The recovery does not use the passphrase: the recovery code and backup file restore key 2, the recovery
+  sheet lets a new phone reach the guardian with the hardware wallet, and Replace guardian needs only the phone and the
+  hardware wallet ("Recovery flows"); none of them is printed again. (The guardian itself still needs the new passphrase,
+  or the hardware unlock, to co-sign anything after a restart, a recovery's sweep included.)
+- **Backups hold the old passphrase's keystore.** Key 3 does not change, so any copy of the data directory made before
+  the change opens with the old passphrase and gives the same key 3: a copied Docker volume or data folder
+  (packaging/compose, "Moving to another computer"), a NAS snapshot, and on Umbrel a backup of the box that includes
+  this app's data. StartOS backups leave the guardian out (packaging/start9, `backups.ts`). The page says so: delete
+  such copies, or keep them as safe as the old passphrase. If the old passphrase **and** such a copy may both be in
+  someone's hands, a passphrase change is not enough: key 3 has to change, which is "Replace guardian".
+- **Not from the phone (decided).** The phone's Settings > Guardian says where to change it (when the guardian lists
+  `passphrase_change`) and that the app cannot. Why not a phone path, even sealed (the `sealed_unlock` machinery would
+  carry it) and approved by the hardware wallet:
+  - *A phone thief who knows the passphrase* (watched it typed, or it is reused) could otherwise change it and so take
+    the web UI from the owner: sign-in, unlock after a restart, and with it reset, relays and alert channels. A
+    hardware approval would stop a thief with the phone alone; one with the phone and the hardware wallet already moves
+    every coin (2 of 3), so the approval would make the path safe, not useful.
+  - *The benefit is small.* The passphrase is the box's credential and is typed mostly on the box's own page, behind
+    the platform's login on Umbrel and Start9; a change is rare and can wait until the owner is at that page. A phone
+    path would add a method, a sealing purpose carrying two passphrases, a hardware text, its throttle and its older-app
+    cases, for a convenience few would use.
+  - *Every phone-side mistake stays harmless.* Without a method there is nothing a malicious relay, an archived wrap or
+    malware on the phone can replay or provoke: the phone holds no passphrase and can only unlock with it.
+- **What it does not do.** It does not rotate key 3, the nostr identity, the alert channels' key file or the hardware
+  unlock slots (turn the hardware unlock off and on for a new slot); it does not reach guests (family hosting), whose
+  keys derive from the same seed and are unaffected; and it does not change a copy of the data made earlier.
 
 ## Later: Taproot and threshold signatures (decided 2026-11-03: not now)
 
@@ -1085,7 +1170,7 @@ and the guardian as the pocket's watchtower (Spark's watchtower "holds no toxic 
 - `packages/core/`: descriptors (BIP380 checksum, BIP389 multipath), BIP48 wallets, PSBT build, sign, analyze and finalize, software signer. `tweak.ts` holds the BIP 89 tweak math family hosting uses; `keySetId` names a hosted wallet.
 - `packages/protocol/`: the nostr RPC (schemas, gift-wrap transport with per-peer NIP-44 conversation key caching, replay guard, client and server, pairing and recovery URIs, NIP-06 phone identity, an in-memory relay for tests). Spec in `PROTOCOL.md`.
 - `packages/wallet/`: the phone's side (key 2, pairing, payments, rules, recovery, backup, labels and their encrypted copy on the guardian), platform-agnostic; the app supplies storage and hardware adapters. It finishes a recovery (switching to the adopted wallet after checking it, then `confirmHardware()`), replaces the guardian (pair the new one, sweep, retire the old wallet, sweep stray coins later), locks the guardian remotely, parses every Trikey QR (`parseScannedCode`), and keeps a send log that travels in the backup. Chain data comes from the guardian.
-- `apps/guardian/`: the guardian. `src/policy/` is the policy engine (spend checks, daily limit, rule changes with BIP137 approvals, Delay & Notify, wallet rotation with one active wallet plus retired ones, state format version 2 with migration from version 1). Around it: key storage (Argon2id, m=64 MiB, t=3, then XChaCha20-Poly1305), unlock slots for the hardware wallet (`unlock-slots.ts`), lock/unlock (also from the phone), reset, the nostr RPC server and NIP-17 alert DMs behind one shared inbox, email, ntfy, webhook and Telegram alerts (`src/notify/`), an Electrum client (sweep completeness, broadcast, chain time) and the HTTP API for the web UI. `src/hosting/` hosts guests' wallets (family hosting): the slot registry and invites, one engine per hosted wallet, routing by sender, guests' alerts and recoveries. Entry point `src/main.ts`.
+- `apps/guardian/`: the guardian. `src/policy/` is the policy engine (spend checks, daily limit, rule changes with BIP137 approvals, Delay & Notify, wallet rotation with one active wallet plus retired ones, state format version 2 with migration from version 1). Around it: key storage (Argon2id, m=64 MiB, t=3, then XChaCha20-Poly1305), unlock slots for the hardware wallet (`unlock-slots.ts`), lock/unlock (also from the phone), passphrase change (web UI only), reset, the nostr RPC server and NIP-17 alert DMs behind one shared inbox, email, ntfy, webhook and Telegram alerts (`src/notify/`), an Electrum client (sweep completeness, broadcast, chain time) and the HTTP API for the web UI. `src/hosting/` hosts guests' wallets (family hosting): the slot registry and invites, one engine per hosted wallet, routing by sender, guests' alerts and recoveries. Entry point `src/main.ts`.
 - `apps/guardian-web/`: the guardian's web UI, including the recovery code and the reset. Its API is in `API.md`.
 - Savings (optional, docs/design/savings-and-limit-off.md): `SAVINGS_ACCOUNT` in core; `savings.*` in the protocol; the guardian's watch (`apps/guardian/src/savings.ts`); `TrikeyWallet.startSavings` ... `replaceSavingsKey` in `packages/wallet`; `apps/mobile/app/savings/`.
 - `packages/recovery-key/`: Recovery Key mode (no home server): the printed Recovery Kit, the chain of BIP 68 timelocked refills and its scheduler, the single-key spending balance with CPFP, an Esplora client, and recovery with any two keys.

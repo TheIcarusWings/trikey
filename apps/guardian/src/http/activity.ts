@@ -382,6 +382,19 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
       };
     case 'reset':
       return { ...base, kind: 'system', event: 'Guardian reset on this box: a new key 3 was created and the old one destroyed', summary: 'Guardian reset', signedBy: null, sats: null, result: 'ok' };
+    case 'passphrase_changed':
+      return {
+        ...base,
+        kind: 'system',
+        event:
+          'Passphrase changed on this box: the old passphrase no longer unlocks the guardian or signs in to this page, and every other browser was signed out. Key 3 and the hardware wallet unlock are unchanged',
+        summary: 'Passphrase changed',
+        signedBy: null,
+        sats: null,
+        result: 'ok',
+      };
+    case 'passphrase_change_failed':
+      return { ...base, kind: 'system', event: 'Passphrase change refused: the current passphrase was wrong (counted like a wrong unlock)', summary: 'Passphrase change refused', signedBy: null, sats: null, result: 'refused' };
     case 'reset_refused':
       return { ...base, kind: 'system', event: `Guardian reset refused: ${e.detail}`, signedBy: null, sats: null, result: 'refused' };
     case 'paired':

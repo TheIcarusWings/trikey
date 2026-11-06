@@ -862,8 +862,8 @@ export const WALLET_ROUTED_METHODS: ReadonlySet<MethodName> = new Set<MethodName
 /** Alerts whose `walletId` has a meaning of its own (the wallet retired, adopted, Savings, a hosted wallet). */
 const NAMES_A_WALLET: ReadonlySet<Alert['type']> = new Set<Alert['type']>(['wallet_adopted', 'wallet_retired', 'savings_moved', 'savings_unwatched', 'hosting_ending', 'wallet_paused', 'wallet_added']);
 
-/** Alerts about the whole box (its lock, relays, channels, chain source): every wallet of the phone takes them. */
-const BOX_ALERTS: ReadonlySet<Alert['type']> = new Set<Alert['type']>(['guardian_locked', 'relays_changed', 'notifications_changed', 'chain_source_changed']);
+/** Alerts about the whole box (its lock, relays, channels, passphrase, chain source): every wallet of the phone takes them. */
+const BOX_ALERTS: ReadonlySet<Alert['type']> = new Set<Alert['type']>(['guardian_locked', 'relays_changed', 'notifications_changed', 'passphrase_changed', 'chain_source_changed']);
 
 /**
  * The guardian client of an own wallet after the first: every request that acts on a wallet names it (`walletId`), so

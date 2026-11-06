@@ -1482,7 +1482,7 @@ const recoveryAlert = {
 /**
  * Alert types mirror the engine's `AlertKind` (`recovery_started`, `recovery_reminder`, `recovery_ready`,
  * `recovery_cancelled`, `recovery_completed`), plus what the service raises itself: `guardian_locked`,
- * `wallet_adopted`, `wallet_retired`, `sp_received`, `relays_changed`, `notifications_changed`, `chain_source_changed` and `wallet_tx`; and `limit_off` / `limit_on` and
+ * `wallet_adopted`, `wallet_retired`, `sp_received`, `relays_changed`, `notifications_changed`, `passphrase_changed`, `chain_source_changed` and `wallet_tx`; and `limit_off` / `limit_on` and
  * `savings_moved`, which the engine records and the service delivers like the recovery alerts.
  */
 export const Alert = z.discriminatedUnion('type', [
@@ -1652,6 +1652,15 @@ export const Alert = z.discriminatedUnion('type', [
      * new list from `guardian.status.notifications`. Phones before this alert drop it (an unknown `type`).
      */
     type: z.literal('notifications_changed'),
+  }),
+  stamped({
+    ...alertBase,
+    /**
+     * Guardians with `passphrase_change`: the owner changed the guardian's passphrase in its web page (the phone cannot).
+     * The old passphrase no longer unlocks it; key 3, the wallet and any hardware unlock slot are unchanged. Sent to the
+     * paired phone (and the owner's own channels), never to a guest. Phones before it drop it (an unknown `type`).
+     */
+    type: z.literal('passphrase_changed'),
   }),
   stamped({
     ...alertBase,

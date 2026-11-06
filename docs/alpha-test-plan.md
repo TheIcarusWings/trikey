@@ -1190,6 +1190,36 @@ step, what the Jade showed (a photo, never your recovery phrase or PIN) and the 
 
 ---
 
+### 18i. Change the guardian's passphrase (optional; a guardian and an app with this release)
+
+The passphrase can be changed on the guardian's web page, never from the phone (DESIGN.md, "Changing the passphrase").
+It encrypts the same key 3 again: your wallet, its rules and the hardware unlock (step 18d) stay as they are.
+
+Do:
+
+1. **Where.** On the phone, Settings, **Guardian**: a note says the passphrase is changed in the guardian's web page and
+   that the app can't change it. On the web page, sign in on a second browser (or a private window) too, so there are
+   two sessions.
+2. **A mistake first.** Settings, **Passphrase**, **Change passphrase…**. Type a wrong current passphrase and a good new one
+   twice. You should see "That isn't the current passphrase."; Activity: "Passphrase change refused". Try a new
+   passphrase shorter than 12 characters, and two that differ: the page says so before sending anything.
+3. **Change it.** The right current passphrase, a new one twice (let your password manager generate and save it if
+   you use one). It takes a few seconds, longer on a Raspberry Pi. You should see "Passphrase changed" with notes: the
+   old passphrase no longer works, your recovery does not use the passphrase, and copies of the guardian's data made
+   before (a backup, a copied volume) still open with the old one. Activity: "Passphrase changed". The phone's Activity:
+   "Guardian passphrase changed". If you set up email, ntfy, Telegram or a webhook (step 15), it says so there too. The
+   second browser is signed out; this one stays signed in.
+4. **Old and new.** Sign out and in again: the old passphrase is refused, the new one works. Lock the guardian from the
+   phone and unlock it there: the old passphrase is refused ("That passphrase didn't work"), the new one unlocks.
+5. **After a restart.** Restart the guardian. If the hardware unlock is on (step 18d), it unlocks with your device as
+   before, without turning it off and on. Otherwise unlock with the new passphrase. A payment within the limit goes
+   through.
+
+If it goes wrong, collect: the step and the exact message, the guardian's Activity page and log (the log lines
+`guardian.passphrase_changed` and `guardian.passphrase_change_failed` hold no secret). **Never send either passphrase.**
+
+---
+
 ### 18. Host a family member (optional; two phones and two hardware wallets)
 
 Family hosting (docs/design/family-hosting.md): your guardian holds key 3 for someone else's wallet. You need a second

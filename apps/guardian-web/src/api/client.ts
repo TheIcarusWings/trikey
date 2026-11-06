@@ -22,6 +22,7 @@ import type {
   RelaysInput,
   PublicStatus,
   ResetInput,
+  ChangePassphraseInput,
   Rules,
   SetupInput,
   SetupPreflight,
@@ -167,6 +168,13 @@ export interface GuardianApi {
   resetChain(): Promise<ChainSettings>;
   /** "Test connection": connects to `input` without switching to it. */
   testChain(input: ChainSourceInput): Promise<ChainTestResult>;
+
+  /**
+   * Changes the passphrase (the guardian unlocked): the same key 3 encrypted again under `newPassphrase`. Every other
+   * session ends; this browser is signed in again. Rejects with `bad_passphrase` (the current one is wrong, counted like
+   * a wrong unlock), `rate_limited`, `invalid` (the new one breaks the setup rule), `same_passphrase`, `locked`.
+   */
+  changePassphrase(input: ChangePassphraseInput): Promise<GuardianStatus>;
 
   /**
    * Forgets every wallet and creates a new key 3 (the old one is destroyed). Needs the passphrase and

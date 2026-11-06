@@ -275,6 +275,14 @@ export interface SignInInput extends UnlockInput {
   unlock?: boolean;
 }
 
+/** `POST /api/passphrase`: change the passphrase (unlocked only). */
+export interface ChangePassphraseInput {
+  /** The current passphrase. Sent once and dropped. */
+  passphrase: string;
+  /** The new one (at least 12 characters, not the current one). Sent once and dropped. */
+  newPassphrase: string;
+}
+
 /** What `resetGuardian` must be confirmed with, typed exactly (the guardian checks it too). */
 export const RESET_CONFIRMATION = 'RESET GUARDIAN';
 

@@ -141,6 +141,8 @@ export function createHttpApi(base = ''): GuardianApi {
     setChain: (input) => request<ChainSettings>('PUT', '/chain', input),
     resetChain: () => request<ChainSettings>('DELETE', '/chain'),
     testChain: (input) => request<ChainTestResult>('POST', '/chain/test', input),
+    // The same key 3 under a new passphrase: no new key, so no browser entropy.
+    changePassphrase: (input) => request<GuardianStatus>('POST', '/passphrase', { passphrase: input.passphrase, newPassphrase: input.newPassphrase }),
     resetGuardian: async (input) => request<GuardianStatus>('POST', '/reset', withBrowserEntropy(input)),
 
     startPairing: () => request<PairingSession>('POST', '/pairing'),
