@@ -117,7 +117,8 @@ import {
   newMnemonic,
 } from './keys.js';
 import { QR_KINDS, defaultQrModelOf, isQrModel, qrModelInfo, type QrModel } from './qr-devices.js';
-import { isHardwareDisconnect, type CloudBackupStore, type HardwareKind, type HardwareProvider, type HardwareSigner, type HardwareWalletPolicy, type KeyValueStore, type PasskeyPrf, type SecureKeyStore } from './platform.js';
+import { isNfcModel } from './nfc-devices.js';
+import { isHardwareDisconnect, type CloudBackupStore, type HardwareKind, type HardwareProvider, type HardwareSigner, type HardwareWalletPolicy, type KnownHardware, type KeyValueStore, type PasskeyPrf, type SecureKeyStore } from './platform.js';
 import { GuardianSilentPaymentScanner, GuardianSingleKeyChain } from './guardian-sp.js';
 import { TxCache } from './txcache.js';
 import { FEE_BUMP_DATA_REASONS, FeeBumpCheckError, checkFeeBump, type FeeBumpCheckReason } from './fee-bump-check.js';
@@ -400,20 +401,26 @@ export interface NotesBroughtBack {
 /** How long after the last label change the copy goes to the guardian (ms). */
 export const NOTES_DEBOUNCE_MS = 30_000;
 /**
- * Devices that sign Trikey's texts with the authorization key: Ledger and Trezor over USB or Bluetooth, and QR devices
- * whose model signs a text QR (qr-devices.ts: Coldcard Q, Jade, Keystone 3, Passport Prime, Specter DIY). Notes and
- * hardware unlock also need the same signature every time (RFC 6979), which is checked when they are turned on.
+ * Devices that sign Trikey's texts with the authorization key: Ledger and Trezor over USB or Bluetooth, a Coldcard (Mk4
+ * or Q) over NFC (nfc-devices.ts), and QR devices whose model signs a text QR (qr-devices.ts: Coldcard Q, Jade,
+ * Keystone 3, Passport Prime, Specter DIY). Notes and hardware unlock also need the same signature every time (RFC 6979),
+ * which is checked when they are turned on.
  */
-const MESSAGE_HARDWARE: readonly HardwareKind[] = ['ledger', 'trezor'];
+const MESSAGE_HARDWARE: readonly HardwareKind[] = ['ledger', 'trezor', 'coldcard-nfc'];
 function signsTexts(rec: { kind: HardwareKind; qrModel?: QrModel } | undefined): boolean {
   if (!rec) return false;
   if (MESSAGE_HARDWARE.includes(rec.kind)) return true;
   return QR_KINDS.includes(rec.kind) && qrModelInfo(rec.qrModel ?? defaultQrModelOf(rec.kind)).signsMessages;
 }
+/** What the wallet knows of its hardware wallet, for a provider that connects it again (`KnownHardware`). */
+function knownOf(rec: { fingerprint: string; account: { path: string; xpub: string } }): KnownHardware {
+  return { fingerprint: rec.fingerprint, account: { path: rec.account.path, xpub: rec.account.xpub } };
+}
+
 /** The words for a device that cannot sign Trikey's texts. */
 function noTextsMessage(rec: { kind: HardwareKind; qrModel?: QrModel } | undefined): string {
   const qr = rec && QR_KINDS.includes(rec.kind) ? qrModelInfo(rec.qrModel ?? defaultQrModelOf(rec.kind)) : undefined;
-  const which = 'Ledger, Trezor, or by QR code a Coldcard Q, Jade, Keystone 3, Passport Prime or Specter DIY';
+  const which = 'Ledger, Trezor, a Coldcard Mk4 or Q over NFC, or by QR code a Coldcard Q, Jade, Keystone 3, Passport Prime or Specter DIY';
   return qr ? `${qr.whyNot ?? ''} This needs a hardware wallet that signs a text: ${which}.`.trim() : `This needs a hardware wallet that signs a text: ${which}.`;
 }
 
@@ -928,7 +935,7 @@ function phoneAccountOf(descriptor: string, network: Network): number {
   }
 }
 
-const HARDWARE_KINDS: readonly HardwareKind[] = ['ledger', 'trezor', 'coldcard', 'bitbox02', 'jade', 'qr'];
+const HARDWARE_KINDS: readonly HardwareKind[] = ['ledger', 'trezor', 'coldcard', 'bitbox02', 'jade', 'qr', 'coldcard-nfc'];
 const isHardwareKind = (k: unknown): k is HardwareKind => typeof k === 'string' && (HARDWARE_KINDS as readonly string[]).includes(k);
 
 /** A Savings record as a backup holds it (its account is set by the caller: 1 for the first wallet, 2n + 1 after). */
@@ -1011,7 +1018,7 @@ interface PairingSession {
 /** The name Savings is registered under on the hardware wallets (16 characters at most). */
 export const SAVINGS_POLICY_NAME = 'Trikey savings';
 /** Devices that keep a multisig wallet registered (and, for Ledger, need its HMAC back to sign for it). */
-const REGISTERING_KINDS = new Set<HardwareKind>(['ledger', 'bitbox02', 'jade', 'coldcard']);
+const REGISTERING_KINDS = new Set<HardwareKind>(['ledger', 'bitbox02', 'jade', 'coldcard', 'coldcard-nfc']);
 
 /** A "Create Savings" in progress (in memory only: nothing is stored or registered with the guardian until it finishes). */
 interface SavingsDraft {
@@ -1825,7 +1832,7 @@ export class TrikeyWallet {
 
   /** Connects a hardware wallet and checks it is the wallet's own (`rec`). */
   private async connectSame(rec: HardwareRecord): Promise<HardwareSigner> {
-    const hw = await this.hardwareProvider().connect({ kind: rec.kind, ...(rec.qrModel ? { qrModel: rec.qrModel } : {}) });
+    const hw = await this.hardwareProvider().connect({ kind: rec.kind, ...(rec.qrModel ? { qrModel: rec.qrModel } : {}), known: knownOf(rec) });
     if (hw.info.fingerprint !== rec.fingerprint) {
       await hw.close().catch(() => {});
       throw new WalletError('hardware_mismatch', `Connect the wallet's hardware wallet (fingerprint ${rec.fingerprint}), not ${hw.info.fingerprint}.`);
@@ -1865,6 +1872,8 @@ export class TrikeyWallet {
       auth: { pubkey: authPubkey, path: authPath },
       addressVerified: false,
       ...(QR_KINDS.includes(hw.info.kind) ? { qrModel: isQrModel(hw.info.qrModel) ? hw.info.qrModel : defaultQrModelOf(hw.info.kind) } : {}),
+      // A Coldcard over NFC: which one (Mk4 or Q), for the words on its NFC screens.
+      ...(hw.info.kind === 'coldcard-nfc' && isNfcModel(hw.info.qrModel) ? { qrModel: hw.info.qrModel } : {}),
     };
   }
 
@@ -6982,7 +6991,7 @@ export class TrikeyWallet {
     if (this.hwSession) return fn();
     const rec = this.s.hardware;
     if (!rec) throw new WalletError('wrong_state', 'No hardware wallet is set up.');
-    const hw = await this.hardwareProvider().connect({ kind: rec.kind, ...(rec.qrModel ? { qrModel: rec.qrModel } : {}) });
+    const hw = await this.hardwareProvider().connect({ kind: rec.kind, ...(rec.qrModel ? { qrModel: rec.qrModel } : {}), known: knownOf(rec) });
     if (hw.info.fingerprint !== rec.fingerprint) {
       await hw.close().catch(() => {});
       throw new WalletError('hardware_mismatch', `Connect the wallet's hardware wallet (fingerprint ${rec.fingerprint}), not ${hw.info.fingerprint}.`);
@@ -7906,7 +7915,7 @@ export class TrikeyWallet {
   /** Connects the Savings device `dev` (checking it is that device), runs `fn`, disconnects (a held connection to it is reused). */
   private async withSavingsDevice<T>(dev: Pick<SavingsDevice, 'kind' | 'fingerprint'>, fn: (hw: HardwareSigner) => Promise<T>): Promise<T> {
     if (this.s.hardware && dev.fingerprint === this.s.hardware.fingerprint) return this.withHardware((hw) => fn(hw));
-    const hw = await this.hardwareProvider().connect({ kind: dev.kind });
+    const hw = await this.hardwareProvider().connect({ kind: dev.kind, known: { fingerprint: dev.fingerprint } });
     try {
       if (hw.info.fingerprint !== dev.fingerprint)
         throw new WalletError('hardware_mismatch', `Connect your Recovery Key (fingerprint ${dev.fingerprint}), not ${hw.info.fingerprint}.`);

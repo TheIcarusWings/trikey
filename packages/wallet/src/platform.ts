@@ -4,7 +4,11 @@
 
 import type { QrModel } from './qr-devices.js';
 
-export type HardwareKind = 'ledger' | 'trezor' | 'coldcard' | 'bitbox02' | 'jade' | 'qr';
+/**
+ * How the phone talks to the hardware wallet. `coldcard`, `jade` and `qr` are air-gapped devices over QR codes;
+ * `coldcard-nfc` is a Coldcard (Mk4 or Q) over NFC (nfc-devices.ts).
+ */
+export type HardwareKind = 'ledger' | 'trezor' | 'coldcard' | 'bitbox02' | 'jade' | 'qr' | 'coldcard-nfc';
 
 export interface HardwareDeviceInfo {
   kind: HardwareKind;
@@ -12,7 +16,7 @@ export interface HardwareDeviceInfo {
   model?: string;
   /** Master key fingerprint, 8 lowercase hex characters. */
   fingerprint: string;
-  /** QR devices: which model it is (chosen by the owner, or suggested by its key export). */
+  /** QR devices: which model it is (chosen by the owner, or suggested by its key export). A Coldcard over NFC: `coldcard-mk4` or `coldcard-q`. */
   qrModel?: QrModel;
 }
 
@@ -65,12 +69,25 @@ export function isHardwareDisconnect(e: unknown): boolean {
   return false;
 }
 
+/**
+ * The wallet's record of a device it connects again: its master fingerprint and, for key 1, its BIP 48 account key. A
+ * provider that would otherwise have to ask the owner for the device's key first (a Coldcard over NFC: one more tap) may
+ * take them from here; every answer of the device is still checked against them (signatures against these keys).
+ */
+export interface KnownHardware {
+  fingerprint: string;
+  account?: { path: string; xpub: string };
+}
+
 /** Finds and connects hardware wallets. One implementation per transport. */
 export interface HardwareProvider {
   readonly kinds: readonly HardwareKind[];
   isAvailable(): Promise<boolean>;
-  /** `qrModel`: for QR devices, the model the owner picked (or the one stored for the wallet's device). */
-  connect(opts?: { kind?: HardwareKind; signal?: AbortSignal; qrModel?: QrModel }): Promise<HardwareSigner>;
+  /**
+   * `qrModel`: for QR devices, the model the owner picked (or the one stored for the wallet's device). `known`: the
+   * device the wallet expects (see `KnownHardware`); the wallet still checks `info.fingerprint` against it.
+   */
+  connect(opts?: { kind?: HardwareKind; signal?: AbortSignal; qrModel?: QrModel; known?: KnownHardware }): Promise<HardwareSigner>;
 }
 
 /** Secrets (the key 2 seed) kept in the Secure Enclave / Android Keystore-backed store. */
