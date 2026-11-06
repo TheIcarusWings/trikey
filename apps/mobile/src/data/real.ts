@@ -297,6 +297,7 @@ function deviceNames(kind: WalletHardwareKind, model: string | undefined): { bra
     case 'coldcard-nfc':
       return { brand: 'Coldcard', model: m || 'Coldcard' };
     case 'jade':
+    case 'jade-ble':
       return { brand: 'Jade', model: m || 'Jade' };
     default:
       return { brand: 'signing device', model: m || 'Signing device' };
@@ -747,6 +748,8 @@ class Service implements RealWalletService {
         return { kind: 'trezor', brand: 'Trezor', model: model ? `Trezor ${model}` : 'Trezor' };
       case 'bitbox02':
         return { kind: 'bitbox02', brand: 'BitBox02', model: 'BitBox02' };
+      case 'jade-ble':
+        return { kind: 'jade-ble', brand: 'Jade', model: model || 'Jade' };
       case 'coldcard-nfc': {
         const name = nfcModelInfo(rec.qrModel).name;
         return { kind: 'coldcard-nfc', brand: name, model: name, ...(isNfcModel(rec.qrModel) ? { qrModel: rec.qrModel } : {}) };

@@ -17,7 +17,7 @@ import { Body } from '@/components/panels';
 import { WalletProvider, useWallet, type AppMode, type ThemePreference } from '@/data';
 import { AppModeProvider, type AppModeControl } from '@/data/app-mode';
 import { availableModes, bootWallet, loadMode, saveMode, type BootedWallet } from '@/data/boot';
-import { NfcBridgeHost, QrBridgeHost } from '@/hardware/ui';
+import { JadeBleBridgeHost, NfcBridgeHost, QrBridgeHost } from '@/hardware/ui';
 import { useAppFonts } from '@/lib/fonts';
 import { getPlatform } from '@/platform';
 import { NAV_THEME, useTheme } from '@/theme/use-theme';
@@ -102,6 +102,7 @@ function Shell({ restarts }: { restarts: number }) {
         {/* These sheets show only while the wallet waits for a hardware wallet. */}
         <QrBridgeHost />
         <NfcBridgeHost />
+        <JadeBleBridgeHost />
         <DevicePromptHost />
         {/* "Incoming 2,000 sats · unconfirmed": a payment the guardian just saw (wallet_tx). */}
         <ToastHost />

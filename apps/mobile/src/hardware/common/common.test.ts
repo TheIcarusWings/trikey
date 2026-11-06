@@ -226,10 +226,10 @@ describe('errors', () => {
 });
 
 describe('providersFor', () => {
-  it('offers Ledger, Trezor, a Coldcard over NFC and QR on phones', () => {
+  it('offers Ledger, Trezor, a Jade over Bluetooth, a Coldcard over NFC and QR on phones', () => {
     for (const platform of ['ios', 'android'] as const) {
       const providers = providersFor(platform);
-      expect(providers.map((p) => p.kinds)).toEqual([['ledger'], ['trezor'], ['coldcard-nfc'], ['qr', 'coldcard', 'jade']]);
+      expect(providers.map((p) => p.kinds)).toEqual([['ledger'], ['trezor'], ['jade-ble'], ['coldcard-nfc'], ['qr', 'coldcard', 'jade']]);
     }
   });
 
@@ -248,9 +248,12 @@ describe('providersFor', () => {
     expect(await all[1]!.isAvailable()).toBe(false);
     await expect(all[0]!.connect()).rejects.toMatchObject({ code: 'unavailable' });
     await expect(all[1]!.connect()).rejects.toMatchObject({ code: 'unavailable' });
-    // No NFC outside the phone app: unavailable, with the reason.
+    // No Bluetooth for a Jade outside the phone app: unavailable, with the reason.
     expect(await all[2]!.isAvailable()).toBe(false);
-    await expect(all[2]!.connect({ kind: 'coldcard-nfc' })).rejects.toMatchObject({ code: 'unavailable', message: expect.stringMatching(/phone app/) });
+    await expect(all[2]!.connect({ kind: 'jade-ble' })).rejects.toMatchObject({ code: 'unavailable', message: expect.stringMatching(/phone app/) });
+    // No NFC outside the phone app: unavailable, with the reason.
+    expect(await all[3]!.isAvailable()).toBe(false);
+    await expect(all[3]!.connect({ kind: 'coldcard-nfc' })).rejects.toMatchObject({ code: 'unavailable', message: expect.stringMatching(/phone app/) });
   });
 
   it('detects a browser camera from navigator.mediaDevices', () => {

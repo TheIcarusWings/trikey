@@ -405,12 +405,12 @@ export interface NotesBroughtBack {
 export const NOTES_DEBOUNCE_MS = 30_000;
 /**
  * Devices that sign Trikey's texts with the authorization key: Ledger and Trezor over USB or Bluetooth, a Coldcard (Mk4
- * or Q) over NFC (nfc-devices.ts), QR devices whose model signs a text QR (qr-devices.ts: Coldcard Q, Jade, Keystone 3,
+ * or Q) over NFC (nfc-devices.ts), a Jade over Bluetooth (ble-devices.ts), QR devices whose model signs a text QR (qr-devices.ts: Coldcard Q, Jade, Keystone 3,
  * Passport Prime, Specter DIY), and Passport gen 2 and Krux from a file on a microSD card. Notes and hardware unlock also
  * need the same signature every time (RFC 6979), which is checked when they are turned on. Hardware unlock is not offered
  * for the microSD models (a card round trip after every guardian restart).
  */
-const MESSAGE_HARDWARE: readonly HardwareKind[] = ['ledger', 'trezor', 'coldcard-nfc'];
+const MESSAGE_HARDWARE: readonly HardwareKind[] = ['ledger', 'trezor', 'coldcard-nfc', 'jade-ble'];
 function signsTexts(rec: { kind: HardwareKind; qrModel?: QrModel } | undefined): boolean {
   if (!rec) return false;
   if (MESSAGE_HARDWARE.includes(rec.kind)) return true;
@@ -428,7 +428,7 @@ function signsFromCard(rec: { kind: HardwareKind; qrModel?: QrModel } | undefine
 /** The words for a device that cannot sign Trikey's texts (`unlock`: for hardware unlock, which the microSD models don't do). */
 function noTextsMessage(rec: { kind: HardwareKind; qrModel?: QrModel } | undefined, unlock = false): string {
   const qr = rec && QR_KINDS.includes(rec.kind) ? qrModelInfo(rec.qrModel ?? defaultQrModelOf(rec.kind)) : undefined;
-  const which = `Ledger, Trezor, a Coldcard Mk4 or Q over NFC, or by QR code a Coldcard Q, Jade, Keystone 3, Passport Prime or Specter DIY${unlock ? '' : ' (or, from a microSD card, a Passport of the 2nd generation or a Krux)'}`;
+  const which = `Ledger, Trezor, a Coldcard Mk4 or Q over NFC, a Jade over Bluetooth, or by QR code a Coldcard Q, Jade, Keystone 3, Passport Prime or Specter DIY${unlock ? '' : ' (or, from a microSD card, a Passport of the 2nd generation or a Krux)'}`;
   return qr ? `${qr.whyNot ?? ''} This needs a hardware wallet that signs a text: ${which}.`.trim() : `This needs a hardware wallet that signs a text: ${which}.`;
 }
 
@@ -943,7 +943,7 @@ function phoneAccountOf(descriptor: string, network: Network): number {
   }
 }
 
-const HARDWARE_KINDS: readonly HardwareKind[] = ['ledger', 'trezor', 'coldcard', 'bitbox02', 'jade', 'qr', 'coldcard-nfc'];
+const HARDWARE_KINDS: readonly HardwareKind[] = ['ledger', 'trezor', 'coldcard', 'bitbox02', 'jade', 'qr', 'coldcard-nfc', 'jade-ble'];
 const isHardwareKind = (k: unknown): k is HardwareKind => typeof k === 'string' && (HARDWARE_KINDS as readonly string[]).includes(k);
 
 /** A Savings record as a backup holds it (its account is set by the caller: 1 for the first wallet, 2n + 1 after). */
@@ -1026,7 +1026,7 @@ interface PairingSession {
 /** The name Savings is registered under on the hardware wallets (16 characters at most). */
 export const SAVINGS_POLICY_NAME = 'Trikey savings';
 /** Devices that keep a multisig wallet registered (and, for Ledger, need its HMAC back to sign for it). */
-const REGISTERING_KINDS = new Set<HardwareKind>(['ledger', 'bitbox02', 'jade', 'coldcard', 'coldcard-nfc']);
+const REGISTERING_KINDS = new Set<HardwareKind>(['ledger', 'bitbox02', 'jade', 'coldcard', 'coldcard-nfc', 'jade-ble']);
 
 /** A "Create Savings" in progress (in memory only: nothing is stored or registered with the guardian until it finishes). */
 interface SavingsDraft {

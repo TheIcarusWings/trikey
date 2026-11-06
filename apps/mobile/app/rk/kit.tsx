@@ -9,7 +9,7 @@ import { Screen } from '@/components/screen';
 import { useWallet, useWalletService, type HardwareKind, type RecoveryKit } from '@/data';
 import { useAction } from '@/lib/use-action';
 
-const KINDS: HardwareKind[] = ['ledger', 'trezor', 'bitbox02', 'qr', 'coldcard-nfc', 'simulated'];
+const KINDS: HardwareKind[] = ['ledger', 'trezor', 'bitbox02', 'qr', 'coldcard-nfc', 'jade-ble', 'simulated'];
 
 /**
  * Makes key 3 and walks through saving it: print the kit (or read the second hardware wallet), then prove it is saved.

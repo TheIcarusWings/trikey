@@ -38,6 +38,11 @@ const STEPS: Record<HardwareKind, string[]> = {
     'Scan it with this phone.',
     'Scan the Trikey wallet back into the device and check that it says Trikey.',
   ],
+  'jade-ble': [
+    'Turn on the Jade and choose Bluetooth when it asks how to connect. The first time, check that the Jade and this phone show the same six digits, and confirm on both.',
+    'Enter your PIN on the Jade. To check it, this phone passes an encrypted message between the Jade and its PIN server (Blockstream’s, unless you set your own).',
+    'Approve the new 2-of-3 wallet on the Jade. Check that it says 2 of 3 and shows the three keys.',
+  ],
   'coldcard-nfc': [
     'Turn NFC on in the Coldcard’s Settings › Hardware On/Off › NFC Sharing.',
     'Share its multisig public key over NFC and hold this phone to it.',
@@ -49,7 +54,7 @@ export default function ConfirmDevice() {
   const router = useRouter();
   const wallet = useWalletService();
   const params = useLocalSearchParams<{ kind?: string; flow?: string; model?: string }>();
-  const kind = (['ledger', 'trezor', 'bitbox02', 'qr', 'coldcard-nfc', 'simulated'].includes(params.kind ?? '') ? params.kind : 'ledger') as HardwareKind;
+  const kind = (['ledger', 'trezor', 'bitbox02', 'qr', 'coldcard-nfc', 'jade-ble', 'simulated'].includes(params.kind ?? '') ? params.kind : 'ledger') as HardwareKind;
   // QR devices: the model picked in the list (it says whether the device can sign Trikey's texts). A Coldcard over NFC:
   // Mk4 or Q (only the words differ).
   const qrModel = kind === 'qr' && isQrModel(params.model) ? params.model : kind === 'coldcard-nfc' && isNfcModel(params.model) ? params.model : undefined;

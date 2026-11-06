@@ -58,8 +58,8 @@ export type ThemePreference = 'system' | 'light' | 'dark';
 
 // ---------------------------------------------------------------- key 1
 
-/** `coldcard-nfc`: a Coldcard Mk4 or Q over NFC (its `qrModel` says which). */
-export type HardwareKind = 'ledger' | 'trezor' | 'bitbox02' | 'qr' | 'coldcard-nfc' | 'simulated';
+/** `coldcard-nfc`: a Coldcard Mk4 or Q over NFC (its `qrModel` says which). `jade-ble`: a Jade or Jade Plus over Bluetooth. */
+export type HardwareKind = 'ledger' | 'trezor' | 'bitbox02' | 'qr' | 'coldcard-nfc' | 'jade-ble' | 'simulated';
 
 /** One entry of the "Connect your hardware wallet" list. */
 export interface HardwareOption {

@@ -68,6 +68,9 @@ export function isHardwareError(e: unknown, code?: HardwareErrorCode): e is Hard
 /** A user-facing summary for each code; screens can use it as a default message. */
 export function describeHardwareError(e: unknown): string {
   if (!(e instanceof HardwareError)) return e instanceof Error ? e.message : String(e);
+  // The Jade adapter words each of its errors for the owner (a wrong PIN, a PIN server out of reach, the Jade held by
+  // another connection): keep its words.
+  if (e.kind === 'jade-ble' && e.code !== 'cancelled') return e.message;
   switch (e.code) {
     case 'user-rejected':
       return 'You rejected the request on the device.';

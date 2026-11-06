@@ -1138,6 +1138,58 @@ text, the address and the signature), a photo of the device screen, and the exac
 
 ---
 
+### 18h. A Jade over Bluetooth (optional; untested on hardware: Jade, Jade Plus)
+
+**Nothing in this step has been tried on a real Jade or phone yet.** The protocol was read from Jade's firmware and its
+Python client (github.com/Blockstream/Jade at a59d14c, 1.0.41; docs/design/hardware-auth-path.md, "Jade over
+Bluetooth"). Over Bluetooth the Jade is a full key 1, like a Ledger: it registers the wallet, co-signs payments and
+signs Trikey's texts (pairing, approvals, recovery access, notes, hardware unlock). Use a test network: a Jade is locked
+to mainnet or to the test networks the first time it is unlocked, so use a Jade set up for testnet (or a spare one).
+
+Before you start: firmware **0.1.47 or later** (1.0.41 is current); Bluetooth on in the Jade's settings (Device ›
+Settings › Bluetooth; some firmware builds have no Bluetooth at all and say so); Bluetooth on in the phone. Unlocking the
+Jade over Bluetooth asks the Jade's **PIN server** through the phone (Blockstream's, unless you set your own in the
+Jade's settings, "Blind Oracle"): the phone needs the internet for it.
+
+Do:
+
+1. **Connect.** "Create a wallet", **Continue**, **Jade by Bluetooth**. On the Jade choose **Bluetooth** when it asks how
+   to connect. Android asks for the "Nearby devices" permission (Android 12 and later; older Android: location), iOS for
+   Bluetooth. Expected: "Looking for your Jade", then "Connecting to Jade XXXXXX". **The first time**, the phone's
+   system pairing dialog and the Jade both show a six-digit number: check they are the same and confirm on both.
+2. **The PIN-server notice.** Before the first unlock the phone shows **Your Jade's PIN server** and one sentence (the
+   server sees this phone's IP address and when the Jade unlocks, never the PIN or keys; in QR mode Trikey contacts no
+   PIN server).
+   **Continue**. It must not appear again on later connections (it is remembered on the phone).
+3. **The PIN.** "Enter your PIN on the Jade": type it on the Jade. The phone shows "Checking your PIN" while it relays to
+   the server. Expected: "Jade Plus connected" (or "Jade"). Write down the PIN server the phone named (`j8d.io` for
+   Blockstream's).
+4. **Pair** (steps 2 to 4). "Confirm on your device" with the text: the Jade shows the text (a long one is cut after
+   188 characters with "..."; the phone says so), the path `m/48'/1'/0'/2'/0/0` and a hash. Confirm. Then the Jade shows
+   the wallet to register: **2 of 3**, sorted, the three keys, and the name (`Trikey`; spaces become "-"). Approve.
+   Then it shows the first address: **the same as the phone's**. Confirm.
+5. **A payment** over the daily limit (step 7): the phone connects again (**PIN again**: the Jade locks when the
+   Bluetooth link that unlocked it drops), then the Jade shows the payment. Check the amount and the address, and that
+   the **change is not shown as a payment** (it is recognised as change because the wallet is registered). Approve.
+   Try a payment that spends many coins (step 18b): the signed payment comes back in parts; it should still work.
+6. **The same signature twice.** Turn on notes (18c) and hardware unlock (18d): two rounds, the same text twice on the
+   Jade. If the app says the device "gave two different signatures", report it with the firmware version.
+7. **Unlock the guardian** with it (18d step 2): one connection, the PIN, one confirmation.
+8. **Wrong things on purpose.** A wrong PIN once (not three times: three wrong PINs in a row wipe the Jade): the phone
+   should say "Wrong PIN" and **Try again** should ask again. Turn the phone's internet off before the PIN: the phone
+   should say it could not reach the PIN server, and the Jade asks "Failed communicating with Oracle - retry?" (answer
+   No; then turn the internet on and try again). Turn the Jade off in the middle of a signature: "The Jade disconnected".
+   Cancel on the "Enter your PIN" sheet: the phone stops.
+9. **After a reset of pairings** (Jade: Device › Settings › Bluetooth › Reset Pairings): the phone should fail to
+   connect until you also remove the Jade in the phone's Bluetooth settings; the "Connecting" sheet says so.
+10. **The build without Google** (Android, `foss` APK): steps 1 to 5 must work the same (the Bluetooth library has no
+   Google code, and the PIN-server request is a plain https request).
+
+If it goes wrong, collect: Jade model and firmware version (Jade: Device › Info), the phone model and OS version, the
+step, what the Jade showed (a photo, never your recovery phrase or PIN) and the phone's exact message.
+
+---
+
 ### 18. Host a family member (optional; two phones and two hardware wallets)
 
 Family hosting (docs/design/family-hosting.md): your guardian holds key 3 for someone else's wallet. You need a second
@@ -1204,7 +1256,7 @@ If a device refuses it, say exactly what it showed: the fallback is a synthetic 
   you skip that step. Recovery Key mode stays on test networks only.
 - **Out of this round:** Recovery Key mode ("No home server?"), passkeys, iCloud and Google Drive backup (the backup
   is a recovery code plus a backup file), QR-based devices (Coldcard Q, Keystone, Passport, Jade, Krux, SeedSigner; steps 18e, 18f and 18g
-  are optional and untested on any device), BitBox02, the silent payments and Start9. Family hosting is new and has its own optional step ("Host a family member" below).
+  are optional and untested on any device), a Jade over Bluetooth (step 18h, optional and untested), BitBox02, the silent payments and Start9. Family hosting is new and has its own optional step ("Host a family member" below).
 - **iOS** is possible from your own Mac only ("Or on an iPhone"): a free Apple ID's install lasts **7 days**, and nobody has
   run it on a real iPhone yet, so report anything iOS-specific. Android stays the main platform of this round.
 - **Updates keep the wallet from 0.1.7-alpha on** (the Trikey release key). Moving from 0.1.6-alpha or older still needs

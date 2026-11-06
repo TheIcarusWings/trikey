@@ -427,6 +427,8 @@ class Service implements RkWalletService {
         return { kind: 'qr', brand: 'Coldcard', model: model || 'Coldcard' };
       case 'coldcard-nfc':
         return { kind: 'coldcard-nfc', brand: 'Coldcard', model: model || 'Coldcard' };
+      case 'jade-ble':
+        return { kind: 'jade-ble', brand: 'Jade', model: model || 'Jade' };
       case 'jade':
         return { kind: 'qr', brand: 'Jade', model: model || 'Jade' };
       default:

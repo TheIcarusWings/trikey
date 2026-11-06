@@ -11,6 +11,7 @@ export function hardwareOptionTable(os: UiOs): Omit<HardwareOption, 'available'>
     { kind: 'ledger', name: 'Ledger', detail: 'Nano X, Stax, Flex · Bluetooth' },
     { kind: 'trezor', name: 'Trezor', detail: os === 'android' ? 'USB-C, or Bluetooth on Safe 7' : 'Safe 7 · Bluetooth' },
     ...(os === 'android' ? [{ kind: 'bitbox02' as const, name: 'BitBox02', detail: 'USB-C' }] : []),
+    { kind: 'jade-ble', name: 'Jade by Bluetooth', detail: 'Jade or Jade Plus · Bluetooth' },
     { kind: 'coldcard-nfc', name: 'Coldcard by NFC', detail: 'Mk4 or Q · tap the phone on it' },
     { kind: 'qr', name: 'Scan a QR code', detail: QR_DETAIL },
   ];
@@ -22,7 +23,7 @@ export const SIMULATED_OPTION: Omit<HardwareOption, 'available'> = {
   detail: 'Regtest only · keys kept in software',
 };
 
-/** "Ledger", "Trezor", "BitBox02", "Coldcard Q", "Coldcard Mk4", "signing device" for the screens' sentences. */
+/** "Ledger", "Trezor", "BitBox02", "Jade", "Coldcard Q", "Coldcard Mk4", "signing device" for the screens' sentences. */
 export function hardwareBrandOf(kind: HardwareKind, qrModel?: QrModel): string {
   if (kind === 'qr' && qrModel && qrModel !== 'other') return qrModelInfo(qrModel).name;
   if (kind === 'coldcard-nfc') return nfcModelInfo(qrModel).name;
@@ -33,6 +34,8 @@ export function hardwareBrandOf(kind: HardwareKind, qrModel?: QrModel): string {
       return 'Trezor';
     case 'bitbox02':
       return 'BitBox02';
+    case 'jade-ble':
+      return 'Jade';
     case 'simulated':
       return 'simulated device';
     case 'qr':
