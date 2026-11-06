@@ -1,4 +1,5 @@
 import type { NetworkName } from '@trikey/core';
+import type { NfcBridge } from './nfc/bridge';
 import type { QrBridge } from './qr/bridge';
 import type { QrFormat } from './qr/types';
 
@@ -41,6 +42,11 @@ export interface HardwareProviderOptions {
      * `app/trezor-callback.tsx` handles it.
      */
     callbackPath?: string;
+  };
+
+  nfc?: {
+    /** The bridge the NFC screen is mounted on (see `ui/nfc-bridge-host`). The default one is used if you do not pass it. */
+    bridge?: NfcBridge;
   };
 
   qr?: {

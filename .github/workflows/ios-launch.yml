@@ -118,9 +118,10 @@ jobs:
           set -euo pipefail
           mkdir -p "${LOGS}"
           npx expo prebuild --platform ios --no-install 2>&1 | tee "${LOGS}/prebuild.log"
-          # No entitlement a free account could not sign: no iCloud container, no associated domains.
-          if grep -rlE 'com\.apple\.developer\.(icloud|ubiquity|associated-domains)' ios --include='*.entitlements'; then
-            echo "::error title=iOS build::The generated project asks for iCloud or associated-domains entitlements; TRIKEY_DISABLE_ICLOUD=1 and an empty EXPO_PUBLIC_PASSKEY_RP_ID should leave them out"
+          # No entitlement a free account could not sign: no iCloud container, no associated domains, no NFC tag reading
+          # (TRIKEY_IOS_NFC unset, apps/mobile/ios-nfc.js).
+          if grep -rlE 'com\.apple\.developer\.(icloud|ubiquity|associated-domains|nfc)' ios --include='*.entitlements'; then
+            echo "::error title=iOS build::The generated project asks for iCloud, associated-domains or NFC entitlements; TRIKEY_DISABLE_ICLOUD=1, an empty EXPO_PUBLIC_PASSKEY_RP_ID and an unset TRIKEY_IOS_NFC should leave them out"
             exit 1
           fi
 
@@ -140,6 +141,11 @@ jobs:
           set -euo pipefail
           pod --version
           pod install 2>&1 | tee "${LOGS}/pod-install.log"
+          # Without TRIKEY_IOS_NFC the NFC library is not linked on iOS (apps/mobile/react-native.config.js, ios-nfc.js).
+          if grep -q 'react-native-nfc-manager' Podfile.lock; then
+            echo "::error title=iOS build::react-native-nfc-manager is linked on iOS although TRIKEY_IOS_NFC is unset"
+            exit 1
+          fi
 
       - name: Build the app for the iOS Simulator (Release)
         id: build

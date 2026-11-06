@@ -37,7 +37,7 @@ export const HARDWARE_UNLOCK_UNAVAILABLE: Record<'not_paired' | 'hosted' | 'guar
   guardian: 'Update your guardian to unlock it with your hardware wallet.',
   // Some QR devices (Passport gen 2, SeedSigner, Krux, "Other") sign no text by QR code: there is nothing to unlock with.
   hardware:
-    'This needs a hardware wallet that signs a short text: a Ledger or a Trezor, or by QR code a Coldcard Q, Jade, Keystone 3, Passport Prime or Specter DIY. A QR device set up before Trikey asked for its model counts as "Other": pick it in Settings, Hardware wallet model. Until then, use the passphrase.',
+    'This needs a hardware wallet that signs a short text: a Ledger, a Trezor, a Coldcard Mk4 or Q over NFC, or by QR code a Coldcard Q, Jade, Keystone 3, Passport Prime or Specter DIY. A QR device set up before Trikey asked for its model counts as "Other": pick it in Settings, Hardware wallet model. Until then, use the passphrase.',
 };
 
 /** What turning it on does and does not do, in the words every screen uses. */

@@ -17,7 +17,7 @@ import { Body } from '@/components/panels';
 import { WalletProvider, useWallet, type AppMode, type ThemePreference } from '@/data';
 import { AppModeProvider, type AppModeControl } from '@/data/app-mode';
 import { availableModes, bootWallet, loadMode, saveMode, type BootedWallet } from '@/data/boot';
-import { QrBridgeHost } from '@/hardware/ui';
+import { NfcBridgeHost, QrBridgeHost } from '@/hardware/ui';
 import { useAppFonts } from '@/lib/fonts';
 import { getPlatform } from '@/platform';
 import { NAV_THEME, useTheme } from '@/theme/use-theme';
@@ -99,8 +99,9 @@ function Shell({ restarts }: { restarts: number }) {
       <View className="bg-background w-full flex-1 self-center" style={Platform.OS === 'web' ? { maxWidth: 480 } : undefined}>
         <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.screen } }} />
         <PortalHost />
-        {/* Both sheets show only while the wallet waits for a hardware wallet. */}
+        {/* These sheets show only while the wallet waits for a hardware wallet. */}
         <QrBridgeHost />
+        <NfcBridgeHost />
         <DevicePromptHost />
         {/* "Incoming 2,000 sats · unconfirmed": a payment the guardian just saw (wallet_tx). */}
         <ToastHost />

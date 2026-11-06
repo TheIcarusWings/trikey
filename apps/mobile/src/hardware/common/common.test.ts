@@ -226,10 +226,10 @@ describe('errors', () => {
 });
 
 describe('providersFor', () => {
-  it('offers Ledger, Trezor and QR on phones', () => {
+  it('offers Ledger, Trezor, a Coldcard over NFC and QR on phones', () => {
     for (const platform of ['ios', 'android'] as const) {
       const providers = providersFor(platform);
-      expect(providers.map((p) => p.kinds)).toEqual([['ledger'], ['trezor'], ['qr', 'coldcard', 'jade']]);
+      expect(providers.map((p) => p.kinds)).toEqual([['ledger'], ['trezor'], ['coldcard-nfc'], ['qr', 'coldcard', 'jade']]);
     }
   });
 
@@ -248,6 +248,9 @@ describe('providersFor', () => {
     expect(await all[1]!.isAvailable()).toBe(false);
     await expect(all[0]!.connect()).rejects.toMatchObject({ code: 'unavailable' });
     await expect(all[1]!.connect()).rejects.toMatchObject({ code: 'unavailable' });
+    // No NFC outside the phone app: unavailable, with the reason.
+    expect(await all[2]!.isAvailable()).toBe(false);
+    await expect(all[2]!.connect({ kind: 'coldcard-nfc' })).rejects.toMatchObject({ code: 'unavailable', message: expect.stringMatching(/phone app/) });
   });
 
   it('detects a browser camera from navigator.mediaDevices', () => {

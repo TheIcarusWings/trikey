@@ -27,6 +27,8 @@ import {
   leaveBlockerText,
   walletKeys,
   parseBackup,
+  isNfcModel,
+  nfcModelInfo,
   qrModelInfo,
   type Argon2Params,
   type QrModel,
@@ -292,6 +294,7 @@ function deviceNames(kind: WalletHardwareKind, model: string | undefined): { bra
     case 'bitbox02':
       return { brand: 'BitBox02', model: 'BitBox02' };
     case 'coldcard':
+    case 'coldcard-nfc':
       return { brand: 'Coldcard', model: m || 'Coldcard' };
     case 'jade':
       return { brand: 'Jade', model: m || 'Jade' };
@@ -301,6 +304,15 @@ function deviceNames(kind: WalletHardwareKind, model: string | undefined): { bra
 }
 
 const toWalletKind = (kind: HardwareKind): WalletHardwareKind | undefined => (kind === 'simulated' ? undefined : kind);
+
+/** Kinds whose model the owner picks: a QR device, and a Coldcard over NFC (Mk4 or Q). */
+const hasModel = (kind: string | undefined): boolean => kind === 'qr' || kind === 'coldcard-nfc';
+
+/** A provider's own reason for being unavailable (the NFC provider has one: no NFC, or an iPhone build without it). */
+async function unavailableDetailOf(provider: HardwareProvider): Promise<string | undefined> {
+  const p = provider as HardwareProvider & { unavailableReason?: () => Promise<string | undefined> };
+  return typeof p.unavailableReason === 'function' ? await p.unavailableReason().catch(() => undefined) : undefined;
+}
 
 function describeProblem(e: WalletError): { problem: QuoteProblem; message: string } {
   const message = mapError(e).message;
@@ -556,7 +568,8 @@ class Service implements RealWalletService {
     });
     this.hw = withDevicePrompts(compositeProvider(this.rawProviders), this.prompts, {
       network: this.network,
-      silentKinds: this.deps.silentKinds ?? ['qr', 'coldcard', 'jade'],
+      // QR and NFC devices: their own sheets say what to do on the device.
+      silentKinds: this.deps.silentKinds ?? ['qr', 'coldcard', 'jade', 'coldcard-nfc'],
     });
   }
 
@@ -734,6 +747,10 @@ class Service implements RealWalletService {
         return { kind: 'trezor', brand: 'Trezor', model: model ? `Trezor ${model}` : 'Trezor' };
       case 'bitbox02':
         return { kind: 'bitbox02', brand: 'BitBox02', model: 'BitBox02' };
+      case 'coldcard-nfc': {
+        const name = nfcModelInfo(rec.qrModel).name;
+        return { kind: 'coldcard-nfc', brand: name, model: name, ...(isNfcModel(rec.qrModel) ? { qrModel: rec.qrModel } : {}) };
+      }
       default: {
         // A QR device: its model as the owner picked it (Settings can change it), else what it was connected as.
         const qrModel = rec.qrModel ?? 'other';
@@ -1040,7 +1057,7 @@ class Service implements RealWalletService {
         };
         this.setProgress(`Adding "${name}": approve on your new hardware wallet`);
         try {
-          const added = await set.addWallet({ name, rules, ...(kind ? { hardwareKind: kind } : {}), ...(kind === 'qr' && input.hardwareModel ? { hardwareModel: input.hardwareModel } : {}) });
+          const added = await set.addWallet({ name, rules, ...(kind ? { hardwareKind: kind } : {}), ...(hasModel(kind) && input.hardwareModel ? { hardwareModel: input.hardwareModel } : {}) });
           this.armOthersTimer();
           addEvent(this.log, { kind: 'wallet-added', name, at: this.clock.now() });
           await this.saveLogNow();
@@ -1667,7 +1684,9 @@ class Service implements RealWalletService {
     for (const opt of hardwareOptionTable(this.deps.platform.os)) {
       const provider = this.rawProviders.find((p) => p.kinds.includes(opt.kind as WalletHardwareKind));
       if (!provider) continue;
-      out.push({ ...opt, available: await provider.isAvailable().catch(() => false) });
+      const available = await provider.isAvailable().catch(() => false);
+      const why = !available ? await unavailableDetailOf(provider) : undefined;
+      out.push({ ...opt, available, ...(why ? { unavailableDetail: why } : {}) });
     }
     return out;
   }
@@ -1680,7 +1699,7 @@ class Service implements RealWalletService {
         const ac = (this.abort = new AbortController());
         this.setProgress(`Connecting to your ${hardwareBrandOf(kind, qrModel)}`);
         try {
-          await w.connectHardware({ kind: toWalletKind(kind), signal: ac.signal, ...(kind === 'qr' && qrModel ? { qrModel } : {}) });
+          await w.connectHardware({ kind: toWalletKind(kind), signal: ac.signal, ...(hasModel(kind) && qrModel ? { qrModel } : {}) });
           return this.hardwareView();
         } finally {
           this.setProgress(null);
@@ -2809,7 +2828,7 @@ class Service implements RealWalletService {
   }
 
   startRecovery(lostKey: LostKey, opts: { guardian?: GuardianAddress; hardwareKind?: HardwareKind; hardwareModel?: QrModel } = {}): Promise<RecoveryInProgress> {
-    const model = opts.hardwareKind === 'qr' && opts.hardwareModel ? opts.hardwareModel : undefined;
+    const model = hasModel(opts.hardwareKind) && opts.hardwareModel ? opts.hardwareModel : undefined;
     return this.exclusive(() =>
       this.guarded(async () => {
         if (lostKey === 'hardware') {

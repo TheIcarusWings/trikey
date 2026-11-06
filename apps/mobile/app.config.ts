@@ -1,6 +1,7 @@
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 // CommonJS, shared with metro.config.js, react-native.config.js and the config plugin.
 import { androidVariant } from './android-variant';
+import { iosNfcEnabled } from './ios-nfc';
 
 // Expo reads app.json first and passes it in as `config`; this file adds what depends on the
 // environment: the publisher's iCloud container, passkey domain and app identifiers. The defaults
@@ -39,6 +40,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   const icloudEnabled = env('TRIKEY_DISABLE_ICLOUD') !== '1';
   // The standard Android build or the one without Google code (android-variant.js). iOS has one build.
   const variant = androidVariant();
+  // NFC on iOS (a Coldcard over NFC) needs a capability a free Apple account cannot sign: off unless TRIKEY_IOS_NFC=1 (ios-nfc.js).
+  const iosNfc = iosNfcEnabled();
 
   const plugins: PluginEntry[] = [
     // Development build instead of Expo Go: secure storage, passkeys and iCloud are native modules.
@@ -56,6 +59,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     // What the Android variant links and leaves out, written into the generated Gradle files.
     ['./plugins/with-android-variant.js', { variant }],
   ];
+  // The NFC entitlement and NFCReaderUsageDescription (plugins/with-ios-nfc.js); without it iOS links no NFC code at all.
+  if (iosNfc) plugins.push('./plugins/with-ios-nfc.js');
   if (icloudEnabled) {
     // iCloud Drive container entitlement and NSUbiquitousContainers, for the iOS cloud backup.
     // The Android side of this package needs no configuration.
@@ -88,8 +93,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       package: androidPackage,
       versionCode: config.android?.versionCode ?? androidVersionCode(config.version),
     },
-    // For reading the build's configuration (`npx expo config`); the app itself knows its variant from its bundle.
-    extra: { ...config.extra, androidVariant: variant },
+    // For reading the build's configuration (`npx expo config`); the app itself knows its Android variant from its bundle.
+    // `iosNfc` is also read by the app (src/hardware/nfc/transport.native.ts): without it, NFC reads as unavailable on iOS.
+    extra: { ...config.extra, androidVariant: variant, iosNfc },
     plugins: [...existing, ...plugins.filter((p) => !have.has(pluginName(p)))],
   };
 };

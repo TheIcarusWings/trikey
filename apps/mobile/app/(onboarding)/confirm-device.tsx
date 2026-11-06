@@ -6,7 +6,7 @@ import { AppButton } from '@/components/app-button';
 import { DeviceMock } from '@/components/device-mock';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
-import { isQrModel } from '@trikey/wallet';
+import { isNfcModel, isQrModel } from '@trikey/wallet';
 import type { HardwareKind, HardwareWallet } from '@/data';
 import { hardwareBrandOf, errorText, useWallet, useWalletService } from '@/data';
 import { pick } from '@/lib/platform';
@@ -38,15 +38,21 @@ const STEPS: Record<HardwareKind, string[]> = {
     'Scan it with this phone.',
     'Scan the Trikey wallet back into the device and check that it says Trikey.',
   ],
+  'coldcard-nfc': [
+    'Turn NFC on in the Coldcard’s Settings › Hardware On/Off › NFC Sharing.',
+    'Share its multisig public key over NFC and hold this phone to it.',
+    'Send the Trikey wallet back to it over NFC and check that it says Trikey, 2 of 3.',
+  ],
 };
 
 export default function ConfirmDevice() {
   const router = useRouter();
   const wallet = useWalletService();
   const params = useLocalSearchParams<{ kind?: string; flow?: string; model?: string }>();
-  const kind = (['ledger', 'trezor', 'bitbox02', 'qr', 'simulated'].includes(params.kind ?? '') ? params.kind : 'ledger') as HardwareKind;
-  // QR devices: the model picked in the list (it says whether the device can sign Trikey's texts).
-  const qrModel = kind === 'qr' && isQrModel(params.model) ? params.model : undefined;
+  const kind = (['ledger', 'trezor', 'bitbox02', 'qr', 'coldcard-nfc', 'simulated'].includes(params.kind ?? '') ? params.kind : 'ledger') as HardwareKind;
+  // QR devices: the model picked in the list (it says whether the device can sign Trikey's texts). A Coldcard over NFC:
+  // Mk4 or Q (only the words differ).
+  const qrModel = kind === 'qr' && isQrModel(params.model) ? params.model : kind === 'coldcard-nfc' && isNfcModel(params.model) ? params.model : undefined;
   const { progress } = useWallet();
   const [connected, setConnected] = useState<HardwareWallet | null>(null);
   const [problem, setProblem] = useState<Error | null>(null);

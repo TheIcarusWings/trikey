@@ -1,11 +1,12 @@
 /**
  * Hardware wallet adapters for the Trikey app: implementations of `HardwareProvider` and `HardwareSigner` from
- * `@trikey/wallet` for Ledger (Bluetooth), Trezor (Trezor Suite Lite) and air-gapped devices (QR: UR and BBQr).
+ * `@trikey/wallet` for Ledger (Bluetooth), Trezor (Trezor Suite Lite), a Coldcard over NFC and air-gapped devices (QR: UR
+ * and BBQr).
  *
  *   const providers = createHardwareProviders({ network: 'testnet' });
  *   const signer = await providers[0].connect({ kind: 'ledger' });
  *
- * The QR providers need `QrBridgeHost` (from `./ui`) mounted once in the app.
+ * The QR providers need `QrBridgeHost`, and the NFC provider `NfcBridgeHost` (both from `./ui`), mounted once in the app.
  */
 import { Platform } from 'react-native';
 import type { HardwareProvider } from '@trikey/wallet';
@@ -22,6 +23,10 @@ export { providersFor, type AdapterPlatform } from './providers';
 export { LedgerBleProvider } from './ledger/provider';
 export { TrezorProvider } from './trezor/provider';
 export { QrProvider } from './qr/provider';
+export { NfcProvider } from './nfc/provider';
+export { NfcBridge, type NfcRequest, type NfcReadRequest, type NfcShowRequest, type NfcWriteRequest, type NfcTapState } from './nfc/bridge';
+export { defaultNfcBridge } from './nfc/default';
+export type { NfcTransport } from './nfc/transport';
 export { QrBridge, defaultQrBridge, type QrRequest, type QrScanRequest, type QrShowRequest } from './qr/bridge';
 export type { QrFormat, QrPayload, QrProgress } from './qr/types';
 export { QR_DEVICES_WITHOUT_MESSAGE_SIGNING } from './qr/signer';

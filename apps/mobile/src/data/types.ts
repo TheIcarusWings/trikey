@@ -58,15 +58,18 @@ export type ThemePreference = 'system' | 'light' | 'dark';
 
 // ---------------------------------------------------------------- key 1
 
-export type HardwareKind = 'ledger' | 'trezor' | 'bitbox02' | 'qr' | 'simulated';
+/** `coldcard-nfc`: a Coldcard Mk4 or Q over NFC (its `qrModel` says which). */
+export type HardwareKind = 'ledger' | 'trezor' | 'bitbox02' | 'qr' | 'coldcard-nfc' | 'simulated';
 
 /** One entry of the "Connect your hardware wallet" list. */
 export interface HardwareOption {
   kind: HardwareKind;
   name: string;
   detail: string;
-  /** False when this phone cannot use it right now (no Bluetooth, no camera). */
+  /** False when this phone cannot use it right now (no Bluetooth, no camera, no NFC). */
   available: boolean;
+  /** Why it is not available, when the app knows (an iPhone build without NFC). */
+  unavailableDetail?: string;
 }
 
 export interface HardwareWallet {
@@ -75,7 +78,7 @@ export interface HardwareWallet {
   brand: string;
   /** "Ledger Nano X" */
   model: string;
-  /** QR devices: the model the owner picked (`other` for a wallet made before models existed). Settings can change it. */
+  /** QR devices: the model the owner picked (`other` for a wallet made before models existed). Settings can change it. A Coldcard over NFC: `coldcard-mk4` or `coldcard-q`. */
   qrModel?: QrModel;
 }
 

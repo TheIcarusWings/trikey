@@ -1,5 +1,7 @@
 import type { HardwareProvider } from '@trikey/wallet';
 import { LedgerBleProvider } from './ledger/provider';
+import { defaultNfcBridge } from './nfc/default';
+import { NfcProvider } from './nfc/provider';
 import type { HardwareProviderOptions } from './options';
 import { QrProvider } from './qr/provider';
 import { TrezorProvider } from './trezor/provider';
@@ -23,7 +25,9 @@ async function browserCameraPresent(): Promise<boolean> {
 /**
  * The providers a platform can offer:
  *
- * - iOS and Android: Ledger over Bluetooth, Trezor through Trezor Suite Lite, and QR (UR and BBQr) for air-gapped devices;
+ * - iOS and Android: Ledger over Bluetooth, Trezor through Trezor Suite Lite, a Coldcard (Mk4, Q) over NFC, and QR (UR and
+ *   BBQr) for air-gapped devices. NFC reports itself unavailable where the phone or the build has none (an iPhone build
+ *   without the NFC entitlement);
  * - web: none, or only QR when the browser can open a camera (the web build is a preview target, not a wallet).
  *
  * BitBox02 has no mobile SDK (USB and its own bridge only), so there is no provider for it.
@@ -33,5 +37,10 @@ export function providersFor(platform: AdapterPlatform, options: HardwareProvide
     return hasBrowserCamera ? [new QrProvider({ network: options.network, qr: options.qr, cameraAvailable: browserCameraPresent })] : [];
   }
   if (platform !== 'ios' && platform !== 'android') return [];
-  return [new LedgerBleProvider(options), new TrezorProvider(options), new QrProvider({ network: options.network, qr: options.qr })];
+  return [
+    new LedgerBleProvider(options),
+    new TrezorProvider(options),
+    new NfcProvider({ network: options.network, bridge: options.nfc?.bridge ?? defaultNfcBridge }),
+    new QrProvider({ network: options.network, qr: options.qr }),
+  ];
 }
