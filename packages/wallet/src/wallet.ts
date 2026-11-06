@@ -405,12 +405,12 @@ export interface NotesBroughtBack {
 export const NOTES_DEBOUNCE_MS = 30_000;
 /**
  * Devices that sign Trikey's texts with the authorization key: Ledger and Trezor over USB or Bluetooth, a Coldcard (Mk4
- * or Q) over NFC (nfc-devices.ts), a Jade over Bluetooth (ble-devices.ts), QR devices whose model signs a text QR (qr-devices.ts: Coldcard Q, Jade, Keystone 3,
+ * or Q) over NFC (nfc-devices.ts), a Jade over Bluetooth (ble-devices.ts), a BitBox02 over USB-C or Bluetooth (bitbox02.ts), QR devices whose model signs a text QR (qr-devices.ts: Coldcard Q, Jade, Keystone 3,
  * Passport Prime, Specter DIY), and Passport gen 2 and Krux from a file on a microSD card. Notes and hardware unlock also
  * need the same signature every time (RFC 6979), which is checked when they are turned on. Hardware unlock is not offered
  * for the microSD models (a card round trip after every guardian restart).
  */
-const MESSAGE_HARDWARE: readonly HardwareKind[] = ['ledger', 'trezor', 'coldcard-nfc', 'jade-ble'];
+const MESSAGE_HARDWARE: readonly HardwareKind[] = ['ledger', 'trezor', 'coldcard-nfc', 'jade-ble', 'bitbox02'];
 function signsTexts(rec: { kind: HardwareKind; qrModel?: QrModel } | undefined): boolean {
   if (!rec) return false;
   if (MESSAGE_HARDWARE.includes(rec.kind)) return true;
@@ -428,7 +428,7 @@ function signsFromCard(rec: { kind: HardwareKind; qrModel?: QrModel } | undefine
 /** The words for a device that cannot sign Trikey's texts (`unlock`: for hardware unlock, which the microSD models don't do). */
 function noTextsMessage(rec: { kind: HardwareKind; qrModel?: QrModel } | undefined, unlock = false): string {
   const qr = rec && QR_KINDS.includes(rec.kind) ? qrModelInfo(rec.qrModel ?? defaultQrModelOf(rec.kind)) : undefined;
-  const which = `Ledger, Trezor, a Coldcard Mk4 or Q over NFC, a Jade over Bluetooth, or by QR code a Coldcard Q, Jade, Keystone 3, Passport Prime or Specter DIY${unlock ? '' : ' (or, from a microSD card, a Passport of the 2nd generation or a Krux)'}`;
+  const which = `Ledger, Trezor, a BitBox02, a Coldcard Mk4 or Q over NFC, a Jade over Bluetooth, or by QR code a Coldcard Q, Jade, Keystone 3, Passport Prime or Specter DIY${unlock ? '' : ' (or, from a microSD card, a Passport of the 2nd generation or a Krux)'}`;
   return qr ? `${qr.whyNot ?? ''} This needs a hardware wallet that signs a text: ${which}.`.trim() : `This needs a hardware wallet that signs a text: ${which}.`;
 }
 
