@@ -23,7 +23,8 @@ import { BleManager, State, type Device, type Subscription } from 'react-native-
 import { base64 } from '@scure/base';
 import { usbHid, type UsbHidModule } from '../../../modules/trikey-usb-hid';
 import { HardwareError } from '../errors';
-import { ReportSplitter, type BitBoxConnection, type BitBoxDevice, type BitBoxLink } from './link';
+import type { BitBoxConnection, BitBoxDevice, BitBoxLink } from './link';
+import { ReportSplitter } from './report-splitter';
 
 const KIND = 'bitbox02' as const;
 
