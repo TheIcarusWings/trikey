@@ -540,11 +540,19 @@ Do:
    You should see: the phone's Guardian screen follows (status Locked, then Online); pull down to refresh if it lags.
 4. Try a wrong passphrase on the web page once or twice. You should see "That passphrase isn't right" and, after a few wrong
    tries, a wait before the next attempt.
+5. **Sealed unlock** (a guardian and an app with this release). Restart the guardian, then unlock from the phone with the
+   passphrase (step 2), once with a wrong passphrase first. You should see: the wrong one is refused as before, the right
+   one unlocks with no extra step; the Activity line reads "Guardian unlocked with the passphrase from the phone" and
+   does **not** say "sent it unsealed". If you still have an older app on another phone, unlock from it once: it works,
+   and its Activity line ends with "The phone sent it unsealed (an older Trikey app): update the app". A message saying
+   the guardian "restarted or locked again while this phone was unlocking it" should only appear if you restarted or
+   locked the guardian during the unlock; tapping again then works.
 
 If it goes wrong, collect:
 
 - Which side you locked from and unlocked from, and the status the other side showed.
-- The guardian log, and the Activity page (it records unlocks and locks, with "via" web or phone).
+- The guardian log, and the Activity page (it records unlocks and locks, with "via" web or phone). The log lines
+  `guardian.unlock_key_stale` and `guardian.unlock_unsealed` help with step 5; neither holds a secret.
 
 ### 10. Raising the limit with a hardware approval
 
@@ -966,7 +974,8 @@ Do:
 2. **Restart the guardian** (Umbrel: restart the app; Docker: `docker compose restart`). On the phone, Home says
    "Guardian locked" with **Unlock with your <device>**. Tap it, then on the Guardian screen **Unlock with your
    <device>**: one confirmation on the device. You should see: status "Online"; Activity: "Unlocked with the hardware
-   wallet". Lock again from the phone and unlock with the passphrase: it still works.
+   wallet" (with no "sent it unsealed": the signature travels sealed, as the passphrase does, step 9.5). Lock again from
+   the phone and unlock with the passphrase: it still works.
 3. **A wrong device** (if you have a second one): connect it and try to unlock. You should see "didn't unlock the
    guardian"; five failures in a row (passphrase or device) stop the phone until the web page unlocks, as before.
 4. **Turn it off.** Switch it off and confirm. You should see: Activity "Hardware unlock turned off"; after the next lock

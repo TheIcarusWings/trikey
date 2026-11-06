@@ -2,7 +2,7 @@
  * Unlocking the guardian with the hardware wallet, on a real chain (DESIGN.md, "Unlocking the guardian with the hardware
  * wallet"): the owner turns it on (two device confirmations), the guardian restarts and comes back locked, phone-only
  * payments wait; one device confirmation unlocks it, and the next payment within the limit is co-signed by key 3 again
- * and mined. The passphrase still works after the option is turned off.
+ * and mined. The passphrase still works after the option is turned off. Both unlocks travel sealed (`sealed_unlock`).
  *
  * Regtest only, fresh throwaway seeds for every device and phone.
  */
@@ -50,6 +50,9 @@ describeE2e('the hardware wallet unlocks the guardian after a restart', () => {
     expect(await A.unlockGuardianWithHardware()).toEqual({ ok: true });
     expect(signs() - before).toBe(1);
     expect(rig.guardian.locked).toBe(false);
+    // Sealed to the guardian's per-lock unlock key (PROTOCOL.md, "Sealed unlock"), not in the clear.
+    expect(rig.guardian.service.get().activity.at(-1)).toMatchObject({ type: 'unlocked', method: 'hardware' });
+    expect(rig.guardian.service.get().activity.at(-1)).not.toHaveProperty('unsealed');
 
     const q = A.quoteSend({ address: externalAddress(), amountSats: 20_000 });
     expect(q.plan).toEqual({ signer: 'phone+guardian' });
@@ -66,5 +69,6 @@ describeE2e('the hardware wallet unlocks the guardian after a restart', () => {
     await A.lockGuardian();
     expect(await A.unlockGuardian(rig.passphrase)).toEqual({ ok: true });
     expect(rig.guardian.locked).toBe(false);
+    expect(rig.guardian.service.get().activity.at(-1)).not.toHaveProperty('unsealed');
   });
 });
