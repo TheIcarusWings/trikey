@@ -9,7 +9,7 @@
  * - `compositeProvider` makes one provider out of Ledger, Trezor and QR.
  */
 import { MultisigWallet, getNetwork, type NetworkName } from '@trikey/core';
-import type { HardwareDeviceInfo, HardwareKind, HardwareProvider, HardwareSigner, HardwareWalletPolicy, SignMessageContext } from '@trikey/wallet';
+import { JADE_DISPLAY_LENGTH, type HardwareDeviceInfo, type HardwareKind, type HardwareProvider, type HardwareSigner, type HardwareWalletPolicy, type SignMessageContext } from '@trikey/wallet';
 import { WalletServiceError } from './errors';
 import type { DevicePrompt } from './types';
 
@@ -194,11 +194,16 @@ class PromptingSigner implements HardwareSigner {
       this.inner.info.kind === 'trezor' && path.startsWith("m/48'")
         ? '\n\nYour Trezor may first warn about an unusual or wrong path. That is expected for this key: continue.'
         : '';
+    // A Jade shows the first 188 characters of a text, then "...", and the text's hash; it signs all of it.
+    const jadeNote =
+      this.inner.info.kind === 'jade-ble' && message.length > JADE_DISPLAY_LENGTH
+        ? `\n\nYour Jade shows only the first ${JADE_DISPLAY_LENGTH} characters, then "...": check that they match the start of this text. It signs the whole text.`
+        : '';
     // Notes and hardware unlock sign the same text twice (the same signature both times is the check).
     const round = context?.round && context.round.of > 1 ? context.round : undefined;
     const title = round ? `Confirm on your device (${round.n} of ${round.of})` : 'Confirm on your device';
     const twice = round?.n === 1 ? '\n\nYour device will show the same text twice: approve it both times.' : '';
-    return this.run(title, `Check that the device shows exactly this text:\n${message}${trezorNote}${twice}`, () => this.inner.signMessage(path, message, context));
+    return this.run(title, `Check that the device shows exactly this text:\n${message}${trezorNote}${jadeNote}${twice}`, () => this.inner.signMessage(path, message, context));
   }
 
   close() {

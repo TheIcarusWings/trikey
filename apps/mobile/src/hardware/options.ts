@@ -1,4 +1,5 @@
 import type { NetworkName } from '@trikey/core';
+import type { JadeBleBridge, JadeNoticeStore } from './jade/bridge';
 import type { NfcBridge } from './nfc/bridge';
 import type { QrBridge } from './qr/bridge';
 import type { QrFormat } from './qr/types';
@@ -42,6 +43,13 @@ export interface HardwareProviderOptions {
      * `app/trezor-callback.tsx` handles it.
      */
     callbackPath?: string;
+  };
+
+  jade?: {
+    /** The bridge the Jade's Bluetooth sheet is mounted on (see `ui/jade-ble-bridge-host`). The default one if not passed. */
+    bridge?: JadeBleBridge;
+    /** Where the app remembers that the owner read the PIN-server notice (shown once, before the first unlock). */
+    notices?: JadeNoticeStore;
   };
 
   nfc?: {

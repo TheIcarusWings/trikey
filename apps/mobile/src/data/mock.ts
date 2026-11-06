@@ -95,6 +95,7 @@ const HARDWARE: Record<HardwareKind, HardwareWallet> = {
   bitbox02: { kind: 'bitbox02', brand: 'BitBox02', model: 'BitBox02' },
   qr: { kind: 'qr', brand: 'Coldcard', model: 'Coldcard Q', qrModel: 'coldcard-q' },
   'coldcard-nfc': { kind: 'coldcard-nfc', brand: 'Coldcard Mk4', model: 'Coldcard Mk4', qrModel: 'coldcard-mk4' },
+  'jade-ble': { kind: 'jade-ble', brand: 'Jade', model: 'Jade Plus' },
 };
 
 /** The demo's Coldcard over NFC as the person picked it (Mk4 or Q). */

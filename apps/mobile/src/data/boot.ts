@@ -29,6 +29,8 @@ import type { AppMode, NetworkName } from './types';
 export const MODE_KEY = 'trikey.app.mode';
 const SIM_DEVICE_KEY = 'trikey.sim.device.v1';
 const SIM_DEVICE2_KEY = 'trikey.sim.device2.v1';
+/** Set once the owner read that unlocking a Jade over Bluetooth asks its PIN server. */
+const JADE_NOTICE_KEY = 'trikey.jade.pin-server-notice.v1';
 
 /** Where `npm run rk-sim -w @trikey/mobile` listens. An Android emulator reaches the computer at 10.0.2.2 instead: change it in Settings. */
 export const RK_SIM_URL = process.env.EXPO_PUBLIC_RK_SIM_URL || 'http://127.0.0.1:3002';
@@ -83,14 +85,19 @@ function simControl() {
  * Trezor link, and only the kind in use ever asks them for anything. The Ledger's "what the device wants now" hints go to
  * both kinds' prompt sheets (the one that is not waiting ignores them).
  */
-function sharedHardware() {
+function sharedHardware(kv: KeyValueStore) {
   const cache = new Map<NetworkName, HardwareProvider[]>();
+  // The PIN-server notice is shown once, before a Jade's first unlock over Bluetooth.
+  const notices = {
+    seen: async () => (await kv.get(JADE_NOTICE_KEY)) === '1',
+    markSeen: () => kv.set(JADE_NOTICE_KEY, '1'),
+  };
   const hints = new Set<(interaction: string) => void>();
   return (network: NetworkName, hooks: { onLedgerInteraction: (interaction: string) => void }): HardwareProvider[] => {
     hints.add(hooks.onLedgerInteraction);
     let providers = cache.get(network);
     if (!providers) {
-      providers = createHardwareProviders({ network, ledger: { onInteraction: (i) => hints.forEach((h) => h(i)) } });
+      providers = createHardwareProviders({ network, ledger: { onInteraction: (i) => hints.forEach((h) => h(i)) }, jade: { notices } });
       cache.set(network, providers);
     }
     return providers;
@@ -185,7 +192,7 @@ export async function bootWallet(mode: AppMode, platform: TrikeyPlatform = getPl
     return createRoutedWalletService({ mode, kv, guardian, recoveryKey, initial });
   }
 
-  const hardware = sharedHardware();
+  const hardware = sharedHardware(platform.kv);
   const deviceName = Platform.OS === 'ios' ? 'iPhone' : Platform.OS === 'android' ? 'Android phone' : 'Trikey phone';
   const guardian = await createRealWalletService({
     mode: 'real',
