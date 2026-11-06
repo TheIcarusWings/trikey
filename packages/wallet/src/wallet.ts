@@ -1621,12 +1621,12 @@ export class TrikeyWallet {
    * `viaAlert`: the guardian itself just told this phone something (an alert that its recovery completed). It may have
    * taken the phone over, so the expiry check is skipped: the phone is then its paired phone and is answered.
    */
-  private async call<M extends MethodName>(method: M, params: Params<M>, opts: { timeoutMs?: number; viaAlert?: boolean } = {}): Promise<Result<M>> {
+  private async call<M extends MethodName>(method: M, params: Params<M>, opts: { timeoutMs?: number; viaAlert?: boolean; id?: string } = {}): Promise<Result<M>> {
     // `recovery.access` is how access is renewed: the guardian answers it for anyone who holds the hardware wallet's signature.
     if (method !== 'recovery.access' && !opts.viaAlert) this.requireRecoveryAccess();
     const rpc = await this.client();
     try {
-      return await rpc.call(method, params, { timeoutMs: opts.timeoutMs });
+      return await rpc.call(method, params, { timeoutMs: opts.timeoutMs, ...(opts.id ? { id: opts.id } : {}) });
     } catch (e) {
       throw asWalletError(e, method);
     }
@@ -4519,7 +4519,7 @@ export class TrikeyWallet {
       const guardianPubkey = this.s.guardian!.pubkey;
       const phonePubkey = this.s.nostrPubkey;
       const params = (id: string): Params<'guardian.unlock'> =>
-        sealing ? { kind: 'sealed', sealed: sealUnlock(secret, { guardianPubkey, unlockKey: key!, phonePubkey, id, expiresAt: this.nowSec() + SEALED_UNLOCK_TTL_SEC }) } : secret;
+        sealing ? { kind: 'sealed', sealed: sealUnlock(secret, { purpose: 'guardian.unlock', guardianPubkey, unlockKey: key!, phonePubkey, id, expiresAt: this.nowSec() + SEALED_UNLOCK_TTL_SEC }) } : secret;
       try {
         // A secret: never written to the pending-request record.
         await this.callChanging('guardian.unlock', params, { persist: false, verify });
@@ -4606,9 +4606,46 @@ export class TrikeyWallet {
         );
       return a;
     });
-    await this.call('unlock.hardware.add', { walletId, slot, signature });
+    await this.sendHardwareUnlockAdd(walletId, slot, signature);
     await this.refreshStatus().catch(() => undefined);
     return this.hardwareUnlockView();
+  }
+
+  /**
+   * `unlock.hardware.add` with the signature sealed to the guardian's current sealing key when it lists `sealed_unlock`
+   * (PROTOCOL.md, "Sealed unlock"; purpose `unlock.hardware.add`, so it can never be taken for an unlock), in the clear only
+   * to a guardian without it. A stale key (the guardian locked, unlocked or restarted meanwhile) is read again and the
+   * request sent once more, sealed to the new key, without asking the device again.
+   */
+  private async sendHardwareUnlockAdd(walletId: string, slot: string, signature: string): Promise<void> {
+    let st = await this.statusForUnlock();
+    for (let attempt = 0; ; attempt++) {
+      const sealing = !!st.features?.includes(GUARDIAN_FEATURES.sealedUnlock);
+      const key = st.unlockKey?.pubkey;
+      if (sealing && !key) throw new WalletError('guardian_unsupported', "The guardian didn't give a key to seal the signature to. Refresh and try again.");
+      const id = generateMessageId();
+      const params: Params<'unlock.hardware.add'> = sealing
+        ? {
+            walletId,
+            slot,
+            sealed: sealUnlock(
+              { kind: 'hardware', walletId, slot, signature },
+              { purpose: 'unlock.hardware.add', guardianPubkey: this.s.guardian!.pubkey, unlockKey: key!, phonePubkey: this.s.nostrPubkey, id, expiresAt: this.nowSec() + SEALED_UNLOCK_TTL_SEC },
+            ),
+          }
+        : { walletId, slot, signature };
+      try {
+        await this.call('unlock.hardware.add', params, { id });
+        return;
+      } catch (e) {
+        const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
+        if (attempt === 0 && refusal?.kind === 'unlock_failed' && refusal.reason === 'unlock_key_stale') {
+          st = await this.statusForUnlock();
+          continue;
+        }
+        throw e;
+      }
+    }
   }
 
   /** Turns it off: the guardian deletes this wallet's unlock slot. The passphrase always stays. Locked or unlocked. */

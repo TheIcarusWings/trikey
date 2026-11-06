@@ -2,8 +2,9 @@
  * Sealed unlock from the phone (PROTOCOL.md, "Sealed unlock"), end to end against the real guardian service in-process
  * (`@trikey/guardian/testing`), a software hardware wallet over in-memory relays, regtest, throwaway keys:
  *
- * - to a guardian with `sealed_unlock` the passphrase and the hardware signature go sealed: the relays' wraps, opened
- *   with the guardian's nostr key (what a thief with its disk could do), do not show them;
+ * - to a guardian with `sealed_unlock` the passphrase and the hardware signature go sealed, when unlocking and when
+ *   turning hardware unlock on: the relays' wraps, opened with the guardian's nostr key (what a thief with its disk
+ *   could do), do not show them;
  * - a stale unlock key (the guardian locked again between the phone's read and its send) is read again and the unlock
  *   sent once more, without asking the hardware wallet again; stale twice comes back as a refusal;
  * - a wrong passphrase is a refusal as before, and the next try works (the key the guardian replaced is read again);
@@ -82,10 +83,30 @@ describe('sealed unlock from the phone', { timeout: 60_000 }, () => {
     expect(signs() - before).toBe(1);
     expect(rig.guardian.service.get().activity.at(-1)).toMatchObject({ type: 'unlocked', method: 'hardware' });
     expect(rig.guardian.service.get().activity.at(-1)).not.toHaveProperty('unsealed');
+    // Neither the unlock nor the add that turned it on (sealed too, while the guardian was unlocked) shows the signature.
     const sig = await slotSignature();
-    // Only `unlock.hardware.add` (sent while unlocked, when there is no unlock key) carries it: DESIGN.md, what remains.
-    for (const line of archive().split('\n').filter((l) => l.includes(sig))) expect(line).toContain('unlock.hardware.add');
-    expect(archive().split('\n').filter((l) => l.includes('guardian.unlock')).some((l) => l.includes(sig))).toBe(false);
+    expect(archive()).toContain('unlock.hardware.add');
+    expect(archive()).not.toContain(sig);
+  });
+
+  it('turning it on again with a stale sealing key: read again and sent once more, the device asked only its two times', async () => {
+    const g = rig.guardian;
+    const real = g.currentUnlockKey.bind(g);
+    let reads = 0;
+    g.currentUnlockKey = () => (reads++ === 0 ? getPublicKey(generateSecretKey()) : real());
+    try {
+      const before = signs();
+      const was = A.state.guardianStatus!.hardwareUnlock!.slot;
+      expect((await A.enableHardwareUnlock()).on).toBe(true);
+      expect(signs() - before).toBe(2);
+      expect(A.state.guardianStatus!.hardwareUnlock!.slot).not.toBe(was);
+      expect(rig.logLines.filter((l) => l.includes('guardian.unlock_key_stale') && l.includes('unlock.hardware.add')).length).toBe(1);
+      expect(rig.guardian.service.get().activity.at(-1)).toMatchObject({ type: 'unlock_slot_added' });
+      expect(rig.guardian.service.get().activity.at(-1)).not.toHaveProperty('unsealed');
+    } finally {
+      g.currentUnlockKey = real;
+    }
+    expect(archive()).not.toContain(await slotSignature());
   });
 
   it('a stale unlock key is read again and the unlock sent once more, without asking the device again', async () => {
@@ -94,6 +115,7 @@ describe('sealed unlock from the phone', { timeout: 60_000 }, () => {
     const real = g.currentUnlockKey.bind(g);
     // The first status read shows a key the guardian does not hold, as if it locked again right after answering.
     let reads = 0;
+    const staleBefore = rig.logLines.filter((l) => l.includes('guardian.unlock_key_stale')).length;
     g.currentUnlockKey = () => (reads++ === 0 ? getPublicKey(generateSecretKey()) : real());
     try {
       const before = signs();
@@ -101,7 +123,7 @@ describe('sealed unlock from the phone', { timeout: 60_000 }, () => {
       expect(signs() - before).toBe(1);
       expect(reads).toBeGreaterThan(1);
       expect(g.phoneThrottle.failures).toBe(0);
-      expect(rig.logLines.filter((l) => l.includes('guardian.unlock_key_stale')).length).toBe(1);
+      expect(rig.logLines.filter((l) => l.includes('guardian.unlock_key_stale')).length - staleBefore).toBe(1);
     } finally {
       g.currentUnlockKey = real;
     }
@@ -133,10 +155,13 @@ describe('sealed unlock from the phone', { timeout: 60_000 }, () => {
     expect(archive()).not.toContain('not the passphrase');
   });
 
-  it('a guardian without sealed_unlock gets the passphrase in the clear, as before', async () => {
+  it('a guardian without sealed_unlock gets the passphrase and the add in the clear, as before', async () => {
     const features = rig.guardian.features;
     rig.guardian.features = features.filter((f) => f !== GUARDIAN_FEATURES.sealedUnlock);
     try {
+      await A.refreshStatus();
+      expect((await A.enableHardwareUnlock()).on).toBe(true);
+      expect(archive()).toContain(await slotSignature());
       await A.lockGuardian();
       expect(await A.unlockGuardian(rig.passphrase)).toEqual({ ok: true });
       expect(archive()).toContain(rig.passphrase);

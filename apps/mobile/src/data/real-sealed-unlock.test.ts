@@ -2,12 +2,12 @@
  * Sealed unlock in the app (`WalletService.unlockGuardian`; PROTOCOL.md, "Sealed unlock"), from the real wallet service
  * against the real guardian in-process (regtest, throwaway keys): the passphrase typed in the app reaches a guardian
  * with `sealed_unlock` sealed (the relays' wraps, opened with the guardian's nostr key, do not show it), works after a
- * restart, and the new refusals read in words.
+ * restart; turning hardware unlock on sends the device's signature sealed too; the new refusals read in words.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GuardianRig } from '@trikey/guardian/testing';
 import { MemoryCloudBackupStore, MemoryKeyValueStore, MemoryPasskeyPrf, MemorySecureKeyStore, SoftwareHardwareSigner } from '@trikey/wallet/testing';
-import { GUARDIAN_FEATURES, openGiftWrap } from '@trikey/protocol';
+import { GUARDIAN_FEATURES, openGiftWrap, unlockKeyMessage } from '@trikey/protocol';
 import type { HardwareKind, HardwareProvider, HardwareSigner } from '@trikey/wallet';
 import { createRealWalletService, type RealWalletService } from './real';
 import { refusalToError } from './real-errors';
@@ -93,8 +93,22 @@ describe('sealed unlock, in the app', { timeout: 120_000 }, () => {
     expect(archive()).not.toContain('not it"');
   });
 
+  it('turning hardware unlock on sends the signature sealed', async () => {
+    const s = await svc.hardwareUnlock!.enable();
+    expect(s.on).toBe(true);
+    expect(rig.guardian.service.get().activity.at(-1)).toMatchObject({ type: 'unlock_slot_added' });
+    expect(rig.guardian.service.get().activity.at(-1)).not.toHaveProperty('unsealed');
+    const w = svc.wallet!;
+    const slot = w.state.guardianStatus!.hardwareUnlock!.slot;
+    const n = key1.calls.length;
+    const sig = await key1.signMessage(w.state.hardware!.auth.path, unlockKeyMessage({ walletId: w.state.wallet!.walletId, guardianPubkey: rig.pubkey, network: 'regtest', slot }));
+    key1.calls.splice(n);
+    expect(archive()).toContain('unlock.hardware.add');
+    expect(archive()).not.toContain(sig);
+  });
+
   it('says why in words for the sealed refusals', () => {
-    expect(refusalToError({ kind: 'unlock_failed', reason: 'unlock_key_stale', message: 'x' }).message).toMatch(/restarted or locked again.*Try again/);
+    expect(refusalToError({ kind: 'unlock_failed', reason: 'unlock_key_stale', message: 'x' }).message).toMatch(/restarted, locked or unlocked.*Try again/);
     expect(refusalToError({ kind: 'unlock_failed', reason: 'sealed_unlock_invalid', message: 'x', retryAfterSeconds: 4 }).message).toMatch(/couldn't read the unlock.*4 seconds/);
   });
 });
