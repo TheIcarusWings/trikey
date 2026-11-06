@@ -470,8 +470,9 @@ export const GuardianUnlockParams = z.discriminatedUnion('kind', [
   PassphraseUnlock,
   HardwareUnlock,
   /**
-   * Guardians with `sealed_unlock`: the passphrase or the hardware signature, sealed to the unlock key the guardian made
-   * when it locked, which it forgets once unlocked (PROTOCOL.md, "Sealed unlock"). Older guardians refuse it (`-32602`).
+   * Guardians with `sealed_unlock`: the passphrase or the hardware signature, sealed to `guardian.status.unlockKey`
+   * (purpose `guardian.unlock`), a key in the guardian's memory only that it replaces once unlocked (PROTOCOL.md, "Sealed
+   * unlock"). Older guardians refuse it (`-32602`).
    */
   z.strictObject({ kind: z.literal('sealed'), sealed: SealedUnlock }),
 ]);
@@ -700,9 +701,10 @@ export const GuardianStatusResult = z
      */
     hardwareUnlock: z.object({ slot: UnlockSlotId, addedAt: UnixSeconds }).optional(),
     /**
-     * Guardians with `sealed_unlock`, while locked: the public half of the key it made when it locked (in memory only,
-     * new at every lock and after every failed unlock, forgotten once unlocked). The phone seals `guardian.unlock`'s
-     * secret to it (PROTOCOL.md, "Sealed unlock"). Absent while unlocked.
+     * Guardians with `sealed_unlock`: the public half of its sealing key (in memory only; new at every lock and every
+     * unlock, after every failed unlock and after every `unlock.hardware.add` that used it). The phone seals
+     * `guardian.unlock`'s secret (while locked) and `unlock.hardware.add`'s signature (while unlocked) to it (PROTOCOL.md,
+     * "Sealed unlock"). Never to a guest.
      */
     unlockKey: z.object({ pubkey: NostrPubkey }).optional(),
     /**
@@ -1354,7 +1356,15 @@ export const LabelsDeleteResult = z.object({ deleted: z.array(WalletId).max(64) 
  * key from it, encrypts its seed under that key as one more unlock slot, and forgets the signature and the key. It
  * replaces the wallet's earlier slot, if any. The passphrase always stays.
  */
-export const UnlockHardwareAddParams = z.strictObject({ walletId: WalletId, slot: UnlockSlotId, signature: Bip137Signature });
+export const UnlockHardwareAddParams = z.union([
+  z.strictObject({ walletId: WalletId, slot: UnlockSlotId, signature: Bip137Signature }),
+  /**
+   * Guardians with `sealed_unlock`: the signature sealed to `guardian.status.unlockKey` (purpose `unlock.hardware.add`)
+   * as `{kind: "hardware", walletId, slot, signature}`, whose `walletId` and `slot` must be these (PROTOCOL.md, "Sealed
+   * unlock"). Older guardians refuse it (`-32602`).
+   */
+  z.strictObject({ walletId: WalletId, slot: UnlockSlotId, sealed: SealedUnlock }),
+]);
 export const UnlockHardwareAddResult = z.object({ walletId: WalletId, slot: UnlockSlotId, addedAt: UnixSeconds });
 
 /** Turns it off: the wallet's slot is deleted. The paired phone; locked or unlocked. `removed`: there was one. */

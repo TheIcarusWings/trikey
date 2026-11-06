@@ -2,18 +2,19 @@
  * Sealed unlock (PROTOCOL.md, "Sealed unlock"; DESIGN.md, threat model "The guardian's disk plus archived gift wraps").
  *
  * The guardian's nostr key is on its disk in the clear (a locked guardian must still receive requests), and every
- * `guardian.unlock` travels in a gift wrap encrypted to that key. Someone who later holds the disk and an archive of
- * old wraps (a relay that kept them past their expiry) could open a past unlock and read the passphrase, or the hardware
- * wallet's slot signature, and with it key 3's seed. So a guardian with `sealed_unlock` makes a fresh key pair each time
- * it locks, keeps it in memory only and forgets it once unlocked; the phone seals the unlock secret to that key's public
- * half. The disk never holds what opens a seal, and once the guardian unlocked nothing anywhere does.
+ * request travels in a gift wrap encrypted to that key. Someone who later holds the disk and an archive of old wraps (a
+ * relay that kept them past their expiry) could open a past `guardian.unlock` and read the passphrase, or the hardware
+ * wallet's slot signature (also in `unlock.hardware.add`), and with either key 3's seed. So a guardian with
+ * `sealed_unlock` holds a key pair in memory only, a new one at every lock and every unlock and after every use; the phone
+ * seals those secrets to its public half. The disk never holds what opens a seal, and once the key is replaced nothing
+ * anywhere does.
  *
  * The seal reuses the transport's own primitive, NIP-44 v2 (secp256k1 ECDH, HKDF-SHA256, ChaCha20, HMAC-SHA256, padding
  * to a power of two), from a fresh one-time phone key to the guardian's unlock key: the phone's nostr key cannot open it
- * later either. NIP-44 takes no associated data, so the context (the guardian's nostr pubkey, the unlock key, the
- * sending phone, the request id and an expiry) is inside the encrypted and MACed plaintext, and the guardian compares
- * every field before it looks at the secret: a seal made for another guardian, another key, another phone or another
- * request is refused, and one past its expiry is not tried at all.
+ * later either. NIP-44 takes no associated data, so the context (the purpose, the guardian's nostr pubkey, the unlock
+ * key, the sending phone, the request id and an expiry) is inside the encrypted and MACed plaintext, and the guardian
+ * compares every field before it looks at the secret: a seal made for the other purpose (an add's seal sent as an
+ * unlock, or the reverse), another guardian, key, phone or request is refused, and one past its expiry is not tried.
  */
 import * as nip44 from 'nostr-tools/nip44';
 import { getPublicKey } from 'nostr-tools/pure';
@@ -29,8 +30,17 @@ export const SEALED_UNLOCK_TTL_SEC = 300;
 /** The longest expiry the guardian accepts, from its clock (the longest request TTL); plus the protocol's clock skew. */
 export const SEALED_UNLOCK_MAX_TTL_SEC = 3600;
 
+/**
+ * What a seal is for, bound inside it: `guardian.unlock` (the passphrase or the slot signature, to unlock) or
+ * `unlock.hardware.add` (the slot signature, to make the slot). A seal for one is refused as the other.
+ */
+export const SEAL_PURPOSES = ['guardian.unlock', 'unlock.hardware.add'] as const;
+export type SealPurpose = (typeof SEAL_PURPOSES)[number];
+
 const SealedBody = z.strictObject({
   t: z.literal(SEALED_UNLOCK_CONTEXT),
+  /** The method the seal is for. */
+  for: z.enum(SEAL_PURPOSES),
   /** The guardian's nostr pubkey (its identity). */
   guardian: NostrPubkey,
   /** The unlock key sealed to (the same as the wire's `key`, now authenticated). */
@@ -45,13 +55,15 @@ const SealedBody = z.strictObject({
 });
 
 export interface SealContext {
+  /** The request the seal travels in. */
+  purpose: SealPurpose;
   /** The guardian's nostr pubkey (hex), as paired. */
   guardianPubkey: string;
-  /** `guardian.status.unlockKey.pubkey`: the key the guardian made when it locked. */
+  /** `guardian.status.unlockKey.pubkey`: the guardian's current sealing key. */
   unlockKey: string;
   /** This phone's nostr pubkey (hex): the request's sender. */
   phonePubkey: string;
-  /** The id of the `guardian.unlock` request that carries the seal. */
+  /** The id of the request that carries the seal. */
   id: string;
   /** Unix seconds; the guardian refuses the seal from then on. */
   expiresAt: number;
@@ -64,6 +76,7 @@ export interface SealContext {
 export function sealUnlock(secret: UnlockSecret, ctx: SealContext): SealedUnlock {
   const body: z.infer<typeof SealedBody> = SealedBody.parse({
     t: SEALED_UNLOCK_CONTEXT,
+    for: ctx.purpose,
     guardian: ctx.guardianPubkey,
     key: ctx.unlockKey,
     phone: ctx.phonePubkey,
@@ -85,7 +98,9 @@ export function sealUnlock(secret: UnlockSecret, ctx: SealContext): SealedUnlock
 }
 
 export interface OpenContext {
-  /** The guardian's unlock key (its secret half), as made when it locked. */
+  /** The request the seal arrived in. */
+  purpose: SealPurpose;
+  /** The guardian's unlock key (its secret half). */
   secretKey: Uint8Array;
   /** The guardian's own nostr pubkey (hex). */
   guardianPubkey: string;
@@ -99,11 +114,11 @@ export interface OpenContext {
 
 /**
  * What opening a seal found.
- * - `stale`: sealed to another unlock key (the guardian restarted, locked again or replaced its key after a failed try):
+ * - `stale`: sealed to another unlock key (the guardian restarted, locked or unlocked, or replaced its key after a use):
  *   nothing was decrypted; the phone should read `guardian.status` and seal again. Not a guess.
  * - `expired`: it opened, but its expiry has passed; the secret is not looked at. Not a guess either.
- * - `invalid`: sealed to this key but it does not open (damaged, tampered) or names another guardian, key, phone or
- *   request. Only the paired phone's own wraps reach this, so the guardian counts it as a failed try.
+ * - `invalid`: sealed to this key but it does not open (damaged, tampered) or names another purpose, guardian, key,
+ *   phone or request. Only the paired phone's own wraps reach this, so the guardian counts it as a failed unlock.
  */
 export type OpenedUnlock = { ok: true; secret: UnlockSecret } | { ok: false; reason: 'stale' | 'expired' | 'invalid' };
 
@@ -136,7 +151,7 @@ export function openSealedUnlock(sealed: SealedUnlock, ctx: OpenContext): Opened
   } catch {
     return { ok: false, reason: 'invalid' };
   }
-  if (body.guardian !== ctx.guardianPubkey || body.key !== key || body.phone !== ctx.phonePubkey || body.id !== ctx.id) return { ok: false, reason: 'invalid' };
+  if (body.for !== ctx.purpose || body.guardian !== ctx.guardianPubkey || body.key !== key || body.phone !== ctx.phonePubkey || body.id !== ctx.id) return { ok: false, reason: 'invalid' };
   if (body.exp <= ctx.now) return { ok: false, reason: 'expired' };
   if (body.exp > ctx.now + SEALED_UNLOCK_MAX_TTL_SEC + DEFAULT_LIMITS.clockSkewSec) return { ok: false, reason: 'invalid' };
   return { ok: true, secret: body.unlock };

@@ -33,9 +33,9 @@ function fresh() {
   const secretKey = generateSecretKey();
   const unlockKey = getPublicKey(secretKey);
   const seal = (secret: UnlockSecret = PASS, over: Partial<Parameters<typeof sealUnlock>[1]> = {}) =>
-    sealUnlock(secret, { guardianPubkey: GUARDIAN, unlockKey, phonePubkey: PHONE, id: ID, expiresAt: NOW + 300, ...over });
+    sealUnlock(secret, { purpose: 'guardian.unlock', guardianPubkey: GUARDIAN, unlockKey, phonePubkey: PHONE, id: ID, expiresAt: NOW + 300, ...over });
   const open = (s: SealedUnlock, over: Partial<Parameters<typeof openSealedUnlock>[1]> = {}) =>
-    openSealedUnlock(s, { secretKey, guardianPubkey: GUARDIAN, phonePubkey: PHONE, id: ID, now: NOW, ...over });
+    openSealedUnlock(s, { purpose: 'guardian.unlock', secretKey, guardianPubkey: GUARDIAN, phonePubkey: PHONE, id: ID, now: NOW, ...over });
   return { secretKey, unlockKey, seal, open };
 }
 
@@ -77,7 +77,7 @@ describe('sealed unlock: seal and open', () => {
     const conv = nip44.getConversationKey(guardianKey, s.from);
     expect(() => nip44.decrypt(s.payload, conv)).toThrow();
     // Nor can the guardian's nostr key pretend to be the unlock key.
-    expect(openSealedUnlock(s, { secretKey: guardianKey, guardianPubkey: GUARDIAN, phonePubkey: PHONE, id: ID, now: NOW })).toEqual({ ok: false, reason: 'stale' });
+    expect(openSealedUnlock(s, { purpose: 'guardian.unlock', secretKey: guardianKey, guardianPubkey: GUARDIAN, phonePubkey: PHONE, id: ID, now: NOW })).toEqual({ ok: false, reason: 'stale' });
   });
 });
 
@@ -118,6 +118,15 @@ describe('sealed unlock: what is refused', () => {
     expect(k.open(k.seal(PASS, { expiresAt: NOW + SEALED_UNLOCK_MAX_TTL_SEC + 121 }))).toEqual({ ok: false, reason: 'invalid' });
   });
 
+  it('bound to its purpose: an add\'s seal is not an unlock, and an unlock\'s seal is not an add', () => {
+    const k = fresh();
+    const add = k.seal(HW, { purpose: 'unlock.hardware.add' });
+    expect(k.open(add)).toEqual({ ok: false, reason: 'invalid' });
+    expect(k.open(add, { purpose: 'unlock.hardware.add' })).toEqual({ ok: true, secret: HW });
+    expect(k.open(k.seal(HW), { purpose: 'unlock.hardware.add' })).toEqual({ ok: false, reason: 'invalid' });
+    expect(() => k.seal(HW, { purpose: 'policy.update' as never })).toThrow();
+  });
+
   it('bound to the guardian, the phone and the request: any other is invalid', () => {
     const k = fresh();
     const s = k.seal();
@@ -132,10 +141,12 @@ describe('sealed unlock: what is refused', () => {
     const k = fresh();
     const one = generateSecretKey();
     const enc = (o: unknown) => ({ v: 1 as const, key: k.unlockKey, from: getPublicKey(one), payload: nip44.encrypt(JSON.stringify(o), nip44.getConversationKey(one, k.unlockKey), new Uint8Array(32).fill(3)) });
-    const body = { t: SEALED_UNLOCK_CONTEXT, guardian: GUARDIAN, key: k.unlockKey, phone: PHONE, id: ID, exp: NOW + 60, unlock: PASS };
+    const body = { t: SEALED_UNLOCK_CONTEXT, for: 'guardian.unlock', guardian: GUARDIAN, key: k.unlockKey, phone: PHONE, id: ID, exp: NOW + 60, unlock: PASS };
     expect(k.open(enc(body))).toEqual({ ok: true, secret: PASS });
     expect(k.open(enc({ ...body, t: 'trikey/sealed-unlock/v2' }))).toEqual({ ok: false, reason: 'invalid' });
     expect(k.open(enc({ ...body, extra: 1 }))).toEqual({ ok: false, reason: 'invalid' });
+    const { for: _purpose, ...unbound } = body;
+    expect(k.open(enc(unbound))).toEqual({ ok: false, reason: 'invalid' });
     expect(k.open(enc({ ...body, unlock: { kind: 'sealed' } }))).toEqual({ ok: false, reason: 'invalid' });
     expect(k.open(enc('just text'))).toEqual({ ok: false, reason: 'invalid' });
   });
@@ -154,8 +165,8 @@ describe('the guardian\'s unlock key holder', () => {
     expect(h.pubkey).toBeUndefined();
     const first = h.rotate();
     const held = (h as unknown as { secret: Uint8Array }).secret;
-    const s = sealUnlock(PASS, { guardianPubkey: GUARDIAN, unlockKey: first, phonePubkey: PHONE, id: ID, expiresAt: NOW + 60 });
-    const ctx = { guardianPubkey: GUARDIAN, phonePubkey: PHONE, id: ID, now: NOW };
+    const s = sealUnlock(PASS, { purpose: 'guardian.unlock', guardianPubkey: GUARDIAN, unlockKey: first, phonePubkey: PHONE, id: ID, expiresAt: NOW + 60 });
+    const ctx = { purpose: 'guardian.unlock' as const, guardianPubkey: GUARDIAN, phonePubkey: PHONE, id: ID, now: NOW };
     expect(h.open(s, ctx)).toEqual({ ok: true, secret: PASS });
     const second = h.rotate();
     expect(second).not.toBe(first);
@@ -183,6 +194,13 @@ describe('sealed unlock on the wire', () => {
     expect(p.safeParse({ kind: 'sealed', sealed: { ...s, payload: 'not base64!' } }).success).toBe(false);
     expect(p.safeParse({ kind: 'sealed', sealed: { ...s, payload: 'A'.repeat(16_400) } }).success).toBe(false);
     expect(p.safeParse({ kind: 'sealed', sealed: s, passphrase: 'x' }).success).toBe(false);
+    // `unlock.hardware.add` takes the signature in the clear or sealed, never both.
+    const add = methods['unlock.hardware.add'].params;
+    const sealedAdd = k.seal(HW, { purpose: 'unlock.hardware.add' });
+    expect(add.safeParse({ walletId: '0123456789abcdef', slot: '89abcdef01234567', sealed: sealedAdd }).success).toBe(true);
+    expect(add.safeParse({ walletId: '0123456789abcdef', slot: '89abcdef01234567', signature: SIG }).success).toBe(true);
+    expect(add.safeParse({ walletId: '0123456789abcdef', slot: '89abcdef01234567', signature: SIG, sealed: sealedAdd }).success).toBe(false);
+    expect(add.safeParse({ walletId: '0123456789abcdef', slot: '89abcdef01234567' }).success).toBe(false);
     // The longest passphrase the protocol allows still fits a seal.
     const long = k.seal({ kind: 'passphrase', passphrase: 'é'.repeat(1024) });
     expect(p.safeParse({ kind: 'sealed', sealed: long }).success).toBe(true);
