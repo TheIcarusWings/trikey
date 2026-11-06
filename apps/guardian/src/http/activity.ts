@@ -323,10 +323,12 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
 }
 
 /**
- * An unlock from an app before sealed unlock (PROTOCOL.md, "Sealed unlock"): its passphrase or signature crossed the
- * relays in a wrap that the guardian's disk could open later. It works; the owner is asked to update the app.
+ * An unlock (or a hardware unlock turned on) from an app before sealed unlock (PROTOCOL.md, "Sealed unlock"): its
+ * passphrase or signature crossed the relays in a wrap that the guardian's disk could open later. It works; the owner
+ * is asked to update the app.
  */
-const UNSEALED = '. The phone sent it unsealed (an older Trikey app): update the app so the next unlock is sealed';
+const UNSEALED_SENTENCE = 'The phone sent it unsealed (an older Trikey app): update the app so it is sealed next time';
+const UNSEALED = `. ${UNSEALED_SENTENCE}`;
 
 export function serviceEntry(e: ServiceActivity): ActivityEntry {
   const base = { id: `s${e.id}`, at: iso(e.at) };
@@ -566,7 +568,7 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
       return {
         ...base,
         kind: 'system',
-        event: `The paired phone turned on unlocking with the hardware wallet of wallet ${e.walletId}: that hardware wallet can now unlock this guardian through the phone. The passphrase still works.`,
+        event: `The paired phone turned on unlocking with the hardware wallet of wallet ${e.walletId}: that hardware wallet can now unlock this guardian through the phone. The passphrase still works.${e.unsealed ? ` ${UNSEALED_SENTENCE}.` : ''}`,
         summary: 'Hardware unlock turned on',
         signedBy: 'Phone + hardware wallet',
         sats: null,

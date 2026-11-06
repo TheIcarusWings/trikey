@@ -117,7 +117,8 @@ export type ServiceEvent =
    * signed), or it was removed: the phone turned it off, or the wallet no longer uses this guardian (retired, recovered
    * to another wallet). A reset removes every slot with key 3 and logs only the reset.
    */
-  | { type: 'unlock_slot_added'; walletId: string }
+  /** `unsealed`: an older phone sent the signature in the clear to a guardian that seals it (PROTOCOL.md, "Sealed unlock"). */
+  | { type: 'unlock_slot_added'; walletId: string; unsealed?: true }
   | { type: 'unlock_slot_removed'; walletIds: string[]; by: 'phone' | 'retired' };
 
 /** A relay removed from `relays` that the guardian still watches (listens and publishes on) until the owner stops it. */

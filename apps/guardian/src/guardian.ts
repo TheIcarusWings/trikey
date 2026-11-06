@@ -228,7 +228,13 @@ type AttemptHow = { hardwareOf?: string; sealed?: boolean; badSeal?: boolean; un
 /** What `unlock.hardware.add` did, or why not. */
 export type HardwareUnlockAddOutcome =
   | { ok: true; walletId: string; slot: string; addedAt: number }
-  | { ok: false; code: 'locked' | 'not_registered' | 'wallet_changed' | 'hardware_unconfirmed' | 'bad_signature' | 'setup_required'; message: string };
+  | { ok: false; code: 'locked' | 'not_registered' | 'wallet_changed' | 'hardware_unconfirmed' | 'bad_signature' | 'setup_required'; message: string }
+  /**
+   * The signature sealed (`sealed_unlock`): `unlock_key_stale`, sealed to a key the guardian no longer holds or expired
+   * (seal again, nothing was opened); `bad_seal`, sealed to the current key but it does not open, or is not this
+   * request's (another purpose, guardian, phone, id, wallet or slot).
+   */
+  | { ok: false; code: 'unlock_key_stale' | 'bad_seal'; message: string };
 
 export type SetupOutcome = { ok: true } | { ok: false; code: 'invalid' | 'already_setup'; message: string };
 
@@ -389,9 +395,9 @@ export class Guardian implements WalletRuntime {
   inbox?: Inbox;
 
   /**
-   * Sealed unlock (PROTOCOL.md, "Sealed unlock"): the key pair the phone seals `guardian.unlock`'s secret to. Made in
-   * memory, never written, at start and at every lock, and again after every failed unlock from the phone; zeroed once
-   * unlocked (`installSigner`) and at stop.
+   * Sealed unlock (PROTOCOL.md, "Sealed unlock"): the key pair the phone seals `guardian.unlock`'s secret (while locked)
+   * and `unlock.hardware.add`'s signature (while unlocked) to. In memory only, never written; a new one at start, at
+   * every lock and every unlock, after every counted failed unlock and after every add that used it; zeroed at stop.
    */
   readonly unlockKey = new UnlockKeyHolder();
 
@@ -1410,7 +1416,11 @@ export class Guardian implements WalletRuntime {
    * against the wallet's authorization key, encrypts the seed under the key it gives as an unlock slot (replacing the
    * wallet's earlier one), opens it once to be sure, and forgets the signature and the key.
    */
-  addHardwareUnlock(w: WalletRuntime, input: { walletId: string; slot: string; signature: string }): Promise<HardwareUnlockAddOutcome> {
+  addHardwareUnlock(
+    w: WalletRuntime,
+    input: { walletId: string; slot: string } & ({ signature: string } | { sealed: SealedUnlock }),
+    ctx: { phone: string; id: string },
+  ): Promise<HardwareUnlockAddOutcome> {
     return this.unlockMutex.run(async (): Promise<HardwareUnlockAddOutcome> => {
       const file = this.keystore;
       if (!file || !this.identity) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
@@ -1422,17 +1432,39 @@ export class Guardian implements WalletRuntime {
         return { ok: false, code: 'wallet_changed', message: `This guardian guards wallet ${reg.walletId} now: sign the text for it.` };
       if (w.engine.status().hardwareConfirmRequired)
         return { ok: false, code: 'hardware_unconfirmed', message: 'Confirm your hardware wallet for this wallet first (after the recovery).' };
-      if (!reg.hardwareAuth || !bip137Authorizer.verify(this.unlockText(reg.walletId, input.slot), input.signature, reg.hardwareAuth)) {
+      // The signature: sealed to the guardian's current sealing key (PROTOCOL.md, "Sealed unlock"), or from an older phone
+      // in the clear (accepted, and marked).
+      let signature: string;
+      const unsealed = !('sealed' in input) && this.sealsUnlocks;
+      if ('sealed' in input) {
+        const opened = this.unlockKey.open(input.sealed, { purpose: 'unlock.hardware.add', guardianPubkey: this.identity.pubkey, phonePubkey: ctx.phone, id: ctx.id, now: this.nowSec() });
+        if (!opened.ok && opened.reason !== 'invalid') {
+          this.log.info('guardian.unlock_key_stale', { reason: opened.reason, method: 'unlock.hardware.add' });
+          return { ok: false, code: 'unlock_key_stale', message: "The guardian's sealing key changed (it restarted, locked or unlocked). Try again." };
+        }
+        // Used: whatever comes next, this key seals nothing more.
+        this.unlockKey.rotate();
+        const secret = opened.ok ? opened.secret : undefined;
+        if (!secret || secret.kind !== 'hardware' || secret.walletId !== input.walletId || secret.slot !== input.slot) {
+          this.log.warn('unlock_slots.bad_seal', { walletId: reg.walletId });
+          return { ok: false, code: 'bad_seal', message: 'The guardian could not open that sealed signature.' };
+        }
+        signature = secret.signature;
+      } else {
+        signature = input.signature;
+        if (unsealed) this.log.warn('guardian.unlock_unsealed', { method: 'unlock.hardware.add' });
+      }
+      if (!reg.hardwareAuth || !bip137Authorizer.verify(this.unlockText(reg.walletId, input.slot), signature, reg.hardwareAuth)) {
         this.log.warn('unlock_slots.bad_signature', { walletId: reg.walletId });
         return { ok: false, code: 'bad_signature', message: "That is not this wallet's hardware wallet's signature of the unlock text." };
       }
       const binding = keystoreBinding(file);
-      const slot = seed.use((bytes) => sealSlot(bytes, input.signature, binding, { walletId: reg.walletId, slot: input.slot, addedAt: this.clock.now() }));
+      const slot = seed.use((bytes) => sealSlot(bytes, signature, binding, { walletId: reg.walletId, slot: input.slot, addedAt: this.clock.now() }));
       // Opened once before it counts: a slot that would not open is never stored.
-      openSlot(slot, input.signature, binding).fill(0);
+      openSlot(slot, signature, binding).fill(0);
       await this.unlockSlots.put(slot);
-      this.log.info('unlock_slots.added', { walletId: reg.walletId });
-      await w.logEvent({ type: 'unlock_slot_added', walletId: reg.walletId });
+      this.log.info('unlock_slots.added', { walletId: reg.walletId, ...(unsealed ? { unsealed: true } : {}) });
+      await w.logEvent({ type: 'unlock_slot_added', walletId: reg.walletId, ...(unsealed ? { unsealed: true as const } : {}) });
       return { ok: true, walletId: reg.walletId, slot: slot.slot, addedAt: slot.addedAt };
     });
   }
@@ -1583,8 +1615,9 @@ export class Guardian implements WalletRuntime {
     this.lockedAt = undefined;
     this.lockReason = undefined;
     this.lockedBy = undefined;
-    // Unlocked: the unlock key goes, so no seal made to it (the one that just unlocked included) can be opened again.
-    this.unlockKey.wipe();
+    // Unlocked: the key it was locked with goes (zeroed), so no seal made to it, the one that just unlocked included, can be
+    // opened again. A new one serves `unlock.hardware.add` while unlocked.
+    this.unlockKey.rotate();
   }
 
   private dropSigner(): void {
@@ -1726,11 +1759,11 @@ export class Guardian implements WalletRuntime {
   }
 
   /**
-   * The unlock key's public half for `guardian.status`, while locked (and sealing). Locked without one cannot happen
-   * (start and every lock make one); if it ever did, one is made here rather than leaving the phone without a key.
+   * The sealing key's public half for `guardian.status` (once set up, and sealing). Set up without one cannot happen (start
+   * and every lock and unlock make one); if it ever did, one is made here rather than leaving the phone without a key.
    */
   currentUnlockKey(): string | undefined {
-    if (!this.locked || !this.sealsUnlocks || !this.keystore) return undefined;
+    if (!this.sealsUnlocks || !this.keystore) return undefined;
     return this.unlockKey.pubkey ?? this.unlockKey.rotate();
   }
 
@@ -1754,7 +1787,7 @@ export class Guardian implements WalletRuntime {
       const file = this.keystore;
       if (!file || !this.identity) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
       if (!this.locked) return { ok: true };
-      const opened = this.unlockKey.open(sealed, { guardianPubkey: this.identity.pubkey, phonePubkey: ctx.phone, id: ctx.id, now: this.nowSec() });
+      const opened = this.unlockKey.open(sealed, { purpose: 'guardian.unlock', guardianPubkey: this.identity.pubkey, phonePubkey: ctx.phone, id: ctx.id, now: this.nowSec() });
       if (!opened.ok && opened.reason !== 'invalid') {
         this.log.info('guardian.unlock_key_stale', { reason: opened.reason });
         return {

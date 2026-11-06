@@ -139,8 +139,9 @@ afterAll(async () => {
   await rig?.stop();
 });
 
+/** The host's status without what changes by itself: the clock, and the sealing key (new at every lock, unlock and use). */
 const stable = (s: Record<string, unknown>) => {
-  const { time: _t, atMs: _a, ...rest } = s;
+  const { time: _t, atMs: _a, unlockKey: _k, ...rest } = s;
   return rest;
 };
 
