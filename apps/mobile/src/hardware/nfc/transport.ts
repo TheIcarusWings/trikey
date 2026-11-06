@@ -4,6 +4,7 @@
  * what the web build and Node (the tests) get, where there is no NFC.
  */
 import type { NdefRecord } from './ndef';
+import { noNfc } from './no-nfc';
 
 export interface NfcTransport {
   /** The phone has an NFC reader and this build of the app may use it. */
@@ -27,21 +28,9 @@ export interface NfcTransport {
   readonly unavailableReason?: string;
 }
 
-/** No NFC here (web, tests). */
-export const noNfc: NfcTransport = {
-  isSupported: async () => false,
-  isEnabled: async () => false,
-  write: async () => {
-    throw new Error('NFC is not available here.');
-  },
-  read: async () => {
-    throw new Error('NFC is not available here.');
-  },
-  cancel: async () => {},
-  openSettings: async () => false,
-  systemSheet: false,
-  unavailableReason: 'NFC needs the Trikey phone app.',
-};
+// `noNfc` lives in its own file: transport.native.ts needs it too, and on a phone './transport' resolves to
+// transport.native.ts itself, so importing it from here made that module depend on itself (0.1.18 crashed on iOS).
+export { noNfc };
 
 /** The transport this build uses. */
 export function defaultNfcTransport(): NfcTransport {
