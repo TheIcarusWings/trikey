@@ -234,8 +234,9 @@ will ever be), and a hardware approval can set it today. "Off" is that value. No
   (about 200 characters, under the 240 limit). Every other policy keeps the v1 text. An older guardian would build v1
   and refuse the v2 signature (`1202`), so the phone offers "off" only to guardians that report the feature.
 - **It is a loosening, like any raise.** It needs a fresh hardware approval (`phoneMayApply` already says so: the
-  limit rises). It is refused during a recovery (`RecoveryAlreadyActive`) and refused in `pair`, where rules are not
-  hardware-approved: the user turns it off after pairing.
+  limit rises). It is refused during a recovery (`RecoveryAlreadyActive`) and refused in `pair`, even now that the rules
+  a wallet starts with are hardware-approved (security review 2026-11, DESIGN.md rule 4): the user turns it off after
+  pairing, with its own `limit=off` approval and alerts.
 - **Turning it back on is tightening:** any value lower than off, from the phone alone, at once.
 - **Recovery and rotation.** A completed recovery means a key was lost or taken. The adopted wallet therefore starts
   with the limit **on**, at the value it had just before it was turned off (recorded as `limitBeforeOff` with the
