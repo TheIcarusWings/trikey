@@ -61,6 +61,9 @@ export const ROUTED_METHODS: readonly MethodName[] = [
   'labels.get',
   'labels.list',
   'labels.delete',
+  // Unlocking with the hardware wallet (`hardware_unlock`): each wallet's own slot, opened by its own hardware wallet.
+  'unlock.hardware.add',
+  'unlock.hardware.remove',
 ];
 
 /** What the box shares: an own wallet's phone may call them as the first wallet's does. */

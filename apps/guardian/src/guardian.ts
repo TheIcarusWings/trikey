@@ -16,6 +16,9 @@
  *   service.json         relays (and those still watched after a change), paired
  *                        phone, co-signed sweeps, service log
  *   unlock-throttle.json unlock rate limit
+ *   unlock-slots.json    key 3's seed, encrypted once more per own wallet
+ *                        whose owner turned on unlocking with the hardware
+ *                        wallet (unlock-slots.ts); only once one is on
  *   silent-payments.json, silent-payments-key.json
  *                        the silent payment scanner (silent/service.ts): its
  *                        registration, matches, and the key its scan key is
@@ -46,7 +49,7 @@ import type { Server } from 'node:http';
 import { hex } from '@scure/base';
 import type { SimplePool } from 'nostr-tools/pool';
 import { normalizeURL } from 'nostr-tools/utils';
-import { GUARDIAN_FEATURES, RpcServer, SeenWraps, SimplePoolRelayPool, checkRelayList, checkRelayUrl, createSimplePool, sameRelays, type Alert, type MethodName } from '@trikey/protocol';
+import { GUARDIAN_FEATURES, RpcServer, unlockKeyMessage, SeenWraps, SimplePoolRelayPool, checkRelayList, checkRelayUrl, createSimplePool, sameRelays, type Alert, type MethodName } from '@trikey/protocol';
 import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 import { ChainService } from './chain/chain.js';
 import { RelayedTxs } from './chain/relayed.js';
@@ -76,7 +79,9 @@ import {
   SETUP_ENTROPY_BYTES,
   checkPassphrase,
   generateSeed,
+  guardianSeedOf,
   key3Context,
+  keystoreBinding,
   key3Mix,
   readKeystore,
   replaceKeystore,
@@ -122,6 +127,8 @@ import type { SmtpTestOptions } from './notify/channels.js';
 import { activeRecovery, labelled, type WalletRuntime } from './runtime.js';
 import { OwnWallets } from './wallets/service.js';
 import { LabelsVault, strayLabelIds } from './labels.js';
+import { DamagedSlotError, UNLOCK_SLOTS_FILE, UnlockSlots, WrongSlotKeyError, openSlot, sealSlot } from './unlock-slots.js';
+import { bip137Authorizer } from './policy/authorizer.js';
 
 export const FILES = {
   keystore: 'keystore.json',
@@ -196,12 +203,20 @@ export type ContactLockOutcome = 'locked' | 'already_locked' | 'not_allowed';
 
 export type UnlockOutcome =
   | { ok: true }
-  | { ok: false; code: 'bad_passphrase' | 'rate_limited'; retryAfterSeconds?: number }
+  /** `bad_hardware`: the hardware wallet's signature does not open that wallet's unlock slot (it counts as a failure). */
+  | { ok: false; code: 'bad_passphrase' | 'bad_hardware' | 'rate_limited'; retryAfterSeconds?: number }
   /**
    * `phone_unlock_disabled`: too many failed phone attempts in a row, until the web UI unlocks;
    * `recovery_pending`: the phone may not unlock while a recovery it did not start is running.
    */
-  | { ok: false; code: 'setup_required' | 'invalid' | 'phone_unlock_disabled' | 'recovery_pending'; message: string };
+  | { ok: false; code: 'setup_required' | 'invalid' | 'phone_unlock_disabled' | 'recovery_pending'; message: string }
+  /** `hardware_unlock_off`: no unlock slot for that wallet, or another slot id (turned off, or on again since): not a failure. */
+  | { ok: false; code: 'hardware_unlock_off'; message: string };
+
+/** What `unlock.hardware.add` did, or why not. */
+export type HardwareUnlockAddOutcome =
+  | { ok: true; walletId: string; slot: string; addedAt: number }
+  | { ok: false; code: 'locked' | 'not_registered' | 'wallet_changed' | 'hardware_unconfirmed' | 'bad_signature' | 'setup_required'; message: string };
 
 export type SetupOutcome = { ok: true } | { ok: false; code: 'invalid' | 'already_setup'; message: string };
 
@@ -314,6 +329,8 @@ export class Guardian implements WalletRuntime {
   readonly wallets: OwnWallets;
   /** Encrypted notes of every own wallet (labels.ts): ciphertext the phone stores here to survive a recovery. */
   readonly labels: LabelsVault;
+  /** Unlocking with the hardware wallet (unlock-slots.ts): key 3's seed under each own wallet's hardware wallet that may unlock. */
+  readonly unlockSlots: UnlockSlots;
   /** Email, ntfy, webhook and Telegram alerts (notify/notifier.ts): owner-side settings from the web UI; works while locked. */
   readonly notifier: Notifier;
   /** Keeps the wallets' chain data live and sends `wallet_tx` alerts (live-wallet.ts). Undefined when turned off. */
@@ -470,6 +487,7 @@ export class Guardian implements WalletRuntime {
     this.hosting = new Hosting(this);
     this.wallets = new OwnWallets(this);
     this.labels = new LabelsVault(opts.config.dataDir, () => this.clock.now(), opts.labelsUploadLimit);
+    this.unlockSlots = new UnlockSlots(join(opts.config.dataDir, UNLOCK_SLOTS_FILE));
     if (opts.liveWallet !== false) {
       this.live = new LiveWallet(this, opts.liveWallet ?? {});
       this.features.push(GUARDIAN_FEATURES.liveWallet);
@@ -545,6 +563,12 @@ export class Guardian implements WalletRuntime {
       g.chain.setBackend(g.makeBackend(stored, false));
     }
     await g.chain.relayed.load();
+    // Unlock slots: bound to this keystore (a file left by a reset that crashed half-way is dropped), and only for the
+    // wallets the box guards now (a retirement or recovery that stopped before it deleted them).
+    const slots = await g.unlockSlots.load(g.keystore ? keystoreBinding(g.keystore) : undefined);
+    if (slots === 'stale') g.log.warn('unlock_slots.stale_dropped', {});
+    if (slots === 'unreadable') g.log.error('unlock_slots.unreadable', { file: UNLOCK_SLOTS_FILE });
+    await g.pruneUnlockSlots();
     g.lockedAt = g.clock.now();
     g.lockReason = 'restart';
     return g;
@@ -577,6 +601,7 @@ export class Guardian implements WalletRuntime {
     GUARDIAN_FEATURES.ownWallets,
     GUARDIAN_FEATURES.ownWallets2,
     GUARDIAN_FEATURES.labelsBackup,
+    GUARDIAN_FEATURES.hardwareUnlock,
   ];
 
   /** The wallet object of a registration or a watched wallet (cached per descriptor). */
@@ -1310,6 +1335,92 @@ export class Guardian implements WalletRuntime {
     } catch (e) {
       this.log.error('labels.delete_failed', { error: errorText(e) });
     }
+    // Every place a wallet leaves (retired, swept to another wallet) comes here: its unlock slot goes too.
+    await this.pruneUnlockSlots(w);
+  }
+
+  /**
+   * Deletes the unlock slots of wallets the box no longer guards (unlock-slots.ts): a retired wallet, a wallet a recovery
+   * swept (the adopted wallet turns it on again with its own hardware wallet: a lost or stolen device must not keep
+   * unlocking), an own wallet removed. Best effort: a failure is logged, and the next start tries again.
+   */
+  async pruneUnlockSlots(w: WalletRuntime = this): Promise<void> {
+    try {
+      const gone = await this.unlockSlots.prune(this.guardedWalletIds());
+      if (gone.length) {
+        this.log.info('unlock_slots.removed', { walletIds: gone.join(','), reason: 'retired' });
+        await w.logEvent({ type: 'unlock_slot_removed', walletIds: gone, by: 'retired' });
+      }
+    } catch (e) {
+      this.log.error('unlock_slots.remove_failed', { error: errorText(e) });
+    }
+  }
+
+  /** The wallet ids the box guards now for its owner: the first wallet's and every active own wallet's. Never a guest's. */
+  guardedWalletIds(): string[] {
+    return [this.engine.registration()?.walletId, ...this.wallets.active().map((w) => w.engine.registration()?.walletId)].filter((x): x is string => !!x);
+  }
+
+  /** The owner's wallet (the first or an own wallet) that guards `walletId` now, with its registration. Never a guest's. */
+  private guardedWallet(walletId: string): { w: WalletRuntime; reg: NonNullable<ReturnType<PolicyEngine['registration']>> } | undefined {
+    const first = this.engine.registration();
+    if (first?.walletId === walletId) return { w: this, reg: first };
+    const own = this.wallets.active().find((w) => w.engine.registration()?.walletId === walletId);
+    const reg = own?.engine.registration();
+    return own && reg ? { w: own, reg } : undefined;
+  }
+
+  /** `guardian.status.hardwareUnlock` of `walletId`. */
+  hardwareUnlockOf(walletId: string | undefined): { slot: string; addedAt: number } | undefined {
+    if (!walletId || !this.features.includes(GUARDIAN_FEATURES.hardwareUnlock)) return undefined;
+    const s = this.unlockSlots.get(walletId);
+    return s ? { slot: s.slot, addedAt: Math.floor(s.addedAt / 1000) } : undefined;
+  }
+
+  /** The text the hardware wallet of `walletId` signs for unlock slot `slot` (`@trikey/protocol` `unlockKeyMessage`). */
+  private unlockText(walletId: string, slot: string): string {
+    return unlockKeyMessage({ walletId, guardianPubkey: this.identity!.pubkey, network: this.config.network, slot });
+  }
+
+  /**
+   * `unlock.hardware.add` (the paired phone of `w`, unlocked): checks the hardware wallet's signature of the slot's text
+   * against the wallet's authorization key, encrypts the seed under the key it gives as an unlock slot (replacing the
+   * wallet's earlier one), opens it once to be sure, and forgets the signature and the key.
+   */
+  addHardwareUnlock(w: WalletRuntime, input: { walletId: string; slot: string; signature: string }): Promise<HardwareUnlockAddOutcome> {
+    return this.unlockMutex.run(async (): Promise<HardwareUnlockAddOutcome> => {
+      const file = this.keystore;
+      if (!file || !this.identity) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
+      const seed = this.seed;
+      if (this.locked || !seed || seed.wiped) return { ok: false, code: 'locked', message: 'Unlock the guardian first: the seed is needed to add a way to unlock it.' };
+      const reg = w.engine.registration();
+      if (!reg) return { ok: false, code: 'not_registered', message: 'This wallet is not set up on this guardian.' };
+      if (reg.walletId !== input.walletId)
+        return { ok: false, code: 'wallet_changed', message: `This guardian guards wallet ${reg.walletId} now: sign the text for it.` };
+      if (w.engine.status().hardwareConfirmRequired)
+        return { ok: false, code: 'hardware_unconfirmed', message: 'Confirm your hardware wallet for this wallet first (after the recovery).' };
+      if (!reg.hardwareAuth || !bip137Authorizer.verify(this.unlockText(reg.walletId, input.slot), input.signature, reg.hardwareAuth)) {
+        this.log.warn('unlock_slots.bad_signature', { walletId: reg.walletId });
+        return { ok: false, code: 'bad_signature', message: "That is not this wallet's hardware wallet's signature of the unlock text." };
+      }
+      const binding = keystoreBinding(file);
+      const slot = seed.use((bytes) => sealSlot(bytes, input.signature, binding, { walletId: reg.walletId, slot: input.slot, addedAt: this.clock.now() }));
+      // Opened once before it counts: a slot that would not open is never stored.
+      openSlot(slot, input.signature, binding).fill(0);
+      await this.unlockSlots.put(slot);
+      this.log.info('unlock_slots.added', { walletId: reg.walletId });
+      await w.logEvent({ type: 'unlock_slot_added', walletId: reg.walletId });
+      return { ok: true, walletId: reg.walletId, slot: slot.slot, addedAt: slot.addedAt };
+    });
+  }
+
+  /** `unlock.hardware.remove`: the paired phone turned it off. Locked or unlocked. */
+  async removeHardwareUnlock(w: WalletRuntime, walletId: string): Promise<boolean> {
+    const gone = await this.unlockSlots.remove([walletId]);
+    if (!gone.length) return false;
+    this.log.info('unlock_slots.removed', { walletIds: walletId, reason: 'phone' });
+    await w.logEvent({ type: 'unlock_slot_removed', walletIds: gone, by: 'phone' });
+    return true;
   }
 
   /** After `wallet.retire`: the retired wallet's phone is no longer a peer; tell it (best effort). */
@@ -1410,6 +1521,7 @@ export class Guardian implements WalletRuntime {
         throw e;
       }
       this.keystore = file;
+      await this.unlockSlots.rebind(keystoreBinding(file));
       this.installSigner(signer, held);
       await this.throttle.succeeded();
       await this.logEvent({ type: 'setup' });
@@ -1529,44 +1641,91 @@ export class Guardian implements WalletRuntime {
       if (!this.locked) return { ok: true };
       if (typeof passphrase !== 'string' || passphrase.length === 0 || passphrase.length > 4 * MAX_PASSPHRASE_LENGTH)
         return { ok: false, code: 'invalid', message: 'Enter the unlock passphrase.' };
-      if (via === 'phone') {
-        const refusal = this.phoneUnlockRefusal();
-        if (refusal) {
-          this.log.warn('guardian.phone_unlock_refused', { code: 'code' in refusal ? refusal.code : undefined });
-          return refusal;
-        }
-      }
-      const throttle = via === 'web' ? this.throttle : this.phoneThrottle;
-      const verdict = throttle.check();
-      if (!verdict.ok) return { ok: false, code: 'rate_limited', retryAfterSeconds: Math.ceil(verdict.retryAfterMs / 1000) };
-      await throttle.begin();
-      let seed: GuardianSeed;
-      try {
-        seed = await unlockKeystoreSeed(file, passphrase);
-      } catch (e) {
-        if (!(e instanceof BadPassphraseError)) throw e;
-        this.log.warn('guardian.unlock_failed', { via, failures: throttle.failures });
-        await this.logEvent({ type: 'unlock_failed', via });
-        const next = throttle.check();
-        return { ok: false, code: 'bad_passphrase', retryAfterSeconds: next.ok ? undefined : Math.ceil(next.retryAfterMs / 1000) };
-      }
-      // The paired wallet's key 3: derived again from the seed and, if the phone contributed, its bytes.
-      let signer: KeystoreSigner;
-      try {
-        signer = seed.key3(file.public.network, this.engine.registration()?.key3Mix).signer;
-      } catch (e) {
-        seed.wipe();
-        throw e;
-      }
-      this.installSigner(signer, seed);
-      await throttle.succeeded();
-      // A successful unlock at the box also lets the phone try again.
-      if (via === 'web') await this.phoneThrottle.succeeded();
-      this.log.info('guardian.unlocked', { via });
-      await this.logEvent({ type: 'unlocked', via });
-      void this.tick();
-      return { ok: true };
+      return this.unlockAttempt(file, via, undefined, () => unlockKeystoreSeed(file, passphrase));
     });
+  }
+
+  /**
+   * Unlock with the hardware wallet (`guardian.unlock` with `kind: "hardware"`, from the phone): the signature of the
+   * slot's text must verify against `walletId`'s authorization key and open its slot. The phone's throttle and refusals,
+   * exactly as for the passphrase; a signature that does not open it counts as a wrong passphrase would. The signature
+   * and the key are never logged or kept.
+   */
+  unlockWithHardware(input: { walletId: string; slot: string; signature: string }): Promise<UnlockOutcome> {
+    return this.unlockMutex.run(async (): Promise<UnlockOutcome> => {
+      const file = this.keystore;
+      if (!file || !this.identity) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
+      if (!this.locked) return { ok: true };
+      const slot = this.unlockSlots.get(input.walletId);
+      const target = this.guardedWallet(input.walletId);
+      // Nothing to open (turned off, or on again with another slot id): not a guess, so not counted.
+      if (!slot || !target || slot.slot !== input.slot || !target.reg.hardwareAuthConfirmed)
+        return { ok: false, code: 'hardware_unlock_off', message: 'Unlocking with this hardware wallet is not on for this wallet (any more). Use the passphrase.' };
+      const binding = keystoreBinding(file);
+      return this.unlockAttempt(file, 'phone', input.walletId, async () => {
+        const auth = target.reg.hardwareAuth;
+        if (!auth || !bip137Authorizer.verify(this.unlockText(input.walletId, input.slot), input.signature, auth)) throw new BadPassphraseError();
+        let bytes: Uint8Array;
+        try {
+          bytes = openSlot(slot, input.signature, binding);
+        } catch (e) {
+          if (e instanceof DamagedSlotError) this.log.error('unlock_slots.damaged', { walletId: input.walletId });
+          if (e instanceof WrongSlotKeyError || e instanceof DamagedSlotError) throw new BadPassphraseError();
+          throw e;
+        }
+        try {
+          return guardianSeedOf(file, bytes);
+        } finally {
+          bytes.fill(0);
+        }
+      });
+    });
+  }
+
+  /**
+   * One unlock attempt (inside the unlock mutex, the guardian locked): the phone's refusals, the throttle of `via`, then
+   * `open`, which throws `BadPassphraseError` for a wrong passphrase or signature. `hardwareOf`: the wallet whose hardware
+   * wallet's signature `open` tries (the passphrase otherwise), for the log.
+   */
+  private async unlockAttempt(file: KeystoreFile, via: 'web' | 'phone', hardwareOf: string | undefined, open: () => Promise<GuardianSeed>): Promise<UnlockOutcome> {
+    const how = hardwareOf ? { method: 'hardware' as const, walletId: hardwareOf } : {};
+    if (via === 'phone') {
+      const refusal = this.phoneUnlockRefusal();
+      if (refusal) {
+        this.log.warn('guardian.phone_unlock_refused', { code: 'code' in refusal ? refusal.code : undefined, ...how });
+        return refusal;
+      }
+    }
+    const throttle = via === 'web' ? this.throttle : this.phoneThrottle;
+    const verdict = throttle.check();
+    if (!verdict.ok) return { ok: false, code: 'rate_limited', retryAfterSeconds: Math.ceil(verdict.retryAfterMs / 1000) };
+    await throttle.begin();
+    let seed: GuardianSeed;
+    try {
+      seed = await open();
+    } catch (e) {
+      if (!(e instanceof BadPassphraseError)) throw e;
+      this.log.warn('guardian.unlock_failed', { via, failures: throttle.failures, ...how });
+      await this.logEvent({ type: 'unlock_failed', via, ...how });
+      const next = throttle.check();
+      return { ok: false, code: hardwareOf ? 'bad_hardware' : 'bad_passphrase', retryAfterSeconds: next.ok ? undefined : Math.ceil(next.retryAfterMs / 1000) };
+    }
+    // The paired wallet's key 3: derived again from the seed and, if the phone contributed, its bytes.
+    let signer: KeystoreSigner;
+    try {
+      signer = seed.key3(file.public.network, this.engine.registration()?.key3Mix).signer;
+    } catch (e) {
+      seed.wipe();
+      throw e;
+    }
+    this.installSigner(signer, seed);
+    await throttle.succeeded();
+    // A successful unlock at the box also lets the phone try again.
+    if (via === 'web') await this.phoneThrottle.succeeded();
+    this.log.info('guardian.unlocked', { via, ...how });
+    await this.logEvent({ type: 'unlocked', via, ...how });
+    void this.tick();
+    return { ok: true };
   }
 
   /**
@@ -1753,7 +1912,10 @@ export class Guardian implements WalletRuntime {
             });
             await this.sp.unregister('guardian reset');
             await this.labels.deleteAll();
+            // Every unlock slot holds the old seed: gone before key 3 is (a crash in between leaves no slot, never a stale one).
+            await this.unlockSlots.deleteAll();
             await replaceKeystore(this.path('keystore'), next);
+            await this.unlockSlots.rebind(keystoreBinding(next));
           } catch (e) {
             signer.wipe();
             held.wipe();

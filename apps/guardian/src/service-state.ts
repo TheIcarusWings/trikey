@@ -41,8 +41,9 @@ export interface SweepRecord {
 export type ServiceEvent =
   | { type: 'setup' }
   | { type: 'started' }
-  | { type: 'unlocked'; via: 'web' | 'phone' }
-  | { type: 'unlock_failed'; via: 'web' | 'phone' }
+  /** `method: 'hardware'` (absent: the passphrase): the phone sent the hardware wallet's signature of `walletId`'s unlock slot. */
+  | { type: 'unlocked'; via: 'web' | 'phone'; method?: 'hardware'; walletId?: string }
+  | { type: 'unlock_failed'; via: 'web' | 'phone'; method?: 'hardware'; walletId?: string }
   | { type: 'locked'; reason: 'manual' | 'remote' }
   | { type: 'reset' }
   | { type: 'reset_refused'; detail: string }
@@ -106,7 +107,14 @@ export type ServiceEvent =
    * wallet), or they were deleted (the phone turned the option off, or the wallet left this guardian).
    */
   | { type: 'labels_updated'; walletId: string }
-  | { type: 'labels_deleted'; walletIds: string[]; by: 'phone' | 'retired' };
+  | { type: 'labels_deleted'; walletIds: string[]; by: 'phone' | 'retired' }
+  /**
+   * Unlocking with the hardware wallet (unlock-slots.ts): the paired phone turned it on for a wallet (its hardware wallet
+   * signed), or it was removed: the phone turned it off, or the wallet no longer uses this guardian (retired, recovered
+   * to another wallet). A reset removes every slot with key 3 and logs only the reset.
+   */
+  | { type: 'unlock_slot_added'; walletId: string }
+  | { type: 'unlock_slot_removed'; walletIds: string[]; by: 'phone' | 'retired' };
 
 /** A relay removed from `relays` that the guardian still watches (listens and publishes on) until the owner stops it. */
 export interface RetiringRelay {
