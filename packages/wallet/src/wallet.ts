@@ -65,6 +65,7 @@ import {
   normalizePolicy,
   normalizeRelayUrl,
   pairingMessage,
+  pairingRulesMessage,
   policyHash,
   recoveryAccessMessage,
   sameRelays,
@@ -72,6 +73,7 @@ import {
   type Alert,
   type HardwareAction,
   type HardwareApproval,
+  type PairingRulesApproval,
   type HistoryEntry,
   type KeyOrigin,
   type MethodName,
@@ -312,7 +314,7 @@ export type WalletEvent =
    */
   | { type: 'alert'; alert: Alert; id: string; atMs: number }
   /** The hardware wallet is about to be asked to sign this exact text: show it, so the user can compare it with the device screen. */
-  | { type: 'hardware_prompt'; purpose: 'pairing' | 'approval' | 'recovery-access' | 'payment' | 'recovery-sweep' | 'register' | 'savings' | 'notes' | 'unlock'; text: string }
+  | { type: 'hardware_prompt'; purpose: 'pairing' | 'rules' | 'approval' | 'recovery-access' | 'payment' | 'recovery-sweep' | 'register' | 'savings' | 'notes' | 'unlock'; text: string }
   /** A request left over from before the app restarted was settled (or given up). */
   | { type: 'pending_settled'; method: string; ok: boolean; refusal?: GuardianRefusal }
   /** A step of a long operation ("Replace guardian"), for a progress line. */
@@ -1893,7 +1895,7 @@ export class TrikeyWallet {
     hw: HardwareSigner,
     rec: HardwareRecord,
     text: string,
-    purpose: 'pairing' | 'approval' | 'recovery-access' | 'notes' | 'unlock',
+    purpose: 'pairing' | 'rules' | 'approval' | 'recovery-access' | 'notes' | 'unlock',
     round?: { n: number; of: number },
   ): Promise<string> {
     this.emit({ type: 'hardware_prompt', purpose, text });
@@ -1901,6 +1903,19 @@ export class TrikeyWallet {
     if (!verifyMessage(text, hex.decode(rec.auth.pubkey), sig))
       throw new WalletError('hardware_invalid_response', 'The hardware wallet signature does not verify against its authorization key.');
     return sig;
+  }
+
+  /**
+   * The device's approval of the rules a wallet starts with (`pairingRulesMessage`: the policy text with `seq=0`, which the
+   * device shows: limit, delay, fee cap, number of contacts), for `pair`, `wallet.add` and `hosted.pair` at a guardian that
+   * lists `pairing_rules_approval` in `features` (it refuses rules without it). Undefined for a guardian without the
+   * feature: its strict schema would refuse the member, and it accepts the rules as before. DESIGN.md, rule 4.
+   */
+  private async approveInitialRules(hw: HardwareSigner, rec: HardwareRecord, walletId: string, rules: Policy, features: readonly string[] | undefined): Promise<PairingRulesApproval | undefined> {
+    if (!features?.includes(GUARDIAN_FEATURES.pairingRulesApproval)) return undefined;
+    const expiresAt = this.nowSec() + APPROVAL_TTL_SEC;
+    const signature = await this.signWithAuthKey(hw, rec, pairingRulesMessage(rules, { walletId, expiresAt }), 'rules');
+    return { kind: 'bip137', expiresAt, signature };
   }
 
   /** Signs PSBT inputs on the device (for the wallet as `policy` registered it) and checks every input gained a valid hardware signature. */
@@ -2052,7 +2067,10 @@ export class TrikeyWallet {
   }
 
   /** `pair` at the session's guardian with the hardware wallet's pairing proof; checks it registered exactly this wallet. */
-  private async registerAtGuardian(session: PairingSession, opts: { rules: Policy; deviceName: string; proof: string; replaces?: { walletId: string; descriptor: string } }): Promise<Result<'pair'>> {
+  private async registerAtGuardian(
+    session: PairingSession,
+    opts: { rules: Policy; deviceName: string; proof: string; rulesApproval?: PairingRulesApproval; replaces?: { walletId: string; descriptor: string } },
+  ): Promise<Result<'pair'>> {
     const hwRec = this.s.hardware!;
     const walletId = session.wallet.fingerprint();
     const descriptor = session.wallet.descriptor();
@@ -2068,6 +2086,8 @@ export class TrikeyWallet {
         hardwareAuth: hwRec.auth,
         hardwareAuthProof: opts.proof,
         rules: opts.rules,
+        // Only to a guardian with `pairing_rules_approval` (`approveInitialRules`), which requires it.
+        ...(opts.rulesApproval ? { rulesApproval: opts.rulesApproval } : {}),
         // The old wallet's descriptor lets the new guardian watch it: it lists its coins and relays the sweep.
         ...(opts.replaces ? { replacesWalletId: opts.replaces.walletId, replacesDescriptor: opts.replaces.descriptor } : {}),
       });
@@ -2080,9 +2100,10 @@ export class TrikeyWallet {
   }
 
   /**
-   * Step 3: pair. The hardware wallet signs the pairing proof and registers
-   * the wallet, the guardian registers it with the initial `rules`, and the
-   * device shows the first receive address, which must match.
+   * Step 3: pair. The hardware wallet signs the pairing proof, registers the
+   * wallet and (guardians with `pairing_rules_approval`) approves the initial
+   * `rules`, which it shows; the guardian registers the wallet with exactly
+   * those rules, and the device shows the first receive address, which must match.
    */
   async pair(opts: { rules: Policy; deviceName?: string; verifyAddress?: boolean }): Promise<PairOutcome> {
     const session = this.pairing;
@@ -2094,7 +2115,7 @@ export class TrikeyWallet {
     } catch (e) {
       throw new WalletError('invalid_rules', `Invalid rules: ${(e as Error).message}`, { cause: e });
     }
-    // Pairing rules are not hardware-approved: the guardian refuses "no daily limit" here (turn it off after pairing).
+    // The guardian refuses "no daily limit" here, even hardware-approved (turn it off after pairing).
     if (isLimitOff(rules.dailyLimitSats)) throw new WalletError('invalid_rules', 'A wallet is paired with a daily limit. You can turn it off afterwards, with your hardware wallet.');
     // Letting the contacts lock the guardian may be set at pairing (it only adds protection), but only where the guardian
     // knows the rule: an older one refuses the member. Refused before the hardware wallet is asked anything.
@@ -2107,13 +2128,15 @@ export class TrikeyWallet {
     const cosignerPub = hex.encode(wallet.accountPubkeys().cosigner);
     const policyName = policyNameOf(walletId);
 
-    const { proof, hmac } = await this.withHardware(async (hw, rec) => {
+    const { proof, hmac, rulesApproval } = await this.withHardware(async (hw, rec) => {
       const proof = await this.signWithAuthKey(hw, rec, pairingMessage(walletId, cosignerPub), 'pairing');
       const reg = await hw.registerWallet({ name: policyName, descriptor });
-      return { proof, hmac: reg.hmac };
+      // The rules the wallet starts with, shown on the device and signed (rule 4).
+      const rulesApproval = await this.approveInitialRules(hw, rec, walletId, rules, session.features);
+      return { proof, hmac: reg.hmac, rulesApproval };
     }, hwRec);
 
-    const res = await this.registerAtGuardian(session, { rules, deviceName, proof });
+    const res = await this.registerAtGuardian(session, { rules, deviceName, proof, ...(rulesApproval ? { rulesApproval } : {}) });
 
     // Paired: from here on the guardian has the wallet, so persist before anything else can fail.
     this.rpc = session.rpc;
@@ -2196,8 +2219,10 @@ export class TrikeyWallet {
         throw new WalletError('hardware_in_use', 'This hardware wallet is already in a wallet on this phone. Each wallet needs its own hardware wallet.');
       if (rec.account.xpub === first.key2.xpub) throw new WalletError('hardware_mismatch', 'The hardware wallet holds the phone key.');
 
-      // 2. Key 3 at the account.
+      // 2. Key 3 at the account. And what the guardian can do now (an update since the last status may ask for the rules
+      // approval below).
       const prep = await this.call('wallet.add.prepare', { account: opts.account });
+      const features = (await this.refreshStatus().catch(() => undefined))?.features ?? this.s.guardianStatus?.features;
       const expectedPath = bip48Path(this.network, opts.account);
       if (prep.account !== opts.account || prep.guardianKey.path.replace(/h/g, "'") !== expectedPath)
         throw new WalletError('guardian_mismatch', `The guardian's key is at ${prep.guardianKey.path}, expected ${expectedPath}.`);
@@ -2228,6 +2253,8 @@ export class TrikeyWallet {
       const proof = await this.signWithAuthKey(hw, rec, pairingMessage(walletId, hex.encode(acct.cosigner)), 'pairing');
       this.emit({ type: 'hardware_prompt', purpose: 'register', text: `Register "${policyName}" on the hardware wallet` });
       const reg = await hw.registerWallet({ name: policyName, descriptor });
+      // The new wallet's rules, shown on its device and signed (rule 4).
+      const rulesApproval = await this.approveInitialRules(hw, rec, walletId, rules, features);
 
       // 4. The guardian.
       const res = await this.call('wallet.add', {
@@ -2237,6 +2264,7 @@ export class TrikeyWallet {
         hardwareAuth: rec.auth,
         hardwareAuthProof: proof,
         rules,
+        ...(rulesApproval ? { rulesApproval } : {}),
         ...(opts.firstName ? { firstName: opts.firstName.slice(0, 16) } : {}),
         // A guardian with phase 2 keeps the device's kind, so a phone rebuilding this wallet connects the right one.
         ...(this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.ownWallets2) ? { hardwareKind: rec.kind } : {}),
@@ -6679,10 +6707,12 @@ export class TrikeyWallet {
       const t = tweakFromPath(hd.publicKey!, hd.chainCode!, [0, 0]);
       if (hex.encode(t.publicKey) !== hwRec.auth.pubkey) throw new WalletError('hardware_invalid_response', "The hardware wallet's authorization key does not derive from its account key.");
       const policyName = policyNameOf(walletId);
-      const { proof, hmac } = await this.withHardware(async (hw, rec) => {
+      const { proof, hmac, rulesApproval } = await this.withHardware(async (hw, rec) => {
         const proof = await this.signWithAuthKey(hw, rec, pairingMessage(walletId, cosignerPub), 'pairing');
         const reg = await hw.registerWallet({ name: policyName, descriptor });
-        return { proof, hmac: reg.hmac };
+        // The rules this wallet starts with, over the key-set id, shown on the device and signed (rule 4).
+        const rulesApproval = await this.approveInitialRules(hw, rec, walletId, rules, prep.features);
+        return { proof, hmac: reg.hmac, rulesApproval };
       }, hwRec);
       const walletMap = encryptWalletMap({ version: 1, network: this.network.name, descriptor, birthHeight: opts.birthHeight ?? 0 }, walletMapKey(hd.chainCode!, payload.guardianPubkey, walletId));
       let res: Result<'hosted.pair'>;
@@ -6696,6 +6726,7 @@ export class TrikeyWallet {
           hardwareAuth: { pubkey: hwRec.auth.pubkey, path: hwRec.auth.path, tweak: hex.encode(tweakToBytes(t.tweak)) },
           hardwareAuthProof: proof,
           rules,
+          ...(rulesApproval ? { rulesApproval } : {}),
           walletMap,
           phoneNostrPubkey: this.s.nostrPubkey,
         });
@@ -7168,18 +7199,26 @@ export class TrikeyWallet {
     // turn it on there once it is updated). One that knows it keeps it.
     const rules = isContactLockOn(limited) && !session.features.includes(GUARDIAN_FEATURES.contactLock) ? normalizePolicy({ ...limited, contactLock: false }) : limited;
     this.emitStep('pair');
-    const { proof, hmac } = await this.withHardware(async (hw, rec) => {
+    const { proof, hmac, rulesApproval } = await this.withHardware(async (hw, rec) => {
       const reg = await hw.registerWallet({ name, descriptor });
       // Before any money moves: the device must derive the address the sweep will pay.
       const first = wallet.derive(0, 0).address;
       const shown = await hw.displayAddress({ name, descriptor, ...(reg.hmac ? { registration: { hmac: reg.hmac } } : {}) }, 0, 0);
       if (shown !== first) throw new WalletError('address_mismatch', `The hardware wallet shows ${shown}, but the new wallet's first address is ${first}. Nothing was moved.`);
       const proof = await this.signWithAuthKey(hw, rec, pairingMessage(walletId, cosignerPub), 'pairing');
-      return { proof, hmac: reg.hmac };
+      // The rules the new wallet starts with (the current ones, the limit on), shown on the device and signed.
+      const rulesApproval = await this.approveInitialRules(hw, rec, walletId, rules, session.features);
+      return { proof, hmac: reg.hmac, rulesApproval };
     });
     // The new guardian keys the wallet it watches by its descriptor hash; a hosted wallet's own id is its key-set id.
     const replacesId = this.isHosted ? this.multisig().fingerprint() : this.s.wallet!.walletId;
-    const res = await this.registerAtGuardian(session, { rules, deviceName: this.s.deviceName, proof, replaces: { walletId: replacesId, descriptor: this.s.wallet!.descriptor } });
+    const res = await this.registerAtGuardian(session, {
+      rules,
+      deviceName: this.s.deviceName,
+      proof,
+      ...(rulesApproval ? { rulesApproval } : {}),
+      replaces: { walletId: replacesId, descriptor: this.s.wallet!.descriptor },
+    });
     // The new guardian holds the new wallet: persist before anything else can fail.
     this.replaceRpc = { rpc: session.rpc, pool: session.pool };
     this.pairing = undefined;
@@ -7289,13 +7328,14 @@ export class TrikeyWallet {
       const limited = isLimitOff(current.dailyLimitSats) ? { ...current, dailyLimitSats: this.s.guardianStatus?.dailyLimit?.limitBeforeOffSats ?? 0 } : current;
       const rules = isContactLockOn(limited) && !st.features?.includes(GUARDIAN_FEATURES.contactLock) ? normalizePolicy({ ...limited, contactLock: false }) : limited;
       this.emitStep('pair');
-      const { proof, hmac } = await this.withHardware(async (hw, rec) => {
+      const { proof, hmac, rulesApproval } = await this.withHardware(async (hw, rec) => {
         const reg = await hw.registerWallet({ name, descriptor });
         const first = wallet.derive(0, 0).address;
         const shown = await hw.displayAddress({ name, descriptor, ...(reg.hmac ? { registration: { hmac: reg.hmac } } : {}) }, 0, 0);
         if (shown !== first) throw new WalletError('address_mismatch', `The hardware wallet shows ${shown}, but the new wallet's first address is ${first}. Nothing was moved.`);
         const proof = await this.signWithAuthKey(hw, rec, pairingMessage(walletId, hex.encode(wallet.accountPubkeys().cosigner)), 'pairing');
-        return { proof, hmac: reg.hmac };
+        const rulesApproval = await this.approveInitialRules(hw, rec, walletId, rules, st.features);
+        return { proof, hmac: reg.hmac, rulesApproval };
       });
       let res: Result<'wallet.add'>;
       try {
@@ -7306,6 +7346,7 @@ export class TrikeyWallet {
           hardwareAuth: this.s.hardware!.auth,
           hardwareAuthProof: proof,
           rules,
+          ...(rulesApproval ? { rulesApproval } : {}),
           hardwareKind: this.s.hardware!.kind,
           replacesWalletId: this.s.wallet!.walletId,
           replacesDescriptor: this.s.wallet!.descriptor,

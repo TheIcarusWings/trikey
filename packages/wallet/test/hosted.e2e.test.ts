@@ -70,6 +70,8 @@ describe('a hosted wallet, end to end', { timeout: 90_000 }, () => {
     expect(A.isHosted).toBe(true);
     const w = A.multisig();
     expect(walletId).toBe(keySetId(w.accountPubkeys()));
+    // The device approved the rules the wallet starts with, over the key-set id (seq=0): the guardian requires it.
+    expect(device.calls.some((c) => c.op === 'signMessage' && c.context?.purpose === 'rules' && c.message.startsWith(`Trikey policy v1 wallet=${walletId} seq=0 `))).toBe(true);
     // Key 3 is a depth-0 xpub over the slot's account key and this phone's chaincode.
     const [, , k3] = parseSortedMultiDescriptor(w.descriptor());
     expect(k3.originPath).toBe('');
@@ -108,7 +110,7 @@ describe('a hosted wallet, end to end', { timeout: 90_000 }, () => {
     // The status is the slot's view.
     const st = await A.refreshStatus();
     expect(st.walletId).toBe(walletId);
-    expect(st.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps']);
+    expect(st.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps', 'pairing_rules_approval']);
     // "Speed up" is not for a guest yet (DESIGN.md, "Speed up"): not offered, and refused before anything is read or signed.
     if (!res.ok) throw new Error('unreachable');
     expect(A.snapshot()!.history.find((h) => h.txid === res.txid)?.canSpeedUp).toBeUndefined();
