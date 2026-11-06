@@ -6,6 +6,26 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## 0.1.20-alpha (2026-11-06)
+
+Change the guardian's passphrase, and BitBox02. Update the guardian, then the app; each works with the other side's
+older version.
+
+- **Change the guardian's passphrase.** On the guardian's web page, Settings > Passphrase: the current passphrase, then
+  the new one twice. Your wallet, its rules and unlocking with your hardware wallet keep working. Other browsers are
+  signed out, and your phone and your email, push or Telegram alerts say it happened. The old passphrase stops working
+  everywhere (password manager, paper, an older app you once typed it into); your recovery code, backup file and
+  recovery sheet don't use it, so there is nothing to print again. A copy of the guardian's data made before the change
+  (a backup of the box, a copied Docker volume) still opens with the old passphrase: delete it or keep it safe. The app
+  can't change the passphrase, so a stolen phone can't either (#160).
+- **BitBox02.** Plug a BitBox02 into an Android phone's USB-C port, or connect a BitBox02 Nova over Bluetooth on Android
+  or iPhone. It sets up your wallet, approves payments and rule changes, gives recovery access, keeps your notes on the
+  guardian and can unlock the guardian. It needs firmware 9.27.1 or later; the first time, check that the phone and the
+  BitBox02 show the same pairing code. Payments are signed so the phone can check the BitBox02 hides nothing in its
+  signatures (anti-klepto). Notes and hardware unlock made with a BitBox02 work only with a BitBox02: if you move your
+  recovery phrase to another brand, turn them on again. Not yet tried on a real BitBox02: please test (alpha test plan,
+  step 18i) (#159).
+
 ## 0.1.19-alpha (2026-11-06)
 
 A fix for the iPhone app, and Jade over Bluetooth. Update the app; the guardian has no changes.
