@@ -6,6 +6,37 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## 0.1.21-alpha (2026-11-06)
+
+A security release: fixes from an external review of the whole project (an AI-run audit, each finding checked against
+the code before fixing). Update the guardian, then the app: a guardian with this release refuses to pair with an older
+app. Nothing here was exploited that we know of.
+
+- **Your hardware wallet now approves the rules a new wallet starts with.** When you pair, add a wallet, accept a family
+  invite or replace your guardian, your hardware wallet asks for one more confirmation showing your daily limit
+  (`limit=`, in sats), waiting period (`delay=`), sweep fee cap and number of alert contacts: check them before you
+  approve. Before, only the app chose these rules, so a tampered app could have set a limit high enough to empty the
+  wallet with the phone and guardian alone. Wallets already paired keep their rules (#167).
+- **A notification channel moved to another server no longer keeps its secrets.** Moving an ntfy channel needs its topic
+  again and forgets its token; a webhook with a new address forgets its signing secret; changing the email server, port,
+  encryption, user name or pinned certificate needs the app password again (#164).
+- **On Umbrel and Start9, only you can set up a new guardian.** Other apps on the same box could reach a guardian not yet
+  set up. On Umbrel nothing changes for you (the guardian recognises Umbrel's login); on Start9 the guardian asks for a
+  setup code: Actions > Show Setup Code, or the dialog that shows your web password (#164).
+- **Bitcoin Core's password goes only where it was checked**, and on Start9 the guardian no longer sees Bitcoin's whole
+  data folder. The docs list the exact RPC calls the guardian needs, and advise keeping no funds in the node's own
+  wallet (#164).
+- **Savings: a payment out can no longer be hidden behind many small payments in.** The guardian now checks every Savings
+  transaction; if there are too many to check for half an hour, you and your contacts get "Savings not fully checked"
+  instead of silence (#166).
+- **Cancelling a recovery by DM: the cancel line must be the whole reply.** A reply quoting the guardian's alert no longer
+  cancels; anything else gets a short answer saying exactly what to send (#166).
+- **The guardian's one-time unlock key is replaced after every try**, whatever the answer, and **a burst of refused
+  payment requests hits the same limit as one after another** (#166).
+- **Recovery Key mode: the vault's address waits for your hardware wallet.** QR and NFC devices now confirm the vault's
+  first address too; no vault address is shown until one has; key exports that don't match their path are refused
+  (#165).
+
 ## 0.1.20-alpha (2026-11-06)
 
 Change the guardian's passphrase, and BitBox02. Update the guardian, then the app; each works with the other side's
