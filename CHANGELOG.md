@@ -6,6 +6,32 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## 0.1.17-alpha (2026-11-06)
+
+Unlock the guardian with your hardware wallet, sealed unlocks, and QR hardware wallets for guardian wallets. Update the
+guardian, then the app; each works with the other side's older version.
+
+- **Unlock your guardian with your hardware wallet.** After a restart the guardian is locked until you unlock it. Turn
+  on Settings > Guardian > "Unlock with your hardware wallet" (off by default): from then on one confirmation on the
+  device unlocks the guardian from your phone, without typing the passphrase, which always keeps working. Your phone
+  keeps nothing that can unlock the guardian by itself, so a stolen phone still can't. With several wallets, each
+  wallet's device can be turned on separately, and any of them unlocks the guardian (#147).
+- **Your unlock is sealed.** Unlocking from the phone, with the passphrase or the hardware wallet, and turning the
+  hardware unlock on, are now sealed to a key the guardian keeps only in memory and replaces at every lock, unlock and
+  use. Even someone who later steals the guardian's disk and has kept old relay messages can't read them. An older app
+  still unlocks; the guardian's Activity page then asks you to update it (#149).
+- **QR hardware wallets can set up a guardian wallet.** A Coldcard Q, Jade, Keystone 3, Passport Prime or Specter DIY
+  can now pair with your guardian, approve rule changes, let a new phone start a recovery, keep your notes on the
+  guardian and unlock it. The phone shows the short text to sign as a QR code; the device shows the same text, signs
+  it and shows the signature as a QR code; the phone checks it before using it. Not yet tried on these devices: please
+  test (alpha test plan, step 18e) (#150).
+- **Trikey asks which QR device you have.** Passport (2nd generation), Krux and SeedSigner co-sign payments but can't
+  set up a guardian wallet yet, and the app says so before you start. The Coldcard Mk4 has no camera and needs NFC or
+  USB, not supported yet. A QR device added before this version shows as "Other": pick its model in Settings >
+  Advanced > Hardware wallet model (#150).
+- **Clearer unlock errors.** When the phone may not unlock (too many wrong tries, or a recovery this phone didn't
+  start), the app says to unlock on the guardian's web page (#147).
+
 ## 0.1.16-alpha (2026-11-05)
 
 Notes that survive losing your phone, a check on every Speed up, and a note about the phone itself. Update the

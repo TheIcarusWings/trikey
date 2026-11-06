@@ -6,7 +6,7 @@ tagline: Key 3 of your 2-of-3 bitcoin wallet, on your own node
 # TODO(verify): the icon is a placeholder (the web UI favicon). Replace with a proper icon URL.
 icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/guardian-web/public/favicon.svg
 category: bitcoin
-version: "0.1.16-alpha"
+version: "0.1.17-alpha"
 # TODO(verify): host-facing port for the app_proxy. Pick one that no other app in the store uses.
 port: 3010
 description: >-
@@ -26,10 +26,10 @@ support: https://github.com/TheIcarusWings/trikey/issues
 # TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
 gallery: []
 releaseNotes: >-
-  Notes that survive recovery: with the 0.1.16 app, an encrypted copy of your labels can be kept on the guardian,
-  which stores it without being able to read it, and a phone that recovered the wallet brings it back. The app now
-  checks every Speed up against the original payment before signing, and the Security tab notes when the phone has
-  no screen lock or an old security update.
+  Unlock the guardian with your hardware wallet after a restart (opt-in, from the 0.1.17 app); the passphrase keeps
+  working. Unlocks from the phone are now sealed to a key the guardian keeps only in memory, so old relay messages
+  can't reveal them. QR hardware wallets (Coldcard Q, Jade, Keystone 3, Passport Prime, Specter DIY) can now set up
+  a guardian wallet.
 dependencies:
   - bitcoin
   - electrs
