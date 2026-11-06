@@ -34,6 +34,7 @@ Visual walkthrough (private canvas): https://claude.ai/artifact/NV7SCZja8ik9LAvu
 | Chain sources | The owner chooses, as in Sparrow Wallet: their own Electrum server (the default: the box's own Electrs on Umbrel and Start9), their own Bitcoin Core alone (a watch-only descriptor wallet in it), or a public Electrum server (TLS, a short list or another one) behind a warning; every change announced on every channel; no switch to a public server during a recovery | Own node first; a public server only for people with none, since it sees the wallets' addresses and could hide coins (it cannot spend or change rules) |
 | Entropy | Every key from one checked function on the OS CSPRNG; the guardian's seed mixes in the browser's (and on Umbrel the platform's) randomness, key 3 the phone's; no dice | See "Entropy": guards catch gross failures, the setup mix, the key-3 mix and 2-of-3 cover subtle ones |
 | Guardian for family | Invite-only hosting: a guardian holds key 3 for a person its owner knows, one engine per hosted wallet, BIP 89 delegation | See "Guardian for family"; phase 1 built (docs/design/family-hosting.md) |
+| Unlocking key 3 | The passphrase always (Argon2id, never removable); opt-in, per own wallet, that wallet's Ledger or Trezor through the phone: a deterministic BIP 137 signature opens an extra unlock slot. The phone keeps nothing that unlocks by itself | See "Unlocking the guardian with the hardware wallet": no new device API (Trezor's CipherKeyValue was not needed), and a stolen phone still cannot undo a lock |
 
 Options considered and dropped, with research in the earlier pages under `docs/`:
 - company cosigner (Bitkey's model);
@@ -79,8 +80,8 @@ Hardware (key 1) ───┘   outbound only           └── alerts: nostr 
   - recoveries in progress;
   - notifications: email, ntfy, webhook and Telegram alerts ("Alerts beyond nostr").
 - **Keeps key 3 only in memory.** On disk it is encrypted. After any restart the guardian is *locked* until the user unlocks it with:
-  - **the hardware wallet:** a deterministic secret obtained over the phone. The mechanism is still open; see "Open questions".
-  - **or a passphrase:** stretched with Argon2id.
+  - **a passphrase:** stretched with Argon2id, in the web UI or typed on the phone; always there, never removable;
+  - **or, if the owner turned it on, the hardware wallet:** one confirmation on a Ledger or Trezor through the phone, which opens an extra unlock slot ("Unlocking the guardian with the hardware wallet").
   
   A stolen, unplugged box is useless.
 - **Holds no backup of key 3.** If the box dies, phone + hardware sweep to a new wallet with a fresh guardian ("Replace guardian").
@@ -154,7 +155,8 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
   | `singlekey.register` | Register the phone's single-key coins (public data only): the helper coin's account (`m/84'/c'/1'` xpub) and coins by outpoint and script. Then `sign` accepts the helper input, `wallet.sync` with `wallet: 'helper'` serves them and `tx.broadcast` relays their sweeps into the vault |
   | `sp.register`, `sp.unregister` | Hand the guardian the silent payment scan key (with `B_spend`, labels and birth height) so it scans the node's blocks; take it back |
   | `sp.scan` | The payments the scanner found (`sp_received` alerts announce new ones) |
-  | `guardian.unlock` | Unlock after a restart (refused after 5 failed tries in a row until the web UI unlocks, and while a recovery the phone did not start runs) |
+  | `guardian.unlock` | Unlock after a restart, with the passphrase or (opt-in) the hardware wallet's signature (refused after 5 failed tries in a row until the web UI unlocks, and while a recovery the phone did not start runs) |
+  | `unlock.hardware.add`, `unlock.hardware.remove` | Turn unlocking with a wallet's hardware wallet on (its signature, the guardian unlocked) or off ("Unlocking the guardian with the hardware wallet") |
   | `guardian.lock` | Lock the guardian remotely (alert contacts can lock it too, with a `LOCK` DM, when the owner allows it: rule 8) |
   | `guardian.status` | Read guardian state (with `warnings`, e.g. `no_alert_contacts`) |
   | `labels.put`, `labels.get`, `labels.list`, `labels.delete` | Keep an encrypted copy of the phone's labels per wallet, opt-in, so they survive a recovery; a phone with recovery access may read it ("Notes that survive recovery") |
@@ -293,6 +295,14 @@ printed and kept with the hardware wallet.
 - **Remote compromise of the home server** gives up one key of three. That's the same exposure as Bitkey's server being breached.
 - **Savings (optional).** Phone + guardian, together or compromised, cannot move Savings: the guardian holds no Savings key. What can: the phone with the hardware wallet, or the Recovery Key with either of them. A burglar who finds the phone, a powered box and a Recovery Key kept at home takes Savings too, so the Recovery Key belongs away from home, apart from the hardware wallet's seed words. A compromised guardian can hide Savings' balance from the phone or stay silent when it moves (its tripwire), which costs nothing it was trusted with. Turning the Savings watch off or swapping it for another wallet (the paired phone alone can) is announced to the phone and every alert contact (`savings_unwatched`), so a phone thief cannot quietly blind the tripwire before moving Savings with a second key. The watched Savings record survives a recovery, so whoever completes one (normally the owner) can read Savings' descriptor and balance from the guardian; it moves nothing.
 - **Encrypted notes on the guardian (opt-in).** The guardian stores ciphertext it cannot open (the key comes from a hardware wallet signature that never leaves the phone). It learns **roughly how many notes the owner keeps** (the copy is padded to a size bucket: 4 KiB doubling to 512 KiB) and **when they change** (each upload, at most one stored version per 10 minutes), nothing of what they say. A thief holding the unlocked phone can overwrite or delete the copy (as they could the labels on that phone); the guardian keeps the three newest versions, and the money is never at stake.
+- **Unlocking with the hardware wallet (opt-in; "Unlocking the guardian with the hardware wallet").** What an unlock slot changes, case by case:
+  - *The box stolen (the disk only).* The slots file holds, per wallet, a salt, a nonce, a 16-byte key check and the encrypted seed: the key comes from a hardware wallet's signature (256 bits, not a guessable passphrase), so the slots add no offline attack; the passphrase slot stays as strong as its passphrase. Combined with an archive of old gift wraps a malicious relay kept past their expiry, the guardian's nostr key on the disk (stored in clear, so a locked guardian can answer) opens an old `guardian.unlock`, and with it the signature: the same exposure as a passphrase the owner once typed on the phone. Turning the option off and on again makes a new slot and makes every earlier signature worthless; a reset rotates key 3. A stolen box is "Replace guardian" either way: never unlock a box you no longer hold.
+  - *The phone stolen, without the hardware wallet.* It cannot unlock: the phone keeps neither the signature nor anything derived from it, and the guardian checks every slot signature against the wallet's authorization key, so the phone cannot add a slot of its own either (`unlock_signature_invalid`). Its guesses count against the phone's throttle (5 in a row stop the phone until the web UI unlocks), as wrong passphrases do. A lock by the owner or an alert contact (rule 8) therefore still holds. It can turn the option off: a nuisance (the passphrase remains).
+  - *The phone and the hardware wallet together.* They unlock the guardian, as they already could move every coin without it (2 of 3). Nothing new.
+  - *A malicious relay.* It sees one more gift wrap and cannot open it (NIP-44 to the guardian's key); it can drop it (the owner uses the passphrase) or replay it: the guardian refuses an old or seen rumor, an id it handled before a restart (`1501`), and an unlock while already unlocked changes nothing.
+  - *A compromised phone* (malware on it). It sees the signature in transit and could keep it, so it could unlock the guardian later without the device, until the slot changes: the same as it already sees the passphrase whenever the owner types it on the phone. Unlike the passphrase, the signature opens nothing else (no other use, no other wallet, no other guardian; the text says so) and costs only an off-and-on to replace. A phone suspected of malware: turn the option off, or off and on again from a clean phone.
+  - *Replay of a signature elsewhere.* The text names the wallet, the guardian's nostr key, the network and a random slot id, and its prefix is no approval's (rule 4), so it is worthless anywhere else, and no other text of the device unlocks anything.
+  - *A guest's hardware wallet* (family hosting) never unlocks the host's box: guests cannot call the methods and are never told the feature.
 - **Phishing that imitates an alert.** Trikey alerts never carry a link or a button and never ask anyone to sign in,
   in nostr DMs, email, ntfy, Telegram or webhooks alike (the guardian breaks anything link-like before sending, and its name in
   messages may hold no dots); each message says so. A message with a link is not from the guardian. Email and ntfy are
@@ -340,6 +350,7 @@ Guessable keys would lose money silently, so where each key's randomness comes f
 | Backup data key, nonces, salts, recovery code, passkey PRF salt | `packages/wallet/src/backup.ts`, `wallet.ts` | `secureRandomBytes`. |
 | Pairing secret, message ids, pairing session id | `packages/protocol/src/pairing.ts`, `envelope.ts`, `apps/guardian/src/pairing.ts` | `secureRandomBytes`. |
 | Guardian keystore salt and nonce, silent-payment key encryption | `apps/guardian/src/keystore.ts`, `silent/service.ts` | `secureRandomBytes`. |
+| Unlock slot salt and nonce; the slot id | `apps/guardian/src/unlock-slots.ts`; the phone's `enableHardwareUnlock` | `secureRandomBytes`. The slot's key itself comes from the hardware wallet's deterministic signature, not from either generator. |
 | NIP-44 nonces and NIP-59 back-dating (RPC and the guardian's NIP-17 alert DMs) | `packages/protocol/src/transport.ts` | `secureRandomBytes` and `secureRandomInt`, no longer `Math.random` or nostr-tools' own generator. Back-dating hides when a message was sent, so it should not come from a predictable generator. The wrap's public `expiration` is derived from that same back-dated `created_at` (`created_at + W + the class TTL ceiling`, where `W` is the back-dating window: 2 days for alerts, 10 minutes for requests and responses from 0.1.10, PROTOCOL.md section 2), never from the send time, so it does not undo the back-dating; relays still see when an event arrives. |
 
 `Math.random` is left in one place: the Electrum reconnect jitter, which is timing only. A lint-style test ([`packages/core/test/randomness-lint.test.ts`](packages/core/test/randomness-lint.test.ts), checker in `test/support/randomness-check.ts`) fails CI when the shipped sources (`apps/*/src`, `apps/*/app`, `packages/*/src`) reach randomness any other way: `Math.random`; a random function (`randomBytes`, `getRandomValues`, `randomUUID`, `randomInt`, `randomFill`, `randomSecretKey`, `generateMnemonic`, `generateSecretKey`, nostr-tools' `wrapEvent`/`createWrap`/`createSeal`, ...) imported, destructured or reached as a member from any module other than our own; `globalThis.crypto` / `window.crypto` (except `.subtle`); and `nip44.encrypt` without an explicit nonce. Aliased, namespace, default, `require` and dynamic-import forms are followed. The few files that implement the source itself are allowlisted per rule, with the reason, and a test fails if an exception is no longer needed. It cannot see value aliasing (`const m = Math; m.random()`) or code inside dependencies.
@@ -753,6 +764,62 @@ guardian"). Protocol: PROTOCOL.md, "Encrypted notes".
 - **Not yet:** the app shows no history of a wallet a recovery swept (its coins were all moved), so the old wallet's
   notes come back into the labels, the backup and later copies, but are not shown on that phone yet.
 
+## Unlocking the guardian with the hardware wallet (decided 2026-11-05, built)
+
+Open question 1. The guardian starts locked after every restart; until now only the passphrase unlocked it, in the web
+UI or typed on the phone. The owner's choice: let the hardware wallet do it too, **opt-in, off by default, per own
+wallet, Ledger and Trezor only**, the passphrase always kept. Protocol: PROTOCOL.md, "Unlocking with the hardware
+wallet"; code: `apps/guardian/src/unlock-slots.ts`, `TrikeyWallet.enableHardwareUnlock` / `unlockGuardianWithHardware`.
+
+- **The same trick as the notes, not a device API.** Ledger has no symmetric-key API, and Trezor's CipherKeyValue
+  (SLIP-11) would have served one brand only, so neither is used. The hardware wallet BIP 137-signs, with the
+  authorization key it signs approvals with (docs/design/hardware-auth-path.md), one line:
+  `Trikey unlock key v1 wallet=<walletId> guardian=<guardian nostr pubkey> network=<network> slot=<slot id>`.
+  Ledger and Trezor sign deterministically (RFC 6979; "Notes that survive recovery" has the firmware references), so
+  the device signs that text the same way at every unlock. Turning the option on asks for it twice and refuses when the
+  two differ (`hardware_not_deterministic`). The key material is `r || s` (low `s`, header byte dropped) through
+  HKDF-SHA256, `info = trikey/guardian-unlock/v1`, with a random salt kept on the guardian; the helpers are shared with
+  the notes (`@trikey/core` `signatureKeyMaterial`, `sameSignature`, `keyFromSignature`).
+- **The guardian checks the signature first.** Unlike the notes key, this key is for the guardian, so the phone sends
+  the signature itself (once, over the encrypted RPC) and the guardian verifies it against the wallet's authorization
+  key before it derives anything, both when a slot is added and at every unlock. That is what keeps a phone alone from
+  adding a slot of its own (it could otherwise unlock after the owner, or an alert contact, locked the guardian). The
+  guardian rebuilds the text itself and never takes text from the phone.
+- **Unlock slots beside the keystore, not inside it.** Each slot (`unlock-slots.json`) is the 64-byte setup seed
+  encrypted with XChaCha20-Poly1305 under the slot's key, with a 16-byte key check (a wrong signature is told apart
+  before decrypting, as in the notes blob) and associated data binding the keystore (key 3's account pubkey and its
+  `createdAt`), the wallet, the slot id, when it was added, its salt and check. The opened seed is checked against the
+  keystore's public key like a passphrase unlock. `keystore.json` is never touched: nothing to migrate, an existing
+  passphrase-only guardian loads and unlocks exactly as before, an older guardian on the same data directory ignores
+  the file, and nothing here can lose the passphrase path. (docs/design/passkey-unlock.md's keystore version 2, a data
+  key with slots, remains the way for passkeys; this needed no data key: the slots wrap the seed itself.) The signature
+  and the derived keys live for one request and are zeroed; nothing secret is written or logged.
+- **The phone does not keep the key** (the owner's question, decided: it does not). With the key in the phone's secure
+  store, a phone unlocked by a thief (or a biometric bypass) would unlock the guardian at will, undoing the very locks
+  that exist for a stolen phone: the owner's remote lock, an alert contact's `LOCK` (rule 8), the restart a power cut
+  causes. Every unlock therefore needs the hardware wallet, one confirmation. The convenience lost is small (an unlock
+  happens after a restart, rarely), and the passphrase is still there when the device is not.
+- **One slot per own wallet** (docs/design/multi-wallet.md): any of them, with its own hardware wallet, unlocks the
+  whole box (key 3's seed is one seed). Turning it on again replaces the wallet's slot (a new slot id), so every
+  earlier signature stops working.
+- **Same throttle and refusals as the passphrase from the phone.** A signature that does not open the slot counts as a
+  wrong passphrase; 5 failures in a row of either kind stop the phone until the web UI unlocks; a recovery the phone
+  did not start refuses it. Asking with a slot id that is gone (turned off or replaced) is not a guess and is not
+  counted. The web UI keeps the passphrase only.
+- **Lifecycle.** The passphrase can never be removed. Off (`unlock.hardware.remove`) deletes the slot. Retiring a wallet,
+  a recovery that leaves the guardian, and a recovery's rotation delete the swept wallet's slot (the adopted wallet turns
+  it on again with its own hardware wallet, once confirmed with `hardware.confirm`: a lost or stolen device must not
+  keep unlocking); a slot of a wallet the box no longer guards is also dropped at start. A reset deletes every slot
+  before it replaces key 3 (they hold the old seed), and a slots file bound to another keystore is dropped. A passphrase
+  change (not built yet) needs nothing: the slots do not depend on the passphrase. Family hosting: never; a guest's
+  hardware wallet must not unlock the host's guardian, so guests cannot call the methods and are not told the feature.
+- **QR devices: not offered.** Keystone, Passport, Jade over QR, SeedSigner and Krux sign no messages over QR codes in
+  Trikey (as for the notes), so there is no signature to unlock with; the app says so and keeps the passphrase.
+- **Seen and said.** The web UI's Activity: "Hardware unlock turned on / off", "Unlocked with the hardware wallet" and
+  failed attempts, never the signature. Offered only by a guardian that lists `hardware_unlock`; an older phone never
+  calls it. The app: Settings > Guardian, "Unlock with your <device>" (a switch), and on the locked guardian the same
+  button above the passphrase field.
+
 ## Later: Taproot and threshold signatures (decided 2026-11-03: not now)
 
 Today every Trikey spend is a visible 2-of-3 (`wsh(sortedmulti)`): anyone reading the chain sees a multisig, and two
@@ -780,7 +847,7 @@ Several wallets on one phone and one guardian, where only the hardware wallet ch
 
 ## Open questions
 
-1. **How the hardware wallet unlocks the guardian.** Rule changes now use BIP137 message signatures (see rule 4); which signing paths each device allows still has to be tested on real hardware. Unlocking with the hardware wallet is still open: Trezor has CipherKeyValue (SLIP-11), Ledger has no symmetric-key API. Until then, unlocking uses the passphrase.
+1. **How the hardware wallet unlocks the guardian.** Built, opt-in ("Unlocking the guardian with the hardware wallet"): Ledger and Trezor BIP 137-sign a fixed unlock text deterministically, and the guardian, after checking the signature against the wallet's authorization key, derives an unlock slot's key from it, as the notes do. Trezor's CipherKeyValue (SLIP-11) was not needed, and Ledger needs no symmetric-key API. Still open: checking on real devices (firmware versions) that two signatures of the same text are equal, which the app checks each time the option is turned on; QR devices keep the passphrase. Rule changes use BIP137 message signatures too (see rule 4); which signing paths each device allows still has to be tested on real hardware.
 2. **Notifications when the phone app is asleep.**
    - Nostr DMs reach the user's regular nostr app (zero infrastructure).
    - Real push on iOS needs Apple's push service, called with credentials only the app's publisher holds. That means running a stateless "empty ping" bridge, which conflicts with "we run nothing".
@@ -794,7 +861,7 @@ Several wallets on one phone and one guardian, where only the hardware wallet ch
 - `packages/core/`: descriptors (BIP380 checksum, BIP389 multipath), BIP48 wallets, PSBT build, sign, analyze and finalize, software signer. `tweak.ts` holds the BIP 89 tweak math family hosting uses; `keySetId` names a hosted wallet.
 - `packages/protocol/`: the nostr RPC (schemas, gift-wrap transport with per-peer NIP-44 conversation key caching, replay guard, client and server, pairing and recovery URIs, NIP-06 phone identity, an in-memory relay for tests). Spec in `PROTOCOL.md`.
 - `packages/wallet/`: the phone's side (key 2, pairing, payments, rules, recovery, backup, labels and their encrypted copy on the guardian), platform-agnostic; the app supplies storage and hardware adapters. It finishes a recovery (switching to the adopted wallet after checking it, then `confirmHardware()`), replaces the guardian (pair the new one, sweep, retire the old wallet, sweep stray coins later), locks the guardian remotely, parses every Trikey QR (`parseScannedCode`), and keeps a send log that travels in the backup. Chain data comes from the guardian.
-- `apps/guardian/`: the guardian. `src/policy/` is the policy engine (spend checks, daily limit, rule changes with BIP137 approvals, Delay & Notify, wallet rotation with one active wallet plus retired ones, state format version 2 with migration from version 1). Around it: key storage (Argon2id, m=64 MiB, t=3, then XChaCha20-Poly1305), lock/unlock (also from the phone), reset, the nostr RPC server and NIP-17 alert DMs behind one shared inbox, email, ntfy, webhook and Telegram alerts (`src/notify/`), an Electrum client (sweep completeness, broadcast, chain time) and the HTTP API for the web UI. `src/hosting/` hosts guests' wallets (family hosting): the slot registry and invites, one engine per hosted wallet, routing by sender, guests' alerts and recoveries. Entry point `src/main.ts`.
+- `apps/guardian/`: the guardian. `src/policy/` is the policy engine (spend checks, daily limit, rule changes with BIP137 approvals, Delay & Notify, wallet rotation with one active wallet plus retired ones, state format version 2 with migration from version 1). Around it: key storage (Argon2id, m=64 MiB, t=3, then XChaCha20-Poly1305), unlock slots for the hardware wallet (`unlock-slots.ts`), lock/unlock (also from the phone), reset, the nostr RPC server and NIP-17 alert DMs behind one shared inbox, email, ntfy, webhook and Telegram alerts (`src/notify/`), an Electrum client (sweep completeness, broadcast, chain time) and the HTTP API for the web UI. `src/hosting/` hosts guests' wallets (family hosting): the slot registry and invites, one engine per hosted wallet, routing by sender, guests' alerts and recoveries. Entry point `src/main.ts`.
 - `apps/guardian-web/`: the guardian's web UI, including the recovery code and the reset. Its API is in `API.md`.
 - Savings (optional, docs/design/savings-and-limit-off.md): `SAVINGS_ACCOUNT` in core; `savings.*` in the protocol; the guardian's watch (`apps/guardian/src/savings.ts`); `TrikeyWallet.startSavings` ... `replaceSavingsKey` in `packages/wallet`; `apps/mobile/app/savings/`.
 - `packages/recovery-key/`: Recovery Key mode (no home server): the printed Recovery Kit, the chain of BIP 68 timelocked refills and its scheduler, the single-key spending balance with CPFP, an Esplora client, and recovery with any two keys.

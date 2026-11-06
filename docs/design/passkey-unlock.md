@@ -210,7 +210,7 @@ iCloud Keychain and YubiKeys are the providers where (b) is best supported today
 - **The passphrase remains a working fallback.** It is a mandatory slot. It is still required for
   reset, for adding or removing a passkey, and for every unlock from the phone.
 - **Nothing secret goes over a relay.** The phone's `guardian.unlock` over nostr stays passphrase
-  only (or the future hardware unlock). PRF outputs and assertions travel only on the HTTPS path between
+  only (or the hardware unlock, now built). PRF outputs and assertions travel only on the HTTPS path between
   the browser and the box.
 - **No third party.** No hosted relying party, no Related Origin Requests on `trikey.app`, no
   attestation service. The guardian verifies everything itself.
@@ -232,7 +232,10 @@ an own domain as the supported paths, and offer passkeys only when the page is a
 | 4. Review | Security review of phases 2 and 3 before it reaches mainnet users. | — |
 
 Version 2 slots also prepare the ground for the hardware-wallet unlock (Open question 1 in DESIGN.md),
-which would be one more slot type.
+which would be one more slot type. (Update 2026-11-05: the hardware-wallet unlock was built without version 2: its
+slots wrap the seed itself in a file of their own, `unlock-slots.json`, and keystore.json is unchanged. See DESIGN.md,
+"Unlocking the guardian with the hardware wallet". A passkey slot can still come with version 2, or as one more slot
+kind in that file.)
 
 ## Decisions (30 October 2026)
 
