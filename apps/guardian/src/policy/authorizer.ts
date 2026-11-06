@@ -51,35 +51,43 @@ function line(parts: string[]): string {
   return msg;
 }
 
+/** The policy text (versions 1 to 3) for `rules`, with `head` (wallet and sequence) and `tail` (expiry). */
+function policyLine(rules: Rules, head: string[], tail: string, contactLockBefore?: boolean): string {
+  const r = normalizeRules(rules);
+  // No daily limit: version 2 says so in words ("limit=off"), so the device screen shows it plainly. Guardians
+  // before it rebuild only version 1, so they refuse such a signature (the phone does not offer "off" to them).
+  const off = isLimitOff(r);
+  // Contacts may lock the guardian, or may now and this takes it away: version 3 says which in words. Guardians
+  // before it never have such rules, and a phone only sends them to a guardian that reports `contact_lock`.
+  const lockOn = isContactLockOn(r);
+  const lock = lockOn || contactLockBefore === true;
+  return line([
+    lock ? 'Trikey policy v3' : off ? 'Trikey policy v2' : 'Trikey policy v1',
+    ...head,
+    off ? 'limit=off' : `limit=${r.dailyLimitSats}`,
+    `delay=${r.recoveryDelayDays}d`,
+    `feecap=${r.sweepFeeCapSats}`,
+    `contacts=${r.alertContacts.length}`,
+    ...(lock ? [`lock=${lockOn ? 'on' : 'off'}`] : []),
+    `hash=${policyHash(r)}`,
+    tail,
+  ]);
+}
+
+function checkContext(ctx: { walletId: string; expiresAt: number }): void {
+  if (!Number.isSafeInteger(ctx.expiresAt) || ctx.expiresAt < 0) throw new Error('expiresAt must be unix seconds');
+  if (!/^[0-9a-f]{16}$/.test(ctx.walletId)) throw new Error('invalid wallet id');
+}
+
 /** The exact text the hardware wallet signs for `action`. */
 export function approvalMessage(action: HardwareAction, ctx: ApprovalContext): string {
   if (!Number.isSafeInteger(ctx.sequence) || ctx.sequence < 1) throw new Error('sequence must be a positive integer');
-  if (!Number.isSafeInteger(ctx.expiresAt) || ctx.expiresAt < 0) throw new Error('expiresAt must be unix seconds');
-  if (!/^[0-9a-f]{16}$/.test(ctx.walletId)) throw new Error('invalid wallet id');
+  checkContext(ctx);
   const head = [`wallet=${ctx.walletId}`, `seq=${ctx.sequence}`];
   const tail = `expires=${isoSeconds(ctx.expiresAt)}`;
   switch (action.action) {
-    case 'policy': {
-      const r = normalizeRules(action.rules);
-      // No daily limit: version 2 says so in words ("limit=off"), so the device screen shows it plainly. Guardians
-      // before it rebuild only version 1, so they refuse such a signature (the phone does not offer "off" to them).
-      const off = isLimitOff(r);
-      // Contacts may lock the guardian, or may now and this takes it away: version 3 says which in words. Guardians
-      // before it never have such rules, and a phone only sends them to a guardian that reports `contact_lock`.
-      const lockOn = isContactLockOn(r);
-      const lock = lockOn || action.contactLockBefore === true;
-      return line([
-        lock ? 'Trikey policy v3' : off ? 'Trikey policy v2' : 'Trikey policy v1',
-        ...head,
-        off ? 'limit=off' : `limit=${r.dailyLimitSats}`,
-        `delay=${r.recoveryDelayDays}d`,
-        `feecap=${r.sweepFeeCapSats}`,
-        `contacts=${r.alertContacts.length}`,
-        ...(lock ? [`lock=${lockOn ? 'on' : 'off'}`] : []),
-        `hash=${policyHash(r)}`,
-        tail,
-      ]);
-    }
+    case 'policy':
+      return policyLine(action.rules, head, tail, action.contactLockBefore);
     case 'cancel-recovery':
       if (!/^[0-9a-z-]{1,40}$/.test(action.recoveryId)) throw new Error('invalid recovery id');
       return line(['Trikey cancel-recovery v1', ...head, `recovery=${action.recoveryId}`, tail]);
@@ -88,6 +96,23 @@ export function approvalMessage(action: HardwareAction, ctx: ApprovalContext): s
     case 'retire-wallet':
       return line(['Trikey retire-wallet v1', ...head, tail]);
   }
+}
+
+/**
+ * The sequence of the rules a wallet starts with. Every later approval must be above the last accepted sequence, which
+ * starts at 0 and only grows, so a text with this sequence approves nothing after pairing.
+ */
+export const PAIRING_RULES_SEQUENCE = 0;
+
+/**
+ * Signed at pairing (`pair`, `wallet.add`, `hosted.pair`) to approve the rules the wallet starts with: the policy text with
+ * `seq=0` (`PAIRING_RULES_SEQUENCE`), its limit, delay, fee cap and contacts in clear and the hash of the complete rules.
+ * The wallet id covers key 3, so the signature pairs only this wallet with this guardian, and only with these rules.
+ * Same text as @trikey/protocol's `pairingRulesMessage`.
+ */
+export function pairingRulesMessage(rules: Rules, ctx: { walletId: string; expiresAt: number }): string {
+  checkContext(ctx);
+  return policyLine(rules, [`wallet=${ctx.walletId}`, `seq=${PAIRING_RULES_SEQUENCE}`], `expires=${isoSeconds(ctx.expiresAt)}`);
 }
 
 /** Signed once at pairing, to prove the device holds the authorization key. */

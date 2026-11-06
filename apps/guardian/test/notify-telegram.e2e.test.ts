@@ -16,7 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MultisigWallet, type KeyExpression } from '@trikey/core';
 import { NotifyChannel, RpcClient, SimplePoolRelayPool, decodePairingUri, pairingMessage, type Alert, type Policy } from '@trikey/protocol';
 import { signMessage } from '../src/policy/index.js';
-import { AUTH_PATH, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from './helpers.js';
+import { AUTH_PATH, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withRulesApproval } from './helpers.js';
 import { GuardianRig } from './support/index.js';
 import { BOT_TOKEN, startTelegram, type FakeTelegram } from './support/telegram-server.js';
 
@@ -53,7 +53,7 @@ beforeAll(async () => {
   const cosigner: KeyExpression = { fingerprint: prep.guardianKey.fingerprint, originPath: prep.guardianKey.path.replace(/^m\//, '').replace(/'/g, 'h'), xpub: prep.guardianKey.xpub };
   const wallet = new MultisigWallet(network, { app: await appSigner().getKey(network), hardware: await hwSigner().getKey(network), cosigner });
   const app = wallet.keys.app;
-  await phone.call('pair', {
+  await phone.call('pair', withRulesApproval({
     pairingSecret: p.secret,
     deviceName: 'Telegram phone',
     network: 'regtest',
@@ -63,7 +63,7 @@ beforeAll(async () => {
     hardwareAuth: { pubkey: hwAuthPubkey(), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!)), hwAuthPrivateKey()),
     rules: RULES,
-  });
+  }, rig.nowSec() * 1000));
 }, 30_000);
 
 afterAll(async () => {

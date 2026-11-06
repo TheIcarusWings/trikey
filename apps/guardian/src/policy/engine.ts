@@ -35,6 +35,7 @@ import {
   approvalMessage,
   bip137Authorizer,
   pairingMessage,
+  pairingRulesMessage,
   proofId,
   recoveryAccessMessage,
 } from './authorizer.js';
@@ -64,6 +65,7 @@ import {
   Result,
   RetiredWallet,
   Rules,
+  RulesApproval,
   SavingsWatch,
   SingleKeyRegistration,
   SurvivingRole,
@@ -106,6 +108,40 @@ export const MAINNET_CONTACT_REQUIRED =
 
 /** Why pairing refuses a policy with no daily limit. */
 export const LIMIT_OFF_AT_PAIRING = 'a wallet cannot be paired with the daily limit off; pair with a limit, then turn it off with the hardware wallet';
+/** Why pairing refuses rules the hardware wallet did not approve (an app from before `pairing_rules_approval`). */
+export const RULES_APPROVAL_MISSING =
+  'the hardware wallet must approve the rules the wallet starts with (rulesApproval); update the Trikey app and pair again';
+
+/**
+ * Why the rules a wallet starts with are not approved by `key` (DESIGN.md, rule 4): `approval` must be a signature by the
+ * authorization key being registered over `pairingRulesMessage(rules, { walletId, expiresAt })`, the policy text with
+ * `seq=0`, unexpired and at most 24 h ahead. `rules` are the normalized rules the guardian will store, so the wallet starts
+ * with exactly what the device showed. No sequence is consumed: 0 is below every sequence a later approval may use.
+ * Shared by `pair` / `wallet.add` (this engine) and `hosted.pair` (the hosted engine).
+ */
+export function rulesApprovalRefusal(
+  approval: RulesApproval | undefined,
+  rules: Rules,
+  walletId: string,
+  key: HardwareAuthKey,
+  authorizer: HardwareAuthorizer,
+  now: number,
+): Refusal | undefined {
+  if (!approval || typeof approval !== 'object') return { reason: 'invalid_registration', detail: RULES_APPROVAL_MISSING };
+  if (approval.kind !== key.kind) return { reason: 'unsupported_approval', kind: String(approval.kind) };
+  if (!Number.isSafeInteger(approval.expiresAt) || approval.expiresAt * 1000 <= now) return { reason: 'approval_expired', expiresAt: approval.expiresAt };
+  const maxExpiresAt = Math.floor((now + MAX_APPROVAL_TTL_MS) / 1000);
+  if (approval.expiresAt > maxExpiresAt) return { reason: 'approval_expiry_too_far', expiresAt: approval.expiresAt, maxExpiresAt };
+  let message: string;
+  try {
+    message = pairingRulesMessage(rules, { walletId, expiresAt: approval.expiresAt });
+  } catch {
+    return { reason: 'approval_invalid_signature' };
+  }
+  if (typeof approval.signature !== 'string' || !authorizer.verify(message, approval.signature, key)) return { reason: 'approval_invalid_signature' };
+  return undefined;
+}
+
 /** How long a `limit_off` / `limit_on` notice is retried for someone it has not reached (the alerts' TTL). */
 export const NOTICE_TTL_MS = 7 * DAY;
 /** Notices kept (the oldest dropped first). */
@@ -158,6 +194,16 @@ export interface RegisterInput {
   hardwareAuth: HardwareAuthKey;
   /** Proof (BIP137 signature) over `pairingMessage(walletId, cosignerAccountPubkey)` by the authorization key. */
   hardwareAuthProof: string;
+  /**
+   * The authorization key's approval of `rules` (`pairingRulesMessage`, `seq=0`). Required: without it (or with one over
+   * other rules, another wallet, or by another key) the registration is refused, unless `legacyUnapprovedRules`.
+   */
+  rulesApproval?: RulesApproval;
+  /**
+   * Accept `rules` without `rulesApproval`, as guardians did before `pairing_rules_approval`. Only for a service that does
+   * not report that feature (tests simulating an older guardian); the guardian itself always reports it.
+   */
+  legacyUnapprovedRules?: true;
   appNostrPubkey: string;
   /** The wallet this one replaces on another guardian, if the phone said so. */
   replacesWalletId?: string;
@@ -714,7 +760,8 @@ export class PolicyEngine {
       }
       // Without a contact, a recovery's alerts reach only the paired phone, which a thief may hold.
       if (network.name === 'bitcoin' && !rules.alertContacts.length) return bad(`rules: ${MAINNET_CONTACT_REQUIRED}`);
-      // Pairing rules are not hardware-approved (only the pairing proof is), so they cannot loosen as far as "off".
+      // "Off" is never where a wallet starts, even hardware-approved: pair with a limit, then turn it off with its own
+      // approval (the version-2 text that says so in words), which also alerts the contacts.
       if (isLimitOff(rules)) return bad(`rules: ${LIMIT_OFF_AT_PAIRING}`);
       const checked = this.checkAuthKey(input.hardwareAuth);
       if (!checked.ok) return bad(checked.detail);
@@ -729,6 +776,12 @@ export class PolicyEngine {
       if (retired) return refused({ reason: 'wallet_retired', walletId: retired.registration.walletId });
       if (!checked.authorizer.verify(pairingMessage(walletId, cosignerHex), input.hardwareAuthProof, hwKey))
         return bad('hardware pairing proof does not verify');
+      // The rules the wallet starts with need the hardware wallet like any loosening (rule 4): otherwise a malicious app
+      // could pair with a limit just below "off", a huge fee cap or its own contacts, and drain with phone + guardian.
+      if (!input.legacyUnapprovedRules) {
+        const r = rulesApprovalRefusal(input.rulesApproval, rules, walletId, hwKey, checked.authorizer, now);
+        if (r) return refused(r);
+      }
       const replaces = typeof input.replacesWalletId === 'string' && /^[0-9a-f]{16}$/.test(input.replacesWalletId) ? input.replacesWalletId : undefined;
       let watched: WatchedWallet | undefined;
       if (input.replacesDescriptor !== undefined) {

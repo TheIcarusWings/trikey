@@ -162,6 +162,20 @@ export const HardwareApproval = z.strictObject({
   signature: Bip137Signature,
 });
 
+/**
+ * The hardware wallet's approval of the rules a wallet starts with, sent at pairing (`pair`, `wallet.add`, `hosted.pair`)
+ * to guardians with `pairing_rules_approval`. No sequence: the text has `seq=0`, which no later approval can use. The
+ * guardian rebuilds `pairingRulesMessage(rules, { walletId, expiresAt })` from the request's rules and the wallet it
+ * registers, and verifies `signature` against `hardwareAuth`, so the wallet starts with exactly the rules the device showed.
+ */
+export const PairingRulesApproval = z.strictObject({
+  kind: z.literal('bip137'),
+  /** Unix SECONDS after which the approval is void; at most 24 h after the guardian checks it. */
+  expiresAt: UnixSeconds,
+  /** BIP 137 signature (base64) by the authorization key over `pairingRulesMessage(rules, { walletId, expiresAt })`. */
+  signature: Bip137Signature,
+});
+
 export const RecoveryState = z.enum(['pending', 'ready', 'cancelled', 'completed']);
 
 /**
@@ -264,6 +278,12 @@ export const PairParams = z.strictObject({
   hardwareAuthProof: Bip137Signature,
   /** The initial rules. */
   rules: Policy,
+  /**
+   * The hardware wallet's approval of `rules` (`pairingRulesMessage`). Required by guardians with
+   * `pairing_rules_approval`, which refuse a `pair` without it (`-32602`, `data.reason: "app_update_required"`); sent
+   * only to them (older guardians' strict schema refuses the member).
+   */
+  rulesApproval: PairingRulesApproval.optional(),
   /**
    * The wallet this one replaces, when the phone moves an existing wallet to this guardian ("Replace
    * guardian": the old one died or was retired). The guardian records it in its log. With
@@ -603,6 +623,8 @@ export const WalletAddParams = z
     hardwareAuth: HardwareAuthKey,
     hardwareAuthProof: Bip137Signature,
     rules: Policy,
+    /** As `pair`'s: the new wallet's hardware wallet approves `rules` (guardians with `pairing_rules_approval`, which require it). */
+    rulesApproval: PairingRulesApproval.optional(),
     /** The first wallet's name on the phone, so the guardian's alerts can tell the two apart ("Daily"). */
     firstName: OwnWalletName.optional(),
     /** Guardians with `own_wallets_2`: the kind of hardware wallet, kept and listed in `guardian.status.wallets`. */
@@ -1189,6 +1211,8 @@ export const HostedPairParams = z.strictObject({
   hardwareAuth: z.strictObject({ pubkey: CompressedPubkey, path: DerivationPath, tweak: Hex32 }),
   hardwareAuthProof: Bip137Signature,
   rules: Policy,
+  /** As `pair`'s, over the key-set id (guardians whose `hosted.prepare` lists `pairing_rules_approval`, which require it). */
+  rulesApproval: PairingRulesApproval.optional(),
   walletMap: WalletMap,
   phoneNostrPubkey: NostrPubkey,
 });
@@ -1814,6 +1838,7 @@ export type KeyOrigin = z.infer<typeof KeyOrigin>;
 export type Policy = z.infer<typeof Policy>;
 export type PolicyWarning = z.infer<typeof PolicyWarning>;
 export type HardwareApproval = z.infer<typeof HardwareApproval>;
+export type PairingRulesApproval = z.infer<typeof PairingRulesApproval>;
 export type HardwareAuthKey = z.infer<typeof HardwareAuthKey>;
 export type Recovery = z.infer<typeof Recovery>;
 export type RecoveryState = z.infer<typeof RecoveryState>;

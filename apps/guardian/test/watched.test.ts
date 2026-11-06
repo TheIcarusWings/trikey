@@ -21,6 +21,7 @@ import {
   hwSigner,
   makeWallet,
   network,
+  approveRules,
 } from './helpers.js';
 import {
   ManualClock,
@@ -54,6 +55,7 @@ async function register(
     rules: DEFAULT_RULES,
     hardwareAuth: { kind: 'bip137', pubkey: hwAuthPubkey(AUTH_PATH, hardware), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(walletId, cosigner), hwAuthPrivateKey(AUTH_PATH, hardware)),
+    rulesApproval: approveRules(walletId, DEFAULT_RULES, T0, { privateKey: hwAuthPrivateKey(AUTH_PATH, hardware) }),
     appNostrPubkey: APP_NOSTR,
     ...extra,
   });

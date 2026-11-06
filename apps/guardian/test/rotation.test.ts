@@ -54,6 +54,7 @@ import {
   phoneSpend,
   setup,
   spendPsbt,
+  approveRules,
 } from './helpers.js';
 
 const NEW_PHONE = nostrKey(21);
@@ -272,6 +273,7 @@ describe('adopting the destination wallet after a recovery', () => {
       rules: DEFAULT_RULES,
       hardwareAuth: { kind: 'bip137', pubkey: hwAuthPubkey(hwPath), path: hwPath },
       hardwareAuthProof: signMessage(pairingMessage(walletId, cosignerPub()), hwAuthPrivateKey(hwPath)),
+      rulesApproval: approveRules(walletId, DEFAULT_RULES, clock.now(), { privateKey: hwAuthPrivateKey(hwPath) }),
       appNostrPubkey: APP_NOSTR,
     });
     expect(reg.ok).toBe(true);
@@ -356,6 +358,7 @@ describe('adopting the destination wallet after a recovery', () => {
       rules: DEFAULT_RULES,
       hardwareAuth: { kind: 'bip137', pubkey: hwAuthPubkey(), path: AUTH_PATH },
       hardwareAuthProof: signMessage(pairingMessage(dest.fingerprint(), cosignerPub()), hwAuthPrivateKey()),
+      rulesApproval: approveRules(dest.fingerprint(), DEFAULT_RULES, ctx2.clock.now()),
       appNostrPubkey: NEW_PHONE,
     });
     expect(res).toMatchObject({ ok: true, walletId: dest.fingerprint() });
@@ -399,6 +402,7 @@ describe('retired wallets refuse everything', () => {
       rules: DEFAULT_RULES,
       hardwareAuth: { kind: 'bip137', pubkey: hwAuthPubkey(), path: AUTH_PATH },
       hardwareAuthProof: signMessage(pairingMessage(ctx.walletId, cosignerPub()), hwAuthPrivateKey()),
+      rulesApproval: approveRules(ctx.walletId, DEFAULT_RULES, ctx.clock.now()),
       appNostrPubkey: APP_NOSTR,
     });
     expect(again).toMatchObject({ ok: false, refusal: { reason: 'wallet_retired', walletId: ctx.walletId } });
@@ -416,6 +420,7 @@ describe('retired wallets refuse everything', () => {
       rules: DEFAULT_RULES,
       hardwareAuth: { kind: 'bip137', pubkey: hwAuthPubkey(), path: AUTH_PATH },
       hardwareAuthProof: signMessage(pairingMessage(next.fingerprint(), cosignerPub()), hwAuthPrivateKey()),
+      rulesApproval: approveRules(next.fingerprint(), DEFAULT_RULES, ctx.clock.now()),
       appNostrPubkey: APP_NOSTR,
       replacesWalletId: ctx.walletId,
     });

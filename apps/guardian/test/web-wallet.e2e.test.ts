@@ -24,7 +24,7 @@ import { ChainUnavailableError } from '../src/chain/chain.js';
 import { COLD_READ_TTL_MS, paymentsOf, receiveAddressAt, walletOverview } from '../src/http/wallet.js';
 import { MNEMONICS, appSigner, hwSigner, network } from './helpers.js';
 import { GuardianRig } from './support/index.js';
-import { fakeMap, hostedWallet } from './support/hosted.js';
+import { fakeMap, hostedWallet, withHostedRulesApproval } from './support/hosted.js';
 import { callHandler, pairInRig } from './security/support.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -388,7 +388,7 @@ describe('GET /api/wallet', { timeout: 60_000 }, () => {
       const secret = decodeInviteUri(inv.body.link, rig.nowSec()).secret;
       const prep = await guestRpc.call('hosted.prepare', { inviteSecret: secret, network: 'regtest', entropy: '7b'.repeat(31) + '0e' });
       const guest = await hostedWallet({ cosignerPub: prep.cosignerAccountPubkey, app: MNEMONICS.app2, hardware: MNEMONICS.stranger });
-      await guestRpc.call('hosted.pair', {
+      await guestRpc.call('hosted.pair', withHostedRulesApproval({
         inviteSecret: secret,
         deviceName: 'Guest phone',
         walletLabel: LABEL,
@@ -399,7 +399,7 @@ describe('GET /api/wallet', { timeout: 60_000 }, () => {
         rules: { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [], sweepFeeCapSats: 20_000 },
         walletMap: fakeMap(),
         phoneNostrPubkey: guestPub,
-      });
+      }, guest, rig.nowSec() * 1000));
       // The guest's coins: on the chain, not the host's.
       rig.fund(guest.wallet.derive(0, 0).script, 777_777n);
       rig.fund(guest.wallet.derive(0, 1).script, 333_333n, { confirmed: false });

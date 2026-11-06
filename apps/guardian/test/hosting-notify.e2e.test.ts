@@ -17,11 +17,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MultisigWallet, type KeyExpression } from '@trikey/core';
 import { RpcClient, SimplePoolRelayPool, approvalMessage, decodeInviteUri, decodePairingUri, pairingMessage, wrapDirectMessage, type Alert, type Policy } from '@trikey/protocol';
 import { signMessage } from '../src/policy/index.js';
-import { AUTH_PATH, MNEMONICS, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from './helpers.js';
+import { AUTH_PATH, MNEMONICS, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withRulesApproval } from './helpers.js';
 import { GuardianRig } from './support/index.js';
 import { startHttp, startSmtp, type TestHttp, type TestSmtp } from './support/notify-servers.js';
 import { BOT_TOKEN, startTelegram, type FakeTelegram } from './support/telegram-server.js';
-import { destinationAfterHardwareLoss, fakeMap, hostedWallet, phoneSweep, type HostedFixture } from './support/hosted.js';
+import { destinationAfterHardwareLoss, fakeMap, hostedWallet, phoneSweep, type HostedFixture, withHostedRulesApproval } from './support/hosted.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function waitFor<T>(fn: () => T | undefined | false | Promise<T | undefined | false>, what: string, timeoutMs = 10_000): Promise<T> {
@@ -95,7 +95,7 @@ beforeAll(async () => {
   const cosigner: KeyExpression = { fingerprint: prep.guardianKey.fingerprint, originPath: prep.guardianKey.path.replace(/^m\//, '').replace(/'/g, 'h'), xpub: prep.guardianKey.xpub };
   const wallet = (hostWallet = new MultisigWallet(network, { app: await appSigner().getKey(network), hardware: await hwSigner().getKey(network), cosigner }));
   const app = wallet.keys.app;
-  await hostPhone.call('pair', {
+  await hostPhone.call('pair', withRulesApproval({
     pairingSecret: p.secret,
     deviceName: 'Host phone',
     network: 'regtest',
@@ -105,7 +105,7 @@ beforeAll(async () => {
     hardwareAuth: { pubkey: hwAuthPubkey(), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!)), hwAuthPrivateKey()),
     rules: HOST_RULES,
-  });
+  }, rig.nowSec() * 1000));
   // The host's extra channels: its own email, webhook, ntfy and Telegram, and alice's email and Telegram; payments too
   // (live wallet).
   const r = await rig.api('PUT', '/notifications', {
@@ -149,7 +149,7 @@ describe("a guest's alerts never reach the host's extra channels", { timeout: 60
     guestRpc = client(guestPhone.secretKey, guestAlerts);
     const prep = await guestRpc.call('hosted.prepare', { inviteSecret: secret, network: 'regtest', entropy: '5c'.repeat(31) + '0d' });
     guest = await hostedWallet({ cosignerPub: prep.cosignerAccountPubkey, app: MNEMONICS.app2, hardware: MNEMONICS.hardware2 });
-    await guestRpc.call('hosted.pair', {
+    await guestRpc.call('hosted.pair', withHostedRulesApproval({
       inviteSecret: secret,
       deviceName: 'Guest phone',
       walletLabel: GUEST_LABEL,
@@ -160,11 +160,11 @@ describe("a guest's alerts never reach the host's extra channels", { timeout: 60
       rules: { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [alice.pubkey, guestContact.pubkey], sweepFeeCapSats: 20_000 },
       walletMap: fakeMap(),
       phoneNostrPubkey: guestPhone.pubkey,
-    });
+    }, guest, rig.nowSec() * 1000));
     // The guest's status shows nothing of the host's channels.
     const st = await guestRpc.call('guardian.status', {});
     expect(st).not.toHaveProperty('notifications');
-    expect(st.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps']);
+    expect(st.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps', 'pairing_rules_approval']);
   });
 
   it("the guest's recovery alerts and its hosting_ending go by nostr to the guest's phone and contacts only", async () => {

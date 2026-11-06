@@ -647,6 +647,7 @@ export class Guardian implements WalletRuntime {
     GUARDIAN_FEATURES.hardwareUnlock,
     GUARDIAN_FEATURES.sealedUnlock,
     GUARDIAN_FEATURES.passphraseChange,
+    GUARDIAN_FEATURES.pairingRulesApproval,
   ];
 
   /** The wallet object of a registration or a watched wallet (cached per descriptor). */

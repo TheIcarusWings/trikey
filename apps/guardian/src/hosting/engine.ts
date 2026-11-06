@@ -45,12 +45,12 @@ import { Mutex } from '../files.js';
 import { dueAlerts as computeDueAlerts, isKnownAlertId, type DueAlert } from '../policy/alerts.js';
 import { bip137Authorizer, approvalMessage, pairingMessage, proofId, recoveryAccessMessage, type HardwareAction, type HardwareAuthorizer } from '../policy/authorizer.js';
 import { DAY, systemClock, type ChainTime, type ChainTimeSource, type Clock } from '../policy/clock.js';
-import { BLOCKS_PER_DAY, MAINNET_CONTACT_REQUIRED, LIMIT_OFF_AT_PAIRING, MAX_ACCESS_GRANTS, MAX_APPROVAL_TTL_MS, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_SEQUENCE_STEP, NOTICE_TTL_MS, isRefusalEvent, policyWarnings, pruneActivity, type CosignResult, type GuardianStatus, type PhoneSpendingStatus, type RecoveryView } from '../policy/engine.js';
+import { BLOCKS_PER_DAY, MAINNET_CONTACT_REQUIRED, LIMIT_OFF_AT_PAIRING, rulesApprovalRefusal, MAX_ACCESS_GRANTS, MAX_APPROVAL_TTL_MS, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_SEQUENCE_STEP, NOTICE_TTL_MS, isRefusalEvent, policyWarnings, pruneActivity, type CosignResult, type GuardianStatus, type PhoneSpendingStatus, type RecoveryView } from '../policy/engine.js';
 import { addCosignerSignatures } from '../policy/inspect.js';
 import { pruneSpends, splitOutflow, usageWith, windowUsage } from '../policy/limit.js';
 import { isContactLockOn, isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from '../policy/rules.js';
 import type { CosignerSigner } from '../policy/signer.js';
-import type { AccessGrant, CancelActor, CancelledBy, HardwareApproval, Rules, SurvivingRole } from '../policy/index.js';
+import type { AccessGrant, CancelActor, CancelledBy, HardwareApproval, Rules, RulesApproval, SurvivingRole } from '../policy/index.js';
 import {
   HOSTED_MAX_ACTIVITY,
   HOSTED_MAX_REFUSALS,
@@ -129,6 +129,8 @@ export interface HostedRegisterInput {
   rules: Rules;
   hardwareAuth: { pubkey: string; path: string; tweak: string };
   hardwareAuthProof: string;
+  /** The authorization key's approval of `rules` over the key-set id (`pairingRulesMessage`, `seq=0`). Required. */
+  rulesApproval?: RulesApproval;
   appNostrPubkey: string;
   walletLabel: string;
   walletMap: string;
@@ -628,6 +630,9 @@ export class HostedEngine {
         return bad(`hardwareAuth: ${(e as Error).message}`);
       }
       if (!authorizer.verify(pairingMessage(walletId, keys.cosigner), input.hardwareAuthProof, hwKey)) return bad('hardware pairing proof does not verify');
+      // The rules the guest's wallet starts with, approved on its hardware wallet (rule 4), as for the owner's `pair`.
+      const rulesRefusal = rulesApprovalRefusal(input.rulesApproval, rules, walletId, hwKey, authorizer, now);
+      if (rulesRefusal) return refused(rulesRefusal);
       const mapBad = this.mapRefusal(input.walletMap);
       if (mapBad) return bad(mapBad);
       draft.active = {

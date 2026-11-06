@@ -33,7 +33,7 @@ import type { GuardianConfig } from '../src/config.js';
 import { createLogger } from '../src/log.js';
 import { DAY, ManualClock, signMessage } from '../src/policy/index.js';
 import { FakeElectrum } from './support/fake-electrum.js';
-import { AUTH_PATH, MNEMONICS, appSigner, fund, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, phoneSpend } from './helpers.js';
+import { AUTH_PATH, MNEMONICS, appSigner, fund, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, phoneSpend, withRulesApproval } from './helpers.js';
 
 const PASS = 'correct horse battery staple';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -295,7 +295,7 @@ describe('Trikey Guardian service, end to end', { timeout: 30_000 }, () => {
     const cosignerPub = hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!);
     rules = { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [contactPub], sweepFeeCapSats: 20_000 };
     const app = wallet.keys.app;
-    const res = await phone.call('pair', {
+    const res = await phone.call('pair', withRulesApproval({
       pairingSecret: p.secret,
       deviceName: 'Test phone',
       network: 'regtest',
@@ -305,7 +305,7 @@ describe('Trikey Guardian service, end to end', { timeout: 30_000 }, () => {
       hardwareAuth: { pubkey: hwAuthPubkey(), path: AUTH_PATH },
       hardwareAuthProof: signMessage(pairingMessage(walletId, cosignerPub), hwAuthPriv),
       rules,
-    });
+    }, clock.now(), hwAuthPriv));
     expect(res.walletId).toBe(walletId);
     expect((await api('GET', `/pairing/${session.id}`)).body.status).toBe('paired');
 

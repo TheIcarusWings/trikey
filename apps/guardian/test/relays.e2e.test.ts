@@ -15,7 +15,7 @@ import { RpcClient, RpcTimeoutError, SimplePoolRelayPool, checkRelayUrl, decodeP
 import { DAY, signMessage } from '../src/policy/index.js';
 import { MAX_RETIRING_RELAYS, parseRelayList } from '../src/guardian.js';
 import { addRelay, normalizeRelayInput, relayListError } from '../../guardian-web/src/lib/relays.js';
-import { AUTH_PATH, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from './helpers.js';
+import { AUTH_PATH, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withRulesApproval } from './helpers.js';
 import { GuardianRig } from './support/index.js';
 
 const MINUTE = 60_000;
@@ -66,7 +66,7 @@ async function pair(rig: GuardianRig, phone: Phone): Promise<void> {
   const wallet = new MultisigWallet(network, { app: await appSigner().getKey(network), hardware: await hwSigner().getKey(network), cosigner: toKey(prep.guardianKey) });
   const app = wallet.keys.app;
   const cosigner = hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!);
-  await phone.rpc.call('pair', {
+  await phone.rpc.call('pair', withRulesApproval({
     pairingSecret: p.secret,
     deviceName: 'Test phone',
     network: 'regtest',
@@ -76,7 +76,7 @@ async function pair(rig: GuardianRig, phone: Phone): Promise<void> {
     hardwareAuth: { pubkey: hwAuthPubkey(AUTH_PATH), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), cosigner), hwAuthPrivateKey(AUTH_PATH)),
     rules: { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [], sweepFeeCapSats: 20_000 },
-  });
+  }, rig.nowSec() * 1000, hwAuthPrivateKey(AUTH_PATH)));
 }
 
 let rig: GuardianRig;

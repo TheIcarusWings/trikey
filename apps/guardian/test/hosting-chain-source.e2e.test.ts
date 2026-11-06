@@ -16,7 +16,7 @@ import { ElectrumClient } from '../src/chain/electrum.js';
 import { buildBackend, type ChainSource } from '../src/chain/source.js';
 import { MNEMONICS } from './helpers.js';
 import { FakeElectrum, GuardianRig } from './support/index.js';
-import { destinationAfterHardwareLoss, fakeMap, hostedWallet, phoneSweep, type HostedFixture } from './support/hosted.js';
+import { destinationAfterHardwareLoss, fakeMap, hostedWallet, phoneSweep, type HostedFixture, withHostedRulesApproval } from './support/hosted.js';
 import { pairInRig } from './security/support.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -57,7 +57,7 @@ beforeAll(async () => {
   guestRpc.onAlert((a) => void guestAlerts.push(a));
   const prep = await guestRpc.call('hosted.prepare', { inviteSecret: secret, network: 'regtest', entropy: '7a'.repeat(31) + '0e' });
   guest = await hostedWallet({ cosignerPub: prep.cosignerAccountPubkey, app: MNEMONICS.app2, hardware: MNEMONICS.hardware2 });
-  await guestRpc.call('hosted.pair', {
+  await guestRpc.call('hosted.pair', withHostedRulesApproval({
     inviteSecret: secret,
     deviceName: 'Guest phone',
     walletLabel: LABEL,
@@ -68,7 +68,7 @@ beforeAll(async () => {
     rules: { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [], sweepFeeCapSats: 20_000 },
     walletMap: fakeMap(),
     phoneNostrPubkey: guestPub,
-  });
+  }, guest, rig.nowSec() * 1000));
 }, 60_000);
 
 afterAll(async () => {
@@ -84,7 +84,7 @@ describe("family hosting and the host's chain source", { timeout: 60_000 }, () =
     expect(st.chainSource).toEqual({ kind: 'own', backend: 'electrum', host: 'own' });
     // The host's own Electrs is at 127.0.0.1 in this rig: not named to the guest (the relays are, as to every phone).
     expect(JSON.stringify(st.chainSource)).not.toContain('127.0.0.1');
-    expect(st.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps']);
+    expect(st.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps', 'pairing_rules_approval']);
   });
 
   it("a public server is refused while a guest's recovery runs", async () => {

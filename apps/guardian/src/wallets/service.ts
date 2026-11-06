@@ -12,13 +12,13 @@
 import { join } from 'node:path';
 import { hex } from '@scure/base';
 import { MultisigWallet, getNetwork, type NetworkName } from '@trikey/core';
-import { ErrorCode, RpcError, type Handlers, type MethodName, type Params, type Result } from '@trikey/protocol';
+import { ErrorCode, GUARDIAN_FEATURES, RpcError, type Handlers, type MethodName, type Params, type Result } from '@trikey/protocol';
 import type { Guardian } from '../guardian.js';
 import { RECOVERY_PEER_METHODS } from '../guardian.js';
 import type { GuardianSeed, KeystoreSigner } from '../keystore.js';
 import { errorText } from '../log.js';
 import { onceAcrossRestarts, walletHandlers, walletOf } from '../nostr/handlers.js';
-import { refusalError, rulesFromPolicy } from '../nostr/wire.js';
+import { APP_UPDATE_REQUIRED, APP_UPDATE_REQUIRED_TEXT, refusalError, rulesFromPolicy } from '../nostr/wire.js';
 import type { Registration } from '../policy/index.js';
 import { labelled, type WalletRuntime } from '../runtime.js';
 import { WalletsRegistry, type OwnWalletRecord } from './registry.js';
@@ -315,6 +315,9 @@ export class OwnWallets implements OwnWalletHost {
       await g.logEvent({ type: 'wallet_add_refused', name: params.name, detail: message });
       throw new RpcError(ErrorCode.InvalidParams, message, { reason });
     };
+    // The new wallet's rules, approved on its hardware wallet (rule 4), as at `pair`; an older app sends none.
+    const rulesApproved = g.features.includes(GUARDIAN_FEATURES.pairingRulesApproval);
+    if (rulesApproved && !params.rulesApproval) return reject(APP_UPDATE_REQUIRED_TEXT, APP_UPDATE_REQUIRED.reason);
     let wallet: MultisigWallet;
     try {
       wallet = MultisigWallet.fromDescriptor(params.descriptor, network);
@@ -351,6 +354,7 @@ export class OwnWallets implements OwnWalletHost {
         rules: rulesFromPolicy(params.rules),
         hardwareAuth: { kind: 'bip137', pubkey: params.hardwareAuth.pubkey, path: params.hardwareAuth.path },
         hardwareAuthProof: params.hardwareAuthProof,
+        ...(rulesApproved ? { rulesApproval: params.rulesApproval } : { legacyUnapprovedRules: true as const }),
         appNostrPubkey: sender,
         // "Replace guardian" with several wallets: the wallet this one replaces on the old guardian, watched here so its
         // coins are listed and its sweep relayed, as `pair` does for the first wallet.
