@@ -1889,6 +1889,34 @@ code,
   line-height: 1.55;
 }
 
+/* Support the project */
+
+.donate {
+  display: grid;
+  gap: 1.5rem;
+  max-width: 44rem;
+}
+
+.donate-to {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.donate-address {
+  color: var(--ink);
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* Always dark on white, whatever the theme, so any camera reads it. */
+.donate-qr {
+  display: block;
+  width: 164px;
+  height: auto;
+  border-radius: 10px;
+}
+
 /* Status and follow */
 
 .follow {
