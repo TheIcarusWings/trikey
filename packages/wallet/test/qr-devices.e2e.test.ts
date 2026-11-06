@@ -1,13 +1,14 @@
 /**
  * QR hardware wallets by model (qr-devices.ts), in the wallet:
  *
- * - the capability table: which models sign Trikey's texts, their limits, and that the smallest limit (Coldcard's 240)
- *   is Trikey's own maximum;
+ * - the capability table: which models sign Trikey's texts and how (a text QR, or a microSD file for Passport gen 2 and
+ *   Krux), their limits, and that the smallest limit (Coldcard's 240) is Trikey's own maximum;
  * - every text Trikey asks a hardware wallet to sign (pairing, approvals, recovery access, the notes key, the unlock key)
  *   at its longest fits that limit and Coldcard's spacing rules: this test fails if a text grows past it;
  * - against the real guardian in-process (regtest, throwaway keys): a QR device's model is stored with the wallet, a
  *   record made before models existed reads as "Other", notes and hardware unlock are offered only for a model that
- *   signs texts, the owner can set the model later, and turning notes on tells the device it is round 1 then 2 of 2.
+ *   signs texts (unlock not for a microSD model), the owner can set the model later, and turning notes on tells the
+ *   device it is round 1 then 2 of 2.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GuardianRig } from '@trikey/guardian/testing';
@@ -17,6 +18,8 @@ import {
   QR_MODELS,
   QR_MODEL_INFO,
   TrikeyWallet,
+  qrMessageMethod,
+  qrModelUnlocks,
   WalletError,
   defaultQrModelOf,
   labelsKeyMessage,
@@ -66,13 +69,23 @@ describe('the QR model table', () => {
     }
   });
 
-  it('says which devices sign texts by QR code, as the firmware sources read', () => {
+  it('says which devices sign texts, and how, as the firmware sources read', () => {
     const signs = QR_MODELS.filter((m) => QR_MODEL_INFO[m].signsMessages);
-    expect(signs).toEqual(['coldcard-q', 'jade', 'keystone-3', 'passport-prime', 'specter-diy']);
+    expect(signs).toEqual(['coldcard-q', 'jade', 'keystone-3', 'passport-prime', 'passport', 'krux', 'specter-diy']);
+    expect(QR_MODELS.filter((m) => qrMessageMethod(m) === 'qr-text')).toEqual(['coldcard-q', 'jade', 'keystone-3', 'passport-prime', 'specter-diy']);
+    expect(QR_MODELS.filter((m) => qrMessageMethod(m) === 'microsd')).toEqual(['passport', 'krux']);
+    expect(QR_MODELS.filter((m) => qrMessageMethod(m) === 'none')).toEqual(['coldcard-mk4', 'seedsigner', 'other']);
+    // Hardware unlock: never from a microSD card (a card round trip after every guardian restart).
+    expect(QR_MODELS.filter((m) => qrModelUnlocks(m))).toEqual(['coldcard-q', 'jade', 'keystone-3', 'passport-prime', 'specter-diy']);
     expect(QR_MODEL_INFO['coldcard-mk4']).toMatchObject({ qr: false, signsMessages: false, whyNot: expect.stringMatching(/no camera.*NFC or USB/) });
-    expect(QR_MODEL_INFO.seedsigner.whyNot).toMatch(/m\/48'/);
-    expect(QR_MODEL_INFO.krux.whyNot).toMatch(/microSD/);
-    expect(QR_MODEL_INFO.passport.whyNot).toMatch(/microSD/);
+    // SeedSigner: decided, payments only (no blind BIP 322 proof).
+    expect(QR_MODEL_INFO.seedsigner.whyNot).toMatch(/m\/48'.*co-signs payments only/);
+    for (const m of ['passport', 'krux'] as const) {
+      expect(QR_MODEL_INFO[m]).toMatchObject({ messageMethod: 'microsd', showsAddress: 'p2pkh', noEdgeSpaces: true, unlockWhyNot: expect.stringMatching(/microSD card.*passphrase/) });
+      expect(QR_MODEL_INFO[m].messageSteps!.join(' ')).toMatch(/\{file\}/);
+    }
+    expect(QR_MODEL_INFO.passport.maxSpaceRun).toBe(3);
+    expect(QR_MODEL_INFO.krux.displayLength).toBe(120);
     expect(QR_MODEL_INFO.other.signsMessages).toBe(false);
     expect(QR_MODEL_INFO.jade.displayLength).toBe(188);
     expect(QR_MODEL_INFO['keystone-3'].showsAddress).toBe('none');
@@ -97,6 +110,14 @@ describe('the QR model table', () => {
     expect(messageProblemFor('jade', 'café')).toMatch(/ASCII/);
     expect(messageProblemFor('jade', 'line\nbreak')).toMatch(/ASCII/);
     expect(messageProblemFor('jade', 'a'.repeat(300))).toBeUndefined();
+    // Passport gen 2 (utils.py validate_sign_text): no space at either end, at most 3 in a row, its 4096-byte file.
+    expect(messageProblemFor('passport', 'Trikey   pair')).toBeUndefined();
+    expect(messageProblemFor('passport', 'Trikey    pair')).toMatch(/more than 3 spaces in a row/);
+    expect(messageProblemFor('passport', 'Trikey ')).toMatch(/starts or ends with a space/);
+    expect(messageProblemFor('passport', 'a'.repeat(4001))).toMatch(/signs at most 4000/);
+    // Krux strips every line, so a space at either end would change the text it signs.
+    expect(messageProblemFor('krux', ' Trikey')).toMatch(/Krux does not sign a text that starts or ends with a space/);
+    expect(messageProblemFor('krux', 'a'.repeat(1000))).toBeUndefined();
   });
 });
 
@@ -157,6 +178,19 @@ describe('a QR device in the wallet', { timeout: 60_000 }, () => {
       { purpose: 'notes', round: { n: 2, of: 2 } },
     ]);
     await w.disableNotes();
+  });
+
+  it('a model that signs from a microSD card: notes are offered, hardware unlock is not, with the reason', async () => {
+    for (const model of ['passport', 'krux'] as const) {
+      await w.setHardwareModel(model);
+      expect(w.notesView()).toMatchObject({ available: true });
+      expect(w.hardwareUnlockView()).toMatchObject({ available: false, unavailable: 'microsd', on: false });
+      const e = await w.enableHardwareUnlock().catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(WalletError);
+      expect((e as WalletError).message).toMatch(/only from a microSD card.*passphrase unlocks your guardian/);
+    }
+    await w.setHardwareModel('coldcard-q');
+    expect(w.hardwareUnlockView()).toMatchObject({ available: true });
   });
 
   it('a model that signs no text: notes and unlock are not offered, and the reason names the device', async () => {

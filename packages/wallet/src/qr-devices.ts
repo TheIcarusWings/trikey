@@ -9,6 +9,11 @@
  * from each vendor's firmware source (docs/design/hardware-auth-path.md, "QR devices"); **none of it has been tested on
  * a device yet** (docs/alpha-test-plan.md).
  *
+ * Passport (2nd generation) and Krux refuse that path over a text QR but sign it from a file on a microSD card: the phone
+ * writes the request file, the owner carries it to the device on the card and brings the signed file back
+ * (`messageMethod: 'microsd'`, `apps/mobile/src/hardware/qr/sd-message.ts`). That is fine for pairing, approvals,
+ * recovery access and notes, but not for hardware unlock (a card round trip after every guardian restart).
+ *
  * The model is the owner's choice when the device is added (the app may suggest one from the device's key export,
  * `detectQrModel` in the app). Wallets made before models existed read as `other` until the owner sets it in Settings.
  */
@@ -22,6 +27,12 @@ export const isQrModel = (m: unknown): m is QrModel => typeof m === 'string' && 
 /** Kinds that talk over QR codes (`apps/mobile/src/hardware/qr`). */
 export const QR_KINDS: readonly HardwareKind[] = ['qr', 'coldcard', 'jade'];
 
+/**
+ * How a model signs Trikey's texts: `qr-text` (a `signmessage` text QR, answered by a QR), `microsd` (a request file on
+ * a microSD card, answered by a signed file), or `none`. Read it with `qrMessageMethod`.
+ */
+export type QrMessageMethod = 'qr-text' | 'microsd' | 'none';
+
 export interface QrModelInfo {
   model: QrModel;
   /** "Coldcard Q" */
@@ -30,8 +41,14 @@ export interface QrModelInfo {
   detail: string;
   /** It works over QR codes at all: it has a camera and scans a PSBT. False only for the Coldcard Mk4. */
   qr: boolean;
-  /** It signs a text with the authorization key over a text QR, so it can set up and approve a guardian wallet. */
+  /** It signs a text with the authorization key (by QR code or from a microSD card), so it can set up and approve a guardian wallet. */
   signsMessages: boolean;
+  /** How it signs a text, when not over a text QR (`qrMessageMethod` gives the answer for every model). */
+  messageMethod?: QrMessageMethod;
+  /** Why the guardian is not unlocked with it although it signs texts, in words for the owner (microSD models). */
+  unlockWhyNot?: string;
+  /** microSD models: it can also show the signature as a QR code after signing the file (Krux). */
+  answersByQr?: true;
   /** Why it cannot (when `qr` or `signsMessages` is false), in words for the owner. */
   whyNot?: string;
   /** The longest text its firmware signs, in characters, where the firmware has a limit (Coldcard: 240). */
@@ -40,6 +57,10 @@ export interface QrModelInfo {
   displayLength?: number;
   /** Coldcard's text rules: 2 or more characters, no space at either end, never three spaces in a row. */
   coldcardTextRules?: true;
+  /** It refuses (Passport) or strips (Krux) a space at either end of the text. */
+  noEdgeSpaces?: true;
+  /** The most spaces in a row it signs (Passport: 3). */
+  maxSpaceRun?: number;
   /** Which address it shows next to the text for Trikey's key: legacy `1…` (P2PKH), or none. */
   showsAddress?: 'p2pkh' | 'none';
   /** It signs a message only from the account the path names, so the owner opens that account first (Passport Prime). */
@@ -123,11 +144,24 @@ export const QR_MODEL_INFO: Readonly<Record<QrModel, QrModelInfo>> = {
   passport: {
     model: 'passport',
     name: 'Passport (2nd generation)',
-    detail: 'Signs payments; can’t set up a guardian wallet yet',
+    detail: 'Signs payments by QR, and Trikey’s texts from a microSD card',
     qr: true,
-    signsMessages: false,
-    // flows/sign_electrum_message_flow.py: a 48'/…/2' path is a script type, and the QR flow stops before signing.
-    whyNot: 'Passport signs a message with a multisig key only from a microSD card file, which Trikey can’t make yet. Its QR message signing refuses the key Trikey’s guardian needs.',
+    signsMessages: true,
+    // Its QR flow maps a 48'/…/2' path to P2WSH and stops (sign_electrum_message_flow.py); the microSD flow signs a 2-line
+    // file (text, path) with the legacy address type (flows/health_check_microsd_flow.py, health_check_common_flow.py).
+    messageMethod: 'microsd',
+    unlockWhyNot: 'Passport signs Trikey’s texts only from a microSD card, and carrying a card back and forth after every guardian restart is too clunky, so unlocking with it is not offered. The passphrase unlocks your guardian.',
+    // utils.py validate_sign_text: printable ASCII, no space at either end, at most 3 in a row; the whole file is at
+    // most MSG_SIGNING_MAX_LENGTH = 4096 bytes, the path included (the file check in the app counts it exactly).
+    maxMessageLength: 4000,
+    noEdgeSpaces: true,
+    maxSpaceRun: 3,
+    showsAddress: 'p2pkh',
+    messageSteps: [
+      'Put the card in your Passport. Open any account, then Account Tools > Sign a Message > Sign with microSD, and pick {file}.',
+      'Read the text to the end: it must be exactly the text above. Passport then asks to sign with an address: it must be the one below. Sign.',
+      'Passport writes the signed file next to it, named {base}-signed- and a number. Put the card back in this phone’s reader (or copy that file over), then tap “Open the signed file” and pick it.',
+    ],
   },
   seedsigner: {
     model: 'seedsigner',
@@ -135,17 +169,31 @@ export const QR_MODEL_INFO: Readonly<Record<QrModel, QrModelInfo>> = {
     detail: 'Signs payments; can’t set up a guardian wallet',
     qr: true,
     signsMessages: false,
-    // helpers/embit_utils.py: "Not implemented" for 48h paths.
-    whyNot: 'SeedSigner doesn’t sign messages with a multisig key (a path that starts m/48\'), and that is the key Trikey’s guardian needs.',
+    // helpers/embit_utils.py: "Not implemented" for 48h paths. Decided: co-signs payments only, no blind BIP 322 proof (DESIGN.md).
+    whyNot: 'SeedSigner doesn’t sign messages with a multisig key (a path that starts m/48\'), and that is the key Trikey’s guardian needs. It co-signs payments only.',
   },
   krux: {
     model: 'krux',
     name: 'Krux',
-    detail: 'Signs payments; can’t set up a guardian wallet yet',
+    detail: 'Signs payments by QR, and Trikey’s texts from a microSD card',
     qr: true,
-    signsMessages: false,
-    // pages/home_pages/sign_message_ui.py: "Unsupported script type" for purpose 48 over QR.
-    whyNot: 'Krux signs a message with a multisig key only from a microSD card file, which Trikey can’t make yet. Its QR message signing refuses the key Trikey’s guardian needs.',
+    signsMessages: true,
+    // Its QR flow refuses purpose 48 ("Unsupported script type"); the microSD flow signs a 3-line file (text, path, single-sig
+    // address type) at any path (pages/home_pages/sign_message_ui.py, _sign_at_address_from_sd).
+    messageMethod: 'microsd',
+    unlockWhyNot: 'Krux signs Trikey’s texts only from a microSD card, and carrying a card back and forth after every guardian restart is too clunky, so unlocking with it is not offered. The passphrase unlocks your guardian.',
+    // It strips each line, so a space at either end would change the text it signs.
+    noEdgeSpaces: true,
+    // display.py to_lines: about 10 lines; on the M5StickV (16 characters a line) about the first 120 characters show, then
+    // "…"; on the larger screens about 210.
+    displayLength: 120,
+    showsAddress: 'p2pkh',
+    answersByQr: true,
+    messageSteps: [
+      'Put the card in your Krux. Choose Sign > Message > Load from SD card, and pick {file}.',
+      'Krux shows the text and an address: the text must match the one above (a small screen cuts it with "…"), the address the one below. If it shows "SHA256:" and a long number instead, stop: it did not read the file. Sign.',
+      'Choose Sign to SD card and keep the name it suggests ({base}-signed.txt), bring the card back and tap “Open the signed file”. Or choose Sign to QR code and tap “Scan the signature instead”.',
+    ],
   },
   'specter-diy': {
     model: 'specter-diy',
@@ -175,6 +223,19 @@ export function qrModelInfo(model: QrModel | undefined): QrModelInfo {
   return QR_MODEL_INFO[model && isQrModel(model) ? model : 'other'];
 }
 
+/** How `model` signs Trikey's texts (`none` for a model that does not). */
+export function qrMessageMethod(model: QrModel | undefined): QrMessageMethod {
+  const info = qrModelInfo(model);
+  if (!info.qr || !info.signsMessages) return 'none';
+  return info.messageMethod ?? 'qr-text';
+}
+
+/** Whether `model` can unlock the guardian: it signs texts, and not from a microSD card (a card round trip per restart). */
+export function qrModelUnlocks(model: QrModel | undefined): boolean {
+  const method = qrMessageMethod(model);
+  return method !== 'none' && method !== 'microsd';
+}
+
 /** The model of a record made before models existed: a `jade` kind is a Jade, a `coldcard` kind over QR a Coldcard Q (the Mk4 has no camera). */
 export function defaultQrModelOf(kind: HardwareKind): QrModel | undefined {
   if (kind === 'jade') return 'jade';
@@ -189,7 +250,7 @@ export function defaultQrModelOf(kind: HardwareKind): QrModel | undefined {
  */
 export const MIN_QR_MESSAGE_LIMIT = Math.min(...Object.values(QR_MODEL_INFO).flatMap((i) => (i.signsMessages && i.maxMessageLength ? [i.maxMessageLength] : [])));
 
-/** Why `text` cannot be signed on `model`, or undefined when it can (length, printable ASCII, Coldcard's spacing rules). */
+/** Why `text` cannot be signed on `model`, or undefined when it can (length, printable ASCII, each firmware's spacing rules). */
 export function messageProblemFor(model: QrModel, text: string): string | undefined {
   const info = qrModelInfo(model);
   if (!/^[\x20-\x7e]+$/.test(text)) return 'The text is not plain printable ASCII on one line.';
@@ -200,5 +261,8 @@ export function messageProblemFor(model: QrModel, text: string): string | undefi
     if (text !== text.trim()) return 'The Coldcard refuses a text that starts or ends with a space.';
     if (text.includes('   ')) return 'The Coldcard refuses a text with three spaces in a row.';
   }
+  if (info.noEdgeSpaces && text !== text.trim()) return `The ${info.name} does not sign a text that starts or ends with a space.`;
+  if (info.maxSpaceRun !== undefined && text.includes(' '.repeat(info.maxSpaceRun + 1)))
+    return `The ${info.name} refuses a text with more than ${info.maxSpaceRun} spaces in a row.`;
   return undefined;
 }
