@@ -34,11 +34,19 @@ export const LOCK_WINDOW_SEC = 600;
  * "lock?" or "LOCK 3-0123" do nothing, so a conversation in the guardian's DM thread cannot lock it by accident.
  */
 export function isLockCommand(content: string): boolean {
-  const lines = content
+  const lines = commandLines(content);
+  return lines.length === 1 && /^lock[.!]?$/i.test(lines[0]!);
+}
+
+/**
+ * The lines of a contact's DM that may carry a command (`LOCK`, `CANCEL <id>`): trimmed, without blank lines and
+ * without quoted ones (`> ...`: a client quoting the guardian's alert, which itself names the command).
+ */
+export function commandLines(content: string): string[] {
+  return content
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter((l) => l.length > 0 && !l.startsWith('>'));
-  return lines.length === 1 && /^lock[.!]?$/i.test(lines[0]!);
 }
 
 /** How to stop a running recovery, for the answers: locking does not cancel it. */

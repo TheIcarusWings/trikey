@@ -39,7 +39,8 @@ contact's app, so anything sent there is meant for the guardian; requiring the w
   to copy a code from. The thing it protects against, an accidental lock, costs one unlock. Friction in an emergency
   costs more than that.
 - *A confirmation round ("reply YES to lock").* Same trade: slower when it matters, for a nuisance-only mistake.
-- *Matching "lock" anywhere in the text* (as `CANCEL <id>` is found anywhere): too easy to trigger by accident.
+- *Matching "lock" anywhere in the text*: too easy to trigger by accident. (`CANCEL <id>` was once found anywhere in a
+  message, so a reply quoting the alert cancelled the recovery; after 0.1.19 it is parsed like `LOCK`.)
 
 **2. The setting is a policy member that exists only when on.** Rejected: an always-present boolean (it would change
 every policy's canonical JSON and hash, need a protocol version bump and change the hardware wallet text for everyone),

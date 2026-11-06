@@ -104,9 +104,9 @@ function plainAlertText(w: WalletRuntime, a: DueAlert, rec: RecoveryRecord | und
   const lockHint = canLock ? `\n\nCANCEL stops this recovery. ${reach === 'nostr' ? LOCK_HINT_NOSTR : LOCK_HINT}` : '';
   const howToCancel =
     reach === 'dm'
-      ? `To stop it, reply to this message with:\n\nCANCEL ${id}\n\nor cancel it in the Trikey app.${lockHint}`
+      ? `To stop it, reply to this message with exactly this line and nothing else:\n\nCANCEL ${id}\n\nor cancel it in the Trikey app.${lockHint}`
       : reach === 'nostr'
-        ? `To stop it, reply to the guardian's nostr message about it, in your nostr app, with:\n\nCANCEL ${id}\n\nReplying here does nothing. You can also contact the owner.${lockHint}`
+        ? `To stop it, reply to the guardian's nostr message about it, in your nostr app, with exactly this line and nothing else:\n\nCANCEL ${id}\n\nReplying here does nothing. You can also contact the owner.${lockHint}`
         : 'Contact the owner: they, or an alert contact with a nostr app, can cancel it. Replying here does nothing.';
   if (form === 'short') {
     switch (a.kind) {
