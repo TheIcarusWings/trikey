@@ -380,6 +380,7 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
     'guardian.status': () => {
       const s = w.engine.status();
       const stamp = g.stampNow(); // `time` and `atMs` from one reading of the clock
+      const unlockKey = g.currentUnlockKey();
       return {
         state: g.locked ? 'locked' : 'unlocked',
         paired: s.registered,
@@ -395,6 +396,8 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
         ...(s.walletId ? { walletId: s.walletId, hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
         // Unlocking with the hardware wallet: the slot this wallet's hardware wallet signs for (locked too: that is when it is needed).
         ...(g.hardwareUnlockOf(s.walletId) ? { hardwareUnlock: g.hardwareUnlockOf(s.walletId)! } : {}),
+        // Sealed unlock: the key the phone seals `guardian.unlock` and `unlock.hardware.add` to (memory only; new at every lock, unlock and use).
+        ...(unlockKey ? { unlockKey: { pubkey: unlockKey } } : {}),
         ...(s.registered ? { key3Mixed: !!w.engine.registration()?.key3Mix } : {}),
         // A phone that missed a `relays_changed` alert catches up here (PROTOCOL.md, "Changing relays").
         ...(g.service.get().relays.length ? { relays: [...g.service.get().relays] } : {}),
@@ -428,12 +431,26 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
       };
     },
 
-    'guardian.unlock': async (params) => {
+    'guardian.unlock': async (params, ctx) => {
       if (params.kind === 'hardware' && !g.features.includes(GUARDIAN_FEATURES.hardwareUnlock))
         throw new RpcError(ErrorCode.UnlockFailed, 'Unlocking with the hardware wallet is not supported yet; use the passphrase.');
-      // The same throttle and refusals for both (Guardian.unlockAttempt); the signature is never logged or kept.
-      const r = params.kind === 'hardware' ? await g.unlockWithHardware(params) : await g.unlock(params.passphrase, 'phone');
+      // As a guardian before sealed unlock answers (its schema has no `sealed`).
+      if (params.kind === 'sealed' && !g.sealsUnlocks) throw new RpcError(ErrorCode.InvalidParams);
+      // The same throttle and refusals for all (Guardian.unlockAttempt); the passphrase and the signature are never logged or kept.
+      const r =
+        params.kind === 'sealed'
+          ? await g.unlockSealed(params.sealed, { phone: ctx.sender, id: ctx.id })
+          : params.kind === 'hardware'
+            ? await g.unlockWithHardware(params)
+            : await g.unlock(params.passphrase, 'phone');
       if (r.ok) return { unlocked: true };
+      // Sealed to a key the guardian no longer holds: read `guardian.status` again and seal to its `unlockKey`. Not counted.
+      if (r.code === 'unlock_key_stale') throw new RpcError(ErrorCode.UnlockFailed, r.message, { reason: r.code });
+      if (r.code === 'bad_seal')
+        throw new RpcError(ErrorCode.UnlockFailed, 'The guardian could not open that sealed unlock.', {
+          reason: 'sealed_unlock_invalid',
+          ...(r.retryAfterSeconds ? { retryAfterSeconds: r.retryAfterSeconds } : {}),
+        });
       if (r.code === 'rate_limited')
         throw new RpcError(ErrorCode.RateLimited, 'Too many unlock attempts; wait and try again.', { retryAfterSeconds: r.retryAfterSeconds });
       if (r.code === 'bad_passphrase')
@@ -909,8 +926,10 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
     // -- unlocking with the hardware wallet (unlock-slots.ts; PROTOCOL.md, "Unlocking with the hardware wallet") --
     // The paired phone only (Guardian.authorize; own wallets routed by `walletId`); guests never get here (hosting/).
 
-    'unlock.hardware.add': async (params) => {
-      const r = await g.addHardwareUnlock(w, params);
+    'unlock.hardware.add': async (params, ctx) => {
+      // As a guardian before sealed unlock answers (its schema has no `sealed`).
+      if ('sealed' in params && !g.sealsUnlocks) throw new RpcError(ErrorCode.InvalidParams);
+      const r = await g.addHardwareUnlock(w, params, { phone: ctx.sender, id: ctx.id });
       if (r.ok) return { walletId: r.walletId, slot: r.slot, addedAt: Math.floor(r.addedAt / 1000) };
       switch (r.code) {
         case 'locked':
@@ -921,6 +940,11 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
           throw new RpcError(ErrorCode.HardwareAuthUnconfirmed, r.message);
         case 'bad_signature':
           throw new RpcError(ErrorCode.ApprovalInvalid, r.message, { reason: 'unlock_signature_invalid' });
+        // Sealed to a key the guardian no longer holds: read `guardian.status` again and seal to its `unlockKey`.
+        case 'unlock_key_stale':
+          throw new RpcError(ErrorCode.UnlockFailed, r.message, { reason: r.code });
+        case 'bad_seal':
+          throw new RpcError(ErrorCode.ApprovalInvalid, r.message, { reason: 'sealed_unlock_invalid' });
         case 'wallet_changed':
           throw new RpcError(ErrorCode.InvalidParams, r.message, { reason: 'unlock_wallet_changed', walletId: w.engine.registration()?.walletId });
         default:

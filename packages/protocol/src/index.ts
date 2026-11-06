@@ -11,3 +11,4 @@ export * from './server.js';
 export * from './pairing.js';
 export * from './relay-url.js';
 export * from './identity.js';
+export * from './sealed-unlock.js';

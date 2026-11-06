@@ -102,6 +102,16 @@ export function refusalToError(r: GuardianRefusal): WalletServiceError {
         );
       if (r.reason === 'hardware_unlock_off')
         return new WalletServiceError('unlock_failed', 'Unlocking with the hardware wallet is off on your guardian now. Use the passphrase.');
+      // Sealed unlock: the guardian restarted, locked or unlocked while the phone was sending (it already tried once more).
+      if (r.reason === 'unlock_key_stale')
+        return new WalletServiceError('unlock_failed', 'Your guardian restarted, locked or unlocked while this phone was talking to it. Try again.');
+      // A sealed unlock the guardian could not open: counted as a wrong try.
+      if (r.reason === 'sealed_unlock_invalid')
+        return new WalletServiceError(
+          'unlock_failed',
+          `Your guardian couldn't read the unlock this phone sent. Try again; if it keeps happening, unlock it on its web page.${wait(r.retryAfterSeconds)}`,
+          opts(false, r.retryAfterSeconds),
+        );
       return new WalletServiceError('unlock_failed', `That passphrase didn't work.${wait(r.retryAfterSeconds)}`, opts(false, r.retryAfterSeconds));
     case 'rate_limited':
       return new WalletServiceError('rate_limited', `Too many tries.${wait(r.retryAfterSeconds) || ' Wait a moment and try again.'}`, opts(false, r.retryAfterSeconds));

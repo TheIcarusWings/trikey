@@ -41,9 +41,13 @@ export interface SweepRecord {
 export type ServiceEvent =
   | { type: 'setup' }
   | { type: 'started' }
-  /** `method: 'hardware'` (absent: the passphrase): the phone sent the hardware wallet's signature of `walletId`'s unlock slot. */
-  | { type: 'unlocked'; via: 'web' | 'phone'; method?: 'hardware'; walletId?: string }
-  | { type: 'unlock_failed'; via: 'web' | 'phone'; method?: 'hardware'; walletId?: string }
+  /**
+   * `method: 'hardware'` (absent: the passphrase): the phone sent the hardware wallet's signature of `walletId`'s unlock
+   * slot. `unsealed`: the phone sent it in the clear to a guardian that seals unlocks (an app from before sealed unlock).
+   * `unreadable` (failures only): a sealed unlock that did not open, or was not for this guardian, phone or request.
+   */
+  | { type: 'unlocked'; via: 'web' | 'phone'; method?: 'hardware'; walletId?: string; unsealed?: true }
+  | { type: 'unlock_failed'; via: 'web' | 'phone'; method?: 'hardware'; walletId?: string; unsealed?: true; unreadable?: true }
   | { type: 'locked'; reason: 'manual' | 'remote' }
   | { type: 'reset' }
   | { type: 'reset_refused'; detail: string }
@@ -113,7 +117,8 @@ export type ServiceEvent =
    * signed), or it was removed: the phone turned it off, or the wallet no longer uses this guardian (retired, recovered
    * to another wallet). A reset removes every slot with key 3 and logs only the reset.
    */
-  | { type: 'unlock_slot_added'; walletId: string }
+  /** `unsealed`: an older phone sent the signature in the clear to a guardian that seals it (PROTOCOL.md, "Sealed unlock"). */
+  | { type: 'unlock_slot_added'; walletId: string; unsealed?: true }
   | { type: 'unlock_slot_removed'; walletIds: string[]; by: 'phone' | 'retired' };
 
 /** A relay removed from `relays` that the guardian still watches (listens and publishes on) until the owner stops it. */

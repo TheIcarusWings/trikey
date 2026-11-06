@@ -60,9 +60,16 @@ const walletIdOf = async (engine: { registration(): { walletId: string } | undef
 describe('security: hidden change (finding 1), coverage and wallet.sync', () => {
   let rig: GuardianRig;
   afterEach(async () => rig?.stop());
+  /**
+   * No live wallet here: its background read of the funded coins raises the receive mark whenever it lands (after the
+   * pairing's debounce, or on Electrs' notification of a new coin), which made the marks these tests check depend on
+   * timing (seen under a loaded full run). What raises the marks here is co-signing and the scans the tests make
+   * themselves: the coverage check and `wallet.sync`, which notes what it finds as the live read would.
+   */
+  const start = () => GuardianRig.start({ liveWallet: false });
 
   it('PoC: change key 3 co-signed past the plain gap limit is found by the recovery coverage check and by wallet.sync', async () => {
-    rig = await GuardianRig.start();
+    rig = await start();
     const g = rig.guardian;
     const { wallet, walletId } = await pairInRig(rig, { dailyLimitSats: 50_000n });
     const visible = rig.fund(wallet.derive(RECEIVE, 0).script, 50_000n);
@@ -93,7 +100,7 @@ describe('security: hidden change (finding 1), coverage and wallet.sync', () => 
   }, 30_000);
 
   it('receiving still works: wallet.sync raises the receive mark to what it finds, widening the window', async () => {
-    rig = await GuardianRig.start();
+    rig = await start();
     const g = rig.guardian;
     const { wallet, walletId } = await pairInRig(rig, { dailyLimitSats: 50_000n });
     const coin = rig.fund(wallet.derive(RECEIVE, 15).script, 1_000_000n); // a payment to a fresh address
