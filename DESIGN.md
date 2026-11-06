@@ -340,7 +340,7 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
   - an id, so retries are idempotent;
   - a NIP-40 expiry;
   - the hash of the PSBT it refers to.
-- **Replay protection:** old rumors are dropped. Strangers (senders that are not the paired phone, an alert contact or a phone with recovery access) get their own small replay cache and seen-wrap set, so they cannot push a peer's entries out; refused `sign` / `recovery.start` / `recovery.update` are rate limited per sender, and repeated identical refusals are one log entry with a count.
+- **Replay protection:** old rumors are dropped. Strangers (senders that are not the paired phone, an alert contact or a phone with recovery access) get their own small replay cache and seen-wrap set, so they cannot push a peer's entries out; refused `sign` / `recovery.start` / `recovery.update` are rate limited per sender (each request holds a slot while it runs and gives it back if it succeeds, so a burst sent at once gets no more than the limit through; up to 0.1.19 the check came before the call and the count after, and overlapping requests all passed), and repeated identical refusals are one log entry with a count.
 - **Relays:** several, with the user's own relay optional (Umbrel has a Nostr Relay app). Setup ticks the project's
   relay `wss://relay.trikey.app` (it stores only gift wraps and Nostr Connect events, kinds 1059 and 24133) next to
   three public ones; it sees what any relay sees, ciphertext and metadata, and is never the only one. Trikey keeps its
