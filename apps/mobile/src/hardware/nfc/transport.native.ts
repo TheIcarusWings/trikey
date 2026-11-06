@@ -17,7 +17,8 @@ import { Platform } from 'react-native';
 import type { NdefRecord as LibNdefRecord, NfcManager as LibNfcManager } from 'react-native-nfc-manager';
 import { HardwareError } from '../errors';
 import type { NdefRecord } from './ndef';
-import { noNfc, type NfcTransport } from './transport';
+import { noNfc } from './no-nfc';
+import type { NfcTransport } from './transport';
 
 type Lib = typeof import('react-native-nfc-manager');
 
