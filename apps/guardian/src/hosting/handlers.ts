@@ -20,7 +20,7 @@ import type { Guardian } from '../guardian.js';
 import { errorText } from '../log.js';
 import { formatBtc } from '../alerts.js';
 import { policyHash, type CancelActor } from '../policy/index.js';
-import { policyToWire, recoveryToWire, refusalError, refusalText, rulesFromPolicy } from '../nostr/wire.js';
+import { APP_UPDATE_REQUIRED, APP_UPDATE_REQUIRED_TEXT, policyToWire, recoveryToWire, refusalError, refusalText, rulesFromPolicy } from '../nostr/wire.js';
 import { GUEST_FEATURES, GUEST_METHODS, GUEST_RECOVERY_METHODS, Hosting, guestChainSource, slotOfRecoveryId, type GuestRoute } from './service.js';
 import type { HostedRecoveryView } from './engine.js';
 import type { HostedRefusal } from './types.js';
@@ -401,6 +401,8 @@ function pairingHandlers(g: Guardian, h: Hosting) {
         if (params.network !== g.config.network) return reject(`This guardian runs on ${g.config.network}, not ${params.network}.`);
         if (params.phoneNostrPubkey !== ctx.sender) return reject('phoneNostrPubkey must be the key this request is signed with.');
         if (h.liveSlots().length >= 8) return reject('This guardian hosts as many wallets as it can.');
+        // The guest's rules, approved on its hardware wallet (rule 4); an app from before that sends none.
+        if (!params.rulesApproval) return reject(APP_UPDATE_REQUIRED_TEXT, ErrorCode.InvalidParams, APP_UPDATE_REQUIRED);
         const mix = h.key3Record(slot.slotId, ctx.sender, slot.invite.entropy);
         const key = g.hostedKey3(mix);
         const engine = await h.openEngine(slot.slotId);
@@ -423,6 +425,7 @@ function pairingHandlers(g: Guardian, h: Hosting) {
               rules: rulesFromPolicy(params.rules),
               hardwareAuth: params.hardwareAuth,
               hardwareAuthProof: params.hardwareAuthProof,
+              rulesApproval: params.rulesApproval,
               appNostrPubkey: ctx.sender,
               walletLabel: params.walletLabel,
               walletMap: params.walletMap,

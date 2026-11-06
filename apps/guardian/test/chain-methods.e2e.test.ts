@@ -23,7 +23,7 @@ import {
   recoveryAccessMessage,
 } from '@trikey/protocol';
 import { signMessage } from '../src/policy/index.js';
-import { AUTH_PATH, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from './helpers.js';
+import { AUTH_PATH, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withRulesApproval } from './helpers.js';
 import { GuardianRig } from './support/index.js';
 
 let rig: GuardianRig;
@@ -63,7 +63,7 @@ beforeAll(async () => {
   wallet = new MultisigWallet(network, { app: await appSigner().getKey(network), hardware: await hwSigner().getKey(network), cosigner });
   const cosignerPub = hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!);
   const app = wallet.keys.app;
-  await phone.call('pair', {
+  await phone.call('pair', withRulesApproval({
     pairingSecret: p.secret,
     deviceName: 'Chain test phone',
     network: 'regtest',
@@ -73,7 +73,7 @@ beforeAll(async () => {
     hardwareAuth: { pubkey: hwAuthPubkey(), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), cosignerPub), hwAuthPrivateKey()),
     rules: { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [], sweepFeeCapSats: 20_000 },
-  });
+  }, rig.nowSec() * 1000));
 }, 30_000);
 
 afterAll(async () => {

@@ -3,18 +3,36 @@ name: Umbrel store
 # An Umbrel community app store is a repository whose root holds umbrel-app-store.yml
 # (packaging/README.md). This monorepo keeps the store under packaging/umbrel/, so on a release
 # tag this workflow copies it to its own repository, trikey-umbrel-store, with the image pinned
-# by digest.
+# by digest: the digest docker.yml's `publish` job pushed, which docker.yml passes in when it
+# calls this workflow (`image-digest`). The tag is not re-resolved for the pin; it only has to
+# still point at that digest, or the job fails. To retry by hand, run it on the tag with the
+# digest from docker.yml's run summary. It runs only on a v* tag ref, in the `release`
+# environment (docs/android-signing.md, "The `release` environment").
 #
 # It needs a secret, UMBREL_STORE_TOKEN: a fine-grained personal access token with
-# "Contents: read and write" on the store repository, and nothing else. Without the secret the
+# "Contents: read and write" on the store repository, and nothing else; best kept as a secret of
+# the `release` environment, so no other ref can read it. Without the secret the
 # workflow does nothing and says so. The store repository's name can be changed with the
 # repository variable UMBREL_STORE_REPO (owner/name).
 
 on:
-  push:
-    tags: ['v*']
-  # release.yml dispatches it on the tag it creates (a tag made with GITHUB_TOKEN does not trigger `push`).
+  # Release tags: docker.yml calls it with the digest it pushed.
+  workflow_call:
+    inputs:
+      image-digest:
+        description: 'The digest (sha256:...) of the guardian image docker.yml just pushed for this tag.'
+        required: true
+        type: string
+    secrets:
+      UMBREL_STORE_TOKEN:
+        required: false
+  # A retry by hand, on the tag, with the digest from docker.yml's run summary.
   workflow_dispatch:
+    inputs:
+      image-digest:
+        description: 'The digest (sha256:...) docker.yml published for this tag (its run summary).'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -22,7 +40,9 @@ permissions:
 
 jobs:
   publish:
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
     runs-on: ubuntu-latest
+    environment: release
     env:
       # Secrets cannot be tested in an `if:`, so the check goes through the environment.
       HAS_TOKEN: ${{ secrets.UMBREL_STORE_TOKEN != '' }}
@@ -35,8 +55,10 @@ jobs:
             echo "::notice title=Umbrel store not updated::The UMBREL_STORE_TOKEN secret is not set, so ${GITHUB_REF_NAME} was not copied to ${STORE_REPO}. See packaging/README.md."
           fi
 
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: env.HAS_TOKEN == 'true'
+        with:
+          persist-credentials: false
 
       - name: Check that the app matches the tag
         if: env.HAS_TOKEN == 'true'
@@ -50,33 +72,33 @@ jobs:
 
       - name: Log in to GHCR
         if: env.HAS_TOKEN == 'true'
-        uses: docker/login-action@v4.6.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # docker.yml pushes the same tag at the same time, so wait for it.
-      - name: Find the image digest
+      # The digest docker.yml pushed, not whatever the tag resolves to now; the tag must still agree with it.
+      - name: Check the image digest
         if: env.HAS_TOKEN == 'true'
         id: digest
+        env:
+          DIGEST: ${{ inputs.image-digest }}
         run: |
+          set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          for attempt in $(seq 1 60); do
-            if digest=$(docker buildx imagetools inspect "${IMAGE}:${version}" --format '{{.Manifest.Digest}}' 2>/dev/null) && [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              echo "digest=${digest}" >> "$GITHUB_OUTPUT"
-              echo "${IMAGE}:${version} is ${digest}"
-              exit 0
-            fi
-            echo "Waiting for ${IMAGE}:${version} (${attempt}/60)"
-            sleep 30
-          done
-          echo "::error::${IMAGE}:${version} was not published within 30 minutes"
-          exit 1
+          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::image-digest is not a sha256 digest: '${DIGEST}'"; exit 1; }
+          docker buildx imagetools inspect "${IMAGE}@${DIGEST}" > /dev/null \
+            || { echo "::error::${IMAGE}@${DIGEST} does not exist"; exit 1; }
+          current=$(docker buildx imagetools inspect "${IMAGE}:${version}" --format '{{.Manifest.Digest}}')
+          [ "${current}" = "${DIGEST}" ] \
+            || { echo "::error::${IMAGE}:${version} is ${current}, not the ${DIGEST} docker.yml pushed: the tag was changed"; exit 1; }
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "${IMAGE}:${version} is ${DIGEST}"
 
       - name: Check out the store repository
         if: env.HAS_TOKEN == 'true'
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.STORE_REPO }}
           token: ${{ secrets.UMBREL_STORE_TOKEN }}

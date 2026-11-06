@@ -76,7 +76,7 @@ function isReleasePageUrl(url: unknown): url is string {
 
 /**
  * The file names a release must carry for `variant`: the APK and, beside it, its checksum. The names are made in
- * .github/workflows/android-build.yml.
+ * packaging/android/sign-apk.sh (run by .github/workflows/android-build.yml).
  */
 export function assetNames(tag: string, variant: AndroidVariant = 'standard'): { apk: string; sha256: string } {
   const apk = variant === 'foss' ? `trikey-alpha-foss-${tag}.apk` : `trikey-alpha-${tag}.apk`;

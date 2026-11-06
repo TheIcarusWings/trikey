@@ -134,7 +134,9 @@ describe('a Coldcard Q over QR codes, in the app', { timeout: 120_000 }, () => {
     expect(message.frames[0]).toMatch(/^signmessage m\/48h\/1h\/0h\/2h\/0\/0 ascii:Trikey pair v1 wallet=[0-9a-f]{16} guardian=0[23][0-9a-f]{64}$/);
     expect(message.title).toBe('Sign on your Coldcard Q');
     expect(message.notes!.join(' ')).toMatch(/proves to your guardian/);
-    expect(cc.signed).toEqual([expect.stringMatching(/^Trikey pair v1 /)]);
+    // Then the rules the wallet starts with (seq=0), which the device shows, with a note that says what to check.
+    expect(cc.signed).toEqual([expect.stringMatching(/^Trikey pair v1 /), expect.stringMatching(/^Trikey policy v1 wallet=[0-9a-f]{16} seq=0 limit=100000 delay=7d feecap=\d+ contacts=\d+ hash=[0-9a-f]{64} expires=\S+Z$/)]);
+    expect(cc.shown.filter((r) => r.purpose === 'message')[1]!.notes!.join(' ')).toMatch(/rules your wallet starts with/);
     // After the signature: the wallet goes onto the device, and the first address is compared.
     expect(cc.shown.map((r) => r.purpose)).toEqual(expect.arrayContaining(['message', 'wallet', 'address']));
   });

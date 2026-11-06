@@ -47,6 +47,7 @@ import {
   phoneSpend,
   setup,
   type Ctx,
+  approveRules,
 } from './helpers.js';
 
 const r = (over: Partial<Rules> = {}): Rules => ({ ...DEFAULT_RULES, ...over });
@@ -173,7 +174,7 @@ describe('turning the daily limit off', () => {
     expect(ctx.engine.dueNotices()).toEqual([]);
   });
 
-  it('is refused at pairing (pairing rules are not hardware-approved)', async () => {
+  it('is refused at pairing, even with the rules hardware-approved (a wallet starts with a limit)', async () => {
     const engine = await PolicyEngine.open({ store: new MemoryStore() });
     const wallet = await makeWallet();
     const cosigner = hex.encode(wallet.accountPubkeys().cosigner);
@@ -184,6 +185,8 @@ describe('turning the daily limit off', () => {
       rules: OFF,
       hardwareAuth: { kind: 'bip137', pubkey: hwAuthPubkey(), path: AUTH_PATH },
       hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), cosigner), hwAuthPrivateKey()),
+      // Even approved on the hardware wallet: a wallet starts with a limit.
+      rulesApproval: approveRules(wallet.fingerprint(), OFF, Date.now()),
       appNostrPubkey: APP_NOSTR,
     });
     expect(res).toMatchObject({ ok: false, refusal: { reason: 'invalid_registration', detail: `rules: ${LIMIT_OFF_AT_PAIRING}` } });

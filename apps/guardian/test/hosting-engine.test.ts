@@ -12,8 +12,8 @@ import { HostedEngine, MemoryHostedStore, hostedAuthPath, serializeHosted } from
 import { HOSTED_RECOVERY_ID, slotOfRecoveryId } from '../src/hosting/service.js';
 import { hostedAlertText } from '../src/hosting/alerts.js';
 import { parseCancel } from '../src/dm-cancel.js';
-import { ClockChain, DAY, ManualClock, SoftwareCosignerSigner, approvalMessage as approvalText, pairingMessage, recoveryAccessMessage, signMessage, type Rules } from '../src/policy/index.js';
-import { APP_NOSTR, AUTH_PATH, CONTACT_A, CONTACT_B, MNEMONICS, T0, appSigner, approve, fund, hwAuthPrivateKey, network, nostrKey } from './helpers.js';
+import { ClockChain, DAY, ManualClock, SoftwareCosignerSigner, approvalMessage as approvalText, pairingMessage, pairingRulesMessage, recoveryAccessMessage, signMessage, type Rules } from '../src/policy/index.js';
+import { APP_NOSTR, AUTH_PATH, CONTACT_A, CONTACT_B, MNEMONICS, T0, appSigner, approve, approveRules, fund, hwAuthPrivateKey, network, nostrKey } from './helpers.js';
 import { destinationAfterHardwareLoss, externalScript, fakeMap, hostedWallet, offPathPayment, phoneSweep, type HostedFixture } from './support/hosted.js';
 
 const SLOT = '0123456789abcdef';
@@ -35,6 +35,7 @@ async function setup(opts: { maxLedgerCoins?: number; rules?: Partial<Rules> } =
       rules: { ...RULES, ...opts.rules },
       hardwareAuth: fx.hardwareAuth,
       hardwareAuthProof: fx.proof,
+      rulesApproval: fx.approveRules({ ...RULES, ...opts.rules }, clock.now()),
       appNostrPubkey: APP_NOSTR,
       walletLabel: 'Ana',
       walletMap: map,
@@ -49,12 +50,13 @@ async function setup(opts: { maxLedgerCoins?: number; rules?: Partial<Rules> } =
 const ctxOf = (fx: HostedFixture, clock: ManualClock) => ({ clock, walletId: fx.walletId });
 
 describe('registration of a hosted wallet', () => {
-  async function attempt(mutate: (input: Parameters<HostedEngine['register']>[0], fx: HostedFixture) => void) {
+  /** `mutate` changes the input; the rules approval is then signed over the final rules, unless `mutate` set one. */
+  async function attempt(mutate: (input: Parameters<HostedEngine['register']>[0], fx: HostedFixture, clock: ManualClock) => void, opts: { noApproval?: boolean } = {}) {
     const clock = new ManualClock(T0);
     const signer = new SoftwareCosignerSigner(K3);
     const engine = await HostedEngine.open({ slotId: SLOT, store: new MemoryHostedStore(), clock, chain: new ClockChain(clock) });
     const fx = await hostedWallet({ cosignerPub: hex.encode(signer.accountPubkey) });
-    const input = {
+    const input: Parameters<HostedEngine['register']>[0] = {
       network: 'regtest' as const,
       accountPubkeys: { app: fx.accountPubkeys.app, hardware: fx.accountPubkeys.hardware },
       cosignerAccountPubkey: fx.accountPubkeys.cosigner,
@@ -65,8 +67,10 @@ describe('registration of a hosted wallet', () => {
       walletLabel: 'Ana',
       walletMap: fakeMap(),
     };
-    mutate(input, fx);
-    return engine.register(input, signer);
+    mutate(input, fx, clock);
+    if (!opts.noApproval && !input.rulesApproval) input.rulesApproval = fx.approveRules(input.rules, clock.now());
+    const res = await engine.register(input, signer);
+    return Object.assign(res, { engine });
   }
 
   it('registers by account pubkeys: the wallet id is the key-set id, never a descriptor hash', async () => {
@@ -98,6 +102,38 @@ describe('registration of a hosted wallet', () => {
     expect((await attempt((i) => void (i.walletMap = 'not base64!'))).ok).toBe(false);
     expect((await attempt((i) => void (i.walletMap = fakeMap(4097)))).ok).toBe(false);
     expect((await attempt((i) => void (i.accountPubkeys.hardware = i.accountPubkeys.app))).ok).toBe(false);
+  });
+
+  // Security review 2026-11: the rules a wallet starts with were not hardware-approved, so a malicious app could pair with
+  // a limit just below "off" and drain with phone + guardian. They are now, as for the host's `pair`.
+  it('refuses rules the hardware wallet did not approve: none, other rules, another wallet, another key, expired', async () => {
+    const drain: Rules = { ...RULES, dailyLimitSats: 2_100_000_000_000_000n - 1n, sweepFeeCapSats: 2_100_000_000_000_000n };
+    const none = await attempt((i) => void (i.rules = drain), { noApproval: true });
+    expect(!none.ok && none.refusal).toMatchObject({ reason: 'invalid_registration', detail: expect.stringMatching(/approve the rules/) });
+    expect(none.engine.registration()).toBeUndefined();
+    // The device approved the reasonable rules; the app sent others.
+    const other = await attempt((i, fx, clock) => {
+      i.rulesApproval = fx.approveRules(RULES, clock.now());
+      i.rules = drain;
+    });
+    expect(!other.ok && other.refusal).toMatchObject({ reason: 'approval_invalid_signature' });
+    expect(other.engine.registration()).toBeUndefined();
+    // Over the descriptor hash instead of the key-set id (another wallet id).
+    const wrongId = await attempt((i, fx, clock) => {
+      const expiresAt = Math.floor(clock.now() / 1000) + 600;
+      i.rulesApproval = { kind: 'bip137', expiresAt, signature: signMessage(pairingRulesMessage(i.rules, { walletId: fx.wallet.fingerprint(), expiresAt }), hwAuthPrivateKey()) };
+    });
+    expect(!wrongId.ok && wrongId.refusal).toMatchObject({ reason: 'approval_invalid_signature' });
+    const wrongKey = await attempt((i, fx, clock) => void (i.rulesApproval = approveRules(fx.walletId, i.rules, clock.now(), { privateKey: hwAuthPrivateKey(AUTH_PATH, MNEMONICS.hardware2) })));
+    expect(!wrongKey.ok && wrongKey.refusal).toMatchObject({ reason: 'approval_invalid_signature' });
+    const expired = await attempt((i, fx, clock) => void (i.rulesApproval = approveRules(fx.walletId, i.rules, clock.now(), { expiresInSec: -1 })));
+    expect(!expired.ok && expired.refusal).toMatchObject({ reason: 'approval_expired' });
+    const tooFar = await attempt((i, fx, clock) => void (i.rulesApproval = approveRules(fx.walletId, i.rules, clock.now(), { expiresInSec: 25 * 3600 })));
+    expect(!tooFar.ok && tooFar.refusal).toMatchObject({ reason: 'approval_expiry_too_far' });
+    // Hardware-approved, the same rules: accepted, and the guardian keeps exactly what the device showed.
+    const ok = await attempt((i) => void (i.rules = { ...drain, alertContacts: [CONTACT_B, CONTACT_A] }));
+    expect(ok.ok).toBe(true);
+    expect(ok.engine.status().rules).toEqual({ ...drain, alertContacts: [CONTACT_A, CONTACT_B].sort() });
   });
 
   it('refuses a key set the guardian already guards elsewhere', async () => {

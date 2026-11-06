@@ -279,8 +279,8 @@ describe('the two Android builds', () => {
   it('names the APK of each build as the release workflow does', () => {
     expect(assetNames('v0.1.9-alpha')).toEqual({ apk: 'trikey-alpha-v0.1.9-alpha.apk', sha256: 'trikey-alpha-v0.1.9-alpha.apk.sha256' });
     expect(assetNames('v0.1.9-alpha', 'foss')).toEqual({ apk: 'trikey-alpha-foss-v0.1.9-alpha.apk', sha256: 'trikey-alpha-foss-v0.1.9-alpha.apk.sha256' });
-    // The workflow's names (.github/workflows/android-build.yml), so the app and the releases agree.
-    const workflow = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../.github/workflows/android-build.yml'), 'utf8');
+    // The workflow's names (packaging/android/sign-apk.sh, run by .github/workflows/android-build.yml), so the app and the releases agree.
+    const workflow = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../packaging/android/sign-apk.sh'), 'utf8');
     expect(workflow).toContain('name="trikey-alpha-foss-${GITHUB_REF_NAME}"');
     expect(workflow).toContain('name="trikey-alpha-${GITHUB_REF_NAME}"');
   });

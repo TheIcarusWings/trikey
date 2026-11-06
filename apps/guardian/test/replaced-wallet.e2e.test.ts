@@ -34,7 +34,7 @@ import {
 } from '@trikey/protocol';
 import { RESET_CONFIRMATION } from '../src/guardian.js';
 import { signMessage } from '../src/policy/index.js';
-import { AUTH_PATH, MNEMONICS, OTHER_COSIGNER_PRIV, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, makeWallet, network } from './helpers.js';
+import { AUTH_PATH, MNEMONICS, OTHER_COSIGNER_PRIV, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, makeWallet, network, withRulesApproval } from './helpers.js';
 import { GuardianRig, type FundedOutput } from './support/index.js';
 
 const HOUR_MS = 3_600_000;
@@ -119,7 +119,7 @@ async function pairingParams(rig: GuardianRig, phone: Phone, opts: PairOptions =
     cosigner: toKey(prep.guardianKey),
   });
   const app = wallet.keys.app;
-  const params = {
+  const params = withRulesApproval({
     pairingSecret: p.secret,
     deviceName: 'Test phone',
     network: 'regtest' as const,
@@ -131,7 +131,7 @@ async function pairingParams(rig: GuardianRig, phone: Phone, opts: PairOptions =
     rules: { dailyLimitSats: 100_000, recoveryDelayDays: 7 as const, alertContacts: [], sweepFeeCapSats: 20_000 },
     ...(opts.replacesWalletId ? { replacesWalletId: opts.replacesWalletId } : {}),
     ...(opts.replacesDescriptor ? { replacesDescriptor: opts.replacesDescriptor } : {}),
-  };
+  }, rig.nowSec() * 1000, hwAuthPrivateKey(AUTH_PATH, opts.hardware));
   return { wallet, params, guardianKey: prep.guardianKey };
 }
 

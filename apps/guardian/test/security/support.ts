@@ -9,7 +9,7 @@ import type { HandlerContext } from '@trikey/protocol';
 import { buildHandlers } from '../../src/nostr/handlers.js';
 import { pairingMessage, signMessage, type Rules } from '../../src/policy/index.js';
 import type { FundedOutput, GuardianRig } from '../support/index.js';
-import { APP_NOSTR, AUTH_PATH, CONTACT_A, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from '../helpers.js';
+import { APP_NOSTR, AUTH_PATH, CONTACT_A, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, approveRules } from '../helpers.js';
 
 /** Pairs a wallet (the test phone and hardware keys, the rig's key 3) straight through the engine. */
 export async function pairInRig(rig: GuardianRig, rules: Partial<Rules> = {}): Promise<{ wallet: MultisigWallet; walletId: string }> {
@@ -28,6 +28,7 @@ export async function pairInRig(rig: GuardianRig, rules: Partial<Rules> = {}): P
     rules: { dailyLimitSats: 100_000n, recoveryDelayDays: 7, alertContacts: [CONTACT_A], sweepFeeCapSats: 20_000n, ...rules },
     hardwareAuth: { kind: 'bip137', pubkey: hwAuthPubkey(), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(walletId, pub.accountPubkey), hwAuthPrivateKey()),
+    rulesApproval: approveRules(walletId, { dailyLimitSats: 100_000n, recoveryDelayDays: 7, alertContacts: [CONTACT_A], sweepFeeCapSats: 20_000n, ...rules }, g.clock.now()),
     appNostrPubkey: APP_NOSTR,
   });
   if (!reg.ok) throw new Error(`registration failed: ${JSON.stringify(reg.refusal)}`);

@@ -8,12 +8,12 @@ name: Android APK build
 # - android-launch.yml (pull requests) calls it for x86_64, the emulator's ABI, and opens the APK in an
 #   Android emulator to check it starts.
 #
-# Two variants (`variant`, TRIKEY_ANDROID_VARIANT; apps/mobile/android-variant.js explains them), two apps with the same
-# code and signature but their own application id, launcher label and URL scheme, so both can be installed on one phone:
+# Two variants (`variant`, TRIKEY_ANDROID_VARIANT; apps/mobile/android-variant.js explains them), the same app with
+# the same package name and signature, so either installs over the other and the wallet stays:
 #
-# - `standard`: app.trikey.wallet ("Trikey"), trikey-alpha-<version>.apk. Has Google's libraries: Google Sign-In for Google Drive backup (off until
+# - `standard`: trikey-alpha-<version>.apk. Has Google's libraries: Google Sign-In for Google Drive backup (off until
 #   EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID is set), ML Kit for reading QR codes, the Play services passkey provider.
-# - `foss`: app.trikey.wallet.foss ("Trikey FOSS"), trikey-alpha-foss-<version>.apk, no Google code. QR codes are read by zxing-cpp (open source); there is
+# - `foss`: trikey-alpha-foss-<version>.apk, no Google code. QR codes are read by zxing-cpp (open source); there is
 #   no Google Drive. A check fails the build if any Google Play services, Firebase, ML Kit or data transport class,
 #   or ML Kit's libbarhopper, is in the APK (apps/mobile/scripts/apk-google-scan.mts); for the standard APK the same
 #   check only reports what is there.
@@ -28,14 +28,17 @@ name: Android APK build
 # self-test) is an ordinary screen of the app, not part of React Native's dev menu, so it is there in
 # a release build too.
 #
-# Signing. Expo's generated project signs release builds with its public debug keystore, so the job
-# re-signs the APK, in one of two ways (`signing`):
+# Signing. Expo's generated project signs release builds with its public debug keystore, so the APK is
+# re-signed (packaging/android/sign-apk.sh), in one of two ways (`signing`):
 #
-# - `release` (release tags): with the project's release key, from the ANDROID_RELEASE_KEYSTORE secrets
+# - `release` (release tags only): with the project's release key, from the ANDROID_RELEASE_KEYSTORE secrets
 #   (docs/android-signing.md). Every release has the same signature, so Android installs one over the
 #   other and the wallet on the phone stays. The key never is in the repository; its certificate's
 #   SHA-256 is, in packaging/android/release-cert.sha256, and the job refuses an APK signed by anything else.
-# - `one-off` (pull requests, manual runs): with a throwaway key made in the job (keytool, random password,
+#   The build job never sees the key: it hands the APK to a separate job, `sign`, which declares the `release`
+#   environment, runs no npm or Gradle code and is the only job that reads the key. The script refuses release
+#   signing on anything but a v* tag.
+# - `one-off` (pull requests, manual runs): with a throwaway key made in the build job (keytool, random password,
 #   deleted at the end, never uploaded). Such a build cannot update, or be updated by, any other build.
 #
 # Cleartext: not allowed. Android 9+ blocks plain http:// and ws:// for a release build unless the
@@ -46,7 +49,8 @@ name: Android APK build
 # build"): iCloud off, passkeys off (no EXPO_PUBLIC_PASSKEY_RP_ID), Google Drive backup off (no
 # EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID). Backup is the recovery code plus a backup file.
 #
-# Only read access. Secrets: the release key, and only when the caller passes it (android-apk.yml, on tags).
+# Only read access. Secrets: the release key, only in the `sign` job, and only when the caller passes it (android-apk.yml's
+# apk-release job, on release tags) or the `release` environment holds it.
 
 on:
   workflow_call:
@@ -73,7 +77,7 @@ on:
         type: string
     secrets:
       ANDROID_RELEASE_KEYSTORE:
-        description: 'The release keystore (PKCS12), base64. Needed for signing: release.'
+        description: 'The release keystore (PKCS12), base64. Needed for signing: release. A secret of the same name in the `release` environment takes precedence.'
         required: false
       ANDROID_RELEASE_KEYSTORE_PASSWORD:
         description: 'Its password (the key has the same one).'
@@ -84,9 +88,9 @@ on:
     outputs:
       apk-name:
         description: 'File name of the signed APK in the artifact, without .apk'
-        value: ${{ jobs.apk.outputs.apk-name }}
+        value: ${{ jobs.sign.outputs.apk-name || jobs.apk.outputs.apk-name }}
       application-id:
-        description: "The Android application id (android.package in the Expo config). It differs per variant: a matrix caller gets only one job's, so the artifact also holds it, in application-id-<variant>.txt."
+        description: 'The Android application id (android.package in the Expo config)'
         value: ${{ jobs.apk.outputs.application-id }}
 
 permissions:
@@ -110,21 +114,21 @@ jobs:
       # Through the environment, not spliced into a script.
       ARCHITECTURES: ${{ inputs.architectures || 'arm64-v8a' }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v7.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           cache: npm
 
-      - uses: actions/setup-java@v6.1.0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '17'
 
       # Command-line tools and licences. Gradle then fetches the platform, build tools, NDK and CMake
       # that this React Native version asks for.
-      - uses: android-actions/setup-android@v4.0.4
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
 
       - name: Check the variant
         run: |
@@ -135,10 +139,9 @@ jobs:
 
       - run: npm ci
 
-      # The application id the build will have: android.package from app.json, as app.config.ts resolves it for this
-      # variant (app.trikey.wallet, or app.trikey.wallet.foss for foss; TRIKEY_ANDROID_PACKAGE overrides the first for a
-      # fork). The APK is checked against it below, and the launch check starts the app by it
-      # (application-id-<variant>.txt in the artifact).
+      # The application id the build will have: android.package from app.json, as app.config.ts resolves it
+      # (TRIKEY_ANDROID_PACKAGE overrides it for a fork). The APK is checked against it below, and the launch
+      # check starts the app by it.
       - name: Read the application id from the Expo config
         id: config
         working-directory: apps/mobile
@@ -146,10 +149,6 @@ jobs:
           set -euo pipefail
           id="$(npx expo config --type public --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const p=JSON.parse(s).android?.package;if(!p)process.exit(1);process.stdout.write(p)})')"
           [[ "${id}" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] || { echo "::error::Unexpected android.package: ${id}"; exit 1; }
-          case "${TRIKEY_ANDROID_VARIANT}" in
-            foss) [[ "${id}" == *.foss ]] || { echo "::error::The foss build's application id must end in .foss, not ${id}"; exit 1; } ;;
-            *) [[ "${id}" != *.foss ]] || { echo "::error::The standard build has the foss application id ${id}"; exit 1; } ;;
-          esac
           echo "Application id: ${id}"
           echo "application-id=${id}" >> "${GITHUB_OUTPUT}"
 
@@ -159,7 +158,7 @@ jobs:
 
       # After the prebuild, so the cache key sees the generated Gradle files.
       # Write the cache on any ref (the default only writes on the default branch): tags never are.
-      - uses: gradle/actions/setup-gradle@v5.0.2
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
         with:
           cache-read-only: false
 
@@ -174,120 +173,12 @@ jobs:
             -PreactNativeArchitectures="${ARCHITECTURES}" \
             -Pandroid.enableMinifyInReleaseBuilds=false
 
-      - name: Sign and check the result
-        id: sign
-        env:
-          UNSIGNED: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
-          APPLICATION_ID: ${{ steps.config.outputs.application-id }}
-          SIGNING: ${{ inputs.signing || 'one-off' }}
-          RELEASE_KEYSTORE: ${{ secrets.ANDROID_RELEASE_KEYSTORE }}
-          RELEASE_PASS: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
-          RELEASE_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          bt="$(ls -d "${ANDROID_HOME}"/build-tools/*/ | sort -V | tail -n 1)"
-          bt="${bt%/}"
-
-          # The names the app's update check looks for (apps/mobile/src/lib/update-check.ts, assetNames).
-          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${TRIKEY_ANDROID_VARIANT}" = foss ]; then
-            name="trikey-alpha-foss-${GITHUB_REF_NAME}"
-          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            name="trikey-alpha-${GITHUB_REF_NAME}"
-          elif [ "${TRIKEY_ANDROID_VARIANT}" = foss ]; then
-            name="trikey-alpha-foss-0.1.0-${GITHUB_SHA::7}"
-          else
-            name="trikey-alpha-0.1.0-${GITHUB_SHA::7}"
-          fi
-
-          keystore="${RUNNER_TEMP}/signing.p12"
-          case "${SIGNING}" in
-            release)
-              # The project's release key. A release is never signed with anything else: without the secrets,
-              # or without the pinned certificate, the job stops instead of falling back to a one-off key.
-              [ -n "${RELEASE_KEYSTORE}" ] && [ -n "${RELEASE_PASS}" ] \
-                || { echo "::error::signing: release, but the ANDROID_RELEASE_KEYSTORE secrets are not set (docs/android-signing.md)"; exit 1; }
-              [ -s packaging/android/release-cert.sha256 ] \
-                || { echo "::error::signing: release, but packaging/android/release-cert.sha256 is missing"; exit 1; }
-              base64 -d <<<"${RELEASE_KEYSTORE}" > "${keystore}" \
-                || { echo "::error::ANDROID_RELEASE_KEYSTORE is not valid base64"; exit 1; }
-              # A secret set from a pipe (`security find-generic-password -w | gh secret set ...`) can keep the
-              # line break the command printed at the end: it is not part of the password.
-              KS_PASS="${RELEASE_PASS%%[$'\r\n']*}"
-              alias="${RELEASE_ALIAS:-trikey}"
-              ;;
-            one-off)
-              # A key that exists for this job only: random password (masked), never written to the repository,
-              # the artifact or a secret store, and deleted below.
-              KS_PASS="$(openssl rand -hex 24)"
-              echo "::add-mask::${KS_PASS}"
-              alias=trikey-test
-              keytool -genkeypair -keystore "${keystore}" -storetype PKCS12 \
-                -alias "${alias}" -keyalg RSA -keysize 3072 -validity 3650 \
-                -dname "CN=Trikey one-off test key, O=Trikey alpha test build" \
-                -storepass "${KS_PASS}" -keypass "${KS_PASS}"
-              ;;
-            *) echo "::error::Unknown signing: ${SIGNING}"; exit 1 ;;
-          esac
-          export KS_PASS
-
-          # apksigner replaces the debug signature Gradle put on the APK.
-          "${bt}/apksigner" sign --ks "${keystore}" --ks-type PKCS12 --ks-key-alias "${alias}" \
-            --ks-pass env:KS_PASS --key-pass env:KS_PASS \
-            --out "dist/${name}.apk" "${UNSIGNED}"
-          rm -f "${keystore}"
-          unset KS_PASS RELEASE_PASS RELEASE_KEYSTORE
-
-          # Checks: aligned, signed by the expected key and not the public debug key, the right app, the
-          # native code for every architecture asked for, and a JavaScript bundle inside (so it runs
-          # without Metro).
-          "${bt}/zipalign" -c 4 "dist/${name}.apk"
-          certs="$("${bt}/apksigner" verify --verbose --print-certs "dist/${name}.apk")"
-          echo "${certs}"
-          if grep -qi 'Android Debug' <<<"${certs}"; then echo "::error::The APK is still signed with the debug key"; exit 1; fi
-          # The signers' certificate digests, however this apksigner labels the lines ("Signer #1 ...", or per scheme or
-          # SDK range in other versions): every one must be the same certificate.
-          digests="$(grep -oiE 'certificate SHA-256 digest: *[0-9a-f:]+' <<<"${certs}" | sed -E 's/.*[Dd]igest: *//' | tr -d ':' | tr 'A-F' 'a-f' | sort -u)"
-          if [ -z "${digests}" ] || [ "$(wc -l <<<"${digests}")" != 1 ]; then
-            report="$(head -n 40 <<<"${certs}" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
-            echo "::error::Could not read exactly one signing certificate digest from apksigner (found: ${digests:-none}). Its report:%0A${report}"
-            exit 1
-          fi
-          signer="${digests}"
-          if [ "${SIGNING}" = release ]; then
-            pinned="$(grep -v '^#' packaging/android/release-cert.sha256 | tr -d ' :\n\r' | tr 'A-F' 'a-f')"
-            [[ "${pinned}" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::packaging/android/release-cert.sha256 does not hold a SHA-256"; exit 1; }
-            [ "${signer}" = "${pinned}" ] \
-              || { echo "::error::The APK is signed by ${signer}, not by the release key ${pinned} (packaging/android/release-cert.sha256)"; exit 1; }
-          else
-            grep -q 'Trikey one-off test key' <<<"${certs}" || { echo "::error::The APK is not signed with the one-off key"; exit 1; }
-          fi
-          echo "signer=${signer}" >> "${GITHUB_OUTPUT}"
-          # (Captured first: a pipe into grep -q would end the writer early and trip pipefail.)
-          badging="$("${bt}/aapt2" dump badging "dist/${name}.apk")"
-          grep -qF "package: name='${APPLICATION_ID}'" <<<"${badging}" \
-            || { echo "::error::Unexpected package name (expected ${APPLICATION_ID})"; exit 1; }
-          listing="$(unzip -l "dist/${name}.apk")"
-          grep -q 'assets/index.android.bundle' <<<"${listing}" \
-            || { echo "::error::No embedded JavaScript bundle: this build would need Metro"; exit 1; }
-          IFS=',' read -ra abis <<<"${ARCHITECTURES}"
-          for abi in "${abis[@]}"; do
-            grep -q "lib/${abi}/" <<<"${listing}" ||{ echo "::error::No native libraries for ${abi} in the APK"; exit 1; }
-          done
-
-          (cd dist && sha256sum "${name}.apk" > "${name}.apk.sha256")
-          # For the launch check, which runs once per variant and cannot tell the two jobs' outputs apart.
-          printf '%s\n' "${APPLICATION_ID}" > "dist/application-id-${TRIKEY_ANDROID_VARIANT}.txt"
-          echo "name=${name}" >> "${GITHUB_OUTPUT}"
-          echo "sha256=$(cut -d' ' -f1 "dist/${name}.apk.sha256")" >> "${GITHUB_OUTPUT}"
-          echo "size=$(stat -c %s "dist/${name}.apk")" >> "${GITHUB_OUTPUT}"
-
       # Every dex file (any class of these packages, or any mention of one), the native libraries, the files Google's
       # libraries leave at the APK's root and the manifest. The FOSS APK must have none of it; the standard APK's
-      # findings are only reported, as a notice.
+      # findings are only reported, as a notice. Checked on the APK Gradle made: signing changes only its signature.
       - name: Check for Google code
         env:
-          APK: dist/${{ steps.sign.outputs.name }}.apk
+          APK: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
         run: |
           set -euo pipefail
           if [ "${TRIKEY_ANDROID_VARIANT}" = foss ]; then
@@ -310,86 +201,96 @@ jobs:
             echo '```'
           } >> "${GITHUB_STEP_SUMMARY}"
 
-      # The release notes, in parts that android-apk.yml puts together for the release, in this order:
-      # - release-notes-common.md (written by the standard build): signing, which of the two APKs to pick, how to install;
-      # - release-notes-<variant>.md (each build): the APK's name, checksum, size and what it was built from.
+      # A one-off key: signed here (packaging/android/sign-apk.sh), no secrets.
+      - name: Sign with a one-off key and check the result
+        id: sign
+        if: inputs.signing != 'release'
+        env:
+          UNSIGNED: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          APPLICATION_ID: ${{ steps.config.outputs.application-id }}
+          SIGNING: ${{ inputs.signing || 'one-off' }}
+        run: bash packaging/android/sign-apk.sh
+
       - name: Release notes
+        if: inputs.signing != 'release'
         env:
           NAME: ${{ steps.sign.outputs.name }}
           SHA256: ${{ steps.sign.outputs.sha256 }}
           SIGNER: ${{ steps.sign.outputs.signer }}
           SIZE: ${{ steps.sign.outputs.size }}
           SIGNING: ${{ inputs.signing || 'one-off' }}
-        run: |
-          set -euo pipefail
-          if [ "${SIGNING}" = release ]; then
-            signing_note="**Signed with the Trikey release key** (certificate SHA-256 \`${SIGNER}\`, also in
-          packaging/android/release-cert.sha256). Every release from 0.1.7-alpha on has this signature, so it installs over
-          the previous one and the wallet on the phone stays. Builds up to 0.1.6-alpha had one-off keys: moving from one of
-          those needs a last uninstall, which deletes the wallet on that phone, so make a backup (recovery code and backup
-          file) first. To get updates without downloading by hand, see docs/android-signing.md (Obtainium)."
-          else
-            signing_note="**This is a test build, signed with a one-off key made by the build job.** The key is thrown away
-          after the build, so Android will not install this build over another one, or another over it: uninstall first.
-          Uninstalling deletes the wallet on that phone, so make a backup (recovery code and backup file) before you do."
-          fi
-          # Both APK names, whichever variant this job built.
-          standard_name="${NAME/trikey-alpha-foss-/trikey-alpha-}"
-          foss_name="${standard_name/trikey-alpha-/trikey-alpha-foss-}"
-          size_mb="$(awk -v b="${SIZE}" 'BEGIN { printf "%.1f", b / 1048576 }')"
+        run: bash packaging/android/apk-release-notes.sh
 
-          if [ "${TRIKEY_ANDROID_VARIANT}" = standard ]; then
-            cat > dist/release-notes-common.md <<EOF
-          ## Trikey alpha test build (Android)
+      - if: inputs.signing != 'release'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-name || 'trikey-android-apk' }}
+          path: |
+            dist/*.apk
+            dist/*.apk.sha256
+            dist/release-notes-*.md
+            dist/application-id-*.txt
+          if-no-files-found: error
+          retention-days: 30
 
-          ${signing_note}
+      # The release key: the APK goes to the `sign` job below, which is the only one that sees the key.
+      - name: Keep the APK for the signing job
+        if: inputs.signing == 'release'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-name || 'trikey-android-apk' }}-unsigned
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 1
 
-          **Which APK?** There are two builds of the same code, as two apps: each updates itself, and both can be on one
-          phone, each with its own wallet.
+  # Signs with the project's release key. Only on a release tag, and only this job gets the key: it declares the
+  # `release` environment (Settings, Environments: deployments only from tags v*, and the key as an environment
+  # secret; docs/android-signing.md), and it runs no npm, Gradle or other build code, only apksigner and the checks in
+  # packaging/android/sign-apk.sh, on the APK the build job above made.
+  sign:
+    needs: apk
+    if: inputs.signing == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    outputs:
+      apk-name: ${{ steps.sign.outputs.name }}
+    env:
+      TRIKEY_ANDROID_VARIANT: ${{ inputs.variant || 'standard' }}
+      ARCHITECTURES: ${{ inputs.architectures || 'arm64-v8a' }}
+    steps:
+      # The scripts and the pinned certificate, from the tag's commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-          - \`${standard_name}.apk\`: the **standard** build, "Trikey" (app.trikey.wallet). It contains Google's
-            libraries: QR codes are read with Google's ML Kit, and Google Drive backup can be switched on in a later release
-            (it needs Google Play services on the phone).
-          - \`${foss_name}.apk\`: **no Google code**, "Trikey FOSS" (app.trikey.wallet.foss), for phones without Google
-            Play services (GrapheneOS, /e/OS, LineageOS) or if you prefer an app without it. QR codes are read with the
-            open source zxing-cpp. It will never offer Google Drive backup: the backup is the recovery code plus the backup
-            file, which you can still save to Google Drive or anywhere else from the share sheet. Settings, About says
-            "Trikey (no Google)".
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact-name || 'trikey-android-apk' }}-unsigned
+          path: ${{ runner.temp }}/unsigned
 
-          Today both do the same: Google Drive backup is not switched on in either yet. Not sure? Take the standard one.
+      # apksigner, zipalign and aapt2 from the build tools on the runner image (ANDROID_HOME).
+      - name: Sign with the release key and check the result
+        id: sign
+        env:
+          UNSIGNED: ${{ runner.temp }}/unsigned/app-release.apk
+          APPLICATION_ID: ${{ needs.apk.outputs.application-id }}
+          SIGNING: release
+          RELEASE_KEYSTORE: ${{ secrets.ANDROID_RELEASE_KEYSTORE }}
+          RELEASE_PASS: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+        run: bash packaging/android/sign-apk.sh
 
-          **Had the no-Google APK of 0.1.21-alpha or earlier?** It had the standard app's id, so this FOSS APK cannot
-          update it: it installs as a second app, next to the old one, and starts empty. Your wallet is still in the old
-          app. In Trikey FOSS, tap "I already have a Trikey wallet", then "My phone, but I have its backup", and open your
-          backup file with your recovery code. Uninstall the old app once the wallet shows in the new one. (Or install
-          the standard APK over the old app: it updates in place and keeps the wallet, with Google's libraries.)
+      - name: Release notes
+        env:
+          NAME: ${{ steps.sign.outputs.name }}
+          SHA256: ${{ steps.sign.outputs.sha256 }}
+          SIGNER: ${{ steps.sign.outputs.signer }}
+          SIZE: ${{ steps.sign.outputs.size }}
+          SIGNING: release
+        run: bash packaging/android/apk-release-notes.sh
 
-          - Pre-alpha, open source, not audited. Test networks only (signet, testnet4). Never put real bitcoin in it.
-          - Install: download the APK on the phone, open it, and allow installing from this source when Android asks.
-          - Passkeys and Google Drive backup are not in these builds; the backup is a recovery code plus a backup file.
-          - Check for updates (Settings, About) offers the APK of the build you have installed.
-          - How to test it: docs/alpha-test-plan.md in the repository.
-          EOF
-          fi
-
-          if [ "${TRIKEY_ANDROID_VARIANT}" = foss ]; then
-            heading="No Google: \`${NAME}.apk\`"
-            checked="- Checked by the build: no Google Play services, Firebase, ML Kit or data transport code in it."
-          else
-            heading="Standard: \`${NAME}.apk\`"
-            checked=""
-          fi
-          cat > "dist/release-notes-${TRIKEY_ANDROID_VARIANT}.md" <<EOF
-
-          ### ${heading}
-
-          - SHA-256 \`${SHA256}\`
-          - ${size_mb} MB, built for ${ARCHITECTURES} from commit ${GITHUB_SHA::12}.
-          ${checked}
-          EOF
-          cat dist/release-notes-*.md >> "${GITHUB_STEP_SUMMARY}"
-
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.artifact-name || 'trikey-android-apk' }}
           path: |

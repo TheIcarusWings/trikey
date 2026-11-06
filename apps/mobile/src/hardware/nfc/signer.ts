@@ -50,6 +50,7 @@ const same = (a: readonly number[], b: readonly number[]) => a.length === b.leng
 /** What the text is for, in a sentence for the NFC screen. */
 const PURPOSE_NOTE: Record<NonNullable<SignMessageContext['purpose']>, string> = {
   pairing: 'This text proves to your guardian that this Coldcard holds the key that approves changes for this wallet. It names the wallet and your guardian’s key. It moves no money.',
+  rules: 'This text approves the rules your wallet starts with: check on the Coldcard the daily limit (limit=, in sats), the waiting period (delay=), the sweep fee cap (feecap=) and the number of alert contacts. seq=0 means first rules. It moves no money.',
   approval: 'This text approves the change you asked for. What it changes is written out in it (for rules: the limit, delay, fee cap and number of contacts): check it on the Coldcard. It is valid for a short time only.',
   'recovery-access': 'This text lets this phone ask your guardian for the wallet, so it can start a recovery. It names your guardian and this phone, and expires soon. It moves no money.',
   notes: 'This text makes the key that encrypts your notes on the guardian. It moves no money and changes no rule.',

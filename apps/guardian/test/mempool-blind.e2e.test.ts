@@ -25,7 +25,7 @@ import { RpcClient, SimplePoolRelayPool, decodePairingUri, pairingMessage, type 
 import { signMessage } from '../src/policy/index.js';
 import { scriptHash } from '../src/chain/chain.js';
 import { RELAYED_FILE } from '../src/chain/relayed.js';
-import { AUTH_PATH, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from './helpers.js';
+import { AUTH_PATH, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withRulesApproval } from './helpers.js';
 import { GuardianRig } from './support/index.js';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -77,7 +77,7 @@ async function setUp(opts: { hideMempool: boolean; bitcoind: boolean; slowPingMs
   const wallet = new MultisigWallet(network, { app: await appSigner().getKey(network), hardware: await hwSigner().getKey(network), cosigner });
   const cosignerPub = hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!);
   const app = wallet.keys.app;
-  await phone.call('pair', {
+  await phone.call('pair', withRulesApproval({
     pairingSecret: p.secret,
     deviceName: 'Mempool phone',
     network: 'regtest',
@@ -87,7 +87,7 @@ async function setUp(opts: { hideMempool: boolean; bitcoind: boolean; slowPingMs
     hardwareAuth: { pubkey: hwAuthPubkey(), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), cosignerPub), hwAuthPrivateKey()),
     rules: RULES,
-  });
+  }, rig.nowSec() * 1000));
   await rig.guardian.tick();
   await waitFor(() => rig.guardian.chain.liveStats().kind === 'electrum' && (rig.guardian.chain.liveStats() as { scripts: number }).scripts >= 40, 'subscriptions');
   return { rig, phone, wallet, alerts };

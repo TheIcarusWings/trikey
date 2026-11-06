@@ -12,6 +12,8 @@ import {
   approvalMessage as engineApprovalMessage,
   bip137Authorizer,
   pairingMessage as enginePairingMessage,
+  pairingRulesMessage as enginePairingRulesMessage,
+  PAIRING_RULES_SEQUENCE as ENGINE_PAIRING_RULES_SEQUENCE,
   policyHash as enginePolicyHash,
   recoveryAccessMessage as engineRecoveryAccessMessage,
   recoverMessageSigner,
@@ -30,7 +32,10 @@ import {
   RECOVERY_DELAYS,
   approvalMessage,
   normalizePolicy,
+  PAIRING_RULES_SEQUENCE,
+  PairingRulesApproval,
   pairingMessage,
+  pairingRulesMessage,
   policyHash,
   recoveryAccessMessage,
   type HardwareAction,
@@ -145,6 +150,32 @@ describe('protocol vs guardian engine: hardware approval texts', () => {
   it('pairingMessage matches the engine text', () => {
     const guardian = '02' + 'ab'.repeat(32);
     expect(pairingMessage(WALLET_ID, guardian)).toBe(enginePairingMessage(WALLET_ID, guardian));
+  });
+
+  it('pairingRulesMessage (the rules a wallet starts with, seq=0) is character for character the engine text', () => {
+    expect(PAIRING_RULES_SEQUENCE).toBe(0);
+    expect(ENGINE_PAIRING_RULES_SEQUENCE).toBe(0);
+    for (const p of [...policies, { ...policy, contactLock: true }])
+      for (const ctx of ctxs) {
+        const rules = { ...toRules(p), ...(p.contactLock ? { contactLock: true } : {}) };
+        const text = pairingRulesMessage(p, ctx);
+        expect(text).toBe(enginePairingRulesMessage(rules, ctx));
+        // The policy text of a change, with sequence 0: a sequence no later approval can use.
+        expect(text).toBe(approvalMessage({ action: 'policy', policy: p }, { ...ctx, sequence: 1 }).replace(' seq=1 ', ' seq=0 '));
+        expect(text.length).toBeLessThanOrEqual(MAX_APPROVAL_MESSAGE_LENGTH);
+      }
+    expect(() => pairingRulesMessage(policy, { walletId: 'short', expiresAt: 1 })).toThrow();
+    expect(() => enginePairingRulesMessage(toRules(policy), { walletId: 'short', expiresAt: 1 })).toThrow();
+    // A signature over the protocol text is a PairingRulesApproval the engine authorizer accepts, and approves no change.
+    const priv = new Uint8Array(32).fill(5);
+    const ctx = { walletId: WALLET_ID, expiresAt: 1_900_000_000 };
+    const text = pairingRulesMessage(policy, ctx);
+    const approval = { kind: 'bip137' as const, expiresAt: ctx.expiresAt, signature: signMessage(text, priv) };
+    expect(PairingRulesApproval.safeParse(approval).success).toBe(true);
+    expect(PairingRulesApproval.safeParse({ ...approval, sequence: 1 }).success).toBe(false);
+    const key = { kind: 'bip137' as const, pubkey: hex.encode(recoverMessageSigner(text, approval.signature).publicKey), path: "m/84'/1'/1000'/0/0" };
+    expect(bip137Authorizer.verify(enginePairingRulesMessage(toRules(policy), ctx), approval.signature, key)).toBe(true);
+    for (const sequence of [1, 2, 1000]) expect(bip137Authorizer.verify(engineApprovalMessage({ action: 'policy', rules: toRules(policy) }, { ...ctx, sequence }), approval.signature, key)).toBe(false);
   });
 
   it('both refuse inputs that cannot form a signable message', () => {

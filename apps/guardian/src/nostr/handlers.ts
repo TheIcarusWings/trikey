@@ -35,7 +35,7 @@ import { isContactLockOn, isLimitOff, policyHash, type CancelActor, type Recover
 import { helperAccount } from '../singlekey.js';
 import { NodeRpcRequiredError, NotRegisteredError } from '../silent/service.js';
 import { savingsWallet } from '../savings.js';
-import { policyToWire, recoveryToWire, refusalError, rulesFromPolicy } from './wire.js';
+import { APP_UPDATE_REQUIRED, APP_UPDATE_REQUIRED_TEXT, policyToWire, recoveryToWire, refusalError, rulesFromPolicy } from './wire.js';
 import { withHosting } from '../hosting/handlers.js';
 import { withOwnWallets } from '../wallets/handlers.js';
 import { labelLine } from '../labels.js';
@@ -532,6 +532,10 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
         const app = wallet.keys.app;
         if (app.xpub !== params.phoneKey.xpub || app.fingerprint !== params.phoneKey.fingerprint || app.originPath !== normPath(params.phoneKey.path))
           return reject('phoneKey is not the first key of the descriptor.');
+        // The rules the wallet starts with must be approved on the hardware wallet (rule 4): an app from before that
+        // sends none, and is told to update rather than given a wallet with rules no device showed.
+        const rulesApproved = g.features.includes(GUARDIAN_FEATURES.pairingRulesApproval);
+        if (rulesApproved && !params.rulesApproval) return reject(APP_UPDATE_REQUIRED_TEXT, APP_UPDATE_REQUIRED);
         // This wallet's key 3: from the phone's `pair.prepare` contribution when it sent one (it must then be
         // the key in the descriptor), else the guardian's own key.
         const key = g.key3ForPairing({ entropy: session.key3Entropy, pairingId: session.id, phonePubkey: ctx.sender });
@@ -544,6 +548,7 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
             rules: rulesFromPolicy(params.rules),
             hardwareAuth: { kind: 'bip137', pubkey: params.hardwareAuth.pubkey, path: params.hardwareAuth.path },
             hardwareAuthProof: params.hardwareAuthProof,
+            ...(rulesApproved ? { rulesApproval: params.rulesApproval } : { legacyUnapprovedRules: true as const }),
             appNostrPubkey: ctx.sender,
             replacesWalletId: params.replacesWalletId,
             replacesDescriptor: params.replacesDescriptor,

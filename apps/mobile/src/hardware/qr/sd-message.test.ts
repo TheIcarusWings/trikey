@@ -76,8 +76,9 @@ describe('the request file', () => {
 
   it('names say what it is for and, when signed twice, which round', () => {
     const name = (purpose?: string, round?: { n: number; of: number }) => sdRequestFile('passport', AUTH, TEXT, { ...(purpose ? { purpose } : {}), ...(round ? { round } : {}) }).name;
-    expect([name('pairing'), name('approval'), name('recovery-access'), name('notes', { n: 2, of: 2 }), name('unlock'), name(), name('notes', { n: 1, of: 1 })]).toEqual([
+    expect([name('pairing'), name('rules'), name('approval'), name('recovery-access'), name('notes', { n: 2, of: 2 }), name('unlock'), name(), name('notes', { n: 1, of: 1 })]).toEqual([
       'trikey-pair.txt',
+      'trikey-rules.txt',
       'trikey-approve.txt',
       'trikey-access.txt',
       'trikey-notes-2of2.txt',

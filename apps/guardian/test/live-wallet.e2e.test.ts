@@ -21,7 +21,7 @@ import { MultisigWallet, RECEIVE, SAVINGS_ACCOUNT, SoftwareSigner, type KeyExpre
 import { GUARDIAN_FEATURES, RpcClient, SimplePoolRelayPool, decodePairingUri, pairingMessage, type Alert, type Policy } from '@trikey/protocol';
 import { signMessage } from '../src/policy/index.js';
 import { describeTx, walletTxText, LIVE_FILE } from '../src/live-wallet.js';
-import { AUTH_PATH, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from './helpers.js';
+import { AUTH_PATH, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withRulesApproval } from './helpers.js';
 import { GuardianRig } from './support/index.js';
 import { startHttp, type TestHttp } from './support/notify-servers.js';
 import { readFile } from 'node:fs/promises';
@@ -100,7 +100,7 @@ beforeAll(async () => {
   pay(wallet.derive(0, 0).script, 100_000, true);
   const cosignerPub = hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!);
   const app = wallet.keys.app;
-  await phone.call('pair', {
+  await phone.call('pair', withRulesApproval({
     pairingSecret: p.secret,
     deviceName: 'Live phone',
     network: 'regtest',
@@ -110,7 +110,7 @@ beforeAll(async () => {
     hardwareAuth: { pubkey: hwAuthPubkey(), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), cosignerPub), hwAuthPrivateKey()),
     rules: RULES,
-  });
+  }, rig.nowSec() * 1000));
   savings = new MultisigWallet(network, {
     app: await appSigner().getKey(network, SAVINGS_ACCOUNT),
     hardware: await hwSigner().getKey(network, SAVINGS_ACCOUNT),

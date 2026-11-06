@@ -25,7 +25,7 @@ import {
   type Rules,
 } from '../../src/policy/index.js';
 import { GuardianRig } from '../support/index.js';
-import { APP_NOSTR, CONTACT_A, COSIGNER_PRIV, DAY, DEFAULT_RULES, MNEMONICS, OTHER_COSIGNER_PRIV, T0, appSigner, fund, hwSigner, makeWallet, network, setup } from '../helpers.js';
+import { APP_NOSTR, CONTACT_A, COSIGNER_PRIV, DAY, DEFAULT_RULES, MNEMONICS, OTHER_COSIGNER_PRIV, T0, appSigner, fund, hwSigner, makeWallet, network, setup, approveRules } from '../helpers.js';
 import { callHandler, pairInRig } from './support.js';
 
 const main = NETWORKS.bitcoin;
@@ -51,6 +51,7 @@ async function mainnet() {
       rules,
       hardwareAuth: { kind: 'bip137', pubkey: hex.encode(secp256k1.getPublicKey(authPriv, true)), path: MAIN_AUTH_PATH },
       hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), cosigner), authPriv),
+      rulesApproval: approveRules(wallet.fingerprint(), rules, clock.now(), { privateKey: authPriv }),
       appNostrPubkey: APP_NOSTR,
     });
   return { clock, engine, wallet, authPriv, register };

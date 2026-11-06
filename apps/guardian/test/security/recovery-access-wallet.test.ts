@@ -13,7 +13,7 @@ import { base64, hex } from '@scure/base';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { decodeRecoveryUri, encodeRecoveryUri, recoveryAccessMessage as protocolMessage } from '@trikey/protocol';
 import { pairingMessage, recoveryAccessMessage, signMessage } from '../../src/policy/index.js';
-import { APP_NOSTR, AUTH_PATH, DEFAULT_RULES, MNEMONICS, approve, hwAuthPrivateKey, hwAuthPubkey, makeWallet, nostrKey, setup, type Ctx } from '../helpers.js';
+import { APP_NOSTR, AUTH_PATH, DEFAULT_RULES, MNEMONICS, approve, hwAuthPrivateKey, hwAuthPubkey, makeWallet, nostrKey, setup, type Ctx, approveRules } from '../helpers.js';
 
 const GUARDIAN = hex.encode(schnorr.getPublicKey(new Uint8Array(32).fill(31)));
 const PHONE = nostrKey(41);
@@ -38,6 +38,7 @@ async function retireAndRepair(ctx: Ctx): Promise<string> {
     rules: DEFAULT_RULES,
     hardwareAuth: { kind: 'bip137', pubkey: hwAuthPubkey(), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(next.fingerprint(), cosigner), hwAuthPrivateKey()),
+    rulesApproval: approveRules(next.fingerprint(), DEFAULT_RULES, ctx.clock.now()),
     appNostrPubkey: APP_NOSTR,
   });
   expect(reg.ok).toBe(true);

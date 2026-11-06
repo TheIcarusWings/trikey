@@ -43,9 +43,9 @@ import { RESET_CONFIRMATION } from '../src/guardian.js';
 import { COALESCE_MS, LOG_EVERY_MS } from '../src/labels.js';
 import { GUEST_FEATURES } from '../src/hosting/service.js';
 import { STOP_NOW_CONFIRMATION } from '../src/hosting/types.js';
-import { AUTH_PATH, MNEMONICS, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from './helpers.js';
+import { AUTH_PATH, MNEMONICS, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withRulesApproval } from './helpers.js';
 import { GuardianRig } from './support/index.js';
-import { fakeMap, hostedWallet } from './support/hosted.js';
+import { fakeMap, hostedWallet, withHostedRulesApproval } from './support/hosted.js';
 
 async function rpcError(p: Promise<unknown>): Promise<RpcError> {
   try {
@@ -111,7 +111,7 @@ beforeAll(async () => {
   wallet = new MultisigWallet(network, { app: await appSigner().getKey(network), hardware: await hwSigner().getKey(network), cosigner });
   walletId = wallet.fingerprint();
   const app = wallet.keys.app;
-  await phone.call('pair', {
+  await phone.call('pair', withRulesApproval({
     pairingSecret: p.secret,
     deviceName: 'Notes test phone',
     network: 'regtest',
@@ -121,7 +121,7 @@ beforeAll(async () => {
     hardwareAuth: { pubkey: hwAuthPubkey(), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(walletId, hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!)), hwAuthPrivateKey()),
     rules: { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [], sweepFeeCapSats: 20_000 },
-  });
+  }, rig.nowSec() * 1000));
 }, 30_000);
 
 afterAll(async () => {
@@ -262,7 +262,7 @@ describe('encrypted notes on the guardian', { timeout: 60_000 }, () => {
     const prep = await g.call('hosted.prepare', { inviteSecret: secret, network: 'regtest', entropy: hex.encode(new Uint8Array(32).map((_, i) => i + 5)) });
     expect(prep.features ?? []).not.toContain(GUARDIAN_FEATURES.labelsBackup);
     const fx = await hostedWallet({ cosignerPub: prep.cosignerAccountPubkey, app: MNEMONICS.app2, hardware: MNEMONICS.hardware });
-    await g.call('hosted.pair', {
+    await g.call('hosted.pair', withHostedRulesApproval({
       inviteSecret: secret,
       deviceName: 'Guest phone',
       walletLabel: 'Family wallet',
@@ -273,7 +273,7 @@ describe('encrypted notes on the guardian', { timeout: 60_000 }, () => {
       rules: { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [getPublicKey(new Uint8Array(32).fill(78))], sweepFeeCapSats: 20_000 },
       walletMap: fakeMap(),
       phoneNostrPubkey: getPublicKey(gKey),
-    });
+    }, fx, rig.nowSec() * 1000));
     expect((await g.call('guardian.status', {})).features ?? []).not.toContain(GUARDIAN_FEATURES.labelsBackup);
     for (const call of [() => g.call('labels.list', {}), () => g.call('labels.get', {}), () => g.call('labels.get', { walletId }), () => put(g, fx.walletId, blobOf(10, 1)), () => g.call('labels.delete', {})]) {
       const e = await rpcError(call());
