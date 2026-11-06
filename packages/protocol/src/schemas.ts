@@ -432,10 +432,18 @@ export const PhoneResumeParams = z.strictObject({
 });
 export const PhoneResumeResult = z.object({ phoneSpending: z.literal('enabled') });
 
+/** An unlock slot's id (`unlockKeyMessage`): 8 random bytes in hex, picked by the phone when it turns hardware unlock on. */
+export const UnlockSlotId = z.string().regex(/^[0-9a-f]{16}$/, 'expected 8 bytes of lowercase hex');
+
 export const GuardianUnlockParams = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('passphrase'), passphrase: z.string().min(1).max(1024) }),
-  /** A secret derived by the hardware wallet (e.g. SLIP-11), hex. */
-  z.strictObject({ kind: z.literal('hardware'), secret: z.string().regex(/^[0-9a-f]{32,128}$/) }),
+  /**
+   * Guardians with `hardware_unlock` (PROTOCOL.md, "Unlocking with the hardware wallet"): the hardware wallet's BIP 137
+   * signature of `unlockKeyMessage` for the slot of `walletId` (the slot id `guardian.status.hardwareUnlock` lists). The
+   * guardian checks it against that wallet's authorization key, derives the slot's key from it and opens the slot; the
+   * same throttle and refusals as the passphrase. Never stored. Older guardians refuse it (`1101`).
+   */
+  z.strictObject({ kind: z.literal('hardware'), walletId: WalletId, slot: UnlockSlotId, signature: Bip137Signature }),
 ]);
 export const GuardianUnlockResult = z.object({ unlocked: z.boolean() });
 
@@ -655,6 +663,12 @@ export const GuardianStatusResult = z
     savingsWalletId: WalletId.optional(),
     /** As `policy.get`'s: weak spots of the paired wallet's policy. Absent when there are none. */
     warnings: z.array(PolicyWarning).max(8).optional(),
+    /**
+     * Guardians with `hardware_unlock`: this wallet's hardware wallet can unlock the guardian (`unlock.hardware.add`).
+     * `slot` names the text to sign (`unlockKeyMessage`); `addedAt` unix seconds. Absent while it cannot. Sent while
+     * locked too: it is what the phone signs to unlock.
+     */
+    hardwareUnlock: z.object({ slot: UnlockSlotId, addedAt: UnixSeconds }).optional(),
     /**
      * While locked, why and since when (guardians with `contact_lock`; absent from older ones and while unlocked).
      * `contact`: the alert contact who locked it with a `LOCK` DM. After a restart the reason is `restart`.
@@ -1294,6 +1308,24 @@ export const LabelsDeleteParams = z.strictObject({ ...onWallet });
 export const LabelsDeleteResult = z.object({ deleted: z.array(WalletId).max(64) });
 
 /* -------------------------------------------------------------------------- */
+/* Unlocking with the hardware wallet (guardians with `hardware_unlock`)       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Turns hardware unlock on for one wallet of the owner (PROTOCOL.md, "Unlocking with the hardware wallet"): the hardware
+ * wallet's BIP 137 signature of `unlockKeyMessage` for a fresh `slot`. The paired phone of that wallet only, the guardian
+ * unlocked, never a guest. The guardian checks the signature against the wallet's authorization key, derives the slot's
+ * key from it, encrypts its seed under that key as one more unlock slot, and forgets the signature and the key. It
+ * replaces the wallet's earlier slot, if any. The passphrase always stays.
+ */
+export const UnlockHardwareAddParams = z.strictObject({ walletId: WalletId, slot: UnlockSlotId, signature: Bip137Signature });
+export const UnlockHardwareAddResult = z.object({ walletId: WalletId, slot: UnlockSlotId, addedAt: UnixSeconds });
+
+/** Turns it off: the wallet's slot is deleted. The paired phone; locked or unlocked. `removed`: there was one. */
+export const UnlockHardwareRemoveParams = z.strictObject({ walletId: WalletId });
+export const UnlockHardwareRemoveResult = z.object({ walletId: WalletId, removed: z.boolean() });
+
+/* -------------------------------------------------------------------------- */
 /* Relay changes                                                              */
 /* -------------------------------------------------------------------------- */
 
@@ -1326,6 +1358,8 @@ export const methods = {
   'recovery.status': { params: RecoveryStatusParams, result: RecoveryStatusResult },
   'phone.resume': { params: PhoneResumeParams, result: PhoneResumeResult },
   'guardian.unlock': { params: GuardianUnlockParams, result: GuardianUnlockResult },
+  'unlock.hardware.add': { params: UnlockHardwareAddParams, result: UnlockHardwareAddResult },
+  'unlock.hardware.remove': { params: UnlockHardwareRemoveParams, result: UnlockHardwareRemoveResult },
   'guardian.status': { params: GuardianStatusParams, result: GuardianStatusResult },
   'wallet.sync': { params: WalletSyncParams, result: WalletSyncResult },
   'tx.get': { params: TxGetParams, result: TxGetResult },
@@ -1647,6 +1681,8 @@ export const RequestSchema = z.discriminatedUnion('method', [
   requestOf('recovery.status', RecoveryStatusParams),
   requestOf('phone.resume', PhoneResumeParams),
   requestOf('guardian.unlock', GuardianUnlockParams),
+  requestOf('unlock.hardware.add', UnlockHardwareAddParams),
+  requestOf('unlock.hardware.remove', UnlockHardwareRemoveParams),
   requestOf('guardian.status', GuardianStatusParams),
   requestOf('wallet.sync', WalletSyncParams),
   requestOf('tx.get', TxGetParams),

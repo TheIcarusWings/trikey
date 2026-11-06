@@ -6,3 +6,4 @@ export * from './psbt.js';
 export * from './signers.js';
 export * from './timelock.js';
 export * from './random.js';
+export * from './hardware-key.js';
