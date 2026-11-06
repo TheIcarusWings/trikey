@@ -6,9 +6,10 @@ import type { QrModel } from './qr-devices.js';
 
 /**
  * How the phone talks to the hardware wallet. `coldcard`, `jade` and `qr` are air-gapped devices over QR codes;
- * `coldcard-nfc` is a Coldcard (Mk4 or Q) over NFC (nfc-devices.ts).
+ * `coldcard-nfc` is a Coldcard (Mk4 or Q) over NFC (nfc-devices.ts); `jade-ble` is a Blockstream Jade or Jade Plus over
+ * Bluetooth (ble-devices.ts).
  */
-export type HardwareKind = 'ledger' | 'trezor' | 'coldcard' | 'bitbox02' | 'jade' | 'qr' | 'coldcard-nfc';
+export type HardwareKind = 'ledger' | 'trezor' | 'coldcard' | 'bitbox02' | 'jade' | 'qr' | 'coldcard-nfc' | 'jade-ble';
 
 export interface HardwareDeviceInfo {
   kind: HardwareKind;

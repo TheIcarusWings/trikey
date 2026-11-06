@@ -1551,5 +1551,5 @@ function pickAddr(d: { address: string; script: Uint8Array }) {
 }
 
 function hardwareName(kind: HardwareKind): string {
-  return { ledger: 'Ledger', trezor: 'Trezor', coldcard: 'Coldcard', bitbox02: 'BitBox02', jade: 'Jade', qr: 'hardware wallet', 'coldcard-nfc': 'Coldcard' }[kind];
+  return { ledger: 'Ledger', trezor: 'Trezor', coldcard: 'Coldcard', bitbox02: 'BitBox02', jade: 'Jade', qr: 'hardware wallet', 'coldcard-nfc': 'Coldcard', 'jade-ble': 'Jade' }[kind];
 }

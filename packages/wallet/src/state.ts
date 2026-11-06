@@ -18,7 +18,7 @@ import { QR_MODELS, defaultQrModelOf } from './qr-devices.js';
 const Hex32 = z.string().regex(/^[0-9a-f]{64}$/);
 
 export const HardwareRecord = z.object({
-  kind: z.enum(['ledger', 'trezor', 'coldcard', 'bitbox02', 'jade', 'qr', 'coldcard-nfc']),
+  kind: z.enum(['ledger', 'trezor', 'coldcard', 'bitbox02', 'jade', 'qr', 'coldcard-nfc', 'jade-ble']),
   model: z.string().optional(),
   /** Master fingerprint, 8 hex. */
   fingerprint: z.string().regex(/^[0-9a-f]{8}$/),
