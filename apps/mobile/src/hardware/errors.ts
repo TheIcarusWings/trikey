@@ -47,7 +47,7 @@ export class HardwareError extends Error {
 
 /**
  * Thrown for a call that cannot work on this device. `devices` names the devices affected so the UI can
- * say "message signing is not available over QR (Coldcard Q, Jade, Keystone, Passport)".
+ * say which devices cannot sign a message over QR (Passport, Krux, SeedSigner...).
  */
 export class HardwareNotSupportedError extends HardwareError {
   readonly operation: string;

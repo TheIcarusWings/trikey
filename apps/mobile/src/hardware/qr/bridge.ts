@@ -10,14 +10,18 @@ import type { QrProgress } from './types';
 
 export interface QrShowRequest {
   type: 'show';
-  /** What is being shown: the host may pick an icon or wording from it. */
-  purpose: 'psbt' | 'wallet' | 'address';
+  /** What is being shown: the host may pick an icon or wording from it. `message`: a text for the device to sign. */
+  purpose: 'psbt' | 'wallet' | 'address' | 'message';
   title: string;
   instructions: string;
   /** The QR frames to cycle through, in order. One frame means a still QR. */
   frames: string[];
-  /** Text to show under the QR in monospace, for the user to read and compare (an address). */
+  /** Text to show under the QR in monospace, for the user to read and compare (an address, the text to sign). */
   detail?: string;
+  /** Numbered steps on the device, shown under the QR (message signing: they differ per model). */
+  steps?: string[];
+  /** Short notes shown after the steps (what the text means, what to check on the device). */
+  notes?: string[];
   /** Label of the button that moves on ("Scan the signed transaction"). */
   continueLabel: string;
 }
@@ -29,7 +33,7 @@ export type QrScanStep<T> =
 
 export interface QrScanRequest<T = unknown> {
   type: 'scan';
-  purpose: 'signed-psbt' | 'device-key';
+  purpose: 'signed-psbt' | 'device-key' | 'signed-message';
   title: string;
   instructions: string;
   /**

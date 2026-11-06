@@ -16,6 +16,9 @@ import { coldcardMultisigConfig } from './registration';
 import { QR_DEVICES_WITHOUT_MESSAGE_SIGNING, QrSigner, type QrSignerOptions } from './signer';
 import type { QrFormat, QrPayload } from './types';
 import { encodePsbtUr } from './ur';
+import { messageAddresses } from './message';
+import { verifyBip137Message } from '@trikey/wallet';
+import { signMessage as signBip137 } from '../../../../../packages/wallet/src/bip137';
 
 const H = HARDENED;
 const ACCOUNT = [48 + H, 1 + H, 0 + H, 2 + H];
@@ -389,12 +392,140 @@ describe('QrSigner.getXpub', () => {
 });
 
 describe('QrSigner.signMessage', () => {
-  it('is not supported over QR, and says for which devices', async () => {
-    const { signer } = await setup();
-    const err = await signer.signMessage().catch((e: unknown) => e);
+  const AUTH = "m/48'/1'/0'/2'/0/0";
+  const TEXT = `Trikey pair v1 wallet=0123456789abcdef guardian=03${'ab'.repeat(32)}`;
+  const authKey = () => hwSigner().master(network).derive(AUTH).privateKey!;
+  const sign = (text: string, key = authKey()) => signBip137(text, key);
+
+  async function messageSetup(model: QrSignerOptions['model']) {
+    const f = await makeFixture();
+    const bridge = new QrBridge();
+    const signer = new QrSigner(
+      { kind: 'qr', fingerprint: f.hardwareFingerprint, ...(model ? { qrModel: model } : {}) },
+      { network: 'regtest', bridge, format: 'ur', registration: 'descriptor', label: 'signing device', knownKeys: [{ path: ACCOUNT, xpub: f.hardwareXpub }], ...(model ? { model } : {}) },
+    );
+    return { f, bridge, signer };
+  }
+
+  it.each(['seedsigner', 'krux', 'passport', 'other', 'coldcard-mk4', undefined] as const)('%s: refused with the reason, before anything is shown', async (model) => {
+    const { signer, bridge } = await messageSetup(model);
+    const shown = drive(bridge, {});
+    const err = await signer.signMessage(AUTH, TEXT).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(HardwareNotSupportedError);
     expect(err).toMatchObject({ code: 'not-supported', operation: 'signMessage', devices: QR_DEVICES_WITHOUT_MESSAGE_SIGNING });
-    expect((err as HardwareNotSupportedError).devices).toEqual(expect.arrayContaining(['Coldcard Q', 'Jade', 'Keystone', 'Passport']));
+    expect((err as Error).message).toMatch(model === 'seedsigner' ? /m\/48'/ : model === 'coldcard-mk4' ? /no camera/ : model === 'other' || !model ? /doesn.t know/ : /microSD/);
+    expect(shown.log).toEqual([]);
+    expect(QR_DEVICES_WITHOUT_MESSAGE_SIGNING).toEqual(expect.arrayContaining(['SeedSigner', 'Krux', 'Passport (2nd generation)', 'Coldcard Mk4', 'Other QR device']));
+    shown.stop();
+  });
+
+  it('Coldcard Q: shows the signmessage QR with the text, the steps and the address, then takes the bare signature', async () => {
+    const { signer, bridge } = await messageSetup('coldcard-q');
+    let show: QrShowRequest | undefined;
+    let scan: QrScanRequest | undefined;
+    drive(bridge, {
+      show: (r) => {
+        show = r;
+        bridge.finishShow();
+      },
+      scan: (r) => {
+        scan = r;
+        feed(bridge, [sign(TEXT)]);
+      },
+    });
+    const sig = await signer.signMessage(AUTH, TEXT, { purpose: 'pairing' });
+    expect(verifyBip137Message(TEXT, hwSigner().master(network).derive(AUTH).publicKey!, sig)).toBe(true);
+    expect(show).toMatchObject({ purpose: 'message', frames: [`signmessage m/48h/1h/0h/2h/0/0 ascii:${TEXT}`], detail: TEXT, continueLabel: 'Scan the signature' });
+    expect(show!.title).toBe('Sign on your Coldcard Q');
+    expect(show!.steps!.join(' ')).toMatch(/press the QR key.*m\/48'\/1'\/0'\/2'\/0\/0/);
+    const notes = show!.notes!.join(' ');
+    expect(notes).toMatch(/proves to your guardian/);
+    expect(notes).toMatch(/shows the text before it signs/);
+    // The P2PKH address the Coldcard shows for that key, for the owner to compare.
+    expect(notes).toMatch(/It shows this address for the key: [mn][1-9A-HJ-NP-Za-km-z]{25,34}$/);
+    expect(scan).toMatchObject({ purpose: 'signed-message', title: 'Scan the signature' });
+  });
+
+  it("takes Coldcard's armored answer, and checks the text and the address in it", async () => {
+    const { signer, bridge } = await messageSetup('coldcard-q');
+    const pub = hwSigner().master(network).derive(AUTH).publicKey!;
+    const { p2pkh } = messageAddresses(pub, 'regtest');
+    const armor = (text: string, address: string, sig: string) =>
+      `-----BEGIN BITCOIN SIGNED MESSAGE-----\n${text}\n-----BEGIN BITCOIN SIGNATURE-----\n${address}\n${sig}\n-----END BITCOIN SIGNATURE-----\n`;
+    const hints: Array<string | undefined> = [];
+    drive(bridge, {
+      show: () => bridge.finishShow(),
+      scan: () => {
+        // Another text, then another key's address, then the right one.
+        hints.push(feed(bridge, [armor(`${TEXT} x`, p2pkh, sign(`${TEXT} x`))])[0]!.hint);
+        const other = messageAddresses(hwSigner().master(network).derive("m/48'/1'/0'/2'/0/1").publicKey!, 'regtest').p2pkh;
+        hints.push(feed(bridge, [armor(TEXT, other, sign(TEXT))])[0]!.hint);
+        feed(bridge, [armor(TEXT, p2pkh, sign(TEXT))]);
+      },
+    });
+    const sig = await signer.signMessage(AUTH, TEXT);
+    expect(sig).toBe(sign(TEXT));
+    expect(hints[0]).toMatch(/signed a different text/);
+    expect(hints[1]).toMatch(/signed with another key \(address [mn]\w+, not [mn]\w+\)/);
+  });
+
+  it('a signature by another key, garbage, or Trikey’s own request stay hints; scanning goes on until the right one', async () => {
+    const { signer, bridge } = await messageSetup('specter-diy');
+    const hints: Array<string | undefined> = [];
+    drive(bridge, {
+      show: () => bridge.finishShow(),
+      scan: () => {
+        for (const frame of [sign(TEXT, new Uint8Array(32).fill(3)), 'hello', `signmessage m/48h/1h/0h/2h/0/0 ascii:${TEXT}`]) hints.push(feed(bridge, [frame])[0]!.hint);
+        feed(bridge, [sign(TEXT)]);
+      },
+    });
+    await signer.signMessage(AUTH, TEXT);
+    expect(hints[0]).toMatch(/not from this wallet.s key m\/48'\/1'\/0'\/2'\/0\/0.*same seed and passphrase.*text was not changed/);
+    expect(hints[1]).toMatch(/not a message signature/);
+    expect(hints[2]).toMatch(/That is Trikey.s request/);
+  });
+
+  it('notes and unlock: says the device shows the same text twice, and which round this is', async () => {
+    const { signer, bridge } = await messageSetup('jade');
+    const shows: QrShowRequest[] = [];
+    drive(bridge, {
+      show: (r) => {
+        shows.push(r);
+        bridge.finishShow();
+      },
+      scan: () => void feed(bridge, [sign(TEXT)]),
+    });
+    await signer.signMessage(AUTH, TEXT, { purpose: 'notes', round: { n: 1, of: 2 } });
+    await signer.signMessage(AUTH, TEXT, { purpose: 'notes', round: { n: 2, of: 2 } });
+    expect(shows.map((r) => r.title)).toEqual(['Sign on your Jade / Jade Plus (1 of 2)', 'Sign on your Jade / Jade Plus (2 of 2)']);
+    expect(shows[0]!.notes!.join(' ')).toMatch(/will show the same text twice/);
+    expect(shows[1]!.notes!.join(' ')).toMatch(/Round 2 of 2: the same text again/);
+    expect(shows[0]!.notes!.join(' ')).toMatch(/encrypts your notes/);
+  });
+
+  it('Jade: warns that a long text is cut on its screen; Keystone: no address; Passport Prime: the account to sign from', async () => {
+    const long = `Trikey recovery-access v2 wallet=0123456789abcdef guardian=${'a'.repeat(64)} phone=${'b'.repeat(64)} expires=2026-11-07T00:00:00Z`;
+    const shown = async (model: QrSignerOptions['model'], text: string) => {
+      const { signer, bridge } = await messageSetup(model);
+      let req: QrShowRequest | undefined;
+      drive(bridge, { show: (r) => ((req = r), bridge.cancel()) });
+      await signer.signMessage(AUTH, text).catch(() => {});
+      return req!;
+    };
+    expect((await shown('jade', long)).notes!.join(' ')).toMatch(/This text is 223 characters. The Jade \/ Jade Plus shows about the first 188/);
+    expect((await shown('jade', TEXT)).notes!.join(' ')).not.toMatch(/about the first/);
+    const keystone = await shown('keystone-3', TEXT);
+    expect(keystone.steps!.join(' ')).toMatch(/shows no address for this key/);
+    expect(keystone.notes!.join(' ')).not.toMatch(/It shows this address/);
+    expect((await shown('passport-prime', TEXT)).steps![0]).toMatch(/open account 0/);
+  });
+
+  it("refuses a text the Coldcard would refuse, and a cancel rejects with 'cancelled'", async () => {
+    const { signer, bridge } = await messageSetup('coldcard-q');
+    await expect(signer.signMessage(AUTH, 'a'.repeat(241))).rejects.toMatchObject({ code: 'invalid-request', message: expect.stringMatching(/at most 240/) });
+    await expect(signer.signMessage(AUTH, 'caf\u00e9')).rejects.toMatchObject({ code: 'invalid-request' });
+    drive(bridge, { show: () => bridge.cancel() });
+    await expect(signer.signMessage(AUTH, TEXT)).rejects.toMatchObject({ code: 'cancelled' });
   });
 });
 

@@ -1,4 +1,5 @@
 import { parseScannedCode } from '@trikey/wallet/scan';
+import { qrModelInfo } from '@trikey/wallet';
 import { NODE_RPC_TEXT, WalletServiceError } from './errors';
 import { SIMULATED_OPTION, hardwareOptionTable, type UiOs } from './hardware-options';
 import { LIMIT_OFF_SATS, buildRefillSchedule, limitChangeNeedsHardware, quoteSend as quoteSendRule, quoteSendMax as quoteSendMaxRule } from './rules';
@@ -31,6 +32,7 @@ import type {
   SendRequest,
   HardwareKind,
   HardwareWallet,
+  QrModel,
   LostKey,
   PhoneBackup,
   RecoveryDelayDays,
@@ -91,8 +93,15 @@ const HARDWARE: Record<HardwareKind, HardwareWallet> = {
   ledger: { kind: 'ledger', brand: 'Ledger', model: 'Ledger Nano X' },
   trezor: { kind: 'trezor', brand: 'Trezor', model: 'Trezor Safe 7' },
   bitbox02: { kind: 'bitbox02', brand: 'BitBox02', model: 'BitBox02' },
-  qr: { kind: 'qr', brand: 'Coldcard', model: 'Coldcard Q' },
+  qr: { kind: 'qr', brand: 'Coldcard', model: 'Coldcard Q', qrModel: 'coldcard-q' },
 };
+
+/** The demo's QR device as the person picked it. */
+function demoQrHardware(qrModel: QrModel | undefined): HardwareWallet {
+  if (!qrModel) return HARDWARE.qr;
+  const info = qrModelInfo(qrModel);
+  return info.model === 'other' ? { kind: 'qr', brand: 'signing device', model: 'Signing device', qrModel } : { kind: 'qr', brand: info.name, model: info.name, qrModel };
+}
 
 const MARIA: Contact = { id: 'c-maria', name: 'Maria', npub: 'npub1x7qd0m4zc2gk8w5v9n3ylr6ts0ahe7j4fp8u2xw3mq5ca6vhzk2q8' };
 const TOM: Contact = { id: 'c-tom', name: 'Tom', npub: 'npub1m3dz8k4w0c6ylv5n2xr9ts7ahe3j4fp8u2xw3mq5ca6vhz9f9fwa' };
@@ -403,11 +412,15 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     async getHardwareOptions() {
       return hardwareOptionTable(platform as UiOs).map((o) => ({ ...o, available: true }));
     },
-    async connectHardware(kind: HardwareKind) {
+    async connectHardware(kind: HardwareKind, qrModel?: QrModel) {
       await wait(deviceDelay);
-      const hardware = HARDWARE[kind];
+      const hardware = kind === 'qr' ? demoQrHardware(qrModel) : HARDWARE[kind];
       update({ hardware });
       return hardware;
+    },
+    async setHardwareModel(model: QrModel) {
+      if (state.hardware.kind !== 'qr') throw new WalletServiceError('wrong_state', 'Only a QR device has a model to pick.');
+      update({ hardware: demoQrHardware(model) });
     },
     async pairGuardian(_pairingCode: string): Promise<Guardian> {
       await wait(networkDelay);

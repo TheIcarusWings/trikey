@@ -101,7 +101,7 @@ describe('unlock with the hardware wallet, in the app', { timeout: 120_000 }, ()
     expect(refusalToError({ kind: 'unlock_failed', reason: 'hardware_unlock_off', message: 'x' }).message).toMatch(/Use the passphrase/);
     expect(refusalToError({ kind: 'unlock_failed', reason: 'phone_unlock_disabled', message: 'Too many wrong passphrases from the phone.' }).message).toMatch(/web page/);
     expect(refusalToError({ kind: 'unlock_failed', message: 'Wrong passphrase.' }).message).toMatch(/passphrase didn't work/);
-    expect(HARDWARE_UNLOCK_UNAVAILABLE.hardware).toMatch(/QR codes cannot sign/);
+    expect(HARDWARE_UNLOCK_UNAVAILABLE.hardware).toMatch(/by QR code a Coldcard Q.*Hardware wallet model/);
   });
 
   it('off removes it on the guardian; the passphrase still unlocks', async () => {

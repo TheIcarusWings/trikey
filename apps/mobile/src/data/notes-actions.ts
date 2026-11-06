@@ -79,5 +79,6 @@ export const NOTES_UNAVAILABLE: Record<'not_paired' | 'hosted' | 'guardian' | 'h
   not_paired: 'Finish setting up this wallet with your guardian first.',
   hosted: "Notes are not kept on someone else's guardian yet.",
   guardian: 'Update your guardian to keep your notes there.',
-  hardware: 'This needs a hardware wallet that signs messages over USB or Bluetooth, like a Ledger or a Trezor.',
+  hardware:
+    'This needs a hardware wallet that signs a short text: a Ledger or a Trezor, or by QR code a Coldcard Q, Jade, Keystone 3, Passport Prime or Specter DIY. A QR device set up before Trikey asked for its model counts as "Other": pick it in Settings, Hardware wallet model.',
 };

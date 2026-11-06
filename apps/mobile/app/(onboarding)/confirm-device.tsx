@@ -6,6 +6,7 @@ import { AppButton } from '@/components/app-button';
 import { DeviceMock } from '@/components/device-mock';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
+import { isQrModel } from '@trikey/wallet';
 import type { HardwareKind, HardwareWallet } from '@/data';
 import { hardwareBrandOf, errorText, useWallet, useWalletService } from '@/data';
 import { pick } from '@/lib/platform';
@@ -42,8 +43,10 @@ const STEPS: Record<HardwareKind, string[]> = {
 export default function ConfirmDevice() {
   const router = useRouter();
   const wallet = useWalletService();
-  const params = useLocalSearchParams<{ kind?: string; flow?: string }>();
+  const params = useLocalSearchParams<{ kind?: string; flow?: string; model?: string }>();
   const kind = (['ledger', 'trezor', 'bitbox02', 'qr', 'simulated'].includes(params.kind ?? '') ? params.kind : 'ledger') as HardwareKind;
+  // QR devices: the model picked in the list (it says whether the device can sign Trikey's texts).
+  const qrModel = kind === 'qr' && isQrModel(params.model) ? params.model : undefined;
   const { progress } = useWallet();
   const [connected, setConnected] = useState<HardwareWallet | null>(null);
   const [problem, setProblem] = useState<Error | null>(null);
@@ -53,7 +56,7 @@ export default function ConfirmDevice() {
     let cancelled = false;
     setConnected(null);
     setProblem(null);
-    wallet.connectHardware(kind).then(
+    wallet.connectHardware(kind, qrModel).then(
       (hardware) => {
         if (!cancelled) setConnected(hardware);
       },
@@ -65,10 +68,10 @@ export default function ConfirmDevice() {
       cancelled = true;
       wallet.cancelDevicePrompt(); // leaving the screen stops the search for the device
     };
-  }, [wallet, kind, attempt]);
+  }, [wallet, kind, qrModel, attempt]);
 
   // The device name to show before it has answered.
-  const name = kind === 'qr' ? 'device' : hardwareBrandOf(kind);
+  const name = kind === 'qr' && (!qrModel || qrModel === 'other') ? 'device' : hardwareBrandOf(kind, qrModel);
   return (
     <Screen
       title={`Check your ${name}`}
