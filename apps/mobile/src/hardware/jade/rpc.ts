@@ -18,6 +18,7 @@ import type { HardwareKind } from '@trikey/wallet';
 import { HardwareError } from '../errors';
 import { CborError, CborIncomplete, decodeCbor, encodeCbor, type CborValue } from './cbor';
 import type { JadeConnection } from './link';
+import { secureRandomBytes } from '@trikey/core/random';
 
 const KIND: HardwareKind = 'jade-ble';
 
@@ -101,7 +102,8 @@ export class JadeRpc {
   private buffer = new Uint8Array(0);
   private waiting?: { id: string; resolve: (r: JadeReply) => void; reject: (e: unknown) => void };
   private queue: Promise<unknown> = Promise.resolve();
-  private nextId = Math.floor(Math.random() * 900_000) + 100_000;
+  // A random start, so a stray reply from an earlier connection is unlikely to match a new request's id.
+  private nextId = 100_000 + (new DataView(secureRandomBytes(4).buffer).getUint32(0) % 900_000);
   private closed?: Error;
   private readonly offs: Array<() => void> = [];
   /** Bytes that were not CBOR the Jade would send, for the log. Never shown to the owner. */

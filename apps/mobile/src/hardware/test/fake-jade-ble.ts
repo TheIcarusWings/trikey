@@ -18,6 +18,7 @@ import { HDKey } from '@scure/bip32';
 import { base64 } from '@scure/base';
 import * as btc from '@scure/btc-signer';
 import { mnemonicToSeedSync } from '@scure/bip39';
+import { secureRandomBytes } from '@trikey/core/random';
 import { NETWORKS, SoftwareSigner, TX_OPTS, multisigScripts, type NetworkName } from '@trikey/core';
 import { SoftwareHardwareSigner } from '@trikey/wallet/testing';
 import { decodeCbor, encodeCbor, CborIncomplete, type CborValue } from '../jade/cbor';
@@ -223,7 +224,7 @@ export class FakeJade {
   }
 
   private askPinServer(id: string) {
-    this.pinData = base64.encode(crypto.getRandomValues(new Uint8Array(48)));
+    this.pinData = base64.encode(secureRandomBytes(48));
     this.send({ id, result: { http_request: { params: { urls: this.urls, method: 'POST', accept: 'json', data: { data: this.pinData } }, 'on-reply': 'pin' } } });
   }
 
