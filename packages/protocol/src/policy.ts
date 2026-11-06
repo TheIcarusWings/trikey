@@ -65,6 +65,13 @@ export const GUARDIAN_FEATURES = {
    * listed to a guest: a guest's hardware wallet never unlocks the host's guardian.
    */
   hardwareUnlock: 'hardware_unlock',
+  /**
+   * Sealed unlock (PROTOCOL.md, "Sealed unlock"): while locked, `guardian.status.unlockKey` names a key the guardian made
+   * when it locked and holds in memory only; `guardian.unlock` takes `kind: "sealed"`, the passphrase or the hardware
+   * signature sealed to that key, so an archived gift wrap plus the guardian's disk no longer reveal it. A phone sends
+   * the secret sealed to such a guardian, and in the clear only to one without it. Never listed to a guest.
+   */
+  sealedUnlock: 'sealed_unlock',
 } as const;
 
 /** True when the alert contacts may lock the guardian (`Policy.contactLock`). */
