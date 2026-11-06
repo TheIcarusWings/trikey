@@ -72,6 +72,10 @@ export interface GuardianRigOptions {
   telegramApi?: string;
   /** The guardian's TRIKEY_PLATFORM, as loadConfig sets it. Default unset (no setup code), as for embedders. */
   platform?: GuardianConfig['platform'];
+  /** TRIKEY_TRUSTED_PROXY (http/trusted-proxy.ts), e.g. `['127.0.0.2']` to stand for the platform's login proxy. */
+  trustedProxies?: string[];
+  /** TRIKEY_SETUP_CODE, canonical form (Start9 hands one in). */
+  setupCode?: string;
   /** Builds the backend for a chain source the web UI chooses (Settings > Server): fakes instead of public servers. */
   chainBackend?: GuardianOptions['chainBackend'];
   /** The live wallet's options (live-wallet.ts), e.g. a short `recheckMs`; `false` turns it off. Default the guardian's. */
@@ -174,6 +178,8 @@ export class GuardianRig {
       ...(this.opts.spScanThreads ? { spScanThreads: this.opts.spScanThreads } : {}),
       ...(this.opts.extraEntropy ? { extraEntropy: this.opts.extraEntropy } : {}),
       ...(this.opts.platform ? { platform: this.opts.platform } : {}),
+      ...(this.opts.trustedProxies ? { trustedProxies: this.opts.trustedProxies } : {}),
+      ...(this.opts.setupCode ? { setupCode: this.opts.setupCode } : {}),
     };
     this.guardian = await Guardian.open({
       config,

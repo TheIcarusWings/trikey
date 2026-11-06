@@ -1,6 +1,7 @@
 import { utils } from '@start9labs/start-sdk'
 import { storeJson } from '../fileModels/store.json'
 import { i18n } from '../i18n'
+import { formatSetupCode } from '../init/setupCode'
 import { sdk } from '../sdk'
 
 // Sets, and later rotates, the password of the basic-auth gate on the web interface. The first
@@ -30,6 +31,8 @@ export const setWebPassword = sdk.Action.withoutInput(
       len: 32,
     })
     await storeJson.merge(effects, { uiPassword })
+    // The first-run setup code, shown here too: this is the dialog the owner sees right before opening the web UI.
+    const setupCode = await storeJson.read((s) => s.setupCode).once()
 
     return {
       version: '1',
@@ -60,6 +63,22 @@ export const setWebPassword = sdk.Action.withoutInput(
             qr: false,
             launchable: false,
           },
+          ...(setupCode
+            ? [
+                {
+                  type: 'single' as const,
+                  name: i18n('Setup code (first run only)'),
+                  description: i18n(
+                    "Enter this code on the guardian's first-run screen. It is needed only until the guardian is set up.",
+                  ),
+                  value: formatSetupCode(setupCode),
+                  masked: false,
+                  copyable: true,
+                  qr: false,
+                  launchable: false,
+                },
+              ]
+            : []),
         ],
       },
     }

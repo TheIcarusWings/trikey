@@ -58,27 +58,37 @@ export const main = sdk.setupMain(async ({ effects }) => {
     )
   }
 
+  // The guardian's own container mounts only its data. Bitcoin's whole `main` volume (its
+  // datadir: chainstate, and the node's wallets if it has any) is mounted read-only into a
+  // second subcontainer that never runs anything: the package runtime reads the RPC cookie
+  // through it, below. Before, it was mounted into the guardian's container, which only needed
+  // the cookie (security review 2026-11, finding 5). The cookie file itself cannot be mounted
+  // alone: dependency mounts take a directory, and bitcoind replaces the file at every start,
+  // which a single-file bind mount would not follow.
   const guardianSub = await sdk.SubContainer.of(
     effects,
     { imageId: 'guardian' },
-    sdk.Mounts.of()
-      .mountVolume({
-        volumeId: 'main',
-        subpath: null,
-        mountpoint: dataDir,
-        readonly: false,
-      })
-      // Only for Bitcoin Core's RPC cookie; the guardian never reads this mount itself.
-      .mountDependency<
-        { id: 'bitcoind'; volumes: readonly ['main'] } & T.SDKManifest
-      >({
-        dependencyId: 'bitcoind',
-        volumeId: 'main',
-        subpath: null,
-        mountpoint: btcMountpoint,
-        readonly: true,
-      }),
+    sdk.Mounts.of().mountVolume({
+      volumeId: 'main',
+      subpath: null,
+      mountpoint: dataDir,
+      readonly: false,
+    }),
     'guardian',
+  )
+  const cookieSub = await sdk.SubContainer.of(
+    effects,
+    { imageId: 'guardian' },
+    sdk.Mounts.of().mountDependency<
+      { id: 'bitcoind'; volumes: readonly ['main'] } & T.SDKManifest
+    >({
+      dependencyId: 'bitcoind',
+      volumeId: 'main',
+      subpath: null,
+      mountpoint: btcMountpoint,
+      readonly: true,
+    }),
+    'bitcoind-cookie',
   )
 
   // The guardian uses Bitcoin Core's RPC (all four BITCOIN_RPC_* or none) for sync status, as a
@@ -98,7 +108,7 @@ export const main = sdk.setupMain(async ({ effects }) => {
   // key 3 until it is unlocked) whenever Bitcoin restarts: the old password stops working at that
   // moment. The gap while bitcoind restarts, when the file is gone, is not a change (the same
   // pattern as electrs-startos).
-  const rootfs = await guardianSub.rootfs
+  const rootfs = await cookieSub.rootfs
   const cookie = await FileHelper.string(`${rootfs}${btcMountpoint}/.cookie`)
     .read(
       (c) => c.trim(),
@@ -120,6 +130,8 @@ export const main = sdk.setupMain(async ({ effects }) => {
   const electrumAddress = splitAddress(electrum)
   // Drawn once at install (init/seedEntropy.ts). Read once: it never changes afterwards.
   const extraEntropy = await storeJson.read((s) => s.extraEntropy).once()
+  // Drawn once at install (init/setupCode.ts) and shown in the show-setup-code action.
+  const setupCode = await storeJson.read((s) => s.setupCode).once()
 
   return (
     sdk.Daemons.of(effects)
@@ -140,10 +152,13 @@ export const main = sdk.setupMain(async ({ effects }) => {
           env: {
             PORT: String(uiPort),
             TRIKEY_DATA_DIR: dataDir,
-            // The interface's basic-auth gate guards the web UI, so first-run setup asks for no
-            // setup code (plain Docker's default, packaging/compose/README.md). Without this the
-            // guardian would assume plain Docker and wait for a code from its log.
             TRIKEY_PLATFORM: 'start9',
+            // Until it is set up, the guardian asks for this code: the basic-auth gate covers only
+            // the TLS interface, and other services on this server reach the plaintext port
+            // without it (DESIGN.md, "First run"). The owner reads it in StartOS (Actions > Show
+            // Setup Code, and with the web password). Without it the guardian would print a new
+            // one in its log at every start.
+            ...(setupCode ? { TRIKEY_SETUP_CODE: setupCode } : {}),
             // StartOS runs Bitcoin Core on mainnet only.
             BITCOIN_NETWORK: 'bitcoin',
             ELECTRUM_HOST: electrumAddress.host,

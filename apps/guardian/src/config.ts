@@ -29,9 +29,15 @@
  *                     main thread, without workers
  *   FAMILY_HOSTING    optional: `false` turns hosting guests' wallets off (the `family_hosting`
  *                     feature; on by default)
- *   TRIKEY_PLATFORM   umbrel, start9 or docker (default). Umbrel and Start9 put their own login in front of the
- *                     web UI; on plain Docker nothing does, so first-run setup asks for a one-time setup code
- *                     that the guardian prints in its log (http/setup-code.ts)
+ *   TRIKEY_PLATFORM   umbrel, start9 or docker (default). Until it is set up, the guardian asks for a one-time
+ *                     setup code on every platform (http/setup-code.ts): other containers on the box can reach it
+ *                     without the platform's login. The code is in the guardian's log; on Start9 also in an action
+ *   TRIKEY_TRUSTED_PROXY optional: who reaches the guardian only through the platform's login (comma-separated:
+ *                     `gateway`, the container's default gateway, where umbrelOS's in-process app gateway connects
+ *                     from; host names, resolved at every request and trusted only while they name one address;
+ *                     IP addresses). Requests from them need no setup code (http/trusted-proxy.ts). Umbrel sets it
+ *   TRIKEY_SETUP_CODE optional: the setup code to ask for, instead of a new one at every start (16 characters of
+ *                     Crockford base32, as the guardian prints them). Start9 sets it and shows it in an action
  *   TRIKEY_RELAYS     optional: the relays the first-run screen offers (comma-separated wss:// URLs, 1 to 8),
  *                     instead of the built-in list
  *   TRIKEY_EXTRA_ENTROPY optional: 32 bytes as 64 hex characters (on Umbrel, the app's
@@ -47,6 +53,9 @@ import { hex } from '@scure/base';
 import { DEFAULT_KDF, SETUP_ENTROPY_BYTES, type KdfParams } from './keystore.js';
 import { isLocalAddress, normalizeFingerprint } from './chain/electrum.js';
 import { ChainSourceError, parseChainSource, publicServersFor, PUBLIC_SERVERS, type ChainSource } from './chain/source.js';
+import { SETUP_CODE_RE, normalizeSetupCode } from './http/setup-code.js';
+
+const optional = <K extends string, V>(k: K, v: V | undefined): { [P in K]?: V } => (v === undefined ? {} : ({ [k]: v } as { [P in K]?: V }));
 
 /**
  * Where the guardian reads the chain. Today one kind: an Electrum server (the box's own Electrs, or one on the
@@ -101,10 +110,15 @@ export interface GuardianConfig {
    */
   familyHosting?: boolean;
   /**
-   * TRIKEY_PLATFORM. `docker` (the default of `loadConfig`): first-run setup needs the setup code from the log.
-   * Unset (embedders and tests that build a config by hand): no setup code.
+   * TRIKEY_PLATFORM (`docker` by default in `loadConfig`). Set: first-run setup needs the setup code, from the log (or,
+   * on Start9, an action), except from `trustedProxies`. Unset (embedders and tests that build a config by hand): no
+   * setup code.
    */
   platform?: Platform;
+  /** TRIKEY_TRUSTED_PROXY: who reaches the guardian only through the platform's login (http/trusted-proxy.ts). */
+  trustedProxies?: string[];
+  /** TRIKEY_SETUP_CODE: the setup code to ask for (canonical form), instead of a new random one at every start. */
+  setupCode?: string;
   /**
    * The chain source from the environment (CHAIN_SOURCE). Unset: the Electrum server of `electrum`. The web UI's
    * choice, once made, overrides both (chain/source.ts).
@@ -172,6 +186,28 @@ function parseFlag(name: string, value: string | undefined): boolean {
   if (TRUE.test(v)) return true;
   if (FALSE.test(v)) return false;
   throw new Error(`${name} must be 1 or 0 (got "${value}")`);
+}
+
+/** TRIKEY_TRUSTED_PROXY: `gateway`, host names (a Docker container name) and IP addresses, comma-separated. */
+export function parseTrustedProxies(value: string | undefined): string[] | undefined {
+  const list = (value ?? '')
+    .split(',')
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
+  if (!list.length) return undefined;
+  if (list.length > 8) throw new Error('TRIKEY_TRUSTED_PROXY: at most 8 entries');
+  for (const v of list)
+    if (v !== 'gateway' && !isIP(v.replace(/^\[|\]$/g, '')) && !/^(?=.{1,253}$)[a-z0-9_](?:[a-z0-9_-]{0,62})(?:\.[a-z0-9_](?:[a-z0-9_-]{0,62}))*$/.test(v))
+      throw new Error(`TRIKEY_TRUSTED_PROXY: "${v}" is not "gateway", a host name or an IP address`);
+  return list.map((v) => v.replace(/^\[|\]$/g, ''));
+}
+
+/** TRIKEY_SETUP_CODE: 16 characters of Crockford base32 (separators and case ignored, look-alikes folded). */
+export function parseSetupCodeEnv(value: string | undefined): string | undefined {
+  if (value === undefined || value.trim() === '') return undefined;
+  const c = normalizeSetupCode(value);
+  if (!SETUP_CODE_RE.test(c)) throw new Error('TRIKEY_SETUP_CODE must be 16 characters of Crockford base32 (like ABCD-EFGH-JKMN-PQRS)');
+  return c;
 }
 
 export function parsePlatform(value: string | undefined): Platform {
@@ -312,5 +348,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GuardianConfig
     extraEntropy: parseExtraEntropy(env['TRIKEY_EXTRA_ENTROPY']),
     familyHosting: env['FAMILY_HOSTING']?.trim().toLowerCase() !== 'false',
     platform: parsePlatform(env['TRIKEY_PLATFORM']),
+    ...optional('trustedProxies', parseTrustedProxies(env['TRIKEY_TRUSTED_PROXY'])),
+    ...optional('setupCode', parseSetupCodeEnv(env['TRIKEY_SETUP_CODE'])),
   };
 }

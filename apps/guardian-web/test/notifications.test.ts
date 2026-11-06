@@ -16,6 +16,7 @@ import {
   emailError,
   guardianNameError,
   healthLabel,
+  passwordNeededFor,
   passwordOnlyChange,
   pinError,
   settingsInput,
@@ -68,11 +69,26 @@ describe('the checks', () => {
 
   it('the email account form', () => {
     const draft = { host: 'smtp.example.com', port: '465', security: 'tls' as const, username: 'me@example.com', from: 'me@example.com', password: 'app password' };
-    expect(smtpError(draft, false)).toBeUndefined();
-    expect(smtpError({ ...draft, password: '' }, false)).toMatch(/app password/);
-    expect(smtpError({ ...draft, password: '' }, true)).toBeUndefined();
-    expect(smtpError({ ...draft, port: '0' }, true)).toMatch(/port/);
-    expect(smtpError({ ...draft, from: 'x' }, true)).toMatch(/From address/);
+    const stored = { host: 'smtp.example.com', port: 465, security: 'tls' as const, username: 'me@example.com', from: 'me@example.com', passwordSet: true as const, health: { state: 'ok' as const } };
+    expect(smtpError(draft, undefined)).toBeUndefined();
+    expect(smtpError({ ...draft, password: '' }, undefined)).toMatch(/app password/);
+    expect(smtpError({ ...draft, password: '' }, stored)).toBeUndefined();
+    expect(smtpError({ ...draft, port: '0' }, stored)).toMatch(/port/);
+    expect(smtpError({ ...draft, from: 'x' }, stored)).toMatch(/From address/);
+  });
+
+  it('asks for the app password again when the server, port, encryption, user name or pin changes (never the From address)', () => {
+    const stored = { host: 'smtp.example.com', port: 465, security: 'tls' as const, username: 'me@example.com', from: 'me@example.com', pin: { sha256: 'AB', certificate: false }, passwordSet: true as const, health: { state: 'ok' as const } };
+    const keep = { host: 'smtp.example.com', port: '465', security: 'tls' as const, username: 'me@example.com', from: 'me@example.com', password: '' };
+    expect(passwordNeededFor(stored, keep)).toEqual([]);
+    expect(passwordNeededFor(stored, { ...keep, from: 'alerts@example.com' })).toEqual([]);
+    expect(passwordNeededFor(stored, { ...keep, host: 'smtp.attacker.example' })).toEqual(['server']);
+    expect(passwordNeededFor(stored, { ...keep, port: '587', security: 'starttls' })).toEqual(['port', 'encryption']);
+    expect(passwordNeededFor(stored, { ...keep, username: 'other@example.com' })).toEqual(['user name']);
+    expect(passwordNeededFor(stored, { ...keep, clearPin: true })).toEqual(['pinned certificate']);
+    expect(passwordNeededFor(stored, { ...keep, pin: 'CD:EF' })).toEqual(['pinned certificate']);
+    expect(smtpError({ ...keep, host: 'smtp.attacker.example' }, stored)).toMatch(/enter the app password again/);
+    expect(smtpError({ ...keep, host: 'smtp.attacker.example', password: 'typed again' }, stored)).toBeUndefined();
   });
 });
 
@@ -159,9 +175,9 @@ describe('the pinned certificate field', () => {
     expect(pinError(FP.slice(0, 59))).toMatch(/SHA-1/);
     expect(pinError('not a fingerprint')).toMatch(/64 hex digits/);
     const draft = { host: 'bridge.lan', port: '1025', security: 'starttls' as const, username: 'me@proton.me', from: 'me@proton.me', password: 'bridge password' };
-    expect(smtpError({ ...draft, pin: 'AB:CD' }, false)).toMatch(/^Pinned certificate: /);
-    expect(smtpError({ ...draft, pin: 'AB:CD', clearPin: true }, false)).toBeUndefined();
-    expect(smtpError({ ...draft, pin: FP }, false)).toBeUndefined();
+    expect(smtpError({ ...draft, pin: 'AB:CD' }, undefined)).toMatch(/^Pinned certificate: /);
+    expect(smtpError({ ...draft, pin: 'AB:CD', clearPin: true }, undefined)).toBeUndefined();
+    expect(smtpError({ ...draft, pin: FP }, undefined)).toBeUndefined();
   });
 
   it('goes into the PUT body only when typed; removing it sends null; otherwise the stored pin is kept', () => {
@@ -249,16 +265,18 @@ describe('the mock', () => {
     const fixed = await during.setNotifications(settingsInput(set, { smtp: { ...draft, pin: '', password: 'new bridge password' } }));
     expect(fixed.smtp!.pin).toEqual({ sha256: FP, certificate: false });
     for (const change of [{ host: 'other.lan' }, { port: '1026' }, { username: 'x@proton.me' }, { pin: PEM }, { pin: '', clearPin: true }])
-      await expect(during.setNotifications(settingsInput(fixed, { smtp: { ...draft, pin: '', password: '', ...change } })), JSON.stringify(change)).rejects.toMatchObject({ code: 'recovery_pending' });
+      await expect(during.setNotifications(settingsInput(fixed, { smtp: { ...draft, pin: '', password: 'typed again', ...change } })), JSON.stringify(change)).rejects.toMatchObject({ code: 'recovery_pending' });
     await expect(during.setNotifications(settingsInput(fixed, { smtp: null }))).rejects.toMatchObject({ code: 'recovery_pending' });
     // Outside a recovery the pin can be replaced (a pasted certificate) and removed.
     const api = createMockApi('notify');
     const n = await api.getNotifications();
     const base = { host: n.smtp!.host, port: String(n.smtp!.port), security: n.smtp!.security, username: n.smtp!.username, from: n.smtp!.from, password: '' };
-    const withCert = await api.setNotifications(settingsInput(n, { smtp: { ...base, pin: PEM } }));
+    // ...with the app password again (never sent to a server it was not typed for)...
+    await expect(api.setNotifications(settingsInput(n, { smtp: { ...base, pin: PEM } }))).rejects.toMatchObject({ code: 'invalid', message: expect.stringMatching(/app password again/) });
+    const withCert = await api.setNotifications(settingsInput(n, { smtp: { ...base, password: 'app password', pin: PEM } }));
     expect(withCert.smtp!.pin).toMatchObject({ certificate: true });
-    await expect(api.setNotifications(settingsInput(n, { smtp: { ...base, pin: 'AB:CD' } }))).rejects.toMatchObject({ code: 'invalid' });
-    const cleared = await api.setNotifications(settingsInput(withCert, { smtp: { ...base, clearPin: true } }));
+    await expect(api.setNotifications(settingsInput(n, { smtp: { ...base, password: 'app password', pin: 'AB:CD' } }))).rejects.toMatchObject({ code: 'invalid' });
+    const cleared = await api.setNotifications(settingsInput(withCert, { smtp: { ...base, password: 'app password', clearPin: true } }));
     expect(cleared.smtp).not.toHaveProperty('pin');
   });
 });

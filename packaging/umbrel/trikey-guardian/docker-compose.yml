@@ -22,9 +22,13 @@ services:
     environment:
       PORT: 3000
       TRIKEY_DATA_DIR: /data
-      # Umbrel's app_proxy login guards the web UI, so first-run setup needs no setup code (plain Docker's
-      # default, packaging/compose/README.md).
       TRIKEY_PLATFORM: umbrel
+      # Until it is set up, the guardian asks for a setup code (printed in its log) from everyone except Umbrel's
+      # login proxy: every app's containers share umbrel_main_network and reach port 3000 without Umbrel's login
+      # (DESIGN.md, "First run"). umbrelOS 2's in-process app gateway connects from the network's gateway (the host,
+      # 10.21.0.1); umbrelOS 1's app_proxy sidecar from its own container. So through Umbrel the owner never sees a
+      # code; if neither is recognised, the code is in the app's logs (Settings > Troubleshoot).
+      TRIKEY_TRUSTED_PROXY: gateway,trikey-guardian_app_proxy_1,app_proxy_trikey-guardian
       # Electrs (dependency "electrs")
       ELECTRUM_HOST: ${APP_ELECTRS_NODE_IP}
       ELECTRUM_PORT: ${APP_ELECTRS_NODE_PORT}
@@ -32,7 +36,9 @@ services:
       # none: with them it reports sync progress, broadcasts as a fallback and scans for silent
       # payments (`getblock <hash> 3`; without them `sp.*` answers 1700). Umbrel exports them
       # from apps/bitcoin/exports.sh (getumbrel/umbrel-apps): the node's IP, port 8332, and the
-      # `umbrel` RPC user with its generated password.
+      # `umbrel` RPC user with its generated password. Umbrel offers an app no restricted user, so
+      # this one can make every call: keep no funds in the node's own wallet (DESIGN.md, "The
+      # node's RPC credential", lists the calls the guardian makes).
       BITCOIN_RPC_HOST: ${APP_BITCOIN_NODE_IP}
       BITCOIN_RPC_PORT: ${APP_BITCOIN_RPC_PORT}
       BITCOIN_RPC_USER: ${APP_BITCOIN_RPC_USER}

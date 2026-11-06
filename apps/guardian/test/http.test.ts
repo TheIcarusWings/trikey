@@ -22,8 +22,9 @@ describe('origin and content-type checks', () => {
     expect(checkOrigin({ origin: 'http://umbrel.local:3011', host: 'umbrel.local:3010' }).ok).toBe(false);
     expect(checkOrigin({ origin: 'null', host: 'umbrel.local' }).ok).toBe(false);
     expect(checkOrigin({ origin: 'not a url', host: 'umbrel.local' }).ok).toBe(false);
-    // No browser signals at all: a non-browser client (curl), which another site cannot drive.
-    expect(checkOrigin({ host: 'umbrel.local' }).ok).toBe(true);
+    // No browser signals at all: a non-browser client (curl), which another site cannot drive. The server then decides
+    // by who connected (below).
+    expect(checkOrigin({ host: 'umbrel.local' })).toEqual({ ok: true, headerless: true });
   });
 
   it('accepts only application/json', () => {
@@ -78,7 +79,9 @@ describe('HTTP server', () => {
         },
       },
     ];
-    server = await startHttpServer({ port: 0, host: '127.0.0.1', routes, webDir: web, log: silentLogger });
+    // 127.0.0.3 stands for another app's container on the box: not the guardian's own (loopback in real life) nor the
+    // platform's proxy. Everything else on 127/8 is "the guardian's own container" here.
+    server = await startHttpServer({ port: 0, host: '127.0.0.1', routes, webDir: web, log: silentLogger, headerlessClient: (a) => a !== '127.0.0.3' && a !== '::ffff:127.0.0.3' });
     port = (server.address() as { port: number }).port;
   });
 
@@ -88,9 +91,9 @@ describe('HTTP server', () => {
   });
 
   /** Raw request (fetch would add its own Origin / Sec-Fetch headers). */
-  function send(method: string, path: string, headers: Record<string, string> = {}, body?: string) {
+  function send(method: string, path: string, headers: Record<string, string> = {}, body?: string, localAddress?: string) {
     return new Promise<{ status: number; headers: Record<string, string | string[] | undefined>; text: string }>((resolve, reject) => {
-      const req = httpRequest({ host: '127.0.0.1', port, method, path, headers: { host: `127.0.0.1:${port}`, ...headers } }, (res) => {
+      const req = httpRequest({ host: '127.0.0.1', port, method, path, ...(localAddress ? { localAddress } : {}), headers: { host: `127.0.0.1:${port}`, ...headers } }, (res) => {
         let text = '';
         res.setEncoding('utf8');
         res.on('data', (c) => (text += c));
@@ -150,6 +153,19 @@ describe('HTTP server', () => {
     }
     expect(calls).toHaveLength(4);
     expect(calls[0]).toEqual({ params: { id: 'a b' }, body: { x: 1 } });
+  });
+
+  it('refuses a state-changing request without Origin or Sec-Fetch-Site from anyone but its own container or the proxy', async () => {
+    // Security review 2026-11, finding 3: a request forged from another container (an SSRF there sets no headers).
+    const before = calls.length;
+    const r = await send('POST', '/api/echo/1', json, '{}', '127.0.0.3');
+    expect(r.status).toBe(403);
+    expect(JSON.parse(r.text).error.message).toMatch(/neither an Origin nor a Sec-Fetch-Site/);
+    // The same request with the browser's Origin, from there, is judged by its origin as before.
+    expect((await send('POST', '/api/echo/1', { ...json, origin: `http://127.0.0.1:${port}` }, '{}', '127.0.0.3')).status).toBe(200);
+    // Reading needs no header.
+    expect((await send('GET', '/api/ping', {}, undefined, '127.0.0.3')).status).toBe(200);
+    expect(calls.length).toBe(before + 1);
   });
 
   it('limits and validates bodies, and never echoes internals', async () => {

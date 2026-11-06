@@ -174,9 +174,9 @@ describe('a pinned certificate (Proton Mail Bridge, self-hosted relays)', () => 
     expect(() => checkPin('')).toThrow(/Pinned certificate/);
     // In the account: absent keeps the stored pin, null removes it, text sets it.
     const smtpBody = { host: 'bridge.lan', port: 1025, security: 'starttls', username: 'me@proton.me', from: 'me@proton.me', password: 'bridge password' };
-    expect(checkSmtp(smtpBody, false)).not.toHaveProperty('pin');
-    expect(checkSmtp({ ...smtpBody, pin: null }, false).pin).toBeNull();
-    expect(checkSmtp({ ...smtpBody, pin: fp }, false).pin).toEqual({ sha256: fp });
+    expect(checkSmtp(smtpBody, undefined)).not.toHaveProperty('pin');
+    expect(checkSmtp({ ...smtpBody, pin: null }, undefined).pin).toBeNull();
+    expect(checkSmtp({ ...smtpBody, pin: fp }, undefined).pin).toEqual({ sha256: fp });
   });
 });
 

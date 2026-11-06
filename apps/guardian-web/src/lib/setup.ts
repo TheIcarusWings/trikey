@@ -37,9 +37,22 @@ export function chainCheckCopy(p: SetupPreflight): ChainCheckCopy {
   };
 }
 
-/** Where the owner finds the setup code. */
+/** Where the owner finds the setup code (plain Docker). */
 export const SETUP_CODE_HELP =
   'The guardian printed a one-time setup code in its log when it started. Open the log (docker compose logs guardian, or the Logs tab of your NAS’s container app) and copy the code from the line with setup.code. It proves you are the one who started this guardian.';
+
+/**
+ * Where the owner finds the setup code, by platform. Other apps on an Umbrel or a Start9 can reach the guardian
+ * without the platform's login, so until it is set up the guardian asks for a code only the box's owner can read.
+ * Umbrel's own login proxy is recognised and needs none: Umbrel shows this only when it was not.
+ */
+export function setupCodeHelp(platform: SetupPreflight['platform']): string {
+  if (platform === 'umbrel')
+    return 'The guardian asks for a one-time setup code, because this page did not reach it through Umbrel’s login. In umbrelOS, open Settings > Troubleshoot, choose Trikey Guardian, and copy the code from the line with setup.code in its logs. It proves you are the owner of this Umbrel.';
+  if (platform === 'start9')
+    return 'The guardian asks for a one-time setup code. In StartOS, open Trikey Guardian, then Actions > Show Setup Code (it was also shown with the web password). It proves you are the owner of this server.';
+  return SETUP_CODE_HELP;
+}
 
 /** A setup code as the owner may type it: letters and digits in groups of four. Loose on purpose; the guardian decides. */
 export function setupCodeFormatError(code: string): string | undefined {

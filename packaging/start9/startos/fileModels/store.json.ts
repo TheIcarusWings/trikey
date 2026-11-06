@@ -15,11 +15,22 @@ import { sdk } from '../sdk'
 // for Umbrel's APP_SEED. The guardian mixes it into every new key-3 setup seed next to its own
 // OS draw and the browser's bytes (DESIGN.md, "Entropy"). It is not a key: knowing it does not
 // weaken the seed, which stays as strong as the guardian's own draw.
+//
+// setupCode is the guardian's first-run setup code (TRIKEY_SETUP_CODE): 16 characters of Crockford base32 (80 bits)
+// drawn once at install (init/setupCode.ts), shown to the owner by the show-setup-code action (and with the web
+// password), and asked for by the guardian until it is set up. The basic-auth gate covers only the TLS interface:
+// another service on the same server reaches the guardian's plaintext port directly and could otherwise run setup
+// first (security review 2026-11, finding 3). Useless once the guardian is set up.
 const shape = z.looseObject({
   uiPassword: z.string().optional().catch(undefined),
   extraEntropy: z
     .string()
     .regex(/^[0-9a-f]{64}$/)
+    .optional()
+    .catch(undefined),
+  setupCode: z
+    .string()
+    .regex(/^[0-9A-HJKMNP-TV-Z]{16}$/)
     .optional()
     .catch(undefined),
 })

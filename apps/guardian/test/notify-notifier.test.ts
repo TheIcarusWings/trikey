@@ -390,7 +390,7 @@ describe('changes are announced', () => {
     const keep = v.destinations.map((d) => ({ id: d.id, audience: d.audience, kind: d.kind, ...(d.contact ? { contact: d.contact } : {}), ...(d.email ? { email: d.email } : {}), ...(d.ntfy ? { ntfy: { server: d.ntfy.server } } : {}), ...(d.webhook ? { webhook: {} } : {}) }));
     const removing = await n.update({ guardianName: 'Home vault', smtp: smtpIn(smtp.port, null), destinations: keep.slice(1) }, { recoveryRunning: true });
     expect(removing).toMatchObject({ ok: false, code: 'recovery_pending' });
-    const changingSmtp = await n.update({ guardianName: 'Home vault', smtp: { ...smtpIn(smtp.port, null), username: 'other@example.com' }, destinations: keep }, { recoveryRunning: true });
+    const changingSmtp = await n.update({ guardianName: 'Home vault', smtp: { ...smtpIn(), username: 'other@example.com' }, destinations: keep }, { recoveryRunning: true });
     expect(changingSmtp).toMatchObject({ ok: false, code: 'recovery_pending' });
     const changingAddress = await n.update({ guardianName: 'Home vault', smtp: smtpIn(smtp.port, null), destinations: keep.map((d) => (d.email === 'alice@example.com' ? { ...d, email: 'thief@example.com' } : d)) }, { recoveryRunning: true });
     expect(changingAddress).toMatchObject({ ok: false, code: 'recovery_pending' });
@@ -413,11 +413,13 @@ describe('changes are announced', () => {
       { ...smtpIn(smtp.port, NEW), username: 'other@example.com' },
       { ...smtpIn(smtp.port, NEW), from: 'other@example.com' },
       { ...smtpIn(smtp.port, NEW), pin: selfSignedCert().fingerprint256 },
-      { ...smtpIn(smtp.port, null), pin: selfSignedCert().cert },
+      { ...smtpIn(smtp.port, NEW), pin: selfSignedCert().cert },
     ]) {
       const r = await put(s);
       expect(r, JSON.stringify(s)).toMatchObject({ ok: false, code: 'recovery_pending', message: expect.stringMatching(/Only the email account's app password/) });
     }
+    // Without the password, a pin change is not even considered: the saved password stays with its account.
+    expect(await put({ ...smtpIn(smtp.port, null), pin: selfSignedCert().cert })).toMatchObject({ ok: false, code: 'invalid', message: expect.stringMatching(/Enter the app password again/) });
     expect(JSON.stringify(n.view())).toBe(before);
     expect(n.pending).toBe(0);
 
@@ -447,6 +449,132 @@ describe('changes are announced', () => {
     expect(smtp.mails.find((m) => m.to[0] === 'alice@example.com')!.text).toMatch(/no longer get alerts/);
     expect(smtp.mails.find((m) => m.to[0] === 'alice.new@example.com')!.text).toMatch(/now gets alerts/);
     expect(n.view().destinations.find((d) => d.email === 'alice.new@example.com')!.id).not.toBe(v.destinations.find((d) => d.email === 'alice@example.com')!.id);
+  });
+});
+
+/**
+ * Security review 2026-11, findings 1 and 2: someone with a web session must not be able to move a channel or the email
+ * account to a server of their own and have the guardian hand it a secret saved for another one (an ntfy topic and
+ * token, a webhook's signing secret, the app password). Each test is the attack, and what the guardian does instead.
+ */
+describe('secrets stay with the address they were saved for', () => {
+  let attacker: TestHttp;
+  let attackerSmtp: TestSmtp;
+  beforeAll(async () => {
+    attacker = await startHttp();
+    attackerSmtp = await startSmtp({ pass: 'anything' });
+  });
+  afterAll(async () => {
+    await attacker.stop();
+    await attackerSmtp.stop();
+  });
+  beforeEach(() => {
+    attacker.requests.length = 0;
+    attackerSmtp.mails.length = 0;
+    attackerSmtp.logins = 0;
+  });
+
+  const kept = () =>
+    n.view().destinations.map((d) => ({ id: d.id, audience: d.audience, kind: d.kind, ...(d.contact ? { contact: d.contact } : {}), ...(d.email ? { email: d.email } : {}), ...(d.ntfy ? { ntfy: { server: d.ntfy.server } } : {}), ...(d.webhook ? { webhook: {} } : {}) }));
+  const seen = (reqs: { body: string; headers: Record<string, unknown> }[], text: string) => reqs.some((q) => q.body.includes(text) || JSON.stringify(q.headers).includes(text));
+
+  it('ntfy: moving a channel to another server without its topic is refused, and the stored topic and token never reach it', async () => {
+    await configured();
+    const before = JSON.stringify(n.view());
+    // The attack: the same channel id, the attacker's server, no topic (the stored one would be kept) and no token.
+    const moved = kept().map((d) => (d.kind === 'ntfy' ? { ...d, ntfy: { server: attacker.url } } : d));
+    const r = await n.update({ guardianName: 'Home vault', smtp: smtpIn(smtp.port, null), destinations: moved }, { recoveryRunning: false });
+    expect(r).toMatchObject({ ok: false, code: 'invalid', message: expect.stringMatching(/changed the server\. Enter the topic again/) });
+    expect(JSON.stringify(n.view())).toBe(before);
+    await flush();
+    await n.test({ destination: n.view().destinations.find((d) => d.kind === 'ntfy')!.id });
+    expect(attacker.requests).toHaveLength(0);
+  });
+
+  it('ntfy: a new server with a new topic drops the old token; the removal notice goes to the old server only', async () => {
+    await configured();
+    const moved = kept().map((d) => (d.kind === 'ntfy' ? { ...d, ntfy: { server: attacker.url, topic: 'attacker-chosen-topic' } } : d));
+    const r = await n.update({ guardianName: 'Home vault', smtp: smtpIn(smtp.port, null), destinations: moved }, { recoveryRunning: false });
+    expect(r).toMatchObject({ ok: true, changed: true });
+    expect(n.view().destinations.find((d) => d.kind === 'ntfy')!.ntfy).toEqual({ server: attacker.url, topicHint: expect.any(String), tokenSet: false });
+    await flush();
+    await n.enqueue(started());
+    await flush();
+    // The new server got its own topic only, and never the old topic or token.
+    expect(attacker.requests.length).toBeGreaterThan(0);
+    for (const q of attacker.requests) {
+      expect(JSON.parse(q.body).topic).toBe('attacker-chosen-topic');
+      expect(q.headers.authorization).toBeUndefined();
+    }
+    expect(seen(attacker.requests, 'owner-topic-x7f3k2')).toBe(false);
+    expect(seen(attacker.requests, 'tk_owner')).toBe(false);
+    // The old server was told, with the old topic and token, that it no longer gets alerts.
+    const notice = http.requests.find((q) => q.path === '/' && JSON.parse(q.body).topic === 'owner-topic-x7f3k2');
+    expect(notice && JSON.parse(notice.body).message).toMatch(/will no longer get alerts/);
+    expect(notice!.headers.authorization).toBe('Bearer tk_owner');
+    expect(http.requests.filter((q) => q.path === '/' && JSON.parse(q.body).message.includes('OWNER TEXT'))).toHaveLength(0);
+  });
+
+  it('ntfy: on the same server the topic and token are kept as before', async () => {
+    await configured();
+    expect(await n.update({ guardianName: 'Home vault', smtp: smtpIn(smtp.port, null), destinations: kept() }, { recoveryRunning: false })).toEqual({ ok: true, changed: false });
+    expect(n.view().destinations.find((d) => d.kind === 'ntfy')!.ntfy!.tokenSet).toBe(true);
+  });
+
+  it('webhook: a new URL never gets the old signing secret', async () => {
+    await configured();
+    const moved = kept().map((d) => (d.kind === 'webhook' ? { ...d, webhook: { url: `${attacker.url}/hook` } } : d));
+    const r = await n.update({ guardianName: 'Home vault', smtp: smtpIn(smtp.port, null), destinations: moved }, { recoveryRunning: false });
+    expect(r).toMatchObject({ ok: true, changed: true });
+    expect(n.view().destinations.find((d) => d.kind === 'webhook')!.webhook).toEqual({ origin: attacker.url, secretSet: false });
+    await flush();
+    await n.enqueue(started());
+    await flush();
+    expect(attacker.requests.length).toBeGreaterThan(0);
+    for (const q of attacker.requests) expect(q.headers['x-trikey-signature']).toBeUndefined();
+    // The old receiver's removal notice is still signed with its own secret, at its own URL.
+    const notice = http.requests.find((q) => q.path === '/api/webhook/trikey-secret-id');
+    expect(notice && JSON.parse(notice.body).message).toMatch(/will no longer get alerts/);
+    expect(notice!.headers['x-trikey-signature']).toMatch(/^sha256=/);
+    // The same receiver at another path of the same origin is a new address too.
+    const repath = kept().map((d) => (d.kind === 'webhook' ? { ...d, webhook: { url: `${attacker.url}/other`, secret: 'a-new-secret-for-the-hook' } } : d));
+    expect(await n.update({ guardianName: 'Home vault', smtp: smtpIn(smtp.port, null), destinations: repath }, { recoveryRunning: false })).toMatchObject({ ok: true });
+    expect(n.view().destinations.find((d) => d.kind === 'webhook')!.webhook!.secretSet).toBe(true);
+  });
+
+  it('email: a new server, port, encryption, user name or pin needs the app password again; it never reaches another server', async () => {
+    await configured();
+    const before = JSON.stringify(n.view());
+    const fp = selfSignedCert().fingerprint256;
+    for (const s of [
+      { ...smtpIn(attackerSmtp.port, null) },
+      { ...smtpIn(smtp.port, null), host: 'localhost' },
+      { ...smtpIn(smtp.port, null), security: 'tls' },
+      { ...smtpIn(smtp.port, null), username: 'other@example.com' },
+      { ...smtpIn(smtp.port, null), pin: fp },
+    ]) {
+      const r = await n.update({ guardianName: 'Home vault', smtp: s, destinations: kept() }, { recoveryRunning: false });
+      expect(r, JSON.stringify(s)).toMatchObject({ ok: false, code: 'invalid', message: expect.stringMatching(/Enter the app password again/) });
+    }
+    expect(JSON.stringify(n.view())).toBe(before);
+    // "Send a test message" for the account goes to the server the password was saved for.
+    expect(await n.test({ smtp: true })).toMatchObject({ ok: true });
+    expect(attackerSmtp.logins).toBe(0);
+
+    // A pin set with the password, then removed without it: refused as well.
+    smtp.pass = 'renewed app password';
+    // (The local test server's certificate is not the pin; only the settings are checked here.)
+    expect(await n.update({ guardianName: 'Home vault', smtp: { ...smtpIn(smtp.port, 'renewed app password'), pin: fp }, destinations: kept() }, { recoveryRunning: false })).toMatchObject({ ok: true });
+    expect(await n.update({ guardianName: 'Home vault', smtp: { ...smtpIn(smtp.port, null), pin: null }, destinations: kept() }, { recoveryRunning: false })).toMatchObject({
+      ok: false,
+      message: expect.stringMatching(/pinned certificate\. Enter the app password again/),
+    });
+    // The same pin again, or a new From address, keeps the password.
+    expect(await n.update({ guardianName: 'Home vault', smtp: { ...smtpIn(smtp.port, null), pin: fp }, destinations: kept() }, { recoveryRunning: false })).toEqual({ ok: true, changed: false });
+    expect(await n.update({ guardianName: 'Home vault', smtp: { ...smtpIn(smtp.port, null), pin: fp, from: 'alerts@example.com' }, destinations: kept() }, { recoveryRunning: false })).toMatchObject({
+      ok: true,
+      changes: ['email account changed: From address'],
+    });
   });
 });
 

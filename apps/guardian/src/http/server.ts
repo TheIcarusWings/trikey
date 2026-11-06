@@ -17,6 +17,10 @@
  *   cross-site form or a simple fetch cannot send one without a CORS preflight,
  *   which this server never grants) and must come from this origin, judged by
  *   `Sec-Fetch-Site` when the browser sends it, else by `Origin` vs `Host`;
+ *   one with neither header (not a browser) only from the guardian's own
+ *   container or the platform's login proxy (`headerlessClient`), so a request
+ *   forged from another app on the box (a server-side request forgery there,
+ *   which rarely sets headers) changes nothing;
  * - small JSON bodies only, never logged;
  * - static files from the built web UI, with `index.html` for client routes.
  */
@@ -27,6 +31,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { extname, join, normalize, sep } from 'node:path';
 import { errorText, type Logger } from '../log.js';
 import { SESSION_COOKIE, parseCookies, type WebSessions } from './sessions.js';
+import { isLoopback } from './trusted-proxy.js';
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
@@ -37,6 +42,8 @@ export interface RouteContext {
   body: unknown;
   /** The request's web session (always `authenticated` when the server has no `sessions`). */
   session: { authenticated: boolean; token?: string; secure: boolean };
+  /** The socket's remote address (never a forwarded header): who connected to the guardian. */
+  remoteAddress?: string;
 }
 
 export interface RouteResult {
@@ -78,15 +85,17 @@ const STATE_CHANGING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  * browsers, curl), an `Origin` header must name this host (as the client sees
  * it: `Host`, or `X-Forwarded-Host` behind a proxy; scripts cannot set either
  * cross-origin without a preflight). Requests with neither come from
- * non-browser clients, which cannot be driven by another site.
+ * non-browser clients, which cannot be driven by another site: `headerless`
+ * says so, and the server then accepts them only from `headerlessClient`
+ * (every browser sends `Origin` on a POST, PUT or DELETE).
  */
-export function checkOrigin(headers: IncomingMessage['headers']): { ok: true } | { ok: false; reason: string } {
+export function checkOrigin(headers: IncomingMessage['headers']): { ok: true; headerless?: true } | { ok: false; reason: string } {
   const site = headers['sec-fetch-site'];
   if (typeof site === 'string') {
     return site === 'same-origin' ? { ok: true } : { ok: false, reason: `cross-site request (Sec-Fetch-Site: ${site})` };
   }
   const origin = headers['origin'];
-  if (origin === undefined) return { ok: true };
+  if (origin === undefined) return { ok: true, headerless: true };
   if (typeof origin !== 'string' || origin === 'null') return { ok: false, reason: 'opaque origin' };
   let host: string;
   try {
@@ -228,6 +237,12 @@ export interface HttpServerOptions {
   sessions?: WebSessions;
   /** Clock for session expiry (ms). Default `Date.now`. */
   now?: () => number;
+  /**
+   * Who may send a state-changing request without `Origin` or `Sec-Fetch-Site` (not a browser): by the socket's
+   * remote address. Default: loopback only (a process in the guardian's own container: a health check, `docker exec`).
+   * The guardian adds the platform's login proxy (trusted-proxy.ts). Everyone else must send `Origin`, as browsers do.
+   */
+  headerlessClient?: (remote: string | undefined) => boolean | Promise<boolean>;
 }
 
 /** Whether the request reached us over HTTPS (directly, or as the proxy says). */
@@ -325,9 +340,12 @@ export function createHttpHandler(opts: HttpServerOptions): (req: IncomingMessag
     const open = typeof route.public === 'function' ? route.public() : route.public === true;
     if (!authenticated && !open) throw new HttpError(401, 'unauthenticated', 'Sign in with the unlock passphrase first.');
     let body: unknown;
+    const remoteAddress = req.socket.remoteAddress;
     if (STATE_CHANGING.has(req.method ?? '')) {
       const origin = checkOrigin(req.headers);
       if (!origin.ok) throw new HttpError(403, 'forbidden', `Rejected: ${origin.reason}.`);
+      if (origin.headerless && !(await (opts.headerlessClient ?? isLoopback)(remoteAddress)))
+        throw new HttpError(403, 'forbidden', 'Rejected: a request that changes something must come from the web page (it has neither an Origin nor a Sec-Fetch-Site header). Scripts: send Origin with the address you open the page at.');
       if (!isJsonContentType(req.headers['content-type'])) throw new HttpError(415, 'invalid', 'Send a JSON body (Content-Type: application/json).');
       const text = await readBody(req);
       try {
@@ -345,7 +363,7 @@ export function createHttpHandler(opts: HttpServerOptions): (req: IncomingMessag
     } catch {
       throw new HttpError(400, 'invalid', 'Bad path.');
     }
-    const out = await route.handler({ params, query, body, session: { authenticated, ...(token ? { token } : {}), secure } });
+    const out = await route.handler({ params, query, body, session: { authenticated, ...(token ? { token } : {}), secure }, ...(remoteAddress ? { remoteAddress } : {}) });
     for (const [name, value] of Object.entries(out.headers ?? {})) res.setHeader(name, value);
     sendJson(res, out.status, out.body);
   }

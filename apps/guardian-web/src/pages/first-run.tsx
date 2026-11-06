@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label';
 import { useApi, usePageTitle } from '@/hooks/use-api';
 import { MIN_PASSPHRASE, PASSPHRASE_HINT, newPassphraseErrors } from '@/lib/passphrase';
 import { passwordRules } from '@/lib/password-manager';
-import { SETUP_CODE_HELP, STAY_ON_NOTE, chainCheckCopy, setupCodeFormatError } from '@/lib/setup';
+import { STAY_ON_NOTE, chainCheckCopy, setupCodeFormatError, setupCodeHelp } from '@/lib/setup';
 import { cn } from '@/lib/utils';
 
 function ChainCheck({ preflight }: { preflight: SetupPreflight }) {
@@ -39,8 +39,8 @@ function ChainCheck({ preflight }: { preflight: SetupPreflight }) {
   );
 }
 
-/** Plain Docker: no platform login guards this page, so the owner first proves they can read the guardian's log. */
-function SetupCodeStep({ onDone, initialError }: { onDone: (code: string) => void; initialError?: string }) {
+/** No platform login guards this request (plain Docker, or another way in on Umbrel and Start9): the owner first proves they can read the setup code. */
+function SetupCodeStep({ onDone, initialError, platform }: { onDone: (code: string) => void; initialError?: string; platform: SetupPreflight['platform'] }) {
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | undefined>(initialError);
   const [busy, setBusy] = useState(false);
@@ -64,7 +64,7 @@ function SetupCodeStep({ onDone, initialError }: { onDone: (code: string) => voi
     <AuthCard>
       <AuthHeader title="Set up your guardian" />
       <form onSubmit={onSubmit} noValidate className="flex flex-col gap-5">
-        <p className="m-0 text-sm leading-5 text-muted-foreground">{SETUP_CODE_HELP}</p>
+        <p className="m-0 text-sm leading-5 text-muted-foreground">{setupCodeHelp(platform)}</p>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="g-code">Setup code</Label>
           <Input
@@ -121,6 +121,7 @@ export function FirstRunPage() {
   if (preflight.setupCodeRequired && setupCode === undefined)
     return (
       <SetupCodeStep
+        platform={preflight.platform}
         initialError={codeError}
         onDone={(c) => {
           setCodeError(undefined);

@@ -14,12 +14,27 @@ that image; `compose/` runs it with Docker Compose.
 - `start9/`: the StartOS package (TypeScript SDK 3.1). It has its own `package.json`, and is not
   one of the monorepo's npm workspaces (`packages/*`, `apps/*`), so a root `npm install` does not touch it.
 
-Both platforms put their authenticating proxy in front of the guardian (Umbrel's `app_proxy`; on
-Start9 a basic-auth gate, see `start9/README.md`), and the packages say so with `TRIKEY_PLATFORM`
-(`umbrel`, `start9`). The guardian's own login is the unlock passphrase (web sessions); before
-setup there is none, so without `TRIKEY_PLATFORM` (plain Docker, `compose/`) first-run setup asks
-for a one-time setup code that the guardian prints in its log. A new platform package must set
-`TRIKEY_PLATFORM` only if its own login guards the page. Never publish the port to the internet.
+Both platforms put their authenticating proxy in front of the guardian (Umbrel's app gateway; on
+Start9 a basic-auth gate, see `start9/README.md`), and the packages say which platform with
+`TRIKEY_PLATFORM` (`umbrel`, `start9`). The guardian's own login is the unlock passphrase (web
+sessions); before setup there is none, and the platform's login guards only its own path: other
+apps' containers on the box reach the port directly. So on every platform first-run setup asks for
+a one-time setup code (DESIGN.md, "First run without a platform login"), except from the platform's
+login proxy where the guardian can recognise it (`TRIKEY_TRUSTED_PROXY`, Umbrel):
+
+| Platform | Setup code | Where the owner finds it |
+|---|---|---|
+| Umbrel | not asked through Umbrel's login (`TRIKEY_TRUSTED_PROXY=gateway,...`) | the app's logs (Settings > Troubleshoot), if ever asked |
+| Start9 | always (`TRIKEY_SETUP_CODE`, drawn at install) | Actions > Show Setup Code, and next to the web password |
+| plain Docker | always, new at every start | `docker compose logs guardian \| grep setup.code` |
+
+A new platform package sets `TRIKEY_TRUSTED_PROXY` only to an address that nothing but its own
+login proxy can connect from. Never publish the port to the internet.
+
+Bitcoin Core's RPC: Umbrel and Start9 give the guardian a full RPC user (Umbrel's `umbrel`, Start9's
+cookie), so keep no funds in the node's own wallet there. Where the owner sets the credentials (plain
+Docker), a restricted `rpcauth` user with `rpcwhitelist` is the better choice; DESIGN.md, "The node's
+RPC credential", lists the calls to allow.
 
 ## Build the image locally
 

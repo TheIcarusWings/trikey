@@ -437,7 +437,7 @@ export class Notifier {
         } catch (e) {
           throw new SettingsError((e as Error).message);
         }
-        smtpIn = r.smtp === null || r.smtp === undefined ? null : checkSmtp(r.smtp, !!draft.smtp);
+        smtpIn = r.smtp === null || r.smtp === undefined ? null : checkSmtp(r.smtp, draft.smtp);
         if (!Array.isArray(r.destinations)) throw new SettingsError('destinations must be a list.');
         if (r.destinations.length > MAX_DESTINATIONS) throw new SettingsError(`Use at most ${MAX_DESTINATIONS} channels.`);
         const byId = new Map(draft.destinations.map((d) => [d.id, d]));
@@ -475,22 +475,40 @@ export class Notifier {
         const stored: StoredDestination = { id, audience: d.audience, kind: d.kind, ...(d.contact ? { contact: d.contact } : {}), createdAt: old?.createdAt ?? now };
         if (d.kind === 'email') stored.email = d.email;
         if (d.kind === 'telegram' && d.telegram) stored.telegram = { chatId: d.telegram.chatId, name: d.telegram.name };
+        // A stored secret is kept only for the address it was saved for: the topic and token of an ntfy server, the
+        // signing secret of a webhook URL (security review 2026-11, finding 1). settings.ts asks for the topic again
+        // when the server changes and drops the token; this holds the line here too.
         if (d.kind === 'ntfy' && d.ntfy) {
-          const topic = d.ntfy.topic !== undefined ? await this.sealOrKeep(`${id}.topic`, d.ntfy.topic, old?.ntfy?.topic) : old!.ntfy!.topic;
+          const sameServer = !!old?.ntfy && old.ntfy.server === d.ntfy.server;
+          if (d.ntfy.topic === undefined && !sameServer) throw new Error('ntfy topic kept for another server');
+          const topic = d.ntfy.topic !== undefined ? await this.sealOrKeep(`${id}.topic`, d.ntfy.topic, sameServer ? old?.ntfy?.topic : undefined) : old!.ntfy!.topic;
           const hint = d.ntfy.topic !== undefined ? topicHint(d.ntfy.topic) : old!.ntfy!.hint;
-          const token = d.ntfy.token === null ? undefined : d.ntfy.token !== undefined ? await this.sealOrKeep(`${id}.token`, d.ntfy.token, old?.ntfy?.token) : old?.ntfy?.token;
+          const token =
+            d.ntfy.token === null ? undefined : d.ntfy.token !== undefined ? await this.sealOrKeep(`${id}.token`, d.ntfy.token, sameServer ? old?.ntfy?.token : undefined) : sameServer ? old?.ntfy?.token : undefined;
           stored.ntfy = { server: d.ntfy.server, topic, hint, ...(token ? { token } : {}) };
         }
         if (d.kind === 'webhook' && d.webhook) {
           const url = d.webhook.url !== undefined ? await this.sealOrKeep(`${id}.url`, d.webhook.url, old?.webhook?.url) : old!.webhook!.url;
+          // sealOrKeep hands back the stored seal for the same URL: anything else is a new address, which never gets
+          // the old secret (it would sign for, and so offer a guessing oracle to, a receiver it was not made for).
+          const sameUrl = !!old?.webhook && url === old.webhook.url;
           const origin = d.webhook.origin ?? old!.webhook!.origin;
-          const secret = d.webhook.secret === null ? undefined : d.webhook.secret !== undefined ? await this.sealOrKeep(`${id}.secret`, d.webhook.secret, old?.webhook?.secret) : old?.webhook?.secret;
+          const secret =
+            d.webhook.secret === null
+              ? undefined
+              : d.webhook.secret !== undefined
+                ? await this.sealOrKeep(`${id}.secret`, d.webhook.secret, sameUrl ? old?.webhook?.secret : undefined)
+                : sameUrl
+                  ? old?.webhook?.secret
+                  : undefined;
           stored.webhook = { url, origin, ...(secret ? { secret } : {}) };
         }
         next.push(stored);
       }
       let smtp: StoredSmtp | undefined;
       if (smtpIn) {
+        // checkSmtp asked for the password again if the server, port, encryption, user name or pin changed: a stored
+        // one is only kept for the account it was typed for (security review 2026-11, finding 2).
         const password = smtpIn.password !== undefined ? await this.sealOrKeep('smtp.password', smtpIn.password, draft.smtp?.password) : draft.smtp!.password;
         // The pin: absent keeps the stored one; the same certificate again (by fingerprint) keeps the stored one too,
         // unless the certificate itself now comes with it.

@@ -18,10 +18,15 @@ directly): every endpoint but the reduced `GET /api/status` and first-run setup
 needs a session, which only the unlock passphrase opens (`POST /api/session`;
 `apps/guardian-web/API.md`).
 
-On plain Docker (`TRIKEY_PLATFORM=docker`, the default) there is no platform login in
-front of the first-run screen, so setup also needs the one-time setup code the guardian
-prints in its log at every start (`src/http/setup-code.ts`). `packaging/compose/` publishes
-the port on `127.0.0.1` by default. A DNS-rebinding page reaches only what a signed-out
+Until it is set up, setup also needs a one-time setup code on every platform
+(`src/http/setup-code.ts`; security review 2026-11, finding 3), because the platform's login
+guards only its own path and other containers on the box reach the port directly: the code
+is printed in the log (new at every start), or handed in by the platform
+(`TRIKEY_SETUP_CODE`, Start9's Show Setup Code action). Requests from the platform's login
+proxy (`TRIKEY_TRUSTED_PROXY`, by the socket's address: `src/http/trusted-proxy.ts`) need
+none, so on Umbrel the owner does not see it. A request that changes something without
+`Origin` or `Sec-Fetch-Site` is accepted only from the guardian's own container or that
+proxy. `packaging/compose/` publishes the port on `127.0.0.1` by default. A DNS-rebinding page reaches only what a signed-out
 client does: its origin is not the guardian's, so it gets no session cookie.
 
 Network use: outbound `wss://` to the nostr relays chosen at setup (and alert
@@ -45,10 +50,12 @@ node --import tsx apps/guardian/src/main.ts
 | `ELECTRUM_TLS_CERT_SHA256` | none | With TLS: accept exactly the certificate with this SHA-256 fingerprint (64 hex digits, colons allowed), for self-signed certificates. Compared before anything is sent. |
 | `ELECTRUM_ALLOW_PUBLIC_PLAINTEXT` | `0` | `1` allows plain TCP to an address on the internet |
 | `CHAIN_SOURCE` | `electrum` | `electrum` (the Electrum server of `ELECTRUM_*`), `core` (Bitcoin Core alone through a watch-only wallet, `BITCOIN_RPC_*`; `BITCOIN_CORE_WALLET`, default `trikey-guardian`) or `public` (`PUBLIC_ELECTRUM_SERVER`: a listed id or `host:port`, default the network's first; `PUBLIC_ELECTRUM_CERT_SHA256`). The first choice: the web UI's Settings > Server overrides it (`chain-source.json`). `src/chain/source.ts` |
-| `BITCOIN_RPC_ALLOW_PUBLIC` | `0` | `1` allows plain RPC to an address on the internet (Bitcoin Core's RPC has no TLS) |
-| `TRIKEY_PLATFORM` | `docker` | `umbrel` or `start9`: the platform's login guards the web UI. `docker`: first-run setup needs the setup code from the log. The Umbrel and Start9 packages set theirs. |
+| `BITCOIN_RPC_ALLOW_PUBLIC` | `0` | `1` allows plain RPC to an address on the internet (Bitcoin Core's RPC has no TLS). Either way a host name is resolved at every call, every address it resolves to is checked (never link-local), the request goes to the checked address, and redirects are refused (`src/chain/bitcoind.ts`) |
+| `TRIKEY_PLATFORM` | `docker` | `umbrel`, `start9` or `docker`: which platform (the words of the first-run screen). On every one, first-run setup needs the setup code, except from `TRIKEY_TRUSTED_PROXY`. The Umbrel and Start9 packages set theirs. |
+| `TRIKEY_TRUSTED_PROXY` | none | The platform's login proxy, which needs no setup code and may send header-less requests: comma-separated `gateway` (the container's default gateway, where umbrelOS 2's app gateway connects from), host names (resolved at every request, trusted only while they name one address) and IP addresses. The Umbrel package sets it; set it only to an address nothing else can connect from. |
+| `TRIKEY_SETUP_CODE` | none | The setup code to ask for (16 Crockford base32 characters), instead of a new one at every start. The Start9 package sets it and shows it in an action. |
 | `TRIKEY_RELAYS` | built-in list | Optional: the relays the first-run screen offers, comma-separated, 1 to 8 |
-| `BITCOIN_RPC_HOST`, `_PORT`, `_USER`, `_PASS` | none | Optional: sync progress, a broadcast fallback, and the silent payment scanner (`getblock <hash> 3`; without them `sp.*` answers `1700`) |
+| `BITCOIN_RPC_HOST`, `_PORT`, `_USER`, `_PASS` | none | Optional: sync progress, a broadcast fallback, and the silent payment scanner (`getblock <hash> 3`; without them `sp.*` answers `1700`). Prefer a restricted `rpcauth` user with `rpcwhitelist`: the calls it needs are `RPC_METHODS` (and `RPC_METHODS_CORE_ALONE` for Bitcoin Core alone) in `src/chain/bitcoind.ts`, and DESIGN.md "The node's RPC credential" has the lines to copy |
 | `BITCOIN_NETWORK` | `bitcoin` | `bitcoin`, `testnet`, `signet`, `regtest`; also `mainnet`, `main`, `testnet3`, `testnet4`, `test` |
 | `TRIKEY_LOG_LEVEL` | `info` | `debug` for more |
 | `TRIKEY_EXTRA_ENTROPY` | none | Optional: 32 bytes as 64 hex characters, mixed into every new setup seed with the OS draw and the browser's entropy (`trikey/guardian-seed/v1`, DESIGN.md "Entropy"). The Umbrel package sets it to the app's `APP_SEED`. Any other non-empty value is hashed to 32 bytes (SHA-256); it never stops the guardian from starting. Never logged; removed from the process environment once read. |

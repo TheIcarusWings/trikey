@@ -106,6 +106,13 @@ the container with the new settings; the data stays).
 | `PUBLIC_ELECTRUM_SERVER`, `PUBLIC_ELECTRUM_CERT_SHA256` | With `CHAIN_SOURCE=public`: a listed server's id or `host:port` of another public one (empty: the first listed for your network), and its certificate pin if it is self-signed. |
 | `BITCOIN_RPC_HOST`, `_PORT`, `_USER`, `_PASS` | All four or none: your Bitcoin Core's RPC. Needed for `CHAIN_SOURCE=core`. Otherwise optional: the guardian then shows sync progress, broadcasts through the node when the Electrum server fails, and scans for silent payments. |
 | `BITCOIN_RPC_ALLOW_PUBLIC` | `1` allows plain RPC to an address on the internet. Not advised. |
+
+**Give the guardian its own, restricted RPC user**, not your node's main one: a user that can make only the calls the
+guardian makes, so a guardian taken over cannot use a wallet in your node. Make it with Bitcoin Core's
+`share/rpcauth/rpcauth.py trikey` (it prints the `rpcauth=` line and the password for `BITCOIN_RPC_PASS`) and add to
+`bitcoin.conf` the `rpcauth=` line and the `rpcwhitelist=trikey:...` and `rpcwhitelistdefault=0` lines from DESIGN.md,
+"The node's RPC credential" (a shorter list with an Electrum server, a longer one for Bitcoin Core alone). Either way,
+keep no funds in your node's own wallet.
 | `BITCOIN_CORE_WALLET` | With `CHAIN_SOURCE=core`: the watch-only wallet's name in Bitcoin Core (default `trikey-guardian`). |
 | `TRIKEY_UI_BIND` | `127.0.0.1` (default): only this computer opens the web UI. See [another computer](#opening-the-web-ui-from-another-computer). |
 | `TRIKEY_UI_PORT` | The web UI's port on this computer, default 3000. |
@@ -170,9 +177,9 @@ the new value in `.env` and run `docker compose up -d`.
 
 ## The setup code
 
-On Umbrel and Start9 the platform's login stands in front of the guardian's page, so only you see its first screen.
-On plain Docker nothing does: anyone who reaches the port before you (another user of this computer, a device on your
-network if you exposed it) could press "Set up" and become the owner of key 3 and its passphrase.
+Before it is set up, the guardian has no passphrase yet. On plain Docker nothing stands in front of its page: anyone
+who reaches the port before you (another user of this computer, another container, a device on your network if you
+exposed it) could press "Set up" and become the owner of key 3 and its passphrase.
 
 So, until it is set up, the guardian asks for a **one-time setup code** that it prints in its own log when it starts,
 as Jupyter does with its token. Reading the container's log takes the Docker access that only you have.
@@ -183,6 +190,9 @@ as Jupyter does with its token. Reading the container's log takes the Docker acc
   one from the log.
 - 10 wrong codes in a minute and the guardian waits a minute before it takes the next one.
 - Once the guardian is set up, the code is gone: the unlock passphrase is the login from then on.
+- Scripting the API with `curl`: send `-H "Origin: http://localhost:3000"` (the address you open the page at) with every
+  `POST`, `PUT` or `DELETE`, as a browser does. Without `Origin` (or `Sec-Fetch-Site`), only a process inside the
+  guardian's own container may change anything.
 
 ## Step by step
 
