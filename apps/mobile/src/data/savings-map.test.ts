@@ -150,7 +150,9 @@ describe('Savings wallet map: the page', () => {
     const tainted = { ...data, mnemonic: PHONE_MNEMONIC, xprv: s.phoneXprv, masterXprv: s.phoneMasterXprv, recoveryCode: RECOVERY_CODE, seed: mnemonicToSeedSync(PHONE_MNEMONIC) } as SavingsMapData;
     const page = renderSavingsMap(tainted, { date: DATE }).html;
     for (const secret of [PHONE_MNEMONIC, s.phoneXprv, s.phoneMasterXprv, RECOVERY_CODE, 'abandon abandon', 'TRK1-']) expect(page).not.toContain(secret);
-    expect(page).not.toMatch(/[xtuvyzUVYZ]prv/);
+    // An extended private key as a whole base58 word (xprv, tprv, zprv…), not those four letters by chance inside a
+    // random xpub, address or checksum (about one run in two thousand with random keys).
+    expect(page).not.toMatch(/(^|[^1-9A-HJ-NP-Za-km-z])[xtuvyzUVYZ]prv[1-9A-HJ-NP-Za-km-z]{100,}/);
     expect(page).toBe(html);
   });
 

@@ -116,7 +116,9 @@ describe('Savings in the app', { timeout: 120_000 }, () => {
     expect(map.firstAddress).toMatch(/^bcrt1q/);
     expect(map.html).toContain(map.firstAddress);
     expect(map.html).toContain('Trikey Savings — wallet map');
-    expect(map.html).not.toMatch(/[xtuvyzUVYZ]prv/);
+    // An extended private key as a whole base58 word (xprv, tprv, zprv…), not those four letters by chance inside a
+    // random xpub, address or checksum (about one run in two thousand with random keys).
+    expect(map.html).not.toMatch(/(^|[^1-9A-HJ-NP-Za-km-z])[xtuvyzUVYZ]prv[1-9A-HJ-NP-Za-km-z]{100,}/);
   });
 
   it('"Add to Savings" is an ordinary payment within the daily limit; Savings shows it', async () => {
