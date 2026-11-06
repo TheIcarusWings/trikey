@@ -58,7 +58,8 @@ status device_abi "$(sh_ getprop ro.product.cpu.abi)"
 status device_sdk "$(sh_ getprop ro.build.version.sdk)"
 status maestro_version "$(maestro --version 2>/dev/null | tail -n 1)"
 
-# The flow names the app by app.json's package; a build with another one (TRIKEY_ANDROID_PACKAGE) gets a copy with its own.
+# The flow names the app by app.json's package; a build with another one (the FOSS app, app.trikey.wallet.foss, or a
+# fork's TRIKEY_ANDROID_PACKAGE) gets a copy with its own.
 flow_dir="${WALK_OUT}/flow"
 mkdir -p "${flow_dir}"
 flow="${flow_dir}/$(basename "${FLOW}")"

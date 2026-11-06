@@ -1,6 +1,8 @@
 # Zapstore listing (https://zapstore.dev), read by zsp. Zapstore picks up each GitHub release by itself once the
 # maintainer has linked the APK signing certificate to Trikey's publisher npub (run `zsp` once; see
 # docs/zapstore.md). No key or secret belongs in this file or in this repository.
+# This is the standard app's listing (Trikey, app.trikey.wallet). The app without Google code (Trikey FOSS,
+# app.trikey.wallet.foss) is a separate app with its own listing: packaging/zapstore/foss/zapstore.yaml.
 repository: https://github.com/TheIcarusWings/trikey
 release_source: https://github.com/TheIcarusWings/trikey
 pubkey: npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9

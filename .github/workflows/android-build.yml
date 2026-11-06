@@ -8,12 +8,12 @@ name: Android APK build
 # - android-launch.yml (pull requests) calls it for x86_64, the emulator's ABI, and opens the APK in an
 #   Android emulator to check it starts.
 #
-# Two variants (`variant`, TRIKEY_ANDROID_VARIANT; apps/mobile/android-variant.js explains them), the same app with
-# the same package name and signature, so either installs over the other and the wallet stays:
+# Two variants (`variant`, TRIKEY_ANDROID_VARIANT; apps/mobile/android-variant.js explains them), two apps with the same
+# code and signature but their own application id, launcher label and URL scheme, so both can be installed on one phone:
 #
-# - `standard`: trikey-alpha-<version>.apk. Has Google's libraries: Google Sign-In for Google Drive backup (off until
+# - `standard`: app.trikey.wallet ("Trikey"), trikey-alpha-<version>.apk. Has Google's libraries: Google Sign-In for Google Drive backup (off until
 #   EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID is set), ML Kit for reading QR codes, the Play services passkey provider.
-# - `foss`: trikey-alpha-foss-<version>.apk, no Google code. QR codes are read by zxing-cpp (open source); there is
+# - `foss`: app.trikey.wallet.foss ("Trikey FOSS"), trikey-alpha-foss-<version>.apk, no Google code. QR codes are read by zxing-cpp (open source); there is
 #   no Google Drive. A check fails the build if any Google Play services, Firebase, ML Kit or data transport class,
 #   or ML Kit's libbarhopper, is in the APK (apps/mobile/scripts/apk-google-scan.mts); for the standard APK the same
 #   check only reports what is there.
@@ -86,7 +86,7 @@ on:
         description: 'File name of the signed APK in the artifact, without .apk'
         value: ${{ jobs.apk.outputs.apk-name }}
       application-id:
-        description: 'The Android application id (android.package in the Expo config)'
+        description: "The Android application id (android.package in the Expo config). It differs per variant: a matrix caller gets only one job's, so the artifact also holds it, in application-id-<variant>.txt."
         value: ${{ jobs.apk.outputs.application-id }}
 
 permissions:
@@ -135,9 +135,10 @@ jobs:
 
       - run: npm ci
 
-      # The application id the build will have: android.package from app.json, as app.config.ts resolves it
-      # (TRIKEY_ANDROID_PACKAGE overrides it for a fork). The APK is checked against it below, and the launch
-      # check starts the app by it.
+      # The application id the build will have: android.package from app.json, as app.config.ts resolves it for this
+      # variant (app.trikey.wallet, or app.trikey.wallet.foss for foss; TRIKEY_ANDROID_PACKAGE overrides the first for a
+      # fork). The APK is checked against it below, and the launch check starts the app by it
+      # (application-id-<variant>.txt in the artifact).
       - name: Read the application id from the Expo config
         id: config
         working-directory: apps/mobile
@@ -145,6 +146,10 @@ jobs:
           set -euo pipefail
           id="$(npx expo config --type public --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const p=JSON.parse(s).android?.package;if(!p)process.exit(1);process.stdout.write(p)})')"
           [[ "${id}" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] || { echo "::error::Unexpected android.package: ${id}"; exit 1; }
+          case "${TRIKEY_ANDROID_VARIANT}" in
+            foss) [[ "${id}" == *.foss ]] || { echo "::error::The foss build's application id must end in .foss, not ${id}"; exit 1; } ;;
+            *) [[ "${id}" != *.foss ]] || { echo "::error::The standard build has the foss application id ${id}"; exit 1; } ;;
+          esac
           echo "Application id: ${id}"
           echo "application-id=${id}" >> "${GITHUB_OUTPUT}"
 
@@ -271,6 +276,8 @@ jobs:
           done
 
           (cd dist && sha256sum "${name}.apk" > "${name}.apk.sha256")
+          # For the launch check, which runs once per variant and cannot tell the two jobs' outputs apart.
+          printf '%s\n' "${APPLICATION_ID}" > "dist/application-id-${TRIKEY_ANDROID_VARIANT}.txt"
           echo "name=${name}" >> "${GITHUB_OUTPUT}"
           echo "sha256=$(cut -d' ' -f1 "dist/${name}.apk.sha256")" >> "${GITHUB_OUTPUT}"
           echo "size=$(stat -c %s "dist/${name}.apk")" >> "${GITHUB_OUTPUT}"
@@ -337,18 +344,25 @@ jobs:
 
           ${signing_note}
 
-          **Which APK?** There are two builds of the same app. They have the same name, package and signature, so you can
-          switch at any time by installing the other one over the app; the wallet stays.
+          **Which APK?** There are two builds of the same code, as two apps: each updates itself, and both can be on one
+          phone, each with its own wallet.
 
-          - \`${standard_name}.apk\`: the **standard** build. It contains Google's libraries: QR codes are read with
-            Google's ML Kit, and Google Drive backup can be switched on in a later release (it needs Google Play services
-            on the phone).
-          - \`${foss_name}.apk\`: **no Google code**, for phones without Google Play services (GrapheneOS, /e/OS,
-            LineageOS) or if you prefer an app without it. QR codes are read with the open source zxing-cpp. It will never
-            offer Google Drive backup: the backup is the recovery code plus the backup file, which you can still save to
-            Google Drive or anywhere else from the share sheet. Settings, About says "Trikey (no Google)".
+          - \`${standard_name}.apk\`: the **standard** build, "Trikey" (app.trikey.wallet). It contains Google's
+            libraries: QR codes are read with Google's ML Kit, and Google Drive backup can be switched on in a later release
+            (it needs Google Play services on the phone).
+          - \`${foss_name}.apk\`: **no Google code**, "Trikey FOSS" (app.trikey.wallet.foss), for phones without Google
+            Play services (GrapheneOS, /e/OS, LineageOS) or if you prefer an app without it. QR codes are read with the
+            open source zxing-cpp. It will never offer Google Drive backup: the backup is the recovery code plus the backup
+            file, which you can still save to Google Drive or anywhere else from the share sheet. Settings, About says
+            "Trikey (no Google)".
 
           Today both do the same: Google Drive backup is not switched on in either yet. Not sure? Take the standard one.
+
+          **Had the no-Google APK of 0.1.20-alpha or earlier?** It had the standard app's id, so this FOSS APK cannot
+          update it: it installs as a second app, next to the old one, and starts empty. Your wallet is still in the old
+          app. In Trikey FOSS, tap "I already have a Trikey wallet", then "My phone, but I have its backup", and open your
+          backup file with your recovery code. Uninstall the old app once the wallet shows in the new one. (Or install
+          the standard APK over the old app: it updates in place and keeps the wallet, with Google's libraries.)
 
           - Pre-alpha, open source, not audited. Test networks only (signet, testnet4). Never put real bitcoin in it.
           - Install: download the APK on the phone, open it, and allow installing from this source when Android asks.
@@ -382,5 +396,6 @@ jobs:
             dist/*.apk
             dist/*.apk.sha256
             dist/release-notes-*.md
+            dist/application-id-*.txt
           if-no-files-found: error
           retention-days: 30

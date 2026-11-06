@@ -6,9 +6,12 @@
 // - app/build.gradle: a check that the build runs with the same TRIKEY_ANDROID_VARIANT as the prebuild (linking, the
 //   JavaScript bundle and the app config are each worked out again during the build, from the environment), and for
 //   the FOSS build the Maven modules it leaves out.
+// - res/values/strings.xml: the launcher label (`app_name`), "Trikey FOSS" for the FOSS app, so the two apps can be told
+//   apart when both are installed (android-variant.js, ANDROID_APP_SUFFIXES). Its application id and URL scheme are set
+//   in app.config.ts, where Expo's own plugins write them.
 //
 // The text changes are plain functions, exported for the tests.
-const { withAppBuildGradle, withSettingsGradle } = require('expo/config-plugins');
+const { AndroidConfig, withAppBuildGradle, withSettingsGradle, withStringsXml } = require('expo/config-plugins');
 const { FOSS_EXCLUDED_MAVEN_MODULES, UNLINKED_EXPO_MODULES } = require('../android-variant');
 
 const BEGIN = '// @generated begin trikey-android-variant - written by plugins/with-android-variant.js, do not edit';
@@ -65,9 +68,15 @@ function appBuildGradleForVariant(contents, variant) {
   return clean + '\n' + lines.join('\n');
 }
 
-/** @type {import('expo/config-plugins').ConfigPlugin<{ variant: 'standard' | 'foss' }>} */
-const withAndroidVariant = (config, { variant }) => {
+/** strings.xml (parsed) with `app_name`, the launcher label, set to `label`. */
+function stringsXmlWithLabel(xml, label) {
+  return AndroidConfig.Strings.setStringItem([AndroidConfig.Resources.buildResourceItem({ name: 'app_name', value: label })], xml);
+}
+
+/** @type {import('expo/config-plugins').ConfigPlugin<{ variant: 'standard' | 'foss'; label?: string }>} */
+const withAndroidVariant = (config, { variant, label }) => {
   if (variant !== 'standard' && variant !== 'foss') throw new Error(`with-android-variant: unknown variant ${variant}`);
+  if (label !== undefined && (typeof label !== 'string' || !label.trim())) throw new Error('with-android-variant: label must be a name');
   config = withSettingsGradle(config, (c) => {
     c.modResults.contents = settingsGradleForVariant(c.modResults.contents, variant);
     return c;
@@ -77,9 +86,17 @@ const withAndroidVariant = (config, { variant }) => {
     c.modResults.contents = appBuildGradleForVariant(c.modResults.contents, variant);
     return c;
   });
+  if (label) {
+    // After Expo's own `app_name` (from the config's `name`, which is also the iOS name): this mod runs later.
+    config = withStringsXml(config, (c) => {
+      c.modResults = stringsXmlWithLabel(c.modResults, label);
+      return c;
+    });
+  }
   return config;
 };
 
 module.exports = withAndroidVariant;
 module.exports.settingsGradleForVariant = settingsGradleForVariant;
 module.exports.appBuildGradleForVariant = appBuildGradleForVariant;
+module.exports.stringsXmlWithLabel = stringsXmlWithLabel;

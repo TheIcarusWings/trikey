@@ -1,0 +1,37 @@
+# Zapstore listing of Trikey FOSS (app.trikey.wallet.foss), the Android app without Google code. Read by zsp, like the
+# standard app's listing in the repository root's zapstore.yaml. Zapstore lists apps by application id, so the two apps
+# are two listings with one publisher npub and one APK signing certificate. zsp's wizard reads ./zapstore.yaml, so run it
+# from this folder (`cd packaging/zapstore/foss && zsp`), or publish with `zsp publish packaging/zapstore/foss/zapstore.yaml`.
+# Relative paths are read from this folder. See docs/zapstore.md. No key or secret belongs in this file or in this
+# repository.
+repository: https://github.com/TheIcarusWings/trikey
+release_source: https://github.com/TheIcarusWings/trikey
+# The FOSS APK only (trikey-alpha-foss-v<version>.apk), never its .sha256 or the standard APK.
+match: '^trikey-alpha-foss-v[0-9][^/]*\.apk$'
+# Every release is a GitHub pre-release while Trikey is pre-alpha; publish them on the main channel.
+prerelease_channel: main
+# APKs up to 0.1.20-alpha had the standard app's id (app.trikey.wallet): only 0.1.21 and later are this app.
+release_filter: '^v(0\.1\.(2[1-9]|[3-9][0-9])|0\.([2-9]|[1-9][0-9])\.[0-9]+|[1-9][0-9]*\.[0-9]+\.[0-9]+)(-alpha)?$'
+
+name: Trikey FOSS
+summary: Trikey without Google code. A 2-of-3 bitcoin wallet where every key is yours. Pre-alpha, open source, not audited.
+description: |
+  Trikey FOSS is Trikey built without any Google code, for phones without Google Play services (GrapheneOS, /e/OS,
+  LineageOS) and for anyone who prefers it. QR codes are read with the open source zxing-cpp; the backup is a recovery
+  code plus a backup file, never Google Drive. It is a separate app from the standard Trikey, with its own wallet.
+
+  Trikey is a 2-of-3 bitcoin wallet: your hardware wallet (Ledger or Trezor), this phone, and the Trikey Guardian
+  on your own Umbrel. Everyday payments need only the phone, under a daily limit the guardian enforces. Bigger
+  payments and rule changes need your hardware wallet. Lose the phone and a Delay & Notify recovery gets your money
+  back while your alert contacts are told over nostr.
+
+  Used the no-Google Trikey of 0.1.20 or earlier? It was the same app as the standard Trikey; this one starts empty.
+  Restore your wallet here from your backup file and recovery code ("I already have a Trikey wallet").
+
+  **Pre-alpha, open source, not audited.** Use test networks, or on mainnet only an amount you can afford to lose.
+license: MIT
+website: https://trikey.app
+tags: [bitcoin, wallet, multisig, nostr, foss]
+icon: ../../../apps/mobile/assets/icon.png
+release_notes: ../../../CHANGELOG.md
+metadata_sources: [github]

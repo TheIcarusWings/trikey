@@ -34,12 +34,14 @@ tags:
 
 # A loaded CI emulator can show Android's own "Pixel Launcher isn't responding" over the app, and the walk then sees
 # nothing of Trikey (on PR #65, even after the relaunch). Close such a dialog when it is about another app; one that
-# says Trikey isn't responding is the app's own failure and stays. (android-walk.sh also asks the emulator to hide them.)
+# says Trikey (or Trikey FOSS, the launcher label of the build without Google code) isn't responding is the app's own
+# failure and stays. (android-walk.sh also asks the emulator to hide them.) The appId below is the standard app's;
+# android-walk.sh puts the id of the APK under test in its place (app.trikey.wallet.foss for the FOSS app).
 - runFlow:
     label: Close another app's "isn't responding" dialog
     when:
       visible: '.* isn.t responding'
-      notVisible: 'Trikey isn.t responding'
+      notVisible: 'Trikey( FOSS)? isn.t responding'
     commands:
       - tapOn:
           id: 'android:id/aerr_close'
@@ -62,7 +64,7 @@ tags:
           label: Close another app's "isn't responding" dialog again
           when:
             visible: '.* isn.t responding'
-            notVisible: 'Trikey isn.t responding'
+            notVisible: 'Trikey( FOSS)? isn.t responding'
           commands:
             - tapOn:
                 id: 'android:id/aerr_close'

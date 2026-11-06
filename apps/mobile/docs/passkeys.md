@@ -73,7 +73,9 @@ Serve this at `https://<RP ID>/.well-known/assetlinks.json` with `Content-Type: 
 ]
 ```
 
-- `package_name` is the Android package (`TRIKEY_ANDROID_PACKAGE`, or `android.package` in `app.json`).
+- `package_name` is the Android package (`TRIKEY_ANDROID_PACKAGE`, or `android.package` in `app.json`). The Android
+  build without Google code (`TRIKEY_ANDROID_VARIANT=foss`) is a separate app, `<package>.foss`: give it a statement of
+  its own, the same as this one with that `package_name`, so its passkeys work too.
 - `sha256_cert_fingerprints` is the SHA-256 of the key that **signs the build the user installs**.
   List every one you use:
   - the debug keystore, for development builds (`keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android`);

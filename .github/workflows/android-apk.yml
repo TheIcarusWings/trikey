@@ -1,11 +1,11 @@
 name: Android test APK
 
 # Builds the installable Android APKs of apps/mobile for alpha testers: no Play Store, no Google or
-# Apple account. Runs on a manual dispatch and on release tags (v*), never on every push. Two APKs, the same
-# app: the standard build and the one without Google code (trikey-alpha-<tag>.apk and trikey-alpha-foss-<tag>.apk;
-# android-build.yml's header says what differs). A tag's APKs are both signed with the project's release key (the
-# ANDROID_RELEASE_KEYSTORE secrets, docs/android-signing.md), so releases update each other and a phone can move
-# from one build to the other; a manual run gets a one-off key per APK.
+# Apple account. Runs on a manual dispatch and on release tags (v*), never on every push. Two APKs, two apps from the
+# same code: the standard build (app.trikey.wallet, trikey-alpha-<tag>.apk) and the one without Google code
+# (app.trikey.wallet.foss, trikey-alpha-foss-<tag>.apk); android-build.yml's header says what differs. A tag's APKs are
+# both signed with the project's release key (the ANDROID_RELEASE_KEYSTORE secrets, docs/android-signing.md), so each
+# release updates the same app of the previous one; a manual run gets a one-off key per APK.
 # The test plan that goes with it is docs/alpha-test-plan.md.
 #
 # The build itself (release build, Hermes bundle, signing, the checks on the APK) is in

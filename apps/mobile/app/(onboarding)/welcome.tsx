@@ -1,22 +1,28 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
 import { Logo } from '@/components/icons';
 import { ModeSwitcher } from '@/components/mode-switcher';
 import { NetworkPicker, mainnetBlocked } from '@/components/network-picker';
-import { Pill } from '@/components/panels';
+import { Notice, Pill } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import { useWallet } from '@/data';
+import { ANDROID_VARIANT } from '@/lib/android-variant';
+import { fossMigrationNote } from '@/lib/foss-migration';
 import { pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
+
+// The FOSS Android app only: how to bring a wallet over from the earlier build without Google (src/lib/foss-migration.ts).
+const MIGRATION = fossMigrationNote(Platform.OS, ANDROID_VARIANT);
 
 export default function Welcome() {
   const router = useRouter();
   const state = useWallet();
   const { backing } = state;
   const [showMode, setShowMode] = useState(false);
+  const [showMigration, setShowMigration] = useState(false);
   const picks = backing === 'real' || backing === 'demo';
   const mainnet = picks && state.network === 'bitcoin';
   // On mainnet, nothing goes on until the person has accepted the warning under the picker.
@@ -36,7 +42,7 @@ export default function Welcome() {
     <Screen
       bare
       // The mainnet warning makes the footer tall: on a small phone the logo scrolls under it.
-      scrollable={mainnet}
+      scrollable={mainnet || showMigration}
       footer={
         <>
           {/* Honest from the first screen: what kind of build this is. */}
@@ -78,6 +84,24 @@ export default function Welcome() {
         <Text className={cn('text-muted-foreground text-center', pick('max-w-[300px] text-[17px] leading-6', 'max-w-[320px] text-base leading-6'))}>
           A bitcoin wallet where all three keys are yours. No company holds one.
         </Text>
+        {MIGRATION ? (
+          <>
+            <Text
+              role="link"
+              testID="welcome-foss-migration"
+              onPress={() => setShowMigration((v) => !v)}
+              className="text-muted-foreground text-center text-[13px] leading-[18px] underline underline-offset-[3px]">
+              {MIGRATION.link}
+            </Text>
+            {showMigration ? (
+              <View className="self-stretch">
+                <Notice title={MIGRATION.title} tone="outline">
+                  {MIGRATION.body}
+                </Notice>
+              </View>
+            ) : null}
+          </>
+        ) : null}
       </View>
     </Screen>
   );

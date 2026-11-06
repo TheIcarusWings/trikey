@@ -227,17 +227,34 @@ Where it comes from: every release on [GitHub's Releases page](https://github.co
 `trikey-alpha-v<version>.apk` and its `.apk.sha256`, built by the **Android test APK** workflow
 (`.github/workflows/android-apk.yml`). Take the newest pre-release.
 
-**Which APK.** From 0.1.9-alpha a release has two APKs of the same app; pick one:
+**Which APK.** From 0.1.9-alpha a release has two APKs; from 0.1.21-alpha they are two apps (each with its own wallet),
+pick one or install both:
 
-- `trikey-alpha-v<version>.apk`, the **standard** build: it contains Google's libraries (ML Kit reads the QR codes, and
+- `trikey-alpha-v<version>.apk`, the **standard** build, **Trikey** on the home screen: it contains Google's libraries (ML Kit reads the QR codes, and
   Google Drive backup can be switched on in a later release; that needs Google Play services on the phone).
-- `trikey-alpha-foss-v<version>.apk`, **no Google code**: for a phone without Google Play services (GrapheneOS, /e/OS,
+- `trikey-alpha-foss-v<version>.apk`, **no Google code**, **Trikey FOSS** on the home screen: for a phone without Google Play services (GrapheneOS, /e/OS,
   LineageOS) or if you prefer it. The open source zxing-cpp reads the QR codes. It never offers Google Drive backup: the
   backup is the recovery code plus the backup file, which you can still put in Google Drive or anywhere else yourself from
   the share sheet. Settings → About shows "Trikey (no Google)".
 
-Both have the same package and signature: installing one over the other switches builds and keeps the wallet. Today they do
-the same, because Google Drive backup is not switched on yet; the difference to test is the QR scanning. If you have the
+Both are signed with the same key, but they have their own application id (`app.trikey.wallet` and
+`app.trikey.wallet.foss`): they sit side by side, and installing one never touches the other's wallet. Today they do
+the same, because Google Drive backup is not switched on yet; the difference to test is the QR scanning.
+
+**Had the no-Google APK of 0.1.20-alpha or earlier?** It had the standard app's id, so the new FOSS APK installs as a
+second app next to it, empty, and your wallet stays in the old one. Restore it in Trikey FOSS ("I already have a Trikey
+wallet", "My phone, but I have its backup", backup file and recovery code), check it is there, then uninstall the old app.
+Or install the standard APK over the old app, which keeps the wallet. The steps are in
+[docs/android-signing.md](android-signing.md), "Moving from the no-Google APK". Please test it and report:
+
+1. With the old no-Google build (0.1.20-alpha or earlier) holding a wallet, install the new FOSS APK. It appears as a
+   second app, **Trikey FOSS**; the old one (**Trikey**) still opens with its wallet.
+2. Trikey FOSS opens on Welcome with "Used Trikey without Google before?"; tapping it explains the move.
+3. Restore the backup in Trikey FOSS. It shows the same wallet and balance; a payment from it works.
+4. Uninstall the old app; Trikey FOSS still works. Settings → About says "Trikey (no Google)", and Check for updates
+   offers the FOSS APK.
+5. Both apps on one phone (the standard one and Trikey FOSS, each with its own wallet): a Trezor through Trezor Suite Lite
+   answers to the app that asked, with no "Open with" question (the FOSS app's links are `trikey-foss://`). If you have the
 build without Google code, scan every kind of code the plan asks for (pairing code, contact, address, an animated QR from
 your hardware wallet, the Recovery Kit) and note in the report that you used `foss`. Before a release is made, every pull request that touches
 the app already builds it and opens it in an Android emulator (and in the iOS Simulator), so a build that crashes at start
@@ -246,8 +263,8 @@ does not reach a release. A local build is in `apps/mobile/README.md`, "Android"
 What kind of build it is:
 
 - A **release build** with the app's code inside it. Nothing needs to run on a computer, and it starts in **Real** mode.
-- From 0.1.7-alpha, signed with the **Trikey release key**: a newer release installs over the older one and the wallet on the
-  phone stays. To get updates without downloading by hand, use Obtainium ([docs/android-signing.md](android-signing.md)).
+- From 0.1.7-alpha, signed with the **Trikey release key**: a newer release installs over the older one of the same app
+  and the wallet on the phone stays. To get updates without downloading by hand, use Obtainium ([docs/android-signing.md](android-signing.md)).
   Builds up to 0.1.6-alpha had a one-off key each: to move from one of those, **uninstall it first, which deletes the wallet
   on that phone**. Back up first.
 - No passkeys and no Google Drive or iCloud backup in this build. The backup is a recovery code plus a backup file.
