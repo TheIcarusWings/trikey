@@ -6,6 +6,32 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## 0.1.18-alpha (2026-11-06)
+
+More hardware wallets for guardian wallets: Coldcard over NFC, and Passport (2nd generation) and Krux from a microSD
+card. Update the guardian, then the app; each works with the other side's older version.
+
+- **Coldcard Mk4, and Coldcard Q without QR codes.** Pick "Coldcard by NFC" and hold your phone to the Coldcard: it
+  shares its key, keeps your 2-of-3 wallet, signs payments, and signs Trikey's short texts for your guardian, notes and
+  unlock. Turn on NFC Sharing in the Coldcard's settings first. On Android, NFC is optional (phones without it still
+  install Trikey, and the app says when NFC is off); on iPhone it needs a build made with a paid Apple developer
+  account, which the current test builds don't have, and the app says so. Not yet tried on a real Coldcard: please
+  test (alpha test plan, step 18g) (#154).
+- **Passport (2nd generation) and Krux can set up a guardian wallet.** They sign Trikey's short texts from their
+  microSD card: the phone gives you a small file to copy to the card, you check the text on the device and sign it, and
+  you bring the signed file back (Krux can also show the signature as a QR code). The phone checks the signature before
+  using it. This covers pairing, approving rule changes, recovery access and notes on the guardian; unlocking the
+  guardian isn't offered for them (a card round trip after every restart), so the passphrase works as before. Not yet
+  tried on these devices: please test (step 18f) (#153).
+- **SeedSigner co-signs payments only.** It can't sign Trikey's texts with the key your guardian checks, and the only
+  workaround would make you approve without seeing the text. Use it in Recovery Key mode or as a payment co-signer
+  (#153).
+- **Telegram: what comes next.** After you save a Telegram bot on the guardian's page, it says that the bot sends
+  nothing yet and how to add a Telegram channel for you or a contact, until you have one (#152).
+- **Support the project.** Settings > Support the project in the app, and a Support section in the guardian page's
+  Settings, show the project's one public donation address, what donations pay for, and a plain warning: you get
+  nothing in return, so give only what you'd be fine never seeing again (#137).
+
 ## 0.1.17-alpha (2026-11-06)
 
 Unlock the guardian with your hardware wallet, sealed unlocks, and QR hardware wallets for guardian wallets. Update the
