@@ -10,7 +10,7 @@ export function hardwareOptionTable(os: UiOs): Omit<HardwareOption, 'available'>
   return [
     { kind: 'ledger', name: 'Ledger', detail: 'Nano X, Stax, Flex · Bluetooth' },
     { kind: 'trezor', name: 'Trezor', detail: os === 'android' ? 'USB-C, or Bluetooth on Safe 7' : 'Safe 7 · Bluetooth' },
-    ...(os === 'android' ? [{ kind: 'bitbox02' as const, name: 'BitBox02', detail: 'USB-C' }] : []),
+    { kind: 'bitbox02', name: 'BitBox02', detail: os === 'android' ? 'USB-C, or Bluetooth on the Nova' : 'BitBox02 Nova · Bluetooth' },
     { kind: 'jade-ble', name: 'Jade by Bluetooth', detail: 'Jade or Jade Plus · Bluetooth' },
     { kind: 'coldcard-nfc', name: 'Coldcard by NFC', detail: 'Mk4 or Q · tap the phone on it' },
     { kind: 'qr', name: 'Scan a QR code', detail: QR_DETAIL },

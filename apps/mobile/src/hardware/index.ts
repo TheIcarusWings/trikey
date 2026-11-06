@@ -1,13 +1,13 @@
 /**
  * Hardware wallet adapters for the Trikey app: implementations of `HardwareProvider` and `HardwareSigner` from
- * `@trikey/wallet` for Ledger (Bluetooth), Trezor (Trezor Suite Lite), a Jade over Bluetooth, a Coldcard over NFC and
- * air-gapped devices (QR: UR and BBQr).
+ * `@trikey/wallet` for Ledger (Bluetooth), Trezor (Trezor Suite Lite), a BitBox02 (USB-C, or a Nova over Bluetooth), a
+ * Jade over Bluetooth, a Coldcard over NFC and air-gapped devices (QR: UR and BBQr).
  *
  *   const providers = createHardwareProviders({ network: 'testnet' });
  *   const signer = await providers[0].connect({ kind: 'ledger' });
  *
- * The QR providers need `QrBridgeHost`, the NFC provider `NfcBridgeHost` and the Jade provider `JadeBleBridgeHost` (all from
- * `./ui`), mounted once in the app.
+ * The QR providers need `QrBridgeHost`, the NFC provider `NfcBridgeHost`, the BitBox02 provider `BitBox02BridgeHost` and
+ * the Jade provider `JadeBleBridgeHost` (all from `./ui`), mounted once in the app.
  */
 import { Platform } from 'react-native';
 import type { HardwareProvider } from '@trikey/wallet';
@@ -25,6 +25,11 @@ export { LedgerBleProvider } from './ledger/provider';
 export { TrezorProvider } from './trezor/provider';
 export { QrProvider } from './qr/provider';
 export { NfcProvider } from './nfc/provider';
+export { BitBox02Provider } from './bitbox02/provider';
+export { BitBoxBridge, type BitBoxBridgeScreen } from './bitbox02/bridge';
+export { defaultBitBoxBridge } from './bitbox02/default';
+export { deserializePairing, memoryPairingStore, serializePairing, type BitBoxPairingStore } from './bitbox02/session';
+export type { BitBoxLink, BitBoxDevice, BitBoxConnection } from './bitbox02/link';
 export { JadeBleProvider, PIN_SERVER_NOTICE } from './jade/provider';
 export { JadeBleBridge, memoryNoticeStore, type JadeBridgeScreen, type JadeNoticeStore } from './jade/bridge';
 export { defaultJadeBleBridge } from './jade/default';

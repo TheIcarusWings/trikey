@@ -422,7 +422,7 @@ class Service implements RkWalletService {
       case 'trezor':
         return { kind: 'trezor', brand: 'Trezor', model: model ? `Trezor ${model}` : 'Trezor' };
       case 'bitbox02':
-        return { kind: 'bitbox02', brand: 'BitBox02', model: 'BitBox02' };
+        return { kind: 'bitbox02', brand: 'BitBox02', model: model || 'BitBox02' };
       case 'coldcard':
         return { kind: 'qr', brand: 'Coldcard', model: model || 'Coldcard' };
       case 'coldcard-nfc':

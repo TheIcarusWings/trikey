@@ -61,6 +61,9 @@ Hardware (key 1) ───┘   outbound only           └── alerts: nostr 
   - a Jade or Jade Plus over Bluetooth (its own RPC over `react-native-ble-plx`, the library the Ledger transport already
     uses): unlocked with its PIN through its PIN server, then like a Ledger ("Jade over Bluetooth" below);
   - Trezor via `@trezor/connect`;
+  - a BitBox02 or BitBox02 Nova (its own protocol, written in the app): over USB-C on Android (the app's own small
+    USB module, Android's USB API only) or, for the Nova, over Bluetooth on both phones (`react-native-ble-plx`)
+    ("BitBox02 over USB-C and Bluetooth" below);
   - air-gapped devices via PSBT QR (UR/BBQr), and message signing over a text QR for the models that can
     (see "Hardware wallets by feature" below);
   - a Coldcard Mk4 or Q over NFC (`react-native-nfc-manager`): the Coldcard plays an NFC tag, and the phone writes NDEF
@@ -94,6 +97,12 @@ tap of the phone on the Coldcard. Read from Coldcard's firmware (`shared/nfc.py`
 (docs/alpha-test-plan.md, "Coldcard over NFC"). iPhone builds have NFC only when built with `TRIKEY_IOS_NFC=1`, which
 needs a paid Apple developer account (the NFC Tag Reading capability); Android builds always have it.
 
+A BitBox02 does all of it too (kind `bitbox02`, `packages/wallet/src/bitbox02.ts`; "BitBox02 over USB-C and Bluetooth"
+below): over USB-C on Android (the BitBox02 and the Nova) or Bluetooth (the Nova, Android and iPhone), after the owner
+unlocks it with its password and, the first time, confirms on it the pairing code the phone shows. Firmware 9.27.1 or
+later. Read from the BitBox02's firmware and official clients, **not tested on a device yet** (docs/alpha-test-plan.md,
+step 18i).
+
 A Jade or Jade Plus over Bluetooth does all of it too (kind `jade-ble`, `packages/wallet/src/ble-devices.ts`;
 "Jade over Bluetooth" below): `register_multisig`, `sign_psbt` and `sign_message` over Jade's own RPC, after the owner
 unlocks it with the PIN on the Jade. Read from Jade's firmware and client, **not tested on a device yet**
@@ -115,10 +124,10 @@ unlocks it with the PIN on the Jade. Read from Jade's firmware and client, **not
 | Other QR device | Yes | No (unknown): pick the model in Settings | No | No | Recovery Key mode |
 | Coldcard Mk4, Coldcard Q (NFC) | Yes | Yes | Yes | Yes | The Coldcard Q's limits; one tap to send each request and one to read the answer; NFC Sharing on in the Coldcard's settings; iPhone builds need `TRIKEY_IOS_NFC=1` |
 | Coldcard Mk4 (QR) | No: no camera (use NFC) | No | No | No | |
-| BitBox02 | No provider yet | | | | |
+| BitBox02, BitBox02 Nova (USB-C on Android; the Nova by Bluetooth on both) | Yes | Yes | Yes | Yes | Firmware 9.27.1 or later; shows "External service key", the key's own `bc1q…` address, then the text (in full up to 640 characters); the pairing code once per phone; notes and an unlock slot made with a BitBox02 open only with a BitBox02 (its signature is not other brands') |
 
 A model that cannot sign a text is refused with its reason (`QrSigner.signMessage`), and the connect screen says so
-before a guardian wallet is started, offering Recovery Key mode. Not built: USB for Jade, BIP 322 proofs, BitBox02.
+before a guardian wallet is started, offering Recovery Key mode. Not built: USB for Jade, BIP 322 proofs.
 
 **SeedSigner co-signs payments only (decided 2026-11-06).** Its firmware refuses a message at any `m/48'` path
 ("Not implemented" in `parse_derivation_path`, and custom paths are "not supported"), so it cannot sign Trikey's texts
@@ -191,6 +200,44 @@ docs/design/hardware-auth-path.md §9.
   the key derived from the Jade's account xpub before it is used.
 - **The wallet is registered** (`register_multisig`, the 2-of-3 `sortedmulti` with each key's origin): Jade signs
   without it, but only with it does it recognise the change as change instead of showing it as a payment.
+
+### BitBox02 over USB-C and Bluetooth (built 2026-11-06, untested on devices)
+
+The phone speaks the BitBox02's own protocol (firmware github.com/BitBoxSwiss/bitbox02-firmware at b27f5f68 and its
+official clients; step by step with file and line references in docs/design/hardware-auth-path.md §10): 64-byte U2F HID
+reports, a request layer that waits while the owner decides on the device, a Noise_XX encrypted channel, and protocol
+buffers. Trikey implements the part it needs in TypeScript (`apps/mobile/src/hardware/bitbox02`) because BitBox's
+clients do not fit a React Native app: the Rust one's WebAssembly build is gone (and Hermes runs no WebAssembly), the
+TypeScript one talks only to WebHID or the BitBoxBridge and brings other majors of the crypto libraries, and there are
+no Android or iOS bindings. The tests replay the real implementations' vectors (Noise transcript, pairing code,
+anti-klepto, the firmware's own message signatures) and a fake BitBox02 written from the firmware.
+
+- **Two ways in.** USB-C on Android, for the BitBox02 and the Nova, through the app's own Expo module
+  (`modules/trikey-usb-hid`: Android's `android.hardware.usb`, no Google code, so the build without Google has it;
+  Android asks the owner to allow the device the first time). Bluetooth for the Nova, on Android and iPhone, through
+  `react-native-ble-plx` like the Jade (the phone and the Nova bond the first time: the same six digits on both). An
+  iPhone has no USB HID, so the original BitBox02 cannot reach one.
+- **Pairing.** The BitBox02 asks for its password on its own screen. The first time a phone and a BitBox02 meet, the
+  phone shows a pairing code (four groups of five characters from the encrypted channel's handshake) and the BitBox02
+  shows the same; the owner confirms it on the BitBox02. A different code means something between them changes the
+  connection: reject it. The phone keeps its channel key and the BitBox02's in its app storage, so later connections ask
+  only for the password.
+- **Payments with anti-klepto (decided).** For every input the phone sends a commitment to a random number, the BitBox02
+  commits to its signature nonce, then the phone sends the number and checks the signature used both. A BitBox02 with
+  malicious firmware therefore cannot leak key 1 through its nonces, which no other adapter in Trikey can check. Then
+  each signature is verified against the transaction, and every input must be signed. The change is the wallet's own
+  (the wallet is registered), so the BitBox02 does not show it as a payment.
+- **Trikey's texts: anti-klepto, except notes and hardware unlock.** Pairing, approvals, recovery access and the other
+  texts use anti-klepto too. Notes and hardware unlock need the same signature every time, so for those two the phone
+  sends no commitment: the firmware then signs with a fixed contribution of zeros, deterministic but **not plain RFC
+  6979**. The app still signs them twice and compares. Consequence: a notes copy or an unlock slot made with a BitBox02
+  opens only with a BitBox02 that has the same seed, and one made with a Ledger, Trezor, Coldcard or Jade does not open
+  with a BitBox02. After restoring the seed on another brand, turn notes on again and set up the hardware unlock again
+  (the phone says so when it asks the BitBox02 for those two).
+- **What the owner sees for a text:** "Sign message", "External service key", an address starting with `bc1q` (the key's
+  own single-key address, not the wallet's: the device always shows one), then the text, which it shows in full up to
+  640 characters (Trikey's are at most 240). Firmware 9.27.1 (2026-08-31) or later: older firmware refuses a key under
+  `m/48'`, and the phone refuses the device with "update it with the BitBoxApp".
 
 ### Trikey Guardian (Docker container)
 - **Packaging:** one image, shipped as an Umbrel app (`umbrel-app.yml`, depending on `bitcoin` + `electrs`), a Start9 service package, and a Docker Compose file for plain Docker (`packaging/compose`), with an optional node profile.
@@ -457,6 +504,11 @@ printed and kept with the hardware wallet.
   over their old address, a changed email account through the old one) and to the phone, and nothing can be removed
   while a recovery runs. They could already reset the guardian; the nostr alerts and controls stay as they were.
 - **The phone itself.** The Security tab shows a calm note when the phone has no screen lock (Android KeyguardManager.isDeviceSecure, iOS deviceOwnerAuthentication, via expo-local-authentication), an Android security patch older than 6 months (`Build.VERSION.SECURITY_PATCH`, `modules/trikey-phone-safety`; iOS has no robust way to tell a supported version, so it is skipped there) or an emulator or simulator (expo-device): read on the phone, never sent to the guardian, any server or analytics.
+- **A BitBox02** ("BitBox02 over USB-C and Bluetooth"). Its payments and most texts use anti-klepto, checked by the phone,
+  so malicious BitBox02 firmware cannot leak key 1 through those signatures' nonces. Notes and hardware unlock cannot
+  (they need the same signature every time): there, as with every other brand, the firmware is trusted. The phone's
+  pairing with a BitBox02 (its channel key) sits in the app's storage: someone who copies it can skip only the pairing
+  code with that BitBox02, never its password or an approval on it.
 - **A Jade over Bluetooth and its PIN server** ("Jade over Bluetooth"). Unlocking it sends an encrypted exchange from the phone to the PIN server the Jade names (Blockstream's by default): that server learns the phone's IP address, when this Jade unlocks and failed PIN counts, never the PIN, keys or wallet. It cannot unlock the Jade without the PIN, and a server that is down or refuses only keeps the Jade locked (the passphrase and the other keys are unaffected; QR mode works without Trikey contacting it). The phone uses only https addresses the Jade gives and calls nothing on the Jade but `pin` with the answer. Payments over Bluetooth do not use Jade's anti-exfil (its PSBT path has none), so a Jade with malicious firmware could in theory leak key 1 through its signature nonces: alone that moves nothing, with a stolen phone it would.
 - **Malicious relays** can drop messages but can't read or forge them. A relay change from the web UI (a security event in the activity log) can at worst move the phone to relays that drop everything; the old relays stay watched until the owner stops them and the phone moves only to relays the guardian answered it over.
 - **Contested recovery** (a thief cancels a genuine recovery): phone-only spending stays paused, so the thief can't drain either. Same as Bitkey.

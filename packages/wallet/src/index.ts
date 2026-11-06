@@ -3,6 +3,7 @@ export * from './platform.js';
 export * from './qr-devices.js';
 export * from './nfc-devices.js';
 export * from './ble-devices.js';
+export * from './bitbox02.js';
 export * from './errors.js';
 export * from './chain.js';
 export * from './send.js';

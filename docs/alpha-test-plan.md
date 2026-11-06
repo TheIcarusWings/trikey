@@ -1188,6 +1188,55 @@ Do:
 If it goes wrong, collect: Jade model and firmware version (Jade: Device › Info), the phone model and OS version, the
 step, what the Jade showed (a photo, never your recovery phrase or PIN) and the phone's exact message.
 
+### 18i. A BitBox02 over USB-C or Bluetooth (optional; untested on hardware: BitBox02, BitBox02 Nova)
+
+**Nothing in this step has been tried on a real BitBox02 or phone yet.** The protocol was read from the BitBox02's
+firmware and its official clients (github.com/BitBoxSwiss/bitbox02-firmware at b27f5f68, bitbox-api-rs, bitbox-api-ts,
+BitBoxApp; docs/design/hardware-auth-path.md §10). The BitBox02 is a full key 1, like a Ledger: it registers the wallet,
+co-signs payments and signs Trikey's texts (pairing, approvals, recovery access, notes, hardware unlock). Use a test
+network; either edition (Multi or Bitcoin-only) signs on the test networks.
+
+Before you start: firmware **9.27.1 or later** (update it with the BitBoxApp; older firmware cannot sign Trikey's texts and
+the phone says so); the BitBox02 set up (a wallet created or restored, backed up) with the BitBoxApp first. Two ways in:
+
+- **USB-C, Android only** (BitBox02 and Nova): plug it into the phone (a USB-C to USB-C cable, or the BitBox02 directly).
+- **Bluetooth, the BitBox02 Nova only, Android and iPhone.** BitBoxApp's own Android app uses USB only, so a Nova over
+  Bluetooth on Android is untested by anyone: report what happens.
+
+Do:
+
+1. **Connect.** "Create a wallet", **Continue**, **BitBox02**. USB: Android asks whether Trikey may use the BitBox02:
+   **Allow** (the system's dialog). Bluetooth: Android asks for "Nearby devices", iOS for Bluetooth; the first time the
+   phone's system pairing dialog and the Nova both show a six-digit code: check they are the same and confirm on both.
+   Expected: "Looking for your BitBox02", "Connecting to BitBox02" (or the Nova's Bluetooth name).
+2. **Unlock.** "Unlock your BitBox02": enter the password on the BitBox02.
+3. **The pairing code** (once per phone and BitBox02). The phone shows **Check the pairing code**: four groups of five
+   letters and digits on two lines. The BitBox02 shows "Pairing code" with the same. If they are the same, confirm on the
+   BitBox02. Expected: "BitBox02 connected" (or "BitBox02 Nova"). Try rejecting it once on the BitBox02: the phone must
+   stop and say the pairing was rejected. Later connections must not ask again (unplug and plug in: password only).
+4. **Pair** (steps 2 to 4). "Confirm on your device" with the text. The BitBox02 shows **Sign message**, "Coin: BTC Testnet"
+   (or Bitcoin) and **External service key**, then an **Address** starting with `tb1q` (`bc1q` on mainnet): that is this
+   key's own single-key address, expected, not the wallet's. Then the text, one screen; check it is the phone's word for
+   word and confirm (long touch). Then the wallet to register: the name (`Trikey`), **2-of-3**, and the three keys (shown
+   as xpub/tpub): approve. Then the first address: **the same as the phone's**. Confirm.
+5. **A payment** over the daily limit (step 7): the BitBox02 shows the recipient and amount and the fee; check that the
+   **change is not shown** (the wallet is registered). Approve. With many coins (step 18b) it reads every coin's previous
+   transaction: check it still works and how long it takes.
+6. **The same signature twice.** Turn on notes (18c) and hardware unlock (18d): two rounds, the same text twice. These two
+   sign **without anti-klepto** (on purpose, see DESIGN.md "BitBox02"): if the app says the device "gave two different
+   signatures", report it with the firmware version.
+7. **Unlock the guardian** with it (18d step 2): one connection, the password, one confirmation.
+8. **Wrong things on purpose.** Reject a payment and a text on the BitBox02: "You rejected the request on the device."
+   Unplug it (or turn the Nova off) in the middle of a signature: "The BitBox02 disconnected". Cancel on the "Unlock" sheet:
+   the phone stops. A BitBox02 on firmware older than 9.27.1 (if you have one): the phone refuses it with the update
+   advice.
+9. **The build without Google** (Android, `foss` APK): steps 1 to 5 over USB must work the same (the USB module uses only
+   Android's own USB API).
+
+If it goes wrong, collect: BitBox02 model (BitBox02 or Nova, Multi or Bitcoin-only) and firmware version (BitBoxApp ›
+Device settings), USB or Bluetooth, the phone model and OS version, the step, what the BitBox02 showed (a photo, never
+your recovery words or password) and the phone's exact message.
+
 ---
 
 ### 18i. Change the guardian's passphrase (optional; a guardian and an app with this release)
@@ -1286,7 +1335,7 @@ If a device refuses it, say exactly what it showed: the fallback is a synthetic 
   you skip that step. Recovery Key mode stays on test networks only.
 - **Out of this round:** Recovery Key mode ("No home server?"), passkeys, iCloud and Google Drive backup (the backup
   is a recovery code plus a backup file), QR-based devices (Coldcard Q, Keystone, Passport, Jade, Krux, SeedSigner; steps 18e, 18f and 18g
-  are optional and untested on any device), a Jade over Bluetooth (step 18h, optional and untested), BitBox02, the silent payments and Start9. Family hosting is new and has its own optional step ("Host a family member" below).
+  are optional and untested on any device), a Jade over Bluetooth (step 18h, optional and untested), a BitBox02 (step 18i, optional and untested), the silent payments and Start9. Family hosting is new and has its own optional step ("Host a family member" below).
 - **iOS** is possible from your own Mac only ("Or on an iPhone"): a free Apple ID's install lasts **7 days**, and nobody has
   run it on a real iPhone yet, so report anything iOS-specific. Android stays the main platform of this round.
 - **Updates keep the wallet from 0.1.7-alpha on** (the Trikey release key). Moving from 0.1.6-alpha or older still needs

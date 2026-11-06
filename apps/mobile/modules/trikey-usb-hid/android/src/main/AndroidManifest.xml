@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- USB host mode, for a BitBox02 on the USB-C port. Not required: phones without it still install the app. -->
+  <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+</manifest>

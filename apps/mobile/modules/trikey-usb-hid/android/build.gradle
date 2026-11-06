@@ -1,0 +1,17 @@
+// USB HID for a BitBox02 plugged into the phone (src/hardware/bitbox02/link.native.ts). Linked in both Android builds:
+// it uses nothing but the Android framework's android.hardware.usb (no Google library).
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'app.trikey'
+version = '1.0.0'
+
+android {
+  namespace 'app.trikey.usbhid'
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}

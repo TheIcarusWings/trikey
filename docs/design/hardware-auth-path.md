@@ -221,9 +221,9 @@ says so on Jade's screen.
 Notes and hardware unlock sign the same text twice when they are turned on (`hardware_not_deterministic` if the two
 differ); the QR screen says "(1 of 2)" and "(2 of 2)" and that the device will show the same text twice. Models that
 cannot sign are refused with their reason, and the connect screen says so before a guardian wallet is started, offering
-Recovery Key mode. Not built: Jade over USB, BIP 322 proofs, BitBox02 (Jade over Bluetooth is section 9).
+Recovery Key mode. Not built: Jade over USB, BIP 322 proofs (Jade over Bluetooth is section 9, BitBox02 section 10).
 docs/alpha-test-plan.md step 18e lists the QR device tests, 18f the microSD ones; NFC is section 8 and step 18g,
-Bluetooth section 9 and step 18h.
+Bluetooth section 9 and step 18h, BitBox02 section 10 and step 18i.
 
 ### microSD (Passport gen 2, Krux; built 2026-11-06, untested on devices)
 
@@ -464,3 +464,118 @@ network; CHANGELOG.md).
 **Not done, or to check on a device:** the pairing dialogs on Android and iOS, and a Jade whose pairing was reset (the
 phone must forget it too); the MTU Android gets and the time a large PSBT takes; whether the change of a Trikey payment
 is left off the Jade's screen; a custom PIN server; Jade over USB (Android OTG) is not built; anti-exfil (above).
+
+## 10. BitBox02 over USB-C and Bluetooth (built 2026-11-06; untested on devices)
+
+A BitBox02 or BitBox02 Nova is the hardware kind `bitbox02` (`packages/wallet/src/bitbox02.ts`; the phone side is
+`apps/mobile/src/hardware/bitbox02`). Like a Ledger it does everything for Trikey: key export, wallet registration,
+payments and Trikey's texts. Read from github.com/BitBoxSwiss/bitbox02-firmware at b27f5f68 (2026-11-04; tags
+`firmware/v9.27.1` and `v9.27.2`), its official clients bitbox-api-rs 0663f04 and bitbox-api-ts da3519d (npm
+`@bitboxswiss/bitbox-api` 0.4.0), and BitBoxApp 2f3e4f4. Paths are under `src/rust/bitbox02-rust/src/` unless they
+start with `src/` or `messages/`. **Not tried on a device or a phone.**
+
+**Why Trikey speaks the protocol itself.** The Rust client's WASM package is gone (bitbox-api-rs CHANGELOG, "Remove the
+`wasm` feature ... the TypeScript library is now maintained in BitBoxSwiss/bitbox-api-ts"), and Hermes has no
+WebAssembly anyway. The pure TypeScript `@bitboxswiss/bitbox-api` connects only through WebHID or the BitBoxBridge (its
+transport is internal and its `exports` refuse a deep import), its peers are noble 1.x and bitcoinjs-lib 7 (Trikey has
+noble 2.x and bitcoinjs-lib 6), and it keeps its pairing in `localStorage`. BitBox publishes no Android or iOS bindings
+(BitBoxApp runs its Go backend through gomobile). So the app implements the subset it needs in TypeScript (about 2,000
+lines with comments, links included), on the libraries it already has (`@noble/curves` x25519 and secp256k1, `@noble/hashes`, `@noble/ciphers`
+chacha20poly1305), and its tests replay the real implementations' vectors (below).
+
+**The links.**
+
+- *USB-C, Android* (both models): vendor `0x03eb`, product `0x2403` (bitbox-api-ts `constants.ts`; BitBoxApp
+  `res/xml/device_filter.xml`); interface 0, its IN and OUT endpoints, 64-byte reports by `bulkTransfer`, as BitBoxApp's
+  Android app does (`GoViewModel.java:44-91`). No React Native library does generic USB HID, so the app has its own
+  Expo module, `modules/trikey-usb-hid` (Kotlin, `android.hardware.usb` only, no Google code, both Android builds):
+  list, Android's permission dialog (an explicit, mutable `PendingIntent`), open, a reader thread, write, close, unplug.
+  `android.hardware.usb.host` is declared not required. iOS gives apps no USB HID.
+- *Bluetooth LE, the Nova* (Android and iOS; BitBoxApp `frontends/ios/.../Bluetooth.swift`): service
+  `e1511a45-f3db-44c0-82b8-6c880790d1f1`; the phone writes reports to `799d485c-d354-4ed0-b577-f8ee79ec275a` with response,
+  as many whole 64-byte reports per write as the MTU allows, at most five (`:562-580`); the Nova notifies reports on
+  `419572a5-9f53-4eb1-8db7-61bcab928867` (`:288-299`). The first connection bonds: LE Secure Connections, the Nova shows
+  a six-digit code and so does the phone's system dialog (`src/da14531/da14531_handler.c`, `CTRL_CMD_PAIRING_CODE`). Each
+  report reaches the main chip as one USB frame (`_hww_handler`: payload must be `USB_REPORT_SIZE`). BitBoxApp's
+  Android app has no Bluetooth, so a Nova over Bluetooth on Android is untried by anyone.
+
+**The layers** (each in its own file, each tested on its own):
+
+| Layer | What | Firmware / client |
+|---|---|---|
+| Framing (`framing.ts`) | U2F HID: an init report (channel `0xff00ff00`, command `0xC1`, big-endian length, 57 bytes) and continuations (sequence 0-127, 59 bytes), zero-padded to 64 | bitbox-api-rs `u2fframing.rs`; `FIRMWARE_CMD = 0x80 \| 0x40 \| 0x01` |
+| HWW (`hww.ts`) | `i` (info: version, platform 0 BitBox02 / 2 Nova, edition, unlocked, initialized); `0x00` + request; ACK `0x00`, NOT_READY `0x01` (the owner is still deciding: poll with `0x01` every 200 ms), BUSY `0x02`, NACK `0x03`; `0x03` reset (9.28.0+) | `src/hww.c` (`hww_req_t`, `_api_info`, `_reset_session`) |
+| Session (`session.ts`, `noise.ts`) | `u` unlock (the password on the device; `2` = no wallet yet), `h`, `H` × 2 (Noise_XX_25519_ChaChaPoly_SHA256, prologue = the protocol name, phone = initiator), `v` (the pairing code), `n` + ciphertext for every request | `hww.rs:71-128`, `hww/noise.rs:61-136`, `src/rust/bitbox-noise/src/noise_xx.rs:85-96` |
+| Messages (`proto.ts`) | hand-written protocol buffers for ~25 messages | `messages/hww.proto`, `btc.proto`, `common.proto`, `antiklepto.proto` |
+| Anti-klepto (`antiklepto.ts`) | host commitment, signer commitment, check | `src/rust/bitbox-secp256k1/src/lib.rs:146-255` |
+
+**Pairing.** After the handshake the BitBox02 answers `0` (it knows this phone's Noise key, or the link is Bluetooth,
+already paired with its six digits: `hww/noise.rs:91-98`) or `1` (it wants the code confirmed). The phone also asks
+when it has not seen the BitBox02's Noise key before, as the official clients do. Then the phone shows the first 20
+characters of the base32 handshake hash as `ABCDE FGHIJ` / `KLMNO PQRST` (`workflow/pairing.rs:9-22`) and sends `v`; the
+BitBox02 shows "Pairing code" with the same characters and the owner confirms it there (or rejects: the firmware answers
+`1` and resets the channel). Each side then remembers the other's key, so the next session skips it. The phone keeps its
+own Noise key and the BitBox02s' keys in the app's key-value store (`trikey.bitbox02.pairing.v1`): it only spares the
+owner the code for a BitBox02 this phone already paired with; the password and every approval are still asked on the
+device. A Nova over Bluetooth shows the code too the first time (the phone has not seen it), after the six digits.
+
+**Requests** (the session is encrypted; responses are checked as listed):
+
+| Step | Request | What the BitBox02 does | What the phone checks |
+|---|---|---|---|
+| Fingerprint | `RootFingerprintRequest` (hww.proto 24) | 4 bytes | 4 bytes, compared with the wallet's record by the wallet |
+| Account key | `BTCPubRequest {coin, keypath m/48'/c'/0'/2', xpub_type XPUB/TPUB, display false}` | `48'/c'/a'/2'` is a known multisig keypath: no "unusual keypath" warning (`bitcoin.rs:93-158`, `bitcoin/keypath.rs:44-69, 152-167`) | network family, depth, child number |
+| Wallet | `BTCIsScriptConfigRegisteredRequest`, then if needed `BTCRegisterScriptConfigRequest {coin, multisig {threshold 2, three XPub, our_xpub_index, P2WSH}, keypath, name, AUTO_XPUB_TPUB}` | validates its key at our index (`multisig.rs:262-300`), shows the name, "2-of-3" and the keys, keeps the hash of the **sorted** xpubs (`multisig.rs:32-116`); the script is BIP 67 sorted (`multisig.rs:302-330`), so it is Trikey's `sortedmulti` | name 1-30 characters, no space at either end (`util/src/name.rs`) |
+| Address | `BTCPubRequest {keypath account/chain/index, script_config multisig, display true}` | needs the wallet registered; shows the name and the address (index ≤ 10000) | equal to the phone's own |
+| Payment | `BTCSignInitRequest {coin, [multisig at account], version, inputs, outputs, locktime, unit sat}`, then the BitBox02 asks: `INPUT` i (pass 1), `PREVTX_INIT/INPUT/OUTPUT` of its previous transaction (hashed and checked against the outpoint, its output against the value and script: `signtx.rs:346-431`), `OUTPUT` k (change as `ours` with keypath: derived and not shown, `signtx.rs:997-1017`), then `INPUT` i again (pass 2) | in pass 2 each input carries `host_nonce_commitment`; the BitBox02 answers `HOST_NONCE` with its nonce commitment, the phone sends the nonce (`antiklepto_signature`), the BitBox02 signs (`signtx.rs:1316-1360`) | anti-klepto on every signature; each signature verified against the transaction (`mergePartialSignatures`); every input signed (`assertDeviceSignedAll`) |
+| Text | `BTCSignMessageRequest {coin, P2WPKH at m/48'/c'/0'/2'/0/0, msg, host_nonce_commitment?}` | 9.27.1+: shows "External service key", the key's P2WPKH address, the text; signs sha256d of the BIP 137 message; answers `r \|\| s \|\| recid` (`bitcoin/signmsg.rs:24-176`) | anti-klepto (except notes and unlock), then the BIP 137 signature `[31 + recid] \|\| r \|\| s` verified against the key derived from the account xpub (`checkMessageAnswer`) |
+
+Every input of a payment must be the wallet's own (the BitBox02 signs only its own inputs and wants every input's
+keypath) and carry its previous transaction (Trikey's PSBTs do). Coin: BTC on mainnet, TBTC on testnet and signet, RBTC on
+regtest (`bitcoin.rs:79-90`: both editions have all three).
+
+**Texts and determinism.** `signmsg.rs` takes a simple script config, P2WPKH or P2WPKH-P2SH, at a standard receive path
+or any path under `45'` or `48'` up to depth 10 (`:31-41, 72-85`); `48'` from v9.27.1 (CHANGELOG: "allow signing messages
+with keys in the m/48' application namespace"). It signs with `secp256k1_anti_exfil_sign`: `k = RFC6979(key, z, extra =
+Hash_d(host nonce))`, `k' = k + Hash_p(R || host nonce)` (tags `s2c/ecdsa/data`, `s2c/ecdsa/point`). With a commitment the
+host nonce is the phone's random one (anti-klepto, checked: the signature's `r` must be `x(R + Hash_p(R || nonce)·G)`);
+without one it is 32 zero bytes (`:155-160`, "Preserve the historical zero-contribution S2C signature; this differs from
+plain RFC6979"): **deterministic, but not RFC 6979**. The tests reproduce the firmware's own vectors with that formula
+(`signmsg.rs` tests at `m/48'`, `m/45'`, `m/84'`, `TEST_MNEMONIC` in `keystore.rs:940`) and check that plain RFC 6979 gives
+another signature. So:
+
+- pairing, approvals, recovery access, cancel-recovery, resume and retire: **with** anti-klepto;
+- notes and hardware unlock, which need the same signature every time (`SignMessageContext.purpose`): **without**; the app
+  signs twice and compares, as for every device;
+- a notes key or unlock slot made with a BitBox02 opens only with a BitBox02 holding that seed (Ledger, Trezor,
+  Coldcard and Jade sign the same text with plain RFC 6979, so differently), and the reverse. After restoring the seed on
+  another brand, turn notes on again and set up the hardware unlock again (`BITBOX02_SIGNATURE_NOTE`; the phone says so
+  on the device prompt for those two).
+
+Why the difference matters: the authorization key is `account/0/0`, a non-hardened child of the account key, so a nonce
+that leaks it, together with the account xpub, gives the account's private key (key 1). Anti-klepto stops a BitBox02
+with malicious firmware from choosing such nonces; without it (notes, unlock, and every other brand) the firmware is
+trusted not to.
+
+**The tests** (`apps/mobile/src/hardware/bitbox02/*.test.ts`, `apps/mobile/src/data/real-bitbox02.test.ts`): the framing
+against bitbox-api-rs's vectors; the Noise transcript of the Rust `noise-protocol` crate for fixed keys (as copied in
+bitbox-api-ts `test/noise.test.ts`), message by message, the handshake hash and the first ciphertext; the pairing code
+against `workflow/pairing.rs` `test_confirm`; anti-klepto against the Rust vectors (bitbox-api-ts
+`test/eth-antiklepto.test.ts`); the message signatures against `signmsg.rs`; protocol buffers against hand-encoded bytes.
+Then a fake BitBox02 (`apps/mobile/src/hardware/test/fake-bitbox02.ts`) written from the firmware: NOT_READY while "the
+owner" decides, the Noise responder, the pairing code, registration by sorted-xpub hash, addresses, the signing flow with
+its own BIP 143 sighash and previous-transaction check, S2C signatures; and made to misbehave (a signature over another
+sighash, a nonce it did not commit to, a missing signature, another key or text, another address, a key at another
+path, a broken ciphertext). The app's wallet service pairs it with the in-process guardian, turns notes on and co-signs
+a payment.
+
+**Platform.** USB: the module above (compiled by the Android build; it runs only on a phone). Bluetooth:
+`react-native-ble-plx` 3.4.0, already linked for Ledger and Jade, one shared `BleManager`; Android 12+ "Nearby devices",
+iOS `NSBluetoothAlwaysUsageDescription` (now naming the BitBox02 Nova). Firmware **9.27.1** or later (2026-08-31);
+older firmware is refused at connect with "update it with the BitBoxApp".
+
+**Not done, or to check on a device:** Android's USB permission dialog and the HID endpoints on real phones (USB-C OTG,
+the BitBox02 powered by the phone); a Nova over Bluetooth on Android (never done by BitBoxApp) and the MTU each phone
+gets; how a 240-character text looks on the BitBox02's screen; the time a payment with many inputs takes (every previous
+transaction goes through the device); BitBoxApp's "Bluetooth enabled" switch on the Nova; the session reset of firmware
+9.28.0 (unreleased when this was written, coded from the firmware's `master`).
