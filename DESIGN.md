@@ -778,6 +778,21 @@ signatures plus the script cost more than one key's signature. Two ways to fix t
 
 Several wallets on one phone and one guardian, where only the hardware wallet changes: the same phone seed and key 3 seed at a BIP 48 account per wallet, one backup: docs/design/multi-wallet.md (proposal, not built; the owner's decisions of 2026-11-05 are in its section 10).
 
+## Considered and not built: Bitkey hardware wallets as key 1 (2026-11-05)
+
+Bitkey's hardware wallets were checked as Trikey's key 1, from Bitkey's open-source firmware and app.
+
+- **W3 (the 2026 model with a screen): not possible.** Its firmware signs only for a keyset Bitkey's server (WSM)
+  has signed, so it refuses any wallet Bitkey did not set up.
+- **W1 (the first model, no screen): possible, not supported.** Its firmware derives keys and signs any hash over NFC,
+  with no check by Bitkey's server. But it signs blind, and in Trikey the hardware wallet is what stops a compromised
+  phone: a payment over the daily limit (or with the limit off) is the phone plus the hardware wallet, without the
+  guardian. A device that cannot show what it signs gives no protection there. It would also need NFC on both
+  platforms (on iOS, an Apple developer account with the NFC entitlement).
+- **What could change it:** firmware that shows the outputs (or enforces a spending policy itself; W1 firmware has a
+  dormant one), or a role where blind signing costs little. The only such role is a Savings **Recovery Key**, kept
+  apart and used only for a recovery; a Ledger or Trezor already fills it better, so it is built only if owners ask.
+
 ## Open questions
 
 1. **How the hardware wallet unlocks the guardian.** Rule changes now use BIP137 message signatures (see rule 4); which signing paths each device allows still has to be tested on real hardware. Unlocking with the hardware wallet is still open: Trezor has CipherKeyValue (SLIP-11), Ledger has no symmetric-key API. Until then, unlocking uses the passphrase.
