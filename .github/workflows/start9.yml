@@ -92,7 +92,11 @@ jobs:
           for v in $passed; do
             grep -qx "$v" <<<"$read_vars" || { echo "::error file=$main::$v is not read by $config"; fail=1; }
           done
+          # Umbrel-only on purpose: TRIKEY_TRUSTED_PROXY names Umbrel's login gateway, the one address first-run setup
+          # trusts without the setup code; Start9 trusts no address and shows the code in StartOS instead.
+          umbrel_only="TRIKEY_TRUSTED_PROXY"
           for v in $umbrel; do
+            grep -qx "$v" <<<"$umbrel_only" && continue
             grep -qx "$v" <<<"$passed" || { echo "::error file=$main::$v is passed on Umbrel ($compose) but not on Start9"; fail=1; }
           done
           grep -Eq "TRIKEY_PLATFORM: 'start9'" "$main" \
