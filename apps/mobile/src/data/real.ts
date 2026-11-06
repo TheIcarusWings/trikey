@@ -68,6 +68,8 @@ import { createSpeedUpActions } from './real-speed-up';
 import { createCoinActions } from './real-coins';
 import { createNotesActions } from './real-notes';
 import type { NotesActions } from './notes-actions';
+import { createHardwareUnlockActions } from './real-hardware-unlock';
+import type { HardwareUnlockActions } from './hardware-unlock-actions';
 import type { CoinActions } from './coin-actions';
 import type { SpeedUpActions } from './speed-up-actions';
 import { renderSavingsMap, savingsMapData } from './savings-map';
@@ -2082,6 +2084,16 @@ class Service implements RealWalletService {
       this.labelsVersion++;
       this.refresh();
     },
+    iso: (ms) => this.iso(ms),
+  });
+
+  /** Unlocking the guardian with the hardware wallet (./real-hardware-unlock.ts). Nothing that unlocks is kept on the phone. */
+  readonly hardwareUnlock: HardwareUnlockActions = createHardwareUnlockActions({
+    wallet: () => this.w,
+    requireWallet: () => this.requireWallet(),
+    run: (job) => this.exclusive(() => this.guarded(job)),
+    unlocked: () => this.answered(),
+    changed: () => this.refresh(),
     iso: (ms) => this.iso(ms),
   });
 

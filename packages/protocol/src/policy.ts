@@ -59,6 +59,12 @@ export const GUARDIAN_FEATURES = {
    * listed to a guest: guests' notes are not kept (yet).
    */
   labelsBackup: 'labels_backup',
+  /**
+   * Unlocking with the hardware wallet (PROTOCOL.md, "Unlocking with the hardware wallet"): `unlock.hardware.add` /
+   * `unlock.hardware.remove`, `guardian.unlock` with `kind: "hardware"`, and `guardian.status.hardwareUnlock`. Never
+   * listed to a guest: a guest's hardware wallet never unlocks the host's guardian.
+   */
+  hardwareUnlock: 'hardware_unlock',
 } as const;
 
 /** True when the alert contacts may lock the guardian (`Policy.contactLock`). */

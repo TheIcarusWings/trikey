@@ -9,6 +9,7 @@ import { looksLikeSilentPaymentAddress } from './sp-empty';
 import { DEMO_HELPER_FEE, DEMO_TAPROOT_OUTPUT, createMockSilentPayments, demoSilentActivity, demoSilentPayments, type MockSilentControl } from './sp-mock';
 import { createMockSpeedUp } from './speed-up-mock';
 import { createMockNotes } from './notes-mock';
+import { createMockHardwareUnlock } from './hardware-unlock-mock';
 import { createMockCoins } from './coins-mock';
 import { recoverySheetWallet, renderRecoverySheet } from './recovery-sheet';
 import { DEMO_SAVINGS_DESCRIPTOR, createMockSavings, creditDemoSavings, demoFilledSavings, emptySavings, isDemoSavingsAddress } from './savings-mock';
@@ -924,6 +925,19 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     }),
     coins: coins.actions,
     notes: createMockNotes({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW }),
+    hardwareUnlock: createMockHardwareUnlock({
+      get: () => state,
+      update,
+      wait,
+      deviceDelay,
+      networkDelay,
+      now: NOW,
+      unlocked: () =>
+        update((s) => {
+          const { lockedByContact: _gone, ...guardian } = s.guardian;
+          return { guardian: { ...guardian, status: 'online', lastSeenAt: NOW.toISOString() } };
+        }),
+    }),
     speedUp: createMockSpeedUp({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW, nextId, nextTxid: () => txid((++counter * 7919).toString(16).padStart(12, '0')) }),
 
     // -- preferences --------------------------------------------------

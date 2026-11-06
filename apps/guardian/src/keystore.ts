@@ -461,6 +461,15 @@ export class GuardianSeed {
     }
   }
 
+  /**
+   * Runs `f` over the seed itself (not a copy), for sealing it into an unlock slot (unlock-slots.ts). `f` must not keep
+   * or change it.
+   */
+  use<T>(f: (seed: Uint8Array) => T): T {
+    if (!this.#seed) throw new Error('the guardian is locked');
+    return f(this.#seed);
+  }
+
   wipe(): void {
     this.#seed?.fill(0);
     this.#seed = undefined;
@@ -597,20 +606,35 @@ export async function replaceKeystore(path: string, file: KeystoreFile): Promise
 }
 
 /**
+ * `seed` as the keystore's `GuardianSeed`, once it is checked to give the guardian key on file (`KeystoreFormatError`
+ * otherwise). However it was opened: the passphrase (`unlockKeystoreSeed`) or an unlock slot (unlock-slots.ts). Copies
+ * `seed`; the caller zeroes its own buffer.
+ */
+export function guardianSeedOf(file: KeystoreFile, seed: Uint8Array): GuardianSeed {
+  if (seed.length !== 64) throw new KeystoreFormatError('the seed must be 64 bytes');
+  const { signer, pub } = cosignerFromSeed(seed, file.public.network);
+  signer.wipe();
+  if (pub.accountPubkey !== file.public.accountPubkey || pub.xpub !== file.public.xpub)
+    throw new KeystoreFormatError('decrypted key does not match the stored public key');
+  return new GuardianSeed(seed);
+}
+
+/**
  * Unlocks and keeps the seed: decrypts it, checks it gives the guardian key on file, and returns it as a
  * `GuardianSeed` (the decrypted buffer is zeroed). Key 3 of a mixed wallet is derived from it.
  */
 export async function unlockKeystoreSeed(file: KeystoreFile, passphrase: string): Promise<GuardianSeed> {
   const seed = await openKeystore(file, passphrase);
   try {
-    const { signer, pub } = cosignerFromSeed(seed, file.public.network);
-    signer.wipe();
-    if (pub.accountPubkey !== file.public.accountPubkey || pub.xpub !== file.public.xpub)
-      throw new KeystoreFormatError('decrypted key does not match the stored public key');
-    return new GuardianSeed(seed);
+    return guardianSeedOf(file, seed);
   } finally {
     seed.fill(0);
   }
+}
+
+/** What an unlock slot is bound to (unlock-slots.ts): key 3's account pubkey and when this keystore was made. */
+export function keystoreBinding(file: KeystoreFile): { accountPubkey: string; createdAt: string } {
+  return { accountPubkey: file.public.accountPubkey, createdAt: file.createdAt };
 }
 
 /** Unlocks: decrypts the seed, derives the guardian's own key, zeroes the seed. */

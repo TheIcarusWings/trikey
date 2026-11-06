@@ -7,6 +7,7 @@ import { Lock, Server, TriangleAlert } from '@/components/icons';
 import { Footnote, InfoRow, ListGroup, Notice, Panel, SectionLabel, SettingsRow } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { UnlockForm } from '@/components/unlock-form';
+import { HardwareUnlockSection } from '@/components/hardware-unlock';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { formatSats, hostLockedLine, serverHost, shorten, useNow, useWallet, useWalletService, walletPausedLine } from '@/data';
@@ -226,6 +227,7 @@ export default function GuardianSettings() {
         </Notice>
       ) : null}
       {hosted ? <PauseHostedWallet /> : <LockGuardian />}
+      {hosted ? null : <HardwareUnlockSection />}
       {hosted ? (
         <ListGroup>
           <SettingsRow title={`Leave ${hosted.hostLabel ?? 'your host'}`} subtitle="Move your money, then release this wallet" onPress={() => router.push('/settings/leave-host')} />

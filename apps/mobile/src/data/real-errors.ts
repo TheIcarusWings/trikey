@@ -91,6 +91,17 @@ export function refusalToError(r: GuardianRefusal): WalletServiceError {
         );
       return new WalletServiceError('invalid_input', "The guardian didn't understand that request.");
     case 'unlock_failed':
+      // Five wrong tries in a row from the phone, or a recovery this phone did not start: only the box's web page unlocks now.
+      if (r.reason === 'phone_unlock_disabled' || r.reason === 'recovery_pending')
+        return new WalletServiceError('unlock_failed', `${r.message} Open the guardian's web page on your home network and unlock it there with the passphrase.`);
+      if (r.reason === 'hardware_unlock_failed')
+        return new WalletServiceError(
+          'unlock_failed',
+          `Your hardware wallet's confirmation didn't unlock the guardian. Check it is this wallet's hardware wallet, or use the passphrase.${wait(r.retryAfterSeconds)}`,
+          opts(false, r.retryAfterSeconds),
+        );
+      if (r.reason === 'hardware_unlock_off')
+        return new WalletServiceError('unlock_failed', 'Unlocking with the hardware wallet is off on your guardian now. Use the passphrase.');
       return new WalletServiceError('unlock_failed', `That passphrase didn't work.${wait(r.retryAfterSeconds)}`, opts(false, r.retryAfterSeconds));
     case 'rate_limited':
       return new WalletServiceError('rate_limited', `Too many tries.${wait(r.retryAfterSeconds) || ' Wait a moment and try again.'}`, opts(false, r.retryAfterSeconds));

@@ -133,3 +133,27 @@ export function recoveryAccessMessage(ctx: { guardianPubkey: string; phonePubkey
     `expires=${isoSeconds(ctx.expiresAt)}`,
   ]);
 }
+
+/** An unlock slot's id: 8 random bytes in hex, chosen by the phone when it turns hardware unlock on. */
+export const UNLOCK_SLOT_ID = /^[0-9a-f]{16}$/;
+
+/**
+ * The text the hardware wallet signs to unlock the guardian (guardians with `hardware_unlock`, PROTOCOL.md "Unlocking
+ * with the hardware wallet"):
+ *
+ * `Trikey unlock key v1 wallet=<walletId> guardian=<guardian nostr pubkey, hex> network=<network> slot=<slot id>`
+ *
+ * Signed with the wallet's authorization key, like an approval. Ledger and Trezor sign deterministically (RFC 6979), so
+ * the same device makes the same signature again for the same slot: the guardian derives the slot's key from it
+ * (HKDF-SHA256 over `r || s`, `trikey/guardian-unlock/v1`, `@trikey/core` `keyFromSignature`) and checks the signature
+ * against the wallet's authorization key first, so nothing but the hardware wallet can add or open a slot. The slot id
+ * is fresh each time the option is turned on, so turning it off and on again makes every earlier signature worthless.
+ * Never an approval: no sequence, no expiry; it opens one slot and nothing else.
+ */
+export function unlockKeyMessage(ctx: { walletId: string; guardianPubkey: string; network: string; slot: string }): string {
+  if (!/^[0-9a-f]{16}$/.test(ctx.walletId)) throw new Error('invalid wallet id');
+  if (!/^[0-9a-f]{64}$/.test(ctx.guardianPubkey)) throw new Error('invalid nostr pubkey');
+  if (!/^[a-z]{1,16}$/.test(ctx.network)) throw new Error('invalid network');
+  if (!UNLOCK_SLOT_ID.test(ctx.slot)) throw new Error('invalid unlock slot id');
+  return line(['Trikey unlock key v1', `wallet=${ctx.walletId}`, `guardian=${ctx.guardianPubkey}`, `network=${ctx.network}`, `slot=${ctx.slot}`]);
+}

@@ -185,6 +185,11 @@ export const GuardianStatusCache = z.object({
       mempool: z.literal('unseen').optional(),
     })
     .optional(),
+  /**
+   * This wallet's hardware wallet can unlock the guardian (`guardian.status.hardwareUnlock`, guardians with
+   * `hardware_unlock`): the slot it signs for and when it was turned on (unix seconds). Public: nothing secret is kept.
+   */
+  hardwareUnlock: z.object({ slot: z.string().regex(/^[0-9a-f]{16}$/), addedAt: z.number() }).optional(),
 });
 export type GuardianStatusCache = z.infer<typeof GuardianStatusCache>;
 

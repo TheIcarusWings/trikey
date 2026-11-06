@@ -330,8 +330,28 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
     case 'started':
       return { ...base, kind: 'system', event: 'Guardian started, locked', summary: 'Restarted, locked', signedBy: null, sats: null, result: 'locked' };
     case 'unlocked':
+      if (e.method === 'hardware')
+        return {
+          ...base,
+          kind: 'system',
+          event: `Guardian unlocked with the hardware wallet${e.walletId ? ` of wallet ${e.walletId}` : ''}, from the phone`,
+          summary: 'Unlocked with the hardware wallet',
+          signedBy: 'Phone + hardware wallet',
+          sats: null,
+          result: 'ok',
+        };
       return { ...base, kind: 'system', event: `Guardian unlocked with the passphrase ${e.via === 'web' ? 'on this box' : 'from the phone'}`, summary: 'Unlocked', signedBy: e.via === 'web' ? null : 'Phone', sats: null, result: 'ok' };
     case 'unlock_failed':
+      if (e.method === 'hardware')
+        return {
+          ...base,
+          kind: 'system',
+          event: `A hardware wallet signature from the phone did not unlock the guardian${e.walletId ? ` (wallet ${e.walletId})` : ''}`,
+          summary: 'Unlock failed',
+          signedBy: null,
+          sats: null,
+          result: 'refused',
+        };
       return { ...base, kind: 'system', event: `Wrong unlock passphrase ${e.via === 'web' ? 'on this box' : 'from the phone'}`, summary: 'Unlock failed', signedBy: null, sats: null, result: 'refused' };
     case 'locked':
       return {
@@ -522,6 +542,29 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
             ? `The paired phone turned off keeping its notes here: the encrypted notes of ${e.walletIds.map((id) => `wallet ${id}`).join(', ')} were deleted.`
             : `The encrypted notes of ${e.walletIds.map((id) => `wallet ${id}`).join(', ')} were deleted: the wallet no longer uses this guardian.`,
         summary: 'Encrypted notes deleted',
+        signedBy: e.by === 'phone' ? 'Phone' : null,
+        sats: null,
+        result: 'ok',
+      };
+    case 'unlock_slot_added':
+      return {
+        ...base,
+        kind: 'system',
+        event: `The paired phone turned on unlocking with the hardware wallet of wallet ${e.walletId}: that hardware wallet can now unlock this guardian through the phone. The passphrase still works.`,
+        summary: 'Hardware unlock turned on',
+        signedBy: 'Phone + hardware wallet',
+        sats: null,
+        result: 'ok',
+      };
+    case 'unlock_slot_removed':
+      return {
+        ...base,
+        kind: 'system',
+        event:
+          e.by === 'phone'
+            ? `The paired phone turned off unlocking with the hardware wallet of ${e.walletIds.map((id) => `wallet ${id}`).join(', ')}.`
+            : `Unlocking with the hardware wallet of ${e.walletIds.map((id) => `wallet ${id}`).join(', ')} was removed: the wallet no longer uses this guardian.`,
+        summary: 'Hardware unlock turned off',
         signedBy: e.by === 'phone' ? 'Phone' : null,
         sats: null,
         result: 'ok',

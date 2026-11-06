@@ -27,6 +27,7 @@ import {
   type Alert,
   type HardwareAction,
   type Response,
+  unlockKeyMessage,
 } from '@trikey/protocol';
 import { signMessage } from '../src/policy/index.js';
 import { RESET_CONFIRMATION } from '../src/guardian.js';
@@ -206,6 +207,11 @@ describe('lost phone, no backup: recovery ends with the new phone co-signing fro
     await rig.lock();
     expect((await rig.api('GET', '/recovery-code')).body.error.code).toBe('locked');
     await rig.unlock();
+    // The old phone had turned on unlocking with the hardware wallet: the recovery must take that slot away.
+    const slot = '00112233aabbccdd';
+    const text = unlockKeyMessage({ walletId: oldId, guardianPubkey: rig.pubkey, network: 'regtest', slot });
+    await oldPhone.rpc.call('unlock.hardware.add', { walletId: oldId, slot, signature: signMessage(text, hwAuthPrivateKey()) });
+    expect(rig.guardian.unlockSlots.list().map((s) => s.walletId)).toEqual([oldId]);
   });
 
   it('a new phone scans it, gets in with the hardware wallet, and starts the recovery to its own key 2', async () => {
@@ -268,6 +274,15 @@ describe('lost phone, no backup: recovery ends with the new phone co-signing fro
     const events = (await rig.api('GET', '/activity?limit=50')).body.entries.map((e: { event: string }) => e.event);
     expect(events.some((e: string) => e.includes(`now guarding the new wallet ${dest.fingerprint()}`) && e.includes('1 recovery access grant revoked'))).toBe(true);
     expect(rig.guardian.recoveryPeers()).toEqual([]);
+    // The swept wallet's unlock slot is gone: a lost (or stolen) hardware wallet never keeps unlocking the guardian.
+    expect(rig.guardian.unlockSlots.list()).toEqual([]);
+    expect(rig.guardian.service.get().activity.filter((e) => e.type === 'unlock_slot_removed')).toEqual([expect.objectContaining({ walletIds: [oldId], by: 'retired' })]);
+    // The adopted wallet turns it on again with its own hardware wallet, once that wallet is confirmed.
+    const slot = '1122334455667788';
+    const text = unlockKeyMessage({ walletId: dest.fingerprint(), guardianPubkey: rig.pubkey, network: 'regtest', slot });
+    await expect(newPhone.rpc.call('unlock.hardware.add', { walletId: dest.fingerprint(), slot, signature: signMessage(text, hwAuthPrivateKey()) })).rejects.toMatchObject({
+      code: ErrorCode.HardwareAuthUnconfirmed,
+    });
   });
 
   it('the old phone and the other recovery-access phone are cut off; the old wallet is retired', async () => {

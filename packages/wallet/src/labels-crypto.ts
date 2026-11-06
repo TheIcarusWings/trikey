@@ -33,12 +33,10 @@
  * Pure: no storage, no network.
  */
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
-import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { hkdf } from '@noble/hashes/hkdf.js';
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
-import { base64 } from '@scure/base';
+import { HardwareKeyError, keyFromSignature, sameSignature, signatureKeyMaterial } from '@trikey/core';
 import { secureRandomBytes } from '@trikey/core/random';
 import { MAX_LABELS_BYTES } from '@trikey/protocol';
 import { WalletError } from './errors.js';
@@ -60,40 +58,35 @@ export function labelsKeyMessage(walletId: string, network: string): string {
   return `Trikey labels key v1 wallet=${walletId} network=${network}`;
 }
 
-/** `r || s` of a BIP 137 signature (base64), with `s` in its low form. Throws `hardware_invalid_response`. */
-export function labelsSignatureBytes(signature: string): Uint8Array {
-  let raw: Uint8Array;
+/** Maps the shared helper's malformed-signature error to the wallet's `hardware_invalid_response`. */
+function fromDevice<T>(f: () => T): T {
   try {
-    raw = base64.decode(signature.trim());
+    return f();
   } catch (e) {
-    throw new WalletError('hardware_invalid_response', 'The hardware wallet returned a signature that is not base64.', { cause: e });
+    if (e instanceof HardwareKeyError) throw new WalletError('hardware_invalid_response', `The hardware wallet returned an unusable signature: ${e.message}`, { cause: e });
+    throw e;
   }
-  if (raw.length !== 65) throw new WalletError('hardware_invalid_response', 'The hardware wallet returned a signature that is not 65 bytes.');
-  let sig: InstanceType<typeof secp256k1.Signature>;
-  try {
-    sig = secp256k1.Signature.fromBytes(raw.slice(1), 'compact');
-  } catch (e) {
-    throw new WalletError('hardware_invalid_response', 'The hardware wallet returned an invalid signature.', { cause: e });
-  }
-  const low = sig.hasHighS() ? new secp256k1.Signature(sig.r, secp256k1.Point.CURVE().n - sig.s) : sig;
-  return low.toBytes('compact');
 }
 
-/** Whether two signatures of the same text are the same signature (the device signs deterministically). */
+/**
+ * `r || s` of a BIP 137 signature (base64), with `s` in its low form (`@trikey/core` `signatureKeyMaterial`, shared with
+ * the guardian's hardware unlock). Throws `hardware_invalid_response`.
+ */
+export function labelsSignatureBytes(signature: string): Uint8Array {
+  return fromDevice(() => signatureKeyMaterial(signature));
+}
+
+/**
+ * Whether two signatures of the same text are the same signature (the device signs deterministically). Shared with the
+ * hardware unlock's check (`@trikey/core` `sameSignature`). Throws `hardware_invalid_response`.
+ */
 export function sameLabelsSignature(a: string, b: string): boolean {
-  const x = labelsSignatureBytes(a);
-  const y = labelsSignatureBytes(b);
-  return x.length === y.length && x.every((v, i) => v === y[i]);
+  return fromDevice(() => sameSignature(a, b));
 }
 
 /** The 64 bytes of key material for `walletId` from the hardware wallet's signature of `labelsKeyMessage`. */
 export function deriveLabelsKey(signature: string, walletId: string): Uint8Array {
-  const ikm = labelsSignatureBytes(signature);
-  try {
-    return hkdf(sha256, ikm, utf8ToBytes(walletId), utf8ToBytes(LABELS_KEY_INFO), 64);
-  } finally {
-    ikm.fill(0);
-  }
+  return fromDevice(() => keyFromSignature(signature, utf8ToBytes(walletId), utf8ToBytes(LABELS_KEY_INFO), 64));
 }
 
 function splitKey(key: Uint8Array): { enc: Uint8Array; check: Uint8Array } {

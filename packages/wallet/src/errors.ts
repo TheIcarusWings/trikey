@@ -41,7 +41,12 @@ export type GuardianRefusal = { message: string } & (
   | { kind: 'already_paired' }
   | { kind: 'pairing_rejected' }
   | { kind: 'invalid_params' }
-  | { kind: 'unlock_failed'; retryAfterSeconds?: number }
+  /**
+   * `reason`: `phone_unlock_disabled` (5 failures in a row: the web UI must unlock first), `recovery_pending` (a recovery
+   * this phone did not start runs), `hardware_unlock_failed` (the hardware wallet's signature did not open its slot),
+   * `hardware_unlock_off` (no slot for that wallet: turned off, or on again since). Absent: a wrong passphrase.
+   */
+  | { kind: 'unlock_failed'; retryAfterSeconds?: number; reason?: string }
   | { kind: 'rate_limited'; retryAfterSeconds?: number }
   /** 1501: try again later. Also chain data unavailable. */
   | { kind: 'unavailable' }
@@ -122,7 +127,7 @@ export function refusalFromError(e: unknown): GuardianRefusal | undefined {
     case ErrorCode.InvalidParams:
       return { kind: 'invalid_params', message };
     case ErrorCode.UnlockFailed:
-      return { kind: 'unlock_failed', retryAfterSeconds: num(data['retryAfterSeconds']), message };
+      return { kind: 'unlock_failed', retryAfterSeconds: num(data['retryAfterSeconds']), ...(reason ? { reason } : {}), message };
     case ErrorCode.RateLimited:
       return { kind: 'rate_limited', retryAfterSeconds: num(data['retryAfterSeconds']), message };
     case ErrorCode.Unavailable:

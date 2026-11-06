@@ -951,6 +951,31 @@ Do:
 If it goes wrong, collect: the device model and firmware, the step and the exact message, and the guardian's Activity
 page (it shows no label: the guardian cannot read them).
 
+### 18d. Unlock the guardian with the hardware wallet (optional; a guardian with this release, a Ledger or a Trezor)
+
+After a restart the guardian is locked until you unlock it. This option lets your hardware wallet unlock it from the
+phone with one confirmation, next to the passphrase, which always keeps working (DESIGN.md, "Unlocking the guardian with
+the hardware wallet"). It is off by default; QR devices cannot use it (they sign no messages over QR codes).
+
+Do:
+
+1. **Turn it on** (the guardian unlocked). Settings, **Guardian**, **Unlock with your <device>**. You should see: your
+   device asks you to sign `Trikey unlock key v1 wallet=<id> guardian=<hex> network=<network> slot=<hex>` **twice**
+   (check it on the device screen); then "On since <time>". The guardian's web page, Activity: "Hardware unlock turned
+   on". If the app says the device "gave two different signatures", report the device model and firmware.
+2. **Restart the guardian** (Umbrel: restart the app; Docker: `docker compose restart`). On the phone, Home says
+   "Guardian locked" with **Unlock with your <device>**. Tap it, then on the Guardian screen **Unlock with your
+   <device>**: one confirmation on the device. You should see: status "Online"; Activity: "Unlocked with the hardware
+   wallet". Lock again from the phone and unlock with the passphrase: it still works.
+3. **A wrong device** (if you have a second one): connect it and try to unlock. You should see "didn't unlock the
+   guardian"; five failures in a row (passphrase or device) stop the phone until the web page unlocks, as before.
+4. **Turn it off.** Switch it off and confirm. You should see: Activity "Hardware unlock turned off"; after the next lock
+   only the passphrase unlocks.
+5. **Several wallets** (step 18a): each wallet's own hardware wallet can be turned on for the box; each unlocks it alone.
+
+If it goes wrong, collect: the device model and firmware, the step and the exact message, and the guardian's Activity
+page and log (they never show the signature).
+
 ---
 
 ### 18. Host a family member (optional; two phones and two hardware wallets)

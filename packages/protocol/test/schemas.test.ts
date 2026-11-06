@@ -114,6 +114,8 @@ describe('request schemas', () => {
     'labels.get': { of: '0123456789abcdef', version: 0, part: 0 },
     'labels.list': {},
     'labels.delete': {},
+    'unlock.hardware.add': { walletId: '0123456789abcdef', slot: '89abcdef01234567', signature: approval.signature },
+    'unlock.hardware.remove': { walletId: '0123456789abcdef' },
   };
 
   it('has a sample for every method', () => {
@@ -136,8 +138,13 @@ describe('request schemas', () => {
   });
 
   it('validates guardian.unlock variants', () => {
-    expect(methods['guardian.unlock'].params.safeParse({ kind: 'hardware', secret: 'ab'.repeat(32) }).success).toBe(true);
-    expect(methods['guardian.unlock'].params.safeParse({ kind: 'hardware', secret: 'zz' }).success).toBe(false);
+    const hw = { kind: 'hardware', walletId: '0123456789abcdef', slot: '89abcdef01234567', signature: approval.signature };
+    expect(methods['guardian.unlock'].params.safeParse(hw).success).toBe(true);
+    // The shape reserved before hardware unlock was built (a bare secret) is not it.
+    expect(methods['guardian.unlock'].params.safeParse({ kind: 'hardware', secret: 'ab'.repeat(32) }).success).toBe(false);
+    expect(methods['guardian.unlock'].params.safeParse({ ...hw, slot: 'zz' }).success).toBe(false);
+    expect(methods['guardian.unlock'].params.safeParse({ ...hw, signature: 'not a signature' }).success).toBe(false);
+    expect(methods['guardian.unlock'].params.safeParse({ ...hw, extra: 1 }).success).toBe(false);
     expect(methods['guardian.unlock'].params.safeParse({ kind: 'magic' }).success).toBe(false);
   });
 });
