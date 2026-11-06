@@ -2,8 +2,8 @@ name: Start9 package
 
 # Type-checks the StartOS package (packaging/start9) and builds its .s9pk for x86_64 and aarch64 with start-cli.
 # Runs on pull requests that touch the package or what it wraps (the guardian's environment contract in
-# apps/guardian/src/config.ts, the image's Dockerfile), on release tags (release.yml dispatches it on the tag it
-# creates, since a tag made with GITHUB_TOKEN does not start `push` workflows) and by hand.
+# apps/guardian/src/config.ts, the image's Dockerfile), on release tags (called by docker.yml once the image is
+# pushed) and by hand.
 #
 # Nothing is published. Each build is signed with a throwaway key made in the job (`start-cli init-key`, then the
 # minimal packaging workspace Start9's own CI provisions: `.startos/build.key.pem`), so the .s9pk files are workflow
@@ -15,12 +15,14 @@ name: Start9 package
 # the newest release with its install-start-cli action instead; this pins it so a new start-cli cannot change a build
 # without a commit here. To update: download both assets of the new release, put their SHA-256 here, run this workflow.
 #
-# The image: the package pulls ghcr.io/theicaruswings/trikey-guardian:<version> by the tag in
-# packaging/start9/startos/manifest/index.ts, and `s9pk pack` copies it into the .s9pk. On a release tag the job waits
-# for docker.yml to publish that tag (as umbrel-store.yml does) and packs exactly the published image. On a pull
-# request it uses the published image when the tag exists; when it does not yet (a release PR that bumps the version)
-# it builds the image from the checkout for the runner's own architecture and tags it with that name, so the pack
-# finds it locally. Each architecture builds on a runner of that architecture, so nothing is emulated.
+# The image: the package names ghcr.io/theicaruswings/trikey-guardian:<version> in packaging/start9/startos/manifest/index.ts,
+# and `s9pk pack` copies it into the .s9pk, using a local image of that name as is. On a release tag this workflow is
+# called by docker.yml with the digest its `publish` job just pushed (`image-digest`): the job pulls exactly that
+# digest, checks the tag still points at it, and tags it locally under the manifest's name, so the tag is never
+# re-resolved for what goes into the package. (A manual run on a tag must be given that digest, from docker.yml's run
+# summary.) On a pull request it uses the published image when the tag exists; when it does not yet (a release PR that
+# bumps the version) it builds the image from the checkout for the runner's own architecture and tags it with that
+# name, so the pack finds it locally. Each architecture builds on a runner of that architecture, so nothing is emulated.
 
 on:
   pull_request:
@@ -30,9 +32,20 @@ on:
       - 'packaging/docker/Dockerfile'
       - 'packaging/umbrel/trikey-guardian/docker-compose.yml'
       - '.github/workflows/start9.yml'
-  push:
-    tags: ['v*']
+  # Release tags: docker.yml calls it with the digest it pushed.
+  workflow_call:
+    inputs:
+      image-digest:
+        description: 'The digest (sha256:...) of the guardian image docker.yml just pushed for this tag.'
+        required: true
+        type: string
   workflow_dispatch:
+    inputs:
+      image-digest:
+        description: 'On a tag: the digest (sha256:...) docker.yml published for it (its run summary). Ignored elsewhere.'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -51,9 +64,9 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v7.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -132,9 +145,9 @@ jobs:
       run:
         working-directory: packaging/start9
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v7.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -178,23 +191,25 @@ jobs:
         id: image
         env:
           ARCH: ${{ matrix.arch }}
+          DIGEST: ${{ inputs.image-digest }}
         run: |
           set -euo pipefail
           tag=$(grep -oE "${IMAGE}:[^'\"]+" startos/manifest/index.ts | head -1)
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            # docker.yml pushes the same tag at the same time.
-            for attempt in $(seq 1 60); do
-              if digest=$(docker buildx imagetools inspect "${tag}" --format '{{.Manifest.Digest}}' 2>/dev/null) && [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-                echo "${tag} is ${digest}"
-                echo "source=published ${digest}" >> "$GITHUB_OUTPUT"
-                exit 0
-              fi
-              echo "Waiting for ${tag} (${attempt}/60)"
-              sleep 30
-            done
-            echo "::error::${tag} was not published within 30 minutes"
-            exit 1
+            # Exactly the image docker.yml pushed, by digest: the tag is not re-resolved for what is packed.
+            [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] \
+              || { echo "::error::On a tag this workflow packs the digest docker.yml pushed (image-digest), got '${DIGEST}'"; exit 1; }
+            case "${ARCH}" in x86_64) platform=linux/amd64 ;; aarch64) platform=linux/arm64 ;; esac
+            # A tripwire: the tag must still point at what was pushed (an overwritten tag fails the release).
+            current=$(docker buildx imagetools inspect "${tag}" --format '{{.Manifest.Digest}}')
+            [ "${current}" = "${DIGEST}" ] \
+              || { echo "::error::${tag} is ${current}, not the ${DIGEST} docker.yml pushed: the tag was changed"; exit 1; }
+            docker pull --platform "${platform}" "${IMAGE}@${DIGEST}"
+            docker tag "${IMAGE}@${DIGEST}" "${tag}"
+            echo "Packing ${IMAGE}@${DIGEST} (${platform}) as ${tag}"
+            echo "source=published ${DIGEST}" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           if digest=$(docker buildx imagetools inspect "${tag}" --format '{{.Manifest.Digest}}' 2>/dev/null) && [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "Using the published ${tag} (${digest})"
@@ -240,7 +255,7 @@ jobs:
             echo "- Signed with a throwaway key: for testing only (packaging/start9/README.md, \"CI\")"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: trikey-guardian-s9pk-${{ matrix.arch }}
           path: |

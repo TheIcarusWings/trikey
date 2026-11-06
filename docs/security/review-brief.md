@@ -414,12 +414,12 @@ a simulated phone and contact), `rotation*.test.ts`, `limit*.test.ts`, `recovery
 
 | Workflow | What it checks |
 |---|---|
-| `ci.yml` | Builds `tools/consensus-verify`, `npm ci`, `npm run typecheck`, `npm test`; a `secrets` job runs gitleaks (`.gitleaks.toml`) |
+| `ci.yml` | Builds `tools/consensus-verify`, `npm ci`, `npm run typecheck`, `npm test`; a `secrets` job runs gitleaks (`.gitleaks.toml`); an `action-pins` job fails if any `uses:` is not pinned to a full commit SHA (Dependabot, `.github/dependabot.yml`, proposes updates) |
 | `e2e.yml` | The regtest end-to-end suite with real bitcoind and Electrs |
-| `docker.yml` | Builds the guardian image and smoke-starts it (waits for `/api/status`) |
+| `docker.yml` | Builds the guardian image and smoke-starts it (waits for `/api/status`); pushes only on `v*` tags, from a `publish` job in the `release` environment, then calls `start9.yml` and `umbrel-store.yml` with the pushed digest |
 | `reproducible.yml` | Builds the image twice and compares digests |
 | `android-launch.yml`, `ios-launch.yml` | Builds the app, opens it in an emulator or simulator, walks the demo with Maestro, fails on a crash |
-| `android-build.yml`, `android-apk.yml` | Release APK, signed with the release key (`packaging/android/release-cert.sha256`) |
+| `android-build.yml`, `android-apk.yml` | Release APK, signed with the release key (`packaging/android/release-cert.sha256`) in a separate `sign` job (`release` environment, `v*` tags only, no build code); certificates re-checked before upload |
 | `umbrel-store.yml` | Publishes the Umbrel store copy with the image pinned by digest |
 | `site.yml` | Validates the website |
 

@@ -55,10 +55,12 @@ This folder lives in the monorepo, so the store has to live in its own repositor
 `trikey-umbrel-store` (suggested name, next to this repository) with one commit in it, for example
 a README. Then, in Umbrel: App Store, then Community App Stores, and add that repository's URL.
 
-`.github/workflows/umbrel-store.yml` keeps the store in step. On a release tag `v*` it waits for
-the image to be published, copies `packaging/umbrel/` into the store repository with the image
-pinned by digest, and pushes. It needs one secret in this repository, `UMBREL_STORE_TOKEN`: a
-fine-grained personal access token with "Contents: read and write" on the store repository only.
+`.github/workflows/umbrel-store.yml` keeps the store in step. On a release tag `v*`, `docker.yml`
+calls it once the image is pushed, with the digest it pushed; it copies `packaging/umbrel/` into the
+store repository with the image pinned by that digest (failing if the tag no longer points at it),
+and pushes. It needs one secret, `UMBREL_STORE_TOKEN`: a fine-grained personal access token with
+"Contents: read and write" on the store repository only, best kept in the `release` environment
+(`docs/android-signing.md`, "The `release` environment").
 Without the secret it does nothing and says so in the run's annotations. (To use another
 repository name, set the repository variable `UMBREL_STORE_REPO` to `owner/name`.) The workflow
 refuses to publish if `umbrel-app.yml` and `docker-compose.yml` do not name the tag's version, so
@@ -93,6 +95,7 @@ The package pulls `ghcr.io/theicaruswings/trikey-guardian:<version>`, so the ima
 has to be published first (or built locally under that name).
 
 `.github/workflows/start9.yml` type-checks the package and builds both `.s9pk` files on every pull
-request that touches it (or the guardian's environment contract) and on every release tag, and keeps
+request that touches it (or the guardian's environment contract) and on every release tag (called by
+`docker.yml` with the digest of the image it pushed, which is the image packed), and keeps
 them as workflow artifacts. They are signed with a throwaway key, so they are for testing, not
 attached to releases: `start9/README.md`, "CI".

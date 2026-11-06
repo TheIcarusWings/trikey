@@ -90,10 +90,11 @@ describe('.github/workflows/docker.yml: the release files', () => {
   const job = wf.jobs['compose-files']!;
 
   it('runs after the image is pushed, on tags only, and may write release assets', () => {
-    expect(job.needs).toBe('image');
-    expect(job.if).toContain("github.ref_type == 'tag'");
+    expect(job.needs).toBe('publish');
+    expect(job.if).toBe("needs.publish.outputs.digest != ''");
+    expect(wf.jobs['publish']!.if).toBe("github.ref_type == 'tag' && startsWith(github.ref_name, 'v')");
     expect(job.permissions).toEqual({ contents: 'write' });
-    expect(wf.jobs['image']!.outputs).toMatchObject({ digest: '${{ steps.build.outputs.digest }}' });
+    expect(wf.jobs['publish']!.outputs).toMatchObject({ digest: '${{ steps.build.outputs.digest }}' });
   });
 
   it('pins the image by digest and attaches the compose file and the settings to the release', () => {
