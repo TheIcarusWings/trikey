@@ -6,7 +6,7 @@ tagline: Key 3 of your 2-of-3 bitcoin wallet, on your own node
 # TODO(verify): the icon is a placeholder (the web UI favicon). Replace with a proper icon URL.
 icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/guardian-web/public/favicon.svg
 category: bitcoin
-version: "0.1.18-alpha"
+version: "0.1.19-alpha"
 # TODO(verify): host-facing port for the app_proxy. Pick one that no other app in the store uses.
 port: 3010
 description: >-
@@ -26,9 +26,8 @@ support: https://github.com/TheIcarusWings/trikey/issues
 # TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
 gallery: []
 releaseNotes: >-
-  With the 0.1.18 app, more hardware wallets can set up a guardian wallet: a Coldcard Mk4 or Q over NFC, and
-  Passport (2nd generation) and Krux from their microSD card. The Telegram settings now say what to do after you
-  save the bot. A new Support page shows the project's donation address.
+  No guardian changes: this release fixes the 0.1.18 iPhone app, which closed itself right after opening, and adds
+  Jade and Jade Plus over Bluetooth in the app. Update the app; the guardian update only keeps versions in step.
 dependencies:
   - bitcoin
   - electrs
