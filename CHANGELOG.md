@@ -6,6 +6,20 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## 0.1.19-alpha (2026-11-06)
+
+A fix for the iPhone app, and Jade over Bluetooth. Update the app; the guardian has no changes.
+
+- **iPhone: 0.1.18 closed itself right after opening. Fixed.** A part of the Coldcard NFC code loaded itself in a loop on
+  phones; on an iPhone without NFC that stopped the app at launch. Your wallet was not touched. A new test catches this
+  kind of mistake, and releases now wait for the iPhone launch check (#158).
+- **Jade over Bluetooth.** A Blockstream Jade or Jade Plus can connect over Bluetooth, not only with QR codes: it sets up
+  your wallet, co-signs payments, approves your guardian's changes, and can keep your notes on the guardian and unlock
+  it. To unlock the Jade you type its PIN on the Jade, and your phone passes an encrypted check between the Jade and its
+  PIN server (Blockstream's, unless you set your own); that server sees your phone's IP address and when your Jade
+  unlocks, never your PIN or keys, and the app says so before the first unlock. In QR mode Trikey contacts no PIN
+  server. Not yet tried on a real Jade: please test (alpha test plan, step 18h) (#156).
+
 ## 0.1.18-alpha (2026-11-06)
 
 More hardware wallets for guardian wallets: Coldcard over NFC, and Passport (2nd generation) and Krux from a microSD
