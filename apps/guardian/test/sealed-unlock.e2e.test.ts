@@ -6,6 +6,8 @@
  * - a sealed passphrase and a sealed hardware signature unlock; the key the guardian was locked with is zeroed then; a
  *   seal to an old key is `unlock_key_stale`, not counted, and sealing again to the new key works;
  * - a wrong passphrase, a tampered seal or one bound to another request count like a wrong passphrase and replace the key;
+ * - a seal to the current key that is refused uncounted (expired, rate limited, phone stopped, recovery pending, hardware
+ *   unlock off; an add while locked or expired) replaces the key too; a seal to an old key (a replay) changes nothing;
  * - `unlock.hardware.add` takes the signature sealed (while unlocked), the key is replaced after each use, a stale key is
  *   refused without effect; an add's seal is no unlock and an unlock's seal no add;
  * - an "old phone" (plaintext unlock and add) still works, marked in the Activity; an "old guardian" refuses `sealed`
@@ -20,7 +22,7 @@ import { join } from 'node:path';
 import { base64, hex } from '@scure/base';
 import { HDKey } from '@scure/bip32';
 import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { MultisigWallet, type KeyExpression } from '@trikey/core';
 import {
   ErrorCode,
@@ -99,6 +101,24 @@ function seal(secret: UnlockSecret, key: string, purpose: SealPurpose, id: strin
 function sealedUnlock(secret: UnlockSecret, key: string, bind: Bind = {}) {
   const id = generateMessageId();
   return phone.call('guardian.unlock', { kind: 'sealed', sealed: seal(secret, key, 'guardian.unlock', id, bind) }, { id });
+}
+
+/** `guardian.unlock`, sealed, with the seal itself (to try it later with the key the guardian holds then). */
+function sealedUnlockWith(secret: UnlockSecret, key: string, bind: Bind = {}) {
+  const id = generateMessageId();
+  const sealed = seal(secret, key, 'guardian.unlock', id, bind);
+  const call = phone.call('guardian.unlock', { kind: 'sealed', sealed }, { id });
+  return { sealed, call, id };
+}
+
+/**
+ * What an attacker who images the guardian's memory now could do with an archived seal: try it with the key held now.
+ * True when that key is still the one it was sealed to (it would decrypt: the bug).
+ */
+function memoryOpens(sealed: SealedUnlock): boolean {
+  const secret = heldSecret();
+  if (!secret) return false;
+  return getPublicKey(secret) === sealed.key;
 }
 
 /** `unlock.hardware.add` for slot `s`, its signature sealed (the sealed `slot` may differ, to test the binding). */
@@ -241,14 +261,68 @@ describe('sealed unlock', { timeout: 60_000 }, () => {
     expect(await sealedUnlock(HW(), after)).toEqual({ unlocked: true });
   });
 
-  it('an expired seal is stale too: not counted, and the secret is not tried', async () => {
+  it('an expired seal is stale too: not counted, and the secret is not tried; but it was decrypted, so the key is replaced', async () => {
     await rig.lock();
     const key = (await unlockKeyNow())!;
     const failures = rig.guardian.phoneThrottle.failures;
-    expect(reason(await rpcError(sealedUnlock(PASS(), key, { expiresAt: rig.nowSec() })))).toBe('unlock_key_stale');
+    const { sealed, call } = sealedUnlockWith(PASS(), key, { expiresAt: rig.nowSec() });
+    expect(reason(await rpcError(call))).toBe('unlock_key_stale');
     expect(rig.guardian.phoneThrottle.failures).toBe(failures);
-    // Not tried, so not a reason to replace the key either.
-    expect(await unlockKeyNow()).toBe(key);
+    // The seal held the right passphrase: the key in memory must not be able to open it any more.
+    expect(await unlockKeyNow()).not.toBe(key);
+    expect(memoryOpens(sealed)).toBe(false);
+    // A replay of a seal to an old key (stale) is not opened and must not burn the live key.
+    const live = (await unlockKeyNow())!;
+    expect(reason(await rpcError(sealedUnlock(PASS(), key)))).toBe('unlock_key_stale');
+    expect(await unlockKeyNow()).toBe(live);
+    expect(await sealedUnlock(PASS(), live)).toEqual({ unlocked: true });
+  });
+
+  it('a seal to the current key that is refused (rate limited, phone stopped, recovery pending, hardware unlock off) replaces the key', async () => {
+    // The attack: the right passphrase sealed to the current key, refused without a counted failure, used to leave the
+    // key in memory; whoever later images the box's memory and disk and holds the archived wrap could open that seal.
+    const refusedRight = async (secret: UnlockSecret, want: string, opts: { notOpened?: boolean } = {}) => {
+      const key = (await unlockKeyNow())!;
+      const failures = rig.guardian.phoneThrottle.failures;
+      const opens = vi.spyOn(rig.guardian.unlockKey, 'open');
+      try {
+        const { sealed, call } = sealedUnlockWith(secret, key);
+        const e = await rpcError(call);
+        expect(want === 'rate_limited' ? (e.code === ErrorCode.RateLimited ? 'rate_limited' : reason(e)) : reason(e), want).toBe(want);
+        expect(rig.guardian.locked, want).toBe(true);
+        expect(rig.guardian.phoneThrottle.failures, want).toBe(failures);
+        // Refusals that need no secret are checked before anything is decrypted.
+        if (opts.notOpened) expect(opens, want).not.toHaveBeenCalled();
+        expect(await unlockKeyNow(), want).not.toBe(key);
+        expect(memoryOpens(sealed), want).toBe(false);
+      } finally {
+        opens.mockRestore();
+      }
+    };
+    await rig.lock();
+    // Hardware unlock off for that slot: decrypted (the slot is inside), refused, the key replaced.
+    await refusedRight({ kind: 'hardware', walletId, slot: 'ffffeeeeddddcccc', signature: hwSig('ffffeeeeddddcccc') }, 'hardware_unlock_off');
+    // Rate limited: 4 wrong passphrases (3 free), then the right one at once.
+    for (let i = 0; i < 4; i++) await failing(() => sealedUnlock({ kind: 'passphrase', passphrase: `wrong ${i}` }, rig.guardian.unlockKey.pubkey!));
+    await refusedRight(PASS(), 'rate_limited', { notOpened: true });
+    // A fifth wrong one: the phone is stopped until the web UI unlocks.
+    rig.clock.advance(3_600_000);
+    await failing(() => sealedUnlock({ kind: 'passphrase', passphrase: 'wrong 5' }, rig.guardian.unlockKey.pubkey!));
+    rig.clock.advance(3_600_000);
+    await refusedRight(PASS(), 'phone_unlock_disabled', { notOpened: true });
+    await rig.unlock();
+    // A recovery the phone did not start (its refusal stubbed: the same check as `phone_unlock_disabled`, before opening).
+    await rig.lock();
+    const refusal = vi
+      .spyOn(rig.guardian as unknown as { phoneUnlockRefusal: () => unknown }, 'phoneUnlockRefusal')
+      .mockReturnValue({ ok: false, code: 'recovery_pending', message: 'Recovery r1 is running.' });
+    try {
+      await refusedRight(PASS(), 'recovery_pending', { notOpened: true });
+    } finally {
+      refusal.mockRestore();
+    }
+    expect(await sealedUnlock(PASS(), (await unlockKeyNow())!)).toEqual({ unlocked: true });
+    await rig.lock();
   });
 
   it('a wrong passphrase, a tampered seal, a seal for another request, guardian or purpose: each counts, and each replaces the key', async () => {
@@ -267,8 +341,9 @@ describe('sealed unlock', { timeout: 60_000 }, () => {
     ];
     for (const [what, call, want] of tries) {
       const failures = rig.guardian.phoneThrottle.failures;
-      const key = (await unlockKeyNow())!;
-      const e = await failing(() => call(key));
+      // Read the key before every try, as the phone does: a rate-limited seal to it uses it up too.
+      let key = '';
+      const e = await failing(async () => call((key = (await unlockKeyNow())!)));
       expect(e.code, what).toBe(ErrorCode.UnlockFailed);
       expect(reason(e), what).toBe(want);
       expect(rig.guardian.phoneThrottle.failures, what).toBe(failures + 1);
@@ -300,9 +375,14 @@ describe('sealed unlock', { timeout: 60_000 }, () => {
     expect(reason(e)).toBe('unlock_key_stale');
     expect((await status()).hardwareUnlock).toMatchObject({ slot });
     expect(await unlockKeyNow()).toBe(k2);
-    // Expired: stale, not a use.
+    // Expired: stale, nothing added; but it was decrypted, so the key is used up too.
     expect(reason(await rpcError(sealedAdd('5555666677778888', k2, { expiresAt: rig.nowSec() })))).toBe('unlock_key_stale');
-    expect(await unlockKeyNow()).toBe(k2);
+    expect((await status()).hardwareUnlock).toMatchObject({ slot });
+    const k3 = (await unlockKeyNow())!;
+    expect(k3).not.toBe(k2);
+    // A replay to an old key does not burn the live one.
+    expect(reason(await rpcError(sealedAdd('5555666677778888', k2)))).toBe('unlock_key_stale');
+    expect(await unlockKeyNow()).toBe(k3);
   });
 
   it("an add's seal that does not open, or is bound to another slot, request or purpose, is refused and uses up the key", async () => {
@@ -321,12 +401,21 @@ describe('sealed unlock', { timeout: 60_000 }, () => {
       expect(await unlockKeyNow(), what).not.toBe(key);
       expect((await status()).hardwareUnlock, what).toMatchObject({ slot });
     }
-    // Locked: refused before anything is opened; the key stays.
+    // Locked: refused before anything is opened; but the seal (a good signature) was to the key held now, so that key
+    // is replaced too: the memory must not keep what opens it.
     await rig.lock();
     const key = (await unlockKeyNow())!;
-    expect((await rpcError(sealedAdd('5555666677778888', key))).code).toBe(ErrorCode.GuardianLocked);
-    expect(await unlockKeyNow()).toBe(key);
-    expect(await sealedUnlock(HW(), key)).toEqual({ unlocked: true });
+    const opens = vi.spyOn(rig.guardian.unlockKey, 'open');
+    try {
+      expect((await rpcError(sealedAdd('5555666677778888', key))).code).toBe(ErrorCode.GuardianLocked);
+      expect(opens).not.toHaveBeenCalled();
+    } finally {
+      opens.mockRestore();
+    }
+    const after = (await unlockKeyNow())!;
+    expect(after).not.toBe(key);
+    expect(reason(await rpcError(sealedUnlock(HW(), key)))).toBe('unlock_key_stale');
+    expect(await sealedUnlock(HW(), after)).toEqual({ unlocked: true });
   });
 
   it('the sealing keys never reach the data directory or the log', async () => {

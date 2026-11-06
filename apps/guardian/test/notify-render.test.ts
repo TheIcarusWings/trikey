@@ -113,7 +113,7 @@ describe('controls only where they work', () => {
 
   it('the nostr DM itself is unchanged', () => {
     const g = fakeGuardian(false);
-    expect(alertText(g, alerts[0]!, rec)).toContain('To stop it, reply to this message with:');
+    expect(alertText(g, alerts[0]!, rec)).toContain('To stop it, reply to this message with exactly this line and nothing else:');
     expect(alertText(g, alerts[0]!, rec)).toBe(alertText(g, alerts[0]!, rec, 'long', 'dm'));
   });
 });

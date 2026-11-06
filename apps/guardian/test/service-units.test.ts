@@ -4,7 +4,7 @@ import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 import { ErrorCode, wrapMessage, type NostrEvent, type OpenedWrap, type RelayPool } from '@trikey/protocol';
 import { Inbox } from '../src/nostr/inbox.js';
 import { loadConfig, parseNetwork } from '../src/config.js';
-import { parseCancel } from '../src/dm-cancel.js';
+import { cancelHintText, mentionedCancel, parseCancel } from '../src/dm-cancel.js';
 import { PAIRING_MAX_FAILURES, PAIRING_TTL_MS, PairingSessions } from '../src/pairing.js';
 import { recoveryToWire, refusalCode, refusalData, refusalError, toSeconds } from '../src/nostr/wire.js';
 import { formatBtc, formatWhen } from '../src/alerts.js';
@@ -54,13 +54,49 @@ describe('pairing sessions', () => {
 });
 
 describe('CANCEL replies', () => {
-  it('finds a recovery id in a reply, case-insensitively', () => {
+  it('takes exactly one line `CANCEL <id>`, case-insensitively, beside blank and quoted lines', () => {
     expect(parseCancel('CANCEL 2-0123456789ab')).toBe('2-0123456789ab');
-    expect(parseCancel('  cancel   12-ABCDEF012345 please')).toBe('12-abcdef012345');
+    expect(parseCancel('  cancel   12-ABCDEF012345  ')).toBe('12-abcdef012345');
+    expect(parseCancel('Cancel 2-0123456789ab.')).toBe('2-0123456789ab');
+    expect(parseCancel('CANCEL 2-0123456789ab!')).toBe('2-0123456789ab');
     expect(parseCancel('> quoted alert\n\nCancel 3-00000000000f')).toBe('3-00000000000f');
-    expect(parseCancel('do not cancel')).toBeUndefined();
-    expect(parseCancel('CANCEL everything')).toBeUndefined();
-    expect(parseCancel('CANCEL 2-0123')).toBeUndefined();
+    expect(parseCancel('CANCEL 3-00000000000f\r\n\r\n> To stop it, reply to this message with:\n>\n> CANCEL 3-00000000000f')).toBe('3-00000000000f');
+    expect(parseCancel('CANCEL g1g2-0123456789ab')).toBe('g1g2-0123456789ab');
+  });
+
+  it("never cancels on a quoted alert, a sentence or more words (the alert itself names `CANCEL <id>`)", () => {
+    // The attack: a client quotes the guardian's own alert in a reply asking the owner something.
+    const quotedAlert = [
+      '> Trikey alert: someone started a recovery of the bitcoin wallet "Family" you help protect.',
+      '>',
+      '> To stop it, reply to this message with exactly this line and nothing else:',
+      '>',
+      '> CANCEL 2-0123456789ab',
+      '',
+      'Was this you?',
+    ].join('\n');
+    for (const no of [
+      quotedAlert,
+      '> CANCEL 2-0123456789ab',
+      'Was this you? CANCEL 2-0123456789ab',
+      'CANCEL 2-0123456789ab please',
+      "don't cancel 2-0123456789ab",
+      'do not cancel',
+      'CANCEL everything',
+      'CANCEL 2-0123',
+      'CANCEL 2-0123456789ab?',
+      'CANCEL 2-0123456789ab\nCANCEL 2-0123456789ab',
+      'CANCEL 2-0123456789ab\nthanks',
+      '',
+    ])
+      expect(parseCancel(no), no).toBeUndefined();
+    // A quoted or worded one is still noticed, for the hint (never to cancel).
+    expect(mentionedCancel(quotedAlert)).toBe('2-0123456789ab');
+    expect(mentionedCancel('CANCEL 2-0123456789AB please')).toBe('2-0123456789ab');
+    expect(mentionedCancel('hello')).toBeUndefined();
+    expect(cancelHintText('2-0123456789ab')).toMatch(/nothing was cancelled.*exactly this line.*\n\nCANCEL 2-0123456789ab$/s);
+    // The hint, quoted back by the contact's client, is not a command either.
+    expect(parseCancel(cancelHintText('2-0123456789ab').split('\n').map((l) => `> ${l}`).join('\n') + '\nok')).toBeUndefined();
   });
 });
 

@@ -114,6 +114,8 @@ const MAX_NOTICES = 32;
 const MAX_SAVINGS_SPENDS = 500;
 /** Savings spends whose coins and payment are remembered (`SavingsWatch.spendDetails`), to tell a replacement (RBF) apart. */
 const MAX_SAVINGS_SPEND_DETAILS = 100;
+/** A `savings_unchecked` notice at most this often (savings.ts says when the tripwire cannot check everything). */
+export const SAVINGS_UNCHECKED_NOTICE_EVERY_MS = DAY;
 
 /** Weak spots of a policy the phone and the web UI should show. */
 export type PolicyWarning = 'no_alert_contacts';
@@ -977,10 +979,19 @@ export class PolicyEngine {
    *
    * Returns the new spends (`announced`: queued as a notice; `replaces`: the spend it replaced). Writes nothing when
    * nothing is new.
+   *
+   * `complete: false`: the scan could not check every transaction of Savings yet (savings.ts). Before the first scan
+   * that could, only the high-water marks are taken: the history is not recorded half, or an older spend checked later
+   * would read as news. After it, the spends it found are news as ever.
    */
   async noteSavingsScan(
     walletId: string,
-    scan: { nextReceiveIndex: number; nextChangeIndex: number; spends: { txid: string; amountSats: bigint; outpoints?: string[]; payment?: string; consolidated?: true }[] },
+    scan: {
+      nextReceiveIndex: number;
+      nextChangeIndex: number;
+      spends: { txid: string; amountSats: bigint; outpoints?: string[]; payment?: string; consolidated?: true }[];
+      complete?: boolean;
+    },
   ): Promise<{ txid: string; amountSats: bigint; announced: boolean; replaces?: string; consolidated?: true }[]> {
     const used: HighWater = { receive: scan.nextReceiveIndex - 1, change: scan.nextChangeIndex - 1 };
     const ok = (n: number) => Number.isSafeInteger(n) && n <= MAX_SELF_INDEX;
@@ -989,8 +1000,9 @@ export class PolicyEngine {
       if (!sv || sv.walletId !== walletId) return undefined;
       const cur = sv.highWater ?? NO_HIGH_WATER;
       const rises = (ok(used.receive) && used.receive > cur.receive) || (ok(used.change) && used.change > cur.change);
+      if (scan.complete === false && !sv.baselined) return rises ? { fresh: [] as typeof scan.spends, hold: true } : undefined;
       const fresh = scan.spends.filter((x) => /^[0-9a-f]{64}$/.test(x.txid) && !sv.seenSpends.includes(x.txid));
-      return rises || fresh.length || !sv.baselined ? { fresh } : undefined;
+      return rises || fresh.length || !sv.baselined ? { fresh, hold: false } : undefined;
     };
     if (!pending(this.state)) return [];
     return this.mutate((draft, now) => {
@@ -1000,6 +1012,7 @@ export class PolicyEngine {
       const sv = w.savings!;
       const clamp = (n: number) => (Number.isSafeInteger(n) ? Math.min(n, MAX_SELF_INDEX) : -1);
       sv.highWater = maxHighWater(sv.highWater ?? NO_HIGH_WATER, { receive: clamp(used.receive), change: clamp(used.change) });
+      if (p.hold) return [];
       // Oldest first, so the log and the notices read in the order the coins moved.
       const fresh = [...new Map(p.fresh.map((x) => [x.txid, x])).values()].reverse();
       sv.seenSpends = [...sv.seenSpends, ...fresh.map((x) => x.txid)].slice(-MAX_SAVINGS_SPENDS);
@@ -1049,6 +1062,40 @@ export class PolicyEngine {
       }
       sv.spendDetails = details.slice(-MAX_SAVINGS_SPEND_DETAILS);
       return out;
+    });
+  }
+
+  /**
+   * The Savings tripwire cannot check every transaction of Savings (savings.ts): more arrived than it may read in a while
+   * (`pending`: how many wait), or reading Savings keeps failing (`pending` absent). A spend of Savings may be among them,
+   * unseen, so the paired phone and every alert contact get a durable `savings_unchecked` notice, delivered and retried
+   * like `savings_moved`, at most once per `SAVINGS_UNCHECKED_NOTICE_EVERY_MS` (a flood of receives must not become a
+   * flood of messages). Only once Savings was baselined (before, nothing is news yet). True when it queued one.
+   */
+  async noteSavingsUnchecked(walletId: string, pending: number | undefined): Promise<boolean> {
+    const due = (st: GuardianState, now: number) => {
+      const sv = st.active?.savings;
+      return !!sv && sv.walletId === walletId && sv.baselined && (sv.uncheckedNoticeAt === undefined || now - sv.uncheckedNoticeAt >= SAVINGS_UNCHECKED_NOTICE_EVERY_MS);
+    };
+    if (!due(this.state, this.clock.now())) return false;
+    return this.mutate((draft, now) => {
+      if (!due(draft, now)) return false;
+      const w = draft.active!;
+      const sv = w.savings!;
+      sv.uncheckedNoticeAt = now;
+      const count = pending !== undefined && Number.isSafeInteger(pending) && pending > 0 ? { pending } : {};
+      this.log(draft, now, { type: 'savings_unchecked', walletId, ...count });
+      this.addNotice(draft, now, {
+        id: `savings-${draft.nextActivityId}`,
+        kind: 'savings_unchecked',
+        walletId: w.registration.walletId,
+        at: now,
+        savingsWalletId: walletId,
+        ...count,
+        recipients: [w.registration.appNostrPubkey, ...w.rules.alertContacts.filter((c) => c !== w.registration.appNostrPubkey)],
+        sent: [],
+      });
+      return true;
     });
   }
 

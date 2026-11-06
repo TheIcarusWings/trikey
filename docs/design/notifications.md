@@ -128,7 +128,7 @@ What goes where:
 | `limit_off` | yes | yes |
 | `limit_on` | yes | no (as on nostr) |
 | `contact_lock` (an alert contact locked it) | yes | yes, except the one who locked it |
-| `savings_moved`, `savings_unwatched` | yes | yes |
+| `savings_moved`, `savings_unwatched`, `savings_unchecked` | yes | yes |
 | `guardian_locked` after a restart, or from the phone | yes | no |
 | `relays_changed`, `wallet_retired` (retire, reset), `wallet_adopted` | yes | no |
 | `notifications_changed` | yes | yes (all of them) |

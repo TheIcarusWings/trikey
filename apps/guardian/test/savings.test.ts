@@ -193,6 +193,47 @@ describe('the savings_moved tripwire', () => {
     expect(ctx.engine.savings()!.highWater).toEqual({ receive: 1, change: 1 });
   });
 
+  it('a scan that could not check every transaction yet records no history: only the high-water marks', async () => {
+    const ctx = await setup({ rules: { alertContacts: [CONTACT_A] } });
+    const sv = await registered(ctx);
+    // Not baselined from half a history: an older spend checked later would read as news.
+    expect(await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 3, nextChangeIndex: 1, spends: [{ txid: TXID(1), amountSats: 5_000n }], complete: false })).toEqual([]);
+    expect(ctx.engine.savings()).toMatchObject({ baselined: false, seenSpends: [], highWater: { receive: 2, change: 0 } });
+    // Complete: the history (both spends), not news.
+    const all = [{ txid: TXID(2), amountSats: 7_000n }, { txid: TXID(1), amountSats: 5_000n }];
+    expect(await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 3, nextChangeIndex: 1, spends: all })).toEqual([]);
+    expect(ctx.engine.savings()).toMatchObject({ baselined: true, seenSpends: [TXID(1), TXID(2)] });
+    // Baselined, an incomplete scan's spends are news as ever.
+    const fresh = await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 3, nextChangeIndex: 1, spends: [{ txid: TXID(3), amountSats: 1_000n }, ...all], complete: false });
+    expect(fresh).toEqual([{ txid: TXID(3), amountSats: 1_000n, announced: true }]);
+  });
+
+  it('"not fully checked" is told to the phone and every contact once baselined, at most once a day', async () => {
+    const ctx = await setup({ rules: { alertContacts: [CONTACT_A] } });
+    const sv = await registered(ctx);
+    // Before the first full scan nothing is news, this neither.
+    expect(await ctx.engine.noteSavingsUnchecked(sv.walletId, 300)).toBe(false);
+    await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 1, nextChangeIndex: 0, spends: [] });
+    expect(await ctx.engine.noteSavingsUnchecked(sv.walletId, 300)).toBe(true);
+    const n = ctx.engine.dueNotices().find((x) => x.kind === 'savings_unchecked')!;
+    expect(n).toMatchObject({ savingsWalletId: sv.walletId, pending: 300, recipients: [APP_NOSTR, CONTACT_A] });
+    expect(ctx.engine.activity({ limit: 1 })[0]).toMatchObject({ type: 'savings_unchecked', walletId: sv.walletId, pending: 300 });
+    expect(engineEntry(ctx.engine.activity({ limit: 1 })[0]!).event).toMatch(/300 transactions of the Savings wallet .* waited unchecked/);
+    expect(noticeToWire(n)).toMatchObject({ type: 'savings_unchecked', walletId: sv.walletId, pending: 300 });
+    expect(noticeToWire(n)!.message).toMatch(/300 payments into Savings wait unchecked.*may be hidden among them/);
+    expect(noticeText(n)).toMatch(/cannot check everything that happens in its Savings wallet[\s\S]*300 transactions/);
+    // A flood of receives is not a flood of messages.
+    ctx.clock.advance(3_600_000);
+    expect(await ctx.engine.noteSavingsUnchecked(sv.walletId, 900)).toBe(false);
+    ctx.clock.advance(24 * 3_600_000);
+    expect(await ctx.engine.noteSavingsUnchecked(sv.walletId, undefined)).toBe(true);
+    const failing = ctx.engine.dueNotices().filter((x) => x.kind === 'savings_unchecked').at(-1)!;
+    expect(failing.pending).toBeUndefined();
+    expect(noticeToWire(failing)!.message).toMatch(/cannot read Savings right now/);
+    // Another (old) Savings wallet: nothing.
+    expect(await ctx.engine.noteSavingsUnchecked(TXID(9).slice(0, 8), 5)).toBe(false);
+  });
+
   it('what the phone and the contacts are told, in words', async () => {
     const ctx = await setup();
     const sv = await registered(ctx);

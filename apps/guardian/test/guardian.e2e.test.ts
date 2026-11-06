@@ -401,7 +401,22 @@ describe('Trikey Guardian service, end to end', { timeout: 30_000 }, () => {
     expect(web.destination).toBe(dest.derive(0, 0).address);
     await waitFor(async () => (await api('GET', '/recovery')).body.recovery.alertsSent.every((x: { sentAt: string[] }) => x.sentAt.length === 1), 'alerts recorded');
 
-    // The contact replies from their nostr app.
+    // The contact first asks the owner, their client quoting the alert (which names `CANCEL <id>`): nothing is cancelled,
+    // and the contact is told the exact line to send.
+    const quoting = [...dm.content.split('\n').map((l) => `> ${l}`), '', 'Was this you?'].join('\n');
+    expect(quoting).toContain(`> CANCEL ${recovery1Id}`);
+    const hinted = () => logLines.filter((l) => l.includes('dm.cancel_ignored') && l.includes('not the command')).length;
+    const hintsBefore = hinted();
+    await contactPool.publish([relayA.url, relayB.url], nip17.wrapEvent(contactKey, { publicKey: guardianPub }, quoting));
+    const hint = await waitFor(() => contactInbox.find((m) => m.content.includes('nothing was cancelled')), 'hint DM');
+    expect(hint.content).toContain(`exactly this line and nothing else:\n\nCANCEL ${recovery1Id}`);
+    // "CANCEL <id> please" is not the command either (the same hint, so the inbox, which keeps one of each, has it once).
+    await contactPool.publish([relayA.url, relayB.url], nip17.wrapEvent(contactKey, { publicKey: guardianPub }, `CANCEL ${recovery1Id} please`));
+    await waitFor(() => hinted() >= hintsBefore + 2 || undefined, 'second message handled');
+    expect(phoneAlerts.find((a) => a.type === 'recovery_cancelled')).toBeUndefined();
+    expect((await phone.call('guardian.status', {})).activeRecoveryId).toBe(recovery1Id);
+
+    // The contact replies from their nostr app with the line itself.
     const reply = nip17.wrapEvent(contactKey, { publicKey: guardianPub }, `CANCEL ${recovery1Id}`);
     await contactPool.publish([relayA.url, relayB.url], reply);
 

@@ -11,6 +11,7 @@ import { buildSpend, keySetId, parsePsbt } from '@trikey/core';
 import { HostedEngine, MemoryHostedStore, hostedAuthPath, serializeHosted } from '../src/hosting/engine.js';
 import { HOSTED_RECOVERY_ID, slotOfRecoveryId } from '../src/hosting/service.js';
 import { hostedAlertText } from '../src/hosting/alerts.js';
+import { parseCancel } from '../src/dm-cancel.js';
 import { ClockChain, DAY, ManualClock, SoftwareCosignerSigner, approvalMessage as approvalText, pairingMessage, recoveryAccessMessage, signMessage, type Rules } from '../src/policy/index.js';
 import { APP_NOSTR, AUTH_PATH, CONTACT_A, CONTACT_B, MNEMONICS, T0, appSigner, approve, fund, hwAuthPrivateKey, network, nostrKey } from './helpers.js';
 import { destinationAfterHardwareLoss, externalScript, fakeMap, hostedWallet, offPathPayment, phoneSweep, type HostedFixture } from './support/hosted.js';
@@ -199,7 +200,7 @@ describe('guest-built recovery', () => {
     expect(res.recovery.id).toMatch(HOSTED_RECOVERY_ID);
     expect(slotOfRecoveryId(res.recovery.id)).toBe(SLOT);
     expect(slotOfRecoveryId('1-0123456789ab')).toBeUndefined();
-    expect(/\bcancel\s+([0-9a-z]+-[0-9a-f]{12})\b/i.exec(`CANCEL ${res.recovery.id}`)?.[1]).toBe(res.recovery.id);
+    expect(parseCancel(`CANCEL ${res.recovery.id}`)).toBe(res.recovery.id);
     void clock;
   });
 

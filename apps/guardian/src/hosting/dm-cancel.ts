@@ -5,12 +5,14 @@
  */
 import type { Guardian } from '../guardian.js';
 import type { IncomingDm } from '../nostr/dm.js';
+import { cancelHintText } from '../dm-cancel.js';
 import { hostedRefusalText } from './handlers.js';
 import { slotOfRecoveryId } from './service.js';
 
 const ANSWER_WINDOW_SEC = 600;
 
-export async function onHostedCancelDm(g: Guardian, dm: IncomingDm, id: string): Promise<void> {
+/** `hintOnly`: the message names `CANCEL <id>` but is not the command (dm-cancel.ts `parseCancel`): never cancels. */
+export async function onHostedCancelDm(g: Guardian, dm: IncomingDm, id: string, hintOnly = false): Promise<void> {
   const slotId = slotOfRecoveryId(id);
   const live = slotId ? g.hosting.liveSlots().find((x) => x.slot.slotId === slotId) : undefined;
   if (!live) return;
@@ -31,6 +33,11 @@ export async function onHostedCancelDm(g: Guardian, dm: IncomingDm, id: string):
     }
     const fresh = dm.createdAt >= g.nowSec() - ANSWER_WINDOW_SEC;
     const active = engine.activeRecord();
+    if (hintOnly) {
+      g.log.info('dm.cancel_ignored', { reason: 'not the command' });
+      if (fresh && active?.id === id) await reply(cancelHintText(id));
+      return;
+    }
     if (!active || active.id !== id) {
       if (fresh) await reply(`Trikey: there is no running recovery ${id}, so nothing was cancelled.`);
       return;
