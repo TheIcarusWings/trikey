@@ -322,6 +322,12 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
   }
 }
 
+/**
+ * An unlock from an app before sealed unlock (PROTOCOL.md, "Sealed unlock"): its passphrase or signature crossed the
+ * relays in a wrap that the guardian's disk could open later. It works; the owner is asked to update the app.
+ */
+const UNSEALED = '. The phone sent it unsealed (an older Trikey app): update the app so the next unlock is sealed';
+
 export function serviceEntry(e: ServiceActivity): ActivityEntry {
   const base = { id: `s${e.id}`, at: iso(e.at) };
   switch (e.type) {
@@ -334,25 +340,35 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
         return {
           ...base,
           kind: 'system',
-          event: `Guardian unlocked with the hardware wallet${e.walletId ? ` of wallet ${e.walletId}` : ''}, from the phone`,
+          event: `Guardian unlocked with the hardware wallet${e.walletId ? ` of wallet ${e.walletId}` : ''}, from the phone${e.unsealed ? UNSEALED : ''}`,
           summary: 'Unlocked with the hardware wallet',
           signedBy: 'Phone + hardware wallet',
           sats: null,
           result: 'ok',
         };
-      return { ...base, kind: 'system', event: `Guardian unlocked with the passphrase ${e.via === 'web' ? 'on this box' : 'from the phone'}`, summary: 'Unlocked', signedBy: e.via === 'web' ? null : 'Phone', sats: null, result: 'ok' };
+      return { ...base, kind: 'system', event: `Guardian unlocked with the passphrase ${e.via === 'web' ? 'on this box' : 'from the phone'}${e.unsealed ? UNSEALED : ''}`, summary: 'Unlocked', signedBy: e.via === 'web' ? null : 'Phone', sats: null, result: 'ok' };
     case 'unlock_failed':
-      if (e.method === 'hardware')
+      if (e.unreadable)
         return {
           ...base,
           kind: 'system',
-          event: `A hardware wallet signature from the phone did not unlock the guardian${e.walletId ? ` (wallet ${e.walletId})` : ''}`,
+          event: 'The phone sent a sealed unlock this guardian could not open (damaged, or made for another guardian or request); counted as a failed try',
           summary: 'Unlock failed',
           signedBy: null,
           sats: null,
           result: 'refused',
         };
-      return { ...base, kind: 'system', event: `Wrong unlock passphrase ${e.via === 'web' ? 'on this box' : 'from the phone'}`, summary: 'Unlock failed', signedBy: null, sats: null, result: 'refused' };
+      if (e.method === 'hardware')
+        return {
+          ...base,
+          kind: 'system',
+          event: `A hardware wallet signature from the phone did not unlock the guardian${e.walletId ? ` (wallet ${e.walletId})` : ''}${e.unsealed ? UNSEALED : ''}`,
+          summary: 'Unlock failed',
+          signedBy: null,
+          sats: null,
+          result: 'refused',
+        };
+      return { ...base, kind: 'system', event: `Wrong unlock passphrase ${e.via === 'web' ? 'on this box' : 'from the phone'}${e.unsealed ? UNSEALED : ''}`, summary: 'Unlock failed', signedBy: null, sats: null, result: 'refused' };
     case 'locked':
       return {
         ...base,

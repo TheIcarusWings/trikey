@@ -41,9 +41,13 @@ export interface SweepRecord {
 export type ServiceEvent =
   | { type: 'setup' }
   | { type: 'started' }
-  /** `method: 'hardware'` (absent: the passphrase): the phone sent the hardware wallet's signature of `walletId`'s unlock slot. */
-  | { type: 'unlocked'; via: 'web' | 'phone'; method?: 'hardware'; walletId?: string }
-  | { type: 'unlock_failed'; via: 'web' | 'phone'; method?: 'hardware'; walletId?: string }
+  /**
+   * `method: 'hardware'` (absent: the passphrase): the phone sent the hardware wallet's signature of `walletId`'s unlock
+   * slot. `unsealed`: the phone sent it in the clear to a guardian that seals unlocks (an app from before sealed unlock).
+   * `unreadable` (failures only): a sealed unlock that did not open, or was not for this guardian, phone or request.
+   */
+  | { type: 'unlocked'; via: 'web' | 'phone'; method?: 'hardware'; walletId?: string; unsealed?: true }
+  | { type: 'unlock_failed'; via: 'web' | 'phone'; method?: 'hardware'; walletId?: string; unsealed?: true; unreadable?: true }
   | { type: 'locked'; reason: 'manual' | 'remote' }
   | { type: 'reset' }
   | { type: 'reset_refused'; detail: string }
