@@ -1097,6 +1097,30 @@ Bitkey's hardware wallets were checked as Trikey's key 1, from Bitkey's open-sou
   dormant one), or a role where blind signing costs little. The only such role is a Savings **Recovery Key**, kept
   apart and used only for a recovery; a Ledger or Trezor already fills it better, so it is built only if owners ask.
 
+## Considered and not built: Spark (spark.money) as a spending pocket (2026-11-06)
+
+Spark is a statechain-style Bitcoin layer 2 by Lightspark: instant, near-free transfers, Lightning interop and
+stablecoins (USDB from Brale). Considered only as a small, capped "spending pocket" next to the vault (top-ups as
+ordinary Trikey payments within the daily limit), never for the vault. Decided: **not now** (the owner, 2026-11-06),
+from Spark's own docs (docs.spark.money, read 2026-11-06) and its Apache-2.0 repo (github.com/buildonspark/spark):
+
+- **One hot key.** The user side co-signs with the operators by FROST through a single-key signer (`SparkSigner`);
+  "Does it support MPC/multisig? Not yet." No hardware wallet speaks it. A pocket would have no guardian, no limit and
+  no hardware approval: the thing Trikey exists to avoid.
+- **Beta.** "Still highly experimental. Expect bugs, rapid iteration, and breaking changes"; "start with small amounts".
+- **The way out is not practical from a phone.** Unilateral exit is a beta CLI flow: Bitcoin Core v29, own UTXOs for
+  fees, one session, broadcast root to leaves, leaves over about 16,348 sats, relative timelocks of 100+ blocks, and a
+  watchtower against a prior owner publishing an old branch.
+- **Trust in a few companies.** Operators are Lightspark, Flashnet and Breez; safety rests on at least one deleting its
+  key share at each transfer ("moment-in-time" trust), and Lightspark provides deposit/withdrawal liquidity.
+- **Privacy off by default** (balances and transfer history publicly queryable until `setPrivacyEnabled(true)`; token
+  activity always public), and **stablecoins can be frozen** by their issuer through the operators' freeze lists.
+- 0-conf deposits are gated (partner access).
+
+**Revisit when** Spark supports multisig or an external signer a hardware wallet can drive, and its exit is
+production-ready. If a pocket is built then: capped, privacy on from the start, the screen naming the different trust,
+and the guardian as the pocket's watchtower (Spark's watchtower "holds no toxic data").
+
 ## Open questions
 
 1. **How the hardware wallet unlocks the guardian.** Built, opt-in ("Unlocking the guardian with the hardware wallet"): Ledger and Trezor BIP 137-sign a fixed unlock text deterministically, and the guardian, after checking the signature against the wallet's authorization key, derives an unlock slot's key from it, as the notes do. Trezor's CipherKeyValue (SLIP-11) was not needed, and Ledger needs no symmetric-key API. Still open: checking on real devices (firmware versions) that two signatures of the same text are equal, which the app checks each time the option is turned on; QR devices that sign a text by QR (Coldcard Q, Jade, Keystone 3, Passport Prime, Specter DIY) do it over two QR round trips, a Coldcard Mk4 or Q over NFC with taps; the others, including Passport gen 2 and Krux (microSD only), keep the passphrase. Rule changes use BIP137 message signatures too (see rule 4); which signing paths each device allows still has to be tested on real hardware.
