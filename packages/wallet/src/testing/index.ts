@@ -52,7 +52,7 @@ export interface SoftwareHardwareOptions {
   model?: string;
   /** QR devices: the model it reports (qr-devices.ts). */
   qrModel?: QrModel;
-  /** Demand `registerWallet` before signing or showing addresses (default: true for ledger, bitbox02, jade, coldcard). */
+  /** Demand `registerWallet` before signing or showing addresses (default: true for ledger, bitbox02, jade, coldcard, coldcard-nfc). */
   requireRegistration?: boolean;
   /** Sign PSBTs that also spend finalized inputs of another wallet (external inputs). Default true. */
   allowExternalInputs?: boolean;
@@ -67,7 +67,7 @@ export type DeviceCall =
   | { op: 'signMessage'; path: string; message: string; context?: SignMessageContext }
   | { op: 'close' };
 
-const REGISTERING_KINDS: HardwareKind[] = ['ledger', 'bitbox02', 'jade', 'coldcard'];
+const REGISTERING_KINDS: HardwareKind[] = ['ledger', 'bitbox02', 'jade', 'coldcard', 'coldcard-nfc'];
 
 /** A BIP 137 signature (p2pkh header) with a random nonce: valid, never the same twice. */
 function signMessageWithNonce(message: string, privateKey: Uint8Array): string {
@@ -191,7 +191,7 @@ export class SoftwareHardwareSigner implements HardwareSigner {
 
 /** Hands out the software device(s). `device` can be swapped to simulate plugging in another one. */
 export class SoftwareHardwareProvider implements HardwareProvider {
-  readonly kinds: readonly HardwareKind[] = ['ledger', 'trezor', 'coldcard', 'bitbox02', 'jade', 'qr'];
+  readonly kinds: readonly HardwareKind[] = ['ledger', 'trezor', 'coldcard', 'bitbox02', 'jade', 'qr', 'coldcard-nfc'];
   connects = 0;
 
   constructor(public device: SoftwareHardwareSigner) {}

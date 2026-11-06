@@ -39,7 +39,8 @@ const RECOVERY_KEY_DEVICES: Record<HardwareKind, SavingsDevice> = {
   ledger: { brand: 'Ledger', model: 'Ledger Nano S Plus', fingerprint: '5e7d2c4b' },
   trezor: { brand: 'Trezor', model: 'Trezor Safe 3', fingerprint: '5e7d2c4b' },
   bitbox02: { brand: 'BitBox02', model: 'BitBox02', fingerprint: '5e7d2c4b' },
-  qr: { brand: 'Coldcard', model: 'Coldcard Mk4', fingerprint: '5e7d2c4b' },
+  qr: { brand: 'Coldcard', model: 'Coldcard Q', fingerprint: '5e7d2c4b' },
+  'coldcard-nfc': { brand: 'Coldcard', model: 'Coldcard Mk4', fingerprint: '5e7d2c4b' },
 };
 
 /** Savings holding money, for Settings > Developer: the balance the design shows (0.48 BTC). */

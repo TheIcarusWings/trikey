@@ -101,7 +101,8 @@ the phone unless you send it.
 1. Xcode on a Mac, signed in with your Apple ID (Xcode, Settings, Accounts). A free account is enough.
 2. Leave `EXPO_PUBLIC_PASSKEY_RP_ID` **unset** (it adds the Associated Domains capability, which a free account cannot sign) and
    build **without iCloud**: `TRIKEY_DISABLE_ICLOUD=1` (see `.env.example`). Nothing in the app or in `app.config.ts` then asks
-   for the iCloud or associated-domains entitlements.
+   for the iCloud or associated-domains entitlements. Leave `TRIKEY_IOS_NFC` unset too: NFC (a Coldcard over NFC) needs the
+   NFC Tag Reading capability, which a free account cannot sign; such a build has no NFC, and says so in its device list.
 3. Build the app straight onto your phone (USB, or Wi-Fi after the first time). `--configuration Release` puts the
    JavaScript inside the app, so it opens without Metro running on your computer (leave it out for a development client
    that loads the JavaScript from `npx expo start --dev-client`):
@@ -272,6 +273,7 @@ variables in your build service (for example EAS secrets).
 | `TRIKEY_ICLOUD_CONTAINER` | `iCloud.<your bundle id>` | `iCloud.<bundle id>` |
 | `TRIKEY_ICLOUD_ENVIRONMENT` | `Development` or `Production` | `Production` |
 | `TRIKEY_DISABLE_ICLOUD` | `1` builds without iCloud | iCloud on |
+| `TRIKEY_IOS_NFC` | `1` builds iOS with NFC (a Coldcard Mk4 or Q over NFC); needs the NFC Tag Reading capability (paid account) | No NFC on iOS (Android always has it) |
 | `TRIKEY_ANDROID_VARIANT` | `standard` or `foss` (no Google code); set it for both the prebuild and the Gradle build | `standard` |
 | `EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID` | Google OAuth client ID (Android backup) | Google Drive backup unavailable |
 | `EXPO_PUBLIC_PASSKEY_RP_ID` | Passkey domain: `trikey.app` for the project's builds, your own domain for a fork | Passkeys unsupported |
@@ -290,6 +292,11 @@ variables in your build service (for example EAS secrets).
 4. For passkeys: host `apple-app-site-association` as described in [docs/passkeys.md](docs/passkeys.md) and
    set `EXPO_PUBLIC_PASSKEY_RP_ID`. `app.config.ts` then adds the `webcredentials:<domain>` associated domain.
 5. `NSFaceIDUsageDescription` is set by the `expo-secure-store` plugin (text in `app.json`).
+6. For NFC (a Coldcard Mk4 or Q over NFC): turn on **NFC Tag Reading** for the App ID and build with
+   `TRIKEY_IOS_NFC=1`. `plugins/with-ios-nfc.js` then adds `com.apple.developer.nfc.readersession.formats` (`TAG`) and
+   `NFCReaderUsageDescription`, and react-native-nfc-manager is linked on iOS (`react-native.config.js`, `ios-nfc.js`).
+   Without it the iOS build has no NFC code at all. Android needs nothing: the library's manifest asks for the NFC
+   permission and declares NFC not required, so phones without it still install the app.
 
 ### Android
 

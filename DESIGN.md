@@ -60,7 +60,9 @@ Hardware (key 1) ───┘   outbound only           └── alerts: nostr 
   - Ledger over Bluetooth (`@ledgerhq/device-signer-kit-bitcoin`);
   - Trezor via `@trezor/connect`;
   - air-gapped devices via PSBT QR (UR/BBQr), and message signing over a text QR for the models that can
-    (see "Hardware wallets by feature" below).
+    (see "Hardware wallets by feature" below);
+  - a Coldcard Mk4 or Q over NFC (`react-native-nfc-manager`): the Coldcard plays an NFC tag, and the phone writes NDEF
+    records to it or reads what it shares (docs/design/hardware-auth-path.md, "Coldcard over NFC").
 - **Wallet registration** on devices that need it (Ledger, BitBox02, Jade, Coldcard), plus showing the first address on the device.
 - **Cloud backup of key 2 + the descriptor:**
   - XChaCha20-Poly1305 under a random data key;
@@ -83,6 +85,13 @@ The table is `packages/wallet/src/qr-devices.ts` (`messageMethod`: `qr-text`, `m
 over QR and from microSD is read from each firmware's source, not tested on devices yet** (docs/alpha-test-plan.md, "QR
 message signing" and "microSD message signing").
 
+A Coldcard Mk4 (no camera) or Q can do all of it over NFC instead (kind `coldcard-nfc`,
+`packages/wallet/src/nfc-devices.ts`): the phone writes the same `signmessage` line, a PSBT or the wallet's setup file
+to the Coldcard's NFC Tools, and reads back the armored signature, the signed PSBT or the key export. Each step is a
+tap of the phone on the Coldcard. Read from Coldcard's firmware (`shared/nfc.py`), **not tested on a device yet**
+(docs/alpha-test-plan.md, "Coldcard over NFC"). iPhone builds have NFC only when built with `TRIKEY_IOS_NFC=1`, which
+needs a paid Apple developer account (the NFC Tag Reading capability); Android builds always have it.
+
 | Device | Payments | Guardian pairing, approvals, recovery access | Notes on the guardian | Hardware unlock | Limits and notes |
 |---|---|---|---|---|---|
 | Ledger (Bluetooth) | Yes | Yes | Yes | Yes | Shows texts up to 640 bytes in full |
@@ -96,12 +105,13 @@ message signing" and "microSD message signing").
 | Krux (payments by QR) | Yes | Yes, from a microSD file (the signature comes back as a file or a QR) | Yes, from a microSD file (two files when turned on) | No: as Passport gen 2 | Shows about 10 lines of the text (on the M5StickV about the first 120 characters, on larger screens about 210), then "…", and a legacy address |
 | SeedSigner (QR) | Yes | No: decided, payments only (below) | No | No | Recovery Key mode |
 | Other QR device | Yes | No (unknown): pick the model in Settings | No | No | Recovery Key mode |
-| Coldcard Mk4 | No: no camera; needs NFC or USB, not built | No | No | No | |
+| Coldcard Mk4, Coldcard Q (NFC) | Yes | Yes | Yes | Yes | The Coldcard Q's limits; one tap to send each request and one to read the answer; NFC Sharing on in the Coldcard's settings; iPhone builds need `TRIKEY_IOS_NFC=1` |
+| Coldcard Mk4 (QR) | No: no camera (use NFC) | No | No | No | |
 | BitBox02 | No provider yet | | | | |
 
 A model that cannot sign a text is refused with its reason (`QrSigner.signMessage`), and the connect screen says so
-before a guardian wallet is started, offering Recovery Key mode. Not built: NFC (Coldcard Mk4 and Q), BLE or USB for
-Jade, BIP 322 proofs, BitBox02.
+before a guardian wallet is started, offering Recovery Key mode. Not built: BLE or USB for Jade, BIP 322 proofs,
+BitBox02.
 
 **SeedSigner co-signs payments only (decided 2026-11-06).** Its firmware refuses a message at any `m/48'` path
 ("Not implemented" in `parse_derivation_path`, and custom paths are "not supported"), so it cannot sign Trikey's texts
@@ -177,7 +187,7 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
    - **Payments into the optional Savings wallet count like any payment** (the owner's decision, 2026-11-01): the guardian is not told which wallet is Savings for this rule and counts an output to it as leaving the wallet. A phone thief registering their own wallet as "Savings" therefore gains nothing.
    - **The limit can be turned off** (strictly opt-in; docs/design/savings-and-limit-off.md, section 4). "Off" is the largest limit there is, all bitcoin there will ever be, so the policy and its hash are unchanged; every other rule stays, and the guardian still counts what it co-signs. It is a loosening: only with a fresh hardware approval whose text says it in words (`Trikey policy v2 ... limit=off ...`, rule 4), never at pairing and never while a recovery is pending or ready. Turning it back on is tightening: the phone alone, at once. The guardian alerts the paired phone (`limit_off`) and every alert contact (a NIP-17 DM) when it is turned off, logs it as a warning, and tells the phone when it is on again (`limit_on`). It remembers the limit before (`limitBeforeOff`): after a recovery the adopted wallet starts with the limit **on** at that value (rotation, below). The phone offers it only to a guardian that reports the `limit_off` feature. With the limit off the guardian is a second signature, not a brake: a thief who gets into the phone sends everything at once.
 4. **Loosening the rules needs the hardware wallet.** That covers raising the limit, shortening the delay, changing the sweep fee cap, adding or removing alert contacts, and stopping the alert contacts from locking the guardian (rule 8). The phone alone can only tighten: lower the limit, lengthen the delay or let the alert contacts lock the guardian, **also while a recovery runs** (tightening never helps a thief; a running recovery keeps the delay and fee cap it started with). On mainnet the rules must name at least one alert contact: a pairing without one, or any change that removes the last one, is refused even with a hardware approval; test networks allow it and report `warnings: ['no_alert_contacts']`.
-   - **How the hardware wallet approves:** a BIP137 `signmessage` signature from a single-sig key recorded at pairing. Ledger and Trezor sign it over USB or Bluetooth; Coldcard Q, Jade, Keystone 3, Passport Prime and Specter DIY over a text QR; Passport gen 2 and Krux from a file on their microSD card (see "Hardware wallets by feature"). The signed text is one line that shows the new values in clear, so the user checks them on the device screen:
+   - **How the hardware wallet approves:** a BIP137 `signmessage` signature from a single-sig key recorded at pairing. Ledger and Trezor sign it over USB or Bluetooth; a Coldcard Mk4 or Q over NFC; Coldcard Q, Jade, Keystone 3, Passport Prime and Specter DIY over a text QR; Passport gen 2 and Krux from a file on their microSD card (see "Hardware wallets by feature"). The signed text is one line that shows the new values in clear, so the user checks them on the device screen:
      `Trikey policy v1 wallet=<id> seq=<n> limit=<sats> delay=<d>d feecap=<sats> contacts=<k> hash=<policyHash> expires=<ISO8601Z>`
      and, for no daily limit only, version 2 with the limit in words (older guardians refuse it, `1202`):
      `Trikey policy v2 wallet=<id> seq=<n> limit=off delay=<d>d feecap=<sats> contacts=<k> hash=<policyHash> expires=<ISO8601Z>`
@@ -818,9 +828,9 @@ guardian"). Protocol: PROTOCOL.md, "Encrypted notes".
   Ledger's Bitcoin app signs messages with RFC 6979 (`crypto_ecdsa_sign_sha256_hash_with_key`, `CX_RND_RFC6979`);
   Trezor signs with RFC 6979 too (`ecdsa_sign_digest` with `USE_RFC6979`, or libsecp256k1's RFC 6979 nonce function
   with a deterministic retry counter); Coldcard Q, Jade (QR mode, never anti-exfil), Keystone 3, Passport Prime and
-  Specter DIY sign with RFC 6979 too, over a text QR, and Passport gen 2 and Krux from a microSD file (two files when
+  Specter DIY sign with RFC 6979 too, over a text QR, a Coldcard Mk4 or Q over NFC (the same firmware code), and Passport gen 2 and Krux from a microSD file (two files when
   the option is turned on): read from the firmware sources, not tested on devices. The QR models that cannot sign a
-  text (SeedSigner, the Coldcard Mk4, "Other") are not offered the option ("Hardware wallets by feature"). **The phone verifies it**: turning the option on asks for the
+  text (SeedSigner, the Coldcard Mk4 by QR, "Other") are not offered the option ("Hardware wallets by feature"). **The phone verifies it**: turning the option on asks for the
   signature twice and refuses, in plain words, when the two differ (`hardware_not_deterministic`).
 - **The blob.** Version byte, 24-byte nonce, 16-byte key check (HMAC of a constant under the check key: a wrong key is
   told apart before decrypting), then XChaCha20-Poly1305 over the plaintext padded to 4, 8, 16 ... 512 KiB, the header
@@ -898,8 +908,9 @@ wallet"; code: `apps/guardian/src/unlock-slots.ts`, `TrikeyWallet.enableHardware
   change (not built yet) needs nothing: the slots do not depend on the passphrase. Family hosting: never; a guest's
   hardware wallet must not unlock the host's guardian, so guests cannot call the methods and are not told the feature.
 - **QR devices: only the models that sign a text by QR.** Coldcard Q, Jade, Keystone 3, Passport Prime and Specter DIY
-  sign the unlock text over a text QR (two round trips when it is turned on, one per unlock). SeedSigner, "Other" and
-  the Coldcard Mk4 do not (as for the notes), so there is no signature to unlock with; the app says so and keeps the
+  sign the unlock text over a text QR (two round trips when it is turned on, one per unlock); a Coldcard Mk4 or Q over NFC
+  does it with two taps per unlock (send the text, read the signature). SeedSigner, "Other" and the Coldcard Mk4 by
+  QR do not (as for the notes), so there is no signature to unlock with; the app says so and keeps the
   passphrase. Passport gen 2 and Krux sign texts only from a microSD card: a card round trip after every restart is too
   clunky, so the option is hidden for them, with one sentence saying why and that the passphrase works.
 - **Seen and said.** The web UI's Activity: "Hardware unlock turned on / off", "Unlocked with the hardware wallet" and
@@ -991,7 +1002,7 @@ Bitkey's hardware wallets were checked as Trikey's key 1, from Bitkey's open-sou
 
 ## Open questions
 
-1. **How the hardware wallet unlocks the guardian.** Built, opt-in ("Unlocking the guardian with the hardware wallet"): Ledger and Trezor BIP 137-sign a fixed unlock text deterministically, and the guardian, after checking the signature against the wallet's authorization key, derives an unlock slot's key from it, as the notes do. Trezor's CipherKeyValue (SLIP-11) was not needed, and Ledger needs no symmetric-key API. Still open: checking on real devices (firmware versions) that two signatures of the same text are equal, which the app checks each time the option is turned on; QR devices that sign a text by QR (Coldcard Q, Jade, Keystone 3, Passport Prime, Specter DIY) do it over two QR round trips; the others, including Passport gen 2 and Krux (microSD only), keep the passphrase. Rule changes use BIP137 message signatures too (see rule 4); which signing paths each device allows still has to be tested on real hardware.
+1. **How the hardware wallet unlocks the guardian.** Built, opt-in ("Unlocking the guardian with the hardware wallet"): Ledger and Trezor BIP 137-sign a fixed unlock text deterministically, and the guardian, after checking the signature against the wallet's authorization key, derives an unlock slot's key from it, as the notes do. Trezor's CipherKeyValue (SLIP-11) was not needed, and Ledger needs no symmetric-key API. Still open: checking on real devices (firmware versions) that two signatures of the same text are equal, which the app checks each time the option is turned on; QR devices that sign a text by QR (Coldcard Q, Jade, Keystone 3, Passport Prime, Specter DIY) do it over two QR round trips, a Coldcard Mk4 or Q over NFC with taps; the others, including Passport gen 2 and Krux (microSD only), keep the passphrase. Rule changes use BIP137 message signatures too (see rule 4); which signing paths each device allows still has to be tested on real hardware.
 2. **Notifications when the phone app is asleep.**
    - Nostr DMs reach the user's regular nostr app (zero infrastructure).
    - Real push on iOS needs Apple's push service, called with credentials only the app's publisher holds. That means running a stateless "empty ping" bridge, which conflicts with "we run nothing".

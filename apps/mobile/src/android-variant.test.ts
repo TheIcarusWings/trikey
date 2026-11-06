@@ -56,18 +56,21 @@ describe('the switch: TRIKEY_ANDROID_VARIANT', () => {
 });
 
 describe('react-native.config.js', () => {
-  type RnConfig = { dependencies: Record<string, { platforms: { android: null } }> };
+  type RnConfig = { dependencies: Record<string, { platforms: { android?: null; ios?: null } }> };
+  // NFC is linked on iOS only with TRIKEY_IOS_NFC=1 (ios-nfc.js, tested in ios-nfc.test.ts); here it is unset.
+  const iosNfcOff = { 'react-native-nfc-manager': { platforms: { ios: null } } };
 
   it('FOSS: Google Sign-In and the cloud storage library are not linked on Android (iOS untouched)', () => {
     expect(loadWith<RnConfig>('foss', './react-native.config.js').dependencies).toEqual({
       '@react-native-google-signin/google-signin': { platforms: { android: null } },
       'react-native-cloud-storage': { platforms: { android: null } },
+      ...iosNfcOff,
     });
   });
 
-  it('standard: everything is linked', () => {
-    expect(loadWith<RnConfig>(undefined, './react-native.config.js').dependencies).toEqual({});
-    expect(loadWith<RnConfig>('standard', './react-native.config.js').dependencies).toEqual({});
+  it('standard: everything is linked on Android', () => {
+    expect(loadWith<RnConfig>(undefined, './react-native.config.js').dependencies).toEqual(iosNfcOff);
+    expect(loadWith<RnConfig>('standard', './react-native.config.js').dependencies).toEqual(iosNfcOff);
   });
 });
 

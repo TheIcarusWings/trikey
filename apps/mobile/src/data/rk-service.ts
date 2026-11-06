@@ -306,7 +306,7 @@ class Service implements RkWalletService {
     });
     this.hw = withDevicePrompts(compositeProvider(this.rawProviders), this.prompts, {
       network: this.network,
-      silentKinds: this.deps.silentKinds ?? ['qr', 'coldcard', 'jade'],
+      silentKinds: this.deps.silentKinds ?? ['qr', 'coldcard', 'jade', 'coldcard-nfc'],
     });
   }
 
@@ -425,6 +425,8 @@ class Service implements RkWalletService {
         return { kind: 'bitbox02', brand: 'BitBox02', model: 'BitBox02' };
       case 'coldcard':
         return { kind: 'qr', brand: 'Coldcard', model: model || 'Coldcard' };
+      case 'coldcard-nfc':
+        return { kind: 'coldcard-nfc', brand: 'Coldcard', model: model || 'Coldcard' };
       case 'jade':
         return { kind: 'qr', brand: 'Jade', model: model || 'Jade' };
       default:
@@ -1105,9 +1107,9 @@ class Service implements RkWalletService {
         return self.exclusive(() =>
           self.guarded(async () => {
             const w = self.requireWallet();
-            // A QR-only device (the ones whose own screens guide the person: QR, Coldcard, Jade) cannot show an address on
+            // A QR or NFC device (the ones whose own screens guide the person: QR, Coldcard, Jade) cannot show an address on
             // request: the check is skipped here, and the vault's first deposit address can be compared later (Add to vault).
-            const qrOnly = self.deps.silentKinds ?? ['qr', 'coldcard', 'jade'];
+            const qrOnly = self.deps.silentKinds ?? ['qr', 'coldcard', 'jade', 'coldcard-nfc'];
             const verifyAddress = !qrOnly.includes(w.state.hardware?.kind as WalletHardwareKind);
             self.setProgress('Setting up your vault: approve on your hardware wallet');
             try {

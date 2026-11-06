@@ -1,5 +1,5 @@
 import { parseScannedCode } from '@trikey/wallet/scan';
-import { qrModelInfo } from '@trikey/wallet';
+import { isNfcModel, nfcModelInfo, qrModelInfo } from '@trikey/wallet';
 import { NODE_RPC_TEXT, WalletServiceError } from './errors';
 import { SIMULATED_OPTION, hardwareOptionTable, type UiOs } from './hardware-options';
 import { LIMIT_OFF_SATS, buildRefillSchedule, limitChangeNeedsHardware, quoteSend as quoteSendRule, quoteSendMax as quoteSendMaxRule } from './rules';
@@ -94,7 +94,14 @@ const HARDWARE: Record<HardwareKind, HardwareWallet> = {
   trezor: { kind: 'trezor', brand: 'Trezor', model: 'Trezor Safe 7' },
   bitbox02: { kind: 'bitbox02', brand: 'BitBox02', model: 'BitBox02' },
   qr: { kind: 'qr', brand: 'Coldcard', model: 'Coldcard Q', qrModel: 'coldcard-q' },
+  'coldcard-nfc': { kind: 'coldcard-nfc', brand: 'Coldcard Mk4', model: 'Coldcard Mk4', qrModel: 'coldcard-mk4' },
 };
+
+/** The demo's Coldcard over NFC as the person picked it (Mk4 or Q). */
+function demoNfcHardware(qrModel: QrModel | undefined): HardwareWallet {
+  const name = nfcModelInfo(qrModel).name;
+  return { kind: 'coldcard-nfc', brand: name, model: name, ...(isNfcModel(qrModel) ? { qrModel } : {}) };
+}
 
 /** The demo's QR device as the person picked it. */
 function demoQrHardware(qrModel: QrModel | undefined): HardwareWallet {
@@ -414,7 +421,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     },
     async connectHardware(kind: HardwareKind, qrModel?: QrModel) {
       await wait(deviceDelay);
-      const hardware = kind === 'qr' ? demoQrHardware(qrModel) : HARDWARE[kind];
+      const hardware = kind === 'qr' ? demoQrHardware(qrModel) : kind === 'coldcard-nfc' ? demoNfcHardware(qrModel) : HARDWARE[kind];
       update({ hardware });
       return hardware;
     },

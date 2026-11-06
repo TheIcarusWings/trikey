@@ -18,7 +18,7 @@ import { QR_MODELS, defaultQrModelOf } from './qr-devices.js';
 const Hex32 = z.string().regex(/^[0-9a-f]{64}$/);
 
 export const HardwareRecord = z.object({
-  kind: z.enum(['ledger', 'trezor', 'coldcard', 'bitbox02', 'jade', 'qr']),
+  kind: z.enum(['ledger', 'trezor', 'coldcard', 'bitbox02', 'jade', 'qr', 'coldcard-nfc']),
   model: z.string().optional(),
   /** Master fingerprint, 8 hex. */
   fingerprint: z.string().regex(/^[0-9a-f]{8}$/),
@@ -34,7 +34,8 @@ export const HardwareRecord = z.object({
   addressVerified: z.boolean().default(false),
   /**
    * QR devices: the model (qr-devices.ts), which says whether it signs Trikey's texts. Absent on records made before
-   * models existed: `StateStore.load` sets `other` for a `qr` device (the owner can set it in Settings).
+   * models existed: `StateStore.load` sets `other` for a `qr` device (the owner can set it in Settings). A Coldcard over
+   * NFC (`coldcard-nfc`): `coldcard-mk4` or `coldcard-q`, which only changes the words on the NFC screens.
    */
   qrModel: z.enum(QR_MODELS).optional(),
 });

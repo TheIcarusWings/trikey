@@ -92,10 +92,11 @@ export const QR_MODEL_INFO: Readonly<Record<QrModel, QrModelInfo>> = {
   'coldcard-mk4': {
     model: 'coldcard-mk4',
     name: 'Coldcard Mk4',
-    detail: 'No camera: needs NFC or USB, not in Trikey yet',
+    detail: 'No camera: Trikey talks to it over NFC',
     qr: false,
     signsMessages: false,
-    whyNot: 'The Coldcard Mk4 has no camera, so it can’t scan Trikey’s QR codes. It needs NFC or USB, which Trikey doesn’t support yet.',
+    // It has NFC (nfc-devices.ts): the app's list takes it there.
+    whyNot: 'The Coldcard Mk4 has no camera, so it can’t scan Trikey’s QR codes; it talks over NFC or USB. Add it with “Coldcard by NFC” instead.',
   },
   jade: {
     model: 'jade',
