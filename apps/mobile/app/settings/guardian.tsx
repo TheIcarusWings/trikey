@@ -265,6 +265,12 @@ export default function GuardianSettings() {
           : 'The guardian holds key 3. It locks itself after a restart and takes its passphrase to unlock. Keep the npub and relays, or the "Recover on a new phone" code from its page: a new phone needs them to recover with your hardware wallet.'}
       </Footnote>
       {guardian.key3Note ? <Footnote>{guardian.key3Note}</Footnote> : null}
+      {!hosted && guardian.passphraseInWebPage ? (
+        <Footnote>
+          To change the guardian's passphrase, open its web page on {host}: Settings, Passphrase. This app can't change it and never keeps it, so a
+          stolen phone can't either. Your recovery code, backup and recovery sheet don't use it.
+        </Footnote>
+      ) : null}
     </Screen>
   );
 }

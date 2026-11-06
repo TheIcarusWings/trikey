@@ -365,7 +365,7 @@ function RelaysSection({ paired, onSaved }: { paired: boolean; onSaved: () => vo
   );
 }
 
-/** Lock now, the relays, the details of this box (collapsed), and the reset in its own danger zone. */
+/** Lock now, the passphrase, the relays, the details of this box (collapsed), and the reset in its own danger zone. */
 export function SettingsPage() {
   usePageTitle('Settings');
   const navigate = useNavigate();
@@ -408,6 +408,21 @@ export function SettingsPage() {
           </p>
         </div>
         {lockError && <ErrorState error={new Error(lockError)} title="Couldn't lock the guardian" className="max-w-none" />}
+      </section>
+
+      <section aria-labelledby="passphrase-heading" className="flex flex-col gap-3">
+        <h2 id="passphrase-heading" className="m-0 text-base leading-[22px] font-semibold">
+          Passphrase
+        </h2>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+          <Button asChild variant="outline">
+            <Link to="/passphrase">Change passphrase…</Link>
+          </Button>
+          <p className="m-0 min-w-0 max-w-[60ch] flex-1 basis-60 text-[13px] leading-[18px] text-muted-foreground">
+            It unlocks the guardian after a restart and signs you in here. Only this page can change it, never the phone. Your recovery code,
+            backup file and recovery sheet do not use it.
+          </p>
+        </div>
       </section>
 
       <RelaysSection paired={status.wallets.some((w) => w.phonesPaired > 0)} onSaved={refresh} />

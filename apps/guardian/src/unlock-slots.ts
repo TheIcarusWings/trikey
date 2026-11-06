@@ -24,8 +24,8 @@
  *
  * **Why a file of its own** (`unlock-slots.json`, next to keystore.json, never inside it): keystore.json stays byte for
  * byte what it was, so nothing is migrated, an older guardian ignores the slots, and the passphrase path cannot be lost
- * by anything here. Slots do not depend on the passphrase, so a passphrase change (when there is one) leaves them as
- * they are. A reset makes a new seed: its slots are deleted with it, and a slots file bound to another keystore (a crash
+ * by anything here. Slots do not depend on the passphrase, and a passphrase change keeps the keystore's `createdAt`
+ * (keystore.ts `rekeyKeystore`), so it leaves them bound and untouched. A reset makes a new seed: its slots are deleted with it, and a slots file bound to another keystore (a crash
  * between the two) is dropped at the next start.
  *
  * **Nothing secret stays.** The signature and the keys derived from it live in memory for one request and are zeroed;

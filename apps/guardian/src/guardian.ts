@@ -74,6 +74,9 @@ import { ensureDataDir, Mutex } from './files.js';
 import { loadOrCreateIdentity, loadIdentity, type GuardianIdentity } from './identity.js';
 import {
   BadPassphraseError,
+  SamePassphraseError,
+  changeKeystorePassphrase,
+  sameSeed,
   GuardianSeed,
   MAX_PASSPHRASE_LENGTH,
   SETUP_ENTROPY_BYTES,
@@ -237,6 +240,19 @@ export type HardwareUnlockAddOutcome =
   | { ok: false; code: 'unlock_key_stale' | 'bad_seal'; message: string };
 
 export type SetupOutcome = { ok: true } | { ok: false; code: 'invalid' | 'already_setup'; message: string };
+
+/**
+ * What a passphrase change did (`Guardian.changePassphrase`). `bad_passphrase` / `rate_limited`: the current passphrase,
+ * through the web unlock's throttle; `same_passphrase`: the new one is the current one.
+ */
+export type PassphraseChangeOutcome =
+  | { ok: true }
+  | { ok: false; code: 'bad_passphrase' | 'rate_limited'; retryAfterSeconds?: number }
+  | { ok: false; code: 'setup_required' | 'locked' | 'invalid' | 'same_passphrase'; message: string };
+
+/** What the owner's phone and own channels are told after a passphrase change (no secret, no link). */
+export const PASSPHRASE_CHANGED_TEXT =
+  "Your guardian's passphrase was changed in its web page. The old passphrase no longer unlocks it; key 3, your wallet and the hardware wallet unlock are unchanged. If you did not do this, someone who knew the old passphrase has the guardian's web page: lock the guardian from your phone and move your wallet to a new guardian with Replace guardian.";
 
 export type RelayChangeOutcome =
   | { ok: true; changed: boolean }
@@ -630,6 +646,7 @@ export class Guardian implements WalletRuntime {
     GUARDIAN_FEATURES.labelsBackup,
     GUARDIAN_FEATURES.hardwareUnlock,
     GUARDIAN_FEATURES.sealedUnlock,
+    GUARDIAN_FEATURES.passphraseChange,
   ];
 
   /** The wallet object of a registration or a watched wallet (cached per descriptor). */
@@ -1886,6 +1903,65 @@ export class Guardian implements WalletRuntime {
       await this.sessionThrottle.succeeded();
       return { ok: true };
     });
+  }
+
+  /**
+   * The web UI's "Change passphrase" (DESIGN.md, "Changing the passphrase"): only while unlocked, with the current
+   * passphrase (through the web unlock's throttle, as an unlock) and a new one (`checkPassphrase`'s rules, as at setup).
+   * The same seed is sealed again under the new passphrase, `createdAt` kept so every hardware unlock slot still opens,
+   * checked to open to the seed this guardian holds, and swapped in atomically (keystore.ts `changeKeystorePassphrase`).
+   * Then every web session ends (the route signs the browser that changed it in again), the Activity says so, and the
+   * paired phone (`passphrase_changed`) and the owner's own channels are told. Neither passphrase is ever logged.
+   *
+   * Not from the phone: see DESIGN.md (a phone thief who saw the passphrase must not be able to lock the owner out of
+   * the box, and the web page already needs the box's own login on Umbrel and Start9).
+   */
+  async changePassphrase(input: { passphrase?: unknown; newPassphrase?: unknown }): Promise<PassphraseChangeOutcome> {
+    const outcome = await this.unlockMutex.run(async (): Promise<PassphraseChangeOutcome> => {
+      const file = this.keystore;
+      if (!file) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
+      const held = this.seed;
+      if (this.locked || !held || held.wiped) return { ok: false, code: 'locked', message: 'Unlock the guardian first.' };
+      const current = input.passphrase;
+      if (typeof current !== 'string' || current.length === 0 || current.length > 4 * MAX_PASSPHRASE_LENGTH)
+        return { ok: false, code: 'invalid', message: 'Enter the current passphrase.' };
+      const bad = checkPassphrase(input.newPassphrase);
+      if (bad) return { ok: false, code: 'invalid', message: `New passphrase: ${bad}.` };
+      const next = input.newPassphrase as string;
+      if (current.normalize('NFKC') === next.normalize('NFKC'))
+        return { ok: false, code: 'same_passphrase', message: 'The new passphrase is the same as the current one.' };
+
+      const verdict = this.throttle.check();
+      if (!verdict.ok) return { ok: false, code: 'rate_limited', retryAfterSeconds: Math.ceil(verdict.retryAfterMs / 1000) };
+      await this.throttle.begin();
+      let rekeyed: KeystoreFile;
+      try {
+        rekeyed = await changeKeystorePassphrase(this.path('keystore'), file, current, next, {
+          kdf: this.config.kdf,
+          expected: (seed) => held.use((mine) => sameSeed(mine, seed)),
+          opened: () => this.throttle.succeeded(),
+        });
+      } catch (e) {
+        if (e instanceof SamePassphraseError) return { ok: false, code: 'same_passphrase', message: 'The new passphrase is the same as the current one.' };
+        if (!(e instanceof BadPassphraseError)) throw e;
+        this.log.warn('guardian.passphrase_change_failed', { failures: this.throttle.failures });
+        await this.logEvent({ type: 'passphrase_change_failed' });
+        const after = this.throttle.check();
+        return { ok: false, code: 'bad_passphrase', retryAfterSeconds: after.ok ? undefined : Math.ceil(after.retryAfterMs / 1000) };
+      }
+      this.keystore = rekeyed;
+      // The passphrase also signs browsers in: every session made with the old one ends (the route signs this one in again).
+      this.sessions.clear();
+      this.log.warn('guardian.passphrase_changed');
+      await this.logEvent({ type: 'passphrase_changed' });
+      return { ok: true };
+    });
+    if (outcome.ok) {
+      // A security event, like a relay or channel change made in the web page: the phone and the owner's own channels.
+      await this.notifyPhone({ type: 'passphrase_changed', ...this.stampNow(), message: PASSPHRASE_CHANGED_TEXT });
+      this.notifyOwner('passphrase_changed', PASSPHRASE_CHANGED_TEXT);
+    }
+    return outcome;
   }
 
   /**

@@ -19,8 +19,8 @@ except `GET /api/status` (reduced to `PublicStatus` without one), `POST /api/ses
 `POST /api/session` with the unlock passphrase signs the browser in: the guardian sets
 an `HttpOnly; SameSite=Strict` cookie (`Secure` when the request came over HTTPS, as
 `X-Forwarded-Proto` says), a random 32-byte token held in memory only. A session ends
-after 30 minutes without a request, 12 hours after sign-in, at sign-out, at a reset, and
-when the guardian restarts. Without one, everything else answers `401 unauthenticated`.
+after 30 minutes without a request, 12 hours after sign-in, at sign-out, at a reset or a
+passphrase change, and when the guardian restarts. Without one, everything else answers `401 unauthenticated`.
 
 ## Conventions
 
@@ -50,15 +50,15 @@ when the guardian restarts. Without one, everything else answers `401 unauthenti
   `Sec-Fetch-Site: same-origin` when the browser sends it, else `Origin` against
   `Host` / `X-Forwarded-Host` (`403 forbidden`). Bodies are limited to 16 KiB.
 - The UI is a single-page app with client-side routes (`/` Home, `/setup`, `/sign-in`, `/locked`,
-  `/wallet` (also while locked), `/activity`, `/rules`, `/recovery`, `/phones`, `/settings`, `/reset`; `/pair` and `/recover-phone`
+  `/wallet` (also while locked), `/activity`, `/rules`, `/recovery`, `/phones`, `/settings`, `/passphrase`, `/reset`; `/pair` and `/recover-phone`
   redirect to `/phones`; `/host` exists only in a build with `VITE_FEATURE_HOST_FOR_SOMEONE=true`). The guardian serves
   `index.html` for every non-`/api` path that is not a file in `dist/` (a missing
   file under `/assets/` is a `404`).
 - **Password managers.** The passphrase works with them (Proton Pass, 1Password, Bitwarden,
-  iCloud Keychain, Google): set-up, unlock, sign-in and reset are real `<form>`s with a submit
+  iCloud Keychain, Google): set-up, unlock, sign-in, change passphrase and reset are real `<form>`s with a submit
   button, the passphrase fields say `current-password` or `new-password`, and each form carries
   the same fixed user name (`username`, "Trikey Guardian", off-screen and out of the tab order) so
-  one saved entry fills them all. Set-up's two `new-password` fields carry a `passwordrules` hint
+  one saved entry fills them all. Set-up's and Change passphrase's two `new-password` fields carry a `passwordrules` hint
   (at least 12 characters, any printable), so a generated passphrase fills both. Passkeys need HTTPS:
   WebAuthn does not run on a plain-HTTP address other than `localhost`.
 - A strict CSP works: the app has no inline scripts and loads all fonts and scripts
@@ -95,6 +95,7 @@ the sign-in screen. The guardian is locked after every start of its process.
 | `POST /api/setup` | `{ passphrase, relays: string[], entropy?, setupCode? }` | `GuardianStatus` | First run only. With `setupCodeRequired`, `setupCode` must be the setup code (checked first, same answers as `POST /setup/code`). Creates key 3 (a fresh BIP39 seed; the BIP48 account key), encrypts it under an Argon2id key from the passphrase, connects the chosen relays. The guardian ends up unlocked. `entropy`: 32 bytes from the browser's `crypto.getRandomValues` as 64 lowercase hex characters, mixed into the new seed with the guardian's own (DESIGN.md, "Entropy", `trikey/guardian-seed/v1`); never logged or stored. The UI always sends it; it is optional for other clients. `400 invalid` if `relays` is empty, has more than 8 entries or a URL that is not `wss://` (or `ws://` on a local host), the passphrase has fewer than 12 characters, or `entropy` is present but not exactly 64 lowercase hex characters. There is no backup of key 3, by design. |
 | `POST /api/unlock` | `{ passphrase }` | `GuardianStatus` | `401 bad_passphrase` on a wrong passphrase (with `retryAfterSeconds` once the next try has to wait). Rate limited with exponential backoff after 3 failures (`429 rate_limited`); the count survives restarts. The phone's `guardian.unlock`, the reset and the sign-in each have their own count, so a stolen phone guessing away never delays this UI (security review 2026-10, finding 4). Unlocking takes a few seconds on a Raspberry Pi (Argon2id). |
 | `POST /api/lock` | `{}` | `GuardianStatus` | Drops key 3 from memory and invalidates a pairing code in progress. The phone gets a `guardian_locked` alert. |
+| `POST /api/passphrase` | `{ passphrase, newPassphrase }` | `GuardianStatus` | "Change passphrase", see below. Unlocked only (`409 locked`). |
 | `POST /api/reset` | `{ passphrase, confirm, entropy? }` | `GuardianStatus` | "Reset guardian", see below. Works locked or unlocked and ends unlocked. `entropy` as for setup (the new key 3's seed); `400 invalid` if present and malformed. |
 
 **Reset guardian.** Forgets every wallet (active and retired), its rules, recoveries and
@@ -110,6 +111,21 @@ signature would be lost with key 3). The paired phone gets a `wallet_retired` al
 anyone holding this UI, the passphrase and a stolen hardware wallet could pair the user's own
 wallet again with a phone of their choosing and no alert contacts, and run a recovery only they
 hear about. A wallet that used the old key 3 stays spendable with its phone and hardware wallet.
+
+**Change passphrase** (Settings, Passphrase; DESIGN.md, "Changing the passphrase"). Unlocked only. `passphrase` is the
+current one, checked like an unlock and through the **unlock's own rate limit** (`401 bad_passphrase` with
+`retryAfterSeconds` once the next try has to wait, `429 rate_limited`; a wrong one is logged in Activity, "Passphrase
+change refused"). `newPassphrase` follows setup's rule (`400 invalid`: fewer than 12 characters after NFKC, or more
+than 1024) and must not be the current one (`400 same_passphrase`). The guardian encrypts the same key 3 again under the
+new passphrase (a fresh Argon2id salt and nonce, the keystore's `createdAt` kept, so a hardware unlock slot keeps
+working), opens the new file once to check it, and replaces `keystore.json` atomically: a crash leaves the old file or
+the new one. Then it ends every web session (the browser that changed it gets a new cookie in this answer), logs
+"Passphrase changed", and tells the paired phone (`passphrase_changed`) and the owner's own alert channels. Key 3, the
+wallet, the rules, the relays and the nostr identity do not change, and neither do the recovery code, backup file or
+recovery sheet (none of them uses the passphrase). A copy of the data directory made before the change still opens with
+the old passphrase. The phone cannot change the passphrase (there is no nostr method for it). The UI checks the new
+passphrase with the same rule before sending (`src/lib/passphrase.ts`, shared with set-up). It takes three Argon2id
+runs (the current passphrase, the new file, its check): several seconds, longer on a Raspberry Pi.
 
 **The setup code (plain Docker).** On Umbrel and Start9 the platform's login guards the first-run screen
 (`TRIKEY_PLATFORM=umbrel` or `start9`). On plain Docker (`packaging/compose/`, `TRIKEY_PLATFORM=docker`, the
@@ -281,6 +297,6 @@ The mock keeps state in memory (a reload starts over). Pick the starting state w
 
 The Wallet page (`/wallet?mock=…`) follows the scenario: the demo wallet (a pending payment in, two phone payments today) in most, no wallet yet with `unpaired`, a chain the guardian cannot read with `syncing`, no daily limit with `limitoff`, Savings with `savings`, read-only with `locked`. Its address is a golden vector of a wallet made of published test mnemonics on signet.
 
-In the mock any unlock passphrase works except the literal `wrong` (also for the reset). In dev, run
+In the mock any unlock passphrase works except the literal `wrong` (also for the reset and as the current passphrase of a change). In dev, run
 `trikeyMock.completePairing()` in the browser console to pretend a phone scanned
 the current pairing code.

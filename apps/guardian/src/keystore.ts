@@ -81,6 +81,11 @@
  * after theft of the disk is bounded by the passphrase: the UI requires 12+
  * characters. Lower values are only used by tests, through configuration.
  *
+ * Changing the passphrase (web UI only, unlocked): the same seed is sealed again under the new passphrase with a fresh
+ * salt and nonce, `createdAt` kept (it binds the hardware unlock slots), checked to open to the same seed, and swapped
+ * in with one atomic rename (`changeKeystorePassphrase`). Key 3 does not change: a copy of the old file (a backup, a
+ * copied volume) still opens with the old passphrase.
+ *
  * Memory hygiene: the derived key, the decrypted seed and intermediate private
  * keys are zeroed as soon as they are used. JavaScript cannot zero strings or
  * bigints, so the passphrase string (from the request) and the bigint arithmetic
@@ -519,6 +524,11 @@ async function deriveKey(passphrase: string, salt: Uint8Array, kdf: KdfParams): 
 
 /** Encrypts `seed` under `passphrase`. Does not keep or zero `seed`. */
 export async function sealKeystore(seed: Uint8Array, passphrase: string, pub: CosignerPublic, kdf: KdfParams = DEFAULT_KDF, now = new Date()): Promise<KeystoreFile> {
+  return sealWith(seed, passphrase, pub, kdf, now.toISOString());
+}
+
+/** `sealKeystore` with the keystore's `createdAt` given: a fresh salt and nonce every time. */
+async function sealWith(seed: Uint8Array, passphrase: string, pub: CosignerPublic, kdf: KdfParams, createdAt: string): Promise<KeystoreFile> {
   checkKdf(kdf);
   if (seed.length !== 64) throw new Error('seed must be 64 bytes');
   const salt = secureRandomBytes(16);
@@ -529,7 +539,7 @@ export async function sealKeystore(seed: Uint8Array, passphrase: string, pub: Co
     kdf: { name: 'argon2id', version: 19, t: kdf.t, m: kdf.m, p: kdf.p, salt: base64.encode(salt) },
     cipher: { name: 'xchacha20-poly1305', nonce: base64.encode(nonce) },
     public: { ...pub },
-    createdAt: now.toISOString(),
+    createdAt,
   };
   const key = await deriveKey(passphrase, salt, kdf);
   try {
@@ -538,6 +548,17 @@ export async function sealKeystore(seed: Uint8Array, passphrase: string, pub: Co
   } finally {
     key.fill(0);
   }
+}
+
+/**
+ * The same seed under a new passphrase (a passphrase change, DESIGN.md "Changing the passphrase"): a fresh Argon2id salt
+ * and a fresh nonce, `kdf` (today's parameters, so an old keystore also gets them), and `file`'s public data and
+ * `createdAt` kept. `createdAt` and key 3's account pubkey are what an unlock slot is bound to (`keystoreBinding`,
+ * unlock-slots.ts), so every hardware unlock slot keeps opening and nothing else needs writing. Does not keep or zero
+ * `seed`.
+ */
+export async function rekeyKeystore(file: KeystoreFile, seed: Uint8Array, passphrase: string, kdf: KdfParams = DEFAULT_KDF): Promise<KeystoreFile> {
+  return sealWith(seed, passphrase, file.public, kdf, file.createdAt);
 }
 
 /** Decrypts the seed. Throws `BadPassphraseError` on a wrong passphrase or any tampering. The caller zeroes the result. */
@@ -597,12 +618,75 @@ export async function writeKeystore(path: string, file: KeystoreFile): Promise<v
 }
 
 /**
- * Replaces key 3 on disk (atomically). Only the web UI's reset does this, deliberately destroying the
- * old key 3: there is no backup of it, by design. Everything else uses `writeKeystore`, which never
- * overwrites.
+ * Replaces the keystore on disk (atomically). Only two things do this: the web UI's reset, deliberately destroying the
+ * old key 3 (there is no backup of it, by design), and a passphrase change (`changeKeystorePassphrase`), which writes
+ * the same seed under the new passphrase. Everything else uses `writeKeystore`, which never overwrites.
  */
 export async function replaceKeystore(path: string, file: KeystoreFile): Promise<void> {
   await writeFileAtomic(path, `${JSON.stringify(file, null, 2)}\n`, { overwrite: true });
+}
+
+/** The new passphrase is the current one (NFKC-normalized, as the KDF sees it): nothing to change. */
+export class SamePassphraseError extends Error {
+  constructor() {
+    super('the new passphrase is the current one');
+    this.name = 'SamePassphraseError';
+  }
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a[i]! ^ b[i]!;
+  return d === 0;
+}
+
+/**
+ * Changes the passphrase of the keystore `file` stored at `path` (DESIGN.md, "Changing the passphrase"):
+ *
+ * 1. opens `file` with `current` (`BadPassphraseError` if it does not) and checks the seed gives the key on file;
+ * 2. with `expected`, checks it is that seed (the one the unlocked guardian holds), so the file on disk cannot have
+ *    been swapped under it;
+ * 3. seals the same seed under `next` (`rekeyKeystore`: fresh salt and nonce, `createdAt` kept, so unlock slots stay
+ *    bound), then opens the new file with `next` and compares the seed, before anything is written;
+ * 4. replaces `path` atomically (files.ts: a temp file in the same directory, fsync, rename, fsync of the directory),
+ *    so a crash leaves the old keystore or the new one, never neither and never half of one.
+ *
+ * Returns the new file. Checks of the new passphrase's length are the caller's (`checkPassphrase`); this refuses only
+ * `next` equal to `current` (`SamePassphraseError`, before any KDF). `opened` runs once `current` opened the file (the
+ * caller's throttle). The seed and keys are zeroed; nothing is logged.
+ */
+export async function changeKeystorePassphrase(
+  path: string,
+  file: KeystoreFile,
+  current: string,
+  next: string,
+  opts: { kdf?: KdfParams; expected?: (seed: Uint8Array) => boolean; opened?: () => Promise<void> } = {},
+): Promise<KeystoreFile> {
+  if (current.normalize('NFKC') === next.normalize('NFKC')) throw new SamePassphraseError();
+  const seed = await openKeystore(file, current);
+  try {
+    // The current passphrase was right (a throttle counts that as a success, whatever happens next).
+    await opts.opened?.();
+    guardianSeedOf(file, seed).wipe();
+    if (opts.expected && !opts.expected(seed)) throw new KeystoreFormatError('the keystore on disk is not the one this guardian unlocked');
+    const rekeyed = await rekeyKeystore(file, seed, next, opts.kdf ?? DEFAULT_KDF);
+    const check = await openKeystore(rekeyed, next).catch(() => undefined);
+    try {
+      if (!check || !sameBytes(check, seed)) throw new KeystoreFormatError('the new keystore does not open to the same seed');
+    } finally {
+      check?.fill(0);
+    }
+    await replaceKeystore(path, rekeyed);
+    return rekeyed;
+  } finally {
+    seed.fill(0);
+  }
+}
+
+/** True when `a` and `b` are the same seed (constant time over equal lengths). */
+export function sameSeed(a: Uint8Array, b: Uint8Array): boolean {
+  return sameBytes(a, b);
 }
 
 /**
