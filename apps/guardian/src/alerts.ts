@@ -104,9 +104,9 @@ function plainAlertText(w: WalletRuntime, a: DueAlert, rec: RecoveryRecord | und
   const lockHint = canLock ? `\n\nCANCEL stops this recovery. ${reach === 'nostr' ? LOCK_HINT_NOSTR : LOCK_HINT}` : '';
   const howToCancel =
     reach === 'dm'
-      ? `To stop it, reply to this message with:\n\nCANCEL ${id}\n\nor cancel it in the Trikey app.${lockHint}`
+      ? `To stop it, reply to this message with exactly this line and nothing else:\n\nCANCEL ${id}\n\nor cancel it in the Trikey app.${lockHint}`
       : reach === 'nostr'
-        ? `To stop it, reply to the guardian's nostr message about it, in your nostr app, with:\n\nCANCEL ${id}\n\nReplying here does nothing. You can also contact the owner.${lockHint}`
+        ? `To stop it, reply to the guardian's nostr message about it, in your nostr app, with exactly this line and nothing else:\n\nCANCEL ${id}\n\nReplying here does nothing. You can also contact the owner.${lockHint}`
         : 'Contact the owner: they, or an alert contact with a nostr app, can cancel it. Replying here does nothing.';
   if (form === 'short') {
     switch (a.kind) {
@@ -194,6 +194,18 @@ export function noticeToWire(n: LimitNotice): Alert | undefined {
             : `Your guardian no longer watches Savings (${n.savingsWalletId.slice(0, 8)}): it will not say when Savings moves. If you did not do this, act now.`,
         }
       : undefined;
+  if (n.kind === 'savings_unchecked')
+    return n.savingsWalletId
+      ? {
+          type: 'savings_unchecked',
+          ...stamp,
+          walletId: n.savingsWalletId,
+          ...(n.pending ? { pending: n.pending } : {}),
+          message: n.pending
+            ? `Your guardian cannot check every Savings transaction right now: ${n.pending} payments into Savings wait unchecked, more than it reads at once. A payment out of Savings may be hidden among them. If you did not expect this, check Savings and act now.`
+            : 'Your guardian cannot read Savings right now, so it would not see a payment out of it. If this lasts, check Savings and your guardian\'s server.',
+        }
+      : undefined;
   if (n.kind === 'savings_moved')
     return n.savingsWalletId && n.txid
       ? {
@@ -257,6 +269,16 @@ export function noticeText(n: LimitNotice, canLock = false, reach: ContactReach 
       n.replacedBy
         ? 'This is expected when the owner replaced a lost Savings key. If not, or you are not sure, call them now: someone with their phone may be about to move Savings unseen.'
         : 'If the owner did not do this, or you are not sure, call them now: someone with their phone may be about to move Savings unseen.',
+    ].join('\n');
+  if (n.kind === 'savings_unchecked')
+    return [
+      'Trikey alert: the guardian of the bitcoin wallet you help protect cannot check everything that happens in its Savings wallet.',
+      '',
+      n.pending
+        ? `What happened: since ${formatWhen(n.at)}, ${n.pending} transactions of the Savings wallet wait unchecked: more arrived than the guardian reads at once (someone may be flooding Savings with small payments). A payment out of Savings may be hidden among them; the guardian tells you once it finds one.`
+        : `What happened: since ${formatWhen(n.at)}, the guardian has not been able to read the Savings wallet, so it would not see a payment out of it.`,
+      '',
+      'If the owner knows why, nothing else is needed. If not, or you are not sure, call them: someone may hold two of their keys.',
     ].join('\n');
   if (n.kind === 'savings_moved' && n.replacesTxid)
     return [
@@ -432,7 +454,7 @@ export class Alerter {
         type: n.kind,
         ...(n.kind === 'savings_moved' && n.consolidated && !n.replacesTxid ? { title: 'Savings consolidated' } : {}),
         at: n.at,
-        walletId: n.kind === 'savings_moved' || n.kind === 'savings_unwatched' ? (n.savingsWalletId ?? n.walletId) : n.walletId,
+        walletId: n.kind === 'savings_moved' || n.kind === 'savings_unwatched' || n.kind === 'savings_unchecked' ? (n.savingsWalletId ?? n.walletId) : n.walletId,
         ...(all.includes(phone ?? '') ? { owner: this.noticeWire(n)?.message } : {}),
         ...(contacts.length || n.kind !== 'limit_on' ? { contacts: { text: (reach) => this.noticeDm(n, canLock, reach), recipients: contacts } } : {}),
       });

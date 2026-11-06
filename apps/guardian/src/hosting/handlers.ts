@@ -101,12 +101,21 @@ async function chainCall<T>(g: Guardian, method: string, fn: () => Promise<T>): 
   }
 }
 
-/** Refusals per sender, as the host's `refusable` (the same limiter, keyed by sender). */
+/**
+ * Refusals per sender, as the host's `refusable` (the same limiter, keyed by sender): the slot is held while the call
+ * runs and given back on success, so overlapping requests cannot all pass before the first refusal is counted.
+ */
 async function refusable<T extends { ok: boolean }>(g: Guardian, sender: string, fn: () => Promise<T>): Promise<T> {
-  const gate = g.refusalLimiter.blocked(sender, g.clock.now());
-  if (!gate.ok) throw new RpcError(ErrorCode.RateLimited, 'Too many refused requests; wait and try again.', { retryAfterSeconds: Math.ceil(gate.retryAfterMs / 1000) });
-  const res = await fn();
-  if (!res.ok) g.refusalLimiter.take(sender, g.clock.now());
+  const turn = g.refusalLimiter.reserve(sender, g.clock.now());
+  if (!turn.ok) throw new RpcError(ErrorCode.RateLimited, 'Too many refused requests; wait and try again.', { retryAfterSeconds: Math.ceil(turn.retryAfterMs / 1000) });
+  let res: T;
+  try {
+    res = await fn();
+  } catch (e) {
+    turn.release();
+    throw e;
+  }
+  if (res.ok) turn.release();
   return res;
 }
 

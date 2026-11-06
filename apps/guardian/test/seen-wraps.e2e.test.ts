@@ -71,7 +71,11 @@ function inbox(relay: DevRelay, file: string) {
     isPeer: (s) => s === phonePub,
     seen: new SeenWraps({ storage: seenWrapsFile(file), now: nowSec, saveDelayMs: 50 }),
   });
-  cleanup.push(() => pool.close(), () => box.close());
+  // Close and drain: the seen-ids file is saved after a short delay, and must not land in the folder while it is removed.
+  cleanup.push(() => pool.close(), async () => {
+    box.close();
+    await box.drain();
+  });
   return { box, rpc };
 }
 

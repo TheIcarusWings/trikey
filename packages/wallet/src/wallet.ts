@@ -862,7 +862,7 @@ export const WALLET_ROUTED_METHODS: ReadonlySet<MethodName> = new Set<MethodName
 ]);
 
 /** Alerts whose `walletId` has a meaning of its own (the wallet retired, adopted, Savings, a hosted wallet). */
-const NAMES_A_WALLET: ReadonlySet<Alert['type']> = new Set<Alert['type']>(['wallet_adopted', 'wallet_retired', 'savings_moved', 'savings_unwatched', 'hosting_ending', 'wallet_paused', 'wallet_added']);
+const NAMES_A_WALLET: ReadonlySet<Alert['type']> = new Set<Alert['type']>(['wallet_adopted', 'wallet_retired', 'savings_moved', 'savings_unwatched', 'savings_unchecked', 'hosting_ending', 'wallet_paused', 'wallet_added']);
 
 /** Alerts about the whole box (its lock, relays, channels, passphrase, chain source): every wallet of the phone takes them. */
 const BOX_ALERTS: ReadonlySet<Alert['type']> = new Set<Alert['type']>(['guardian_locked', 'relays_changed', 'notifications_changed', 'passphrase_changed', 'chain_source_changed']);
@@ -5293,7 +5293,7 @@ export class TrikeyWallet {
       if (!id) return BOX_ALERTS.has(alert.type) ? undefined : 'first';
       if (id === mine || prev === mine) return undefined;
       // Its own Savings' alerts name the Savings wallet (multi-wallet phase 2).
-      if (this.s.savings && id === this.s.savings.walletId && (alert.type === 'savings_moved' || alert.type === 'savings_unwatched')) return undefined;
+      if (this.s.savings && id === this.s.savings.walletId && (alert.type === 'savings_moved' || alert.type === 'savings_unwatched' || alert.type === 'savings_unchecked')) return undefined;
       return id;
     }
     // The first wallet: everything as before, except what names another wallet of this phone.

@@ -13,7 +13,7 @@ import { base64 } from '@scure/base';
 import { RECEIVE } from '@trikey/core';
 import { ErrorCode, RpcError } from '@trikey/protocol';
 import { ClockChain, ManualChain, MemoryStore, PolicyEngine } from '../../src/policy/index.js';
-import { DEFAULT_REFUSAL_LIMIT } from '../../src/rate-limit.js';
+import { DEFAULT_REFUSAL_LIMIT, SlidingWindowLimiter } from '../../src/rate-limit.js';
 import { GuardianRig } from '../support/index.js';
 import { T0, fund, nostrKey, phoneSpend, setup } from '../helpers.js';
 import { callHandler, pairInRig } from './support.js';
@@ -82,5 +82,58 @@ describe('security: refusal floods (finding 9), service', () => {
     // The window passes: the phone is heard again.
     rig.clock.advance(DEFAULT_REFUSAL_LIMIT.windowMs + 1000);
     await expect(callHandler(rig, 'sign', { psbt: garbage })).rejects.toSatisfy((e: unknown) => e instanceof RpcError && e.code === ErrorCode.PsbtInvalid);
+  }, 30_000);
+
+  it('a burst of overlapping sign requests gets no more than the limit through to the engine', async () => {
+    // External review: the limit was checked before the engine call and counted after it, so requests sent at once
+    // (each a different id, all in flight together) all passed the check and all reached the engine.
+    rig = await GuardianRig.start();
+    const g = rig.guardian;
+    await pairInRig(rig);
+    const garbage = base64.encode(new Uint8Array([0x70, 0x73, 0x62, 0x74, 0xff, 1, 2, 3]));
+    const reached = { n: 0 };
+    const cosign = g.engine.cosign.bind(g.engine);
+    g.engine.cosign = async (psbt) => {
+      reached.n++;
+      return cosign(psbt);
+    };
+    const burst = 3 * DEFAULT_REFUSAL_LIMIT.max;
+    const codes = await Promise.all(
+      Array.from({ length: burst }, () =>
+        callHandler(rig, 'sign', { psbt: garbage }).then(
+          () => 'signed',
+          (e: unknown) => (e instanceof RpcError ? e.code : String(e)),
+        ),
+      ),
+    );
+    expect(reached.n).toBe(DEFAULT_REFUSAL_LIMIT.max);
+    expect(codes.filter((c) => c === ErrorCode.PsbtInvalid)).toHaveLength(DEFAULT_REFUSAL_LIMIT.max);
+    expect(codes.filter((c) => c === ErrorCode.RateLimited)).toHaveLength(burst - DEFAULT_REFUSAL_LIMIT.max);
+  }, 30_000);
+
+  it('a burst of overlapping successful requests does not use up the refusal limit', async () => {
+    rig = await GuardianRig.start();
+    const g = rig.guardian;
+    (g as unknown as { refusalLimiter: SlidingWindowLimiter }).refusalLimiter = new SlidingWindowLimiter({ max: 2, windowMs: 600_000 });
+    await pairInRig(rig);
+    // Stand-in engine answers, all in flight together: successes are released, so refusals afterwards still pass.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const cosign = g.engine.cosign.bind(g.engine);
+    let ok = true;
+    let calls = 0;
+    g.engine.cosign = async (psbt) => {
+      if (!ok) return cosign(psbt);
+      if (++calls <= 2) await gate;
+      return { ok: true, psbt, txid: '00'.repeat(32), outflow: 0n, replay: false } as unknown as Awaited<ReturnType<typeof cosign>>;
+    };
+    const any = base64.encode(new Uint8Array([0x70, 0x73, 0x62, 0x74, 0xff, 1, 2, 3]));
+    const during = Array.from({ length: 2 }, () => callHandler(rig, 'sign', { psbt: any }));
+    // While two are in flight (each holding a reserved slot), a third waits its turn as refused.
+    await expect(callHandler(rig, 'sign', { psbt: any })).rejects.toSatisfy((e: unknown) => e instanceof RpcError && e.code === ErrorCode.RateLimited);
+    release();
+    await Promise.all(during);
+    ok = false;
+    await expect(callHandler(rig, 'sign', { psbt: any })).rejects.toSatisfy((e: unknown) => e instanceof RpcError && e.code === ErrorCode.PsbtInvalid);
   }, 30_000);
 });

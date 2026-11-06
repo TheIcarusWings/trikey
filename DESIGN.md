@@ -341,7 +341,7 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
   - an id, so retries are idempotent;
   - a NIP-40 expiry;
   - the hash of the PSBT it refers to.
-- **Replay protection:** old rumors are dropped. Strangers (senders that are not the paired phone, an alert contact or a phone with recovery access) get their own small replay cache and seen-wrap set, so they cannot push a peer's entries out; refused `sign` / `recovery.start` / `recovery.update` are rate limited per sender, and repeated identical refusals are one log entry with a count.
+- **Replay protection:** old rumors are dropped. Strangers (senders that are not the paired phone, an alert contact or a phone with recovery access) get their own small replay cache and seen-wrap set, so they cannot push a peer's entries out; refused `sign` / `recovery.start` / `recovery.update` are rate limited per sender (each request holds a slot while it runs and gives it back if it succeeds, so a burst sent at once gets no more than the limit through; up to 0.1.19 the check came before the call and the count after, and overlapping requests all passed), and repeated identical refusals are one log entry with a count.
 - **Relays:** several, with the user's own relay optional (Umbrel has a Nostr Relay app). Setup ticks the project's
   relay `wss://relay.trikey.app` (it stores only gift wraps and Nostr Connect events, kinds 1059 and 24133) next to
   three public ones; it sees what any relay sees, ciphertext and metadata, and is never the only one. Trikey keeps its
@@ -520,6 +520,11 @@ printed and kept with the hardware wallet.
 - **Reset rotates key 3.** With the old key 3 and no wallet state, anyone holding the web UI, the passphrase and a stolen hardware wallet could pair the user's own wallet again with their own phone and no alert contacts, then run a recovery nobody else hears about. A new key 3 cannot co-sign the old wallet at all (its funds stay with the phone and the hardware wallet), so a reset can only lose the guardian's help, never the user's money to a thief. Reset is refused while a recovery runs or a sweep awaits broadcast.
 - **Remote lock** is allowed for the paired phone at any time and, only when the owner turned rule 8 on, for the alert contacts; for nobody else. It only removes capability. A thief with the phone can lock the guardian (a nuisance: unlock needs the passphrase), but could not have done more with it than the daily limit anyway.
 - **Alert contacts locking (rule 8, opt-in).** A contact, or someone who stole a contact's nostr key, can at worst **lock** the guardian, as often as the owner unlocks it (5 messages per contact per hour): a nuisance, never a loss. While it is locked the owner pays with the hardware wallet, and a ready recovery waits for the unlock, which a contact could already delay more by cancelling it. The owner unlocks and, if it happens again, removes that contact or turns rule 8 off, both with the hardware wallet. It gives a contact nothing else: no unlock, no rule change, no balances, and strangers get no answer to learn from. What it buys: a contact who sees an alert the owner cannot have caused (a phone thief's recovery, the limit off) can stop the guardian co-signing at once, without waiting for the owner. It does not stop a recovery (`CANCEL` does) and does not help against a thief holding the phone and the hardware wallet, who needs no guardian. The phone alone can turn it on, never off: a phone thief would want it off, and that needs the hardware wallet.
+- **A contact's `CANCEL` is the whole message.** The alert DM names the line `CANCEL <id>`, so nostr clients that quote
+  the message they reply to would carry it into any answer ("> CANCEL 2-... / Was this you?"). The guardian takes the
+  command only as the one line left once blank and quoted (`>`) lines are dropped, as for `LOCK`; anything else that
+  names the running recovery's line gets a short DM with the exact line to send, and cancels nothing (up to 0.1.19 the
+  line was found anywhere in the message, quotes included).
 - **The recovery code holds no secret.** The guardian's npub and relays are visible on the relays anyway; what lets a new phone in is the hardware wallet's `recovery.access` signature, bound to that phone's nostr key and (version 2, when the code carries the wallet id) to the wallet. A version-1 signature whose grant a rotation or retirement revoked is refused until it expires.
 - **The guardian's clock is not trusted alone.** An attacker who controls the box's NTP can move the system clock: a recovery's delay counts from the later of the clock and the chain's median time past at the start (a clock set back cannot shorten it), and completes only when the clock, the median time past and the block count all agree (a clock pushed forward cannot either). The daily limit's window is not opened by stepping the clock: the guardian refuses to co-sign while the clock is more than 3 hours ahead of the chain, and its window time never goes backwards. Without chain data a recovery does not start, and co-signing stops once the last chain observation is 3 hours old.
 - **The web UI has its own sessions.** Every API call needs a session (the unlock passphrase signs a browser in; an HttpOnly, SameSite=Strict cookie, idle-expiring, in memory), except the reduced status and first-run setup until it completes, because other apps' containers on the box can likely reach the guardian without going through the platform's proxy. Still keep the port behind the proxy (Umbrel's `app_proxy`, Start9's interfaces), which also stops DNS rebinding.
@@ -800,7 +805,15 @@ no policy hash or approval text changes, the same version-1 backup).
   later spend of the same coins is a replacement (RBF); paying out the same (a fee bump) it is only logged
   (`savings_replaced`), paying out something else it is announced again, naming the spend it replaced. Turning the watch off, or
   swapping it for another Savings wallet, is announced to the phone and every contact the same way (`savings_unwatched`);
-  the phone, which did not ask for it, registers Savings again at its next sync. It refuses to watch any
+  the phone, which did not ask for it, registers Savings again at its next sync. **Every transaction counts, not the
+  newest few:** a scan's history is cut to 200 entries, unconfirmed first, so someone holding two Savings keys could
+  hide a spend behind 200 cheap unconfirmed payments into Savings (an external review found this up to 0.1.19). The
+  tripwire now checks every transaction the server lists for a Savings address, each once (remembered in memory),
+  first seen first checked, at most 500 reads per scan: a flood costs the guardian one read per transaction, spread over
+  scans, and what arrives after a spend waits behind it. While transactions wait unchecked for 30 minutes, or reading
+  Savings keeps failing that long, the phone and every contact get `savings_unchecked` (at most daily) rather than
+  silence; the first scan records history only once it has checked everything. A Savings spend relayed through
+  `tx.broadcast` stays in view until the engine has recorded it. It refuses to watch any
   wallet it could sign for (the guarded, watched or a retired key set, or one holding key 3). A rotation carries the
   record to the adopted wallet; retirement and reset drop it. The web UI shows a "Savings (watched)" card.
 - **Backup and recovery.** The backup is version 2 only when Savings exists (`savings`: descriptor, wallet id, the two
@@ -1042,8 +1055,10 @@ PROTOCOL.md, "Sealed unlock"; code: `packages/protocol/src/sealed-unlock.ts`, `G
 `addHardwareUnlock`, `TrikeyWallet.sendUnlock` and `sendHardwareUnlockAdd`.
 
 - **One sealing key at a time, in memory only.** The guardian makes a secp256k1 key pair when it starts (locked), at
-  every lock (web UI, `guardian.lock`, a contact's `LOCK`), at every unlock, after every counted failed unlock from the
-  phone and after every `unlock.hardware.add` that opened a seal with it, and zeroes it at stop. The key a locked
+  every lock (web UI, `guardian.lock`, a contact's `LOCK`), at every unlock, and after every `guardian.unlock` or
+  `unlock.hardware.add` whose seal was made to it, whatever became of that request (a success, a counted failure, a seal
+  that opened but had expired, or a refusal: `recovery_pending`, `phone_unlock_disabled`, `rate_limited`,
+  `hardware_unlock_off`, an add while locked), and zeroes it at stop. The key a locked
   guardian showed is zeroed the moment it unlocks; a new one serves the add, the only request that carries such a secret
   while unlocked. It never touches the disk or the log (a test scans the data directory). There is no auto-lock to hook;
   a later one would rotate through `lock()` like the others.
@@ -1053,7 +1068,11 @@ PROTOCOL.md, "Sealed unlock"; code: `packages/protocol/src/sealed-unlock.ts`, `G
   two requests is accepted anyway.
 - **Rotation after every use and every failed try, no time limit.** A failed unlock is often a near-miss of the
   passphrase; replacing the key after it means even someone who reads the guardian's memory later cannot open that
-  seal. It costs nothing: the phone reads `guardian.status` before every unlock and add anyway. A timer was not added:
+  seal. The same for every seal made to the key held now that the guardian then refuses without counting (it had
+  expired, the phone was rate limited or stopped, a recovery it did not start is running, the hardware unlock is off, an
+  add arrived while locked): such a seal usually holds the right secret, and left in memory the key would open it for
+  whoever images the box later with the archived wrap (an external review found the key kept in those cases up to
+  0.1.19). The refusals that need no secret are checked before the seal is decrypted at all. It costs nothing: the phone reads `guardian.status` before every unlock and add anyway. A timer was not added:
   the key never reaches the disk, so its age adds nothing to the disk-plus-archive attack; a reader of the live memory
   would see the next unlock or add whatever the key's age; and a timer would only turn into stale-key retries for a
   phone that read the key a while ago.
@@ -1062,8 +1081,9 @@ PROTOCOL.md, "Sealed unlock"; code: `packages/protocol/src/sealed-unlock.ts`, `G
   pubkey, the sealing key, the sending phone, the request id and an expiry are inside the encrypted, MACed plaintext, and
   the guardian compares all of them before it tries the secret. The channel that carries `unlockKey` is already the
   guardian's signed gift wrap; the binding is belt and braces.
-- **Stale is not a guess.** A seal to a key the guardian no longer holds (a restart, a lock or unlock, a replaced key, or
-  one past its expiry) is `unlock_key_stale`, not counted and changing nothing, and the phone reads the new key and sends
+- **Stale is not a guess.** A seal to a key the guardian no longer holds (a restart, a lock or unlock, a replaced key)
+  is `unlock_key_stale`, not counted, never decrypted and changing nothing (so replaying old seals cannot burn the live
+  key); one to the current key past its expiry is `unlock_key_stale` too, not counted, but the key is replaced, and the phone reads the new key and sends
   once more by itself (for the hardware wallet, without asking the device again). An unlock's seal to the current key that
   does not open, or names another purpose, guardian, phone or request, counts as a wrong passphrase: only the paired
   phone's own wraps reach the handler, a relay can neither forge the phone's seal nor replay a request (replay guard,

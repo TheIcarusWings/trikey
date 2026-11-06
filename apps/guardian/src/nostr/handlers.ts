@@ -185,16 +185,23 @@ async function replacementRefusal(g: Guardian, w: WalletRuntime, paired: Multisi
 /**
  * An engine call that may refuse (`sign`, `recovery.start`, `recovery.update`): once `sender` had too many
  * refusals in the window it gets `RateLimited` without reaching the engine (no log entry, no state).
- * Only refusals count.
+ * Only refusals count, but each call holds its slot while it runs (given back on success or an error that
+ * is not a refusal), so a burst of requests in flight together cannot all pass before the first is counted.
  */
 async function refusable<T extends { ok: boolean }>(g: Guardian, sender: string, fn: () => Promise<T>): Promise<T> {
-  const gate = g.refusalLimiter.blocked(sender, g.clock.now());
-  if (!gate.ok) {
+  const turn = g.refusalLimiter.reserve(sender, g.clock.now());
+  if (!turn.ok) {
     g.log.warn('rpc.refusals_rate_limited');
-    throw new RpcError(ErrorCode.RateLimited, 'Too many refused requests; wait and try again.', { retryAfterSeconds: Math.ceil(gate.retryAfterMs / 1000) });
+    throw new RpcError(ErrorCode.RateLimited, 'Too many refused requests; wait and try again.', { retryAfterSeconds: Math.ceil(turn.retryAfterMs / 1000) });
   }
-  const res = await fn();
-  if (!res.ok) g.refusalLimiter.take(sender, g.clock.now());
+  let res: T;
+  try {
+    res = await fn();
+  } catch (e) {
+    turn.release();
+    throw e;
+  }
+  if (res.ok) turn.release();
   return res;
 }
 
@@ -754,6 +761,8 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
             const r = await g.chain.broadcast(params.txHex, { track: true });
             if (r.txid !== txid) g.log.warn('tx.broadcast_txid_mismatch', { txid, reported: r.txid });
             g.log.info('tx.broadcast', { txid, via: r.via, spends: 'savings' });
+            // Kept in view of the tripwire until it has recorded this spend, whatever the server lists meanwhile.
+            w.savingsWatch.relayed(txid, params.txHex);
             void w.savingsWatch.run({ force: true }).then(() => w.alerts.run());
             return { txid };
           }

@@ -6,7 +6,7 @@ tagline: Key 3 of your 2-of-3 bitcoin wallet, on your own node
 # TODO(verify): the icon is a placeholder (the web UI favicon). Replace with a proper icon URL.
 icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/guardian-web/public/favicon.svg
 category: bitcoin
-version: "0.1.19-alpha"
+version: "0.1.20-alpha"
 # TODO(verify): host-facing port for the app_proxy. Pick one that no other app in the store uses.
 port: 3010
 description: >-
@@ -26,8 +26,9 @@ support: https://github.com/TheIcarusWings/trikey/issues
 # TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
 gallery: []
 releaseNotes: >-
-  No guardian changes: this release fixes the 0.1.18 iPhone app, which closed itself right after opening, and adds
-  Jade and Jade Plus over Bluetooth in the app. Update the app; the guardian update only keeps versions in step.
+  Change the guardian's passphrase from its web page (Settings, Passphrase): the old one stops working everywhere,
+  other browsers are signed out, and you are alerted. With the 0.1.20 app, a BitBox02 (USB-C on Android) or BitBox02
+  Nova (Bluetooth) can be your hardware wallet.
 dependencies:
   - bitcoin
   - electrs

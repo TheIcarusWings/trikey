@@ -77,6 +77,8 @@ export interface SavingsWatch {
    * replacement apart): a later spend of one of the same coins is a replacement (RBF) of it, not a new outflow.
    */
   spendDetails?: SavingsSpendSeen[];
+  /** ms: when the last `savings_unchecked` notice was queued (the tripwire could not check everything; at most daily). */
+  uncheckedNoticeAt?: number;
 }
 
 /** One Savings spend the guardian has seen: its coins and a digest of what it pays out (`savings.ts`, `SavingsSpend`). */
@@ -345,6 +347,11 @@ export type ActivityEvent =
    * to Savings is smaller): the same outflow, so nobody is told again. `amountSats` now, `previousAmountSats` before.
    */
   | { type: 'savings_replaced'; walletId: string; txid: string; replaces: string; amountSats: bigint; previousAmountSats: bigint }
+  /**
+   * The Savings tripwire could not check every transaction of Savings for a while: `pending` of them waited (a flood of
+   * payments into Savings), or reading Savings kept failing (`pending` absent). A spend may be hidden among them.
+   */
+  | { type: 'savings_unchecked'; walletId: string; pending?: number }
   /** `helperInput`: the outpoint of the phone's helper coin that rode along (a silent payment). */
   | { type: 'cosign_signed'; txid: string; outflow: bigint; usedAfter: bigint; replay: boolean; helperInput?: string }
   | { type: 'single_key_registered'; helper: boolean; coins: number }
@@ -450,7 +457,7 @@ export interface GuardedWallet {
 export interface LimitNotice {
   /** `limit-<n>`, `lock-<n>` or `lockrule-<n>`, unique (the next activity id when it was queued). */
   id: string;
-  kind: 'limit_off' | 'limit_on' | 'contact_lock' | 'contact_lock_on' | 'contact_lock_off' | 'savings_moved' | 'savings_unwatched';
+  kind: 'limit_off' | 'limit_on' | 'contact_lock' | 'contact_lock_on' | 'contact_lock_off' | 'savings_moved' | 'savings_unwatched' | 'savings_unchecked';
   walletId: string;
   /** ms */
   at: number;
@@ -465,9 +472,11 @@ export interface LimitNotice {
   /**
    * `savings_moved`: the Savings wallet, the spending transaction and what left Savings (sats, fee included).
    * `savings_unwatched`: the Savings wallet no longer watched, and `replacedBy` the one watched instead (absent: none).
+   * `savings_unchecked`: the Savings wallet the tripwire cannot check in full, and `pending` how many transactions wait.
    */
   savingsWalletId?: string;
   replacedBy?: string;
+  pending?: number;
   txid?: string;
   amountSats?: bigint;
   /** `savings_moved` of a replacement (RBF) that pays out something else: the spend it replaced, and what that one moved. */

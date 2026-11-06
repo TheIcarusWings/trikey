@@ -1647,6 +1647,19 @@ export const Alert = z.discriminatedUnion('type', [
   stamped({
     ...alertBase,
     /**
+     * The guardian cannot check every transaction of the watched Savings wallet `walletId` for a while: `pending` of them
+     * wait unchecked (more arrived than it reads in a while: a flood of small payments into Savings would otherwise hide a
+     * spend among them), or reading Savings keeps failing (`pending` absent). A spend of Savings may be among them, not
+     * yet announced (`savings_moved` follows once it is checked). To the paired phone and the alert contacts (a NIP-17
+     * DM), at most once a day. Phones before this alert drop it (an unknown `type`).
+     */
+    type: z.literal('savings_unchecked'),
+    walletId: WalletId,
+    pending: z.int().min(1).optional(),
+  }),
+  stamped({
+    ...alertBase,
+    /**
      * A guest's hosted wallet: the host stopped hosting it. Key 3 keeps co-signing and running recoveries until `endsAt`
      * (unix seconds), then the wallet is retired on that guardian (`wallet_retired`, `hosting_ended`). Move it with Replace
      * guardian before then. Sent to the guest's phone; the guest's alert contacts get it as a NIP-17 DM.

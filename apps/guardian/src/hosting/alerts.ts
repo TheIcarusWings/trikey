@@ -81,7 +81,7 @@ export function hostedAlertText(a: DueAlert, rec: HostedRecoveryRecord | undefin
     }
   }
   const pauseHint = canPause ? `\n\nCANCEL stops this recovery. ${PAUSE_HINT}` : '';
-  const howToCancel = `To stop it, reply to this message with:\n\nCANCEL ${id}\n\nor cancel it in the Trikey app.${pauseHint}`;
+  const howToCancel = `To stop it, reply to this message with exactly this line and nothing else:\n\nCANCEL ${id}\n\nor cancel it in the Trikey app.${pauseHint}`;
   switch (a.kind) {
     case 'recovery_started':
       return [

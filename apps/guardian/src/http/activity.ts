@@ -198,8 +198,11 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
                   ? [`"Savings moved" alert sent to ${n}`, 'Savings alert sent']
                   : e.kind === 'savings_unwatched'
                     ? [`"Savings no longer watched" alert sent to ${n}`, 'Savings alert sent']
+                  : e.kind === 'savings_unchecked'
+                    ? [`"Savings not fully checked" alert sent to ${n}`, 'Savings alert sent']
                   : [`"You can no longer lock the guardian" message sent to ${n}`, 'Contacts told they can no longer lock'];
-      return { ...base, kind: e.kind === 'contact_lock' || e.kind === 'savings_moved' || e.kind === 'savings_unwatched' ? 'system' : 'rules', event, summary, signedBy: null, sats: null, result: 'ok' };
+      const system = e.kind === 'contact_lock' || e.kind === 'savings_moved' || e.kind === 'savings_unwatched' || e.kind === 'savings_unchecked';
+      return { ...base, kind: system ? 'system' : 'rules', event, summary, signedBy: null, sats: null, result: 'ok' };
     }
     case 'contact_locked':
       return {
@@ -289,6 +292,18 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
         summary: e.replaces ? 'Savings payment replaced' : e.consolidated ? 'Savings consolidated' : 'Savings moved',
         signedBy: null,
         sats: sats(e.amountSats),
+        result: 'ok',
+      };
+    case 'savings_unchecked':
+      return {
+        ...base,
+        kind: 'system',
+        event: e.pending
+          ? `Savings not fully checked: ${e.pending} transactions of the Savings wallet ${e.walletId} waited unchecked, more than this guardian reads at once (a flood of payments into Savings could hide a spend). It keeps checking them in order and announces any spend it finds. The phone and the alert contacts are told.`
+          : `Savings not checked: reading the Savings wallet ${e.walletId} kept failing, so a spend of it would go unseen. The phone and the alert contacts are told.`,
+        summary: 'Savings not fully checked',
+        signedBy: null,
+        sats: null,
         result: 'ok',
       };
     case 'savings_replaced':

@@ -1250,7 +1250,7 @@ your recovery words or password) and the phone's exact message.
 
 ---
 
-### 18i. Change the guardian's passphrase (optional; a guardian and an app with this release)
+### 18j. Change the guardian's passphrase (optional; a guardian and an app with this release)
 
 The passphrase can be changed on the guardian's web page, never from the phone (DESIGN.md, "Changing the passphrase").
 It encrypts the same key 3 again: your wallet, its rules and the hardware unlock (step 18d) stay as they are.

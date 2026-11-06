@@ -79,6 +79,15 @@ describe('savings: the watch turned off or swapped', () => {
     expect(Alert.safeParse(noWallet).success).toBe(false);
   });
 
+  it('savings_unchecked names the wallet, and how many transactions wait unchecked when it knows', () => {
+    const a = { type: 'savings_unchecked', walletId: SAVINGS_ID, at: 1_900_000_000, atMs: 1_900_000_000_100 };
+    expect(Alert.safeParse(a).success).toBe(true);
+    expect(Alert.safeParse({ ...a, pending: 312 }).success).toBe(true);
+    expect(Alert.safeParse({ ...a, pending: 0 }).success).toBe(false);
+    const { walletId: _w, ...noWallet } = a;
+    expect(Alert.safeParse(noWallet).success).toBe(false);
+  });
+
   it('an alert type a phone does not know fails its schema, so the client drops it (older phones ignore new alerts)', () => {
     // Phones before `savings_unwatched` (or `savings_moved`) have a closed `Alert` union: such a message fails
     // `MessageSchema` in `parseRumor`, and `RpcClient` drops it without calling any alert handler.

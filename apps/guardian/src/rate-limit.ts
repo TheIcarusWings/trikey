@@ -36,12 +36,34 @@ export class SlidingWindowLimiter {
     if (this.hits.size > 256) for (const [k, ts] of this.hits) if (ts.every((t) => t <= from)) this.hits.delete(k);
     return { ok: true };
   }
+
+  /**
+   * Counts one call for `key` at `now` (ms) up front, as `take`, for a call that should count only if it fails: the slot
+   * is held while the call runs, so calls in flight together cannot all pass a check made before any of them is
+   * counted; `release` gives it back (a success). Over the limit: nothing counted, as `take`.
+   */
+  reserve(key: string, now: number): { ok: true; release: () => void } | { ok: false; retryAfterMs: number } {
+    const turn = this.take(key, now);
+    if (!turn.ok) return turn;
+    let released = false;
+    return {
+      ok: true,
+      release: () => {
+        if (released) return;
+        released = true;
+        const hits = this.hits.get(key);
+        const i = hits ? hits.lastIndexOf(now) : -1;
+        if (i >= 0) hits!.splice(i, 1);
+      },
+    };
+  }
 }
 
 /**
  * Refused `sign` / `recovery.start` / `recovery.update` per sender: a stolen phone (or a buggy one)
  * sending a stream of requests the engine refuses gets `RateLimited` without reaching the engine once
- * it has had this many refusals in the window. Successful calls do not count.
+ * it has had this many refusals in the window. Successful calls do not count; calls in flight count
+ * until they succeed (`reserve`), so a burst sent at once gets no more than this many through.
  */
 export const DEFAULT_REFUSAL_LIMIT: RateLimitOptions = { max: 30, windowMs: 10 * 60 * 1000 };
 
