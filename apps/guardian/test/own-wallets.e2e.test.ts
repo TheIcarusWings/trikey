@@ -14,7 +14,7 @@ import { MultisigWallet, analyzePsbt, buildSpend, buildSweep, type KeyExpression
 import { ErrorCode, RpcClient, RpcError, SimplePoolRelayPool, decodePairingUri, pairingMessage, recoveryAccessMessage, type Alert, type Policy } from '@trikey/protocol';
 import { signMessage } from '../src/policy/index.js';
 import { cosignerFromSeed } from '../src/keystore.js';
-import { AUTH_PATH, MNEMONICS, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from './helpers.js';
+import { AUTH_PATH, MNEMONICS, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withRulesApproval } from './helpers.js';
 import { GuardianRig, type FundedOutput } from './support/index.js';
 
 const HW2 = MNEMONICS.hardware2;
@@ -54,6 +54,8 @@ interface Phone {
   pubkey: string;
   rpc: RpcClient;
   alerts: Alert[];
+  /** The guardian's clock, in seconds. */
+  now: () => number;
 }
 
 function phoneOn(rig: GuardianRig, key = generateSecretKey()): Phone {
@@ -63,7 +65,7 @@ function phoneOn(rig: GuardianRig, key = generateSecretKey()): Phone {
   clients.push(rpc);
   const alerts: Alert[] = [];
   rpc.onAlert((a) => alerts.push(a));
-  return { key, pubkey: getPublicKey(key), rpc, alerts };
+  return { key, pubkey: getPublicKey(key), rpc, alerts, now: () => rig.nowSec() };
 }
 
 const toKey = (k: { fingerprint: string; path: string; xpub: string }): KeyExpression => ({ fingerprint: k.fingerprint, originPath: k.path.replace(/^m\//, '').replace(/'/g, 'h'), xpub: k.xpub });
@@ -76,7 +78,7 @@ async function pairFirst(rig: GuardianRig, phone: Phone) {
   const prep = await phone.rpc.call('pair.prepare', { pairingSecret: p.secret, network: 'regtest', entropy: 'a1b2'.repeat(16) });
   const wallet = new MultisigWallet(network, { app: await appSigner().getKey(network), hardware: await hwSigner().getKey(network), cosigner: toKey(prep.guardianKey) });
   const app = wallet.keys.app;
-  const res = await phone.rpc.call('pair', {
+  const res = await phone.rpc.call('pair', withRulesApproval({
     pairingSecret: p.secret,
     deviceName: 'Test phone',
     network: 'regtest',
@@ -86,7 +88,7 @@ async function pairFirst(rig: GuardianRig, phone: Phone) {
     hardwareAuth: { pubkey: hwAuthPubkey(), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), rawPub(prep.guardianKey.xpub)), hwAuthPrivateKey()),
     rules: rules(100_000),
-  });
+  }, rig.nowSec() * 1000));
   return { wallet, walletId: res.walletId, guardianKey: prep.guardianKey };
 }
 
@@ -98,7 +100,7 @@ async function addWallet(phone: Phone, opts: { account: number; hardware: string
     hardware: await hwSigner(opts.hardware).getKey(network),
     cosigner: toKey(prep.guardianKey),
   });
-  const res = await phone.rpc.call('wallet.add', {
+  const res = await phone.rpc.call('wallet.add', withRulesApproval({
     account: opts.account,
     name: opts.name,
     descriptor: wallet.descriptor(),
@@ -106,7 +108,7 @@ async function addWallet(phone: Phone, opts: { account: number; hardware: string
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), rawPub(prep.guardianKey.xpub)), hwAuthPrivateKey(AUTH_PATH, opts.hardware)),
     rules: rules(opts.limit ?? 50_000),
     ...(opts.firstName ? { firstName: opts.firstName } : {}),
-  });
+  }, phone.now() * 1000, hwAuthPrivateKey(AUTH_PATH, opts.hardware)));
   return { wallet, walletId: res.walletId, prep, res };
 }
 
@@ -384,14 +386,14 @@ describe('own wallets: alert contacts', { timeout: 60_000 }, () => {
     const contact = phoneOn(rig);
     const prep = await phone.rpc.call('wallet.add.prepare', { account: 2 });
     const wallet = new MultisigWallet(network, { app: await appSigner().getKey(network, 2), hardware: await hwSigner(HW2).getKey(network), cosigner: toKey(prep.guardianKey) });
-    const added = await phone.rpc.call('wallet.add', {
+    const added = await phone.rpc.call('wallet.add', withRulesApproval({
       account: 2,
       name: 'Business',
       descriptor: wallet.descriptor(),
       hardwareAuth: { pubkey: hwAuthPubkey(AUTH_PATH, HW2), path: AUTH_PATH },
       hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), rawPub(prep.guardianKey.xpub)), hwAuthPrivateKey(AUTH_PATH, HW2)),
       rules: { ...rules(50_000), alertContacts: [contact.pubkey] },
-    });
+    }, rig.nowSec() * 1000, hwAuthPrivateKey(AUTH_PATH, HW2)));
     // The first wallet's rules do not list the contact: it is Business's only.
     expect((await phone.rpc.call('policy.get', {})).policy.alertContacts).toEqual([]);
     const coin = rig.fund(wallet.derive(0, 0).script, 100_000n);

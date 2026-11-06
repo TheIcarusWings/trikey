@@ -245,7 +245,7 @@ export default function ReplaceGuardian() {
   const steps = [
     { title: 'Install Trikey Guardian on the new box', detail: 'Umbrel or Start9' },
     { title: 'Scan its pairing code', detail: 'Trikey shows you every step before anything moves' },
-    { title: `Approve the move on your ${hardware.brand}`, detail: 'One transaction, with a network fee' },
+    { title: `Approve the new wallet and the move on your ${hardware.brand}`, detail: 'It shows the rules the new wallet starts with (check the daily limit), then one transaction, with a network fee' },
   ];
   return (
     <Screen

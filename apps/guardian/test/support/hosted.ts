@@ -21,8 +21,9 @@ import {
   tweakToBytes,
   type Utxo,
 } from '@trikey/core';
-import { pairingMessage, signMessage } from '../../src/policy/index.js';
-import { AUTH_PATH, MNEMONICS, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from '../helpers.js';
+import type { Policy } from '@trikey/protocol';
+import { pairingMessage, signMessage, type Rules } from '../../src/policy/index.js';
+import { AUTH_PATH, MNEMONICS, appSigner, approveRules, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from '../helpers.js';
 
 export interface HostedFixture {
   wallet: MultisigWallet;
@@ -30,6 +31,8 @@ export interface HostedFixture {
   accountPubkeys: { app: string; hardware: string; cosigner: string };
   hardwareAuth: { pubkey: string; path: string; tweak: string };
   proof: string;
+  /** The device's approval of the rules the wallet starts with (`hosted.pair`'s `rulesApproval`), at the guardian's `nowMs`. */
+  approveRules(rules: Rules | Policy, nowMs: number): ReturnType<typeof approveRules>;
   app: string;
   hardware: string;
 }
@@ -58,9 +61,15 @@ export async function hostedWallet(opts: { cosignerPub: string; app?: string; ha
     accountPubkeys,
     hardwareAuth: authOf(wallet, hardware),
     proof: signMessage(pairingMessage(walletId, accountPubkeys.cosigner), hwAuthPrivateKey(AUTH_PATH, hardware)),
+    approveRules: (rules, nowMs) => approveRules(walletId, rules, nowMs, { privateKey: hwAuthPrivateKey(AUTH_PATH, hardware) }),
     app,
     hardware,
   };
+}
+
+/** `hosted.pair` params with the guest device's `rulesApproval` over their `rules` (`fx`'s key-set id). `nowMs`: the guardian's clock. */
+export function withHostedRulesApproval<T extends { rules: Policy }>(params: T, fx: HostedFixture, nowMs: number): T & { rulesApproval: ReturnType<typeof approveRules> } {
+  return { ...params, rulesApproval: fx.approveRules(params.rules, nowMs) };
 }
 
 /** An opaque wallet map of `n` bytes, base64url (the guardian cannot read a real one either). */

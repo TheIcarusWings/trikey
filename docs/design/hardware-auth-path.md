@@ -15,9 +15,10 @@ because moving it would break a security check on the guardian, and to make smal
 `authKeyPath()` (`packages/wallet/src/keys.ts`) is `<BIP 48 account>/0/0`, so `m/48'/0'/0'/2'/0/0` on
 mainnet and `m/48'/1'/0'/2'/0/0` on test networks. That key is the hardware key in the wallet's first
 receive address. The phone derives its pubkey from the BIP 48 account xpub it already has, with no extra
-device call (`readHardware`, `packages/wallet/src/wallet.ts`). It signs pairing proofs, `hardware.confirm`
-proofs, approvals and recovery access with `hw.signMessage(rec.auth.path, text)` (`signWithAuthKey`, same
-file). The guardian requires this key to sit below the hardware account by non-hardened steps and to
+device call (`readHardware`, `packages/wallet/src/wallet.ts`). It signs pairing proofs, the rules a wallet
+starts with (the policy text with `seq=0`, at `pair`, `wallet.add` and `hosted.pair`, since the 2026-11 security
+review; DESIGN.md rule 4), `hardware.confirm` proofs, approvals and recovery access with
+`hw.signMessage(rec.auth.path, text)` (`signWithAuthKey`, same file). The guardian requires this key to sit below the hardware account by non-hardened steps and to
 derive from the hardware xpub in the descriptor (`authKeyMismatch`, `apps/guardian/src/policy/engine.ts`).
 
 - Trezor: `TrezorSigner.signMessage` calls `connect.signMessage({ path, coin, message })` with no

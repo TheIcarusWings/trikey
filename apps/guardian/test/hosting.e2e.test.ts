@@ -24,9 +24,9 @@ import { MultisigWallet, finalizePsbt, keySetId, type KeyExpression } from '@tri
 import { ErrorCode, RpcClient, RpcError, SimplePoolRelayPool, decodeInviteUri, decodePairingUri, pairingMessage, recoveryAccessMessage, type Alert, type Policy } from '@trikey/protocol';
 import { DAY, deserializeState, serializeState, signMessage } from '../src/policy/index.js';
 import { STOP_NOW_CONFIRMATION } from '../src/hosting/types.js';
-import { AUTH_PATH, MNEMONICS, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, phoneSpend } from './helpers.js';
+import { AUTH_PATH, MNEMONICS, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, phoneSpend, withRulesApproval } from './helpers.js';
 import { GuardianRig } from './support/rig.js';
-import { destinationAfterHardwareLoss, externalScript, fakeMap, hostedWallet, offPathPayment, phoneSweep, type HostedFixture } from './support/hosted.js';
+import { destinationAfterHardwareLoss, externalScript, fakeMap, hostedWallet, offPathPayment, phoneSweep, type HostedFixture, withHostedRulesApproval } from './support/hosted.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function waitFor<T>(fn: () => T | undefined | false | Promise<T | undefined | false>, what: string, timeoutMs = 8000): Promise<T> {
@@ -93,7 +93,7 @@ async function invite(name: string): Promise<{ link: string; id: string; secret:
 async function accept(g: Guest, secret: string, opts: { app?: string; hardware?: string; rules?: Partial<Policy> } = {}): Promise<HostedFixture> {
   const prep = await g.rpc.call('hosted.prepare', { inviteSecret: secret, network: 'regtest', entropy: hex.encode(new Uint8Array(32).map((_, i) => i + g.key[0])) });
   const fx = await hostedWallet({ cosignerPub: prep.cosignerAccountPubkey, app: opts.app ?? MNEMONICS.app2, hardware: opts.hardware ?? MNEMONICS.hardware });
-  const res = await g.rpc.call('hosted.pair', {
+  const res = await g.rpc.call('hosted.pair', withHostedRulesApproval({
     inviteSecret: secret,
     deviceName: 'Guest phone',
     walletLabel: 'Family wallet',
@@ -104,7 +104,7 @@ async function accept(g: Guest, secret: string, opts: { app?: string; hardware?:
     rules: { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [g.contact.pubkey], sweepFeeCapSats: 20_000, ...opts.rules },
     walletMap: fakeMap(),
     phoneNostrPubkey: g.pub,
-  });
+  }, fx, rig.nowSec() * 1000));
   expect(res.walletId).toBe(fx.walletId);
   g.fx = fx;
   return fx;
@@ -118,7 +118,7 @@ beforeAll(async () => {
   const cosigner: KeyExpression = { fingerprint: prep.guardianKey.fingerprint, originPath: prep.guardianKey.path.replace(/^m\//, '').replace(/'/g, 'h'), xpub: prep.guardianKey.xpub };
   hostWallet = new MultisigWallet(network, { app: await appSigner().getKey(network), hardware: await hwSigner().getKey(network), cosigner });
   const app = hostWallet.keys.app;
-  await host.call('pair', {
+  await host.call('pair', withRulesApproval({
     pairingSecret: p.secret,
     deviceName: 'Host phone',
     network: 'regtest',
@@ -128,7 +128,7 @@ beforeAll(async () => {
     hardwareAuth: { pubkey: hwAuthPubkey(), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(hostWallet.fingerprint(), hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!)), hwAuthPrivateKey()),
     rules: HOST_RULES,
-  });
+  }, rig.nowSec() * 1000));
   hostBytes = await readFile(stateFile(), 'utf8');
 }, 60_000);
 
@@ -190,7 +190,7 @@ describe('family hosting, end to end', { timeout: 60_000 }, () => {
     await expect(dad().rpc.call('hosted.prepare', { inviteSecret: a.secret, network: 'regtest' } as never)).rejects.toThrow(/expected string/);
     const prep = await dad().rpc.call('hosted.prepare', { inviteSecret: a.secret, network: 'regtest', entropy: 'ab'.repeat(31) + 'cd' });
     expect(prep.cosignerAccountPubkey).toMatch(/^0[23][0-9a-f]{64}$/);
-    expect(prep.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps']);
+    expect(prep.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps', 'pairing_rules_approval']);
     expect(prep.cosignerAccountPubkey).not.toBe(hex.encode(hostWallet.accountPubkeys().cosigner));
     const other = client(generateSecretKey());
     const e = await rpcError(other.call('hosted.prepare', { inviteSecret: a.secret, network: 'regtest', entropy: 'cd'.repeat(32) }));
@@ -219,7 +219,7 @@ describe('family hosting, end to end', { timeout: 60_000 }, () => {
 
   it("the guest's guardian.status is its slot's view: its key-set id, family_hosting only, nothing of the host's wallet", async () => {
     const st = await dad().rpc.call('guardian.status', {});
-    expect(st).toMatchObject({ paired: true, walletId: dad().fx!.walletId, features: ['family_hosting', 'limit_off', 'contact_lock', 'short_wraps'], hosting: { state: 'active' }, key3Mixed: true });
+    expect(st).toMatchObject({ paired: true, walletId: dad().fx!.walletId, features: ['family_hosting', 'limit_off', 'contact_lock', 'short_wraps', 'pairing_rules_approval'], hosting: { state: 'active' }, key3Mixed: true });
     expect(st.walletId).not.toBe(hostWallet.fingerprint());
     expect(st).not.toHaveProperty('savingsWalletId');
     expect(st).not.toHaveProperty('watchedWalletId');

@@ -78,6 +78,13 @@ export const GUARDIAN_FEATURES = {
    * alert. The phone only says where to change it. Never listed to a guest.
    */
   passphraseChange: 'passphrase_change',
+  /**
+   * The rules a wallet starts with are approved on its hardware wallet (DESIGN.md, rule 4; PROTOCOL.md, "Pairing"):
+   * `pair`, `wallet.add` and `hosted.pair` carry `rulesApproval`, a signature over `pairingRulesMessage` (the policy text
+   * with `seq=0`), and such a guardian refuses them without it. Listed in `pair.prepare`, `guardian.status` and
+   * `hosted.prepare`; a phone sends `rulesApproval` only to a guardian that lists it.
+   */
+  pairingRulesApproval: 'pairing_rules_approval',
 } as const;
 
 /** True when the alert contacts may lock the guardian (`Policy.contactLock`). */

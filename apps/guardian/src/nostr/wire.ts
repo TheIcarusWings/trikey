@@ -208,6 +208,15 @@ export function refusalText(r: Refusal): string {
   }
 }
 
+/**
+ * The answer to an app from before `pairing_rules_approval` that pairs (`pair`, `wallet.add`, `hosted.pair`) without the
+ * hardware wallet's approval of the rules: `-32602` with `data.reason: "app_update_required"`. Pairing is rare, and
+ * accepting rules no device showed would let a malicious app start the wallet with rules the owner never saw.
+ */
+export const APP_UPDATE_REQUIRED_TEXT =
+  'Update the Trikey app to pair with this guardian: it now asks your hardware wallet to approve the rules (daily limit, waiting period, fee cap, contacts) the wallet starts with. Nothing was paired.';
+export const APP_UPDATE_REQUIRED = { reason: 'app_update_required' } as const;
+
 export function refusalError(r: Refusal): RpcError {
   return new RpcError(refusalCode(r), refusalText(r).slice(0, 500), refusalData(r));
 }

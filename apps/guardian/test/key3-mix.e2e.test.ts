@@ -14,7 +14,7 @@ import { MultisigWallet, analyzePsbt, buildSpend, type KeyExpression, type Utxo 
 import { RpcClient, SimplePoolRelayPool, decodePairingUri, pairingMessage } from '@trikey/protocol';
 import { KEY3_MIX_FORMAT, cosignerFromSeed, key3Context, key3Mix, mixedKey3Seed } from '../src/keystore.js';
 import { signMessage } from '../src/policy/index.js';
-import { AUTH_PATH, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from './helpers.js';
+import { AUTH_PATH, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withRulesApproval } from './helpers.js';
 import { GuardianRig, type FundedOutput } from './support/index.js';
 
 // ---------------------------------------------------------------------------
@@ -115,7 +115,7 @@ async function pair(rig: GuardianRig, phone: Phone, entropies: (string | undefin
   for (const entropy of entropies) prep = await phone.rpc.call('pair.prepare', { pairingSecret: p.secret, network: 'regtest', ...(entropy ? { entropy } : {}) });
   const wallet = new MultisigWallet(network, { app: await appSigner().getKey(network), hardware: await hwSigner().getKey(network), cosigner: toKey(prep!.guardianKey) });
   const app = wallet.keys.app;
-  const res = await phone.rpc.call('pair', {
+  const res = await phone.rpc.call('pair', withRulesApproval({
     pairingSecret: p.secret,
     deviceName: 'Test phone',
     network: 'regtest',
@@ -125,7 +125,7 @@ async function pair(rig: GuardianRig, phone: Phone, entropies: (string | undefin
     hardwareAuth: { pubkey: hwAuthPubkey(), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), rawPub(prep!.guardianKey.xpub)), hwAuthPrivateKey()),
     rules: { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [], sweepFeeCapSats: 20_000 },
-  });
+  }, rig.nowSec() * 1000));
   return { prep: prep!, res, wallet };
 }
 

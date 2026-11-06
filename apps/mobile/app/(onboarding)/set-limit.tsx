@@ -83,8 +83,9 @@ export default function SetLimit() {
         </>
       }>
       <Body>
-        Bigger payments, and any change to these rules, need your {hardware.brand}. If a device is lost, recovery waits and alerts you and your
-        contacts every day.
+        Your {hardware.brand} will show these rules for you to approve: check the daily limit (limit=, in sats) and the waiting period (delay=) on
+        its screen before you approve. Bigger payments, and any change to these rules, need your {hardware.brand} too. If a device is lost,
+        recovery waits and alerts you and your contacts every day.
       </Body>
       <Card className={cn('gap-3.5 p-4', !changing && 'border-foreground')}>
         <View className="flex-row items-center justify-between">

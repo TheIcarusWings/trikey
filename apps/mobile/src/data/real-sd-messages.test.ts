@@ -173,9 +173,12 @@ describe('a Passport (2nd generation) signing from its microSD card, in the app'
     expect(pair.notes!.join(' ')).toMatch(/proves to your guardian/);
     // Picking Trikey's own file first was caught, and the owner could pick again.
     expect(passport.hints[0]).toMatch(/the file Trikey made \(the request\)/);
-    expect(passport.signed).toEqual([expect.stringMatching(/^Trikey pair v1 /)]);
-    // After the signature: the wallet goes onto the device, and the first address is compared, by QR as for any QR device.
-    expect(passport.shown.map((r) => r.purpose)).toEqual(['device-key', 'message-file', 'wallet', 'address']);
+    // Then the rules the wallet starts with (seq=0), in a file of its own, which the device shows.
+    expect(passport.signed).toEqual([expect.stringMatching(/^Trikey pair v1 /), expect.stringMatching(/^Trikey policy v1 wallet=[0-9a-f]{16} seq=0 limit=100000 delay=7d feecap=\d+ contacts=\d+ hash=[0-9a-f]{64} expires=\S+Z$/)]);
+    expect(card.files.get('trikey-rules.txt')).toMatch(/^Trikey policy v1 wallet=[0-9a-f]{16} seq=0 /);
+    expect(passport.requests[1]!.notes!.join(' ')).toMatch(/rules your wallet starts with/);
+    // The wallet goes onto the device and the first address is compared, by QR as for any QR device.
+    expect(passport.shown.map((r) => r.purpose)).toEqual(['device-key', 'message-file', 'wallet', 'message-file', 'address']);
   });
 
   it('notes on the guardian: two files, one per round, each screen saying which round', async () => {

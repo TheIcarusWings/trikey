@@ -20,7 +20,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MultisigWallet, RECEIVE, SAVINGS_ACCOUNT, SoftwareSigner, buildSpend, combinePsbts, finalizePsbt, type KeyExpression } from '@trikey/core';
 import { ErrorCode, GUARDIAN_FEATURES, RpcClient, RpcError, SimplePoolRelayPool, decodePairingUri, pairingMessage, type Alert, type Policy } from '@trikey/protocol';
 import { signMessage } from '../src/policy/index.js';
-import { AUTH_PATH, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from './helpers.js';
+import { AUTH_PATH, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withRulesApproval } from './helpers.js';
 import { GuardianRig } from './support/index.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -77,7 +77,7 @@ beforeAll(async () => {
   spending = new MultisigWallet(network, { app: await appSigner().getKey(network), hardware: await hwSigner().getKey(network), cosigner });
   const cosignerPub = hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!);
   const app = spending.keys.app;
-  await phone.call('pair', {
+  await phone.call('pair', withRulesApproval({
     pairingSecret: p.secret,
     deviceName: 'Savings phone',
     network: 'regtest',
@@ -87,7 +87,7 @@ beforeAll(async () => {
     hardwareAuth: { pubkey: hwAuthPubkey(), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(spending.fingerprint(), cosignerPub), hwAuthPrivateKey()),
     rules: RULES,
-  });
+  }, rig.nowSec() * 1000));
   savings = new MultisigWallet(network, {
     app: await appSigner().getKey(network, SAVINGS_ACCOUNT),
     hardware: await hwSigner().getKey(network, SAVINGS_ACCOUNT),

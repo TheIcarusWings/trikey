@@ -96,7 +96,10 @@ export default function AddWallet() {
           />
         </>
       }>
-      <Body>A wallet with another hardware wallet: its own daily limit and recoveries. The other rules are your first wallet's; change them later in Settings.</Body>
+      <Body>
+        A wallet with another hardware wallet: its own daily limit and recoveries. The other rules are your first wallet's; change them later in Settings. The
+        new hardware wallet shows the rules for you to approve: check the daily limit (limit=, in sats) on its screen.
+      </Body>
       <View className="gap-1.5">
         <FieldLabel nativeID="wallet-name">Name</FieldLabel>
         <Input aria-labelledby="wallet-name" value={name} onChangeText={setName} placeholder="Business" maxLength={16} autoCapitalize="words" />

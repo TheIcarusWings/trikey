@@ -33,7 +33,7 @@ import {
 import { onContactDm } from '../src/dm-cancel.js';
 import { isLockCommand } from '../src/dm-lock.js';
 import { signMessage } from '../src/policy/index.js';
-import { AUTH_PATH, appSigner, fund, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, phoneSpend } from './helpers.js';
+import { AUTH_PATH, appSigner, fund, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, phoneSpend, withRulesApproval } from './helpers.js';
 import { GuardianRig } from './support/index.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -115,7 +115,7 @@ beforeAll(async () => {
   wallet = new MultisigWallet(network, { app: await appSigner().getKey(network), hardware: await hwSigner().getKey(network), cosigner });
   const cosignerPub = hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!);
   const app = wallet.keys.app;
-  await phone.call('pair', {
+  await phone.call('pair', withRulesApproval({
     pairingSecret: p.secret,
     deviceName: 'Contact lock phone',
     network: 'regtest',
@@ -125,7 +125,7 @@ beforeAll(async () => {
     hardwareAuth: { pubkey: hwAuthPubkey(), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), cosignerPub), hwAuthPrivateKey()),
     rules: RULES,
-  });
+  }, rig.nowSec() * 1000));
 }, 30_000);
 
 afterAll(async () => {

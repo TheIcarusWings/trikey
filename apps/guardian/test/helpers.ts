@@ -32,8 +32,11 @@ import {
   StateStore,
   approvalMessage,
   pairingMessage,
+  pairingRulesMessage,
   signMessage,
+  type RulesApproval,
 } from '../src/policy/index.js';
+import { pairingRulesMessage as wirePairingRulesMessage, type Policy } from '@trikey/protocol';
 
 export const network = NETWORKS.regtest;
 
@@ -140,10 +143,30 @@ export async function setup(
     rules: { ...DEFAULT_RULES, ...opts.rules },
     hardwareAuth: { kind: 'bip137', pubkey: hwAuthPubkey(), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(walletId, hex.encode(signer.accountPubkey)), hwAuthPrivateKey()),
+    rulesApproval: approveRules(walletId, { ...DEFAULT_RULES, ...opts.rules }, clock.now()),
     appNostrPubkey: APP_NOSTR,
   });
   if (!res.ok) throw new Error(`registration failed: ${JSON.stringify(res.refusal)}`);
   return { engine, clock, store, wallet, walletId, signer };
+}
+
+/**
+ * The fake device's approval of the rules a wallet starts with (`pairingRulesMessage`: the policy text with `seq=0`),
+ * as the phone sends it in `pair`, `wallet.add` and `hosted.pair`. `rules`: the engine's (`Rules`) or the wire's
+ * (`Policy`, with the protocol package's text). `nowMs`: the guardian's clock.
+ */
+export function approveRules(
+  walletId: string,
+  rules: Rules | Policy,
+  nowMs: number,
+  opts: { expiresInSec?: number; privateKey?: Uint8Array } = {},
+): RulesApproval & { kind: 'bip137' } {
+  const expiresAt = Math.floor(nowMs / 1000) + (opts.expiresInSec ?? 600);
+  const text =
+    typeof rules.dailyLimitSats === 'bigint'
+      ? pairingRulesMessage(rules as Rules, { walletId, expiresAt })
+      : wirePairingRulesMessage(rules as Policy, { walletId, expiresAt });
+  return { kind: 'bip137', expiresAt, signature: signMessage(text, opts.privateKey ?? hwAuthPrivateKey()) };
 }
 
 /** A hardware approval signed with the fake device's authorization key. */
@@ -228,4 +251,13 @@ export function le64(v: bigint): Uint8Array {
   const b = new Uint8Array(8);
   new DataView(b.buffer).setBigUint64(0, v, true);
   return b;
+}
+
+/**
+ * `pair` / `wallet.add` params with the fake device's `rulesApproval` over their `rules`, for the wallet their descriptor
+ * describes (guardians with `pairing_rules_approval` require it). `nowMs`: the guardian's clock.
+ */
+export function withRulesApproval<T extends { descriptor: string; rules: Policy }>(params: T, nowMs: number, privateKey: Uint8Array = hwAuthPrivateKey()): T & { rulesApproval: ReturnType<typeof approveRules> } {
+  const walletId = MultisigWallet.fromDescriptor(params.descriptor, network).fingerprint();
+  return { ...params, rulesApproval: approveRules(walletId, params.rules, nowMs, { privateKey }) };
 }

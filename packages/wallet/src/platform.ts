@@ -23,7 +23,8 @@ export interface HardwareDeviceInfo {
 
 /** What `signMessage` is for, so a device that needs the owner to act (QR) can say so. */
 export interface SignMessageContext {
-  purpose?: 'pairing' | 'approval' | 'recovery-access' | 'notes' | 'unlock';
+  /** `rules`: at pairing, the rules the wallet starts with (the policy text with `seq=0`), which the owner checks on the device. */
+  purpose?: 'pairing' | 'rules' | 'approval' | 'recovery-access' | 'notes' | 'unlock';
   /** The same text is signed `of` times in a row (notes and hardware unlock check the device signs the same way twice). */
   round?: { n: number; of: number };
 }

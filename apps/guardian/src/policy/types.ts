@@ -184,6 +184,19 @@ export interface SpendRecord {
 export type RecoveryStatus = 'none' | 'pending' | 'ready' | 'completed' | 'cancelled';
 export type SurvivingRole = Exclude<Role, 'cosigner'>;
 
+/**
+ * The hardware wallet's approval of the rules a wallet starts with (`pairingRulesMessage`: the policy text with `seq=0`),
+ * checked at registration against the authorization key being registered. No sequence: 0 is implied, and no later
+ * approval can use it.
+ */
+export interface RulesApproval {
+  kind: string;
+  /** Unix time (seconds) after which the approval is void; at most 24 h after the guardian checks it. */
+  expiresAt: number;
+  /** For 'bip137', the base64 signature. */
+  signature: string;
+}
+
 export type CancelActor = { kind: 'nostr'; pubkey: string } | { kind: 'hardware'; approval: HardwareApproval };
 export type CancelledBy =
   | { kind: 'app' | 'contact'; pubkey: string }

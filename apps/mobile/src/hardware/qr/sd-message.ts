@@ -54,7 +54,7 @@ export interface SdRequestFile {
 }
 
 /** What the text is for, in the file name. */
-const STEMS: Record<string, string> = { pairing: 'pair', approval: 'approve', 'recovery-access': 'access', notes: 'notes', unlock: 'unlock' };
+const STEMS: Record<string, string> = { pairing: 'pair', rules: 'rules', approval: 'approve', 'recovery-access': 'access', notes: 'notes', unlock: 'unlock' };
 
 /**
  * The request file `format` reads to sign `text` with the key at `path`. The name is plain (letters, digits, `-`,

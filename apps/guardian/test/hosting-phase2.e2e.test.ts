@@ -25,9 +25,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MultisigWallet, buildSpend, finalizePsbt, type KeyExpression } from '@trikey/core';
 import { ErrorCode, RpcClient, RpcError, SimplePoolRelayPool, approvalMessage, decodeInviteUri, decodePairingUri, pairingMessage, wrapDirectMessage, type Alert, type Policy } from '@trikey/protocol';
 import { signMessage } from '../src/policy/index.js';
-import { AUTH_PATH, MNEMONICS, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from './helpers.js';
+import { AUTH_PATH, MNEMONICS, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withRulesApproval } from './helpers.js';
 import { GuardianRig } from './support/rig.js';
-import { fakeMap, hostedWallet, type HostedFixture } from './support/hosted.js';
+import { fakeMap, hostedWallet, type HostedFixture, withHostedRulesApproval } from './support/hosted.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function waitFor<T>(fn: () => T | undefined | false | Promise<T | undefined | false>, what: string, timeoutMs = 8000): Promise<T> {
@@ -119,7 +119,7 @@ async function acceptGuest(name: string, seed: number, rules: Policy, mnemonics:
   const prep = await rpc.call('hosted.prepare', { inviteSecret: secret, network: 'regtest', entropy: hex.encode(new Uint8Array(32).map((_, i) => i + seed)) });
   expect(prep.features).toEqual(expect.arrayContaining(['family_hosting', 'limit_off', 'contact_lock']));
   const fx = await hostedWallet({ cosignerPub: prep.cosignerAccountPubkey, app: mnemonics.app, hardware: mnemonics.hardware });
-  await rpc.call('hosted.pair', {
+  await rpc.call('hosted.pair', withHostedRulesApproval({
     inviteSecret: secret,
     deviceName: `${name} phone`,
     walletLabel: `${name}'s savings`,
@@ -130,7 +130,7 @@ async function acceptGuest(name: string, seed: number, rules: Policy, mnemonics:
     rules,
     walletMap: fakeMap(),
     phoneNostrPubkey: getPublicKey(key),
-  });
+  }, fx, rig.nowSec() * 1000));
   return { key, pub: getPublicKey(key), rpc, alerts, fx, rules, hardware: mnemonics.hardware };
 }
 
@@ -173,7 +173,7 @@ beforeAll(async () => {
   const cosigner: KeyExpression = { fingerprint: prep.guardianKey.fingerprint, originPath: prep.guardianKey.path.replace(/^m\//, '').replace(/'/g, 'h'), xpub: prep.guardianKey.xpub };
   hostWallet = new MultisigWallet(network, { app: await appSigner().getKey(network), hardware: await hwSigner().getKey(network), cosigner });
   const app = hostWallet.keys.app;
-  await host.call('pair', {
+  await host.call('pair', withRulesApproval({
     pairingSecret: p.secret,
     deviceName: 'Host phone',
     network: 'regtest',
@@ -183,7 +183,7 @@ beforeAll(async () => {
     hardwareAuth: { pubkey: hwAuthPubkey(), path: AUTH_PATH },
     hardwareAuthProof: signMessage(pairingMessage(hostWallet.fingerprint(), hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!)), hwAuthPrivateKey()),
     rules: HOST_RULES,
-  });
+  }, rig.nowSec() * 1000));
   // Dad: contacts may pause his wallet (on at acceptance); "both" is also one of the host's contacts.
   guests.dad = await acceptGuest('Dad', 91, { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [dadContact.pubkey, dadContact2.pubkey, both.pubkey], sweepFeeCapSats: 20_000, contactLock: true }, { app: MNEMONICS.app2, hardware: MNEMONICS.hardware });
   // Ana: the setting off.

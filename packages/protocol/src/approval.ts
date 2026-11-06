@@ -21,6 +21,10 @@ import type { Policy } from './schemas.js';
  * versions 1 and 2:
  *
  * `Trikey policy v3 wallet=<id> seq=<n> limit=<sats|off> delay=<d>d feecap=<sats> contacts=<k> lock=<on|off> hash=<policyHash> expires=<ISO>`
+ *
+ * The rules a wallet starts with are approved over the same text with `seq=0` (`pairingRulesMessage`, guardians with
+ * `pairing_rules_approval`): sequence 0 is never valid for any later approval (those must be above the guardian's last
+ * accepted sequence, which starts at 0), so that signature can only ever pair that wallet with exactly those rules.
  */
 export const MAX_APPROVAL_MESSAGE_LENGTH = 240;
 
@@ -59,33 +63,41 @@ function line(parts: string[]): string {
   return msg;
 }
 
+/** The policy text (versions 1 to 3) for `policy`, with `head` (wallet and sequence) and `tail` (expiry). */
+function policyLine(policy: Policy, head: string[], tail: string, opts: { contactLockBefore?: boolean; legacyPolicyText?: boolean }): string {
+  const p = normalizePolicy(policy);
+  // No daily limit: version 2, which says so in words on the device screen.
+  const off = isLimitOff(p.dailyLimitSats) && !opts.legacyPolicyText;
+  // The contacts may lock the guardian (or may now, and this takes it away): version 3, which says which in words.
+  const lockOn = isContactLockOn(p);
+  const lock = lockOn || opts.contactLockBefore === true;
+  return line([
+    lock ? 'Trikey policy v3' : off ? 'Trikey policy v2' : 'Trikey policy v1',
+    ...head,
+    off ? 'limit=off' : `limit=${p.dailyLimitSats}`,
+    `delay=${p.recoveryDelayDays}d`,
+    `feecap=${p.sweepFeeCapSats}`,
+    `contacts=${p.alertContacts.length}`,
+    ...(lock ? [`lock=${lockOn ? 'on' : 'off'}`] : []),
+    `hash=${policyHash(p)}`,
+    tail,
+  ]);
+}
+
+function checkContext(ctx: { walletId: string; expiresAt: number }): void {
+  if (!Number.isSafeInteger(ctx.expiresAt) || ctx.expiresAt < 0) throw new Error('expiresAt must be unix seconds');
+  if (!/^[0-9a-f]{16}$/.test(ctx.walletId)) throw new Error('invalid wallet id');
+}
+
 /** The exact text the hardware wallet signs for `action`. Throws if the inputs cannot form a signable message. */
 export function approvalMessage(action: HardwareAction, ctx: ApprovalContext): string {
   if (!Number.isSafeInteger(ctx.sequence) || ctx.sequence < 1) throw new Error('sequence must be a positive integer');
-  if (!Number.isSafeInteger(ctx.expiresAt) || ctx.expiresAt < 0) throw new Error('expiresAt must be unix seconds');
-  if (!/^[0-9a-f]{16}$/.test(ctx.walletId)) throw new Error('invalid wallet id');
+  checkContext(ctx);
   const head = [`wallet=${ctx.walletId}`, `seq=${ctx.sequence}`];
   const tail = `expires=${isoSeconds(ctx.expiresAt)}`;
   switch (action.action) {
-    case 'policy': {
-      const p = normalizePolicy(action.policy);
-      // No daily limit: version 2, which says so in words on the device screen.
-      const off = isLimitOff(p.dailyLimitSats) && !ctx.legacyPolicyText;
-      // The contacts may lock the guardian (or may now, and this takes it away): version 3, which says which in words.
-      const lockOn = isContactLockOn(p);
-      const lock = lockOn || action.contactLockBefore === true;
-      return line([
-        lock ? 'Trikey policy v3' : off ? 'Trikey policy v2' : 'Trikey policy v1',
-        ...head,
-        off ? 'limit=off' : `limit=${p.dailyLimitSats}`,
-        `delay=${p.recoveryDelayDays}d`,
-        `feecap=${p.sweepFeeCapSats}`,
-        `contacts=${p.alertContacts.length}`,
-        ...(lock ? [`lock=${lockOn ? 'on' : 'off'}`] : []),
-        `hash=${policyHash(p)}`,
-        tail,
-      ]);
-    }
+    case 'policy':
+      return policyLine(action.policy, head, tail, { contactLockBefore: action.contactLockBefore, legacyPolicyText: ctx.legacyPolicyText });
     case 'cancel-recovery':
       if (!/^[0-9a-z-]{1,40}$/.test(action.recoveryId)) throw new Error('invalid recovery id');
       return line(['Trikey cancel-recovery v1', ...head, `recovery=${action.recoveryId}`, tail]);
@@ -94,6 +106,29 @@ export function approvalMessage(action: HardwareAction, ctx: ApprovalContext): s
     case 'retire-wallet':
       return line(['Trikey retire-wallet v1', ...head, tail]);
   }
+}
+
+/**
+ * The sequence number of the rules a wallet starts with (`pairingRulesMessage`). Every later approval must be above the
+ * guardian's last accepted sequence, which is never below 0, so a text with this sequence approves nothing after pairing.
+ */
+export const PAIRING_RULES_SEQUENCE = 0;
+
+/**
+ * The text the hardware wallet signs at pairing (`pair`, `wallet.add`, `hosted.pair`, guardians with
+ * `pairing_rules_approval`) to approve the rules the wallet starts with: the policy text of `approvalMessage`, with
+ * `seq=0`, so the device shows the limit, delay, fee cap, number of contacts (and whether they may lock the guardian)
+ * in clear, and the hash of the complete rules:
+ *
+ * `Trikey policy v1 wallet=<walletId> seq=0 limit=<sats> delay=<d>d feecap=<sats> contacts=<k> hash=<policyHash> expires=<ISO>`
+ *
+ * (version 3 with `lock=on` when the rules let the alert contacts lock the guardian; never version 2: a wallet is never
+ * paired with no daily limit). `walletId` names the wallet, whose id covers key 3, so the signature is worth nothing to
+ * another wallet or another guardian, and `seq=0` is worth nothing after pairing (`PAIRING_RULES_SEQUENCE`).
+ */
+export function pairingRulesMessage(policy: Policy, ctx: { walletId: string; expiresAt: number }): string {
+  checkContext(ctx);
+  return policyLine(policy, [`wallet=${ctx.walletId}`, `seq=${PAIRING_RULES_SEQUENCE}`], `expires=${isoSeconds(ctx.expiresAt)}`, {});
 }
 
 /**

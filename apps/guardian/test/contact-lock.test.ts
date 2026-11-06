@@ -52,6 +52,7 @@ import {
   phoneSpend,
   setup,
   type Ctx,
+  approveRules,
 } from './helpers.js';
 
 const r = (over: Partial<Rules> = {}): Rules => ({ ...DEFAULT_RULES, ...over });
@@ -161,6 +162,7 @@ describe('contact lock: turning it on', () => {
         rules,
         hardwareAuth: { kind: 'bip137', pubkey: hwAuthPubkey(), path: AUTH_PATH },
         hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), cosigner), hwAuthPrivateKey()),
+        rulesApproval: approveRules(wallet.fingerprint(), rules, Date.now()),
         appNostrPubkey: APP_NOSTR,
       });
       expect(res.ok).toBe(true);
