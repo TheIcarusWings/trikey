@@ -58,6 +58,8 @@ Hardware (key 1) ───┘   outbound only           └── alerts: nostr 
 - **Key 2:** BIP39 seed, encrypted at rest with a key from the Secure Enclave or Android Keystore. Those chips can't hold secp256k1 keys directly, so they wrap the seed instead. Unlocking needs biometrics.
 - **Hardware wallets:**
   - Ledger over Bluetooth (`@ledgerhq/device-signer-kit-bitcoin`);
+  - a Jade or Jade Plus over Bluetooth (its own RPC over `react-native-ble-plx`, the library the Ledger transport already
+    uses): unlocked with its PIN through its PIN server, then like a Ledger ("Jade over Bluetooth" below);
   - Trezor via `@trezor/connect`;
   - air-gapped devices via PSBT QR (UR/BBQr), and message signing over a text QR for the models that can
     (see "Hardware wallets by feature" below);
@@ -92,12 +94,18 @@ tap of the phone on the Coldcard. Read from Coldcard's firmware (`shared/nfc.py`
 (docs/alpha-test-plan.md, "Coldcard over NFC"). iPhone builds have NFC only when built with `TRIKEY_IOS_NFC=1`, which
 needs a paid Apple developer account (the NFC Tag Reading capability); Android builds always have it.
 
+A Jade or Jade Plus over Bluetooth does all of it too (kind `jade-ble`, `packages/wallet/src/ble-devices.ts`;
+"Jade over Bluetooth" below): `register_multisig`, `sign_psbt` and `sign_message` over Jade's own RPC, after the owner
+unlocks it with the PIN on the Jade. Read from Jade's firmware and client, **not tested on a device yet**
+(docs/alpha-test-plan.md, step 18h).
+
 | Device | Payments | Guardian pairing, approvals, recovery access | Notes on the guardian | Hardware unlock | Limits and notes |
 |---|---|---|---|---|---|
 | Ledger (Bluetooth) | Yes | Yes | Yes | Yes | Shows texts up to 640 bytes in full |
 | Trezor (Suite Lite) | Yes | Yes | Yes | Yes | Older firmware warns about the path first |
 | Coldcard Q (QR) | Yes | Yes | Yes | Yes | 240 characters at most (Trikey's maximum exactly); no space at either end, never three in a row; shows the text, the path and a legacy `1…` address |
 | Jade, Jade Plus (QR mode) | Yes | Yes | Yes | Yes | Signs the whole text but shows only about the first 188 characters, then "..." (policy approvals and recovery access are longer) |
+| Jade, Jade Plus (Bluetooth) | Yes | Yes | Yes | Yes | The same 188 characters on screen; the PIN on the Jade at every connection, checked through its PIN server (the phone relays it: below); firmware 0.1.47 or later |
 | Keystone 3 (QR) | Yes | Yes | Yes | Yes | Shows no address for this key |
 | Passport Prime (QR) | Yes | Yes | Yes | Yes | Signs only from the account the path names: open that account first |
 | Specter DIY (QR) | Yes | Yes | Yes | Yes | Shows the text, the path and a legacy address |
@@ -110,8 +118,7 @@ needs a paid Apple developer account (the NFC Tag Reading capability); Android b
 | BitBox02 | No provider yet | | | | |
 
 A model that cannot sign a text is refused with its reason (`QrSigner.signMessage`), and the connect screen says so
-before a guardian wallet is started, offering Recovery Key mode. Not built: BLE or USB for Jade, BIP 322 proofs,
-BitBox02.
+before a guardian wallet is started, offering Recovery Key mode. Not built: USB for Jade, BIP 322 proofs, BitBox02.
 
 **SeedSigner co-signs payments only (decided 2026-11-06).** Its firmware refuses a message at any `m/48'` path
 ("Not implemented" in `parse_derivation_path`, and custom paths are "not supported"), so it cannot sign Trikey's texts
@@ -150,6 +157,41 @@ docs/design/hardware-auth-path.md §7):
 - **Hardware unlock: not offered.** Every guardian restart would need a card round trip. The switch is hidden and one
   sentence says why and that the passphrase unlocks the guardian.
 
+### Jade over Bluetooth (built 2026-11-06, untested on devices)
+
+The phone speaks Jade's own RPC (CBOR maps over one Bluetooth LE service; firmware `main/ble/ble.c`, `main/wire.c`,
+client `jadepy/jade.py`) through `react-native-ble-plx`, which the Ledger transport already links: no new native code,
+and none from Google, so the Android build without Google has it. The first connection pairs the phone and the Jade (the
+same six digits on both, confirmed on both). The protocol, step by step with firmware lines, is in
+docs/design/hardware-auth-path.md §9.
+
+- **Unlocking asks the Jade's PIN server, through the phone.** A Jade rebuilds the key to its seed from the PIN and a
+  secret held by a "blind" PIN server. Over Bluetooth it cannot reach the server, so after the owner types the PIN on
+  the Jade, the phone relays an encrypted exchange between the Jade and the server the Jade names: Blockstream's
+  (`j8d.io`) unless the owner set their own on the Jade. The phone uses only the address the Jade gives (no server is
+  written in Trikey), only over https (never plain http; it has no Tor, so never the onion address), and passes the
+  server's answer to nothing but the Jade's `pin` call. **What the server learns:** that this Jade (by a key of its own,
+  which tells its unlocks apart) is unlocking and when, how many wrong PINs in a row (three wipe it), and the phone's IP
+  address. **Not** the PIN, the seed, any key, address, wallet or amount, and nothing about Trikey beyond the timing. The
+  phone says so in one sentence before the first unlock over Bluetooth, and stops if the owner declines. In QR mode
+  Trikey contacts no PIN server (a SeedQR asks none; "QR PIN Unlock" has the owner relay it with another app). The Jade
+  clears its keys when the Bluetooth link that unlocked it drops, so every connection (setup, a payment, a text) asks for
+  the PIN again.
+- **Payments without anti-exfil (decided).** Jade's anti-exfil protocol would stop a malicious Jade from leaking key 1
+  through its signature nonces, but only its older `sign_tx` flow has it; `sign_psbt`, which takes Trikey's PSBTs and
+  recognises the registered wallet's change, signs with RFC 6979 and no host entropy. Moving payments to `sign_tx`
+  would be a second signing path (full previous transactions for each input, change described apart) plus a
+  sign-to-contract verifier with no maintained JavaScript implementation. So payments use `sign_psbt`; each signature is
+  verified against the transaction before it is used, and every input of the Jade must carry one. The risk left is
+  malicious firmware on the Jade itself (open source, reproducible, checked by its secure boot): key 1 alone moves
+  nothing, but a leaked key 1 plus a stolen phone would. A candidate for later.
+- **Trikey's texts without anti-exfil, on purpose.** `sign_message` without a host commitment signs with RFC 6979 and no
+  extra entropy (`wallet_sign_message_hash`, libwally's default nonce), so a text gives the same signature every time,
+  which notes and hardware unlock need; the app still signs them twice and compares. The signature is checked against
+  the key derived from the Jade's account xpub before it is used.
+- **The wallet is registered** (`register_multisig`, the 2-of-3 `sortedmulti` with each key's origin): Jade signs
+  without it, but only with it does it recognise the change as change instead of showing it as a payment.
+
 ### Trikey Guardian (Docker container)
 - **Packaging:** one image, shipped as an Umbrel app (`umbrel-app.yml`, depending on `bitcoin` + `electrs`), a Start9 service package, and a Docker Compose file for plain Docker (`packaging/compose`), with an optional node profile.
 - **Chain data and broadcasting** go through the chain source the owner chose (Settings > Server, "Chain sources" in the decision table): by default the user's own node and Electrum server (on Umbrel and Start9 the box's own; on plain Docker one on the user's network, plain TCP only to a private address, else TLS, optionally with a pinned certificate), or the user's Bitcoin Core alone, or, for people without a node, a public Electrum server.
@@ -187,7 +229,7 @@ The rules follow Bitkey's own spend rules and recovery code (`server/src/api/mob
    - **Payments into the optional Savings wallet count like any payment** (the owner's decision, 2026-11-01): the guardian is not told which wallet is Savings for this rule and counts an output to it as leaving the wallet. A phone thief registering their own wallet as "Savings" therefore gains nothing.
    - **The limit can be turned off** (strictly opt-in; docs/design/savings-and-limit-off.md, section 4). "Off" is the largest limit there is, all bitcoin there will ever be, so the policy and its hash are unchanged; every other rule stays, and the guardian still counts what it co-signs. It is a loosening: only with a fresh hardware approval whose text says it in words (`Trikey policy v2 ... limit=off ...`, rule 4), never at pairing and never while a recovery is pending or ready. Turning it back on is tightening: the phone alone, at once. The guardian alerts the paired phone (`limit_off`) and every alert contact (a NIP-17 DM) when it is turned off, logs it as a warning, and tells the phone when it is on again (`limit_on`). It remembers the limit before (`limitBeforeOff`): after a recovery the adopted wallet starts with the limit **on** at that value (rotation, below). The phone offers it only to a guardian that reports the `limit_off` feature. With the limit off the guardian is a second signature, not a brake: a thief who gets into the phone sends everything at once.
 4. **Loosening the rules needs the hardware wallet.** That covers raising the limit, shortening the delay, changing the sweep fee cap, adding or removing alert contacts, and stopping the alert contacts from locking the guardian (rule 8). The phone alone can only tighten: lower the limit, lengthen the delay or let the alert contacts lock the guardian, **also while a recovery runs** (tightening never helps a thief; a running recovery keeps the delay and fee cap it started with). On mainnet the rules must name at least one alert contact: a pairing without one, or any change that removes the last one, is refused even with a hardware approval; test networks allow it and report `warnings: ['no_alert_contacts']`.
-   - **How the hardware wallet approves:** a BIP137 `signmessage` signature from a single-sig key recorded at pairing. Ledger and Trezor sign it over USB or Bluetooth; a Coldcard Mk4 or Q over NFC; Coldcard Q, Jade, Keystone 3, Passport Prime and Specter DIY over a text QR; Passport gen 2 and Krux from a file on their microSD card (see "Hardware wallets by feature"). The signed text is one line that shows the new values in clear, so the user checks them on the device screen:
+   - **How the hardware wallet approves:** a BIP137 `signmessage` signature from a single-sig key recorded at pairing. Ledger and Trezor sign it over USB or Bluetooth; a Jade over Bluetooth; a Coldcard Mk4 or Q over NFC; Coldcard Q, Jade, Keystone 3, Passport Prime and Specter DIY over a text QR; Passport gen 2 and Krux from a file on their microSD card (see "Hardware wallets by feature"). The signed text is one line that shows the new values in clear, so the user checks them on the device screen:
      `Trikey policy v1 wallet=<id> seq=<n> limit=<sats> delay=<d>d feecap=<sats> contacts=<k> hash=<policyHash> expires=<ISO8601Z>`
      and, for no daily limit only, version 2 with the limit in words (older guardians refuse it, `1202`):
      `Trikey policy v2 wallet=<id> seq=<n> limit=off delay=<d>d feecap=<sats> contacts=<k> hash=<policyHash> expires=<ISO8601Z>`
@@ -398,6 +440,7 @@ printed and kept with the hardware wallet.
   over their old address, a changed email account through the old one) and to the phone, and nothing can be removed
   while a recovery runs. They could already reset the guardian; the nostr alerts and controls stay as they were.
 - **The phone itself.** The Security tab shows a calm note when the phone has no screen lock (Android KeyguardManager.isDeviceSecure, iOS deviceOwnerAuthentication, via expo-local-authentication), an Android security patch older than 6 months (`Build.VERSION.SECURITY_PATCH`, `modules/trikey-phone-safety`; iOS has no robust way to tell a supported version, so it is skipped there) or an emulator or simulator (expo-device): read on the phone, never sent to the guardian, any server or analytics.
+- **A Jade over Bluetooth and its PIN server** ("Jade over Bluetooth"). Unlocking it sends an encrypted exchange from the phone to the PIN server the Jade names (Blockstream's by default): that server learns the phone's IP address, when this Jade unlocks and failed PIN counts, never the PIN, keys or wallet. It cannot unlock the Jade without the PIN, and a server that is down or refuses only keeps the Jade locked (the passphrase and the other keys are unaffected; QR mode works without Trikey contacting it). The phone uses only https addresses the Jade gives and calls nothing on the Jade but `pin` with the answer. Payments over Bluetooth do not use Jade's anti-exfil (its PSBT path has none), so a Jade with malicious firmware could in theory leak key 1 through its signature nonces: alone that moves nothing, with a stolen phone it would.
 - **Malicious relays** can drop messages but can't read or forge them. A relay change from the web UI (a security event in the activity log) can at worst move the phone to relays that drop everything; the old relays stay watched until the owner stops them and the phone moves only to relays the guardian answered it over.
 - **Contested recovery** (a thief cancels a genuine recovery): phone-only spending stays paused, so the thief can't drain either. Same as Bitkey.
 - **After a recovery the guardian trusts its outcome:** the phone that started it becomes the new wallet's paired phone. That is what the Delay & Notify period protects; a thief who gets that far already holds the new wallet's keys. The hardware wallet must re-prove its authorization key for the new wallet before it can loosen anything, and the old wallet's recovery access grants are revoked.
@@ -827,7 +870,8 @@ guardian"). Protocol: PROTOCOL.md, "Encrypted notes".
 - **Deterministic signatures, checked.** It only works if the device signs the same text the same way on another phone.
   Ledger's Bitcoin app signs messages with RFC 6979 (`crypto_ecdsa_sign_sha256_hash_with_key`, `CX_RND_RFC6979`);
   Trezor signs with RFC 6979 too (`ecdsa_sign_digest` with `USE_RFC6979`, or libsecp256k1's RFC 6979 nonce function
-  with a deterministic retry counter); Coldcard Q, Jade (QR mode, never anti-exfil), Keystone 3, Passport Prime and
+  with a deterministic retry counter); a Jade over Bluetooth signs with RFC 6979 when no anti-exfil host commitment is
+  sent, and Trikey never sends one (`wallet_sign_message_hash`, docs/design/hardware-auth-path.md §9); Coldcard Q, Jade (QR mode, never anti-exfil), Keystone 3, Passport Prime and
   Specter DIY sign with RFC 6979 too, over a text QR, a Coldcard Mk4 or Q over NFC (the same firmware code), and Passport gen 2 and Krux from a microSD file (two files when
   the option is turned on): read from the firmware sources, not tested on devices. The QR models that cannot sign a
   text (SeedSigner, the Coldcard Mk4 by QR, "Other") are not offered the option ("Hardware wallets by feature"). **The phone verifies it**: turning the option on asks for the
@@ -909,7 +953,8 @@ wallet"; code: `apps/guardian/src/unlock-slots.ts`, `TrikeyWallet.enableHardware
   hardware wallet must not unlock the host's guardian, so guests cannot call the methods and are not told the feature.
 - **QR devices: only the models that sign a text by QR.** Coldcard Q, Jade, Keystone 3, Passport Prime and Specter DIY
   sign the unlock text over a text QR (two round trips when it is turned on, one per unlock); a Coldcard Mk4 or Q over NFC
-  does it with two taps per unlock (send the text, read the signature). SeedSigner, "Other" and the Coldcard Mk4 by
+  does it with two taps per unlock (send the text, read the signature); a Jade over Bluetooth with its PIN and one
+  confirmation per unlock (the PIN goes through its PIN server, "Jade over Bluetooth"). SeedSigner, "Other" and the Coldcard Mk4 by
   QR do not (as for the notes), so there is no signature to unlock with; the app says so and keeps the
   passphrase. Passport gen 2 and Krux sign texts only from a microSD card: a card round trip after every restart is too
   clunky, so the option is hidden for them, with one sentence saying why and that the passphrase works.

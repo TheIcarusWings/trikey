@@ -221,8 +221,9 @@ says so on Jade's screen.
 Notes and hardware unlock sign the same text twice when they are turned on (`hardware_not_deterministic` if the two
 differ); the QR screen says "(1 of 2)" and "(2 of 2)" and that the device will show the same text twice. Models that
 cannot sign are refused with their reason, and the connect screen says so before a guardian wallet is started, offering
-Recovery Key mode. Not built: Jade over BLE or USB, BIP 322 proofs, BitBox02. docs/alpha-test-plan.md step 18e
-lists the QR device tests, 18f the microSD ones; NFC is section 8 and step 18g.
+Recovery Key mode. Not built: Jade over USB, BIP 322 proofs, BitBox02 (Jade over Bluetooth is section 9).
+docs/alpha-test-plan.md step 18e lists the QR device tests, 18f the microSD ones; NFC is section 8 and step 18g,
+Bluetooth section 9 and step 18h.
 
 ### microSD (Passport gen 2, Krux; built 2026-11-06, untested on devices)
 
@@ -342,3 +343,124 @@ library whether NFC is supported and on.
 phones handle NFC-V; writing from an iPhone is untested); how long a large PSBT takes; whether Android's NDEF stack
 writes the 3-byte TLV length the Coldcard's `ccfile_decode` reads (it should: it is the NFC Forum T5T format);
 Coldcard's PushTx and "Verify Address" over NFC are not used. USB (Mk4 over Android OTG) is not built.
+
+## 9. Jade over Bluetooth (built 2026-11-06; untested on devices)
+
+A Blockstream Jade or Jade Plus over Bluetooth LE (or another board running Jade's firmware with Bluetooth) is a hardware kind of its own, `jade-ble`
+(`packages/wallet/src/ble-devices.ts`; the phone side is `apps/mobile/src/hardware/jade`). Like a Ledger it does
+everything for Trikey: key export, wallet registration, payments and Trikey's texts. In QR mode the same Jade keeps
+working as before (section 7). Read from github.com/Blockstream/Jade at a59d14c (1.0.41, 2026-10-23): the firmware
+(`main/`), its RPC documentation (`docs/index.rst`) and its Python client (`jadepy/`); the PIN server from
+github.com/Blockstream/blind_pin_server at 62f97a1. **Not tried on a device or a phone.**
+
+**The link.** One GATT service, 6e400001-b5a3-f393-e0a9-e50e24dcca9e, which the Jade advertises with its name ("Jade"
+and six hex digits; `main/ble/ble.c:40-50, 246-261`; `jadepy/jade_ble.py:28-31`). The phone writes requests to
+6e400002-… (write with response) and the Jade answers by indications on 6e400003-… (`ble.c:125-148`). Both
+characteristics need an encrypted, authenticated link (`BLE_GATT_CHR_F_WRITE_ENC | _AUTHEN`, `READ_ENC | _AUTHEN`), so
+the first subscription or write makes the phone pair: LE Secure Connections with numeric comparison, bonding and MITM
+protection (`ble.c:502-515`; `BLE_SM_IOACT_NUMCMP` at `ble.c:724-783` shows the number on the Jade for the owner to
+confirm; the phone shows the same number in its own system dialog). A write carries at most MTU - 3 bytes, never more
+than 512 (`ble.c:69-79`; jadepy writes 509-byte pieces with response, `jade_ble.py:31, 192-226`); Android asks for a
+517-byte MTU, iOS picks its own. The Jade's indications are cut the same way (`write_ble`, `ble.c:300-330`).
+
+**The messages.** CBOR maps, roughly JSON-RPC (docs/index.rst lines 13-21): a request `{id, method, params}` with an id
+of 1 to 16 characters and a method of at most 32 (`main/utils/cbor_rpc.c:92-124`), a reply `{id, result}` or `{id,
+error: {code, message, data}}`; `{log}` lines in between are skipped (`jadepy/jade.py:2334-2381`). There is no length
+prefix: the Jade parses a message when its CBOR is complete and drops an incomplete one after 2 s of silence (3 s on the
+first Jade; `main/wire.c:23-46, 103-173`), so the phone writes each message in one go and finds the replies' boundaries
+the same way (`apps/mobile/src/hardware/jade/cbor.ts`, `rpc.ts`). A request is at most `MAX_INPUT_MSG_SIZE` (401 KiB on
+units with PSRAM, as Jade's boards have; 17 KiB without) and a reply at most 3 KiB (`main/process.h:17-34`), so a
+signed PSBT comes back in parts: `seqnum`/`seqlen` on each reply and `get_extended_data {origid, orig, seqnum, seqlen}`
+for the next (`main/process/sign_psbt.c:43, 1269-1310`; docs/index.rst lines 43-84; `jade.py:1979-2026`). Error codes
+(`cbor_rpc.h:13-23`): -32000 the owner declined, -32002 locked, -32003 another network, and the JSON-RPC ones.
+
+| Step | Request | What the Jade does | Firmware |
+|---|---|---|---|
+| Version and state | `get_version_info` | `JADE_VERSION`, `JADE_STATE` (LOCKED, READY…), `JADE_INTERFACE` (BLE, QR, SERIAL), `BOARD_TYPE` (JADE_V2 is the Jade Plus) | `main/versioninfo.c:64-73`, docs/index.rst 134-183 |
+| Unlock | `auth_user {network, epoch}`, then `pin {data}` | Asks the PIN on its own screen; answers `true`, `false` (wrong PIN) or an `http_request` (below) | `main/process/auth_user.c:399-503`, `pinclient.c` |
+| Fingerprint | `get_xpub {network, path: []}` | The root xpub (allowed for this call only); the phone takes HASH160 of its key | `main/process/get_xpubs.c:22-35` |
+| Account key | `get_xpub {network, path}` | The xpub at `m/48'/c'/a'/2'` (tpub on test networks) | same |
+| Wallet | `register_multisig {network, multisig_name, descriptor: {variant: "wsh(multi(k))", sorted: true, threshold: 2, signers: [{fingerprint, derivation, xpub, path: []}]}}` | Checks its own key is a signer (`validate_signers`), shows the wallet, keeps it; the same wallet again returns at once | `main/process/register_multisig.c:27-136, 552-740`, `main/signer.c:10-84` |
+| Address | `get_receive_address {network, paths: [[chain, index] ×3], multisig_name}` | Derives the address from the registered wallet and shows it; the phone compares it with its own | `main/process/get_receive_address.c:60-89, 256-260` |
+| Payment | `sign_psbt {network, psbt}` | Shows the payment, signs its inputs (RFC 6979 with low-R grinding), returns the PSBT in parts | `main/process/sign_psbt.c:1100-1104, 1221-1310` |
+| Text | `sign_message {path, message}` (no `ae_host_commitment`) | Shows the text (188 characters, then "..."), the hash and the path; returns the base64 65-byte signature | `main/process/sign_message.c:150-315`, `main/wallet.c:1485-1531` |
+
+Network names (`main/utils/network.c:14-21`): `mainnet`; `testnet` for testnet and signet (the same `tb` addresses);
+`localtest` for regtest. The wallet name is a storage key on the Jade: 1 to 15 characters from `!` to `~`, no space
+(`main/storage.c:418-435`, `main/multisig.h:10`), so "Trikey savings" is registered as `Trikey-savings`.
+
+**Does Jade need the wallet registered?** To sign, no: `sign_psbt` signs every input whose derivations carry its
+fingerprint. To recognise change, yes: only an input matching a registered wallet lets it check the change output
+against that wallet and leave it off the screen; without one it "abandons" change detection and shows the change as a
+payment (`sign_psbt.c:883-958`, outputs at 653-700). Trikey registers it when the wallet is set up, as for a Ledger.
+
+**Unlocking: the PIN server.** A Jade's keys are encrypted under a key it rebuilds from the PIN and a secret held by a
+"blind oracle" PIN server; over Bluetooth or USB the host relays (docs/index.rst 363-462). After `auth_user` and the PIN
+on the Jade, the reply is `{http_request: {params: {urls, method: "POST", accept: "json", data: {data}}, "on-reply":
+"pin"}}` (`pinclient.c:68-127`, `process_utils.c:494-602`). `urls` are the PIN server's `/get_pin` (or `/set_pin`) and
+its onion address: Blockstream's by default (`PINSERVER_URL` "https://j8d.io" and an onion, `pinclient.c:20-22`), or
+the owner's own, set on the Jade ("Blind Oracle" in its settings, or `update_pinserver`). The phone POSTs `data` as JSON
+to the **first `https://` URL that is not an onion** and sends the JSON answer to `pin` (`handle_pin`,
+`pinclient.c:299-354`); `pin` answers `true`, `false`, or another `http_request` (changing the PIN asks `/set_pin` too).
+It never uses plain `http://`, has no Tor to reach an onion, and calls nothing but `pin` with the answer. When no URL is
+usable or the request fails it sends `pin` with no data: the Jade then asks "Failed communicating with Oracle - retry?"
+(`PIN_CAN_RETRY`, `pinclient.c:323-330, 545-552`), and the phone shows why on its sheet. A custom server's own
+certificate (`root_certificates`) cannot be added to the phone's TLS: such a server works only with a certificate
+phones already trust. No PIN-server address is written in Trikey: it uses what the Jade sends.
+
+What the PIN server learns: the payload is encrypted and signed between the Jade and the server (ECDH with the server
+key built into the Jade, `pinclient.c` `generate_ske`, `encrypt_payload`); the phone only carries it. The server
+recovers the Jade's own PIN-server public key from the signature and keeps its state under its hash
+(blind_pin_server `pindb.py:106-131, 141-161, 206-250`): so it can tell this Jade's unlocks apart, sees when it unlocks
+and how many wrong PINs in a row (three wipe the entry, and the Jade's keys with it), and sees the phone's IP address.
+It never sees the PIN (only an HMAC of it under a key of the Jade, `get_pin_secret`), the seed, any key, address or
+wallet. The phone shows this in one sentence before the first unlock over Bluetooth (and stops if the owner declines).
+In QR mode Trikey contacts no PIN server: a Jade used with a SeedQR (a temporary wallet, in memory only) asks none, and
+one unlocked with "QR PIN Unlock" has the owner carry the same exchange by QR codes through another app
+(`main/qrmode.c:1708-1800`, Blockstream's blkstrm.com/qrpin page), so the PIN server still sees that unlock, but not
+from Trikey.
+
+The Jade clears its keys when the Bluetooth link that unlocked them drops (`main/process/dashboard.c:2719-2731`), so
+every connection asks for the PIN again: one for setting up and pairing, one per payment, one per text (notes, unlock).
+
+**Trikey's texts.** `sign_message {path, message}` without `ae_host_commitment` is the legacy flow (docs/index.rst
+1381-1428): `wallet_sign_message_hash` calls `wally_ec_sig_from_bytes(..., EC_FLAG_ECDSA | EC_FLAG_RECOVERABLE)` with
+no host entropy (`wallet.c:1503-1517`); libwally signs with `secp256k1_ecdsa_sign_recoverable` and its default nonce
+function with no extra data (libwally-core 3bf543cd `src/sign.c:364-422`, `src/internal.c:363-367`: RFC 6979), and Jade
+replaces only libwally's secp256k1 context, not its nonce function (`main/utils/wally_ext.c:126-144`). The header is
+`27 + 4 + recid` (`sign.c:414`), a compressed P2PKH header, as the guardian takes. So the same text gives the same
+signature every time, which notes and hardware unlock need; the app still signs them twice and compares. With
+`ae_host_commitment` the Jade would use anti-exfil (`sign_message.c:221-293`): random-looking, and a 64-byte signature;
+Trikey never sends it. The Jade shows the first 188 characters, then "..." (`ui.h:11`, `sign_message.c:43-51` in
+`confirm_sign_message`), the hash and the path, and signs the whole text; the phone says so when a text is longer. The
+phone derives the key from the account xpub the Jade gave and checks the signature (`checkMessageAnswer`) before it
+returns it; the wallet checks it once more.
+
+**Payments and anti-exfil (decided: not on this path).** Jade's anti-exfil protocol (host commitment, signer
+commitment, then the host's entropy and a check that the signature's nonce commits to it) stops a malicious Jade from
+leaking key 1 through its nonces. It exists only on the older `sign_tx` flow (`use_ae_signatures`, then one `tx_input`
+per input with `ae_host_commitment`, then `get_signature` with `ae_host_entropy`; docs/index.rst 1632-1744,
+`main/process/sign_tx.c:451, 584-605`). `sign_psbt`, the path that takes Trikey's PSBTs and checks change against the
+registered wallet, has none: it signs with `wally_psbt_sign_input_bip32(..., EC_FLAG_GRIND_R)` and reads no host
+entropy (`sign_psbt.c:1100-1104`). Moving payments to `sign_tx` would mean a second signing path: the raw transaction,
+each input's script and the full previous transaction (required unless there is a single witness input,
+`sign_tx.c:674-678`), change described separately, and a verifier for the sign-to-contract commitment (secp256k1-zkp
+`ecdsa_s2c`), which has no maintained JavaScript implementation. Trikey uses `sign_psbt` without anti-exfil: what
+anti-exfil guards against is malicious firmware on the Jade (Jade's firmware is open source, reproducibly built and
+verified by its secure boot), and key 1 alone moves nothing in the 2-of-3; a leaked key 1 together with a stolen phone
+would, which is why this is written down as a limit (DESIGN.md, "Jade over Bluetooth") and a candidate for later. Every
+signature the Jade returns is verified against the transaction before it is merged, and every input that names this
+Jade must carry its signature (`assertDeviceSignedAll`).
+
+**Platform.** `react-native-ble-plx` 3.4.0 (MIT), already linked for the Ledger transport, whose single shared
+`BleManager` both use; Android: RxAndroidBle on the platform's Bluetooth API, no Google code, so the build without
+Google keeps it (nothing new to scan in the APK); iOS: Core Bluetooth. Android 12 and later ask for "Nearby devices"
+(`BLUETOOTH_SCAN`, declared `neverForLocation`, and `BLUETOOTH_CONNECT`, through the library's config plugin in
+app.json); older Android asks for location, which it needs for any scan. iOS: `NSBluetoothAlwaysUsageDescription`
+(now naming the Jade). The PIN-server request is a plain `fetch` (OkHttp on Android, URLSession on iOS); the app has no
+host allowlist, and https needs nothing more on either platform. Jade firmware 0.1.47 or later (`sign_psbt` with a
+network; CHANGELOG.md).
+
+**Not done, or to check on a device:** the pairing dialogs on Android and iOS, and a Jade whose pairing was reset (the
+phone must forget it too); the MTU Android gets and the time a large PSBT takes; whether the change of a Trikey payment
+is left off the Jade's screen; a custom PIN server; Jade over USB (Android OTG) is not built; anti-exfil (above).
