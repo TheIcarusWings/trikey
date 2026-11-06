@@ -16,6 +16,7 @@ import {
   emailError,
   guardianNameError,
   healthLabel,
+  passwordNeededFor,
   passwordOnlyChange,
   settingsInput,
   smtpError,
@@ -65,7 +66,7 @@ function EmailAccount({ data, busy, save, test }: { data: NotificationSettings; 
   const set = (patch: Partial<SmtpDraft>) => setDraft((d) => ({ ...d, ...patch }));
   const onSave = async (e: FormEvent) => {
     e.preventDefault();
-    const problem = smtpError(draft, !!s) ?? (s && data.recoveryRunning && !passwordOnlyChange(s, draft) ? 'A recovery is running: only the app password can be changed until it ends.' : undefined);
+    const problem = smtpError(draft, s) ?? (s && data.recoveryRunning && !passwordOnlyChange(s, draft) ? 'A recovery is running: only the app password can be changed until it ends.' : undefined);
     if (problem) return setError(problem);
     setError(undefined);
     const failed = await save(draft);
@@ -146,7 +147,11 @@ function EmailAccount({ data, busy, save, test }: { data: NotificationSettings; 
               <Input id="smtp-from" type="email" autoComplete="off" spellCheck={false} placeholder="you@example.com" value={draft.from} onChange={(e) => set({ from: e.target.value })} />
             </Field>
           </div>
-          <Field id="smtp-password" label="App password" note={s ? 'Leave empty to keep the one saved.' : undefined}>
+          <Field
+            id="smtp-password"
+            label="App password"
+            note={s ? (passwordNeededFor(s, draft).length ? 'Needed again: you changed the server, account or pinned certificate.' : 'Leave empty to keep the one saved.') : undefined}
+          >
             <Input id="smtp-password" type="password" autoComplete="new-password" value={draft.password} onChange={(e) => set({ password: e.target.value })} />
           </Field>
           {s?.pin || showPin ? (

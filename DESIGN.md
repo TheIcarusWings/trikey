@@ -503,6 +503,10 @@ printed and kept with the hardware wallet.
   the web UI and the passphrase can, but every change is announced on every channel before and after it (removed ones
   over their old address, a changed email account through the old one) and to the phone, and nothing can be removed
   while a recovery runs. They could already reset the guardian; the nostr alerts and controls stay as they were.
+  Redirecting never hands them a stored secret: a channel moved to another ntfy server needs its topic again and loses
+  its token, a new webhook URL loses the signing secret, and a new email server, port, encryption, user name or pinned
+  certificate needs the app password again (docs/design/notifications.md, "A secret stays with the address it was saved
+  for"; security review 2026-11, findings 1 and 2).
 - **The phone itself.** The Security tab shows a calm note when the phone has no screen lock (Android KeyguardManager.isDeviceSecure, iOS deviceOwnerAuthentication, via expo-local-authentication), an Android security patch older than 6 months (`Build.VERSION.SECURITY_PATCH`, `modules/trikey-phone-safety`; iOS has no robust way to tell a supported version, so it is skipped there) or an emulator or simulator (expo-device): read on the phone, never sent to the guardian, any server or analytics.
 - **A BitBox02** ("BitBox02 over USB-C and Bluetooth"). Its payments and most texts use anti-klepto, checked by the phone,
   so malicious BitBox02 firmware cannot leak key 1 through those signatures' nonces. Notes and hardware unlock cannot

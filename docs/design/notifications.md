@@ -105,6 +105,25 @@ back, never into logs: the logger redacts, and error texts carry no URL path or 
 the app password and ntfy token if the box is lost. Rejected: deriving the key from the passphrase (mute while locked);
 a key derived from the nostr key (no better at rest, and ties two unrelated secrets together).
 
+**A secret stays with the address it was saved for** (security review 2026-11). Someone with a web session must not
+be able to point a stored channel at a server of their own and have the guardian hand that server what was saved for
+another: the PUT replaces everything, and an omitted secret means "keep the stored one". So:
+
+- **ntfy:** moving a channel to another server (any change of the server URL) needs the topic typed again, and drops the
+  stored access token unless a new one comes with it. The removal notice ("no longer gets alerts") goes to the old
+  server with the old topic and token, and nothing else does; the new server hears only its new topic.
+- **Webhook:** a new URL (any change, even another path on the same origin: a shared receiver host serves many
+  people) never gets the old signing secret: it is dropped unless a new one comes with it. The secret is not sent as
+  such, but every payload signed with it would go to the new receiver, which could then guess it offline.
+- **Email account:** a new server, port, encryption, user name or pinned certificate (set, replaced or removed) needs the
+  app password again; without it the change is refused before anything is stored. The From address may change alone.
+  "Send a test message" therefore only ever logs in where the password was typed for. During a recovery the rule
+  "only the password may change" stays as it was.
+- **Telegram:** nothing to do. The bot token only ever goes to the Bot API's own address (`https://api.telegram.org`,
+  not a setting), and a chat id is no secret (only the bot's token can write to the chat). A change of bot keeps the
+  chats; the new bot cannot write to a chat that never sent it `/start`, and the change is announced over the old bot
+  first, as before.
+
 ## Content
 
 - **Plain text only.** No HTML, no links, no buttons, nothing that asks to sign in. A last check (`defang` in

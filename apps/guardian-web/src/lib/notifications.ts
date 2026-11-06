@@ -208,15 +208,32 @@ export function settingsInput(
   return { guardianName: (change.guardianName ?? s.guardianName).trim(), paymentAlerts: change.paymentAlerts ?? s.paymentAlerts, smtp, ...telegram, destinations };
 }
 
-/** The email account's form errors, or undefined. `hasPassword`: one is stored already. */
-export function smtpError(d: SmtpDraft, hasPassword: boolean): string | undefined {
+/**
+ * What in the draft the stored app password was not saved for: the server, port, encryption, user name or pinned
+ * certificate (a new one, or removing it). The guardian then wants the app password again: it never sends a saved one
+ * to a server or account it was not typed for. Empty: the saved password can be kept.
+ */
+export function passwordNeededFor(stored: NonNullable<NotificationSettings['smtp']>, d: SmtpDraft): string[] {
+  const out: string[] = [];
+  if (d.host.trim().toLowerCase().replace(/\.$/, '') !== stored.host) out.push('server');
+  if (Number(d.port) !== stored.port) out.push('port');
+  if (d.security !== stored.security) out.push('encryption');
+  if (d.username.trim() !== stored.username) out.push('user name');
+  if ((d.clearPin && stored.pin) || (!d.clearPin && d.pin?.trim())) out.push('pinned certificate');
+  return out;
+}
+
+/** The email account's form errors, or undefined. `stored`: the account as saved, if any. */
+export function smtpError(d: SmtpDraft, stored: NotificationSettings['smtp'] | undefined): string | undefined {
   if (!/^[A-Za-z0-9.-]{1,253}$/.test(d.host.trim())) return 'Enter the email server, like smtp.example.com.';
   const port = Number(d.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) return 'The port is a number (465 for TLS, 587 for STARTTLS).';
   if (!d.username.trim()) return 'Enter the user name (usually your email address).';
   const from = emailError(d.from);
   if (from) return `From address: ${from}`;
-  if (!d.password && !hasPassword) return 'Enter an app password (made in your email account for this; not your account password).';
+  if (!d.password && !stored) return 'Enter an app password (made in your email account for this; not your account password).';
+  const scope = stored && !d.password ? passwordNeededFor(stored, d) : [];
+  if (scope.length) return `You changed the ${scope.join(', ')}: enter the app password again. The saved one is only sent to the server and account it was saved for.`;
   const pin = d.clearPin ? undefined : pinError(d.pin ?? '');
   if (pin) return `Pinned certificate: ${pin}`;
   return undefined;

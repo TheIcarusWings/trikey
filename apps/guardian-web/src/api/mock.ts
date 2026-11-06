@@ -664,6 +664,18 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       if (nameProblem) throw bad(nameProblem);
       if (input.destinations.some((d) => d.kind === 'email') && !input.smtp) throw bad('Set up the email account first: email channels send through it.');
       if (input.smtp && !input.smtp.password && !smtpSettings) throw bad('Email server: enter an app password (not your account password).');
+      // As the guardian: a saved app password is kept only for the server and account it was typed for.
+      if (
+        input.smtp &&
+        !input.smtp.password &&
+        smtpSettings &&
+        (input.smtp.host !== smtpSettings.host ||
+          input.smtp.port !== smtpSettings.port ||
+          input.smtp.security !== smtpSettings.security ||
+          input.smtp.username !== smtpSettings.username ||
+          (input.smtp.pin !== undefined && !(input.smtp.pin === null && !smtpSettings.pin)))
+      )
+        throw bad('Email server: you changed the server or account. Enter the app password again: the saved one is only ever sent to the server and account it was saved for.');
       const pinProblem = input.smtp?.pin ? pinError(input.smtp.pin) : undefined;
       if (pinProblem) throw bad(`Pinned certificate: ${pinProblem}`);
       const tokenProblem = input.telegram?.token !== undefined ? telegramTokenError(input.telegram.token) : undefined;

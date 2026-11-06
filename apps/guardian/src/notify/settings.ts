@@ -134,8 +134,29 @@ export function checkPin(raw: unknown): SmtpPin {
   return { sha256: hexText.toUpperCase().replace(/(..)(?!$)/g, '$1:') };
 }
 
-/** The email account, checked. `password` stays absent when the input keeps the stored one. */
-export function checkSmtp(raw: unknown, hasStoredPassword: boolean): SmtpInput {
+/**
+ * What of the email account the stored app password was given for: the server it may be sent to (host, port,
+ * encryption, the pinned certificate) and the account it logs in to (user name). Changing any of these needs the app
+ * password again, so a stored one is never sent to a server or account it was not typed for (security review
+ * 2026-11, finding 2). The From address is not among them: the password goes nowhere new when it changes.
+ */
+export function smtpPasswordScopeChanges(stored: Pick<StoredSmtp, 'host' | 'port' | 'security' | 'username' | 'pin'>, next: { host: string; port: number; security: string; username: string; pin?: SmtpPin | null }): string[] {
+  const out: string[] = [];
+  if (stored.host !== next.host) out.push('server');
+  if (stored.port !== next.port) out.push('port');
+  if (stored.security !== next.security) out.push('encryption');
+  if (stored.username !== next.username) out.push('user name');
+  // The pin: absent keeps the stored one; null removes it; another certificate replaces it.
+  if (next.pin === null ? !!stored.pin : next.pin !== undefined && next.pin.sha256 !== stored.pin?.sha256) out.push('pinned certificate');
+  return out;
+}
+
+/**
+ * The email account, checked. `password` stays absent when the input keeps the stored one, which it may only when the
+ * server, port, encryption, user name and pinned certificate stay as they were (`smtpPasswordScopeChanges`).
+ * `stored`: the account as saved, if any.
+ */
+export function checkSmtp(raw: unknown, stored: Pick<StoredSmtp, 'host' | 'port' | 'security' | 'username' | 'pin'> | undefined): SmtpInput {
   const r = (raw ?? {}) as Record<string, unknown>;
   const host = typeof r.host === 'string' ? r.host.trim().toLowerCase().replace(/\.$/, '') : '';
   if (!HOST_RE.test(host) && !/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) throw new SettingsError('Email server: enter its host name, like smtp.example.com.');
@@ -145,14 +166,19 @@ export function checkSmtp(raw: unknown, hasStoredPassword: boolean): SmtpInput {
   const username = typeof r.username === 'string' ? r.username.trim() : '';
   if (!username || username.length > 254 || CONTROL.test(username)) throw new SettingsError('Email server: enter the user name (usually your email address).');
   const from = checkEmail(r.from, 'From address');
+  let pin: SmtpPin | null | undefined;
+  if (r.pin === null) pin = null;
+  else if (r.pin !== undefined && r.pin !== '') pin = checkPin(r.pin);
   let password: string | undefined;
   if (r.password !== undefined && r.password !== null && r.password !== '') {
     if (typeof r.password !== 'string' || r.password.length > 256 || CONTROL.test(r.password)) throw new SettingsError('Email server: the app password is at most 256 characters, without line breaks.');
     password = r.password;
-  } else if (!hasStoredPassword) throw new SettingsError('Email server: enter an app password (not your account password).');
-  let pin: SmtpPin | null | undefined;
-  if (r.pin === null) pin = null;
-  else if (r.pin !== undefined && r.pin !== '') pin = checkPin(r.pin);
+  } else if (!stored) throw new SettingsError('Email server: enter an app password (not your account password).');
+  else {
+    const scope = smtpPasswordScopeChanges(stored, { host, port, security: r.security, username, pin });
+    if (scope.length)
+      throw new SettingsError(`Email server: you changed the ${scope.join(', ')}. Enter the app password again: the saved one is only ever sent to the server and account it was saved for.`);
+  }
   return { host, port, security: r.security, username, from, ...(password !== undefined ? { password } : {}), ...(pin !== undefined ? { pin } : {}) };
 }
 
@@ -222,18 +248,23 @@ export function checkDestination(raw: unknown, existing: StoredDestination | und
     } catch (e) {
       throw new SettingsError(`ntfy server: ${(e as AddressError).message}`);
     }
+    const serverUrl = server.url.replace(/\/$/, '');
+    // The stored topic and token were saved for the stored server: they are never sent to another one (security review
+    // 2026-11, finding 1). A new server needs the topic again, and the token is dropped unless a new one comes with it.
+    const sameServer = !!existing?.ntfy && existing.ntfy.server === serverUrl;
     let topic: string | undefined;
     if (n.topic !== undefined && n.topic !== '') {
       topic = typeof n.topic === 'string' ? n.topic.trim() : '';
       if (!TOPIC_RE.test(topic)) throw new SettingsError('ntfy topic: letters, digits, - and _ only, at most 64.');
     } else if (!existing?.ntfy) throw new SettingsError('ntfy: enter the topic.');
+    else if (!sameServer) throw new SettingsError('ntfy: you changed the server. Enter the topic again (and its access token, if it needs one): the saved ones are only ever sent to the server they were saved for.');
     let token: string | null | undefined;
     if (n.token === null) token = null;
     else if (n.token !== undefined && n.token !== '') {
       if (typeof n.token !== 'string' || !TOKEN_RE.test(n.token.trim())) throw new SettingsError('ntfy access token: paste the token as ntfy shows it (tk_…).');
       token = n.token.trim();
-    }
-    out.ntfy = { server: server.url.replace(/\/$/, ''), origin: server.origin, ...(topic !== undefined ? { topic } : {}), ...(token !== undefined ? { token } : {}) };
+    } else if (existing?.ntfy && !sameServer) token = null;
+    out.ntfy = { server: serverUrl, origin: server.origin, ...(topic !== undefined ? { topic } : {}), ...(token !== undefined ? { token } : {}) };
   } else {
     if (audience !== 'owner') throw new SettingsError('Webhooks are for your own devices only.');
     const w = (r.webhook ?? {}) as Record<string, unknown>;
