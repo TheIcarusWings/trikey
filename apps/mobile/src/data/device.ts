@@ -9,7 +9,7 @@
  * - `compositeProvider` makes one provider out of Ledger, Trezor and QR.
  */
 import { MultisigWallet, getNetwork, type NetworkName } from '@trikey/core';
-import type { HardwareDeviceInfo, HardwareKind, HardwareProvider, HardwareSigner, HardwareWalletPolicy } from '@trikey/wallet';
+import type { HardwareDeviceInfo, HardwareKind, HardwareProvider, HardwareSigner, HardwareWalletPolicy, SignMessageContext } from '@trikey/wallet';
 import { WalletServiceError } from './errors';
 import type { DevicePrompt } from './types';
 
@@ -186,7 +186,7 @@ class PromptingSigner implements HardwareSigner {
     return this.run(title, text ?? 'Review the payment on the device before approving.', () => this.inner.signPsbt(psbtBase64, wallet));
   }
 
-  signMessage(path: string, message: string) {
+  signMessage(path: string, message: string, context?: SignMessageContext) {
     this.store.pendingDetail = undefined;
     // Trezor firmware before 2.13.0, and every Model One, warn about the auth key's path (a key of the 2-of-3 account,
     // used here for a message) and sign once the user goes on: docs/design/hardware-auth-path.md.
@@ -194,7 +194,11 @@ class PromptingSigner implements HardwareSigner {
       this.inner.info.kind === 'trezor' && path.startsWith("m/48'")
         ? '\n\nYour Trezor may first warn about an unusual or wrong path. That is expected for this key: continue.'
         : '';
-    return this.run('Confirm on your device', `Check that the device shows exactly this text:\n${message}${trezorNote}`, () => this.inner.signMessage(path, message));
+    // Notes and hardware unlock sign the same text twice (the same signature both times is the check).
+    const round = context?.round && context.round.of > 1 ? context.round : undefined;
+    const title = round ? `Confirm on your device (${round.n} of ${round.of})` : 'Confirm on your device';
+    const twice = round?.n === 1 ? '\n\nYour device will show the same text twice: approve it both times.' : '';
+    return this.run(title, `Check that the device shows exactly this text:\n${message}${trezorNote}${twice}`, () => this.inner.signMessage(path, message, context));
   }
 
   close() {

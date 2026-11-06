@@ -13,6 +13,7 @@ import { CryptoAccount, CryptoHDKey, CryptoMultiAccounts, CryptoOutput } from '@
 import { HardwareError } from '../errors';
 import { HARDENED, parsePath } from '../common/path';
 import { TPUB_VERSION, XPUB_VERSION, encodeXpub, normalizeXpub } from '../common/xpub';
+import type { QrModel } from '@trikey/wallet';
 import type { QrPayload } from './types';
 
 export interface ExportedKey {
@@ -223,3 +224,58 @@ function formatKeyPath(path: readonly number[]): string {
   return `m/${path.map((n) => (n >= HARDENED ? `${n - HARDENED}'` : String(n))).join('/')}`;
 }
 
+
+// ----------------------------------------------------------------------------------------------- model hint
+
+const BRANDS: ReadonlyArray<[RegExp, QrModel]> = [
+  [/keystone/i, 'keystone-3'],
+  [/passport\s*prime/i, 'passport-prime'],
+  [/\bjade\b/i, 'jade'],
+  [/seed\s*signer/i, 'seedsigner'],
+  [/\bkrux\b/i, 'krux'],
+  [/specter/i, 'specter-diy'],
+  [/coldcard/i, 'coldcard-q'],
+];
+
+function brandOf(...names: Array<string | undefined>): QrModel | undefined {
+  for (const n of names) {
+    if (!n) continue;
+    const hit = BRANDS.find(([re]) => re.test(n));
+    if (hit) return hit[1];
+  }
+  return undefined;
+}
+
+/**
+ * Which model a key export probably came from, when it says so; undefined otherwise. Only a hint: the owner's choice
+ * wins, and a hint fills in only a model the owner left as "Other". Signals:
+ *
+ * - a BBQr `J` frame set holding Coldcard's JSON export (`xfp`): Coldcard Q (BBQr is Coinkite's format, and Coldcard Q
+ *   shows its multisig export that way; Passport gen 2 shows the same JSON, but as UR);
+ * - a UR `crypto-multi-accounts` with a `device` name (Keystone writes "Keystone 3 Pro"), or a `crypto-hdkey` with a
+ *   `name` or `note` that names a brand.
+ *
+ * A UR `crypto-account` carries only the master fingerprint, which says nothing about the device.
+ */
+export function detectQrModel(payload: QrPayload): QrModel | undefined {
+  try {
+    if (payload.type === 'bbqr') {
+      if (payload.fileType !== 'J') return undefined;
+      const json = JSON.parse(new TextDecoder().decode(payload.data)) as unknown;
+      return json && typeof json === 'object' && typeof (json as Json).xfp === 'string' ? 'coldcard-q' : undefined;
+    }
+    if (payload.type !== 'ur') return undefined;
+    const buf = Buffer.from(payload.cbor);
+    if (payload.urType === 'crypto-multi-accounts') {
+      const multi = CryptoMultiAccounts.fromCBOR(buf);
+      return brandOf(multi.getDevice(), ...multi.getKeys().flatMap((k) => [k.getName(), k.getNote()]));
+    }
+    if (payload.urType === 'crypto-hdkey') {
+      const hd = CryptoHDKey.fromCBOR(buf);
+      return brandOf(hd.getName(), hd.getNote());
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}

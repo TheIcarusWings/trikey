@@ -113,6 +113,7 @@ import {
   mnemonicFromEntropy,
   newMnemonic,
 } from './keys.js';
+import { QR_KINDS, defaultQrModelOf, isQrModel, qrModelInfo, type QrModel } from './qr-devices.js';
 import { isHardwareDisconnect, type CloudBackupStore, type HardwareKind, type HardwareProvider, type HardwareSigner, type HardwareWalletPolicy, type KeyValueStore, type PasskeyPrf, type SecureKeyStore } from './platform.js';
 import { GuardianSilentPaymentScanner, GuardianSingleKeyChain } from './guardian-sp.js';
 import { TxCache } from './txcache.js';
@@ -395,8 +396,23 @@ export interface NotesBroughtBack {
 
 /** How long after the last label change the copy goes to the guardian (ms). */
 export const NOTES_DEBOUNCE_MS = 30_000;
-/** Devices whose message signatures make the notes key: Ledger and Trezor (RFC 6979, checked when turned on). */
-const NOTES_HARDWARE: readonly HardwareKind[] = ['ledger', 'trezor'];
+/**
+ * Devices that sign Trikey's texts with the authorization key: Ledger and Trezor over USB or Bluetooth, and QR devices
+ * whose model signs a text QR (qr-devices.ts: Coldcard Q, Jade, Keystone 3, Passport Prime, Specter DIY). Notes and
+ * hardware unlock also need the same signature every time (RFC 6979), which is checked when they are turned on.
+ */
+const MESSAGE_HARDWARE: readonly HardwareKind[] = ['ledger', 'trezor'];
+function signsTexts(rec: { kind: HardwareKind; qrModel?: QrModel } | undefined): boolean {
+  if (!rec) return false;
+  if (MESSAGE_HARDWARE.includes(rec.kind)) return true;
+  return QR_KINDS.includes(rec.kind) && qrModelInfo(rec.qrModel ?? defaultQrModelOf(rec.kind)).signsMessages;
+}
+/** The words for a device that cannot sign Trikey's texts. */
+function noTextsMessage(rec: { kind: HardwareKind; qrModel?: QrModel } | undefined): string {
+  const qr = rec && QR_KINDS.includes(rec.kind) ? qrModelInfo(rec.qrModel ?? defaultQrModelOf(rec.kind)) : undefined;
+  const which = 'Ledger, Trezor, or by QR code a Coldcard Q, Jade, Keystone 3, Passport Prime or Specter DIY';
+  return qr ? `${qr.whyNot ?? ''} This needs a hardware wallet that signs a text: ${which}.`.trim() : `This needs a hardware wallet that signs a text: ${which}.`;
+}
 
 /** What the encrypted blob carries (plaintext, before padding). */
 interface NotesPayload {
@@ -862,6 +878,8 @@ export interface AddOwnWalletOptions {
   /** Where its state is kept (`WalletSet`: `<storageKey>.a<account>`). */
   storageKey: string;
   hardwareKind?: HardwareKind;
+  /** A QR device's model, as the owner picked it (qr-devices.ts). */
+  hardwareModel?: QrModel;
   /** Show the first address on the device and check it (default true). */
   verifyAddress?: boolean;
   /** Master fingerprints of the devices already in a wallet of this phone: each wallet needs its own hardware wallet. */
@@ -1800,7 +1818,7 @@ export class TrikeyWallet {
 
   /** Connects a hardware wallet and checks it is the wallet's own (`rec`). */
   private async connectSame(rec: HardwareRecord): Promise<HardwareSigner> {
-    const hw = await this.hardwareProvider().connect({ kind: rec.kind });
+    const hw = await this.hardwareProvider().connect({ kind: rec.kind, ...(rec.qrModel ? { qrModel: rec.qrModel } : {}) });
     if (hw.info.fingerprint !== rec.fingerprint) {
       await hw.close().catch(() => {});
       throw new WalletError('hardware_mismatch', `Connect the wallet's hardware wallet (fingerprint ${rec.fingerprint}), not ${hw.info.fingerprint}.`);
@@ -1839,13 +1857,23 @@ export class TrikeyWallet {
       account: { fingerprint: hw.info.fingerprint, path, xpub },
       auth: { pubkey: authPubkey, path: authPath },
       addressVerified: false,
+      ...(QR_KINDS.includes(hw.info.kind) ? { qrModel: isQrModel(hw.info.qrModel) ? hw.info.qrModel : defaultQrModelOf(hw.info.kind) } : {}),
     };
   }
 
-  /** Asks the device to BIP 137-sign `text` with the authorization key, and checks the signature. */
-  private async signWithAuthKey(hw: HardwareSigner, rec: HardwareRecord, text: string, purpose: 'pairing' | 'approval' | 'recovery-access' | 'notes' | 'unlock'): Promise<string> {
+  /**
+   * Asks the device to BIP 137-sign `text` with the authorization key, and checks the signature. `round`: the same text
+   * is signed twice in a row (notes, hardware unlock), so a QR device can tell the owner it shows the same text again.
+   */
+  private async signWithAuthKey(
+    hw: HardwareSigner,
+    rec: HardwareRecord,
+    text: string,
+    purpose: 'pairing' | 'approval' | 'recovery-access' | 'notes' | 'unlock',
+    round?: { n: number; of: number },
+  ): Promise<string> {
     this.emit({ type: 'hardware_prompt', purpose, text });
-    const sig = await hw.signMessage(rec.auth.path, text);
+    const sig = await hw.signMessage(rec.auth.path, text, { purpose, ...(round ? { round } : {}) });
     if (!verifyMessage(text, hex.decode(rec.auth.pubkey), sig))
       throw new WalletError('hardware_invalid_response', 'The hardware wallet signature does not verify against its authorization key.');
     return sig;
@@ -1883,6 +1911,24 @@ export class TrikeyWallet {
       await hw.close().catch(() => {});
       throw e;
     }
+  }
+
+  /**
+   * Sets the model of the wallet's QR hardware wallet (Settings, "Hardware wallet model"). A wallet made before QR models
+   * existed reads as `other`, which signs no text, until the owner picks the model here. Nothing is asked of the device:
+   * the model only decides what Trikey asks of it (qr-devices.ts), and a wrong model fails at the device, never silently.
+   */
+  async setHardwareModel(model: QrModel): Promise<void> {
+    const rec = this.s.hardware;
+    if (!rec) throw new WalletError('wrong_state', 'No hardware wallet is set up.');
+    if (!QR_KINDS.includes(rec.kind)) throw new WalletError('wrong_state', 'Only a QR device has a model to pick.');
+    if (!isQrModel(model)) throw new WalletError('wrong_state', `Not a QR device model: ${String(model)}.`);
+    if (rec.qrModel === model) return;
+    // A connection held for a run of steps was made for the old model: the next step connects again.
+    const held = this.hwSession;
+    this.hwSession = undefined;
+    await held?.close().catch(() => {});
+    await this.update((s) => void (s.hardware = { ...s.hardware!, qrModel: model }));
   }
 
   /**
@@ -2119,7 +2165,7 @@ export class TrikeyWallet {
     const taken = new Set([first.hardware?.fingerprint, first.savings?.hardware.fingerprint, first.savings?.recoveryKey.fingerprint, ...(opts.takenFingerprints ?? [])].filter((x): x is string => !!x));
 
     // 1. The new device.
-    const hw = await this.hardwareProvider().connect({ kind: opts.hardwareKind });
+    const hw = await this.hardwareProvider().connect({ kind: opts.hardwareKind, ...(opts.hardwareModel ? { qrModel: opts.hardwareModel } : {}) });
     try {
       const rec = await this.readHardware(hw);
       if (taken.has(rec.fingerprint))
@@ -3528,9 +3574,8 @@ export class TrikeyWallet {
     if (!this.s.wallet || (this.s.stage !== 'paired' && this.s.stage !== 'recovering')) return 'not_paired';
     if (this.isHosted) return 'hosted';
     if (!this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.labelsBackup)) return 'guardian';
-    // QR devices sign no messages over QR (apps/mobile/src/hardware/qr): the key could not be made.
-    const kind = this.s.hardware?.kind;
-    if (!kind || !NOTES_HARDWARE.includes(kind)) return 'hardware';
+    // A device that signs no text (some QR models: qr-devices.ts) could not make the key.
+    if (!signsTexts(this.s.hardware)) return 'hardware';
     return undefined;
   }
 
@@ -3541,7 +3586,7 @@ export class TrikeyWallet {
       not_paired: 'Set the wallet up with your guardian first.',
       hosted: 'Notes are not kept for a wallet hosted on someone else\'s guardian yet.',
       guardian: 'Update your guardian to keep your notes there.',
-      hardware: 'This needs a hardware wallet that signs messages over USB or Bluetooth (Ledger, Trezor).',
+      hardware: noTextsMessage(this.s.hardware),
     }[why];
     throw new WalletError(why === 'guardian' ? 'guardian_unsupported' : 'wrong_state', text);
   }
@@ -3580,8 +3625,8 @@ export class TrikeyWallet {
     const walletId = this.s.wallet!.walletId;
     const text = labelsKeyMessage(walletId, this.network.name);
     const key = await this.withHardware(async (hw, rec) => {
-      const a = await this.signWithAuthKey(hw, rec, text, 'notes');
-      const b = await this.signWithAuthKey(hw, rec, text, 'notes');
+      const a = await this.signWithAuthKey(hw, rec, text, 'notes', { n: 1, of: 2 });
+      const b = await this.signWithAuthKey(hw, rec, text, 'notes', { n: 2, of: 2 });
       if (!sameLabelsSignature(a, b))
         throw new WalletError(
           'hardware_not_deterministic',
@@ -4519,9 +4564,8 @@ export class TrikeyWallet {
     // A guest's hardware wallet never unlocks the host's guardian (family hosting).
     if (this.isHosted) return 'hosted';
     if (!this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.hardwareUnlock)) return 'guardian';
-    // QR devices sign no messages over QR (apps/mobile/src/hardware/qr): there is no signature to unlock with.
-    const kind = this.s.hardware?.kind;
-    if (!kind || !NOTES_HARDWARE.includes(kind)) return 'hardware';
+    // A device that signs no text (some QR models: qr-devices.ts) has no signature to unlock with.
+    if (!signsTexts(this.s.hardware)) return 'hardware';
     return undefined;
   }
 
@@ -4532,7 +4576,7 @@ export class TrikeyWallet {
       not_paired: 'Set the wallet up with your guardian first.',
       hosted: "Only your host can unlock their guardian.",
       guardian: 'Update your guardian to unlock it with your hardware wallet.',
-      hardware: 'This needs a hardware wallet that signs messages over USB or Bluetooth (Ledger, Trezor).',
+      hardware: noTextsMessage(this.s.hardware),
     }[why];
     throw new WalletError(why === 'guardian' ? 'guardian_unsupported' : 'wrong_state', text);
   }
@@ -4557,8 +4601,8 @@ export class TrikeyWallet {
     const slot = hex.encode(secureRandomBytes(8));
     const text = this.unlockText(slot);
     const signature = await this.withHardware(async (hw, rec) => {
-      const a = await this.signWithAuthKey(hw, rec, text, 'unlock');
-      const b = await this.signWithAuthKey(hw, rec, text, 'unlock');
+      const a = await this.signWithAuthKey(hw, rec, text, 'unlock', { n: 1, of: 2 });
+      const b = await this.signWithAuthKey(hw, rec, text, 'unlock', { n: 2, of: 2 });
       if (!sameHardwareSignature(a, b))
         throw new WalletError(
           'hardware_not_deterministic',
@@ -4918,11 +4962,11 @@ export class TrikeyWallet {
    * a new wallet of key 2, a NEW hardware wallet (connect it when asked) and
    * the same guardian key, after the Delay & Notify period. Key 2 signs the sweep.
    */
-  async startRecovery(opts: { lostKey: 'hardware'; newHardwareKind?: HardwareKind; allowSingleServer?: boolean }): Promise<Recovery> {
+  async startRecovery(opts: { lostKey: 'hardware'; newHardwareKind?: HardwareKind; newHardwareModel?: QrModel; allowSingleServer?: boolean }): Promise<Recovery> {
     this.requirePaired();
     if (opts.lostKey !== 'hardware') throw new WalletError('wrong_state', 'Without the phone key, recover from a new phone with recoverWithHardware().');
     const old = this.s.hardware!;
-    const hw = await this.hardwareProvider().connect({ kind: opts.newHardwareKind });
+    const hw = await this.hardwareProvider().connect({ kind: opts.newHardwareKind, ...(opts.newHardwareModel ? { qrModel: opts.newHardwareModel } : {}) });
     let rec: HardwareRecord;
     try {
       rec = await this.readHardware(hw);
@@ -4949,7 +4993,7 @@ export class TrikeyWallet {
    *
    * `guardian` is the guardian's npub (or hex pubkey) and relays, from its web UI.
    */
-  async recoverWithHardware(opts: { guardian: { npub: string; relays: string[]; walletId?: string } | string; hardwareKind?: HardwareKind }): Promise<Recovery> {
+  async recoverWithHardware(opts: { guardian: { npub: string; relays: string[]; walletId?: string } | string; hardwareKind?: HardwareKind; hardwareModel?: QrModel }): Promise<Recovery> {
     // A scanned recovery code (`trikey://recover?...`) or the npub and relays.
     const guardian = typeof opts.guardian === 'string' ? TrikeyWallet.parseRecoveryCode(opts.guardian, this.network.name) : opts.guardian;
     const started = this.s.recovery?.role === 'initiator' && (this.s.recovery.recovery?.state === 'pending' || this.s.recovery.recovery?.state === 'ready');
@@ -4968,7 +5012,7 @@ export class TrikeyWallet {
     const { rpc, pool } = await this.connect(guardianPubkey, relays);
     let keep = false;
     try {
-      const hw = await this.hardwareProvider().connect({ kind: opts.hardwareKind });
+      const hw = await this.hardwareProvider().connect({ kind: opts.hardwareKind, ...(opts.hardwareModel ? { qrModel: opts.hardwareModel } : {}) });
       this.hwSession = hw;
       const rec = await this.readHardware(hw);
       const expiresAt = this.nowSec() + ACCESS_TTL_SEC;
@@ -6766,7 +6810,7 @@ export class TrikeyWallet {
    * chaincode). Coins the guardian co-signed at no derivation path cannot be signed by the hardware wallet: they are
    * named in `abandon` (and the alerts say so). On mainnet, `mainnetConsent: true` as for any hosted wallet.
    */
-  async recoverHostedWithHardware(opts: { code: string; hardwareKind?: HardwareKind; mainnetConsent?: boolean; allowSingleServer?: boolean; walletLabel?: string }): Promise<Recovery & { abandoned: string[] }> {
+  async recoverHostedWithHardware(opts: { code: string; hardwareKind?: HardwareKind; hardwareModel?: QrModel; mainnetConsent?: boolean; allowSingleServer?: boolean; walletLabel?: string }): Promise<Recovery & { abandoned: string[] }> {
     const guardian = TrikeyWallet.parseRecoveryCode(opts.code, this.network.name);
     if (this.s.stage !== 'new') throw new WalletError('wrong_state', 'Recover from a phone that is not set up yet.');
     if (!guardian.walletId) throw new WalletError('pairing_uri_invalid', 'This recovery code does not name the wallet; ask the host to show it again from their guardian.');
@@ -6779,7 +6823,7 @@ export class TrikeyWallet {
     const { rpc, pool } = await this.connect(guardianPubkey, relays);
     let keep = false;
     try {
-      const hw = await this.hardwareProvider().connect({ kind: opts.hardwareKind });
+      const hw = await this.hardwareProvider().connect({ kind: opts.hardwareKind, ...(opts.hardwareModel ? { qrModel: opts.hardwareModel } : {}) });
       this.hwSession = hw;
       const rec = await this.readHardware(hw);
       const expiresAt = this.nowSec() + ACCESS_TTL_SEC;
@@ -6875,7 +6919,7 @@ export class TrikeyWallet {
     if (this.hwSession) return fn();
     const rec = this.s.hardware;
     if (!rec) throw new WalletError('wrong_state', 'No hardware wallet is set up.');
-    const hw = await this.hardwareProvider().connect({ kind: rec.kind });
+    const hw = await this.hardwareProvider().connect({ kind: rec.kind, ...(rec.qrModel ? { qrModel: rec.qrModel } : {}) });
     if (hw.info.fingerprint !== rec.fingerprint) {
       await hw.close().catch(() => {});
       throw new WalletError('hardware_mismatch', `Connect the wallet's hardware wallet (fingerprint ${rec.fingerprint}), not ${hw.info.fingerprint}.`);

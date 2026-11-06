@@ -1,4 +1,6 @@
 export * from './platform.js';
+// QR devices by model: which sign Trikey's texts, and their limits.
+export * from './qr-devices.js';
 export * from './errors.js';
 export * from './chain.js';
 export * from './send.js';

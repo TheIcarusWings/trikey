@@ -3,11 +3,22 @@
  * connected: every call shows QR codes for the device to scan, and/or scans the QR codes the device shows back. The
  * screens are somebody else's job; this class only talks to a `QrBridge`.
  */
-import type { HardwareDeviceInfo, HardwareKind, HardwareSigner, HardwareWalletPolicy } from '@trikey/wallet';
-import type { NetworkName } from '@trikey/core';
+import { HDKey } from '@scure/bip32';
+import {
+  QR_MODEL_INFO,
+  messageProblemFor,
+  qrModelInfo,
+  type HardwareDeviceInfo,
+  type HardwareKind,
+  type HardwareSigner,
+  type HardwareWalletPolicy,
+  type QrModel,
+  type SignMessageContext,
+} from '@trikey/wallet';
+import { getNetwork, type NetworkName } from '@trikey/core';
 import { HardwareError, HardwareNotSupportedError } from '../errors';
 import { assertChainIndex, assertNetworkFamily, findKeyIndex, parseWalletPolicy, walletScriptsAt } from '../common/wallet';
-import { coinTypeOf, formatPath, parsePath } from '../common/path';
+import { HARDENED, coinTypeOf, formatPath, parsePath } from '../common/path';
 import { xpubFamily } from '../common/xpub';
 import {
   assertDeviceSignedAll,
@@ -22,6 +33,7 @@ import {
 import type { QrBridge } from './bridge';
 import { encodeBbqr } from './bbqr';
 import { findExportedKey, parseDeviceExport, type ExportedKey } from './export';
+import { checkMessageAnswer, messageAddresses, parseMessageAnswer, signMessageRequest } from './message';
 import { signedFromPayload } from './payload';
 import { coldcardMultisigConfig } from './registration';
 import { acceptFrames } from './scan';
@@ -38,6 +50,8 @@ export interface QrSignerOptions {
   registration: QrRegistrationFormat;
   /** Name for the instructions: "Coldcard", "Jade", or "signing device". */
   label: string;
+  /** Which device it is (@trikey/wallet qr-devices.ts): whether it signs Trikey's texts, and the steps to word. Default `other`. */
+  model?: QrModel;
   /** Account keys already read from the device's export while connecting. */
   knownKeys?: ExportedKey[];
   /** Used for plain frame length (UR) and QR density (BBQr). */
@@ -45,8 +59,19 @@ export interface QrSignerOptions {
   maxBbqrVersion?: number;
 }
 
-/** Devices whose companion flow has no message signing over QR. They are named in the error so the UI can say so. */
-export const QR_DEVICES_WITHOUT_MESSAGE_SIGNING = ['Coldcard Q', 'Jade', 'Keystone', 'Passport', 'SeedSigner'] as const;
+/** QR models that cannot sign Trikey's texts over QR. They are named in the error so the UI can say so. */
+export const QR_DEVICES_WITHOUT_MESSAGE_SIGNING: readonly string[] = Object.values(QR_MODEL_INFO)
+  .filter((i) => !i.qr || !i.signsMessages)
+  .map((i) => i.name);
+
+/** What the text the device signs is for, in a sentence for the QR screen. */
+const PURPOSE_NOTE: Record<NonNullable<SignMessageContext['purpose']>, string> = {
+  pairing: 'This text proves to your guardian that this hardware wallet holds the key that approves changes for this wallet. It names the wallet and your guardian’s key. It moves no money.',
+  approval: 'This text approves the change you asked for. What it changes is written out in it (for rules: the limit, delay, fee cap and number of contacts): check it on the device. It is valid for a short time only.',
+  'recovery-access': 'This text lets this phone ask your guardian for the wallet, so it can start a recovery. It names your guardian and this phone, and expires soon. It moves no money.',
+  notes: 'This text makes the key that encrypts your notes on the guardian. It moves no money and changes no rule.',
+  unlock: 'This text opens your guardian after it restarted, without the passphrase. It moves no money and changes no rule.',
+};
 
 const same = (a: readonly number[], b: readonly number[]) => a.length === b.length && a.every((n, i) => n === b[i]);
 
@@ -157,12 +182,81 @@ export class QrSigner implements HardwareSigner {
     return encodePsbtBase64(psbt);
   }
 
-  async signMessage(): Promise<string> {
-    throw new HardwareNotSupportedError(
-      'signMessage',
-      'Signing a message over QR is not supported. Approvals that loosen the guardian rules need a device that can sign a message over USB or Bluetooth (Ledger, Trezor) or from a file.',
-      { kind: this.kind, devices: QR_DEVICES_WITHOUT_MESSAGE_SIGNING },
-    );
+  /** The compressed pubkey at `path`, derived from the account key the device exported (scanned now if it is not known yet). */
+  private async pubkeyAt(path: number[]): Promise<Uint8Array> {
+    let hardened = 0;
+    while (hardened < path.length && path[hardened]! >= HARDENED) hardened++;
+    if (hardened === 0 || hardened === path.length) throw new HardwareError('invalid-request', `Trikey can only check a message key below an account key, not ${formatPath(path)}.`, { kind: this.kind });
+    const xpub = await this.getXpub(formatPath(path.slice(0, hardened)));
+    const network = getNetwork(this.opts.network);
+    const key = HDKey.fromExtendedKey(xpub, network.bip32).derive(`m/${path.slice(hardened).join('/')}`);
+    return key.publicKey!;
+  }
+
+  /**
+   * BIP 137 over a text QR (message.ts): shows `signmessage <path> ascii:<text>`, scans the base64 signature (or
+   * Coldcard's armored block) and checks it against the key at `path`, derived from the account key the device
+   * exported. A model that cannot do this (qr-devices.ts) is refused with its reason before anything is shown.
+   */
+  async signMessage(path: string, message: string, context: SignMessageContext = {}): Promise<string> {
+    const info = qrModelInfo(this.opts.model);
+    if (!info.qr || !info.signsMessages)
+      throw new HardwareNotSupportedError('signMessage', info.whyNot ?? `The ${info.name} can't sign a text by QR code.`, { kind: this.kind, devices: QR_DEVICES_WITHOUT_MESSAGE_SIGNING });
+    const problem = messageProblemFor(info.model, message);
+    if (problem) throw new HardwareError('invalid-request', problem, { kind: this.kind });
+    const numbers = parsePath(path);
+    const request = signMessageRequest(path, message);
+    const pubkey = await this.pubkeyAt(numbers);
+    const shownPath = formatPath(numbers);
+    const account = numbers[2] !== undefined && numbers[2] >= HARDENED ? numbers[2] - HARDENED : 0;
+    const label = info.name;
+    const fill = (t: string) => t.replace('{path}', shownPath).replace('{account}', String(account));
+    const { p2pkh } = messageAddresses(pubkey, this.opts.network);
+
+    const round = context.round && context.round.of > 1 ? context.round : undefined;
+    const notes = [
+      ...(context.purpose ? [PURPOSE_NOTE[context.purpose]] : []),
+      ...(round
+        ? [
+            round.n === 1
+              ? `Your ${label} will show the same text ${round.of === 2 ? 'twice' : `${round.of} times`}. Sign it each time: Trikey checks that it signs the same way every time, so the same key can be made again later.`
+              : `Round ${round.n} of ${round.of}: the same text again. Sign it once more.`,
+          ]
+        : []),
+      `Your ${label} shows the text before it signs: check that it is exactly the text above.`,
+      ...(info.displayLength && message.length > info.displayLength
+        ? [`This text is ${message.length} characters. The ${label} shows about the first ${info.displayLength} and then "...": check that part, and the path.`]
+        : []),
+      ...(info.showsAddress === 'p2pkh' ? [`It shows this address for the key: ${p2pkh}`] : []),
+    ];
+
+    await this.opts.bridge.show({
+      purpose: 'message',
+      title: round ? `Sign on your ${label} (${round.n} of ${round.of})` : `Sign on your ${label}`,
+      instructions: `Scan this code with your ${label}. It asks it to sign the short text below with the key ${shownPath}, the key that approves changes for this wallet.`,
+      frames: [request],
+      detail: message,
+      steps: (info.messageSteps ?? []).map(fill),
+      notes,
+      continueLabel: 'Scan the signature',
+    });
+
+    return this.opts.bridge.scan({
+      purpose: 'signed-message',
+      title: 'Scan the signature',
+      instructions: `Show the signature on your ${label} as a QR code and point this camera at it.`,
+      // A wrong key or another text becomes a hint: the owner can sign again on the device and scan the new one.
+      accept: acceptFrames((payload) =>
+        checkMessageAnswer(parseMessageAnswer(payload), {
+          text: message,
+          pubkey,
+          network: this.opts.network,
+          path,
+          label,
+          ...(info.signsFromAccount ? { account } : {}),
+        }),
+      ),
+    });
   }
 
   async close(): Promise<void> {

@@ -6,7 +6,7 @@ import { Clock } from '@/components/icons';
 import { Body, Notice } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
-import { parseGuardianAddress, useWallet, useWalletService, type HardwareKind } from '@/data';
+import { parseGuardianAddress, useWallet, useWalletService, type HardwareKind, type QrModel } from '@/data';
 import { useAction } from '@/lib/use-action';
 
 /**
@@ -22,11 +22,11 @@ export default function RecoverNewHardware() {
   const lostKey = lost === 'phone' ? 'phone' : 'hardware';
   const { busy, run, message, error } = useAction();
 
-  const start = async (kind: HardwareKind) => {
+  const start = async (kind: HardwareKind, hardwareModel?: QrModel) => {
     const parsed = lostKey === 'phone' && npub ? parseGuardianAddress(npub, (relays ?? '').split(',').join(' ')) : undefined;
     // A wallet hosted on someone else's guardian (its recovery code said so): recovered from its encrypted wallet map.
     const guardian = parsed ? { ...parsed, ...(walletId ? { walletId } : {}), ...(hosted === '1' ? { hosted: true as const } : {}) } : undefined;
-    const r = await run(wallet.startRecovery(lostKey, { hardwareKind: kind, guardian }));
+    const r = await run(wallet.startRecovery(lostKey, { hardwareKind: kind, ...(hardwareModel ? { hardwareModel } : {}), guardian }));
     if (r.ok) router.replace('/recover/waiting');
   };
 
@@ -42,7 +42,8 @@ export default function RecoverNewHardware() {
           Approve on your hardware wallet when it asks. Keep the app open.
         </Notice>
       ) : (
-        <HardwareList onPick={(kind) => void start(kind)} />
+        // Both recoveries need a device that signs Trikey's texts (recovery access, or confirming the new wallet).
+        <HardwareList purpose="guardian" onPick={(kind, model) => void start(kind, model)} />
       )}
       <ActionNotice message={message} error={error} />
       <View className="gap-1">

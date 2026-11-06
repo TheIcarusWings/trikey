@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { GUARDIAN_FEATURES, type Policy } from '@trikey/protocol';
 import { WalletError } from './errors.js';
 import type { HardwareKind } from './platform.js';
+import type { QrModel } from './qr-devices.js';
 import { TrikeyWallet, type ReplaceOutcome, type ReplacePlan, type WalletDeps, type WalletEvent } from './wallet.js';
 
 /** "Replace guardian" with several wallets: what moves, wallet by wallet (`WalletSet.previewReplaceGuardian`). */
@@ -252,7 +253,7 @@ export class WalletSet {
    * "Add a wallet": a name, the new hardware wallet, the rules. The guardian must list `own_wallets` (`guardian_unsupported`
    * otherwise: "Update your guardian to add a wallet"). Returns the new wallet; the app asks for a new backup next.
    */
-  async addWallet(opts: { name: string; rules: Policy; hardwareKind?: HardwareKind; verifyAddress?: boolean }): Promise<TrikeyWallet> {
+  async addWallet(opts: { name: string; rules: Policy; hardwareKind?: HardwareKind; hardwareModel?: QrModel; verifyAddress?: boolean }): Promise<TrikeyWallet> {
     if (!this.first.ownWalletsSupported) throw new WalletError('guardian_unsupported', 'Update your guardian to add a wallet.');
     if (this.list.length >= MAX_WALLETS) throw new WalletError('wrong_state', `A phone holds at most ${MAX_WALLETS} wallets.`);
     const name = opts.name.trim();
@@ -267,6 +268,7 @@ export class WalletSet {
       rules: opts.rules,
       storageKey,
       ...(opts.hardwareKind ? { hardwareKind: opts.hardwareKind } : {}),
+      ...(opts.hardwareModel ? { hardwareModel: opts.hardwareModel } : {}),
       ...(opts.verifyAddress !== undefined ? { verifyAddress: opts.verifyAddress } : {}),
       takenFingerprints: this.takenFingerprints(),
       firstName: this.nameOf(this.first),

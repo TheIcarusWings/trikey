@@ -25,3 +25,5 @@ export { QrProvider } from './qr/provider';
 export { QrBridge, defaultQrBridge, type QrRequest, type QrScanRequest, type QrShowRequest } from './qr/bridge';
 export type { QrFormat, QrPayload, QrProgress } from './qr/types';
 export { QR_DEVICES_WITHOUT_MESSAGE_SIGNING } from './qr/signer';
+export { signMessageRequest, parseMessageAnswer, checkMessageAnswer, type MessageAnswer } from './qr/message';
+export { detectQrModel } from './qr/export';
