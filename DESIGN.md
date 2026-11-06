@@ -1040,8 +1040,10 @@ PROTOCOL.md, "Sealed unlock"; code: `packages/protocol/src/sealed-unlock.ts`, `G
 `addHardwareUnlock`, `TrikeyWallet.sendUnlock` and `sendHardwareUnlockAdd`.
 
 - **One sealing key at a time, in memory only.** The guardian makes a secp256k1 key pair when it starts (locked), at
-  every lock (web UI, `guardian.lock`, a contact's `LOCK`), at every unlock, after every counted failed unlock from the
-  phone and after every `unlock.hardware.add` that opened a seal with it, and zeroes it at stop. The key a locked
+  every lock (web UI, `guardian.lock`, a contact's `LOCK`), at every unlock, and after every `guardian.unlock` or
+  `unlock.hardware.add` whose seal was made to it, whatever became of that request (a success, a counted failure, a seal
+  that opened but had expired, or a refusal: `recovery_pending`, `phone_unlock_disabled`, `rate_limited`,
+  `hardware_unlock_off`, an add while locked), and zeroes it at stop. The key a locked
   guardian showed is zeroed the moment it unlocks; a new one serves the add, the only request that carries such a secret
   while unlocked. It never touches the disk or the log (a test scans the data directory). There is no auto-lock to hook;
   a later one would rotate through `lock()` like the others.
@@ -1051,7 +1053,11 @@ PROTOCOL.md, "Sealed unlock"; code: `packages/protocol/src/sealed-unlock.ts`, `G
   two requests is accepted anyway.
 - **Rotation after every use and every failed try, no time limit.** A failed unlock is often a near-miss of the
   passphrase; replacing the key after it means even someone who reads the guardian's memory later cannot open that
-  seal. It costs nothing: the phone reads `guardian.status` before every unlock and add anyway. A timer was not added:
+  seal. The same for every seal made to the key held now that the guardian then refuses without counting (it had
+  expired, the phone was rate limited or stopped, a recovery it did not start is running, the hardware unlock is off, an
+  add arrived while locked): such a seal usually holds the right secret, and left in memory the key would open it for
+  whoever images the box later with the archived wrap (an external review found the key kept in those cases up to
+  0.1.19). The refusals that need no secret are checked before the seal is decrypted at all. It costs nothing: the phone reads `guardian.status` before every unlock and add anyway. A timer was not added:
   the key never reaches the disk, so its age adds nothing to the disk-plus-archive attack; a reader of the live memory
   would see the next unlock or add whatever the key's age; and a timer would only turn into stale-key retries for a
   phone that read the key a while ago.
@@ -1060,8 +1066,9 @@ PROTOCOL.md, "Sealed unlock"; code: `packages/protocol/src/sealed-unlock.ts`, `G
   pubkey, the sealing key, the sending phone, the request id and an expiry are inside the encrypted, MACed plaintext, and
   the guardian compares all of them before it tries the secret. The channel that carries `unlockKey` is already the
   guardian's signed gift wrap; the binding is belt and braces.
-- **Stale is not a guess.** A seal to a key the guardian no longer holds (a restart, a lock or unlock, a replaced key, or
-  one past its expiry) is `unlock_key_stale`, not counted and changing nothing, and the phone reads the new key and sends
+- **Stale is not a guess.** A seal to a key the guardian no longer holds (a restart, a lock or unlock, a replaced key)
+  is `unlock_key_stale`, not counted, never decrypted and changing nothing (so replaying old seals cannot burn the live
+  key); one to the current key past its expiry is `unlock_key_stale` too, not counted, but the key is replaced, and the phone reads the new key and sends
   once more by itself (for the hardware wallet, without asking the device again). An unlock's seal to the current key that
   does not open, or names another purpose, guardian, phone or request, counts as a wrong passphrase: only the paired
   phone's own wraps reach the handler, a relay can neither forge the phone's seal nor replay a request (replay guard,

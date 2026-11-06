@@ -1438,52 +1438,89 @@ export class Guardian implements WalletRuntime {
     input: { walletId: string; slot: string } & ({ signature: string } | { sealed: SealedUnlock }),
     ctx: { phone: string; id: string },
   ): Promise<HardwareUnlockAddOutcome> {
+    // A seal to the key held now is used up whatever happens to it below (opened, refused before opening, expired): the
+    // key that could open it is replaced before this returns, so reading the guardian's memory later opens nothing it
+    // was sent. A seal to another key (stale, or a replay) is never opened and changes nothing.
     return this.unlockMutex.run(async (): Promise<HardwareUnlockAddOutcome> => {
-      const file = this.keystore;
-      if (!file || !this.identity) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
-      const seed = this.seed;
-      if (this.locked || !seed || seed.wiped) return { ok: false, code: 'locked', message: 'Unlock the guardian first: the seed is needed to add a way to unlock it.' };
-      const reg = w.engine.registration();
-      if (!reg) return { ok: false, code: 'not_registered', message: 'This wallet is not set up on this guardian.' };
-      if (reg.walletId !== input.walletId)
-        return { ok: false, code: 'wallet_changed', message: `This guardian guards wallet ${reg.walletId} now: sign the text for it.` };
-      if (w.engine.status().hardwareConfirmRequired)
-        return { ok: false, code: 'hardware_unconfirmed', message: 'Confirm your hardware wallet for this wallet first (after the recovery).' };
-      // The signature: sealed to the guardian's current sealing key (PROTOCOL.md, "Sealed unlock"), or from an older phone
-      // in the clear (accepted, and marked).
-      let signature: string;
-      const unsealed = !('sealed' in input) && this.sealsUnlocks;
-      if ('sealed' in input) {
-        const opened = this.unlockKey.open(input.sealed, { purpose: 'unlock.hardware.add', guardianPubkey: this.identity.pubkey, phonePubkey: ctx.phone, id: ctx.id, now: this.nowSec() });
-        if (!opened.ok && opened.reason !== 'invalid') {
-          this.log.info('guardian.unlock_key_stale', { reason: opened.reason, method: 'unlock.hardware.add' });
-          return { ok: false, code: 'unlock_key_stale', message: "The guardian's sealing key changed (it restarted, locked or unlocked). Try again." };
-        }
-        // Used: whatever comes next, this key seals nothing more.
-        this.unlockKey.rotate();
-        const secret = opened.ok ? opened.secret : undefined;
-        if (!secret || secret.kind !== 'hardware' || secret.walletId !== input.walletId || secret.slot !== input.slot) {
-          this.log.warn('unlock_slots.bad_seal', { walletId: reg.walletId });
-          return { ok: false, code: 'bad_seal', message: 'The guardian could not open that sealed signature.' };
-        }
-        signature = secret.signature;
-      } else {
-        signature = input.signature;
-        if (unsealed) this.log.warn('guardian.unlock_unsealed', { method: 'unlock.hardware.add' });
+      const sealedTo = 'sealed' in input ? this.sealedToCurrentKey(input.sealed) : undefined;
+      try {
+        return await this.addHardwareUnlockLocked(w, input, ctx);
+      } finally {
+        this.retireUnlockKey(sealedTo);
       }
-      if (!reg.hardwareAuth || !bip137Authorizer.verify(this.unlockText(reg.walletId, input.slot), signature, reg.hardwareAuth)) {
-        this.log.warn('unlock_slots.bad_signature', { walletId: reg.walletId });
-        return { ok: false, code: 'bad_signature', message: "That is not this wallet's hardware wallet's signature of the unlock text." };
-      }
-      const binding = keystoreBinding(file);
-      const slot = seed.use((bytes) => sealSlot(bytes, signature, binding, { walletId: reg.walletId, slot: input.slot, addedAt: this.clock.now() }));
-      // Opened once before it counts: a slot that would not open is never stored.
-      openSlot(slot, signature, binding).fill(0);
-      await this.unlockSlots.put(slot);
-      this.log.info('unlock_slots.added', { walletId: reg.walletId, ...(unsealed ? { unsealed: true } : {}) });
-      await w.logEvent({ type: 'unlock_slot_added', walletId: reg.walletId, ...(unsealed ? { unsealed: true as const } : {}) });
-      return { ok: true, walletId: reg.walletId, slot: slot.slot, addedAt: slot.addedAt };
     });
+  }
+
+  /**
+   * The key a seal is addressed to, when it is the sealing key the guardian holds now (read before anything else runs,
+   * so a refusal or a rotation below cannot hide it); undefined for a seal to another key.
+   */
+  private sealedToCurrentKey(sealed: SealedUnlock): string | undefined {
+    const key = (sealed as { key?: unknown } | undefined)?.key;
+    const held = this.unlockKey.pubkey;
+    return typeof key === 'string' && held !== undefined && key === held ? key : undefined;
+  }
+
+  /** Replaces the sealing key if it is still `key` (a success or a counted failure may have replaced it already). */
+  private retireUnlockKey(key: string | undefined): void {
+    if (key !== undefined && this.unlockKey.pubkey === key) this.unlockKey.rotate();
+  }
+
+  /** `addHardwareUnlock`, inside the unlock mutex. */
+  private async addHardwareUnlockLocked(
+    w: WalletRuntime,
+    input: { walletId: string; slot: string } & ({ signature: string } | { sealed: SealedUnlock }),
+    ctx: { phone: string; id: string },
+  ): Promise<HardwareUnlockAddOutcome> {
+    const file = this.keystore;
+    if (!file || !this.identity) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
+    const seed = this.seed;
+    if (this.locked || !seed || seed.wiped) return { ok: false, code: 'locked', message: 'Unlock the guardian first: the seed is needed to add a way to unlock it.' };
+    const reg = w.engine.registration();
+    if (!reg) return { ok: false, code: 'not_registered', message: 'This wallet is not set up on this guardian.' };
+    if (reg.walletId !== input.walletId)
+      return { ok: false, code: 'wallet_changed', message: `This guardian guards wallet ${reg.walletId} now: sign the text for it.` };
+    if (w.engine.status().hardwareConfirmRequired)
+      return { ok: false, code: 'hardware_unconfirmed', message: 'Confirm your hardware wallet for this wallet first (after the recovery).' };
+    // The signature: sealed to the guardian's current sealing key (PROTOCOL.md, "Sealed unlock"), or from an older phone
+    // in the clear (accepted, and marked).
+    let signature: string;
+    const unsealed = !('sealed' in input) && this.sealsUnlocks;
+    if ('sealed' in input) {
+      const opened = this.unlockKey.open(input.sealed, { purpose: 'unlock.hardware.add', guardianPubkey: this.identity.pubkey, phonePubkey: ctx.phone, id: ctx.id, now: this.nowSec() });
+      // Used: whatever comes next (expired included: it was decrypted), this key seals nothing more. A stale seal was
+      // not opened and leaves the key as it is (`addHardwareUnlock` replaces it only for a seal to the key held now).
+      if (opened.ok || opened.reason !== 'stale') this.unlockKey.rotate();
+      if (!opened.ok && opened.reason !== 'invalid') {
+        this.log.info('guardian.unlock_key_stale', { reason: opened.reason, method: 'unlock.hardware.add' });
+        return {
+          ok: false,
+          code: 'unlock_key_stale',
+          message: opened.reason === 'expired' ? 'That request expired. Try again.' : "The guardian's sealing key changed (it restarted, locked or unlocked). Try again.",
+        };
+      }
+      const secret = opened.ok ? opened.secret : undefined;
+      if (!secret || secret.kind !== 'hardware' || secret.walletId !== input.walletId || secret.slot !== input.slot) {
+        this.log.warn('unlock_slots.bad_seal', { walletId: reg.walletId });
+        return { ok: false, code: 'bad_seal', message: 'The guardian could not open that sealed signature.' };
+      }
+      signature = secret.signature;
+    } else {
+      signature = input.signature;
+      if (unsealed) this.log.warn('guardian.unlock_unsealed', { method: 'unlock.hardware.add' });
+    }
+    if (!reg.hardwareAuth || !bip137Authorizer.verify(this.unlockText(reg.walletId, input.slot), signature, reg.hardwareAuth)) {
+      this.log.warn('unlock_slots.bad_signature', { walletId: reg.walletId });
+      return { ok: false, code: 'bad_signature', message: "That is not this wallet's hardware wallet's signature of the unlock text." };
+    }
+    const binding = keystoreBinding(file);
+    const slot = seed.use((bytes) => sealSlot(bytes, signature, binding, { walletId: reg.walletId, slot: input.slot, addedAt: this.clock.now() }));
+    // Opened once before it counts: a slot that would not open is never stored.
+    openSlot(slot, signature, binding).fill(0);
+    await this.unlockSlots.put(slot);
+    this.log.info('unlock_slots.added', { walletId: reg.walletId, ...(unsealed ? { unsealed: true } : {}) });
+    await w.logEvent({ type: 'unlock_slot_added', walletId: reg.walletId, ...(unsealed ? { unsealed: true as const } : {}) });
+    return { ok: true, walletId: reg.walletId, slot: slot.slot, addedAt: slot.addedAt };
   }
 
   /** `unlock.hardware.remove`: the paired phone turned it off. Locked or unlocked. */
@@ -1796,33 +1833,77 @@ export class Guardian implements WalletRuntime {
    *   as a wrong passphrase. Only the paired phone's own wraps reach this method (the RPC server drops everyone else's,
    *   and a relay cannot forge the phone's seal), so a third party cannot burn the owner's tries with it: the phone could
    *   already do as much with wrong passphrases.
-   * - After every counted failure the key is replaced, so a seal made to it (a near-miss passphrase) cannot be opened
+   * - A seal to the key held now is used up whatever becomes of it: opened and refused (expired, `recovery_pending`,
+   *   `hardware_unlock_off`, ...), refused before opening (`phone_unlock_disabled`, `rate_limited`, `recovery_pending`:
+   *   checked first, so the secret is not decrypted for nothing), a counted failure or a success, the key is replaced
+   *   before this returns. A seal made to it (a near-miss passphrase, or the right one refused) then cannot be opened
    *   later even by someone reading the guardian's memory. The phone reads the new key from `guardian.status`.
+   * - A seal to another key is never opened and changes nothing: replaying old seals cannot burn the live key.
    */
   unlockSealed(sealed: SealedUnlock, ctx: { phone: string; id: string }): Promise<UnlockOutcome> {
     return this.unlockMutex.run(async (): Promise<UnlockOutcome> => {
-      const file = this.keystore;
-      if (!file || !this.identity) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
-      if (!this.locked) return { ok: true };
-      const opened = this.unlockKey.open(sealed, { purpose: 'guardian.unlock', guardianPubkey: this.identity.pubkey, phonePubkey: ctx.phone, id: ctx.id, now: this.nowSec() });
-      if (!opened.ok && opened.reason !== 'invalid') {
-        this.log.info('guardian.unlock_key_stale', { reason: opened.reason });
-        return {
-          ok: false,
-          code: 'unlock_key_stale',
-          message: opened.reason === 'expired' ? 'That unlock request expired. Try again.' : "The guardian's unlock key changed (it restarted or locked again). Try again.",
-        };
+      const sealedTo = this.sealedToCurrentKey(sealed);
+      try {
+        return await this.sealedAttempt(sealed, ctx, sealedTo !== undefined);
+      } finally {
+        this.retireUnlockKey(sealedTo);
       }
-      let r: UnlockOutcome;
-      if (!opened.ok) {
-        r = await this.unlockAttempt(file, 'phone', { badSeal: true }, () => Promise.reject(new BadPassphraseError()));
-      } else {
-        const secret: UnlockSecret = opened.secret;
-        r = secret.kind === 'passphrase' ? await this.passphraseAttempt(file, secret.passphrase, 'phone', { sealed: true }) : await this.hardwareAttempt(file, secret, { sealed: true });
-      }
-      if (!r.ok && (r.code === 'bad_passphrase' || r.code === 'bad_hardware' || r.code === 'bad_seal')) this.unlockKey.rotate();
-      return r;
     });
+  }
+
+  /** `unlockSealed`, inside the unlock mutex. `current`: the seal is addressed to the key held now. */
+  private async sealedAttempt(sealed: SealedUnlock, ctx: { phone: string; id: string }, current: boolean): Promise<UnlockOutcome> {
+    const file = this.keystore;
+    if (!file || !this.identity) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
+    if (!this.locked) return { ok: true };
+    // The refusals that need no secret, before anything is decrypted (a seal to another key is stale first, as before).
+    if (current) {
+      const refusal = this.phoneAttemptRefusal({ sealed: true });
+      if (refusal) return refusal;
+    }
+    const opened = this.unlockKey.open(sealed, { purpose: 'guardian.unlock', guardianPubkey: this.identity.pubkey, phonePubkey: ctx.phone, id: ctx.id, now: this.nowSec() });
+    if (!opened.ok && opened.reason !== 'invalid') {
+      this.log.info('guardian.unlock_key_stale', { reason: opened.reason });
+      return {
+        ok: false,
+        code: 'unlock_key_stale',
+        message: opened.reason === 'expired' ? 'That unlock request expired. Try again.' : "The guardian's unlock key changed (it restarted or locked again). Try again.",
+      };
+    }
+    let r: UnlockOutcome;
+    if (!opened.ok) {
+      r = await this.unlockAttempt(file, 'phone', { badSeal: true }, () => Promise.reject(new BadPassphraseError()));
+    } else {
+      const secret: UnlockSecret = opened.secret;
+      r = secret.kind === 'passphrase' ? await this.passphraseAttempt(file, secret.passphrase, 'phone', { sealed: true }) : await this.hardwareAttempt(file, secret, { sealed: true });
+    }
+    // A counted failure replaces the key even for a seal that did not parse far enough to name it.
+    if (!r.ok && (r.code === 'bad_passphrase' || r.code === 'bad_hardware' || r.code === 'bad_seal')) this.unlockKey.rotate();
+    return r;
+  }
+
+  /**
+   * The phone's refusals and its throttle, before an attempt (`unlockAttempt`, and a sealed unlock before it opens the
+   * seal): `phone_unlock_disabled`, `recovery_pending` or `rate_limited`, or undefined when the phone may try.
+   */
+  private phoneAttemptRefusal(how: AttemptHow): UnlockOutcome | undefined {
+    const refusal = this.phoneUnlockRefusal();
+    if (refusal) {
+      this.log.warn('guardian.phone_unlock_refused', { code: 'code' in refusal ? refusal.code : undefined, ...this.attemptFields(how) });
+      return refusal;
+    }
+    const verdict = this.phoneThrottle.check();
+    if (!verdict.ok) return { ok: false, code: 'rate_limited', retryAfterSeconds: Math.ceil(verdict.retryAfterMs / 1000) };
+    return undefined;
+  }
+
+  /** How an attempt came, for the log and the Activity. */
+  private attemptFields(how: AttemptHow) {
+    return {
+      ...(how.hardwareOf ? { method: 'hardware' as const, walletId: how.hardwareOf } : {}),
+      ...(how.badSeal ? { unreadable: true as const } : {}),
+      ...(how.unsealed ? { unsealed: true as const } : {}),
+    };
   }
 
   /**
@@ -1832,21 +1913,15 @@ export class Guardian implements WalletRuntime {
    * only fails); `how.unsealed`: an older phone's secret in the clear on a guardian that seals. For the log and Activity.
    */
   private async unlockAttempt(file: KeystoreFile, via: 'web' | 'phone', how: AttemptHow, open: () => Promise<GuardianSeed>): Promise<UnlockOutcome> {
-    const what = {
-      ...(how.hardwareOf ? { method: 'hardware' as const, walletId: how.hardwareOf } : {}),
-      ...(how.badSeal ? { unreadable: true as const } : {}),
-      ...(how.unsealed ? { unsealed: true as const } : {}),
-    };
-    if (via === 'phone') {
-      const refusal = this.phoneUnlockRefusal();
-      if (refusal) {
-        this.log.warn('guardian.phone_unlock_refused', { code: 'code' in refusal ? refusal.code : undefined, ...what });
-        return refusal;
-      }
-    }
+    const what = this.attemptFields(how);
     const throttle = via === 'web' ? this.throttle : this.phoneThrottle;
-    const verdict = throttle.check();
-    if (!verdict.ok) return { ok: false, code: 'rate_limited', retryAfterSeconds: Math.ceil(verdict.retryAfterMs / 1000) };
+    if (via === 'phone') {
+      const refusal = this.phoneAttemptRefusal(how);
+      if (refusal) return refusal;
+    } else {
+      const verdict = throttle.check();
+      if (!verdict.ok) return { ok: false, code: 'rate_limited', retryAfterSeconds: Math.ceil(verdict.retryAfterMs / 1000) };
+    }
     // An older app sent the secret in the clear to a guardian that seals: it works, and the owner is told to update.
     if (how.unsealed) this.log.warn('guardian.unlock_unsealed', { method: how.hardwareOf ? 'hardware' : 'passphrase' });
     await throttle.begin();
