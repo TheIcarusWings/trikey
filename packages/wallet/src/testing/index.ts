@@ -25,7 +25,9 @@ import { analyzeMixedPsbt } from '../silent.js';
 import { messageHash, signMessage } from '../bip137.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { isValidMnemonic } from '../keys.js';
+import type { QrModel } from '../qr-devices.js';
 import type {
+  SignMessageContext,
   CloudBackupStore,
   HardwareDeviceInfo,
   HardwareKind,
@@ -48,6 +50,8 @@ export interface SoftwareHardwareOptions {
   network: NetworkName;
   kind?: HardwareKind;
   model?: string;
+  /** QR devices: the model it reports (qr-devices.ts). */
+  qrModel?: QrModel;
   /** Demand `registerWallet` before signing or showing addresses (default: true for ledger, bitbox02, jade, coldcard). */
   requireRegistration?: boolean;
   /** Sign PSBTs that also spend finalized inputs of another wallet (external inputs). Default true. */
@@ -60,7 +64,7 @@ export type DeviceCall =
   | { op: 'registerWallet'; name: string; descriptor: string }
   | { op: 'displayAddress'; chain: 0 | 1; index: number; address: string }
   | { op: 'signPsbt'; inputs: number; externalInputs: number }
-  | { op: 'signMessage'; path: string; message: string }
+  | { op: 'signMessage'; path: string; message: string; context?: SignMessageContext }
   | { op: 'close' };
 
 const REGISTERING_KINDS: HardwareKind[] = ['ledger', 'bitbox02', 'jade', 'coldcard'];
@@ -105,7 +109,7 @@ export class SoftwareHardwareSigner implements HardwareSigner {
     this.requireRegistration = opts.requireRegistration ?? REGISTERING_KINDS.includes(kind);
     this.allowExternalInputs = opts.allowExternalInputs ?? true;
     this.hmacKey = sha256(concatBytes(utf8ToBytes('trikey-sim-device'), this.master.privateKey!));
-    this.info = { kind, model: opts.model ?? 'Simulated device', fingerprint: this.master.fingerprint.toString(16).padStart(8, '0') };
+    this.info = { kind, model: opts.model ?? 'Simulated device', fingerprint: this.master.fingerprint.toString(16).padStart(8, '0'), ...(opts.qrModel ? { qrModel: opts.qrModel } : {}) };
   }
 
   private checkPath(path: string): void {
@@ -163,10 +167,10 @@ export class SoftwareHardwareSigner implements HardwareSigner {
     return base64.encode(signed);
   }
 
-  async signMessage(path: string, message: string): Promise<string> {
+  async signMessage(path: string, message: string, context?: SignMessageContext): Promise<string> {
     this.checkPath(path);
     if (!/^[\x20-\x7e]+$/.test(message)) throw new Error('the device only signs printable ASCII');
-    this.calls.push({ op: 'signMessage', path, message });
+    this.calls.push({ op: 'signMessage', path, message, ...(context ? { context } : {}) });
     if (this.signWithWrongKeyOnce) {
       this.signWithWrongKeyOnce = false;
       return signMessage(message, sha256(utf8ToBytes('not the device key')));

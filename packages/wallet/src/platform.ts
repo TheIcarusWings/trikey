@@ -2,6 +2,8 @@
 // secure key storage, plain app storage, cloud backup and passkeys.
 // The wallet logic in this package only talks to the platform through these.
 
+import type { QrModel } from './qr-devices.js';
+
 export type HardwareKind = 'ledger' | 'trezor' | 'coldcard' | 'bitbox02' | 'jade' | 'qr';
 
 export interface HardwareDeviceInfo {
@@ -10,6 +12,15 @@ export interface HardwareDeviceInfo {
   model?: string;
   /** Master key fingerprint, 8 lowercase hex characters. */
   fingerprint: string;
+  /** QR devices: which model it is (chosen by the owner, or suggested by its key export). */
+  qrModel?: QrModel;
+}
+
+/** What `signMessage` is for, so a device that needs the owner to act (QR) can say so. */
+export interface SignMessageContext {
+  purpose?: 'pairing' | 'approval' | 'recovery-access' | 'notes' | 'unlock';
+  /** The same text is signed `of` times in a row (notes and hardware unlock check the device signs the same way twice). */
+  round?: { n: number; of: number };
 }
 
 /** A multisig wallet as a hardware wallet needs to see it. */
@@ -36,7 +47,7 @@ export interface HardwareSigner {
   /** Sign every input the device can sign; returns the PSBT (base64) with its signatures added. */
   signPsbt(psbtBase64: string, wallet: HardwareWalletPolicy): Promise<string>;
   /** BIP137 `signmessage` with the single-sig key at `path`; returns the base64 signature. */
-  signMessage(path: string, message: string): Promise<string>;
+  signMessage(path: string, message: string, context?: SignMessageContext): Promise<string>;
   /** Release the connection (BLE, USB, deep link session). */
   close(): Promise<void>;
 }
@@ -58,7 +69,8 @@ export function isHardwareDisconnect(e: unknown): boolean {
 export interface HardwareProvider {
   readonly kinds: readonly HardwareKind[];
   isAvailable(): Promise<boolean>;
-  connect(opts?: { kind?: HardwareKind; signal?: AbortSignal }): Promise<HardwareSigner>;
+  /** `qrModel`: for QR devices, the model the owner picked (or the one stored for the wallet's device). */
+  connect(opts?: { kind?: HardwareKind; signal?: AbortSignal; qrModel?: QrModel }): Promise<HardwareSigner>;
 }
 
 /** Secrets (the key 2 seed) kept in the Secure Enclave / Android Keystore-backed store. */
