@@ -12,7 +12,9 @@ name: Android test APK
 # android-build.yml, shared with android-launch.yml, which opens an x86_64 build of the same APK in an
 # emulator on every pull request that touches the app. Read that file's header for how and why.
 #
-# Secrets: GITHUB_TOKEN, and the release key for the build job on tags. Only the release job gets write access.
+# Secrets: GITHUB_TOKEN, and the release key, only on release tags (v*): the apk-release job passes it, and inside
+# android-build.yml only the `sign` job, in the `release` environment, reads it. A run on a branch has two separate jobs
+# with no `secrets:` at all, so a branch dispatch never gets the key. Only the release job gets write access.
 
 on:
   push:
@@ -33,7 +35,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Manual runs on a branch: a one-off key per APK, and no secrets at all. (A tag that is not v* lands here too.)
   apk:
+    if: ${{ !(github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [standard, foss]
+    uses: ./.github/workflows/android-build.yml
+    with:
+      architectures: ${{ inputs.architectures || 'arm64-v8a' }}
+      artifact-name: trikey-android-apk-${{ matrix.variant }}
+      signing: one-off
+      variant: ${{ matrix.variant }}
+
+  # Release tags (v*) only: the release key. android-build.yml hands it to its `sign` job alone, which declares the
+  # `release` environment; once the key is an environment secret there (docs/android-signing.md), the repository
+  # secrets passed here can be deleted and the environment's deployment rule decides which refs ever get it.
+  apk-release:
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
     strategy:
       # Both or no release: the release job below needs both builds.
       fail-fast: false
@@ -43,7 +63,7 @@ jobs:
     with:
       architectures: ${{ inputs.architectures || 'arm64-v8a' }}
       artifact-name: trikey-android-apk-${{ matrix.variant }}
-      signing: ${{ github.ref_type == 'tag' && 'release' || 'one-off' }}
+      signing: release
       variant: ${{ matrix.variant }}
     secrets:
       ANDROID_RELEASE_KEYSTORE: ${{ secrets.ANDROID_RELEASE_KEYSTORE }}
@@ -53,21 +73,28 @@ jobs:
   # Attaches both APKs to the tag's release. release.yml creates that release (published pre-release, notes from the
   # CHANGELOG) before dispatching this build, so the APKs' own notes (signing, which APK to pick, checksums) are
   # appended, not put in their place, and the release stays published. A tag pushed by hand with no release gets a
-  # published pre-release.
+  # published pre-release. Before anything is uploaded, every APK's signing certificate is checked again here against
+  # packaging/android/release-cert.sha256, and every checksum file against its APK.
   release:
-    if: github.ref_type == 'tag'
-    needs: apk
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    needs: apk-release
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v8.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: packaging/android
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: trikey-android-apk-*
           merge-multiple: true
           path: dist
 
-      # The parts each build wrote (android-build.yml, "Release notes"): what both share, then each APK.
+      # The parts each build wrote (packaging/android/apk-release-notes.sh): what both share, then each APK.
       - name: Put the release notes together
         run: |
           set -euo pipefail
@@ -78,7 +105,28 @@ jobs:
           ls -l dist
           [ "$(ls dist/*.apk | wc -l)" = 2 ] || { echo "::error::Expected two APKs"; exit 1; }
 
-      - uses: softprops/action-gh-release@v3.0.3
+      # The signing job checked this already; this is the last look before upload, in the job that uploads, so an APK
+      # signed by any other key (or a stray unsigned one) never reaches the release.
+      - name: Check every APK's certificate against the pinned release certificate
+        run: |
+          set -euo pipefail
+          bt="$(find "${ANDROID_HOME}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          [ -x "${bt}/apksigner" ] || { echo "::error::No apksigner under ${ANDROID_HOME}/build-tools"; exit 1; }
+          pinned="$(grep -v '^#' packaging/android/release-cert.sha256 | tr -d ' :\n\r' | tr 'A-F' 'a-f')"
+          [[ "${pinned}" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::packaging/android/release-cert.sha256 does not hold a SHA-256"; exit 1; }
+          shopt -s nullglob
+          apks=(dist/*.apk)
+          [ "${#apks[@]}" = 2 ] || { echo "::error::Expected two APKs, found ${#apks[@]}"; exit 1; }
+          for apk in "${apks[@]}"; do
+            certs="$("${bt}/apksigner" verify --verbose --print-certs "${apk}")"
+            digests="$(grep -oiE 'certificate SHA-256 digest: *[0-9a-f:]+' <<<"${certs}" | sed -E 's/.*[Dd]igest: *//' | tr -d ':' | tr 'A-F' 'a-f' | sort -u)"
+            [ "${digests}" = "${pinned}" ] \
+              || { echo "::error::${apk} is signed by ${digests:-nothing}, not by the release key ${pinned}"; exit 1; }
+            (cd dist && sha256sum -c "$(basename "${apk}").sha256")
+            echo "${apk}: release key ${pinned}, checksum file matches"
+          done
+
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           body_path: dist/release-notes.md

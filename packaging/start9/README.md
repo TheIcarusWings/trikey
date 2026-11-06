@@ -35,7 +35,7 @@ that name is used as is. `assets/` is empty (`.gitkeep`): `s9pk pack` expects th
 
 `.github/workflows/start9.yml` runs on pull requests that touch this folder, the guardian's
 environment contract (`apps/guardian/src/config.ts`), the Dockerfile or the Umbrel compose file,
-on release tags (`release.yml` dispatches it) and by hand. It:
+on release tags (`docker.yml` calls it once the image is pushed) and by hand. It:
 
 - runs `npm ci`, `npx tsc --noEmit` and the SDK's `lint.mjs`;
 - checks the environment `main.ts` passes against `config.ts` (every variable is one the guardian
@@ -52,8 +52,9 @@ on release tags (`release.yml` dispatches it) and by hand. It:
 - inspects each manifest (id, architecture, volumes, dependencies, a clean git hash) and uploads
   the `.s9pk` with its `.sha256` as a workflow artifact for 14 days.
 
-The image: on a tag the job waits for `docker.yml` to publish the tag's image and packs exactly
-that one. On a pull request it packs the published image of the manifest's tag when it exists, and
+The image: on a tag, `docker.yml` passes the digest it just pushed, and the job pulls exactly that
+digest for its architecture and tags it locally under the manifest's name (it fails if the tag no
+longer points at that digest), so the tag is not re-resolved for what is packed. On a pull request it packs the published image of the manifest's tag when it exists, and
 otherwise (a release PR, before the tag) builds the image from the checkout for the runner's
 architecture under that name. So a pull request that changes the guardian but not the version
 packs the *published* image: the build checks the package, not the guardian.

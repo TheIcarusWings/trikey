@@ -1,0 +1,16 @@
+# Dependabot keeps the GitHub Actions in .github/workflows up to date. Every `uses:` is pinned to a full commit SHA with
+# its version in a trailing comment (ci.yml, job action-pins, fails on anything else); Dependabot updates both the SHA
+# and the comment, as a pull request a maintainer reviews like any other change. Only actions: npm dependencies are
+# updated by hand (package-lock.json).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      github-actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci

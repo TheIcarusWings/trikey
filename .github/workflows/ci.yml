@@ -18,12 +18,12 @@ jobs:
     env:
       TRIKEY_CONSENSUS_VERIFY: ${{ github.workspace }}/tools/consensus-verify/target/release/consensus-verify
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-node@v7.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           cache: npm
-      - uses: actions/cache@v6.1.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -41,9 +41,38 @@ jobs:
   secrets:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v3.0.0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Every action is pinned to a full commit SHA (a tag can be moved to other code; a SHA cannot), with its version in a
+  # trailing comment for people and for Dependabot (.github/dependabot.yml), which proposes updates as pull requests.
+  # Local reusable workflows (./...) are exempt; a docker:// action must be pinned by sha256 digest.
+  action-pins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check that every uses is pinned to a commit SHA
+        run: |
+          set -euo pipefail
+          bad=0
+          dirs=(.github/workflows)
+          [ -d .github/actions ] && dirs+=(.github/actions)
+          while IFS= read -r line; do
+            file="${line%%:*}"; rest="${line#*:}"; lineno="${rest%%:*}"; text="${rest#*:}"
+            ref="$(sed -E 's/^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*//; s/[[:space:]]+#.*$//; s/^["'\'']//; s/["'\'']$//' <<<"${text}")"
+            case "${ref}" in
+              ./*) continue ;;
+              docker://*@sha256:*) [[ "${ref}" =~ @sha256:[0-9a-f]{64}$ ]] && continue ;;
+              *@*) [[ "${ref##*@}" =~ ^[0-9a-f]{40}$ ]] && continue ;;
+            esac
+            echo "::error file=${file},line=${lineno}::'${ref}' is not pinned to a full commit SHA (owner/repo@<40 hex> # vX.Y.Z)"
+            bad=1
+          done < <(grep -rnE '^[[:space:]]*(-[[:space:]]+)?uses:' "${dirs[@]}" || true)
+          [ "${bad}" = 0 ] && echo "Every action is pinned to a commit SHA."
+          exit "${bad}"

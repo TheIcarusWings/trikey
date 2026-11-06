@@ -5,8 +5,8 @@ an installed app only when both have the same signature, so a new release now up
 the phone stays. Builds up to 0.1.6-alpha were signed with a one-off key each, so moving from one of those to 0.1.7-alpha
 needs one last uninstall (which deletes the wallet on that phone: make a backup first).
 
-Pull-request builds and manual runs of the **Android test APK** workflow still get a one-off key: they never see the release
-key, and they cannot update a release build or be updated by one.
+Pull-request builds and manual runs of the **Android test APK** workflow on a branch still get a one-off key: they never see
+the release key (their jobs are passed no secrets at all), and they cannot update a release build or be updated by one.
 
 ## Two APKs, one app
 
@@ -56,8 +56,9 @@ Obtainium then shows when a release is out, and installs it with one tap.
 
 ## For the maintainer: the key
 
-The key lives only in two places: the repository's Actions secrets, for the build, and the maintainer's own backup.
-Neither the repository nor any artifact or log ever contains it.
+The key lives only in two places: the `release` environment's secrets (or, until they are moved there, the repository's
+Actions secrets), for the build, and the maintainer's own backup. Neither the repository nor any artifact or log ever
+contains it.
 
 - **Losing it** means no release can update an installed app again: every tester would have to uninstall once more.
   Keep the `.p12` file and its password backed up (a password manager, plus an offline copy).
@@ -82,7 +83,7 @@ repository. Back up `trikey-release.p12` (and the password) before anything else
 
 ### Giving it to the build
 
-In the repository, **Settings → Secrets and variables → Actions → New repository secret**:
+The secrets:
 
 | Name | Value |
 | --- | --- |
@@ -90,9 +91,66 @@ In the repository, **Settings → Secrets and variables → Actions → New repo
 | `ANDROID_RELEASE_KEYSTORE_PASSWORD` | the password |
 | `ANDROID_RELEASE_KEY_ALIAS` | optional; only if the key's alias is not `trikey` |
 
-The build (`.github/workflows/android-build.yml`) decodes the keystore into the runner's temporary folder, signs, deletes
-it, and checks the APK's certificate against `packaging/android/release-cert.sha256`. Only the build job of a release tag
-gets these secrets (`.github/workflows/android-apk.yml`).
+They belong in the `release` environment (next section). Repository secrets of the same names (**Settings → Secrets and
+variables → Actions → New repository secret**) also work, and are where they were before the environment existed.
+
+Only a release tag's signing job reads them. `.github/workflows/android-apk.yml` passes them only from its `apk-release`
+job, which runs only on a `v*` tag; a run on a branch goes through a separate job with no secrets. In
+`.github/workflows/android-build.yml` the build job (npm, Expo, Gradle) never sees them: it hands the APK to a separate
+`sign` job, which declares `environment: release`, runs no build code, decodes the keystore into the runner's temporary
+folder, signs (`packaging/android/sign-apk.sh`), deletes it, and checks the APK's certificate against
+`packaging/android/release-cert.sha256`. The release job checks both APKs' certificates against that file once more
+before it uploads anything.
 
 These are not the SSH or GPG keys on a GitHub account: those sign commits and log in to GitHub. An Android app is signed
 with its own key, made as above.
+
+## The `release` environment
+
+Everything that publishes or signs runs in a GitHub environment named `release`: the `sign` job of
+`android-build.yml` (the Android release key), the `publish` job of `docker.yml` (the only job that can push the guardian
+image to GHCR) and the `publish` job of `umbrel-store.yml` (`UMBREL_STORE_TOKEN`). Those jobs also refuse to run on
+anything but a `v*` tag ref, but that is a line in a workflow file, which anyone who can push a branch can edit. The
+environment is the part a workflow file cannot change: its secrets reach only jobs that name it, and its rule decides
+which refs those jobs may run on.
+
+**Before the owner sets it up**, GitHub creates `release` by itself the first time a job names it, with no protection
+rules (GitHub's documented behaviour for an environment that does not exist yet). Such a job still gets the repository
+secrets, so releases keep working exactly as before; the environment only starts protecting anything once the steps
+below are done.
+
+**Setting it up (the repository owner, once):**
+
+1. On GitHub, open the repository, then **Settings → Environments**. If `release` is already listed (made by a release
+   run), click it; otherwise click **New environment**, type `release`, and click **Configure environment**.
+2. Under **Deployment branches and tags**, change **No restriction** to **Selected branches and tags**. Click **Add
+   deployment branch or tag rule**, set **Ref type** to **Tag**, type `v*` as the name pattern, and click **Add rule**.
+   No branch rule: no branch may deploy to `release`.
+3. Optional but recommended: tick **Required reviewers**, add yourself, and click **Save protection rules**. Every
+   release then waits for your approval before it signs or publishes (Actions shows *Review deployments* on the run;
+   docker.yml, each of the two Android signing jobs and the Umbrel store job ask, so approve all waiting jobs). This is
+   what stops someone with only write access (a stolen token, a misbehaving automation) from releasing by pushing a
+   `v*` tag. Leave **Allow administrators to bypass configured protection rules** off if you want the rule to bind you
+   too.
+4. Under **Environment secrets**, click **Add environment secret** for each of `ANDROID_RELEASE_KEYSTORE`,
+   `ANDROID_RELEASE_KEYSTORE_PASSWORD`, `ANDROID_RELEASE_KEY_ALIAS` (if you use it) and `UMBREL_STORE_TOKEN`, with the same
+   values as the repository secrets (from your backup and password manager: GitHub never shows a secret's value again).
+5. Release once (or re-run the last release's builds with `release.yml`, *redispatch*) and check that the APKs are
+   signed and the image and the Umbrel store are published.
+6. Then delete the repository copies: **Settings → Secrets and variables → Actions → Repository secrets**, the bin icon
+   next to `ANDROID_RELEASE_KEYSTORE`, `ANDROID_RELEASE_KEYSTORE_PASSWORD`, `ANDROID_RELEASE_KEY_ALIAS` and
+   `UMBREL_STORE_TOKEN`. From now on a workflow on any other ref, edited or not, cannot read them.
+
+Where an environment secret and a repository secret have the same name, the job in the environment gets the
+environment's. Optional, further:
+
+- **The image.** `packages: write` comes from GITHUB_TOKEN, which a workflow file edited on a branch can still ask for.
+  To close that too: on the package's page (**Packages → trikey-guardian → Package settings → Manage Actions access**)
+  give this repository the **Read** role instead of **Write**, and add an environment secret `GHCR_PUSH_TOKEN` to
+  `release`: a classic personal access token with only the `write:packages` scope (GHCR does not take fine-grained
+  tokens; this one can write every package of the account, so keep it only in the environment). `docker.yml` pushes with
+  it when it is set, and with GITHUB_TOKEN otherwise.
+- **Tags.** A `v*` tag is what the rule lets through, and anyone with write access can push one. Required reviewers
+  (step 3) is the guard against that. A tag ruleset (**Settings → Rules → Rulesets → New ruleset → New tag ruleset**,
+  target `v*`, *Restrict creations*) can also limit who creates them, but `release.yml` creates the tag with
+  GITHUB_TOKEN: check that a ruleset you add still lets it, or create release tags by hand.
