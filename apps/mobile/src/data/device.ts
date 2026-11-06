@@ -9,7 +9,7 @@
  * - `compositeProvider` makes one provider out of Ledger, Trezor and QR.
  */
 import { MultisigWallet, getNetwork, type NetworkName } from '@trikey/core';
-import { JADE_DISPLAY_LENGTH, type HardwareDeviceInfo, type HardwareKind, type HardwareProvider, type HardwareSigner, type HardwareWalletPolicy, type SignMessageContext } from '@trikey/wallet';
+import { JADE_DISPLAY_LENGTH, BITBOX02_SIGNATURE_NOTE, type HardwareDeviceInfo, type HardwareKind, type HardwareProvider, type HardwareSigner, type HardwareWalletPolicy, type SignMessageContext } from '@trikey/wallet';
 import { WalletServiceError } from './errors';
 import type { DevicePrompt } from './types';
 
@@ -199,11 +199,18 @@ class PromptingSigner implements HardwareSigner {
       this.inner.info.kind === 'jade-ble' && message.length > JADE_DISPLAY_LENGTH
         ? `\n\nYour Jade shows only the first ${JADE_DISPLAY_LENGTH} characters, then "...": check that they match the start of this text. It signs the whole text.`
         : '';
+    // A BitBox02 names this key "External service key" and shows its own single-key address before the text.
+    const bitboxNote =
+      this.inner.info.kind === 'bitbox02'
+        ? `\n\nYour BitBox02 first says "External service key" and shows an address starting with bc1q (or tb1q, bcrt1q): that is this key's own address, expected. Then it shows the text.${
+            context?.purpose === 'notes' || context?.purpose === 'unlock' ? `\n\n${BITBOX02_SIGNATURE_NOTE}` : ''
+          }`
+        : '';
     // Notes and hardware unlock sign the same text twice (the same signature both times is the check).
     const round = context?.round && context.round.of > 1 ? context.round : undefined;
     const title = round ? `Confirm on your device (${round.n} of ${round.of})` : 'Confirm on your device';
     const twice = round?.n === 1 ? '\n\nYour device will show the same text twice: approve it both times.' : '';
-    return this.run(title, `Check that the device shows exactly this text:\n${message}${trezorNote}${jadeNote}${twice}`, () => this.inner.signMessage(path, message, context));
+    return this.run(title, `Check that the device shows exactly this text:\n${message}${trezorNote}${jadeNote}${bitboxNote}${twice}`, () => this.inner.signMessage(path, message, context));
   }
 
   close() {

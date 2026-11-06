@@ -24,9 +24,9 @@ const STEPS: Record<HardwareKind, string[]> = {
     'Approve the new 2-of-3 wallet. Check that it says Trikey.',
   ],
   bitbox02: [
-    'Unlock it and keep it plugged in.',
-    'Approve sharing its public key.',
-    'Approve the new 2-of-3 wallet. Check that it says Trikey.',
+    'Plug it into this phone’s USB-C port, or turn on a BitBox02 Nova next to it for Bluetooth. Enter your password on the BitBox02.',
+    'The first time, check that the BitBox02 shows the same pairing code as this phone, and confirm it on the BitBox02. (Over Bluetooth, the phone and the Nova also show a six-digit code to confirm on both.)',
+    'Approve the new 2-of-3 wallet on the BitBox02. Check that it says Trikey, 2-of-3, and shows the three keys.',
   ],
   simulated: [
     'Nothing to plug in: this is software on this phone, for regtest only.',

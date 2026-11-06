@@ -1,4 +1,6 @@
 import type { NetworkName } from '@trikey/core';
+import type { BitBoxBridge } from './bitbox02/bridge';
+import type { BitBoxPairingStore } from './bitbox02/session';
 import type { JadeBleBridge, JadeNoticeStore } from './jade/bridge';
 import type { NfcBridge } from './nfc/bridge';
 import type { QrBridge } from './qr/bridge';
@@ -43,6 +45,13 @@ export interface HardwareProviderOptions {
      * `app/trezor-callback.tsx` handles it.
      */
     callbackPath?: string;
+  };
+
+  bitbox02?: {
+    /** The bridge the BitBox02's sheet is mounted on (see `ui/bitbox02-bridge-host`). The default one if not passed. */
+    bridge?: BitBoxBridge;
+    /** Where the phone keeps its pairing with BitBox02s (its Noise key and theirs). Default: in memory (asked again after a restart). */
+    pairing?: BitBoxPairingStore;
   };
 
   jade?: {

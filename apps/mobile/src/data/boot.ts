@@ -13,7 +13,7 @@
  */
 import { Platform } from 'react-native';
 import type { HardwareKind, HardwareProvider, KeyValueStore } from '@trikey/wallet';
-import { createHardwareProviders } from '@/hardware';
+import { createHardwareProviders, deserializePairing, serializePairing } from '@/hardware';
 import { getPlatform, type TrikeyPlatform } from '@/platform';
 import { clearSharedBackups, pickBackupFile, shareBackupFile } from '@/platform/backup-files';
 import { clearSharedLabels, pickLabelsFile, shareLabelsFile } from '@/platform/labels-files';
@@ -31,6 +31,8 @@ const SIM_DEVICE_KEY = 'trikey.sim.device.v1';
 const SIM_DEVICE2_KEY = 'trikey.sim.device2.v1';
 /** Set once the owner read that unlocking a Jade over Bluetooth asks its PIN server. */
 const JADE_NOTICE_KEY = 'trikey.jade.pin-server-notice.v1';
+/** This phone's pairing with BitBox02s (its Noise key and theirs), so the pairing code is asked once per BitBox02. */
+const BITBOX02_PAIRING_KEY = 'trikey.bitbox02.pairing.v1';
 
 /** Where `npm run rk-sim -w @trikey/mobile` listens. An Android emulator reaches the computer at 10.0.2.2 instead: change it in Settings. */
 export const RK_SIM_URL = process.env.EXPO_PUBLIC_RK_SIM_URL || 'http://127.0.0.1:3002';
@@ -92,12 +94,18 @@ function sharedHardware(kv: KeyValueStore) {
     seen: async () => (await kv.get(JADE_NOTICE_KEY)) === '1',
     markSeen: () => kv.set(JADE_NOTICE_KEY, '1'),
   };
+  // The phone's BitBox02 pairing: kept in the app's own storage (the key only lets this phone skip the pairing code with a
+  // BitBox02 it already paired with; the BitBox02 still asks for its password and every approval).
+  const bitbox02Pairing = {
+    load: async () => deserializePairing(await kv.get(BITBOX02_PAIRING_KEY)),
+    save: (d: Parameters<typeof serializePairing>[0]) => kv.set(BITBOX02_PAIRING_KEY, serializePairing(d)),
+  };
   const hints = new Set<(interaction: string) => void>();
   return (network: NetworkName, hooks: { onLedgerInteraction: (interaction: string) => void }): HardwareProvider[] => {
     hints.add(hooks.onLedgerInteraction);
     let providers = cache.get(network);
     if (!providers) {
-      providers = createHardwareProviders({ network, ledger: { onInteraction: (i) => hints.forEach((h) => h(i)) }, jade: { notices } });
+      providers = createHardwareProviders({ network, ledger: { onInteraction: (i) => hints.forEach((h) => h(i)) }, jade: { notices }, bitbox02: { pairing: bitbox02Pairing } });
       cache.set(network, providers);
     }
     return providers;

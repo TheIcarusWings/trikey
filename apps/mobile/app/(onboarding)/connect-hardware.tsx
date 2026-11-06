@@ -29,7 +29,7 @@ export default function ConnectHardware() {
       />
       {IS_IOS ? (
         <Footnote>
-          USB-only devices, like older Trezors and BitBox02, can't connect to an iPhone. Use the Android app or a QR device.
+          USB-only devices, like older Trezors and the BitBox02 (the Nova connects over Bluetooth), can't connect to an iPhone. Use the Android app or a QR device.
         </Footnote>
       ) : null}
     </Screen>

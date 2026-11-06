@@ -292,7 +292,7 @@ function deviceNames(kind: WalletHardwareKind, model: string | undefined): { bra
     case 'trezor':
       return { brand: 'Trezor', model: m ? `Trezor ${m}` : 'Trezor' };
     case 'bitbox02':
-      return { brand: 'BitBox02', model: 'BitBox02' };
+      return { brand: 'BitBox02', model: m || 'BitBox02' };
     case 'coldcard':
     case 'coldcard-nfc':
       return { brand: 'Coldcard', model: m || 'Coldcard' };
@@ -747,7 +747,7 @@ class Service implements RealWalletService {
       case 'trezor':
         return { kind: 'trezor', brand: 'Trezor', model: model ? `Trezor ${model}` : 'Trezor' };
       case 'bitbox02':
-        return { kind: 'bitbox02', brand: 'BitBox02', model: 'BitBox02' };
+        return { kind: 'bitbox02', brand: 'BitBox02', model: model || 'BitBox02' };
       case 'jade-ble':
         return { kind: 'jade-ble', brand: 'Jade', model: model || 'Jade' };
       case 'coldcard-nfc': {
