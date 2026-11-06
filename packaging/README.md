@@ -31,6 +31,11 @@ login proxy where the guardian can recognise it (`TRIKEY_TRUSTED_PROXY`, Umbrel)
 A new platform package sets `TRIKEY_TRUSTED_PROXY` only to an address that nothing but its own
 login proxy can connect from. Never publish the port to the internet.
 
+Bitcoin Core's RPC: Umbrel and Start9 give the guardian a full RPC user (Umbrel's `umbrel`, Start9's
+cookie), so keep no funds in the node's own wallet there. Where the owner sets the credentials (plain
+Docker), a restricted `rpcauth` user with `rpcwhitelist` is the better choice; DESIGN.md, "The node's
+RPC credential", lists the calls to allow.
+
 ## Build the image locally
 
 ```sh

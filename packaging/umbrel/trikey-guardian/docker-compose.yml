@@ -36,7 +36,9 @@ services:
       # none: with them it reports sync progress, broadcasts as a fallback and scans for silent
       # payments (`getblock <hash> 3`; without them `sp.*` answers 1700). Umbrel exports them
       # from apps/bitcoin/exports.sh (getumbrel/umbrel-apps): the node's IP, port 8332, and the
-      # `umbrel` RPC user with its generated password.
+      # `umbrel` RPC user with its generated password. Umbrel offers an app no restricted user, so
+      # this one can make every call: keep no funds in the node's own wallet (DESIGN.md, "The
+      # node's RPC credential", lists the calls the guardian makes).
       BITCOIN_RPC_HOST: ${APP_BITCOIN_NODE_IP}
       BITCOIN_RPC_PORT: ${APP_BITCOIN_RPC_PORT}
       BITCOIN_RPC_USER: ${APP_BITCOIN_RPC_USER}

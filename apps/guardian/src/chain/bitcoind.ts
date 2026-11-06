@@ -23,6 +23,42 @@ import { isIP } from 'node:net';
 import type { BitcoinRpcConfig } from '../config.js';
 import { isLocalAddress } from './electrum.js';
 
+/**
+ * Every Bitcoin Core RPC the guardian makes, for an owner who gives it a restricted user (`rpcauth` with
+ * `rpcwhitelist`; DESIGN.md, "The node's RPC credential"). test/rpc-methods.test.ts checks these against the code.
+ * - `RPC_METHODS`: with an Electrum server as the chain source (the default): sync status, the broadcast fallback, the
+ *   silent payment scanner, and reading the mempool itself (chain.ts).
+ * - `RPC_METHODS_CORE_ALONE`: added when the chain source is Bitcoin Core alone (core-backend.ts), through its own
+ *   watch-only wallet (`/wallet/trikey-guardian`).
+ */
+export const RPC_METHODS = [
+  'getblockchaininfo',
+  'getblockcount',
+  'getblockhash',
+  'getblock',
+  'sendrawtransaction',
+  'getrawmempool',
+  'getrawtransaction',
+  'getmempoolinfo',
+  'getmempoolentry',
+  'getnetworkinfo',
+  'gettxout',
+] as const;
+export const RPC_METHODS_CORE_ALONE = [
+  'getbestblockhash',
+  'getblockheader',
+  'estimatesmartfee',
+  'listwallets',
+  'loadwallet',
+  'createwallet',
+  'getdescriptorinfo',
+  'importdescriptors',
+  'listdescriptors',
+  'listsinceblock',
+  'listunspent',
+  'gettransaction',
+] as const;
+
 /** One connection pool for every client (keyed by the checked address and port), as fetch kept one. */
 const agent = new Agent({ keepAlive: true, timeout: 5_000 });
 

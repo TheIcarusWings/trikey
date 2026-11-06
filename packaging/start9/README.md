@@ -100,7 +100,7 @@ bridge and passes the guardian the same variables as the Umbrel package (CI chec
 | `TRIKEY_EXTRA_ENTROPY` | 32 random bytes the package draws once at install (`init/seedEntropy.ts`) and keeps in `store.json` on the `startos` volume; Umbrel passes its `APP_SEED`. Mixed into every new key-3 setup seed (DESIGN.md, "Entropy"); never weakens it |
 | `ELECTRUM_HOST`, `ELECTRUM_PORT` | `sdk.host.getBridgeAddress` of Electrs' plaintext Electrum binding (host id `electrum`, port 50001) |
 | `BITCOIN_RPC_HOST`, `BITCOIN_RPC_PORT` | the bridge address of Bitcoin's RPC binding (host id `rpc`, port 8332, the RPC proxy that also serves pruned blocks) |
-| `BITCOIN_RPC_USER`, `BITCOIN_RPC_PASS` | Bitcoin's RPC cookie `/.cookie` on the `bitcoind` volume (mounted read-only in the guardian's container), `__cookie__:<password>`, read by the package runtime and passed only as environment |
+| `BITCOIN_RPC_USER`, `BITCOIN_RPC_PASS` | Bitcoin's RPC cookie `/.cookie` on the `bitcoind` volume, `__cookie__:<password>`, read by the package runtime and passed only as environment. The volume is mounted read-only into a subcontainer of its own that runs nothing (`bitcoind-cookie`), not into the guardian's: the guardian never sees Bitcoin's datadir or any wallet file in it (security review 2026-11, finding 5). The cookie cannot be mounted alone: dependency mounts take a directory, and bitcoind replaces the file at every start |
 | `BITCOIN_NETWORK` | `bitcoin`: Start9's Bitcoin package runs mainnet only |
 
 The four `BITCOIN_RPC_*` go together (the guardian takes all or none). With them it reports sync
@@ -111,7 +111,9 @@ romanz/electrs#1361). They come from the `bitcoind` dependency's own interfaces 
 bridge address of its `rpc` host (as mempool-startos resolves it) and the RPC cookie from its
 `main` volume (as mempool, electrs, lnd and btcpayserver read it). Bitcoin's package supports no
 `rpcuser`/`rpcpassword`, and its RPC proxy accepts the cookie user with every call allowed
-(`passthrough_rpccookie` in btc-rpc-proxy), JSON-RPC batches included.
+(`passthrough_rpccookie` in btc-rpc-proxy), JSON-RPC batches included. So the guardian holds a credential for
+every call, wallet calls included: keep no funds in Bitcoin's own wallet on this server (DESIGN.md, "The node's RPC
+credential", lists the calls the guardian actually makes).
 
 Left at the guardian's defaults, as on Umbrel: `CHAIN_SOURCE` (the Electrum server above; the web
 UI's Settings, Server can change it), `FAMILY_HOSTING` (on), `TRIKEY_RELAYS` (the built-in list),
@@ -178,6 +180,8 @@ Not checked, because there is no StartOS server here (nothing was installed or r
   way the SDK's newer docs describe (`proxy.auth`). SDK 3.1.1 only has `addSsl.auth`.
 - `TODO(verify)` that the guardian reaches Bitcoin's RPC proxy with the cookie, and Electrs, over
   the bridge (`getblock <hash> 3`, the mempool calls), and that the seeded extra entropy reaches it.
+  And that the cookie is read through the `bitcoind-cookie` subcontainer, including a new cookie
+  after Bitcoin restarts (main runs again, as before).
 - `TODO(verify)` that the chown oneshot and `uid 1000` are right for the `main` volume, and that
   `sdk.useEntrypoint()` runs the image's CMD (no ENTRYPOINT) as expected.
 - `TODO(verify)` the install flow: critical task for the password (its result showing the setup

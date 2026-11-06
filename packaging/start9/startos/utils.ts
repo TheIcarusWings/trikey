@@ -10,7 +10,7 @@ export const dataDir = '/data'
 /** The uid and gid of the `node` user in the image, which runs the guardian. */
 export const guardianUid = 1000
 
-/** Where the bitcoind volume (and so its RPC .cookie) is mounted in the guardian's container. */
+/** Where the bitcoind volume (and so its RPC .cookie) is mounted in the cookie-reading subcontainer (main.ts), never the guardian's. */
 export const btcMountpoint = '/mnt/bitcoind'
 
 // The two ports below are not discovered, they are the contract that the Start9 packages for

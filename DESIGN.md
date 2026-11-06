@@ -539,6 +539,41 @@ printed and kept with the hardware wallet.
   - **The web UI's passphrase over plain HTTP on the LAN** is a separate exposure (a device on the same network can read it in transit), outside the relays and unchanged here: keep the web UI behind the platform's proxy, `127.0.0.1`, Tailscale or an HTTPS proxy ("First run without a platform login").
   - Other requests in the archive give nothing the disk does not: the silent payment scan key is on the disk under its key file, the notes are ciphertext, approvals and recovery-access signatures are bound to one sequence or one phone.
 - **The chain source is trusted** for chain data; headers are checked to link up but not for proof of work, transactions against their txid. On plain Docker the Electrum server may be on another machine: plain TCP goes only to a loopback, private or link-local address (resolved and checked before every connection), anything else needs TLS, verified against the public CAs or a pinned certificate; Bitcoin Core's RPC (no TLS, the node's credentials in clear) the same, and stricter: a host name is resolved at every call, every address must be local and not link-local (169.254/16, fe80::/10, where cloud metadata services live), the request goes to the address that was checked (no second lookup a DNS rebinding could change), and redirects are refused (security review 2026-11, finding 4); a literal IP address is used as configured. **A public server** (the owner's explicit choice) sees the watched wallets' addresses and the box's IP address and can hide coins or delay confirmations: that can stall a payment or a recovery's completion, or make the guardian miss a Savings movement, but never spend or change a rule. Because Delay & Notify leans on chain data (spends elsewhere, sweep confirmations), the guardian refuses to switch to a public server while a recovery runs, and every switch is announced on every channel and to the phone, which shows the kind.
+- **The node's RPC credential** (security review 2026-11, finding 5). The guardian talks to Bitcoin Core with whatever
+  user the platform gives it, and on Umbrel and Start9 that is a full one: Umbrel exports only its Bitcoin Node app's
+  `umbrel` RPC user (`APP_BITCOIN_RPC_USER`/`_PASS`), and on Start9 the RPC cookie user, which Bitcoin's RPC proxy lets
+  make every call. Whoever takes over the guardian (or reads its environment) can do what that user can: read the node,
+  broadcast, and, if the node holds a wallet, use it (send from it, or export its private descriptors with
+  `listdescriptors true` while it is unlocked). The guardian itself only reads, broadcasts signed transactions and, with
+  Bitcoin Core alone, keeps its own watch-only wallet. What limits the rest:
+  - **Keep no funds in the node's own wallet** (the Bitcoin Core the guardian uses), or keep that wallet encrypted and
+    locked. Trikey's coins are not there: the node only sees addresses.
+  - **A restricted RPC user, where the owner sets the credentials** (plain Docker's `.env`, Settings > Server): make one
+    with Bitcoin Core's `share/rpcauth/rpcauth.py trikey`, put its `rpcauth=` line in `bitcoin.conf` with exactly the
+    calls the guardian makes, and give the guardian that user. With an Electrum server as the chain source (the default):
+
+    ```
+    rpcauth=trikey:<salt>$<hash>
+    rpcwhitelist=trikey:getblockchaininfo,getblockcount,getblockhash,getblock,sendrawtransaction,getrawmempool,getrawtransaction,getmempoolinfo,getmempoolentry,getnetworkinfo,gettxout
+    rpcwhitelistdefault=0
+    ```
+
+    and with **Bitcoin Core alone** (Settings > Server, `CHAIN_SOURCE=core`) the calls of its watch-only wallet too:
+
+    ```
+    rpcwhitelist=trikey:getblockchaininfo,getblockcount,getblockhash,getblock,sendrawtransaction,getrawmempool,getrawtransaction,getmempoolinfo,getmempoolentry,getnetworkinfo,gettxout,getbestblockhash,getblockheader,estimatesmartfee,listwallets,loadwallet,createwallet,getdescriptorinfo,importdescriptors,listdescriptors,listsinceblock,listunspent,gettransaction
+    ```
+
+    `rpcwhitelistdefault=0` keeps the node's other users (other apps) unrestricted; without it, any `rpcwhitelist`
+    line makes every other user's list empty. A whitelist names calls, not wallets: with Bitcoin Core alone the wallet
+    calls work on any wallet loaded in the node (`listdescriptors true` included), so the advice above still holds.
+    None of the listed calls can sign or send from a wallet. The lists are in `apps/guardian/src/chain/bitcoind.ts`
+    (`RPC_METHODS`, `RPC_METHODS_CORE_ALONE`), and a test keeps them, this text and the code in step.
+  - **Umbrel** gives an app no other user, and its compose file sets the variables, so there the advice is the first
+    point. **Start9**: the package reads the cookie through a subcontainer of its own that runs nothing; the
+    guardian's container no longer mounts Bitcoin's volume (its datadir and any wallet files in it). A dedicated
+    `rpcauth` user from Bitcoin's `generate-rpc-dependent` action is left for a test on a device
+    (packaging/start9/README.md).
 - **Nuisances, not thefts:**
   - Anyone who knows a wallet address can send a coin after a recovery starts. That blocks completion, because the sweep must spend every coin, until the surviving key adds it with `recovery.update` (the delay runs on).
   - Anyone who sees the guardian's npub on a relay can burn a 5-minute pairing code with wrong attempts (at no disk write: a wrong secret is refused before anything is recorded).
