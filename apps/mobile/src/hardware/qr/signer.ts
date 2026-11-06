@@ -34,7 +34,7 @@ import {
 } from '../common/psbt';
 import type { QrBridge } from './bridge';
 import { encodeBbqr } from './bbqr';
-import { findExportedKey, parseDeviceExport, type ExportedKey } from './export';
+import { checkKeyMatchesPath, findExportedKey, parseDeviceExport, type ExportedKey } from './export';
 import { checkMessageAnswer, messageAddresses, parseMessageAnswer, signMessageRequest } from './message';
 import { signedFromPayload } from './payload';
 import { coldcardMultisigConfig } from './registration';
@@ -104,7 +104,11 @@ export class QrSigner implements HardwareSigner {
     const numbers = parsePath(path);
     if (numbers.length === 0) throw new HardwareError('invalid-request', 'Asking for the master key is not supported.', { kind: this.kind });
     const known = this.keys.find((k) => same(k.path, numbers));
-    if (known) return known.xpub;
+    if (known) {
+      // Read at connect (or by an earlier call): checked against its path again before it is handed out.
+      checkKeyMatchesPath(known);
+      return known.xpub;
+    }
     const shown = formatPath(numbers);
     const exp = await this.opts.bridge.scan({
       purpose: 'device-key',

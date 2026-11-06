@@ -116,7 +116,12 @@ export default function Receive() {
         </View>
       ) : (
         <Notice tone="warn" title="No address to show">
-          {rkMode ? "Finish setting up the wallet first: the vault and the spending balance get their addresses when your Recovery Key is saved." : `Your ${hardware.brand} hasn't confirmed this wallet's addresses yet, so Trikey won't show one. Finish setting up the wallet first.`}
+          {toVault && state.onboarded
+            ? // The vault is made, but the device has not confirmed its addresses (Recovery Key mode, a vault from before that check was required).
+              `Your ${hardware.brand} hasn't confirmed the vault's addresses yet, so Trikey won't show one. Check the address on your ${hardware.brand} below first.`
+            : rkMode
+              ? "Finish setting up the wallet first: the vault and the spending balance get their addresses when your Recovery Key is saved."
+              : `Your ${hardware.brand} hasn't confirmed this wallet's addresses yet, so Trikey won't show one. Finish setting up the wallet first.`}
         </Notice>
       )}
       {/* Coin control: a label for the address about to be shared (guardian mode; not the vault of Recovery Key mode). */}

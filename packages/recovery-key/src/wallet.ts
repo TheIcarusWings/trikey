@@ -591,6 +591,16 @@ export class RecoveryKeyWallet {
    * QR code, or the asked words), builds the vault, registers it on the
    * hardware wallet and checks the first address there, then wipes key 3
    * from the phone: only its xpub stays.
+   *
+   * The address check is what proves the hardware key in the vault is the
+   * device's own: an air-gapped device's key comes from a QR code or an NFC
+   * read the phone cannot authenticate, and a swapped export would put
+   * someone else's key in the vault. An air-gapped device "shows" the
+   * address through its signer's compare sheet (the person checks it on the
+   * device). `verifyAddress: false` skips the check (tests, and nothing
+   * else should): the vault is then built, but `addressVerified` stays
+   * false and no vault address is handed out until
+   * `vaultReceiveAddress({ verifyOnDevice: true })` passes.
    */
   async confirmKitSaved(proof: KitProof, opts: { verifyAddress?: boolean } = {}): Promise<VaultSummary> {
     const p = this.pendingKit;
@@ -1143,8 +1153,23 @@ export class RecoveryKeyWallet {
   // ===========================================================================
   // RK-Home: the vault
 
-  /** A fresh vault deposit address, optionally shown on the hardware wallet. */
+  /** Whether the hardware wallet has confirmed the vault's addresses (at setup, or later with `vaultReceiveAddress`). */
+  get vaultAddressVerified(): boolean {
+    return this.s.stage === 'ready' && !!this.s.hardware?.addressVerified;
+  }
+
+  /**
+   * A fresh vault deposit address, optionally shown on the hardware wallet.
+   *
+   * Only once the hardware wallet has confirmed the vault's addresses (`addressVerified`): until then the vault may hold
+   * a key that is not the device's (a swapped QR or NFC export), so without `verifyOnDevice` this throws
+   * `address_unverified`. With it, a match on the device records the confirmation, and the vault's addresses are
+   * handed out from then on (a vault made before this check was required gets there the same way).
+   */
   async vaultReceiveAddress(opts: { verifyOnDevice?: boolean } = {}): Promise<{ address: string; index: number; verifiedOnDevice: boolean }> {
+    this.requireReady();
+    if (!opts.verifyOnDevice && !this.s.hardware?.addressVerified)
+      throw new RecoveryKeyError('address_unverified', "The hardware wallet has not confirmed the vault's addresses yet. Check the address on the device first.");
     const index = this.s.indices.vaultReceive;
     const address = this.vault().derive(RECEIVE, index).address;
     let verified = false;
@@ -1153,10 +1178,13 @@ export class RecoveryKeyWallet {
         this.emit({ type: 'hardware_prompt', purpose: 'address', text: `Check that your device shows ${address}` });
         return hw.displayAddress(this.devicePolicy(), 0, index);
       });
-      if (shown !== address) throw new RecoveryKeyError('address_mismatch', `The device shows ${shown}, the phone computed ${address}.`);
+      if (shown !== address) throw new RecoveryKeyError('address_mismatch', `The device shows ${shown}, the phone computed ${address}. Do not use this wallet.`);
       verified = true;
     }
-    await this.update((s) => void (s.indices.vaultReceive = index + 1));
+    await this.update((s) => {
+      s.indices.vaultReceive = index + 1;
+      if (verified) s.hardware = { ...s.hardware!, addressVerified: true };
+    });
     return { address, index, verifiedOnDevice: verified };
   }
 

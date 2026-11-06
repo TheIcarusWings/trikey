@@ -12,7 +12,7 @@ import '../common/buffer';
 import { CryptoAccount, CryptoHDKey, CryptoMultiAccounts, CryptoOutput } from '@keystonehq/bc-ur-registry';
 import { HardwareError } from '../errors';
 import { HARDENED, parsePath } from '../common/path';
-import { TPUB_VERSION, XPUB_VERSION, encodeXpub, normalizeXpub } from '../common/xpub';
+import { TPUB_VERSION, XPUB_VERSION, decodeXpub, encodeXpub, normalizeXpub } from '../common/xpub';
 import type { QrModel } from '@trikey/wallet';
 import type { QrPayload } from './types';
 
@@ -41,13 +41,25 @@ function normalizeFingerprint(fp: string): string {
 
 // ----------------------------------------------------------------------------------------------- UR
 
-/** The standard xpub or tpub of a `crypto-hdkey`, with its path and (if the key carries it) the master fingerprint. */
+/**
+ * The standard xpub or tpub of a `crypto-hdkey`, with its path and (if the key carries it) the master fingerprint.
+ *
+ * A `crypto-hdkey` has no depth or child number of its own: the xpub's are the ones its origin states. So the origin
+ * must be a full path from the master key, every step known: an origin whose stated `depth` differs from its number of
+ * steps (a partial path, or one that contradicts itself), or with a wildcard step, is refused, never re-labelled as a
+ * path it does not claim.
+ */
 export function describeHdKey(hd: CryptoHDKey): { fingerprint?: string; key: ExportedKey } | undefined {
   if (hd.isMaster() || hd.isPrivateKey()) return undefined;
   const origin = hd.getOrigin();
   if (!origin) return undefined;
   const components = origin.getComponents();
   if (components.length === 0) return undefined;
+  if (components.some((c) => c.isWildcard()))
+    throw bad('The exported key has a wildcard in its derivation path, so it is not an account key.');
+  const statedDepth = origin.getDepth();
+  if (statedDepth !== undefined && statedDepth !== components.length)
+    throw bad(`The exported key says it is at depth ${statedDepth}, but its derivation path has ${components.length} steps. Export it again from the device.`);
   const path = components.map((c) => c.getIndex() + (c.isHardened() ? HARDENED : 0));
   const source = origin.getSourceFingerprint();
   const parent = hd.getParentFingerprint();
@@ -185,8 +197,18 @@ function exportFromText(text: string): DeviceKeyExport {
 
 // ----------------------------------------------------------------------------------------------- entry point
 
-/** Reads a device's key export from a scanned payload. Throws a `HardwareError('invalid-response')` with a message fit to show. */
+/**
+ * Reads a device's key export from a scanned payload. Throws a `HardwareError('invalid-response')` with a message fit to
+ * show. Every key in it must be what its path claims (`checkKeyMatchesPath`), or the whole export is refused: the signers
+ * keep the export's keys and hand them out later without reading it again.
+ */
 export function parseDeviceExport(payload: QrPayload): DeviceKeyExport {
+  const exp = readDeviceExport(payload);
+  for (const k of exp.keys) checkKeyMatchesPath(k);
+  return exp;
+}
+
+function readDeviceExport(payload: QrPayload): DeviceKeyExport {
   switch (payload.type) {
     case 'ur':
       return exportFromUr(payload.urType, payload.cbor);
@@ -213,15 +235,36 @@ function parseText(text: string): DeviceKeyExport {
   return exportFromText(t);
 }
 
-/** The exported key for `path`, or a message listing what the export does hold. */
+/**
+ * Checks that an exported key is what its path claims: the xpub's own depth and child number are the path's length and
+ * last step. A key at another depth or index (a key from elsewhere put next to a path, or a path written for another
+ * key) is refused, not re-labelled.
+ */
+export function checkKeyMatchesPath(key: ExportedKey): void {
+  const d = decodeXpub(key.xpub);
+  const last = key.path[key.path.length - 1];
+  if (d.depth !== key.path.length || d.childNumber !== last)
+    throw bad(
+      `The exported key does not match its derivation path ${formatKeyPath(key.path)}: the key is at depth ${d.depth}, child ${formatIndex(d.childNumber)}. Export it again from the device.`,
+    );
+}
+
+/** The exported key for `path`, checked against it (`checkKeyMatchesPath`), or a message listing what the export does hold. */
 export function findExportedKey(exp: DeviceKeyExport, path: readonly number[]): ExportedKey {
   const found = exp.keys.find((k) => k.path.length === path.length && k.path.every((n, i) => n === path[i]));
-  if (found) return found;
+  if (found) {
+    checkKeyMatchesPath(found);
+    return found;
+  }
   throw bad(`The export does not include the key for this path. It holds: ${exp.keys.map((k) => formatKeyPath(k.path)).join(', ')}.`);
 }
 
+function formatIndex(n: number): string {
+  return n >= HARDENED ? `${n - HARDENED}'` : String(n);
+}
+
 function formatKeyPath(path: readonly number[]): string {
-  return `m/${path.map((n) => (n >= HARDENED ? `${n - HARDENED}'` : String(n))).join('/')}`;
+  return `m/${path.map(formatIndex).join('/')}`;
 }
 
 

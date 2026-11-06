@@ -369,12 +369,23 @@ describe('QrSigner.getXpub', () => {
     expect(await signer.getXpub("m/48'/1'/0'/2'")).toBe(f.hardwareXpub);
     expect(bridge.getSnapshot()).toBeUndefined();
 
-    const vpub = encodeXpub({ ...decodeXpub(f.hardwareXpub), version: 0x02575483 });
-    const other = { xfp: f.hardwareFingerprint.toUpperCase(), bip84_deriv: "m/84'/1'/0'", bip84: vpub, p2wsh_deriv: "m/48'/1'/1'/2'", p2wsh: vpub };
+    const vpub = (xpub: string) => encodeXpub({ ...decodeXpub(xpub), version: 0x02575483 });
+    const account1 = f.hardwareXpubAt("m/48'/1'/1'/2'");
+    const bip84 = f.hardwareXpubAt("m/84'/1'/0'");
+    const other = { xfp: f.hardwareFingerprint.toUpperCase(), bip84_deriv: "m/84'/1'/0'", bip84: vpub(bip84), p2wsh_deriv: "m/48'/1'/1'/2'", p2wsh: vpub(account1) };
     drive(bridge, { scan: () => void feed(bridge, encodeBbqr(new TextEncoder().encode(JSON.stringify(other)), 'J')) });
-    expect(await signer.getXpub("m/48'/1'/1'/2'")).toBe(f.hardwareXpub);
+    expect(await signer.getXpub("m/48'/1'/1'/2'")).toBe(account1);
     // Both keys of the export are remembered now.
-    expect(await signer.getXpub("m/84'/1'/0'")).toBe(f.hardwareXpub);
+    expect(await signer.getXpub("m/84'/1'/0'")).toBe(bip84);
+  });
+
+  it('refuses a key it was given at connect that is not the one its path claims', async () => {
+    const f = await makeFixture();
+    const signer = new QrSigner(
+      { kind: 'coldcard', fingerprint: f.hardwareFingerprint },
+      { network: 'regtest', bridge: new QrBridge(), format: 'bbqr', registration: 'coldcard', label: 'Coldcard', knownKeys: [{ path: ACCOUNT, xpub: f.hardwareXpubAt("m/84'/1'/0'") }] },
+    );
+    await expect(signer.getXpub("m/48'/1'/0'/2'")).rejects.toMatchObject({ code: 'invalid-response', message: expect.stringMatching(/does not match its derivation path/) });
   });
 
   it('refuses an export from another device or for another network', async () => {

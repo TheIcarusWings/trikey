@@ -442,9 +442,13 @@ class Service implements RkWalletService {
     return w.spendingAccount().derive(SPENDING_RECEIVE, w.state.indices.spendingReceive).address;
   }
 
+  /**
+   * The vault's next deposit address, or '' until the hardware wallet has confirmed the vault's addresses (the same
+   * rule as the guardian mode's receive address): before that the vault may hold a key that is not the device's.
+   */
   private vaultPeek(): string {
     const w = this.w;
-    if (!w || w.state.stage !== 'ready') return '';
+    if (!w || !w.vaultAddressVerified) return '';
     return w.vault().derive(RECEIVE, w.state.indices.vaultReceive).address;
   }
 
@@ -1109,13 +1113,13 @@ class Service implements RkWalletService {
         return self.exclusive(() =>
           self.guarded(async () => {
             const w = self.requireWallet();
-            // A QR or NFC device (the ones whose own screens guide the person: QR, Coldcard, Jade) cannot show an address on
-            // request: the check is skipped here, and the vault's first deposit address can be compared later (Add to vault).
-            const qrOnly = self.deps.silentKinds ?? ['qr', 'coldcard', 'jade', 'coldcard-nfc'];
-            const verifyAddress = !qrOnly.includes(w.state.hardware?.kind as WalletHardwareKind);
+            // The device checks the vault's first address, for every kind: it is what proves the hardware key in the vault
+            // is the device's own (a swapped QR or NFC export would put someone else's key there). A QR or NFC device
+            // (QR, Coldcard, Jade, Coldcard over NFC) cannot be asked for an address, so its signer shows the compare
+            // sheet: the address, to check on the device's own screen. No vault address is shown before this passes.
             self.setProgress('Setting up your vault: approve on your hardware wallet');
             try {
-              const v = await w.confirmKitSaved(proof, { verifyAddress });
+              const v = await w.confirmKitSaved(proof);
               self.deps.onWalletChange?.(true);
               await self.resync();
               return { fingerprint: v.fingerprint };

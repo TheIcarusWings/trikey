@@ -189,6 +189,39 @@ export class SoftwareHardwareSigner implements HardwareSigner {
   }
 }
 
+/**
+ * A device whose key export was swapped on its way to the phone: the QR code or NFC read the phone took carries
+ * `impostorMnemonic`'s key, at the asked path and under this device's own fingerprint, so nothing in the export gives it
+ * away. The device itself still works addresses out with its own key, as a real one does, so `displayAddress` (the
+ * device's screen, or the compare sheet an air-gapped device gets) shows another address than the phone computes. For
+ * tests of the on-device address check, the one thing that catches it.
+ */
+export class SwappedExportSigner extends SoftwareHardwareSigner {
+  private readonly impostor: HDKey;
+  /** Impostor xpub handed out -> this device's own xpub at the same path. */
+  private readonly swapped = new Map<string, string>();
+
+  constructor(opts: SoftwareHardwareOptions & { impostorMnemonic: string }) {
+    super(opts);
+    this.impostor = HDKey.fromMasterSeed(mnemonicToSeedSync(opts.impostorMnemonic), this.network.bip32);
+  }
+
+  override async getXpub(path: string): Promise<string> {
+    const own = await super.getXpub(path);
+    const fake = this.impostor.derive(path).publicExtendedKey;
+    this.swapped.set(fake, own);
+    return fake;
+  }
+
+  override async displayAddress(policy: HardwareWalletPolicy, chain: 0 | 1, index: number): Promise<string> {
+    let descriptor = policy.descriptor.replace(/#[a-z0-9]{8}$/, '');
+    for (const [fake, own] of this.swapped) descriptor = descriptor.split(fake).join(own);
+    const address = MultisigWallet.fromDescriptor(descriptor, this.network).derive(chain, index).address;
+    this.calls.push({ op: 'displayAddress', chain, index, address });
+    return address;
+  }
+}
+
 /** Hands out the software device(s). `device` can be swapped to simulate plugging in another one. */
 export class SoftwareHardwareProvider implements HardwareProvider {
   readonly kinds: readonly HardwareKind[] = ['ledger', 'trezor', 'coldcard', 'bitbox02', 'jade', 'qr', 'coldcard-nfc', 'jade-ble'];

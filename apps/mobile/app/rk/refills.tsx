@@ -44,6 +44,8 @@ export default function RecoveryKeyRefills() {
   const [nonce, setNonce] = useState(0);
   const { busy, run, message, error } = useAction();
   const rk = wallet.rk!;
+  // '' until the hardware wallet has confirmed the vault's addresses.
+  const vaultAddress = rk.vaultAddress();
 
   // Worked out again once the amount or count has rested: it reads the chain and the vault's coins.
   useEffect(() => {
@@ -181,11 +183,28 @@ export default function RecoveryKeyRefills() {
               ? `${formatSats(recoveryKey.vaultSats)} sats are on their way to the vault. Refills can be planned once they confirm.`
               : `${previewError} Send some bitcoin to the vault's address, and come back when it has confirmed.`}
           </Notice>
-          <Text className="font-mono text-[13px] leading-5" selectable testID="vault-address">
-            {groupAddress(rk.vaultAddress())}
-          </Text>
+          {vaultAddress ? (
+            <Text className="font-mono text-[13px] leading-5" selectable testID="vault-address">
+              {groupAddress(vaultAddress)}
+            </Text>
+          ) : (
+            // No vault address before the hardware wallet has confirmed one (a vault from before that check was required).
+            <View className="gap-2">
+              <Footnote>
+                Your {hardware.brand} hasn't confirmed the vault's addresses yet, so Trikey won't show one. Check the address on your {hardware.brand} first.
+              </Footnote>
+              <AppButton
+                title={`Check on your ${hardware.brand}`}
+                variant="outline"
+                size="compact"
+                onPress={() => router.push({ pathname: '/receive/verify', params: { to: 'vault' } })}
+              />
+            </View>
+          )}
           <View className="flex-row gap-3">
-            <AppButton title="Show QR code" variant="outline" size="compact" className="flex-1 self-auto" onPress={() => router.push({ pathname: '/receive', params: { to: 'vault' } })} />
+            {vaultAddress ? (
+              <AppButton title="Show QR code" variant="outline" size="compact" className="flex-1 self-auto" onPress={() => router.push({ pathname: '/receive', params: { to: 'vault' } })} />
+            ) : null}
             <AppButton
               title="Check again"
               variant="outline"

@@ -19,6 +19,11 @@ export type RecoveryKeyErrorCode =
   | 'hardware_invalid_response'
   /** The device showed a different address than the wallet computed. Stop and find out why. */
   | 'address_mismatch'
+  /**
+   * The hardware wallet has not confirmed the vault's addresses yet (its check at setup was skipped or did not finish):
+   * no vault address is handed out until `vaultReceiveAddress({ verifyOnDevice: true })` passes.
+   */
+  | 'address_unverified'
   /** The secure store has no key 2, or the user cancelled the biometric prompt. */
   | 'key_unavailable'
   /** Not a Recovery Kit, or a version or network this build does not read. */
