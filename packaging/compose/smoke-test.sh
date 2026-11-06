@@ -103,9 +103,14 @@ echo "$pre" | jq -e '.electrs == "found" and .node == "found" and .platform == "
   || fail "unexpected preflight: $pre"
 
 echo "== setup code gate"
-post() { curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -X POST --data "$2" "$base$1"; }
+# As a browser sends it: a POST carries Origin. Without Origin or Sec-Fetch-Site, only a process inside the guardian's
+# own container (or a platform's login proxy) may change anything (apps/guardian/src/http/server.ts).
+post() { curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -H "Origin: http://127.0.0.1:${ui_port}" -X POST --data "$2" "$base$1"; }
 entropy="$(printf 'ab%.0s' $(seq 1 32))"
 body='{"passphrase":"smoke test passphrase only","relays":["wss://relay.damus.io"],"entropy":"'"$entropy"'"}'
+headerless="$(curl -sS -w '\n%{http_code}' -H 'Content-Type: application/json' -X POST --data '{"code":"AAAA-AAAA-AAAA-AAAA"}' "$base/setup/code")"
+[ "$(echo "$headerless" | tail -n 1)" = "403" ] && echo "$headerless" | head -n 1 | jq -e '.error.code == "forbidden"' >/dev/null \
+  || fail "a POST without Origin from outside the container was not refused: $headerless"
 [ "$(post /setup "$body")" = "403" ] || fail "setup without the setup code was not refused with 403"
 [ "$(post /setup/code '{"code":"AAAA-AAAA-AAAA-AAAA"}')" = "401" ] || fail "a wrong setup code was not refused with 401"
 code="$(dc logs --no-color guardian | sed -n 's/.* setup\.code code=\([0-9A-Z-]*\) .*/\1/p' | tail -n 1)"

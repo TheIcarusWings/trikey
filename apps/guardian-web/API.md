@@ -37,9 +37,9 @@ passphrase change, and when the guardian restarts. Without one, everything else 
 
   Codes: `unauthenticated` (401, no session: sign in), `bad_passphrase` (401), `rate_limited` (429, with `retryAfterSeconds` and a
   `Retry-After` header), `locked` (409), `setup_required` (409), `already_setup` (409), `setup_code_required` (403) and
-  `bad_setup_code` (401) (plain Docker's first run, below),
+  `bad_setup_code` (401) (the first run, below),
   `already_paired` (409), `recovery_pending` (409), `sweep_pending` (409), `not_found` (404), `invalid` (400, 413 or 415), `forbidden`
-  (403, a cross-origin request), `not_available` (501), `internal` (500). The UI
+  (403, a cross-origin request, or one without `Origin` from outside the box's own container), `not_available` (501), `internal` (500). The UI
   reacts to the first few and shows any other code as a generic failure using `message`.
 - Every response sends `Cache-Control: no-store` (API) and security headers: a CSP
   with `default-src 'self'` and no `'unsafe-inline'`, `X-Frame-Options: DENY`,
@@ -48,7 +48,10 @@ passphrase change, and when the guardian restarts. Without one, everything else 
   `Content-Type: application/json` (the client sends `{}` when it has nothing to
   send; anything else is `415`), and must be same-origin: the guardian checks
   `Sec-Fetch-Site: same-origin` when the browser sends it, else `Origin` against
-  `Host` / `X-Forwarded-Host` (`403 forbidden`). Bodies are limited to 16 KiB.
+  `Host` / `X-Forwarded-Host` (`403 forbidden`). A request with neither header (not a browser: every browser sends
+  `Origin` on these methods) is accepted only from the guardian's own container (loopback) or the platform's login
+  proxy (`TRIKEY_TRUSTED_PROXY`), judged by the socket's address; from anywhere else `403 forbidden` (security review
+  2026-11). Scripts send `Origin: <the address they open the page at>`. Bodies are limited to 16 KiB.
 - The UI is a single-page app with client-side routes (`/` Home, `/setup`, `/sign-in`, `/locked`,
   `/wallet` (also while locked), `/activity`, `/rules`, `/recovery`, `/phones`, `/settings`, `/passphrase`, `/reset`; `/pair` and `/recover-phone`
   redirect to `/phones`; `/host` exists only in a build with `VITE_FEATURE_HOST_FOR_SOMEONE=true`). The guardian serves
@@ -69,7 +72,7 @@ passphrase change, and when the guardian restarts. Without one, everything else 
 
 | Guardian state | Allowed |
 |---|---|
-| Setup not complete | `GET /status`, `GET /setup/preflight`, `POST /setup/code`, `POST /setup` (no session needed; setup signs the browser in; on plain Docker setup needs the setup code) |
+| Setup not complete | `GET /status`, `GET /setup/preflight`, `POST /setup/code`, `POST /setup` (no session needed; setup signs the browser in; setup needs the setup code unless the request came through the platform's login proxy) |
 | No session (after setup) | `GET /status` (as `PublicStatus`), `POST /session`, `DELETE /session` |
 | Locked, signed in | `GET /status`, `GET /wallet` (read-only), `POST /unlock`, `POST /reset`, the session endpoints |
 | Unlocked, signed in | everything |
@@ -90,7 +93,7 @@ the sign-in screen. The guardian is locked after every start of its process.
 | `GET /api/status` | none | `GuardianStatus` or `PublicStatus` | Always available. Without a session (after setup) only `PublicStatus`: `authenticated: false`, `setupComplete`, `state`, `network`, `version`. With one (`authenticated: true`): `setupComplete`, `state` (`locked` or `unlocked`), `lockedAt` and `lockReason` (`restart`, `manual` from this UI, `remote` from the paired phone's `guardian.lock`, or `contact`: an alert contact sent `LOCK` over nostr, allowed only while the rules' `contactLock` is on) while locked, `lockedBy` (with `contact`: that contact's npub), `relays[]` (with live connection state), `chain` (`synced` once Electrs answers, `syncing` with `progress` when Bitcoin Core RPC reports initial block download, else `unavailable`; `height`; `mempoolUnseen: true` when the guardian found that its Electrum server reports no unconfirmed transactions, so payments to the wallet show only once confirmed), `wallets[]` (zero or one: the engine guards one active wallet), `retiredWallets[]` (wallets it guarded before, read-only history: `reason` `recovered` with the `successorId` it guards now, or `retired`), `hardwareConfirmRequired` (after the guardian took over a recovered wallet, until the phone confirms the hardware wallet), `dailySpend` (`usedSats`, `limitSats`, and `limitOff: true` while there is no daily limit), `savings?` (the phone's optional Savings wallet, which this guardian only watches and cannot sign for: `id`, `watchedSince`, `balanceSats`/`unconfirmedSats`/`scannedAt` from its last scan, and `lastMoved: { at, sats, txid }`, the newest time coins left it; absent without Savings), `recoveryInProgress`, and `phoneSpending`, `network`, `npub`, `version`, `warnings?` (`no_alert_contacts`: a recovery would be announced only to the paired phone; mainnet guardians refuse that, test networks warn). |
 | `POST /api/session` | `{ passphrase, unlock? }` | `GuardianStatus` | Signs the browser in (sets the session cookie). With `unlock: true` a locked guardian is unlocked by the same passphrase (that attempt counts against the unlock's rate limit). `401 bad_passphrase`, `429 rate_limited`: sign-in has its own rate limit (exponential backoff after 3 failures, persisted), which neither the unlock, the reset nor the phone's `guardian.unlock` shares. |
 | `DELETE /api/session` | `{}` | `PublicStatus` | Signs the browser out (clears the cookie). |
-| `GET /api/setup/preflight` | none | `SetupPreflight` | First run only. `electrs` is `found` when Electrs answers; `node` is `found` when Bitcoin Core RPC answers (or, without RPC settings, when Electrs does). The relay choices to offer. Since 0.1.9: `electrsProblem` (while `electrs` is `missing`: why, in plain words), `platform` (`umbrel`, `start9` or `docker`) and `setupCodeRequired`. |
+| `GET /api/setup/preflight` | none | `SetupPreflight` | First run only. `electrs` is `found` when Electrs answers; `node` is `found` when Bitcoin Core RPC answers (or, without RPC settings, when Electrs does). The relay choices to offer. Since 0.1.9: `electrsProblem` (while `electrs` is `missing`: why, in plain words), `platform` (`umbrel`, `start9` or `docker`) and `setupCodeRequired` (for this request: false only through the platform's recognised login proxy, or on a guardian without `TRIKEY_PLATFORM`). |
 | `POST /api/setup/code` | `{ code }` | `{ ok: true }` | First run only. Checks the setup code (below) before the owner types a passphrase; sets nothing up. `403 setup_code_required` without a code, `401 bad_setup_code`, `429 rate_limited` after 10 wrong codes in a minute. Without `setupCodeRequired` any code passes. |
 | `POST /api/setup` | `{ passphrase, relays: string[], entropy?, setupCode? }` | `GuardianStatus` | First run only. With `setupCodeRequired`, `setupCode` must be the setup code (checked first, same answers as `POST /setup/code`). Creates key 3 (a fresh BIP39 seed; the BIP48 account key), encrypts it under an Argon2id key from the passphrase, connects the chosen relays. The guardian ends up unlocked. `entropy`: 32 bytes from the browser's `crypto.getRandomValues` as 64 lowercase hex characters, mixed into the new seed with the guardian's own (DESIGN.md, "Entropy", `trikey/guardian-seed/v1`); never logged or stored. The UI always sends it; it is optional for other clients. `400 invalid` if `relays` is empty, has more than 8 entries or a URL that is not `wss://` (or `ws://` on a local host), the passphrase has fewer than 12 characters, or `entropy` is present but not exactly 64 lowercase hex characters. There is no backup of key 3, by design. |
 | `POST /api/unlock` | `{ passphrase }` | `GuardianStatus` | `401 bad_passphrase` on a wrong passphrase (with `retryAfterSeconds` once the next try has to wait). Rate limited with exponential backoff after 3 failures (`429 rate_limited`); the count survives restarts. The phone's `guardian.unlock`, the reset and the sign-in each have their own count, so a stolen phone guessing away never delays this UI (security review 2026-10, finding 4). Unlocking takes a few seconds on a Raspberry Pi (Argon2id). |
@@ -127,13 +130,16 @@ the old passphrase. The phone cannot change the passphrase (there is no nostr me
 passphrase with the same rule before sending (`src/lib/passphrase.ts`, shared with set-up). It takes three Argon2id
 runs (the current passphrase, the new file, its check): several seconds, longer on a Raspberry Pi.
 
-**The setup code (plain Docker).** On Umbrel and Start9 the platform's login guards the first-run screen
-(`TRIKEY_PLATFORM=umbrel` or `start9`). On plain Docker (`packaging/compose/`, `TRIKEY_PLATFORM=docker`, the
-default) nothing does, so whoever reached the port first could set the guardian up. There the guardian makes a
-one-time code at every start, 16 Crockford base32 characters from the OS generator (`XXXX-XXXX-XXXX-XXXX`), kept in
-memory only, and prints it in its log (`setup.code code=...`), which only the box's owner can read. The UI asks for it
-first (`POST /api/setup/code`) and sends it again with `POST /api/setup`. Case, spaces and dashes do not matter, and
-`O`, `I` and `L` read as `0`, `1` and `1`. After setup the code opens nothing.
+**The setup code.** Before setup, whoever reached the port first could set the guardian up. On plain Docker nothing
+guards the port; on Umbrel and Start9 the platform's login guards only its own path, and other apps' containers reach
+the port directly (security review 2026-11, finding 3). So on every platform (`TRIKEY_PLATFORM` set) the guardian asks
+for a one-time code, 16 Crockford base32 characters (`XXXX-XXXX-XXXX-XXXX`, 80 bits), except from the platform's login
+proxy (`TRIKEY_TRUSTED_PROXY`, recognised by the socket's address; Umbrel). Where it comes from: made from the OS
+generator at every start, kept in memory only and printed in the log (`setup.code code=...`), or handed in by the
+platform (`TRIKEY_SETUP_CODE`: Start9 draws it at install and shows it in its Show Setup Code action; the log has it
+too). The UI asks for it first (`POST /api/setup/code`) and sends it again with `POST /api/setup`; the page says where
+to find it by `platform`. Case, spaces and dashes do not matter, and `O`, `I` and `L` read as `0`, `1` and `1`. After
+setup the code opens nothing.
 
 **Passphrase handling.** The UI sends the passphrase in exactly one request body.
 It is held in component state only while the form is open, cleared as soon as the

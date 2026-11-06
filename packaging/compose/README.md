@@ -170,9 +170,9 @@ the new value in `.env` and run `docker compose up -d`.
 
 ## The setup code
 
-On Umbrel and Start9 the platform's login stands in front of the guardian's page, so only you see its first screen.
-On plain Docker nothing does: anyone who reaches the port before you (another user of this computer, a device on your
-network if you exposed it) could press "Set up" and become the owner of key 3 and its passphrase.
+Before it is set up, the guardian has no passphrase yet. On plain Docker nothing stands in front of its page: anyone
+who reaches the port before you (another user of this computer, another container, a device on your network if you
+exposed it) could press "Set up" and become the owner of key 3 and its passphrase.
 
 So, until it is set up, the guardian asks for a **one-time setup code** that it prints in its own log when it starts,
 as Jupyter does with its token. Reading the container's log takes the Docker access that only you have.
@@ -183,6 +183,9 @@ as Jupyter does with its token. Reading the container's log takes the Docker acc
   one from the log.
 - 10 wrong codes in a minute and the guardian waits a minute before it takes the next one.
 - Once the guardian is set up, the code is gone: the unlock passphrase is the login from then on.
+- Scripting the API with `curl`: send `-H "Origin: http://localhost:3000"` (the address you open the page at) with every
+  `POST`, `PUT` or `DELETE`, as a browser does. Without `Origin` (or `Sec-Fetch-Site`), only a process inside the
+  guardian's own container may change anything.
 
 ## Step by step
 

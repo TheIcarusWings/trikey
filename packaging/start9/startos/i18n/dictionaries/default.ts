@@ -28,6 +28,13 @@ const dict = {
   Username: 17,
   Password: 18,
   'Trikey Guardian has no login of its own, so StartOS must protect its web interface with a password.': 19,
+
+  // actions/showSetupCode.ts, actions/setWebPassword.ts
+  'Show Setup Code': 20,
+  'Show the one-time code the guardian asks for when you set it up.': 21,
+  'Setup Code': 22,
+  "Enter this code on the guardian's first-run screen. It is needed only until the guardian is set up.": 23,
+  'Setup code (first run only)': 24,
 } as const
 
 /**

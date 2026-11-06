@@ -250,7 +250,11 @@ export interface SetupPreflight {
    * guards this page, and the box must stay on for the guardian to work.
    */
   platform?: Platform;
-  /** True: setup needs the one-time setup code the guardian prints in its log (plain Docker). Check it with `checkSetupCode`. */
+  /**
+   * True: setup needs the one-time setup code (`checkSetupCode`): in the guardian's log, and on Start9 in its
+   * Show Setup Code action. Every platform asks for it, except from the platform's own login proxy (Umbrel), so this
+   * says it for the request that asked.
+   */
   setupCodeRequired?: boolean;
 }
 

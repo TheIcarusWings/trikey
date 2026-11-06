@@ -8,7 +8,7 @@ import { ApiError } from '../src/api/client';
 import { createHttpApi } from '../src/api/http';
 import { MOCK_SETUP_CODE, createMockApi } from '../src/api/mock';
 import type { SetupPreflight } from '../src/api/types';
-import { STAY_ON_NOTE, chainCheckCopy, setupCodeFormatError } from '../src/lib/setup';
+import { SETUP_CODE_HELP, STAY_ON_NOTE, chainCheckCopy, setupCodeFormatError, setupCodeHelp } from '../src/lib/setup';
 
 const base: SetupPreflight = { node: 'found', electrs: 'found', synced: true, relayOptions: [] };
 
@@ -31,6 +31,15 @@ describe('the first-run chain check', () => {
     expect(missing.body).toMatch(/ELECTRUM_HOST, ELECTRUM_PORT and ELECTRUM_TLS/);
     expect(missing.body).toMatch(/The guardian says: connection refused/);
     expect(STAY_ON_NOTE).toMatch(/stay|on and awake/);
+  });
+});
+
+describe('where the setup code is', () => {
+  it('says where each platform shows it', () => {
+    expect(setupCodeHelp('docker')).toBe(SETUP_CODE_HELP);
+    expect(setupCodeHelp(undefined)).toBe(SETUP_CODE_HELP);
+    expect(setupCodeHelp('umbrel')).toMatch(/Settings > Troubleshoot/);
+    expect(setupCodeHelp('start9')).toMatch(/Actions > Show Setup Code/);
   });
 });
 

@@ -119,6 +119,7 @@ import { startHttpServer } from './http/server.js';
 import { buildRoutes } from './http/api.js';
 import { WebSessions } from './http/sessions.js';
 import { SetupCode } from './http/setup-code.js';
+import { TrustedProxy, isLoopback } from './http/trusted-proxy.js';
 import { GUARDIAN_VERSION } from './version.js';
 import { SilentPaymentService } from './silent/service.js';
 import { SavingsMonitor } from './savings.js';
@@ -398,10 +399,13 @@ export class Guardian implements WalletRuntime {
   /** The web UI's sessions (http/sessions.ts). In memory: a restart signs everyone out. */
   readonly sessions = new WebSessions();
   /**
-   * On plain Docker (`config.platform === 'docker'`): the one-time code first-run setup asks for, printed in the log
-   * (http/setup-code.ts). New at every start. Undefined on Umbrel and Start9, whose login guards the first-run screen.
+   * The one-time code first-run setup asks for (http/setup-code.ts), on every platform (`config.platform` set; unset
+   * for embedders and tests): printed in the log, new at every start, or the one the platform handed in
+   * (TRIKEY_SETUP_CODE, Start9). Requests through the platform's login proxy need none (`trustedProxy`).
    */
   readonly setupCode?: SetupCode;
+  /** Who reaches the guardian only through the platform's login (TRIKEY_TRUSTED_PROXY; http/trusted-proxy.ts). */
+  readonly trustedProxy?: TrustedProxy;
   /** Wrong setup codes, all callers together: 10 a minute. The code has 80 bits; this keeps the log quiet. */
   readonly setupCodeLimiter = new SlidingWindowLimiter({ max: 10, windowMs: 60_000 });
   keystore?: KeystoreFile;
@@ -497,7 +501,10 @@ export class Guardian implements WalletRuntime {
     this.config = opts.config;
     this.clock = opts.clock ?? systemClock;
     this.log = opts.log ?? silentLogger;
-    if (opts.config.platform === 'docker') this.setupCode = new SetupCode();
+    // Security review 2026-11, finding 3: other containers on an Umbrel or a Start9 reach the port without the
+    // platform's login, so the setup code is asked for everywhere (except through the login proxy: trustedProxy).
+    if (opts.config.platform) this.setupCode = new SetupCode(undefined, opts.config.setupCode);
+    if (opts.config.trustedProxies?.length) this.trustedProxy = new TrustedProxy(opts.config.trustedProxies, { log: this.log });
     const rpc = opts.config.bitcoinRpc ? new BitcoinRpc(opts.config.bitcoinRpc, { allowPublic: opts.config.bitcoinRpc.allowPublic }) : undefined;
     // The environment's choice; `open` swaps in the web UI's, if the owner made one (chain-source.json).
     this.chainSource = this.environmentChainSource;
@@ -736,6 +743,7 @@ export class Guardian implements WalletRuntime {
         log: this.log,
         sessions: this.sessions,
         now: () => this.clock.now(),
+        headerlessClient: async (remote) => isLoopback(remote) || !!(await this.trustedProxy?.trusts(remote)),
       });
     }
     this.chain.start();
@@ -743,7 +751,13 @@ export class Guardian implements WalletRuntime {
     this.live?.start();
     if (!this.setupComplete && this.setupCode) {
       // Deliberately in the log (the one place only the box's owner reads): http/setup-code.ts.
-      this.log.info('setup.code', { code: this.setupCode.code, hint: 'Open the web UI and enter this setup code to set up the guardian. It changes at every restart.' });
+      const hint =
+        this.config.platform === 'umbrel'
+          ? 'If the web UI asks for a setup code, enter this one. It changes at every restart.'
+          : this.config.setupCode
+            ? 'Open the web UI and enter this setup code to set up the guardian (StartOS also shows it under Actions > Show Setup Code).'
+            : 'Open the web UI and enter this setup code to set up the guardian. It changes at every restart.';
+      this.log.info('setup.code', { code: this.setupCode.code, hint });
     }
     if (this.setupComplete) {
       await this.startNostr();

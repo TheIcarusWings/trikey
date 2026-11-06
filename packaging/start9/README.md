@@ -83,8 +83,8 @@ it under Trusted Keys; then the tag build can upload the files to the release li
 | Interface | `ui`, HTTP on port 3000. The only listener. |
 | Health check | `Web Interface`: `GET /api/status` on port 3000 answers 2xx (runs in the container, like the image's `HEALTHCHECK`) |
 | Dependencies | `bitcoind` and `electrs`, both required and `running` |
-| Actions | `set-web-password` |
-| Init | `init/seedEntropy.ts` (once: 32 random bytes for `TRIKEY_EXTRA_ENTROPY`), `init/watchPassword.ts` (the critical task until a web UI password exists) |
+| Actions | `set-web-password` (its result also shows the setup code), `show-setup-code` |
+| Init | `init/seedEntropy.ts` (once: 32 random bytes for `TRIKEY_EXTRA_ENTROPY`), `init/setupCode.ts` (once: the first-run setup code for `TRIKEY_SETUP_CODE`), `init/watchPassword.ts` (the critical task until a web UI password exists) |
 | Backups | none, on purpose (see below) |
 
 ### Dependencies and the guardian's environment
@@ -95,7 +95,8 @@ bridge and passes the guardian the same variables as the Umbrel package (CI chec
 | Variable | From |
 |---|---|
 | `PORT`, `TRIKEY_DATA_DIR` | `3000`, `/data` |
-| `TRIKEY_PLATFORM` | `start9`: the basic-auth gate (below) guards the web UI, so first-run setup asks for no setup code. Without it the guardian assumes plain Docker and waits for a code from its log |
+| `TRIKEY_PLATFORM` | `start9`: the words of the first-run screen (where the setup code is) |
+| `TRIKEY_SETUP_CODE` | the first-run setup code (16 Crockford base32 characters, 80 bits), drawn once at install (`init/setupCode.ts`) into `store.json` on the `startos` volume and shown by the `show-setup-code` action and with the web password. Until it is set up the guardian asks every request for it: the basic-auth gate covers only the TLS interface, and other services reach the plaintext port over the bridge (below; security review 2026-11, finding 3). No address is trusted to skip it (`TRIKEY_TRUSTED_PROXY` unset): StartOS's proxy reaches the service over the same bridge, and its address was not checked on a device |
 | `TRIKEY_EXTRA_ENTROPY` | 32 random bytes the package draws once at install (`init/seedEntropy.ts`) and keeps in `store.json` on the `startos` volume; Umbrel passes its `APP_SEED`. Mixed into every new key-3 setup seed (DESIGN.md, "Entropy"); never weakens it |
 | `ELECTRUM_HOST`, `ELECTRUM_PORT` | `sdk.host.getBridgeAddress` of Electrs' plaintext Electrum binding (host id `electrum`, port 50001) |
 | `BITCOIN_RPC_HOST`, `BITCOIN_RPC_PORT` | the bridge address of Bitcoin's RPC binding (host id `rpc`, port 8332, the RPC proxy that also serves pruned blocks) |
@@ -134,7 +135,9 @@ exists, `interfaces.ts` binds nothing and a critical task asks for it, so the gu
 reachable. The password is in `store.json` on the `startos` volume in the clear (StartOS needs the
 clear text to enforce it); it is not a key. The plaintext port stays on the server and the
 internal bridge, as for every StartOS `http` binding, so another service on the same server could
-reach it without the password.
+reach it without the password. That is why first-run setup needs the setup code here (`TRIKEY_SETUP_CODE`):
+otherwise such a service could set the guardian up first, with its own passphrase. After setup every
+call but the reduced status needs a web session, which only the unlock passphrase opens.
 
 ### No backup, on purpose
 
@@ -177,8 +180,12 @@ Not checked, because there is no StartOS server here (nothing was installed or r
   the bridge (`getblock <hash> 3`, the mempool calls), and that the seeded extra entropy reaches it.
 - `TODO(verify)` that the chown oneshot and `uid 1000` are right for the `main` volume, and that
   `sdk.useEntrypoint()` runs the image's CMD (no ENTRYPOINT) as expected.
-- `TODO(verify)` the install flow: critical task for the password, then Open UI, basic-auth
-  prompt, guardian setup screen.
+- `TODO(verify)` the install flow: critical task for the password (its result showing the setup
+  code too), then Open UI, basic-auth prompt, the guardian's setup-code step, guardian setup screen.
+  And that the `show-setup-code` action shows the same code the guardian asks for (`TRIKEY_SETUP_CODE`).
+- `TODO(verify)` which address StartOS's own proxy connects from. If only it can connect from that
+  address (no other service through a bridge forward), it could go in `TRIKEY_TRUSTED_PROXY` and the
+  owner would not need the code, as on Umbrel.
 - English only: there are no translations.
 
 ## Updating

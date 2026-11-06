@@ -13,12 +13,15 @@ silent payments reads whole blocks from your node, so let Bitcoin and Electrs fi
 ## Set up
 
 1. Run the **Set Web UI Password** action. Copy the password: it is shown once. (Run the action again
-   at any time to get a new one.)
+   at any time to get a new one.) The same dialog shows the **setup code**.
 2. Start the service and open **Web UI**. Your browser asks for the username `admin` and that password.
-3. In the guardian's own screen, choose the nostr relays, and choose a **passphrase for key 3**. The
+3. The guardian asks for the **setup code**: it proves you are this server's owner, since other services
+   on the server could reach the guardian before you. It is in **Actions > Show Setup Code** (and was
+   in the password dialog). It is needed only once, until the guardian is set up.
+4. In the guardian's own screen, choose the nostr relays, and choose a **passphrase for key 3**. The
    guardian encrypts key 3 with it, and asks for it every time it starts. **Nobody can recover it
    for you.**
-4. In the Trikey app on your phone, scan the pairing code the guardian shows.
+5. In the Trikey app on your phone, scan the pairing code the guardian shows.
 
 ## Two different passwords
 

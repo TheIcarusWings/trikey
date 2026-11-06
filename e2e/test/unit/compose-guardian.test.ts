@@ -55,8 +55,15 @@ describe('packaging/compose/docker-compose.yml', () => {
 
   it('asks for the setup code at first run (TRIKEY_PLATFORM=docker); Umbrel and Start9 say who guards the page', () => {
     expect(guardian.environment?.['TRIKEY_PLATFORM']).toBe('docker');
+    expect(guardian.environment?.['TRIKEY_TRUSTED_PROXY']).toBeUndefined();
     expect(umbrel.services['server']!.environment?.['TRIKEY_PLATFORM']).toBe('umbrel');
-    expect(read('packaging/start9/startos/main.ts')).toMatch(/TRIKEY_PLATFORM: 'start9'/);
+    // Umbrel: only its login proxy skips the setup code (security review 2026-11, finding 3).
+    expect(umbrel.services['server']!.environment?.['TRIKEY_TRUSTED_PROXY']).toBe('gateway,trikey-guardian_app_proxy_1,app_proxy_trikey-guardian');
+    expect(umbrel.services['app_proxy']!.environment?.['APP_HOST']).toBe('trikey-guardian_server_1');
+    const start9 = read('packaging/start9/startos/main.ts');
+    expect(start9).toMatch(/TRIKEY_PLATFORM: 'start9'/);
+    // Start9: the package hands in the code it shows in its actions.
+    expect(start9).toMatch(/TRIKEY_SETUP_CODE: setupCode/);
   });
 
   it('runs the node profile on the same pinned images as the regtest stack, and only with --profile node', () => {

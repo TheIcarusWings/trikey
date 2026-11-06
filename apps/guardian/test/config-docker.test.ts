@@ -57,7 +57,7 @@ describe('TRIKEY_RELAYS', () => {
 });
 
 describe('golden: the Umbrel and Start9 environments read as before', () => {
-  it('Umbrel (packaging/umbrel docker-compose.yml): Electrs on the internal network, plain TCP, no setup code', () => {
+  it('Umbrel (packaging/umbrel docker-compose.yml): Electrs on the internal network, plain TCP, the login proxy trusted', () => {
     const c = loadConfig({
       PORT: '3000',
       TRIKEY_DATA_DIR: '/data',
@@ -69,15 +69,18 @@ describe('golden: the Umbrel and Start9 environments read as before', () => {
       BITCOIN_RPC_USER: 'umbrel',
       BITCOIN_RPC_PASS: 'test-only',
       BITCOIN_NETWORK: 'mainnet',
+      TRIKEY_TRUSTED_PROXY: 'gateway,trikey-guardian_app_proxy_1,app_proxy_trikey-guardian',
     });
     expect(c.electrum).toEqual({ host: '10.21.21.10', port: 50001 });
     expect(c.platform).toBe('umbrel');
+    expect(c.trustedProxies).toEqual(['gateway', 'trikey-guardian_app_proxy_1', 'app_proxy_trikey-guardian']);
     expect(c.relayOptions).toEqual(DEFAULT_RELAY_OPTIONS);
   });
 
-  it('Start9 (packaging/start9 main.ts): the bridge address, plain TCP, no setup code', () => {
-    const c = loadConfig({ PORT: '3000', TRIKEY_DATA_DIR: '/data', TRIKEY_PLATFORM: 'start9', BITCOIN_NETWORK: 'bitcoin', ELECTRUM_HOST: '10.0.3.1', ELECTRUM_PORT: '50001' });
+  it('Start9 (packaging/start9 main.ts): the bridge address, plain TCP, the setup code from the package', () => {
+    const c = loadConfig({ PORT: '3000', TRIKEY_DATA_DIR: '/data', TRIKEY_PLATFORM: 'start9', BITCOIN_NETWORK: 'bitcoin', ELECTRUM_HOST: '10.0.3.1', ELECTRUM_PORT: '50001', TRIKEY_SETUP_CODE: 'ABCD-EFGH-JKMN-PQRS' });
     expect(c.electrum).toEqual({ host: '10.0.3.1', port: 50001 });
     expect(c.platform).toBe('start9');
+    expect(c.setupCode).toBe('ABCDEFGHJKMNPQRS');
   });
 });
