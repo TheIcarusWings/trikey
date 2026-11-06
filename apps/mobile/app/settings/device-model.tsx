@@ -1,4 +1,4 @@
-import { QR_MODELS, isQrModel, qrModelInfo } from '@trikey/wallet';
+import { QR_MODELS, isQrModel, qrMessageMethod, qrModelInfo } from '@trikey/wallet';
 import { ActionNotice } from '@/components/action-notice';
 import { RadioRow } from '@/components/choice';
 import { Info } from '@/components/icons';
@@ -29,6 +29,11 @@ export default function DeviceModel() {
       {!info.signsMessages ? (
         <Notice icon={Info} tone="warn-outline" title={`${info.name} can’t sign Trikey’s texts`}>
           {`It co-signs payments, but rule changes that need your hardware wallet, notes on the guardian and unlocking the guardian with it need a device that signs a short text. ${info.whyNot ?? ''}`}
+        </Notice>
+      ) : null}
+      {qrMessageMethod(current) === 'microsd' ? (
+        <Notice icon={Info} tone="outline" title={`${info.name} signs Trikey’s texts from a microSD card`}>
+          {`Pairing, approvals, recovery access and notes work: Trikey gives you a file to copy to the card, the ${info.name} signs it, and you bring the signed file back. ${info.unlockWhyNot ?? ''}`.trim()}
         </Notice>
       ) : null}
       <RadioGroup

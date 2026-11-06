@@ -964,7 +964,9 @@ page (it shows no label: the guardian cannot read them).
 After a restart the guardian is locked until you unlock it. This option lets your hardware wallet unlock it from the
 phone with one confirmation, next to the passphrase, which always keeps working (DESIGN.md, "Unlocking the guardian with
 the hardware wallet"). It is off by default. Of the QR devices, only those that sign a text by QR code can use it
-(Coldcard Q, Jade, Keystone 3, Passport Prime, Specter DIY; step 18e); the others keep the passphrase.
+(Coldcard Q, Jade, Keystone 3, Passport Prime, Specter DIY; step 18e); the others keep the passphrase. Passport (2nd
+generation) and Krux sign texts only from a microSD card (step 18f): the option is hidden for them, with a sentence
+saying why.
 
 Do:
 
@@ -999,9 +1001,10 @@ signature back. Use a test network.
 
 Do, for each device you have:
 
-1. **Pick the model.** "Create a wallet", **Continue**, **Scan a QR code**, then your device. Passport (2nd generation),
-   Krux, SeedSigner and "Other" should say they "can't set up a guardian wallet yet" and offer Recovery Key mode; the
-   Coldcard Mk4 (no camera) should go to NFC instead (step 18f). Pick yours, scan its multisig key export.
+1. **Pick the model.** "Create a wallet", **Continue**, **Scan a QR code**, then your device. SeedSigner and "Other"
+   should say they "can't set up a guardian wallet" and offer Recovery Key mode (SeedSigner: "It co-signs payments
+   only"); the Coldcard Mk4 (no camera) should go to NFC instead (step 18g). Passport (2nd generation) and Krux go on: they sign from a
+   microSD card (step 18f). Pick yours, scan its multisig key export.
 2. **Pair** (steps 2 to 4). At "Approve", the phone shows **Sign on your <device>** with a QR, the text
    `Trikey pair v1 wallet=<id> guardian=<hex>` under it, numbered steps for your device, and, for Coldcard Q,
    Passport Prime and Specter, the address the device should show. Scan the QR with the device, **check the text and
@@ -1035,7 +1038,7 @@ Do, for each device you have:
 If it goes wrong, collect: device model and firmware, the step, a photo of the device screen and of the phone's QR
 screen (the text and the address, never your seed words), and the exact message.
 
-### 18f. A Coldcard over NFC (optional; untested on hardware: Coldcard Mk4, Coldcard Q)
+### 18g. A Coldcard over NFC (optional; untested on hardware: Coldcard Mk4, Coldcard Q)
 
 **Nothing in this step has been tried on a real device or phone yet.** The protocol was read from Coldcard's firmware
 (`shared/nfc.py`; docs/design/hardware-auth-path.md, "Coldcard over NFC"). The Coldcard plays an NFC tag: for each step
@@ -1082,6 +1085,56 @@ Do:
 
 If it goes wrong, collect: Coldcard model and firmware version, the phone model and OS version, the step, what the
 Coldcard showed (a photo, never your seed words) and the phone's exact message.
+
+---
+
+### 18f. microSD message signing (optional; untested on hardware: Passport 2nd generation, Krux)
+
+**Nothing in this step has been tried on a real device yet.** Passport (2nd generation) and Krux refuse Trikey's key
+over a text QR but sign it from a file on their microSD card (DESIGN.md, "microSD message signing";
+docs/design/hardware-auth-path.md §7, "microSD"). The phone writes a small text file (`trikey-pair.txt` and so on), you
+copy it to the card, sign on the device, and bring back the signed file it writes. You need the device's microSD card
+and a way to reach it from the phone: a USB-C (or Lightning) card reader, or a computer. Use a test network.
+
+Do, for each device you have:
+
+1. **Pick the model.** "Create a wallet", **Continue**, **Scan a QR code**, then **Passport (2nd generation)** or
+   **Krux**: the line should say "Signs payments by QR, and Trikey's texts from a microSD card", and it should go on
+   to the key export (no "can't set up a guardian wallet"). Scan its multisig key export as usual.
+2. **Pair** (steps 2 to 4). At "Approve", the phone shows **Sign on your <device>**, the text
+   `Trikey pair v1 wallet=<id> guardian=<hex>`, numbered steps and the legacy address (`m…`/`n…` on test networks) the
+   device should show. Tap **Save the file (trikey-pair.txt)** and pick the card in the reader. Write down: whether the
+   folder picker reaches the card on your phone (Android, iPhone), and the file's name and contents on the card (two
+   lines on Passport: the text, `m/48h/1h/0h/2h/0/0`; three on Krux: the same and `p2pkh`). Also try **Share the file**
+   once (to a computer, or Files).
+3. **On the device:**
+   - **Passport (2nd generation)**: any account, **Account Tools > Sign a Message > Sign with microSD**, pick
+     `trikey-pair.txt`. It should show the whole text (scroll to the end), then "Sign message with this address?" with
+     the address the phone showed. Sign. It should write `trikey-pair-signed-001.txt` next to it.
+   - **Krux**: **Sign > Message > Load from SD card**, pick `trikey-pair.txt`. It should show "Message:" with the text
+     (cut with "…" on a small screen) and "Address:" with the phone's address, then "Sign?". If it shows "SHA256:" and a
+     long number instead, stop and report it: it did not read the file. After signing, choose **Sign to SD card** (keep
+     the name `trikey-pair-signed.txt`); once, choose **Sign to QR code** instead and use **Scan the signature instead**
+     on the phone.
+4. **Bring it back.** Card back in the reader, **Open the signed file**, pick the `-signed` file. The phone should go
+   on (the wallet is added to the device, then the address is compared, as for any QR device). Write down how long the
+   whole round trip took.
+5. **Wrong files on purpose** (once): pick `trikey-pair.txt` itself (the phone should say it is "the file Trikey made
+   (the request)"), and any other text file ("not a signed message"). Edit a copy of the signed file on a computer,
+   change one character of the text, and pick it ("a different text"). Each should stay on the same screen with the
+   reason; then pick the right file.
+6. **Raise the limit** (step 10): the approval text (about 200 characters) goes through the same round trip. On Krux,
+   note how much of it the screen shows (the phone says it may cut after about 120 characters on a small screen).
+7. **Notes, twice** (step 18c): turning notes on asks for two files, **"(1 of 2)"** `trikey-notes-1of2.txt` and
+   **"(2 of 2)"** `trikey-notes-2of2.txt`. Sign both. In round 2, first pick round 1's signed file: the phone should say
+   it is "the signed file of the other round". If the app says the device "gave two different signatures", report the
+   device and firmware.
+8. **Hardware unlock is not offered.** Settings, **Guardian**: under "Unlocking" there is no switch, only a sentence
+   saying the device signs only from a microSD card and that the passphrase unlocks the guardian.
+9. **Recovery access** (step 12, the lost-phone path, if you run it with this device): the new phone asks the device to sign its request the same way (`trikey-access.txt`).
+
+If it goes wrong, collect: device model and firmware, the step, the request and signed files (they hold no secret: the
+text, the address and the signature), a photo of the device screen, and the exact message.
 
 ---
 
@@ -1150,8 +1203,8 @@ If a device refuses it, say exactly what it showed: the fallback is a synthetic 
   there (Path A). Use a small amount. On mainnet the guardian will not pair without at least one alert contact, so the app does not let
   you skip that step. Recovery Key mode stays on test networks only.
 - **Out of this round:** Recovery Key mode ("No home server?"), passkeys, iCloud and Google Drive backup (the backup
-  is a recovery code plus a backup file), QR-based devices (Coldcard Q, Keystone, Passport, Jade, SeedSigner; step 18e
-  is optional and untested on any device), BitBox02, the silent payments and Start9. Family hosting is new and has its own optional step ("Host a family member" below).
+  is a recovery code plus a backup file), QR-based devices (Coldcard Q, Keystone, Passport, Jade, Krux, SeedSigner; steps 18e, 18f and 18g
+  are optional and untested on any device), BitBox02, the silent payments and Start9. Family hosting is new and has its own optional step ("Host a family member" below).
 - **iOS** is possible from your own Mac only ("Or on an iPhone"): a free Apple ID's install lasts **7 days**, and nobody has
   run it on a real iPhone yet, so report anything iOS-specific. Android stays the main platform of this round.
 - **Updates keep the wallet from 0.1.7-alpha on** (the Trikey release key). Moving from 0.1.6-alpha or older still needs

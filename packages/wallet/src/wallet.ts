@@ -116,7 +116,7 @@ import {
   mnemonicFromEntropy,
   newMnemonic,
 } from './keys.js';
-import { QR_KINDS, defaultQrModelOf, isQrModel, qrModelInfo, type QrModel } from './qr-devices.js';
+import { QR_KINDS, defaultQrModelOf, isQrModel, qrMessageMethod, qrModelInfo, type QrModel } from './qr-devices.js';
 import { isNfcModel } from './nfc-devices.js';
 import { isHardwareDisconnect, type CloudBackupStore, type HardwareKind, type HardwareProvider, type HardwareSigner, type HardwareWalletPolicy, type KnownHardware, type KeyValueStore, type PasskeyPrf, type SecureKeyStore } from './platform.js';
 import { GuardianSilentPaymentScanner, GuardianSingleKeyChain } from './guardian-sp.js';
@@ -360,8 +360,11 @@ export interface NotesView {
 export interface HardwareUnlockView {
   /** It can be offered: the guardian lists `hardware_unlock`, the wallet is the owner's own, its device signs messages. */
   available: boolean;
-  /** Why not: the wallet is not set up, it is hosted on someone else's guardian, the guardian is older, the device signs no messages (QR). */
-  unavailable?: 'not_paired' | 'hosted' | 'guardian' | 'hardware';
+  /**
+   * Why not: the wallet is not set up, it is hosted on someone else's guardian, the guardian is older, the device signs no
+   * messages (QR), or it signs them only from a microSD card (`microsd`: Passport gen 2, Krux; the passphrase stays).
+   */
+  unavailable?: 'not_paired' | 'hosted' | 'guardian' | 'hardware' | 'microsd';
   /** On for this wallet (as the guardian last said): its hardware wallet can unlock the guardian through this phone. */
   on: boolean;
   /** When it was turned on (ms, the guardian's clock). */
@@ -402,9 +405,10 @@ export interface NotesBroughtBack {
 export const NOTES_DEBOUNCE_MS = 30_000;
 /**
  * Devices that sign Trikey's texts with the authorization key: Ledger and Trezor over USB or Bluetooth, a Coldcard (Mk4
- * or Q) over NFC (nfc-devices.ts), and QR devices whose model signs a text QR (qr-devices.ts: Coldcard Q, Jade,
- * Keystone 3, Passport Prime, Specter DIY). Notes and hardware unlock also need the same signature every time (RFC 6979),
- * which is checked when they are turned on.
+ * or Q) over NFC (nfc-devices.ts), QR devices whose model signs a text QR (qr-devices.ts: Coldcard Q, Jade, Keystone 3,
+ * Passport Prime, Specter DIY), and Passport gen 2 and Krux from a file on a microSD card. Notes and hardware unlock also
+ * need the same signature every time (RFC 6979), which is checked when they are turned on. Hardware unlock is not offered
+ * for the microSD models (a card round trip after every guardian restart).
  */
 const MESSAGE_HARDWARE: readonly HardwareKind[] = ['ledger', 'trezor', 'coldcard-nfc'];
 function signsTexts(rec: { kind: HardwareKind; qrModel?: QrModel } | undefined): boolean {
@@ -417,10 +421,14 @@ function knownOf(rec: { fingerprint: string; account: { path: string; xpub: stri
   return { fingerprint: rec.fingerprint, account: { path: rec.account.path, xpub: rec.account.xpub } };
 }
 
-/** The words for a device that cannot sign Trikey's texts. */
-function noTextsMessage(rec: { kind: HardwareKind; qrModel?: QrModel } | undefined): string {
+/** It signs Trikey's texts only from a microSD card (Passport gen 2, Krux). */
+function signsFromCard(rec: { kind: HardwareKind; qrModel?: QrModel } | undefined): boolean {
+  return !!rec && QR_KINDS.includes(rec.kind) && qrMessageMethod(rec.qrModel ?? defaultQrModelOf(rec.kind)) === 'microsd';
+}
+/** The words for a device that cannot sign Trikey's texts (`unlock`: for hardware unlock, which the microSD models don't do). */
+function noTextsMessage(rec: { kind: HardwareKind; qrModel?: QrModel } | undefined, unlock = false): string {
   const qr = rec && QR_KINDS.includes(rec.kind) ? qrModelInfo(rec.qrModel ?? defaultQrModelOf(rec.kind)) : undefined;
-  const which = 'Ledger, Trezor, a Coldcard Mk4 or Q over NFC, or by QR code a Coldcard Q, Jade, Keystone 3, Passport Prime or Specter DIY';
+  const which = `Ledger, Trezor, a Coldcard Mk4 or Q over NFC, or by QR code a Coldcard Q, Jade, Keystone 3, Passport Prime or Specter DIY${unlock ? '' : ' (or, from a microSD card, a Passport of the 2nd generation or a Krux)'}`;
   return qr ? `${qr.whyNot ?? ''} This needs a hardware wallet that signs a text: ${which}.`.trim() : `This needs a hardware wallet that signs a text: ${which}.`;
 }
 
@@ -4615,6 +4623,8 @@ export class TrikeyWallet {
     if (!this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.hardwareUnlock)) return 'guardian';
     // A device that signs no text (some QR models: qr-devices.ts) has no signature to unlock with.
     if (!signsTexts(this.s.hardware)) return 'hardware';
+    // One that signs only from a microSD card would need a card round trip after every restart: not offered.
+    if (signsFromCard(this.s.hardware)) return 'microsd';
     return undefined;
   }
 
@@ -4625,7 +4635,8 @@ export class TrikeyWallet {
       not_paired: 'Set the wallet up with your guardian first.',
       hosted: "Only your host can unlock their guardian.",
       guardian: 'Update your guardian to unlock it with your hardware wallet.',
-      hardware: noTextsMessage(this.s.hardware),
+      hardware: noTextsMessage(this.s.hardware, true),
+      microsd: qrModelInfo(this.s.hardware?.qrModel).unlockWhyNot ?? 'This hardware wallet signs texts only from a microSD card, so it does not unlock the guardian. The passphrase does.',
     }[why];
     throw new WalletError(why === 'guardian' ? 'guardian_unsupported' : 'wrong_state', text);
   }

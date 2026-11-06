@@ -16,6 +16,7 @@ import { CAN_CHECK_FOR_UPDATES, UpdateCheck } from '@/components/update-check';
 import { formatSats, serverHost, useWallet, useWalletService, type GuardianStatus, type ThemePreference } from '@/data';
 import { ANDROID_VARIANT } from '@/lib/android-variant';
 import { appDisplayName } from '@/lib/app-name';
+import { donationAddress } from '@/lib/donation';
 import { IS_IOS, pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 
@@ -132,6 +133,9 @@ export default function SettingsScreen() {
         <SettingsRow title={appDisplayName(Platform.OS, ANDROID_VARIANT)} value={`${Constants.expoConfig?.version ?? ''} · pre-alpha`} />
         {CAN_CHECK_FOR_UPDATES ? <UpdateCheck /> : null}
         <SettingsRow title="Report a problem" subtitle="Opens a public GitHub issue" onPress={() => router.push('/settings/report')} />
+        {donationAddress() ? (
+          <SettingsRow title="Support the project" subtitle="Donations, and what they pay for" onPress={() => router.push('/settings/support')} />
+        ) : null}
       </ListGroup>
     </Screen>
   );

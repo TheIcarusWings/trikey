@@ -25,6 +25,7 @@ import { addRelay, oldRelaysAfterChange, relayListError, sameRelayList } from '@
 import { cn } from '@/lib/utils';
 import { NotificationsSection } from './settings-notifications';
 import { ServerSection } from './settings-server';
+import { SupportSection } from './settings-support';
 
 function InfoRow({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -414,6 +415,8 @@ export function SettingsPage() {
       <NotificationsSection />
 
       <ServerSection />
+
+      <SupportSection />
 
       <details className="group/advanced">
         <summary className="flex w-fit cursor-pointer list-none items-center gap-1 rounded-sm text-base leading-[22px] font-semibold outline-none marker:content-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">

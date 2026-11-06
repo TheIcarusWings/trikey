@@ -206,9 +206,9 @@ Passport 83d1d576, KeyOS 4ea7bc9, SeedSigner ada81cd, Krux 28d14c2, Specter DIY 
 | Keystone 3 | Yes in code (`qrcode/mod.rs`, `sign_msg` takes any path) | Text and path; no address for a `48'` path | RFC 6979 |
 | Passport Prime | Yes, from the account the path names (`message_signing.rs`) | Text, path, legacy address | RFC 6979 |
 | Specter DIY | Yes (`signmessage.py`) | Text, path, legacy address | RFC 6979 |
-| Passport gen 2 | No: the QR flow maps `48'/x'/x'/2'` to P2WSH and stops before signing; a microSD file works (not built) | | |
-| Krux | No: "Unsupported script type" for purpose 48 over QR; a microSD file works (not built) | | |
-| SeedSigner | No: "Not implemented" for `48h` paths | | |
+| Passport gen 2 | No: the QR flow maps `48'/x'/x'/2'` to P2WSH and stops before signing. **A microSD file works (built, below)** | Text in full (scrolled to the end), legacy address. No space at either end, at most 3 in a row, file ≤ 4096 bytes | RFC 6979 (trezor-crypto) |
+| Krux | No: "Unsupported script type" for purpose 48 over QR. **A microSD file works (built, below)** | About 10 lines of text then "…" (M5StickV ~120 characters, larger screens ~210), legacy address | RFC 6979 (embit/libsecp256k1) |
+| SeedSigner | No: "Not implemented" for `48h` paths. **Decided: payments only** (DESIGN.md) | | |
 | Coldcard Mk4 | No camera: over NFC instead (section 8) | | |
 
 Text lengths: Coldcard's 240 is exactly `MAX_APPROVAL_MESSAGE_LENGTH`, and the longest text Trikey can build (a version 3
@@ -221,8 +221,64 @@ says so on Jade's screen.
 Notes and hardware unlock sign the same text twice when they are turned on (`hardware_not_deterministic` if the two
 differ); the QR screen says "(1 of 2)" and "(2 of 2)" and that the device will show the same text twice. Models that
 cannot sign are refused with their reason, and the connect screen says so before a guardian wallet is started, offering
-Recovery Key mode. Not built: microSD files (Passport gen 2, Krux), Jade over BLE or USB, BIP 322 proofs (SeedSigner,
-Krux), BitBox02. docs/alpha-test-plan.md step 18e lists the device tests; NFC is section 8 and step 18f.
+Recovery Key mode. Not built: Jade over BLE or USB, BIP 322 proofs, BitBox02. docs/alpha-test-plan.md step 18e
+lists the QR device tests, 18f the microSD ones; NFC is section 8 and step 18g.
+
+### microSD (Passport gen 2, Krux; built 2026-11-06, untested on devices)
+
+Both refuse the key over a text QR because their QR flows take the address type from the path's purpose, and 48 is
+multisig. Their microSD flows take it from the file, and sign at any path. The capability table marks them
+`messageMethod: 'microsd'`; `QrSigner.signMessage` dispatches on it to one *file request* on the QR bridge
+(`apps/mobile/src/hardware/qr/sd-message.ts`, `bridge.ts`, `ui/qr-bridge-host.tsx`, `platform/device-files`).
+
+**Passport gen 2** (passport2 83d1d576). Account Tools > Sign a Message > Sign with microSD
+(`menus.py` `sign_message_submenu`) opens `HealthCheckMicrosdFlow(normal_signing=True)`
+(`flows/health_check_microsd_flow.py`):
+
+- The file list hides names with `-signed` (`is_signable`); the read stops at `MSG_SIGNING_MAX_LENGTH` = 4096 bytes and
+  must be UTF-8.
+- `HealthCheckCommonFlow.validate_lines` (`flows/health_check_common_flow.py`): `splitlines`, then 2 or 3 lines: the text,
+  the path, and an optional address type (`get_addr_type_from_string`; default `AF_CLASSIC`, legacy). A file that starts
+  with `signmessage ` is read as Sparrow's one-line request instead, whose address type comes from the path (P2WSH for
+  ours: it fails), so Trikey never writes one. `validate_sign_text` (`utils.py`): printable ASCII, no space at either
+  end, fewer than 4 spaces in a row; the path must start with `m` and `cleanup_deriv_path` takes `h`.
+- It shows the text (`LongTextPage`, scrolled to the end) and "Sign message with this address?" with the legacy
+  address, signs (`sign_text_file_task` → `sign_message_digest_recoverable` → trezor-crypto `ecdsa.sign`, header 31-34;
+  `ecdsa_sign_digest` under `USE_RFC6979 1`, or `zkp_ecdsa_sign_digest`, libsecp256k1's default nonce), and writes
+  `RFC_SIGNATURE_TEMPLATE` (`public_constants.py`: the armored block with the text, the address and the base64
+  signature) to `<name>-signed-NNN.<ext>` next to it (`pick_filename` numbers from 001 and requires an extension). No
+  QR of the answer.
+
+Trikey writes `<text>\n<m/48h/<coin>h/<account>h/2h/0/0>\n` as `trikey-<purpose>.txt`.
+
+**Krux** (krux 28d14c2). Sign > Message > Load from SD card (`pages/home_pages/sign_message_ui.py`):
+
+- `_sign_at_address_from_sd`: every line stripped, empty lines dropped; the last line must be `p2pkh`, `p2sh-p2wpkh`,
+  `p2wpkh` or `p2tr`; the one before it the path (`_is_valid_derivation_path`: `m`, then numbers with `'`, `h` or `H`);
+  the lines before that are the text, joined by `\n`. The network comes from the path's coin type.
+- It shows "Message:" with the text (`max_lines` = `TOTAL_LINES - 10`, or `- 7` on the M5StickV and Cube, then "…":
+  about 120 characters on the M5StickV's 16-character lines, about 210 on the others for Trikey's texts, which wrap at
+  spaces), "Address:" with the address of the named type, then "Sign?". It signs with `key.sign_at` (embit
+  `secp256k1.ecdsa_sign_recoverable`, no nonce data: RFC 6979; header `27 + 4 + recid` whatever the type).
+- It then offers "Sign to QR code" (a plain QR of the base64 signature) or "Sign to SD card": the armored block, no
+  final newline, as `<name>-signed.txt` (`SIGNED_FILE_SUFFIX`; the name is prefilled on the device's keypad).
+- A file that is not in that form falls through to `sign_standard_message`: the screen shows "SHA256:" and a hash, it
+  signs that with the *account* key (DER) and writes a `.sig` file. The steps tell the owner to stop there, and the
+  phone refuses a `.sig`.
+
+Trikey writes `<text>\n<path>\np2pkh\n`: P2PKH because the header Krux writes is P2PKH's in BIP 137, so the armored
+file verifies in any BIP 137 tool, and the address shown is the legacy one the other devices show for this key.
+
+**The phone.** "Save the file" (`Directory.pickDirectoryAsync`: the card in a reader, or Files) or "Share the file"
+(share sheet, a copy in its own cache folder, cleared before each share and at start); then "Open the signed file"
+(document picker), or on Krux "Scan the signature instead". `parseSignedFile` refuses Trikey's own request, a `.sig` or
+`.pub`, an empty, binary or oversized file, and in round 2 of 2 the signed file of round 1 (by its name); the armored
+block's text must be Trikey's and its address the key's, and the signature must verify against the key derived from the
+device's xpub (`checkMessageAnswer`). Each refusal is a hint on the same screen, never a silent accept. Notes keep the
+double signature (two files): both firmwares are RFC 6979 by their source, so one would probably do, but the second
+signature is what checks it on the owner's own device, and it is asked once.
+
+Not offered: hardware unlock (a card round trip after every guardian restart; the passphrase works).
 
 ## 8. Coldcard over NFC (built 2026-11-06; untested on devices)
 

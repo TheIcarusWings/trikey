@@ -47,6 +47,14 @@ export function HardwareUnlockSection() {
   if (!actions || !s) return null;
   // An older guardian, a wallet not set up yet, or a hosted wallet (its own controls say what to do): hidden.
   if (!s.available && !s.on && (s.unavailable === 'guardian' || s.unavailable === 'not_paired' || s.unavailable === 'hosted')) return null;
+  // A device that signs only from a microSD card (Passport gen 2, Krux): no switch, one sentence on why.
+  if (!s.available && !s.on && s.unavailable === 'microsd')
+    return (
+      <>
+        <SectionLabel>Unlocking</SectionLabel>
+        <Notice tone="outline">{s.unavailableText}</Notice>
+      </>
+    );
   const locked = guardian.status === 'locked';
   const turnOff = async () => {
     const r = await toggle.run(actions.disable());
