@@ -40,6 +40,8 @@ describeE2e('the hardware wallet unlocks the guardian after a restart', () => {
     await A.refreshStatus();
     expect((await A.enableHardwareUnlock()).on).toBe(true);
     expect(signs() - before).toBe(2);
+    expect(rig.guardian.service.get().activity.at(-1)).toMatchObject({ type: 'unlock_slot_added' });
+    expect(rig.guardian.service.get().activity.at(-1)).not.toHaveProperty('unsealed');
 
     await rig.restart();
     await A.refreshStatus();

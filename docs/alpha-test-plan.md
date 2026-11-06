@@ -970,7 +970,7 @@ Do:
 1. **Turn it on** (the guardian unlocked). Settings, **Guardian**, **Unlock with your <device>**. You should see: your
    device asks you to sign `Trikey unlock key v1 wallet=<id> guardian=<hex> network=<network> slot=<hex>` **twice**
    (check it on the device screen); then "On since <time>". The guardian's web page, Activity: "Hardware unlock turned
-   on". If the app says the device "gave two different signatures", report the device model and firmware.
+   on", with no "sent it unsealed" (the signature travels sealed). If the app says the device "gave two different signatures", report the device model and firmware.
 2. **Restart the guardian** (Umbrel: restart the app; Docker: `docker compose restart`). On the phone, Home says
    "Guardian locked" with **Unlock with your <device>**. Tap it, then on the Guardian screen **Unlock with your
    <device>**: one confirmation on the device. You should see: status "Online"; Activity: "Unlocked with the hardware
