@@ -1,4 +1,8 @@
 import type { GuardianChainSource } from './chain-source';
+import type { QrModel } from '@trikey/wallet';
+
+/** The model of a QR hardware wallet (@trikey/wallet qr-devices.ts): whether it signs Trikey's texts. */
+export type { QrModel };
 /**
  * Domain types for the Trikey app UI.
  *
@@ -71,6 +75,8 @@ export interface HardwareWallet {
   brand: string;
   /** "Ledger Nano X" */
   model: string;
+  /** QR devices: the model the owner picked (`other` for a wallet made before models existed). Settings can change it. */
+  qrModel?: QrModel;
 }
 
 // ---------------------------------------------------------------- key 2
@@ -997,6 +1003,8 @@ export interface WalletsView {
 export interface AddWalletInput {
   name: string;
   hardware: HardwareKind;
+  /** QR devices: the model picked in the list. */
+  hardwareModel?: QrModel;
   dailyLimitSats: Sats;
 }
 

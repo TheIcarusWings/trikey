@@ -27,7 +27,9 @@ import {
   leaveBlockerText,
   walletKeys,
   parseBackup,
+  qrModelInfo,
   type Argon2Params,
+  type QrModel,
   type CloudBackupStore,
   type GuardianRefusal,
   type HardwareKind as WalletHardwareKind,
@@ -732,12 +734,15 @@ class Service implements RealWalletService {
         return { kind: 'trezor', brand: 'Trezor', model: model ? `Trezor ${model}` : 'Trezor' };
       case 'bitbox02':
         return { kind: 'bitbox02', brand: 'BitBox02', model: 'BitBox02' };
-      case 'coldcard':
-        return { kind: 'qr', brand: 'Coldcard', model: model || 'Coldcard' };
-      case 'jade':
-        return { kind: 'qr', brand: 'Jade', model: model || 'Jade' };
-      default:
-        return { kind: 'qr', brand: 'signing device', model: model || 'Signing device' };
+      default: {
+        // A QR device: its model as the owner picked it (Settings can change it), else what it was connected as.
+        const qrModel = rec.qrModel ?? 'other';
+        const info = qrModelInfo(qrModel);
+        if (info.model !== 'other') return { kind: 'qr', brand: info.name, model: info.name, qrModel };
+        if (rec.kind === 'coldcard') return { kind: 'qr', brand: 'Coldcard', model: model || 'Coldcard', qrModel };
+        if (rec.kind === 'jade') return { kind: 'qr', brand: 'Jade', model: model || 'Jade', qrModel };
+        return { kind: 'qr', brand: 'signing device', model: model || 'Signing device', qrModel };
+      }
     }
   }
 
@@ -1035,7 +1040,7 @@ class Service implements RealWalletService {
         };
         this.setProgress(`Adding "${name}": approve on your new hardware wallet`);
         try {
-          const added = await set.addWallet({ name, rules, ...(kind ? { hardwareKind: kind } : {}) });
+          const added = await set.addWallet({ name, rules, ...(kind ? { hardwareKind: kind } : {}), ...(kind === 'qr' && input.hardwareModel ? { hardwareModel: input.hardwareModel } : {}) });
           this.armOthersTimer();
           addEvent(this.log, { kind: 'wallet-added', name, at: this.clock.now() });
           await this.saveLogNow();
@@ -1667,19 +1672,29 @@ class Service implements RealWalletService {
     return out;
   }
 
-  connectHardware(kind: HardwareKind): Promise<HardwareWallet> {
+  connectHardware(kind: HardwareKind, qrModel?: QrModel): Promise<HardwareWallet> {
     return this.exclusive(() =>
       this.guarded(async () => {
         const w = await this.ensureWallet();
         this.abort?.abort();
         const ac = (this.abort = new AbortController());
-        this.setProgress(`Connecting to your ${hardwareBrandOf(kind)}`);
+        this.setProgress(`Connecting to your ${hardwareBrandOf(kind, qrModel)}`);
         try {
-          await w.connectHardware({ kind: toWalletKind(kind), signal: ac.signal });
+          await w.connectHardware({ kind: toWalletKind(kind), signal: ac.signal, ...(kind === 'qr' && qrModel ? { qrModel } : {}) });
           return this.hardwareView();
         } finally {
           this.setProgress(null);
         }
+      }),
+    );
+  }
+
+  setHardwareModel(model: QrModel): Promise<void> {
+    return this.exclusive(() =>
+      this.guarded(async () => {
+        const w = this.requireWallet();
+        await w.setHardwareModel(model);
+        this.refresh();
       }),
     );
   }
@@ -2793,14 +2808,15 @@ class Service implements RealWalletService {
     return r;
   }
 
-  startRecovery(lostKey: LostKey, opts: { guardian?: GuardianAddress; hardwareKind?: HardwareKind } = {}): Promise<RecoveryInProgress> {
+  startRecovery(lostKey: LostKey, opts: { guardian?: GuardianAddress; hardwareKind?: HardwareKind; hardwareModel?: QrModel } = {}): Promise<RecoveryInProgress> {
+    const model = opts.hardwareKind === 'qr' && opts.hardwareModel ? opts.hardwareModel : undefined;
     return this.exclusive(() =>
       this.guarded(async () => {
         if (lostKey === 'hardware') {
           const w = this.requireWallet();
           this.setProgress('Starting the recovery: approve with your new hardware wallet');
           try {
-            await w.startRecovery({ lostKey: 'hardware', ...(opts.hardwareKind ? { newHardwareKind: toWalletKind(opts.hardwareKind) } : {}) });
+            await w.startRecovery({ lostKey: 'hardware', ...(opts.hardwareKind ? { newHardwareKind: toWalletKind(opts.hardwareKind) } : {}), ...(model ? { newHardwareModel: model } : {}) });
           } finally {
             this.setProgress(null);
           }
@@ -2817,8 +2833,9 @@ class Service implements RealWalletService {
               code: encodeRecoveryUri({ guardianPubkey: npubToHex(g.npub), relays: g.relays, network: this.network, walletId: g.walletId, hosted: true }),
               mainnetConsent: this.mainnetRiskAccepted,
               ...(opts.hardwareKind ? { hardwareKind: toWalletKind(opts.hardwareKind) } : {}),
+              ...(model ? { hardwareModel: model } : {}),
             });
-          else await w.recoverWithHardware({ guardian: g, ...(opts.hardwareKind ? { hardwareKind: toWalletKind(opts.hardwareKind) } : {}) });
+          else await w.recoverWithHardware({ guardian: g, ...(opts.hardwareKind ? { hardwareKind: toWalletKind(opts.hardwareKind) } : {}), ...(model ? { hardwareModel: model } : {}) });
         } finally {
           this.setProgress(null);
         }

@@ -1,8 +1,9 @@
-import type { HardwareKind, HardwareOption } from './types';
+import { qrModelInfo } from '@trikey/wallet';
+import type { HardwareKind, HardwareOption, QrModel } from './types';
 
 export type UiOs = 'ios' | 'android' | 'web';
 
-const QR_DETAIL = 'Coldcard Q, Keystone, Passport, Jade, SeedSigner';
+const QR_DETAIL = 'Coldcard Q, Jade, Keystone, Passport, SeedSigner, Krux, Specter';
 
 /** The hardware wallets the connect screen can list, as the designs word them. */
 export function hardwareOptionTable(os: UiOs): Omit<HardwareOption, 'available'>[] {
@@ -20,8 +21,9 @@ export const SIMULATED_OPTION: Omit<HardwareOption, 'available'> = {
   detail: 'Regtest only · keys kept in software',
 };
 
-/** "Ledger", "Trezor", "BitBox02", "your signing device" for the screens' sentences. */
-export function hardwareBrandOf(kind: HardwareKind): string {
+/** "Ledger", "Trezor", "BitBox02", "Coldcard Q", "signing device" for the screens' sentences. */
+export function hardwareBrandOf(kind: HardwareKind, qrModel?: QrModel): string {
+  if (kind === 'qr' && qrModel && qrModel !== 'other') return qrModelInfo(qrModel).name;
   switch (kind) {
     case 'ledger':
       return 'Ledger';

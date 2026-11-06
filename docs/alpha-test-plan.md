@@ -925,7 +925,7 @@ Activity page.
 
 ---
 
-### 18c. Notes that survive recovery (optional; a guardian with this release, a Ledger or a Trezor)
+### 18c. Notes that survive recovery (optional; a guardian with this release, a Ledger, a Trezor or a QR device that signs texts)
 
 Labels (step 18b) normally live on the phone and in its backup only. This option keeps an **encrypted copy** on the
 guardian, so a recovery without the phone and its backup brings them back too (DESIGN.md, "Notes that survive recovery").
@@ -959,11 +959,12 @@ Do:
 If it goes wrong, collect: the device model and firmware, the step and the exact message, and the guardian's Activity
 page (it shows no label: the guardian cannot read them).
 
-### 18d. Unlock the guardian with the hardware wallet (optional; a guardian with this release, a Ledger or a Trezor)
+### 18d. Unlock the guardian with the hardware wallet (optional; a guardian with this release, a Ledger, a Trezor or a QR device that signs texts)
 
 After a restart the guardian is locked until you unlock it. This option lets your hardware wallet unlock it from the
 phone with one confirmation, next to the passphrase, which always keeps working (DESIGN.md, "Unlocking the guardian with
-the hardware wallet"). It is off by default; QR devices cannot use it (they sign no messages over QR codes).
+the hardware wallet"). It is off by default. Of the QR devices, only those that sign a text by QR code can use it
+(Coldcard Q, Jade, Keystone 3, Passport Prime, Specter DIY; step 18e); the others keep the passphrase.
 
 Do:
 
@@ -984,6 +985,55 @@ Do:
 
 If it goes wrong, collect: the device model and firmware, the step and the exact message, and the guardian's Activity
 page and log (they never show the signature).
+
+---
+
+### 18e. QR message signing (optional; untested on hardware: Coldcard Q, Jade, Keystone 3, Passport Prime, Specter DIY)
+
+**Nothing in this step has been tried on a real device yet.** What each device does was read from its firmware source
+(DESIGN.md, "Hardware wallets by feature"; docs/design/hardware-auth-path.md, "QR devices"). Pairing a guardian,
+approvals that loosen the rules, recovery access, notes and hardware unlock all need the device to sign a short text
+with the key `m/48'/<coin>'/0'/2'/0/0`. Over QR codes the phone shows one QR, `signmessage m/48h/1h/0h/2h/0/0
+ascii:<text>` (`0h` in place of `1h` on mainnet), the device shows the text and signs, and the phone scans the
+signature back. Use a test network.
+
+Do, for each device you have:
+
+1. **Pick the model.** "Create a wallet", **Continue**, **Scan a QR code**, then your device. Passport (2nd generation),
+   Krux, SeedSigner and "Other" should say they "can't set up a guardian wallet yet" and offer Recovery Key mode; the
+   Coldcard Mk4 should say it has no camera. Pick yours, scan its multisig key export.
+2. **Pair** (steps 2 to 4). At "Approve", the phone shows **Sign on your <device>** with a QR, the text
+   `Trikey pair v1 wallet=<id> guardian=<hex>` under it, numbered steps for your device, and, for Coldcard Q,
+   Passport Prime and Specter, the address the device should show. Scan the QR with the device, **check the text and
+   the path on its screen**, sign, tap **Scan the signature** and scan what the device shows.
+3. **Per device**, what to check and write down:
+   - **Coldcard Q** (firmware 1.5.2Q or later): press the QR key and scan; the Coldcard should recognise a message to
+     sign. Check the text, the path and that its address matches the one on the phone. Choose to show the signature as
+     a QR. Then raise the limit (step 10): its text is about 200 characters, and the Coldcard signs at most 240. Note
+     whether the answer QR is the bare signature or the armored block (both are read).
+   - **Jade / Jade Plus** (1.0.41 or later), unlocked in **QR mode**: Scan QR, then the QR. Jade shows the text cut after
+     about 188 characters and "...", the path and a hash. The pairing text (114 characters) should show in full; a limit
+     change (about 200) is cut at the end. Note what it shows, and that the answer QR is accepted (a 65-byte signature).
+   - **Keystone 3**: scan from its home screen. Does it accept the path `m/48'/...` at all? It should show the text and
+     the path and **no address**. Write down exactly what it shows, and any warning.
+   - **Passport Prime**: open account 0 first (the one the path names), then scan. Write down whether your multisig
+     account at index 0 exists to sign from, and what it shows (the address should match the phone's).
+   - **Specter DIY**: Scan QR code, then the QR. It should show the text, the path and an address that matches the
+     phone's.
+4. **The same signature twice.** Turn on notes (step 18c) and hardware unlock (step 18d). Each shows **"(1 of 2)"**
+   then **"(2 of 2)"**, with "Your <device> will show the same text twice". Sign both. If the app says the device "gave
+   two different signatures", report the device and firmware: it cannot be used for notes or unlock.
+5. **Wrong things on purpose** (once, any device): sign with another path or account on the device (Passport Prime:
+   from account 1), or scan an old signature. The phone should keep the camera open and say the signature "is not from
+   this wallet's key", naming the path. Cancel, and try again properly.
+6. **Settings, Advanced, Hardware wallet model.** Switch to "Other": notes and hardware unlock say they need a device
+   that signs a text. Switch back.
+7. **Across devices** (two devices with the same seed, for example a Coldcard Q and a Jade): turn notes on with one,
+   then on another phone recover or restore with the other and bring the notes back. The two should give the same
+   signature for the same text.
+
+If it goes wrong, collect: device model and firmware, the step, a photo of the device screen and of the phone's QR
+screen (the text and the address, never your seed words), and the exact message.
 
 ---
 
@@ -1052,8 +1102,8 @@ If a device refuses it, say exactly what it showed: the fallback is a synthetic 
   there (Path A). Use a small amount. On mainnet the guardian will not pair without at least one alert contact, so the app does not let
   you skip that step. Recovery Key mode stays on test networks only.
 - **Out of this round:** Recovery Key mode ("No home server?"), passkeys, iCloud and Google Drive backup (the backup
-  is a recovery code plus a backup file), QR-based devices (Coldcard Q, Keystone, Passport, Jade, SeedSigner), BitBox02, the
-  silent payments and Start9. Family hosting is new and has its own optional step ("Host a family member" below).
+  is a recovery code plus a backup file), QR-based devices (Coldcard Q, Keystone, Passport, Jade, SeedSigner; step 18e
+  is optional and untested on any device), BitBox02, the silent payments and Start9. Family hosting is new and has its own optional step ("Host a family member" below).
 - **iOS** is possible from your own Mac only ("Or on an iPhone"): a free Apple ID's install lasts **7 days**, and nobody has
   run it on a real iPhone yet, so report anything iOS-specific. Android stays the main platform of this round.
 - **Updates keep the wallet from 0.1.7-alpha on** (the Trikey release key). Moving from 0.1.6-alpha or older still needs

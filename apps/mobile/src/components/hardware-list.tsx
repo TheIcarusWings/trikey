@@ -1,20 +1,121 @@
 import { useEffect, useState } from 'react';
 import { Pressable, View } from 'react-native';
-import { ChevronRight } from '@/components/icons';
-import { Body, ListGroup } from '@/components/panels';
+import { QR_MODELS, qrModelInfo } from '@trikey/wallet';
+import { AppButton } from '@/components/app-button';
+import { ChevronRight, Info } from '@/components/icons';
+import { Body, ListGroup, Notice } from '@/components/panels';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
-import { useWalletService, type HardwareKind, type HardwareOption } from '@/data';
+import { useWalletService, type HardwareKind, type HardwareOption, type QrModel } from '@/data';
 import { IS_IOS, pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
 /**
- * The hardware wallets this phone can talk to (Ledger, Trezor, QR devices; the simulated device in the simulator),
- * asked of the wallet. Used when connecting the first one and when connecting a replacement.
+ * What the device will be used for. `guardian`: a guardian wallet, where the device must sign Trikey's texts (pairing,
+ * approvals, recovery access), so a QR model that cannot is stopped before anything starts. `payments`: it only
+ * co-signs payments (Recovery Key mode, Savings), which every QR model with a camera does.
  */
-export function HardwareList({ onPick }: { onPick: (kind: HardwareKind) => void }) {
+export type HardwarePurpose = 'guardian' | 'payments';
+
+function Row({ title, detail, label, disabled, onPress }: { title: string; detail: string; label: string; disabled?: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      role="link"
+      disabled={disabled}
+      accessibilityLabel={label}
+      onPress={onPress}
+      className={cn(
+        'flex-row items-center gap-3 active:bg-accent',
+        pick('min-h-[60px] px-4 py-3', 'min-h-[72px] gap-4 px-0 py-3'),
+        disabled && 'opacity-50'
+      )}>
+      <View className="flex-1">
+        <Text className={pick('text-[17px] leading-[22px]', 'text-base leading-6')}>{title}</Text>
+        <Text className={cn('text-muted-foreground', pick('text-[13px] leading-[18px]', 'text-sm leading-5'))}>{detail}</Text>
+      </View>
+      <Icon as={ChevronRight} size={pick(20, 24)} className={IS_IOS ? 'text-chevron' : 'text-muted-foreground'} strokeWidth={2} />
+    </Pressable>
+  );
+}
+
+/** Why `model` can't be used for `purpose`, or undefined when it can. */
+export function qrModelBlock(model: QrModel, purpose: HardwarePurpose): { title: string; text: string; payments: boolean } | undefined {
+  const info = qrModelInfo(model);
+  if (!info.qr) return { title: `${info.name}: not by QR code`, text: info.whyNot ?? '', payments: false };
+  if (purpose === 'guardian' && !info.signsMessages)
+    return {
+      title: `${info.name} can't set up a guardian wallet yet`,
+      text: `It can co-sign payments, but a guardian wallet needs your hardware wallet to sign a short text to pair with your guardian and to approve rule changes. ${info.whyNot ?? ''}`.trim(),
+      payments: true,
+    };
+  return undefined;
+}
+
+/**
+ * The QR device models (@trikey/wallet qr-devices.ts), each with what it can do. Picking one that cannot do `purpose`
+ * says so before anything starts, and offers Recovery Key mode where the caller has it (`onRecoveryKeyMode`).
+ */
+export function QrModelList({
+  purpose,
+  onPick,
+  onRecoveryKeyMode,
+  current,
+}: {
+  purpose: HardwarePurpose;
+  onPick: (model: QrModel) => void;
+  onRecoveryKeyMode?: () => void;
+  current?: QrModel;
+}) {
+  const [blocked, setBlocked] = useState<QrModel | null>(null);
+  const block = blocked ? qrModelBlock(blocked, purpose) : undefined;
+  if (blocked && block)
+    return (
+      <View className="gap-3">
+        <Notice icon={Info} tone="warn-outline" title={block.title}>
+          {block.text}
+          {block.payments && onRecoveryKeyMode ? ' Recovery Key mode needs no guardian, so you can use it there.' : ''}
+        </Notice>
+        {block.payments && onRecoveryKeyMode ? <AppButton title="Use Recovery Key mode instead" onPress={onRecoveryKeyMode} /> : null}
+        <AppButton title="Pick another device" variant="outline" onPress={() => setBlocked(null)} />
+      </View>
+    );
+  return (
+    <ListGroup>
+      {QR_MODELS.map((model) => {
+        const info = qrModelInfo(model);
+        const stop = qrModelBlock(model, purpose);
+        const detail = model === current ? `${info.detail} · current` : info.detail;
+        return (
+          <Row
+            key={model}
+            title={info.name}
+            detail={detail}
+            label={`${info.name}. ${detail}`}
+            onPress={() => (stop ? setBlocked(model) : onPick(model))}
+          />
+        );
+      })}
+    </ListGroup>
+  );
+}
+
+/**
+ * The hardware wallets this phone can talk to (Ledger, Trezor, QR devices; the simulated device in the simulator),
+ * asked of the wallet. Used when connecting the first one and when connecting a replacement. "Scan a QR code" opens the
+ * list of QR models: the owner picks theirs, since it decides whether the device can set up a guardian wallet.
+ */
+export function HardwareList({
+  onPick,
+  purpose = 'payments',
+  onRecoveryKeyMode,
+}: {
+  onPick: (kind: HardwareKind, qrModel?: QrModel) => void;
+  purpose?: HardwarePurpose;
+  onRecoveryKeyMode?: () => void;
+}) {
   const wallet = useWalletService();
   const [options, setOptions] = useState<HardwareOption[] | null>(null);
+  const [qrOpen, setQrOpen] = useState(false);
 
   useEffect(() => {
     let off = false;
@@ -32,28 +133,26 @@ export function HardwareList({ onPick }: { onPick: (kind: HardwareKind) => void 
       </Body>
     );
 
+  if (qrOpen)
+    return (
+      <View className="gap-3">
+        <Body>Which device is it? Trikey asks it for different things, and not every device can set up a guardian wallet.</Body>
+        <QrModelList purpose={purpose} onPick={(model) => onPick('qr', model)} onRecoveryKeyMode={onRecoveryKeyMode} />
+        <AppButton title="Back to all devices" variant="ghost" onPress={() => setQrOpen(false)} />
+      </View>
+    );
+
   return (
     <ListGroup>
       {options.map((option) => (
-        <Pressable
+        <Row
           key={option.kind}
-          role="link"
+          title={option.name}
+          detail={option.available ? option.detail : 'Not available on this phone right now'}
+          label={`${option.name}. ${option.detail}${option.available ? '' : '. Not available on this phone right now'}`}
           disabled={!option.available}
-          accessibilityLabel={`${option.name}. ${option.detail}${option.available ? '' : '. Not available on this phone right now'}`}
-          onPress={() => onPick(option.kind)}
-          className={cn(
-            'flex-row items-center gap-3 active:bg-accent',
-            pick('min-h-[60px] px-4 py-3', 'min-h-[72px] gap-4 px-0 py-3'),
-            !option.available && 'opacity-50'
-          )}>
-          <View className="flex-1">
-            <Text className={pick('text-[17px] leading-[22px]', 'text-base leading-6')}>{option.name}</Text>
-            <Text className={cn('text-muted-foreground', pick('text-[13px] leading-[18px]', 'text-sm leading-5'))}>
-              {option.available ? option.detail : 'Not available on this phone right now'}
-            </Text>
-          </View>
-          <Icon as={ChevronRight} size={pick(20, 24)} className={IS_IOS ? 'text-chevron' : 'text-muted-foreground'} strokeWidth={2} />
-        </Pressable>
+          onPress={() => (option.kind === 'qr' ? setQrOpen(true) : onPick(option.kind))}
+        />
       ))}
     </ListGroup>
   );

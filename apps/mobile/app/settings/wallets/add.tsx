@@ -17,7 +17,9 @@ import {
   useWallet,
   useWalletService,
   walletNameProblem,
+  hardwareBrandOf,
   type HardwareKind,
+  type QrModel,
   type WalletListItem,
 } from '@/data';
 import { pick } from '@/lib/platform';
@@ -39,6 +41,7 @@ export default function AddWallet() {
   const [name, setName] = useState('');
   const [limit, setLimit] = useState(formatSats(DEFAULT_LIMIT));
   const [kind, setKind] = useState<HardwareKind | null>(null);
+  const [qrModel, setQrModel] = useState<QrModel | undefined>(undefined);
   const [added, setAdded] = useState<WalletListItem | null>(null);
   const { busy, run, message, error } = useAction();
   const problem = name ? walletNameProblem(name, view) : undefined;
@@ -74,7 +77,7 @@ export default function AddWallet() {
 
   const add = async () => {
     if (!kind) return;
-    const r = await run(wallet.addWallet!({ name: name.trim(), hardware: kind, dailyLimitSats: limitSats }));
+    const r = await run(wallet.addWallet!({ name: name.trim(), hardware: kind, ...(qrModel ? { hardwareModel: qrModel } : {}), dailyLimitSats: limitSats }));
     if (r.ok) setAdded(r.value);
   };
 
@@ -118,9 +121,15 @@ export default function AddWallet() {
       <Notice icon={Smartphone}>{SHARED_PHONE_NOTICE}</Notice>
       <FieldLabel>The new hardware wallet</FieldLabel>
       {kind ? (
-        <Body>{`Connect your new hardware wallet (${kind}). It must not be in another wallet on this phone.`}</Body>
+        <Body>{`Connect your new hardware wallet (${hardwareBrandOf(kind, qrModel)}). It must not be in another wallet on this phone.`}</Body>
       ) : (
-        <HardwareList onPick={setKind} />
+        <HardwareList
+          purpose="guardian"
+          onPick={(k, m) => {
+            setQrModel(m);
+            setKind(k);
+          }}
+        />
       )}
     </Screen>
   );

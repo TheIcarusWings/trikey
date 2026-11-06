@@ -113,6 +113,14 @@ export default function SettingsScreen() {
           <SectionLabel>Advanced</SectionLabel>
           <ListGroup>
             <SettingsRow title="Wallet details" subtitle="To recover in another wallet" onPress={() => router.push('/settings/wallet-details')} />
+            {state.hardware.kind === 'qr' && state.backing !== 'simulator' ? (
+              <SettingsRow
+                title="Hardware wallet model"
+                value={state.hardware.qrModel && state.hardware.qrModel !== 'other' ? state.hardware.model : 'Other'}
+                subtitle="What Trikey asks of your QR device"
+                onPress={() => router.push('/settings/device-model')}
+              />
+            ) : null}
           </ListGroup>
         </>
       ) : null}

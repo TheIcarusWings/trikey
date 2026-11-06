@@ -20,9 +20,31 @@ function ShowRequest({ request, bridge }: { request: QrShowRequest; bridge: QrBr
     <>
       <AnimatedQr frames={request.frames} />
       {request.detail ? (
-        <Text selectable className="text-foreground text-center font-mono text-[13px] leading-[20px]">
+        <Text
+          selectable
+          accessibilityLabel={request.purpose === 'message' ? `The text to sign: ${request.detail}` : undefined}
+          className={cn('text-foreground font-mono text-[13px] leading-[20px]', request.purpose === 'message' ? 'self-stretch text-left' : 'text-center')}>
           {request.detail}
         </Text>
+      ) : null}
+      {request.steps?.length ? (
+        <View className="gap-2 self-stretch pl-5">
+          {request.steps.map((step, i) => (
+            <View key={step} className="flex-row">
+              <Text className="-ml-5 w-5 text-base leading-6">{i + 1}.</Text>
+              <Text className="flex-1 text-base leading-6">{step}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      {request.notes?.length ? (
+        <View className="gap-1.5 self-stretch">
+          {request.notes.map((note) => (
+            <Text key={note} selectable className="text-muted-foreground text-sm leading-5">
+              {note}
+            </Text>
+          ))}
+        </View>
       ) : null}
       <View className="gap-2 self-stretch">
         <AppButton title={request.continueLabel} size="hero" onPress={() => bridge.finishShow()} />

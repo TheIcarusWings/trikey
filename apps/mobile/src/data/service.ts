@@ -1,4 +1,5 @@
 import type {
+  QrModel,
   WalletDetails,
   BackupOptions,
   FeeSpeed,
@@ -133,7 +134,13 @@ export interface WalletService {
   acceptMainnetRisk(accepted: boolean): void;
   /** The hardware wallets this phone can talk to. */
   getHardwareOptions(): Promise<HardwareOption[]>;
-  connectHardware(kind: HardwareKind): Promise<HardwareWallet>;
+  /** `qrModel`: for a QR device, the model picked in the list (it says whether the device signs Trikey's texts). */
+  connectHardware(kind: HardwareKind, qrModel?: QrModel): Promise<HardwareWallet>;
+  /**
+   * Sets the model of the wallet's QR hardware wallet (Settings). Wallets made before models existed read as "Other",
+   * which signs no text: pairing a guardian, approvals, notes and hardware unlock need a model that does.
+   */
+  setHardwareModel?(model: QrModel): Promise<void>;
   /** Called with whatever the pairing QR code contained. */
   pairGuardian(pairingCode: string): Promise<Guardian>;
   /**
@@ -261,7 +268,7 @@ export interface WalletService {
    * `hardware`: this phone and the guardian move everything to a new hardware wallet (it connects `hardwareKind`).
    * `phone`: on a NEW phone, the hardware wallet and the guardian (found at `guardian`) do it.
    */
-  startRecovery(lostKey: LostKey, opts?: { guardian?: GuardianAddress; hardwareKind?: HardwareKind }): Promise<RecoveryInProgress>;
+  startRecovery(lostKey: LostKey, opts?: { guardian?: GuardianAddress; hardwareKind?: HardwareKind; hardwareModel?: QrModel }): Promise<RecoveryInProgress>;
   acknowledgeRecovery(): void;
   cancelRecovery(): Promise<void>;
   /** After a contested cancel, or a hosted wallet's pause: the hardware wallet re-enables phone payments. */

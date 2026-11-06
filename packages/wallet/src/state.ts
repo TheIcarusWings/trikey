@@ -13,6 +13,7 @@ import { HardwareAuthKey, HistoryEntry, KeyOrigin, Network, PhoneSpendingState, 
 import type { KeyValueStore } from './platform.js';
 import { OwnSpend } from './own-spends.js';
 import { WalletError } from './errors.js';
+import { QR_MODELS, defaultQrModelOf } from './qr-devices.js';
 
 const Hex32 = z.string().regex(/^[0-9a-f]{64}$/);
 
@@ -31,8 +32,20 @@ export const HardwareRecord = z.object({
   registrationHmac: z.string().optional(),
   /** The device showed the first receive address and it matched. */
   addressVerified: z.boolean().default(false),
+  /**
+   * QR devices: the model (qr-devices.ts), which says whether it signs Trikey's texts. Absent on records made before
+   * models existed: `StateStore.load` sets `other` for a `qr` device (the owner can set it in Settings).
+   */
+  qrModel: z.enum(QR_MODELS).optional(),
 });
 export type HardwareRecord = z.infer<typeof HardwareRecord>;
+
+/** `rec` with its QR model filled in when it has none (records made before QR models existed). */
+export function withQrModel<T extends { kind: HardwareRecord['kind']; qrModel?: HardwareRecord['qrModel'] }>(rec: T): T {
+  if (rec.qrModel) return rec;
+  const model = defaultQrModelOf(rec.kind);
+  return model ? { ...rec, qrModel: model } : rec;
+}
 
 /**
  * A wallet hosted on someone else's guardian (docs/design/family-hosting.md): the guardian knows only its account
@@ -656,6 +669,8 @@ export class StateStore {
     }
     const parsed = WalletState.safeParse(json);
     if (!parsed.success) throw new WalletError('internal', `the stored wallet state is invalid: ${parsed.error.issues[0]?.message}`);
+    // QR models (qr-devices.ts) came later: a QR device stored without one reads as `other` until the owner picks it.
+    if (parsed.data.hardware) parsed.data.hardware = withQrModel(parsed.data.hardware);
     return parsed.data;
   }
 

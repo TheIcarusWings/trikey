@@ -1,7 +1,7 @@
-# The hardware authorization key path on Trezor and Ledger
+# The hardware authorization key path on Trezor, Ledger and QR devices
 
-Status: proposal, not built. Written 2026-10-31 against `main` at 0.1.5. Device behaviour was read from
-firmware and SDK source the same day, not tested on hardware.
+Status: sections 1-6 written 2026-10-31 against `main` at 0.1.5; section 7 (QR devices, built) added 2026-11-06.
+Device behaviour was read from firmware and SDK source, not tested on hardware.
 
 A code audit flagged an unconfirmed risk: that Trezor refuses `signMessage` at our authorization key path
 with "Forbidden key path" under the default Strict safety checks. **It does not.** No Trezor refuses the
@@ -173,3 +173,52 @@ Keep `m/48'/c'/0'/2'/0/0`. No change to the protocol or the guardian, and no mig
 Detecting the firmware version, to show the hint only when it applies, needs Connect `getFeatures` through
 Suite Lite. Whether Suite Lite's deep link exposes it is unverified, so the hint above is worded to hold for
 every model.
+
+## 7. QR devices (built 2026-11-06; untested on devices)
+
+Air-gapped devices sign the same text at the same path over a **text QR**, the format Sparrow and Specter use. The phone
+shows one QR:
+
+```
+signmessage m/48h/<coin>h/<account>h/2h/0/0 ascii:<text>
+```
+
+and scans the answer: a QR of the base64 65-byte BIP 137 signature, or Coldcard's armored block
+(`-----BEGIN BITCOIN SIGNED MESSAGE-----`, the text, then the address and the signature), which Coldcard writes over NFC
+and to microSD. Every parser read accepts the `h` notation (Coldcard `cleanup_deriv_path`, Jade's libwally
+`bip32_path_from_str`, Keystone, embit, Passport). The phone (`apps/mobile/src/hardware/qr/message.ts`,
+`QrSigner.signMessage`) derives the expected key from the account xpub the device exported, and before returning the
+signature checks that an armored block's text is Trikey's, that its address is the key's (legacy, nested or native
+segwit), and that the signature verifies. A wrong key, path, account or text stays on the scan screen as a hint naming
+the path, so the owner can sign again; `signWithAuthKey` then checks it once more. The device's header byte (31-34 for
+the legacy address type every one of them writes for a `48'` path) is fine: the guardian takes 27-42.
+
+The owner picks the model when adding the device (a key export that names it fills in "Other"; Settings changes it),
+because the current `qr` kind does not say which device it is. The capability table is
+`packages/wallet/src/qr-devices.ts`. From the firmware sources (Coldcard 09766a1, Jade a59d14c, Keystone 3 3690bf1,
+Passport 83d1d576, KeyOS 4ea7bc9, SeedSigner ada81cd, Krux 28d14c2, Specter DIY bec1ab1):
+
+| Model | Signs at `m/48'/c'/a'/2'/0/0` by text QR | What it shows; limits | Deterministic |
+|---|---|---|---|
+| Coldcard Q | Yes (`decoders.py`, no path check in `auth.py`) | Text, path, legacy address. 2-240 ASCII characters, no space at either end, never three in a row (`msgsign.py`) | RFC 6979 |
+| Jade / Jade Plus | Yes, in QR mode (`qrmode.c`) | Text cut after about 188 characters with "...", the path, a hash; signs all of it | RFC 6979 (no anti-exfil over QR) |
+| Keystone 3 | Yes in code (`qrcode/mod.rs`, `sign_msg` takes any path) | Text and path; no address for a `48'` path | RFC 6979 |
+| Passport Prime | Yes, from the account the path names (`message_signing.rs`) | Text, path, legacy address | RFC 6979 |
+| Specter DIY | Yes (`signmessage.py`) | Text, path, legacy address | RFC 6979 |
+| Passport gen 2 | No: the QR flow maps `48'/x'/x'/2'` to P2WSH and stops before signing; a microSD file works (not built) | | |
+| Krux | No: "Unsupported script type" for purpose 48 over QR; a microSD file works (not built) | | |
+| SeedSigner | No: "Not implemented" for `48h` paths | | |
+| Coldcard Mk4 | No camera: NFC or USB (not built) | | |
+
+Text lengths: Coldcard's 240 is exactly `MAX_APPROVAL_MESSAGE_LENGTH`, and the longest text Trikey can build (a version 3
+policy approval with a 16-digit sequence) is 238 characters; a test (`packages/wallet/test/qr-devices.e2e.test.ts`)
+fails if any text grows past the smallest limit. On Jade's screen the pairing text (114), notes key (60), unlock key
+(156), cancel-recovery (about 135) and resume or retire (about 82) show in full; a policy approval (about 190-238) and
+recovery access (199 or 223) are cut, with the values first and the end of `hash=` and `expires=` cut off. The phone
+says so on Jade's screen.
+
+Notes and hardware unlock sign the same text twice when they are turned on (`hardware_not_deterministic` if the two
+differ); the QR screen says "(1 of 2)" and "(2 of 2)" and that the device will show the same text twice. Models that
+cannot sign are refused with their reason, and the connect screen says so before a guardian wallet is started, offering
+Recovery Key mode. Not built: NFC (Coldcard Mk4 and Q), microSD files (Passport gen 2, Krux), Jade over BLE or USB,
+BIP 322 proofs (SeedSigner, Krux), BitBox02. docs/alpha-test-plan.md step 18e lists the device tests.
