@@ -803,7 +803,15 @@ no policy hash or approval text changes, the same version-1 backup).
   later spend of the same coins is a replacement (RBF); paying out the same (a fee bump) it is only logged
   (`savings_replaced`), paying out something else it is announced again, naming the spend it replaced. Turning the watch off, or
   swapping it for another Savings wallet, is announced to the phone and every contact the same way (`savings_unwatched`);
-  the phone, which did not ask for it, registers Savings again at its next sync. It refuses to watch any
+  the phone, which did not ask for it, registers Savings again at its next sync. **Every transaction counts, not the
+  newest few:** a scan's history is cut to 200 entries, unconfirmed first, so someone holding two Savings keys could
+  hide a spend behind 200 cheap unconfirmed payments into Savings (an external review found this up to 0.1.19). The
+  tripwire now checks every transaction the server lists for a Savings address, each once (remembered in memory),
+  first seen first checked, at most 500 reads per scan: a flood costs the guardian one read per transaction, spread over
+  scans, and what arrives after a spend waits behind it. While transactions wait unchecked for 30 minutes, or reading
+  Savings keeps failing that long, the phone and every contact get `savings_unchecked` (at most daily) rather than
+  silence; the first scan records history only once it has checked everything. A Savings spend relayed through
+  `tx.broadcast` stays in view until the engine has recorded it. It refuses to watch any
   wallet it could sign for (the guarded, watched or a retired key set, or one holding key 3). A rotation carries the
   record to the adopted wallet; retirement and reset drop it. The web UI shows a "Savings (watched)" card.
 - **Backup and recovery.** The backup is version 2 only when Savings exists (`savings`: descriptor, wallet id, the two

@@ -203,6 +203,13 @@ export interface WalletSync {
   gapLimit: number;
   /** The version of the relayed records this read applied (relayed.ts `RelayedTxs.version`). */
   relayedVersion?: number;
+  /**
+   * Every transaction the server lists for a used address, at its height (0 unconfirmed), whether or not `history` (cut
+   * to `historyLimit`) shows it: what the Savings tripwire checks in full (savings.ts). Not on the wire.
+   */
+  txHeights?: ReadonlyMap<string, number>;
+  /** The output scripts (hex) the scan counts as the wallet's (`ChainService.walletScripts`). Not on the wire. */
+  ownScripts?: ReadonlyMap<string, { chain: 0 | 1; index: number }>;
 }
 
 function decodeRawTx(txHex: string) {
@@ -861,6 +868,8 @@ export class ChainService {
       nextChangeIndex: next[1],
       gapLimit: scan.gapLimit,
       relayedVersion: relayed.version,
+      txHeights: heights,
+      ownScripts: scripts,
     };
   }
 

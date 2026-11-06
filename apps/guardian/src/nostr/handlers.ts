@@ -756,6 +756,8 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
             const r = await g.chain.broadcast(params.txHex, { track: true });
             if (r.txid !== txid) g.log.warn('tx.broadcast_txid_mismatch', { txid, reported: r.txid });
             g.log.info('tx.broadcast', { txid, via: r.via, spends: 'savings' });
+            // Kept in view of the tripwire until it has recorded this spend, whatever the server lists meanwhile.
+            w.savingsWatch.relayed(txid, params.txHex);
             void w.savingsWatch.run({ force: true }).then(() => w.alerts.run());
             return { txid };
           }

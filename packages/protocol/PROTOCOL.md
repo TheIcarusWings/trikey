@@ -427,6 +427,12 @@ know these methods, and only to them does a phone send them (an older one answer
   a Savings coin that an earlier spend also spent is a replacement (RBF). If it pays out the same as the one it replaces
   (the same outputs to everyone but Savings: a fee bump, only the change is smaller) it is logged and not announced;
   otherwise it is announced as a `savings_moved` with `replaces` (the txid it replaced) and `previousAmountSats`.
+  **Every transaction, not a window:** the guardian checks every transaction its server lists for a Savings address
+  (however many unconfirmed payments into Savings sort before a spend), each once, at most 500 reads per scan, first
+  seen first checked; a Savings spend it relayed stays in view until announced. While transactions wait unchecked for
+  30 minutes (a flood of payments into Savings), or reading Savings keeps failing that long, it raises
+  `savings_unchecked` to the paired phone and the alert contacts, at most once a day; any spend among them is announced
+  as soon as it is checked. The first scan records history only once it has checked everything.
 
 ### Extra alert channels
 
@@ -757,6 +763,7 @@ Nothing else on the wire changes. The guardian's nostr key, its relays, key 3, t
 | `limit_on` | `limitSats`, `reason` (`phone`\|`hardware`\|`recovery`): the daily limit is on again; `recovery`: the wallet a recovery adopted starts with it. To the paired phone |
 | `savings_moved` | `walletId` (the Savings wallet), `txid`, `amountSats` (what left Savings, fee included), `replaces?` and `previousAmountSats?` (a replacement of a spend announced before that pays out something else; a fee bump is not announced): a Savings coin was spent. To the paired phone; alert contacts get a NIP-17 DM. Guardians with `savings`; see "Savings" |
 | `savings_unwatched` | `walletId` (the Savings wallet no longer watched), `replacedBy?` (the one watched instead): `savings.unregister`, or `savings.register` with another wallet. To the paired phone; alert contacts get a NIP-17 DM. See "Savings" |
+| `savings_unchecked` | `walletId` (the Savings wallet), `pending?` (transactions waiting unchecked; absent: reading Savings keeps failing): for 30 minutes the guardian could not check every Savings transaction, so a spend may be hidden among them. At most once a day. To the paired phone; alert contacts get a NIP-17 DM. Phones before it drop it (an unknown `type`). See "Savings" |
 | `relays_changed` | `relays` (`RelayList`): the guardian moved to these relays (its web UI). Sent to the paired phone (and phones with recovery access) over the old and the new relays. See section 5, "Changing relays" |
 | `notifications_changed` | none: the extra alert channels (email, ntfy, webhook, Telegram) were changed in the guardian's web UI; read the new list from `guardian.status.notifications`. Guardians with `notifications`; see "Extra alert channels" |
 | `passphrase_changed` | none: the owner changed the guardian's passphrase in its web UI; the old one no longer unlocks it, key 3 and any hardware unlock slot are unchanged. To the paired phone (and the owner's extra alert channels), never a guest's. Guardians with `passphrase_change`; see "Changing the passphrase" |
