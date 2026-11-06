@@ -31,8 +31,9 @@ export default function ReceiveVerify() {
   // Recovery Key mode checks the vault's address (the spending balance's belongs to the phone alone).
   const params = useLocalSearchParams<{ to?: string }>();
   const toVault = state.mode === 'recoveryKey' && params.to === 'vault';
-  // The address on screen is the one the device is asked about, even after the wallet moves on to the next one.
-  const [receiveAddress] = useState(() => (toVault ? (wallet.rk?.vaultAddress() ?? '') : state.receiveAddress));
+  // The address on screen is the one the device is asked about, even after the wallet moves on to the next one. A vault
+  // whose addresses the device has not confirmed yet has none to show before the check: it is the one the device shows.
+  const [receiveAddress, setReceiveAddress] = useState(() => (toVault ? (wallet.rk?.vaultAddress() ?? '') : state.receiveAddress));
   const [mismatch, setMismatch] = useState(false);
   const [verified, setVerified] = useState(false);
   const { busy, run, message, error } = useAction();
@@ -46,7 +47,9 @@ export default function ReceiveVerify() {
   useEffect(() => {
     let off = false;
     void run(toVault ? wallet.rk!.verifyVaultAddress() : wallet.receiveAddress({ verifyOnDevice: true })).then((r) => {
-      if (!off && r.ok) setVerified(r.value.verifiedOnDevice);
+      if (off || !r.ok) return;
+      if (toVault && r.value.verifiedOnDevice) setReceiveAddress(r.value.address);
+      setVerified(r.value.verifiedOnDevice);
     });
     return () => {
       off = true;

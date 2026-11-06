@@ -33,6 +33,8 @@ export function mapRkError(e: unknown): WalletServiceError {
         return make('hardware', `The hardware wallet's answer didn't check out. ${e.message}`);
       case 'address_mismatch':
         return make('address_mismatch');
+      case 'address_unverified':
+        return make('address_mismatch', "Your hardware wallet hasn't confirmed the vault's addresses yet, so Trikey won't show one. Check the address on your hardware wallet first.");
       case 'key_unavailable':
         return make('refused', "The phone key couldn't be unlocked. Try again, and confirm with Face ID or your fingerprint.");
       case 'kit_invalid':

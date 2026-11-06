@@ -9,9 +9,9 @@ import { EsploraClient, RecoveryKeyWallet } from '@trikey/recovery-key';
 import { receiverAddress, silentPaymentKeysFromSeed } from '@trikey/silent-payments';
 import { simFetch } from '@trikey/recovery-key/testing';
 import { WalletServiceError } from './errors';
-import { MemoryKeyValueStore, MemorySecureKeyStore, SoftwareHardwareSigner } from '@trikey/wallet/testing';
+import { MemoryKeyValueStore, MemorySecureKeyStore, SoftwareHardwareSigner, SwappedExportSigner } from '@trikey/wallet/testing';
 import { createRkWalletService, networkPrefKey } from './rk-service';
-import { HARDWARE, PERIOD, closeServicesAfterAll, externalAddress, failure, setUp, wordsProof, world } from './rk-test-support';
+import { HARDWARE, HARDWARE_3, PERIOD, closeServicesAfterAll, externalAddress, failure, setUp, wordsProof, world } from './rk-test-support';
 
 closeServicesAfterAll();
 
@@ -107,18 +107,36 @@ describe('creating the wallet (RK-Create)', () => {
     expect(svc.getState().recoveryKey).toMatchObject({ stage: 'ready', savedKey: 'hardware' });
   });
 
-  it('does not ask a QR-only device to show the first address (it cannot on request)', async () => {
+  it('has a QR-only device check the first address too (its compare sheet), before any vault address is shown', async () => {
     const w = world();
     const qr = new SoftwareHardwareSigner({ mnemonic: HARDWARE, network: 'regtest', kind: 'qr', model: 'Signing device' });
     w.provider.device = qr;
     const { svc } = await w.phone();
     await svc.connectHardware('qr');
     const kit = await svc.rk!.makeKit();
+    expect(svc.rk!.vaultAddress()).toBe('');
     await svc.rk!.confirmKit(wordsProof(kit));
-    expect(qr.calls.map((c) => c.op)).not.toContain('displayAddress');
-    expect(svc.getState()).toMatchObject({ onboarded: true, addressVerified: false });
-    // The deposit address can still be compared on the device later.
+    const shown = qr.calls.filter((c) => c.op === 'displayAddress');
+    expect(shown).toHaveLength(1);
+    expect(svc.getState()).toMatchObject({ onboarded: true, addressVerified: true });
+    expect(svc.rk!.vaultAddress()).toBe((shown[0] as { address: string }).address);
+    // It can still be compared again later (Add to vault, Check on your device).
     expect(await svc.rk!.verifyVaultAddress()).toMatchObject({ verifiedOnDevice: true });
+  });
+
+  it('refuses a swapped QR export: no vault, and no vault address to show, copy or share', async () => {
+    const w = world();
+    // The key export the phone scans carries someone else's key under the device's fingerprint.
+    const device = new SwappedExportSigner({ mnemonic: HARDWARE, impostorMnemonic: HARDWARE_3, network: 'regtest', kind: 'qr', model: 'Signing device' });
+    w.provider.device = device;
+    const { svc } = await w.phone();
+    await svc.connectHardware('qr');
+    const kit = await svc.rk!.makeKit();
+    expect(await failure(svc.rk!.confirmKit(wordsProof(kit)))).toMatchObject({ kind: 'address_mismatch' });
+    expect(device.calls.some((c) => c.op === 'displayAddress')).toBe(true);
+    expect(svc.getState()).toMatchObject({ onboarded: false, addressVerified: false, recoveryKey: { stage: 'hardware' } });
+    expect(svc.rk!.vaultAddress()).toBe('');
+    expect(await failure(svc.rk!.verifyVaultAddress())).toMatchObject({ kind: 'wrong_state' });
   });
 
   it('never leaves the test networks, even where the guardian mode may use mainnet', async () => {

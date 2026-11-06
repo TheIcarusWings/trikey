@@ -8,6 +8,7 @@ import { ColdcardNdef, ccfileDecode, recordParser } from '../test/fake-coldcard-
 import { makeFixture } from '../test/fixtures';
 import { COLDCARD_NFC_MAX_SIZE, keyExportFromNdef, messageAnswerFromNdef, messageRequest, psbtRequest, signedFromNdef, walletRequest } from './coldcard';
 import { decodeNdefMessage, textRecord } from './ndef';
+import { decodeXpub, encodeXpub } from '../common/xpub';
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const dec = (b: Uint8Array) => new TextDecoder().decode(b);
@@ -57,7 +58,9 @@ describe('what the phone writes', () => {
 
 describe('what the phone reads', () => {
   it('the key export: application/json (Settings › Multisig Wallets › Export XPUB), or the same JSON as text', () => {
-    const json = '{"p2wsh_deriv": "m/48h/1h/0h/2h", "p2wsh": "tpubD6NzVbkrYhZ4XgiXtGrdW5XDAPFCL9h7we1vwNCpn8tGbBcgfVYjXyhWo4E1xkh56hjod1RhGjxbaTLV3X4FyWuejifB9jusQ46QzG87VKp", "account": "0", "xfp": "0F056943"}';
+    // A key at the account path's depth and index (the export's keys are checked against their paths).
+    const tpub = encodeXpub({ ...decodeXpub('tpubD6NzVbkrYhZ4XgiXtGrdW5XDAPFCL9h7we1vwNCpn8tGbBcgfVYjXyhWo4E1xkh56hjod1RhGjxbaTLV3X4FyWuejifB9jusQ46QzG87VKp'), depth: 4, childNumber: 0x80000002 });
+    const json = `{"p2wsh_deriv": "m/48h/1h/0h/2h", "p2wsh": "${tpub}", "account": "0", "xfp": "0F056943"}`;
     const asJson = new ColdcardNdef();
     asJson.addMimeData('application/json', enc(json));
     expect(keyExportFromNdef(shared(asJson))).toMatchObject({ fingerprint: '0f056943', keys: [{ path: [0x80000030, 0x80000001, 0x80000000, 0x80000002] }] });

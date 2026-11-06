@@ -22,6 +22,8 @@ export interface Fixture {
   hardwareFingerprint: string;
   /** The hardware account xpub (tpub). */
   hardwareXpub: string;
+  /** The throwaway hardware wallet's xpub (tpub) at any path, e.g. "m/84'/1'/0'", as a device would export it. */
+  hardwareXpubAt(path: string): string;
   /** An unsigned spend: one input (chain 0, index 3), a payment, and a change output (chain 1, index 4). */
   psbt: Uint8Array;
   psbtBase64: string;
@@ -52,6 +54,7 @@ export async function makeFixture(): Promise<Fixture> {
     policy: { name: 'Trikey test', descriptor: wallet.descriptor() },
     hardwareFingerprint: hardwareKey.fingerprint,
     hardwareXpub: hardwareKey.xpub,
+    hardwareXpubAt: (path: string) => hwSigner().master(network).derive(path).publicExtendedKey,
     psbt: plan.psbt,
     psbtBase64: base64.encode(plan.psbt),
     psbtAppSigned: await appSigner().signPsbt(plan.psbt, network),

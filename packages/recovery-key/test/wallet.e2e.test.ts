@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { hex } from '@scure/base';
 import { MultisigWallet } from '@trikey/core';
-import { MemoryKeyValueStore, MemorySecureKeyStore, SoftwareHardwareProvider, SoftwareHardwareSigner } from '@trikey/wallet/testing';
+import { MemoryKeyValueStore, MemorySecureKeyStore, SoftwareHardwareProvider, SoftwareHardwareSigner, SwappedExportSigner } from '@trikey/wallet/testing';
 import { EsploraClient } from '../src/esplora.js';
 import { SimChain, simFetch } from '../src/testing/index.js';
 import { startFakeEsplora, type FakeEsplora } from '../src/testing/esplora-server.js';
@@ -161,6 +161,71 @@ describe('create a vault and approve 8 refills', () => {
       const res = verifyConsensus(r.txHex, prevouts);
       expect(res.ok, `refill ${k + 1}: ${res.output}`).toBe(true);
     });
+  });
+});
+
+// A QR or NFC export swapped on its way to the phone puts someone else's key in the vault as the hardware key. Nothing
+// in the export can show it; the device's own address check does, and no vault address is handed out before it passes.
+describe('the vault address waits for the device check', () => {
+  const qrDevice = () => new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware, network: 'regtest', kind: 'qr', model: 'Signing device' });
+  const swapped = () => new SwappedExportSigner({ mnemonic: MNEMONICS.hardware, impostorMnemonic: MNEMONICS.hardware2, network: 'regtest', kind: 'qr', model: 'Signing device' });
+
+  async function started(w: World, device: SoftwareHardwareSigner) {
+    w.provider.device = device;
+    const wallet = await RecoveryKeyWallet.create(w.deps, { mnemonic: MNEMONICS.phone });
+    await wallet.connectHardware();
+    const kit = await wallet.createRecoveryKit({ date: new Date(w.clock.t) });
+    return { wallet, kit };
+  }
+
+  it('checks the first address on an air-gapped device too, and hands out vault addresses once it matches', async () => {
+    const w = await world();
+    const device = qrDevice();
+    const { wallet, kit } = await started(w, device);
+    const summary = await wallet.confirmKitSaved(wordsProof(kit, wallet.kitChallenge()));
+    expect(device.calls.filter((c) => c.op === 'displayAddress')).toEqual([{ op: 'displayAddress', chain: 0, index: 0, address: summary.firstAddress }]);
+    expect(summary.addressVerified).toBe(true);
+    expect(wallet.vaultAddressVerified).toBe(true);
+    expect((await wallet.vaultReceiveAddress()).address).toBe(summary.firstAddress);
+  });
+
+  it('refuses a swapped export: the vault is not made, and no address of it is handed out', async () => {
+    const w = await world();
+    const device = swapped();
+    const { wallet, kit } = await started(w, device);
+    // The vault the phone would build has the impostor's key where the device's should be.
+    expect(wallet.state.hardware!.key.xpub).not.toBe(await qrDevice().getXpub("m/48'/1'/0'/2'"));
+    expect(wallet.state.hardware!.fingerprint).toBe(device.info.fingerprint);
+    const err = await rejects(wallet.confirmKitSaved(wordsProof(kit, wallet.kitChallenge())));
+    expect(err.code).toBe('address_mismatch');
+    expect(wallet.state.stage).toBe('hardware');
+    expect(wallet.state.vault).toBeUndefined();
+    expect(wallet.vaultAddressVerified).toBe(false);
+    expect((await rejects(wallet.vaultReceiveAddress())).code).toBe('wrong_state');
+  });
+
+  it('a vault whose check was skipped hands out no address until the device confirms one', async () => {
+    const w = await world();
+    const { wallet, kit } = await started(w, qrDevice());
+    const summary = await wallet.confirmKitSaved(wordsProof(kit, wallet.kitChallenge()), { verifyAddress: false });
+    expect(summary.addressVerified).toBe(false);
+    expect(wallet.state.stage).toBe('ready');
+    expect(wallet.vaultAddressVerified).toBe(false);
+    expect((await rejects(wallet.vaultReceiveAddress())).code).toBe('address_unverified');
+    const checked = await wallet.vaultReceiveAddress({ verifyOnDevice: true });
+    expect(checked).toMatchObject({ address: summary.firstAddress, verifiedOnDevice: true });
+    expect(wallet.vaultAddressVerified).toBe(true);
+    expect(wallet.state.hardware!.addressVerified).toBe(true);
+    expect((await wallet.vaultReceiveAddress()).index).toBe(1);
+  });
+
+  it('a skipped check on a swapped export never unlocks the vault address', async () => {
+    const w = await world();
+    const { wallet, kit } = await started(w, swapped());
+    await wallet.confirmKitSaved(wordsProof(kit, wallet.kitChallenge()), { verifyAddress: false });
+    expect((await rejects(wallet.vaultReceiveAddress({ verifyOnDevice: true }))).code).toBe('address_mismatch');
+    expect(wallet.vaultAddressVerified).toBe(false);
+    expect((await rejects(wallet.vaultReceiveAddress())).code).toBe('address_unverified');
   });
 });
 

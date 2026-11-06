@@ -30,7 +30,7 @@ import {
 } from '../common/psbt';
 import { assertChainIndex, assertNetworkFamily, findKeyIndex, parseWalletPolicy, walletScriptsAt } from '../common/wallet';
 import { xpubFamily } from '../common/xpub';
-import { findExportedKey, type ExportedKey } from '../qr/export';
+import { checkKeyMatchesPath, findExportedKey, type ExportedKey } from '../qr/export';
 import { checkMessageAnswer, messageAddresses } from '../qr/message';
 import { coldcardMultisigConfig } from '../qr/registration';
 import type { NfcBridge } from './bridge';
@@ -99,7 +99,11 @@ export class NfcSigner implements HardwareSigner {
     const numbers = parsePath(path);
     if (numbers.length === 0) throw new HardwareError('invalid-request', 'Asking for the master key is not supported.', { kind: 'coldcard-nfc' });
     const known = this.keys.find((k) => same(k.path, numbers));
-    if (known) return known.xpub;
+    if (known) {
+      // Read at connect (or by an earlier call): checked against its path again before it is handed out.
+      checkKeyMatchesPath(known);
+      return known.xpub;
+    }
     const exp = await this.opts.bridge.read({
       purpose: 'device-key',
       title: `Read the key ${formatPath(numbers)}`,

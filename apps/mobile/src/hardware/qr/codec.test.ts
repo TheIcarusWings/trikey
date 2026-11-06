@@ -373,15 +373,16 @@ describe('public key export from a device', () => {
 
   it('reads the Coldcard multisig export (SLIP-132 Vpub) as JSON text and as BBQr', async () => {
     const f = await makeFixture();
-    const vpub = encodeXpub({ ...decodeXpub(f.hardwareXpub), version: 0x02575483 });
+    const asVpub = (xpub: string) => encodeXpub({ ...decodeXpub(xpub), version: 0x02575483 });
+    const vpub = asVpub(f.hardwareXpub);
     expect(vpub).toMatch(/^Vpub/);
     const json = JSON.stringify({
       xfp: f.hardwareFingerprint.toUpperCase(),
       account: '0',
       p2sh_deriv: "m/45'",
-      p2sh: vpub,
+      p2sh: asVpub(f.hardwareXpubAt("m/45'")),
       p2sh_p2wsh_deriv: "m/48'/1'/0'/1'",
-      p2sh_p2wsh: vpub,
+      p2sh_p2wsh: asVpub(f.hardwareXpubAt("m/48'/1'/0'/1'")),
       p2wsh_deriv: "m/48'/1'/0'/2'",
       p2wsh: vpub,
     });
@@ -398,12 +399,43 @@ describe('public key export from a device', () => {
       chain: 'XTN',
       xfp: f.hardwareFingerprint.toUpperCase(),
       account: 0,
-      xpub: f.hardwareXpub,
-      bip44: { name: 'p2pkh', xfp: f.hardwareFingerprint.toUpperCase(), deriv: "m/44h/1h/0h", xpub: f.hardwareXpub },
+      xpub: f.hardwareXpubAt('m'),
+      bip44: { name: 'p2pkh', xfp: f.hardwareFingerprint.toUpperCase(), deriv: "m/44h/1h/0h", xpub: f.hardwareXpubAt("m/44'/1'/0'") },
       bip48_2: { name: 'p2wsh', xfp: f.hardwareFingerprint.toUpperCase(), deriv: "m/48h/1h/0h/2h", xpub: f.hardwareXpub },
     });
     const exp = parseDeviceExport({ type: 'text', text: json });
     expect(exp.keys.map((k) => k.path)).toEqual([[44 + H, 1 + H, 0 + H], [48 + H, 1 + H, 0 + H, 2 + H]]);
+  });
+
+  it('refuses an export whose key is not the one its path claims (a swapped or re-labelled key)', async () => {
+    const f = await makeFixture();
+    const fp = f.hardwareFingerprint.toUpperCase();
+    const account: number[] = [48 + H, 1 + H, 0 + H, 2 + H];
+    // Another key next to the account path: the master key (depth 0), the BIP 84 account (depth 3), the P2SH-P2WSH
+    // account (depth 4, child 1'). The key's own depth and child number contradict the path.
+    for (const wrong of [f.hardwareXpubAt('m'), f.hardwareXpubAt("m/84'/1'/0'"), f.hardwareXpubAt("m/48'/1'/0'/1'")]) {
+      expect(() => parseDeviceExport({ type: 'text', text: JSON.stringify({ xfp: fp, p2wsh_deriv: "m/48'/1'/0'/2'", p2wsh: wrong }) })).toThrowError(/does not match its derivation path/);
+      expect(() => parseDeviceExport({ type: 'text', text: `[${f.hardwareFingerprint}/48h/1h/0h/2h]${wrong}` })).toThrowError(/does not match its derivation path/);
+      expect(() => findExportedKey({ fingerprint: f.hardwareFingerprint, keys: [{ path: account, xpub: wrong }] }, account)).toThrowError(/does not match/);
+    }
+    // One such key spoils the whole export, even next to a good one: the signers keep every key of an export.
+    const mixed = JSON.stringify({ xfp: fp, p2wsh_deriv: "m/48'/1'/0'/2'", p2wsh: f.hardwareXpub, bip84_deriv: "m/84'/1'/0'", bip84: f.hardwareXpub });
+    expect(() => parseDeviceExport({ type: 'text', text: mixed })).toThrowError(/m\/84'\/1'\/0'/);
+
+    // A crypto-hdkey has no depth or child number of its own: an origin whose stated depth is not its number of steps
+    // (a partial path) is refused, not taken as a path from the master key.
+    const d = decodeXpub(f.hardwareXpub);
+    const hdWith = (components: PathComponent[], depth?: number) =>
+      new CryptoHDKey({ isMaster: false, key: Buffer.from(d.key), chainCode: Buffer.from(d.chainCode), origin: new CryptoKeypath(components, Buffer.from(f.hardwareFingerprint, 'hex'), depth) });
+    const partial = hdWith([new PathComponent({ index: 0, hardened: true }), new PathComponent({ index: 2, hardened: true })], 4);
+    expect(() => describeHdKey(partial)).toThrowError(/depth 4.*2 steps/);
+    expect(() => parseDeviceExport({ type: 'ur', urType: 'crypto-hdkey', cbor: new Uint8Array(partial.toCBOR()) })).toThrowError(/depth 4/);
+    const wildcard = hdWith([new PathComponent({ index: 48, hardened: true }), new PathComponent({ hardened: false })]);
+    expect(() => describeHdKey(wildcard)).toThrowError(/wildcard/);
+    // Without a stated depth the path is the key's full path, as before.
+    const full = describeHdKey(hdWith(account.map((n) => new PathComponent({ index: n - H, hardened: true }))))!.key;
+    expect(full.path).toEqual(account);
+    expect(decodeXpub(full.xpub)).toMatchObject({ depth: 4, childNumber: 2 + H, key: d.key, chainCode: d.chainCode });
   });
 
   it('reads descriptor text with a key origin', async () => {

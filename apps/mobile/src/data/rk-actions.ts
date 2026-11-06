@@ -42,9 +42,15 @@ export interface RecoveryKeyActions {
   /** Hides a banner for good (the next one of its kind shows again). */
   dismissNotice(id: string): void;
 
-  /** The vault's next deposit address, without using it up. */
+  /**
+   * The vault's next deposit address, without using it up; '' until the hardware wallet has confirmed the vault's
+   * addresses (`state.addressVerified`). Never show, copy or share a vault address another way.
+   */
   vaultAddress(): string;
-  /** Shows that address on the hardware wallet and checks it matches. */
+  /**
+   * Shows that address on the hardware wallet and checks it matches. A match records the confirmation, so a vault whose
+   * setup check did not run (made before it was required) gets its addresses this way.
+   */
   verifyVaultAddress(): Promise<{ address: string; verifiedOnDevice: boolean }>;
 
   /** Reads a kit (its QR text, or its words) and looks up what the vault holds. Changes nothing. */
