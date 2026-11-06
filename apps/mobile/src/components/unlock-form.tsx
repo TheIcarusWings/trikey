@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
+import { HardwareUnlockButton } from '@/components/hardware-unlock';
 import { AppButton } from '@/components/app-button';
 import { Input } from '@/components/ui/input';
 import { useWalletService } from '@/data';
@@ -10,7 +11,7 @@ import { pick } from '@/lib/platform';
 /**
  * The passphrase field that unlocks a guardian after a restart. The passphrase lives in this component's state for as
  * long as the field is on screen, goes to the guardian once, and is cleared as soon as the guardian answers. It is never
- * written anywhere.
+ * written anywhere. With unlocking by hardware wallet on (Settings > Guardian), "Unlock with <device>" comes first.
  */
 export function UnlockForm({ onUnlocked }: { onUnlocked?: () => void }) {
   const wallet = useWalletService();
@@ -26,6 +27,7 @@ export function UnlockForm({ onUnlocked }: { onUnlocked?: () => void }) {
 
   return (
     <View className="gap-3">
+      <HardwareUnlockButton onUnlocked={onUnlocked} />
       <Input
         accessibilityLabel="Guardian passphrase"
         placeholder="Guardian passphrase"

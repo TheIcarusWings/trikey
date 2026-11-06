@@ -43,6 +43,7 @@ import type { SavingsActions } from './savings-actions';
 import type { SpeedUpActions } from './speed-up-actions';
 import type { CoinActions } from './coin-actions';
 import type { NotesActions } from './notes-actions';
+import type { HardwareUnlockActions } from './hardware-unlock-actions';
 
 export type { RecoveryKeyActions, SilentPaymentActions, SavingsActions, SpeedUpActions, CoinActions };
 
@@ -298,6 +299,11 @@ export interface WalletService {
    * and "Bring back your notes" after a recovery or a restore. The guardian mode's wallet and the demo have it.
    */
   readonly notes?: NotesActions;
+  /**
+   * Unlocking the guardian with the hardware wallet (DESIGN.md): off by default; when on, "Unlock with <device>" next to
+   * the passphrase. The phone keeps nothing that unlocks by itself. The guardian mode's wallet and the demo have it.
+   */
+  readonly hardwareUnlock?: HardwareUnlockActions;
   /**
    * Makes a quote exact when the wallet needs the chain for it (Recovery Key mode picks the coins). Optional: the
    * quote `quoteSend` gave stays valid, with `estimate: true`. Screens that show the final fee call it.

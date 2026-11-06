@@ -229,11 +229,14 @@ export function SilentPaymentsRow() {
 
 /**
  * Guardian locked (after a restart) or offline: phone-only payments wait, the hardware wallet can still pay. A locked
- * guardian is unlocked with its passphrase on the guardian's page.
+ * guardian is unlocked on the guardian's page: with its passphrase, or the hardware wallet when that is on.
  */
 export function GuardianDownNotice() {
   const router = useRouter();
+  const service = useWalletService();
   const { guardian, hardware, hosted } = useWallet();
+  // Unlocking with the hardware wallet is on: the guardian page offers it first.
+  const byHardware = !!service.hardwareUnlock?.state()?.on;
   const locked = guardian.status === 'locked';
   const host = guardianBox(guardian);
 
@@ -252,7 +255,7 @@ export function GuardianDownNotice() {
           </Text>
           {locked && !hosted ? (
             <Pressable role="link" onPress={() => router.push('/settings/guardian')} className="min-h-11 justify-center self-start active:opacity-60">
-              <Text className="text-[15px] font-semibold leading-5">Unlock with passphrase</Text>
+              <Text className="text-[15px] font-semibold leading-5">{byHardware ? `Unlock with your ${hardware.brand}` : 'Unlock with passphrase'}</Text>
             </Pressable>
           ) : null}
         </View>
