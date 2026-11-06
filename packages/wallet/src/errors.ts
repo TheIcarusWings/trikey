@@ -44,7 +44,10 @@ export type GuardianRefusal = { message: string } & (
   /**
    * `reason`: `phone_unlock_disabled` (5 failures in a row: the web UI must unlock first), `recovery_pending` (a recovery
    * this phone did not start runs), `hardware_unlock_failed` (the hardware wallet's signature did not open its slot),
-   * `hardware_unlock_off` (no slot for that wallet: turned off, or on again since). Absent: a wrong passphrase.
+   * `hardware_unlock_off` (no slot for that wallet: turned off, or on again since), `unlock_key_stale` (sealed to an unlock
+   * key the guardian no longer holds, even after one fresh try: it restarted or locked again meanwhile; not counted),
+   * `sealed_unlock_invalid` (the guardian could not open the seal: counted like a wrong passphrase). Absent: a wrong
+   * passphrase.
    */
   | { kind: 'unlock_failed'; retryAfterSeconds?: number; reason?: string }
   | { kind: 'rate_limited'; retryAfterSeconds?: number }

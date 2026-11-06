@@ -86,6 +86,9 @@ import {
   type Result,
   type RpcClientOptions,
   type WalletUtxo,
+  SEALED_UNLOCK_TTL_SEC,
+  sealUnlock,
+  type UnlockSecret,
 } from '@trikey/protocol';
 import {
   BACKUP_FILE_PREFIX,
@@ -1636,10 +1639,11 @@ export class TrikeyWallet {
    * (it handled this id before it restarted and lost the answer), the wallet
    * re-reads the guardian's state with `verify`: if the change is there, that
    * is the result; if not, it sends the request once more with a new id.
+   * `params` may be a function of the request id, for params bound to it (a sealed unlock): made again for a new id.
    */
   private callChanging<M extends MethodName>(
     method: M,
-    params: Params<M>,
+    params: Params<M> | ((id: string) => Params<M>),
     opts: { verify: () => Promise<Result<M> | undefined>; persist?: boolean; id?: string; timeoutMs?: number },
   ): Promise<Result<M>> {
     // One at a time: there is one pending slot, and approvals share one sequence counter.
@@ -1655,12 +1659,13 @@ export class TrikeyWallet {
 
   private async callChangingNow<M extends MethodName>(
     method: M,
-    params: Params<M>,
+    paramsOf: Params<M> | ((id: string) => Params<M>),
     opts: { verify: () => Promise<Result<M> | undefined>; persist?: boolean; id?: string; timeoutMs?: number },
   ): Promise<Result<M>> {
     const rpc = await this.client();
     const persist = opts.persist !== false && STATE_CHANGING.has(method);
-    const record = async (id: string) => {
+    const paramsFor = (id: string): Params<M> => (typeof paramsOf === 'function' ? (paramsOf as (id: string) => Params<M>)(id) : paramsOf);
+    const record = async (id: string, params: Params<M>) => {
       // Re-sending the same id keeps its first `sentAt`, so a request cannot live on forever across restarts.
       if (persist)
         await this.update((s) => void (s.pending = { id, method, params, sentAt: s.pending?.id === id ? s.pending.sentAt : this.now() }));
@@ -1669,7 +1674,8 @@ export class TrikeyWallet {
       if (persist) await this.update((s) => void (s.pending = undefined));
     };
     let id = opts.id ?? generateMessageId();
-    await record(id);
+    let params = paramsFor(id);
+    await record(id, params);
     try {
       try {
         const r = await rpc.call(method, params, { id, timeoutMs: opts.timeoutMs });
@@ -1683,7 +1689,8 @@ export class TrikeyWallet {
           return done;
         }
         id = generateMessageId();
-        await record(id);
+        params = paramsFor(id);
+        await record(id, params);
         const r = await rpc.call(method, params, { id, timeoutMs: opts.timeoutMs });
         await clear();
         return r;
@@ -4475,24 +4482,57 @@ export class TrikeyWallet {
   // ===========================================================================
   // Guardian unlock
 
-  /** Unlocks the guardian after a restart with its passphrase (`guardian.unlock`). The passphrase is never stored. */
+  /**
+   * Unlocks the guardian after a restart with its passphrase (`guardian.unlock`). The passphrase is never stored. To a
+   * guardian with `sealed_unlock` it is sealed to the guardian's current unlock key (`sendUnlock`).
+   */
   async unlockGuardian(passphrase: string): Promise<{ ok: true } | { ok: false; refusal: GuardianRefusal }> {
     if (!this.s.guardian) throw new WalletError('wrong_state', 'No guardian is paired.');
     // A guest never unlocks the host's box (family hosting): only its owner's passphrase does, at the box.
     if (this.isHosted) throw new WalletError('wrong_state', "Only your host can unlock their guardian. To resume a paused wallet, use your hardware wallet.");
-    try {
-      await this.callChanging(
-        'guardian.unlock',
-        { kind: 'passphrase', passphrase },
-        {
-          persist: false,
-          verify: async () => ((await this.call('guardian.status', {})).state === 'unlocked' ? { unlocked: true } : undefined),
-        },
-      );
-    } catch (e) {
-      const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
-      if (!refusal) throw e;
-      return { ok: false, refusal };
+    return this.sendUnlock({ kind: 'passphrase', passphrase }, await this.statusForUnlock());
+  }
+
+  /** `guardian.status` read now and stored, as the guardian answered it (its `unlockKey` is not kept: it changes at every lock). */
+  private async statusForUnlock(): Promise<Result<'guardian.status'>> {
+    const st = await this.call('guardian.status', {});
+    await this.storeStatus(st);
+    return st;
+  }
+
+  /**
+   * Sends an unlock secret (`guardian.unlock`), sealed when the guardian can open a seal (PROTOCOL.md, "Sealed unlock"):
+   * a guardian listing `sealed_unlock` gets it sealed to its `unlockKey` (made when it locked, in its memory only), bound
+   * to its nostr key, this phone, the request id and an expiry; only a guardian without the feature gets it in the clear,
+   * as before. Sealed to a key the guardian no longer holds (it restarted or locked again meanwhile: `unlock_key_stale`),
+   * the phone reads the new key and sends once more, sealed to it. Never stored, never in the pending-request record.
+   */
+  private async sendUnlock(secret: UnlockSecret, status: Result<'guardian.status'>): Promise<{ ok: true } | { ok: false; refusal: GuardianRefusal }> {
+    const verify = async () => ((await this.call('guardian.status', {})).state === 'unlocked' ? { unlocked: true } : undefined);
+    let st = status;
+    for (let attempt = 0; ; attempt++) {
+      if (st.state === 'unlocked') break;
+      const sealing = !!st.features?.includes(GUARDIAN_FEATURES.sealedUnlock);
+      const key = st.unlockKey?.pubkey;
+      // A guardian that seals but shows no key while locked: never fall back to the clear.
+      if (sealing && !key) throw new WalletError('guardian_unsupported', "The guardian didn't give a key to seal the unlock to. Refresh and try again.");
+      const guardianPubkey = this.s.guardian!.pubkey;
+      const phonePubkey = this.s.nostrPubkey;
+      const params = (id: string): Params<'guardian.unlock'> =>
+        sealing ? { kind: 'sealed', sealed: sealUnlock(secret, { guardianPubkey, unlockKey: key!, phonePubkey, id, expiresAt: this.nowSec() + SEALED_UNLOCK_TTL_SEC }) } : secret;
+      try {
+        // A secret: never written to the pending-request record.
+        await this.callChanging('guardian.unlock', params, { persist: false, verify });
+        break;
+      } catch (e) {
+        const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
+        if (!refusal) throw e;
+        if (attempt === 0 && refusal.kind === 'unlock_failed' && refusal.reason === 'unlock_key_stale') {
+          st = await this.statusForUnlock();
+          continue;
+        }
+        return { ok: false, refusal };
+      }
     }
     await this.refreshStatus().catch(() => undefined);
     return { ok: true };
@@ -4587,31 +4627,17 @@ export class TrikeyWallet {
    */
   async unlockGuardianWithHardware(): Promise<{ ok: true } | { ok: false; refusal: GuardianRefusal }> {
     this.requireHardwareUnlock();
-    // The slot as the guardian lists it now (turned on again elsewhere, say): what to sign.
-    const st = await this.refreshStatus();
+    // The slot as the guardian lists it now (turned on again elsewhere, say): what to sign. And its unlock key.
+    const st = await this.statusForUnlock();
     if (st.state === 'unlocked') return { ok: true };
     const slot = st.hardwareUnlock?.slot;
     if (!slot) throw new WalletError('wrong_state', 'Unlocking with the hardware wallet is not on for this wallet. Use the passphrase.');
     const walletId = this.s.wallet!.walletId;
     const text = this.unlockText(slot);
     const signature = await this.withHardware((hw, rec) => this.signWithAuthKey(hw, rec, text, 'unlock'));
-    try {
-      await this.callChanging(
-        'guardian.unlock',
-        { kind: 'hardware', walletId, slot, signature },
-        {
-          // A secret for as long as the slot lives: never written to the pending-request record.
-          persist: false,
-          verify: async () => ((await this.call('guardian.status', {})).state === 'unlocked' ? { unlocked: true } : undefined),
-        },
-      );
-    } catch (e) {
-      const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
-      if (!refusal) throw e;
-      return { ok: false, refusal };
-    }
-    await this.refreshStatus().catch(() => undefined);
-    return { ok: true };
+    // A secret for as long as the slot lives: sealed when the guardian can open a seal, never stored. A stale unlock key
+    // is sealed again without asking the device (its signature of the same text is the same).
+    return this.sendUnlock({ kind: 'hardware', walletId, slot, signature }, st);
   }
 
   /**
