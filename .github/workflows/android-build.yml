@@ -358,7 +358,7 @@ jobs:
 
           Today both do the same: Google Drive backup is not switched on in either yet. Not sure? Take the standard one.
 
-          **Had the no-Google APK of 0.1.20-alpha or earlier?** It had the standard app's id, so this FOSS APK cannot
+          **Had the no-Google APK of 0.1.21-alpha or earlier?** It had the standard app's id, so this FOSS APK cannot
           update it: it installs as a second app, next to the old one, and starts empty. Your wallet is still in the old
           app. In Trikey FOSS, tap "I already have a Trikey wallet", then "My phone, but I have its backup", and open your
           backup file with your recovery code. Uninstall the old app once the wallet shows in the new one. (Or install

@@ -10,8 +10,8 @@ release_source: https://github.com/TheIcarusWings/trikey
 match: '^trikey-alpha-foss-v[0-9][^/]*\.apk$'
 # Every release is a GitHub pre-release while Trikey is pre-alpha; publish them on the main channel.
 prerelease_channel: main
-# APKs up to 0.1.20-alpha had the standard app's id (app.trikey.wallet): only 0.1.21 and later are this app.
-release_filter: '^v(0\.1\.(2[1-9]|[3-9][0-9])|0\.([2-9]|[1-9][0-9])\.[0-9]+|[1-9][0-9]*\.[0-9]+\.[0-9]+)(-alpha)?$'
+# APKs up to 0.1.21-alpha had the standard app's id (app.trikey.wallet): only 0.1.22 and later are this app.
+release_filter: '^v(0\.1\.(2[2-9]|[3-9][0-9])|0\.([2-9]|[1-9][0-9])\.[0-9]+|[1-9][0-9]*\.[0-9]+\.[0-9]+)(-alpha)?$'
 
 name: Trikey FOSS
 summary: Trikey without Google code. A 2-of-3 bitcoin wallet where every key is yours. Pre-alpha, open source, not audited.
@@ -25,7 +25,7 @@ description: |
   payments and rule changes need your hardware wallet. Lose the phone and a Delay & Notify recovery gets your money
   back while your alert contacts are told over nostr.
 
-  Used the no-Google Trikey of 0.1.20 or earlier? It was the same app as the standard Trikey; this one starts empty.
+  Used the no-Google Trikey of 0.1.21 or earlier? It was the same app as the standard Trikey; this one starts empty.
   Restore your wallet here from your backup file and recovery code ("I already have a Trikey wallet").
 
   **Pre-alpha, open source, not audited.** Use test networks, or on mainnet only an amount you can afford to lose.

@@ -42,7 +42,7 @@ once its listing is published):
 - **Trikey FOSS** (`trikey-alpha-foss-v<version>.apk`, `app.trikey.wallet.foss`): no Google code, for phones without
   Google Play services.
 
-Both can be on one phone, each with its own wallet. Had the no-Google APK of 0.1.20-alpha or earlier? It was the same
+Both can be on one phone, each with its own wallet. Had the no-Google APK of 0.1.21-alpha or earlier? It was the same
 app as Trikey, so the new Trikey FOSS installs next to it and starts empty: restore your backup file and recovery code
 in it, then uninstall the old one ([how](docs/android-signing.md#moving-from-the-no-google-apk-of-0120-alpha-or-earlier)).
 How to install and test: [docs/alpha-test-plan.md](docs/alpha-test-plan.md).

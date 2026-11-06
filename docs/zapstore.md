@@ -12,7 +12,7 @@ listing's publisher is Trikey's own npub (below), and the APK is the same file a
 (certificate SHA-256 in [`packaging/android/release-cert.sha256`](../packaging/android/release-cert.sha256)). An APK
 of the same app from Zapstore, Obtainium or GitHub installs over the others and keeps the wallet.
 
-There are two apps (from 0.1.21-alpha; [android-signing.md](android-signing.md), "Two APKs, two apps"): **Trikey**
+There are two apps (from 0.1.22-alpha; [android-signing.md](android-signing.md), "Two APKs, two apps"): **Trikey**
 (`app.trikey.wallet`, the standard build, with Google's libraries) and **Trikey FOSS** (`app.trikey.wallet.foss`, no
 Google code). The **Trikey** listing has the standard app. **Trikey FOSS** gets its own listing once the maintainer has
 published it (below); until then, take its APK from GitHub or Obtainium. Each app has its own wallet: to move one from
@@ -63,11 +63,11 @@ Zapstore lists apps by application id, so Trikey FOSS (`app.trikey.wallet.foss`)
 from the same repository, publisher npub and APK certificate. Its description is
 [`packaging/zapstore/foss/zapstore.yaml`](../packaging/zapstore/foss/zapstore.yaml): the same as the root file but
 `match` takes only the FOSS APK (`trikey-alpha-foss-v<version>.apk`), `release_filter` skips the releases up to
-0.1.20-alpha (whose FOSS APK still had the standard app's id: publishing one would put it under the wrong app), and the
+0.1.21-alpha (whose FOSS APK still had the standard app's id: publishing one would put it under the wrong app), and the
 name, summary and description are Trikey FOSS's. zsp's wizard reads `./zapstore.yaml`, which is why the file is in a
 folder of its own.
 
-Run this on your own computer, after the release workflow has published the first release with the new id (0.1.21-alpha
+Run this on your own computer, after the release workflow has published the first release with the new id (0.1.22-alpha
 or later) and both APKs are on its GitHub release page:
 
 1. Update `zsp` (step 2 above) and check what Zapstore would publish; this reads only, it signs and uploads nothing:

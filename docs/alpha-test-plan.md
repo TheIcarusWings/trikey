@@ -227,7 +227,7 @@ Where it comes from: every release on [GitHub's Releases page](https://github.co
 `trikey-alpha-v<version>.apk` and its `.apk.sha256`, built by the **Android test APK** workflow
 (`.github/workflows/android-apk.yml`). Take the newest pre-release.
 
-**Which APK.** From 0.1.9-alpha a release has two APKs; from 0.1.21-alpha they are two apps (each with its own wallet),
+**Which APK.** From 0.1.9-alpha a release has two APKs; from 0.1.22-alpha they are two apps (each with its own wallet),
 pick one or install both:
 
 - `trikey-alpha-v<version>.apk`, the **standard** build, **Trikey** on the home screen: it contains Google's libraries (ML Kit reads the QR codes, and
@@ -241,13 +241,13 @@ Both are signed with the same key, but they have their own application id (`app.
 `app.trikey.wallet.foss`): they sit side by side, and installing one never touches the other's wallet. Today they do
 the same, because Google Drive backup is not switched on yet; the difference to test is the QR scanning.
 
-**Had the no-Google APK of 0.1.20-alpha or earlier?** It had the standard app's id, so the new FOSS APK installs as a
+**Had the no-Google APK of 0.1.21-alpha or earlier?** It had the standard app's id, so the new FOSS APK installs as a
 second app next to it, empty, and your wallet stays in the old one. Restore it in Trikey FOSS ("I already have a Trikey
 wallet", "My phone, but I have its backup", backup file and recovery code), check it is there, then uninstall the old app.
 Or install the standard APK over the old app, which keeps the wallet. The steps are in
 [docs/android-signing.md](android-signing.md), "Moving from the no-Google APK". Please test it and report:
 
-1. With the old no-Google build (0.1.20-alpha or earlier) holding a wallet, install the new FOSS APK. It appears as a
+1. With the old no-Google build (0.1.21-alpha or earlier) holding a wallet, install the new FOSS APK. It appears as a
    second app, **Trikey FOSS**; the old one (**Trikey**) still opens with its wallet.
 2. Trikey FOSS opens on Welcome with "Used Trikey without Google before?"; tapping it explains the move.
 3. Restore the backup in Trikey FOSS. It shows the same wallet and balance; a payment from it works.

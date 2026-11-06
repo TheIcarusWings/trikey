@@ -17,7 +17,7 @@ From 0.1.9-alpha, every release has two APKs, built from the same code:
 | `trikey-alpha-v<version>.apk` | **Trikey**, `app.trikey.wallet` | The **standard** build. It contains Google's libraries: Google Sign-In, for the Google Drive backup a later release can switch on (it needs Google Play services on the phone), Google's ML Kit to read QR codes, and the Google Play services provider for passkeys. |
 | `trikey-alpha-foss-v<version>.apk` | **Trikey FOSS**, `app.trikey.wallet.foss` | **No Google code**, for phones without Google Play services (GrapheneOS, /e/OS, LineageOS) and for app stores that take only free software. QR codes are read by the open source zxing-cpp. There is no Google Drive backup: the backup is the recovery code plus the backup file, which you can still save to Google Drive, or anywhere else, by hand from the share sheet. Settings, About says "Trikey (no Google)". |
 
-From 0.1.21-alpha they are **two apps**: each has its own application id (the FOSS one adds `.foss`), launcher label and
+From 0.1.22-alpha they are **two apps**: each has its own application id (the FOSS one adds `.foss`), launcher label and
 URL scheme (`trikey-foss://` for the FOSS app, so Trezor Suite Lite's answer reaches the app that asked). Both can be
 installed on one phone and are listed separately (Zapstore, Obtainium). Both are signed with the same release key, and
 each release updates the same app: the standard APK updates Trikey, the FOSS APK updates Trikey FOSS. Only a downgrade (an
@@ -26,9 +26,9 @@ restoring a backup does. The in-app **Check for updates** offers the APK of the 
 fails if any Google Play services, Firebase, ML Kit or Google data transport class, or ML Kit's `libbarhopper` library, is
 in it (`apps/mobile/scripts/apk-google-scan.mts`).
 
-Up to 0.1.20-alpha both APKs had the standard app's id (`app.trikey.wallet`), so one replaced the other.
+Up to 0.1.21-alpha both APKs had the standard app's id (`app.trikey.wallet`), so one replaced the other.
 
-### Moving from the no-Google APK of 0.1.20-alpha or earlier
+### Moving from the no-Google APK of 0.1.21-alpha or earlier
 
 That APK installed as `app.trikey.wallet`, the standard app's id. Android cannot turn an installed app into another
 one, so the new FOSS APK does not update it: it installs as a second app, **Trikey FOSS**, which starts empty. Your
@@ -37,7 +37,7 @@ wallet is still in the old app (its launcher label is "Trikey"), and nothing has
 1. **Stay without Google (recommended for this build's users).** Have your backup ready: the recovery code and the
    backup file. If you are not sure you still have both, make a new backup in the old app first (Security tab, the
    backup row).
-   1. Install `trikey-alpha-foss-v<version>.apk` (0.1.21-alpha or later). It appears next to the old app as Trikey FOSS.
+   1. Install `trikey-alpha-foss-v<version>.apk` (0.1.22-alpha or later). It appears next to the old app as Trikey FOSS.
    2. Open Trikey FOSS. Its first screen has "Used Trikey without Google before?", which says the same as this list.
       Tap **I already have a Trikey wallet**, then **My phone, but I have its backup**, open the backup file and enter
       the recovery code. A Recovery Key wallet: **I have a Recovery Kit**, with the kit and your hardware wallet.

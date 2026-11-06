@@ -176,7 +176,7 @@ native project is generated and built (`android-variant.js` has the details):
 They are two apps, signed with the same release key: both can be installed on one phone, each with its own storage
 (Keystore keys, the wallet database, file provider authorities, which libraries name after `${applicationId}`), and each
 release updates the same app. Installing one does not move a wallet from the other; restoring its backup does. Up to
-0.1.20-alpha both had `app.trikey.wallet`, so moving from that no-Google APK takes a restore (docs/android-signing.md,
+0.1.21-alpha both had `app.trikey.wallet`, so moving from that no-Google APK takes a restore (docs/android-signing.md,
 "Moving from the no-Google APK"; the FOSS app's Welcome screen says it too). `app.config.ts` sets the id and scheme for
 the variant (`android-variant.js`, `androidAppFor`) and the config plugin the launcher label; iOS keeps `trikey://` and its
 bundle id whatever the variant. Check for updates (Settings → About) offers the APK of the app it runs in. iOS has one
