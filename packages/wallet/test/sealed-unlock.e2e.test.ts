@@ -93,7 +93,12 @@ describe('sealed unlock from the phone', { timeout: 60_000 }, () => {
     const g = rig.guardian;
     const real = g.currentUnlockKey.bind(g);
     let reads = 0;
-    g.currentUnlockKey = () => (reads++ === 0 ? getPublicKey(generateSecretKey()) : real());
+    // Status reads show a key the guardian does not hold until it has refused one seal as stale: a background status
+    // read (the app refreshes after a lock) may come first, so "the first read" is not reliably the request's.
+    const staleLogs = () => rig.logLines.filter((l) => l.includes('guardian.unlock_key_stale')).length;
+    const staleAt = staleLogs();
+    const fake = getPublicKey(generateSecretKey());
+    g.currentUnlockKey = () => (reads++, staleLogs() === staleAt ? fake : real());
     try {
       const before = signs();
       const was = A.state.guardianStatus!.hardwareUnlock!.slot;
@@ -116,7 +121,10 @@ describe('sealed unlock from the phone', { timeout: 60_000 }, () => {
     // The first status read shows a key the guardian does not hold, as if it locked again right after answering.
     let reads = 0;
     const staleBefore = rig.logLines.filter((l) => l.includes('guardian.unlock_key_stale')).length;
-    g.currentUnlockKey = () => (reads++ === 0 ? getPublicKey(generateSecretKey()) : real());
+    // Stale until the guardian has refused one seal as stale: a background status read (the app refreshes after the
+    // lock) may come before the unlock's own, so "the first read" is not reliably the unlock's.
+    const fake = getPublicKey(generateSecretKey());
+    g.currentUnlockKey = () => (reads++, rig.logLines.filter((l) => l.includes('guardian.unlock_key_stale')).length === staleBefore ? fake : real());
     try {
       const before = signs();
       expect(await A.unlockGuardianWithHardware()).toEqual({ ok: true });
