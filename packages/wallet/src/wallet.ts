@@ -68,6 +68,7 @@ import {
   policyHash,
   recoveryAccessMessage,
   sameRelays,
+  unlockKeyMessage,
   type Alert,
   type HardwareAction,
   type HardwareApproval,
@@ -120,7 +121,7 @@ import { applyOwnSpends, ownSpendOf, reconcileOwnSpends, withOwnSpend } from './
 import { coinList, receivedLabels, selectableCoins, type CoinList, type SelectableCoins } from './coins.js';
 import { bip329Origin } from './labels-bip329.js';
 import { LabelStore, LabelsDocument, addressKey, labelStoreKey, type Bip329ImportResult } from './labels-store.js';
-import { deriveLabelsKey, labelsKeyMessage, openLabels, sameLabelsSignature, sealLabels } from './labels-crypto.js';
+import { deriveLabelsKey, labelsKeyMessage, openLabels, sameLabelsSignature, sameLabelsSignature as sameHardwareSignature, sealLabels } from './labels-crypto.js';
 import { parseScannedCode, type ScannedCode } from './scan.js';
 import {
   DEFAULT_SWEEP_MIN_SATS,
@@ -306,7 +307,7 @@ export type WalletEvent =
    */
   | { type: 'alert'; alert: Alert; id: string; atMs: number }
   /** The hardware wallet is about to be asked to sign this exact text: show it, so the user can compare it with the device screen. */
-  | { type: 'hardware_prompt'; purpose: 'pairing' | 'approval' | 'recovery-access' | 'payment' | 'recovery-sweep' | 'register' | 'savings' | 'notes'; text: string }
+  | { type: 'hardware_prompt'; purpose: 'pairing' | 'approval' | 'recovery-access' | 'payment' | 'recovery-sweep' | 'register' | 'savings' | 'notes' | 'unlock'; text: string }
   /** A request left over from before the app restarted was settled (or given up). */
   | { type: 'pending_settled'; method: string; ok: boolean; refusal?: GuardianRefusal }
   /** A step of a long operation ("Replace guardian"), for a progress line. */
@@ -348,6 +349,18 @@ export interface NotesView {
   error?: { code: string; message: string; at: number };
   /** Copies brought back to this phone (wallet id, version time). */
   broughtBack: { of: string; at: number }[];
+}
+
+/** Unlocking the guardian with this wallet's hardware wallet (`TrikeyWallet.hardwareUnlockView`). */
+export interface HardwareUnlockView {
+  /** It can be offered: the guardian lists `hardware_unlock`, the wallet is the owner's own, its device signs messages. */
+  available: boolean;
+  /** Why not: the wallet is not set up, it is hosted on someone else's guardian, the guardian is older, the device signs no messages (QR). */
+  unavailable?: 'not_paired' | 'hosted' | 'guardian' | 'hardware';
+  /** On for this wallet (as the guardian last said): its hardware wallet can unlock the guardian through this phone. */
+  on: boolean;
+  /** When it was turned on (ms, the guardian's clock). */
+  since?: number;
 }
 
 /** A copy of notes on the guardian (`TrikeyWallet.notesOnGuardian`). */
@@ -1830,7 +1843,7 @@ export class TrikeyWallet {
   }
 
   /** Asks the device to BIP 137-sign `text` with the authorization key, and checks the signature. */
-  private async signWithAuthKey(hw: HardwareSigner, rec: HardwareRecord, text: string, purpose: 'pairing' | 'approval' | 'recovery-access' | 'notes'): Promise<string> {
+  private async signWithAuthKey(hw: HardwareSigner, rec: HardwareRecord, text: string, purpose: 'pairing' | 'approval' | 'recovery-access' | 'notes' | 'unlock'): Promise<string> {
     this.emit({ type: 'hardware_prompt', purpose, text });
     const sig = await hw.signMessage(rec.auth.path, text);
     if (!verifyMessage(text, hex.decode(rec.auth.pubkey), sig))
@@ -2408,6 +2421,7 @@ export class TrikeyWallet {
         ? { notifications: { channels: [...st.notifications.channels, ...(st.notifications.otherChannels ?? []).filter((c): c is typeof c & { kind: 'telegram' } => c.kind === 'telegram')].map((c) => ({ ...c })) } }
         : {}),
       ...(st.chainSource ? { chainSource: { ...st.chainSource } } : {}),
+      ...(st.hardwareUnlock ? { hardwareUnlock: { ...st.hardwareUnlock } } : {}),
     };
     await this.update((s) => {
       s.guardianStatus = cache;
@@ -4471,6 +4485,122 @@ export class TrikeyWallet {
         'guardian.unlock',
         { kind: 'passphrase', passphrase },
         {
+          persist: false,
+          verify: async () => ((await this.call('guardian.status', {})).state === 'unlocked' ? { unlocked: true } : undefined),
+        },
+      );
+    } catch (e) {
+      const refusal = e instanceof WalletError ? e.refusal : refusalFromError(e);
+      if (!refusal) throw e;
+      return { ok: false, refusal };
+    }
+    await this.refreshStatus().catch(() => undefined);
+    return { ok: true };
+  }
+
+  // ===========================================================================
+  // Unlocking the guardian with the hardware wallet (DESIGN.md; PROTOCOL.md, "Unlocking with the hardware wallet")
+
+  /** Whether this wallet's hardware wallet can unlock the guardian, and whether that can be offered. No I/O. */
+  hardwareUnlockView(): HardwareUnlockView {
+    const unavailable = this.hardwareUnlockUnavailable();
+    const slot = this.s.guardianStatus?.hardwareUnlock;
+    return {
+      available: !unavailable,
+      ...(unavailable ? { unavailable } : {}),
+      on: !unavailable && !!slot,
+      ...(!unavailable && slot ? { since: slot.addedAt * 1000 } : {}),
+    };
+  }
+
+  /** Why hardware unlock cannot be offered for this wallet now, or undefined when it can. */
+  private hardwareUnlockUnavailable(): HardwareUnlockView['unavailable'] {
+    if (!this.s.wallet || !this.s.guardian || this.s.stage !== 'paired') return 'not_paired';
+    // A guest's hardware wallet never unlocks the host's guardian (family hosting).
+    if (this.isHosted) return 'hosted';
+    if (!this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.hardwareUnlock)) return 'guardian';
+    // QR devices sign no messages over QR (apps/mobile/src/hardware/qr): there is no signature to unlock with.
+    const kind = this.s.hardware?.kind;
+    if (!kind || !NOTES_HARDWARE.includes(kind)) return 'hardware';
+    return undefined;
+  }
+
+  private requireHardwareUnlock(): void {
+    const why = this.hardwareUnlockUnavailable();
+    if (!why) return;
+    const text = {
+      not_paired: 'Set the wallet up with your guardian first.',
+      hosted: "Only your host can unlock their guardian.",
+      guardian: 'Update your guardian to unlock it with your hardware wallet.',
+      hardware: 'This needs a hardware wallet that signs messages over USB or Bluetooth (Ledger, Trezor).',
+    }[why];
+    throw new WalletError(why === 'guardian' ? 'guardian_unsupported' : 'wrong_state', text);
+  }
+
+  /** The text this wallet's hardware wallet signs for unlock slot `slot` of the paired guardian. */
+  private unlockText(slot: string): string {
+    return unlockKeyMessage({ walletId: this.s.wallet!.walletId, guardianPubkey: this.s.guardian!.pubkey, network: this.network.name, slot });
+  }
+
+  /**
+   * Turns on unlocking the guardian with this wallet's hardware wallet (the guardian must be unlocked). The device signs
+   * the unlock text of a fresh slot twice (one confirmation each); the two signatures must be the same
+   * (`hardware_not_deterministic` otherwise: it could not unlock later). The phone sends the signature once over the
+   * encrypted RPC; the guardian checks it against the wallet's authorization key, makes its unlock slot, and forgets it.
+   * **The phone keeps neither the signature nor anything derived from it**: every unlock needs the hardware wallet
+   * (DESIGN.md, "Unlocking the guardian with the hardware wallet"). Turning it on again replaces the slot (a new slot id),
+   * so every earlier signature stops working.
+   */
+  async enableHardwareUnlock(): Promise<HardwareUnlockView> {
+    this.requireHardwareUnlock();
+    const walletId = this.s.wallet!.walletId;
+    const slot = hex.encode(secureRandomBytes(8));
+    const text = this.unlockText(slot);
+    const signature = await this.withHardware(async (hw, rec) => {
+      const a = await this.signWithAuthKey(hw, rec, text, 'unlock');
+      const b = await this.signWithAuthKey(hw, rec, text, 'unlock');
+      if (!sameHardwareSignature(a, b))
+        throw new WalletError(
+          'hardware_not_deterministic',
+          'Your hardware wallet signed the same text twice and gave two different signatures, so it could not unlock your guardian later. Keep using the passphrase. A firmware update may fix it.',
+        );
+      return a;
+    });
+    await this.call('unlock.hardware.add', { walletId, slot, signature });
+    await this.refreshStatus().catch(() => undefined);
+    return this.hardwareUnlockView();
+  }
+
+  /** Turns it off: the guardian deletes this wallet's unlock slot. The passphrase always stays. Locked or unlocked. */
+  async disableHardwareUnlock(): Promise<HardwareUnlockView> {
+    if (!this.s.wallet || !this.s.guardian) throw new WalletError('wrong_state', 'No guardian is paired.');
+    if (this.isHosted) return this.hardwareUnlockView();
+    await this.call('unlock.hardware.remove', { walletId: this.s.wallet.walletId });
+    await this.refreshStatus().catch(() => undefined);
+    return this.hardwareUnlockView();
+  }
+
+  /**
+   * Unlocks the guardian after a restart with this wallet's hardware wallet: one device confirmation of the slot's
+   * unlock text (the slot the guardian lists right now), sent once (`guardian.unlock`, `kind: "hardware"`) and never
+   * stored. The guardian's throttle and refusals are the passphrase's; a refusal comes back as for `unlockGuardian`.
+   */
+  async unlockGuardianWithHardware(): Promise<{ ok: true } | { ok: false; refusal: GuardianRefusal }> {
+    this.requireHardwareUnlock();
+    // The slot as the guardian lists it now (turned on again elsewhere, say): what to sign.
+    const st = await this.refreshStatus();
+    if (st.state === 'unlocked') return { ok: true };
+    const slot = st.hardwareUnlock?.slot;
+    if (!slot) throw new WalletError('wrong_state', 'Unlocking with the hardware wallet is not on for this wallet. Use the passphrase.');
+    const walletId = this.s.wallet!.walletId;
+    const text = this.unlockText(slot);
+    const signature = await this.withHardware((hw, rec) => this.signWithAuthKey(hw, rec, text, 'unlock'));
+    try {
+      await this.callChanging(
+        'guardian.unlock',
+        { kind: 'hardware', walletId, slot, signature },
+        {
+          // A secret for as long as the slot lives: never written to the pending-request record.
           persist: false,
           verify: async () => ((await this.call('guardian.status', {})).state === 'unlocked' ? { unlocked: true } : undefined),
         },
