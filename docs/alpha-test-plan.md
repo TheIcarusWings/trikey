@@ -1001,7 +1001,7 @@ Do, for each device you have:
 
 1. **Pick the model.** "Create a wallet", **Continue**, **Scan a QR code**, then your device. Passport (2nd generation),
    Krux, SeedSigner and "Other" should say they "can't set up a guardian wallet yet" and offer Recovery Key mode; the
-   Coldcard Mk4 should say it has no camera. Pick yours, scan its multisig key export.
+   Coldcard Mk4 (no camera) should go to NFC instead (step 18f). Pick yours, scan its multisig key export.
 2. **Pair** (steps 2 to 4). At "Approve", the phone shows **Sign on your <device>** with a QR, the text
    `Trikey pair v1 wallet=<id> guardian=<hex>` under it, numbered steps for your device, and, for Coldcard Q,
    Passport Prime and Specter, the address the device should show. Scan the QR with the device, **check the text and
@@ -1034,6 +1034,54 @@ Do, for each device you have:
 
 If it goes wrong, collect: device model and firmware, the step, a photo of the device screen and of the phone's QR
 screen (the text and the address, never your seed words), and the exact message.
+
+### 18f. A Coldcard over NFC (optional; untested on hardware: Coldcard Mk4, Coldcard Q)
+
+**Nothing in this step has been tried on a real device or phone yet.** The protocol was read from Coldcard's firmware
+(`shared/nfc.py`; docs/design/hardware-auth-path.md, "Coldcard over NFC"). The Coldcard plays an NFC tag: for each step
+the phone either sends something to it (you open the Coldcard's NFC menu first, then hold the phone to it) or reads what
+it shares (it shows the NFC animation). Use a test network (on the Coldcard: Advanced/Tools › Danger Zone › Testnet
+Mode, or the equivalent on your firmware).
+
+Before you start: on the Coldcard, **Settings › Hardware On/Off › NFC Sharing › Enable NFC**. On Android, NFC on in
+the phone's settings. On an iPhone, the build must have been made with `TRIKEY_IOS_NFC=1` and a paid Apple developer
+account (the NFC Tag Reading capability); the alpha's iPhone builds have no NFC, and the app says so in the list of
+devices ("This iPhone build of Trikey has no NFC").
+
+Do:
+
+1. **Where the antenna is.** A Mk4: the back of the phone flat on the keypad, over the 8 key. A Q: on the screen. The
+   phone's own antenna is usually near its camera (iPhone: the top edge). Write down the position that worked.
+2. **Connect.** "Create a wallet", **Continue**, **Coldcard by NFC**, then **Coldcard Mk4** (or Q). Also check that
+   **Scan a QR code › Coldcard Mk4** leads to the same place. The phone shows **Connect your Coldcard Mk4** with steps:
+   on the Coldcard **Settings › Multisig Wallets › Export XPUB**, OK, account **0**, then **3** (Mk4) or the **NFC key**
+   (Q) to share over NFC; tap **Read from the Coldcard** and hold the phone to it. Expected: "Coldcard Mk4 connected".
+3. **Pair** (steps 2 to 4). At "Approve": **Sign on your Coldcard Mk4**, the text under it. On the Coldcard **Advanced/
+   Tools › NFC Tools › Sign Message**, then **Send to the Coldcard** and hold the phone to it; lift it when the phone
+   says done. About 3 seconds later the Coldcard should show the text, the path `m/48'/1'/0'/2'/0/0` and a legacy
+   address (`m…`/`n…` on test networks) that **matches the one on the phone**. OK. It then shares the signature: **Read
+   from the Coldcard**, hold the phone to it, then X on the Coldcard.
+4. **The wallet onto the Coldcard.** **Add the wallet to your Coldcard Mk4**: on the Coldcard **Settings › Multisig
+   Wallets › Import**, choose NFC, **Send to the Coldcard**. About 3 seconds later it should show the wallet: check the
+   name, **2 of 3** and the three keys, approve, then **I approved it** on the phone. Then **Compare the address**: on
+   the Coldcard **Address Explorer**, the wallet's name, address 0, the same as the phone's.
+5. **A payment** over the daily limit (step 7): **Sign on your Coldcard Mk4**. On the Coldcard **NFC Tools › Sign
+   PSBT**, **Send to the Coldcard**; check the amount and the address on the Coldcard and approve; then **Read from the
+   Coldcard** and hold the phone to it. Note whether it shared a partly signed PSBT or a finished transaction (both are
+   read). Try a payment that spends many coins (consolidate first with step 18b): over about 7,000 bytes the phone
+   should say it is too large for the Coldcard's NFC, before anything is sent.
+6. **The same signature twice.** Turn on notes (18c) and hardware unlock (18d): two rounds, "(1 of 2)" and "(2 of 2)",
+   each a send and a read.
+7. **Wrong things on purpose.** Tap with NFC off on the phone: it should say NFC is off and offer the settings (Android).
+   Lift the phone in the middle of a send: it should say it lost the Coldcard, and **Try again** should work. Read
+   before the Coldcard shares anything: "not sharing anything yet". Hold the phone to another Coldcard when reading the
+   signature: "not from this wallet's key".
+8. **iPhone** (only with an NFC build): the iPhone's own "Ready to Scan" sheet opens for each send and read; check that
+   writing to the Coldcard works (Core NFC writes NDEF to its Type 5 tag) and that closing that sheet leaves Trikey's
+   screen with **Try again**.
+
+If it goes wrong, collect: Coldcard model and firmware version, the phone model and OS version, the step, what the
+Coldcard showed (a photo, never your seed words) and the phone's exact message.
 
 ---
 

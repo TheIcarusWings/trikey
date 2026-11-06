@@ -1,6 +1,7 @@
 # The hardware authorization key path on Trezor, Ledger and QR devices
 
-Status: sections 1-6 written 2026-10-31 against `main` at 0.1.5; section 7 (QR devices, built) added 2026-11-06.
+Status: sections 1-6 written 2026-10-31 against `main` at 0.1.5; section 7 (QR devices, built) added 2026-11-06;
+section 8 (Coldcard over NFC, built) added 2026-11-06.
 Device behaviour was read from firmware and SDK source, not tested on hardware.
 
 A code audit flagged an unconfirmed risk: that Trezor refuses `signMessage` at our authorization key path
@@ -208,7 +209,7 @@ Passport 83d1d576, KeyOS 4ea7bc9, SeedSigner ada81cd, Krux 28d14c2, Specter DIY 
 | Passport gen 2 | No: the QR flow maps `48'/x'/x'/2'` to P2WSH and stops before signing; a microSD file works (not built) | | |
 | Krux | No: "Unsupported script type" for purpose 48 over QR; a microSD file works (not built) | | |
 | SeedSigner | No: "Not implemented" for `48h` paths | | |
-| Coldcard Mk4 | No camera: NFC or USB (not built) | | |
+| Coldcard Mk4 | No camera: over NFC instead (section 8) | | |
 
 Text lengths: Coldcard's 240 is exactly `MAX_APPROVAL_MESSAGE_LENGTH`, and the longest text Trikey can build (a version 3
 policy approval with a 16-digit sequence) is 238 characters; a test (`packages/wallet/test/qr-devices.e2e.test.ts`)
@@ -220,5 +221,68 @@ says so on Jade's screen.
 Notes and hardware unlock sign the same text twice when they are turned on (`hardware_not_deterministic` if the two
 differ); the QR screen says "(1 of 2)" and "(2 of 2)" and that the device will show the same text twice. Models that
 cannot sign are refused with their reason, and the connect screen says so before a guardian wallet is started, offering
-Recovery Key mode. Not built: NFC (Coldcard Mk4 and Q), microSD files (Passport gen 2, Krux), Jade over BLE or USB,
-BIP 322 proofs (SeedSigner, Krux), BitBox02. docs/alpha-test-plan.md step 18e lists the device tests.
+Recovery Key mode. Not built: microSD files (Passport gen 2, Krux), Jade over BLE or USB, BIP 322 proofs (SeedSigner,
+Krux), BitBox02. docs/alpha-test-plan.md step 18e lists the device tests; NFC is section 8 and step 18f.
+
+## 8. Coldcard over NFC (built 2026-11-06; untested on devices)
+
+The Coldcard Mk4 has no camera; it and the Coldcard Q have NFC. Trikey talks to them over it as a hardware kind of its
+own, `coldcard-nfc` (`packages/wallet/src/nfc-devices.ts`; the phone side is `apps/mobile/src/hardware/nfc`), which
+does everything a Ledger or Trezor does: key export, wallet registration, payments and Trikey's texts. Read from
+Coldcard's firmware `master` 09766a1 (2026-11-04, github.com/Coldcard/firmware); **not tried on a device or a phone**.
+
+**The link.** The Coldcard's NFC chip is an ST25DV64KC that plays an **NFC Forum Type 5 tag** (NFC-V, ISO 15693, 8 KiB),
+not a Type 4 tag (`shared/nfc.py:1-9`; `docs/nfc-coldcard.md`, "Lower Layers"). The radio is off except while a menu
+shares or waits (`set_rf_disable`, `nfc.py:144-166`), and NFC Sharing is off by default (Settings › Hardware On/Off,
+`flow.py:144`). Either the Coldcard **shares**: it writes NDEF records behind a read-only capability container
+(`CC_FILE`, `ndef.py:14`) and keeps them up until the owner presses OK or X (`share_loop`, `nfc.py:228-237`); or it
+**receives**: it offers an empty writable tag (`CC_WR_FILE`, `ndef.py:17-20`), waits for the phone to write, and reads it
+once the radio has been quiet for 3 seconds (`start_nfc_rx`, `nfc.py:492-523`, `min_delay=3000`), then wipes the tag.
+Records are built by `ndefMaker` (`ndef.py:22-104`) and parsed by `record_parser` (`ndef.py:142-227`), which refuses
+chunked records. The phone's OS (Android `Ndef`, iOS `NFCNDEFTag`) handles the capability container and the TLV; Trikey
+reads and writes the NDEF message (`apps/mobile/src/hardware/nfc/ndef.ts`).
+
+| Step | Coldcard menu | Phone | Records | Firmware |
+|---|---|---|---|---|
+| Key export (connect) | Settings › Multisig Wallets › Export XPUB, account, then 3 (Mk4) or NFC (Q) | reads | `application/json`: `{"p2wsh_deriv", "p2wsh" (SLIP-132 Zpub/Vpub), "p2wsh_desc", "account", "xfp"}` | `multisig.py:1590-1654` (`export_multisig_xpubs`), `export.py:69-71`, `nfc.py:368-373` (`share_json`) |
+| Wallet registration | Settings › Multisig Wallets › Import, then NFC | writes | text: the Coldcard multisig setup file, as Trikey shows over QR | `nfc.py:637-658` (`import_multisig_nfc`: first record of 70+ bytes holding `pub` or `multi(`), `multisig.py:1447, 1992-2003` |
+| Payment | Advanced/Tools › NFC Tools › Sign PSBT | writes | `urn:nfc:ext:bitcoin.org:sha256` (32 bytes), `urn:nfc:ext:bitcoin.org:psbt` (binary) | `nfc.py:525-576` (`start_psbt_rx`: any record over 100 bytes that tastes like a PSBT; the sha256 record is checked, "PSBT checksum mismatch", `auth.py:396-399`); menu `flow.py:396-405` |
+| Signed payment | shared right after approval | reads | text label, `bitcoin.org:sha256`, `bitcoin.org:psbt`; or, finalized, text, `bitcoin.org:txid`, `bitcoin.org:sha256`, `bitcoin.org:txn` | `auth.py:893-949` (`done_signing`, same way out as in), `nfc.py:239-255` (`share_signed_txn`), `nfc.py:354-366` (`share_psbt`) |
+| Text to sign | Advanced/Tools › NFC Tools › Sign Message | writes | text: `signmessage m/48h/<coin>h/<acct>h/2h/0/0 ascii:<text>` | `nfc.py:705-719` (`start_msg_sign`: 1 to 3 lines), `msgsign.py:296-308` (`parse_msg_sign_request`, Sparrow form first), `msgsign.py:265-283` (text rules), `auth.py:152-214` (`ApproveMessageSign`, no path check) |
+| Signature | shared right after OK | reads | text: the armored block (`-----BEGIN BITCOIN SIGNED MESSAGE-----`, text, P2PKH address, base64 signature) | `nfc.py:721-726` (`msg_sign_done`), `msgsign.py:18-29` |
+
+Sizes: the Coldcard shares nothing of `MAX_NFC_SIZE` = 8000 bytes or more (`nfc.py:23`, "PSBT is too large to share via
+NFC", `nfc.py:356-358`). The phone refuses up front a PSBT whose signed copy would reach it (about 110 bytes per input
+the Coldcard signs, `PSBT_SIGNATURE_BYTES`), with "spend fewer coins" in words; in practice that is a few dozen inputs.
+
+**What the phone checks**, as over QR: the export must name the device's fingerprint and hold the account asked for; a
+signed PSBT must carry a valid signature of this fingerprint on every input it owns (`assertDeviceSignedAll`), and a
+SHA-256 record, when present, must match; an armored answer must carry Trikey's text, an address of the key at the path
+(legacy, nested or native segwit) and a signature that verifies against the key derived from the account xpub
+(`checkMessageAnswer`); `signWithAuthKey` checks it once more. A wrong answer stays on the screen as a hint. When the
+wallet connects its own Coldcard again it passes what it knows (`KnownHardware`: fingerprint and account key), so a
+payment or a text is one send and one read, without reading the export first; the checks above are what keep a wrong
+Coldcard out.
+
+**The tap**, as the owner sees it: the phone shows the Coldcard menu to open and a button, **Send to the Coldcard** or
+**Read from the Coldcard**. On Android the app says "Hold the phone to the Coldcard…" (reader mode, NFC-V only, so no
+other app is offered the tag); on iOS the system's own "Ready to Scan" sheet appears. Where to hold it
+(`docs/nfc-coldcard.md`): a Mk4 over the 8 key, a Q on the screen. NFC off, the phone moving away, the wrong thing
+shared: a hint and **Try again**; Android also offers its NFC settings.
+
+**Platform.** `react-native-nfc-manager` 4.2.0 (MIT; Android `android.nfc`, iOS Core NFC; its Android dependencies are
+React Native and the Kotlin standard library only, so the build without Google code keeps it; a test checks its manifest
+and Gradle file). Android: the library's manifest asks for `android.permission.NFC` and declares `android.hardware.nfc`
+**not required**, so phones without NFC still install the app. iOS: Core NFC needs the "NFC Tag Reading" capability
+(`com.apple.developer.nfc.readersession.formats` = `TAG`; App Store Connect refuses `NDEF` there for recent SDKs, and
+`TAG` covers the NDEF session the library opens) and `NFCReaderUsageDescription`. A free Apple developer account
+("personal team") cannot sign that capability, so it is **off by default**: only `TRIKEY_IOS_NFC=1`
+(`apps/mobile/ios-nfc.js`) writes the entitlement and the usage text (`plugins/with-ios-nfc.js`) and links the library
+on iOS (`react-native.config.js`); without it the iOS build has no NFC code at all, CI checks there is no NFC
+entitlement or pod, and the app lists "Coldcard by NFC" as unavailable with the reason. At run time the app asks the
+library whether NFC is supported and on.
+
+**Not done, or to check on a device:** that Core NFC writes NDEF to the Coldcard's Type 5 tag (the firmware's notes say
+phones handle NFC-V; writing from an iPhone is untested); how long a large PSBT takes; whether Android's NDEF stack
+writes the 3-byte TLV length the Coldcard's `ccfile_decode` reads (it should: it is the NFC Forum T5T format);
+Coldcard's PushTx and "Verify Address" over NFC are not used. USB (Mk4 over Android OTG) is not built.
