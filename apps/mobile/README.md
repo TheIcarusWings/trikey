@@ -115,8 +115,11 @@ the phone unless you send it.
    Pick your Apple ID as the team if Xcode asks, and trust the developer profile on the phone (Settings, General, VPN &
    Device Management). Set your own `TRIKEY_IOS_BUNDLE_ID` (a bundle id you can register for free, like
    `com.yourname.trikey`) if `app.trikey.wallet` is refused.
-4. A free provisioning profile lasts **7 days**: after that the app stops opening until you run the same command again. The
-   wallet's data stays on the phone, so a reinstall over it keeps your wallet, but make a backup first.
+4. A free provisioning profile lasts **7 days**: after that the app stops opening until you build and install it again. The
+   wallet's data stays on the phone, so a reinstall over it keeps your wallet, but make a backup first. Once the profile
+   has expired, `expo run:ios` can fail with `No profiles for '<bundle id>' were found` (it doesn't let Xcode renew the
+   profile); build with `xcodebuild -allowProvisioningUpdates` instead and install with `devicectl` (see "Renewing an
+   expired profile" below). The phone then asks you to trust the renewed developer profile again before Trikey opens.
 
 If the build fails, these are the snags met on a first build from a Mac (Xcode 26.6, iOS 26.6):
 
@@ -136,6 +139,22 @@ If the build fails, these are the snags met on a first build from a Mac (Xcode 2
 - **The first run ends with `Unable to launch ... profile has not been explicitly trusted`**: the app is installed. Trust your
   developer profile on the phone (Settings, General, VPN & Device Management; the entry appears once an app signed with your
   Apple ID is on the phone) and open Trikey from the home screen.
+
+**Renewing an expired profile** (after the 7 days; checked with Xcode 26.6). From `apps/mobile`, after the usual
+`TRIKEY_DISABLE_ICLOUD=1 npx expo prebuild --platform ios` (or with the `ios/` folder from your last build), with your
+phone's hardware UDID (`xcrun devicectl device info details --device <id>`, the `udid` field):
+
+```sh
+cd ios
+xcodebuild -workspace Trikey.xcworkspace -scheme Trikey -configuration Release \
+  -destination 'id=<UDID>' -allowProvisioningUpdates -derivedDataPath build
+xcrun devicectl device install app --device <UDID> build/Build/Products/Release-iphoneos/Trikey.app
+```
+
+`-allowProvisioningUpdates` lets Xcode make a new 7-day profile for your Personal Team. Then, on the phone: Settings,
+General, VPN & Device Management, trust the developer profile again (iOS refuses to open the app until you do), and open
+Trikey. The wallet is still there. (Check the scheme name with `xcodebuild -list -workspace Trikey.xcworkspace` if it
+differs.)
 
 CI builds the same Release app for the iOS Simulator (no signing, no Apple account) and opens it in a simulator on every pull
 request that touches the app: `.github/workflows/ios-launch.yml` fails if the app is not running 25 seconds later or crashed,

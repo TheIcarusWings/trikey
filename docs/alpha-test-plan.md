@@ -309,6 +309,9 @@ own Mac, signed with a free Apple ID.
    TRIKEY_DISABLE_ICLOUD=1 TRIKEY_IOS_BUNDLE_ID=com.<yourname>.trikey npx expo run:ios --device --configuration Release
    ```
 4. On the iPhone: Settings, General, VPN & Device Management, trust your developer profile. Then open Trikey.
+5. Seven days later the profile expires and Trikey stops opening. Build it again; if `expo run:ios` then fails with
+   `No profiles … were found`, use `xcodebuild -allowProvisioningUpdates` as in `apps/mobile/README.md` ("Renewing an
+   expired profile"), and trust the renewed profile on the phone again. The wallet stays on the phone.
 
 If the build stops with an error, `apps/mobile/README.md` ("iOS (free Apple ID)") lists the snags met on a first build and their
 fixes (UTF-8 shell for CocoaPods, the device UDID, the iOS platform download, opening Xcode once for the signing profile).
