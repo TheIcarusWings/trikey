@@ -3,7 +3,8 @@ import { useEffect } from 'react';
 
 /**
  * Trezor Suite Lite opens `<scheme>://trezor-callback?id=...&response=...` when it is done. The Trezor provider
- * (src/hardware/trezor) listens for that URL and hands it to Trezor Connect, which resolves the request that is waiting.
+ * (src/hardware/trezor) listens for that URL and hands it to Trezor Connect, which resolves the request that is waiting
+ * (only a reply carrying that request's one-time token: src/hardware/trezor/callback.ts).
  * The router still sees the URL as a navigation, so this route exists only to get out of the way: it shows nothing and
  * goes straight back to the screen the user came from.
  */

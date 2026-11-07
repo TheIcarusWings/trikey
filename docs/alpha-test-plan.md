@@ -400,6 +400,8 @@ Do:
   Suite Lite opens and returns you to Trikey. When the Trezor signs Trikey's messages (pairing, and every hardware approval
   later), firmware before 2.13.0 and the Model One first warn about the path ("Unknown derivation path" or "Wrong address
   path for selected coin"): that is expected, continue. Note in the report which one you saw, with the firmware version.
+  If Suite Lite returns you to Trikey but Trikey keeps waiting, tell me: each request carries a one-time check that the
+  answer must bring back, and a Suite Lite that drops it would be a finding.
 - During setup the device asks you to approve the new 2-of-3 wallet (the app's checklist for your device lists it; it may come
   at the connect screen or at "Approve on Ledger" once you set the limit in step 4). **Read the device's screen**: it should say
   Trikey and 2 of 3.

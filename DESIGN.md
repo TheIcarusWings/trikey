@@ -129,6 +129,16 @@ unlocks it with the PIN on the Jade. Read from Jade's firmware and client, **not
 A model that cannot sign a text is refused with its reason (`QrSigner.signMessage`), and the connect screen says so
 before a guardian wallet is started, offering Recovery Key mode. Not built: USB for Jade, BIP 322 proofs.
 
+**Trezor's reply link.** Trezor Suite Lite answers each request by opening a link into the app
+(`trikey://trezor-callback?id=…&response=…`), which any app or web page can open too. So each request carries a
+one-time random token (128 bits) in its callback address, and the phone hands Trezor Connect only a reply at exactly
+that address, for a request still waiting, with its token, once (`apps/mobile/src/hardware/trezor/callback.ts`). The
+key read at connect must be the one asked for: the path Suite Lite echoes, and the key's own depth and child number. An
+address shown must be for the path asked for. What the token cannot stop: on Android, an app that also claims the
+`trikey` scheme, if the owner picks it when the phone asks which app opens the link, sees the real reply and can answer
+in its place. Against that, every signature is checked against the keys, and the vault's first address is shown on the
+Trezor's own screen for the owner to compare, as for every device.
+
 **SeedSigner co-signs payments only (decided 2026-11-06).** Its firmware refuses a message at any `m/48'` path
 ("Not implemented" in `parse_derivation_path`, and custom paths are "not supported"), so it cannot sign Trikey's texts
 with the key the guardian checks. The only way around it is a BIP 322 proof (a PSBT that spends a virtual output),
