@@ -111,7 +111,7 @@ import { savingsWallet } from './savings.js';
 import type { MultisigWallet, NetworkName } from '@trikey/core';
 import type { SavingsWatch } from './policy/index.js';
 import { stampOf, toSeconds } from './nostr/wire.js';
-import { DEFAULT_BROADCAST_LIMIT, DEFAULT_CONTACT_LOCK_LIMIT, DEFAULT_REFUSAL_LIMIT, SlidingWindowLimiter, type RateLimitOptions } from './rate-limit.js';
+import { DEFAULT_BROADCAST_LIMIT, DEFAULT_CONTACT_LOCK_LIMIT, DEFAULT_CONTACT_REPLY_LIMIT, DEFAULT_REFUSAL_LIMIT, SlidingWindowLimiter, type RateLimitOptions } from './rate-limit.js';
 import { Alerter } from './alerts.js';
 import { RecoveryRunner } from './recovery-runner.js';
 import { onContactDm } from './dm-cancel.js';
@@ -169,6 +169,8 @@ export interface GuardianOptions {
   refusalLimit?: RateLimitOptions;
   /** `LOCK` DMs handled per alert contact per window (dm-lock.ts). Default 5 per hour. */
   contactLockLimit?: RateLimitOptions;
+  /** Answers to `CANCEL` DMs per sender per window (dm-cancel.ts). Default 10 per hour. */
+  contactReplyLimit?: RateLimitOptions;
   /** Encrypted notes: uploads per wallet per hour (labels.ts `DEFAULT_LABELS_UPLOAD_LIMIT`). */
   labelsUploadLimit?: RateLimitOptions;
   /** How often the watched Savings wallet is scanned when no block came (savings.ts). Default 2 minutes. */
@@ -351,6 +353,8 @@ export class Guardian implements WalletRuntime {
   readonly refusalLimiter: SlidingWindowLimiter;
   /** Per alert contact: `LOCK` DMs (dm-lock.ts), whatever they lead to. */
   readonly contactLockLimiter: SlidingWindowLimiter;
+  /** Per sender: answers to `CANCEL` DMs (dm-cancel.ts); the cancels themselves are never limited. */
+  readonly contactReplyLimiter: SlidingWindowLimiter;
   /** The silent payment scanner (needs the node RPC; works while locked). */
   readonly sp: SilentPaymentService;
   /** Watches the phone's Savings wallet, if it registered one: chain data and the `savings_moved` tripwire (savings.ts). */
@@ -554,6 +558,7 @@ export class Guardian implements WalletRuntime {
     this.broadcastLimiter = new SlidingWindowLimiter(opts.broadcastLimit ?? DEFAULT_BROADCAST_LIMIT);
     this.refusalLimiter = new SlidingWindowLimiter(opts.refusalLimit ?? DEFAULT_REFUSAL_LIMIT);
     this.contactLockLimiter = new SlidingWindowLimiter(opts.contactLockLimit ?? DEFAULT_CONTACT_LOCK_LIMIT);
+    this.contactReplyLimiter = new SlidingWindowLimiter(opts.contactReplyLimit ?? DEFAULT_CONTACT_REPLY_LIMIT);
   }
 
   private path(name: keyof typeof FILES): string {

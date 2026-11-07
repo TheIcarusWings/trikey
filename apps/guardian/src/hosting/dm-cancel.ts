@@ -5,11 +5,9 @@
  */
 import type { Guardian } from '../guardian.js';
 import type { IncomingDm } from '../nostr/dm.js';
-import { cancelHintText } from '../dm-cancel.js';
+import { ANSWER_WINDOW_SEC, answerContact, cancelHintText, mayAnswer } from '../dm-cancel.js';
 import { hostedRefusalText } from './handlers.js';
 import { slotOfRecoveryId } from './service.js';
-
-const ANSWER_WINDOW_SEC = 600;
 
 /** `hintOnly`: the message names `CANCEL <id>` but is not the command (dm-cancel.ts `parseCancel`): never cancels. */
 export async function onHostedCancelDm(g: Guardian, dm: IncomingDm, id: string, hintOnly = false): Promise<void> {
@@ -17,39 +15,27 @@ export async function onHostedCancelDm(g: Guardian, dm: IncomingDm, id: string, 
   const live = slotId ? g.hosting.liveSlots().find((x) => x.slot.slotId === slotId) : undefined;
   if (!live) return;
   const { slot, engine } = live;
-  const reply = async (text: string) => {
-    try {
-      await g.dm?.send(dm.sender, text);
-    } catch {
-      /* best effort */
-    }
-  };
-  await g.recoveryMutex.run(async () => {
+  // Decided under the mutex (shared with the host's recoveries), sent after it: dm-cancel.ts.
+  const answer = await g.recoveryMutex.run(async (): Promise<string | undefined> => {
     const reg = engine.registration();
-    if (!reg) return;
+    if (!reg) return undefined;
     if (dm.sender !== reg.appNostrPubkey && !engine.isAlertContact(dm.sender)) {
       g.log.info('dm.cancel_ignored', { reason: 'not a contact of this hosted wallet' });
-      return;
+      return undefined;
     }
-    const fresh = dm.createdAt >= g.nowSec() - ANSWER_WINDOW_SEC;
+    const fresh = mayAnswer(dm.createdAt, g.nowSec());
     const active = engine.activeRecord();
     if (hintOnly) {
       g.log.info('dm.cancel_ignored', { reason: 'not the command' });
-      if (fresh && active?.id === id) await reply(cancelHintText(id));
-      return;
+      return fresh && active?.id === id ? cancelHintText(id) : undefined;
     }
-    if (!active || active.id !== id) {
-      if (fresh) await reply(`Trikey: there is no running recovery ${id}, so nothing was cancelled.`);
-      return;
-    }
-    if (dm.createdAt < Math.floor(active.startedAt / 1000) - ANSWER_WINDOW_SEC) return;
+    if (!active || active.id !== id) return fresh ? `Trikey: there is no running recovery ${id}, so nothing was cancelled.` : undefined;
+    if (dm.createdAt < Math.floor(active.startedAt / 1000) - ANSWER_WINDOW_SEC) return undefined;
     const res = await engine.cancelRecovery({ kind: 'nostr', pubkey: dm.sender });
-    if (!res.ok) {
-      await reply(`Trikey: could not cancel recovery ${id}: ${hostedRefusalText(res.refusal)}.`);
-      return;
-    }
+    if (!res.ok) return `Trikey: could not cancel recovery ${id}: ${hostedRefusalText(res.refusal)}.`;
     await g.logEvent({ type: 'hosting_recovery', name: slot.name, recoveryId: id, state: 'cancelled' });
-    await reply(`Trikey: recovery ${id} is cancelled. No funds will move. Thank you for checking.`);
+    return `Trikey: recovery ${id} is cancelled. No funds will move. Thank you for checking.`;
   });
   void g.hosting.alerts.run();
+  if (answer) await answerContact(g, dm.sender, answer);
 }

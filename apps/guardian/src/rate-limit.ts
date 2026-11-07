@@ -75,3 +75,10 @@ export const DEFAULT_BROADCAST_LIMIT: RateLimitOptions = { max: 20, windowMs: 10
  * contact (or someone with a contact's nostr key) cannot flood the guardian, the owner or the other contacts.
  */
 export const DEFAULT_CONTACT_LOCK_LIMIT: RateLimitOptions = { max: 5, windowMs: 60 * 60 * 1000 };
+
+/**
+ * Answers to `CANCEL` DMs per sender (dm-cancel.ts): each one is a DM published to the guardian's relays and the
+ * sender's own, so a contact (or a key a guest named as its contact) cannot make the guardian publish one DM for each
+ * DM it sends. Only the answers are limited: a cancel is always applied.
+ */
+export const DEFAULT_CONTACT_REPLY_LIMIT: RateLimitOptions = { max: 10, windowMs: 60 * 60 * 1000 };
