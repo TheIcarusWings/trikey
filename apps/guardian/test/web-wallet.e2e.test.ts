@@ -259,12 +259,16 @@ describe('GET /api/wallet', { timeout: 60_000 }, () => {
     const { createHttpApi } = await web('api/http.ts');
     const words = await web('lib/wallet.ts');
     const realFetch = globalThis.fetch;
-    await rig.api('GET', '/status'); // signed in: the rig's browser holds the session cookie
+    await rig.api('GET', '/status'); // signed in: the rig's browser holds the session cookie, its page the secret
     const base = `http://127.0.0.1:${rig.guardian.httpAddress!.port}`;
     vi.stubGlobal('window', { dispatchEvent: () => true });
     vi.stubGlobal('fetch', (url: string, init: RequestInit) => realFetch(url, { ...init, headers: { ...(init.headers as Record<string, string>), cookie: rig.sessionCookie! } }));
+    // The page's secret, as if this tab had signed in (the client sends it as X-Trikey-Session).
+    const { SessionSecret } = await web('api/session.ts');
+    const secret = new SessionSecret({ storage: null, channel: null });
+    secret.remember(rig.sessionSecret!);
     try {
-      const w = await createHttpApi(base).getWallet();
+      const w = await createHttpApi(base, secret).getWallet();
       expect(w).toEqual(await get());
       const { pending, done } = words.splitPayments(w.payments);
       expect(pending.map((p: { direction: string }) => words.paymentTitle(p))).toEqual(['Sending']);

@@ -18,7 +18,7 @@ import { MAX_RETIRING_RELAYS, type Guardian } from '../guardian.js';
 import { isContactLockOn, isLimitOff, type RecoveryRecord } from '../policy/index.js';
 import { npubEncode } from 'nostr-tools/nip19';
 import { engineEntry, serviceEntry, shortNpub } from './activity.js';
-import { HttpError, type Route, type RouteResult } from './server.js';
+import { HttpError, type Route, type RouteContext, type RouteResult } from './server.js';
 import type {
   ActivityEntry,
   ChannelHealth,
@@ -102,9 +102,14 @@ export function publicStatus(g: Guardian): PublicStatus {
   return { authenticated: false, setupComplete: g.setupComplete, state: g.locked ? 'locked' : 'unlocked', network: g.config.network, version: g.version };
 }
 
-/** Signs the browser in: a new session and its cookie. */
-function signedIn(g: Guardian, secure: boolean): Record<string, string> {
-  return { 'Set-Cookie': sessionCookie(g.sessions.create(g.clock.now()), secure) };
+/**
+ * Signs the browser in: a new session, its cookie, and its secret in the answer (`sessionSecret`, for the page's
+ * `X-Trikey-Session` header; http/sessions.ts). Signed in through the platform's login proxy or loopback, the session
+ * is bound to them.
+ */
+async function signedIn(g: Guardian, session: RouteContext['session']): Promise<RouteResult> {
+  const { token, secret } = g.sessions.create(g.clock.now(), { bound: session.trustedSocket });
+  return { status: 200, body: { ...(await guardianStatus(g)), sessionSecret: secret }, headers: { 'Set-Cookie': sessionCookie(token, session.secure) } };
 }
 
 /** The watched Savings wallet for the web UI's card: the engine's record, the last scan, the last movement. */
@@ -389,7 +394,7 @@ export function buildRoutes(g: Guardian): Route[] {
         if (!g.setupComplete) throw new HttpError(409, 'setup_required', 'Set up the guardian first.');
         const input = (body ?? {}) as { passphrase?: unknown; unlock?: unknown };
         const r = input.unlock === true && g.locked ? await g.unlock(input.passphrase, 'web') : await g.checkWebPassphrase(input.passphrase);
-        if (r.ok) return { status: 200, body: await guardianStatus(g), headers: signedIn(g, session.secure) };
+        if (r.ok) return signedIn(g, session);
         if (r.code === 'bad_passphrase') throw new HttpError(401, 'bad_passphrase', 'That passphrase is not right.', r.retryAfterSeconds);
         if (r.code === 'rate_limited') throw new HttpError(429, 'rate_limited', 'Too many tries. Wait and try again.', r.retryAfterSeconds);
         throw new HttpError(r.code === 'setup_required' ? 409 : 400, r.code, 'message' in r ? r.message : 'Sign-in failed.');
@@ -400,6 +405,8 @@ export function buildRoutes(g: Guardian): Route[] {
       method: 'DELETE',
       path: '/session',
       public: true,
+      // Ends this browser's session only with its secret (`session.token` is set only then): another app holding the
+      // cookie alone cannot sign the owner out this way.
       handler: ({ session }) => {
         g.sessions.destroy(session.token);
         return { status: 200, body: publicStatus(g), headers: { 'Set-Cookie': sessionCookie(undefined, session.secure) } };
@@ -450,7 +457,7 @@ export function buildRoutes(g: Guardian): Route[] {
         const r = await g.setup({ passphrase: input.passphrase, relays: input.relays, entropy: input.entropy });
         if (!r.ok) throw new HttpError(r.code === 'already_setup' ? 409 : 400, r.code, r.message);
         // The browser that set the guardian up is signed in.
-        return { status: 200, body: await guardianStatus(g), headers: signedIn(g, session.secure) };
+        return signedIn(g, session);
       },
     },
 
@@ -704,7 +711,7 @@ export function buildRoutes(g: Guardian): Route[] {
         requireUnlocked(g);
         const input = (body ?? {}) as { passphrase?: unknown; newPassphrase?: unknown };
         const r = await g.changePassphrase({ passphrase: input.passphrase, newPassphrase: input.newPassphrase });
-        if (r.ok) return { status: 200, body: await guardianStatus(g), headers: signedIn(g, session.secure) };
+        if (r.ok) return signedIn(g, session);
         if (r.code === 'bad_passphrase') throw new HttpError(401, 'bad_passphrase', 'That is not the current passphrase.', r.retryAfterSeconds);
         if (r.code === 'rate_limited') throw new HttpError(429, 'rate_limited', 'Too many tries. Wait and try again.', r.retryAfterSeconds);
         throw new HttpError(r.code === 'invalid' || r.code === 'same_passphrase' ? 400 : 409, r.code, 'message' in r ? r.message : 'Passphrase change refused.');
@@ -719,7 +726,7 @@ export function buildRoutes(g: Guardian): Route[] {
         const input = (body ?? {}) as { passphrase?: unknown; confirm?: unknown; entropy?: unknown };
         const r = await g.reset({ passphrase: input.passphrase, confirm: input.confirm, entropy: input.entropy });
         // A reset ends every session; the browser that did it (with the passphrase) is signed in again.
-        if (r.ok) return { status: 200, body: await guardianStatus(g), headers: signedIn(g, session.secure) };
+        if (r.ok) return signedIn(g, session);
         if (r.code === 'bad_passphrase') throw new HttpError(401, 'bad_passphrase', 'That passphrase is not right.', r.retryAfterSeconds);
         if (r.code === 'rate_limited') throw new HttpError(429, 'rate_limited', 'Too many tries. Wait and try again.', r.retryAfterSeconds);
         const status = r.code === 'invalid' ? 400 : 409;

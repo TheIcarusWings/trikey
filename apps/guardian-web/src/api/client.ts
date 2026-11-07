@@ -81,8 +81,8 @@ export interface GuardianApi {
   getStatus(): Promise<GuardianStatus | PublicStatus>;
 
   /**
-   * Signs this browser in with the unlock passphrase (an HttpOnly session cookie). With `unlock: true`
-   * a locked guardian is unlocked too. Rejects with `bad_passphrase` or `rate_limited`.
+   * Signs this browser in with the unlock passphrase (an HttpOnly session cookie, and the session's secret, which the
+   * client keeps for `X-Trikey-Session`). With `unlock: true` a locked guardian is unlocked too. Rejects with `bad_passphrase` or `rate_limited`.
    */
   signIn(input: SignInInput): Promise<GuardianStatus>;
   /** Ends this browser's session. */

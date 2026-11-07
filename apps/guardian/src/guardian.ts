@@ -747,6 +747,8 @@ export class Guardian implements WalletRuntime {
         sessions: this.sessions,
         now: () => this.clock.now(),
         headerlessClient: async (remote) => isLoopback(remote) || !!(await this.trustedProxy?.trusts(remote)),
+        // Where the login proxy is recognised (Umbrel), sessions signed in through it stay bound to it (http/sessions.ts).
+        ...(this.trustedProxy ? { trustedSocket: async (remote: string | undefined) => isLoopback(remote) || !!(await this.trustedProxy?.trusts(remote)) } : {}),
       });
     }
     this.chain.start();

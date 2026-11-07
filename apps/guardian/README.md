@@ -16,7 +16,9 @@ checks. The web API also has sessions of its own (since the 2026-10 security
 review, because other apps' containers on the box can likely reach the port
 directly): every endpoint but the reduced `GET /api/status` and first-run setup
 needs a session, which only the unlock passphrase opens (`POST /api/session`;
-`apps/guardian-web/API.md`).
+`apps/guardian-web/API.md`): the cookie and the session's secret in `X-Trikey-Session`
+together, because the browser sends the cookie to every app on the same host
+(`src/http/sessions.ts`).
 
 Until it is set up, setup also needs a one-time setup code on every platform
 (`src/http/setup-code.ts`; security review 2026-11, finding 3), because the platform's login

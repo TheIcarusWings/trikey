@@ -90,19 +90,23 @@ async function restart(): Promise<void> {
 
 /** The browser's web session cookie (the API needs a session since the 2026-10 security review). */
 let cookie: string | undefined;
+/** The page's session secret (`sessionSecret` of the sign-in answer, sent as `X-Trikey-Session`). */
+let sessionSecret: string | undefined;
 
 /** Same-origin JSON like the browser, with the session cookie; signed out, it signs in with the passphrase first. */
 async function api(method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> {
   const send = async (m: string, p: string, b?: unknown) => {
     const res = await fetch(`${base}${p}`, {
       method: m,
-      headers: { ...(m === 'GET' ? {} : { 'content-type': 'application/json' }), ...(cookie ? { cookie } : {}) },
+      headers: { ...(m === 'GET' ? {} : { 'content-type': 'application/json' }), ...(cookie ? { cookie } : {}), ...(sessionSecret ? { 'x-trikey-session': sessionSecret } : {}) },
       body: m === 'GET' ? undefined : JSON.stringify(b ?? {}),
     });
     const set = res.headers.get('set-cookie');
     if (set) cookie = /Max-Age=0/i.test(set) ? undefined : set.split(';')[0];
     const text = await res.text();
-    return { status: res.status, body: text ? JSON.parse(text) : undefined };
+    const parsed = text ? JSON.parse(text) : undefined;
+    if (typeof parsed?.sessionSecret === 'string') sessionSecret = parsed.sessionSecret;
+    return { status: res.status, body: parsed };
   };
   const r = await send(method, path, body);
   const signedOut = (r.status === 401 && r.body?.error?.code === 'unauthenticated') || (path === '/status' && r.body?.authenticated === false);

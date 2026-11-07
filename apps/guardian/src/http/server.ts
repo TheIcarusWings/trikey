@@ -7,9 +7,10 @@
  * otherwise look same-origin to the checks below. Since the 2026-10 security
  * review it does not rely on the proxy alone (other apps' containers on the box
  * can likely reach it directly): every `/api` route needs a session
- * (`sessions.ts`: `POST /api/session` with the unlock passphrase) unless it is
- * marked public (`GET /api/status`, reduced without a session, and first-run
- * setup until setup completes).
+ * (`sessions.ts`: `POST /api/session` with the unlock passphrase; the cookie and
+ * the session's secret in `X-Trikey-Session` together, since every app on the
+ * same host receives the cookie) unless it is marked public (`GET /api/status`,
+ * reduced without a session, and first-run setup until setup completes).
  *
  * What it does do:
  * - security headers on every response (strict CSP, no framing, no referrer);
@@ -30,7 +31,7 @@ import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, normalize, sep } from 'node:path';
 import { errorText, type Logger } from '../log.js';
-import { SESSION_COOKIE, parseCookies, type WebSessions } from './sessions.js';
+import { SESSION_COOKIE, SESSION_HEADER, clearSessionCookies, cookieValues, type WebSessions } from './sessions.js';
 import { isLoopback } from './trusted-proxy.js';
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -40,8 +41,12 @@ export interface RouteContext {
   query: URLSearchParams;
   /** Parsed JSON body (POST/PUT/DELETE), or undefined. */
   body: unknown;
-  /** The request's web session (always `authenticated` when the server has no `sessions`). */
-  session: { authenticated: boolean; token?: string; secure: boolean };
+  /**
+   * The request's web session (always `authenticated` when the server has no `sessions`). `token` only when it is
+   * authenticated. `trustedSocket`: the request came from the platform's login proxy or loopback (`trustedSocket`
+   * option), so a session signed in by it is bound to them.
+   */
+  session: { authenticated: boolean; token?: string; secure: boolean; trustedSocket: boolean };
   /** The socket's remote address (never a forwarded header): who connected to the guardian. */
   remoteAddress?: string;
 }
@@ -233,7 +238,10 @@ export interface HttpServerOptions {
   routes: Route[];
   webDir?: string;
   log: Logger;
-  /** Web sessions: with them, every non-public route answers 401 `unauthenticated` without one. */
+  /**
+   * Web sessions: with them, every non-public route answers 401 `unauthenticated` without one. A session is the cookie
+   * and its secret in `X-Trikey-Session` together (sessions.ts); a request with more than one session cookie has none.
+   */
   sessions?: WebSessions;
   /** Clock for session expiry (ms). Default `Date.now`. */
   now?: () => number;
@@ -243,6 +251,12 @@ export interface HttpServerOptions {
    * The guardian adds the platform's login proxy (trusted-proxy.ts). Everyone else must send `Origin`, as browsers do.
    */
   headerlessClient?: (remote: string | undefined) => boolean | Promise<boolean>;
+  /**
+   * Set where the platform's login proxy is recognised (TRIKEY_TRUSTED_PROXY): whether a socket is that proxy or
+   * loopback. Sessions signed in from such a socket are accepted only from such sockets (sessions.ts). Unset: no
+   * session is bound.
+   */
+  trustedSocket?: (remote: string | undefined) => boolean | Promise<boolean>;
 }
 
 /** Whether the request reached us over HTTPS (directly, or as the proxy says). */
@@ -334,13 +348,26 @@ export function createHttpHandler(opts: HttpServerOptions): (req: IncomingMessag
       res.setHeader('Allow', [...new Set(matching.map((r) => r.method))].join(', '));
       throw new HttpError(405, 'method_not_allowed', 'Method not allowed.');
     }
-    const token = parseCookies(req.headers['cookie'])[SESSION_COOKIE];
     const secure = isSecure(req);
-    const authenticated = opts.sessions ? opts.sessions.check(token, (opts.now ?? Date.now)()) : true;
-    const open = typeof route.public === 'function' ? route.public() : route.public === true;
-    if (!authenticated && !open) throw new HttpError(401, 'unauthenticated', 'Sign in with the unlock passphrase first.');
-    let body: unknown;
     const remoteAddress = req.socket.remoteAddress;
+    const trustedSocket = opts.trustedSocket ? await opts.trustedSocket(remoteAddress) : false;
+    // Cookies are bound to the host, not the port: every app on the same host receives `trikey_session` and can set
+    // one (sessions.ts). So the cookie counts only with its secret, and two of them (one tossed in by another app, at
+    // a more specific path, to sign the owner out) count as none: answered as signed out, and cleared.
+    const tokens = cookieValues(req.headers['cookie'], SESSION_COOKIE);
+    const conflict = tokens.length > 1;
+    if (conflict) res.setHeader('Set-Cookie', clearSessionCookies(pathname, typeof req.headers['host'] === 'string' ? req.headers['host'] : undefined, secure));
+    const token = conflict ? undefined : tokens[0];
+    const secret = req.headers[SESSION_HEADER];
+    const authenticated = opts.sessions ? opts.sessions.check(token, typeof secret === 'string' ? secret : undefined, (opts.now ?? Date.now)(), trustedSocket) : true;
+    const open = typeof route.public === 'function' ? route.public() : route.public === true;
+    if (!authenticated && !open)
+      throw new HttpError(
+        401,
+        'unauthenticated',
+        conflict ? 'This browser sent two session cookies (another app on this address may have set one). Sign in again.' : 'Sign in with the unlock passphrase first.',
+      );
+    let body: unknown;
     if (STATE_CHANGING.has(req.method ?? '')) {
       const origin = checkOrigin(req.headers);
       if (!origin.ok) throw new HttpError(403, 'forbidden', `Rejected: ${origin.reason}.`);
@@ -363,8 +390,18 @@ export function createHttpHandler(opts: HttpServerOptions): (req: IncomingMessag
     } catch {
       throw new HttpError(400, 'invalid', 'Bad path.');
     }
-    const out = await route.handler({ params, query, body, session: { authenticated, ...(token ? { token } : {}), secure }, ...(remoteAddress ? { remoteAddress } : {}) });
-    for (const [name, value] of Object.entries(out.headers ?? {})) res.setHeader(name, value);
+    const out = await route.handler({
+      params,
+      query,
+      body,
+      session: { authenticated, ...(authenticated && token ? { token } : {}), secure, trustedSocket },
+      ...(remoteAddress ? { remoteAddress } : {}),
+    });
+    for (const [name, value] of Object.entries(out.headers ?? {})) {
+      // A sign-in answer after a cookie conflict: the clearing cookies first, the new session's last (it wins).
+      const before = name.toLowerCase() === 'set-cookie' ? res.getHeader('Set-Cookie') : undefined;
+      res.setHeader(name, Array.isArray(before) ? [...before, ...(Array.isArray(value) ? value : [value])] : value);
+    }
     sendJson(res, out.status, out.body);
   }
 
