@@ -373,6 +373,7 @@ export class SavingsMonitor {
         nextChangeIndex: r.nextChangeIndex,
         spends: check.spends,
         complete: check.unchecked === 0,
+        ...(g.chainSourceSummary()?.kind === 'public' ? { publicSource: true } : {}),
       });
       for (const x of fresh) {
         const fields = { walletId, txid: x.txid, amountSats: Number(x.amountSats), ...(x.replaces ? { replaces: x.replaces } : {}), ...(x.consolidated ? { consolidated: true } : {}) };

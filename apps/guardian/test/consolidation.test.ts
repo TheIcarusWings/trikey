@@ -93,8 +93,8 @@ describe('consolidation: only the fee counts against the daily limit', () => {
 });
 
 describe('consolidation: what the phone must do for it to count as the wallet\'s own', () => {
-  it(`an output past the high-water mark plus ${CHANGE_WINDOW} counts as leaving the wallet; co-signed ones raise the mark`, async () => {
-    const { engine, wallet } = await setup({ rules: { dailyLimitSats: LIMIT } });
+  it(`an output past the high-water mark plus ${CHANGE_WINDOW} counts as leaving the wallet; the mark rises once a scan sees it used`, async () => {
+    const { engine, wallet, walletId } = await setup({ rules: { dailyLimitSats: LIMIT } });
     // A new wallet's marks are -1: receive indexes 0 to CHANGE_WINDOW - 1 are within reach of a scan.
     const coins = smallCoins(wallet);
     const fee = 1_500n;
@@ -107,8 +107,11 @@ describe('consolidation: what the phone must do for it to count as the wallet\'s
     expect(beyond).toMatchObject({ ok: false, refusal: { reason: 'over_daily_limit', outflow: sum(coins) } });
     expect(await engine.cosign(await sign(to(CHANGE_WINDOW - 1)))).toMatchObject({ ok: true, outflow: fee });
     expect(engine.highWater().receive).toBe(CHANGE_WINDOW - 1);
-    // The mark rose with it: CHANGE_WINDOW further is now within reach (a later consolidation of the new coin).
+    // Co-signing alone does not move the window (it may never be broadcast): CHANGE_WINDOW further is still out of reach.
     const merged = fund(wallet, RECEIVE, CHANGE_WINDOW - 1, sum(coins) - fee);
+    expect(await engine.cosign(await sign(to(2 * CHANGE_WINDOW - 1, [merged])))).toMatchObject({ ok: false, refusal: { reason: 'over_daily_limit' } });
+    // Once a scan sees the new coin's address used, the mark rises with it (a later consolidation of the new coin).
+    expect(await engine.noteUsedIndexes(walletId, { receive: CHANGE_WINDOW - 1, change: -1 })).toBe(true);
     expect(await engine.cosign(await sign(to(2 * CHANGE_WINDOW - 1, [merged])))).toMatchObject({ ok: true, outflow: fee });
   });
 

@@ -30,11 +30,11 @@ import * as btc from '@scure/btc-signer';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { base64, hex } from '@scure/base';
 import { MultisigWallet, analyzePsbt, finalizePsbt, getNetwork, parsePsbt, sighashAll } from '@trikey/core';
-import { parseRawTx } from './chain/chain.js';
+import { MAX_SCAN_INDEX, parseRawTx } from './chain/chain.js';
 import type { Guardian } from './guardian.js';
 import type { WalletRuntime } from './runtime.js';
 import { errorText } from './log.js';
-import { HOUR, MAX_SELF_INDEX, type RecoveryRecord, type Registration } from './policy/index.js';
+import { HOUR, type RecoveryRecord, type Registration } from './policy/index.js';
 import { refusalText } from './nostr/wire.js';
 import type { SweepRecord } from './service-state.js';
 import { formatBtc, formatWhen } from './alerts.js';
@@ -67,7 +67,8 @@ function sweepInputs(psbt: Uint8Array): { outpoints: Set<string>; maxIndex: Part
       if (path.length < 2) continue;
       const chain = path[path.length - 2];
       const index = path[path.length - 1];
-      if ((chain === 0 || chain === 1) && index >= 0 && index <= MAX_SELF_INDEX) maxIndex[chain] = Math.max(maxIndex[chain] ?? -1, index);
+      // Up to the scan's own limit (a coin a guardian before the change-window fix let through may sit up to it).
+      if ((chain === 0 || chain === 1) && index >= 0 && index <= MAX_SCAN_INDEX) maxIndex[chain] = Math.max(maxIndex[chain] ?? -1, index);
     }
   }
   return { outpoints, maxIndex };
