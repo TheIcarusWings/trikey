@@ -4,7 +4,10 @@
  * Software stand-ins for the hardware wallets; throwaway keys; regtest.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { hex } from '@scure/base';
+import { base64, hex } from '@scure/base';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { MultisigWallet } from '@trikey/core';
 import { MemoryKeyValueStore, MemorySecureKeyStore, SoftwareHardwareProvider, SoftwareHardwareSigner, SwappedExportSigner } from '@trikey/wallet/testing';
 import { EsploraClient } from '../src/esplora.js';
@@ -31,13 +34,25 @@ class Clock {
   }
 }
 
+/** The app's providers connect by kind: a second device (a Coldcard here) answers when one is asked for by its kind. */
+class KindProvider extends SoftwareHardwareProvider {
+  second?: SoftwareHardwareSigner;
+  override async connect(opts?: { kind?: string }) {
+    if (this.second && opts?.kind === this.second.info.kind) {
+      this.connects++;
+      return this.second;
+    }
+    return super.connect();
+  }
+}
+
 async function world() {
   const chain = new SimChain({ height: 200 });
   const srv = await startFakeEsplora(chain);
   servers.push(srv);
   const esplora = new EsploraClient({ baseUrl: srv.url });
   const ledger = new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware, network: 'regtest', kind: 'ledger', model: 'Nano X' });
-  const provider = new SoftwareHardwareProvider(ledger);
+  const provider = new KindProvider(ledger);
   const clock = new Clock();
   const phone = () => ({ secureStore: new MemorySecureKeyStore(), store: new MemoryKeyValueStore() });
   const p1 = phone();
@@ -110,10 +125,61 @@ describe('create a vault and approve 8 refills', () => {
     expect(again!.state.chain!.refills.map((r) => r.txid)).toEqual(chain.refills.map((r) => r.txid));
     const key = [...w.p1.store.data.keys()][0]!;
     const doc = JSON.parse(w.p1.store.data.get(key)!);
-    const body = JSON.parse(doc.state);
-    body.chain.refills[3].changeValueSats -= 1;
-    doc.state = JSON.stringify(body);
-    w.p1.store.data.set(key, JSON.stringify(doc));
+    const box = base64.decode(doc.box);
+    box[40]! ^= 1;
+    w.p1.store.data.set(key, JSON.stringify({ ...doc, box: base64.encode(box) }));
+    expect((await rejects(RecoveryKeyWallet.open(w.deps))).code).toBe('state_tampered');
+  });
+
+  it('keeps the signed refills (and the rest of the state) encrypted in the app database, which phone backups copy', async () => {
+    const w = await world();
+    const { wallet } = await createAndApprove(w);
+    const refills = wallet.refillTransactions();
+    expect(refills).toHaveLength(8);
+    const stored = [...w.p1.store.data.values()].join('\n');
+    // Not one signed refill, txid or the descriptor is readable from the stored document.
+    for (const r of refills) {
+      expect(stored).not.toContain(r.txHex);
+      expect(stored).not.toContain(r.txHex.slice(0, 64));
+      expect(stored).not.toContain(r.txid);
+    }
+    expect(stored).not.toContain(wallet.state.vault!.descriptor.slice(0, 40));
+    expect(stored).not.toContain(wallet.state.hardware!.key.xpub);
+    const doc = JSON.parse(w.p1.store.data.get([...w.p1.store.data.keys()][0]!)!);
+    expect(Object.keys(doc).sort()).toEqual(['box', 'macKeyId', 'nonce', 'v']);
+    expect(doc.v).toBe(2);
+    // Reopening reads it back, refills and all.
+    expect((await RecoveryKeyWallet.open(w.deps))!.refillTransactions()).toEqual(refills);
+    // A document moved to another wallet's place in the store does not open there.
+    const other = `${[...w.p1.store.data.keys()][0]!}.other`;
+    const otherKeyId = doc.macKeyId.replace(/^[^]*\.mac\./, `${other}.mac.`);
+    // Even with the same key under the other place's name: the place is part of what the encryption checks.
+    w.p1.secureStore.items.set(otherKeyId, w.p1.secureStore.items.get(doc.macKeyId)!);
+    w.p1.store.data.set(other, JSON.stringify({ ...doc, macKeyId: otherKeyId }));
+    expect((await rejects(RecoveryKeyWallet.open({ ...w.deps, storageKey: other }))).code).toBe('state_tampered');
+  });
+
+  it('reads a state saved in the clear by an earlier version, and writes it again encrypted at once', async () => {
+    const w = await world();
+    const { wallet } = await createAndApprove(w);
+    const refills = wallet.refillTransactions();
+    const key = [...w.p1.store.data.keys()][0]!;
+    const { macKeyId } = JSON.parse(w.p1.store.data.get(key)!) as { macKeyId: string };
+    // Format 1, as 0.1.21 and earlier saved it: the JSON in the clear, with an HMAC under the key in the secure store.
+    const macKey = w.p1.secureStore.items.get(macKeyId)!.secret;
+    const body = JSON.stringify(wallet.state);
+    w.p1.store.data.set(key, JSON.stringify({ v: 1, macKeyId, mac: hex.encode(hmac(sha256, macKey, utf8ToBytes(body))), state: body }));
+    expect(w.p1.store.data.get(key)).toContain(refills[0]!.txHex);
+    const opened = await RecoveryKeyWallet.open(w.deps);
+    expect(opened!.refillTransactions()).toEqual(refills);
+    const now = w.p1.store.data.get(key)!;
+    expect(JSON.parse(now).v).toBe(2);
+    for (const r of refills) expect(now).not.toContain(r.txHex);
+    expect((await RecoveryKeyWallet.open(w.deps))!.refillTransactions()).toEqual(refills);
+    // A format 1 document that was changed is still refused.
+    const changed = JSON.parse(body);
+    changed.chain.refills[3].changeValueSats -= 1;
+    w.p1.store.data.set(key, JSON.stringify({ v: 1, macKeyId, mac: hex.encode(hmac(sha256, macKey, utf8ToBytes(body))), state: JSON.stringify(changed) }));
     expect((await rejects(RecoveryKeyWallet.open(w.deps))).code).toBe('state_tampered');
   });
 
@@ -575,9 +641,15 @@ describe('recovery', () => {
     expect(map.kind).toBe('xpub');
     expect(map.recoveryWords).toEqual([]);
     expect(rkDevice.calls.map((c) => c.op)).toEqual(['getXpub', 'close']);
+    // Confirming connects both devices: key 1, then the second one, which registers the vault and shows its first address.
     w.provider.device = w.ledger;
-    await wallet.confirmKitSaved({ mapSaved: true });
-    expect(wallet.state.recoveryKey).toMatchObject({ kind: 'hardware', device: { fingerprint: rkDevice.info.fingerprint, kind: 'coldcard' } });
+    w.provider.second = rkDevice;
+    const summary = await wallet.confirmKitSaved({ mapSaved: true });
+    expect(rkDevice.calls.map((c) => c.op)).toEqual(['getXpub', 'close', 'registerWallet', 'displayAddress', 'close']);
+    expect(rkDevice.calls.find((c) => c.op === 'displayAddress')).toMatchObject({ chain: 0, index: 0, address: summary.firstAddress });
+    expect(summary.addressVerified).toBe(true);
+    expect(wallet.vaultAddressVerified).toBe(true);
+    expect(wallet.state.recoveryKey).toMatchObject({ kind: 'hardware', device: { fingerprint: rkDevice.info.fingerprint, kind: 'coldcard' }, addressVerified: true });
     const { address } = await wallet.vaultReceiveAddress();
     w.chain.fund(address, 1_500_000n);
     w.mine(1);
@@ -590,6 +662,73 @@ describe('recovery', () => {
     w.mine(1);
     expect(w.chain.balance(dest)).toBe(BigInt(res.amountSats));
     expect(rkDevice.calls.filter((c) => c.op === 'signPsbt')).toHaveLength(1);
+  });
+
+  it('a second hardware wallet whose export was swapped: its own screen shows another address, and no vault is made', async () => {
+    const w = await world();
+    const wallet = await RecoveryKeyWallet.create(w.deps, { mnemonic: MNEMONICS.phone });
+    await wallet.connectHardware();
+    // The export the phone reads carries someone else's key under the second device's fingerprint (a swapped QR or NFC read).
+    const rkDevice = new SwappedExportSigner({ mnemonic: MNEMONICS.rkDevice, impostorMnemonic: MNEMONICS.phone2, network: 'regtest', kind: 'coldcard' });
+    w.provider.device = rkDevice;
+    await wallet.useHardwareRecoveryKey();
+    w.provider.device = w.ledger;
+    w.provider.second = rkDevice;
+    // Key 1 is genuine and shows the address of the (swapped) vault; only the second device itself can tell.
+    const err = await rejects(wallet.confirmKitSaved({ mapSaved: true }));
+    expect(err).toMatchObject({ code: 'address_mismatch', message: expect.stringMatching(/second hardware wallet shows/) });
+    expect(rkDevice.calls.map((c) => c.op)).toEqual(['getXpub', 'close', 'registerWallet', 'displayAddress', 'close']);
+    expect(wallet.state.stage).toBe('hardware');
+    expect(wallet.state.vault).toBeUndefined();
+    expect((await rejects(wallet.vaultReceiveAddress())).code).toBe('wrong_state');
+  });
+
+  it('refuses a second hardware wallet whose key is one already in the vault, under another fingerprint', async () => {
+    const w = await world();
+    const wallet = await RecoveryKeyWallet.create(w.deps, { mnemonic: MNEMONICS.phone });
+    await wallet.connectHardware();
+    w.provider.device = new SwappedExportSigner({ mnemonic: MNEMONICS.rkDevice, impostorMnemonic: MNEMONICS.hardware, network: 'regtest', kind: 'coldcard' });
+    expect(await rejects(wallet.useHardwareRecoveryKey())).toMatchObject({ code: 'hardware_mismatch', message: expect.stringMatching(/main hardware wallet/) });
+    w.provider.device = new SwappedExportSigner({ mnemonic: MNEMONICS.rkDevice, impostorMnemonic: MNEMONICS.phone, network: 'regtest', kind: 'coldcard' });
+    expect(await rejects(wallet.useHardwareRecoveryKey())).toMatchObject({ code: 'hardware_mismatch', message: expect.stringMatching(/phone key/) });
+  });
+
+  it('a vault whose second hardware wallet has not shown an address hands out no address until both devices do', async () => {
+    const w = await world();
+    const wallet = await RecoveryKeyWallet.create(w.deps, { mnemonic: MNEMONICS.phone });
+    await wallet.connectHardware();
+    const rkDevice = new SoftwareHardwareSigner({ mnemonic: MNEMONICS.rkDevice, network: 'regtest', kind: 'coldcard' });
+    w.provider.device = rkDevice;
+    await wallet.useHardwareRecoveryKey();
+    w.provider.device = w.ledger;
+    w.provider.second = rkDevice;
+    // As a vault made before this check: the vault is built, but no device was asked to show an address.
+    const summary = await wallet.confirmKitSaved({ mapSaved: true }, { verifyAddress: false });
+    expect(summary.addressVerified).toBe(false);
+    expect(wallet.state.recoveryKey!.addressVerified).toBe(false);
+    expect(wallet.vaultAddressVerified).toBe(false);
+    expect((await rejects(wallet.vaultReceiveAddress())).code).toBe('address_unverified');
+    // Check on your device: key 1 shows the address, then the second device does too.
+    const before = rkDevice.calls.length;
+    const checked = await wallet.vaultReceiveAddress({ verifyOnDevice: true });
+    expect(checked.verifiedOnDevice).toBe(true);
+    expect(rkDevice.calls.slice(before).map((c) => c.op)).toEqual(['registerWallet', 'displayAddress', 'close']);
+    expect(rkDevice.calls.find((c) => c.op === 'displayAddress' && c.index === checked.index)).toMatchObject({ address: checked.address });
+    expect(wallet.vaultAddressVerified).toBe(true);
+    expect((await RecoveryKeyWallet.open(w.deps))!.vaultAddressVerified).toBe(true);
+    await wallet.vaultReceiveAddress();
+
+    // A vault made by an earlier version: key 1 confirmed, the second device never asked (no flag at all).
+    delete (wallet.state.recoveryKey as { addressVerified?: boolean }).addressVerified;
+    expect(wallet.vaultAddressVerified).toBe(false);
+    expect(await rejects(wallet.vaultReceiveAddress())).toMatchObject({ code: 'address_unverified', message: expect.stringMatching(/second hardware wallet/) });
+    // Without the second device at hand, nothing is recorded.
+    w.provider.second = undefined;
+    expect((await rejects(wallet.vaultReceiveAddress({ verifyOnDevice: true }))).code).toBe('hardware_mismatch');
+    expect(wallet.vaultAddressVerified).toBe(false);
+    w.provider.second = rkDevice;
+    await wallet.vaultReceiveAddress({ verifyOnDevice: true });
+    expect(wallet.vaultAddressVerified).toBe(true);
   });
 
   it('caps the sweep fee', async () => {

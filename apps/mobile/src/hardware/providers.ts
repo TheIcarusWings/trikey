@@ -44,7 +44,7 @@ export function providersFor(platform: AdapterPlatform, options: HardwareProvide
     new LedgerBleProvider(options),
     new TrezorProvider(options),
     new BitBox02Provider({ network: options.network, bridge: options.bitbox02?.bridge ?? defaultBitBoxBridge, ...(options.bitbox02?.pairing ? { pairing: options.bitbox02.pairing } : {}) }),
-    new JadeBleProvider({ network: options.network, bridge: options.jade?.bridge ?? defaultJadeBleBridge, ...(options.jade?.notices ? { notices: options.jade.notices } : {}) }),
+    new JadeBleProvider({ network: options.network, bridge: options.jade?.bridge ?? defaultJadeBleBridge, ...(options.jade?.notices ? { notices: options.jade.notices } : {}), ...(options.jade?.pinServers ? { pinServers: options.jade.pinServers } : {}) }),
     new NfcProvider({ network: options.network, bridge: options.nfc?.bridge ?? defaultNfcBridge }),
     new QrProvider({ network: options.network, qr: options.qr }),
   ];

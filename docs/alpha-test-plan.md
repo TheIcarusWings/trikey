@@ -400,6 +400,8 @@ Do:
   Suite Lite opens and returns you to Trikey. When the Trezor signs Trikey's messages (pairing, and every hardware approval
   later), firmware before 2.13.0 and the Model One first warn about the path ("Unknown derivation path" or "Wrong address
   path for selected coin"): that is expected, continue. Note in the report which one you saw, with the firmware version.
+  If Suite Lite returns you to Trikey but Trikey keeps waiting, tell me: each request carries a one-time check that the
+  answer must bring back, and a Suite Lite that drops it would be a finding.
 - During setup the device asks you to approve the new 2-of-3 wallet (the app's checklist for your device lists it; it may come
   at the connect screen or at "Approve on Ledger" once you set the limit in step 4). **Read the device's screen**: it should say
   Trikey and 2 of 3.
@@ -1235,7 +1237,8 @@ Do:
    **Continue**. It must not appear again on later connections (it is remembered on the phone).
 3. **The PIN.** "Enter your PIN on the Jade": type it on the Jade. The phone shows "Checking your PIN" while it relays to
    the server. Expected: "Jade Plus connected" (or "Jade"). Write down the PIN server the phone named (`j8d.io` for
-   Blockstream's).
+   Blockstream's). If you set your own PIN server on the Jade, the phone first asks **A PIN server Trikey does not
+   know**, naming it: **It is my server**, once (it is remembered). With Blockstream's it must never ask that.
 4. **Pair** (steps 2 to 4). "Confirm on your device" with the text: the Jade shows the text (a long one is cut after
    188 characters with "..."; the phone says so), the path `m/48'/1'/0'/2'/0/0` and a hash. Confirm. Then the Jade shows
    the wallet to register: **2 of 3**, sorted, the three keys, and the name (`Trikey`; spaces become "-"). Approve.

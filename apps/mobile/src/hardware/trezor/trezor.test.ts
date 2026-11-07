@@ -12,6 +12,7 @@ import { bip32VersionsFor, decodeXpub, encodeXpub } from '../common/xpub';
 import { parseWalletPolicy } from '../common/wallet';
 import { deviceSignatures, makeFixture, network, type Fixture } from '../test/fixtures';
 import { coinForNetwork, mergeTrezorSignatures, multisigAt, psbtToTrezorRequest, trezorSignatureToDer } from './convert';
+import { TrezorCallbackGuard } from './callback';
 import { mapTrezorError } from './errors';
 import { TrezorSigner } from './signer';
 import type { TrezorConnectLike, TrezorMultisig, TrezorResponse, TrezorSignTransactionParams } from './types';
@@ -358,6 +359,13 @@ describe('TrezorSigner', () => {
     await expect(signer.getXpub("m/48'/1'/0'/2'")).rejects.toMatchObject({ code: 'invalid-response' });
   });
 
+  it('refuses a key from another place in the tree, even with the path echoed right', async () => {
+    const { f, connect, signer } = await setupSigner();
+    const d = decodeXpub(f.hardwareXpub);
+    connect.respond = () => ({ success: true, payload: { xpub: encodeXpub({ ...d, childNumber: 1 + H }), fingerprint: 0, path: ACCOUNT, depth: 4 } as never });
+    await expect(signer.getXpub("m/48'/1'/0'/2'")).rejects.toMatchObject({ code: 'invalid-response', message: expect.stringMatching(/not the one at the path/) });
+  });
+
   it('seeds the xpub fetched while connecting', async () => {
     const f = await makeFixture();
     const connect = new FakeConnect(f);
@@ -393,6 +401,11 @@ describe('TrezorSigner', () => {
 
     connect.addressOverride = f.wallet.derive(1, 7).address;
     await expect(signer.displayAddress(f.policy, 1, 6)).rejects.toMatchObject({ code: 'invalid-response' });
+    // The right address, but answered for another path than the one asked for.
+    connect.addressOverride = undefined;
+    connect.respond = (method) => (method === 'getAddress' ? ({ success: true, payload: { address: f.wallet.derive(1, 6).address, path: [...ACCOUNT, 1, 7] } } as never) : undefined);
+    await expect(signer.displayAddress(f.policy, 1, 6)).rejects.toMatchObject({ code: 'invalid-response', message: expect.stringMatching(/different address than the one asked for/) });
+    connect.respond = undefined;
     await expect(signer.displayAddress(f.policy, 3 as 0, 6)).rejects.toMatchObject({ code: 'invalid-request' });
   });
 
@@ -525,5 +538,45 @@ describe('TrezorSigner over the real connect-mobile deep-link client (offline)',
     await tick();
     await signer.close();
     await expect(closed).rejects.toMatchObject({ code: 'cancelled' });
+  });
+
+  it('with the one-time token: Suite Lite\'s reply goes through, a link opened by anything else never reaches Connect', async () => {
+    // As the provider wires it: the guard adds the token on the way out and checks it on the way back.
+    const { default: TrezorConnect } = await import('@trezor/connect-mobile');
+    const guard = new TrezorCallbackGuard('trikey://trezor-callback');
+    const opened: string[] = [];
+    await TrezorConnect.init({
+      manifest: { appName: 'Trikey', appUrl: 'https://example.invalid', email: 'dev@example.invalid' },
+      deeplinkOpen: (url: string) => void opened.push(guard.outgoing(url)!),
+      deeplinkCallbackUrl: 'trikey://trezor-callback',
+    });
+    const deliver = (url: string) => {
+      const reply = guard.isCallback(url) ? guard.incoming(url) : undefined;
+      if (reply) TrezorConnect.handleDeeplink(reply);
+    };
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const f = await makeFixture();
+    const connect = TrezorConnect as unknown as TrezorConnectLike;
+    const signer = new TrezorSigner({ kind: 'trezor', fingerprint: f.hardwareFingerprint }, connect, { network: 'regtest' });
+    const p = signer.getXpub("m/48'/1'/0'/2'");
+    await tick();
+    const callback = new URL(new URL(opened.at(-1)!).searchParams.get('callback')!);
+    expect(callback.searchParams.get('t')).toMatch(/^[0-9a-f]{32}$/);
+    // Another app forges the answer with the id it saw or guessed, but without the token: dropped, the call still waits.
+    const forged = new URL('trikey://trezor-callback');
+    forged.searchParams.set('id', callback.searchParams.get('id')!);
+    forged.searchParams.set('response', JSON.stringify({ success: true, payload: { xpub: 'tpubFORGED', path: [48 + H, 1 + H, H, 2 + H], fingerprint: 1, depth: 4 } }));
+    deliver(forged.toString());
+    let settled = false;
+    void p.then(
+      () => (settled = true),
+      () => (settled = true),
+    );
+    await tick();
+    expect(settled).toBe(false);
+    // What Suite Lite does: the callback as sent (id and token), with the response set on it.
+    callback.searchParams.set('response', JSON.stringify({ success: true, payload: { xpub: f.hardwareXpub, path: [48 + H, 1 + H, H, 2 + H], fingerprint: 1, depth: 4 } }));
+    deliver(callback.toString());
+    expect(await p).toBe(f.hardwareXpub);
   });
 });

@@ -129,6 +129,16 @@ unlocks it with the PIN on the Jade. Read from Jade's firmware and client, **not
 A model that cannot sign a text is refused with its reason (`QrSigner.signMessage`), and the connect screen says so
 before a guardian wallet is started, offering Recovery Key mode. Not built: USB for Jade, BIP 322 proofs.
 
+**Trezor's reply link.** Trezor Suite Lite answers each request by opening a link into the app
+(`trikey://trezor-callback?id=…&response=…`), which any app or web page can open too. So each request carries a
+one-time random token (128 bits) in its callback address, and the phone hands Trezor Connect only a reply at exactly
+that address, for a request still waiting, with its token, once (`apps/mobile/src/hardware/trezor/callback.ts`). The
+key read at connect must be the one asked for: the path Suite Lite echoes, and the key's own depth and child number. An
+address shown must be for the path asked for. What the token cannot stop: on Android, an app that also claims the
+`trikey` scheme, if the owner picks it when the phone asks which app opens the link, sees the real reply and can answer
+in its place. Against that, every signature is checked against the keys, and the vault's first address is shown on the
+Trezor's own screen for the owner to compare, as for every device.
+
 **SeedSigner co-signs payments only (decided 2026-11-06).** Its firmware refuses a message at any `m/48'` path
 ("Not implemented" in `parse_derivation_path`, and custom paths are "not supported"), so it cannot sign Trikey's texts
 with the key the guardian checks. The only way around it is a BIP 322 proof (a PSBT that spends a virtual output),
@@ -189,9 +199,15 @@ docs/design/hardware-auth-path.md §9.
 - **Unlocking asks the Jade's PIN server, through the phone.** A Jade rebuilds the key to its seed from the PIN and a
   secret held by a "blind" PIN server. Over Bluetooth it cannot reach the server, so after the owner types the PIN on
   the Jade, the phone relays an encrypted exchange between the Jade and the server the Jade names: Blockstream's
-  (`j8d.io`) unless the owner set their own on the Jade. The phone uses only the address the Jade gives (no server is
-  written in Trikey), only over https (never plain http; it has no Tor, so never the onion address), and passes the
-  server's answer to nothing but the Jade's `pin` call. **What the server learns:** that this Jade (by a key of its own,
+  (`j8d.io`) unless the owner set their own on the Jade. The phone reaches only Blockstream's server (`j8d.io`, or its
+  older name `jadepin.blockstream.com`) or one the owner says is their own: the first time a Jade names another server,
+  the phone asks ("A PIN server Trikey does not know") and remembers a yes. Anything that answers over Bluetooth as a
+  "Jade" could otherwise make the phone fetch an address on the owner's network and read the answer back. So: https
+  only, to a named host (never an IP address, `localhost` or a local name, nor a URL with a user name or a query), a
+  path ending in `/get_pin` or `/set_pin`, a JSON POST, no redirect (a redirected answer is dropped: React Native's
+  fetch follows redirects itself, so the request may still go, but nothing comes back to the device), and an answer of
+  at most 4 KiB. Never plain http; it has no Tor, so never the onion address. It passes the server's answer to nothing
+  but the Jade's `pin` call. **What the server learns:** that this Jade (by a key of its own,
   which tells its unlocks apart) is unlocking and when, how many wrong PINs in a row (three wipe it), and the phone's IP
   address. **Not** the PIN, the seed, any key, address, wallet or amount, and nothing about Trikey beyond the timing. The
   phone says so in one sentence before the first unlock over Bluetooth, and stops if the owner declines. In QR mode
@@ -571,7 +587,7 @@ printed and kept with the hardware wallet.
   (they need the same signature every time): there, as with every other brand, the firmware is trusted. The phone's
   pairing with a BitBox02 (its channel key) sits in the app's storage: someone who copies it can skip only the pairing
   code with that BitBox02, never its password or an approval on it.
-- **A Jade over Bluetooth and its PIN server** ("Jade over Bluetooth"). Unlocking it sends an encrypted exchange from the phone to the PIN server the Jade names (Blockstream's by default): that server learns the phone's IP address, when this Jade unlocks and failed PIN counts, never the PIN, keys or wallet. It cannot unlock the Jade without the PIN, and a server that is down or refuses only keeps the Jade locked (the passphrase and the other keys are unaffected; QR mode works without Trikey contacting it). The phone uses only https addresses the Jade gives and calls nothing on the Jade but `pin` with the answer. Payments over Bluetooth do not use Jade's anti-exfil (its PSBT path has none), so a Jade with malicious firmware could in theory leak key 1 through its signature nonces: alone that moves nothing, with a stolen phone it would.
+- **A Jade over Bluetooth and its PIN server** ("Jade over Bluetooth"). Unlocking it sends an encrypted exchange from the phone to the PIN server the Jade names (Blockstream's by default): that server learns the phone's IP address, when this Jade unlocks and failed PIN counts, never the PIN, keys or wallet. It cannot unlock the Jade without the PIN, and a server that is down or refuses only keeps the Jade locked (the passphrase and the other keys are unaffected; QR mode works without Trikey contacting it). The phone reaches only Blockstream's PIN server or one the owner said is their own, over https, with no redirect, and calls nothing on the Jade but `pin` with the answer. Payments over Bluetooth do not use Jade's anti-exfil (its PSBT path has none), so a Jade with malicious firmware could in theory leak key 1 through its signature nonces: alone that moves nothing, with a stolen phone it would.
 - **Malicious relays** can drop messages but can't read or forge them. A relay change from the web UI (a security event in the activity log) can at worst move the phone to relays that drop everything; the old relays stay watched until the owner stops them and the phone moves only to relays the guardian answered it over.
 - **Contested recovery** (a thief cancels a genuine recovery): phone-only spending stays paused, so the thief can't drain either. Same as Bitkey.
 - **After a recovery the guardian trusts its outcome:** the phone that started it becomes the new wallet's paired phone. That is what the Delay & Notify period protects; a thief who gets that far already holds the new wallet's keys. The hardware wallet must re-prove its authorization key for the new wallet before it can loosen anything, and the old wallet's recovery access grants are revoked.
@@ -765,7 +781,7 @@ Built in [`packages/recovery-key`](packages/recovery-key) (`@trikey/recovery-key
   - Key 1, the hardware wallet: its BIP 48 account key.
   - Key 2, the phone: one seed with two accounts. BIP 48 for the vault, BIP 84 (`m/84'/c'/0'`) for the **spending balance**, a single-key `wpkh` wallet the phone spends from with Face ID alone (it also restores in any BIP 84 wallet).
   - Key 3, the **Recovery Key**: a fresh 12-word BIP 39 seed made in memory and printed on the Recovery Kit, or a second hardware wallet, of which only the xpub is needed (the kit is then a wallet map with no secret). The user proves the kit is saved by typing three of its words or scanning the printout; then key 3 is wiped from the phone and only its xpub stays. (An NFC card is still a later option.)
-- **No vault address before the device confirms one.** Key 1 reaches the phone from the device, and for an air-gapped device (QR, Coldcard over NFC) by a code or read the phone cannot authenticate: a swapped export would put someone else's key in the vault under the device's fingerprint. So, as in guardian mode, the vault is registered on the device and its first address checked there when the kit is confirmed, for every kind (an air-gapped device gets the compare sheet: the address, to find on its own screen); a mismatch makes no vault. Until a check has passed (`addressVerified`), no vault address is shown, copied or shared (`vaultReceiveAddress` throws `address_unverified`); a vault made before the check was required gets there with *Check on your device* (`vaultReceiveAddress({ verifyOnDevice: true })`). A key export whose xpub's depth or child number contradicts its claimed path is refused (`apps/mobile/src/hardware/qr/export.ts`).
+- **No vault address before the device confirms one.** Key 1 reaches the phone from the device, and for an air-gapped device (QR, Coldcard over NFC) by a code or read the phone cannot authenticate: a swapped export would put someone else's key in the vault under the device's fingerprint. So, as in guardian mode, the vault is registered on the device and its first address checked there when the kit is confirmed, for every kind (an air-gapped device gets the compare sheet: the address, to find on its own screen); a mismatch makes no vault. Until a check has passed (`addressVerified`), no vault address is shown, copied or shared (`vaultReceiveAddress` throws `address_unverified`); a vault made before the check was required gets there with *Check on your device* (`vaultReceiveAddress({ verifyOnDevice: true })`). A **second hardware wallet as the Recovery Key** reaches the phone the same way, so it gets the same check: when the map is confirmed it registers the vault and shows the first address too, after key 1, and a key equal to key 1's or key 2's is refused. Until it has shown one (`recoveryKey.addressVerified`; a vault made before this check has none), no vault address is handed out, and *Check on your device* shows the address on both devices. A key export whose xpub's depth or child number contradicts its claimed path is refused (`apps/mobile/src/hardware/qr/export.ts`).
 - **Refills are a chain pre-signed by phone + hardware** (default 8 × 200,000 sats, weekly).
   - Refill *k* spends output 1 (the vault change) of refill *k−1* with `nSequence` = 1,008 (BIP 68, blocks), pays the refill amount to a fresh spending address (output 0) and the rest to a fresh vault change address. Segwit inputs only, so every txid is fixed before signing; the unsigned previous refill is each link's `nonWitnessUtxo`, so hardware wallets can check amounts.
   - Whoever holds the signed chain, at most one refill confirms in any 1,008-block window. The fake chain in the tests enforces BIP 68 and a thief broadcasting every refill every block gets exactly one per period.
@@ -791,7 +807,7 @@ Built in [`packages/recovery-key`](packages/recovery-key) (`@trikey/recovery-key
   | Hardware wallet and its seed words lost | kit + phone | an address, or a new vault (new hardware wallet, new kit) |
   | Recovery Kit lost or seen | phone + hardware | a new vault with a new kit (same devices, next account) |
 
-- **Stored state** is one JSON document with an HMAC under a key in the secure store, and the refill chain's links and signatures are checked again on every open.
+- **Stored state** is one JSON document, encrypted (XChaCha20-Poly1305, which also authenticates it) under a key derived from a key in the secure store, and the refill chain's links and signatures are checked again on every open. It holds the signed refills, which anyone with a copy could broadcast (one per period), and the app database it sits in goes into phone backups (iCloud; Android Auto Backup and device transfer), while the secure store's key never leaves the device. A document saved by 0.1.21 or earlier (in the clear, with an HMAC under that key) is still read and written again encrypted at once. An older app cannot open the new format: going back to it means restoring from the keys. Copies made before the update (an old backup, and possibly unused pages of the database file) still hold those refills in the clear, and they stay valid until the coins they spend move (a vault payment that ends the chain, or a sweep to a new vault).
 - **The trade-offs:**
   - keep the Recovery Kit apart from the seed words; anyone with both takes everything, with no undo window;
   - approve new refill batches every couple of months;

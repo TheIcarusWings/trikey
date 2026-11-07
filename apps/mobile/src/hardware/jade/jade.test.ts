@@ -16,9 +16,9 @@ import { describeHardwareError } from '../errors';
 import { parseWalletPolicy } from '../common/wallet';
 import { FakeJade, fakePinServer } from '../test/fake-jade-ble';
 import { makeFixture, network } from '../test/fixtures';
-import { JadeBleBridge, memoryNoticeStore, type JadeBridgeScreen } from './bridge';
+import { JadeBleBridge, memoryNoticeStore, memoryPinServerStore, type JadeBridgeScreen } from './bridge';
 import { noBle } from './link';
-import { hostOf, parseHttpRequest, pickPinServerUrl, relayHttpRequest, unlockJade } from './pin-server';
+import { BLOCKSTREAM_PIN_SERVERS, hostOf, parseHttpRequest, parsePinServerUrl, pickPinServerUrl, relayHttpRequest, unlockJade } from './pin-server';
 import type { JadeRpc } from './rpc';
 import { JadeBleProvider, PIN_SERVER_NOTICE, versionAtLeast } from './provider';
 import { JadeSigner, fingerprintOfRoot, jadeNetwork, jadeWalletName, registerMultisigParams } from './signer';
@@ -28,18 +28,19 @@ const AUTH = "m/48'/1'/0'/2'/0/0";
 const TEXT = `Trikey pair v1 wallet=0123456789abcdef guardian=03${'ab'.repeat(32)}`;
 
 /** Plays the owner in front of the sheet: answers the PIN-server notice (yes unless told otherwise) and records screens. */
-function owner(bridge: JadeBleBridge, opts: { acceptNotice?: boolean } = {}) {
+function owner(bridge: JadeBleBridge, opts: { acceptNotice?: boolean; acceptServer?: boolean } = {}) {
   const screens: JadeBridgeScreen[] = [];
   bridge.subscribe(() => {
     const s = bridge.getSnapshot();
     if (!s) return;
     screens.push(s);
-    if (s.type === 'confirm') queueMicrotask(() => (opts.acceptNotice === false ? bridge.cancel() : bridge.proceed()));
+    const yes = s.title === 'A PIN server Trikey does not know' ? opts.acceptServer !== false : opts.acceptNotice !== false;
+    if (s.type === 'confirm') queueMicrotask(() => (yes ? bridge.proceed() : bridge.cancel()));
   });
   return screens;
 }
 
-async function setup(jadeOpts: Partial<ConstructorParameters<typeof FakeJade>[0]> = {}, ownerOpts: { acceptNotice?: boolean } = {}) {
+async function setup(jadeOpts: Partial<ConstructorParameters<typeof FakeJade>[0]> = {}, ownerOpts: { acceptNotice?: boolean; acceptServer?: boolean } = {}) {
   const f = await makeFixture();
   const jade = new FakeJade({ mnemonic: MNEMONICS.hardware, ...jadeOpts });
   const link = jade.link();
@@ -47,8 +48,9 @@ async function setup(jadeOpts: Partial<ConstructorParameters<typeof FakeJade>[0]
   const screens = owner(bridge, ownerOpts);
   const server = fakePinServer();
   const notices = memoryNoticeStore();
-  const provider = new JadeBleProvider({ network: 'regtest', bridge, fetch: server.fetch, notices, now: () => 1_800_000_000 });
-  return { f, jade, link, bridge, screens, server, notices, provider };
+  const pinServers = memoryPinServerStore();
+  const provider = new JadeBleProvider({ network: 'regtest', bridge, fetch: server.fetch, notices, pinServers, now: () => 1_800_000_000 });
+  return { f, jade, link, bridge, screens, server, notices, pinServers, provider };
 }
 
 async function connected() {
@@ -154,10 +156,83 @@ describe('JadeBleProvider: finding, pairing and unlocking', () => {
     const onionOnly = await setup({ pinServerUrls: ['http://mrrxtq6tjpbnbm7vh5jt6mpjctn7ggyfy5wegvbeff3x7jrznqawlmid.onion/get_pin'] });
     await expect(onionOnly.provider.connect()).rejects.toMatchObject({ message: expect.stringMatching(/only an onion address.*no Tor/) });
     expect(onionOnly.server.calls).toEqual([]);
-    // The owner's own server over https: used as given.
+    // The owner's own server over https: used once the owner says it is theirs, and not asked again.
     const own = await setup({ pinServerUrls: ['https://pin.example.org/get_pin', 'http://abc.onion/get_pin'] });
-    await own.provider.connect();
+    await (await own.provider.connect()).close();
     expect(own.server.calls.map((c) => c.url)).toEqual(['https://pin.example.org/get_pin']);
+    const asked = own.screens.filter((x) => x.title === 'A PIN server Trikey does not know');
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatchObject({ type: 'confirm', instructions: expect.stringMatching(/pin\.example\.org.*not Blockstream’s.*set this server on your Jade yourself/) });
+    expect(await own.pinServers.list()).toEqual(['pin.example.org']);
+    await own.provider.connect();
+    expect(own.server.calls).toHaveLength(2);
+    expect(own.screens.filter((x) => x.title === 'A PIN server Trikey does not know')).toHaveLength(1);
+  });
+
+  it('never lets a Jade (or anything claiming to be one) point the phone at an address on its network', async () => {
+    for (const url of [
+      'https://10.0.0.5:8443/admin',
+      'https://192.168.1.1/get_pin',
+      'https://[fd00::1]/get_pin',
+      'https://localhost/get_pin',
+      'https://router.lan/get_pin',
+      'https://nas.local/get_pin',
+      'https://user:pass@pin.example.org/get_pin',
+      'https://pin.example.org/get_pin?x=1',
+      'https://pin.example.org/admin',
+    ]) {
+      const s = await setup({ pinServerUrls: [url] });
+      const err = await s.provider.connect().catch((e: unknown) => e);
+      expect(err, url).toMatchObject({ code: 'unavailable', message: expect.stringMatching(/does not reach/) });
+      expect(s.server.calls, url).toEqual([]);
+      // Not even asked: no answer from the owner can make such an address one to reach.
+      expect(s.screens.map((x) => x.title), url).not.toContain('A PIN server Trikey does not know');
+    }
+  });
+
+  it('reaches no server the owner did not name: a no on the question stops, with nothing sent', async () => {
+    const s = await setup({ pinServerUrls: ['https://pins.attacker.example/get_pin'] }, { acceptServer: false });
+    await expect(s.provider.connect()).rejects.toMatchObject({ code: 'cancelled' });
+    expect(s.server.calls).toEqual([]);
+    expect(await s.pinServers.list()).toEqual([]);
+    // Without a way to ask (unlockJade on its own), only Blockstream's is reached: the Jade gets an empty pin.
+    const methods: string[] = [];
+    const rpc = {
+      call: async (method: string) => {
+        methods.push(method);
+        if (method === 'pin') throw new Error('stop');
+        return { http_request: { params: { urls: ['https://pins.attacker.example/get_pin'], method: 'POST', accept: 'json', data: { data: 'a' } }, 'on-reply': 'pin' } };
+      },
+    } as unknown as JadeRpc;
+    const fetched: string[] = [];
+    await expect(unlockJade(rpc, { network: 'testnet', fetch: async (u) => (fetched.push(u), { ok: true, status: 200, text: async () => '{}' }) })).rejects.toThrow('stop');
+    expect(fetched).toEqual([]);
+    expect(methods).toEqual(['auth_user', 'pin']);
+  });
+
+  it('does not follow a redirect from the PIN server: the answer is dropped and the Jade gets an empty pin', async () => {
+    const s = await setup();
+    const real = s.server.fetch;
+    const inits: unknown[] = [];
+    const provider = new JadeBleProvider({
+      network: 'regtest',
+      bridge: s.bridge,
+      notices: s.notices,
+      fetch: async (url, init) => {
+        inits.push(init);
+        const res = await real(url, init);
+        // What React Native's fetch reports after following a redirect natively.
+        return { ...res, redirected: true, url: 'http://192.168.1.1/' };
+      },
+    });
+    const err = await provider.connect().catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'unavailable', message: expect.stringMatching(/sent this phone somewhere else.*stayed locked/) });
+    expect(inits).toEqual([expect.objectContaining({ redirect: 'error' })]);
+    expect(s.jade.requests.map((r) => [r.method, r.params === undefined])).toEqual([
+      ['get_version_info', true],
+      ['auth_user', false],
+      ['pin', true],
+    ]);
   });
 
   it('refuses firmware too old for Trikey, and says what is missing on a phone without Bluetooth', async () => {
@@ -215,6 +290,16 @@ describe('the PIN-server relay', () => {
     expect(pickPinServerUrl(['http://x.onion/get_pin', 'https://y.onion/get_pin', 'https://j8d.io/get_pin'])).toEqual({ url: 'https://j8d.io/get_pin' });
     expect(pickPinServerUrl([])).toEqual({ problem: expect.stringMatching(/no PIN-server address/) });
     expect(hostOf('https://J8D.io:443/get_pin')).toBe('j8d.io');
+    // Blockstream's only, by default; another server only when allowed, and named with its port when not 443.
+    expect(BLOCKSTREAM_PIN_SERVERS).toEqual(['j8d.io', 'jadepin.blockstream.com']);
+    expect(pickPinServerUrl(['https://J8D.io/get_pin'])).toEqual({ url: 'https://J8D.io/get_pin' });
+    expect(pickPinServerUrl(['https://j8d.io:8443/get_pin'])).toMatchObject({ unknownServer: 'j8d.io:8443' });
+    expect(pickPinServerUrl(['https://pin.example.org/set_pin'])).toMatchObject({ unknownServer: 'pin.example.org' });
+    expect(pickPinServerUrl(['https://pin.example.org/set_pin'], ['pin.example.org'])).toEqual({ url: 'https://pin.example.org/set_pin' });
+    expect(pickPinServerUrl(['https://j8d.io.attacker.example/get_pin'])).toMatchObject({ unknownServer: 'j8d.io.attacker.example' });
+    expect(parsePinServerUrl('https://pin.example.org:9443/jade/get_pin')).toEqual({ server: 'pin.example.org:9443', host: 'pin.example.org' });
+    for (const bad of ['https://1.2.3.4/get_pin', 'https://pin.example.org/../get_pin', 'https://pin.example.org/get_pin#x', 'http://j8d.io/get_pin', 'https://j8d.io/'])
+      expect(parsePinServerUrl(bad), bad).toBeUndefined();
   });
 
   it('passes the server answer on as JSON, and reports a server that answers garbage', async () => {
@@ -228,7 +313,7 @@ describe('the PIN-server relay', () => {
     });
     expect(ok).toEqual({ body: { data: 'xyz' }, url: 'https://j8d.io/get_pin' });
     expect(seen).toEqual([
-      { url: 'https://j8d.io/get_pin', init: { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: '{"data":"abc"}', signal: expect.anything() } },
+      { url: 'https://j8d.io/get_pin', init: { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: '{"data":"abc"}', signal: expect.anything(), redirect: 'error' } },
     ]);
     expect(await relayHttpRequest(req, { fetch: async () => ({ ok: true, status: 200, text: async () => '<html>' }) })).toEqual({ problem: expect.stringMatching(/not JSON/) });
     expect(await relayHttpRequest(req, { fetch: async () => ({ ok: true, status: 200, text: async () => 'x'.repeat(70_000) }) })).toEqual({ problem: expect.stringMatching(/too long/) });

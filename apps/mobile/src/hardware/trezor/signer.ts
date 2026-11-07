@@ -8,7 +8,7 @@ import type { NetworkName } from '@trikey/core';
 import { HardwareError } from '../errors';
 import { assertChainIndex, assertNetworkFamily, findKeyIndex, parseWalletPolicy, walletScriptsAt, type ParsedWallet } from '../common/wallet';
 import { coinTypeOf, formatPath, parsePath } from '../common/path';
-import { normalizeXpub, xpubFamily } from '../common/xpub';
+import { assertXpubAtPath, normalizeXpub, xpubFamily } from '../common/xpub';
 import { assertDeviceSignedAll, decodePsbtBase64, encodePsbtBase64 } from '../common/psbt';
 import { coinForNetwork, devicePathAt, mergeTrezorSignatures, multisigAt, psbtToTrezorRequest } from './convert';
 import { TREZOR_CANCEL_REASONS, mapTrezorError, trezorFailure } from './errors';
@@ -73,6 +73,7 @@ export class TrezorSigner implements HardwareSigner {
     if (res.path.length !== numbers.length || res.path.some((n, i) => n !== numbers[i]))
       throw new HardwareError('invalid-response', 'The Trezor returned the key for a different path.', { kind: 'trezor' });
     const xpub = normalizeXpub(res.xpub);
+    assertXpubAtPath(xpub, numbers, 'trezor');
     if (xpubFamily(xpub) !== (coinType === 0 ? 'main' : 'test')) throw new HardwareError('invalid-response', 'The Trezor returned a key for the wrong network.', { kind: 'trezor' });
     this.xpubs.set(key, xpub);
     return xpub;
@@ -88,15 +89,19 @@ export class TrezorSigner implements HardwareSigner {
     assertChainIndex(chain, index);
     const { parsed, deviceKey } = this.checkWallet(wallet);
     const coin = coinForNetwork(this.opts.network);
+    const path = devicePathAt(parsed, deviceKey, chain, index);
     const res = await this.call(() =>
       this.connect.getAddress({
-        path: devicePathAt(parsed, deviceKey, chain, index),
+        path,
         coin,
         scriptType: 'SPENDWITNESS',
         multisig: multisigAt(parsed, chain, index),
         showOnTrezor: true,
       }),
     );
+    // The reply must be for the address asked for (Connect echoes its path).
+    if (Array.isArray(res.path) && formatPath(res.path) !== formatPath(path))
+      throw new HardwareError('invalid-response', 'The Trezor answered for a different address than the one asked for.', { kind: 'trezor' });
     const expected = walletScriptsAt(parsed, chain, index, this.opts.network).address;
     if (res.address !== expected)
       throw new HardwareError('invalid-response', `The Trezor shows a different address than this wallet derives (${res.address} instead of ${expected}). Do not use it.`, { kind: 'trezor' });
