@@ -4,7 +4,7 @@
  * tried without a guardian. The wallet shown fills the screens' fields as before; the others are kept here, parked,
  * and swapped in when shown.
  */
-import { LIMIT_OFF_SATS } from './rules';
+import { isLimitOffSats } from './rules';
 import { emptySavings } from './savings-mock';
 import type { ActivityItem, Contact, HardwareWallet, WalletListItem, WalletState, WalletsView } from './types';
 
@@ -66,8 +66,8 @@ function itemOf(w: DemoWallet, s: DemoWalletSlice, current: boolean, frozenOf?: 
     balanceSats: s.balanceSats,
     ...(s.savings.status === 'active' ? { savingsSats: s.savings.balanceSats } : {}),
     ...(frozen ? { frozen } : {}),
-    dailyLimitSats: limit >= LIMIT_OFF_SATS ? 0 : limit,
-    ...(limit >= LIMIT_OFF_SATS ? { limitOff: true as const } : {}),
+    dailyLimitSats: isLimitOffSats(limit) ? 0 : limit,
+    ...(isLimitOffSats(limit) ? { limitOff: true as const } : {}),
   };
 }
 

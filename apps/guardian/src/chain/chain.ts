@@ -67,9 +67,14 @@ interface FeeSnapshot {
   minRelaySatPerVb: number;
 }
 
-/** Where a scan of one chain ends (exclusive): `gap` unused addresses after the last used one, and past `mustReach`. */
+/**
+ * Where a scan of one chain ends (exclusive): `gap` unused addresses after the last used one, and past `mustReach`;
+ * never past `MAX_SCAN_INDEX` (that index included). A scan that gets there stops and returns what it found: a mark at
+ * the limit, or a server reporting history all the way, must never make the scan fail (every scan of the wallet, and so
+ * a recovery's coverage check, would fail with it).
+ */
 function scanEnd(lastUsed: number, mustReach: number, gap: number): number {
-  return Math.min(MAX_SCAN_INDEX + 1, Math.max(lastUsed + 1 + gap, mustReach + 1));
+  return Math.min(MAX_SCAN_INDEX + 1, Math.max(lastUsed + 1 + gap, Math.min(mustReach, MAX_SCAN_INDEX) + 1));
 }
 /** Stop scanning a chain past this index (far beyond any real wallet; keeps a lying server from looping us). */
 export const MAX_SCAN_INDEX = 100_000;
@@ -685,7 +690,6 @@ export class ChainService {
         });
         next = stop;
         end = scanEnd(lastUsed, mustReach, gap);
-        if (next > MAX_SCAN_INDEX) throw new ChainUnavailableError('address scan went past the index limit');
       }
       chains[chain] = { used, nextIndex: lastUsed + 1 };
     }
@@ -696,7 +700,7 @@ export class ChainService {
   walletScripts(wallet: AddressSource, scan: WalletScan): Map<string, { chain: 0 | 1; index: number }> {
     const out = new Map<string, { chain: 0 | 1; index: number }>();
     for (const chain of [0, 1] as const) {
-      const end = Math.min(MAX_SCAN_INDEX, scan.chains[chain].nextIndex + scan.gapLimit);
+      const end = Math.min(MAX_SCAN_INDEX + 1, scan.chains[chain].nextIndex + scan.gapLimit);
       for (let index = 0; index < end; index++) out.set(hex.encode(this.script(wallet, chain, index)), { chain, index });
     }
     return out;

@@ -305,6 +305,10 @@ export type Refusal =
   | { reason: 'chain_unavailable'; detail: string }
   /** The system clock is more than `MAX_CLOCK_AHEAD_OF_CHAIN_MS` ahead of the chain's median time past: nothing is co-signed. */
   | { reason: 'clock_ahead_of_chain'; systemTime: number; chainTime: number }
+  /** The PSBT pays less than `MIN_COSIGN_FEE_SAT_PER_KVB` (inspect.ts): it would never relay, so it is no real payment. */
+  | { reason: 'fee_rate_too_low'; fee: bigint; vsize: number; minSatPerKvb: number }
+  /** More successful co-signatures in the window than `COSIGN_RATE_LIMITS` allow (engine.ts). */
+  | { reason: 'cosign_rate_limited'; max: number; windowMs: number; retryAfterSeconds: number }
   | { reason: 'nothing_to_resume' }
   | { reason: 'unknown_alert'; alertId: string }
   /** The PSBT spends a wallet this guardian retired (after a recovery, or `wallet.retire`). */
@@ -417,16 +421,44 @@ export interface HighWater {
   change: number;
 }
 
+/**
+ * A co-signed transaction's change, not yet seen used on chain (DESIGN.md, rule 3, "change is only change within reach
+ * of a scan"). Every scan of the wallet reaches it, but it never widens the change window, which only the on-chain marks
+ * (`GuardedWallet.chainMarks`) anchor. Dropped once a scan sees the marks reach it, once a complete scan shows none of
+ * `outpoints` unspent (they were spent, by it or by something else), or after `PENDING_MARK_TTL_MS`.
+ */
+export interface PendingMark extends HighWater {
+  /** The co-signed transaction; `legacy` for the marks a guardian before this release kept (`GuardedWallet.highWater`). */
+  txid: string;
+  /** ms, the limit time it was co-signed (or migrated) at. */
+  at: number;
+  /** The coins it spends (for `legacy`: every coin a remembered co-signature spent). */
+  outpoints: string[];
+  /** Migrated from a guardian before this release: co-signed and on-chain marks mixed, possibly walked (see DESIGN.md). */
+  legacy?: true;
+}
+
 /** The wallet the guardian guards now, with everything that belongs to it. */
 export interface GuardedWallet {
   registration: Registration;
   rules: Rules;
   /**
-   * High-water marks (absent: none yet). An output counts as change only within `CHANGE_WINDOW` of
-   * its chain's mark, and every scan of the wallet starts from them (DESIGN.md, "Rules the guardian
-   * enforces"): raised by co-signed change and by what the scans find used.
+   * The on-chain high-water marks (absent: none yet): per chain, the highest index a scan of the chain source found used.
+   * An output counts as change only within `CHANGE_WINDOW` of its chain's mark (DESIGN.md, "Rules the guardian
+   * enforces"). Only scans raise them (`noteUsedIndexes`, at most a gap per scan from a public server), never a
+   * co-signature: a co-signed transaction that is never broadcast must not move the window.
+   */
+  chainMarks?: HighWater;
+  /** Co-signed change not seen on chain yet, newest last, bounded (`MAX_PENDING_MARKS`): scans reach it. */
+  pendingMarks?: PendingMark[];
+  /**
+   * Before this release: one set of marks raised by co-signed change and by scans alike, so unbroadcast co-signatures
+   * could walk them to the index limit. Read once at load and turned into a `legacy` pending mark (engine.ts
+   * `migrateMarks`); never written.
    */
   highWater?: HighWater;
+  /** The on-chain marks at the start of the current day (`marks.ts`, `MARK_JUMP_ALERT`); `alerted` once announced. */
+  marksDay?: { since: number; receive: number; change: number; alerted?: true };
   /** Phone-only spends in the limit window. */
   spends: SpendRecord[];
   phoneSpending: PhoneSpending;
@@ -444,6 +476,11 @@ export interface GuardedWallet {
    * that was set to the maximum before the guardian knew "off" (a recovery then restores 0, "never", until approved).
    */
   limitBeforeOff?: bigint;
+  /**
+   * A limit stored before 1,000 BTC and more counted as "off" (`LIMIT_OFF_THRESHOLD_SATS`, security review 2026-11),
+   * at or above it but below `LIMIT_OFF_SATS`, was announced once as `limit_off` when the guardian first loaded it.
+   */
+  limitOffAnnounced?: true;
 }
 
 /**

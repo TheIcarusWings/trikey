@@ -57,7 +57,7 @@ import { parseServerUrl } from './rk-server';
 import { addEvent, buildActivity, emptyLog, hostFromLabel, loadLog, saveLog, takeLegacySends, type AppLog } from './app-log';
 import { groupAlertChannels } from './alert-channels';
 import { formatSats } from './format';
-import { LIMIT_OFF_SATS } from './rules';
+import { isLimitOffSats } from './rules';
 import { DevicePromptStore, compositeProvider, ledgerHint, withDevicePrompts } from './device';
 import { WalletServiceError, notAvailableYet } from './errors';
 import { SIMULATED_OPTION, hardwareBrandOf, hardwareOptionTable, type UiOs } from './hardware-options';
@@ -892,8 +892,8 @@ class Service implements RealWalletService {
         usedSats: used,
         ...(s ? { cosignedCount: s.spends.filter((x) => x.at > now - 86_400_000).length } : {}),
         // No daily limit (the hardware wallet turned it off): shown in words, never as the number it is stored as.
-        ...(limit >= LIMIT_OFF_SATS ? { off: true } : {}),
-        ...(limit >= LIMIT_OFF_SATS && this.w?.limitBeforeOff !== undefined ? { limitBeforeOffSats: this.w.limitBeforeOff } : {}),
+        ...(isLimitOffSats(limit) ? { off: true } : {}),
+        ...(isLimitOffSats(limit) && this.w?.limitBeforeOff !== undefined ? { limitBeforeOffSats: this.w.limitBeforeOff } : {}),
         ...(this.w?.limitOffSupported ? { canTurnOff: true } : {}),
       },
       contacts,
@@ -960,8 +960,8 @@ class Service implements RealWalletService {
       balanceSats: snap?.balance.totalSats ?? 0,
       ...(w.state.savings ? { savingsSats: w.savingsSnapshot()?.balance.totalSats ?? 0 } : {}),
       ...this.frozenOf(w),
-      dailyLimitSats: limit >= LIMIT_OFF_SATS ? 0 : limit,
-      ...(limit >= LIMIT_OFF_SATS ? { limitOff: true as const } : {}),
+      dailyLimitSats: isLimitOffSats(limit) ? 0 : limit,
+      ...(isLimitOffSats(limit) ? { limitOff: true as const } : {}),
     };
   }
 
@@ -2687,12 +2687,12 @@ class Service implements RealWalletService {
   }
 
   setDailyLimit(limitSats: Sats): Promise<void> {
-    if (limitSats >= LIMIT_OFF_SATS) return this.turnLimitOff();
+    if (isLimitOffSats(limitSats)) return this.turnLimitOff();
     const before = this.w?.state.rules?.policy.dailyLimitSats ?? 0;
     return this.rulesChange(
       () => this.requireWallet().setDailyLimit(limitSats),
       (r, at) =>
-        before >= LIMIT_OFF_SATS
+        isLimitOffSats(before)
           ? addEvent(this.log, { kind: 'limit-on', limitSats, at })
           : addEvent(this.log, { kind: 'limit-changed', limitSats, direction: limitSats > before ? 'raised' : 'lowered', approvedOn: r.approvedBy === 'hardware' ? 'hardware' : 'phone', at }),
     );

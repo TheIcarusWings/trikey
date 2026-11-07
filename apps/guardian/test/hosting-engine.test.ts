@@ -107,7 +107,8 @@ describe('registration of a hosted wallet', () => {
   // Security review 2026-11: the rules a wallet starts with were not hardware-approved, so a malicious app could pair with
   // a limit just below "off" and drain with phone + guardian. They are now, as for the host's `pair`.
   it('refuses rules the hardware wallet did not approve: none, other rules, another wallet, another key, expired', async () => {
-    const drain: Rules = { ...RULES, dailyLimitSats: 2_100_000_000_000_000n - 1n, sweepFeeCapSats: 2_100_000_000_000_000n };
+    // Just below "off": 1,000 BTC and more is "off" for every purpose (refused at pairing whatever is approved).
+    const drain: Rules = { ...RULES, dailyLimitSats: 1_000n * 100_000_000n - 1n, sweepFeeCapSats: 2_100_000_000_000_000n };
     const none = await attempt((i) => void (i.rules = drain), { noApproval: true });
     expect(!none.ok && none.refusal).toMatchObject({ reason: 'invalid_registration', detail: expect.stringMatching(/approve the rules/) });
     expect(none.engine.registration()).toBeUndefined();

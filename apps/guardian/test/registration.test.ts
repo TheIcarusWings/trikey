@@ -4,6 +4,7 @@ import { HDKey } from '@scure/bip32';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { MultisigWallet } from '@trikey/core';
 import {
+  LIMIT_OFF_THRESHOLD_SATS,
   ManualClock,
   MemoryStore,
   PolicyEngine,
@@ -120,7 +121,8 @@ describe('registration', () => {
 // starts with now need the hardware wallet's signature over exactly those rules (rule 4), like any loosening.
 describe('registration: the rules the wallet starts with are hardware-approved', () => {
   const MAX = 2_100_000_000_000_000n;
-  const DRAIN: Rules = { ...DEFAULT_RULES, dailyLimitSats: MAX - 1n, sweepFeeCapSats: MAX };
+  // Just below "off" (1,000 BTC and more is off for every purpose, and refused at pairing whatever is approved).
+  const DRAIN: Rules = { ...DEFAULT_RULES, dailyLimitSats: LIMIT_OFF_THRESHOLD_SATS - 1n, sweepFeeCapSats: MAX };
 
   it('refuses a drain-everything limit without the approval (the attack), and stores nothing', async () => {
     const engine = await fresh();
@@ -182,7 +184,7 @@ describe('registration: the rules the wallet starts with are hardware-approved',
     expect(stored).toEqual({ ...DRAIN, recoveryDelayDays: 14, alertContacts: [DEFAULT_RULES.alertContacts[0]!.toLowerCase(), 'ee'.repeat(32)].sort() });
     // The text the device showed is the one the guardian rebuilds from what it stores.
     const base = await input({ rules });
-    expect(pairingRulesMessage(stored, { walletId: walletIdOf(base), expiresAt: base.rulesApproval!.expiresAt })).toMatch(/^Trikey policy v1 wallet=[0-9a-f]{16} seq=0 limit=2099999999999999 /);
+    expect(pairingRulesMessage(stored, { walletId: walletIdOf(base), expiresAt: base.rulesApproval!.expiresAt })).toMatch(/^Trikey policy v1 wallet=[0-9a-f]{16} seq=0 limit=99999999999 /);
   });
 
   it('still refuses "no daily limit" at pairing, even hardware-approved', async () => {

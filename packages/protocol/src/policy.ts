@@ -10,9 +10,19 @@ import { MAX_SATS, Policy as PolicySchema, type Policy } from './schemas.js';
  */
 export const LIMIT_OFF_SATS = MAX_SATS;
 
-/** True when `dailyLimitSats` means "no daily limit" (`LIMIT_OFF_SATS`). */
+/**
+ * From this daily limit up, there is no daily limit for every purpose, not only at exactly `LIMIT_OFF_SATS`: 1,000 BTC
+ * (100,000,000,000 sats). A limit that large brakes nothing a phone could hold, so it gets every safeguard of "off"
+ * (security review 2026-11): the version-2 text says `limit=off` on the device instead of a long number, pairing refuses
+ * it, the guardian alerts the phone and the contacts when the limit becomes it, and a recovery's new wallet starts with
+ * the limit back on. Before, one satoshi under `LIMIT_OFF_SATS` was an ordinary number and skipped all of that. The
+ * phone still sets exactly `LIMIT_OFF_SATS` to turn the limit off.
+ */
+export const LIMIT_OFF_THRESHOLD_SATS = 100_000_000_000;
+
+/** True when `dailyLimitSats` means "no daily limit": `LIMIT_OFF_THRESHOLD_SATS` (1,000 BTC) or more. */
 export function isLimitOff(dailyLimitSats: number): boolean {
-  return dailyLimitSats >= LIMIT_OFF_SATS;
+  return dailyLimitSats >= LIMIT_OFF_THRESHOLD_SATS;
 }
 
 /**

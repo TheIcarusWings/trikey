@@ -44,11 +44,11 @@ function registration(ctx: Ctx, wallet: MultisigWallet, opts: { path?: string; m
     network: 'regtest',
     descriptor: wallet.descriptor(),
     cosignerAccountPubkey: cosigner,
-    // The highest limit pairing accepts, hardware-approved ("no daily limit" itself is refused at pairing, rules.test.ts).
-    rules: { ...DEFAULT_RULES, dailyLimitSats: 2_100_000_000_000_000n - 1n, ...opts.rules },
+    // The highest limit pairing accepts, hardware-approved (1,000 BTC and more is "no daily limit", refused at pairing).
+    rules: { ...DEFAULT_RULES, dailyLimitSats: 99_999_999_999n, ...opts.rules },
     hardwareAuth: { kind: 'bip137', pubkey: hex.encode(secp256k1.getPublicKey(priv, true)), path },
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), cosigner), priv),
-    rulesApproval: approveRules(wallet.fingerprint(), { ...DEFAULT_RULES, dailyLimitSats: 2_100_000_000_000_000n - 1n, ...opts.rules }, ctx.clock.now(), { privateKey: priv }),
+    rulesApproval: approveRules(wallet.fingerprint(), { ...DEFAULT_RULES, dailyLimitSats: 99_999_999_999n, ...opts.rules }, ctx.clock.now(), { privateKey: priv }),
     appNostrPubkey: nostrKey(99),
   };
 }

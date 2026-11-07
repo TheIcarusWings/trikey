@@ -62,3 +62,15 @@ export function usageWith(spends: SpendRecord[], shares: SpendRecord['shares'], 
 export function pruneSpends(spends: SpendRecord[], now: number): SpendRecord[] {
   return spends.filter((s) => s.at > now - SPEND_RETENTION_MS);
 }
+
+/**
+ * The time the spend records are pruned at (`pruneSpends`): the limit's own time, `timeFloor`, the last time a
+ * co-signature was counted at (monotonic, and only ever taken while the clock agreed with the chain), and never past
+ * the chain's median time past plus the allowed skew. Never the raw clock: an attacker who controls the box's clock
+ * (NTP) could otherwise jump it a month ahead, send anything (refused, `clock_ahead_of_chain`, but pruned and saved all
+ * the same), jump it back and spend the daily limit again. Undefined before any co-signature: nothing to prune.
+ */
+export function pruneTime(timeFloor: number | undefined, chainSeen: { medianTimePastMs: number } | undefined, maxAheadOfChainMs: number): number | undefined {
+  if (timeFloor === undefined || !Number.isFinite(timeFloor)) return undefined;
+  return chainSeen ? Math.min(timeFloor, chainSeen.medianTimePastMs + maxAheadOfChainMs) : timeFloor;
+}

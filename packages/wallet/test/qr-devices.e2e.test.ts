@@ -12,7 +12,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GuardianRig } from '@trikey/guardian/testing';
-import { MAX_ALERT_CONTACTS, MAX_APPROVAL_MESSAGE_LENGTH, MAX_SATS, approvalMessage, pairingMessage, recoveryAccessMessage, unlockKeyMessage, type Policy } from '@trikey/protocol';
+import { LIMIT_OFF_THRESHOLD_SATS, MAX_ALERT_CONTACTS, MAX_APPROVAL_MESSAGE_LENGTH, MAX_SATS, approvalMessage, pairingMessage, recoveryAccessMessage, unlockKeyMessage, type Policy } from '@trikey/protocol';
 import {
   MIN_QR_MESSAGE_LIMIT,
   QR_MODELS,
@@ -38,7 +38,8 @@ const LATE = 4_102_444_799; // 2099-12-31T23:59:59Z
 /** Every text Trikey signs with the authorization key, each at its longest. */
 function longestTexts(): Record<string, string> {
   const contacts = Array.from({ length: MAX_ALERT_CONTACTS }, (_, i) => (i + 1).toString(16).padStart(64, '0'));
-  const big: Policy = { dailyLimitSats: MAX_SATS - 1, recoveryDelayDays: 30, alertContacts: contacts, sweepFeeCapSats: MAX_SATS, contactLock: true };
+  // The longest limit in numbers: one satoshi under 1,000 BTC (from there it is "off", `limit=off`).
+  const big: Policy = { dailyLimitSats: LIMIT_OFF_THRESHOLD_SATS - 1, recoveryDelayDays: 30, alertContacts: contacts, sweepFeeCapSats: MAX_SATS, contactLock: true };
   const ctx = { walletId: WALLET, sequence: Number.MAX_SAFE_INTEGER, expiresAt: LATE };
   return {
     pairing: pairingMessage(WALLET, COSIGNER),
