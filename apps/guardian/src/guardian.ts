@@ -274,6 +274,15 @@ export type StopWatchingOutcome = { ok: true; dropped: string[] } | { ok: false;
  */
 export const MAX_RETIRING_RELAYS = 16;
 
+/**
+ * Replay entries an alert contact, a hosted guest's phone or contact, or any other peer that is not the owner's phone may
+ * hold: in the RPC replay guard (each request kept up to an hour) and among the handled wraps (each kept until it can no
+ * longer arrive). Far above what such a sender sends; a sender at it is dropped until its entries expire, and never
+ * pushes out another sender's (security sweep 2, finding 12).
+ */
+export const PEER_REPLAY_QUOTA = 256;
+export const PEER_SEEN_QUOTA = 512;
+
 /** The relay list of a setup or a relay change: 1 to 8 entries, normalised, duplicates dropped (protocol `checkRelayList`). */
 export function parseRelayList(input: unknown): { ok: true; relays: string[] } | { ok: false; message: string } {
   const r = checkRelayList(input);
@@ -579,6 +588,7 @@ export class Guardian implements WalletRuntime {
     g.keystore = await readKeystore(g.path('keystore'));
     g.identity = await loadIdentity(g.path('identity'));
     g.service = new ServiceState(g.path('service'));
+    g.service.protectRequests = (sender) => g.isOwnerPhone(sender);
     await g.service.load();
     g.throttle = new UnlockThrottle(g.path('throttle'), g.clock, opts.throttle);
     await g.throttle.load();
@@ -850,6 +860,10 @@ export class Guardian implements WalletRuntime {
       authorize: (sender, method) => this.authorize(sender, method),
       // Strangers (anyone who is not one of these) get their own small replay cache (protocol server.ts).
       isPeer: (sender) => this.isKnownSender(sender),
+      // Among peers, the owner's phones' entries are never pushed out by an alert contact's or a guest's, who each hold
+      // at most `PEER_REPLAY_QUOTA` (security sweep 2, finding 12).
+      peerQuota: (sender) => (this.isOwnerPhone(sender) ? Infinity : PEER_REPLAY_QUOTA),
+      protectPeer: (sender) => this.isOwnerPhone(sender),
       listen: false, // the inbox below opens every wrap once and hands RPC rumors over
       now: () => this.nowSec(),
       onDrop: (d) => {
@@ -883,6 +897,9 @@ export class Guardian implements WalletRuntime {
       isPeer: (sender) => this.isKnownSender(sender),
       seen: new SeenWraps({
         storage: seenWrapsFile(this.path('seenWraps')),
+        // As the replay guard above: the owner's phones' ids are never pushed out by another sender's.
+        quota: (sender) => (this.isOwnerPhone(sender) ? Infinity : PEER_SEEN_QUOTA),
+        protect: (sender) => this.isOwnerPhone(sender),
         now: () => this.nowSec(),
         onError: (e) => this.log.warn('inbox.seen_wraps_failed', { error: errorText(e) }),
       }),
@@ -937,6 +954,17 @@ export class Guardian implements WalletRuntime {
     if (method === 'recovery.access') return !!reg;
     if (method === 'pair.prepare' || method === 'pair') return this.pairing.answering(this.clock.now());
     return false;
+  }
+
+  /**
+   * The owner's own phones: the first wallet's paired phone, an own wallet's, and a phone the owner's hardware wallet let
+   * in (`recovery.access`). Their replay entries (the RPC replay guard, the handled wraps, the durable request record)
+   * are never pushed out to make room for anyone else's, an alert contact's or a hosted guest's (security sweep 2,
+   * finding 12): those could otherwise flood the shared memory and have a relay re-deliver one of the phone's requests.
+   */
+  isOwnerPhone(sender: string): boolean {
+    if (this.engine.registration()?.appNostrPubkey === sender || this.hasRecoveryAccess(sender)) return true;
+    return this.wallets.forSender(sender).length > 0;
   }
 
   /** The paired phone, an alert contact (or a running recovery's recipient), or a phone with recovery access: not a stranger. */

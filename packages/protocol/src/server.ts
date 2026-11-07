@@ -58,6 +58,13 @@ export interface RpcServerOptions {
    * evict a paired phone's entries. Default: the `peers`.
    */
   isPeer?: (sender: string) => boolean;
+  /**
+   * The peers' replay guard (unless `guard` is given): the most live entries one peer may hold, and the peers whose
+   * entries are never evicted to make room for another's (`ReplayGuardOptions`). Peers other than the paired phone (an
+   * alert contact, a hosted guest) then cannot push the phone's entries out. Default: no quota, nobody protected.
+   */
+  peerQuota?: (sender: string) => number;
+  protectPeer?: (sender: string) => boolean;
   /** Entries the strangers' replay guard and response cache keep. Default 256 and 32. */
   strangerCacheSize?: { guard?: number; responses?: number };
   /** How many responses are kept to answer retries. Default 256. */
@@ -105,7 +112,7 @@ export class RpcServer {
     this.relays = [...new Set(opts.relays)];
     if (this.relays.length === 0) throw new Error('RpcServer needs at least one relay');
     this.limits = opts.limits ?? DEFAULT_LIMITS;
-    this.guard = opts.guard ?? new ReplayGuard({ limits: this.limits });
+    this.guard = opts.guard ?? new ReplayGuard({ limits: this.limits, ...(opts.peerQuota ? { quota: opts.peerQuota } : {}), ...(opts.protectPeer ? { protect: opts.protectPeer } : {}) });
     this.strangerGuard = new ReplayGuard({ limits: this.limits, maxEntries: opts.strangerCacheSize?.guard ?? 256 });
     this.peers = new Set(opts.peers ?? []);
     this.allowUnpaired = new Set(opts.allowUnpaired ?? ['pair.prepare', 'pair']);

@@ -5,6 +5,7 @@
  * were) broadcast, and a log of service events (unlocks, broadcasts, ...) that
  * the engine's activity log does not cover. One JSON file, written atomically.
  */
+import { biggestHolder } from '@trikey/protocol';
 import { readJsonFile, writeFileAtomic, Mutex } from './files.js';
 
 export interface PairedPhoneRecord {
@@ -200,6 +201,12 @@ export class ServiceState {
   private data: ServiceStateData = emptyServiceState();
   private readonly mutex = new Mutex();
 
+  /**
+   * Senders whose request records are never dropped to make room for another sender's (the guardian: the owner's
+   * phones, `Guardian.isOwnerPhone`). Default: none.
+   */
+  protectRequests?: (sender: string) => boolean;
+
   constructor(private readonly path: string) {}
 
   async load(): Promise<void> {
@@ -253,7 +260,7 @@ export class ServiceState {
         return;
       }
       d.requests.push({ key, until });
-      if (d.requests.length > MAX_REQUESTS) d.requests = d.requests.slice(-MAX_REQUESTS);
+      if (d.requests.length > MAX_REQUESTS) d.requests = trimRequests(d.requests, MAX_REQUESTS, this.protectRequests);
     });
     return fresh;
   }
@@ -261,4 +268,40 @@ export class ServiceState {
   sweep(recoveryId: string): SweepRecord | undefined {
     return this.data.sweeps.find((s) => s.recoveryId === recoveryId);
   }
+}
+
+/** The sender a request record belongs to: `<sender>:<id>`, or `lock:<sender>:<rumor id>` (dm-lock.ts). */
+export function senderOfRequestKey(key: string): string {
+  const parts = key.split(':');
+  return parts[0] === 'lock' ? (parts[1] ?? '') : (parts[0] ?? '');
+}
+
+/**
+ * `requests` cut to `max`: the sender holding the most records loses its oldest first, a protected sender only when
+ * nobody else holds any. One global "keep the newest" let an alert contact or a hosted guest push the paired phone's
+ * records out with its own (security sweep 2, finding 12); each sender's records are bounded already by the limit on
+ * recorded requests (`DEFAULT_REQUEST_WRITE_LIMIT`).
+ */
+export function trimRequests(requests: { key: string; until: number }[], max: number, protect?: (sender: string) => boolean): { key: string; until: number }[] {
+  if (requests.length <= max) return requests;
+  const bySender = new Map<string, Set<number>>();
+  requests.forEach((r, i) => {
+    const s = senderOfRequestKey(r.key);
+    let set = bySender.get(s);
+    if (!set) bySender.set(s, (set = new Set()));
+    set.add(i);
+  });
+  const dropped = new Set<number>();
+  let left = requests.length;
+  while (left > max) {
+    const victim = biggestHolder(bySender, protect);
+    if (victim === undefined) break;
+    const set = bySender.get(victim)!;
+    const oldest = set.values().next().value!;
+    set.delete(oldest);
+    if (!set.size) bySender.delete(victim);
+    dropped.add(oldest);
+    left--;
+  }
+  return requests.filter((_, i) => !dropped.has(i));
 }

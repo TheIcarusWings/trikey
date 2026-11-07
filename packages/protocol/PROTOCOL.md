@@ -878,7 +878,7 @@ A receiver MUST, in this order, silently drop (no reply, so nothing can be probe
    | `expiration - created_at <= max TTL` | 1 h | 7 days |
 
    Default TTLs when sending: 5 minutes for requests and responses, 7 days for alerts.
-6. **Replay:** the pair (sender pubkey, message `id`) is remembered until `min(expiration, created_at + window) + 120 s` (bounded LRU, 4096 entries by default). A second message with the same pair is a duplicate. The check is made only for already-authorized senders, so strangers cannot fill the cache.
+6. **Replay:** the pair (sender pubkey, message `id`) is remembered until `min(expiration, created_at + window) + 120 s` (bounded, 4096 entries by default: past that, the sender holding the most loses its least recently seen pair, so one sender's flood pushes out its own pairs first; the reference guardian also caps each sender other than the owner's phones at 256 and never evicts the owner's phones' pairs for another sender's). A second message with the same pair is a duplicate. The check is made only for already-authorized senders, so strangers cannot fill the cache.
 
 Also drop a wrap *event id* seen before (the same event arrives from several relays), and a wrap whose public `expiration` tag is more than 120 s in the past, before step 1: the wrap's expiration is never before the rumor's (section 2), so its rumor would fail step 5 anyway.
 
@@ -886,7 +886,7 @@ Also drop a wrap *event id* seen before (the same event arrives from several rel
 
 Every subscription is sent the whole look-back again (section 2), so a receiver that opens each delivered wrap afresh does steps 1 and 2 (two signature checks, two decryptions) for every stored wrap, on every relay, at every start and every resubscription: on a phone, minutes of its JS thread. The reference implementation therefore:
 
-* **keeps the ids of handled wraps across restarts** (`SeenWraps`: the phone in its app storage, the guardian in `seen-wraps.json` in its data directory), each until it can no longer be delivered: `min(wrap expiration, wrap created_at + 2 days 10 min) + 10 min`, at most 4096;
+* **keeps the ids of handled wraps across restarts** (`SeenWraps`: the phone in its app storage, the guardian in `seen-wraps.json` in its data directory), each until it can no longer be delivered: `min(wrap expiration, wrap created_at + 2 days 10 min) + 10 min`, at most 4096 (past that, the sender holding the most loses its oldest; the guardian keeps each id with its sender, caps every sender but the owner's phones at 512, and never drops the owner's phones' ids for another sender's);
 * **checks a delivered event's id against them before anything else**: before the event is even parsed (nostr-tools' `alreadyHaveEvent` reads the id from the raw message), so a handled wrap costs no signature check and no decryption;
 * **checks each new wrap's signature once**, in step 1, and not again in the relay layer (the reference pool checks only the event's shape and that its id is its hash, and passes on each exact copy once, keyed by id *and* signature);
 * opens new wraps a few per turn of the event loop (the phone: 2), those that arrived after the subscription's EOSE first, so that a backlog never blocks the app.

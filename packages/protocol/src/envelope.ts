@@ -68,7 +68,8 @@ export type EnvelopeReason =
   | 'future' // created_at too far ahead
   | 'expired' // past its NIP-40 expiration
   | 'ttl_too_long' // expiration too far after created_at
-  | 'replay'; // id already seen
+  | 'replay' // id already seen
+  | 'over_quota'; // the sender holds as many replay entries as it may (ReplayGuard `quota`): dropped, nothing remembered
 
 export class EnvelopeError extends Error {
   readonly reason: EnvelopeReason;
@@ -281,69 +282,130 @@ export function checkFreshness(
   return 'ok';
 }
 
-export type ReplayVerdict = FreshnessVerdict | 'duplicate';
+export type ReplayVerdict = FreshnessVerdict | 'duplicate' | 'over_quota';
 
 export interface ReplayGuardOptions {
-  /** Most ids remembered; the least recently seen is evicted first. Default 4096. */
+  /** Most ids remembered (see `ReplayGuard` for which go first). Default 4096. */
   maxEntries?: number;
   limits?: Limits;
+  /**
+   * Most live ids one sender may hold. A sender at its quota is refused (`over_quota`, nothing remembered) until one of
+   * its ids expires, so its flood never pushes out another sender's. Default: no quota.
+   */
+  quota?: (sender: string) => number;
+  /**
+   * Senders whose live ids are never evicted to make room for another sender's (the guardian: the owner's own phones).
+   * Default: none.
+   */
+  protect?: (sender: string) => boolean;
 }
 
 /**
  * Remembers (sender, message id) pairs so a message is processed at most once, and applies the
  * time checks. Entries are kept only as long as the message could still pass the time checks, so
- * the cache is bounded by time as well as by `maxEntries`. (If `maxEntries` is exceeded within a
- * single window, the oldest ids are evicted; keep it well above the expected message rate.)
+ * the cache is bounded by time as well as by `maxEntries`.
+ *
+ * Past `maxEntries` live ids, the sender holding the most loses its least recently seen one, never a protected
+ * sender while another holds any (`protect`): whoever floods the guard evicts its own ids first. With a single
+ * sender this is the least recently seen id, as before. A per-sender `quota` refuses a sender's new ids instead
+ * (security sweep 2, finding 12: up to 0.1.21 one global LRU let an alert contact or a hosted guest push the paired
+ * phone's ids out, and a relay re-deliver its request).
  */
 export class ReplayGuard {
-  private readonly seen = new Map<string, number>(); // key -> retain until (unix s)
+  private readonly bySender = new Map<string, Map<string, number>>(); // sender -> id -> retain until (unix s), oldest first
+  private count = 0;
   private readonly maxEntries: number;
   private readonly limits: Limits;
 
-  constructor(opts: ReplayGuardOptions = {}) {
+  constructor(private readonly opts: ReplayGuardOptions = {}) {
     this.maxEntries = opts.maxEntries ?? 4096;
     this.limits = opts.limits ?? DEFAULT_LIMITS;
   }
 
   get size(): number {
-    return this.seen.size;
+    return this.count;
   }
 
   /** Check a message and, if it is acceptable, remember it. */
   admit(meta: RumorMeta, now: number = nowSeconds()): ReplayVerdict {
     const fresh = checkFreshness(meta, now, this.limits);
     if (fresh !== 'ok') return fresh;
-    const key = `${meta.sender}:${meta.id}`;
-    const existing = this.seen.get(key);
-    if (existing !== undefined && existing > now) {
-      // Refresh recency (true LRU) without extending the time bound.
-      this.seen.delete(key);
-      this.seen.set(key, existing);
-      return 'duplicate';
+    let ids = this.bySender.get(meta.sender);
+    const existing = ids?.get(meta.id);
+    if (ids && existing !== undefined) {
+      if (existing > now) {
+        // Refresh recency (true LRU) without extending the time bound.
+        ids.delete(meta.id);
+        ids.set(meta.id, existing);
+        return 'duplicate';
+      }
+      this.remove(meta.sender, meta.id);
     }
-    this.seen.delete(key);
+    const quota = this.opts.quota?.(meta.sender);
+    if (quota !== undefined && (ids?.size ?? 0) >= quota) {
+      this.expire(meta.sender, now);
+      if ((this.bySender.get(meta.sender)?.size ?? 0) >= quota) return 'over_quota';
+    }
+    ids = this.bySender.get(meta.sender);
+    if (!ids) this.bySender.set(meta.sender, (ids = new Map()));
     const retainUntil =
       Math.min(meta.expiration, meta.createdAt + this.limits[meta.cls].maxAgeSec) + this.limits.clockSkewSec;
-    this.seen.set(key, retainUntil);
+    ids.set(meta.id, retainUntil);
+    this.count++;
     this.evict(now);
-    return 'ok';
+    return this.has(meta.sender, meta.id, now) ? 'ok' : 'over_quota';
   }
 
   /** Whether an id is currently remembered (does not record anything). */
   has(sender: string, id: string, now: number = nowSeconds()): boolean {
-    const until = this.seen.get(`${sender}:${id}`);
+    const until = this.bySender.get(sender)?.get(id);
     return until !== undefined && until > now;
   }
 
+  private remove(sender: string, id: string): void {
+    const ids = this.bySender.get(sender);
+    if (!ids?.delete(id)) return;
+    this.count--;
+    if (!ids.size) this.bySender.delete(sender);
+  }
+
+  /** Drops expired ids (of `sender`, or everyone's). */
+  private expire(sender: string | undefined, now: number): void {
+    const senders = sender === undefined ? [...this.bySender.keys()] : [sender];
+    for (const s of senders) for (const [id, until] of this.bySender.get(s) ?? []) if (until <= now) this.remove(s, id);
+  }
+
   private evict(now: number): void {
-    if (this.seen.size <= this.maxEntries) return;
-    for (const [k, until] of this.seen) if (until <= now) this.seen.delete(k);
-    while (this.seen.size > this.maxEntries) {
-      const oldest = this.seen.keys().next();
+    if (this.count <= this.maxEntries) return;
+    this.expire(undefined, now);
+    while (this.count > this.maxEntries) {
+      const victim = biggestHolder(this.bySender, this.opts.protect);
+      if (victim === undefined) break;
+      const oldest = this.bySender.get(victim)!.keys().next();
       if (oldest.done) break;
-      this.seen.delete(oldest.value);
+      this.remove(victim, oldest.value);
     }
   }
+}
+
+/**
+ * The key of `groups` with the most entries, preferring any that `protect` does not cover (a protected one only when
+ * nothing else is left). Ties: the first. Undefined when empty.
+ */
+export function biggestHolder(groups: ReadonlyMap<string, { size: number }>, protect?: (key: string) => boolean): string | undefined {
+  let best: string | undefined;
+  let bestSize = -1;
+  let bestProtected = true;
+  for (const [key, g] of groups) {
+    if (!g.size) continue;
+    const prot = !!protect?.(key);
+    if (best === undefined || (bestProtected && !prot) || (prot === bestProtected && g.size > bestSize)) {
+      best = key;
+      bestSize = g.size;
+      bestProtected = prot;
+    }
+  }
+  return best;
 }
 
 /** A small bounded set of recently seen strings (used to drop the same wrap arriving from several relays). */
