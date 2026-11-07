@@ -125,6 +125,14 @@ Optional, for passkeys later: to reach the guardian over HTTPS (Tailscale first,
 
 **To update to a newer release:** in the App Store, refresh the Trikey store, then update the app (or reinstall it).
 
+**Umbrel backups leave the guardian out, on purpose** (from the release after 0.1.21-alpha; as on Start9). They would be
+one more copy of key 3 and its secrets, and a restored copy would bring back old limits and spending. So an Umbrel
+restored from a backup does not bring the guardian back: Trikey Guardian starts empty, as on a new box. Set it up again
+(step 1), then in the phone app Settings, **Guardian**, **Replace guardian**, with the phone and the hardware wallet
+(step 13). If you test a restore, write down whether the guardian started empty and whether its page loaded (it must be
+able to write its data folder). An Umbrel backup made by 0.1.21-alpha or earlier still holds the guardian's data: treat
+it like the passphrase it was made with.
+
 **Logs.** In Umbrel: Settings, Troubleshoot, then the app. Over SSH:
 ```sh
 sudo umbreld client apps.logs.query --appId trikey-guardian

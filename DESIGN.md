@@ -260,6 +260,19 @@ anti-klepto, the firmware's own message signatures) and a fake BitBox02 written 
   
   A stolen, unplugged box is useless.
 - **Holds no backup of key 3.** If the box dies, phone + hardware sweep to a new wallet with a fresh guardian ("Replace guardian").
+- **The platforms' backups leave the guardian out (decided 2026-11-07).** StartOS backs up none of it
+  (`packaging/start9/startos/backups.ts`), and umbrelOS leaves the contents of its data folder out
+  (`backupIgnore: data/*` in `packaging/umbrel/trikey-guardian/umbrel-app.yml`; umbreld reads the path relative to the
+  app's folder, `data` being the folder mounted at `/data`, and keeps the empty folder so a restore does not leave Docker
+  to make it as root). Up to 0.1.21-alpha an Umbrel backup held all of it. Why, the same on both: the data folder holds
+  key 3's keystore (under the passphrase), the nostr identity's key in the clear, the alert channels' key file, the
+  hardware unlock slots and the rules' state, so a backup is one more copy of key 3 to steal, and one the passphrase
+  change cannot reach ("Changing the passphrase"); and a restored copy is wrong in ways that matter: it rolls back the
+  daily-limit accounting, the high-water marks and the replay ids, and can bring back a key 3 the owner reset. So a box
+  restored from a backup starts an empty guardian, and the owner sets it up and moves the wallet to it with Replace
+  guardian, phone and hardware wallet, exactly as after a lost box. Not covered: umbrelOS's migration to another Umbrel
+  (`migration.ts`, an `rsync` of everything) and a plain-Docker move (`packaging/compose`, "Moving to another computer")
+  copy the guardian on purpose; the old box must then never start it again.
 
 ## Rules the guardian enforces
 
@@ -492,7 +505,7 @@ printed and kept with the hardware wallet.
     already can ("Nuisances").
   - *A stolen disk or an old copy of the data.* A disk or a copy taken after the change needs the new passphrase. One
     taken before still opens with the old passphrase and gives the same key 3: the change protects the future, not
-    copies already made (a backup of the box, a copied volume, a snapshot). If both the old passphrase and such a copy
+    copies already made (a copied volume, a snapshot, an Umbrel backup from 0.1.21-alpha or earlier). If both the old passphrase and such a copy
     may be out, use Replace guardian.
   - *A crash in the middle* leaves the old keystore or the new one (one atomic rename), and the unlock slots are bound to
     either (the same key 3 and `createdAt`).
@@ -1188,8 +1201,9 @@ protocol: PROTOCOL.md, "Changing the passphrase" (a feature and an alert, no met
   or the hardware unlock, to co-sign anything after a restart, a recovery's sweep included.)
 - **Backups hold the old passphrase's keystore.** Key 3 does not change, so any copy of the data directory made before
   the change opens with the old passphrase and gives the same key 3: a copied Docker volume or data folder
-  (packaging/compose, "Moving to another computer"), a NAS snapshot, and on Umbrel a backup of the box that includes
-  this app's data. StartOS backups leave the guardian out (packaging/start9, `backups.ts`). The page says so: delete
+  (packaging/compose, "Moving to another computer"), a NAS snapshot, an image of the box's disk, and an Umbrel backup
+  made by 0.1.21-alpha or earlier. Later Umbrel backups and every StartOS backup leave the guardian out ("The
+  platforms' backups leave the guardian out"). The page says so: delete
   such copies, or keep them as safe as the old passphrase. If the old passphrase **and** such a copy may both be in
   someone's hands, a passphrase change is not enough: key 3 has to change, which is "Replace guardian".
 - **Not from the phone (decided).** The phone's Settings > Guardian says where to change it (when the guardian lists

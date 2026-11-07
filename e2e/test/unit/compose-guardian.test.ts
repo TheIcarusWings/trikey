@@ -111,3 +111,20 @@ describe('.github/workflows/docker.yml: the release files', () => {
     for (const f of ['trikey-guardian-compose.yml', 'trikey-guardian.env.example', 'trikey-guardian-compose.sha256']) expect(script).toContain(f);
   });
 });
+
+describe('the platforms leave the guardian out of their backups (DESIGN.md, "The platforms\' backups leave the guardian out")', () => {
+  it('Umbrel: backupIgnore drops the contents of the folder mounted at TRIKEY_DATA_DIR, and keeps the folder', () => {
+    const manifest = parse(read('packaging/umbrel/trikey-guardian/umbrel-app.yml')) as { backupIgnore?: string[] };
+    const server = umbrel.services['server']!;
+    // umbreld reads backupIgnore relative to ${APP_DATA_DIR} (getumbrel/umbrel, modules/apps/app.ts), so `data/*` is
+    // everything under the host folder of this mount. `data` alone would drop the folder too, and Docker would then
+    // make it as root on the restored box.
+    const mount = server.volumes?.find((v) => v.endsWith(`:${server.environment?.['TRIKEY_DATA_DIR']}`));
+    expect(mount).toBe('${APP_DATA_DIR}/data:/data');
+    expect(manifest.backupIgnore).toEqual(['data/*']);
+  });
+
+  it('Start9: the backup holds no volume', () => {
+    expect(read('packaging/start9/startos/backups.ts')).toMatch(/sdk\.Backups\.ofSyncs\(\)/);
+  });
+});

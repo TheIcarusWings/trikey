@@ -85,6 +85,20 @@ bump both before tagging. Bump the image version in `compose/docker-compose.yml`
 The compose file passes the node's Bitcoin RPC details (`BITCOIN_RPC_*`) from the variables Umbrel
 exports for the `bitcoin` dependency, because the silent payment scanner needs them.
 
+**umbrelOS backups leave the guardian out, on purpose** (DESIGN.md, "The platforms' backups leave the
+guardian out"), as StartOS backups do (`start9/startos/backups.ts`). `umbrel-app.yml` lists
+`backupIgnore: data/*`: umbreld reads it relative to the app's folder, so the contents of the folder
+mounted at `/data` (key 3's keystore, the nostr key, the alert channels' key file, the hardware unlock
+slots, the rules' state, the encrypted notes) never go into a backup, while the empty folder does, so a
+restore brings it back owned by the image's user. Checked in umbreld's source (getumbrel/umbrel,
+`modules/apps/app.ts` `getBackupIgnoredFilePaths`, `modules/backups/backups.ts`, which writes the paths
+into Kopia's ignore file) and against the umbrel-apps store, where Bitcoin Node, Electrs, Lightning
+Node and others use the same key; not yet tried on a real Umbrel (TODO(verify)). So an Umbrel restored
+from a backup starts a new, empty guardian: set it up, then in the phone app Settings, Guardian,
+**Replace guardian**, with the phone and the hardware wallet, exactly as after a lost box. An Umbrel
+backup made by 0.1.21-alpha or earlier still holds the guardian's data. umbrelOS's migration to another
+Umbrel copies everything, the guardian included: after it, never start the guardian on the old box again.
+
 It also sets `TRIKEY_EXTRA_ENTROPY: ${APP_SEED}`. umbrelOS gives every app an `APP_SEED`: the hex
 HMAC-SHA256 of the Umbrel's own seed and the app id (64 hex characters, the same on every start). The
 guardian mixes it into every new setup seed, next to its OS draw and the browser's 32 bytes
