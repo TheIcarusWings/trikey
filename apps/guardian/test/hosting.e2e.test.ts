@@ -143,7 +143,8 @@ afterAll(async () => {
 
 /** The host's status without what changes by itself: the clock, and the sealing key (new at every lock, unlock and use). */
 const stable = (s: Record<string, unknown>) => {
-  const { time: _t, atMs: _a, unlockKey: _k, ...rest } = s;
+  // The sealing key and the offered hardware unlock slot id live in memory and change on their own (use, time).
+  const { time: _t, atMs: _a, unlockKey: _k, hardwareUnlockOffer: _o, ...rest } = s;
   return rest;
 };
 

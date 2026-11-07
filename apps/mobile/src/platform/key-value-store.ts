@@ -20,8 +20,10 @@ function assertValue(value: string): void {
 
 /**
  * Non-secret app state: descriptor, pairing info, caches. Never put a seed, a key or a
- * passphrase here; that is what `SecureKeyStore` is for. Values are not encrypted, and on iOS
- * the database file is part of the phone's normal iCloud device backup.
+ * passphrase here; that is what `SecureKeyStore` is for. Values are not encrypted, and the
+ * database file is part of the phone's backups (iCloud on iOS; Auto Backup and device transfer on
+ * Android). What a backup must not hand out, such as Recovery Key mode's signed refills, is
+ * encrypted before it gets here, under a key in the `SecureKeyStore` (this device only).
  *
  * Backed by `expo-sqlite`'s key-value store rather than AsyncStorage:
  * - it ships with the Expo SDK and is versioned with it, so there is no extra native

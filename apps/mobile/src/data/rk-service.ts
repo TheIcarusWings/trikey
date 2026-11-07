@@ -1116,8 +1116,9 @@ class Service implements RkWalletService {
             // The device checks the vault's first address, for every kind: it is what proves the hardware key in the vault
             // is the device's own (a swapped QR or NFC export would put someone else's key there). A QR or NFC device
             // (QR, Coldcard, Jade, Coldcard over NFC) cannot be asked for an address, so its signer shows the compare
-            // sheet: the address, to check on the device's own screen. No vault address is shown before this passes.
-            self.setProgress('Setting up your vault: approve on your hardware wallet');
+            // sheet: the address, to check on the device's own screen. No vault address is shown before this passes. A
+            // second hardware wallet as the Recovery Key is checked the same way, after key 1.
+            self.setProgress(self.doc.keyKind === 'hardware' ? 'Setting up your vault: approve on both hardware wallets' : 'Setting up your vault: approve on your hardware wallet');
             try {
               const v = await w.confirmKitSaved(proof);
               self.deps.onWalletChange?.(true);

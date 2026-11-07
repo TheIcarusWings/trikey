@@ -9,7 +9,7 @@
 import type { HardwareKind, HardwareProvider, HardwareSigner, KnownHardware, QrModel } from '@trikey/wallet';
 import type { NetworkName } from '@trikey/core';
 import { HardwareError, throwIfAborted } from '../errors';
-import { memoryNoticeStore, type JadeBleBridge, type JadeNoticeStore } from './bridge';
+import { memoryNoticeStore, memoryPinServerStore, type JadeBleBridge, type JadeNoticeStore, type JadePinServerStore } from './bridge';
 import type { CborValue } from './cbor';
 import type { JadeBleDevice } from './link';
 import { unlockJade, type FetchLike, type UnlockEvent } from './pin-server';
@@ -33,11 +33,27 @@ export interface JadeBleProviderOptions {
   now?: () => number;
   /** Where the app remembers that the owner read the PIN-server notice. Default: in memory (shown again after a restart). */
   notices?: JadeNoticeStore;
+  /** The PIN servers the owner named as their own (Blockstream's is always allowed). Default: in memory. */
+  pinServers?: JadePinServerStore;
 }
 
 /** The sentence shown once before the first unlock over Bluetooth (DESIGN.md, "Jade over Bluetooth"). */
 export const PIN_SERVER_NOTICE =
   'To unlock your Jade over Bluetooth, this phone passes an encrypted PIN check between the Jade and the PIN server the Jade names (Blockstream’s, unless you set your own): that server sees this phone’s IP address and when your Jade unlocks, never your PIN or your keys. In QR mode, Trikey contacts no PIN server.';
+
+/**
+ * Asked when a Jade names a PIN server that is not Blockstream's: the owner may have set their own on the Jade, and only
+ * they know. Something that only claims to be a Jade would otherwise choose what this phone fetches.
+ */
+export function pinServerQuestion(server: string) {
+  return {
+    title: 'A PIN server Trikey does not know',
+    instructions: `Your Jade asks this phone to reach ${server} to check your PIN. That is not Blockstream’s PIN server. Continue only if you set this server on your Jade yourself.`,
+    notes: ['If you did not, cancel: something other than your Jade may be answering over Bluetooth. Trikey asks once per server.'],
+    continueLabel: 'It is my server',
+    cancelLabel: 'Cancel',
+  };
+}
 
 export function versionAtLeast(version: string, min: readonly number[]): boolean {
   const parts = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
@@ -60,9 +76,11 @@ export class JadeBleProvider implements HardwareProvider {
   readonly kinds: readonly HardwareKind[] = KINDS;
 
   private readonly notices: JadeNoticeStore;
+  private readonly pinServers: JadePinServerStore;
 
   constructor(private readonly options: JadeBleProviderOptions) {
     this.notices = options.notices ?? memoryNoticeStore();
+    this.pinServers = options.pinServers ?? memoryPinServerStore();
   }
 
   async isAvailable(): Promise<boolean> {
@@ -141,6 +159,14 @@ export class JadeBleProvider implements HardwareProvider {
           signal: ac.signal,
           ...(this.options.now ? { epoch: this.options.now() } : {}),
           onEvent: (e) => this.showUnlock(e, state, cancel),
+          pinServers: {
+            approved: () => this.pinServers.list(),
+            ask: async (server) => {
+              const ok = await bridge.confirm(pinServerQuestion(server));
+              if (ok) await this.pinServers.add(server).catch(() => undefined);
+              return ok;
+            },
+          },
         });
         if (!unlocked)
           throw new HardwareError('device-locked', 'Wrong PIN: the Jade stayed locked. Try again carefully: after three wrong PINs in a row the Jade erases its keys, and you would restore it from its recovery phrase.', { kind: KIND });

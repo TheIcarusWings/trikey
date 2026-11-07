@@ -31,6 +31,8 @@ const SIM_DEVICE_KEY = 'trikey.sim.device.v1';
 const SIM_DEVICE2_KEY = 'trikey.sim.device2.v1';
 /** Set once the owner read that unlocking a Jade over Bluetooth asks its PIN server. */
 const JADE_NOTICE_KEY = 'trikey.jade.pin-server-notice.v1';
+/** The PIN servers (other than Blockstream's) the owner said are their own, as a JSON list. */
+const JADE_PIN_SERVERS_KEY = 'trikey.jade.pin-servers.v1';
 /** This phone's pairing with BitBox02s (its Noise key and theirs), so the pairing code is asked once per BitBox02. */
 const BITBOX02_PAIRING_KEY = 'trikey.bitbox02.pairing.v1';
 
@@ -94,6 +96,21 @@ function sharedHardware(kv: KeyValueStore) {
     seen: async () => (await kv.get(JADE_NOTICE_KEY)) === '1',
     markSeen: () => kv.set(JADE_NOTICE_KEY, '1'),
   };
+  // The PIN servers the owner named as their own: the phone reaches no other (Blockstream's aside).
+  const pinServers = {
+    list: async () => {
+      try {
+        const v = JSON.parse((await kv.get(JADE_PIN_SERVERS_KEY)) ?? '[]') as unknown;
+        return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+      } catch {
+        return [];
+      }
+    },
+    add: async (server: string) => {
+      const now = await pinServers.list();
+      if (!now.includes(server)) await kv.set(JADE_PIN_SERVERS_KEY, JSON.stringify([...now, server]));
+    },
+  };
   // The phone's BitBox02 pairing: kept in the app's own storage (the key only lets this phone skip the pairing code with a
   // BitBox02 it already paired with; the BitBox02 still asks for its password and every approval).
   const bitbox02Pairing = {
@@ -105,7 +122,7 @@ function sharedHardware(kv: KeyValueStore) {
     hints.add(hooks.onLedgerInteraction);
     let providers = cache.get(network);
     if (!providers) {
-      providers = createHardwareProviders({ network, ledger: { onInteraction: (i) => hints.forEach((h) => h(i)) }, jade: { notices }, bitbox02: { pairing: bitbox02Pairing } });
+      providers = createHardwareProviders({ network, ledger: { onInteraction: (i) => hints.forEach((h) => h(i)) }, jade: { notices, pinServers }, bitbox02: { pairing: bitbox02Pairing } });
       cache.set(network, providers);
     }
     return providers;

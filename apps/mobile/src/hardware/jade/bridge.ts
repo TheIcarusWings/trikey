@@ -3,7 +3,8 @@
  *
  * While the phone finds, pairs and unlocks a Jade, the provider puts a *status* on screen ("Looking for your Jade",
  * "Enter your PIN on the Jade") that the owner can only cancel, and once, before the first unlock over Bluetooth, a
- * *notice* the owner answers: that unlocking a Jade this way asks the Jade's PIN server. Whatever mounts
+ * *notice* the owner answers: that unlocking a Jade this way asks the Jade's PIN server (and, when a Jade names a PIN
+ * server that is not Blockstream's, whether it is the owner's own). Whatever mounts
  * `JadeBleBridgeHost` (ui/jade-ble-bridge-host.tsx) shows them. Signing itself (the wallet, a payment, a text) is shown
  * by the app's usual "Confirm on your device" sheet.
  */
@@ -34,6 +35,26 @@ export type JadeBridgeScreen = JadeStatusScreen | JadeConfirmScreen;
 export interface JadeNoticeStore {
   seen(): Promise<boolean>;
   markSeen(): Promise<void>;
+}
+
+/**
+ * The PIN servers the owner named as their own (`host` or `host:port`), so the phone reaches them, and asks about one only
+ * the first time a Jade names it. Blockstream's is never stored: it is always allowed.
+ */
+export interface JadePinServerStore {
+  list(): Promise<string[]>;
+  add(server: string): Promise<void>;
+}
+
+/** In memory: forgotten when the app restarts. For tests, and where the app passes no store. */
+export function memoryPinServerStore(initial: string[] = []): JadePinServerStore {
+  const servers = [...initial];
+  return {
+    list: async () => [...servers],
+    add: async (server) => {
+      if (!servers.includes(server)) servers.push(server);
+    },
+  };
 }
 
 /** In memory: seen until the app restarts. For tests, and where the app passes no store. */

@@ -6,6 +6,46 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## 0.1.22-alpha (2026-11-07)
+
+A security release, from a second review of the whole project (two independent AI-run audits compared, each finding
+checked against the code and fixed with a test that reproduces it). Update the guardian, then the app: with this
+guardian an older app cannot pair a new wallet, add a wallet or change your alert contacts (it says "update the app").
+Nothing here was exploited that we know of. And on Android, the build without Google is now its own app.
+
+- **Your hardware wallet now names your alert contacts** when it approves rules (pairing, adding a wallet, a rule
+  change): `contacts=npub1abcdefgh..wxyz`, the start and end of each contact's npub, or for many contacts their number
+  and a code that the guardian's web page (Rules) and the app show too. Compare them before you approve. Before, it
+  showed only how many contacts there were, so a tampered app could swap your contact for its own unseen. Every contact
+  added or removed now gets a message, and Activity names them (#180).
+- **Adding a wallet needs your first wallet's hardware wallet** (one more confirmation, `Trikey add-wallet v1`), and
+  your first wallet's contacts are told of every wallet added and every hardware unlock turned on. Before, a stolen
+  phone could add a wallet with a hardware key of its own. **New in the guardian's web page** (Settings > Wallets and
+  hardware unlock): see every wallet and its hardware unlock, turn any unlock off, and remove a wallet after the first
+  without its hardware wallet (type `REMOVE WALLET`). Removing is refused while that wallet's recovery runs (#180).
+- **A stolen phone can no longer freeze a recovery** by co-signing thousands of payments to itself that are never
+  sent. Only what the guardian sees on chain moves where it looks for your change now. Co-signing has a minimum fee
+  (0.1 sat/vB) and a limit of 30 payments an hour and 200 a day per wallet. A daily limit of 1,000 BTC or more now
+  counts as "no limit" for every purpose, and a guardian whose clock was pushed forward no longer forgets payments
+  (#179).
+- **On Umbrel, another app can no longer use the guardian page's sign-in.** Browsers send a page's cookie to every app
+  on the same address, so the sign-in now also needs a secret only the guardian's own tabs hold. Opening the guardian
+  in a new tab while none is open asks for your passphrase. The guardian also trusts only Umbrel's own gateway: on
+  umbrelOS 1, a new guardian asks for its setup code (in the app's logs, Settings > Troubleshoot) (#175).
+- **Umbrel backups leave the guardian out**, as on Start9. A restored Umbrel starts an empty guardian: set it up and use
+  **Replace guardian** with your phone and hardware wallet. Backups made by 0.1.21-alpha or earlier still hold a copy
+  of the guardian's data (its key under your passphrase): delete them if you can. microSD signing (Passport gen 2,
+  Krux) now ends with a step to delete the signed files from the card (#176).
+- **Android: Trikey FOSS.** The build without Google code is now its own app (`app.trikey.wallet.foss`, "Trikey FOSS"),
+  installable beside the standard Trikey. Had the no-Google APK of 0.1.21-alpha or earlier? The new one installs as a
+  separate, empty app: restore your wallet in it from your backup file and recovery code, check it, then uninstall the
+  old one (docs/android-signing.md) (#169).
+- **Releases are checked before they go out.** A release starts as a draft and is published only after its 7 files,
+  their checksums and both APKs' signatures are checked; each release pushes one image tag, which a re-release cannot
+  change; the build tools are pinned (#177, #171).
+- The daily-limit bar on the guardian's home page is visible again (#172). The docs explain renewing the iPhone's
+  7-day profile (#174).
+
 ## 0.1.21-alpha (2026-11-06)
 
 A security release: fixes from an external review of the whole project (an AI-run audit, each finding checked against

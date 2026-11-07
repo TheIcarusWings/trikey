@@ -1,20 +1,31 @@
 /**
  * The wallet's persisted state: one JSON document in the app's
- * `KeyValueStore`. Nothing in it is secret (key 2's entropy lives in the
- * `SecureKeyStore`), but all of it is integrity-sensitive: the descriptor
- * decides where coins go, and the refill chain is money waiting to move.
+ * `KeyValueStore`. Key 2's entropy lives in the `SecureKeyStore`, but the
+ * state holds the pre-signed refill chain: fully signed transactions that
+ * anyone holding a copy could broadcast (one per period, as the links allow),
+ * and the descriptor and keys of the whole wallet. The key-value store is an
+ * app database that phone backups (Android Auto Backup, a device-to-device
+ * transfer, an iCloud backup of the app's files) may copy.
  *
- * So the document carries an HMAC-SHA256 under a 32-byte key kept in the
- * secure store (without biometrics, so the app can open the wallet in the
- * background). A changed, truncated or foreign document is refused with
- * `state_tampered`. On top of that the wallet re-verifies the refill chain's
- * signatures and links on every open (`verifyRefillChain`): even someone who
- * could rewrite both stores cannot forge a refill.
+ * So the document is encrypted (XChaCha20-Poly1305) under a key derived
+ * (HKDF-SHA256) from a 32-byte key kept in the secure store (without
+ * biometrics, so the app can open the wallet in the background; this device
+ * only, never in a backup). The encryption also authenticates: a changed,
+ * truncated or foreign document is refused with `state_tampered`. On top of
+ * that the wallet re-verifies the refill chain's signatures and links on
+ * every open (`verifyRefillChain`): even someone who could rewrite both
+ * stores cannot forge a refill.
+ *
+ * Format 1 (before 2026-11) was the same JSON in the clear, with an
+ * HMAC-SHA256 under that key. It is still read, and saved again as format 2
+ * at once.
  */
+import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { hex } from '@scure/base';
+import { base64, hex, utf8 } from '@scure/base';
 import { equalBytes } from '@scure/btc-signer/utils.js';
 import type { KeyExpression, NetworkName } from '@trikey/core';
 import type { HardwareKind, KeyValueStore, SecureKeyStore } from '@trikey/wallet';
@@ -66,7 +77,18 @@ export interface RkState {
   secrets: { key2: string };
   key2: { vault: KeyExpression; spending: KeyExpression };
   hardware?: HardwareRecord;
-  recoveryKey?: { kind: 'kit' | 'hardware'; key: KeyExpression; savedAt: number; device?: { kind: HardwareKind; model?: string; fingerprint: string } };
+  recoveryKey?: {
+    kind: 'kit' | 'hardware';
+    key: KeyExpression;
+    savedAt: number;
+    device?: { kind: HardwareKind; model?: string; fingerprint: string };
+    /**
+     * A second hardware wallet (`kind: 'hardware'`): whether it showed one of the vault's addresses, as key 1 must. Its
+     * key reached the phone as an export the phone cannot authenticate, so until then the vault may hold someone else's
+     * key. Absent (a vault made before this check): not yet.
+     */
+    addressVerified?: boolean;
+  };
   vault?: { descriptor: string; fingerprint: string; creationHeight: number };
   /** Next unused index per chain (reserved indices count as used). */
   indices: { vaultReceive: number; vaultChange: number; spendingReceive: number; spendingInternal: number };
@@ -88,17 +110,36 @@ export interface RkState {
 
 export const DEFAULT_STORAGE_KEY = 'trikey.recovery-key.v1';
 
-interface Doc {
+/** Format 1: the state in the clear, with its MAC. Read only (migrated on load). */
+interface DocV1 {
   v: 1;
   macKeyId: string;
   mac: string;
   state: string;
 }
 
+/** Format 2: the state encrypted, `box` = XChaCha20-Poly1305 ciphertext and tag (base64), `nonce` 24 bytes (hex). */
+interface DocV2 {
+  v: 2;
+  macKeyId: string;
+  nonce: string;
+  box: string;
+}
+
 const tamper = (why: string, cause?: unknown) => new RecoveryKeyError('state_tampered', `The saved wallet failed its integrity check (${why}). Do not use it; restore from your keys.`, { cause });
 
 function macOf(key: Uint8Array, body: string): Uint8Array {
   return hmac(sha256, key, utf8ToBytes(body));
+}
+
+/** The encryption key, apart from the MAC key it comes from (format 1 used that one as is). */
+function encKeyOf(key: Uint8Array): Uint8Array {
+  return hkdf(sha256, key, undefined, utf8ToBytes('trikey/rk-state-encryption/v1'), 32);
+}
+
+/** Binds a document to its place in the store and its key: one cannot be swapped in for another. */
+function aadOf(storageKey: string, macKeyId: string): Uint8Array {
+  return utf8ToBytes(`trikey/rk-state/v2|${storageKey}|${macKeyId}`);
 }
 
 function checkShape(s: RkState): void {
@@ -143,33 +184,51 @@ export class StateStore {
   async load(): Promise<RkState | undefined> {
     const raw = await this.kv.get(this.key);
     if (raw === null) return undefined;
-    let doc: Doc;
+    let doc: DocV1 | DocV2;
     try {
-      doc = JSON.parse(raw) as Doc;
+      doc = JSON.parse(raw) as DocV1 | DocV2;
     } catch (e) {
       throw tamper('not JSON', e);
     }
-    if (doc?.v !== 1 || typeof doc.macKeyId !== 'string' || typeof doc.mac !== 'string' || typeof doc.state !== 'string') throw tamper('unknown format');
+    if ((doc?.v !== 1 && doc?.v !== 2) || typeof doc.macKeyId !== 'string') throw tamper('unknown format');
+    if (doc.v === 1 && (typeof doc.mac !== 'string' || typeof doc.state !== 'string')) throw tamper('unknown format');
+    if (doc.v === 2 && (typeof doc.nonce !== 'string' || typeof doc.box !== 'string')) throw tamper('unknown format');
     if (!doc.macKeyId.startsWith(`${this.key}.mac.`)) throw tamper('foreign key id');
     const key = await this.secure.load(doc.macKeyId, 'Open your wallet');
     if (!key || key.length !== 32) throw tamper('its key is missing from this phone');
-    if (!equalBytes(macOf(key, doc.state), hex.decode(doc.mac))) throw tamper('MAC mismatch');
+    let body: string;
+    if (doc.v === 1) {
+      if (!equalBytes(macOf(key, doc.state), hex.decode(doc.mac))) throw tamper('MAC mismatch');
+      body = doc.state;
+    } else {
+      try {
+        const nonce = hex.decode(doc.nonce);
+        if (nonce.length !== 24) throw new Error('nonce length');
+        body = utf8.encode(xchacha20poly1305(encKeyOf(key), nonce, aadOf(this.key, doc.macKeyId)).decrypt(base64.decode(doc.box)));
+      } catch (e) {
+        throw tamper('it does not decrypt', e);
+      }
+    }
     let s: RkState;
     try {
-      s = JSON.parse(doc.state) as RkState;
+      s = JSON.parse(body) as RkState;
     } catch (e) {
       throw tamper('not JSON', e);
     }
     checkShape(s);
     this.macKeyId = doc.macKeyId;
     this.macKey = key;
+    // A format 1 document holds the signed refills in the clear: write it again encrypted now. If that fails, the next
+    // save does it.
+    if (doc.v === 1) await this.save(s).catch(() => undefined);
     return s;
   }
 
   async save(s: RkState): Promise<void> {
     if (!this.macKey || !this.macKeyId) throw new RecoveryKeyError('internal', 'state store not initialised');
-    const body = JSON.stringify(s);
-    const doc: Doc = { v: 1, macKeyId: this.macKeyId, mac: hex.encode(macOf(this.macKey, body)), state: body };
+    const nonce = secureRandomBytes(24);
+    const box = xchacha20poly1305(encKeyOf(this.macKey), nonce, aadOf(this.key, this.macKeyId)).encrypt(utf8ToBytes(JSON.stringify(s)));
+    const doc: DocV2 = { v: 2, macKeyId: this.macKeyId, nonce: hex.encode(nonce), box: base64.encode(box) };
     await this.kv.set(this.key, JSON.stringify(doc));
   }
 

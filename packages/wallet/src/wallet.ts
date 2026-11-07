@@ -4723,12 +4723,14 @@ export class TrikeyWallet {
    * encrypted RPC; the guardian checks it against the wallet's authorization key, makes its unlock slot, and forgets it.
    * **The phone keeps neither the signature nor anything derived from it**: every unlock needs the hardware wallet
    * (DESIGN.md, "Unlocking the guardian with the hardware wallet"). Turning it on again replaces the slot (a new slot id),
-   * so every earlier signature stops working.
+   * so every earlier signature stops working. The slot id is the one the guardian offers (`hardwareUnlockOffer`, guardians
+   * with `unlock_slot_offer`: it takes each id once, so an old signature never makes its slot again); only for an older
+   * guardian does the phone pick it.
    */
   async enableHardwareUnlock(): Promise<HardwareUnlockView> {
     this.requireHardwareUnlock();
     const walletId = this.s.wallet!.walletId;
-    const slot = hex.encode(secureRandomBytes(8));
+    const slot = await this.newUnlockSlotId();
     const text = this.unlockText(slot);
     const signature = await this.withHardware(async (hw, rec) => {
       const a = await this.signWithAuthKey(hw, rec, text, 'unlock', { n: 1, of: 2 });
@@ -4743,6 +4745,15 @@ export class TrikeyWallet {
     await this.sendHardwareUnlockAdd(walletId, slot, signature);
     await this.refreshStatus().catch(() => undefined);
     return this.hardwareUnlockView();
+  }
+
+  /** The slot id to turn hardware unlock on with: the guardian's offer, or a random one for a guardian from before offers. */
+  private async newUnlockSlotId(): Promise<string> {
+    const st = await this.statusForUnlock();
+    if (!st.features?.includes(GUARDIAN_FEATURES.hardwareUnlockOffer)) return hex.encode(secureRandomBytes(8));
+    if (st.state !== 'unlocked') throw new WalletError('wrong_state', 'Unlock the guardian first: it needs key 3 to add a way to unlock it.');
+    if (!st.hardwareUnlockOffer) throw new WalletError('guardian_unsupported', "The guardian didn't offer a slot for the hardware wallet to sign. Refresh and try again.");
+    return st.hardwareUnlockOffer.slot;
   }
 
   /**

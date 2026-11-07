@@ -14,13 +14,13 @@
 # forwarded on your router. The one port below is the web UI, for you.
 #
 # Download this file from a release (trikey-guardian-compose.yml): that copy pins the image by its digest, so what
-# runs is exactly the image that release built (packaging/VERIFY.md). This copy in the repository follows the version
-# TAG below, which can be pushed over on GHCR: it is for development (TRIKEY_IMAGE swaps in a local build).
+# runs is exactly the image that release built (packaging/VERIFY.md). The copy in the repository follows the version
+# TAG on its image line, which can be pushed over on GHCR: it is for development (an override swaps in a local build).
 name: trikey-guardian
 
 services:
   guardian:
-    image: ${TRIKEY_IMAGE:-ghcr.io/theicaruswings/trikey-guardian:0.1.21-alpha}
+    image: ${TRIKEY_IMAGE:-ghcr.io/theicaruswings/trikey-guardian:0.1.22-alpha}
     restart: unless-stopped
     init: true
     ports:

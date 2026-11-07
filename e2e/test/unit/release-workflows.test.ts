@@ -48,6 +48,7 @@ interface Job {
 interface Workflow {
   on: Record<string, unknown>;
   permissions?: Record<string, string>;
+  env?: Record<string, string>;
   jobs: Record<string, Job>;
 }
 const workflow = (name: string) => parse(read(`.github/workflows/${name}`)) as Workflow;
@@ -172,6 +173,24 @@ describe('the guardian image tags', () => {
     const pin = job.steps!.find((s) => s.name === 'Pin the image in the compose file')!;
     expect(pin.run).toContain('pinned="${IMAGE}:${VERSION}@${DIGEST}"');
     expect(pin.run).toContain('grep -Fxq "    image: ${pinned}"');
+  });
+
+  it("makes the release's compose file from the repository's, as the step really runs (0.1.22's release stopped here)", () => {
+    const job = wf.jobs['compose-files']!;
+    const pin = job.steps!.find((s) => s.name === 'Pin the image in the compose file')!;
+    const temp = mkdtempSync(join(tmpdir(), 'trikey-pin-'));
+    const digest = `sha256:${'ab'.repeat(32)}`;
+    const version = (JSON.parse(read('package.json')) as { version: string }).version + '-alpha';
+    execFileSync('bash', ['-c', pin.run!], {
+      cwd: ROOT,
+      env: { PATH: process.env['PATH'], RUNNER_TEMP: temp, IMAGE: wf.env!['IMAGE'], VERSION: version, DIGEST: digest, TAG: `v${version}` },
+      stdio: 'pipe',
+    });
+    const out = readFileSync(join(temp, 'assets', 'trikey-guardian-compose.yml'), 'utf8');
+    expect(out).toContain(`    image: ghcr.io/theicaruswings/trikey-guardian:${version}@${digest}\n`);
+    // No setting may still take the override; comments may name it.
+    expect(out.split('\n').filter((l) => !/^\s*#/.test(l) && l.includes('TRIKEY_IMAGE'))).toEqual([]);
+    expect(readdirSync(join(temp, 'assets')).sort()).toEqual(['trikey-guardian-compose.sha256', 'trikey-guardian-compose.yml', 'trikey-guardian.env.example']);
   });
 
   it('says in the repository compose file and its README that it follows a tag, and points to the release copy', () => {

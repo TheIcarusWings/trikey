@@ -5,6 +5,7 @@
  */
 import { createBase58check } from '@scure/base';
 import { sha256 } from '@noble/hashes/sha2.js';
+import type { HardwareKind } from '@trikey/wallet';
 import { HardwareError } from '../errors';
 
 const base58check = createBase58check(sha256);
@@ -85,4 +86,14 @@ export function normalizeXpub(xpub: string): string {
 /** The BIP32 version bytes pair (public + private) @scure/bip32 wants for this key's family. */
 export function bip32VersionsFor(xpub: string): { public: number; private: number } {
   return xpubFamily(xpub) === 'main' ? { public: 0x0488b21e, private: 0x0488ade4 } : { public: 0x043587cf, private: 0x04358394 };
+}
+
+/**
+ * Throws unless the key's own depth and child number are the path's length and last step: a device (or whatever answers
+ * for it) that returns a key from another place in its tree is refused, not believed.
+ */
+export function assertXpubAtPath(xpub: string, path: readonly number[], kind?: HardwareKind): void {
+  const d = decodeXpub(xpub);
+  if (d.depth !== path.length || (path.length > 0 && d.childNumber !== path[path.length - 1]))
+    throw new HardwareError('invalid-response', 'The device returned a key that is not the one at the path asked for.', kind ? { kind } : {});
 }

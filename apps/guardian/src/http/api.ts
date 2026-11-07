@@ -19,6 +19,8 @@ import { contactId, contactsCode, isContactLockOn, isLimitOff, type RecoveryReco
 import { npubEncode } from 'nostr-tools/nip19';
 import { engineEntry, npubOrHex, serviceEntry, shortNpub } from './activity.js';
 import { HttpError, type Route, type RouteContext, type RouteResult } from './server.js';
+import { isLoopback, normalizeAddress } from './trusted-proxy.js';
+import { UNKNOWN_CALLER, type Caller } from '../unlock-throttle.js';
 import type {
   ActivityEntry,
   ChannelHealth,
@@ -96,6 +98,18 @@ async function requireSetupCode(g: Guardian, input: unknown, remote: string | un
     'bad_setup_code',
     g.config.setupCode ? 'That is not the setup code. Copy it again from where you found it.' : "That is not the setup code. Copy it from the guardian's log (it changes at every restart).",
   );
+}
+
+/**
+ * Who tries a passphrase, for the web throttles' per-caller counts (unlock-throttle.ts `CallerThrottle`): by the
+ * socket only. The platform's login proxy and loopback are one trusted caller, never held back by the global ceiling
+ * that strangers fill; everyone else counts by their own address.
+ */
+export function caller(session: RouteContext['session'], remote: string | undefined): Caller {
+  if (session.trustedSocket) return { key: 'trusted', trusted: true };
+  const a = normalizeAddress(remote);
+  if (!a) return UNKNOWN_CALLER;
+  return isLoopback(a) ? { key: a, trusted: true } : { key: a };
 }
 
 /** `GET /api/status` without a session: which screen to show, nothing about the wallet. */
@@ -394,10 +408,11 @@ export function buildRoutes(g: Guardian): Route[] {
       method: 'POST',
       path: '/session',
       public: true,
-      handler: async ({ body, session }) => {
+      handler: async ({ body, session, remoteAddress }) => {
         if (!g.setupComplete) throw new HttpError(409, 'setup_required', 'Set up the guardian first.');
         const input = (body ?? {}) as { passphrase?: unknown; unlock?: unknown };
-        const r = input.unlock === true && g.locked ? await g.unlock(input.passphrase, 'web') : await g.checkWebPassphrase(input.passphrase);
+        const who = caller(session, remoteAddress);
+        const r = input.unlock === true && g.locked ? await g.unlock(input.passphrase, 'web', who) : await g.checkWebPassphrase(input.passphrase, who);
         if (r.ok) return signedIn(g, session);
         if (r.code === 'bad_passphrase') throw new HttpError(401, 'bad_passphrase', 'That passphrase is not right.', r.retryAfterSeconds);
         if (r.code === 'rate_limited') throw new HttpError(429, 'rate_limited', 'Too many tries. Wait and try again.', r.retryAfterSeconds);
@@ -468,8 +483,8 @@ export function buildRoutes(g: Guardian): Route[] {
     {
       method: 'POST',
       path: '/unlock',
-      handler: async ({ body }) => {
-        const r = await g.unlock((body as { passphrase?: unknown } | undefined)?.passphrase, 'web');
+      handler: async ({ body, session, remoteAddress }) => {
+        const r = await g.unlock((body as { passphrase?: unknown } | undefined)?.passphrase, 'web', caller(session, remoteAddress));
         if (r.ok) return ok(await guardianStatus(g));
         if (r.code === 'bad_passphrase') throw new HttpError(401, 'bad_passphrase', 'That passphrase is not right.', r.retryAfterSeconds);
         if (r.code === 'rate_limited') throw new HttpError(429, 'rate_limited', 'Too many tries. Wait and try again.', r.retryAfterSeconds);
@@ -711,10 +726,10 @@ export function buildRoutes(g: Guardian): Route[] {
     {
       method: 'POST',
       path: '/passphrase',
-      handler: async ({ body, session }) => {
+      handler: async ({ body, session, remoteAddress }) => {
         requireUnlocked(g);
         const input = (body ?? {}) as { passphrase?: unknown; newPassphrase?: unknown };
-        const r = await g.changePassphrase({ passphrase: input.passphrase, newPassphrase: input.newPassphrase });
+        const r = await g.changePassphrase({ passphrase: input.passphrase, newPassphrase: input.newPassphrase }, caller(session, remoteAddress));
         if (r.ok) return signedIn(g, session);
         if (r.code === 'bad_passphrase') throw new HttpError(401, 'bad_passphrase', 'That is not the current passphrase.', r.retryAfterSeconds);
         if (r.code === 'rate_limited') throw new HttpError(429, 'rate_limited', 'Too many tries. Wait and try again.', r.retryAfterSeconds);

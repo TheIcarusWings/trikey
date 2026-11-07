@@ -138,13 +138,18 @@ export function coreDraft(settings: ChainSettings): ServerDraft {
   return { ...d, kind: 'core', host: n?.host ?? '', port: n ? String(n.port) : '', user: n?.user ?? '', pass: '', tls: false, certSha256: '', preset: '', wallet: '' };
 }
 
-/** Whether the guardian already has Bitcoin Core's password for the draft's host and user (the field may stay empty). */
+/**
+ * Whether the guardian already has Bitcoin Core's password for the draft's host, port and user (the field may stay
+ * empty). Another port, even on the same host, needs the password again: the guardian never sends it anywhere else.
+ */
 export function passKnown(d: ServerDraft, settings: ChainSettings): boolean {
   const host = d.host.trim();
+  const port = Number(d.port.trim());
   const user = d.user.trim();
+  const same = (r: { host: string; port: number; user: string }) => r.host === host && r.port === port && r.user === user;
   const s = settings.source;
-  if (s?.kind === 'core' && s.rpc.host === host && s.rpc.user === user) return true;
-  return !!settings.nodeRpc && settings.nodeRpc.host === host && settings.nodeRpc.user === user;
+  if (s?.kind === 'core' && same(s.rpc)) return true;
+  return !!settings.nodeRpc && same(settings.nodeRpc);
 }
 
 const defaultPort = (d: ServerDraft) => (d.kind === 'core' ? '' : d.tls || d.kind === 'public' ? '50002' : '50001');
