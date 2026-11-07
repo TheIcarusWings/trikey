@@ -782,7 +782,7 @@ Built in [`packages/recovery-key`](packages/recovery-key) (`@trikey/recovery-key
   | Hardware wallet and its seed words lost | kit + phone | an address, or a new vault (new hardware wallet, new kit) |
   | Recovery Kit lost or seen | phone + hardware | a new vault with a new kit (same devices, next account) |
 
-- **Stored state** is one JSON document with an HMAC under a key in the secure store, and the refill chain's links and signatures are checked again on every open.
+- **Stored state** is one JSON document, encrypted (XChaCha20-Poly1305, which also authenticates it) under a key derived from a key in the secure store, and the refill chain's links and signatures are checked again on every open. It holds the signed refills, which anyone with a copy could broadcast (one per period), and the app database it sits in goes into phone backups (iCloud; Android Auto Backup and device transfer), while the secure store's key never leaves the device. A document saved by 0.1.21 or earlier (in the clear, with an HMAC under that key) is still read and written again encrypted at once. An older app cannot open the new format: going back to it means restoring from the keys. Copies made before the update (an old backup, and possibly unused pages of the database file) still hold those refills in the clear, and they stay valid until the coins they spend move (a vault payment that ends the chain, or a sweep to a new vault).
 - **The trade-offs:**
   - keep the Recovery Kit apart from the seed words; anyone with both takes everything, with no undo window;
   - approve new refill batches every couple of months;
