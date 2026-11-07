@@ -10,7 +10,13 @@ name: Reproducible image
 # environment, the entrypoint and the `created` time). packaging/docker/oci-digests.sh prints them.
 #
 # This workflow must build exactly the way docker.yml publishes: same Dockerfile and build
-# args, same BuildKit, rewrite-timestamp=true, no attestations. Keep the two in step.
+# args, same BuildKit, the same pinned QEMU (BINFMT_IMAGE), rewrite-timestamp=true, no
+# attestations. Keep the two in step.
+#
+# On a release tag docker.yml calls it (workflow_call), next to the job that pushes, and its
+# `index-digest` output gates everything that ships the image: docker.yml's `verified` job lets
+# the pushed digest through to the compose file, the Start9 package, the Umbrel store and the
+# GitHub release only if it equals this. So it no longer runs on a tag push of its own.
 
 on:
   pull_request:
@@ -25,8 +31,12 @@ on:
       - '.dockerignore'
       - '.github/workflows/reproducible.yml'
       - '.github/workflows/docker.yml'
-  push:
-    tags: ['v*']
+  # Release tags: docker.yml calls it, and compares the result with what it pushed.
+  workflow_call:
+    outputs:
+      index-digest:
+        description: 'The image index digest both builds gave (sha256:...), when they agree.'
+        value: ${{ jobs.build-twice.outputs.index-digest }}
   workflow_dispatch:
 
 permissions:
@@ -40,11 +50,17 @@ env:
   # BuildKit v0.34.1, by digest (moby/buildkit on Docker Hub, 2026-10-29). Same as docker.yml.
   BUILDKIT_IMAGE: moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
   EXPORT_OPTS: rewrite-timestamp=true,oci-mediatypes=true,compression=gzip
+  # The QEMU emulators, by digest (tonistiigi/binfmt, tag qemu-v10.2.3-68). Same as docker.yml.
+  BINFMT_IMAGE: tonistiigi/binfmt:qemu-v10.2.3-68@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
 
 jobs:
   build-twice:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    permissions:
+      contents: read
+    outputs:
+      index-digest: ${{ steps.compare.outputs.index }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -58,7 +74,12 @@ jobs:
             echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
           fi
 
+      # Run with --privileged: only the pinned image, never one from the Actions cache.
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          image: ${{ env.BINFMT_IMAGE }}
+          platforms: arm64
+          cache-image: false
 
       # Build 1: its own builder container, its own empty cache.
       - name: Builder A
@@ -123,6 +144,9 @@ jobs:
           done
           if diff -u "${RUNNER_TEMP}/digests-a.txt" "${RUNNER_TEMP}/digests-b.txt"; then
             echo "The two builds are identical."
+            index=$(awk '$1 == "index" { print $2 }' "${RUNNER_TEMP}/digests-a.txt")
+            [[ "${index}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no index digest in build A"; exit 1; }
+            echo "index=${index}" >> "$GITHUB_OUTPUT"
           else
             echo "::error::The two builds of the same commit differ, so the image is not reproducible. Download the image-tarballs artifact and compare them with diffoci or skopeo."
             exit 1

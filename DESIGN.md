@@ -587,6 +587,28 @@ printed and kept with the hardware wallet.
   - Anyone who sees the guardian's npub on a relay can burn a 5-minute pairing code with wrong attempts (at no disk write: a wrong secret is refused before anything is recorded).
   - Anyone with a web session can delay unlocks through the web throttle (wrong unlocks, or wrong current passphrases in "Change passphrase", which share it); without one, only sign-ins, which have their own throttle. A stolen phone's guesses never delay the web UI.
   - A flood of refused requests costs no state write and only pushes out older refusals in the activity log, never co-signatures or other entries.
+- **Release supply chain** (review 2026-11). What a release ships is what people install without reading code: the
+  APKs (by hand, Obtainium, Zapstore, the app's Check for updates), the guardian image and the files that name it.
+  - **The image** is pushed only by docker.yml's `publish` job (v* tags, `release` environment), with one tag per
+    release and no moving tag; everything shipped names it by the digest that job pushed, and only once two more clean
+    builds of the tag (reproducible.yml) gave exactly that digest (the release's compose file, the Umbrel store, the
+    Start9 package's packed image, the GitHub release). The arm64 build runs under QEMU from a binfmt image pinned by
+    digest. What remains: a
+    token that may write the package (until the owner sets up `GHCR_PUSH_TOKEN` and drops GITHUB_TOKEN's write access,
+    any branch workflow) can push over a version tag, which reaches only people who pull that tag by name.
+  - **Release files** are attached to a draft and published by publish-release.yml only after its checks (both APKs
+    signed by `packaging/android/release-cert.sha256`, the compose file pinning the pushed digest, checksums), and are
+    locked once the owner turns on immutable releases (docs/android-signing.md). Until then a `contents: write` token
+    can replace a published file.
+  - **The app's update check** shows the release certificate built into the app, never a checksum from the offered
+    release, and warns when an APK would install as a new app (another application id), which Android cannot check
+    against the installed one. Android itself refuses an update signed by another key.
+  - **Not built yet (TODO):** downloading the APK in the app and checking its signing certificate before handing it to
+    Android's installer (`PackageManager.getPackageArchiveInfo(path, GET_SIGNING_CERTIFICATES)` against the built-in
+    certificate, in a small local Expo module without Google code, both variants). It needs the
+    `REQUEST_INSTALL_PACKAGES` permission and a FileProvider, i.e. a wallet that can ask to install apps, and it can
+    only be tested on devices; until then the browser downloads the APK and Android's own signature check on updates,
+    plus the warning and AppVerifier for a new app, are what stand between a replaced file and a phone.
 
 ## Entropy
 

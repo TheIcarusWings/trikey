@@ -51,11 +51,23 @@ The old app's **Check for updates** offers the new FOSS APK, which installs as t
 cannot install it over the old app either (the package differs): remove that entry and add the repository again with
 the FOSS filter (below).
 
+**Check the new app's signer before you restore into it.** An update of an installed app is checked by Android: it
+refuses one that is not signed by the installed app's key. A *new* app has nothing to be compared with, so Android
+installs it whoever signed it, and the old app's update sheet showed only a checksum from the same release (which
+proves nothing about who made the file). So before step 1.2: install [AppVerifier](https://github.com/soupslurpr/AppVerifier)
+(F-Droid or Accrescent), open it, pick **Trikey FOSS** (`app.trikey.wallet.foss`), and compare the SHA-256 it shows
+with [the release key's](#the-release-keys-certificate). If they differ, uninstall Trikey FOSS and restore nothing.
+From 0.1.22-alpha the app's update sheet shows the release certificate built into the app, and warns when an update
+would install as a new app.
+
 ## The release key's certificate
 
-Its SHA-256 is in [`packaging/android/release-cert.sha256`](../packaging/android/release-cert.sha256). The release build
-refuses to publish an APK signed by anything else, and each release's notes repeat it. To check an APK yourself (Android
-SDK build tools):
+Its SHA-256 is in [`packaging/android/release-cert.sha256`](../packaging/android/release-cert.sha256):
+`C6:C4:6A:13:32:72:51:11:41:3A:7B:03:13:E2:F2:F3:7B:10:F0:CE:4C:8D:A1:CA:C3:C9:2D:17:9A:16:2D:A7`. The release build
+refuses to publish an APK signed by anything else, each release's notes repeat it, and from 0.1.22-alpha the app has
+it built in (`apps/mobile/src/lib/release-cert.ts`) and shows it in Settings, About, Check for updates. On the phone,
+[AppVerifier](https://github.com/soupslurpr/AppVerifier) shows an installed app's certificate SHA-256. To check an APK
+file on a computer (Android SDK build tools):
 
 ```sh
 apksigner verify --print-certs trikey-alpha-v0.1.7-alpha.apk | grep 'SHA-256'
@@ -134,11 +146,35 @@ before it uploads anything.
 These are not the SSH or GPG keys on a GitHub account: those sign commits and log in to GitHub. An Android app is signed
 with its own key, made as above.
 
+## How a release is published
+
+`release.yml` creates the tag and a **draft** release. The builds attach their files to the draft: both APKs and their
+`.sha256` (`android-apk.yml`), and the compose files with the guardian image pinned by digest (`docker.yml`). A draft is
+invisible outside the repository: GitHub's public API does not list it, so Obtainium, Zapstore and the app's **Check for
+updates** do not see it, nor does anyone on the releases page. Last, `publish-release.yml` waits for the builds, then,
+in the `release` environment, checks the draft (`packaging/check-release-assets.sh`): exactly the expected files, each
+the one GitHub lists, the checksums, both APKs signed by the pinned certificate and nothing else and each the right
+app, and the compose file running the image by the digest `docker.yml` pushed. Only then does it publish the release.
+
+If a release stays a draft, the Publish release run says why. Fix that (re-run the failed build), then re-run Publish
+release. Do not publish a draft by hand: that skips the checks.
+
+### Immutable releases
+
+A token with `contents: write` (every release job has one, and so could a workflow edited on a branch) can replace a
+published release's files, unless the repository makes releases immutable. With it on, a published release's files and
+its tag cannot be changed or deleted by anyone; only a draft can still change, which is why the files are checked
+right before the draft is published. **The owner turns it on once:** the repository → **Settings → General**, scroll to
+**Releases**, tick **Enable release immutability**, and save. Releases published before stay as they were; every one
+after is immutable. The Publish release run says "is immutable" on success, and warns "Release is not immutable" while
+the setting is off.
+
 ## The `release` environment
 
 Everything that publishes or signs runs in a GitHub environment named `release`: the `sign` job of
 `android-build.yml` (the Android release key), the `publish` job of `docker.yml` (the only job that can push the guardian
-image to GHCR) and the `publish` job of `umbrel-store.yml` (`UMBREL_STORE_TOKEN`). Those jobs also refuse to run on
+image to GHCR), the `publish` job of `umbrel-store.yml` (`UMBREL_STORE_TOKEN`) and the `publish` job of
+`publish-release.yml` (which makes the GitHub release public). Those jobs also refuse to run on
 anything but a `v*` tag ref, but that is a line in a workflow file, which anyone who can push a branch can edit. The
 environment is the part a workflow file cannot change: its secrets reach only jobs that name it, and its rule decides
 which refs those jobs may run on.
@@ -157,7 +193,8 @@ below are done.
    No branch rule: no branch may deploy to `release`.
 3. Optional but recommended: tick **Required reviewers**, add yourself, and click **Save protection rules**. Every
    release then waits for your approval before it signs or publishes (Actions shows *Review deployments* on the run;
-   docker.yml, each of the two Android signing jobs and the Umbrel store job ask, so approve all waiting jobs). This is
+   docker.yml, each of the two Android signing jobs, the Umbrel store job and Publish release ask, so approve all waiting
+   jobs; the last one, Publish release, comes once the draft release has every file and they are checked). This is
    what stops someone with only write access (a stolen token, a misbehaving automation) from releasing by pushing a
    `v*` tag. Leave **Allow administrators to bypass configured protection rules** off if you want the rule to bind you
    too.
@@ -173,12 +210,33 @@ below are done.
 Where an environment secret and a repository secret have the same name, the job in the environment gets the
 environment's. Optional, further:
 
-- **The image.** `packages: write` comes from GITHUB_TOKEN, which a workflow file edited on a branch can still ask for.
-  To close that too: on the package's page (**Packages → trikey-guardian → Package settings → Manage Actions access**)
-  give this repository the **Read** role instead of **Write**, and add an environment secret `GHCR_PUSH_TOKEN` to
-  `release`: a classic personal access token with only the `write:packages` scope (GHCR does not take fine-grained
-  tokens; this one can write every package of the account, so keep it only in the environment). `docker.yml` pushes with
-  it when it is set, and with GITHUB_TOKEN otherwise.
+- **The image** (recommended; the release run warns "Image pushed with GITHUB_TOKEN" until it is done). Without it,
+  `packages: write` comes from GITHUB_TOKEN, which any workflow file on any branch can ask for: a workflow pushed to a
+  branch could push its own image over `ghcr.io/theicaruswings/trikey-guardian:<version>`. Nothing this repository
+  ships names the image by that tag alone (the release's compose file, the Umbrel store and the Start9 package all use
+  the digest the release pushed), but people who type the tag would get it. To close it, in this order, so no release
+  breaks in between:
+  1. Make the token. GitHub, your avatar → **Settings → Developer settings → Personal access tokens → Tokens
+     (classic) → Generate new token → Generate new token (classic)**. Note `trikey GHCR push`; **Expiration**: a date
+     you will remember (a year), and put a reminder in your calendar: once it expires, releases stop at "Log in to
+     GHCR" until you replace it. Tick **only** `write:packages` (GitHub ticks `read:packages` with it). **Generate
+     token**, and copy it. GHCR does not take fine-grained tokens; this classic one can write every package of your
+     account, so it goes nowhere but the `release` environment.
+  2. Store it. This repository → **Settings → Environments → release → Environment secrets → Add environment
+     secret**: name `GHCR_PUSH_TOKEN`, value the token, **Add secret**. Not a repository secret: only the `release`
+     environment's jobs, on `v*` tags, can read it.
+  3. Release once (or run **Actions → Release → Run workflow**, *redispatch* ticked, on `main`). The Docker run's
+     `publish` job now says "Pushing with GHCR_PUSH_TOKEN" and has no "Image pushed with GITHUB_TOKEN" warning.
+  4. Take write access away from the repository's GITHUB_TOKEN. Your avatar → **Your profile → Packages →
+     trikey-guardian → Package settings** (right-hand column). Under **Manage Actions access**: if **Inherit access
+     from source repository (recommended)** is ticked, untick it (with it, every workflow of this repository inherits
+     write access). Then, in the same list, set the role of `TheIcarusWings/trikey` to **Read** (if it is not
+     listed: **Add Repository**, pick it, role **Read**). Leave **Manage access** (people) as it is.
+  5. Check: the next release's `publish` job pushes with the token as in step 3. A branch workflow that tries to push
+     now gets `denied: permission_denied: write_package`.
+
+  `docker.yml` pushes with `GHCR_PUSH_TOKEN` when it is set, and with GITHUB_TOKEN (and the warning) otherwise. To undo,
+  delete the secret and set the repository's role back to **Write** first.
 - **Tags.** A `v*` tag is what the rule lets through, and anyone with write access can push one. Required reviewers
   (step 3) is the guard against that. A tag ruleset (**Settings → Rules → Rulesets → New ruleset → New tag ruleset**,
   target `v*`, *Restrict creations*) can also limit who creates them, but `release.yml` creates the tag with

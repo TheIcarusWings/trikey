@@ -20,7 +20,8 @@ name: Start9 package
 # called by docker.yml with the digest its `publish` job just pushed (`image-digest`): the job pulls exactly that
 # digest, checks the tag still points at it, and tags it locally under the manifest's name, so the tag is never
 # re-resolved for what goes into the package. (A manual run on a tag must be given that digest, from docker.yml's run
-# summary.) On a pull request it uses the published image when the tag exists; when it does not yet (a release PR that
+# summary.) Before packing, it checks that the local image of that name is the one pulled by the digest, and after
+# packing that it has not changed, so the package refuses anything but the pushed image. On a pull request it uses the published image when the tag exists; when it does not yet (a release PR that
 # bumps the version) it builds the image from the checkout for the runner's own architecture and tags it with that
 # name, so the pack finds it locally. Each architecture builds on a runner of that architecture, so nothing is emulated.
 
@@ -211,7 +212,18 @@ jobs:
               || { echo "::error::${tag} is ${current}, not the ${DIGEST} docker.yml pushed: the tag was changed"; exit 1; }
             docker pull --platform "${platform}" "${IMAGE}@${DIGEST}"
             docker tag "${IMAGE}@${DIGEST}" "${tag}"
-            echo "Packing ${IMAGE}@${DIGEST} (${platform}) as ${tag}"
+            # What `s9pk pack` will find under the manifest's name must be what was just pulled by digest: the pushed
+            # index, or its manifest for this platform (Docker records one or the other, depending on its image store).
+            platform_digest=$(docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --raw \
+              | jq -r --arg arch "${platform#linux/}" '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest')
+            [[ "${platform_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] \
+              || { echo "::error::${IMAGE}@${DIGEST} has no ${platform} image"; exit 1; }
+            docker image inspect "${tag}" --format '{{json .RepoDigests}}' \
+              | jq -e --arg index "${IMAGE}@${DIGEST}" --arg manifest "${IMAGE}@${platform_digest}" 'any(.[]; . == $index or . == $manifest)' > /dev/null \
+              || { echo "::error::The local ${tag} is not ${IMAGE}@${DIGEST}: refusing to pack it"; exit 1; }
+            # Its local id, checked again after the pack: the pack must not have pulled the tag again.
+            echo "id=$(docker image inspect "${tag}" --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
+            echo "Packing ${IMAGE}@${DIGEST} (${platform}, ${platform_digest}) as ${tag}"
             echo "source=published ${DIGEST}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -228,6 +240,21 @@ jobs:
       # stays clean.
       - name: Build the .s9pk
         run: make ${{ matrix.target }} FORMAT=true
+
+      # On a tag: the image under the manifest's name is still the one pulled by the pushed digest (`s9pk pack` copies
+      # the local image; had it pulled the tag again, the id would differ when the tag has been pushed over).
+      - name: The packed image is the pushed digest
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ steps.image.outputs.tag }}
+          ID: ${{ steps.image.outputs.id }}
+          DIGEST: ${{ inputs.image-digest }}
+        run: |
+          set -euo pipefail
+          now=$(docker image inspect "${TAG}" --format '{{.Id}}')
+          [ -n "${ID}" ] && [ "${now}" = "${ID}" ] \
+            || { echo "::error::${TAG} changed during the pack (${ID:-unknown} before, ${now} now): the .s9pk may not hold ${IMAGE}@${DIGEST}"; exit 1; }
+          echo "${TAG} is still ${now}, pulled as ${IMAGE}@${DIGEST}"
 
       - name: Check the .s9pk
         id: s9pk

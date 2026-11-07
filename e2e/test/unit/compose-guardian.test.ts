@@ -93,13 +93,13 @@ describe('packaging/compose/docker-compose.yml', () => {
 
 describe('.github/workflows/docker.yml: the release files', () => {
   const wf = parse(read('.github/workflows/docker.yml')) as {
-    jobs: Record<string, { needs?: string; if?: string; permissions?: Record<string, string>; steps: { name?: string; run?: string }[]; outputs?: Record<string, string> }>;
+    jobs: Record<string, { needs?: string | string[]; if?: string; permissions?: Record<string, string>; steps: { name?: string; run?: string }[]; outputs?: Record<string, string> }>;
   };
   const job = wf.jobs['compose-files']!;
 
-  it('runs after the image is pushed, on tags only, and may write release assets', () => {
-    expect(job.needs).toBe('publish');
-    expect(job.if).toBe("needs.publish.outputs.digest != ''");
+  it('runs after the image is pushed and reproduced, on tags only, and may write release assets', () => {
+    expect(job.needs).toEqual(['publish', 'verified']);
+    expect(job.if).toBe("needs.verified.outputs.digest != ''");
     expect(wf.jobs['publish']!.if).toBe("github.ref_type == 'tag' && startsWith(github.ref_name, 'v')");
     expect(job.permissions).toEqual({ contents: 'write' });
     expect(wf.jobs['publish']!.outputs).toMatchObject({ digest: '${{ steps.build.outputs.digest }}' });

@@ -4,13 +4,21 @@ name: Release
 #
 # On every push to main it reads the version in package.json. If CHANGELOG.md has a section for that version
 # ("## <version>-alpha (...)") and the tag v<version>-alpha does not exist yet, it creates the tag on that commit and a
-# published pre-release whose notes are that CHANGELOG section. A push without a version bump, or whose version is
+# DRAFT pre-release whose notes are that CHANGELOG section. A push without a version bump, or whose version is
 # already tagged, does nothing.
+#
+# A draft, so nothing outside this repository sees the release until it is complete: the builds attach their files to
+# the draft (drafts are not in GitHub's public API, so Obtainium, Zapstore and the app's "Check for updates" do not
+# see it), and publish-release.yml, dispatched last, waits for them, checks every file (both APKs signed by the pinned
+# certificate, the compose file pinning the pushed image digest, the checksums) and only then publishes the release.
+# With GitHub's immutable releases on (docs/android-signing.md, "Immutable releases"), a published release's files
+# and tag cannot be changed afterwards, by any token.
 #
 # A tag made with GITHUB_TOKEN does not start the workflows that run on tags (GitHub's guard against loops), but a
 # workflow_dispatch does. So it then dispatches the release builds on the new tag: Docker (the guardian image; once it
-# is pushed, docker.yml itself calls Umbrel store and Start9 package with the digest it pushed, so neither re-resolves
-# the tag), Reproducible image and Android test APK (signed with the release key, attached to this release). On a tag
+# is pushed and reproducible.yml, which docker.yml calls, has rebuilt the same digest, docker.yml itself calls Umbrel
+# store and Start9 package with it, so neither re-resolves the tag) and Android test APK (signed with the release key, attached to this release), then
+# Publish release. On a tag
 # ref they behave exactly as when the tag is pushed by hand. The jobs that publish or sign run only on v* tag refs and
 # declare the `release` environment (docs/android-signing.md, "The `release` environment"). It can also be run by hand (workflow_dispatch) to retry a release whose tag exists but whose builds
 # did not run.
@@ -37,7 +45,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # create the tag and the release
+      contents: write # create the tag and the draft release
       actions: write # dispatch the release builds
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -74,29 +82,38 @@ jobs:
           fi
           echo "act=release" >> "$GITHUB_OUTPUT"
 
-      - name: Create the tag and the release
+      # The tag first (a draft does not create its tag until it is published, and the builds are dispatched on it),
+      # then the draft release on it.
+      - name: Create the tag and the draft release
         if: steps.decide.outputs.act == 'release'
         env:
           TAG: ${{ steps.decide.outputs.tag }}
         run: |
           set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${TAG}" -f sha="${GITHUB_SHA}" > /dev/null
           {
             cat "${RUNNER_TEMP}/notes.md"
             echo
             echo "The Android APKs (the standard build and the one without Google code) and their .sha256 files are attached by"
-            echo "the Android test APK build when it finishes; the guardian image is ghcr.io/theicaruswings/trikey-guardian:${TAG#v}."
-            echo "How to install and test: docs/alpha-test-plan.md."
+            echo "the Android test APK build; the guardian image is ghcr.io/theicaruswings/trikey-guardian:${TAG#v}, and the"
+            echo "attached trikey-guardian-compose.yml names it by digest. This release is published only once every file is"
+            echo "attached and checked (publish-release.yml). How to install and test: docs/alpha-test-plan.md."
           } > "${RUNNER_TEMP}/body.md"
-          gh release create "${TAG}" --target "${GITHUB_SHA}" --prerelease --title "Trikey ${TAG}" --notes-file "${RUNNER_TEMP}/body.md"
-          echo "::notice title=Released::${TAG} on ${GITHUB_SHA::7}"
+          gh release create "${TAG}" --draft --prerelease --verify-tag --title "Trikey ${TAG}" --notes-file "${RUNNER_TEMP}/body.md"
+          echo "::notice title=Draft release::${TAG} on ${GITHUB_SHA::7}: the builds attach their files, then publish-release.yml publishes it."
 
+      # publish-release.yml last: it waits for the builds dispatched before it.
       - name: Dispatch the release builds
         if: steps.decide.outputs.act != 'none'
         env:
           TAG: ${{ steps.decide.outputs.tag }}
         run: |
           set -euo pipefail
-          for wf in docker.yml reproducible.yml android-apk.yml; do
+          # A redispatch whose release was never made (the run stopped after the tag): make the draft now.
+          if ! gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release create "${TAG}" --draft --prerelease --verify-tag --title "Trikey ${TAG}" --notes-file "${RUNNER_TEMP}/notes.md"
+          fi
+          for wf in docker.yml android-apk.yml publish-release.yml; do
             gh workflow run "${wf}" --ref "${TAG}"
             echo "Dispatched ${wf} on ${TAG}"
           done
