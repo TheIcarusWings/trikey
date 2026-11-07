@@ -106,6 +106,8 @@ beforeAll(async () => {
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!)), hwAuthPrivateKey()),
     rules: HOST_RULES,
   }, rig.nowSec() * 1000));
+  // Alice hears by nostr that she is the host's contact (`contact_added`, at pairing) before any channel exists.
+  await waitFor(() => !rig.guardian.engine.dueNotices().length, 'the pairing contact notice');
   // The host's extra channels: its own email, webhook, ntfy and Telegram, and alice's email and Telegram; payments too
   // (live wallet).
   const r = await rig.api('PUT', '/notifications', {
@@ -164,7 +166,7 @@ describe("a guest's alerts never reach the host's extra channels", { timeout: 60
     // The guest's status shows nothing of the host's channels.
     const st = await guestRpc.call('guardian.status', {});
     expect(st).not.toHaveProperty('notifications');
-    expect(st.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps', 'pairing_rules_approval']);
+    expect(st.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps', 'pairing_rules_approval', 'approval_contacts']);
   });
 
   it("the guest's recovery alerts and its hosting_ending go by nostr to the guest's phone and contacts only", async () => {

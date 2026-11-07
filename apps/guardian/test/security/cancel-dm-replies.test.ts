@@ -27,7 +27,8 @@ describe('security: CANCEL DM answers (finding 16)', () => {
     let release!: () => void;
     const hanging = new Promise<void>((r) => (release = r));
     let sends = 0;
-    g.dm!.send = async () => {
+    g.dm!.send = async (_to, text) => {
+      if (!text.includes('no running recovery')) return []; // other DMs (the pairing's notices to the contacts)
       sends++;
       await hanging; // a relay the contact chose that takes its time
       return [];
@@ -49,7 +50,7 @@ describe('security: CANCEL DM answers (finding 16)', () => {
     const g = rig.guardian;
     const replies: string[] = [];
     g.dm!.send = async (to, text) => {
-      if (to === CONTACT_A) replies.push(text);
+      if (to === CONTACT_A && text.includes(FAKE_ID)) replies.push(text);
       return [];
     };
     // Dated 30 days ahead: not "fresh", so no answer (it used to be fresh for ever).

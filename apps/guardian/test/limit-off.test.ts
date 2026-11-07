@@ -44,6 +44,7 @@ import {
   DEFAULT_RULES,
   MNEMONICS,
   approve,
+  drainContactNotices,
   fund,
   hwAuthPrivateKey,
   hwAuthPubkey,
@@ -144,6 +145,9 @@ describe('turning the daily limit off', () => {
     const ctx = await setup({ rules: { alertContacts: [CONTACT_A, CONTACT_B] } });
     // Removing a contact in the same change still tells them.
     await turnOff(ctx, 1, r({ dailyLimitSats: LIMIT_OFF_SATS, alertContacts: [CONTACT_B] }));
+    // (The contact removed is also told that (`contact_removed`).)
+    expect(ctx.engine.dueNotices().map((x) => x.kind).sort()).toEqual(['contact_removed', 'limit_off']);
+    await drainContactNotices(ctx.engine);
     const [n] = ctx.engine.dueNotices();
     expect(ctx.engine.dueNotices()).toHaveLength(1);
     expect(n).toMatchObject({ kind: 'limit_off', walletId: ctx.walletId, sequence: 1, limitSats: 100_000n });
@@ -215,7 +219,8 @@ describe('turning the daily limit off', () => {
     const more = { ...OFF, recoveryDelayDays: 14 as const, alertContacts: [CONTACT_A, CONTACT_B] };
     expect(await ctx.engine.changeRules(more, { authenticatedBy: 'hardware', approval: approve(ctx, { action: 'policy', rules: more }, 2) })).toMatchObject({ ok: true });
     expect(ctx.engine.status().dailyLimit).toMatchObject({ off: true, limitBeforeOff: 100_000n });
-    expect(ctx.engine.dueNotices()).toEqual([]);
+    // No new limit alert; only the contact added is told it is one.
+    expect(ctx.engine.dueNotices().map((x) => x.kind)).toEqual(['contact_added']);
   });
 });
 

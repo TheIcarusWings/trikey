@@ -84,7 +84,7 @@ describe("family hosting and the host's chain source", { timeout: 60_000 }, () =
     expect(st.chainSource).toEqual({ kind: 'own', backend: 'electrum', host: 'own' });
     // The host's own Electrs is at 127.0.0.1 in this rig: not named to the guest (the relays are, as to every phone).
     expect(JSON.stringify(st.chainSource)).not.toContain('127.0.0.1');
-    expect(st.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps', 'pairing_rules_approval']);
+    expect(st.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps', 'pairing_rules_approval', 'approval_contacts']);
   });
 
   it("a public server is refused while a guest's recovery runs", async () => {
@@ -114,7 +114,8 @@ describe("family hosting and the host's chain source", { timeout: 60_000 }, () =
     // The host's phone got the host's alert; the host's channels the host's announcement, with nothing of the guest.
     expect(phone).toHaveBeenCalledWith(expect.objectContaining({ type: 'chain_source_changed', host: 'electrum.example.org' }));
     const events = enqueue.mock.calls.map((c) => c[0]);
-    expect(events.map((e) => e.type)).toEqual(['chain_source_changed']);
+    // (The host's contact may still be owed its pairing notice, `contact_added`: the host's own, with nothing of the guest.)
+    expect(events.map((e) => e.type).filter((t) => t !== 'contact_added')).toEqual(['chain_source_changed']);
     const text = JSON.stringify(events.map((e) => [e.owner, e.contacts?.text('nostr')]));
     for (const secret of [LABEL, 'Granny', guest.walletId, guestPub]) expect(text).not.toContain(secret);
 

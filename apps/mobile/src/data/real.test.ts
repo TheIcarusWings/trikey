@@ -332,7 +332,7 @@ describe('the real wallet service', { timeout: 60_000 }, () => {
     expect(rig.guardian.engine.status().rules?.dailyLimitSats).toBe(150_000n);
     expect(A.svc.getState().activity).toContainEqual(expect.objectContaining({ type: 'security', event: expect.objectContaining({ kind: 'limit-changed', direction: 'raised', approvedOn: 'hardware' }) }));
     // The sheet showed the exact approval text, with the new value in clear.
-    expect(A.prompts.some((p) => /Trikey policy v1 .*limit=150000/.test(p.detail ?? ''))).toBe(true);
+    expect(A.prompts.some((p) => /Trikey policy v4 .*limit=150000/.test(p.detail ?? ''))).toBe(true);
 
     await A.svc.setRecoveryDelay(14);
     expect(A.svc.getState().recoveryDelayDays).toBe(14);

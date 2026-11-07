@@ -31,7 +31,8 @@ const DEFAULT_LIMIT = 100_000;
 /**
  * "Add a wallet" (docs/design/multi-wallet.md): a name, its daily limit, then the NEW hardware wallet. The phone key is
  * the same; the guardian gives the wallet its own key at its own account, so nothing on chain links it to the others.
- * The device registers the wallet under its name and shows the first address. Then a new backup.
+ * The device registers the wallet under its name and shows the first address. The first wallet's hardware wallet approves
+ * adding it (guardians with `add_wallet_approval`). Then a new backup.
  */
 export default function AddWallet() {
   const router = useRouter();
@@ -89,7 +90,7 @@ export default function AddWallet() {
         <>
           <ActionNotice message={message} error={error} />
           <AppButton
-            title={busy ? 'Approve on your new hardware wallet…' : 'Add the wallet'}
+            title={busy ? 'Approve on your hardware wallets…' : 'Add the wallet'}
             busy={busy}
             disabled={!name || !!problem || !kind || !(limitSats > 0)}
             onPress={add}
@@ -98,7 +99,8 @@ export default function AddWallet() {
       }>
       <Body>
         A wallet with another hardware wallet: its own daily limit and recoveries. The other rules are your first wallet's; change them later in Settings. The
-        new hardware wallet shows the rules for you to approve: check the daily limit (limit=, in sats) on its screen.
+        new hardware wallet shows the rules for you to approve: check the daily limit (limit=, in sats) and the alert contacts on its screen. Then your first
+        wallet's hardware wallet approves adding it (a text that starts with "Trikey add-wallet"), so nobody holding only this phone can add a wallet.
       </Body>
       <View className="gap-1.5">
         <FieldLabel nativeID="wallet-name">Name</FieldLabel>

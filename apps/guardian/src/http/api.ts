@@ -15,9 +15,9 @@ import { base64 } from '@scure/base';
 import { getNetwork, parsePsbt } from '@trikey/core';
 import { MAX_RELAYS, encodePairingUri, encodeRecoveryUri } from '@trikey/protocol';
 import { MAX_RETIRING_RELAYS, type Guardian } from '../guardian.js';
-import { isContactLockOn, isLimitOff, type RecoveryRecord } from '../policy/index.js';
+import { contactId, contactsCode, isContactLockOn, isLimitOff, type RecoveryRecord } from '../policy/index.js';
 import { npubEncode } from 'nostr-tools/nip19';
-import { engineEntry, serviceEntry, shortNpub } from './activity.js';
+import { engineEntry, npubOrHex, serviceEntry, shortNpub } from './activity.js';
 import { HttpError, type Route, type RouteContext, type RouteResult } from './server.js';
 import type {
   ActivityEntry,
@@ -39,6 +39,7 @@ import type {
 import type { Health, HealthState } from '../notify/notifier.js';
 import { sessionCookie } from './sessions.js';
 import { hostingRoutes } from '../hosting/http.js';
+import { ownWalletRoutes } from '../wallets/http.js';
 import { walletOverview } from './wallet.js';
 import type { WalletRuntime } from '../runtime.js';
 import type { OwnWallet } from '../wallets/runtime.js';
@@ -143,7 +144,8 @@ export async function guardianStatus(g: Guardian): Promise<GuardianStatus> {
     retiredWallets: g.engine.retiredWallets().map((r) => ({
       id: r.registration.walletId,
       retiredAt: iso(r.retiredAt),
-      reason: r.retirement.reason,
+      // Removed by the owner here: retired, as far as the page tells.
+      reason: r.retirement.reason === 'removed' ? 'retired' : r.retirement.reason,
       ...(r.retirement.reason === 'recovered' && r.retirement.successorWalletId ? { successorId: r.retirement.successorWalletId } : {}),
     })),
     ...(reg ? { hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
@@ -213,8 +215,10 @@ function rules(g: Guardian, w: WalletRuntime = g): Rules {
     recoveryDelayDays: r.recoveryDelayDays,
     contacts: [
       { id: reg.appNostrPubkey, name: phoneName(g), kind: 'paired-phone' },
-      ...r.alertContacts.map((pk) => ({ id: pk, name: shortNpub(pk), kind: 'contact' as const })),
+      // As the hardware wallet shows them in an approval, so the owner can compare the two.
+      ...r.alertContacts.map((pk) => ({ id: pk, name: contactId(pk), npub: npubOrHex(pk), kind: 'contact' as const })),
     ],
+    ...(r.alertContacts.length ? { contactsCode: contactsCode(r.alertContacts) } : {}),
     sweepFeeCapSats: Number(r.sweepFeeCapSats),
     contactLock: isContactLockOn(r),
     hardwarePayments: 'any-amount',
@@ -773,5 +777,6 @@ export function buildRoutes(g: Guardian): Route[] {
 
     // Hosting for family (docs/design/family-hosting.md): hosting/http.ts.
     ...hostingRoutes(g),
+    ...ownWalletRoutes(g),
   ];
 }

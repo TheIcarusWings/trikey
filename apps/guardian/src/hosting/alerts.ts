@@ -14,7 +14,7 @@
  * other contacts) and `contact_lock_on` / `_off` (the contacts may now pause it, or no longer may).
  */
 import { safeName, type Alert } from '@trikey/protocol';
-import { formatBtc, formatWhen, noticeToWire } from '../alerts.js';
+import { contactChangeText, formatBtc, formatWhen, noticeToWire } from '../alerts.js';
 import { npubEncode } from 'nostr-tools/nip19';
 import type { Guardian } from '../guardian.js';
 import { errorText } from '../log.js';
@@ -144,6 +144,8 @@ export function hostedNoticeToWire(n: HostedNotice): Alert | undefined {
       };
     case 'contact_lock_on':
     case 'contact_lock_off':
+    case 'contact_added':
+    case 'contact_removed':
       return undefined;
   }
 }
@@ -185,6 +187,10 @@ export function hostedNoticeText(n: HostedNotice, label: string, canPause = fals
       ].join('\n');
     case 'contact_lock_off':
       return `Trikey: on ${formatWhen(n.at)} the owner's hardware wallet approved that alert contacts can no longer pause the wallet "${label}" you help protect. LOCK messages now do nothing for it. You still get its alerts and can still cancel a recovery. If the owner did not mean to do this, talk to them.`;
+    case 'contact_added':
+    case 'contact_removed':
+      // Named by the guest's label, never the host's name for the box.
+      return contactChangeText({ ...n, kind: n.kind }, { wallet: label });
   }
 }
 

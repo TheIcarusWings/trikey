@@ -252,7 +252,8 @@ export class WalletSet {
 
   /**
    * "Add a wallet": a name, the new hardware wallet, the rules. The guardian must list `own_wallets` (`guardian_unsupported`
-   * otherwise: "Update your guardian to add a wallet"). Returns the new wallet; the app asks for a new backup next.
+   * otherwise: "Update your guardian to add a wallet"). The new device pairs and approves its rules; then the first wallet's
+   * device approves adding it (`add_wallet_approval`). Returns the new wallet; the app asks for a new backup next.
    */
   async addWallet(opts: { name: string; rules: Policy; hardwareKind?: HardwareKind; hardwareModel?: QrModel; verifyAddress?: boolean }): Promise<TrikeyWallet> {
     if (!this.first.ownWalletsSupported) throw new WalletError('guardian_unsupported', 'Update your guardian to add a wallet.');
@@ -451,7 +452,16 @@ export class WalletSet {
       opts.onWallet?.(w, i + 1, total);
       const off = watch(w);
       try {
-        moves.push(ofOutcome(w, await w.moveToGuardian(target, opts.oldGuardianReachable === false ? { oldGuardianReachable: false } : {})));
+        moves.push(
+          ofOutcome(
+            w,
+            await w.moveToGuardian(target, {
+              ...(opts.oldGuardianReachable === false ? { oldGuardianReachable: false as const } : {}),
+              // The first wallet's hardware wallet approves adding it to the new guardian (`add_wallet_approval`).
+              addApproval: (newWalletId) => this.first.approveWalletAdd(newWalletId, target),
+            }),
+          ),
+        );
       } catch (e) {
         moves.push(failure(w, e));
       } finally {

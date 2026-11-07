@@ -80,6 +80,8 @@ const CODES: Record<RefusalReason, number> = {
   cosign_rate_limited: ErrorCode.RateLimited,
   hardware_approval_required: ErrorCode.ApprovalRequired,
   approval_invalid_signature: ErrorCode.ApprovalInvalid,
+  // `data.reason: "app_update_required"`, as for a pairing without the rules approval: the app must update.
+  app_update_required: ErrorCode.InvalidParams,
   approval_revoked: ErrorCode.ApprovalInvalid,
   unsupported_approval: ErrorCode.ApprovalInvalid,
   approval_expired: ErrorCode.ApprovalExpired,
@@ -171,6 +173,8 @@ export function refusalText(r: Refusal): string {
       return `Hardware wallet approval required (${r.detail})`;
     case 'approval_invalid_signature':
       return 'The hardware approval signature is not valid';
+    case 'app_update_required':
+      return r.detail;
     case 'approval_revoked':
       return 'This recovery access was revoked when the guardian moved to another wallet; sign a new one';
     case 'unsupported_approval':
@@ -222,6 +226,9 @@ export function refusalText(r: Refusal): string {
 export const APP_UPDATE_REQUIRED_TEXT =
   'Update the Trikey app to pair with this guardian: it now asks your hardware wallet to approve the rules (daily limit, waiting period, fee cap, contacts) the wallet starts with. Nothing was paired.';
 export const APP_UPDATE_REQUIRED = { reason: 'app_update_required' } as const;
+/** `wallet.add` from an app from before `add_wallet_approval`: the first wallet's hardware wallet must approve it. */
+export const ADD_WALLET_APPROVAL_REQUIRED_TEXT =
+  "Update the Trikey app to add a wallet: your guardian now asks your first wallet's hardware wallet to approve adding one, so a phone alone cannot. Nothing was added.";
 
 export function refusalError(r: Refusal): RpcError {
   return new RpcError(refusalCode(r), refusalText(r).slice(0, 500), refusalData(r));

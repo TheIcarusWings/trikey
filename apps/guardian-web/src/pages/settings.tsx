@@ -425,6 +425,20 @@ export function SettingsPage() {
         </div>
       </section>
 
+      <section aria-labelledby="own-wallets-heading" className="flex flex-col gap-3">
+        <h2 id="own-wallets-heading" className="m-0 text-base leading-[22px] font-semibold">
+          Wallets and hardware unlock
+        </h2>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+          <Button asChild variant="outline">
+            <Link to="/own-wallets">Review…</Link>
+          </Button>
+          <p className="m-0 min-w-0 max-w-[60ch] flex-1 basis-60 text-[13px] leading-[18px] text-muted-foreground">
+            Every wallet this guardian guards and which hardware wallets can unlock it. Turn an unlock off, or remove a wallet you did not add.
+          </p>
+        </div>
+      </section>
+
       <RelaysSection paired={status.wallets.some((w) => w.phonesPaired > 0)} onSaved={refresh} />
 
       <NotificationsSection />

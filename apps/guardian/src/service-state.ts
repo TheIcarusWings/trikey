@@ -114,6 +114,8 @@ export type ServiceEvent =
   /** Own wallets (docs/design/multi-wallet.md): the paired phone added a wallet with its new hardware wallet, or tried to. */
   | { type: 'wallet_added'; name: string; account: number; walletId: string; replaces?: string }
   | { type: 'wallet_add_refused'; name: string; detail: string }
+  /** The owner removed an own wallet (after the first) in the web page, without its hardware wallet (never while its recovery runs). */
+  | { type: 'wallet_removed'; name: string; walletId: string }
   /**
    * Encrypted notes (labels.ts): the phone stored a new version of a wallet's notes (logged at most once a day per
    * wallet), or they were deleted (the phone turned the option off, or the wallet left this guardian).
@@ -127,7 +129,7 @@ export type ServiceEvent =
    */
   /** `unsealed`: an older phone sent the signature in the clear to a guardian that seals it (PROTOCOL.md, "Sealed unlock"). */
   | { type: 'unlock_slot_added'; walletId: string; unsealed?: true }
-  | { type: 'unlock_slot_removed'; walletIds: string[]; by: 'phone' | 'retired' };
+  | { type: 'unlock_slot_removed'; walletIds: string[]; by: 'phone' | 'retired' | 'web' };
 
 /** A relay removed from `relays` that the guardian still watches (listens and publishes on) until the owner stops it. */
 export interface RetiringRelay {

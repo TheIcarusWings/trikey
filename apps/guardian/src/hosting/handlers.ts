@@ -454,6 +454,8 @@ function pairingHandlers(g: Guardian, h: Hosting) {
         });
         await g.logEvent({ type: 'hosting_accepted', name: slot.name });
         g.log.info('hosting.paired', { slot: slot.slotId, walletId: res.walletId });
+        // The guest's contacts are told they are its contacts (`contact_added`).
+        void h.alerts.run();
         return { walletId: res.walletId, cosignerAccountPubkey: key.pub.accountPubkey, guardianVersion: g.version };
       }),
   };

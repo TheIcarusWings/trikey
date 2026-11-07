@@ -95,6 +95,24 @@ export const GUARDIAN_FEATURES = {
    * `hosted.prepare`; a phone sends `rulesApproval` only to a guardian that lists it.
    */
   pairingRulesApproval: 'pairing_rules_approval',
+  /**
+   * Hardware approvals name the alert contacts (DESIGN.md, rule 4; security review 2026-11): the policy text is version 4
+   * (`approvalMessage` / `pairingRulesMessage` with `contactsInText`), which shows each contact's `contactId` (or their
+   * number and `contactsCode` when they do not all fit). Such a guardian refuses an approval over versions 1 to 3 that
+   * sets or changes the contacts (`pair`, `wallet.add`, `hosted.pair`, `policy.update`) with `-32602` and
+   * `data.reason: "app_update_required"`; one that leaves them as they are is still accepted. It tells every contact
+   * added or removed (a NIP-17 DM, and the owner's own channels). Listed in `pair.prepare`, `guardian.status` and
+   * `hosted.prepare`; a phone signs version 4 only for a guardian that lists it.
+   */
+  approvalContacts: 'approval_contacts',
+  /**
+   * Adding a wallet needs the first wallet's hardware wallet (security review 2026-11; docs/design/multi-wallet.md):
+   * `wallet.add` carries `addApproval`, the first wallet's `HardwareApproval` over the `add-wallet` text naming the new
+   * wallet, and such a guardian refuses it without (`-32602`, `data.reason: "app_update_required"`). It also tells the
+   * first wallet's alert contacts when a wallet is added and when hardware unlock is turned on for any wallet, and lets
+   * the owner remove an added wallet or an unlock slot in its web page. Listed in `guardian.status`.
+   */
+  addWalletApproval: 'add_wallet_approval',
 } as const;
 
 /** True when the alert contacts may lock the guardian (`Policy.contactLock`). */

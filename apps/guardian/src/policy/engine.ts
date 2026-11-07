@@ -30,15 +30,18 @@ import { base64, hex } from '@scure/base';
 import { MultisigWallet, Network, NetworkName, ROLES, Role, finalizePsbt, getNetwork } from '@trikey/core';
 import { DueAlert, dueAlerts as computeDueAlerts, isKnownAlertId } from './alerts.js';
 import {
+  CONTACTS_NOT_SHOWN,
   HardwareAction,
   HardwareAuthorizer,
   approvalMessage,
   bip137Authorizer,
+  verifyPolicyApproval,
   pairingMessage,
   pairingRulesMessage,
   proofId,
   recoveryAccessMessage,
 } from './authorizer.js';
+import { contactsDelta } from './contacts.js';
 import { ChainTime, ChainTimeSource, Clock, DAY, HOUR, systemClock } from './clock.js';
 import { MAX_SELF_INDEX, NO_HIGH_WATER, addCosignerSignatures, feeRateRefusal, inspectPsbt, maxHighWater } from './inspect.js';
 import { PUBLIC_SOURCE_MAX_RISE, addPendingMark, chainMarksOf, changeWindow, cosignRateRefusal, marksAfterScan, migrateMarks, scanFloorOf, type MarkJump, type ScanNote } from './marks.js';
@@ -121,6 +124,9 @@ export const RULES_APPROVAL_MISSING =
  * `seq=0`, unexpired and at most 24 h ahead. `rules` are the normalized rules the guardian will store, so the wallet starts
  * with exactly what the device showed. No sequence is consumed: 0 is below every sequence a later approval may use.
  * Shared by `pair` / `wallet.add` (this engine) and `hosted.pair` (the hosted engine).
+ *
+ * `requireContactsInText` (guardians with `approval_contacts`): only the version-4 text, which names the contacts, is
+ * accepted; a signature over an older one (it shows only their number) is refused with "update the app".
  */
 export function rulesApprovalRefusal(
   approval: RulesApproval | undefined,
@@ -129,19 +135,22 @@ export function rulesApprovalRefusal(
   key: HardwareAuthKey,
   authorizer: HardwareAuthorizer,
   now: number,
+  requireContactsInText = true,
 ): Refusal | undefined {
   if (!approval || typeof approval !== 'object') return { reason: 'invalid_registration', detail: RULES_APPROVAL_MISSING };
   if (approval.kind !== key.kind) return { reason: 'unsupported_approval', kind: String(approval.kind) };
   if (!Number.isSafeInteger(approval.expiresAt) || approval.expiresAt * 1000 <= now) return { reason: 'approval_expired', expiresAt: approval.expiresAt };
   const maxExpiresAt = Math.floor((now + MAX_APPROVAL_TTL_MS) / 1000);
   if (approval.expiresAt > maxExpiresAt) return { reason: 'approval_expiry_too_far', expiresAt: approval.expiresAt, maxExpiresAt };
-  let message: string;
-  try {
-    message = pairingRulesMessage(rules, { walletId, expiresAt: approval.expiresAt });
-  } catch {
-    return { reason: 'approval_invalid_signature' };
-  }
-  if (typeof approval.signature !== 'string' || !authorizer.verify(message, approval.signature, key)) return { reason: 'approval_invalid_signature' };
+  const checked = verifyPolicyApproval(
+    (contactsInText) => pairingRulesMessage(rules, { walletId, expiresAt: approval.expiresAt, contactsInText }),
+    approval.signature,
+    key,
+    authorizer,
+    !requireContactsInText,
+  );
+  if (checked === 'legacy_text') return { reason: 'app_update_required', detail: CONTACTS_NOT_SHOWN };
+  if (checked !== 'ok') return { reason: 'approval_invalid_signature' };
   return undefined;
 }
 
@@ -187,6 +196,11 @@ export interface PolicyEngineOptions {
    * an alert contact's `CANCEL <id>` finds its wallet. Absent for the first wallet: ids as they always were.
    */
   recoveryIdPrefix?: string;
+  /**
+   * Whether hardware approvals that set or change the alert contacts must use the version-4 policy text, which names
+   * them (the guardian lists `approval_contacts`). Default: yes. Tests of an older guardian turn it off.
+   */
+  requireContactsInText?: () => boolean;
 }
 
 export interface RegisterInput {
@@ -412,6 +426,7 @@ export class PolicyEngine {
   private readonly chain?: ChainTimeSource;
   private readonly blocksPerDayOverride?: number;
   private readonly recoveryIdPrefix: string;
+  private readonly requireContactsInText: () => boolean;
   private signer?: CosignerSigner;
   /** Set by `register` with its own key 3; installed by `mutate` after the save. */
   private nextSigner?: CosignerSigner;
@@ -428,6 +443,7 @@ export class PolicyEngine {
     this.maxActivity = opts.maxActivity ?? DEFAULT_MAX_ACTIVITY;
     this.maxRefusals = opts.maxRefusals ?? DEFAULT_MAX_REFUSALS;
     this.recoveryIdPrefix = opts.recoveryIdPrefix ?? '';
+    this.requireContactsInText = opts.requireContactsInText ?? (() => true);
     // Marks from before the change-window fix (marks.ts `migrateMarks`): in memory now, on disk with the next write.
     if (state.active) migrateMarks(state.active, Math.max(state.timeFloor ?? 0, this.clock.now()));
     this.setSigner(opts.signer);
@@ -672,6 +688,23 @@ export class PolicyEngine {
     draft.notices = [...live, notice].slice(-MAX_NOTICES);
   }
 
+  /**
+   * `contact_added` to every contact `added` and `contact_removed` to every contact `removed` (not the paired phone's own
+   * key), each naming every contact added and removed (the owner's channels get one line for the change: alerts.ts).
+   */
+  private addContactNotices(
+    draft: GuardianState,
+    now: number,
+    removed: readonly string[],
+    added: readonly string[],
+    ctx: { walletId: string; phone: string; sequence?: number; pairing?: true },
+  ): void {
+    const base = { walletId: ctx.walletId, at: now, added: [...added], removed: [...removed], ...(ctx.sequence !== undefined ? { sequence: ctx.sequence } : {}), ...(ctx.pairing ? { pairing: true as const } : {}), sent: [] };
+    const id = draft.nextActivityId;
+    if (added.length) this.addNotice(draft, now, { ...base, id: `contactadd-${id}`, kind: 'contact_added', recipients: added.filter((c) => c !== ctx.phone) });
+    if (removed.length) this.addNotice(draft, now, { ...base, id: `contactdel-${id}`, kind: 'contact_removed', recipients: removed.filter((c) => c !== ctx.phone) });
+  }
+
   /** Appends to the activity log. A refusal identical to the entry before it is counted there instead (`count`, `lastAt`). */
   private log(draft: GuardianState, now: number, event: ActivityEvent): void {
     const last = draft.activity[draft.activity.length - 1];
@@ -725,14 +758,18 @@ export class PolicyEngine {
       return { reason: 'approval_expired', expiresAt: approval.expiresAt };
     const maxExpiresAt = Math.floor((now + MAX_APPROVAL_TTL_MS) / 1000);
     if (approval.expiresAt > maxExpiresAt) return { reason: 'approval_expiry_too_far', expiresAt: approval.expiresAt, maxExpiresAt };
-    let message: string;
-    try {
-      message = approvalMessage(action, { walletId: reg.walletId, sequence: approval.sequence, expiresAt: approval.expiresAt });
-    } catch {
-      return { reason: 'approval_invalid_signature' };
-    }
-    if (typeof approval.signature !== 'string' || !authorizer.verify(message, approval.signature, reg.hardwareAuth))
-      return { reason: 'approval_invalid_signature' };
+    const ctx = { walletId: reg.walletId, sequence: approval.sequence, expiresAt: approval.expiresAt };
+    // A rule change: the version-4 text, which names the contacts; an older one only while they stay as they are.
+    const contactsKept = action.action !== 'policy' || contactsDelta(draft.active!.rules.alertContacts, action.rules.alertContacts).same;
+    const checked = verifyPolicyApproval(
+      (contactsInText) => approvalMessage(action, { ...ctx, contactsInText: action.action === 'policy' && contactsInText }),
+      approval.signature,
+      reg.hardwareAuth,
+      authorizer,
+      action.action !== 'policy' || contactsKept || !this.requireContactsInText(),
+    );
+    if (checked === 'legacy_text') return { reason: 'app_update_required', detail: CONTACTS_NOT_SHOWN };
+    if (checked !== 'ok') return { reason: 'approval_invalid_signature' };
     draft.hardwareSequence = approval.sequence;
     return undefined;
   }
@@ -818,7 +855,7 @@ export class PolicyEngine {
       // The rules the wallet starts with need the hardware wallet like any loosening (rule 4): otherwise a malicious app
       // could pair with a limit just below "off", a huge fee cap or its own contacts, and drain with phone + guardian.
       if (!input.legacyUnapprovedRules) {
-        const r = rulesApprovalRefusal(input.rulesApproval, rules, walletId, hwKey, checked.authorizer, now);
+        const r = rulesApprovalRefusal(input.rulesApproval, rules, walletId, hwKey, checked.authorizer, now, this.requireContactsInText());
         if (r) return refused(r);
       }
       const replaces = typeof input.replacesWalletId === 'string' && /^[0-9a-f]{16}$/.test(input.replacesWalletId) ? input.replacesWalletId : undefined;
@@ -859,7 +896,15 @@ export class PolicyEngine {
         accessGrants: [],
         ...(watched ? { watched } : {}),
       };
-      this.log(draft, now, { type: 'registered', walletId, ...(replaces ? { replacesWalletId: replaces } : {}), ...(watched ? { watching: true } : {}) });
+      this.log(draft, now, {
+        type: 'registered',
+        walletId,
+        ...(replaces ? { replacesWalletId: replaces } : {}),
+        ...(watched ? { watching: true } : {}),
+        alertContacts: rules.alertContacts,
+      });
+      // Every contact hears that they are one (a phone that chose them without the owner would otherwise go unseen).
+      this.addContactNotices(draft, now, [], rules.alertContacts, { walletId, phone: appNostr, pairing: true });
       // Installed with the saved state (see `mutate`), and only while unlocked.
       if (input.signer) this.nextSigner = input.signer;
       return { ok: true as const, walletId };
@@ -1426,6 +1471,10 @@ export class PolicyEngine {
             sent: [],
           });
       }
+      // Every contact added or removed is told (and the owner's own channels): a swapped contact can never go unseen.
+      const delta = contactsDelta(current.alertContacts, rules.alertContacts);
+      if (!delta.same)
+        this.addContactNotices(draft, now, delta.removed, delta.added, { walletId: w.registration.walletId, phone: w.registration.appNostrPubkey, ...(sequence !== undefined ? { sequence } : {}) });
       w.rules = rules;
       this.log(draft, now, { type: 'rules_changed', by, sequence, from: current, to: rules });
       return { ok: true as const, rules };
@@ -1938,6 +1987,80 @@ export class PolicyEngine {
     });
   }
 
+  /**
+   * The FIRST wallet's hardware wallet approves adding wallet `newWalletId` to the box (`wallet.add`, guardians with
+   * `add_wallet_approval`; security review 2026-11): a `HardwareApproval` over the `add-wallet` text, which names this
+   * wallet and the new one, with this wallet's sequence, which it consumes. Without it the paired phone alone could add
+   * a wallet whose "hardware wallet" is its own key, and with it an unlock slot that opens the whole box.
+   */
+  /** Why `approval` would not approve adding `newWalletId` now (`approveWalletAdd`'s checks), changing nothing. */
+  checkWalletAdd(newWalletId: string, approval: HardwareApproval): Refusal | undefined {
+    const draft = cloneState(this.state);
+    if (!draft.active) return { reason: 'not_registered' };
+    return this.checkApproval(draft, this.clock.now(), approval, { action: 'add-wallet', newWalletId });
+  }
+
+  async approveWalletAdd(newWalletId: string, approval: HardwareApproval): Promise<Result<{ sequence: number }>> {
+    return this.mutate((draft, now) => {
+      if (!draft.active) return refused({ reason: 'not_registered' });
+      const r = this.checkApproval(draft, now, approval, { action: 'add-wallet', newWalletId });
+      if (r) {
+        this.log(draft, now, { type: 'wallet_add_approval_refused', newWalletId: String(newWalletId).slice(0, 16), refusal: r });
+        return refused(r);
+      }
+      this.log(draft, now, { type: 'wallet_add_approved', newWalletId, sequence: approval.sequence });
+      return { ok: true as const, sequence: approval.sequence };
+    });
+  }
+
+  /**
+   * A box event this wallet's alert contacts are told of (durably, like the limit notices): a wallet added to the box
+   * (`wallet_added`), an own wallet removed by the owner in the web page (`wallet_removed`), or a hardware unlock slot
+   * added for any wallet (`unlock_slot_added`). `recipients`: the contacts (the service passes the first wallet's and the
+   * wallet's own); the paired phone's key is left out (it gets its own alert).
+   */
+  async queueBoxNotice(n: { kind: 'wallet_added' | 'wallet_removed' | 'unlock_slot_added'; subjectWalletId: string; name?: string; approved?: true; recipients: string[] }): Promise<Result<{ noticeId?: string }>> {
+    return this.mutate((draft, now) => {
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      const recipients = [...new Set(n.recipients.map((r) => r.toLowerCase()))].filter((r) => isNostrPubkey(r) && r !== w.registration.appNostrPubkey);
+      if (!recipients.length) return { ok: true as const };
+      const id = `${n.kind === 'unlock_slot_added' ? 'unlockslot' : n.kind === 'wallet_added' ? 'walletadd' : 'walletdel'}-${draft.nextActivityId}`;
+      this.addNotice(draft, now, {
+        id,
+        kind: n.kind,
+        walletId: w.registration.walletId,
+        at: now,
+        subjectWalletId: n.subjectWalletId,
+        ...(n.name ? { name: n.name.slice(0, 32) } : {}),
+        ...(n.approved ? { approved: true as const } : {}),
+        recipients,
+        sent: [],
+      });
+      return { ok: true as const, noticeId: id };
+    });
+  }
+
+  /**
+   * The box's owner removes this wallet in the web page, without its hardware wallet (an own wallet after the first; the
+   * service checks that): it is retired as `wallet.retire` would, so nothing is co-signed or started for it again and its
+   * key set is never paired again. Its money stays with its phone key and its hardware wallet (2 of 3). Refused while a
+   * recovery of it runs, as Reset is: the web session gets no power over recoveries (someone who learnt the passphrase
+   * must not freeze a wallet its owner is recovering). DESIGN.md says why a web session may do the rest.
+   */
+  async removeByOwner(): Promise<Result<{ walletId: string; retiredAt: number }>> {
+    return this.mutate((draft, now) => {
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      const rec = activeRecovery(draft);
+      if (rec) return refused({ reason: 'recovery_in_progress', recoveryId: rec.id });
+      const walletId = w.registration.walletId;
+      const revokedGrants = this.retireActive(draft, now, { reason: 'removed', by: 'owner' });
+      this.log(draft, now, { type: 'wallet_removed_by_owner', walletId, revokedGrants });
+      return { ok: true as const, walletId, retiredAt: now };
+    });
+  }
+
   /** Re-enables phone-only payments after a contested recovery. Needs the hardware wallet. */
   async resumePhoneSpending(approval: HardwareApproval): Promise<Result<{}>> {
     return this.mutate((draft, now) => {
@@ -1997,7 +2120,8 @@ export class PolicyEngine {
       if (!n) return refused({ reason: 'unknown_alert', alertId: noticeId });
       const added = [...new Set(recipients.map((r) => r.toLowerCase()))].filter((r) => n.recipients.includes(r) && !n.sent.includes(r));
       n.sent.push(...added);
-      if (added.length) this.log(draft, now, { type: 'limit_alert_sent', noticeId, kind: n.kind, recipients: added });
+      // A contact told it was added or removed: the change's own entry says each is told (the service log has the delivery).
+      if (added.length && n.kind !== 'contact_added' && n.kind !== 'contact_removed') this.log(draft, now, { type: 'limit_alert_sent', noticeId, kind: n.kind, recipients: added });
       return { ok: true as const };
     });
   }

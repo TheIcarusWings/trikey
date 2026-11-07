@@ -51,13 +51,13 @@ import {
   type WalletSnapshot,
 } from '@trikey/wallet';
 import { parseScannedCode } from '@trikey/wallet/scan';
-import { GUARDIAN_FEATURES, SimplePoolRelayPool, isSafeName, encodeRecoveryUri, type Policy, type RelayPool } from '@trikey/protocol';
+import { GUARDIAN_FEATURES, SimplePoolRelayPool, contactId, isSafeName, encodeRecoveryUri, type Policy, type RelayPool } from '@trikey/protocol';
 import { hostedChainFactory, publicServer } from './hosted';
 import { parseServerUrl } from './rk-server';
 import { addEvent, buildActivity, emptyLog, hostFromLabel, loadLog, saveLog, takeLegacySends, type AppLog } from './app-log';
 import { groupAlertChannels } from './alert-channels';
 import { formatSats } from './format';
-import { isLimitOffSats } from './rules';
+import { deviceContactId, isLimitOffSats } from './rules';
 import { DevicePromptStore, compositeProvider, ledgerHint, withDevicePrompts } from './device';
 import { WalletServiceError, notAvailableYet } from './errors';
 import { SIMULATED_OPTION, hardwareBrandOf, hardwareOptionTable, type UiOs } from './hardware-options';
@@ -571,6 +571,21 @@ class Service implements RealWalletService {
       network: this.network,
       // QR and NFC devices: their own sheets say what to do on the device.
       silentKinds: this.deps.silentKinds ?? ['qr', 'coldcard', 'jade', 'coldcard-nfc'],
+      // A rule approval names the contacts as the device shows them: this phone's names next to them.
+      contactName: (id) => {
+        // At pairing the names are still the onboarding list's; afterwards the wallet keeps them.
+        const named = this.onboardingContacts.find((c) => deviceContactId(c.npub) === id);
+        if (named) return named.name;
+        const names = this.w?.state.contactNames ?? {};
+        for (const [hexKey, name] of Object.entries(names)) {
+          try {
+            if (contactId(hexKey) === id) return name;
+          } catch {
+            // not a key
+          }
+        }
+        return undefined;
+      },
     });
   }
 

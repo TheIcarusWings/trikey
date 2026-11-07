@@ -15,12 +15,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { MultisigWallet, type KeyExpression } from '@trikey/core';
 import { isSafeName, safeName, type Policy } from '@trikey/protocol';
 import { labelled } from '../../src/runtime.js';
+import { boxNoticeText } from '../../src/alerts.js';
 import { isLinkFree } from '../../src/notify/render.js';
 import { HostedEngine, MemoryHostedStore } from '../../src/hosting/engine.js';
 import { ClockChain, ManualClock, SoftwareCosignerSigner, pairingMessage, signMessage, type Rules } from '../../src/policy/index.js';
 import { GuardianRig } from '../support/index.js';
 import { fakeMap, hostedWallet } from '../support/hosted.js';
-import { APP_NOSTR, AUTH_PATH, CONTACT_A, MNEMONICS, T0, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withRulesApproval } from '../helpers.js';
+import { APP_NOSTR, AUTH_PATH, CONTACT_A, MNEMONICS, T0, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withAddApproval, withRulesApproval } from '../helpers.js';
 import { callHandler, pairInRig } from './support.js';
 
 /** Nothing a nostr app could turn into a link, and no line break (render.ts `isLinkFree` is the alert channels' check). */
@@ -53,7 +54,7 @@ describe('security: wallet names in alerts (finding 15)', () => {
     const res = await callHandler(
       rig,
       'wallet.add',
-      withRulesApproval(
+      withAddApproval(withRulesApproval(
         {
           account: 2,
           name: 'evil.example\nOK',
@@ -65,7 +66,7 @@ describe('security: wallet names in alerts (finding 15)', () => {
         },
         g.clock.now(),
         hwAuthPrivateKey(AUTH_PATH, MNEMONICS.hardware2),
-      ),
+      ), g, g.clock.now()),
       APP_NOSTR,
     );
     // Stored and answered as given: the phone rebuilds the device's registration name from it.
@@ -78,6 +79,11 @@ describe('security: wallet names in alerts (finding 15)', () => {
     expect(firstLine).toBe('trikey-help io: Trikey alert: someone started a recovery.');
     expect(ownLine).toBe('evil example OK: Trikey alert: someone started a recovery.');
     for (const label of [g.label()!, own.label()!]) expect(clean(label)).toBe(true);
+    // The DM that tells the first wallet's contacts a wallet was added (#180) names it cleaned, queued and rendered.
+    const added = g.engine.dueNotices().find((n) => n.kind === 'wallet_added')!;
+    expect(added.name).toBe('evil example OK');
+    expect(boxNoticeText({ ...added, kind: 'wallet_added' }, 'Home')).toContain('"evil example OK"');
+    expect(boxNoticeText({ ...added, kind: 'wallet_added', name: 'x.example\nhi' }, 'Home')).toContain('"x example hi"');
   }, 60_000);
 
   it("a guest's wallet label is cleaned when it is set", async () => {
