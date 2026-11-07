@@ -735,6 +735,8 @@ export class Guardian implements WalletRuntime {
       setup: this.setupComplete,
       paired: !!this.engine.registration(),
     });
+    // Host names in TRIKEY_TRUSTED_PROXY are checked once, before anyone can connect (http/trusted-proxy.ts).
+    await this.trustedProxy?.start();
     if (listen !== false) {
       this.http = await startHttpServer({
         port: listen.port ?? this.config.port,

@@ -58,7 +58,8 @@ describe('packaging/compose/docker-compose.yml', () => {
     expect(guardian.environment?.['TRIKEY_TRUSTED_PROXY']).toBeUndefined();
     expect(umbrel.services['server']!.environment?.['TRIKEY_PLATFORM']).toBe('umbrel');
     // Umbrel: only its login proxy skips the setup code (security review 2026-11, finding 3).
-    expect(umbrel.services['server']!.environment?.['TRIKEY_TRUSTED_PROXY']).toBe('gateway,trikey-guardian_app_proxy_1,app_proxy_trikey-guardian');
+    // Only the gateway: a container name nothing holds on umbrelOS 2 could be claimed by another app.
+    expect(umbrel.services['server']!.environment?.['TRIKEY_TRUSTED_PROXY']).toBe('gateway');
     expect(umbrel.services['app_proxy']!.environment?.['APP_HOST']).toBe('trikey-guardian_server_1');
     const start9 = read('packaging/start9/startos/main.ts');
     expect(start9).toMatch(/TRIKEY_PLATFORM: 'start9'/);

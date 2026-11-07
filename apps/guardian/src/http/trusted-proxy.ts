@@ -10,9 +10,14 @@
  *
  * Entries:
  * - `gateway`: the container's IPv4 default gateway, read from `/proc/net/route` at every check;
- * - a host name (a container name): resolved at every check, and trusted only while it names exactly one address per
- *   family. A second container that claims the same name as a network alias makes it ambiguous, and then nothing is
- *   trusted by that name (fail closed: the setup code is asked for);
+ * - a host name (a container name): only for a platform that creates a fixed, legitimate holder of that name before
+ *   the guardian starts. A name is checked once at startup (`start`): if it then names no address, or more than one,
+ *   it is never trusted while this process runs. On Docker's network any container can take a free name as its
+ *   `container_name` or a network alias, and Docker's DNS then answers with exactly its address: a name nothing
+ *   legitimate holds is a name another app can claim, and with it skip the setup code and own key 3. Afterwards it is
+ *   resolved at every check and trusted only while it names exactly one address in total, IPv4 and IPv6 together:
+ *   a second container that claims the same name makes it ambiguous, and then nothing is trusted by that name (fail
+ *   closed: the setup code is asked for). The Umbrel package lists `gateway` only;
  * - an IP address.
  *
  * Only the socket's own remote address counts: `X-Forwarded-For` and the like are set by whoever sends the request.
@@ -67,6 +72,9 @@ export class TrustedProxy {
   private readonly resolve: (host: string) => Promise<LookupAddress[]>;
   private readonly routes: () => Promise<string>;
   private warned = new Set<string>();
+  private started?: Promise<void>;
+  /** Host names that did not name exactly one address at startup: never trusted while this process runs. */
+  private readonly refused = new Set<string>();
 
   constructor(
     readonly entries: readonly string[],
@@ -82,8 +90,38 @@ export class TrustedProxy {
     this.opts.log?.warn(event, fields);
   }
 
+  /** The distinct addresses `name` resolves to now (none when it does not resolve). */
+  private async lookup(name: string): Promise<string[]> {
+    let found: LookupAddress[];
+    try {
+      found = await this.resolve(name);
+    } catch {
+      return [];
+    }
+    return [...new Set(found.map((a) => normalizeAddress(a.address)).filter((a): a is string => !!a && isIP(a) !== 0))];
+  }
+
+  /**
+   * Checks every host name once, before the guardian listens (also run by the first check if nobody called it): a
+   * name that names no address or more than one now is never trusted while this process runs. Nothing legitimate
+   * holds it (anyone could claim it later), or someone already claims it next to its holder.
+   */
+  start(): Promise<void> {
+    this.started ??= (async () => {
+      for (const e of this.entries) {
+        if (e === 'gateway' || isIP(e)) continue;
+        const found = await this.lookup(e);
+        if (found.length === 1) continue;
+        this.refused.add(e);
+        this.opts.log?.warn('http.trusted_proxy_name_refused', { name: e, addresses: found.length });
+      }
+    })();
+    return this.started;
+  }
+
   /** The addresses trusted right now (resolved afresh). */
   async addresses(): Promise<Set<string>> {
+    await this.start();
     const out = new Set<string>();
     for (const e of this.entries) {
       if (e === 'gateway') {
@@ -96,19 +134,14 @@ export class TrustedProxy {
         out.add(normalizeAddress(e)!);
         continue;
       }
-      let found: LookupAddress[];
-      try {
-        found = await this.resolve(e);
-      } catch {
-        continue; // not there (an umbrelOS without the sidecar): nothing trusted by this name
-      }
-      const v4 = found.filter((a) => isIP(normalizeAddress(a.address)!) === 4);
-      const v6 = found.filter((a) => isIP(normalizeAddress(a.address)!) === 6);
-      if (v4.length > 1 || v6.length > 1) {
+      if (this.refused.has(e)) continue;
+      const found = await this.lookup(e);
+      // One address in total: an IPv4 and an IPv6 address are two holders as much as two IPv4 addresses are.
+      if (found.length > 1) {
         this.warnOnce(`ambiguous:${e}`, 'http.trusted_proxy_ambiguous', { name: e, addresses: found.length });
         continue;
       }
-      for (const a of found) out.add(normalizeAddress(a.address)!);
+      for (const a of found) out.add(a);
     }
     return out;
   }

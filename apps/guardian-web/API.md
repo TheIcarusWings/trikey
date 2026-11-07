@@ -134,7 +134,7 @@ runs (the current passphrase, the new file, its check): several seconds, longer 
 guards the port; on Umbrel and Start9 the platform's login guards only its own path, and other apps' containers reach
 the port directly (security review 2026-11, finding 3). So on every platform (`TRIKEY_PLATFORM` set) the guardian asks
 for a one-time code, 16 Crockford base32 characters (`XXXX-XXXX-XXXX-XXXX`, 80 bits), except from the platform's login
-proxy (`TRIKEY_TRUSTED_PROXY`, recognised by the socket's address; Umbrel). Where it comes from: made from the OS
+proxy (`TRIKEY_TRUSTED_PROXY`, recognised by the socket's address; Umbrel's app gateway, `gateway`). Where it comes from: made from the OS
 generator at every start, kept in memory only and printed in the log (`setup.code code=...`), or handed in by the
 platform (`TRIKEY_SETUP_CODE`: Start9 draws it at install and shows it in its Show Setup Code action; the log has it
 too). The UI asks for it first (`POST /api/setup/code`) and sends it again with `POST /api/setup`; the page says where

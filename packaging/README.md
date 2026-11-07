@@ -24,12 +24,17 @@ login proxy where the guardian can recognise it (`TRIKEY_TRUSTED_PROXY`, Umbrel)
 
 | Platform | Setup code | Where the owner finds it |
 |---|---|---|
-| Umbrel | not asked through Umbrel's login (`TRIKEY_TRUSTED_PROXY=gateway,...`) | the app's logs (Settings > Troubleshoot), if ever asked |
+| Umbrel | not asked through umbrelOS 2's app gateway (`TRIKEY_TRUSTED_PROXY=gateway`); asked on umbrelOS 1, whose `app_proxy` sidecar is not trusted | the app's logs (Settings > Troubleshoot), if ever asked |
 | Start9 | always (`TRIKEY_SETUP_CODE`, drawn at install) | Actions > Show Setup Code, and next to the web password |
 | plain Docker | always, new at every start | `docker compose logs guardian \| grep setup.code` |
 
 A new platform package sets `TRIKEY_TRUSTED_PROXY` only to an address that nothing but its own
-login proxy can connect from. Never publish the port to the internet.
+login proxy can connect from. A host name (a container name) belongs there only when the platform
+itself creates a fixed, legitimate holder of that name before the guardian starts: on a shared
+Docker network any other app can claim a free name as its `container_name` or a network alias, and
+the guardian would then trust that app. The guardian checks each name once at startup and never
+trusts one that named no address, or more than one, then. That is why the Umbrel package lists
+`gateway` only, not umbrelOS 1's sidecar names. Never publish the port to the internet.
 
 Bitcoin Core's RPC: Umbrel and Start9 give the guardian a full RPC user (Umbrel's `umbrel`, Start9's
 cookie), so keep no funds in the node's own wallet there. Where the owner sets the credentials (plain

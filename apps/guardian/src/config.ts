@@ -34,8 +34,10 @@
  *                     without the platform's login. The code is in the guardian's log; on Start9 also in an action
  *   TRIKEY_TRUSTED_PROXY optional: who reaches the guardian only through the platform's login (comma-separated:
  *                     `gateway`, the container's default gateway, where umbrelOS's in-process app gateway connects
- *                     from; host names, resolved at every request and trusted only while they name one address;
- *                     IP addresses). Requests from them need no setup code (http/trusted-proxy.ts). Umbrel sets it
+ *                     from; host names, only for a platform that creates their holder before the guardian starts:
+ *                     checked at startup, then resolved at every request and trusted only while they name one
+ *                     address; IP addresses). Requests from them need no setup code (http/trusted-proxy.ts). Umbrel
+ *                     sets `gateway`
  *   TRIKEY_SETUP_CODE optional: the setup code to ask for, instead of a new one at every start (16 characters of
  *                     Crockford base32, as the guardian prints them). Start9 sets it and shows it in an action
  *   TRIKEY_RELAYS     optional: the relays the first-run screen offers (comma-separated wss:// URLs, 1 to 8),

@@ -26,9 +26,11 @@ services:
       # Until it is set up, the guardian asks for a setup code (printed in its log) from everyone except Umbrel's
       # login proxy: every app's containers share umbrel_main_network and reach port 3000 without Umbrel's login
       # (DESIGN.md, "First run"). umbrelOS 2's in-process app gateway connects from the network's gateway (the host,
-      # 10.21.0.1); umbrelOS 1's app_proxy sidecar from its own container. So through Umbrel the owner never sees a
-      # code; if neither is recognised, the code is in the app's logs (Settings > Troubleshoot).
-      TRIKEY_TRUSTED_PROXY: gateway,trikey-guardian_app_proxy_1,app_proxy_trikey-guardian
+      # 10.21.0.1), so through Umbrel the owner never sees a code. Only `gateway`: no container names. On umbrelOS 2
+      # nothing holds umbrelOS 1's sidecar names (trikey-guardian_app_proxy_1, app_proxy_trikey-guardian), so another
+      # app could claim one as its container_name or alias and skip the code. On umbrelOS 1 (the app_proxy sidecar)
+      # the owner is asked for the code, which is in the app's logs (Settings > Troubleshoot).
+      TRIKEY_TRUSTED_PROXY: gateway
       # Electrs (dependency "electrs")
       ELECTRUM_HOST: ${APP_ELECTRS_NODE_IP}
       ELECTRUM_PORT: ${APP_ELECTRS_NODE_PORT}
