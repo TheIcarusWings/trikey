@@ -117,7 +117,8 @@ async function addWallet(phone: Phone, opts: { account: number; hardware: string
 /** A phone payment of `amount` from `wallet` (a fresh coin at receive index `index`), co-signed by the guardian. */
 async function pay(rig: GuardianRig, phone: Phone, wallet: MultisigWallet, index: number, amount: bigint, walletId?: string, funded?: FundedOutput) {
   const coin = funded ?? rig.fund(wallet.derive(0, index).script, 200_000n);
-  const plan = buildSpend({ wallet, utxos: [utxoOf(coin, 0, index)], recipients: [{ address: externalAddress(), amount }], feeRate: 2, changeIndex: index });
+  // Change within the window of a chain no scan has seen used (co-signed change does not move it: DESIGN.md, rule 3).
+  const plan = buildSpend({ wallet, utxos: [utxoOf(coin, 0, index)], recipients: [{ address: externalAddress(), amount }], feeRate: 2, changeIndex: index % 20 });
   const psbt = base64.encode(await appSigner().signPsbt(plan.psbt, network));
   const res = await phone.rpc.call('sign', { psbt, ...(walletId ? { walletId } : {}) });
   return analyzePsbt(base64.decode(res.psbt), wallet.accountPubkeys(), network).inputs.map((i) => i.signedBy.sort().join());

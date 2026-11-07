@@ -76,6 +76,8 @@ const CODES: Record<RefusalReason, number> = {
   destination_keeps_lost_key: ErrorCode.PolicyViolation,
   sweep_not_to_destination: ErrorCode.PolicyViolation,
   invalid_recovery_update: ErrorCode.PolicyViolation,
+  fee_rate_too_low: ErrorCode.PolicyViolation,
+  cosign_rate_limited: ErrorCode.RateLimited,
   hardware_approval_required: ErrorCode.ApprovalRequired,
   approval_invalid_signature: ErrorCode.ApprovalInvalid,
   // `data.reason: "app_update_required"`, as for a pairing without the rules approval: the app must update.
@@ -149,6 +151,10 @@ export function refusalText(r: Refusal): string {
       return `The recovery delay has not elapsed (ready at ${new Date(r.readyAt).toISOString()})`;
     case 'chain_unavailable':
       return `No chain data: ${r.detail}`;
+    case 'fee_rate_too_low':
+      return `The fee (${sats(r.fee)} for about ${r.vsize} vB) is below ${r.minSatPerKvb / 1000} sat/vB: no node would relay it, so the guardian does not co-sign it`;
+    case 'cosign_rate_limited':
+      return `Too many payments co-signed: at most ${r.max} in ${r.windowMs >= 86_400_000 ? `${r.windowMs / 86_400_000} day` : `${r.windowMs / 3_600_000} hour`}; try again in ${r.retryAfterSeconds} seconds`;
     case 'clock_ahead_of_chain':
       return `The guardian's clock (${new Date(r.systemTime).toISOString()}) is ahead of the chain (${new Date(r.chainTime).toISOString()}); it co-signs nothing until they agree`;
     case 'recovery_signers':

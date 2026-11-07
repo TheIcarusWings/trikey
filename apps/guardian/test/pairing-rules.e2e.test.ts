@@ -18,6 +18,7 @@ import {
   ErrorCode,
   GUARDIAN_FEATURES,
   LIMIT_OFF_SATS,
+  LIMIT_OFF_THRESHOLD_SATS,
   RpcClient,
   RpcError,
   SimplePoolRelayPool,
@@ -47,7 +48,8 @@ const ATTACKER_CONTACT = getPublicKey(new Uint8Array(32).fill(66));
 /** What the owner chose and the device showed. */
 const SHOWN: Policy = { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [CONTACT], sweepFeeCapSats: 20_000 };
 /** What a malicious app sends instead: everything but "off", a huge fee cap, the shortest delay, its own contact. */
-const DRAIN: Policy = { dailyLimitSats: LIMIT_OFF_SATS - 1, recoveryDelayDays: 7, alertContacts: [ATTACKER_CONTACT], sweepFeeCapSats: LIMIT_OFF_SATS };
+// Just below "off" (1,000 BTC and more is off for every purpose, and refused at pairing whatever is approved).
+const DRAIN: Policy = { dailyLimitSats: LIMIT_OFF_THRESHOLD_SATS - 1, recoveryDelayDays: 7, alertContacts: [ATTACKER_CONTACT], sweepFeeCapSats: LIMIT_OFF_SATS };
 
 const toKey = (k: { fingerprint: string; path: string; xpub: string }): KeyExpression => ({ fingerprint: k.fingerprint, originPath: k.path.replace(/^m\//, '').replace(/'/g, 'h'), xpub: k.xpub });
 const rawPub = (xpub: string) => hex.encode(HDKey.fromExtendedKey(xpub, network.bip32).publicKey!);

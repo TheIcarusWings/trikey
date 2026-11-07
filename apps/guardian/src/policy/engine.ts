@@ -43,9 +43,10 @@ import {
 } from './authorizer.js';
 import { contactsDelta } from './contacts.js';
 import { ChainTime, ChainTimeSource, Clock, DAY, HOUR, systemClock } from './clock.js';
-import { CHANGE_WINDOW, MAX_SELF_INDEX, NO_HIGH_WATER, addCosignerSignatures, inspectPsbt, maxHighWater } from './inspect.js';
-import { pruneSpends, splitOutflow, usageWith, windowUsage } from './limit.js';
-import { isContactLockOn, isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from './rules.js';
+import { MAX_SELF_INDEX, NO_HIGH_WATER, addCosignerSignatures, feeRateRefusal, inspectPsbt, maxHighWater } from './inspect.js';
+import { PUBLIC_SOURCE_MAX_RISE, addPendingMark, chainMarksOf, changeWindow, cosignRateRefusal, marksAfterScan, migrateMarks, scanFloorOf, type MarkJump, type ScanNote } from './marks.js';
+import { pruneSpends, pruneTime, splitOutflow, usageWith, windowUsage } from './limit.js';
+import { LIMIT_OFF_SATS, isContactLockOn, isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from './rules.js';
 import { CosignerSigner } from './signer.js';
 import { StateStore, deserializeState, serializeState } from './storage.js';
 import {
@@ -60,6 +61,7 @@ import {
   HardwareAuthKey,
   HighWater,
   LimitNotice,
+  PendingMark,
   RecoveryDelayDays,
   RecoveryRecord,
   RecoveryStatus,
@@ -110,7 +112,8 @@ export const MAINNET_CONTACT_REQUIRED =
   'on mainnet at least one alert contact is required (it can be your own nostr app on another device), so a recovery is never announced only to a phone a thief may hold';
 
 /** Why pairing refuses a policy with no daily limit. */
-export const LIMIT_OFF_AT_PAIRING = 'a wallet cannot be paired with the daily limit off; pair with a limit, then turn it off with the hardware wallet';
+export const LIMIT_OFF_AT_PAIRING =
+  'a wallet cannot be paired with the daily limit off (1,000 BTC or more counts as off); pair with a limit, then turn it off with the hardware wallet';
 /** Why pairing refuses rules the hardware wallet did not approve (an app from before `pairing_rules_approval`). */
 export const RULES_APPROVAL_MISSING =
   'the hardware wallet must approve the rules the wallet starts with (rulesApproval); update the Trikey app and pair again';
@@ -441,13 +444,45 @@ export class PolicyEngine {
     this.maxRefusals = opts.maxRefusals ?? DEFAULT_MAX_REFUSALS;
     this.recoveryIdPrefix = opts.recoveryIdPrefix ?? '';
     this.requireContactsInText = opts.requireContactsInText ?? (() => true);
+    // Marks from before the change-window fix (marks.ts `migrateMarks`): in memory now, on disk with the next write.
+    if (state.active) migrateMarks(state.active, Math.max(state.timeFloor ?? 0, this.clock.now()));
     this.setSigner(opts.signer);
   }
 
   /** Loads persisted state (or starts empty). A version-1 file is migrated on load and written back as version 2 at the next change. */
   static async open(opts: PolicyEngineOptions): Promise<PolicyEngine> {
     const state = (await opts.store.load()) ?? emptyState();
-    return new PolicyEngine(opts.store, state, opts);
+    const engine = new PolicyEngine(opts.store, state, opts);
+    await engine.announceLimitOffKept();
+    return engine;
+  }
+
+  /**
+   * A limit stored before 1,000 BTC and more counted as "off" (rules.ts `LIMIT_OFF_THRESHOLD_SATS`): one at or above it
+   * but below `LIMIT_OFF_SATS` (a malicious app's pairing "one satoshi under no limit", or a huge limit the owner set)
+   * is off from now on, and nobody was told: the phone and every alert contact are, once (`limit_off`), as when the
+   * limit is turned off. A recovery restores 0 for it (no limit before is known), until the hardware wallet raises it.
+   */
+  private async announceLimitOffKept(): Promise<void> {
+    const due = (s: GuardianState) => {
+      const w = s.active;
+      return !!w && isLimitOff(w.rules) && w.rules.dailyLimitSats < LIMIT_OFF_SATS && w.limitBeforeOff === undefined && !w.limitOffAnnounced;
+    };
+    if (!due(this.state)) return;
+    await this.mutate((draft, now) => {
+      if (!due(draft)) return;
+      const w = draft.active!;
+      w.limitOffAnnounced = true;
+      const phone = w.registration.appNostrPubkey;
+      this.addNotice(draft, now, {
+        id: `limit-${draft.nextActivityId}-kept`,
+        kind: 'limit_off',
+        walletId: w.registration.walletId,
+        at: now,
+        recipients: [phone, ...w.rules.alertContacts.filter((c) => c !== phone)],
+        sent: [],
+      });
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -573,7 +608,9 @@ export class PolicyEngine {
         const now = this.clock.now();
         this.refresh(draft, now);
         const out = await fn(draft, now);
-        if (draft.active) draft.active.spends = pruneSpends(draft.active.spends, now);
+        // On the limit's own trusted time, never the raw clock (limit.ts `pruneTime`).
+        const pruneAt = pruneTime(draft.timeFloor, draft.chainSeen, MAX_CLOCK_AHEAD_OF_CHAIN_MS);
+        if (draft.active && pruneAt !== undefined) draft.active.spends = pruneSpends(draft.active.spends, pruneAt);
         draft.activity = pruneActivity(draft.activity, this.maxActivity, this.maxRefusals);
         // A refusal that changed nothing but the activity log is not worth a durable write (a stranger's
         // or a stolen phone's flood would otherwise fsync the whole state each time): it stays in memory
@@ -943,33 +980,62 @@ export class PolicyEngine {
     });
   }
 
-  /** The active wallet's high-water marks (DESIGN.md: scans of the wallet must reach at least these). */
+  /**
+   * Where every scan of the active wallet must reach (a scan's `minIndex`; DESIGN.md, rule 3): the whole change window
+   * past the on-chain marks, and every change key 3 co-signed that no scan has seen yet (marks.ts `scanFloorOf`).
+   */
   highWater(walletId?: string): HighWater {
     const w = this.state.active;
-    if (!w || (walletId !== undefined && w.registration.walletId !== walletId)) return { ...NO_HIGH_WATER };
-    return { ...(w.highWater ?? NO_HIGH_WATER) };
+    if (!w || (walletId !== undefined && w.registration.walletId !== walletId)) return { receive: -1, change: -1 };
+    return scanFloorOf(w);
+  }
+
+  /** The active wallet's on-chain marks: the highest index per chain a scan found used. They anchor the change window. */
+  chainMarks(walletId?: string): HighWater {
+    const w = this.state.active;
+    if (!w || (walletId !== undefined && w.registration.walletId !== walletId)) return { receive: -1, change: -1 };
+    return chainMarksOf(w);
+  }
+
+  /** The active wallet's pending marks: co-signed change no scan has seen used yet (read-only copies). */
+  pendingMarks(walletId?: string): PendingMark[] {
+    const w = this.state.active;
+    if (!w || (walletId !== undefined && w.registration.walletId !== walletId)) return [];
+    return (w.pendingMarks ?? []).map((p) => ({ ...p, outpoints: [...p.outpoints] }));
   }
 
   /**
-   * Raises the active wallet's high-water marks to what a scan of `walletId` found used (an incoming
-   * payment to a fresh address, say). Never lowers them. Writes nothing when nothing rises.
+   * Raises the active wallet's on-chain marks to what a scan of `walletId` found used (an incoming payment to a fresh
+   * address, co-signed change that was broadcast) and retires the pending marks it settles (marks.ts `marksAfterScan`):
+   * from a public server (`publicSource`) by at most a gap past the known marks per scan; `unspent`, every unspent coin
+   * when the scan listed them all. Never lowers them. Writes nothing when nothing changes. A rise of more than
+   * `MARK_JUMP_ALERT` in a day is passed to `onJump` (once a day) after the write. Returns whether the marks rose.
    */
-  async noteUsedIndexes(walletId: string, used: HighWater): Promise<boolean> {
-    const rises = (s: GuardianState) => {
+  async noteUsedIndexes(
+    walletId: string,
+    used: HighWater,
+    opts: Omit<ScanNote, 'used'> & { onJump?: (jump: MarkJump) => void } = {},
+  ): Promise<boolean> {
+    const scan: ScanNote = { used, ...(opts.publicSource ? { publicSource: true } : {}), ...(opts.unspent ? { unspent: opts.unspent } : {}) };
+    const next = (s: GuardianState, now: number) => {
       const w = s.active;
-      if (!w || w.registration.walletId !== walletId) return false;
-      const cur = w.highWater ?? NO_HIGH_WATER;
-      const ok = (n: number) => Number.isSafeInteger(n) && n <= MAX_SELF_INDEX;
-      return (ok(used.receive) && used.receive > cur.receive) || (ok(used.change) && used.change > cur.change);
+      return w && w.registration.walletId === walletId ? marksAfterScan(w, scan, now) : undefined;
     };
-    if (!rises(this.state)) return false;
-    return this.mutate((draft) => {
-      if (!rises(draft)) return false;
+    if (!next(this.state, this.clock.now())) return false;
+    let jump: MarkJump | undefined;
+    const raised = await this.mutate((draft, now) => {
+      const n = next(draft, now);
+      if (!n) return false;
       const w = draft.active!;
-      const clamp = (n: number) => (Number.isSafeInteger(n) ? Math.min(n, MAX_SELF_INDEX) : -1);
-      w.highWater = maxHighWater(w.highWater ?? NO_HIGH_WATER, { receive: clamp(used.receive), change: clamp(used.change) });
-      return true;
+      w.chainMarks = n.chainMarks;
+      if (n.pendingMarks.length) w.pendingMarks = n.pendingMarks;
+      else delete w.pendingMarks;
+      w.marksDay = n.marksDay;
+      if (n.jump) jump = { walletId, ...n.jump };
+      return n.raised;
     });
+    if (jump) opts.onJump?.(jump);
+    return raised;
   }
 
   /** The paired phone's single-key coins, if it registered any (read-only). */
@@ -1089,14 +1155,22 @@ export class PolicyEngine {
       nextChangeIndex: number;
       spends: { txid: string; amountSats: bigint; outpoints?: string[]; payment?: string; consolidated?: true }[];
       complete?: boolean;
+      /** A public server's scan: the marks rise by at most `PUBLIC_SOURCE_MAX_RISE` (as the active wallet's, marks.ts). */
+      publicSource?: boolean;
     },
   ): Promise<{ txid: string; amountSats: bigint; announced: boolean; replaces?: string; consolidated?: true }[]> {
-    const used: HighWater = { receive: scan.nextReceiveIndex - 1, change: scan.nextChangeIndex - 1 };
+    const scanned: HighWater = { receive: scan.nextReceiveIndex - 1, change: scan.nextChangeIndex - 1 };
     const ok = (n: number) => Number.isSafeInteger(n) && n <= MAX_SELF_INDEX;
+    // The marks are where every Savings scan starts from: a lying public server must not throw them far at once.
+    const usedOf = (cur: HighWater): HighWater =>
+      scan.publicSource
+        ? { receive: Math.min(scanned.receive, cur.receive + PUBLIC_SOURCE_MAX_RISE), change: Math.min(scanned.change, cur.change + PUBLIC_SOURCE_MAX_RISE) }
+        : scanned;
     const pending = (st: GuardianState) => {
       const sv = st.active?.savings;
       if (!sv || sv.walletId !== walletId) return undefined;
       const cur = sv.highWater ?? NO_HIGH_WATER;
+      const used = usedOf(cur);
       const rises = (ok(used.receive) && used.receive > cur.receive) || (ok(used.change) && used.change > cur.change);
       if (scan.complete === false && !sv.baselined) return rises ? { fresh: [] as typeof scan.spends, hold: true } : undefined;
       const fresh = scan.spends.filter((x) => /^[0-9a-f]{64}$/.test(x.txid) && !sv.seenSpends.includes(x.txid));
@@ -1109,6 +1183,7 @@ export class PolicyEngine {
       const w = draft.active!;
       const sv = w.savings!;
       const clamp = (n: number) => (Number.isSafeInteger(n) ? Math.min(n, MAX_SELF_INDEX) : -1);
+      const used = usedOf(sv.highWater ?? NO_HIGH_WATER);
       sv.highWater = maxHighWater(sv.highWater ?? NO_HIGH_WATER, { receive: clamp(used.receive), change: clamp(used.change) });
       if (p.hold) return [];
       // Oldest first, so the log and the notices read in the order the coins moved.
@@ -1269,10 +1344,9 @@ export class PolicyEngine {
       // once the phone registered its helper account, only a script of that account, only in a PSBT
       // with a taproot output (inspect.ts), and at most one finalized P2WPKH input (core).
       const helper = w.singleKey?.helper ? helperAccount(w.singleKey.helper.xpub, reg.network) : undefined;
-      // Change only within CHANGE_WINDOW of the high-water marks: a coin parked further out would be
-      // out of sight of every gap-limit scan, so it counts as leaving the wallet.
-      const marks = w.highWater ?? NO_HIGH_WATER;
-      const selfLimit = { receive: marks.receive + CHANGE_WINDOW, change: marks.change + CHANGE_WINDOW };
+      // Change only within CHANGE_WINDOW of the on-chain marks: a coin parked further out would be out of sight of
+      // every gap-limit scan, so it counts as leaving the wallet. Co-signed change does not move them (marks.ts).
+      const selfLimit = changeWindow(w);
       const checked = inspectPsbt(psbt, this.wallet(reg), undefined, { selfLimit, ...(helper ? { helper: (c) => !!helper.locate(c.script) } : {}) });
       if (!checked.ok) {
         const retired = checked.refusal.reason === 'foreign_input' ? this.retiredOwner(draft, psbt) : undefined;
@@ -1285,8 +1359,14 @@ export class PolicyEngine {
         if (inp.signedBy[0] === 'hardware') return refuse({ reason: 'hardware_signed_outside_recovery', input: inp.index }, txid);
         if (inp.signedBy[0] !== 'app') return refuse({ reason: 'not_signed_by_app', input: inp.index, signedBy: inp.signedBy }, txid);
       }
+      // A transaction below the minimum relay fee rate is never a payment (a 0-fee self-transfer costs nothing).
+      const lowFee = feeRateRefusal(analysis.fee, checked.inspection.vsizeMin);
+      if (lowFee) return refuse(lowFee, txid);
 
       const replay = w.spends.some((s) => s.txid === txid);
+      // Successful co-signatures are paced per wallet (a replay of the same transaction is not a new one).
+      const pace = replay ? undefined : cosignRateRefusal(w.spends, at);
+      if (pace) return refuse(pace, txid);
       const used = windowUsage(w.spends, at);
       const shares = splitOutflow(analysis.inputs, outflow);
       const wouldUse = replay ? used : usageWith(w.spends, shares, at);
@@ -1297,8 +1377,8 @@ export class PolicyEngine {
       const signed = await addCosignerSignatures(psbt, analysis, this.signer);
       if (!replay) w.spends.push({ txid, at, outflow, shares });
       draft.timeFloor = at;
-      // Co-signed change is "seen": the marks rise to it, so every later scan reaches it.
-      w.highWater = maxHighWater(marks, checked.inspection.selfIndexes);
+      // Co-signed change is pending until a scan sees it: every later scan reaches it, but it does not widen the window.
+      addPendingMark(w, { txid, at, self: checked.inspection.selfIndexes, outpoints: analysis.inputs.map((i) => i.outpoint) });
       const helperInput = analysis.helper?.outpoint;
       this.log(draft, now, { type: 'cosign_signed', txid, outflow, usedAfter: wouldUse, replay, ...(helperInput ? { helperInput } : {}) });
       return { ok: true as const, psbt: signed, txid, outflow, usedAfter: wouldUse, replay };
@@ -1780,7 +1860,7 @@ export class PolicyEngine {
       if (rec.rotatedAt !== undefined) return refused({ reason: 'not_adoptable', detail: 'already rotated' });
 
       let next: Registration | undefined;
-      let nextMarks: HighWater | undefined;
+      let nextMarks: { self: HighWater } | undefined;
       let detail: string | undefined;
       const network = getNetwork(old.network);
       try {
@@ -1818,7 +1898,7 @@ export class PolicyEngine {
           };
           // The sweep's outputs are the new wallet's first coins: its scans start from them.
           const sw = inspectPsbt(base64.decode(rec.sweepPsbt), this.wallet(old), dest);
-          if (sw.ok) nextMarks = sw.inspection.selfIndexes;
+          if (sw.ok) nextMarks = { self: sw.inspection.selfIndexes };
         }
       } catch (e) {
         detail = `the new wallet's descriptor does not parse (${(e as Error).message})`;
@@ -1852,9 +1932,10 @@ export class PolicyEngine {
           spends: [],
           phoneSpending: { state: 'enabled' },
           accessGrants: [],
-          ...(nextMarks ? { highWater: nextMarks } : {}),
           ...(w.savings ? { savings: w.savings } : {}),
         };
+      // The sweep's outputs are pending until a scan sees them (no coins of the new wallet to retire them by).
+      if (next && nextMarks) addPendingMark(draft.active!, { txid: rec.sweepTxid, at: now, self: nextMarks.self, outpoints: [] });
       rec.rotatedAt = now;
       if (next && limitRestored !== undefined)
         this.addNotice(draft, now, {

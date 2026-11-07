@@ -23,7 +23,7 @@ import { ObservedStore } from '../observed-store.js';
 import { JsonFileStore, PolicyEngine, type RecoveryRecord, type StateStore } from '../policy/index.js';
 import { RecoveryRunner } from '../recovery-runner.js';
 import type { WalletRuntime } from '../runtime.js';
-import { activeRecovery, labelled } from '../runtime.js';
+import { activeRecovery, labelled, noteWalletScan, type ScanResult } from '../runtime.js';
 import { SavingsMonitor } from '../savings.js';
 import { ServiceState, type ServiceEvent } from '../service-state.js';
 import type { OwnWalletRecord } from './registry.js';
@@ -105,9 +105,9 @@ export class OwnWallet implements WalletRuntime {
     return { 0: hw.receive, 1: hw.change };
   }
 
-  async noteScan(walletId: string, scan: { nextReceiveIndex: number; nextChangeIndex: number }): Promise<void> {
+  async noteScan(walletId: string, scan: ScanResult): Promise<void> {
     try {
-      await this.engine.noteUsedIndexes(walletId, { receive: scan.nextReceiveIndex - 1, change: scan.nextChangeIndex - 1 });
+      await noteWalletScan(this, this.g, walletId, scan);
     } catch (e) {
       this.g.log.error('wallet.high_water_failed', { slot: this.slotId, error: errorText(e) });
     }

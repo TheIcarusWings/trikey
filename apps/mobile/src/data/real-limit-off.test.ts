@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as btc from '@scure/btc-signer';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { NETWORKS } from '@trikey/core';
-import { LIMIT_OFF_SATS as PROTOCOL_LIMIT_OFF } from '@trikey/protocol';
+import { LIMIT_OFF_SATS as PROTOCOL_LIMIT_OFF, LIMIT_OFF_THRESHOLD_SATS as PROTOCOL_LIMIT_OFF_THRESHOLD } from '@trikey/protocol';
 import { GuardianRig } from '@trikey/guardian/testing';
 import {
   MemoryCloudBackupStore,
@@ -22,7 +22,7 @@ import {
 import { WalletServiceError } from './errors';
 import { formatDailyLimit } from './format';
 import { createRealWalletService, type RealWalletService } from './real';
-import { LIMIT_OFF_SATS, canOfferLimitOff, limitIsOff, limitToRestore } from './rules';
+import { LIMIT_OFF_SATS, LIMIT_OFF_THRESHOLD_SATS, canOfferLimitOff, isLimitOffSats, limitIsOff, limitToRestore } from './rules';
 import type { DevicePrompt } from './types';
 
 const device = new SoftwareHardwareSigner({ mnemonic: 'legal winner thank year wave sausage worth useful legal winner thank yellow', network: 'regtest', kind: 'ledger', model: 'Nano X (simulated)' });
@@ -79,6 +79,10 @@ afterAll(async () => {
 describe('no daily limit in the app', { timeout: 120_000 }, () => {
   it('is the protocol value, and the guardian says it can do it', () => {
     expect(LIMIT_OFF_SATS).toBe(PROTOCOL_LIMIT_OFF);
+    // 1,000 BTC and more is "off" for every purpose, as on the guardian (security review 2026-11, finding 3).
+    expect(LIMIT_OFF_THRESHOLD_SATS).toBe(PROTOCOL_LIMIT_OFF_THRESHOLD);
+    expect(isLimitOffSats(LIMIT_OFF_SATS - 1)).toBe(true);
+    expect(isLimitOffSats(LIMIT_OFF_THRESHOLD_SATS - 1)).toBe(false);
     const s = svc.getState();
     expect(s.dailyLimit).toMatchObject({ limitSats: 100_000, canTurnOff: true });
     expect(s.dailyLimit.off).toBeUndefined();

@@ -2,7 +2,7 @@ import { parseScannedCode } from '@trikey/wallet/scan';
 import { isNfcModel, nfcModelInfo, qrModelInfo } from '@trikey/wallet';
 import { NODE_RPC_TEXT, WalletServiceError } from './errors';
 import { SIMULATED_OPTION, hardwareOptionTable, type UiOs } from './hardware-options';
-import { LIMIT_OFF_SATS, buildRefillSchedule, limitChangeNeedsHardware, quoteSend as quoteSendRule, quoteSendMax as quoteSendMaxRule } from './rules';
+import { LIMIT_OFF_SATS, buildRefillSchedule, isLimitOffSats, limitChangeNeedsHardware, quoteSend as quoteSendRule, quoteSendMax as quoteSendMaxRule } from './rules';
 import { CONTACT_LOCK, formatSats } from './format';
 import { emptyRecoveryKeyState } from './rk-empty';
 import { DEMO_FINGERPRINT, createMockRecoveryKey } from './rk-mock';
@@ -826,7 +826,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
 
     // -- rules --------------------------------------------------------
     async setDailyLimit(limitSats: Sats) {
-      if (limitSats >= LIMIT_OFF_SATS) return this.turnLimitOff();
+      if (isLimitOffSats(limitSats)) return this.turnLimitOff();
       // With the limit off, any limit turns it back on: tightening, from the phone alone.
       const wasOff = !!state.dailyLimit.off;
       const needsHardware = !wasOff && limitChangeNeedsHardware(state.dailyLimit.limitSats, limitSats);

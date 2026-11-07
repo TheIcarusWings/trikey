@@ -144,16 +144,16 @@ describe('rule changes approved by the hardware wallet', () => {
 
 describe('approval messages', () => {
   it('fit on every device even with extreme values, and show the key numbers', () => {
-    // The longest version-1 text: the largest limit that is still a limit (one sat under "no daily limit").
+    // The longest version-1 text: the largest limit that is still a limit (one sat under 1,000 BTC, where "off" starts).
     const rules = r({
-      dailyLimitSats: 2_100_000_000_000_000n - 1n,
+      dailyLimitSats: 1_000n * 100_000_000n - 1n,
       sweepFeeCapSats: 2_100_000_000_000_000n,
       recoveryDelayDays: 30,
       alertContacts: Array.from({ length: 20 }, (_, i) => (i + 16).toString(16).padStart(64, '0')),
     });
     const msg = approvalMessage({ action: 'policy', rules }, { walletId: 'ffffffffffffffff', sequence: Number.MAX_SAFE_INTEGER, expiresAt: 4_102_444_800 });
     expect(msg.length).toBeLessThanOrEqual(MAX_MESSAGE_LENGTH);
-    expect(msg).toMatch(/^Trikey policy v1 wallet=ffffffffffffffff seq=\d+ limit=2099999999999999 delay=30d feecap=2100000000000000 contacts=20 hash=[0-9a-f]{64} expires=2100-01-01T00:00:00Z$/);
+    expect(msg).toMatch(/^Trikey policy v1 wallet=ffffffffffffffff seq=\d+ limit=99999999999 delay=30d feecap=2100000000000000 contacts=20 hash=[0-9a-f]{64} expires=2100-01-01T00:00:00Z$/);
     // And the longest version-2 text (no daily limit).
     const off = approvalMessage({ action: 'policy', rules: { ...rules, dailyLimitSats: LIMIT_OFF_SATS } }, { walletId: 'ffffffffffffffff', sequence: Number.MAX_SAFE_INTEGER, expiresAt: 4_102_444_800 });
     expect(off.length).toBeLessThanOrEqual(MAX_MESSAGE_LENGTH);

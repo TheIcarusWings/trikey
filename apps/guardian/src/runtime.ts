@@ -17,7 +17,7 @@ import type { Mutex } from './files.js';
 import type { KeystoreSigner } from './keystore.js';
 import type { KnownCoins } from './nostr/handlers.js';
 import type { ObservedStore } from './observed-store.js';
-import type { PolicyEngine, RecoveryRecord } from './policy/index.js';
+import type { MarkJump, PolicyEngine, RecoveryRecord } from './policy/index.js';
 import type { RecoveryRunner } from './recovery-runner.js';
 import type { SavingsMonitor } from './savings.js';
 import type { ServiceEvent, ServiceState } from './service-state.js';
@@ -42,7 +42,7 @@ export interface WalletRuntime {
   /** Where this wallet's co-signed sweeps (and its paired phone record) live: `service.json` for the first wallet. */
   readonly sweepStore: ServiceState;
   scanFloor(walletId: string): Partial<Record<0 | 1, number>>;
-  noteScan(walletId: string, scan: { nextReceiveIndex: number; nextChangeIndex: number }): Promise<void>;
+  noteScan(walletId: string, scan: ScanResult): Promise<void>;
   recoveryPeers(): string[];
   hasRecoveryAccess(pubkey: string): boolean;
   isAlertContact(pubkey: string): boolean;
@@ -74,4 +74,48 @@ export function activeRecovery(recoveries: readonly RecoveryRecord[] | undefined
 export function labelled(w: Pick<WalletRuntime, 'label'>, text: string): string {
   const name = w.label();
   return name ? `${name}: ${text}` : text;
+}
+
+/** What a scan of a wallet tells its engine (a `WalletSync`, or part of one). */
+export interface ScanResult {
+  nextReceiveIndex: number;
+  nextChangeIndex: number;
+  /** The unspent coins listed, complete unless `utxosTruncated`. */
+  utxos?: readonly { txid: string; vout: number }[];
+  utxosTruncated?: boolean;
+}
+
+/**
+ * Feeds a scan of the active wallet to its engine (`noteUsedIndexes`): the indexes it found used, capped for a public
+ * server, its coins when it listed them all, and a marks jump (`MARK_JUMP_ALERT` in a day: a lying server, or something
+ * walking the addresses) to the log and the owner's channels.
+ */
+export async function noteWalletScan(
+  w: Pick<WalletRuntime, 'engine' | 'label'>,
+  box: { chainSourceSummary(): { kind: 'own' | 'public' } | undefined; notifyOwner(type: string, text: string, walletId?: string, id?: string): void; log: { warn(msg: string, data?: Record<string, unknown>): void } },
+  walletId: string,
+  scan: ScanResult,
+): Promise<void> {
+  const complete = Array.isArray(scan.utxos) && scan.utxosTruncated === false;
+  await w.engine.noteUsedIndexes(
+    walletId,
+    { receive: scan.nextReceiveIndex - 1, change: scan.nextChangeIndex - 1 },
+    {
+      ...(box.chainSourceSummary()?.kind === 'public' ? { publicSource: true } : {}),
+      ...(complete ? { unspent: new Set(scan.utxos!.map((u) => `${u.txid}:${u.vout}`)) } : {}),
+      onJump: (j: MarkJump) => {
+        box.log.warn('wallet.marks_jumped', { walletId, from: j.from, to: j.to, since: j.since });
+        box.notifyOwner(
+          'marks_jumped',
+          labelled(
+            w,
+            `The guardian's scans of wallet ${walletId} found addresses used far beyond the day before (receive ${j.from.receive + 1} to ${j.to.receive + 1}, change ${j.from.change + 1} to ${j.to.change + 1} addresses). ` +
+              'If you did not create that many addresses, check the chain source in the web page, and that your phone is yours.',
+          ),
+          walletId,
+          `marks_jumped-${walletId}-${j.since}`,
+        );
+      },
+    },
+  );
 }

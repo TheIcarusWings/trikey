@@ -107,6 +107,17 @@ export function limitChangeNeedsHardware(current: Sats, next: Sats): boolean {
  */
 export const LIMIT_OFF_SATS: Sats = 2_100_000_000_000_000;
 
+/**
+ * From this limit up there is no daily limit for every purpose (1,000 BTC; @trikey/protocol's
+ * `LIMIT_OFF_THRESHOLD_SATS`, a test checks): shown as "No daily limit", never as the number it is stored as.
+ */
+export const LIMIT_OFF_THRESHOLD_SATS: Sats = 100_000_000_000;
+
+/** A stored daily limit that means "no daily limit" (`LIMIT_OFF_THRESHOLD_SATS` or more). */
+export function isLimitOffSats(limitSats: Sats): boolean {
+  return limitSats >= LIMIT_OFF_THRESHOLD_SATS;
+}
+
 /** The limit to offer when turning it back on when nothing better is known. */
 export const DEFAULT_LIMIT_SATS: Sats = LIMIT_PRESETS[0]!;
 

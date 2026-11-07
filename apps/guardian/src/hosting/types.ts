@@ -139,6 +139,8 @@ export interface HostedWallet {
   ledger: LedgerEntry[];
   /** While the daily limit is off: the limit it had just before (a recovery's adopted wallet starts with it, as the host's). */
   limitBeforeOff?: bigint;
+  /** As the host's (`GuardedWallet.limitOffAnnounced`): a stored limit that counts as off since the threshold, announced once. */
+  limitOffAnnounced?: true;
   /** Present while the slot is paused. */
   pause?: HostedPause;
 }

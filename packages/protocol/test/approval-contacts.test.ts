@@ -11,6 +11,7 @@ import {
   DEVICE_VISIBLE_LENGTH,
   GUARDIAN_FEATURES,
   LIMIT_OFF_SATS,
+  LIMIT_OFF_THRESHOLD_SATS,
   MAX_ALERT_CONTACTS,
   MAX_APPROVAL_MESSAGE_LENGTH,
   MAX_SATS,
@@ -90,7 +91,7 @@ describe('the version-4 policy text', () => {
   });
 
   it('fits every device (Coldcard: 240) at its longest, and the contacts always end within 188 characters', () => {
-    const worst = (contacts: string[]): Policy => ({ dailyLimitSats: MAX_SATS - 1, recoveryDelayDays: 30, sweepFeeCapSats: MAX_SATS, alertContacts: contacts, contactLock: false });
+    const worst = (contacts: string[]): Policy => ({ dailyLimitSats: LIMIT_OFF_THRESHOLD_SATS - 1, recoveryDelayDays: 30, sweepFeeCapSats: MAX_SATS, alertContacts: contacts, contactLock: false });
     const longCtx = { ...ctx, sequence: Number.MAX_SAFE_INTEGER };
     let longest = 0;
     for (let n = 0; n <= MAX_ALERT_CONTACTS; n++) {
@@ -103,13 +104,14 @@ describe('the version-4 policy text', () => {
         longest = Math.max(longest, text.length);
       }
     }
-    // The budget, at the longest values (16-digit sequence, limit and fee cap): 127 characters before ` contacts=`, so two
-    // contacts (19 characters each, a comma between) end by 176 and a third would pass 188; the code takes 27
-    // (`20:` and 24). The longest text of all is a pairing (seq=0) naming three contacts: 210 characters.
-    expect(longest).toBe(210);
+    // The budget, at the longest values (16-digit sequence and fee cap; an 11-digit limit, the longest under "off"): 122
+    // characters before ` contacts=`, so two contacts (19 characters each, a comma between) end by 171 and a third would
+    // pass 188; the code takes 27 (`20:` and 24). The longest text of all is a pairing (seq=0) naming three contacts:
+    // 205 characters.
+    expect(longest).toBe(205);
     expect(approvalContactsShown(approvalMessage({ action: 'policy', policy: worst(keys(2)) }, longCtx))!.kind).toBe('list');
     expect(approvalContactsShown(approvalMessage({ action: 'policy', policy: worst(keys(3)) }, longCtx))!.kind).toBe('code');
-    expect(approvalMessage({ action: 'policy', policy: worst(keys(20)) }, longCtx).length).toBe(193);
+    expect(approvalMessage({ action: 'policy', policy: worst(keys(20)) }, longCtx).length).toBe(188);
   });
 
   it('is the text only for a guardian with approval_contacts: without it, versions 1 to 3 as before', () => {

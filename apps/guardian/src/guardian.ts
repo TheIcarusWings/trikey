@@ -128,7 +128,7 @@ import type { HostedKey3Mix } from './keystore.js';
 import { Notifier, type FindOutcome, type NotifyEvent, type TestOutcome, type UpdateOutcome } from './notify/notifier.js';
 import type { NetPolicy } from './notify/net.js';
 import type { SmtpTestOptions } from './notify/channels.js';
-import { activeRecovery, labelled, type WalletRuntime } from './runtime.js';
+import { activeRecovery, labelled, noteWalletScan, type ScanResult, type WalletRuntime } from './runtime.js';
 import { OwnWallets } from './wallets/service.js';
 import { LabelsVault, strayLabelIds } from './labels.js';
 import { DamagedSlotError, UNLOCK_SLOTS_FILE, UnlockSlots, WrongSlotKeyError, openSlot, sealSlot } from './unlock-slots.js';
@@ -948,18 +948,18 @@ export class Guardian implements WalletRuntime {
   }
 
   /**
-   * Where every scan of the active wallet must reach (a scan's `minIndex`): its high-water marks, the
-   * highest index seen used or co-signed per chain, so no coin key 3 co-signed as change is out of sight.
+   * Where every scan of the active wallet must reach (a scan's `minIndex`): the change window past its on-chain marks
+   * and every change key 3 co-signed that no scan has seen yet (policy/marks.ts), so no such coin is out of sight.
    */
   scanFloor(walletId: string): Partial<Record<0 | 1, number>> {
     const hw = this.engine.highWater(walletId);
     return { 0: hw.receive, 1: hw.change };
   }
 
-  /** Raises the active wallet's marks to what a scan found used (incoming payments to fresh addresses). */
-  async noteScan(walletId: string, scan: { nextReceiveIndex: number; nextChangeIndex: number }): Promise<void> {
+  /** Raises the active wallet's on-chain marks to what a scan found used (runtime.ts `noteWalletScan`). */
+  async noteScan(walletId: string, scan: ScanResult): Promise<void> {
     try {
-      await this.engine.noteUsedIndexes(walletId, { receive: scan.nextReceiveIndex - 1, change: scan.nextChangeIndex - 1 });
+      await noteWalletScan(this, this, walletId, scan);
     } catch (e) {
       this.log.error('wallet.high_water_failed', { error: errorText(e) });
     }
