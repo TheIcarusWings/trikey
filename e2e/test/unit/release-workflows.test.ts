@@ -157,6 +157,23 @@ describe('android-apk.yml and android-build.yml', () => {
   });
 });
 
+describe('the release job of android-apk.yml', () => {
+  it('downloads exactly the two signed APK artifacts, never the -unsigned ones the build jobs also upload', () => {
+    const apk = workflow('android-apk.yml');
+    const build = read('.github/workflows/android-build.yml');
+    // The build jobs upload `<artifact-name>-unsigned` too (the APK the sign job signs).
+    expect(build).toMatch(/inputs\.artifact-name \|\| 'trikey-android-apk' \}\}-unsigned/);
+    const downloads = Object.values(apk.jobs).flatMap((j) => (j.steps ?? []).filter((s) => s.uses?.startsWith('actions/download-artifact@')));
+    expect(downloads.length).toBeGreaterThan(0);
+    for (const d of downloads) {
+      // A pattern such as trikey-android-apk-* would also match trikey-android-apk-standard-unsigned.
+      expect(d.with?.['pattern'], JSON.stringify(d.with)).toBeUndefined();
+      expect(String(d.with?.['name'])).not.toMatch(/unsigned/);
+    }
+    expect(downloads.map((d) => d.with?.['name']).sort()).toEqual(['trikey-android-apk-foss', 'trikey-android-apk-standard']);
+  });
+});
+
 describe('every workflow', () => {
   const files = readdirSync(WORKFLOWS).filter((f) => f.endsWith('.yml'));
 
