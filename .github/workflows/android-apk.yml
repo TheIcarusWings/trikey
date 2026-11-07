@@ -88,10 +88,15 @@ jobs:
           sparse-checkout: packaging/android
           sparse-checkout-cone-mode: false
 
+      # By exact name: a pattern like trikey-android-apk-* would also match the build jobs' -unsigned artifacts
+      # (android-build.yml), and the checks below expect exactly the two signed APKs.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: trikey-android-apk-*
-          merge-multiple: true
+          name: trikey-android-apk-standard
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: trikey-android-apk-foss
           path: dist
 
       # The parts each build wrote (packaging/android/apk-release-notes.sh): what both share, then each APK.
