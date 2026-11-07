@@ -410,13 +410,16 @@ on the Jade, the reply is `{http_request: {params: {urls, method: "POST", accept
 "pin"}}` (`pinclient.c:68-127`, `process_utils.c:494-602`). `urls` are the PIN server's `/get_pin` (or `/set_pin`) and
 its onion address: Blockstream's by default (`PINSERVER_URL` "https://j8d.io" and an onion, `pinclient.c:20-22`), or
 the owner's own, set on the Jade ("Blind Oracle" in its settings, or `update_pinserver`). The phone POSTs `data` as JSON
-to the **first `https://` URL that is not an onion** and sends the JSON answer to `pin` (`handle_pin`,
+to the **first `https://` URL that is not an onion** (and is to a server Trikey reaches: below) and sends the JSON answer to `pin` (`handle_pin`,
 `pinclient.c:299-354`); `pin` answers `true`, `false`, or another `http_request` (changing the PIN asks `/set_pin` too).
 It never uses plain `http://`, has no Tor to reach an onion, and calls nothing but `pin` with the answer. When no URL is
 usable or the request fails it sends `pin` with no data: the Jade then asks "Failed communicating with Oracle - retry?"
 (`PIN_CAN_RETRY`, `pinclient.c:323-330, 545-552`), and the phone shows why on its sheet. A custom server's own
 certificate (`root_certificates`) cannot be added to the phone's TLS: such a server works only with a certificate
-phones already trust. No PIN-server address is written in Trikey: it uses what the Jade sends.
+phones already trust. Trikey reaches only Blockstream's server (`j8d.io`, `jadepin.blockstream.com`) or a server the
+owner said is their own the first time a Jade named it (anything that answers as a Jade over Bluetooth could otherwise
+pick what the phone fetches): https to a named host only, a `/get_pin` or `/set_pin` path, no redirect, at most 4 KiB
+back (`apps/mobile/src/hardware/jade/pin-server.ts`).
 
 What the PIN server learns: the payload is encrypted and signed between the Jade and the server (ECDH with the server
 key built into the Jade, `pinclient.c` `generate_ske`, `encrypt_payload`); the phone only carries it. The server

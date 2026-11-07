@@ -1,7 +1,7 @@
 import type { NetworkName } from '@trikey/core';
 import type { BitBoxBridge } from './bitbox02/bridge';
 import type { BitBoxPairingStore } from './bitbox02/session';
-import type { JadeBleBridge, JadeNoticeStore } from './jade/bridge';
+import type { JadeBleBridge, JadeNoticeStore, JadePinServerStore } from './jade/bridge';
 import type { NfcBridge } from './nfc/bridge';
 import type { QrBridge } from './qr/bridge';
 import type { QrFormat } from './qr/types';
@@ -59,6 +59,8 @@ export interface HardwareProviderOptions {
     bridge?: JadeBleBridge;
     /** Where the app remembers that the owner read the PIN-server notice (shown once, before the first unlock). */
     notices?: JadeNoticeStore;
+    /** The PIN servers the owner named as their own. Default: in memory (asked again after a restart). */
+    pinServers?: JadePinServerStore;
   };
 
   nfc?: {

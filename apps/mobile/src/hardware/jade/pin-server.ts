@@ -16,10 +16,15 @@
  *    Jade, `pinclient.c` `generate_ske`, `encrypt_payload`, `decrypt_reply`): the phone only carries it.
  * 4. The Jade answers `true` (unlocked), `false` (wrong PIN), or another `http_request` (a PIN change asks `set_pin`).
  *
- * The phone uses the URLs the Jade gives and nothing else: no server is written into Trikey. It takes the first
- * `https://` URL that is not an onion; it never sends the PIN-server traffic in plain `http://`, and it cannot reach an
- * onion address (the app has no Tor). When no URL is usable, or the request fails, it sends `pin` with no data: the Jade
- * then shows "Failed communicating with Oracle - retry?" (`handle_pin`: `PIN_CAN_RETRY`) and the owner chooses there.
+ * The phone reaches only a PIN server it knows: Blockstream's (`j8d.io`, and `jadepin.blockstream.com`, its older name),
+ * or one the owner named as their own when their Jade first asked for it (the owner set it on the Jade; the phone asks
+ * once and remembers it). A Bluetooth device that only claims to be a Jade could otherwise make the phone fetch any
+ * address from where it stands (a router page, a service on the home network or VPN) and hand back the answer. So: only
+ * `https://` to a named host (no IP address, no `localhost`, no user name in the URL, no query), a path ending in
+ * `/get_pin` or `/set_pin`, a JSON POST, no redirect (a redirected answer is dropped, never passed to the Jade), and an
+ * answer of at most 4 KiB. It never sends the PIN-server traffic in plain `http://`, and it cannot reach an onion address
+ * (the app has no Tor). When no URL is usable, or the request fails, it sends `pin` with no data: the Jade then shows
+ * "Failed communicating with Oracle - retry?" (`handle_pin`: `PIN_CAN_RETRY`) and the owner chooses there.
  *
  * What the PIN server learns (blind_pin_server `pindb.py`): the Jade's own PIN-server key (a per-device public key, so it
  * can tell this Jade's unlocks apart), when it unlocks, how many wrong PINs in a row, and the phone's IP address. Not the
@@ -79,16 +84,50 @@ export function hostOf(url: string): string {
   return m ? m[1]!.toLowerCase() : url;
 }
 
+/** Blockstream's PIN server (pinclient.c `PINSERVER_URL`), under its current and its older name. */
+export const BLOCKSTREAM_PIN_SERVERS: readonly string[] = ['j8d.io', 'jadepin.blockstream.com'];
+
 /**
- * The URL to use: the first `https://` one that is not an onion address. Undefined, with the reason in words, when there
- * is none (only plain `http://`, only an onion address, or no URL at all).
+ * A PIN-server URL in the one shape Trikey reaches: `https://host[:port]/…/get_pin` (or `set_pin`), host a DNS name.
+ * Its `server` is `host`, or `host:port` for a port other than 443: what the owner approves and the phone remembers.
  */
-export function pickPinServerUrl(urls: readonly string[]): { url: string } | { problem: string } {
+export function parsePinServerUrl(url: string): { server: string; host: string } | undefined {
+  const m = /^https:\/\/([a-z0-9.-]+)(?::(\d{1,5}))?(\/[A-Za-z0-9._~\/-]*)$/i.exec(url);
+  if (!m) return undefined;
+  const host = m[1]!.toLowerCase().replace(/\.$/, '');
+  const labels = host.split('.');
+  // A name with a dot, made of real labels; not an IP address, not a local name, not an onion.
+  if (labels.length < 2 || labels.some((l) => !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(l))) return undefined;
+  if (/^\d+$/.test(labels[labels.length - 1]!)) return undefined;
+  if (/\.(onion|local|localhost|internal|lan|home\.arpa)$/.test(host)) return undefined;
+  const port = m[2] === undefined ? 443 : Number(m[2]);
+  if (port < 1 || port > 65535) return undefined;
+  if (!/\/(get_pin|set_pin)$/.test(m[3]!) || m[3]!.split('/').some((seg) => seg === '..' || seg === '.')) return undefined;
+  return { server: port === 443 ? host : `${host}:${port}`, host };
+}
+
+/**
+ * The URL to use: the first `https://` one that is not an onion address, to a server in `allowed` (default: Blockstream's).
+ * Otherwise the reason in words; `unknownServer` when the first usable URL is to another server, which the owner may
+ * approve as their own.
+ */
+export function pickPinServerUrl(urls: readonly string[], allowed: readonly string[] = BLOCKSTREAM_PIN_SERVERS): { url: string } | { problem: string; unknownServer?: string } {
+  let unknown: string | undefined;
   for (const u of urls) {
     if (!/^https:\/\//i.test(u)) continue;
     if (hostOf(u).endsWith('.onion')) continue;
-    return { url: u };
+    const parsed = parsePinServerUrl(u);
+    if (!parsed) continue;
+    if (allowed.includes(parsed.server)) return { url: u };
+    unknown ??= parsed.server;
   }
+  if (unknown)
+    return {
+      problem: `Your Jade asked this phone to reach ${unknown}, which is not Blockstream’s PIN server or one you named as your own. Trikey did not contact it.`,
+      unknownServer: unknown,
+    };
+  const https = urls.filter((u) => /^https:\/\//i.test(u) && !hostOf(u).endsWith('.onion'));
+  if (https.length) return { problem: `Your Jade gave a PIN-server address Trikey does not reach (${hostOf(https[0]!)}): it must be a named https server, not an IP address or a local name.` };
   if (urls.some((u) => hostOf(u).endsWith('.onion')) && !urls.some((u) => /^https?:\/\//i.test(u) && !hostOf(u).endsWith('.onion')))
     return { problem: 'Your Jade’s PIN server is only an onion address, and Trikey has no Tor. Set an https address for it on the Jade, or use the Jade in QR mode.' };
   if (urls.some((u) => /^http:\/\//i.test(u)))
@@ -96,53 +135,63 @@ export function pickPinServerUrl(urls: readonly string[]): { url: string } | { p
   return { problem: 'Your Jade gave no PIN-server address Trikey can use.' };
 }
 
-export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }) => Promise<{
+export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal; redirect?: 'error' }) => Promise<{
   ok: boolean;
   status: number;
+  /** Set by a fetch that followed a redirect (React Native's follows them natively, whatever `redirect` says). */
+  redirected?: boolean;
+  /** The address the answer came from, after any redirect. */
+  url?: string;
   text(): Promise<string>;
 }>;
 
 export interface RelayOptions {
   fetch: FetchLike;
+  /** The PIN servers the phone may reach (`host` or `host:port`). Default: Blockstream's. */
+  allowedServers?: readonly string[];
   /** Per request. Default 20 s. */
   timeoutMs?: number;
   signal?: AbortSignal;
 }
 
-/** Longest PIN-server answer read (the real one is about 100 bytes of JSON). */
-const MAX_ANSWER = 64 * 1024;
+/** Longest PIN-server answer passed on (the real one is about 100 bytes of JSON). */
+const MAX_ANSWER = 4 * 1024;
 
 /**
- * Makes the request the Jade asked for. Resolves with the server's answer (parsed JSON when `accept` is json, else the
- * text), or with `{ problem }` in words when it could not: then the phone sends the Jade an empty `pin`.
+ * Makes the request the Jade asked for. Resolves with the server's JSON answer, or with `{ problem }` in words when it
+ * could not: then the phone sends the Jade an empty `pin`.
  */
 export async function relayHttpRequest(req: JadeHttpRequest, opts: RelayOptions): Promise<{ body: CborValue; url: string } | { problem: string }> {
-  const picked = pickPinServerUrl(req.urls);
-  if ('problem' in picked) return picked;
+  const picked = pickPinServerUrl(req.urls, opts.allowedServers);
+  if ('problem' in picked) return { problem: picked.problem };
   const json = req.accept === 'json' || req.accept === 'application/json';
-  if (req.method === 'GET' && req.data !== undefined) return { problem: 'The Jade asked for a request Trikey cannot make (a GET with a body).' };
+  // The PIN exchange is a JSON POST (pinclient.c): nothing else is relayed.
+  if (req.method !== 'POST' || !json) return { problem: 'The Jade asked for a request Trikey does not make (only the PIN server’s JSON POST is relayed).' };
   const ac = new AbortController();
   const onAbort = () => ac.abort();
   opts.signal?.addEventListener('abort', onAbort, { once: true });
   const timer = setTimeout(() => ac.abort(), opts.timeoutMs ?? 20_000);
   const host = hostOf(picked.url);
   try {
-    const body = req.method === 'POST' ? (json ? JSON.stringify(toJson(req.data ?? null)) : typeof req.data === 'string' ? req.data : '') : undefined;
+    const body = JSON.stringify(toJson(req.data ?? null));
     // A fetch that does not honour its signal still stops waiting on a timeout or a cancel.
     const stopped = new Promise<never>((_, reject) => ac.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }));
     const res = await Promise.race([
       opts.fetch(picked.url, {
         method: req.method,
-        headers: { ...(json ? { 'Content-Type': 'application/json', Accept: 'application/json' } : {}) },
-        ...(body !== undefined ? { body } : {}),
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body,
         signal: ac.signal,
+        // Never follow a redirect (to plain http, or anywhere else).
+        redirect: 'error',
       }),
       stopped,
     ]);
+    if (res.redirected === true || (typeof res.url === 'string' && res.url !== '' && res.url !== picked.url))
+      return { problem: `The PIN server (${host}) sent this phone somewhere else, which Trikey does not follow.` };
     if (!res.ok) return { problem: `The PIN server (${host}) answered with an error (HTTP ${res.status}).` };
     const text = await Promise.race([res.text(), stopped]);
     if (text.length > MAX_ANSWER) return { problem: `The PIN server (${host}) sent an answer far too long to be one.` };
-    if (!json) return { body: text, url: picked.url };
     try {
       return { body: fromJson(JSON.parse(text)), url: picked.url };
     } catch {
@@ -187,7 +236,17 @@ export type UnlockEvent =
   /** The relay failed; the Jade now asks whether to retry. */
   | { type: 'pin-server-failed'; problem: string };
 
-export interface UnlockOptions extends RelayOptions {
+/** The PIN servers the owner named as their own, and how to ask them about a new one. */
+export interface PinServerApproval {
+  /** Servers approved before (`host` or `host:port`). */
+  approved(): Promise<readonly string[]>;
+  /** Asks the owner whether `server` is their own PIN server, and remembers a yes. */
+  ask(server: string): Promise<boolean>;
+}
+
+export interface UnlockOptions extends Omit<RelayOptions, 'allowedServers'> {
+  /** Without it, only Blockstream's PIN server is reached. */
+  pinServers?: PinServerApproval;
   /** `mainnet`, `testnet` or `localtest` (Jade's names). */
   network: string;
   /** Seconds since 1970, to set the Jade's clock (auth_user `epoch`). Default now. */
@@ -217,9 +276,16 @@ export async function unlockJade(rpc: JadeRpc, opts: UnlockOptions): Promise<boo
       if (!req) throw new HardwareError('invalid-response', 'The Jade answered the unlock with something Trikey cannot read.', { kind: KIND });
       if (!REPLY_METHODS.has(req.onReply)) throw new HardwareError('invalid-response', `The Jade asked Trikey to call "${req.onReply}" with the PIN server's answer, which it does not do.`, { kind: KIND });
       if (round >= MAX_ROUNDS) throw new HardwareError('device-error', 'The Jade kept asking for the PIN server. Restart it and try again.', { kind: KIND });
-      const picked = pickPinServerUrl(req.urls);
+      const allowed = [...BLOCKSTREAM_PIN_SERVERS, ...((await opts.pinServers?.approved().catch(() => [])) ?? [])];
+      let picked = pickPinServerUrl(req.urls, allowed);
+      // A server Trikey does not know: only the owner can say it is theirs (set on the Jade). A no stops here.
+      if ('unknownServer' in picked && picked.unknownServer && opts.pinServers) {
+        if (!(await opts.pinServers.ask(picked.unknownServer))) throw new HardwareError('cancelled', 'Cancelled.', { kind: KIND });
+        allowed.push(picked.unknownServer);
+        picked = pickPinServerUrl(req.urls, allowed);
+      }
       if ('url' in picked) opts.onEvent?.({ type: 'pin-server', host: hostOf(picked.url) });
-      const answer = await relayHttpRequest(req, opts);
+      const answer = await relayHttpRequest(req, { ...opts, allowedServers: allowed });
       if ('problem' in answer) {
         lastProblem = answer.problem;
         opts.onEvent?.({ type: 'pin-server-failed', problem: answer.problem });
