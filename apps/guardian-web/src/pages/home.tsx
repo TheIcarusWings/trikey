@@ -111,9 +111,9 @@ function StatusCard({ status }: { status: GuardianStatus }) {
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={pct}
-            className="h-1.5 overflow-hidden rounded-[3px] bg-border"
+            className="h-2 overflow-hidden rounded-full bg-foreground/15"
           >
-            <div className="h-1.5 bg-good" style={{ width: `${pct}%` }} />
+            <div className="h-2 bg-good" style={{ width: `${pct}%` }} />
           </div>
         )}
       </section>
