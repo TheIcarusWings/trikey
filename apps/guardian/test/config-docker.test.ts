@@ -69,11 +69,11 @@ describe('golden: the Umbrel and Start9 environments read as before', () => {
       BITCOIN_RPC_USER: 'umbrel',
       BITCOIN_RPC_PASS: 'test-only',
       BITCOIN_NETWORK: 'mainnet',
-      TRIKEY_TRUSTED_PROXY: 'gateway,trikey-guardian_app_proxy_1,app_proxy_trikey-guardian',
+      TRIKEY_TRUSTED_PROXY: 'gateway',
     });
     expect(c.electrum).toEqual({ host: '10.21.21.10', port: 50001 });
     expect(c.platform).toBe('umbrel');
-    expect(c.trustedProxies).toEqual(['gateway', 'trikey-guardian_app_proxy_1', 'app_proxy_trikey-guardian']);
+    expect(c.trustedProxies).toEqual(['gateway']);
     expect(c.relayOptions).toEqual(DEFAULT_RELAY_OPTIONS);
   });
 

@@ -77,15 +77,23 @@ async function sealedUnlock(secret: UnlockSecret) {
   return phone.call('guardian.unlock', { kind: 'sealed', sealed }, { id });
 }
 
-/** A raw web API call with an explicit cookie (a second browser), not the rig's own session. */
-async function raw(method: string, path: string, opts: { body?: unknown; cookie?: string } = {}) {
+/** A browser's session: the cookie and the page's secret (`X-Trikey-Session`). */
+type WebSession = { cookie?: string; secret?: string };
+
+/** A raw web API call with an explicit session (a second browser), not the rig's own session. */
+async function raw(method: string, path: string, opts: { body?: unknown; session?: WebSession } = {}) {
   const res = await fetch(`http://127.0.0.1:${rig.guardian.httpAddress!.port}/api${path}`, {
     method,
-    headers: { ...(method === 'GET' ? {} : { 'content-type': 'application/json' }), ...(opts.cookie ? { cookie: opts.cookie } : {}) },
+    headers: {
+      ...(method === 'GET' ? {} : { 'content-type': 'application/json' }),
+      ...(opts.session?.cookie ? { cookie: opts.session.cookie } : {}),
+      ...(opts.session?.secret ? { 'x-trikey-session': opts.session.secret } : {}),
+    },
     body: method === 'GET' ? undefined : JSON.stringify(opts.body ?? {}),
   });
   const text = await res.text();
-  return { status: res.status, body: text ? JSON.parse(text) : undefined, cookie: res.headers.get('set-cookie')?.split(';')[0] };
+  const body = text ? JSON.parse(text) : undefined;
+  return { status: res.status, body, session: { cookie: res.headers.get('set-cookie')?.split(';')[0], secret: body?.sessionSecret } as WebSession };
 }
 const signIn = (passphrase: string) => raw('POST', '/session', { body: { passphrase } });
 
@@ -172,12 +180,13 @@ describe('changing the passphrase', { timeout: 60_000 }, () => {
     const g = rig.guardian;
     const keystoreBefore = (await readKeystore(join(rig.dir, 'keystore.json')))!;
     const slotsBefore = await readFile(join(rig.dir, 'unlock-slots.json'), 'utf8');
-    const other = (await signIn(OLD)).cookie!;
-    expect((await raw('GET', '/activity', { cookie: other })).status).toBe(200);
+    const other = (await signIn(OLD)).session;
+    expect((await raw('GET', '/activity', { session: other })).status).toBe(200);
     const phoneSpy = vi.spyOn(g, 'notifyPhone');
     const enqueue = vi.spyOn(g.notifier, 'enqueue');
     Object.defineProperty(g.notifier, 'configured', { get: () => true, configurable: true });
     const oldCookie = rig.sessionCookie;
+    const old: WebSession = { cookie: rig.sessionCookie, secret: rig.sessionSecret };
 
     const r = await rig.api('POST', '/passphrase', { passphrase: OLD, newPassphrase: NEW });
     expect(r.status).toBe(200);
@@ -198,9 +207,10 @@ describe('changing the passphrase', { timeout: 60_000 }, () => {
     // Sessions: the other browser is signed out, this one holds a fresh cookie (the old one is gone too).
     expect(rig.sessionCookie).toBeDefined();
     expect(rig.sessionCookie).not.toBe(oldCookie);
-    expect((await raw('GET', '/activity', { cookie: other })).status).toBe(401);
-    expect((await raw('GET', '/activity', { cookie: oldCookie })).status).toBe(401);
-    expect((await raw('GET', '/activity', { cookie: rig.sessionCookie })).status).toBe(200);
+    expect(rig.sessionSecret).not.toBe(old.secret);
+    expect((await raw('GET', '/activity', { session: other })).status).toBe(401);
+    expect((await raw('GET', '/activity', { session: old })).status).toBe(401);
+    expect((await raw('GET', '/activity', { session: { cookie: rig.sessionCookie, secret: rig.sessionSecret } })).status).toBe(200);
     // The old passphrase no longer signs in; the new one does.
     expect((await signIn(OLD)).status).toBe(401);
     rig.clock.advance(1_000);

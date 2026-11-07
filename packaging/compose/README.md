@@ -192,7 +192,8 @@ as Jupyter does with its token. Reading the container's log takes the Docker acc
 - Once the guardian is set up, the code is gone: the unlock passphrase is the login from then on.
 - Scripting the API with `curl`: send `-H "Origin: http://localhost:3000"` (the address you open the page at) with every
   `POST`, `PUT` or `DELETE`, as a browser does. Without `Origin` (or `Sec-Fetch-Site`), only a process inside the
-  guardian's own container may change anything.
+  guardian's own container may change anything. After `POST /api/session`, send the cookie it sets (`-b`/`-c`) and
+  `-H "X-Trikey-Session: <sessionSecret from its answer>"` with every request: the cookie alone is no session.
 
 ## Step by step
 

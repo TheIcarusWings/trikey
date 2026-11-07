@@ -182,6 +182,12 @@ export interface PublicStatus {
 export interface GuardianStatus {
   /** True: this browser has a session (absent from guardians before sessions, and from the mock). */
   authenticated?: true;
+  /**
+   * Only in the answers that sign this browser in (`POST /api/session`, `/setup`, `/passphrase`, `/reset`): the new
+   * session's secret. The page keeps it in `sessionStorage` and sends it as `X-Trikey-Session` with every request; the
+   * cookie alone is no session (API.md, "Deployment and sessions").
+   */
+  sessionSecret?: string;
   /** False until first-run setup has created key 3 and the unlock passphrase. */
   setupComplete: boolean;
   state: 'locked' | 'unlocked';

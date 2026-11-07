@@ -1,5 +1,6 @@
 import { BrowserRandomError, browserRandomHex } from '../lib/random';
 import { ApiError, type GuardianApi } from './client';
+import { SESSION_HEADER, pageSessionSecret, type SessionSecret } from './session';
 import type {
   ActivityEntry,
   ChainSettings,
@@ -57,15 +58,24 @@ export function withBrowserEntropy<T extends object>(input: T): T & { entropy: s
  * Every POST, PUT and DELETE carries a JSON body (`{}` when there is nothing to
  * send): the guardian refuses state-changing requests without
  * `Content-Type: application/json`, which keeps cross-site requests out.
+ *
+ * Every request also carries the session's secret (`X-Trikey-Session`, from `session`), which the answers that sign
+ * this browser in bring (`sessionSecret`): the session cookie alone is no session, since the browser sends it to every
+ * app on the same host (session.ts).
  */
-export function createHttpApi(base = ''): GuardianApi {
+export function createHttpApi(base = '', session: SessionSecret = pageSessionSecret()): GuardianApi {
   async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const sent = body === undefined && method !== 'GET' ? {} : body;
+    const secret = await session.current();
     let response: Response;
     try {
       response = await fetch(`${base}/api${path}`, {
         method,
-        headers: sent === undefined ? { Accept: 'application/json' } : { Accept: 'application/json', 'Content-Type': 'application/json' },
+        headers: {
+          Accept: 'application/json',
+          ...(sent === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...(secret ? { [SESSION_HEADER]: secret } : {}),
+        },
         body: sent === undefined ? undefined : JSON.stringify(sent),
         credentials: 'same-origin',
         cache: 'no-store',
@@ -86,7 +96,10 @@ export function createHttpApi(base = ''): GuardianApi {
     if (!response.ok) {
       const err = (payload as ErrorBody | undefined)?.error;
       // The session expired (or the guardian restarted): the app goes back to the sign-in screen.
-      if (response.status === 401 && err?.code === 'unauthenticated') window.dispatchEvent(new Event(SIGNED_OUT_EVENT));
+      if (response.status === 401 && err?.code === 'unauthenticated') {
+        session.forget();
+        window.dispatchEvent(new Event(SIGNED_OUT_EVENT));
+      }
       throw new ApiError(
         err?.code ?? (response.status === 404 ? 'not_found' : 'internal'),
         err?.message ?? `The guardian answered with an error (${response.status}).`,
@@ -94,13 +107,25 @@ export function createHttpApi(base = ''): GuardianApi {
         err?.retryAfterSeconds,
       );
     }
+    // An answer that signed this browser in: keep the new session's secret (for this tab and the guardian's others).
+    const fresh = (payload as { sessionSecret?: unknown } | undefined)?.sessionSecret;
+    if (typeof fresh === 'string') {
+      session.remember(fresh);
+      delete (payload as { sessionSecret?: unknown }).sessionSecret;
+    }
     return payload as T;
   }
 
   return {
     getStatus: () => request<GuardianStatus | PublicStatus>('GET', '/status'),
     signIn: (input) => request<GuardianStatus>('POST', '/session', input),
-    signOut: () => request<PublicStatus>('DELETE', '/session'),
+    signOut: async () => {
+      try {
+        return await request<PublicStatus>('DELETE', '/session');
+      } finally {
+        session.forget();
+      }
+    },
 
     getSetupPreflight: () => request<SetupPreflight>('GET', '/setup/preflight'),
     checkSetupCode: async (code) => {

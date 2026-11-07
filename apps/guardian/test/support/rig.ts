@@ -204,10 +204,12 @@ export class GuardianRig {
 
   /** The web session cookie the rig's "browser" holds (see `api`). */
   sessionCookie?: string;
+  /** The session's secret the rig's "page" holds (`sessionSecret` of the sign-in answer, sent as `X-Trikey-Session`). */
+  sessionSecret?: string;
 
   /**
    * Calls the web UI's API (`http: true` only), as the browser would: same-origin JSON, with the session
-   * cookie. Signed out, it signs in with the passphrase first (`POST /api/session`) when the guardian
+   * cookie and the page's `X-Trikey-Session` header. Signed out, it signs in with the passphrase first (`POST /api/session`) when the guardian
    * answers 401 `unauthenticated`, unless `session: false` (to test the signed-out API).
    */
   async api(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, opts: { session?: boolean } = {}): Promise<{ status: number; body: any }> {
@@ -216,13 +218,19 @@ export class GuardianRig {
     const send = async () => {
       const res = await fetch(`http://127.0.0.1:${addr.port}/api${path}`, {
         method,
-        headers: { ...(method === 'GET' ? {} : { 'content-type': 'application/json' }), ...(opts.session !== false && this.sessionCookie ? { cookie: this.sessionCookie } : {}) },
+        headers: {
+          ...(method === 'GET' ? {} : { 'content-type': 'application/json' }),
+          ...(opts.session !== false && this.sessionCookie ? { cookie: this.sessionCookie } : {}),
+          ...(opts.session !== false && this.sessionSecret ? { 'x-trikey-session': this.sessionSecret } : {}),
+        },
         body: method === 'GET' ? undefined : JSON.stringify(body ?? {}),
       });
       const set = res.headers.get('set-cookie');
       if (set && opts.session !== false) this.sessionCookie = /Max-Age=0/i.test(set) ? undefined : set.split(';')[0];
       const text = await res.text();
-      return { status: res.status, body: text ? JSON.parse(text) : undefined };
+      const parsed = text ? JSON.parse(text) : undefined;
+      if (opts.session !== false && typeof parsed?.sessionSecret === 'string') this.sessionSecret = parsed.sessionSecret;
+      return { status: res.status, body: parsed };
     };
     const r = await send();
     const signedOut = (r.status === 401 && r.body?.error?.code === 'unauthenticated') || (path === '/status' && r.body?.authenticated === false);

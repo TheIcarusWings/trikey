@@ -22,6 +22,23 @@ an `HttpOnly; SameSite=Strict` cookie (`Secure` when the request came over HTTPS
 after 30 minutes without a request, 12 hours after sign-in, at sign-out, at a reset or a
 passphrase change, and when the guardian restarts. Without one, everything else answers `401 unauthenticated`.
 
+**The cookie alone is no session.** Cookies are bound to a host, not to a port (RFC 6265): on Umbrel every app is
+`http://umbrel.local:<port>`, so the browser sends `trikey_session` to every other app the owner opens, and that app's
+server could replay it to the guardian. So every answer that signs the browser in (`POST /api/session`, `/setup`,
+`/passphrase`, `/reset`) also carries `sessionSecret` (32 more random bytes, base64url; the guardian keeps only its
+sha256), and every request must send it back as **`X-Trikey-Session: <sessionSecret>`**. A request with the cookie but
+without the right secret is signed out (`401 unauthenticated`; `GET /api/status` answers `PublicStatus`), and
+`DELETE /api/session` then ends nothing. The page keeps the secret in `sessionStorage` (scoped to scheme, host and port:
+no other app reads it), so a reload keeps the session. A new tab asks the guardian's other open tabs for it over a
+`BroadcastChannel` (also per origin) and, if none is open, shows the sign-in screen. There is deliberately no endpoint
+that hands out the secret for the cookie: another app on the host has the cookie and its server can set any header, so
+it would get the secret too (`src/api/session.ts`). A request with **two** `trikey_session` cookies (another app on the
+host can set one at a more specific path, `Path=/api`, which the browser sends first) has no session either: it is
+answered as signed out with `Set-Cookie`s that clear the cookie at every path a cookie sent with it could have. Where the
+platform's login proxy is recognised (`TRIKEY_TRUSTED_PROXY`, Umbrel), a session signed in through it or from the
+guardian's own container is accepted afterwards only from there. Not `__Host-`: that prefix needs `Secure`, and Umbrel's
+local address is plain HTTP. Scripts: take `sessionSecret` from the sign-in answer and send it with the cookie.
+
 ## Conventions
 
 - All paths are under `/api` on the same origin that serves the UI.
@@ -35,7 +52,7 @@ passphrase change, and when the guardian restarts. Without one, everything else 
   { "error": { "code": "bad_passphrase", "message": "That passphrase is not right." } }
   ```
 
-  Codes: `unauthenticated` (401, no session: sign in), `bad_passphrase` (401), `rate_limited` (429, with `retryAfterSeconds` and a
+  Codes: `unauthenticated` (401, no session, or a cookie without its `X-Trikey-Session`, or two session cookies: sign in), `bad_passphrase` (401), `rate_limited` (429, with `retryAfterSeconds` and a
   `Retry-After` header), `locked` (409), `setup_required` (409), `already_setup` (409), `setup_code_required` (403) and
   `bad_setup_code` (401) (the first run, below),
   `already_paired` (409), `recovery_pending` (409), `sweep_pending` (409), `not_found` (404), `invalid` (400, 413 or 415), `forbidden`
@@ -91,8 +108,8 @@ the sign-in screen. The guardian is locked after every start of its process.
 | Method and path | Request | Response | Notes |
 |---|---|---|---|
 | `GET /api/status` | none | `GuardianStatus` or `PublicStatus` | Always available. Without a session (after setup) only `PublicStatus`: `authenticated: false`, `setupComplete`, `state`, `network`, `version`. With one (`authenticated: true`): `setupComplete`, `state` (`locked` or `unlocked`), `lockedAt` and `lockReason` (`restart`, `manual` from this UI, `remote` from the paired phone's `guardian.lock`, or `contact`: an alert contact sent `LOCK` over nostr, allowed only while the rules' `contactLock` is on) while locked, `lockedBy` (with `contact`: that contact's npub), `relays[]` (with live connection state), `chain` (`synced` once Electrs answers, `syncing` with `progress` when Bitcoin Core RPC reports initial block download, else `unavailable`; `height`; `mempoolUnseen: true` when the guardian found that its Electrum server reports no unconfirmed transactions, so payments to the wallet show only once confirmed), `wallets[]` (zero or one: the engine guards one active wallet), `retiredWallets[]` (wallets it guarded before, read-only history: `reason` `recovered` with the `successorId` it guards now, or `retired`), `hardwareConfirmRequired` (after the guardian took over a recovered wallet, until the phone confirms the hardware wallet), `dailySpend` (`usedSats`, `limitSats`, and `limitOff: true` while there is no daily limit), `savings?` (the phone's optional Savings wallet, which this guardian only watches and cannot sign for: `id`, `watchedSince`, `balanceSats`/`unconfirmedSats`/`scannedAt` from its last scan, and `lastMoved: { at, sats, txid }`, the newest time coins left it; absent without Savings), `recoveryInProgress`, and `phoneSpending`, `network`, `npub`, `version`, `warnings?` (`no_alert_contacts`: a recovery would be announced only to the paired phone; mainnet guardians refuse that, test networks warn). |
-| `POST /api/session` | `{ passphrase, unlock? }` | `GuardianStatus` | Signs the browser in (sets the session cookie). With `unlock: true` a locked guardian is unlocked by the same passphrase (that attempt counts against the unlock's rate limit). `401 bad_passphrase`, `429 rate_limited`: sign-in has its own rate limit (exponential backoff after 3 failures, persisted), which neither the unlock, the reset nor the phone's `guardian.unlock` shares. |
-| `DELETE /api/session` | `{}` | `PublicStatus` | Signs the browser out (clears the cookie). |
+| `POST /api/session` | `{ passphrase, unlock? }` | `GuardianStatus` with `sessionSecret` | Signs the browser in (sets the session cookie; send `sessionSecret` back as `X-Trikey-Session`). With `unlock: true` a locked guardian is unlocked by the same passphrase (that attempt counts against the unlock's rate limit). `401 bad_passphrase`, `429 rate_limited`: sign-in has its own rate limit (exponential backoff after 3 failures, persisted), which neither the unlock, the reset nor the phone's `guardian.unlock` shares. |
+| `DELETE /api/session` | `{}` | `PublicStatus` | Signs the browser out (clears the cookie). Ends the session only with its `X-Trikey-Session`. |
 | `GET /api/setup/preflight` | none | `SetupPreflight` | First run only. `electrs` is `found` when Electrs answers; `node` is `found` when Bitcoin Core RPC answers (or, without RPC settings, when Electrs does). The relay choices to offer. Since 0.1.9: `electrsProblem` (while `electrs` is `missing`: why, in plain words), `platform` (`umbrel`, `start9` or `docker`) and `setupCodeRequired` (for this request: false only through the platform's recognised login proxy, or on a guardian without `TRIKEY_PLATFORM`). |
 | `POST /api/setup/code` | `{ code }` | `{ ok: true }` | First run only. Checks the setup code (below) before the owner types a passphrase; sets nothing up. `403 setup_code_required` without a code, `401 bad_setup_code`, `429 rate_limited` after 10 wrong codes in a minute. Without `setupCodeRequired` any code passes. |
 | `POST /api/setup` | `{ passphrase, relays: string[], entropy?, setupCode? }` | `GuardianStatus` | First run only. With `setupCodeRequired`, `setupCode` must be the setup code (checked first, same answers as `POST /setup/code`). Creates key 3 (a fresh BIP39 seed; the BIP48 account key), encrypts it under an Argon2id key from the passphrase, connects the chosen relays. The guardian ends up unlocked. `entropy`: 32 bytes from the browser's `crypto.getRandomValues` as 64 lowercase hex characters, mixed into the new seed with the guardian's own (DESIGN.md, "Entropy", `trikey/guardian-seed/v1`); never logged or stored. The UI always sends it; it is optional for other clients. `400 invalid` if `relays` is empty, has more than 8 entries or a URL that is not `wss://` (or `ws://` on a local host), the passphrase has fewer than 12 characters, or `entropy` is present but not exactly 64 lowercase hex characters. There is no backup of key 3, by design. |
@@ -134,7 +151,7 @@ runs (the current passphrase, the new file, its check): several seconds, longer 
 guards the port; on Umbrel and Start9 the platform's login guards only its own path, and other apps' containers reach
 the port directly (security review 2026-11, finding 3). So on every platform (`TRIKEY_PLATFORM` set) the guardian asks
 for a one-time code, 16 Crockford base32 characters (`XXXX-XXXX-XXXX-XXXX`, 80 bits), except from the platform's login
-proxy (`TRIKEY_TRUSTED_PROXY`, recognised by the socket's address; Umbrel). Where it comes from: made from the OS
+proxy (`TRIKEY_TRUSTED_PROXY`, recognised by the socket's address; Umbrel's app gateway, `gateway`). Where it comes from: made from the OS
 generator at every start, kept in memory only and printed in the log (`setup.code code=...`), or handed in by the
 platform (`TRIKEY_SETUP_CODE`: Start9 draws it at install and shows it in its Show Setup Code action; the log has it
 too). The UI asks for it first (`POST /api/setup/code`) and sends it again with `POST /api/setup`; the page says where
