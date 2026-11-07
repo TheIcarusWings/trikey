@@ -80,9 +80,9 @@ function LimitCard({ limit }: { limit: NonNullable<WalletOverview['dailyLimit']>
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={pct}
-            className="h-1.5 overflow-hidden rounded-[3px] bg-border"
+            className="h-2 overflow-hidden rounded-full bg-foreground/15"
           >
-            <div className={cn('h-1.5', pct >= 100 ? 'bg-warn' : 'bg-good')} style={{ width: `${pct}%` }} />
+            <div className={cn('h-2', pct >= 100 ? 'bg-warn' : 'bg-good')} style={{ width: `${pct}%` }} />
           </div>
           <p className="m-0 text-sm leading-5 text-muted-foreground tabular-nums">{used}. Over it, payments need the hardware wallet.</p>
         </>
