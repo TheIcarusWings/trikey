@@ -58,7 +58,7 @@ export interface SlotBinding {
 
 export interface UnlockSlot {
   walletId: string;
-  /** The slot id in the signed text (`unlockKeyMessage`), picked by the phone. */
+  /** The slot id in the signed text (`unlockKeyMessage`): offered by the guardian (`hardwareUnlockOffer`; before, picked by the phone). */
   slot: string;
   kind: 'hardware';
   /** Unix ms. */

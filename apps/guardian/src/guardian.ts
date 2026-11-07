@@ -51,6 +51,7 @@ import type { SimplePool } from 'nostr-tools/pool';
 import { normalizeURL } from 'nostr-tools/utils';
 import { GUARDIAN_FEATURES, RpcServer, UnlockKeyHolder, unlockKeyMessage, type SealedUnlock, type UnlockSecret, SeenWraps, SimplePoolRelayPool, checkRelayList, checkRelayUrl, createSimplePool, sameRelays, type Alert, type MethodName } from '@trikey/protocol';
 import { assertRandomSourceHealthy } from '@trikey/core/random-health';
+import { secureRandomBytes } from '@trikey/core/random';
 import { ChainService } from './chain/chain.js';
 import { RelayedTxs } from './chain/relayed.js';
 import { BitcoinRpc } from './chain/bitcoind.js';
@@ -101,7 +102,7 @@ import { ObservedStore } from './observed-store.js';
 import { PairingSessions } from './pairing.js';
 import { DAY, JsonFileStore, PolicyEngine, systemClock, type Clock, type RecoveryRecord, type StateStore } from './policy/index.js';
 import { ServiceState, type RetiringRelay, type ServiceEvent } from './service-state.js';
-import { UnlockThrottle, type ThrottleOptions } from './unlock-throttle.js';
+import { CallerThrottle, UNKNOWN_CALLER, UnlockThrottle, type Caller, type ThrottleOptions } from './unlock-throttle.js';
 import { DirectMessages } from './nostr/dm.js';
 import { Inbox, seenWrapsFile } from './nostr/inbox.js';
 import { buildHandlers, KnownCoins, walletOf } from './nostr/handlers.js';
@@ -227,12 +228,15 @@ export type UnlockOutcome =
   | { ok: false; code: 'hardware_unlock_off'; message: string };
 
 /** How an unlock attempt came (`Guardian.unlockAttempt`): for its failure code, the log and the Activity. */
-type AttemptHow = { hardwareOf?: string; sealed?: boolean; badSeal?: boolean; unsealed?: boolean };
+type AttemptHow = { hardwareOf?: string; sealed?: boolean; badSeal?: boolean; unsealed?: boolean; caller?: Caller };
+
+/** How long a hardware unlock slot id the guardian offered stays good (`guardian.status.hardwareUnlockOffer`). */
+export const SLOT_OFFER_MS = 30 * 60_000;
 
 /** What `unlock.hardware.add` did, or why not. */
 export type HardwareUnlockAddOutcome =
   | { ok: true; walletId: string; slot: string; addedAt: number }
-  | { ok: false; code: 'locked' | 'not_registered' | 'wallet_changed' | 'hardware_unconfirmed' | 'bad_signature' | 'setup_required'; message: string }
+  | { ok: false; code: 'locked' | 'not_registered' | 'wallet_changed' | 'hardware_unconfirmed' | 'bad_signature' | 'setup_required' | 'slot_not_offered'; message: string }
   /**
    * The signature sealed (`sealed_unlock`): `unlock_key_stale`, sealed to a key the guardian no longer holds or expired
    * (seal again, nothing was opened); `bad_seal`, sealed to the current key but it does not open, or is not this
@@ -389,13 +393,15 @@ export class Guardian implements WalletRuntime {
   /**
    * Passphrase attempts, each with its own throttle so one cannot starve another: the web UI's unlock
    * (and setup), the phone's `guardian.unlock`, and the web UI's reset. A stolen phone guessing away
-   * never delays the owner at the box.
+   * never delays the owner at the box. The web UI's unlock and its sign-ins can be tried without a session, so they
+   * count per caller (by the socket's address, unlock-throttle.ts `CallerThrottle`): a stranger who reaches the port
+   * never keeps the owner in the wait.
    */
-  throttle!: UnlockThrottle;
+  throttle!: CallerThrottle;
   phoneThrottle!: UnlockThrottle;
   resetThrottle!: UnlockThrottle;
-  /** Web sign-ins (`POST /api/session`), throttled on their own. */
-  sessionThrottle!: UnlockThrottle;
+  /** Web sign-ins (`POST /api/session`), throttled on their own, per caller. */
+  sessionThrottle!: CallerThrottle;
   /** The web UI's sessions (http/sessions.ts). In memory: a restart signs everyone out. */
   readonly sessions = new WebSessions();
   /**
@@ -570,13 +576,13 @@ export class Guardian implements WalletRuntime {
     g.identity = await loadIdentity(g.path('identity'));
     g.service = new ServiceState(g.path('service'));
     await g.service.load();
-    g.throttle = new UnlockThrottle(g.path('throttle'), g.clock, opts.throttle);
+    g.throttle = new CallerThrottle(g.path('throttle'), g.clock, opts.throttle);
     await g.throttle.load();
     g.phoneThrottle = new UnlockThrottle(g.path('phoneThrottle'), g.clock, opts.throttle);
     await g.phoneThrottle.load();
     g.resetThrottle = new UnlockThrottle(g.path('resetThrottle'), g.clock, opts.throttle);
     await g.resetThrottle.load();
-    g.sessionThrottle = new UnlockThrottle(g.path('sessionThrottle'), g.clock, opts.throttle);
+    g.sessionThrottle = new CallerThrottle(g.path('sessionThrottle'), g.clock, opts.throttle);
     await g.sessionThrottle.load();
     g.store = new ObservedStore(opts.store ?? new JsonFileStore(g.path('engine')));
     // The engine checks its clock against the chain (recovery delay, daily limit window): Electrs' tip.
@@ -652,6 +658,7 @@ export class Guardian implements WalletRuntime {
     GUARDIAN_FEATURES.ownWallets2,
     GUARDIAN_FEATURES.labelsBackup,
     GUARDIAN_FEATURES.hardwareUnlock,
+    GUARDIAN_FEATURES.hardwareUnlockOffer,
     GUARDIAN_FEATURES.sealedUnlock,
     GUARDIAN_FEATURES.passphraseChange,
     GUARDIAN_FEATURES.pairingRulesApproval,
@@ -1444,6 +1451,29 @@ export class Guardian implements WalletRuntime {
     return s ? { slot: s.slot, addedAt: Math.floor(s.addedAt / 1000) } : undefined;
   }
 
+  /**
+   * The slot ids offered for each wallet's next `unlock.hardware.add` (`hardwareUnlockOfferOf`): picked here, in memory
+   * only, each taken once. With the phone picking them, an old signature (kept by malware, or read from an unsealed add)
+   * could make its old slot again after the owner turned the option off and on (security review 2026-11, sweep 2).
+   */
+  private readonly slotOffers = new Map<string, { slot: string; until: number }>();
+
+  /**
+   * `guardian.status.hardwareUnlockOffer` of `walletId` (guardians with `unlock_slot_offer`, unlocked only): the slot id
+   * its hardware wallet signs to turn the option on. The same one until it is used or `SLOT_OFFER_MS` passes.
+   */
+  hardwareUnlockOfferOf(walletId: string | undefined): { slot: string; expiresAt: number } | undefined {
+    if (!walletId || this.locked || !this.features.includes(GUARDIAN_FEATURES.hardwareUnlock) || !this.features.includes(GUARDIAN_FEATURES.hardwareUnlockOffer))
+      return undefined;
+    const now = this.clock.now();
+    let offer = this.slotOffers.get(walletId);
+    if (!offer || offer.until <= now) {
+      offer = { slot: hex.encode(secureRandomBytes(8)), until: now + SLOT_OFFER_MS };
+      this.slotOffers.set(walletId, offer);
+    }
+    return { slot: offer.slot, expiresAt: Math.floor(offer.until / 1000) };
+  }
+
   /** The text the hardware wallet of `walletId` signs for unlock slot `slot` (`@trikey/protocol` `unlockKeyMessage`). */
   private unlockText(walletId: string, slot: string): string {
     return unlockKeyMessage({ walletId, guardianPubkey: this.identity!.pubkey, network: this.config.network, slot });
@@ -1503,6 +1533,17 @@ export class Guardian implements WalletRuntime {
       return { ok: false, code: 'wallet_changed', message: `This guardian guards wallet ${reg.walletId} now: sign the text for it.` };
     if (w.engine.status().hardwareConfirmRequired)
       return { ok: false, code: 'hardware_unconfirmed', message: 'Confirm your hardware wallet for this wallet first (after the recovery).' };
+    // Only the slot id this guardian offered (`hardwareUnlockOfferOf`), still fresh: an old signature for an id of before
+    // never makes a slot again. Checked before the seal is opened: nothing secret is read for a refused id.
+    const offer = this.features.includes(GUARDIAN_FEATURES.hardwareUnlockOffer) ? this.slotOffers.get(reg.walletId) : undefined;
+    if (this.features.includes(GUARDIAN_FEATURES.hardwareUnlockOffer) && (!offer || offer.slot !== input.slot || offer.until <= this.clock.now())) {
+      this.log.warn('unlock_slots.not_offered', { walletId: reg.walletId });
+      return {
+        ok: false,
+        code: 'slot_not_offered',
+        message: 'The guardian did not offer that unlock slot, or it ran out (the guardian restarted, or more than 30 minutes went by). Turn it on again. If this keeps happening, update the Trikey app.',
+      };
+    }
     // The signature: sealed to the guardian's current sealing key (PROTOCOL.md, "Sealed unlock"), or from an older phone
     // in the clear (accepted, and marked).
     let signature: string;
@@ -1539,6 +1580,7 @@ export class Guardian implements WalletRuntime {
     // Opened once before it counts: a slot that would not open is never stored.
     openSlot(slot, signature, binding).fill(0);
     await this.unlockSlots.put(slot);
+    this.slotOffers.delete(reg.walletId); // taken: the next add needs a new id, and a new signature
     this.log.info('unlock_slots.added', { walletId: reg.walletId, ...(unsealed ? { unsealed: true } : {}) });
     await w.logEvent({ type: 'unlock_slot_added', walletId: reg.walletId, ...(unsealed ? { unsealed: true as const } : {}) });
     // A new way to open the whole box: the owner's channels, the first wallet's alert contacts and this wallet's hear of
@@ -1663,7 +1705,7 @@ export class Guardian implements WalletRuntime {
       this.keystore = file;
       await this.unlockSlots.rebind(keystoreBinding(file));
       this.installSigner(signer, held);
-      await this.throttle.succeeded();
+      await this.throttle.clear();
       await this.logEvent({ type: 'setup' });
       this.log.info('guardian.setup_complete', { network: this.config.network, relays: relays.length });
       await this.startNostr();
@@ -1779,13 +1821,14 @@ export class Guardian implements WalletRuntime {
   /**
    * Unlock with the passphrase (web UI or `guardian.unlock`). Rate limited; the passphrase is never logged. From the phone
    * on a guardian that seals unlocks, this is an older app's unsealed passphrase: accepted, and marked in the Activity.
+   * `caller`: who tries it in the web UI (its own count in the web throttle).
    */
-  unlock(passphrase: unknown, via: 'web' | 'phone'): Promise<UnlockOutcome> {
+  unlock(passphrase: unknown, via: 'web' | 'phone', caller?: Caller): Promise<UnlockOutcome> {
     return this.unlockMutex.run(async (): Promise<UnlockOutcome> => {
       const file = this.keystore;
       if (!file) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
       if (!this.locked) return { ok: true };
-      return this.passphraseAttempt(file, passphrase, via, { unsealed: via === 'phone' && this.sealsUnlocks });
+      return this.passphraseAttempt(file, passphrase, via, { unsealed: via === 'phone' && this.sealsUnlocks, ...(caller ? { caller } : {}) });
     });
   }
 
@@ -1945,7 +1988,12 @@ export class Guardian implements WalletRuntime {
    */
   private async unlockAttempt(file: KeystoreFile, via: 'web' | 'phone', how: AttemptHow, open: () => Promise<GuardianSeed>): Promise<UnlockOutcome> {
     const what = this.attemptFields(how);
-    const throttle = via === 'web' ? this.throttle : this.phoneThrottle;
+    // The web throttle counts per caller; the phone is one caller.
+    const caller = how.caller ?? UNKNOWN_CALLER;
+    const throttle =
+      via === 'web'
+        ? { check: () => this.throttle.check(caller), begin: () => this.throttle.begin(caller), succeeded: () => this.throttle.succeeded(caller), failures: () => this.throttle.failuresOf(caller) }
+        : { check: () => this.phoneThrottle.check(), begin: () => this.phoneThrottle.begin(), succeeded: () => this.phoneThrottle.succeeded(), failures: () => this.phoneThrottle.failures };
     if (via === 'phone') {
       const refusal = this.phoneAttemptRefusal(how);
       if (refusal) return refusal;
@@ -1961,7 +2009,7 @@ export class Guardian implements WalletRuntime {
       seed = await open();
     } catch (e) {
       if (!(e instanceof BadPassphraseError)) throw e;
-      this.log.warn('guardian.unlock_failed', { via, failures: throttle.failures, ...what });
+      this.log.warn('guardian.unlock_failed', { via, failures: throttle.failures(), ...what });
       await this.logEvent({ type: 'unlock_failed', via, ...what });
       const next = throttle.check();
       return { ok: false, code: how.badSeal ? 'bad_seal' : how.hardwareOf ? 'bad_hardware' : 'bad_passphrase', retryAfterSeconds: next.ok ? undefined : Math.ceil(next.retryAfterMs / 1000) };
@@ -1986,27 +2034,27 @@ export class Guardian implements WalletRuntime {
 
   /**
    * Checks the unlock passphrase for a web sign-in (`POST /api/session`) without unlocking anything.
-   * Its own throttle, like every other passphrase entry point; the passphrase is never logged.
+   * Its own throttle, like every other passphrase entry point, counted per `caller`; the passphrase is never logged.
    */
-  checkWebPassphrase(passphrase: unknown): Promise<UnlockOutcome> {
+  checkWebPassphrase(passphrase: unknown, caller: Caller = UNKNOWN_CALLER): Promise<UnlockOutcome> {
     return this.unlockMutex.run(async (): Promise<UnlockOutcome> => {
       const file = this.keystore;
       if (!file) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
       if (typeof passphrase !== 'string' || passphrase.length === 0 || passphrase.length > 4 * MAX_PASSPHRASE_LENGTH)
         return { ok: false, code: 'invalid', message: 'Enter the unlock passphrase.' };
-      const verdict = this.sessionThrottle.check();
+      const verdict = this.sessionThrottle.check(caller);
       if (!verdict.ok) return { ok: false, code: 'rate_limited', retryAfterSeconds: Math.ceil(verdict.retryAfterMs / 1000) };
-      await this.sessionThrottle.begin();
+      await this.sessionThrottle.begin(caller);
       try {
         (await unlockKeystoreSeed(file, passphrase)).wipe();
       } catch (e) {
         if (!(e instanceof BadPassphraseError)) throw e;
-        this.log.warn('web.sign_in_failed', { failures: this.sessionThrottle.failures });
+        this.log.warn('web.sign_in_failed', { failures: this.sessionThrottle.failuresOf(caller) });
         await this.logEvent({ type: 'unlock_failed', via: 'web' });
-        const next = this.sessionThrottle.check();
+        const next = this.sessionThrottle.check(caller);
         return { ok: false, code: 'bad_passphrase', retryAfterSeconds: next.ok ? undefined : Math.ceil(next.retryAfterMs / 1000) };
       }
-      await this.sessionThrottle.succeeded();
+      await this.sessionThrottle.succeeded(caller);
       return { ok: true };
     });
   }
@@ -2022,7 +2070,7 @@ export class Guardian implements WalletRuntime {
    * Not from the phone: see DESIGN.md (a phone thief who saw the passphrase must not be able to lock the owner out of
    * the box, and the web page already needs the box's own login on Umbrel and Start9).
    */
-  async changePassphrase(input: { passphrase?: unknown; newPassphrase?: unknown }): Promise<PassphraseChangeOutcome> {
+  async changePassphrase(input: { passphrase?: unknown; newPassphrase?: unknown }, caller: Caller = UNKNOWN_CALLER): Promise<PassphraseChangeOutcome> {
     const outcome = await this.unlockMutex.run(async (): Promise<PassphraseChangeOutcome> => {
       const file = this.keystore;
       if (!file) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
@@ -2037,22 +2085,22 @@ export class Guardian implements WalletRuntime {
       if (current.normalize('NFKC') === next.normalize('NFKC'))
         return { ok: false, code: 'same_passphrase', message: 'The new passphrase is the same as the current one.' };
 
-      const verdict = this.throttle.check();
+      const verdict = this.throttle.check(caller);
       if (!verdict.ok) return { ok: false, code: 'rate_limited', retryAfterSeconds: Math.ceil(verdict.retryAfterMs / 1000) };
-      await this.throttle.begin();
+      await this.throttle.begin(caller);
       let rekeyed: KeystoreFile;
       try {
         rekeyed = await changeKeystorePassphrase(this.path('keystore'), file, current, next, {
           kdf: this.config.kdf,
           expected: (seed) => held.use((mine) => sameSeed(mine, seed)),
-          opened: () => this.throttle.succeeded(),
+          opened: () => this.throttle.succeeded(caller),
         });
       } catch (e) {
         if (e instanceof SamePassphraseError) return { ok: false, code: 'same_passphrase', message: 'The new passphrase is the same as the current one.' };
         if (!(e instanceof BadPassphraseError)) throw e;
-        this.log.warn('guardian.passphrase_change_failed', { failures: this.throttle.failures });
+        this.log.warn('guardian.passphrase_change_failed', { failures: this.throttle.failuresOf(caller) });
         await this.logEvent({ type: 'passphrase_change_failed' });
-        const after = this.throttle.check();
+        const after = this.throttle.check(caller);
         return { ok: false, code: 'bad_passphrase', retryAfterSeconds: after.ok ? undefined : Math.ceil(after.retryAfterMs / 1000) };
       }
       this.keystore = rekeyed;

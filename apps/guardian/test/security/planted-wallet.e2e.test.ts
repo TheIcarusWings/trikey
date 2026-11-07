@@ -29,7 +29,6 @@ import { GuardianRig, type FundedOutput } from '../support/index.js';
 const ATTACKER_HW = 'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote';
 const OWNER_HW2 = MNEMONICS.hardware2;
 const FIRST_CONTACT = nostrKey(41);
-const SLOT = '0123456789abcdef';
 
 async function refusal(p: Promise<unknown>): Promise<RpcError> {
   try {
@@ -151,6 +150,8 @@ describe('security: a wallet added with the phone alone', { timeout: 90_000 }, (
 
   it("an unlock slot on any wallet is announced to the first wallet's contacts, and the owner turns it off in the web page", async () => {
     const business = (await rpc.call('guardian.status', {})).wallets!.find((w) => w.name === 'Business')!;
+    // The slot id the guardian offers for that wallet (`unlock_slot_offer`).
+    const SLOT = (await rpc.call('guardian.status', { walletId: business.walletId })).hardwareUnlockOffer!.slot;
     const signature = signMessage(unlockKeyMessage({ walletId: business.walletId, guardianPubkey: rig.pubkey, network: 'regtest', slot: SLOT }), hwAuthPrivateKey(AUTH_PATH, OWNER_HW2));
     await rpc.call('unlock.hardware.add', { walletId: business.walletId, slot: SLOT, signature });
     expect(notices().find((n) => n.kind === 'unlock_slot_added' && n.subjectWalletId === business.walletId)).toMatchObject({ recipients: [FIRST_CONTACT] });
@@ -165,6 +166,11 @@ describe('security: a wallet added with the phone alone', { timeout: 90_000 }, (
     expect(off.body.wallets[1].unlockSlot).toBeUndefined();
     expect(rig.guardian.unlockSlots.get(business.walletId)).toBeUndefined();
     expect((await rig.api('DELETE', `/unlock-slots/${business.walletId}`)).status).toBe(404);
+    // Turned off in the web page, it stays off: the old signature cannot make its slot again (the guardian offers a new id).
+    const again = await refusal(rpc.call('unlock.hardware.add', { walletId: business.walletId, slot: SLOT, signature }));
+    expect(again.data).toMatchObject({ reason: 'unlock_slot_not_offered' });
+    expect(rig.guardian.unlockSlots.get(business.walletId)).toBeUndefined();
+    expect((await rpc.call('guardian.status', { walletId: business.walletId })).hardwareUnlockOffer!.slot).not.toBe(SLOT);
   });
 
   it('the owner removes a wallet after the first in the web page, without its hardware wallet, behind a typed confirmation', async () => {

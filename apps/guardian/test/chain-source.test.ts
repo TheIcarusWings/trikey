@@ -164,6 +164,17 @@ describe('a save that changes nothing, and the server the platform set', () => {
     expect(() => parseChainSource({ kind: 'core', rpc: { host: '10.21.21.8', port: 8332, user: 'other' } }, undefined, node)).toThrow(/RPC password/);
   });
 
+  it('never sends a kept RPC password to another port of the same host', () => {
+    // Anyone on the node's machine may listen on another port: the password goes only where it was typed for.
+    const node = { host: '10.21.21.8', port: 8332, user: 'umbrel', pass: 'secret' };
+    expect(() => parseChainSource({ kind: 'core', rpc: { host: '10.21.21.8', port: 9999, user: 'umbrel' } }, undefined, node)).toThrow(/RPC password/);
+    const saved = parseChainSource({ kind: 'core', rpc: { host: 'node.lan', port: 8332, user: 'u', pass: 'p' } });
+    expect(() => parseChainSource({ kind: 'core', rpc: { host: 'node.lan', port: 8333, user: 'u' } }, saved)).toThrow(/RPC password/);
+    // The same address keeps it, and a new port with the password typed again is fine.
+    expect(parseChainSource({ kind: 'core', rpc: { host: 'node.lan', port: 8332, user: 'u' } }, saved)).toEqual(saved);
+    expect(parseChainSource({ kind: 'core', rpc: { host: 'node.lan', port: 8333, user: 'u', pass: 'p' } }, saved)).toMatchObject({ rpc: { port: 8333, pass: 'p' } });
+  });
+
   it('names the platform that set the server', () => {
     expect(environmentSourceName('umbrel')).toBe('the server Umbrel set');
     expect(environmentSourceName('start9')).toBe('the server StartOS set');
