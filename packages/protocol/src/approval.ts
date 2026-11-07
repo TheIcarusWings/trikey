@@ -108,7 +108,13 @@ export type HardwareAction =
   | { action: 'policy'; policy: Policy; contactLockBefore?: boolean }
   | { action: 'cancel-recovery'; recoveryId: string }
   | { action: 'resume-phone' }
-  | { action: 'retire-wallet' };
+  | { action: 'retire-wallet' }
+  /**
+   * Adding a wallet (`wallet.add`, guardians with `add_wallet_approval`): signed by the FIRST wallet's hardware wallet,
+   * with the first wallet's id and sequence, naming the new wallet:
+   * `Trikey add-wallet v1 wallet=<first wallet id> new=<new wallet id> seq=<n> expires=<ISO>`.
+   */
+  | { action: 'add-wallet'; newWalletId: string };
 
 export interface ApprovalContext {
   /** From the `pair` result. */
@@ -195,6 +201,9 @@ export function approvalMessage(action: HardwareAction, ctx: ApprovalContext): s
       return line(['Trikey resume-phone v1', ...head, tail]);
     case 'retire-wallet':
       return line(['Trikey retire-wallet v1', ...head, tail]);
+    case 'add-wallet':
+      if (!/^[0-9a-f]{16}$/.test(action.newWalletId)) throw new Error('invalid wallet id');
+      return line(['Trikey add-wallet v1', `wallet=${ctx.walletId}`, `new=${action.newWalletId}`, `seq=${ctx.sequence}`, tail]);
   }
 }
 

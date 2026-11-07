@@ -18,6 +18,8 @@ import { removeBlocker } from './wallets';
 const ledger = new SoftwareHardwareSigner({ mnemonic: 'legal winner thank year wave sausage worth useful legal winner thank yellow', network: 'regtest', kind: 'ledger', model: 'Nano X (simulated)' });
 const trezor = new SoftwareHardwareSigner({ mnemonic: 'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong', network: 'regtest', kind: 'trezor', model: 'Safe 3 (simulated)' });
 const provider = new SoftwareHardwareProvider(ledger);
+// Adding a wallet asks the first wallet's Ledger to approve it, while the new Trezor is the one plugged in.
+provider.others = [ledger, trezor];
 const passkey = new MemoryPasskeyPrf();
 passkey.supported = false;
 const cloud = new MemoryCloudBackupStore();

@@ -263,6 +263,24 @@ export function le64(v: bigint): Uint8Array {
 }
 
 /**
+ * `wallet.add` params with the FIRST wallet's `addApproval` (guardians with `add_wallet_approval`): the `add-wallet` text
+ * naming the new wallet (from the params' descriptor), with the first wallet's id and next sequence as `g` holds them,
+ * signed by the first wallet's device (`privateKey`, the default fake device). `nowMs`: the guardian's clock.
+ */
+export function withAddApproval<T extends { descriptor: string }>(
+  params: T,
+  g: { engine: { registration(): { walletId: string } | undefined; status(): { nextHardwareSequence: number } } },
+  nowMs: number,
+  privateKey: Uint8Array = hwAuthPrivateKey(),
+): T & { addApproval: HardwareApproval & { kind: 'bip137' } } {
+  const newWalletId = MultisigWallet.fromDescriptor(params.descriptor, network).fingerprint();
+  const sequence = g.engine.status().nextHardwareSequence;
+  const expiresAt = Math.floor(nowMs / 1000) + 600;
+  const text = approvalMessage({ action: 'add-wallet', newWalletId }, { walletId: g.engine.registration()!.walletId, sequence, expiresAt });
+  return { ...params, addApproval: { kind: 'bip137', sequence, expiresAt, signature: signMessage(text, privateKey) } };
+}
+
+/**
  * `pair` / `wallet.add` params with the fake device's `rulesApproval` over their `rules`, for the wallet their descriptor
  * describes (guardians with `pairing_rules_approval` require it). `nowMs`: the guardian's clock.
  */

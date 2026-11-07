@@ -894,6 +894,17 @@ Do:
    hardware wallet. You should see: the device registers the wallet as "Trikey Business" and shows its first address, which
    matches the phone; the guardian's Activity shows "Wallet "Business" added"; the phone says anyone who can unlock it can
    spend up to each wallet's daily limit. Connecting the first wallet's device instead must be refused.
+   **With a guardian and an app from this release** the **first** wallet's device is asked too, after the new one approved
+   its rules: a text `Trikey add-wallet v1 wallet=<first wallet id> new=<new wallet id> seq=...`. Approve it on the first
+   wallet's device. The first wallet's alert contacts get a nostr message "a wallet was added to the guardian ...". With an
+   app from before this release and a guardian from this one, "Add a wallet" must be refused with "Update the Trikey app".
+1b. **The owner's escape hatch.** On the guardian's web page, Settings, **Wallets and hardware unlock**, **Review**: both
+   wallets are listed, with "Hardware unlock is on" for a wallet you turned it on for (step 18d; the first wallet's alert
+   contacts are told when you do). **Turn hardware unlock off** for one: the passphrase still unlocks. Optional, at the
+   end of 18a (instead of step 7's Remove): **Remove...** the second wallet, type `REMOVE WALLET`: the guardian stops
+   guarding it (the phone gets "removed"; its money stays with the phone and its device), and its contacts and the first
+   wallet's are told. While a recovery of that wallet runs, the page offers no Remove (it says why) and the guardian
+   refuses it; Reset is refused too, with no way past it.
 2. **Device check.** Note what each device says when it signs for the second wallet: its own key stays at `0'` (no new
    path warning), the phone's and the guardian's keys show at account `2'`. Report the model and firmware.
 3. **Pay from each.** Switch at the top of Home. Pay inside each wallet's own limit, then over the second one's limit

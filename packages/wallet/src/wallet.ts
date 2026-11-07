@@ -2189,8 +2189,9 @@ export class TrikeyWallet {
    * 2. `wallet.add.prepare`: key 3 at `account` (the same seed as this wallet's key 3).
    * 3. Key 2 at `account` (one biometric prompt), the descriptor, registered on the device as "Trikey <name>", the pairing
    *    proof signed by the device.
-   * 4. `wallet.add`: the guardian checks it all and announces it. The new wallet's state is saved at `storageKey`.
-   * 5. The device shows the first address, which must match (`address_mismatch` otherwise: do not receive yet).
+   * 4. This wallet's own hardware wallet approves adding it (`add-wallet`, guardians with `add_wallet_approval`).
+   * 5. `wallet.add`: the guardian checks it all and announces it. The new wallet's state is saved at `storageKey`.
+   * 6. The device shows the first address, which must match (`address_mismatch` otherwise: do not receive yet).
    */
   async addOwnWallet(opts: AddOwnWalletOptions): Promise<TrikeyWallet> {
     this.requirePaired();
@@ -2257,6 +2258,9 @@ export class TrikeyWallet {
       const reg = await hw.registerWallet({ name: policyName, descriptor });
       // The new wallet's rules, shown on its device and signed (rule 4).
       const rulesApproval = await this.approveInitialRules(hw, rec, walletId, rules, features);
+      // This (the first) wallet's hardware wallet approves adding it (guardians with `add_wallet_approval`, which
+      // require it): a phone alone cannot add a wallet, nor through it a way to unlock the guardian.
+      const addApproval = features?.includes(GUARDIAN_FEATURES.addWalletApproval) ? await this.approveWalletAdd(walletId) : undefined;
 
       // 4. The guardian.
       const res = await this.call('wallet.add', {
@@ -2267,6 +2271,7 @@ export class TrikeyWallet {
         hardwareAuthProof: proof,
         rules,
         ...(rulesApproval ? { rulesApproval } : {}),
+        ...(addApproval ? { addApproval } : {}),
         ...(opts.firstName ? { firstName: opts.firstName.slice(0, 16) } : {}),
         // A guardian with phase 2 keeps the device's kind, so a phone rebuilding this wallet connects the right one.
         ...(this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.ownWallets2) ? { hardwareKind: rec.kind } : {}),
@@ -2311,6 +2316,23 @@ export class TrikeyWallet {
     } finally {
       await hw.close().catch(() => {});
     }
+  }
+
+  /**
+   * This (the first) wallet's hardware approval of adding wallet `newWalletId` to the guardian (`wallet.add`'s
+   * `addApproval`, guardians with `add_wallet_approval`): the `add-wallet` text with this wallet's id and sequence, signed
+   * on this wallet's device. `on`: the guardian it is for; when it is the one this wallet is moving to ("Replace
+   * guardian", the move not finished), this wallet's wallet and sequence there.
+   */
+  async approveWalletAdd(newWalletId: string, on?: { pubkey: string }): Promise<HardwareApproval> {
+    this.requirePaired();
+    if (this.s.own) throw new WalletError('wrong_state', "The first wallet's hardware wallet approves adding a wallet.");
+    const r = this.s.replacing;
+    if (on && r && r.guardian.pubkey === on.pubkey && this.s.guardian?.pubkey !== on.pubkey) {
+      const st = await (await this.replacementRpc(r)).call('guardian.status', {});
+      return this.approve({ action: 'add-wallet', newWalletId }, { walletId: r.wallet.walletId, sequence: Math.max(st.nextHardwareSequence, r.rules.nextHardwareSequence) });
+    }
+    return this.approve({ action: 'add-wallet', newWalletId });
   }
 
   /**
@@ -7280,7 +7302,7 @@ export class TrikeyWallet {
    * `awaiting_broadcast` move, an app restart). Refused while this wallet's recovery runs, and when the old guardian does
    * not answer unless the person confirmed it is gone (`oldGuardianReachable: false`).
    */
-  async moveToGuardian(target: GuardianRecord, opts: { oldGuardianReachable?: false } = {}): Promise<ReplaceOutcome> {
+  async moveToGuardian(target: GuardianRecord, opts: { oldGuardianReachable?: false; addApproval?: (newWalletId: string) => Promise<HardwareApproval> } = {}): Promise<ReplaceOutcome> {
     this.requirePaired();
     if (!this.s.own) throw new WalletError('wrong_state', 'The first wallet moves with the new guardian\'s pairing code ("Replace guardian").');
     if (target.hosted) throw new WalletError('wrong_state', 'Wallets move to a guardian of your own, not to a hosted slot.');
@@ -7300,14 +7322,14 @@ export class TrikeyWallet {
           throw new WalletError('old_guardian_unreachable', "Your old guardian isn't answering. If it is gone for good, confirm, and the move goes ahead without it.", {
             refusal: { kind: 'unreachable', message: 'The old guardian did not answer.' },
           });
-        await this.addAtNewGuardian(target, !st);
+        await this.addAtNewGuardian(target, !st, opts.addApproval);
       }
       return this.continueReplace();
     });
   }
 
   /** `moveToGuardian`'s first step: the wallet at its own account on the new guardian, naming the one it replaces. */
-  private async addAtNewGuardian(target: GuardianRecord, oldOffline: boolean): Promise<void> {
+  private async addAtNewGuardian(target: GuardianRecord, oldOffline: boolean, approveAdd?: (newWalletId: string) => Promise<HardwareApproval>): Promise<void> {
     const own = this.s.own!;
     const conn = await this.connect(target.pubkey, target.relays, this.replacementNaming(target.pubkey));
     let keep = false;
@@ -7318,6 +7340,9 @@ export class TrikeyWallet {
         st = await conn.rpc.call('guardian.status', {}, { timeoutMs: this.deps.probeTimeoutMs ?? Math.min(10_000, this.deps.rpcTimeoutMs ?? 30_000) });
         // Watching the old wallet (`replacesDescriptor`) needs phase 2; an older guardian could not relay the sweep.
         if (!st.features?.includes(GUARDIAN_FEATURES.ownWallets2)) throw new WalletError('guardian_unsupported', 'Update your new guardian: it cannot take more than one wallet yet.');
+        // Adding it there needs the first wallet's hardware wallet (`add_wallet_approval`): only the wallet set can ask it.
+        if (st.features?.includes(GUARDIAN_FEATURES.addWalletApproval) && !approveAdd)
+          throw new WalletError('wrong_state', "Move this wallet with Replace guardian: your first wallet's hardware wallet approves adding it to the new guardian.");
         prep = await conn.rpc.call('wallet.add.prepare', { account: own.account });
       } catch (e) {
         throw asWalletError(e, 'wallet.add.prepare');
@@ -7354,6 +7379,8 @@ export class TrikeyWallet {
         const rulesApproval = await this.approveInitialRules(hw, rec, walletId, rules, st.features);
         return { proof, hmac: reg.hmac, rulesApproval };
       });
+      // The first wallet's device approves adding this wallet there (its own approval on the new guardian).
+      const addApproval = st.features?.includes(GUARDIAN_FEATURES.addWalletApproval) ? await approveAdd!(walletId) : undefined;
       let res: Result<'wallet.add'>;
       try {
         res = await conn.rpc.call('wallet.add', {
@@ -7364,6 +7391,7 @@ export class TrikeyWallet {
           hardwareAuthProof: proof,
           rules,
           ...(rulesApproval ? { rulesApproval } : {}),
+          ...(addApproval ? { addApproval } : {}),
           hardwareKind: this.s.hardware!.kind,
           replacesWalletId: this.s.wallet!.walletId,
           replacesDescriptor: this.s.wallet!.descriptor,

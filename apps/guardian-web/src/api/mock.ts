@@ -1,6 +1,6 @@
 import { browserRandomBytes } from '../lib/random';
 import { ApiError, type GuardianApi } from './client';
-import { RESET_CONFIRMATION } from './types';
+import { REMOVE_WALLET_CONFIRMATION, RESET_CONFIRMATION, type OwnWalletSecurity } from './types';
 import type {
   ActivityEntry,
   ChainSettings,
@@ -67,7 +67,9 @@ export type MockScenario =
   | 'savings'
   | 'notify'
   | 'publicserver'
-  | 'nomempool';
+  | 'nomempool'
+  /** A second wallet the owner did not add (from before `add_wallet_approval`), with an unlock slot, and a third being recovered. */
+  | 'planted';
 
 /** The public servers the mock offers (a signet guardian's list). */
 const PUBLIC_SERVERS_DEMO = [{ id: 'mempool-signet', host: 'mempool.space', port: 60602, operator: 'mempool.space' }];
@@ -207,7 +209,7 @@ function demoRecovery(ready = false): RecoveryInProgress {
 
 export function readScenario(search: string): MockScenario {
   const value = new URLSearchParams(search).get('mock');
-  const known: MockScenario[] = ['firstrun', 'dockerfirstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout', 'oldrelays', 'limitoff', 'contactlocked', 'savings', 'notify', 'publicserver', 'nomempool'];
+  const known: MockScenario[] = ['firstrun', 'dockerfirstrun', 'locked', 'recovery', 'recoveryready', 'unpaired', 'syncing', 'signedout', 'oldrelays', 'limitoff', 'contactlocked', 'savings', 'notify', 'publicserver', 'nomempool', 'planted'];
   return known.find((s) => s === value) ?? 'default';
 }
 
@@ -280,6 +282,34 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
   let recovery: RecoveryInProgress | null =
     scenario === 'recovery' ? demoRecovery() : scenario === 'recoveryready' ? demoRecovery(true) : null;
   let walletIds = scenario === 'unpaired' || scenario === 'firstrun' || docker ? [] : ['3a7f09c2d41e8b65'];
+  // The Wallets page: the first wallet, and in `?mock=planted` one the owner did not add, with an unlock slot and a recovery.
+  let ownWallets: OwnWalletSecurity[] = walletIds.length
+    ? [
+        { walletId: walletIds[0]!, name: 'Main', first: true, account: 0, hardwareFingerprint: 'd34db33f' },
+        ...(scenario === 'planted'
+          ? [
+              {
+                walletId: '9c41e0b7a2f35d18',
+                name: 'Spare',
+                first: false,
+                account: 2,
+                hardwareFingerprint: '0badc0de',
+                addedAt: localAt(2, '03:14'),
+                unlockSlot: { addedAt: localAt(2, '03:16') },
+              },
+              {
+                walletId: '5e7a01c94b3d2f68',
+                name: 'Business',
+                first: false,
+                account: 4,
+                hardwareFingerprint: 'c0ffee11',
+                addedAt: localAt(30, '10:02'),
+                recovery: { id: '5e7a01c94b3d2f68w1-0d3c2b1a9f8e', readyAt: localAt(-5, '03:20') },
+              },
+            ]
+          : []),
+      ]
+    : [];
   let pairing: PairingSession | null = null;
   let relayUrls = RELAYS.map((r) => r.url);
   let retiring: RetiringRelay[] = [];
@@ -869,11 +899,41 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
       return status();
     },
 
+    async getOwnWallets() {
+      await wait();
+      return { wallets: clone(ownWallets), removeConfirmation: REMOVE_WALLET_CONFIRMATION };
+    },
+
+    async removeUnlockSlot(walletId) {
+      await wait();
+      const w = ownWallets.find((x) => x.walletId === walletId);
+      if (!w?.unlockSlot) throw new ApiError('not_found', 'Hardware unlock is not on for that wallet.', 404);
+      delete w.unlockSlot;
+      pushActivity({ kind: 'system', event: `Unlocking with the hardware wallet of wallet ${walletId} was turned off in this web page.`, summary: 'Hardware unlock turned off', signedBy: null, sats: null, result: 'ok' });
+      return this.getOwnWallets();
+    },
+
+    async removeOwnWallet(walletId, input) {
+      await wait();
+      const w = ownWallets.find((x) => x.walletId === walletId);
+      if (!w) throw new ApiError('not_found', 'No such wallet on this guardian.', 404);
+      if (w.first) throw new ApiError('first_wallet', 'The first wallet holds the pairing: it is not removed here. Reset the guardian to forget every wallet.', 409);
+      if (w.recovery)
+        throw new ApiError('recovery_pending', `Recovery ${w.recovery.id} of "${w.name}" is running: the wallet cannot be removed until it completes, or is cancelled from the app, with that wallet's hardware wallet or by one of its alert contacts.`, 409);
+      if (input.confirm !== REMOVE_WALLET_CONFIRMATION) throw new ApiError('invalid', `Type ${REMOVE_WALLET_CONFIRMATION} to confirm.`, 400);
+      ownWallets = ownWallets.filter((x) => x !== w);
+      pushActivity({ kind: 'system', event: `Wallet "${w.name}" (${w.walletId}) removed in this web page: this guardian co-signs nothing for it any more.`, summary: `Wallet "${w.name}" removed`, signedBy: null, sats: null, result: 'ok' });
+      return this.getOwnWallets();
+    },
+
     async resetGuardian(input) {
       await wait(400);
       if (input.confirm !== RESET_CONFIRMATION) throw new ApiError('invalid', `Type ${RESET_CONFIRMATION} to confirm.`, 400);
       if (input.passphrase === 'wrong') throw new ApiError('bad_passphrase', 'That passphrase is not right.', 401);
       if (recovery) throw new ApiError('recovery_pending', `Recovery ${recovery.id} is running. It must be cancelled or completed before the guardian can be reset.`, 409);
+      const ownRunning = ownWallets.find((w) => !w.first && w.recovery);
+      if (ownRunning) throw new ApiError('recovery_pending', `Recovery ${ownRunning.recovery!.id} of "${ownRunning.name}" is running. It must be cancelled or completed before the guardian can be reset.`, 409);
+      ownWallets = [];
       walletIds = [];
       phones = [];
       recovery = null;

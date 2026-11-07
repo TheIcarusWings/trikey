@@ -54,6 +54,7 @@ function longestTexts(): Record<string, string> {
     'cancel-recovery': approvalMessage({ action: 'cancel-recovery', recoveryId: 'z'.repeat(40) }, ctx),
     'resume-phone': approvalMessage({ action: 'resume-phone' }, ctx),
     'retire-wallet': approvalMessage({ action: 'retire-wallet' }, ctx),
+    'add-wallet': approvalMessage({ action: 'add-wallet', newWalletId: 'eeeeeeeeeeeeeeee' }, ctx),
     'recovery-access v1': recoveryAccessMessage({ guardianPubkey: NOSTR, phonePubkey: NOSTR, expiresAt: LATE }),
     'recovery-access v2': recoveryAccessMessage({ guardianPubkey: NOSTR, phonePubkey: NOSTR, expiresAt: LATE, walletId: WALLET }),
     'notes key': labelsKeyMessage(WALLET, 'testnet'),

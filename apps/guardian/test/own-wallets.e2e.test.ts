@@ -14,7 +14,7 @@ import { MultisigWallet, analyzePsbt, buildSpend, buildSweep, type KeyExpression
 import { ErrorCode, RpcClient, RpcError, SimplePoolRelayPool, decodePairingUri, pairingMessage, recoveryAccessMessage, type Alert, type Policy } from '@trikey/protocol';
 import { signMessage } from '../src/policy/index.js';
 import { cosignerFromSeed } from '../src/keystore.js';
-import { AUTH_PATH, MNEMONICS, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withRulesApproval } from './helpers.js';
+import { AUTH_PATH, MNEMONICS, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withAddApproval, withRulesApproval } from './helpers.js';
 import { GuardianRig, type FundedOutput } from './support/index.js';
 
 const HW2 = MNEMONICS.hardware2;
@@ -50,6 +50,8 @@ afterAll(async () => {
 });
 
 interface Phone {
+  /** The guardian it talks to (its first wallet's device approves `wallet.add`). */
+  rig: GuardianRig;
   key: Uint8Array;
   pubkey: string;
   rpc: RpcClient;
@@ -65,7 +67,7 @@ function phoneOn(rig: GuardianRig, key = generateSecretKey()): Phone {
   clients.push(rpc);
   const alerts: Alert[] = [];
   rpc.onAlert((a) => alerts.push(a));
-  return { key, pubkey: getPublicKey(key), rpc, alerts, now: () => rig.nowSec() };
+  return { rig, key, pubkey: getPublicKey(key), rpc, alerts, now: () => rig.nowSec() };
 }
 
 const toKey = (k: { fingerprint: string; path: string; xpub: string }): KeyExpression => ({ fingerprint: k.fingerprint, originPath: k.path.replace(/^m\//, '').replace(/'/g, 'h'), xpub: k.xpub });
@@ -100,7 +102,7 @@ async function addWallet(phone: Phone, opts: { account: number; hardware: string
     hardware: await hwSigner(opts.hardware).getKey(network),
     cosigner: toKey(prep.guardianKey),
   });
-  const res = await phone.rpc.call('wallet.add', withRulesApproval({
+  const res = await phone.rpc.call('wallet.add', withAddApproval(withRulesApproval({
     account: opts.account,
     name: opts.name,
     descriptor: wallet.descriptor(),
@@ -108,7 +110,7 @@ async function addWallet(phone: Phone, opts: { account: number; hardware: string
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), rawPub(prep.guardianKey.xpub)), hwAuthPrivateKey(AUTH_PATH, opts.hardware)),
     rules: rules(opts.limit ?? 50_000),
     ...(opts.firstName ? { firstName: opts.firstName } : {}),
-  }, phone.now() * 1000, hwAuthPrivateKey(AUTH_PATH, opts.hardware)));
+  }, phone.now() * 1000, hwAuthPrivateKey(AUTH_PATH, opts.hardware)), phone.rig.guardian, phone.now() * 1000));
   return { wallet, walletId: res.walletId, prep, res };
 }
 
@@ -177,6 +179,13 @@ describe('own wallets: two wallets of one owner on one guardian', { timeout: 90_
   it('adds a wallet with a new hardware wallet and announces it', async () => {
     second = await addWallet(phone, { account: 2, hardware: HW2, name: 'Business', firstName: 'Daily' });
     expect(second.walletId).toBe(second.wallet.fingerprint());
+    // Adding it used the first wallet's hardware approval (`add_wallet_approval`): that is all it changed of the first
+    // wallet's state, its sequence and the entry saying so.
+    const firstState = JSON.parse(await stateFile());
+    expect(firstState.hardwareSequence).toBe(1);
+    expect(firstState.activity.at(-1)).toMatchObject({ type: 'wallet_add_approved', newWalletId: second.walletId, sequence: 1 });
+    expect({ ...firstState, hardwareSequence: 0, activity: firstState.activity.slice(0, -1), nextActivityId: firstState.nextActivityId - 1 }).toEqual(JSON.parse(firstStateBefore));
+    firstStateBefore = await stateFile();
     expect(second.res).toMatchObject({ account: 2, name: 'Business' });
     const added = await waitFor(() => phone.alerts.find((a) => a.type === 'wallet_added'), 'wallet_added alert');
     expect(added).toMatchObject({ walletId: second.walletId, account: 2, name: 'Business' });
@@ -219,7 +228,7 @@ describe('own wallets: two wallets of one owner on one guardian', { timeout: 90_
     // Over Business's 50,000 sats (30,000 used): refused there ...
     const over = await refusal(pay(rig, phone, second.wallet, 1, 25_000n, second.walletId));
     expect(over.code).toBe(ErrorCode.PolicyViolation);
-    // The first wallet's state file did not change through anything the second did (adding it, paying, a refusal).
+    // The first wallet's state file did not change through anything the second did (paying, a refusal).
     expect(await stateFile()).toBe(firstStateBefore);
     // ... and a wallet-2 payment without walletId goes to the first wallet, which does not know its coins.
     expect([ErrorCode.PsbtInvalid, ErrorCode.PsbtRejected]).toContain((await refusal(pay(rig, phone, second.wallet, 2, 1_000n))).code);
@@ -386,14 +395,14 @@ describe('own wallets: alert contacts', { timeout: 60_000 }, () => {
     const contact = phoneOn(rig);
     const prep = await phone.rpc.call('wallet.add.prepare', { account: 2 });
     const wallet = new MultisigWallet(network, { app: await appSigner().getKey(network, 2), hardware: await hwSigner(HW2).getKey(network), cosigner: toKey(prep.guardianKey) });
-    const added = await phone.rpc.call('wallet.add', withRulesApproval({
+    const added = await phone.rpc.call('wallet.add', withAddApproval(withRulesApproval({
       account: 2,
       name: 'Business',
       descriptor: wallet.descriptor(),
       hardwareAuth: { pubkey: hwAuthPubkey(AUTH_PATH, HW2), path: AUTH_PATH },
       hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), rawPub(prep.guardianKey.xpub)), hwAuthPrivateKey(AUTH_PATH, HW2)),
       rules: { ...rules(50_000), alertContacts: [contact.pubkey] },
-    }, rig.nowSec() * 1000, hwAuthPrivateKey(AUTH_PATH, HW2)));
+    }, rig.nowSec() * 1000, hwAuthPrivateKey(AUTH_PATH, HW2)), rig.guardian, rig.nowSec() * 1000));
     // The first wallet's rules do not list the contact: it is Business's only.
     expect((await phone.rpc.call('policy.get', {})).policy.alertContacts).toEqual([]);
     const coin = rig.fund(wallet.derive(0, 0).script, 100_000n);

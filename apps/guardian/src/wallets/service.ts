@@ -18,7 +18,7 @@ import { RECOVERY_PEER_METHODS } from '../guardian.js';
 import type { GuardianSeed, KeystoreSigner } from '../keystore.js';
 import { errorText } from '../log.js';
 import { onceAcrossRestarts, walletHandlers, walletOf } from '../nostr/handlers.js';
-import { APP_UPDATE_REQUIRED, APP_UPDATE_REQUIRED_TEXT, refusalError, rulesFromPolicy } from '../nostr/wire.js';
+import { ADD_WALLET_APPROVAL_REQUIRED_TEXT, APP_UPDATE_REQUIRED, APP_UPDATE_REQUIRED_TEXT, refusalError, rulesFromPolicy } from '../nostr/wire.js';
 import type { Registration } from '../policy/index.js';
 import { labelled, type WalletRuntime } from '../runtime.js';
 import { WalletsRegistry, type OwnWalletRecord } from './registry.js';
@@ -318,6 +318,10 @@ export class OwnWallets implements OwnWalletHost {
     // The new wallet's rules, approved on its hardware wallet (rule 4), as at `pair`; an older app sends none.
     const rulesApproved = g.features.includes(GUARDIAN_FEATURES.pairingRulesApproval);
     if (rulesApproved && !params.rulesApproval) return reject(APP_UPDATE_REQUIRED_TEXT, APP_UPDATE_REQUIRED.reason);
+    // Adding a wallet needs the FIRST wallet's hardware wallet (security review 2026-11): otherwise the phone alone could
+    // add a wallet whose "hardware wallet" is its own key, then an unlock slot for it that opens the whole box.
+    const addApproved = g.features.includes(GUARDIAN_FEATURES.addWalletApproval);
+    if (addApproved && !params.addApproval) return reject(ADD_WALLET_APPROVAL_REQUIRED_TEXT, APP_UPDATE_REQUIRED.reason);
     let wallet: MultisigWallet;
     try {
       wallet = MultisigWallet.fromDescriptor(params.descriptor, network);
@@ -337,6 +341,16 @@ export class OwnWallets implements OwnWalletHost {
       return reject(`This hardware wallet (${hwFp}) already holds a key in ${taken.get(hwFp)}. Each wallet needs its own hardware wallet.`, 'hardware_in_use');
     const accountKeys = new Set([firstWallet, ...this.active().map((w) => walletOf(w.engine.registration()!))].flatMap((x) => Object.values(x.accountPubkeys()).map((k) => hex.encode(k))));
     if (Object.values(wallet.accountPubkeys()).some((k) => accountKeys.has(hex.encode(k)))) return reject('A key of this wallet is already in another wallet of this guardian.', 'key_in_use');
+    // The first wallet's approval names this wallet (its id covers every key, key 3 included). Checked here and consumed
+    // (the first wallet's sequence) once the wallet is registered, so a request refused for another reason costs no
+    // approval. `wallet.add` runs under the pairing mutex.
+    if (addApproved) {
+      const why = g.engine.checkWalletAdd(wallet.fingerprint(), params.addApproval!);
+      if (why) {
+        await g.logEvent({ type: 'wallet_add_refused', name: params.name, detail: why.reason });
+        throw refusalError(why);
+      }
+    }
 
     const key = g.ownKey3(first, params.account);
     const slotId = this.registry.newSlotId();
@@ -373,6 +387,12 @@ export class OwnWallets implements OwnWalletHost {
       await g.logEvent({ type: 'wallet_add_refused', name: params.name, detail: res.refusal.reason });
       throw refusalError(res.refusal);
     }
+    if (addApproved) {
+      // Consumed now (logged in the first wallet's activity). It verified a moment ago; only another approval by the same
+      // device with the same sequence could have taken it since, and that one needed the device too.
+      const used = await g.engine.approveWalletAdd(res.walletId, params.addApproval!);
+      if (!used.ok) g.log.warn('wallets.add_approval_not_consumed', { reason: used.refusal.reason });
+    }
     // The registration is on disk in its slot; the registry makes it a wallet of the box (a crash in between leaves an
     // unused directory, and the account free).
     await this.registry.update((f) => {
@@ -397,12 +417,99 @@ export class OwnWallets implements OwnWalletHost {
       ...g.stampNow(),
       message: `A wallet was added to your guardian: "${rec.name}". If you did not do this, check the guardian now.`,
     });
-    g.notifyOwner('wallet_added', labelled(w, `A wallet was added to your guardian with your phone and a new hardware wallet (${reg.walletId}). If you did not do this, check the guardian now.`), reg.walletId);
+    g.notifyOwner(
+      'wallet_added',
+      labelled(w, `A wallet was added to your guardian with your phone and a new hardware wallet (${reg.walletId})${addApproved ? ', approved on your first wallet\'s hardware wallet' : ''}. If you did not do this, check the guardian now: its web page can remove it.`),
+      reg.walletId,
+    );
+    // The first wallet's alert contacts hear it too (durably): the phone may be a thief's.
+    await this.tellFirstContacts({ kind: 'wallet_added', subjectWalletId: reg.walletId, name: rec.name, ...(addApproved ? { approved: true as const } : {}) });
     // Now that the box has several wallets, the live wallet watches this one too.
     g.live?.changed('wallets');
     // The new wallet's contacts are told they are its contacts (its engine queued `contact_added`).
     void w.alerts.run();
     return { walletId: reg.walletId, account: rec.account, name: rec.name, descriptor: reg.descriptor, guardianKey: { fingerprint: key.pub.fingerprint, path: key.pub.path, xpub: key.pub.xpub } };
+  }
+
+  /**
+   * Tells the first wallet's alert contacts (and `also`, more contacts: the wallet's own) about a box event, durably,
+   * through the first wallet's notices (`wallet_added`, `wallet_removed`, `unlock_slot_added`).
+   */
+  async tellFirstContacts(n: { kind: 'wallet_added' | 'wallet_removed' | 'unlock_slot_added'; subjectWalletId: string; name?: string; approved?: true }, also: readonly string[] = []): Promise<void> {
+    const g = this.g;
+    const contacts = [...(g.engine.status().rules?.alertContacts ?? []), ...also];
+    if (!contacts.length || !g.engine.registration()) return;
+    const res = await g.engine.queueBoxNotice({ ...n, recipients: contacts });
+    if (res.ok && res.noticeId) void g.alerts.run();
+  }
+
+  /**
+   * Why the owner may not remove `w` in the web page now: a recovery of it runs, or a co-signed sweep of it waits to be
+   * broadcast. The web session gets no power over recoveries (as Reset): someone who learnt the passphrase must not be
+   * able to freeze a wallet whose owner is recovering it. Undefined: it may go.
+   */
+  removalBlocker(w: OwnWallet): { code: 'recovery_pending' | 'sweep_pending'; message: string } | undefined {
+    const rec = w.activeRecord();
+    if (rec)
+      return {
+        code: 'recovery_pending',
+        message: `Recovery ${rec.id} of "${w.name}" is running: the wallet cannot be removed until it completes, or is cancelled from the app, with that wallet's hardware wallet or by one of its alert contacts.`,
+      };
+    const sweep = w.sweepStore.get().sweeps.find((x) => x.broadcastAt === undefined && x.deadAt === undefined);
+    if (sweep) return { code: 'sweep_pending', message: `The sweep of recovery ${sweep.recoveryId} ("${w.name}") has not been broadcast yet. Wait until it is.` };
+    return undefined;
+  }
+
+  /**
+   * The owner's escape hatch in the web page (a passphrase session; docs/design/multi-wallet.md): removes an own wallet
+   * after the first, without its hardware wallet. The guardian stops guarding it (retired: nothing co-signed, never paired
+   * again) and drops its hardware unlock slot. Its money stays with its phone key and its hardware wallet. Refused while
+   * a recovery of it runs or its sweep waits (`removalBlocker`). Announced to its phone, the owner's channels, its own
+   * alert contacts and the first wallet's. The web session could reset the whole guardian; this is less.
+   */
+  async removeByOwner(walletId: string): Promise<{ walletId: string } | { refused: { code: 'recovery_pending' | 'sweep_pending'; message: string } }> {
+    const g = this.g;
+    const w = this.byWalletId(walletId);
+    if (!w) throw new Error('not an own wallet after the first');
+    const reg = w.engine.registration()!;
+    const phone = reg.appNostrPubkey;
+    const contacts = w.engine.status().rules?.alertContacts ?? [];
+    // Under the recovery runner's mutex, so no recovery of it starts or completes between the check and the removal.
+    const res = await g.recoveryMutex.run(async () => {
+      const blocked = this.removalBlocker(w);
+      if (blocked) return { blocked };
+      return { done: await w.engine.removeByOwner() };
+    });
+    if ('blocked' in res) return { refused: res.blocked! };
+    if (!res.done.ok) throw refusalError(res.done.refusal);
+    const removed = res.done.walletId;
+    const now = g.clock.now();
+    w.dropSigner();
+    await this.markRetired(w.slotId, now);
+    await g.unlockSlots.remove([removed]);
+    await g.pruneLabels(w);
+    await w.sweepStore.update((d) => {
+      d.phones = [];
+    });
+    g.log.warn('wallets.removed_by_owner', { slot: w.slotId, walletId: removed });
+    await g.logEvent({ type: 'wallet_removed', name: w.name, walletId: removed });
+    await g.notifyPeer(phone, {
+      type: 'wallet_retired',
+      walletId: removed,
+      reason: 'retired',
+      ...g.stampNow(),
+      message: `Your guardian's owner removed the wallet "${w.name}" in its web page: the guardian co-signs nothing for it any more. Its money moves with your phone and its hardware wallet.`,
+    });
+    g.notifyOwner(
+      'wallet_removed',
+      `The wallet "${w.name}" (${removed}) was removed from your guardian in its web page: it co-signs nothing for it any more. Its money stays with its phone key and its hardware wallet. If you did not do this, someone knows the guardian's passphrase.`,
+      removed,
+    );
+    // Its contacts and the first wallet's hear that it was removed.
+    await this.tellFirstContacts({ kind: 'wallet_removed', subjectWalletId: removed, name: w.name }, contacts);
+    g.dropPeerIfUnused(phone);
+    g.live?.changed('wallets');
+    return { walletId: removed };
   }
 
   /** Master fingerprints of every hardware key the box's wallets hold (the first's, its Savings', every own wallet's and its Savings'), and where. */

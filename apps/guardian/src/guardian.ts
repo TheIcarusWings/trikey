@@ -656,6 +656,7 @@ export class Guardian implements WalletRuntime {
     GUARDIAN_FEATURES.passphraseChange,
     GUARDIAN_FEATURES.pairingRulesApproval,
     GUARDIAN_FEATURES.approvalContacts,
+    GUARDIAN_FEATURES.addWalletApproval,
   ];
 
   /** The wallet object of a registration or a watched wallet (cached per descriptor). */
@@ -1540,6 +1541,16 @@ export class Guardian implements WalletRuntime {
     await this.unlockSlots.put(slot);
     this.log.info('unlock_slots.added', { walletId: reg.walletId, ...(unsealed ? { unsealed: true } : {}) });
     await w.logEvent({ type: 'unlock_slot_added', walletId: reg.walletId, ...(unsealed ? { unsealed: true as const } : {}) });
+    // A new way to open the whole box: the owner's channels, the first wallet's alert contacts and this wallet's hear of
+    // it (security review 2026-11), not only the phone that asked (it may be a thief's).
+    const name = w.slotId === undefined ? this.wallets.registry.firstName : w.label() ?? undefined;
+    this.notifyOwner(
+      'unlock_slot_added',
+      `Unlocking your guardian with the hardware wallet of ${name ? `"${name}" (${reg.walletId})` : `wallet ${reg.walletId}`} was turned on from your phone: it can now unlock the guardian without the passphrase. If you did not do this, turn it off in the guardian's web page.`,
+      reg.walletId,
+    );
+    if (this.features.includes(GUARDIAN_FEATURES.addWalletApproval))
+      await this.wallets.tellFirstContacts({ kind: 'unlock_slot_added', subjectWalletId: reg.walletId, ...(name ? { name } : {}) }, w.slotId === undefined ? [] : (w.engine.status().rules?.alertContacts ?? []));
     return { ok: true, walletId: reg.walletId, slot: slot.slot, addedAt: slot.addedAt };
   }
 

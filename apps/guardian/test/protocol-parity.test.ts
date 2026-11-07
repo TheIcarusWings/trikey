@@ -155,6 +155,7 @@ describe('protocol vs guardian engine: hardware approval texts', () => {
           enginePairingRulesMessage({ ...toRules(p), ...(p.contactLock ? { contactLock: true } : {}) }, { walletId: ctx.walletId, expiresAt: ctx.expiresAt, contactsInText: true }),
         );
       }
+    for (const ctx of ctxs) expect(approvalMessage({ action: 'add-wallet', newWalletId: 'fedcba9876543210' }, ctx)).toBe(engineApprovalMessage({ action: 'add-wallet', newWalletId: 'fedcba9876543210' }, ctx));
     for (const k of contacts(20)) expect(contactId(k)).toBe(engineContactId(k));
     expect(contactsCode(contacts(7))).toBe(engineContactsCode(contacts(7)));
     expect(DEVICE_VISIBLE_LENGTH).toBe(ENGINE_DEVICE_VISIBLE_LENGTH);

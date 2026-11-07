@@ -302,6 +302,27 @@ export interface ResetInput {
   /** Exactly `RESET_CONFIRMATION`. */
   confirm: string;
 }
+/** Typed to remove a wallet after the first without its hardware wallet (`removeOwnWallet`). */
+export const REMOVE_WALLET_CONFIRMATION = 'REMOVE WALLET';
+
+/** One wallet of the box on the Wallets page: what the owner checks for a wallet or an unlock they did not add. */
+export interface OwnWalletSecurity {
+  walletId: string;
+  name: string;
+  /** The first wallet: it holds the pairing and is not removed here (Reset forgets every wallet). */
+  first: boolean;
+  account: number;
+  hardwareFingerprint: string;
+  addedAt?: ISODate;
+  /** Hardware unlock is on for it: its hardware wallet can unlock the whole guardian through the phone. */
+  unlockSlot?: { addedAt: ISODate };
+  recovery?: { id: string; readyAt: ISODate };
+}
+
+export interface OwnWalletsSecurity {
+  wallets: OwnWalletSecurity[];
+  removeConfirmation: string;
+}
 
 // --- relays -------------------------------------------------------------
 

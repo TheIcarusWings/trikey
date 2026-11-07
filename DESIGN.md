@@ -492,6 +492,25 @@ printed and kept with the hardware wallet.
 ## Threat model
 
 - **Stolen phone:** the thief can spend at most the daily limit. They can't raise it, because that needs the hardware wallet. **With the limit turned off** (the owner's explicit choice, hardware-approved) they can send everything at once; the alerts arrive after the money has left. A recovery they start triggers the alerts. They cannot hide the vault from a later recovery either: change past the gap limit counts against the limit (rule 3). They cannot starve the owner's unlock: the phone's `guardian.unlock` has its own throttle, stops after 5 failures until the web UI unlocks, and is refused while a recovery the phone did not start runs.
+- **A phone alone adding a wallet** (security review 2026-11, Medium-High). `wallet.add` needed only the first wallet's
+  paired phone and an unlocked box, and the new wallet's "hardware wallet" (its pairing proof, its rules approval) could be
+  the thief's own key; `unlock.hardware.add` for it then stored a slot that unlocks the whole box, so a lock by the owner or
+  a contact (rule 8) no longer held against the stolen phone; the planted wallet could not be retired without the thief's
+  device, the first wallet cannot retire while others exist, and Reset was refused while the planted wallet's recovery ran;
+  only the phone was told. Now (`add_wallet_approval`) adding a wallet needs the **first wallet's hardware wallet** (`Trikey
+  add-wallet v1 wallet=<first> new=<new> seq=<n> ...`, its sequence), the first wallet's alert contacts are told of every
+  wallet added and every hardware unlock turned on, and the owner has an escape hatch in the web page (signed in with the
+  passphrase): see every wallet and unlock slot, turn any slot off, and remove a wallet after the first without its
+  hardware wallet (typed `REMOVE WALLET`). Why a web session may: it can already reset the whole guardian (a new key 3,
+  every wallet forgotten), and removing one wallet does less. **It gets no power over recoveries**: removing a wallet is
+  refused while a recovery of it runs or its sweep waits to be broadcast, and Reset is still refused while any wallet's
+  recovery runs (there is no override). Otherwise someone who learnt the passphrase could freeze a wallet whose owner is
+  genuinely recovering it (a lost phone or device), leaving its money needing both of its other keys. An override of that
+  is not needed either: with the first wallet's approval a phone thief can no longer plant a wallet, so a recovery of a
+  wallet after the first is one its owner, or someone holding that wallet's keys, started, and it ends by completing or by
+  a cancel from that wallet's phone, hardware wallet or alert contacts. Every removal is announced to the wallet's phone,
+  the owner's channels, its contacts and the first wallet's; the money of a removed wallet stays with its phone key and
+  hardware wallet (2 of 3).
 - **A malicious app swapping an alert contact** (security review 2026-11, High). Before version 4 of the policy text the device showed only the number of contacts, so an app could replace the owner's contact by its own at pairing or at any hardware-approved change, unseen, and later run a recovery only its own "contact" heard of. Now the device names each contact (`contactId`), or shows their number and a code the web page shows too, every contact added or removed is told, and Activity names them (rule 4). What remains: an owner who does not compare the npubs (or, with five or more contacts, the code) with their contacts' apps; a key ground to look like a contact's (2^60 tries); an older guardian, which still shows only the number.
 - **A malicious app build at pairing** (security review 2026-11). The app chooses the rules a wallet starts with. Until this release the hardware wallet signed only the pairing proof, which names no rule, and the guardian refused only "no daily limit" there: an app built to steal could pair with a limit one satoshi below "off", a fee cap as large as all bitcoin or its own alert contact, then send everything with phone + guardian at once. **Since this release the rules a wallet starts with are hardware-approved** (`pair`, `wallet.add`, `hosted.pair`; rule 4): the device shows them, and the guardian refuses rules without a signature over exactly them. What remains: an owner who approves on the device without reading it; and an older app with a guardian that does not have the feature, which still pairs without the approval (update both). A malicious app can still lie on the phone's own screens; the device's screen is what to trust, as for every approval.
 - **Alert contacts are what makes Delay & Notify work.** Without one, a recovery is announced only to the paired phone, which may be the thief's: a phone-only thief could then sweep the whole vault to a wallet of its own (keeping key 2, adding its own "hardware" key) and nobody would hear of it. So **on mainnet the guardian requires at least one alert contact**, at pairing and for every rule change. **A contact can be the user's own nostr app on another device** (a laptop, a tablet, a second phone): it only needs a nostr key that can receive NIP-17 DMs and reply `CANCEL <id>`. Test networks allow zero contacts and say so (`warnings: ['no_alert_contacts']` in `policy.get`, `guardian.status` and the web UI).
@@ -1123,7 +1142,10 @@ wallet"; code: `apps/guardian/src/unlock-slots.ts`, `TrikeyWallet.enableHardware
   happens after a restart, rarely), and the passphrase is still there when the device is not.
 - **One slot per own wallet** (docs/design/multi-wallet.md): any of them, with its own hardware wallet, unlocks the
   whole box (key 3's seed is one seed). Turning it on again replaces the wallet's slot (a new slot id), so every
-  earlier signature stops working.
+  earlier signature stops working. Since a wallet can be added only with the first wallet's hardware wallet
+  (`add_wallet_approval`), a phone alone cannot plant a wallet and a slot of its own; a slot turned on for any wallet is
+  announced to the owner's channels and to the first wallet's alert contacts (and that wallet's), and the web page lists
+  every slot and turns any of them off (Settings > Wallets and hardware unlock).
 - **Same throttle and refusals as the passphrase from the phone.** A signature that does not open the slot counts as a
   wrong passphrase; 5 failures in a row of either kind stop the phone until the web UI unlocks; a recovery the phone
   did not start refuses it. Asking with a slot id that is gone (turned off or replaced) is not a guess and is not

@@ -1906,6 +1906,80 @@ export class PolicyEngine {
     });
   }
 
+  /**
+   * The FIRST wallet's hardware wallet approves adding wallet `newWalletId` to the box (`wallet.add`, guardians with
+   * `add_wallet_approval`; security review 2026-11): a `HardwareApproval` over the `add-wallet` text, which names this
+   * wallet and the new one, with this wallet's sequence, which it consumes. Without it the paired phone alone could add
+   * a wallet whose "hardware wallet" is its own key, and with it an unlock slot that opens the whole box.
+   */
+  /** Why `approval` would not approve adding `newWalletId` now (`approveWalletAdd`'s checks), changing nothing. */
+  checkWalletAdd(newWalletId: string, approval: HardwareApproval): Refusal | undefined {
+    const draft = cloneState(this.state);
+    if (!draft.active) return { reason: 'not_registered' };
+    return this.checkApproval(draft, this.clock.now(), approval, { action: 'add-wallet', newWalletId });
+  }
+
+  async approveWalletAdd(newWalletId: string, approval: HardwareApproval): Promise<Result<{ sequence: number }>> {
+    return this.mutate((draft, now) => {
+      if (!draft.active) return refused({ reason: 'not_registered' });
+      const r = this.checkApproval(draft, now, approval, { action: 'add-wallet', newWalletId });
+      if (r) {
+        this.log(draft, now, { type: 'wallet_add_approval_refused', newWalletId: String(newWalletId).slice(0, 16), refusal: r });
+        return refused(r);
+      }
+      this.log(draft, now, { type: 'wallet_add_approved', newWalletId, sequence: approval.sequence });
+      return { ok: true as const, sequence: approval.sequence };
+    });
+  }
+
+  /**
+   * A box event this wallet's alert contacts are told of (durably, like the limit notices): a wallet added to the box
+   * (`wallet_added`), an own wallet removed by the owner in the web page (`wallet_removed`), or a hardware unlock slot
+   * added for any wallet (`unlock_slot_added`). `recipients`: the contacts (the service passes the first wallet's and the
+   * wallet's own); the paired phone's key is left out (it gets its own alert).
+   */
+  async queueBoxNotice(n: { kind: 'wallet_added' | 'wallet_removed' | 'unlock_slot_added'; subjectWalletId: string; name?: string; approved?: true; recipients: string[] }): Promise<Result<{ noticeId?: string }>> {
+    return this.mutate((draft, now) => {
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      const recipients = [...new Set(n.recipients.map((r) => r.toLowerCase()))].filter((r) => isNostrPubkey(r) && r !== w.registration.appNostrPubkey);
+      if (!recipients.length) return { ok: true as const };
+      const id = `${n.kind === 'unlock_slot_added' ? 'unlockslot' : n.kind === 'wallet_added' ? 'walletadd' : 'walletdel'}-${draft.nextActivityId}`;
+      this.addNotice(draft, now, {
+        id,
+        kind: n.kind,
+        walletId: w.registration.walletId,
+        at: now,
+        subjectWalletId: n.subjectWalletId,
+        ...(n.name ? { name: n.name.slice(0, 32) } : {}),
+        ...(n.approved ? { approved: true as const } : {}),
+        recipients,
+        sent: [],
+      });
+      return { ok: true as const, noticeId: id };
+    });
+  }
+
+  /**
+   * The box's owner removes this wallet in the web page, without its hardware wallet (an own wallet after the first; the
+   * service checks that): it is retired as `wallet.retire` would, so nothing is co-signed or started for it again and its
+   * key set is never paired again. Its money stays with its phone key and its hardware wallet (2 of 3). Refused while a
+   * recovery of it runs, as Reset is: the web session gets no power over recoveries (someone who learnt the passphrase
+   * must not freeze a wallet its owner is recovering). DESIGN.md says why a web session may do the rest.
+   */
+  async removeByOwner(): Promise<Result<{ walletId: string; retiredAt: number }>> {
+    return this.mutate((draft, now) => {
+      const w = draft.active;
+      if (!w) return refused({ reason: 'not_registered' });
+      const rec = activeRecovery(draft);
+      if (rec) return refused({ reason: 'recovery_in_progress', recoveryId: rec.id });
+      const walletId = w.registration.walletId;
+      const revokedGrants = this.retireActive(draft, now, { reason: 'removed', by: 'owner' });
+      this.log(draft, now, { type: 'wallet_removed_by_owner', walletId, revokedGrants });
+      return { ok: true as const, walletId, retiredAt: now };
+    });
+  }
+
   /** Re-enables phone-only payments after a contested recovery. Needs the hardware wallet. */
   async resumePhoneSpending(approval: HardwareApproval): Promise<Result<{}>> {
     return this.mutate((draft, now) => {

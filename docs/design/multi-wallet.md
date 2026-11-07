@@ -157,6 +157,23 @@ From the paired phone, in two requests like pairing:
    the web UI's activity.
 
 A thief holding the phone gains nothing by adding a wallet: it is a new wallet with new keys; the others are untouched.
+**That was wrong** (security review 2026-11): a wallet added with the phone alone may have the thief's own key as its
+"hardware wallet", and its hardware unlock slot (any own wallet's slot unlocks the box: one key 3 seed) then undoes every
+lock against the stolen phone; it could not be retired without that device, and Reset was refused while its recovery ran.
+So, from guardians with `add_wallet_approval`:
+
+- **The first wallet's hardware wallet approves adding a wallet** (`wallet.add`'s `addApproval`): `Trikey add-wallet v1
+  wallet=<first wallet id> new=<new wallet id> seq=<n> expires=<ISO>`, with the first wallet's sequence. In the app's "Add
+  a wallet" both devices confirm: the new one pairs and approves its rules, then the first approves adding it. "Replace
+  guardian" asks the first wallet's device for each wallet it adds on the new guardian. An older app is told to update.
+- **The first wallet's alert contacts are told** (a durable DM) when a wallet is added and when hardware unlock is turned
+  on for any wallet (that wallet's contacts too), not only the phone and the owner's channels.
+- **An escape hatch for the owner** in the web page (a passphrase session), Settings > Wallets and hardware unlock: every
+  wallet and unlock slot of the box; turn a slot off; remove a wallet after the first without its hardware wallet (typed
+  `REMOVE WALLET`; retired, so never paired again; its money stays with its phone key and device). Never while a recovery
+  of that wallet runs or its sweep waits, and Reset is still refused while any wallet's recovery runs: the web session
+  can already reset the whole guardian, but gets no power over recoveries (someone who learnt the passphrase must not
+  freeze a wallet its owner is recovering). Announced to everyone concerned (DESIGN.md, threat model).
 
 ### Routing
 
@@ -383,5 +400,5 @@ simple." What follows from it:
 | Per-wallet passcode | Later (and with one seed, a screen lock only). |
 | Order | The guardian first, then the phone (section 9). |
 | Accounts (2026-11-05, accepted) | A hidden BIP 48 account per wallet on the shared phone and key 3 seeds: Spending at 2*n*, Savings at 2*n*+1 (wallet 2 at 2' and 3', wallet 3 at 4' and 5'), key 3 at the Spending number (section 2). |
-| Adding a wallet (2026-11-05, accepted) | By the paired phone with the new hardware wallet's pairing proof, announced on the phone, the owner's channels and the web UI's Activity (section 3). |
+| Adding a wallet (2026-11-05, accepted) | By the paired phone with the new hardware wallet's pairing proof, announced on the phone, the owner's channels and the web UI's Activity (section 3). Revised 2026-11 (security review): also the first wallet's hardware wallet approves it, and the first wallet's contacts are told; the web page can remove a wallet after the first and its unlock slot. |
 | Other guardians and hosted wallets in the same app (2026-11-05, accepted) | Later. For now the app holds the wallets of one guardian. |

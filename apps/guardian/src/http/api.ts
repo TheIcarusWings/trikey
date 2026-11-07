@@ -39,6 +39,7 @@ import type {
 import type { Health, HealthState } from '../notify/notifier.js';
 import { sessionCookie } from './sessions.js';
 import { hostingRoutes } from '../hosting/http.js';
+import { ownWalletRoutes } from '../wallets/http.js';
 import { walletOverview } from './wallet.js';
 import type { WalletRuntime } from '../runtime.js';
 import type { OwnWallet } from '../wallets/runtime.js';
@@ -143,7 +144,8 @@ export async function guardianStatus(g: Guardian): Promise<GuardianStatus> {
     retiredWallets: g.engine.retiredWallets().map((r) => ({
       id: r.registration.walletId,
       retiredAt: iso(r.retiredAt),
-      reason: r.retirement.reason,
+      // Removed by the owner here: retired, as far as the page tells.
+      reason: r.retirement.reason === 'removed' ? 'retired' : r.retirement.reason,
       ...(r.retirement.reason === 'recovered' && r.retirement.successorWalletId ? { successorId: r.retirement.successorWalletId } : {}),
     })),
     ...(reg ? { hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
@@ -775,5 +777,6 @@ export function buildRoutes(g: Guardian): Route[] {
 
     // Hosting for family (docs/design/family-hosting.md): hosting/http.ts.
     ...hostingRoutes(g),
+    ...ownWalletRoutes(g),
   ];
 }

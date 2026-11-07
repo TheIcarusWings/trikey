@@ -244,10 +244,51 @@ export function contactChangeText(
   ].join('\n');
 }
 
+/**
+ * The NIP-17 DM to the first wallet's (and the wallet's own) alert contacts about the box: a wallet added
+ * (`wallet_added`), an own wallet removed by the owner in the web page (`wallet_removed`), hardware unlock turned on for
+ * a wallet (`unlock_slot_added`). The phone's own alerts and the owner's channels say it in their own words.
+ */
+export function boxNoticeText(n: Pick<LimitNotice, 'at' | 'subjectWalletId' | 'name' | 'approved'> & { kind: 'wallet_added' | 'wallet_removed' | 'unlock_slot_added' }, guardian: string): string {
+  const wallet = `${n.name ? `"${n.name}" (${n.subjectWalletId ?? ''})` : (n.subjectWalletId ?? 'a wallet')}`;
+  if (n.kind === 'wallet_added')
+    return [
+      `Trikey alert: a wallet was added to the guardian "${guardian}", which also guards the bitcoin wallet you help protect.`,
+      '',
+      `What happened: on ${formatWhen(n.at)}, the owner's phone added the wallet ${wallet}, with its own hardware wallet${n.approved ? ", approved on the hardware wallet of the wallet you help protect" : ''}. The wallet you help protect is unchanged.`,
+      '',
+      'If the owner did not do this, or you are not sure, call them now: someone may hold their phone and their hardware wallet.',
+    ].join('\n');
+  if (n.kind === 'wallet_removed')
+    return [
+      `Trikey alert: the owner removed the wallet ${wallet} from the guardian "${guardian}" in its web page.`,
+      '',
+      `What happened: on ${formatWhen(n.at)}, the guardian stopped guarding that wallet: it co-signs nothing for it any more (no recovery of it was running: that would have been refused). Its money stays with its own phone key and hardware wallet. Removing it needs the guardian's passphrase.`,
+      '',
+      'If the owner did not do this, or you are not sure, call them: someone may know the guardian\'s passphrase.',
+    ].join('\n');
+  return [
+    `Trikey alert: unlocking with a hardware wallet was turned on for the guardian "${guardian}" of the bitcoin wallet you help protect.`,
+    '',
+    `What happened: on ${formatWhen(n.at)}, the owner's phone and the hardware wallet of ${wallet} added a way to unlock the guardian after a restart or a lock without its passphrase.`,
+    '',
+    'If the owner did not do this, or you are not sure, call them now: whoever did it can unlock the guardian, also after you or the owner locked it.',
+  ].join('\n');
+}
+
 /** The wire alert of a limit change or a contact lock, for the paired phone (`undefined`: a notice for contacts only). */
 export function noticeToWire(n: LimitNotice): Alert | undefined {
   const stamp = stampOf(n.at);
-  if (n.kind === 'contact_lock_on' || n.kind === 'contact_lock_off' || n.kind === 'contact_added' || n.kind === 'contact_removed') return undefined;
+  if (
+    n.kind === 'contact_lock_on' ||
+    n.kind === 'contact_lock_off' ||
+    n.kind === 'contact_added' ||
+    n.kind === 'contact_removed' ||
+    n.kind === 'wallet_added' ||
+    n.kind === 'wallet_removed' ||
+    n.kind === 'unlock_slot_added'
+  )
+    return undefined;
   if (n.kind === 'savings_unwatched')
     return n.savingsWalletId
       ? {
@@ -323,6 +364,7 @@ export function noticeToWire(n: LimitNotice): Alert | undefined {
  */
 export function noticeText(n: LimitNotice, canLock = false, reach: ContactReach = 'dm', guardian = 'Trikey Guardian'): string {
   if (n.kind === 'contact_added' || n.kind === 'contact_removed') return contactChangeText({ ...n, kind: n.kind }, { guardian }, reach);
+  if (n.kind === 'wallet_added' || n.kind === 'wallet_removed' || n.kind === 'unlock_slot_added') return boxNoticeText({ ...n, kind: n.kind }, guardian);
   if (n.kind === 'savings_unwatched')
     return [
       n.replacedBy
@@ -515,9 +557,10 @@ export class Alerter {
     const all = w.store.state?.notices?.find((x) => x.id === n.id)?.recipients ?? n.recipients;
     const phone = w.engine.walletById(n.walletId)?.appNostrPubkey;
     const contacts = all.filter((r) => r !== phone && r !== n.contact);
-    if (n.kind === 'contact_added' || n.kind === 'contact_removed') {
-      // The owner's channels: one line for the change. A contact's channels: only for the contacts added or removed,
-      // never for a channel without a nostr key (it would not know which contact is meant).
+    if (n.kind === 'contact_added' || n.kind === 'contact_removed' || n.kind === 'wallet_added' || n.kind === 'wallet_removed' || n.kind === 'unlock_slot_added') {
+      // The owner's channels: one line for a contact change (a box event has the owner's own message, sent by the
+      // service). A contact's channels: only for the contacts it is for, never for a channel without a nostr key (it would
+      // not know which contact is meant).
       const owner = contactChangeOwnerText(n);
       try {
         const queued = await g.notifier.enqueue({

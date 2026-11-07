@@ -20,7 +20,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MultisigWallet, RECEIVE, SoftwareSigner, buildSpend, buildSweep, combinePsbts, finalizePsbt, type KeyExpression, type Utxo } from '@trikey/core';
 import { ErrorCode, GUARDIAN_FEATURES, RpcClient, RpcError, SimplePoolRelayPool, approvalMessage, decodePairingUri, pairingMessage, type Alert, type Policy } from '@trikey/protocol';
 import { signMessage } from '../src/policy/index.js';
-import { AUTH_PATH, MNEMONICS, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withRulesApproval } from './helpers.js';
+import { AUTH_PATH, MNEMONICS, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withAddApproval, withRulesApproval } from './helpers.js';
 import { GuardianRig } from './support/index.js';
 
 const HW2 = MNEMONICS.hardware2;
@@ -56,6 +56,8 @@ afterAll(async () => {
 });
 
 interface Phone {
+  /** The guardian it talks to (its first wallet's device approves `wallet.add`). */
+  rig: GuardianRig;
   key: Uint8Array;
   pubkey: string;
   rpc: RpcClient;
@@ -71,7 +73,7 @@ function phoneOn(rig: GuardianRig, key = generateSecretKey()): Phone {
   clients.push(rpc);
   const alerts: Alert[] = [];
   rpc.onAlert((a) => alerts.push(a));
-  return { key, pubkey: getPublicKey(key), rpc, alerts, now: () => rig.nowSec() };
+  return { rig, key, pubkey: getPublicKey(key), rpc, alerts, now: () => rig.nowSec() };
 }
 
 const toKey = (k: { fingerprint: string; path: string; xpub: string }): KeyExpression => ({ fingerprint: k.fingerprint, originPath: k.path.replace(/^m\//, '').replace(/'/g, 'h'), xpub: k.xpub });
@@ -101,7 +103,7 @@ async function pairFirst(rig: GuardianRig, phone: Phone, replaces?: MultisigWall
 async function addWallet(phone: Phone, opts: { account: number; hardware: string; name: string; hardwareKind?: string; replaces?: MultisigWallet }) {
   const prep = await phone.rpc.call('wallet.add.prepare', { account: opts.account });
   const wallet = new MultisigWallet(network, { app: await appSigner().getKey(network, opts.account), hardware: await hwSigner(opts.hardware).getKey(network), cosigner: toKey(prep.guardianKey) });
-  const res = await phone.rpc.call('wallet.add', withRulesApproval({
+  const res = await phone.rpc.call('wallet.add', withAddApproval(withRulesApproval({
     account: opts.account,
     name: opts.name,
     descriptor: wallet.descriptor(),
@@ -110,7 +112,7 @@ async function addWallet(phone: Phone, opts: { account: number; hardware: string
     rules: rules(50_000),
     ...(opts.hardwareKind ? { hardwareKind: opts.hardwareKind } : {}),
     ...(opts.replaces ? { replacesWalletId: opts.replaces.fingerprint(), replacesDescriptor: opts.replaces.descriptor() } : {}),
-  }, phone.now() * 1000, hwAuthPrivateKey(AUTH_PATH, opts.hardware)));
+  }, phone.now() * 1000, hwAuthPrivateKey(AUTH_PATH, opts.hardware)), phone.rig.guardian, phone.now() * 1000));
   return { wallet, walletId: res.walletId };
 }
 
@@ -190,14 +192,14 @@ describe('own wallets phase 2: Savings, the device kind and removing a wallet', 
     const prep = await phone.rpc.call('wallet.add.prepare', { account: 4 });
     const w3 = new MultisigWallet(network, { app: await appSigner().getKey(network, 4), hardware: await hwSigner(RK2).getKey(network), cosigner: toKey(prep.guardianKey) });
     const e = await refusal(
-      phone.rpc.call('wallet.add', withRulesApproval({
+      phone.rpc.call('wallet.add', withAddApproval(withRulesApproval({
         account: 4,
         name: 'Third',
         descriptor: w3.descriptor(),
         hardwareAuth: { pubkey: hwAuthPubkey(AUTH_PATH, RK2), path: AUTH_PATH },
         hardwareAuthProof: signMessage(pairingMessage(w3.fingerprint(), rawPub(prep.guardianKey.xpub)), hwAuthPrivateKey(AUTH_PATH, RK2)),
         rules: rules(10_000),
-      }, rig.nowSec() * 1000, hwAuthPrivateKey(AUTH_PATH, RK2))),
+      }, rig.nowSec() * 1000, hwAuthPrivateKey(AUTH_PATH, RK2)), rig.guardian, rig.nowSec() * 1000)),
     );
     expect(e.data).toMatchObject({ reason: 'hardware_in_use' });
   });

@@ -204,8 +204,21 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
                     ? [`"Savings no longer watched" alert sent to ${n}`, 'Savings alert sent']
                   : e.kind === 'savings_unchecked'
                     ? [`"Savings not fully checked" alert sent to ${n}`, 'Savings alert sent']
+                  : e.kind === 'wallet_added'
+                    ? [`"A wallet was added" alert sent to ${n}`, 'Wallet alert sent']
+                  : e.kind === 'wallet_removed'
+                    ? [`"A wallet was removed" alert sent to ${n}`, 'Wallet alert sent']
+                  : e.kind === 'unlock_slot_added'
+                    ? [`"Hardware unlock turned on" alert sent to ${n}`, 'Unlock alert sent']
                   : [`"You can no longer lock the guardian" message sent to ${n}`, 'Contacts told they can no longer lock'];
-      const system = e.kind === 'contact_lock' || e.kind === 'savings_moved' || e.kind === 'savings_unwatched' || e.kind === 'savings_unchecked';
+      const system =
+        e.kind === 'contact_lock' ||
+        e.kind === 'savings_moved' ||
+        e.kind === 'savings_unwatched' ||
+        e.kind === 'savings_unchecked' ||
+        e.kind === 'wallet_added' ||
+        e.kind === 'wallet_removed' ||
+        e.kind === 'unlock_slot_added';
       return { ...base, kind: system ? 'system' : 'rules', event, summary, signedBy: null, sats: null, result: 'ok' };
     }
     case 'contact_locked':
@@ -242,6 +255,28 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
             result: 'ok',
           };
     }
+    case 'wallet_add_approved':
+      return {
+        ...base,
+        kind: 'system',
+        event: `The first wallet's hardware wallet approved adding wallet ${e.newWalletId} (hardware approval #${e.sequence})`,
+        summary: 'Adding a wallet approved',
+        signedBy: 'Hardware wallet',
+        sats: null,
+        result: 'ok',
+      };
+    case 'wallet_add_approval_refused':
+      return { ...base, kind: 'system', event: `Adding wallet ${e.newWalletId} refused: ${refusalText(e.refusal)}`, signedBy: null, sats: null, result: 'refused' };
+    case 'wallet_removed_by_owner':
+      return {
+        ...base,
+        kind: 'system',
+        event: `Wallet ${e.walletId} removed in this web page: this guardian co-signs nothing for it any more. Its money stays with its phone key and its hardware wallet.`,
+        summary: 'Wallet removed',
+        signedBy: null,
+        sats: null,
+        result: 'ok',
+      };
     case 'wallet_retired':
       return {
         ...base,
@@ -571,6 +606,16 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
         sats: null,
         result: 'ok',
       };
+    case 'wallet_removed':
+      return {
+        ...base,
+        kind: 'system',
+        event: `Wallet "${e.name}" (${e.walletId}) removed in this web page: this guardian co-signs nothing for it any more. Its money stays with its phone key and its hardware wallet. Its phone, its alert contacts and the first wallet's were told.`,
+        summary: `Wallet "${e.name}" removed`,
+        signedBy: null,
+        sats: null,
+        result: 'ok',
+      };
     case 'wallet_add_refused':
       return { ...base, kind: 'system', event: `Adding wallet "${e.name}" was refused: ${e.detail}`, summary: 'Adding a wallet refused', signedBy: null, sats: null, result: 'refused' };
     case 'labels_updated':
@@ -613,7 +658,9 @@ export function serviceEntry(e: ServiceActivity): ActivityEntry {
         event:
           e.by === 'phone'
             ? `The paired phone turned off unlocking with the hardware wallet of ${e.walletIds.map((id) => `wallet ${id}`).join(', ')}.`
-            : `Unlocking with the hardware wallet of ${e.walletIds.map((id) => `wallet ${id}`).join(', ')} was removed: the wallet no longer uses this guardian.`,
+            : e.by === 'web'
+              ? `Unlocking with the hardware wallet of ${e.walletIds.map((id) => `wallet ${id}`).join(', ')} was turned off in this web page.`
+              : `Unlocking with the hardware wallet of ${e.walletIds.map((id) => `wallet ${id}`).join(', ')} was removed: the wallet no longer uses this guardian.`,
         summary: 'Hardware unlock turned off',
         signedBy: e.by === 'phone' ? 'Phone' : null,
         sats: null,

@@ -120,3 +120,13 @@ describe('the version-4 policy text', () => {
     expect(approvalMessage({ action: 'resume-phone' }, ctx)).toBe(`Trikey resume-phone v1 wallet=${WALLET_ID} seq=4 expires=2030-03-17T17:46:40Z`);
   });
 });
+
+describe('the add-wallet text (add_wallet_approval)', () => {
+  it("names the first wallet and the new one, with the first wallet's sequence; 115 characters at most", () => {
+    const text = approvalMessage({ action: 'add-wallet', newWalletId: 'fedcba9876543210' }, { walletId: WALLET_ID, sequence: 7, expiresAt: EXPIRES });
+    expect(text).toBe(`Trikey add-wallet v1 wallet=${WALLET_ID} new=fedcba9876543210 seq=7 expires=2030-03-17T17:46:40Z`);
+    expect(approvalMessage({ action: 'add-wallet', newWalletId: 'fedcba9876543210' }, { walletId: WALLET_ID, sequence: Number.MAX_SAFE_INTEGER, expiresAt: 4_102_444_799 }).length).toBe(115);
+    expect(() => approvalMessage({ action: 'add-wallet', newWalletId: 'nope' }, { walletId: WALLET_ID, sequence: 1, expiresAt: EXPIRES })).toThrow();
+    expect(GUARDIAN_FEATURES.addWalletApproval).toBe('add_wallet_approval');
+  });
+});

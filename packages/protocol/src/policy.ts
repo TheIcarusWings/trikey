@@ -95,6 +95,14 @@ export const GUARDIAN_FEATURES = {
    * `hosted.prepare`; a phone signs version 4 only for a guardian that lists it.
    */
   approvalContacts: 'approval_contacts',
+  /**
+   * Adding a wallet needs the first wallet's hardware wallet (security review 2026-11; docs/design/multi-wallet.md):
+   * `wallet.add` carries `addApproval`, the first wallet's `HardwareApproval` over the `add-wallet` text naming the new
+   * wallet, and such a guardian refuses it without (`-32602`, `data.reason: "app_update_required"`). It also tells the
+   * first wallet's alert contacts when a wallet is added and when hardware unlock is turned on for any wallet, and lets
+   * the owner remove an added wallet or an unlock slot in its web page. Listed in `guardian.status`.
+   */
+  addWalletApproval: 'add_wallet_approval',
 } as const;
 
 /** True when the alert contacts may lock the guardian (`Policy.contactLock`). */
