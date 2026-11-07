@@ -24,6 +24,8 @@ import { APP_UPDATE_REQUIRED, APP_UPDATE_REQUIRED_TEXT, policyToWire, recoveryTo
 import { GUEST_FEATURES, GUEST_METHODS, GUEST_RECOVERY_METHODS, Hosting, guestChainSource, slotOfRecoveryId, type GuestRoute } from './service.js';
 import type { HostedRecoveryView } from './engine.js';
 import type { HostedRefusal } from './types.js';
+import { takeRequestWrite, throwIfRefusalsBlocked } from '../rate-limit.js';
+import type { HostedEngine } from './engine.js';
 
 const INVITE_REJECTIONS = {
   no_invite: 'This invite is not valid. Ask for a new one.',
@@ -166,12 +168,7 @@ function guestHandlers(g: Guardian, h: Hosting): Partial<Record<MethodName, Gues
     };
   };
 
-  const recoveryOf = (route: GuestRoute, id: string) => {
-    if (slotOfRecoveryId(id) !== route.slot.slotId) throw new RpcError(ErrorCode.RecoveryNotFound);
-    const active = route.engine.activeRecord();
-    if (active && active.id === id) return active;
-    throw new RpcError(route.engine.records().some((r) => r.id === id) ? ErrorCode.RecoveryNotActive : ErrorCode.RecoveryNotFound);
-  };
+  const recoveryOf = (route: GuestRoute, id: string) => runningGuestRecovery(route.slot.slotId, route.engine, id);
 
   return {
     'guardian.status': (_p, _ctx, route) => statusOf(route),
@@ -462,6 +459,14 @@ function pairingHandlers(g: Guardian, h: Hosting) {
   };
 }
 
+/** The running recovery of a guest slot named `id`, or the refusal its handlers answer (no such recovery, not running). */
+function runningGuestRecovery(slotId: string, engine: HostedEngine, id: string) {
+  if (slotOfRecoveryId(id) !== slotId) throw new RpcError(ErrorCode.RecoveryNotFound);
+  const active = engine.activeRecord();
+  if (active && active.id === id) return active;
+  throw new RpcError(engine.records().some((r) => r.id === id) ? ErrorCode.RecoveryNotActive : ErrorCode.RecoveryNotFound);
+}
+
 /** Methods whose replay after a restart would matter (as the host's `runOnceAcrossRestarts`). */
 const GUEST_STATE_CHANGING = new Set<MethodName>(['guardian.lock', 'policy.update', 'recovery.start', 'recovery.update', 'recovery.cancel', 'phone.resume', 'hardware.confirm', 'wallet.retire', 'hosted.pair']);
 const REMEMBER_MS = (3600 + 120) * 1000;
@@ -476,8 +481,17 @@ export function withHosting(g: Guardian, host: Handlers): Handlers {
   const pairing = pairingHandlers(g, h);
   const names = new Set<MethodName>([...(Object.keys(host) as MethodName[]), ...(Object.keys(guest) as MethodName[]), 'hosted.prepare', 'hosted.pair']);
   const out: Record<string, unknown> = {};
-  const once = async (method: MethodName, ctx: HandlerContext) => {
+  /**
+   * Records a guest's state-changing request durably, as the host's `runOnceAcrossRestarts`: checked first (a cancel or
+   * an update of the slot's running recovery only, the refusal limit), then counted against the sender's write limit,
+   * so a flood that would be refused writes nothing (security sweep 2, finding 13).
+   */
+  const once = async (method: MethodName, ctx: HandlerContext, params?: unknown, slot?: { slotId: string; engine: HostedEngine }) => {
     if (!GUEST_STATE_CHANGING.has(method)) return;
+    if (slot && (method === 'recovery.cancel' || method === 'recovery.update'))
+      runningGuestRecovery(slot.slotId, slot.engine, String((params as { recoveryId?: unknown })?.recoveryId ?? ''));
+    if (method === 'recovery.start' || method === 'recovery.update') throwIfRefusalsBlocked(g, ctx.sender);
+    takeRequestWrite(g, ctx.sender);
     const fresh = await g.service.rememberRequest(`${ctx.sender}:${ctx.id}`, ctx.createdAt * 1000 + REMEMBER_MS, g.clock.now());
     if (!fresh) throw new RpcError(ErrorCode.Unavailable, 'This request was already handled before the guardian restarted. Send a new request.');
   };
@@ -492,7 +506,7 @@ export function withHosting(g: Guardian, host: Handlers): Handlers {
           const allowed = route.role === 'phone' ? GUEST_METHODS : GUEST_RECOVERY_METHODS;
           const fn = guest[method];
           if (!allowed.has(method) || !fn) throw new RpcError(ErrorCode.Unauthorized, `A hosted wallet cannot use ${method} on this guardian.`, { reason: 'not_for_hosted_wallets' });
-          await once(method, ctx);
+          await once(method, ctx, params, { slotId: route.slot.slotId, engine: route.engine });
           return fn(params, ctx, route);
         }
         if (method === 'hosted.prepare' || method === 'hosted.pair') {
@@ -523,7 +537,7 @@ export function withHosting(g: Guardian, host: Handlers): Handlers {
         if (slotId) {
           const live = h.liveSlots().find((x) => x.slot.slotId === slotId);
           if (!live || !(live.engine.isAlertContact(sender) || (params as { approval?: unknown }).approval)) throw new RpcError(ErrorCode.Unauthorized);
-          await once(method, ctx);
+          await once(method, ctx, params, { slotId: live.slot.slotId, engine: live.engine });
           return guest['recovery.cancel']!(params, ctx, { ...live, role: 'peer' });
         }
         // A host recovery id from someone the host's rules do not let cancel (a guest's contact only): not the host's business.

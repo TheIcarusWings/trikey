@@ -907,6 +907,8 @@ A phone that restarts while a request is unanswered can re-send it with the same
 
 For state-changing methods (`guardian.unlock`, `guardian.lock`, `pair`, `policy.update`, `recovery.start`, `recovery.cancel`, `phone.resume`, `hardware.confirm`, `wallet.retire`, `wallet.unwatch`, `singlekey.register`, `sp.register`, `sp.unregister`, `unlock.hardware.add`, `unlock.hardware.remove`) the guardian remembers handled ids **across restarts** (`relays.ack` is not among them: running it twice changes nothing). A retry of a request it handled before restarting gets `1501 Unavailable` instead of running again, because its cached response was lost. The phone should then check the state (`guardian.status`, `recovery.status`, `policy.get`) and, if needed, send a new request with a new `id`.
 
+That record is a write to disk, so the reference guardian makes it only for a request that passed the checks that cost nothing: a `recovery.cancel` or `recovery.update` must name the running recovery (else `1300` / `1302`, as the handler answers), and a sender over its refusal limit gets `1500` before anything is recorded. Each sender may then have at most 60 such requests recorded per 10 minutes (more: `1500 RateLimited` with `data.retryAfterSeconds`, nothing recorded). Guests' state-changing methods follow the same rules. Up to 0.1.21 every one was recorded first, so an alert contact sending cancels of made-up ids cost a durable write each.
+
 ## 5. Relays
 
 * The relay list comes from the pairing URI (and can change later, below). Both sides use the same list; publish to all, subscribe on all.

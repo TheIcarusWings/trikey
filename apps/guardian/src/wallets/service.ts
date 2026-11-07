@@ -161,7 +161,7 @@ export class OwnWallets implements OwnWalletHost {
   handlersOf(w: OwnWallet): Handlers {
     let h = this.handlerSets.get(w.slotId);
     if (!h) {
-      h = onceAcrossRestarts(this.g, walletHandlers(this.g, w));
+      h = onceAcrossRestarts(this.g, w, walletHandlers(this.g, w));
       this.handlerSets.set(w.slotId, h);
     }
     return h;
