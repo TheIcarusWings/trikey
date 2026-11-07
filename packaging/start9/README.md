@@ -54,7 +54,8 @@ on release tags (`docker.yml` calls it once the image is pushed) and by hand. It
 
 The image: on a tag, `docker.yml` passes the digest it just pushed, and the job pulls exactly that
 digest for its architecture and tags it locally under the manifest's name (it fails if the tag no
-longer points at that digest), so the tag is not re-resolved for what is packed. On a pull request it packs the published image of the manifest's tag when it exists, and
+longer points at that digest), so the tag is not re-resolved for what is packed. It refuses to pack unless the local
+image is the one pulled by that digest, and fails if the image changed during the pack. On a pull request it packs the published image of the manifest's tag when it exists, and
 otherwise (a release PR, before the tag) builds the image from the checkout for the runner's
 architecture under that name. So a pull request that changes the guardian but not the version
 packs the *published* image: the build checks the package, not the guardian.

@@ -36,6 +36,7 @@ interface Job {
   with?: Record<string, unknown>;
   secrets?: Record<string, string> | 'inherit';
   outputs?: Record<string, string>;
+  env?: Record<string, string>;
   steps?: Step[];
 }
 interface Workflow {
@@ -83,6 +84,73 @@ describe('docker.yml', () => {
       expect(job.with).toEqual({ 'image-digest': '${{ needs.publish.outputs.digest }}' });
       expect(job.permissions?.packages ?? 'read').toBe('read');
     }
+  });
+});
+
+describe('the guardian image tags', () => {
+  const wf = workflow('docker.yml');
+  const publish = wf.jobs['publish']!;
+  const step = (name: string) => publish.steps!.find((s) => s.name === name)!;
+
+  it('pushes the version tag only: no latest, <major>.<minor>, sha-... or any other moving tag', () => {
+    const build = publish.steps!.find((s) => s.uses?.startsWith('docker/build-push-action@'))!;
+    expect(build.with!['tags']).toBe('${{ env.IMAGE }}:${{ steps.params.outputs.version }}');
+    expect(String(build.with!['outputs'])).toContain('push=true');
+    const code = read('.github/workflows/docker.yml')
+      .split('\n')
+      .filter((l) => !/^\s*#/.test(l))
+      .join('\n');
+    expect(code).not.toMatch(/metadata-action|\{\{major\}\}|type=sha|:latest\b|type=raw/);
+    // The version is the tag's, and a release version.
+    expect(step('Build parameters').run).toContain('version="${GITHUB_REF_NAME#v}"');
+    expect(step('Build parameters').run).toContain('^[0-9]+\\.[0-9]+\\.[0-9]+(-alpha)?$');
+  });
+
+  it('pushes with GHCR_PUSH_TOKEN when set, else with GITHUB_TOKEN and a warning that says how to close it', () => {
+    const login = publish.steps!.find((s) => s.uses?.startsWith('docker/login-action@'))!;
+    expect(login.with!['password']).toBe('${{ secrets.GHCR_PUSH_TOKEN || secrets.GITHUB_TOKEN }}');
+    const which = step('Which token pushes');
+    expect(which.env!['HAS_PUSH_TOKEN']).toBe("${{ secrets.GHCR_PUSH_TOKEN != '' }}");
+    expect(which.run).toMatch(/::warning title=Image pushed with GITHUB_TOKEN::.*docs\/android-signing\.md/);
+    // A warning, not a failure: releases keep working until the owner has set the token up.
+    expect(which.run).not.toMatch(/exit 1/);
+    expect(publish.steps!.indexOf(which)).toBeLessThan(publish.steps!.indexOf(login));
+    // The owner's steps are written down where the warning points.
+    const doc = read('docs/android-signing.md').replace(/\s+/g, ' ');
+    for (const words of ['GHCR_PUSH_TOKEN', 'write:packages', 'Manage Actions access', 'Inherit access from source repository', '**Read**'])
+      expect(doc).toContain(words);
+  });
+
+  it('fails a re-release that would change the digest of a version already on GHCR', () => {
+    expect(step('Is this version on GHCR already?').run).toContain('docker buildx imagetools inspect "${IMAGE}:${VERSION}"');
+    const digest = step('Digest');
+    expect(digest.env!['PREVIOUS']).toBe('${{ steps.previous.outputs.digest }}');
+    expect(digest.run).toMatch(/\[ "\$\{PREVIOUS\}" != "\$\{DIGEST\}" \][\s\S]*exit 1/);
+  });
+
+  it("pins the pushed digest in the release's compose file", () => {
+    const job = wf.jobs['compose-files']!;
+    expect(job.env!['DIGEST']).toBe('${{ needs.publish.outputs.digest }}');
+    const pin = job.steps!.find((s) => s.name === 'Pin the image in the compose file')!;
+    expect(pin.run).toContain('pinned="${IMAGE}:${VERSION}@${DIGEST}"');
+    expect(pin.run).toContain('grep -Fxq "    image: ${pinned}"');
+  });
+
+  it('says in the repository compose file and its README that it follows a tag, and points to the release copy', () => {
+    expect(read('packaging/compose/docker-compose.yml')).toMatch(/follows the version\s+# TAG/);
+    expect(read('packaging/compose/README.md')).toContain('**follows a tag**');
+  });
+
+  it('packs into the Start9 package only the image pulled by the pushed digest, and checks it again after the pack', () => {
+    const steps = workflow('start9.yml').jobs['build']!.steps!;
+    const image = steps.find((s) => s.name === 'Guardian image')!;
+    expect(image.run).toContain("docker image inspect \"${tag}\" --format '{{json .RepoDigests}}'");
+    expect(image.run).toContain('refusing to pack it');
+    const pack = steps.findIndex((s) => s.name === 'Build the .s9pk');
+    const after = steps.findIndex((s) => s.name === 'The packed image is the pushed digest');
+    expect(after).toBe(pack + 1);
+    expect(steps[after]!.if).toBe("github.ref_type == 'tag'");
+    expect(steps[after]!.env!['ID']).toBe('${{ steps.image.outputs.id }}');
   });
 });
 

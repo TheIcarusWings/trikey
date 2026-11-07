@@ -6,7 +6,17 @@ name: Docker
 #
 # Only the `publish` job can write to GHCR (`packages: write`), and it runs only on a v* tag ref; it also declares the
 # `release` environment, so once the owner restricts that environment to v* tags (docs/android-signing.md, "The
-# `release` environment") a dispatch on any other ref cannot even start it. Pushes use GITHUB_TOKEN.
+# `release` environment") a dispatch on any other ref cannot even start it. It pushes with GHCR_PUSH_TOKEN, a secret of
+# that environment, when the owner has set one up; until then with GITHUB_TOKEN, and it says so in a warning, because
+# any workflow on any branch can ask for a GITHUB_TOKEN that may write the package (docs/android-signing.md, "The
+# image": how to close that).
+#
+# One tag per release, `<version>` (0.1.22-alpha), and no moving tag (no `latest`, `<major>.<minor>` or `sha-...`):
+# nothing points at a tag that later releases would move, so there is no tag whose overwriting would reach anyone who
+# did not ask for that exact version. A version tag can still be pushed over by a token that may write the package, which
+# is why everything this repository ships names the image by digest (the release's compose file, the Umbrel store, the
+# Start9 package's packed image) and only development files name the tag. A re-run of a release must push the very
+# same digest (the build is reproducible); if the version is on GHCR already with another digest, `publish` fails.
 #
 # Downstream of the push, nothing re-resolves the tag: compose-files, start9.yml and umbrel-store.yml are given the
 # digest `publish` pushed (its output), and start9.yml and umbrel-store.yml fail if the tag no longer points at it.
@@ -21,7 +31,7 @@ name: Docker
 #   - rewrite-timestamp=true on the exporter,
 #   - no provenance or SBOM attestations (they record the build, and so differ per build),
 #   - no `org.opencontainers.image.created` label (docker/metadata-action would add the
-#     current time), which is why only `tags` is taken from the metadata step.
+#     current time), which is why the tag is written out here and no metadata step is used.
 
 on:
   push:
@@ -95,8 +105,12 @@ jobs:
       - name: Build parameters
         id: params
         run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          # Also the image's only tag: nothing else may end up in it.
+          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-alpha)?$ ]] || { echo "::error::Not a release version: ${GITHUB_REF_NAME}"; exit 1; }
           echo "sde=$(git log -1 --format=%ct)" >> "$GITHUB_OUTPUT"
-          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
@@ -105,8 +119,20 @@ jobs:
           driver: docker-container
           driver-opts: image=${{ env.BUILDKIT_IMAGE }}
 
-      # GITHUB_TOKEN, or GHCR_PUSH_TOKEN when the `release` environment has one (docs/android-signing.md, "The `release`
-      # environment": with it, the package can deny this repository's GITHUB_TOKEN write access altogether).
+      # GHCR_PUSH_TOKEN when the `release` environment has one, else GITHUB_TOKEN with a warning. Only with the former
+      # can the package deny this repository's GITHUB_TOKEN write access, and so deny it to a workflow edited on a branch
+      # (docs/android-signing.md, "The image"). Not an error without it: releases must keep working until the owner has
+      # done those steps.
+      - name: Which token pushes
+        env:
+          HAS_PUSH_TOKEN: ${{ secrets.GHCR_PUSH_TOKEN != '' }}
+        run: |
+          if [ "${HAS_PUSH_TOKEN}" = "true" ]; then
+            echo "Pushing with GHCR_PUSH_TOKEN, the release environment's token."
+          else
+            echo "::warning title=Image pushed with GITHUB_TOKEN::GHCR_PUSH_TOKEN is not set in the release environment, so this push uses GITHUB_TOKEN. Any workflow on any branch can ask for a GITHUB_TOKEN with packages: write and push over ${IMAGE}:<version>. Add GHCR_PUSH_TOKEN and give this repository's Actions only Read access to the package: docs/android-signing.md, \"The image\"."
+          fi
+
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -114,15 +140,21 @@ jobs:
           username: ${{ secrets.GHCR_PUSH_TOKEN != '' && github.repository_owner || github.actor }}
           password: ${{ secrets.GHCR_PUSH_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - name: Image tags
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ${{ env.IMAGE }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha
+      # A re-run (release.yml's redispatch) pushes the same tag again. The build is reproducible, so that is the same
+      # digest; if the tag holds another one, the Digest step below fails the job and nothing downstream uses this push.
+      - name: Is this version on GHCR already?
+        id: previous
+        env:
+          VERSION: ${{ steps.params.outputs.version }}
+        run: |
+          set -euo pipefail
+          if previous=$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{.Manifest.Digest}}' 2>/dev/null) \
+            && [[ "${previous}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::notice title=Version already on GHCR::${IMAGE}:${VERSION} is ${previous}: this build must push the same digest."
+            echo "digest=${previous}" >> "$GITHUB_OUTPUT"
+          else
+            echo "${IMAGE}:${VERSION} is not on GHCR yet."
+          fi
 
       # A release is built from nothing (no cache read or written), so a stale or poisoned cache cannot reach it.
       - name: Build and push
@@ -132,7 +164,8 @@ jobs:
           context: .
           file: packaging/docker/Dockerfile
           platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
+          # The version, nothing else (see the header: no moving tags).
+          tags: ${{ env.IMAGE }}:${{ steps.params.outputs.version }}
           build-args: |
             SOURCE_DATE_EPOCH=${{ steps.params.outputs.sde }}
             VERSION=${{ steps.params.outputs.version }}
@@ -144,9 +177,14 @@ jobs:
       - name: Digest
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
+          PREVIOUS: ${{ steps.previous.outputs.digest }}
         run: |
           set -euo pipefail
           [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::unexpected digest ${DIGEST}"; exit 1; }
+          if [ -n "${PREVIOUS}" ] && [ "${PREVIOUS}" != "${DIGEST}" ]; then
+            echo "::error title=Version tag changed::${IMAGE}:${GITHUB_REF_NAME#v} was ${PREVIOUS} before this run and is now ${DIGEST}. A re-release must build the same image; nothing downstream uses this push. Find out why the builds differ (packaging/VERIFY.md) before releasing."
+            exit 1
+          fi
           {
             echo "### Published image"
             echo

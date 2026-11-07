@@ -173,12 +173,33 @@ below are done.
 Where an environment secret and a repository secret have the same name, the job in the environment gets the
 environment's. Optional, further:
 
-- **The image.** `packages: write` comes from GITHUB_TOKEN, which a workflow file edited on a branch can still ask for.
-  To close that too: on the package's page (**Packages → trikey-guardian → Package settings → Manage Actions access**)
-  give this repository the **Read** role instead of **Write**, and add an environment secret `GHCR_PUSH_TOKEN` to
-  `release`: a classic personal access token with only the `write:packages` scope (GHCR does not take fine-grained
-  tokens; this one can write every package of the account, so keep it only in the environment). `docker.yml` pushes with
-  it when it is set, and with GITHUB_TOKEN otherwise.
+- **The image** (recommended; the release run warns "Image pushed with GITHUB_TOKEN" until it is done). Without it,
+  `packages: write` comes from GITHUB_TOKEN, which any workflow file on any branch can ask for: a workflow pushed to a
+  branch could push its own image over `ghcr.io/theicaruswings/trikey-guardian:<version>`. Nothing this repository
+  ships names the image by that tag alone (the release's compose file, the Umbrel store and the Start9 package all use
+  the digest the release pushed), but people who type the tag would get it. To close it, in this order, so no release
+  breaks in between:
+  1. Make the token. GitHub, your avatar → **Settings → Developer settings → Personal access tokens → Tokens
+     (classic) → Generate new token → Generate new token (classic)**. Note `trikey GHCR push`; **Expiration**: a date
+     you will remember (a year), and put a reminder in your calendar: once it expires, releases stop at "Log in to
+     GHCR" until you replace it. Tick **only** `write:packages` (GitHub ticks `read:packages` with it). **Generate
+     token**, and copy it. GHCR does not take fine-grained tokens; this classic one can write every package of your
+     account, so it goes nowhere but the `release` environment.
+  2. Store it. This repository → **Settings → Environments → release → Environment secrets → Add environment
+     secret**: name `GHCR_PUSH_TOKEN`, value the token, **Add secret**. Not a repository secret: only the `release`
+     environment's jobs, on `v*` tags, can read it.
+  3. Release once (or run **Actions → Release → Run workflow**, *redispatch* ticked, on `main`). The Docker run's
+     `publish` job now says "Pushing with GHCR_PUSH_TOKEN" and has no "Image pushed with GITHUB_TOKEN" warning.
+  4. Take write access away from the repository's GITHUB_TOKEN. Your avatar → **Your profile → Packages →
+     trikey-guardian → Package settings** (right-hand column). Under **Manage Actions access**: if **Inherit access
+     from source repository (recommended)** is ticked, untick it (with it, every workflow of this repository inherits
+     write access). Then, in the same list, set the role of `TheIcarusWings/trikey` to **Read** (if it is not
+     listed: **Add Repository**, pick it, role **Read**). Leave **Manage access** (people) as it is.
+  5. Check: the next release's `publish` job pushes with the token as in step 3. A branch workflow that tries to push
+     now gets `denied: permission_denied: write_package`.
+
+  `docker.yml` pushes with `GHCR_PUSH_TOKEN` when it is set, and with GITHUB_TOKEN (and the warning) otherwise. To undo,
+  delete the secret and set the repository's role back to **Write** first.
 - **Tags.** A `v*` tag is what the rule lets through, and anyone with write access can push one. Required reviewers
   (step 3) is the guard against that. A tag ruleset (**Settings → Rules → Rulesets → New ruleset → New tag ruleset**,
   target `v*`, *Restrict creations*) can also limit who creates them, but `release.yml` creates the tag with

@@ -113,9 +113,13 @@ match; the CI builds both together.
 - **That the base image and the toolchain are trustworthy.** You trust Docker's Official Node
   image (pinned by digest, built from Debian) and your own Docker and BuildKit. An attacker would
   have to compromise your toolchain and CI in the same way to hide a change.
-- **That the registry tag stays put.** A tag can be moved later. Compare digests, and run the image by
-  digest (`ghcr.io/theicaruswings/trikey-guardian@sha256:...`) where you can. The Umbrel store copy
-  does. The Start9 package refers to the image by tag (`packaging/start9/README.md`).
+- **That the registry tag stays put.** A tag can be pushed over later, by anyone who can write the
+  package. Compare digests, and run the image by digest
+  (`ghcr.io/theicaruswings/trikey-guardian:<version>@sha256:...`) where you can. What a release ships
+  does: the compose file attached to the release, the Umbrel store copy, and the Start9 package, whose
+  release build packs the image it pulled by the pushed digest. Only the repository's own
+  `packaging/compose/docker-compose.yml` and a `.s9pk` you pack yourself follow the tag. Releases push
+  no moving tag (`latest`, `0.1`): only `<version>`.
 - **That your server, your phone or your hardware wallet is safe.** The image is one link in the chain.
 - **The Umbrel and Start9 wrappers.** They hold configuration, not the program, but they decide
   how the image is started. Their sources are in `packaging/umbrel/` and `packaging/start9/`.
