@@ -299,7 +299,8 @@ jobs:
           } > "${out}/trikey-guardian-compose.yml"
           grep -Fxq "    image: ${pinned}" "${out}/trikey-guardian-compose.yml" \
             || { echo "::error::could not pin the image in packaging/compose/docker-compose.yml (its image: line changed?)"; exit 1; }
-          if grep -q 'TRIKEY_IMAGE' "${out}/trikey-guardian-compose.yml"; then echo "::error::the release copy still names TRIKEY_IMAGE"; exit 1; fi
+          # Only settings count: the header comments may name the override.
+          if grep -v '^[[:space:]]*#' "${out}/trikey-guardian-compose.yml" | grep -q 'TRIKEY_IMAGE'; then echo "::error::the release copy still names TRIKEY_IMAGE"; exit 1; fi
           cp packaging/compose/.env.example "${out}/trikey-guardian.env.example"
           (cd "${out}" && sha256sum trikey-guardian-compose.yml trikey-guardian.env.example > trikey-guardian-compose.sha256)
           cat "${out}/trikey-guardian-compose.sha256"
