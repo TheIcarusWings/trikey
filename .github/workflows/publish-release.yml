@@ -12,8 +12,8 @@ name: Publish release
 # `release` environment (so it runs only on refs the environment allows, after the owner's approval when the
 # environment asks for one), checks the draft with packaging/check-release-assets.sh: exactly the expected files, each
 # the one GitHub lists, the checksums, both APKs signed by packaging/android/release-cert.sha256 and nothing else and
-# each the right app, the compose file running the guardian image by the digest docker.yml pushed, and that digest
-# still being what the version tag names. Only then is the draft published, and its files
+# each the right app, the compose file running the guardian image by the digest docker.yml pushed (and its `verified`
+# job found reproduced), and that digest still being what the version tag names. Only then is the draft published, and its files
 # are compared with what was checked once more after. With immutable releases on (docs/android-signing.md, "Immutable
 # releases") nothing can change a published release's files or tag afterwards; the job warns while they are off.
 #
@@ -104,7 +104,7 @@ jobs:
             apps/mobile/app.json
           sparse-checkout-cone-mode: false
 
-      # Written by docker.yml's publish job: the digest it pushed.
+      # Written by docker.yml's `verified` job: the digest `publish` pushed, which two clean builds reproduced.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: guardian-image-digest

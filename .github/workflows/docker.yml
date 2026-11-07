@@ -19,12 +19,19 @@ name: Docker
 # same digest (the build is reproducible); if the version is on GHCR already with another digest, `publish` fails.
 #
 # Downstream of the push, nothing re-resolves the tag: compose-files, start9.yml and umbrel-store.yml are given the
-# digest `publish` pushed (its output), and start9.yml and umbrel-store.yml fail if the tag no longer points at it.
-# release.yml therefore dispatches this workflow, reproducible.yml and android-apk.yml; start9.yml and umbrel-store.yml
-# run from here.
+# digest `publish` pushed, and start9.yml and umbrel-store.yml fail if the tag no longer points at it. They get it only
+# through `verified`: on a release tag this workflow also calls reproducible.yml, which builds the same commit twice
+# more from nothing, and `verified` lets the digest through only if those builds give exactly the pushed image index.
+# release.yml therefore dispatches this workflow and android-apk.yml (and publish-release.yml); reproducible.yml,
+# start9.yml and umbrel-store.yml run from here.
 #
 # The image is built to be reproducible: see packaging/VERIFY.md, and
 # .github/workflows/reproducible.yml, which builds it twice and compares the digests.
+#
+# arm64 is built under QEMU, on the amd64 runner, from a binfmt image pinned by digest (BINFMT_IMAGE). Not natively on
+# an arm64 runner with the two platforms merged afterwards: the merged index would be written by `imagetools create`,
+# not by BuildKit's exporter, so its digest would no longer be the one a single multi-platform build gives, which is what
+# reproducible.yml compares and what packaging/VERIFY.md tells everyone to rebuild and compare.
 # The two workflows must build the same way, so keep these in step with that file:
 #   - the pinned BuildKit (driver-opts below),
 #   - SOURCE_DATE_EPOCH and VERSION as build args,
@@ -46,6 +53,10 @@ env:
   IMAGE: ghcr.io/theicaruswings/trikey-guardian
   # BuildKit v0.34.1, by digest (moby/buildkit on Docker Hub, 2026-10-29). Same as reproducible.yml.
   BUILDKIT_IMAGE: moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
+  # The QEMU emulators for the arm64 build: setup-qemu-action runs this image with --privileged, so it is pinned by
+  # digest (tonistiigi/binfmt on Docker Hub, tag qemu-v10.2.3-68, 2026-06-08; the image index) and never taken from the
+  # Actions cache. Same as reproducible.yml and packaging/VERIFY.md.
+  BINFMT_IMAGE: tonistiigi/binfmt:qemu-v10.2.3-68@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
 
 jobs:
   # Pull requests and manual runs on a branch: both platforms, nothing pushed, no write access.
@@ -63,7 +74,12 @@ jobs:
         id: params
         run: echo "sde=$(git log -1 --format=%ct)" >> "$GITHUB_OUTPUT"
 
+      # arm64 under QEMU, from the pinned binfmt image (see BINFMT_IMAGE above), never cached.
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          image: ${{ env.BINFMT_IMAGE }}
+          platforms: arm64
+          cache-image: false
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
@@ -112,7 +128,12 @@ jobs:
           echo "sde=$(git log -1 --format=%ct)" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
+      # arm64 under QEMU, from the pinned binfmt image (see BINFMT_IMAGE above), never cached.
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          image: ${{ env.BINFMT_IMAGE }}
+          platforms: arm64
+          cache-image: false
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
@@ -196,7 +217,43 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           # Also as an annotation, which the checks API returns (the summary is only on the web page).
           echo "::notice title=Published image::${IMAGE}@${DIGEST}"
-          echo "${DIGEST}" > "${RUNNER_TEMP}/guardian-image-digest.txt"
+
+  # Release tags: two more builds of the same commit, each from nothing on its own builder (reproducible.yml), at the
+  # same time as `publish`. Their image index digest must be the one `publish` pushed (`verified`, below).
+  reproducible:
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/reproducible.yml
+
+  # The gate between the push and everything that ships it: the compose file on the release, the Start9 package, the
+  # Umbrel store and, through the digest artifact, publish-release.yml. They run only if the image on GHCR is the one
+  # two independent clean builds of the tag's source produce, byte for byte; otherwise the release stops here, before
+  # any of them names the image (and the GitHub release stays a draft).
+  verified:
+    needs: [publish, reproducible]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      digest: ${{ steps.compare.outputs.digest }}
+    steps:
+      - name: The pushed image is the reproduced one
+        id: compare
+        env:
+          PUSHED: ${{ needs.publish.outputs.digest }}
+          REBUILT: ${{ needs.reproducible.outputs.index-digest }}
+        run: |
+          set -euo pipefail
+          [[ "${PUSHED}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::publish gave no digest: '${PUSHED}'"; exit 1; }
+          [[ "${REBUILT}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::reproducible.yml gave no digest: '${REBUILT}'"; exit 1; }
+          if [ "${PUSHED}" != "${REBUILT}" ]; then
+            echo "::error title=Pushed image not reproduced::publish pushed ${IMAGE}@${PUSHED}, but two clean builds of ${GITHUB_SHA::12} give ${REBUILT}. Nothing ships it: no compose file, Umbrel store, Start9 package or published release. Compare them (packaging/VERIFY.md, \"If the digests differ\") before releasing."
+            exit 1
+          fi
+          echo "digest=${PUSHED}" >> "$GITHUB_OUTPUT"
+          echo "${PUSHED}" > "${RUNNER_TEMP}/guardian-image-digest.txt"
+          echo "::notice title=Image reproduced::${IMAGE}@${PUSHED} is what two independent builds of ${GITHUB_SHA::12} give."
 
       # For publish-release.yml, which checks that the release's compose file pins this digest before it publishes.
       - name: Keep the digest for publish-release.yml
@@ -212,15 +269,15 @@ jobs:
   # creates the draft before it dispatches this workflow on the tag (a tag made with GITHUB_TOKEN starts no `push: tags`
   # run, a dispatch does); for a tag pushed by hand, this job or android-apk.yml's release job makes the draft.
   compose-files:
-    needs: publish
-    if: needs.publish.outputs.digest != ''
+    needs: [publish, verified]
+    if: needs.verified.outputs.digest != ''
     runs-on: ubuntu-latest
     permissions:
       contents: write # upload release assets
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       VERSION: ${{ needs.publish.outputs.version }}
-      DIGEST: ${{ needs.publish.outputs.digest }}
+      DIGEST: ${{ needs.verified.outputs.digest }}
       TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -279,27 +336,28 @@ jobs:
             "${out}/trikey-guardian-compose.yml" "${out}/trikey-guardian.env.example" "${out}/trikey-guardian-compose.sha256"
           echo "::notice title=Compose files attached to the draft::${TAG}: trikey-guardian-compose.yml pins ${IMAGE}:${VERSION}@${DIGEST}"
 
-  # The Start9 package (.s9pk files, workflow artifacts only), packed from the image `publish` pushed, by its digest.
+  # The Start9 package (.s9pk files, workflow artifacts only), packed from the image `publish` pushed, by its digest,
+  # once `verified` has confirmed it.
   start9:
-    needs: publish
-    if: needs.publish.outputs.digest != ''
+    needs: verified
+    if: needs.verified.outputs.digest != ''
     permissions:
       contents: read
     uses: ./.github/workflows/start9.yml
     with:
-      image-digest: ${{ needs.publish.outputs.digest }}
+      image-digest: ${{ needs.verified.outputs.digest }}
 
   # The Umbrel store copy, with the image pinned by the digest `publish` pushed. Its job declares the `release`
   # environment, where the store token can live (docs/android-signing.md, "The `release` environment").
   umbrel-store:
-    needs: publish
-    if: needs.publish.outputs.digest != ''
+    needs: verified
+    if: needs.verified.outputs.digest != ''
     permissions:
       contents: read
       packages: read
     uses: ./.github/workflows/umbrel-store.yml
     with:
-      image-digest: ${{ needs.publish.outputs.digest }}
+      image-digest: ${{ needs.verified.outputs.digest }}
     secrets:
       UMBREL_STORE_TOKEN: ${{ secrets.UMBREL_STORE_TOKEN }}
 

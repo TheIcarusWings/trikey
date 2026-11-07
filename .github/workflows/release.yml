@@ -16,8 +16,8 @@ name: Release
 #
 # A tag made with GITHUB_TOKEN does not start the workflows that run on tags (GitHub's guard against loops), but a
 # workflow_dispatch does. So it then dispatches the release builds on the new tag: Docker (the guardian image; once it
-# is pushed, docker.yml itself calls Umbrel store and Start9 package with the digest it pushed, so neither re-resolves
-# the tag), Reproducible image and Android test APK (signed with the release key, attached to this release), then
+# is pushed and reproducible.yml, which docker.yml calls, has rebuilt the same digest, docker.yml itself calls Umbrel
+# store and Start9 package with it, so neither re-resolves the tag) and Android test APK (signed with the release key, attached to this release), then
 # Publish release. On a tag
 # ref they behave exactly as when the tag is pushed by hand. The jobs that publish or sign run only on v* tag refs and
 # declare the `release` environment (docs/android-signing.md, "The `release` environment"). It can also be run by hand (workflow_dispatch) to retry a release whose tag exists but whose builds
@@ -113,7 +113,7 @@ jobs:
           if ! gh release view "${TAG}" >/dev/null 2>&1; then
             gh release create "${TAG}" --draft --prerelease --verify-tag --title "Trikey ${TAG}" --notes-file "${RUNNER_TEMP}/notes.md"
           fi
-          for wf in docker.yml reproducible.yml android-apk.yml publish-release.yml; do
+          for wf in docker.yml android-apk.yml publish-release.yml; do
             gh workflow run "${wf}" --ref "${TAG}"
             echo "Dispatched ${wf} on ${TAG}"
           done

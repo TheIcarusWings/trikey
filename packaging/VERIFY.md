@@ -9,8 +9,16 @@ fifteen minutes.
 
 - `git`, `jq`, and Docker with `buildx`.
 - For a build of the Raspberry Pi (arm64) image on an x86 computer, or the other way around, QEMU
-  emulation: `docker run --privileged --rm tonistiigi/binfmt --install all`. Skip this if you only
-  check your own platform (see "A single platform" below).
+  emulation. This runs a container with `--privileged`, so run the image CI uses, by its digest, and
+  only the emulator you need (`arm64` on an x86 computer, `amd64` on an arm64 one):
+
+  ```sh
+  docker run --privileged --rm \
+    tonistiigi/binfmt:qemu-v10.2.3-68@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 \
+    --install arm64
+  ```
+
+  Skip this if you only check your own platform (see "A single platform" below).
 - About 10 GB of disk and, with emulation, a good half hour.
 
 ## 1. Get the source of a release
@@ -81,8 +89,9 @@ Compare them with step 3:
 - the **index** digest of your build must equal the `Digest:` at the top;
 - each **manifest** digest must equal the digest listed for that platform.
 
-The release job also prints the digest it built, in the job summary of the "Reproducible image"
-run for the tag (GitHub, Actions tab). And to see what your own server runs, the Umbrel store
+The release also builds it twice more from nothing, and ships the image only if those builds give
+exactly the pushed digest (`.github/workflows/docker.yml`, job `verified`); the digest is in the
+job summary of the "Reproducible image" job of the tag's Docker run (GitHub, Actions tab). And to see what your own server runs, the Umbrel store
 copy of the app pins the image by this digest in its `docker-compose.yml`.
 
 If they are all equal, the image on GHCR is the one this source builds.
@@ -144,7 +153,8 @@ see `SECURITY.md`.
 
 ## How the build is made reproducible
 
-- The Dockerfile frontend and the Node base image are pinned by digest.
+- The Dockerfile frontend, the Node base image, BuildKit and the QEMU emulators (`tonistiigi/binfmt`)
+  are pinned by digest.
 - `npm ci` installs exactly the lockfile, with install scripts off. No `apt-get`, no network use
   other than the npm registry (whose answers are checked against the lockfile's hashes).
 - `vite build` names every file by its content hash and writes no build time, host name or path.

@@ -8,7 +8,7 @@
 # - each .sha256 file names its own file and matches it;
 # - both APKs are signed by the release key, packaging/android/release-cert.sha256, and nothing else, and each is the
 #   app it should be (app.trikey.wallet, app.trikey.wallet.foss);
-# - the compose file runs the guardian image by the digest docker.yml pushed.
+# - the compose file runs the guardian image by the digest docker.yml pushed and reproducible.yml rebuilt.
 #
 # Input (environment):
 #   TAG               the release tag, v0.1.22-alpha

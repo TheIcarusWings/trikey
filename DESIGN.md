@@ -589,8 +589,10 @@ printed and kept with the hardware wallet.
 - **Release supply chain** (review 2026-11). What a release ships is what people install without reading code: the
   APKs (by hand, Obtainium, Zapstore, the app's Check for updates), the guardian image and the files that name it.
   - **The image** is pushed only by docker.yml's `publish` job (v* tags, `release` environment), with one tag per
-    release and no moving tag; everything shipped names it by the digest that job pushed (the release's compose file,
-    the Umbrel store, the Start9 package's packed image). What remains: a
+    release and no moving tag; everything shipped names it by the digest that job pushed, and only once two more clean
+    builds of the tag (reproducible.yml) gave exactly that digest (the release's compose file, the Umbrel store, the
+    Start9 package's packed image, the GitHub release). The arm64 build runs under QEMU from a binfmt image pinned by
+    digest. What remains: a
     token that may write the package (until the owner sets up `GHCR_PUSH_TOKEN` and drops GITHUB_TOKEN's write access,
     any branch workflow) can push over a version tag, which reaches only people who pull that tag by name.
   - **Release files** are attached to a draft and published by publish-release.yml only after its checks (both APKs

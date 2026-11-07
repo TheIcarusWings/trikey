@@ -82,14 +82,46 @@ describe('docker.yml', () => {
     expect(JSON.stringify(build)).not.toMatch(/login-action/);
   });
 
-  it('hands the pushed digest to start9.yml and umbrel-store.yml, which it calls', () => {
+  it('hands the pushed digest, once reproduced, to start9.yml and umbrel-store.yml, which it calls', () => {
     for (const name of ['start9', 'umbrel-store']) {
       const job = wf.jobs[name]!;
       expect(job.uses).toBe(`./.github/workflows/${name}.yml`);
-      expect(job.needs).toBe('publish');
-      expect(job.with).toEqual({ 'image-digest': '${{ needs.publish.outputs.digest }}' });
+      expect(job.needs).toBe('verified');
+      expect(job.if).toBe("needs.verified.outputs.digest != ''");
+      expect(job.with).toEqual({ 'image-digest': '${{ needs.verified.outputs.digest }}' });
       expect(job.permissions?.packages ?? 'read').toBe('read');
     }
+  });
+
+  it('lets nothing ship the pushed image unless two clean builds of the tag give the same digest', () => {
+    const repro = wf.jobs['reproducible']!;
+    expect(repro.if).toBe(RELEASE_TAG);
+    expect(repro.uses).toBe('./.github/workflows/reproducible.yml');
+    expect(repro.needs).toBeUndefined(); // beside publish, not after it
+    const verified = wf.jobs['verified']!;
+    expect(verified.needs).toEqual(['publish', 'reproducible']);
+    const step = verified.steps!.find((s) => s.name === 'The pushed image is the reproduced one')!;
+    expect(step.env).toEqual({ PUSHED: '${{ needs.publish.outputs.digest }}', REBUILT: '${{ needs.reproducible.outputs.index-digest }}' });
+    expect(step.run).toMatch(/if \[ "\$\{PUSHED\}" != "\$\{REBUILT\}" \]; then[\s\S]*?exit 1/);
+    expect(step.run!.indexOf('exit 1\n          fi')).toBeLessThan(step.run!.indexOf('echo "digest=${PUSHED}"'));
+    expect(verified.outputs).toEqual({ digest: '${{ steps.compare.outputs.digest }}' });
+    // Every job that ships the image takes the digest from `verified`, never from `publish` directly.
+    for (const name of ['compose-files', 'start9', 'umbrel-store']) {
+      expect(JSON.stringify(wf.jobs[name]), name).not.toContain('needs.publish.outputs.digest');
+      expect(JSON.stringify(wf.jobs[name]), name).toContain('needs.verified.outputs.digest');
+    }
+    // publish-release.yml's digest artifact comes from `verified` too.
+    expect(JSON.stringify(verified.steps)).toContain('"name":"guardian-image-digest"');
+    expect(JSON.stringify(wf.jobs['publish']!.steps)).not.toContain('guardian-image-digest');
+    // reproducible.yml hands back the index digest its two builds agree on, and runs on tags only when called.
+    const r = workflow('reproducible.yml');
+    expect(r.on).not.toHaveProperty('push');
+    expect(r.on['workflow_call']).toEqual({
+      outputs: { 'index-digest': expect.objectContaining({ value: '${{ jobs.build-twice.outputs.index-digest }}' }) },
+    });
+    expect(r.jobs['build-twice']!.outputs).toEqual({ 'index-digest': '${{ steps.compare.outputs.index }}' });
+    const compare = r.jobs['build-twice']!.steps!.find((s) => s.name === 'Compare digests')!.run!;
+    expect(compare.indexOf('echo "index=${index}" >> "$GITHUB_OUTPUT"')).toBeGreaterThan(compare.indexOf('if diff -u'));
   });
 });
 
@@ -136,7 +168,7 @@ describe('the guardian image tags', () => {
 
   it("pins the pushed digest in the release's compose file", () => {
     const job = wf.jobs['compose-files']!;
-    expect(job.env!['DIGEST']).toBe('${{ needs.publish.outputs.digest }}');
+    expect(job.env!['DIGEST']).toBe('${{ needs.verified.outputs.digest }}');
     const pin = job.steps!.find((s) => s.name === 'Pin the image in the compose file')!;
     expect(pin.run).toContain('pinned="${IMAGE}:${VERSION}@${DIGEST}"');
     expect(pin.run).toContain('grep -Fxq "    image: ${pinned}"');
@@ -164,7 +196,8 @@ describe('release.yml', () => {
   const script = workflow('release.yml').jobs['release']!.steps!.map((s) => s.run ?? '').join('\n');
 
   it('dispatches the builds, then publish-release.yml last (docker.yml calls the packaging workflows)', () => {
-    expect(script).toContain('for wf in docker.yml reproducible.yml android-apk.yml publish-release.yml; do');
+    // reproducible.yml is called by docker.yml, which gates on it; dispatching it too would build it a third time.
+    expect(script).toContain('for wf in docker.yml android-apk.yml publish-release.yml; do');
   });
 
   it('creates the tag, then the release as a draft on it, never a published one', () => {
@@ -249,7 +282,7 @@ describe('release files: attached to a draft, published only after the checks', 
     // The digest to expect comes from docker.yml's publish job, not from the release's own compose file.
     const download = job.steps!.find((s) => s.uses?.startsWith('actions/download-artifact@'))!;
     expect(download.with).toMatchObject({ name: 'guardian-image-digest', 'run-id': '${{ needs.wait.outputs.docker-run }}' });
-    expect(JSON.stringify(workflow('docker.yml').jobs['publish']!.steps)).toContain('"name":"guardian-image-digest"');
+    expect(JSON.stringify(workflow('docker.yml').jobs['verified']!.steps)).toContain('"name":"guardian-image-digest"');
   });
 
   it('documents the draft, the checks and the owner\'s switch for immutable releases', () => {
@@ -459,6 +492,36 @@ describe('the release job of android-apk.yml', () => {
 describe('every workflow', () => {
   const files = readdirSync(WORKFLOWS).filter((f) => f.endsWith('.yml'));
 
+  it('runs QEMU only from the binfmt image pinned by digest, never cached, and VERIFY.md tells users the same one', () => {
+    const PINNED = /^tonistiigi\/binfmt:qemu-v[\d.]+(-\d+)?@sha256:[0-9a-f]{64}$/;
+    const pins = new Set<string>();
+    let uses = 0;
+    for (const f of files) {
+      const wf = workflow(f);
+      for (const [name, job] of Object.entries(wf.jobs)) {
+        for (const step of job.steps ?? []) {
+          if (!step.uses?.startsWith('docker/setup-qemu-action@')) continue;
+          uses++;
+          const where = `${f}#${name}`;
+          expect(step.with?.['image'], where).toBe('${{ env.BINFMT_IMAGE }}');
+          expect(step.with?.['cache-image'], where).toBe(false);
+          expect(step.with?.['platforms'], where).toBe('arm64');
+          const env = (wf as unknown as { env?: Record<string, string> }).env?.['BINFMT_IMAGE'];
+          expect(env, where).toMatch(PINNED);
+          pins.add(env!);
+        }
+      }
+      // No other way of starting binfmt, unpinned.
+      expect(read(`.github/workflows/${f}`), f).not.toMatch(/tonistiigi\/binfmt(:latest)?\s*(--install|$)/m);
+    }
+    expect(uses).toBe(3); // docker.yml build and publish, reproducible.yml
+    expect(pins.size).toBe(1);
+    const [pin] = [...pins];
+    const verify = read('packaging/VERIFY.md');
+    expect(verify).toContain(pin);
+    expect(verify).not.toMatch(/tonistiigi\/binfmt --install/);
+  });
+
   it('pins every action to a full commit SHA, with its version in a comment', () => {
     expect(files.length).toBeGreaterThan(10);
     for (const f of files) {
@@ -480,7 +543,7 @@ describe('every workflow', () => {
         const where = `${f}#${name}`;
         if (job.uses) {
           // A caller of a reusable workflow: only on release tags.
-          expect(job.if, where).toMatch(/github\.ref_type == 'tag' && startsWith\(github\.ref_name, 'v'\)|needs\.publish\.outputs\.digest/);
+          expect(job.if, where).toMatch(/github\.ref_type == 'tag' && startsWith\(github\.ref_name, 'v'\)|needs\.verified\.outputs\.digest/);
         } else {
           expect(job.environment, where).toBe('release');
         }
