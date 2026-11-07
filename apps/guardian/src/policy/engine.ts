@@ -42,7 +42,7 @@ import {
 import { ChainTime, ChainTimeSource, Clock, DAY, HOUR, systemClock } from './clock.js';
 import { MAX_SELF_INDEX, NO_HIGH_WATER, addCosignerSignatures, feeRateRefusal, inspectPsbt, maxHighWater } from './inspect.js';
 import { PUBLIC_SOURCE_MAX_RISE, addPendingMark, chainMarksOf, changeWindow, cosignRateRefusal, marksAfterScan, migrateMarks, scanFloorOf, type MarkJump, type ScanNote } from './marks.js';
-import { pruneSpends, splitOutflow, usageWith, windowUsage } from './limit.js';
+import { pruneSpends, pruneTime, splitOutflow, usageWith, windowUsage } from './limit.js';
 import { isContactLockOn, isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from './rules.js';
 import { CosignerSigner } from './signer.js';
 import { StateStore, deserializeState, serializeState } from './storage.js';
@@ -561,7 +561,9 @@ export class PolicyEngine {
         const now = this.clock.now();
         this.refresh(draft, now);
         const out = await fn(draft, now);
-        if (draft.active) draft.active.spends = pruneSpends(draft.active.spends, now);
+        // On the limit's own trusted time, never the raw clock (limit.ts `pruneTime`).
+        const pruneAt = pruneTime(draft.timeFloor, draft.chainSeen, MAX_CLOCK_AHEAD_OF_CHAIN_MS);
+        if (draft.active && pruneAt !== undefined) draft.active.spends = pruneSpends(draft.active.spends, pruneAt);
         draft.activity = pruneActivity(draft.activity, this.maxActivity, this.maxRefusals);
         // A refusal that changed nothing but the activity log is not worth a durable write (a stranger's
         // or a stolen phone's flood would otherwise fsync the whole state each time): it stays in memory

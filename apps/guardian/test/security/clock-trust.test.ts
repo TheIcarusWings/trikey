@@ -10,13 +10,17 @@
  *     phone a fresh daily limit per step. Now the engine refuses to co-sign while the clock is more than
  *     MAX_CLOCK_AHEAD_OF_CHAIN_MS ahead of the chain's MTP, and the limit's time never goes backwards.
  *
- * Regression tests from the reviewer's poc-clock-back.test.ts and poc-engine.test.ts ("clock moved forward").
+ * Regression tests from the reviewer's poc-clock-back.test.ts and poc-engine.test.ts ("clock moved forward"), and for
+ * the November review's forward clock that pruned the ledger (below).
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { RECEIVE, buildSweep } from '@trikey/core';
-import { DAY, HOUR, MAX_CLOCK_AHEAD_OF_CHAIN_MS, ManualChain, ManualClock } from '../../src/policy/index.js';
+import { hex } from '@scure/base';
+import { RECEIVE, buildSpend, buildSweep } from '@trikey/core';
+import { HostedEngine, MemoryHostedStore } from '../../src/hosting/engine.js';
+import { DAY, HOUR, MAX_CLOCK_AHEAD_OF_CHAIN_MS, ManualChain, ManualClock, SoftwareCosignerSigner } from '../../src/policy/index.js';
 import { GuardianRig } from '../support/index.js';
-import { APP_NOSTR, MNEMONICS, OTHER_COSIGNER_PRIV, T0, appSigner, fund, hwSigner, makeWallet, network, phoneSpend, setup, type Ctx } from '../helpers.js';
+import { fakeMap, hostedWallet } from '../support/hosted.js';
+import { APP_NOSTR, CONTACT_A, MNEMONICS, OTHER_COSIGNER_PRIV, T0, appSigner, fund, hwSigner, makeWallet, network, phoneSpend, setup, type Ctx } from '../helpers.js';
 import { pairInRig } from './support.js';
 
 const HEIGHT0 = 900_000;
@@ -88,6 +92,74 @@ describe('security: the daily limit window and a clock moved forward (finding 2b
     expect(await spend(2)).toMatchObject({ ok: true });
     ctx.clock.advance(2 * HOUR);
     expect(await spend(3)).toMatchObject({ ok: false, refusal: { reason: 'clock_ahead_of_chain' } });
+  });
+});
+
+/**
+ * Security review 2026-11, finding 2 (HIGH): a forward clock deleted the daily-limit ledger. `mutate` pruned the spend
+ * records (kept 30 days) with the raw system clock on every call, refusals included: with the phone and the box's clock
+ * (NTP or local), spend the limit, jump the clock 30 days ahead, send any `sign` (refused, `clock_ahead_of_chain`, but
+ * pruned and saved), jump it back, spend the limit again. Now the records are pruned on the limit's own trusted time
+ * (`timeFloor`, bounded by the chain's MTP plus the allowed skew), so a refusal never prunes; the same in the hosted engine.
+ */
+describe('security: a clock jumped ahead does not delete the limit ledger (review 2026-11, finding 2)', () => {
+  it('PoC: spend the limit, jump the clock 31 days ahead, a refused sign, jump back: the limit is still used', async () => {
+    const chain = new ManualChain(HEIGHT0, T0 - HOUR);
+    const ctx = await setup({ rules: { dailyLimitSats: 100_000n }, chain });
+    const spend = async (i: number, amount: bigint) => ctx.engine.cosign((await phoneSpend(ctx.wallet, [fund(ctx.wallet, RECEIVE, i, 200_000n)], amount)).psbt);
+    expect(await spend(0, 95_000n)).toMatchObject({ ok: true });
+    ctx.clock.advance(31 * DAY);
+    expect(await spend(1, 1_000n)).toMatchObject({ ok: false, refusal: { reason: 'clock_ahead_of_chain' } });
+    ctx.clock.set(T0 + 10 * 60_000);
+    expect(await spend(2, 95_000n)).toMatchObject({ ok: false, refusal: { reason: 'over_daily_limit' } });
+    expect(ctx.engine.status().dailyLimit!.used).toBeGreaterThan(95_000n);
+  });
+
+  it('records go once they are 30 days old on the limit time, not the clock', async () => {
+    const chain = new ManualChain(HEIGHT0, T0);
+    const ctx = await setup({ rules: { dailyLimitSats: 100_000n }, chain });
+    const spend = async (i: number, amount: bigint) => ctx.engine.cosign((await phoneSpend(ctx.wallet, [fund(ctx.wallet, RECEIVE, i, 200_000n)], amount)).psbt);
+    const first = await phoneSpend(ctx.wallet, [fund(ctx.wallet, RECEIVE, 0, 200_000n)], 10_000n);
+    expect(await ctx.engine.cosign(first.psbt)).toMatchObject({ ok: true, replay: false });
+    // 31 days on, with the chain: the next co-signature prunes the old record (a replay of it then counts again).
+    ctx.clock.advance(31 * DAY);
+    chain.advance(31 * DAY);
+    expect(await spend(1, 10_000n)).toMatchObject({ ok: true });
+    expect(await ctx.engine.cosign(first.psbt)).toMatchObject({ ok: true, replay: false });
+  });
+
+  it('PoC: the hosted engine (a guest slot) keeps its ledger the same way', async () => {
+    const clock = new ManualClock(T0);
+    const chain = new ManualChain(HEIGHT0, T0 - HOUR);
+    const signer = new SoftwareCosignerSigner(new Uint8Array(32).fill(21));
+    const engine = await HostedEngine.open({ slotId: '0123456789abcdef', store: new MemoryHostedStore(), clock, chain, blocksPerDay: 1 });
+    const fx = await hostedWallet({ cosignerPub: hex.encode(signer.accountPubkey) });
+    const rules = { dailyLimitSats: 100_000n, recoveryDelayDays: 7 as const, alertContacts: [CONTACT_A], sweepFeeCapSats: 20_000n };
+    const reg = await engine.register(
+      {
+        network: 'regtest',
+        accountPubkeys: { app: fx.accountPubkeys.app, hardware: fx.accountPubkeys.hardware },
+        cosignerAccountPubkey: fx.accountPubkeys.cosigner,
+        rules,
+        hardwareAuth: fx.hardwareAuth,
+        hardwareAuthProof: fx.proof,
+        rulesApproval: fx.approveRules(rules, clock.now()),
+        appNostrPubkey: APP_NOSTR,
+        walletLabel: 'Ana',
+        walletMap: fakeMap(),
+      },
+      signer,
+    );
+    if (!reg.ok) throw new Error(JSON.stringify(reg.refusal));
+    engine.setSigner(signer);
+    const to = 'bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080';
+    const pay = async (i: number, amount: bigint) =>
+      engine.cosign(await appSigner().signPsbt(buildSpend({ wallet: fx.wallet, utxos: [fund(fx.wallet, 0, i, 200_000n)], recipients: [{ address: to, amount }], feeRate: 2, changeIndex: i }).psbt, network));
+    expect(await pay(0, 95_000n)).toMatchObject({ ok: true });
+    clock.advance(31 * DAY);
+    expect(await pay(1, 1_000n)).toMatchObject({ ok: false, refusal: { reason: 'clock_ahead_of_chain' } });
+    clock.set(T0 + 10 * 60_000);
+    expect(await pay(2, 95_000n)).toMatchObject({ ok: false, refusal: { reason: 'over_daily_limit' } });
   });
 });
 

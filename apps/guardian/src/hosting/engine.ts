@@ -47,7 +47,7 @@ import { bip137Authorizer, approvalMessage, pairingMessage, proofId, recoveryAcc
 import { DAY, systemClock, type ChainTime, type ChainTimeSource, type Clock } from '../policy/clock.js';
 import { BLOCKS_PER_DAY, MAINNET_CONTACT_REQUIRED, LIMIT_OFF_AT_PAIRING, rulesApprovalRefusal, MAX_ACCESS_GRANTS, MAX_APPROVAL_TTL_MS, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_SEQUENCE_STEP, NOTICE_TTL_MS, isRefusalEvent, policyWarnings, pruneActivity, type CosignResult, type GuardianStatus, type PhoneSpendingStatus, type RecoveryView } from '../policy/engine.js';
 import { addCosignerSignatures } from '../policy/inspect.js';
-import { pruneSpends, splitOutflow, usageWith, windowUsage } from '../policy/limit.js';
+import { pruneSpends, pruneTime, splitOutflow, usageWith, windowUsage } from '../policy/limit.js';
 import { isContactLockOn, isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from '../policy/rules.js';
 import type { CosignerSigner } from '../policy/signer.js';
 import type { AccessGrant, CancelActor, CancelledBy, HardwareApproval, Rules, RulesApproval, SurvivingRole } from '../policy/index.js';
@@ -472,7 +472,9 @@ export class HostedEngine {
         const now = this.clock.now();
         this.refresh(draft, now);
         const out = await fn(draft, now);
-        if (draft.active) draft.active.spends = pruneSpends(draft.active.spends, now);
+        // On the limit's own trusted time, never the raw clock (policy/limit.ts `pruneTime`).
+        const pruneAt = pruneTime(draft.timeFloor, draft.chainSeen, MAX_CLOCK_AHEAD_OF_CHAIN_MS);
+        if (draft.active && pruneAt !== undefined) draft.active.spends = pruneSpends(draft.active.spends, pruneAt);
         draft.activity = pruneActivity(draft.activity as never, HOSTED_MAX_ACTIVITY, HOSTED_MAX_REFUSALS) as never;
         const refusalOnly = (out as { ok?: unknown })?.ok === false && withoutActivity(draft) === withoutActivity(this.state);
         if (!refusalOnly) await this.store.save(draft);
