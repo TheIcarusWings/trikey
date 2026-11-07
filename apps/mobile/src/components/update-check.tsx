@@ -2,12 +2,14 @@ import Constants from 'expo-constants';
 import { useState } from 'react';
 import { Linking, Platform, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
-import { Check, Download, ExternalLink, Info, TriangleAlert } from '@/components/icons';
+import { Check, Download, ExternalLink, Info, ShieldCheck, TriangleAlert } from '@/components/icons';
 import { Notice, SettingsRow } from '@/components/panels';
+import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { errorText } from '@/data/errors';
 import { ANDROID_VARIANT } from '@/lib/android-variant';
 import { useHapticOnce } from '@/lib/haptics';
+import { RELEASE_CERT_SHA256, formatFingerprint } from '@/lib/release-cert';
 import { useAction } from '@/lib/use-action';
 import {
   RELEASES_PAGE_URL,
@@ -34,7 +36,9 @@ function open(url: string) {
  * Settings > About > Check for updates: the row and, once tapped, what GitHub said. GitHub is asked only when the
  * person taps the row, never in the background or when Settings opens (see src/lib/update-check.ts). "Download" opens
  * the APK in the browser, which downloads it and hands it to Android's installer: the app downloads and installs
- * nothing itself, so it needs no install permission.
+ * nothing itself, so it needs no install permission. The sheet shows the release certificate built into this app as the
+ * signer to expect, never a checksum from the release itself (see src/lib/update-check.ts, and DESIGN.md, "Release
+ * supply chain", for checking the APK's certificate in the app before handing it over, which is not built yet).
  */
 export function UpdateCheck() {
   const action = useAction();
@@ -45,7 +49,11 @@ export function UpdateCheck() {
     if (action.busy) return;
     setResult(null);
     // The APK of the build that is installed: the standard one, or the one without Google code.
-    const r = await action.run(checkForUpdate(version, (url, init) => fetch(url, init), { variant: ANDROID_VARIANT }));
+    // The running app's id: an APK with another one installs as a new app (update-check.ts, `newApp`).
+    const installedAppId = Constants.expoConfig?.android?.package;
+    const r = await action.run(
+      checkForUpdate(version, (url, init) => fetch(url, init), { variant: ANDROID_VARIANT, ...(installedAppId ? { installedAppId } : {}) })
+    );
     if (r.ok) setResult(r.value);
   };
 
@@ -89,14 +97,22 @@ export function UpdateCheck() {
   );
 }
 
+/** The release certificate's SHA-256, as AppVerifier and Android's tools print it. */
+const FINGERPRINT = formatFingerprint(RELEASE_CERT_SHA256);
+
 function UpdateAvailable({ result }: { result: Extract<UpdateCheckResult, { kind: 'available' }> }) {
-  const { release, sha256, current } = result;
+  const { release, current, appId, newApp } = result;
   const version = formatVersion(release.version);
   return (
     <>
       <Notice icon={Download} tone="fill" title={`Version ${version} is available`}>
         {release.name}. You have {current}.
       </Notice>
+      {newApp ? (
+        <Notice icon={TriangleAlert} iconClass="text-destructive" tone="warn-outline" title="This installs as a new app">
+          {`This APK is ${appId}, a different app from this one, so Android installs it next to this app. Android has nothing to compare it with and would install it whoever signed it. Before you restore your wallet into it, check who signed it: install AppVerifier (from F-Droid or Accrescent), open it, pick ${appId}, and compare its SHA-256 with the one below. If they differ, uninstall it and restore nothing.`}
+        </Notice>
+      ) : null}
       <AppButton
         title="Download"
         icon={Download}
@@ -106,18 +122,29 @@ function UpdateAvailable({ result }: { result: Extract<UpdateCheckResult, { kind
           if (isReleaseDownloadUrl(release.apkUrl)) open(release.apkUrl);
         }}
       />
-      <Text className="text-muted-foreground text-[13px] leading-[18px]">
-        Android installs it over this app and keeps your wallet only if both are signed with the Trikey release key (0.1.7 and
-        later). Back up first.
-      </Text>
-      {sha256 ? (
-        <View className="gap-0.5" accessible accessibilityLabel={`SHA-256 of the download: ${sha256}`}>
-          <Text className="text-muted-foreground text-[13px] leading-[18px]">SHA-256 of the download</Text>
-          <Text selectable className="font-mono text-xs leading-[18px]">
-            {sha256}
-          </Text>
+      {newApp ? null : (
+        <Text className="text-muted-foreground text-[13px] leading-[18px]">
+          Android installs it over this app, and keeps your wallet, only if it is signed with the same key as this app (the
+          Trikey release key, 0.1.7 and later); an APK signed by anyone else is refused. Back up first.
+        </Text>
+      )}
+      <View
+        className="gap-0.5"
+        accessible
+        accessibilityLabel={`Every Trikey release is signed by the certificate with SHA-256 ${FINGERPRINT}`}
+      >
+        <View className="flex-row items-center gap-1.5">
+          <Icon as={ShieldCheck} size={14} className="text-muted-foreground" />
+          <Text className="text-muted-foreground text-[13px] leading-[18px]">Signed by (certificate SHA-256)</Text>
         </View>
-      ) : null}
+        <Text selectable className="font-mono text-xs leading-[18px]">
+          {FINGERPRINT}
+        </Text>
+        <Text className="text-muted-foreground text-[13px] leading-[18px]">
+          Built into this app: every Trikey release, standard and FOSS, is signed by this certificate and no other. Android
+          does not show the signer when it installs; AppVerifier shows it for an installed app.
+        </Text>
+      </View>
       <AppButton title="Open the release page" icon={ExternalLink} variant="ghost" onPress={() => open(release.pageUrl)} />
     </>
   );

@@ -6,10 +6,18 @@
  * check, and none should be added: a wallet should not phone home unasked, and every request tells GitHub this phone's
  * IP address and that it runs Trikey. The request carries no account, token or wallet data.
  *
- * Every Trikey release is a GitHub pre-release for now (tag `v0.1.6-alpha`, asset `trikey-alpha-v0.1.6-alpha.apk`
- * beside `trikey-alpha-v0.1.6-alpha.apk.sha256`), so pre-releases count. From 0.1.9 a release carries two Android
- * builds: the standard one and the one without Google code (`trikey-alpha-foss-v0.1.9-alpha.apk`). The check offers
- * the APK of the build that is installed, so an update never swaps one for the other.
+ * Every Trikey release is a GitHub pre-release for now (tag `v0.1.6-alpha`, asset `trikey-alpha-v0.1.6-alpha.apk`),
+ * so pre-releases count. Drafts never do: GitHub's public API does not list them, and a draft in the answer is skipped
+ * anyway (a release is a draft until every file is attached and checked: .github/workflows/publish-release.yml). From
+ * 0.1.9 a release carries two Android builds: the standard one and the one without Google code
+ * (`trikey-alpha-foss-v0.1.9-alpha.apk`), from 0.1.22 two apps (app.trikey.wallet, app.trikey.wallet.foss). The check
+ * offers the APK of the build that is installed, so an update never swaps one for the other.
+ *
+ * Who signed the APK is not something a file of the same release can show: the release's `.sha256` comes from the same
+ * place as the APK, so whoever could replace one could replace both. The app does not fetch it. What tells is the
+ * signing certificate, whose SHA-256 is built into the app (release-cert.ts). Android itself refuses an update signed by
+ * another key than the installed app's; an APK with another application id is a new app, which Android has nothing to
+ * compare with, so the update sheet then tells the person to check the certificate (`newApp`).
  */
 
 import type { AndroidVariant } from './android-variant';
@@ -18,7 +26,7 @@ const REPO = 'TheIcarusWings/trikey';
 export const RELEASES_API_URL = `https://api.github.com/repos/${REPO}/releases?per_page=10`;
 /** The list of releases, for when there is no single release to point at. */
 export const RELEASES_PAGE_URL = `https://github.com/${REPO}/releases`;
-/** Every APK and checksum the app opens or reads starts with this. */
+/** Every APK the app opens starts with this. */
 export const DOWNLOAD_PREFIX = `https://github.com/${REPO}/releases/download/`;
 const RELEASE_PAGE_PREFIX = `https://github.com/${REPO}/releases/tag/`;
 
@@ -75,12 +83,16 @@ function isReleasePageUrl(url: unknown): url is string {
 }
 
 /**
- * The file names a release must carry for `variant`: the APK and, beside it, its checksum. The names are made in
- * packaging/android/sign-apk.sh (run by .github/workflows/android-build.yml).
+ * The file name of `variant`'s APK in a release. The names are made in packaging/android/sign-apk.sh (run by
+ * .github/workflows/android-build.yml) and checked before publication by packaging/check-release-assets.sh.
  */
-export function assetNames(tag: string, variant: AndroidVariant = 'standard'): { apk: string; sha256: string } {
-  const apk = variant === 'foss' ? `trikey-alpha-foss-${tag}.apk` : `trikey-alpha-${tag}.apk`;
-  return { apk, sha256: `${apk}.sha256` };
+export function assetNames(tag: string, variant: AndroidVariant = 'standard'): { apk: string } {
+  return { apk: variant === 'foss' ? `trikey-alpha-foss-${tag}.apk` : `trikey-alpha-${tag}.apk` };
+}
+
+/** The application id of the app each release APK installs as (android-variant.js; from 0.1.22, two apps). */
+export function releaseAppId(variant: AndroidVariant = 'standard'): string {
+  return variant === 'foss' ? 'app.trikey.wallet.foss' : 'app.trikey.wallet';
 }
 
 export interface Release {
@@ -91,8 +103,6 @@ export interface Release {
   /** The release's page on GitHub, or `RELEASES_PAGE_URL` when GitHub gave something else. */
   pageUrl: string;
   apkUrl: string;
-  /** The `.apk.sha256` file, when the release has one. */
-  sha256Url: string | null;
 }
 
 type Json = Record<string, unknown>;
@@ -119,7 +129,6 @@ export function readRelease(raw: unknown, variant: AndroidVariant = 'standard'):
     name: title || tag,
     pageUrl: isReleasePageUrl(raw.html_url) ? raw.html_url : RELEASES_PAGE_URL,
     apkUrl,
-    sha256Url: downloadUrl(raw.assets, names.sha256),
   };
 }
 
@@ -133,15 +142,20 @@ export function pickRelease(list: unknown[], variant: AndroidVariant = 'standard
   return best;
 }
 
-/** The hash in a `.sha256` file (`<64 hex>  trikey-alpha-v0.1.6-alpha.apk`), in lower case. */
-export function parseSha256File(text: string): string | null {
-  const first = text.trim().split(/\s+/)[0] ?? '';
-  return /^[0-9a-fA-F]{64}$/.test(first) ? first.toLowerCase() : null;
-}
-
 export type UpdateCheck =
   | { kind: 'up-to-date'; current: string }
-  | { kind: 'available'; current: string; release: Release; sha256: string | null }
+  | {
+      kind: 'available';
+      current: string;
+      release: Release;
+      /** The application id the APK installs as. */
+      appId: string;
+      /**
+       * The APK is another app than the one running (another application id): Android installs it beside this one,
+       * with no installed app to check its signature against. Only known when the caller says which app is running.
+       */
+      newApp: boolean;
+    }
   /** GitHub answered, but no release in its list has an APK. */
   | { kind: 'none'; current: string };
 
@@ -183,14 +197,15 @@ async function withTimeout<T>(ms: number, task: (signal: AbortSignal | undefined
 }
 
 /**
- * Asks GitHub for the latest releases (one request, plus the small checksum file when there is a newer APK) and
- * compares the newest with `currentVersion`. Only releases with an APK of `opts.variant` (the installed build, standard
- * by default) count. Throws `UpdateCheckError`. Call it only from a tap: see the top of this file.
+ * Asks GitHub for the latest releases (one request) and compares the newest with `currentVersion`. Only releases with
+ * an APK of `opts.variant` (the installed build, standard by default) count. `opts.installedAppId`, the running app's
+ * application id, tells whether the APK would install as another app (`newApp`). Throws `UpdateCheckError`. Call it only
+ * from a tap: see the top of this file.
  */
 export async function checkForUpdate(
   currentVersion: string,
   fetchFn: FetchLike,
-  opts: { timeoutMs?: number; variant?: AndroidVariant } = {}
+  opts: { timeoutMs?: number; variant?: AndroidVariant; installedAppId?: string } = {}
 ): Promise<UpdateCheck> {
   const timeoutMs = opts.timeoutMs ?? 15_000;
   const current = parseAppVersion(currentVersion);
@@ -219,22 +234,11 @@ export async function checkForUpdate(
   if (!Array.isArray(list)) throw new UpdateCheckError('unreadable');
 
   const shown = formatVersion(current);
-  const release = pickRelease(list, opts.variant ?? 'standard');
+  const variant = opts.variant ?? 'standard';
+  const release = pickRelease(list, variant);
   if (!release) return { kind: 'none', current: shown };
   if (compareVersions(release.version, current) <= 0) return { kind: 'up-to-date', current: shown };
-  return { kind: 'available', current: shown, release, sha256: await fetchSha256(release, fetchFn, timeoutMs) };
-}
-
-/** The checksum is a nicety: any failure leaves it out rather than failing the check. */
-async function fetchSha256(release: Release, fetchFn: FetchLike, timeoutMs: number): Promise<string | null> {
-  const url = release.sha256Url;
-  if (!url || !isReleaseDownloadUrl(url)) return null;
-  try {
-    return await withTimeout(timeoutMs, async (signal) => {
-      const res = await fetchFn(url, { headers: {}, signal });
-      return res.ok ? parseSha256File((await res.text()).slice(0, 1024)) : null;
-    });
-  } catch {
-    return null;
-  }
+  const appId = releaseAppId(variant);
+  const installed = opts.installedAppId?.trim();
+  return { kind: 'available', current: shown, release, appId, newApp: !!installed && installed !== appId };
 }

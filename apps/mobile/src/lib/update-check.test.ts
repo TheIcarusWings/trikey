@@ -11,14 +11,13 @@ import {
   compareVersions,
   isReleaseDownloadUrl,
   parseAppVersion,
-  parseSha256File,
   parseTag,
   pickRelease,
+  releaseAppId,
   type FetchLike,
 } from './update-check';
 
 const DL = 'https://github.com/TheIcarusWings/trikey/releases/download/';
-const HASH = 'ba18630a437f0ca9b51792a2b3966c687bdbf9eacc0785b5983c8f07705a9bd8';
 
 /** One entry of GitHub's release list, as the API gives it (the fields the app reads). */
 function release(tag: string, over: Record<string, unknown> = {}) {
@@ -126,8 +125,13 @@ describe('picking the release', () => {
       name: 'Trikey v0.1.8-alpha (alpha test build)',
       pageUrl: 'https://github.com/TheIcarusWings/trikey/releases/tag/v0.1.8-alpha',
       apkUrl: `${DL}v0.1.8-alpha/trikey-alpha-v0.1.8-alpha.apk`,
-      sha256Url: `${DL}v0.1.8-alpha/trikey-alpha-v0.1.8-alpha.apk.sha256`,
     });
+    expect(picked).not.toHaveProperty('sha256Url');
+  });
+
+  it('never offers a draft, even the newest (a release is a draft until publish-release.yml has checked it)', () => {
+    expect(pickRelease([release('v0.2.0-alpha', { draft: true })])).toBeNull();
+    expect(pickRelease([release('v0.2.0-alpha', { draft: true }), release('v0.1.9-alpha')])?.tag).toBe('v0.1.9-alpha');
   });
 
   it('skips drafts, other tags and releases without the APK', () => {
@@ -158,40 +162,19 @@ describe('picking the release', () => {
     expect(picked?.pageUrl).toBe(RELEASES_PAGE_URL);
   });
 
-  it('leaves the checksum out when the release has none', () => {
-    const tag = 'v0.1.7-alpha';
-    const only = release(tag, { assets: [release(tag).assets[0]] });
-    expect(pickRelease([only])?.sha256Url).toBeNull();
-  });
-});
-
-describe('the checksum file', () => {
-  it('reads the hash before the file name', () => {
-    expect(parseSha256File(`${HASH}  trikey-alpha-v0.1.6-alpha.apk\n`)).toBe(HASH);
-    expect(parseSha256File(HASH.toUpperCase())).toBe(HASH);
-  });
-
-  it('refuses anything that is not a SHA-256', () => {
-    expect(parseSha256File('')).toBeNull();
-    expect(parseSha256File('Not Found')).toBeNull();
-    expect(parseSha256File(`${HASH.slice(1)}  a.apk`)).toBeNull();
-  });
 });
 
 describe('checking for an update', () => {
   const tag = 'v0.1.7-alpha';
-  const shaUrl = `${DL}${tag}/trikey-alpha-${tag}.apk.sha256`;
 
-  it('finds a newer version, with its checksum', async () => {
-    const { fetchFn, asked } = fakeGitHub([release(tag), release('v0.1.6-alpha')], { [shaUrl]: `${HASH}  trikey-alpha-${tag}.apk\n` });
+  it("finds a newer version with one request, and never fetches the release's own checksum", async () => {
+    // The .sha256 comes from the same release as the APK: whoever could replace one could replace both, so it shows
+    // nothing about who signed it. The signer to expect is built into the app (release-cert.ts).
+    const { fetchFn, asked } = fakeGitHub([release(tag), release('v0.1.6-alpha')]);
     const result = await checkForUpdate('0.1.6', fetchFn);
-    expect(result).toMatchObject({ kind: 'available', current: '0.1.6', sha256: HASH, release: { tag } });
-    expect(asked).toEqual([RELEASES_API_URL, shaUrl]);
-  });
-
-  it('still offers the update when the checksum cannot be fetched', async () => {
-    const { fetchFn } = fakeGitHub([release(tag)]);
-    expect(await checkForUpdate('0.1.6', fetchFn)).toMatchObject({ kind: 'available', sha256: null });
+    expect(result).toMatchObject({ kind: 'available', current: '0.1.6', release: { tag }, appId: 'app.trikey.wallet', newApp: false });
+    expect(result).not.toHaveProperty('sha256');
+    expect(asked).toEqual([RELEASES_API_URL]);
   });
 
   it('says the app is up to date on the same or an older release, and asks only once', async () => {
@@ -277,8 +260,8 @@ describe('the two Android builds', () => {
   }
 
   it('names the APK of each build as the release workflow does', () => {
-    expect(assetNames('v0.1.9-alpha')).toEqual({ apk: 'trikey-alpha-v0.1.9-alpha.apk', sha256: 'trikey-alpha-v0.1.9-alpha.apk.sha256' });
-    expect(assetNames('v0.1.9-alpha', 'foss')).toEqual({ apk: 'trikey-alpha-foss-v0.1.9-alpha.apk', sha256: 'trikey-alpha-foss-v0.1.9-alpha.apk.sha256' });
+    expect(assetNames('v0.1.9-alpha')).toEqual({ apk: 'trikey-alpha-v0.1.9-alpha.apk' });
+    expect(assetNames('v0.1.9-alpha', 'foss')).toEqual({ apk: 'trikey-alpha-foss-v0.1.9-alpha.apk' });
     // The workflow's names (packaging/android/sign-apk.sh, run by .github/workflows/android-build.yml), so the app and the releases agree.
     const workflow = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../packaging/android/sign-apk.sh'), 'utf8');
     expect(workflow).toContain('name="trikey-alpha-foss-${GITHUB_REF_NAME}"');
@@ -287,14 +270,39 @@ describe('the two Android builds', () => {
 
   it('offers the installed build its own APK, never the other one', async () => {
     const list = [both('v0.1.9-alpha')];
-    const files = {
-      [`${DL}v0.1.9-alpha/trikey-alpha-v0.1.9-alpha.apk.sha256`]: `${HASH}  trikey-alpha-v0.1.9-alpha.apk\n`,
-      [`${DL}v0.1.9-alpha/trikey-alpha-foss-v0.1.9-alpha.apk.sha256`]: `${'c'.repeat(64)}  trikey-alpha-foss-v0.1.9-alpha.apk\n`,
+    const standard = await checkForUpdate('0.1.8', fakeGitHub(list).fetchFn);
+    const foss = await checkForUpdate('0.1.8', fakeGitHub(list).fetchFn, { variant: 'foss' });
+    expect(standard).toMatchObject({ kind: 'available', release: { apkUrl: `${DL}v0.1.9-alpha/trikey-alpha-v0.1.9-alpha.apk` }, appId: 'app.trikey.wallet' });
+    expect(foss).toMatchObject({ kind: 'available', release: { apkUrl: `${DL}v0.1.9-alpha/trikey-alpha-foss-v0.1.9-alpha.apk` }, appId: 'app.trikey.wallet.foss' });
+  });
+
+  it("says when the APK is another app than the running one, which Android cannot check against this one's signature", async () => {
+    const list = [both('v0.1.22-alpha')];
+    const run = (variant: 'standard' | 'foss', installedAppId?: string) =>
+      checkForUpdate('0.1.21', fakeGitHub(list).fetchFn, { variant, ...(installedAppId === undefined ? {} : { installedAppId }) });
+    // The usual case: the update is the same app, and Android refuses it unless it has the installed app's signature.
+    expect(await run('standard', 'app.trikey.wallet')).toMatchObject({ newApp: false });
+    expect(await run('foss', 'app.trikey.wallet.foss')).toMatchObject({ newApp: false });
+    // A FOSS build that still has the standard app's id (as the no-Google build did up to 0.1.21): a first install.
+    expect(await run('foss', 'app.trikey.wallet')).toMatchObject({ newApp: true, appId: 'app.trikey.wallet.foss' });
+    expect(await run('standard', 'org.example.fork')).toMatchObject({ newApp: true });
+    // Not told which app runs: no claim either way.
+    expect(await run('foss')).toMatchObject({ newApp: false });
+    expect(await run('foss', '  ')).toMatchObject({ newApp: false });
+  });
+
+  it('knows the application id of each release APK (android-variant.js)', async () => {
+    expect(releaseAppId()).toBe('app.trikey.wallet');
+    expect(releaseAppId('foss')).toBe('app.trikey.wallet.foss');
+    const { androidAppFor } = (await import('../../android-variant.js')) as unknown as {
+      androidAppFor: (v: string, s: { package: string; label: string; scheme: string }) => { package: string };
     };
-    const standard = await checkForUpdate('0.1.8', fakeGitHub(list, files).fetchFn);
-    const foss = await checkForUpdate('0.1.8', fakeGitHub(list, files).fetchFn, { variant: 'foss' });
-    expect(standard).toMatchObject({ kind: 'available', release: { apkUrl: `${DL}v0.1.9-alpha/trikey-alpha-v0.1.9-alpha.apk` }, sha256: HASH });
-    expect(foss).toMatchObject({ kind: 'available', release: { apkUrl: `${DL}v0.1.9-alpha/trikey-alpha-foss-v0.1.9-alpha.apk` }, sha256: 'c'.repeat(64) });
+    const app = JSON.parse(readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../app.json'), 'utf8')) as {
+      expo: { android: { package: string } };
+    };
+    for (const variant of ['standard', 'foss'] as const) {
+      expect(androidAppFor(variant, { package: app.expo.android.package, label: '', scheme: '' }).package).toBe(releaseAppId(variant));
+    }
   });
 
   it('skips releases without an APK of the installed build (older ones, or one whose FOSS build failed)', async () => {

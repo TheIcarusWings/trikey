@@ -196,11 +196,21 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           # Also as an annotation, which the checks API returns (the summary is only on the web page).
           echo "::notice title=Published image::${IMAGE}@${DIGEST}"
+          echo "${DIGEST}" > "${RUNNER_TEMP}/guardian-image-digest.txt"
 
-  # On a release tag: attach the plain-Docker files (packaging/compose) to the GitHub release, the compose file with the
-  # image pinned by the digest just pushed, so users download a file that runs exactly this image. release.yml creates
-  # the release before it dispatches this workflow on the tag (a tag made with GITHUB_TOKEN starts no `push: tags`
-  # run, a dispatch does); a tag pushed by hand without a release gets a notice and nothing attached.
+      # For publish-release.yml, which checks that the release's compose file pins this digest before it publishes.
+      - name: Keep the digest for publish-release.yml
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: guardian-image-digest
+          path: ${{ runner.temp }}/guardian-image-digest.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  # On a release tag: attach the plain-Docker files (packaging/compose) to the tag's draft release, the compose file
+  # with the image pinned by the digest just pushed, so users download a file that runs exactly this image. release.yml
+  # creates the draft before it dispatches this workflow on the tag (a tag made with GITHUB_TOKEN starts no `push: tags`
+  # run, a dispatch does); for a tag pushed by hand, this job or android-apk.yml's release job makes the draft.
   compose-files:
     needs: publish
     if: needs.publish.outputs.digest != ''
@@ -248,21 +258,26 @@ jobs:
             docker compose --project-directory "${out}" -f "${out}/trikey-guardian-compose.yml" --profile node config --images | sort
           rm "${out}/.env"
 
-      - name: Attach to the release
+      # To the draft only: publish-release.yml publishes the release once every asset is there and checked, and a
+      # published release's files are never replaced. release.yml makes the draft before it dispatches this workflow;
+      # for a tag pushed by hand, whichever of this job and android-apk.yml's comes first makes it.
+      - name: Attach to the draft release
         run: |
           set -euo pipefail
           out="${RUNNER_TEMP}/assets"
-          # release.yml creates the release just before it dispatches this workflow; allow for a slow API.
-          for attempt in $(seq 1 10); do
-            if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-              gh release upload "${TAG}" --repo "${GITHUB_REPOSITORY}" --clobber \
-                "${out}/trikey-guardian-compose.yml" "${out}/trikey-guardian.env.example" "${out}/trikey-guardian-compose.sha256"
-              echo "::notice title=Compose files attached::${TAG}: trikey-guardian-compose.yml pins ${IMAGE}:${VERSION}@${DIGEST}"
-              exit 0
-            fi
-            sleep 15
-          done
-          echo "::notice title=Compose files not attached::There is no GitHub release for ${TAG}. Create it (or run release.yml with redispatch) and re-run this job."
+          if ! gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            # `|| true`: android-apk.yml may make it at the same moment; the view below decides.
+            gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft --prerelease --verify-tag \
+              --title "Trikey ${TAG}" --notes "Trikey ${TAG}. The guardian image is ${IMAGE}:${VERSION}@${DIGEST}." || true
+          fi
+          draft="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)"
+          if [ "${draft}" != "true" ]; then
+            echo "::warning title=Release already published::${TAG} is published, so its compose files are not replaced."
+            exit 0
+          fi
+          gh release upload "${TAG}" --repo "${GITHUB_REPOSITORY}" --clobber \
+            "${out}/trikey-guardian-compose.yml" "${out}/trikey-guardian.env.example" "${out}/trikey-guardian-compose.sha256"
+          echo "::notice title=Compose files attached to the draft::${TAG}: trikey-guardian-compose.yml pins ${IMAGE}:${VERSION}@${DIGEST}"
 
   # The Start9 package (.s9pk files, workflow artifacts only), packed from the image `publish` pushed, by its digest.
   start9:
