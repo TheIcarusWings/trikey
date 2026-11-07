@@ -194,8 +194,8 @@ describe('a Passport (2nd generation) signing from its microSD card, in the app'
     // Picking Trikey's own file first was caught, and the owner could pick again.
     expect(passport.hints[0]).toMatch(/the file Trikey made \(the request\)/);
     // Then the rules the wallet starts with (seq=0), in a file of its own, which the device shows.
-    expect(passport.signed).toEqual([expect.stringMatching(/^Trikey pair v1 /), expect.stringMatching(/^Trikey policy v1 wallet=[0-9a-f]{16} seq=0 limit=100000 delay=7d feecap=\d+ contacts=\d+ hash=[0-9a-f]{64} expires=\S+Z$/)]);
-    expect(card.written.get('trikey-rules.txt')).toMatch(/^Trikey policy v1 wallet=[0-9a-f]{16} seq=0 /);
+    expect(passport.signed).toEqual([expect.stringMatching(/^Trikey pair v1 /), expect.stringMatching(/^Trikey policy v4 wallet=[0-9a-f]{16} seq=0 limit=100000 delay=7d feecap=\d+ lock=off contacts=\S+ expires=\S+Z$/)]);
+    expect(card.written.get('trikey-rules.txt')).toMatch(/^Trikey policy v4 wallet=[0-9a-f]{16} seq=0 /);
     expect(passport.requests[1]!.notes!.join(' ')).toMatch(/rules your wallet starts with/);
     // After each round trip: delete the request and the signed file, by name, before the app goes on.
     expect(passport.notices.map((n) => n.items)).toEqual([

@@ -1907,14 +1907,16 @@ export class TrikeyWallet {
 
   /**
    * The device's approval of the rules a wallet starts with (`pairingRulesMessage`: the policy text with `seq=0`, which the
-   * device shows: limit, delay, fee cap, number of contacts), for `pair`, `wallet.add` and `hosted.pair` at a guardian that
+   * device shows: limit, delay, fee cap, contacts), for `pair`, `wallet.add` and `hosted.pair` at a guardian that
    * lists `pairing_rules_approval` in `features` (it refuses rules without it). Undefined for a guardian without the
    * feature: its strict schema would refuse the member, and it accepts the rules as before. DESIGN.md, rule 4.
+   * A guardian with `approval_contacts` gets the version-4 text, which names each contact (it refuses an older one).
    */
   private async approveInitialRules(hw: HardwareSigner, rec: HardwareRecord, walletId: string, rules: Policy, features: readonly string[] | undefined): Promise<PairingRulesApproval | undefined> {
     if (!features?.includes(GUARDIAN_FEATURES.pairingRulesApproval)) return undefined;
     const expiresAt = this.nowSec() + APPROVAL_TTL_SEC;
-    const signature = await this.signWithAuthKey(hw, rec, pairingRulesMessage(rules, { walletId, expiresAt }), 'rules');
+    const contactsInText = features.includes(GUARDIAN_FEATURES.approvalContacts);
+    const signature = await this.signWithAuthKey(hw, rec, pairingRulesMessage(rules, { walletId, expiresAt, ...(contactsInText ? { contactsInText } : {}) }), 'rules');
     return { kind: 'bip137', expiresAt, signature };
   }
 
@@ -4343,8 +4345,15 @@ export class TrikeyWallet {
     if (!walletId) throw new WalletError('wrong_state', 'The wallet is not paired yet.');
     const sequence = opts.sequence ?? (await this.nextSequence());
     const expiresAt = this.nowSec() + APPROVAL_TTL_SEC;
-    // A guardian without "no daily limit" rebuilds only the version-1 policy text (PROTOCOL.md, "Hardware approvals").
-    const text = approvalMessage(action, { walletId, sequence, expiresAt, ...(this.limitOffSupported ? {} : { legacyPolicyText: true }) });
+    // A guardian without "no daily limit" rebuilds only the version-1 policy text (PROTOCOL.md, "Hardware approvals"); one
+    // with `approval_contacts` the version-4 text, which names the alert contacts.
+    const text = approvalMessage(action, {
+      walletId,
+      sequence,
+      expiresAt,
+      ...(this.limitOffSupported ? {} : { legacyPolicyText: true }),
+      ...(this.contactsInApprovals ? { contactsInText: true } : {}),
+    });
     const signature = await this.withHardware((hw, rec) => this.signWithAuthKey(hw, rec, text, 'approval'));
     return { kind: 'bip137', sequence, expiresAt, signature };
   }
@@ -4415,6 +4424,14 @@ export class TrikeyWallet {
    */
   get limitOffSupported(): boolean {
     return !!this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.limitOff);
+  }
+
+  /**
+   * The guardian has the hardware wallet name the alert contacts in a rule approval (`approval_contacts`, as last read):
+   * the version-4 policy text. An older guardian rebuilds only versions 1 to 3, which show their number.
+   */
+  get contactsInApprovals(): boolean {
+    return !!this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.approvalContacts);
   }
 
   /** There is no daily limit now (as the guardian last said). */

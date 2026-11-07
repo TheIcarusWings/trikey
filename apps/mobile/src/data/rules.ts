@@ -165,3 +165,12 @@ export function looksLikeBitcoinAddress(value: string): boolean {
 export function looksLikeNpub(value: string): boolean {
   return /^npub1[a-z0-9]{20,70}$/.test(value.trim());
 }
+
+/**
+ * A contact as the hardware wallet shows it when it approves the rules (guardians with `approval_contacts`, the version-4
+ * text): `npub1`, the next 8 characters, `..`, the last 4 (@trikey/protocol's `contactId`, here from the npub itself).
+ */
+export function deviceContactId(npub: string): string {
+  const n = npub.trim().toLowerCase();
+  return n.length > 17 ? `${n.slice(0, 13)}..${n.slice(-4)}` : n;
+}

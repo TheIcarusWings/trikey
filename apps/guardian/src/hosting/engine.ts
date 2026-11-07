@@ -43,7 +43,8 @@ import {
 } from '@trikey/core';
 import { Mutex } from '../files.js';
 import { dueAlerts as computeDueAlerts, isKnownAlertId, type DueAlert } from '../policy/alerts.js';
-import { bip137Authorizer, approvalMessage, pairingMessage, proofId, recoveryAccessMessage, type HardwareAction, type HardwareAuthorizer } from '../policy/authorizer.js';
+import { CONTACTS_NOT_SHOWN, bip137Authorizer, approvalMessage, pairingMessage, proofId, recoveryAccessMessage, verifyPolicyApproval, type HardwareAction, type HardwareAuthorizer } from '../policy/authorizer.js';
+import { contactsDelta } from '../policy/contacts.js';
 import { DAY, systemClock, type ChainTime, type ChainTimeSource, type Clock } from '../policy/clock.js';
 import { BLOCKS_PER_DAY, MAINNET_CONTACT_REQUIRED, LIMIT_OFF_AT_PAIRING, rulesApprovalRefusal, MAX_ACCESS_GRANTS, MAX_APPROVAL_TTL_MS, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_SEQUENCE_STEP, NOTICE_TTL_MS, isRefusalEvent, policyWarnings, pruneActivity, type CosignResult, type GuardianStatus, type PhoneSpendingStatus, type RecoveryView } from '../policy/engine.js';
 import { addCosignerSignatures } from '../policy/inspect.js';
@@ -119,6 +120,8 @@ export interface HostedEngineOptions {
   authorizers?: HardwareAuthorizer[];
   /** Override `MAX_LEDGER_COINS` (tests). */
   maxLedgerCoins?: number;
+  /** As the host's engine: approvals that set or change the contacts must name them (version 4). Default: yes. */
+  requireContactsInText?: () => boolean;
 }
 
 export interface HostedRegisterInput {
@@ -262,6 +265,7 @@ export class HostedEngine {
   private signer?: CosignerSigner;
   private nextSigner?: CosignerSigner;
   private readonly maxLedger: number;
+  private readonly requireContactsInText: () => boolean;
 
   private constructor(
     private readonly store: HostedStore,
@@ -274,6 +278,7 @@ export class HostedEngine {
     this.blocksPerDayOverride = opts.blocksPerDay;
     this.authorizers = new Map((opts.authorizers ?? [bip137Authorizer]).map((a) => [a.kind, a]));
     this.maxLedger = opts.maxLedgerCoins ?? MAX_LEDGER_COINS;
+    this.requireContactsInText = opts.requireContactsInText ?? (() => true);
     this.setSigner(opts.signer);
   }
 
@@ -543,15 +548,28 @@ export class HostedEngine {
     if (!Number.isSafeInteger(approval.expiresAt) || approval.expiresAt * 1000 <= now) return { reason: 'approval_expired', expiresAt: approval.expiresAt };
     const maxExpiresAt = Math.floor((now + MAX_APPROVAL_TTL_MS) / 1000);
     if (approval.expiresAt > maxExpiresAt) return { reason: 'approval_expiry_too_far', expiresAt: approval.expiresAt, maxExpiresAt };
-    let message: string;
-    try {
-      message = approvalMessage(action, { walletId: reg.walletId, sequence: approval.sequence, expiresAt: approval.expiresAt });
-    } catch {
-      return { reason: 'approval_invalid_signature' };
-    }
-    if (typeof approval.signature !== 'string' || !authorizer.verify(message, approval.signature, reg.hardwareAuth)) return { reason: 'approval_invalid_signature' };
+    const ctx = { walletId: reg.walletId, sequence: approval.sequence, expiresAt: approval.expiresAt };
+    // As the host's: the version-4 text, which names the contacts; an older one only while they stay as they are.
+    const contactsKept = action.action !== 'policy' || contactsDelta(draft.active!.rules.alertContacts, action.rules.alertContacts).same;
+    const checked = verifyPolicyApproval(
+      (contactsInText) => approvalMessage(action, { ...ctx, contactsInText: action.action === 'policy' && contactsInText }),
+      approval.signature,
+      reg.hardwareAuth,
+      authorizer,
+      action.action !== 'policy' || contactsKept || !this.requireContactsInText(),
+    );
+    if (checked === 'legacy_text') return { reason: 'app_update_required', detail: CONTACTS_NOT_SHOWN };
+    if (checked !== 'ok') return { reason: 'approval_invalid_signature' };
     draft.hardwareSequence = approval.sequence;
     return undefined;
+  }
+
+  /** `contact_added` / `contact_removed` to every contact added or removed (not the guest's phone key), as the host's. */
+  private addContactNotices(draft: HostedState, now: number, removed: readonly string[], added: readonly string[], ctx: { walletId: string; phone: string; sequence?: number; pairing?: true }): void {
+    const base = { walletId: ctx.walletId, at: now, added: [...added], removed: [...removed], ...(ctx.sequence !== undefined ? { sequence: ctx.sequence } : {}), ...(ctx.pairing ? { pairing: true as const } : {}), sent: [] };
+    const id = draft.nextActivityId;
+    if (added.length) this.addNotice(draft, now, { ...base, id: `contactadd-${id}`, kind: 'contact_added', recipients: added.filter((c) => c !== ctx.phone) });
+    if (removed.length) this.addNotice(draft, now, { ...base, id: `contactdel-${id}`, kind: 'contact_removed', recipients: removed.filter((c) => c !== ctx.phone) });
   }
 
   /**
@@ -631,7 +649,7 @@ export class HostedEngine {
       }
       if (!authorizer.verify(pairingMessage(walletId, keys.cosigner), input.hardwareAuthProof, hwKey)) return bad('hardware pairing proof does not verify');
       // The rules the guest's wallet starts with, approved on its hardware wallet (rule 4), as for the owner's `pair`.
-      const rulesRefusal = rulesApprovalRefusal(input.rulesApproval, rules, walletId, hwKey, authorizer, now);
+      const rulesRefusal = rulesApprovalRefusal(input.rulesApproval, rules, walletId, hwKey, authorizer, now, this.requireContactsInText());
       if (rulesRefusal) return refused(rulesRefusal);
       const mapBad = this.mapRefusal(input.walletMap);
       if (mapBad) return bad(mapBad);
@@ -655,7 +673,8 @@ export class HostedEngine {
         ledger: [],
       };
       draft.maps = { [walletId]: input.walletMap };
-      this.log(draft, now, { type: 'hosted_registered', walletId });
+      this.log(draft, now, { type: 'hosted_registered', walletId, alertContacts: rules.alertContacts });
+      this.addContactNotices(draft, now, [], rules.alertContacts, { walletId, phone: appNostr, pairing: true });
       if (signer) this.nextSigner = signer;
       return { ok: true as const, walletId };
     });
@@ -864,6 +883,9 @@ export class HostedEngine {
             sent: [],
           });
       }
+      // Every contact added or removed is told, as on the host's own wallets.
+      const delta = contactsDelta(current.alertContacts, rules.alertContacts);
+      if (!delta.same) this.addContactNotices(draft, now, delta.removed, delta.added, { walletId: w.registration.walletId, phone, ...(sequence !== undefined ? { sequence } : {}) });
       w.rules = rules;
       this.log(draft, now, { type: 'rules_changed', by, sequence, from: current, to: rules });
       return { ok: true as const, rules };

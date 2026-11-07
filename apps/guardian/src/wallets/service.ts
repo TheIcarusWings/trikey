@@ -400,6 +400,8 @@ export class OwnWallets implements OwnWalletHost {
     g.notifyOwner('wallet_added', labelled(w, `A wallet was added to your guardian with your phone and a new hardware wallet (${reg.walletId}). If you did not do this, check the guardian now.`), reg.walletId);
     // Now that the box has several wallets, the live wallet watches this one too.
     g.live?.changed('wallets');
+    // The new wallet's contacts are told they are its contacts (its engine queued `contact_added`).
+    void w.alerts.run();
     return { walletId: reg.walletId, account: rec.account, name: rec.name, descriptor: reg.descriptor, guardianKey: { fingerprint: key.pub.fingerprint, path: key.pub.path, xpub: key.pub.xpub } };
   }
 

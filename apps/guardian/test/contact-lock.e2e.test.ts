@@ -126,6 +126,10 @@ beforeAll(async () => {
     hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), cosignerPub), hwAuthPrivateKey()),
     rules: RULES,
   }, rig.nowSec() * 1000));
+  // Each contact is told it became one (`contact_added`): delivered, then the inboxes start empty.
+  for (let i = 0; i < 200 && rig.guardian.engine.dueNotices().length; i++) await new Promise((r) => setTimeout(r, 25));
+  await new Promise((r) => setTimeout(r, 300));
+  for (const p of people) p.inbox.length = 0;
 }, 30_000);
 
 afterAll(async () => {

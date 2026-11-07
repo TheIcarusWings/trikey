@@ -151,7 +151,7 @@ describe('adding a wallet', { timeout: 60_000 }, () => {
     // refuses a wallet.add without that (security review 2026-11).
     const rulesSigned = trezor.calls.filter((c) => c.op === 'signMessage' && c.context?.purpose === 'rules');
     expect(rulesSigned.map((c) => (c.op === 'signMessage' ? c.message : ''))).toEqual([
-      expect.stringMatching(new RegExp(`^Trikey policy v1 wallet=${business.state.wallet!.walletId} seq=0 limit=${BUSINESS_RULES.dailyLimitSats} `)),
+      expect.stringMatching(new RegExp(`^Trikey policy v4 wallet=${business.state.wallet!.walletId} seq=0 limit=${BUSINESS_RULES.dailyLimitSats} `)),
     ]);
     // The guardian guards it with its own engine.
     expect(rig.guardian.wallets.byWalletId(business.state.wallet!.walletId)).toBeDefined();

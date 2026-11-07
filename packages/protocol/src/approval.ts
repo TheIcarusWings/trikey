@@ -1,3 +1,6 @@
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { bech32, hex } from '@scure/base';
 import { isContactLockOn, isLimitOff, normalizePolicy, policyHash } from './policy.js';
 import type { Policy } from './schemas.js';
 
@@ -25,8 +28,77 @@ import type { Policy } from './schemas.js';
  * The rules a wallet starts with are approved over the same text with `seq=0` (`pairingRulesMessage`, guardians with
  * `pairing_rules_approval`): sequence 0 is never valid for any later approval (those must be above the guardian's last
  * accepted sequence, which starts at 0), so that signature can only ever pair that wallet with exactly those rules.
+ *
+ * Versions 1 to 3 show only the NUMBER of alert contacts (and a hash nobody can check), so a malicious app could swap the
+ * owner's contact for its own and the device would show exactly what the owner expects (security review 2026-11). For a
+ * guardian with `approval_contacts` the text is version 4 (`contactsInText`), which names every contact in a form the
+ * owner can check against the contact's nostr app (`contactId`: `npub1` and the first 8 and last 4 characters of the
+ * npub), or, when they do not all fit in what every device shows, their number and a code (`contactsCode`) that the
+ * guardian's web page and the app show next to the list. The lock setting is always in words, and there is no hash:
+ * everything the rules hold is in clear, except the rest of each contact's key.
+ *
+ * `Trikey policy v4 wallet=<id> seq=<n> limit=<sats|off> delay=<d>d feecap=<sats> lock=<on|off> contacts=<list> expires=<ISO>`
+ *
+ * where `<list>` is `npub1abcdefgh..wxyz,npub1...` (in the rules' order: sorted by hex key), `none`, or `<k>:<code>`.
  */
 export const MAX_APPROVAL_MESSAGE_LENGTH = 240;
+
+/**
+ * What every device shows of a text: Jade shows the first 188 characters, then "..." (docs/design/hardware-auth-path.md).
+ * A version-4 policy text names the contacts one by one only when the whole list ends within this, so no contact is ever
+ * hidden behind the "...".
+ */
+export const DEVICE_VISIBLE_LENGTH = 188;
+
+/**
+ * A contact as the hardware wallet shows it in a version-4 policy text, and as the app and the guardian's web page show
+ * it next to the contact: `npub1` and the first 8 characters of the npub's data, `..`, and its last 4 (12 bech32
+ * characters, 60 bits: grinding a key that shows the same takes about 2^60 tries). `pubkey`: 32-byte x-only hex.
+ */
+export function contactId(pubkey: string): string {
+  if (!/^[0-9a-fA-F]{64}$/.test(pubkey)) throw new Error('invalid nostr pubkey');
+  const npub = bech32.encode('npub', bech32.toWords(hex.decode(pubkey.toLowerCase())));
+  return `${npub.slice(0, 13)}..${npub.slice(-4)}`;
+}
+
+/**
+ * The code of a list of alert contacts, for a version-4 text whose contacts do not all fit on the device's screen: the
+ * first 10 bytes (80 bits) of sha256 over `trikey contacts v1` and the sorted lowercase hex keys, one per line, in hex,
+ * in groups of 4 (`1a2b-3c4d-5e6f-7a8b-9c0d`). The guardian's web page (Rules) and the app show it next to the contacts,
+ * computed from the list they hold, so the owner can compare it with the device.
+ */
+export function contactsCode(contacts: readonly string[]): string {
+  const sorted = [...new Set(contacts.map((c) => c.toLowerCase()))].sort();
+  const digest = hex.encode(sha256(utf8ToBytes(['trikey contacts v1', ...sorted].join('\n'))).slice(0, 10));
+  return digest.match(/.{4}/g)!.join('-');
+}
+
+/**
+ * The `contacts=` member of a version-4 policy text, given the length of the text before it: every contact's
+ * `contactId` when the list ends within `DEVICE_VISIBLE_LENGTH`, else their number and `contactsCode`; `none` without
+ * contacts. `contacts`: normalized (lowercase, sorted, distinct).
+ */
+export function contactsMember(contacts: readonly string[], before: number): string {
+  if (!contacts.length) return 'contacts=none';
+  const list = `contacts=${contacts.map(contactId).join(',')}`;
+  if (before + 1 + list.length <= DEVICE_VISIBLE_LENGTH) return list;
+  return `contacts=${contacts.length}:${contactsCode(contacts)}`;
+}
+
+/**
+ * How a version-4 policy `text` shows the contacts: none, one by one (`ids`), or as their number and `code`; undefined
+ * for an older text (the number only). The app's approval screens show the same, so the owner knows what to look for on
+ * the device.
+ */
+export function approvalContactsShown(text: string): { kind: 'none' } | { kind: 'list'; ids: string[] } | { kind: 'code'; count: number; code: string } | undefined {
+  const m = / contacts=(\S+)/.exec(text);
+  if (!m || !text.startsWith('Trikey policy v4 ')) return undefined;
+  const v = m[1]!;
+  if (v === 'none') return { kind: 'none' };
+  const code = /^(\d+):([0-9a-f-]+)$/.exec(v);
+  if (code) return { kind: 'code', count: Number(code[1]), code: code[2]! };
+  return { kind: 'list', ids: v.split(',') };
+}
 
 export type HardwareAction =
   /**
@@ -51,6 +123,12 @@ export interface ApprovalContext {
    * existed). The phone never offers "off" to such a guardian.
    */
   legacyPolicyText?: boolean;
+  /**
+   * For a guardian that reports `approval_contacts`: the version-4 policy text, which names the alert contacts
+   * (`contactId`, or their number and `contactsCode`). Such a guardian refuses versions 1 to 3 for any approval that
+   * sets or changes the contacts (pairing included), with "update the app".
+   */
+  contactsInText?: boolean;
 }
 
 function isoSeconds(unixSeconds: number): string {
@@ -63,9 +141,21 @@ function line(parts: string[]): string {
   return msg;
 }
 
-/** The policy text (versions 1 to 3) for `policy`, with `head` (wallet and sequence) and `tail` (expiry). */
-function policyLine(policy: Policy, head: string[], tail: string, opts: { contactLockBefore?: boolean; legacyPolicyText?: boolean }): string {
+/** The policy text (versions 1 to 4) for `policy`, with `head` (wallet and sequence) and `tail` (expiry). */
+function policyLine(policy: Policy, head: string[], tail: string, opts: { contactLockBefore?: boolean; legacyPolicyText?: boolean; contactsInText?: boolean }): string {
   const p = normalizePolicy(policy);
+  if (opts.contactsInText) {
+    // Version 4: the contacts by name, the lock in words, no hash (everything else is in clear).
+    const before = [
+      'Trikey policy v4',
+      ...head,
+      isLimitOff(p.dailyLimitSats) ? 'limit=off' : `limit=${p.dailyLimitSats}`,
+      `delay=${p.recoveryDelayDays}d`,
+      `feecap=${p.sweepFeeCapSats}`,
+      `lock=${isContactLockOn(p) ? 'on' : 'off'}`,
+    ];
+    return line([...before, contactsMember(p.alertContacts, before.join(' ').length), tail]);
+  }
   // No daily limit: version 2, which says so in words on the device screen.
   const off = isLimitOff(p.dailyLimitSats) && !opts.legacyPolicyText;
   // The contacts may lock the guardian (or may now, and this takes it away): version 3, which says which in words.
@@ -97,7 +187,7 @@ export function approvalMessage(action: HardwareAction, ctx: ApprovalContext): s
   const tail = `expires=${isoSeconds(ctx.expiresAt)}`;
   switch (action.action) {
     case 'policy':
-      return policyLine(action.policy, head, tail, { contactLockBefore: action.contactLockBefore, legacyPolicyText: ctx.legacyPolicyText });
+      return policyLine(action.policy, head, tail, { contactLockBefore: action.contactLockBefore, legacyPolicyText: ctx.legacyPolicyText, contactsInText: ctx.contactsInText });
     case 'cancel-recovery':
       if (!/^[0-9a-z-]{1,40}$/.test(action.recoveryId)) throw new Error('invalid recovery id');
       return line(['Trikey cancel-recovery v1', ...head, `recovery=${action.recoveryId}`, tail]);
@@ -125,10 +215,12 @@ export const PAIRING_RULES_SEQUENCE = 0;
  * (version 3 with `lock=on` when the rules let the alert contacts lock the guardian; never version 2: a wallet is never
  * paired with no daily limit). `walletId` names the wallet, whose id covers key 3, so the signature is worth nothing to
  * another wallet or another guardian, and `seq=0` is worth nothing after pairing (`PAIRING_RULES_SEQUENCE`).
+ *
+ * `contactsInText` (guardians with `approval_contacts`, which require it): the version-4 text, naming the contacts.
  */
-export function pairingRulesMessage(policy: Policy, ctx: { walletId: string; expiresAt: number }): string {
+export function pairingRulesMessage(policy: Policy, ctx: { walletId: string; expiresAt: number; contactsInText?: boolean }): string {
   checkContext(ctx);
-  return policyLine(policy, [`wallet=${ctx.walletId}`, `seq=${PAIRING_RULES_SEQUENCE}`], `expires=${isoSeconds(ctx.expiresAt)}`, {});
+  return policyLine(policy, [`wallet=${ctx.walletId}`, `seq=${PAIRING_RULES_SEQUENCE}`], `expires=${isoSeconds(ctx.expiresAt)}`, { contactsInText: ctx.contactsInText });
 }
 
 /**

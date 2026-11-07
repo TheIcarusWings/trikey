@@ -12,7 +12,7 @@
  */
 import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
-import type { Alert } from '@trikey/protocol';
+import { GUARDIAN_FEATURES, type Alert } from '@trikey/protocol';
 import { Alerter } from '../alerts.js';
 import { Mutex } from '../files.js';
 import type { Guardian } from '../guardian.js';
@@ -82,6 +82,7 @@ export class OwnWallet implements WalletRuntime {
       chain: this.g.engineChain,
       // `CANCEL <id>` and `recovery.cancel` find the wallet by its recovery id.
       recoveryIdPrefix: `${this.slotId}w`,
+      requireContactsInText: () => this.g.features.includes(GUARDIAN_FEATURES.approvalContacts),
     });
     await this.sweepStore.load();
   }

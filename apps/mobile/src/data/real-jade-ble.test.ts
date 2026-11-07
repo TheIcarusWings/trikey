@@ -94,7 +94,7 @@ describe('a Jade over Bluetooth, in the app', { timeout: 120_000 }, () => {
     await svc.setUpRules(100_000, 7);
     expect(svc.wallet!.state.hardware).toMatchObject({ kind: 'jade-ble', model: 'Jade Plus', fingerprint: jade.fingerprint });
     // The pairing proof, then the rules the wallet starts with (seq=0), which the Jade shows.
-    expect(jade.signedTexts).toEqual([expect.stringMatching(/^Trikey pair v1 wallet=[0-9a-f]{16} guardian=0[23][0-9a-f]{64}$/), expect.stringMatching(/^Trikey policy v1 wallet=[0-9a-f]{16} seq=0 limit=100000 delay=7d feecap=\d+ contacts=\d+ hash=[0-9a-f]{64} expires=\S+Z$/)]);
+    expect(jade.signedTexts).toEqual([expect.stringMatching(/^Trikey pair v1 wallet=[0-9a-f]{16} guardian=0[23][0-9a-f]{64}$/), expect.stringMatching(/^Trikey policy v4 wallet=[0-9a-f]{16} seq=0 limit=100000 delay=7d feecap=\d+ lock=off contacts=\S+ expires=\S+Z$/)]);
     const sm = jade.requests.find((r) => r.method === 'sign_message')!;
     expect(sm.params).toEqual({ path: [0x80000030, 0x80000001, 0x80000000, 0x80000002, 0, 0], message: jade.signedTexts[0] });
     expect([...jade.wallets.keys()]).toHaveLength(1);

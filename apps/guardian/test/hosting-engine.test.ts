@@ -44,6 +44,8 @@ async function setup(opts: { maxLedgerCoins?: number; rules?: Partial<Rules> } =
   );
   if (!res.ok) throw new Error(JSON.stringify(res.refusal));
   engine.setSigner(signer);
+  // Each contact was told they are one (`contact_added`): delivered, so a test sees only what it causes.
+  for (const n of engine.dueNotices()) if (n.kind === 'contact_added') await engine.markNoticeSent(n.id, n.recipients);
   return { clock, store, engine, fx, signer, map };
 }
 
@@ -419,8 +421,8 @@ describe('phase 2: the contact lock as a per-slot pause', () => {
     expect(engine.dueNotices().find((n) => n.kind === 'contact_lock_on')?.recipients.sort()).toEqual([CONTACT_A, CONTACT_B].sort());
     const offByPhone = await engine.changeRules(base, { authenticatedBy: 'app' });
     expect(!offByPhone.ok && offByPhone.refusal.reason).toBe('hardware_approval_required');
-    // The version-1 text over the same rules (no "lock=off") does not verify.
-    const wrong = await engine.changeRules(base, { authenticatedBy: 'hardware', approval: approve(ctxOf(fx, clock), { action: 'policy', rules: base }, 1) });
+    // The version-1 text over the same rules (no "lock=off") does not verify. (Version 4 always says lock=on or off.)
+    const wrong = await engine.changeRules(base, { authenticatedBy: 'hardware', approval: approve(ctxOf(fx, clock), { action: 'policy', rules: base }, 1, { legacyText: true }) });
     expect(!wrong.ok && wrong.refusal.reason).toBe('approval_invalid_signature');
     const right = await engine.changeRules(base, { authenticatedBy: 'hardware', approval: approve(ctxOf(fx, clock), { action: 'policy', rules: base, contactLockBefore: true }, 2) });
     expect(right.ok).toBe(true);

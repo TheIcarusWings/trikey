@@ -18,6 +18,7 @@ import { labelled, type WalletRuntime } from './runtime.js';
 import { errorText } from './log.js';
 import type { DueAlert, LimitNotice, RecoveryRecord } from './policy/index.js';
 import { stampOf, toSeconds } from './nostr/wire.js';
+import { contactId } from './policy/authorizer.js';
 import { npubEncode } from 'nostr-tools/nip19';
 
 export function formatBtc(sats: bigint | number): string {
@@ -178,10 +179,75 @@ export const LOCK_HINT = 'If something looks wrong and you cannot reach the owne
 export const LOCK_HINT_NOSTR =
   "If something looks wrong and you cannot reach the owner, you can lock the guardian (it then co-signs nothing until the owner unlocks it) by replying LOCK to the guardian's nostr message, in your nostr app.";
 
+/** Contacts as the device showed them (`contactId`), for messages and the activity log. */
+export function contactIds(contacts: readonly string[] | undefined): string {
+  const ids = (contacts ?? []).map((c) => {
+    try {
+      return contactId(c);
+    } catch {
+      return c.slice(0, 12);
+    }
+  });
+  return ids.length ? ids.join(', ') : 'none';
+}
+
+/** Where a contact change came from, in words. */
+function contactChangeHow(n: Pick<LimitNotice, 'pairing' | 'sequence'>): string {
+  return n.pairing ? 'when the wallet was set up on this guardian' : n.sequence !== undefined ? "approved on the owner's hardware wallet" : "from the owner's phone";
+}
+
+/**
+ * The owner's own channels' line for a change of the alert contacts (`contact_added` / `contact_removed`): one per
+ * change, carried by the `contact_added` notice (or `contact_removed` when nobody was added).
+ */
+export function contactChangeOwnerText(n: LimitNotice): string | undefined {
+  if (n.kind !== 'contact_added' && n.kind !== 'contact_removed') return undefined;
+  if (n.kind === 'contact_removed' && n.added?.length) return undefined;
+  const parts = [n.added?.length ? `added ${contactIds(n.added)}` : '', n.removed?.length ? `removed ${contactIds(n.removed)}` : ''].filter(Boolean).join('; ');
+  return n.pairing
+    ? `Your wallet was set up on your guardian with these alert contacts: ${contactIds(n.added)}. Each of them is told. If one of them is not a contact you chose, check the guardian now.`
+    : `Alert contacts changed on your guardian (${contactChangeHow(n)}): ${parts}. Each of them is told. If you did not do this, check the guardian now.`;
+}
+
+/**
+ * The NIP-17 DM to a contact added (`contact_added`) or removed (`contact_removed`): what they are now, who else changed,
+ * and that a change the owner did not tell them about is the alarm (a phone thief swapping the owner's contact for its
+ * own, so that a recovery is heard by nobody else). `who`: the owner's name for the guardian, or a guest wallet's label.
+ */
+export function contactChangeText(
+  n: Pick<LimitNotice, 'at' | 'added' | 'removed' | 'pairing' | 'sequence'> & { kind: 'contact_added' | 'contact_removed' },
+  who: { guardian: string } | { wallet: string },
+  reach: ContactReach = 'dm',
+): string {
+  const reply = reach === 'dm' ? 'by replying with the line it gives you' : "by replying, in your nostr app, to the guardian's nostr message with the line it gives you";
+  const wallet = 'wallet' in who ? `the bitcoin wallet "${who.wallet}"` : `the bitcoin wallet that "${who.guardian}" guards`;
+  const others = (list: string[] | undefined, what: string) => (list?.length ? [`${what}: ${contactIds(list)}.`] : []);
+  if (n.kind === 'contact_added')
+    return [
+      `Trikey: you are now an alert contact of ${wallet} (a Trikey Guardian keeps one of its keys).`,
+      '',
+      `What happened: on ${formatWhen(n.at)}, ${contactChangeHow(n)}, its rules made you one of its alert contacts.`,
+      ...others(n.added, 'Alert contacts added'),
+      ...others(n.removed, 'Alert contacts removed at the same time'),
+      '',
+      `What it means: if anyone starts a recovery of this wallet (moving all its money to a new wallet after a waiting period) or turns its daily limit off, this guardian tells you first, and you can cancel the recovery ${reply}.`,
+      '',
+      'If you do not know who owns this wallet, or they did not ask you, tell them: someone may have chosen you without them. This message needs no answer.',
+    ].join('\n');
+  return [
+    `Trikey alert: you are no longer an alert contact of ${wallet} (a Trikey Guardian keeps one of its keys).`,
+    '',
+    `What happened: on ${formatWhen(n.at)}, ${contactChangeHow(n)}, its rules stopped naming you. You will not hear of its recoveries any more and cannot cancel them.`,
+    ...others(n.added, 'Alert contacts added at the same time'),
+    '',
+    'If the owner did not tell you about this, call them now: someone with their phone may have replaced their contacts with their own, so that a recovery of the wallet is heard by nobody else. They can cancel a recovery from their hardware wallet and check the guardian\'s web page.',
+  ].join('\n');
+}
+
 /** The wire alert of a limit change or a contact lock, for the paired phone (`undefined`: a notice for contacts only). */
 export function noticeToWire(n: LimitNotice): Alert | undefined {
   const stamp = stampOf(n.at);
-  if (n.kind === 'contact_lock_on' || n.kind === 'contact_lock_off') return undefined;
+  if (n.kind === 'contact_lock_on' || n.kind === 'contact_lock_off' || n.kind === 'contact_added' || n.kind === 'contact_removed') return undefined;
   if (n.kind === 'savings_unwatched')
     return n.savingsWalletId
       ? {
@@ -255,7 +321,8 @@ export function noticeToWire(n: LimitNotice): Alert | undefined {
  * The NIP-17 DM to an alert contact (`limit_off`, `contact_lock`, `contact_lock_on` and `contact_lock_off` go to
  * contacts). `canLock`: the rules let the contacts lock the guardian now, so a `limit_off` DM says how.
  */
-export function noticeText(n: LimitNotice, canLock = false, reach: ContactReach = 'dm'): string {
+export function noticeText(n: LimitNotice, canLock = false, reach: ContactReach = 'dm', guardian = 'Trikey Guardian'): string {
+  if (n.kind === 'contact_added' || n.kind === 'contact_removed') return contactChangeText({ ...n, kind: n.kind }, { guardian }, reach);
   if (n.kind === 'savings_unwatched')
     return [
       n.replacedBy
@@ -358,7 +425,7 @@ export class Alerter {
 
   /** A notice as the contacts get it: named once the box has several wallets. */
   private noticeDm(n: LimitNotice, canLock: boolean, reach: ContactReach = 'dm'): string {
-    return labelled(this.w, noticeText(n, canLock, reach));
+    return labelled(this.w, noticeText(n, canLock, reach, this.g.notifier.guardianName));
   }
 
   /** Sends every due alert. Overlapping calls coalesce into one more pass. */
@@ -448,6 +515,25 @@ export class Alerter {
     const all = w.store.state?.notices?.find((x) => x.id === n.id)?.recipients ?? n.recipients;
     const phone = w.engine.walletById(n.walletId)?.appNostrPubkey;
     const contacts = all.filter((r) => r !== phone && r !== n.contact);
+    if (n.kind === 'contact_added' || n.kind === 'contact_removed') {
+      // The owner's channels: one line for the change. A contact's channels: only for the contacts added or removed,
+      // never for a channel without a nostr key (it would not know which contact is meant).
+      const owner = contactChangeOwnerText(n);
+      try {
+        const queued = await g.notifier.enqueue({
+          id: n.id,
+          type: n.kind,
+          at: n.at,
+          walletId: n.walletId,
+          ...(owner ? { owner: labelled(w, owner) } : {}),
+          contacts: { text: (reach) => (reach === 'nostr' ? this.noticeDm(n, canLock, 'nostr') : undefined), recipients: contacts },
+        });
+        if (queued) g.notifier.kick();
+      } catch (e) {
+        g.log.error('notify.enqueue_failed', { alertId: n.id, error: errorText(e) });
+      }
+      return;
+    }
     try {
       const queued = await g.notifier.enqueue({
         id: n.id,

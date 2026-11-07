@@ -430,12 +430,26 @@ Do:
   sweep fee cap and `contacts=` the number of alert contacts. `seq=0` means "the rules the wallet starts with". The Guardian
   page's **Rules** must then show exactly those values. The same extra confirmation comes when you add a wallet (18a),
   accept a family invite (18) and replace the guardian (13).
+- **With a guardian and an app from this release** the text is `Trikey policy v4 wallet=... seq=0 limit=... delay=7d feecap=...
+  lock=off contacts=npub1abcdefgh..wxyz expires=...`: every alert contact by name, as `npub1`, 8 characters, `..` and the
+  last 4. **Compare each with the npub in that contact's nostr app** (for "Me": your own); the phone lists them the same way,
+  with the names you gave. A contact you do not recognise: reject on the device. With five or more contacts (fewer with huge
+  values) the device shows `contacts=<count>:<code>` instead; the Guardian page's **Rules** shows the same code under the
+  contacts once they are stored. On a Jade check that the whole `contacts=` part is visible before the "...".
+- Each contact gets a nostr message within a minute: "you are now an alert contact of the bitcoin wallet that <guardian
+  name> guards". Check that "Me" got it in your nostr app. Activity's "Wallet paired" entry lists the contacts the same way.
 - Then in Settings, **Alert contacts**, **Add contact**: name it "Me", paste **your own npub** (or scan it), and approve on the
   device. Adding a contact needs the hardware wallet; that is on purpose. **On mainnet this step cannot be skipped.** On a
   test network the app would let you skip it, but do it anyway, because step 12 needs the contact.
 
-You should see: after approval, the Alert contacts list shows "Me" with the shortened npub, next to "This phone, always
-included". On the Guardian page, **Rules** shows the same daily limit, waiting period and the contact, and Activity lists the rule changes.
+You should see: after approval, the Alert contacts list shows "Me" with the npub as the device showed it (`npub1abcdefgh..wxyz`),
+next to "This phone, always included". The device's text named "Me" (`contacts=...`). On the Guardian page, **Rules** shows the
+same daily limit, waiting period and the contact (as on the device), and Activity says "alert contacts added: npub1..". "Me"
+gets a nostr message saying it is now an alert contact; removing a contact sends that contact "you are no longer an alert
+contact" (try it with a throwaway npub you hold).
+
+- Optional, needs an app from before this release and a guardian from this release: change the daily limit (still works:
+  the contacts stay the same), then try to add a contact (refused: "Update the Trikey app ... show the alert contacts").
 
 - Optional, needs an app from 0.1.19 or older: pair a **new** guardian (this release) with it. It must refuse with a
   message that says to update the Trikey app, and pair nothing (the guardian's Activity says "Pairing refused: Update the Trikey app..."). An updated

@@ -4,7 +4,8 @@ import { isContactLockOn, isLimitOff, type ActivityEntry as EngineEntry } from '
 import type { ServiceActivity } from '../service-state.js';
 import { environmentSourceName } from '../chain/source.js';
 import { refusalText } from '../nostr/wire.js';
-import { formatWhen } from '../alerts.js';
+import { contactIds, formatWhen } from '../alerts.js';
+import { contactsDelta } from '../policy/contacts.js';
 import type { ActivityEntry } from './types.js';
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -38,7 +39,7 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
       return {
         ...base,
         kind: 'system',
-        event: `Wallet ${e.walletId} paired${e.replacesWalletId ? ` (it replaces wallet ${e.replacesWalletId} on another guardian${e.watching ? '; this guardian watches that wallet so the phone can move its coins' : ''})` : ''}`,
+        event: `Wallet ${e.walletId} paired${e.replacesWalletId ? ` (it replaces wallet ${e.replacesWalletId} on another guardian${e.watching ? '; this guardian watches that wallet so the phone can move its coins' : ''})` : ''}${e.alertContacts ? `. Alert contacts: ${contactIds(e.alertContacts)}${e.alertContacts.length ? ' (each is told)' : ''}` : ''}`,
         summary: 'Wallet paired',
         signedBy: 'Hardware wallet',
         sats: null,
@@ -70,7 +71,10 @@ export function engineEntry(e: EngineEntry): ActivityEntry {
       const nowOff = isLimitOff(e.to);
       if (e.from.recoveryDelayDays !== e.to.recoveryDelayDays) parts.push(`delay ${e.from.recoveryDelayDays} → ${e.to.recoveryDelayDays} days`);
       if (e.from.sweepFeeCapSats !== e.to.sweepFeeCapSats) parts.push(`fee cap ${e.from.sweepFeeCapSats} → ${e.to.sweepFeeCapSats} sats`);
-      if (e.from.alertContacts.join() !== e.to.alertContacts.join()) parts.push(`alert contacts ${e.from.alertContacts.length} → ${e.to.alertContacts.length}`);
+      // The contacts by name (as the device shows them), never just a count: a swapped contact must be visible here.
+      const delta = contactsDelta(e.from.alertContacts, e.to.alertContacts);
+      if (delta.added.length) parts.push(`alert contacts added: ${contactIds(delta.added)}`);
+      if (delta.removed.length) parts.push(`alert contacts removed: ${contactIds(delta.removed)}`);
       // Rule 8, opt-in: whether the alert contacts may lock this guardian, in words.
       const lockWas = isContactLockOn(e.from);
       const lockNow = isContactLockOn(e.to);

@@ -89,7 +89,7 @@ describe('a Coldcard Mk4 over NFC, in the app', { timeout: 120_000 }, () => {
     expect(new TextDecoder().decode(message.message)).toMatch(/signmessage m\/48h\/1h\/0h\/2h\/0\/0 ascii:Trikey pair v1 wallet=[0-9a-f]{16} guardian=0[23][0-9a-f]{64}$/);
     expect(message.title).toBe('Sign on your Coldcard Mk4');
     // Then the rules the wallet starts with (seq=0), which the Coldcard shows, with a note that says what to check.
-    expect(cc.signedTexts).toEqual([expect.stringMatching(/^Trikey pair v1 /), expect.stringMatching(/^Trikey policy v1 wallet=[0-9a-f]{16} seq=0 limit=100000 delay=7d feecap=\d+ contacts=\d+ hash=[0-9a-f]{64} expires=\S+Z$/)]);
+    expect(cc.signedTexts).toEqual([expect.stringMatching(/^Trikey pair v1 /), expect.stringMatching(/^Trikey policy v4 wallet=[0-9a-f]{16} seq=0 limit=100000 delay=7d feecap=\d+ lock=off contacts=\S+ expires=\S+Z$/)]);
     const rules = owner.requests.filter((r): r is NfcWriteRequest => r.type === 'write' && r.purpose === 'message')[1]!;
     expect(rules.notes!.join(' ')).toMatch(/rules your wallet starts with/);
     // After the signature: the wallet goes onto the Coldcard, and the first address is compared on it.

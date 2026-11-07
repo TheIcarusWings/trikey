@@ -305,9 +305,11 @@ export function createMockApi(scenario: MockScenario = 'default'): GuardianApi {
     recoveryDelayDays: 7,
     contacts: [
       { id: 'c_phone', name: 'Paired phone', kind: 'paired-phone' },
-      { id: 'c_maria', name: 'Maria', kind: 'contact' },
-      { id: 'c_tom', name: 'Tom', kind: 'contact' },
+      // As the hardware wallet shows them in an approval (`contactId`), with the code of the list (`contactsCode`).
+      { id: '1b'.repeat(32), name: 'npub1rvd3kxcm..5nvq', npub: 'npub1rvd3kxcmrvd3kxcmrvd3kxcmrvd3kxcmrvd3kxcmrvd3kxcmrvdsca5nvq', kind: 'contact' },
+      { id: '2c'.repeat(32), name: 'npub19skzctpv..rlyr', npub: 'npub19skzctpv9skzctpv9skzctpv9skzctpv9skzctpv9skzctpv9skqhnrlyr', kind: 'contact' },
     ],
+    contactsCode: '607b-7401-d3cb-8945-ea29',
     sweepFeeCapSats: 50_000,
     contactLock: contactLocked,
     hardwarePayments: 'any-amount',

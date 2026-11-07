@@ -283,6 +283,11 @@ export type Refusal =
   | { reason: 'hardware_approval_required'; detail: string }
   | { reason: 'unsupported_approval'; kind: string }
   | { reason: 'approval_invalid_signature' }
+  /**
+   * The approval is a valid signature over a text this guardian no longer accepts for it (an app from before
+   * `approval_contacts` setting or changing the alert contacts over a policy text that shows only their number).
+   */
+  | { reason: 'app_update_required'; detail: string }
   /** A `recovery.access` signature whose grant a wallet rotation or retirement revoked. */
   | { reason: 'approval_revoked' }
   | { reason: 'approval_stale_sequence'; sequence: number; lastSequence: number }
@@ -322,7 +327,8 @@ export type Result<T> = ({ ok: true } & T) | { ok: false; refusal: Refusal };
 // Activity log (what the web UI shows)
 
 export type ActivityEvent =
-  | { type: 'registered'; walletId: string; replacesWalletId?: string; watching?: boolean }
+  /** `alertContacts`: the contacts the wallet was paired with (absent in entries from before it was logged). */
+  | { type: 'registered'; walletId: string; replacesWalletId?: string; watching?: boolean; alertContacts?: string[] }
   | { type: 'wallet_unwatched'; walletId: string }
   /** The phone asked the guardian to watch its Savings wallet (`replaced`: the Savings wallet it watched before). */
   | { type: 'savings_registered'; walletId: string; replaced?: string }
@@ -457,7 +463,17 @@ export interface GuardedWallet {
 export interface LimitNotice {
   /** `limit-<n>`, `lock-<n>` or `lockrule-<n>`, unique (the next activity id when it was queued). */
   id: string;
-  kind: 'limit_off' | 'limit_on' | 'contact_lock' | 'contact_lock_on' | 'contact_lock_off' | 'savings_moved' | 'savings_unwatched' | 'savings_unchecked';
+  kind:
+    | 'limit_off'
+    | 'limit_on'
+    | 'contact_lock'
+    | 'contact_lock_on'
+    | 'contact_lock_off'
+    | 'contact_added'
+    | 'contact_removed'
+    | 'savings_moved'
+    | 'savings_unwatched'
+    | 'savings_unchecked';
   walletId: string;
   /** ms */
   at: number;
@@ -469,6 +485,14 @@ export interface LimitNotice {
   reason?: 'phone' | 'hardware' | 'recovery';
   /** `contact_lock`: the alert contact who locked the guardian (nostr pubkey). */
   contact?: string;
+  /**
+   * `contact_added` (to the contacts added) / `contact_removed` (to the contacts removed): every contact the change added
+   * and removed (nostr pubkeys), so each message and the owner's channels can name them; `pairing`: the wallet was paired
+   * (or added) with these contacts.
+   */
+  added?: string[];
+  removed?: string[];
+  pairing?: true;
   /**
    * `savings_moved`: the Savings wallet, the spending transaction and what left Savings (sats, fee included).
    * `savings_unwatched`: the Savings wallet no longer watched, and `replacedBy` the one watched instead (absent: none).

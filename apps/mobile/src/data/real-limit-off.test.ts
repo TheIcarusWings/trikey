@@ -91,7 +91,7 @@ describe('no daily limit in the app', { timeout: 120_000 }, () => {
     const signs = device.calls.filter((c) => c.op === 'signMessage').length;
     await svc.turnLimitOff();
     expect(device.calls.filter((c) => c.op === 'signMessage').length).toBe(signs + 1);
-    expect(prompts.some((p) => /Trikey policy v2 wallet=[0-9a-f]{16} seq=\d+ limit=off /.test(p.detail ?? ''))).toBe(true);
+    expect(prompts.some((p) => /Trikey policy v4 wallet=[0-9a-f]{16} seq=\d+ limit=off /.test(p.detail ?? ''))).toBe(true);
     expect(rig.guardian.engine.status().dailyLimit).toMatchObject({ off: true, limitBeforeOff: 100_000n });
 
     const s = svc.getState();

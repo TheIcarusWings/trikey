@@ -11,6 +11,9 @@ import {
   RECOVERY_DELAYS as ENGINE_RECOVERY_DELAYS,
   approvalMessage as engineApprovalMessage,
   bip137Authorizer,
+  contactId as engineContactId,
+  contactsCode as engineContactsCode,
+  DEVICE_VISIBLE_LENGTH as ENGINE_DEVICE_VISIBLE_LENGTH,
   pairingMessage as enginePairingMessage,
   pairingRulesMessage as enginePairingRulesMessage,
   PAIRING_RULES_SEQUENCE as ENGINE_PAIRING_RULES_SEQUENCE,
@@ -31,6 +34,9 @@ import {
   Policy,
   RECOVERY_DELAYS,
   approvalMessage,
+  contactId,
+  contactsCode,
+  DEVICE_VISIBLE_LENGTH,
   normalizePolicy,
   PAIRING_RULES_SEQUENCE,
   PairingRulesApproval,
@@ -137,6 +143,21 @@ describe('protocol vs guardian engine: hardware approval texts', () => {
       }
     }
     expect(n).toBe(policies.length * ctxs.length * 5);
+  });
+
+  it('the version-4 texts (contacts named, approval_contacts) are character for character the engine text', () => {
+    const many = (k: number): PolicyType => ({ ...policy, alertContacts: contacts(k) });
+    for (const p of [...policies, many(1), many(2), many(3), many(4), many(5), { ...policy, contactLock: true }, { ...policy, dailyLimitSats: LIMIT_OFF_SATS }])
+      for (const ctx of ctxs) {
+        const v4 = { ...ctx, contactsInText: true };
+        expect(approvalMessage({ action: 'policy', policy: p }, v4)).toBe(engineApprovalMessage({ action: 'policy', rules: { ...toRules(p), ...(p.contactLock ? { contactLock: true } : {}) } }, v4));
+        expect(pairingRulesMessage(p, { walletId: ctx.walletId, expiresAt: ctx.expiresAt, contactsInText: true })).toBe(
+          enginePairingRulesMessage({ ...toRules(p), ...(p.contactLock ? { contactLock: true } : {}) }, { walletId: ctx.walletId, expiresAt: ctx.expiresAt, contactsInText: true }),
+        );
+      }
+    for (const k of contacts(20)) expect(contactId(k)).toBe(engineContactId(k));
+    expect(contactsCode(contacts(7))).toBe(engineContactsCode(contacts(7)));
+    expect(DEVICE_VISIBLE_LENGTH).toBe(ENGINE_DEVICE_VISIBLE_LENGTH);
   });
 
   it('recoveryAccessMessage matches the engine text', () => {

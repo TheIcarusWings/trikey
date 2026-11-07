@@ -580,7 +580,7 @@ export class Guardian implements WalletRuntime {
     await g.sessionThrottle.load();
     g.store = new ObservedStore(opts.store ?? new JsonFileStore(g.path('engine')));
     // The engine checks its clock against the chain (recovery delay, daily limit window): Electrs' tip.
-    g.engine = await PolicyEngine.open({ store: g.store, clock: g.clock, chain: g.engineChain });
+    g.engine = await PolicyEngine.open({ store: g.store, clock: g.clock, chain: g.engineChain, requireContactsInText: () => g.features.includes(GUARDIAN_FEATURES.approvalContacts) });
     const net = g.config.network;
     if (g.keystore && g.keystore.public.network !== net)
       throw new ConfigError(`key 3 was created for ${g.keystore.public.network}, but BITCOIN_NETWORK is ${net}`);
@@ -655,6 +655,7 @@ export class Guardian implements WalletRuntime {
     GUARDIAN_FEATURES.sealedUnlock,
     GUARDIAN_FEATURES.passphraseChange,
     GUARDIAN_FEATURES.pairingRulesApproval,
+    GUARDIAN_FEATURES.approvalContacts,
   ];
 
   /** The wallet object of a registration or a watched wallet (cached per descriptor). */

@@ -549,8 +549,11 @@ export type RecoveryDelayDays = 7 | 14 | 30;
 
 export interface AlertContact {
   id: string;
+  /** For a contact: as the hardware wallet shows it in an approval (`npub1` + 8 … last 4, `contactId`). */
   name: string;
   kind: 'paired-phone' | 'contact';
+  /** A contact's whole npub. Absent from guardians before `approval_contacts`. */
+  npub?: string;
 }
 
 export interface Rules {
@@ -565,6 +568,11 @@ export interface Rules {
   recoveryDelayDays: RecoveryDelayDays;
   /** Everyone who gets daily recovery alerts and can cancel. */
   contacts: AlertContact[];
+  /**
+   * The code of the alert contacts (`contactsCode`): what the hardware wallet shows instead of the contacts when they do
+   * not all fit on its screen (`contacts=<k>:<code>`). Absent without contacts, and from guardians before `approval_contacts`.
+   */
+  contactsCode?: string;
   /** A recovery sweep can't pay more than this in fees (sats). The guardian enforces an absolute cap. */
   sweepFeeCapSats: number;
   /**

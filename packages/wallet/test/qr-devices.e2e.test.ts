@@ -12,7 +12,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GuardianRig } from '@trikey/guardian/testing';
-import { MAX_ALERT_CONTACTS, MAX_APPROVAL_MESSAGE_LENGTH, MAX_SATS, approvalMessage, pairingMessage, recoveryAccessMessage, unlockKeyMessage, type Policy } from '@trikey/protocol';
+import { DEVICE_VISIBLE_LENGTH, MAX_ALERT_CONTACTS, MAX_APPROVAL_MESSAGE_LENGTH, MAX_SATS, approvalMessage, pairingMessage, pairingRulesMessage, recoveryAccessMessage, unlockKeyMessage, type Policy } from '@trikey/protocol';
 import {
   MIN_QR_MESSAGE_LIMIT,
   QR_MODELS,
@@ -46,6 +46,11 @@ function longestTexts(): Record<string, string> {
     'policy v2 (limit off)': approvalMessage({ action: 'policy', policy: { ...big, dailyLimitSats: MAX_SATS, contactLock: false } }, ctx),
     'policy v3 (contact lock)': approvalMessage({ action: 'policy', policy: big }, ctx),
     'policy v3 (lock turned off)': approvalMessage({ action: 'policy', policy: { ...big, contactLock: false }, contactLockBefore: true }, ctx),
+    // Version 4 (`approval_contacts`): the contacts by name, or their number and code when they do not fit.
+    'policy v4 (contacts named)': approvalMessage({ action: 'policy', policy: { ...big, alertContacts: contacts.slice(0, 2) } }, { ...ctx, contactsInText: true }),
+    'policy v4 (contacts code)': approvalMessage({ action: 'policy', policy: big }, { ...ctx, contactsInText: true }),
+    'policy v4 (limit off)': approvalMessage({ action: 'policy', policy: { ...big, dailyLimitSats: MAX_SATS } }, { ...ctx, contactsInText: true }),
+    'pairing rules v4': pairingRulesMessage({ ...big, contactLock: false, alertContacts: contacts.slice(0, 3) }, { walletId: WALLET, expiresAt: LATE, contactsInText: true }),
     'cancel-recovery': approvalMessage({ action: 'cancel-recovery', recoveryId: 'z'.repeat(40) }, ctx),
     'resume-phone': approvalMessage({ action: 'resume-phone' }, ctx),
     'retire-wallet': approvalMessage({ action: 'retire-wallet' }, ctx),
@@ -127,6 +132,13 @@ describe('every text Trikey signs fits every QR device that signs texts', () => 
   it.each(Object.entries(texts))('%s', (_name, text) => {
     expect(text.length).toBeLessThanOrEqual(MIN_QR_MESSAGE_LIMIT);
     for (const model of QR_MODELS.filter((m) => QR_MODEL_INFO[m].signsMessages)) expect(messageProblemFor(model, text)).toBeUndefined();
+  });
+
+  it('a version-4 policy text ends its contacts within what Jade shows (188), at its longest', () => {
+    for (const [name, text] of Object.entries(texts).filter(([n]) => n.includes('v4'))) {
+      expect(text.indexOf(' expires='), name).toBeLessThanOrEqual(DEVICE_VISIBLE_LENGTH);
+      expect(QR_MODEL_INFO.jade.displayLength).toBe(DEVICE_VISIBLE_LENGTH);
+    }
   });
 
   it('the longest is a policy approval with a 16-digit sequence, just under the limit', () => {

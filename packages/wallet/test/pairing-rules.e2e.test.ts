@@ -9,7 +9,7 @@
  * - the approval is no later approval: the next hardware approval still uses sequence 1.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { GUARDIAN_FEATURES, policyHash, type Policy } from '@trikey/protocol';
+import { GUARDIAN_FEATURES, contactId, policyHash, type Policy } from '@trikey/protocol';
 import { GuardianRig } from '@trikey/guardian/testing';
 import { TrikeyWallet, type WalletEvent } from '../src/index.js';
 import { MemoryCloudBackupStore, MemoryPasskeyPrf, SoftwareHardwareProvider, SoftwareHardwareSigner } from '../src/testing/index.js';
@@ -45,14 +45,28 @@ describe('pairing: the device approves the rules the wallet starts with', { time
     await w.onboard({ pairingUri: rig.pairingUri(), rules: RULES });
     const walletId = w.state.wallet!.walletId;
     const texts = ruleSigns(device);
-    expect(texts).toEqual([
-      `Trikey policy v1 wallet=${walletId} seq=0 limit=150000 delay=14d feecap=25000 contacts=1 hash=${policyHash(RULES)} expires=${texts[0]!.match(/expires=(\S+)$/)![1]}`,
-    ]);
+    // Version 4 (the guardian lists `approval_contacts`): the contact by name, as the owner checks it on the device.
+    expect(texts).toEqual([`Trikey policy v4 wallet=${walletId} seq=0 limit=150000 delay=14d feecap=25000 lock=off contacts=${contactId(CONTACT)} expires=${texts[0]!.match(/expires=(\S+)$/)![1]}`]);
     // The phone shows it too (the hardware prompt), and the device is asked for it as "rules".
     expect(events.some((e) => e.type === 'hardware_prompt' && e.purpose === 'rules' && e.text === texts[0])).toBe(true);
     expect(rig.guardian.engine.status().rules).toEqual({ ...RULES, dailyLimitSats: 150_000n, sweepFeeCapSats: 25_000n });
     // The next hardware approval is still the first: pairing consumed no sequence.
     expect((await w.refreshStatus()).nextHardwareSequence).toBe(1);
+  });
+});
+
+describe('pairing with a guardian from before approval_contacts (simulated)', { timeout: 60_000 }, () => {
+  it('signs the older text, which it rebuilds (the number of contacts and the hash), and pairs as before', async () => {
+    const rig = await GuardianRig.start();
+    rigs.push(rig);
+    rig.guardian.features = rig.guardian.features.filter((f) => f !== GUARDIAN_FEATURES.approvalContacts);
+    const device = new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware, network: 'regtest', kind: 'ledger', model: 'Nano X (simulated)' });
+    const w = await TrikeyWallet.create(phone({ clock: rig.clock, hardware: new SoftwareHardwareProvider(device), cloud, passkey }).deps, { deviceName: 'Older guardian phone' });
+    wallets.push(w);
+    await w.onboard({ pairingUri: rig.pairingUri(), rules: RULES });
+    const texts = ruleSigns(device);
+    expect(texts).toEqual([`Trikey policy v1 wallet=${w.state.wallet!.walletId} seq=0 limit=150000 delay=14d feecap=25000 contacts=1 hash=${policyHash(RULES)} expires=${texts[0]!.match(/expires=(\S+)$/)![1]}`]);
+    expect(rig.guardian.engine.status().rules!.alertContacts).toEqual([CONTACT]);
   });
 });
 

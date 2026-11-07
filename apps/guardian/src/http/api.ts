@@ -15,9 +15,9 @@ import { base64 } from '@scure/base';
 import { getNetwork, parsePsbt } from '@trikey/core';
 import { MAX_RELAYS, encodePairingUri, encodeRecoveryUri } from '@trikey/protocol';
 import { MAX_RETIRING_RELAYS, type Guardian } from '../guardian.js';
-import { isContactLockOn, isLimitOff, type RecoveryRecord } from '../policy/index.js';
+import { contactId, contactsCode, isContactLockOn, isLimitOff, type RecoveryRecord } from '../policy/index.js';
 import { npubEncode } from 'nostr-tools/nip19';
-import { engineEntry, serviceEntry, shortNpub } from './activity.js';
+import { engineEntry, npubOrHex, serviceEntry, shortNpub } from './activity.js';
 import { HttpError, type Route, type RouteContext, type RouteResult } from './server.js';
 import type {
   ActivityEntry,
@@ -213,8 +213,10 @@ function rules(g: Guardian, w: WalletRuntime = g): Rules {
     recoveryDelayDays: r.recoveryDelayDays,
     contacts: [
       { id: reg.appNostrPubkey, name: phoneName(g), kind: 'paired-phone' },
-      ...r.alertContacts.map((pk) => ({ id: pk, name: shortNpub(pk), kind: 'contact' as const })),
+      // As the hardware wallet shows them in an approval, so the owner can compare the two.
+      ...r.alertContacts.map((pk) => ({ id: pk, name: contactId(pk), npub: npubOrHex(pk), kind: 'contact' as const })),
     ],
+    ...(r.alertContacts.length ? { contactsCode: contactsCode(r.alertContacts) } : {}),
     sweepFeeCapSats: Number(r.sweepFeeCapSats),
     contactLock: isContactLockOn(r),
     hardwarePayments: 'any-amount',

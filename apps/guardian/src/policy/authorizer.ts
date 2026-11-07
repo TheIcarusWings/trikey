@@ -17,15 +17,48 @@
  * number. Rules where the alert contacts may lock the guardian, or a change
  * from such rules to rules where they may not, have the version-3 text, which
  * adds `lock=on` / `lock=off` after the contacts.
+ *
+ * Versions 1 to 3 show only the number of contacts, so a malicious app could swap one for its own unseen (security
+ * review 2026-11). Version 4 (`contactsInText`, guardians with `approval_contacts`) names every contact on the device
+ * (`contactId`), or their number and a code (`contactsCode`) the web page shows when they do not all fit; such a guardian
+ * refuses an older text for anything that sets or changes the contacts (`verifyPolicyApproval`).
  */
-import { hex } from '@scure/base';
+import { bech32, hex } from '@scure/base';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { parseBip137Signature, verifyMessageWithPubkey } from './bip137.js';
 import { isContactLockOn, isLimitOff, normalizeRules, policyHash } from './rules.js';
 import { HardwareAuthKey, Rules } from './types.js';
 
 export const MAX_MESSAGE_LENGTH = 240;
+/** What every device shows of a text before cutting it (Jade: 188 characters, then "..."). Same as @trikey/protocol's. */
+export const DEVICE_VISIBLE_LENGTH = 188;
+
+/**
+ * A contact as the device, the web page and the app show it: `npub1`, the first 8 characters of the npub's data, `..`
+ * and its last 4 (60 bits). Same as @trikey/protocol's `contactId`.
+ */
+export function contactId(pubkey: string): string {
+  if (!/^[0-9a-fA-F]{64}$/.test(pubkey)) throw new Error('invalid nostr pubkey');
+  const npub = bech32.encode('npub', bech32.toWords(hex.decode(pubkey.toLowerCase())));
+  return `${npub.slice(0, 13)}..${npub.slice(-4)}`;
+}
+
+/** The code of a contact list (80 bits of sha256, hex in groups of 4). Same as @trikey/protocol's `contactsCode`. */
+export function contactsCode(contacts: readonly string[]): string {
+  const sorted = [...new Set(contacts.map((c) => c.toLowerCase()))].sort();
+  const digest = hex.encode(sha256(utf8ToBytes(['trikey contacts v1', ...sorted].join('\n'))).slice(0, 10));
+  return digest.match(/.{4}/g)!.join('-');
+}
+
+/** The `contacts=` member of a version-4 text: every `contactId` if the list ends within `DEVICE_VISIBLE_LENGTH`, else `<k>:<code>`. */
+function contactsMember(contacts: readonly string[], before: number): string {
+  if (!contacts.length) return 'contacts=none';
+  const list = `contacts=${contacts.map(contactId).join(',')}`;
+  if (before + 1 + list.length <= DEVICE_VISIBLE_LENGTH) return list;
+  return `contacts=${contacts.length}:${contactsCode(contacts)}`;
+}
 
 export type HardwareAction =
   /** `contactLockBefore`: the current rules let the contacts lock the guardian (so turning it off says `lock=off`). */
@@ -39,6 +72,8 @@ export interface ApprovalContext {
   sequence: number;
   /** Unix seconds. */
   expiresAt: number;
+  /** The version-4 policy text, which names the contacts (guardians with `approval_contacts`). */
+  contactsInText?: boolean;
 }
 
 function isoSeconds(unixSeconds: number): string {
@@ -51,9 +86,21 @@ function line(parts: string[]): string {
   return msg;
 }
 
-/** The policy text (versions 1 to 3) for `rules`, with `head` (wallet and sequence) and `tail` (expiry). */
-function policyLine(rules: Rules, head: string[], tail: string, contactLockBefore?: boolean): string {
+/** The policy text (versions 1 to 4) for `rules`, with `head` (wallet and sequence) and `tail` (expiry). */
+function policyLine(rules: Rules, head: string[], tail: string, contactLockBefore?: boolean, contactsInText?: boolean): string {
   const r = normalizeRules(rules);
+  if (contactsInText) {
+    // Version 4: every contact by name (or their number and code), the lock in words, no hash: all else is in clear.
+    const before = [
+      'Trikey policy v4',
+      ...head,
+      isLimitOff(r) ? 'limit=off' : `limit=${r.dailyLimitSats}`,
+      `delay=${r.recoveryDelayDays}d`,
+      `feecap=${r.sweepFeeCapSats}`,
+      `lock=${isContactLockOn(r) ? 'on' : 'off'}`,
+    ];
+    return line([...before, contactsMember(r.alertContacts, before.join(' ').length), tail]);
+  }
   // No daily limit: version 2 says so in words ("limit=off"), so the device screen shows it plainly. Guardians
   // before it rebuild only version 1, so they refuse such a signature (the phone does not offer "off" to them).
   const off = isLimitOff(r);
@@ -87,7 +134,7 @@ export function approvalMessage(action: HardwareAction, ctx: ApprovalContext): s
   const tail = `expires=${isoSeconds(ctx.expiresAt)}`;
   switch (action.action) {
     case 'policy':
-      return policyLine(action.rules, head, tail, action.contactLockBefore);
+      return policyLine(action.rules, head, tail, action.contactLockBefore, ctx.contactsInText);
     case 'cancel-recovery':
       if (!/^[0-9a-z-]{1,40}$/.test(action.recoveryId)) throw new Error('invalid recovery id');
       return line(['Trikey cancel-recovery v1', ...head, `recovery=${action.recoveryId}`, tail]);
@@ -110,10 +157,42 @@ export const PAIRING_RULES_SEQUENCE = 0;
  * The wallet id covers key 3, so the signature pairs only this wallet with this guardian, and only with these rules.
  * Same text as @trikey/protocol's `pairingRulesMessage`.
  */
-export function pairingRulesMessage(rules: Rules, ctx: { walletId: string; expiresAt: number }): string {
+export function pairingRulesMessage(rules: Rules, ctx: { walletId: string; expiresAt: number; contactsInText?: boolean }): string {
   checkContext(ctx);
-  return policyLine(rules, [`wallet=${ctx.walletId}`, `seq=${PAIRING_RULES_SEQUENCE}`], `expires=${isoSeconds(ctx.expiresAt)}`);
+  return policyLine(rules, [`wallet=${ctx.walletId}`, `seq=${PAIRING_RULES_SEQUENCE}`], `expires=${isoSeconds(ctx.expiresAt)}`, undefined, ctx.contactsInText);
 }
+
+/**
+ * Checks a signature over a policy text (`text(v4)` builds it): the version-4 text, which names the contacts, first;
+ * then, only when `legacyAllowed` (the contacts stay as they are, or the guardian does not require version 4), versions
+ * 1 to 3. `legacy_text`: a valid signature over the older text where it is not allowed (an app from before
+ * `approval_contacts` setting or changing the contacts: "update the app"). Never throws.
+ */
+export function verifyPolicyApproval(
+  text: (contactsInText: boolean) => string,
+  signature: unknown,
+  key: HardwareAuthKey,
+  authorizer: HardwareAuthorizer,
+  legacyAllowed: boolean,
+): 'ok' | 'legacy_text' | 'invalid' {
+  if (typeof signature !== 'string') return 'invalid';
+  const verifies = (v4: boolean) => {
+    let message: string;
+    try {
+      message = text(v4);
+    } catch {
+      return false;
+    }
+    return authorizer.verify(message, signature, key);
+  };
+  if (verifies(true)) return 'ok';
+  if (!verifies(false)) return 'invalid';
+  return legacyAllowed ? 'ok' : 'legacy_text';
+}
+
+/** Why an older policy text is refused where the contacts are set or changed. */
+export const CONTACTS_NOT_SHOWN =
+  'Update the Trikey app: your guardian now has your hardware wallet show the alert contacts themselves, not only how many there are, whenever they are set or changed. Nothing was changed.';
 
 /** Signed once at pairing, to prove the device holds the authorization key. */
 export function pairingMessage(walletId: string, cosignerAccountPubkey: string): string {

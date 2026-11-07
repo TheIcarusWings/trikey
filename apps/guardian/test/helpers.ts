@@ -127,7 +127,7 @@ export interface Ctx {
 }
 
 export async function setup(
-  opts: { rules?: Partial<Rules>; store?: StateStore; clock?: ManualClock; locked?: boolean; chain?: ChainTimeSource; blocksPerDay?: number } = {},
+  opts: { rules?: Partial<Rules>; store?: StateStore; clock?: ManualClock; locked?: boolean; chain?: ChainTimeSource; blocksPerDay?: number; keepPairingNotices?: true } = {},
 ): Promise<Ctx> {
   const clock = opts.clock ?? new ManualClock(T0);
   const store = opts.store ?? new MemoryStore();
@@ -147,7 +147,14 @@ export async function setup(
     appNostrPubkey: APP_NOSTR,
   });
   if (!res.ok) throw new Error(`registration failed: ${JSON.stringify(res.refusal)}`);
+  // Pairing tells every contact they are one (`contact_added`): delivered here, so a test sees only what it causes.
+  if (!opts.keepPairingNotices) await drainContactNotices(engine);
   return { engine, clock, store, wallet, walletId, signer };
+}
+
+/** Marks every due `contact_added` / `contact_removed` notice as delivered (tests that are not about them). */
+export async function drainContactNotices(engine: Pick<PolicyEngine, 'dueNotices' | 'markNoticeSent'>): Promise<void> {
+  for (const n of engine.dueNotices()) if (n.kind === 'contact_added' || n.kind === 'contact_removed') await engine.markNoticeSent(n.id, n.recipients);
 }
 
 /**
@@ -159,13 +166,15 @@ export function approveRules(
   walletId: string,
   rules: Rules | Policy,
   nowMs: number,
-  opts: { expiresInSec?: number; privateKey?: Uint8Array } = {},
+  opts: { expiresInSec?: number; privateKey?: Uint8Array; legacyText?: true } = {},
 ): RulesApproval & { kind: 'bip137' } {
   const expiresAt = Math.floor(nowMs / 1000) + (opts.expiresInSec ?? 600);
+  // The version-4 text, which names the contacts (`approval_contacts`); `legacyText`: an app from before it.
+  const contactsInText = !opts.legacyText;
   const text =
     typeof rules.dailyLimitSats === 'bigint'
-      ? pairingRulesMessage(rules as Rules, { walletId, expiresAt })
-      : wirePairingRulesMessage(rules as Policy, { walletId, expiresAt });
+      ? pairingRulesMessage(rules as Rules, { walletId, expiresAt, contactsInText })
+      : wirePairingRulesMessage(rules as Policy, { walletId, expiresAt, contactsInText });
   return { kind: 'bip137', expiresAt, signature: signMessage(text, opts.privateKey ?? hwAuthPrivateKey()) };
 }
 
@@ -174,10 +183,10 @@ export function approve(
   ctx: Pick<Ctx, 'clock' | 'walletId'>,
   action: HardwareAction,
   sequence: number,
-  opts: { expiresInSec?: number; privateKey?: Uint8Array; walletId?: string } = {},
+  opts: { expiresInSec?: number; privateKey?: Uint8Array; walletId?: string; legacyText?: true } = {},
 ): HardwareApproval {
   const expiresAt = Math.floor(ctx.clock.now() / 1000) + (opts.expiresInSec ?? 600);
-  const message = approvalMessage(action, { walletId: opts.walletId ?? ctx.walletId, sequence, expiresAt });
+  const message = approvalMessage(action, { walletId: opts.walletId ?? ctx.walletId, sequence, expiresAt, ...(opts.legacyText ? {} : { contactsInText: true }) });
   return { kind: 'bip137', sequence, expiresAt, signature: signMessage(message, opts.privateKey ?? hwAuthPrivateKey()) };
 }
 

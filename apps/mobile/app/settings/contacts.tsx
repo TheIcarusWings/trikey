@@ -9,7 +9,7 @@ import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
 import { Switch } from '@/components/ui/switch';
 import { Text } from '@/components/ui/text';
-import { ALERT_CHANNELS, alertChannelText, contactLockCopy, alertChannelsLine, canOfferContactLock, shorten, useWallet, useWalletService, type AlertChannels, type Contact } from '@/data';
+import { ALERT_CHANNELS, alertChannelText, contactLockCopy, alertChannelsLine, canOfferContactLock, deviceContactId, useWallet, useWalletService, type AlertChannels, type Contact } from '@/data';
 import { IS_IOS, pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
@@ -147,7 +147,10 @@ export default function AlertContacts() {
         <>
           <ActionNotice message={message} error={error} />
           <AppButton title="Add contact" icon={Plus} variant="outline" onPress={() => router.push('/settings/add-contact')} />
-          <Footnote className="text-center">Adding or removing a contact needs your {hardware.brand}.</Footnote>
+          <Footnote className="text-center">
+            Adding or removing a contact needs your {hardware.brand}. It shows each contact as written here (npub1, 8 characters, .., the last 4):
+            check them on its screen.
+          </Footnote>
         </>
       }>
       <Body>People who hear about any recovery attempt and can cancel it. They can't move your money.</Body>
@@ -156,14 +159,14 @@ export default function AlertContacts() {
           <View key={contact.id}>
             <View
               accessible
-              accessibilityLabel={`${contact.name}, ${shorten(contact.npub)}`}
+              accessibilityLabel={`${contact.name}, ${deviceContactId(contact.npub)}`}
               className={cn('flex-row items-center gap-3', IS_IOS ? 'px-4 py-3' : 'min-h-16 gap-4 py-2')}>
               <Avatar>
                 <Text className="text-[15px] font-semibold">{contact.name[0]?.toUpperCase()}</Text>
               </Avatar>
               <View className="flex-1">
                 <Text className={pick('text-base leading-[22px]', 'text-base leading-6')}>{contact.name}</Text>
-                <Text className="text-muted-foreground font-mono text-xs leading-[18px]">{shorten(contact.npub)}</Text>
+                <Text className="text-muted-foreground font-mono text-xs leading-[18px]">{deviceContactId(contact.npub)}</Text>
                 {alertChannels?.byContact[contact.id]?.length ? (
                   <Text className="text-muted-foreground text-xs leading-[18px]">{alertChannelsLine(alertChannels.byContact[contact.id]!)}</Text>
                 ) : null}

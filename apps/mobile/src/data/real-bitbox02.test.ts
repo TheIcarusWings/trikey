@@ -91,7 +91,7 @@ describe('a BitBox02 over USB-C, in the app', { timeout: 120_000 }, () => {
     await svc.setUpRules(100_000, 7);
     expect(svc.wallet!.state.hardware).toMatchObject({ kind: 'bitbox02', model: 'BitBox02', fingerprint: bitbox.fingerprint });
     // The pairing proof, then the rules the wallet starts with (seq=0), which the BitBox02 shows: both with anti-klepto.
-    expect(bitbox.signedTexts).toEqual([expect.stringMatching(/^Trikey pair v1 wallet=[0-9a-f]{16} guardian=0[23][0-9a-f]{64}$/), expect.stringMatching(/^Trikey policy v1 wallet=[0-9a-f]{16} seq=0 limit=100000 delay=7d feecap=\d+ contacts=\d+ hash=[0-9a-f]{64} expires=\S+Z$/)]);
+    expect(bitbox.signedTexts).toEqual([expect.stringMatching(/^Trikey pair v1 wallet=[0-9a-f]{16} guardian=0[23][0-9a-f]{64}$/), expect.stringMatching(/^Trikey policy v4 wallet=[0-9a-f]{16} seq=0 limit=100000 delay=7d feecap=\d+ lock=off contacts=\S+ expires=\S+Z$/)]);
     expect(bitbox.textsWithAntiKlepto).toEqual([true, true]);
     expect(bitbox.registered.size).toBe(1);
     expect(bitbox.requests).toContain('btc_pub address');

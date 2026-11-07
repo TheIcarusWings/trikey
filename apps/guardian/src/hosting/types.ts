@@ -187,9 +187,9 @@ export interface HostedNotice {
    * `hosting_ending`: the host stopped hosting (the phone and the contacts); `limit_off` (the phone and the contacts, old
    * and new) / `limit_on` (the phone), as the host's; `contact_lock`: an alert contact paused the wallet (the phone and
    * every other contact); `contact_lock_on` / `contact_lock_off`: the contacts may now pause it, or no longer may (the
-   * contacts only).
+   * contacts only); `contact_added` / `contact_removed`: the contacts added or removed, each told (as the host's).
    */
-  kind: 'hosting_ending' | 'limit_off' | 'limit_on' | 'contact_lock' | 'contact_lock_on' | 'contact_lock_off';
+  kind: 'hosting_ending' | 'limit_off' | 'limit_on' | 'contact_lock' | 'contact_lock_on' | 'contact_lock_off' | 'contact_added' | 'contact_removed';
   walletId: string;
   at: number;
   endsAt?: number;
@@ -201,13 +201,17 @@ export interface HostedNotice {
   reason?: 'phone' | 'hardware' | 'recovery';
   /** `contact_lock`: the contact who paused the wallet. */
   contact?: string;
+  /** `contact_added` / `contact_removed`: every contact the change added and removed; `pairing`: at `hosted.pair`. */
+  added?: string[];
+  removed?: string[];
+  pairing?: true;
   recipients: string[];
   sent: string[];
 }
 
 export type HostedActivityEvent =
   | ActivityEvent
-  | { type: 'hosted_registered'; walletId: string }
+  | { type: 'hosted_registered'; walletId: string; alertContacts?: string[] }
   | { type: 'ledger_added'; txid: string; coins: number }
   | { type: 'hosting_ending'; endsAt: number }
   | { type: 'hosting_ended'; walletId?: string }

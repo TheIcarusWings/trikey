@@ -8,7 +8,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { getPublicKey } from 'nostr-tools/pure';
 import { npubEncode } from 'nostr-tools/nip19';
-import { SimplePoolRelayPool, wrapDirectMessage } from '@trikey/protocol';
+import { SimplePoolRelayPool, contactId, wrapDirectMessage } from '@trikey/protocol';
 import { GuardianRig } from '@trikey/guardian/testing';
 import {
   MemoryCloudBackupStore,
@@ -129,7 +129,14 @@ describe('contacts can lock the guardian, in the app', { timeout: 120_000 }, () 
     const before = signs();
     await svc.setContactLock(false);
     expect(signs()).toBe(before + 1);
-    expect(prompts.some((p) => /Trikey policy v3 wallet=[0-9a-f]{16} seq=\d+ .* lock=off hash=/.test(p.detail ?? ''))).toBe(true);
+    // Version 4 (the guardian lists `approval_contacts`): the lock in words and Maria by name, as the device shows her,
+    // with the name this phone keeps for her next to it.
+    const prompt = [...prompts].reverse().find((p) => /Trikey policy v4 wallet=[0-9a-f]{16} seq=[1-9]\d* .* lock=off contacts=npub1/.test(p.detail ?? ''));
+    expect(prompt).toBeTruthy();
+    expect(prompt!.detail).toContain(`  ${contactId(mariaPub)}  Maria`);
+    expect(prompt!.detail).toMatch(/Check each one against that contact\u2019s nostr app/);
+    // At pairing too, with the name given during onboarding.
+    expect(prompts.find((p) => / seq=0 .* contacts=npub1/.test(p.detail ?? ''))!.detail).toContain(`  ${contactId(mariaPub)}  Maria`);
     expect(svc.getState().contactLock!.on).toBe(false);
     expect(rig.guardian.engine.status().rules!.contactLock).toBeUndefined();
     expect(svc.getState().activity).toContainEqual(expect.objectContaining({ type: 'security', event: expect.objectContaining({ kind: 'contact-lock-off' }) }));

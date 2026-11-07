@@ -78,7 +78,7 @@ describe('security: alert contacts (finding 5)', () => {
       kind: 'bip137',
       sequence: 1,
       expiresAt,
-      signature: signMessage(approvalMessage({ action: 'policy', rules }, { walletId: m.wallet.fingerprint(), sequence: 1, expiresAt }), m.authPriv),
+      signature: signMessage(approvalMessage({ action: 'policy', rules }, { walletId: m.wallet.fingerprint(), sequence: 1, expiresAt, contactsInText: true }), m.authPriv),
     });
     expect(await m.engine.changeRules(none, { authenticatedBy: 'hardware', approval: approval(none) })).toMatchObject({
       ok: false,
