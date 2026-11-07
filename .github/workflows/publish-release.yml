@@ -1,0 +1,173 @@
+name: Publish release
+
+# The last step of a release: publishes the draft release of a v* tag once every file is attached and checked.
+#
+# release.yml makes the tag and a draft release, dispatches the builds on the tag (Docker, Reproducible image, Android
+# test APK) and then this workflow. The builds attach their files to the draft: the two APKs and their .sha256
+# (android-apk.yml), and the compose files with the image pinned by digest (docker.yml, compose-files). A draft is not
+# in GitHub's public API, so nobody outside the repository (Obtainium, Zapstore, the app's "Check for updates", someone
+# on the releases page) sees the release until this workflow publishes it.
+#
+# `wait` waits for the newest Docker and Android test APK runs of the tag, which must succeed. `publish`, in the
+# `release` environment (so it runs only on refs the environment allows, after the owner's approval when the
+# environment asks for one), checks the draft with packaging/check-release-assets.sh: exactly the expected files, each
+# the one GitHub lists, the checksums, both APKs signed by packaging/android/release-cert.sha256 and nothing else and
+# each the right app, the compose file running the guardian image by the digest docker.yml pushed (and its `verified`
+# job found reproduced), and that digest still being what the version tag names. Only then is the draft published, and its files
+# are compared with what was checked once more after. With immutable releases on (docs/android-signing.md, "Immutable
+# releases") nothing can change a published release's files or tag afterwards; the job warns while they are off.
+#
+# A tag pushed by hand starts it too (`push`). To retry, re-run its failed jobs, or run it by hand on the tag.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/theicaruswings/trikey-guardian
+
+jobs:
+  wait:
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      actions: read # the builds' runs
+      contents: read
+    outputs:
+      docker-run: ${{ steps.wait.outputs.docker-run }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Wait for the release builds
+        id: wait
+        run: |
+          set -euo pipefail
+          # release.yml dispatches the builds just before this workflow: give GitHub a moment to list their runs.
+          sleep 30
+          deadline=$((SECONDS + 170 * 60))
+          while :; do
+            pending=""
+            for wf in docker.yml android-apk.yml; do
+              run="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow "${wf}" --branch "${TAG}" --limit 1 \
+                --json databaseId,status,conclusion,url --jq '.[0] // empty | [.databaseId, .status, .conclusion, .url] | @tsv')"
+              if [ -z "${run}" ]; then pending="${pending} ${wf}(no run yet)"; continue; fi
+              IFS=$'\t' read -r id status conclusion url <<<"${run}"
+              if [ "${status}" != completed ]; then pending="${pending} ${wf}(${status})"; continue; fi
+              if [ "${conclusion}" != success ]; then
+                echo "::error title=Release build failed::${wf} for ${TAG} ended ${conclusion}: ${url}. Fix it and re-run it; then re-run this workflow. The release stays a draft."
+                exit 1
+              fi
+              if [ "${wf}" = docker.yml ]; then echo "docker-run=${id}" >> "$GITHUB_OUTPUT"; fi
+            done
+            if [ -z "${pending}" ]; then
+              echo "Docker and Android test APK succeeded for ${TAG}."
+              exit 0
+            fi
+            if [ "${SECONDS}" -ge "${deadline}" ]; then
+              echo "::error title=Release builds not done::Still waiting for${pending}. Re-run this workflow once they are done; the release stays a draft."
+              exit 1
+            fi
+            echo "Waiting for${pending}"
+            sleep 60
+          done
+
+  publish:
+    needs: wait
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: write # publish the release
+      actions: read # the digest artifact of the Docker run
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      # The check script and the pinned certificate, from the tag's commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            packaging/check-release-assets.sh
+            packaging/android/release-cert.sha256
+            apps/mobile/app.json
+          sparse-checkout-cone-mode: false
+
+      # Written by docker.yml's `verified` job: the digest `publish` pushed, which two clean builds reproduced.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: guardian-image-digest
+          path: ${{ runner.temp }}/digest
+          run-id: ${{ needs.wait.outputs.docker-run }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Find the draft and download its files
+        id: draft
+        run: |
+          set -euo pipefail
+          releases="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq "[.[] | select(.tag_name == \"${TAG}\")]")"
+          [ "$(jq length <<<"${releases}")" = 1 ] \
+            || { echo "::error::Expected one release for ${TAG}, found $(jq length <<<"${releases}"). Delete the extra drafts (Releases page) and re-run."; exit 1; }
+          id="$(jq -r '.[0].id' <<<"${releases}")"
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
+          if [ "$(jq -r '.[0].draft' <<<"${releases}")" != true ]; then
+            echo "::warning title=Already published::${TAG} is published already: nothing to do."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${id}/assets?per_page=100" > "${RUNNER_TEMP}/assets.json"
+          mkdir -p "${RUNNER_TEMP}/assets"
+          while IFS=$'\t' read -r asset name; do
+            [[ "${name}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::Unexpected asset name: ${name}"; exit 1; }
+            curl -fsSL --retry 3 -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/octet-stream" \
+              -o "${RUNNER_TEMP}/assets/${name}" "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${asset}"
+          done < <(jq -r '.[] | [.id, .name] | @tsv' "${RUNNER_TEMP}/assets.json")
+          ls -l "${RUNNER_TEMP}/assets"
+
+      - name: Check every file
+        if: steps.draft.outputs.published != 'true'
+        run: |
+          set -euo pipefail
+          DIGEST="$(tr -d ' \n\r' < "${RUNNER_TEMP}/digest/guardian-image-digest.txt")"
+          version="${TAG#v}"
+          # The version tag must still name that digest: a tag pushed over since is a reason to stop and look.
+          current="$(docker buildx imagetools inspect "${IMAGE}:${version}" --format '{{.Manifest.Digest}}')"
+          [ "${current}" = "${DIGEST}" ] \
+            || { echo "::error::${IMAGE}:${version} is ${current}, not the ${DIGEST} docker.yml pushed: the tag was changed"; exit 1; }
+          STANDARD_PACKAGE="$(jq -r '.expo.android.package' apps/mobile/app.json)"
+          export DIGEST STANDARD_PACKAGE
+          ASSETS_DIR="${RUNNER_TEMP}/assets" ASSETS_JSON="${RUNNER_TEMP}/assets.json" bash packaging/check-release-assets.sh
+
+      - name: Publish
+        if: steps.draft.outputs.published != 'true'
+        env:
+          ID: ${{ steps.draft.outputs.id }}
+        run: |
+          set -euo pipefail
+          checked="$(jq -c '[.[] | {id, name, size, digest}] | sort_by(.name)' "${RUNNER_TEMP}/assets.json")"
+          # Right before publishing, the files must still be the ones checked.
+          now="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${ID}/assets?per_page=100" --jq '[.[] | {id, name, size, digest}] | sort_by(.name)')"
+          [ "$(jq -c . <<<"${now}")" = "${checked}" ] || { echo "::error::The draft's files changed during the check. Re-run this workflow."; exit 1; }
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${ID}" -F draft=false -F prerelease=true > "${RUNNER_TEMP}/published.json"
+          after="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${ID}/assets?per_page=100" --jq '[.[] | {id, name, size, digest}] | sort_by(.name)')"
+          if [ "$(jq -c . <<<"${after}")" != "${checked}" ]; then
+            echo "::error title=Files changed while publishing::${TAG}'s files are not the ones checked. Look at the release now: delete it if a file is not what the builds made."
+            exit 1
+          fi
+          echo "::notice title=Published::${TAG}: $(jq -r '.html_url' "${RUNNER_TEMP}/published.json")"
+          if [ "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${ID}" --jq '.immutable // false')" = true ]; then
+            echo "${TAG} is immutable: its files and tag can no longer change."
+          else
+            echo "::warning title=Release is not immutable::Immutable releases are off, so a token with contents: write can still replace ${TAG}'s files. Turn them on: docs/android-signing.md, \"Immutable releases\"."
+          fi

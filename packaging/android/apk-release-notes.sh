@@ -43,14 +43,20 @@ Today both do the same: Google Drive backup is not switched on in either yet. No
 
 **Had the no-Google APK of 0.1.21-alpha or earlier?** It had the standard app's id, so this FOSS APK cannot
 update it: it installs as a second app, next to the old one, and starts empty. Your wallet is still in the old
-app. In Trikey FOSS, tap "I already have a Trikey wallet", then "My phone, but I have its backup", and open your
-backup file with your recovery code. Uninstall the old app once the wallet shows in the new one. (Or install
-the standard APK over the old app: it updates in place and keeps the wallet, with Google's libraries.)
+app. Because it is a new app, Android has no installed app to compare its signature with, so **check who signed
+it before you restore your wallet into it**: install AppVerifier (F-Droid or Accrescent), pick Trikey FOSS
+(app.trikey.wallet.foss), and compare its SHA-256 with the release key's above and in
+packaging/android/release-cert.sha256. If they differ, uninstall it and restore nothing. Then, in Trikey FOSS, tap
+"I already have a Trikey wallet", then "My phone, but I have its backup", and open your backup file with your
+recovery code. Uninstall the old app once the wallet shows in the new one. (Or install the standard APK over the
+old app: it updates in place, keeps the wallet, and Android checks its signature, with Google's libraries.)
 
 - Pre-alpha, open source, not audited. Test networks only (signet, testnet4). Never put real bitcoin in it.
 - Install: download the APK on the phone, open it, and allow installing from this source when Android asks.
 - Passkeys and Google Drive backup are not in these builds; the backup is a recovery code plus a backup file.
 - Check for updates (Settings, About) offers the APK of the build you have installed.
+- The SHA-256 of each APK below (and its .sha256 file) shows that a download is complete. It comes from this
+  release, like the APK, so it does not show who made it: the signing certificate does.
 - How to test it: docs/alpha-test-plan.md in the repository.
 EOF
 fi

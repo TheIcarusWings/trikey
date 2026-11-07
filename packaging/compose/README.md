@@ -75,8 +75,11 @@ After every restart of the computer or the container, the guardian is **locked**
      exactly the image that release built (and can check: [Updating](#updating)).
    - `trikey-guardian.env.example`: save it as **`.env`** (with the dot).
 
-   (Releases from 0.1.9-alpha on carry these files. The copy in this folder of the repository names the image by its
-   version tag and is for development.)
+   (Releases from 0.1.9-alpha on carry these files.) Use the release's copy, not `docker-compose.yml` from this folder
+   of the repository: that one **follows a tag** (`ghcr.io/theicaruswings/trikey-guardian:<version>`), and a tag on
+   GHCR can be pushed over by anyone who can write the package, so it runs whatever the tag points at when you pull.
+   It is for development (and `TRIKEY_IMAGE` in `.env` swaps in a local build); the release's copy runs one image
+   only, by digest.
 2. Edit `.env`: at least `BITCOIN_NETWORK` and `ELECTRUM_HOST` (see [Settings](#settings-env)).
 3. In that folder:
    ```sh
@@ -461,7 +464,9 @@ fine to share in a bug report (except the `setup.code` line before setup).
 
 ## Files here
 
-- `docker-compose.yml`: the guardian, and the optional node profile.
+- `docker-compose.yml`: the guardian, and the optional node profile. It names the guardian image by its version
+  **tag** (overridable with `TRIKEY_IMAGE`), for development; to run the guardian, use the release's
+  `trikey-guardian-compose.yml`, which names it by digest ([Quick start](#quick-start)).
 - `.env.example`: every setting, with comments.
 - `smoke-test.sh`: CI's check (`.github/workflows/compose.yml`): the compose file is valid, the guardian from it comes
   up healthy on `127.0.0.1`, reaches Electrs on regtest, and keeps setup closed without the setup code.

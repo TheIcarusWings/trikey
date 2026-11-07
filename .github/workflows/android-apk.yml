@@ -70,10 +70,12 @@ jobs:
       ANDROID_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
       ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
 
-  # Attaches both APKs to the tag's release. release.yml creates that release (published pre-release, notes from the
+  # Attaches both APKs to the tag's release while it is a draft. release.yml creates that draft (notes from the
   # CHANGELOG) before dispatching this build, so the APKs' own notes (signing, which APK to pick, checksums) are
-  # appended, not put in their place, and the release stays published. A tag pushed by hand with no release gets a
-  # published pre-release. Before anything is uploaded, every APK's signing certificate is checked again here against
+  # appended, not put in their place; for a tag pushed by hand, this job or docker.yml's compose-files makes the draft. The release is
+  # published by publish-release.yml, once every asset is there and checked; a release that is published already is
+  # never changed (assets of a published release are what people, Obtainium, Zapstore and the app's update check have
+  # trusted). Before anything is uploaded, every APK's signing certificate is checked again here against
   # packaging/android/release-cert.sha256, and every checksum file against its APK.
   release:
     if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
@@ -131,14 +133,30 @@ jobs:
             echo "${apk}: release key ${pinned}, checksum file matches"
           done
 
-      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          body_path: dist/release-notes.md
-          append_body: true
-          draft: false
-          prerelease: true
-          fail_on_unmatched_files: true
-          files: |
-            dist/*.apk
-            dist/*.apk.sha256
+      # gh finds a draft by its tag too. --clobber only ever replaces a draft's files: a published release is refused.
+      - name: Attach to the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            # A tag pushed by hand. `|| true`: docker.yml may make it at the same moment; the view below decides.
+            gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft --prerelease --verify-tag \
+              --title "Trikey ${TAG}" --notes "Trikey ${TAG}." || true
+          fi
+          draft="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)"
+          if [ "${draft}" = "true" ]; then
+            body="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json body --jq .body)"
+            # Once: a re-run (redispatch) must not add the notes a second time.
+            if ! grep -qF '## Trikey alpha test build (Android)' <<<"${body}"; then
+              { printf '%s\n\n' "${body}"; cat dist/release-notes.md; } > "${RUNNER_TEMP}/notes.md"
+              gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --notes-file "${RUNNER_TEMP}/notes.md"
+            fi
+          fi
+          if [ "${draft}" != "true" ]; then
+            echo "::warning title=Release already published::${TAG} is published, so its APKs are not replaced. A new build is a new release."
+            exit 0
+          fi
+          gh release upload "${TAG}" --repo "${GITHUB_REPOSITORY}" --clobber dist/*.apk dist/*.apk.sha256
+          echo "::notice title=APKs attached to the draft::${TAG}: $(cd dist && echo *.apk). publish-release.yml publishes the release once every asset is checked."
