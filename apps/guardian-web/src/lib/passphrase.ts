@@ -56,7 +56,7 @@ export const PASSPHRASE_CHANGED_NOTES: readonly string[] = [
   'The old passphrase no longer unlocks this guardian or signs in to this page. Update it in your password manager and anywhere you wrote it down.',
   'Every copy of the old passphrase is now worthless, including one typed into a Trikey app older than 0.1.17, which sent it to the guardian unsealed. The app never keeps the passphrase: type the new one the next time it asks.',
   'Your recovery does not use this passphrase: the recovery code and backup file bring back your phone key, the recovery sheet lets a new phone reach this guardian with your hardware wallet, and Replace guardian needs only your phone and hardware wallet. Nothing to print again.',
-  "A copy of this guardian's data made before now (a backup of the box, a copied Docker volume or data folder, a NAS snapshot) still opens with the old passphrase, and holds the same key 3. Delete such copies, or keep them as safe as the old passphrase. StartOS backups leave the guardian out.",
+  "A copy of this guardian's data made before now (a copied Docker volume or data folder, a NAS snapshot, an image of the box's disk, an Umbrel backup made by version 0.1.21-alpha or earlier) still opens with the old passphrase, and holds the same key 3. Delete such copies, or keep them as safe as the old passphrase. Later Umbrel backups and StartOS backups leave the guardian out.",
   'If you changed it because someone may know the old passphrase and may have such a copy, changing it is not enough: move your wallet to a new guardian with Replace guardian in the app.',
 ];
 

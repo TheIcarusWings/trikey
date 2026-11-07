@@ -147,8 +147,10 @@ call but the reduced status needs a web session, which only the unlock passphras
 
 `backups.ts` backs up nothing. DESIGN.md: the guardian holds no backup of key 3; a lost box is
 answered by "Replace guardian". The `main` volume holds key 3's keystore, and a restored copy
-would carry stale daily-limit accounting. This is a decision for the maintainers (marked
-`TODO(decision)` in `backups.ts`): `sdk.Backups.ofVolumes('main')` is the one-line alternative.
+would carry stale daily-limit accounting. Decided by the owner (2026-11-07), for Umbrel too, whose
+package leaves the guardian's data out of umbrelOS backups (`packaging/README.md`; DESIGN.md, "The
+platforms' backups leave the guardian out"). A restored server starts an empty guardian: set it up
+and use Replace guardian in the phone app, with the hardware wallet.
 
 ## Checked against what source
 

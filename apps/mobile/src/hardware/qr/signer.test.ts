@@ -7,7 +7,7 @@ import { HARDENED } from '../common/path';
 import { decodeXpub, encodeXpub } from '../common/xpub';
 import { parseWalletPolicy } from '../common/wallet';
 import { makeFixture, network, type Fixture } from '../test/fixtures';
-import { QrBridge, type DeviceFileIo, type QrFileRequest, type QrRequest, type QrScanRequest, type QrShowRequest } from './bridge';
+import { QrBridge, type DeviceFileIo, type QrFileRequest, type QrNoticeRequest, type QrRequest, type QrScanRequest, type QrShowRequest } from './bridge';
 import { encodeBbqr } from './bbqr';
 import { signedFromPayload } from './payload';
 import { QrFrameAssembler } from './frames';
@@ -24,10 +24,15 @@ const H = HARDENED;
 const ACCOUNT = [48 + H, 1 + H, 0 + H, 2 + H];
 const tick = () => new Promise<void>((r) => setTimeout(r, 0));
 
-/** Plays the user and the device: answers every request the bridge shows. */
+/** Plays the user and the device: answers every request the bridge shows. A notice is confirmed unless `notice` says otherwise. */
 function drive(
   bridge: QrBridge,
-  handlers: { show?: (r: QrShowRequest) => void | Promise<void>; scan?: (r: QrScanRequest) => void | Promise<void>; file?: (r: QrFileRequest) => void | Promise<void> },
+  handlers: {
+    show?: (r: QrShowRequest) => void | Promise<void>;
+    scan?: (r: QrScanRequest) => void | Promise<void>;
+    file?: (r: QrFileRequest) => void | Promise<void>;
+    notice?: (r: QrNoticeRequest) => void | Promise<void>;
+  },
 ) {
   const seen = new WeakSet<QrRequest>();
   const log: QrRequest[] = [];
@@ -39,6 +44,7 @@ function drive(
     queueMicrotask(() => {
       if (snap.request.type === 'show') void handlers.show?.(snap.request);
       else if (snap.request.type === 'file') void handlers.file?.(snap.request);
+      else if (snap.request.type === 'notice') void (handlers.notice ? handlers.notice(snap.request) : bridge.acknowledge());
       else void handlers.scan?.(snap.request as QrScanRequest);
     });
   };
@@ -114,6 +120,32 @@ describe('QrBridge', () => {
     void bridge.show({ purpose: 'address', title: 't', instructions: '', frames: ['A'], continueLabel: 'ok' }).catch(() => {});
     expect(calls).toBe(2);
     bridge.cancel();
+  });
+
+  it('a notice resolves only when the owner confirms it: cancel (the back gesture) leaves it on screen, an aborted signal ends it', async () => {
+    const bridge = new QrBridge();
+    const notice = { purpose: 'delete-files' as const, title: 't', instructions: '', items: ['a.txt'], continueLabel: 'I deleted them' };
+    let settled = false;
+    const p = bridge.notice(notice).then(() => (settled = true));
+    expect(bridge.getSnapshot()!.request).toMatchObject({ type: 'notice', items: ['a.txt'] });
+    bridge.cancel();
+    bridge.finishShow();
+    await tick();
+    expect(settled).toBe(false);
+    expect(bridge.getSnapshot()!.request.type).toBe('notice');
+    bridge.acknowledge();
+    await p;
+    expect(bridge.getSnapshot()).toBeUndefined();
+    const ac = new AbortController();
+    const q = bridge.notice(notice, ac.signal);
+    ac.abort();
+    await expect(q).rejects.toMatchObject({ code: 'cancelled' });
+    // acknowledge does nothing to another request.
+    const show = bridge.show({ purpose: 'psbt', title: 't', instructions: '', frames: ['A'], continueLabel: 'ok' });
+    bridge.acknowledge();
+    expect(bridge.getSnapshot()!.request.type).toBe('show');
+    bridge.cancel();
+    await expect(show).rejects.toMatchObject({ code: 'cancelled' });
   });
 
   it('cancel rejects with `cancelled`; so does an aborted signal, queued or active', async () => {
@@ -558,7 +590,7 @@ describe('QrSigner.signMessage', () => {
       const { signer, bridge } = await messageSetup(model);
       const d = drive(bridge, { file: (r) => void bridge.submitFile(fileOf(`${r.file.name.replace('.txt', '')}-signed.txt`, passportSigned(TEXT, legacy(), sign(TEXT)))) });
       expect(await signer.signMessage(AUTH, TEXT, { purpose: 'pairing' })).toBe(sign(TEXT));
-      expect(d.log.map((r) => r.type)).toEqual(['file']);
+      expect(d.log.map((r) => r.type)).toEqual(['file', 'notice']);
       d.stop();
     }
     const { signer, bridge } = await messageSetup('keystone-3');
@@ -667,6 +699,64 @@ describe('QrSigner.signMessage', () => {
     expect(reqs[0]!.notes!.join(' ')).toMatch(/signs the same text twice, from two files: this is the first/);
     expect(reqs[1]!.notes!.join(' ')).toMatch(/Round 2 of 2: the same text again, in a new file/);
     expect(hints[0]).toMatch(/signed file of the other round.*round 2 of 2/);
+  });
+
+  it('microSD: after the signed file, the files to delete by name; the signature is returned only once the owner confirms', async () => {
+    // Passport, notes: the request and the signed file it wrote; they can open the notes.
+    const { signer, bridge } = await messageSetup('passport');
+    const notices: QrNoticeRequest[] = [];
+    let confirm = () => {};
+    drive(bridge, {
+      file: (r) => void bridge.submitFile(fileOf(`${r.file.name.replace('.txt', '')}-signed-001.txt`, passportSigned(TEXT, legacy(), sign(TEXT)))),
+      notice: (r) => {
+        notices.push(r);
+        confirm = () => bridge.acknowledge();
+      },
+    });
+    let returned: string | undefined;
+    const p = signer.signMessage(AUTH, TEXT, { purpose: 'notes', round: { n: 1, of: 2 } }).then((v) => (returned = v));
+    for (let i = 0; i < 100 && notices.length === 0; i++) await tick();
+    expect(notices[0]).toMatchObject({
+      type: 'notice',
+      purpose: 'delete-files',
+      title: 'Delete these files from the card',
+      instructions: 'Delete these files from the card now, and from any computer or email you copied them through. They can open your notes.',
+      items: ['trikey-notes-1of2.txt', 'trikey-notes-1of2-signed-001.txt'],
+      continueLabel: 'I deleted them',
+    });
+    expect(notices[0]!.notes![0]).toMatch(/^trikey-notes-1of2-signed-001\.txt holds the signature your Passport \(2nd generation\) just made, and that signature is the key to your notes/);
+    await tick();
+    expect(returned).toBeUndefined();
+    confirm();
+    expect(await p).toBe(sign(TEXT));
+
+    // Krux, a signed file: its own name (as the file chooser gives it); approvals say they are not needed again.
+    const k = await messageSetup('krux');
+    const kn: QrNoticeRequest[] = [];
+    drive(k.bridge, {
+      file: (r) => void k.bridge.submitFile(fileOf(`${r.file.name.replace('.txt', '')}-signed.txt`, passportSigned(TEXT, legacy(), sign(TEXT)))),
+      notice: (r) => (kn.push(r), k.bridge.acknowledge()),
+    });
+    await k.signer.signMessage(AUTH, TEXT, { purpose: 'approval' });
+    expect(kn[0]).toMatchObject({
+      items: ['trikey-approve.txt', 'trikey-approve-signed.txt'],
+      instructions: 'Delete these files from the card now, and from any computer or email you copied them through. Trikey does not need them again.',
+    });
+    expect(kn[0]!.notes!.join(' ')).toMatch(/They hold the text your Krux signed and its signature, which name this wallet and your guardian/);
+
+    // Krux, the signature by QR: only the request file is on the card; for notes, a signed file written anyway must go too.
+    const q = await messageSetup('krux');
+    const qn: QrNoticeRequest[] = [];
+    drive(q.bridge, { file: () => void q.bridge.submitFrame(sign(TEXT)), notice: (r) => (qn.push(r), q.bridge.acknowledge()) });
+    await q.signer.signMessage(AUTH, TEXT, { purpose: 'notes' });
+    expect(qn[0]).toMatchObject({ title: 'Delete this file from the card', items: ['trikey-notes.txt'], continueLabel: 'I deleted it' });
+    expect(qn[0]!.notes![0]).toMatch(/came back as a QR code, so it is not on the card.*starts with trikey-notes-signed.*it can open your notes/);
+
+    // QR models show no such step: nothing was written anywhere.
+    const c = await messageSetup('keystone-3');
+    const d = drive(c.bridge, { show: () => c.bridge.finishShow(), scan: () => void feed(c.bridge, [sign(TEXT)]) });
+    await c.signer.signMessage(AUTH, TEXT, { purpose: 'notes' });
+    expect(d.log.map((r) => r.type)).toEqual(['show', 'scan']);
   });
 
   it('microSD: refuses a text either firmware would change or refuse, before anything is shown; a cancel rejects', async () => {

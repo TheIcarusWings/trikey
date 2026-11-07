@@ -9,6 +9,10 @@
  * (`saveFile` / `shareFile`), and reads the file the device wrote (`pickFile`, or `submitFile` directly), or, when the
  * device can also show its answer as a QR, a scanned frame (`submitFrame`). The host does the file I/O through a
  * `DeviceFileIo` (the app's: platform/device-files), so a test can pass its own.
+ *
+ * A *notice* is a step the owner must confirm before the signer goes on (`acknowledge`): after a microSD round trip,
+ * the files to delete from the card. It has no cancel (`cancel` leaves it on screen): the signature before it is
+ * already taken, and the owner has to say they did it.
  */
 import { HardwareError } from '../errors';
 import type { QrProgress } from './types';
@@ -84,7 +88,21 @@ export interface QrFileRequest<T = unknown> {
   acceptFrame?(frame: string): QrScanStep<T>;
 }
 
-export type QrRequest = QrShowRequest | QrScanRequest | QrFileRequest;
+export interface QrNoticeRequest {
+  type: 'notice';
+  /** `delete-files`: after a microSD round trip, the files to delete from the card (sd-message.ts, `sdCleanupNotice`). */
+  purpose: 'delete-files';
+  title: string;
+  instructions: string;
+  /** Shown one per line in monospace, exactly as written (the file names). */
+  items: string[];
+  /** Short notes after the items. */
+  notes?: string[];
+  /** The only button: the owner did it ("I deleted them"). */
+  continueLabel: string;
+}
+
+export type QrRequest = QrShowRequest | QrScanRequest | QrFileRequest | QrNoticeRequest;
 
 interface Active {
   request: QrRequest;
@@ -185,6 +203,11 @@ export class QrBridge {
     return this.enqueue<T>({ type: 'file', ...request } as QrFileRequest, signal);
   }
 
+  /** Shows a step the owner must confirm; resolves when they do (`acknowledge`). Only `signal` ends it otherwise. */
+  notice(request: Omit<QrNoticeRequest, 'type'>, signal?: AbortSignal): Promise<void> {
+    return this.enqueue<void>({ type: 'notice', ...request }, signal);
+  }
+
   // ---- called by the host UI ------------------------------------------------------------------------------
 
   /** The user tapped the continue button of a `show` request. */
@@ -194,10 +217,17 @@ export class QrBridge {
     this.settle(() => a.resolve(undefined));
   }
 
-  /** The user closed the sheet. */
+  /** The owner confirmed a `notice` request ("I deleted them"). */
+  acknowledge(): void {
+    const a = this.active;
+    if (a?.request.type !== 'notice') return;
+    this.settle(() => a.resolve(undefined));
+  }
+
+  /** The user closed the sheet. A notice stays: it has no cancel (the system back gesture lands here too). */
   cancel(): void {
     const a = this.active;
-    if (!a) return;
+    if (!a || a.request.type === 'notice') return;
     this.settle(() => a.reject(new HardwareError('cancelled', 'Cancelled.')));
   }
 

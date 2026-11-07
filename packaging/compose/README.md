@@ -337,11 +337,36 @@ keep it as safe as the old passphrase.
 
 - **Never** run `docker compose down -v` (the `-v` deletes the volume) unless you mean to delete the guardian.
   `docker compose down` and `up` keep it.
-- **Moving to another computer:** stop the guardian (`docker compose stop`), copy the volume
-  (`docker run --rm -v trikey-guardian_guardian-data:/data -v "$PWD":/out alpine tar -C /data -czf /out/guardian-data.tgz .`),
-  restore it on the new computer into the same volume name before the first start, start it there, and never start
-  the old one again. Two guardians with the same key on the relays would answer the phone twice. Or simply set up a
-  new guardian and use Replace guardian.
+- **Moving to another computer.** The simplest way is not to move anything: set up a new guardian on the new computer
+  and use Replace guardian. To move this one instead, you carry an archive of the volume, and **that archive holds every
+  secret of the guardian**: key 3 (encrypted with your passphrase), the guardian's nostr key (not encrypted), the key
+  that opens the alert channels' secrets, the hardware unlock slots, your encrypted notes and the wallet's rules and
+  spending state. So keep it readable only by you, encrypt it on the way out, and delete it once the move is done.
+
+  1. On the old computer, stop the guardian and write the archive, encrypted with a passphrase of its own (asked twice;
+     a long one: it guards key 3's file). With [age](https://age-encryption.org):
+     ```sh
+     docker compose stop
+     umask 077    # the archive is readable by you only (0600)
+     docker run --rm -v trikey-guardian_guardian-data:/data:ro alpine tar -C /data -cz . | age -p > guardian-data.tgz.age
+     ```
+     Or with GnuPG: the same, ending in `| gpg --symmetric --cipher-algo AES256 -o guardian-data.tgz.gpg` instead.
+     With neither tool, `... -cz . > guardian-data.tgz` after the same `umask 077` at least keeps it private (check
+     with `ls -l`: `-rw-------`), but then anyone who gets the file has key 3's file to guess the passphrase against.
+  2. Carry the file to the new computer (a USB stick, `scp`), not through email or a cloud folder.
+  3. On the new computer, before the guardian's first start there, restore it into the same volume name:
+     ```sh
+     docker volume create trikey-guardian_guardian-data
+     age -d guardian-data.tgz.age | docker run --rm -i -v trikey-guardian_guardian-data:/data alpine tar -C /data -xzp
+     # or: gpg -d guardian-data.tgz.gpg | docker run --rm -i -v trikey-guardian_guardian-data:/data alpine tar -C /data -xzp
+     docker compose up -d
+     ```
+  4. Unlock it and check that the phone reaches it. Then delete the archive everywhere it went (both computers, the USB
+     stick, and the trash), and delete the old computer's volume (`docker compose down -v` there) so no second copy of
+     key 3 stays behind. On an SSD or a USB stick a deleted file can sometimes be read back, which is why the archive
+     was encrypted.
+
+  Never start the old guardian again: two guardians with the same key on the relays would answer the phone twice.
 
 **A folder instead of the volume.** If you want the data in a folder you choose (a NAS share, say), replace
 `guardian-data:/data` with `./data:/data`, create the folder first and give it to uid 1000, the user the image runs

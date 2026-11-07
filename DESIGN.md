@@ -118,8 +118,8 @@ unlocks it with the PIN on the Jade. Read from Jade's firmware and client, **not
 | Keystone 3 (QR) | Yes | Yes | Yes | Yes | Shows no address for this key |
 | Passport Prime (QR) | Yes | Yes | Yes | Yes | Signs only from the account the path names: open that account first |
 | Specter DIY (QR) | Yes | Yes | Yes | Yes | Shows the text, the path and a legacy address |
-| Passport gen 2 (payments by QR) | Yes | Yes, from a microSD file | Yes, from a microSD file (two files when turned on) | No: a card round trip after every guardian restart; the passphrase works | Shows the whole text and a legacy address; no space at either end, at most 3 in a row; the file is at most 4096 bytes |
-| Krux (payments by QR) | Yes | Yes, from a microSD file (the signature comes back as a file or a QR) | Yes, from a microSD file (two files when turned on) | No: as Passport gen 2 | Shows about 10 lines of the text (on the M5StickV about the first 120 characters, on larger screens about 210), then "…", and a legacy address |
+| Passport gen 2 (payments by QR) | Yes | Yes, from a microSD file | Yes, from a microSD file (two files when turned on; the phone then asks to delete them) | No: a card round trip after every guardian restart; the passphrase works | Shows the whole text and a legacy address; no space at either end, at most 3 in a row; the file is at most 4096 bytes |
+| Krux (payments by QR) | Yes | Yes, from a microSD file (the signature comes back as a file or a QR) | Yes, from a microSD file (two files when turned on; the phone then asks to delete them) | No: as Passport gen 2 | Shows about 10 lines of the text (on the M5StickV about the first 120 characters, on larger screens about 210), then "…", and a legacy address |
 | SeedSigner (QR) | Yes | No: decided, payments only (below) | No | No | Recovery Key mode |
 | Other QR device | Yes | No (unknown): pick the model in Settings | No | No | Recovery Key mode |
 | Coldcard Mk4, Coldcard Q (NFC) | Yes | Yes | Yes | Yes | The Coldcard Q's limits; one tap to send each request and one to read the answer; NFC Sharing on in the Coldcard's settings; iPhone builds need `TRIKEY_IOS_NFC=1` |
@@ -165,6 +165,18 @@ docs/design/hardware-auth-path.md §7):
   once: it stays. What it cannot catch: an owner who signs once and picks a renamed copy of the first file for round 2.
 - **Hardware unlock: not offered.** Every guardian restart would need a card round trip. The switch is hidden and one
   sentence says why and that the passphrase unlocks the guardian.
+- **Cleaning up the card (decided 2026-11-07).** The owner's decision: keep offering notes on these devices, with a clear
+  step to delete the files. Once the signature checks, the phone shows "Delete these files from the card", the request
+  and the signed file by their exact names (the signed one as the file chooser gave it: Passport
+  `<name>-signed-001.txt`, Krux `<name>-signed.txt`; only the request after Krux's Sign to QR code), "now, and from any
+  computer or email you copied them through", with one button, "I deleted them", and no cancel: the signature is only
+  handed on after it (`sdCleanupNotice` in sd-message.ts, a `notice` request on the QR bridge). For the notes it adds
+  "They can open your notes" and why (the signature is their key, and the guardian holds the ciphertext); notes take two
+  rounds, so two such steps. For pairing, rules, approvals and recovery access the same step says Trikey does not need
+  the files again: they hold no secret, but they name the wallet and the guardian, and one rule for every card round
+  trip is easier to follow than one for the notes only. The phone cannot delete them itself: it gets no lasting access
+  to the card, and the signed file came through the system file chooser. It trusts the owner's word; what it cannot
+  catch is a copy it never saw (a computer's trash, a mail sent to yourself), which the step names.
 
 ### Jade over Bluetooth (built 2026-11-06, untested on devices)
 
@@ -260,6 +272,19 @@ anti-klepto, the firmware's own message signatures) and a fake BitBox02 written 
   
   A stolen, unplugged box is useless.
 - **Holds no backup of key 3.** If the box dies, phone + hardware sweep to a new wallet with a fresh guardian ("Replace guardian").
+- **The platforms' backups leave the guardian out (decided 2026-11-07).** StartOS backs up none of it
+  (`packaging/start9/startos/backups.ts`), and umbrelOS leaves the contents of its data folder out
+  (`backupIgnore: data/*` in `packaging/umbrel/trikey-guardian/umbrel-app.yml`; umbreld reads the path relative to the
+  app's folder, `data` being the folder mounted at `/data`, and keeps the empty folder so a restore does not leave Docker
+  to make it as root). Up to 0.1.21-alpha an Umbrel backup held all of it. Why, the same on both: the data folder holds
+  key 3's keystore (under the passphrase), the nostr identity's key in the clear, the alert channels' key file, the
+  hardware unlock slots and the rules' state, so a backup is one more copy of key 3 to steal, and one the passphrase
+  change cannot reach ("Changing the passphrase"); and a restored copy is wrong in ways that matter: it rolls back the
+  daily-limit accounting, the high-water marks and the replay ids, and can bring back a key 3 the owner reset. So a box
+  restored from a backup starts an empty guardian, and the owner sets it up and moves the wallet to it with Replace
+  guardian, phone and hardware wallet, exactly as after a lost box. Not covered: umbrelOS's migration to another Umbrel
+  (`migration.ts`, an `rsync` of everything) and a plain-Docker move (`packaging/compose`, "Moving to another computer")
+  copy the guardian on purpose; the old box must then never start it again.
 
 ## Rules the guardian enforces
 
@@ -471,7 +496,7 @@ printed and kept with the hardware wallet.
   - Tell users to keep the hardware wallet's seed words outside the home.
 - **Remote compromise of the home server** gives up one key of three. That's the same exposure as Bitkey's server being breached.
 - **Savings (optional).** Phone + guardian, together or compromised, cannot move Savings: the guardian holds no Savings key. What can: the phone with the hardware wallet, or the Recovery Key with either of them. A burglar who finds the phone, a powered box and a Recovery Key kept at home takes Savings too, so the Recovery Key belongs away from home, apart from the hardware wallet's seed words. A compromised guardian can hide Savings' balance from the phone or stay silent when it moves (its tripwire), which costs nothing it was trusted with. Turning the Savings watch off or swapping it for another wallet (the paired phone alone can) is announced to the phone and every alert contact (`savings_unwatched`), so a phone thief cannot quietly blind the tripwire before moving Savings with a second key. The watched Savings record survives a recovery, so whoever completes one (normally the owner) can read Savings' descriptor and balance from the guardian; it moves nothing.
-- **Encrypted notes on the guardian (opt-in).** The guardian stores ciphertext it cannot open (the key comes from a hardware wallet signature that never leaves the phone). It learns **roughly how many notes the owner keeps** (the copy is padded to a size bucket: 4 KiB doubling to 512 KiB) and **when they change** (each upload, at most one stored version per 10 minutes), nothing of what they say. A thief holding the unlocked phone can overwrite or delete the copy (as they could the labels on that phone); the guardian keeps the three newest versions, and the money is never at stake.
+- **Encrypted notes on the guardian (opt-in).** The guardian stores ciphertext it cannot open (the key comes from a hardware wallet signature the guardian never sees). With most devices that signature never leaves the phone: it comes back over USB, Bluetooth, NFC or a QR code the phone reads, and only the derived key is kept, in the secure store. **Passport gen 2 and Krux write it to a file on their microSD card** (`trikey-notes-1of2-signed-001.txt` and the like, two when notes are turned on), so a copy of that file, from the card or from a computer or email it passed through, plus a copy of the guardian's `labels/` folder (a stolen box or disk, an old copy of the data) opens every note. What protects it: the file alone opens nothing (the ciphertext is only in the guardian's data, which no platform backup holds: "The platforms' backups leave the guardian out"), and after each round trip the phone names the request and the signed file to delete, from the card and wherever they were copied, and goes on only when the owner says they did ("microSD message signing", "Cleaning up the card"). A file that was not deleted keeps that power for as long as the notes stay on the guardian under that key: the device makes the same signature every time, so turning notes off and on does not change it. It learns **roughly how many notes the owner keeps** (the copy is padded to a size bucket: 4 KiB doubling to 512 KiB) and **when they change** (each upload, at most one stored version per 10 minutes), nothing of what they say. A thief holding the unlocked phone can overwrite or delete the copy (as they could the labels on that phone); the guardian keeps the three newest versions, and the money is never at stake.
 - **Unlocking with the hardware wallet (opt-in; "Unlocking the guardian with the hardware wallet").** What an unlock slot changes, case by case:
   - *The box stolen (the disk only).* The slots file holds, per wallet, a salt, a nonce, a 16-byte key check and the encrypted seed: the key comes from a hardware wallet's signature (256 bits, not a guessable passphrase), so the slots add no offline attack; the passphrase slot stays as strong as its passphrase. Combined with an archive of old gift wraps a malicious relay kept past their expiry, the guardian's nostr key on the disk (stored in clear, so a locked guardian can answer) opened an old `guardian.unlock`, and with it the signature: the same exposure as a passphrase the owner once typed on the phone. Sealed unlock closes that, for `guardian.unlock` and for `unlock.hardware.add`, which carries the same signature ("The guardian's disk plus archived gift wraps", below). Turning the option off and on again makes a new slot and makes every earlier signature worthless; a reset rotates key 3. A stolen box is "Replace guardian" either way: never unlock a box you no longer hold.
   - *The phone stolen, without the hardware wallet.* It cannot unlock: the phone keeps neither the signature nor anything derived from it, and the guardian checks every slot signature against the wallet's authorization key, so the phone cannot add a slot of its own either (`unlock_signature_invalid`). Its guesses count against the phone's throttle (5 in a row stop the phone until the web UI unlocks), as wrong passphrases do. A lock by the owner or an alert contact (rule 8) therefore still holds. It can turn the option off: a nuisance (the passphrase remains).
@@ -492,7 +517,7 @@ printed and kept with the hardware wallet.
     already can ("Nuisances").
   - *A stolen disk or an old copy of the data.* A disk or a copy taken after the change needs the new passphrase. One
     taken before still opens with the old passphrase and gives the same key 3: the change protects the future, not
-    copies already made (a backup of the box, a copied volume, a snapshot). If both the old passphrase and such a copy
+    copies already made (a copied volume, a snapshot, an Umbrel backup from 0.1.21-alpha or earlier). If both the old passphrase and such a copy
     may be out, use Replace guardian.
   - *A crash in the middle* leaves the old keystore or the new one (one atomic rename), and the unlock slots are bound to
     either (the same key 3 and `createdAt`).
@@ -1025,7 +1050,8 @@ guardian"). Protocol: PROTOCOL.md, "Encrypted notes".
   with a deterministic retry counter); a Jade over Bluetooth signs with RFC 6979 when no anti-exfil host commitment is
   sent, and Trikey never sends one (`wallet_sign_message_hash`, docs/design/hardware-auth-path.md §9); Coldcard Q, Jade (QR mode, never anti-exfil), Keystone 3, Passport Prime and
   Specter DIY sign with RFC 6979 too, over a text QR, a Coldcard Mk4 or Q over NFC (the same firmware code), and Passport gen 2 and Krux from a microSD file (two files when
-  the option is turned on): read from the firmware sources, not tested on devices. The QR models that cannot sign a
+  the option is turned on, which the phone then asks the owner to delete: the signature in them is the key, "Cleaning up
+  the card"): read from the firmware sources, not tested on devices. The QR models that cannot sign a
   text (SeedSigner, the Coldcard Mk4 by QR, "Other") are not offered the option ("Hardware wallets by feature"). **The phone verifies it**: turning the option on asks for the
   signature twice and refuses, in plain words, when the two differ (`hardware_not_deterministic`).
 - **The blob.** Version byte, 24-byte nonce, 16-byte key check (HMAC of a constant under the check key: a wrong key is
@@ -1211,8 +1237,9 @@ protocol: PROTOCOL.md, "Changing the passphrase" (a feature and an alert, no met
   or the hardware unlock, to co-sign anything after a restart, a recovery's sweep included.)
 - **Backups hold the old passphrase's keystore.** Key 3 does not change, so any copy of the data directory made before
   the change opens with the old passphrase and gives the same key 3: a copied Docker volume or data folder
-  (packaging/compose, "Moving to another computer"), a NAS snapshot, and on Umbrel a backup of the box that includes
-  this app's data. StartOS backups leave the guardian out (packaging/start9, `backups.ts`). The page says so: delete
+  (packaging/compose, "Moving to another computer"), a NAS snapshot, an image of the box's disk, and an Umbrel backup
+  made by 0.1.21-alpha or earlier. Later Umbrel backups and every StartOS backup leave the guardian out ("The
+  platforms' backups leave the guardian out"). The page says so: delete
   such copies, or keep them as safe as the old passphrase. If the old passphrase **and** such a copy may both be in
   someone's hands, a passphrase change is not enough: key 3 has to change, which is "Replace guardian".
 - **Not from the phone (decided).** The phone's Settings > Guardian says where to change it (when the guardian lists

@@ -39,7 +39,7 @@ import { checkMessageAnswer, messageAddresses, parseMessageAnswer, signMessageRe
 import { signedFromPayload } from './payload';
 import { coldcardMultisigConfig } from './registration';
 import { acceptFrames } from './scan';
-import { baseName, parseSignedFile, sdFormatOf, sdRequestFile } from './sd-message';
+import { baseName, parseSignedFile, sdCleanupNotice, sdFormatOf, sdRequestFile } from './sd-message';
 import type { QrFormat } from './types';
 import { encodePsbtUr } from './ur';
 
@@ -275,7 +275,9 @@ export class QrSigner implements HardwareSigner {
   /**
    * The microSD round trip (sd-message.ts): one file request on the bridge. The owner saves the request file to the
    * card (or shares it to a computer), signs on the device, and picks the signed file it wrote (or, on Krux, scans the
-   * signature QR). A wrong file, key or text stays on the screen as a hint; only a signature that verifies returns.
+   * signature QR). A wrong file, key or text stays on the screen as a hint; only a signature that verifies returns,
+   * and only after the owner confirmed the next step: deleting the request and the signed file, by their names, from
+   * the card and wherever they were copied (`sdCleanupNotice`; for the notes, the signed file is their key).
    */
   private async signMessageFromCard(
     info: QrModelInfo,
@@ -297,7 +299,8 @@ export class QrSigner implements HardwareSigner {
     const label = info.name;
     const fill = (t: string) =>
       t.replaceAll('{path}', o.shownPath).replaceAll('{account}', String(o.account)).replaceAll('{file}', file.name).replaceAll('{base}', baseName(file.name));
-    return this.opts.bridge.file({
+    let signedName: string | undefined;
+    const signature = await this.opts.bridge.file<string>({
       purpose: 'message-file',
       title: o.title,
       instructions: `Your ${label} signs this text from a file on its microSD card. Save ${file.name} to the card, sign it on the ${label}, then open the signed file it writes. It signs with the key ${o.shownPath}, the key that approves changes for this wallet.`,
@@ -306,17 +309,22 @@ export class QrSigner implements HardwareSigner {
       steps: [
         `Save ${file.name} to the microSD card: tap “Save the file” and pick the card (in a card reader on this phone), or share it to a computer and copy it onto the card.`,
         ...(info.messageSteps ?? []).map(fill),
+        `Once the signature checks, Trikey names the files to delete from the card (${file.name}, and the signed file your device wrote) and waits until you have.`,
       ],
       notes: o.notes,
       acceptFile: (picked) => {
         try {
-          return { done: true, value: checkMessageAnswer(parseSignedFile(picked, file, label, o.round), { ...o.check, via: 'file' }) };
+          const value = checkMessageAnswer(parseSignedFile(picked, file, label, o.round), { ...o.check, via: 'file' });
+          signedName = picked.name;
+          return { done: true, value };
         } catch (e) {
           return { done: false, hint: e instanceof Error ? e.message : String(e) };
         }
       },
       ...(info.answersByQr ? { acceptFrame: acceptFrames((payload) => checkMessageAnswer(parseMessageAnswer(payload), o.check)) } : {}),
     });
+    await this.opts.bridge.notice(sdCleanupNotice({ request: file, ...(signedName !== undefined ? { signedName } : {}), ...(o.purpose ? { purpose: o.purpose } : {}), label }));
+    return signature;
   }
 
   async close(): Promise<void> {
