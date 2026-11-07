@@ -177,7 +177,7 @@ function CheckStage({
         </>
       ) : (
         <Body>
-          Keep the printed wallet map with your {kit.device ?? 'second hardware wallet'}. Your vault is built from your hardware wallet, this phone and that device. Nothing on the map can move money.
+          Keep the printed wallet map with your {kit.device ?? 'second hardware wallet'}. Your vault is built from your hardware wallet, this phone and that device. Nothing on the map can move money. Next, both devices register the vault and show its first address: keep your {kit.device ?? 'second hardware wallet'} at hand.
         </Body>
       )}
     </Screen>

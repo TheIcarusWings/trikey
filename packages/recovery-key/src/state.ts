@@ -66,7 +66,18 @@ export interface RkState {
   secrets: { key2: string };
   key2: { vault: KeyExpression; spending: KeyExpression };
   hardware?: HardwareRecord;
-  recoveryKey?: { kind: 'kit' | 'hardware'; key: KeyExpression; savedAt: number; device?: { kind: HardwareKind; model?: string; fingerprint: string } };
+  recoveryKey?: {
+    kind: 'kit' | 'hardware';
+    key: KeyExpression;
+    savedAt: number;
+    device?: { kind: HardwareKind; model?: string; fingerprint: string };
+    /**
+     * A second hardware wallet (`kind: 'hardware'`): whether it showed one of the vault's addresses, as key 1 must. Its
+     * key reached the phone as an export the phone cannot authenticate, so until then the vault may hold someone else's
+     * key. Absent (a vault made before this check): not yet.
+     */
+    addressVerified?: boolean;
+  };
   vault?: { descriptor: string; fingerprint: string; creationHeight: number };
   /** Next unused index per chain (reserved indices count as used). */
   indices: { vaultReceive: number; vaultChange: number; spendingReceive: number; spendingInternal: number };

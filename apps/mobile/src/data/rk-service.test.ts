@@ -105,6 +105,9 @@ describe('creating the wallet (RK-Create)', () => {
     expect(kit).toMatchObject({ kind: 'xpub', challenge: [], device: expect.any(String) });
     await svc.rk!.confirmKit({ mapSaved: true });
     expect(svc.getState().recoveryKey).toMatchObject({ stage: 'ready', savedKey: 'hardware' });
+    // The second device registered the vault and showed its first address, as key 1 did.
+    expect(w.second.calls.map((c) => c.op)).toEqual(['getXpub', 'close', 'registerWallet', 'displayAddress', 'close']);
+    expect(w.second.calls.find((c) => c.op === 'displayAddress')).toMatchObject({ chain: 0, index: 0, address: svc.rk!.vaultAddress() });
   });
 
   it('has a QR-only device check the first address too (its compare sheet), before any vault address is shown', async () => {

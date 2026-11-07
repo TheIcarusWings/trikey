@@ -571,6 +571,9 @@ export class RecoveryKeyWallet {
       if (hw.info.fingerprint === this.s.hardware.fingerprint) throw new RecoveryKeyError('hardware_mismatch', 'That is your main hardware wallet. Connect the second one.');
       if (hw.info.fingerprint === this.s.key2.vault.fingerprint) throw new RecoveryKeyError('hardware_mismatch', 'That device holds the phone key.');
       const key = await readDeviceKey(hw, this.network, 0);
+      // A key already in the vault, under another fingerprint, would leave the vault with two keys, not three.
+      if (key.xpub === this.s.hardware.key.xpub) throw new RecoveryKeyError('hardware_mismatch', 'That is your main hardware wallet. Connect the second one.');
+      if (key.xpub === this.s.key2.vault.xpub) throw new RecoveryKeyError('hardware_mismatch', 'That device holds the phone key.');
       const kit: RecoveryKit = { network: this.network.name, creationHeight, recoveryKey: { kind: 'xpub', key }, phone: this.s.key2.vault, hardware: this.s.hardware.key };
       this.dropPendingKit();
       this.pendingKit = { kit, positions: [], device: { kind: hw.info.kind, model: hw.info.model, fingerprint: hw.info.fingerprint } };
@@ -590,12 +593,15 @@ export class RecoveryKeyWallet {
    * Step 3: the user saved the kit. Checks the proof (a scan of the printed
    * QR code, or the asked words), builds the vault, registers it on the
    * hardware wallet and checks the first address there, then wipes key 3
-   * from the phone: only its xpub stays.
+   * from the phone: only its xpub stays. With a second hardware wallet as
+   * the Recovery Key, that device registers the vault and shows the first
+   * address too.
    *
    * The address check is what proves the hardware key in the vault is the
    * device's own: an air-gapped device's key comes from a QR code or an NFC
    * read the phone cannot authenticate, and a swapped export would put
-   * someone else's key in the vault. An air-gapped device "shows" the
+   * someone else's key in the vault. The same holds for the second device's
+   * key, so it is checked the same way. An air-gapped device "shows" the
    * address through its signer's compare sheet (the person checks it on the
    * device). `verifyAddress: false` skips the check (tests, and nothing
    * else should): the vault is then built, but `addressVerified` stays
@@ -638,15 +644,50 @@ export class RecoveryKeyWallet {
     });
     const kind = p.kit.recoveryKey.kind;
     const device = p.device;
+    // The second hardware wallet: its key came as an export the phone cannot authenticate either, so it registers the
+    // vault and shows the same first address, as key 1 just did.
+    let rkVerified: boolean | undefined;
+    if (kind === 'xpub') {
+      if (!device) throw new RecoveryKeyError('wrong_state', 'Connect the second hardware wallet again.');
+      rkVerified = await this.checkOnRecoveryKeyDevice(device, descriptor, first, 0, opts.verifyAddress ?? true);
+    }
     const creationHeight = p.kit.creationHeight;
     this.dropPendingKit();
     await this.update((s) => {
-      s.recoveryKey = { kind: kind === 'seed' ? 'kit' : 'hardware', key: rk, savedAt: this.clock.now(), ...(device ? { device } : {}) };
+      s.recoveryKey = {
+        kind: kind === 'seed' ? 'kit' : 'hardware',
+        key: rk,
+        savedAt: this.clock.now(),
+        ...(device ? { device } : {}),
+        ...(rkVerified !== undefined ? { addressVerified: rkVerified } : {}),
+      };
       s.vault = { descriptor, fingerprint: vault.fingerprint(), creationHeight };
       s.hardware = { ...s.hardware!, registered: { descriptor, ...(reg.hmac ? { hmac: reg.hmac } : {}) }, addressVerified: reg.verified };
       s.stage = 'ready';
     });
-    return { descriptor, fingerprint: formatFingerprint(vault.fingerprint()), firstAddress: first, addressVerified: reg.verified };
+    return { descriptor, fingerprint: formatFingerprint(vault.fingerprint()), firstAddress: first, addressVerified: reg.verified && rkVerified !== false };
+  }
+
+  /**
+   * Connects the second hardware wallet (the Recovery Key), registers the vault on it and, with `verify`, has it show the
+   * vault address at `index`, which must be `address`. Resolves whether it was shown.
+   */
+  private async checkOnRecoveryKeyDevice(device: { kind: HardwareKind; fingerprint: string }, descriptor: string, address: string, index: number, verify: boolean): Promise<boolean> {
+    this.emit({ type: 'hardware_prompt', purpose: 'register', text: 'Connect your second hardware wallet (the Recovery Key) and register the wallet "Trikey RK" on it' });
+    return withDevice(this.deps.hardware, device.fingerprint, device.kind, async (hw) => {
+      const policy = await registerOn(hw, 'Trikey RK', descriptor);
+      if (!verify) return false;
+      this.emit({ type: 'hardware_prompt', purpose: 'address', text: `Check that your second hardware wallet shows ${address}` });
+      const shown = await hw.displayAddress(policy, 0, index);
+      if (shown !== address) throw new RecoveryKeyError('address_mismatch', `Your second hardware wallet shows ${shown}, the phone computed ${address}. Do not use this wallet.`);
+      return true;
+    });
+  }
+
+  /** Whether the Recovery Key is a second hardware wallet that has not shown a vault address yet. */
+  private get recoveryKeyDeviceUnverified(): boolean {
+    const rk = this.s.recoveryKey;
+    return rk?.kind === 'hardware' && rk.addressVerified !== true;
   }
 
   /** The vault fingerprint as the kit shows it. */
@@ -1153,9 +1194,12 @@ export class RecoveryKeyWallet {
   // ===========================================================================
   // RK-Home: the vault
 
-  /** Whether the hardware wallet has confirmed the vault's addresses (at setup, or later with `vaultReceiveAddress`). */
+  /**
+   * Whether the hardware wallet has confirmed the vault's addresses (at setup, or later with `vaultReceiveAddress`), and a
+   * second hardware wallet used as the Recovery Key has too.
+   */
   get vaultAddressVerified(): boolean {
-    return this.s.stage === 'ready' && !!this.s.hardware?.addressVerified;
+    return this.s.stage === 'ready' && !!this.s.hardware?.addressVerified && !this.recoveryKeyDeviceUnverified;
   }
 
   /**
@@ -1164,15 +1208,22 @@ export class RecoveryKeyWallet {
    * Only once the hardware wallet has confirmed the vault's addresses (`addressVerified`): until then the vault may hold
    * a key that is not the device's (a swapped QR or NFC export), so without `verifyOnDevice` this throws
    * `address_unverified`. With it, a match on the device records the confirmation, and the vault's addresses are
-   * handed out from then on (a vault made before this check was required gets there the same way).
+   * handed out from then on (a vault made before this check was required gets there the same way). A second hardware
+   * wallet used as the Recovery Key must confirm one too: until it has, `verifyOnDevice` also shows the address on it.
    */
   async vaultReceiveAddress(opts: { verifyOnDevice?: boolean } = {}): Promise<{ address: string; index: number; verifiedOnDevice: boolean }> {
     this.requireReady();
-    if (!opts.verifyOnDevice && !this.s.hardware?.addressVerified)
-      throw new RecoveryKeyError('address_unverified', "The hardware wallet has not confirmed the vault's addresses yet. Check the address on the device first.");
+    if (!opts.verifyOnDevice && !this.vaultAddressVerified)
+      throw new RecoveryKeyError(
+        'address_unverified',
+        this.s.hardware?.addressVerified
+          ? "Your second hardware wallet has not confirmed the vault's addresses yet. Check the address on your devices first."
+          : "The hardware wallet has not confirmed the vault's addresses yet. Check the address on the device first.",
+      );
     const index = this.s.indices.vaultReceive;
     const address = this.vault().derive(RECEIVE, index).address;
     let verified = false;
+    let rkVerified = false;
     if (opts.verifyOnDevice) {
       const shown = await this.withHardware(async (hw) => {
         this.emit({ type: 'hardware_prompt', purpose: 'address', text: `Check that your device shows ${address}` });
@@ -1180,10 +1231,16 @@ export class RecoveryKeyWallet {
       });
       if (shown !== address) throw new RecoveryKeyError('address_mismatch', `The device shows ${shown}, the phone computed ${address}. Do not use this wallet.`);
       verified = true;
+      const rk = this.s.recoveryKey!;
+      if (this.recoveryKeyDeviceUnverified) {
+        if (!rk.device) throw new RecoveryKeyError('wrong_state', 'This wallet does not know which device holds its Recovery Key.');
+        rkVerified = await this.checkOnRecoveryKeyDevice(rk.device, this.s.vault!.descriptor, address, index, true);
+      }
     }
     await this.update((s) => {
       s.indices.vaultReceive = index + 1;
       if (verified) s.hardware = { ...s.hardware!, addressVerified: true };
+      if (rkVerified) s.recoveryKey = { ...s.recoveryKey!, addressVerified: true };
     });
     return { address, index, verifiedOnDevice: verified };
   }
