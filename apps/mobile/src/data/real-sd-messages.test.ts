@@ -9,6 +9,9 @@
  * - pairing in guardian mode: the phone hands over `trikey-pair.txt`, the device signs it, the owner picks the signed
  *   file; a wrong file first (Trikey's own request) stays a hint;
  * - notes: two rounds, two files (`trikey-notes-1of2.txt`, `trikey-notes-2of2.txt`), each screen saying which round;
+ * - after every round trip, a step that names the request and the signed file to delete from the card (and from any
+ *   computer or email), which the owner must confirm ("I deleted them") before the app goes on; for the notes it says
+ *   that the files can open them;
  * - hardware unlock is not offered: the reason (a card round trip per restart; the passphrase works) is said.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -16,7 +19,7 @@ import { HDKey } from '@scure/bip32';
 import { NETWORKS } from '@trikey/core';
 import { GuardianRig } from '@trikey/guardian/testing';
 import { MemoryCloudBackupStore, MemoryKeyValueStore, MemoryPasskeyPrf, MemorySecureKeyStore, SoftwareHardwareSigner } from '@trikey/wallet/testing';
-import { QrBridge, type DeviceFile, type DeviceFileIo, type QrFileRequest, type QrRequest } from '../hardware/qr/bridge';
+import { QrBridge, type DeviceFile, type DeviceFileIo, type QrFileRequest, type QrNoticeRequest, type QrRequest } from '../hardware/qr/bridge';
 import { messageAddresses } from '../hardware/qr/message';
 import { QrProvider } from '../hardware/qr/provider';
 import { HARDWARE_UNLOCK_UNAVAILABLE } from './hardware-unlock-actions';
@@ -28,14 +31,21 @@ const ACCOUNT = "m/48'/1'/0'/2'";
 /** The phone's file saver and picker, mocked: "saving" puts the file on the card, "picking" returns what the test says. */
 class FakeCard implements DeviceFileIo {
   readonly files = new Map<string, string>();
+  /** Every file ever written to the card, deleted or not. */
+  readonly written = new Map<string, string>();
   readonly saved: string[] = [];
   /** What the owner picks next (the test sets it; by default the newest signed file). */
   next?: DeviceFile;
 
   async saveToFolder(name: string, text: string): Promise<boolean> {
-    this.files.set(name, text);
+    this.write(name, text);
     this.saved.push(name);
     return true;
+  }
+
+  write(name: string, text: string): void {
+    this.files.set(name, text);
+    this.written.set(name, text);
   }
 
   async share(name: string, text: string): Promise<void> {
@@ -58,11 +68,14 @@ class FakeCard implements DeviceFileIo {
  */
 class FakePassport {
   readonly requests: QrFileRequest[] = [];
+  readonly notices: QrNoticeRequest[] = [];
   readonly shown: QrRequest[] = [];
   readonly signed: string[] = [];
   readonly hints: Array<string | undefined> = [];
   /** Pick Trikey's own request file first, once (a mistake the phone must catch). */
   pickRequestFirst = false;
+  /** Leave the next "delete these files" step on screen: the test confirms it (or tries to get past it) itself. */
+  holdNotice = false;
   private readonly seen = new WeakSet<object>();
   readonly device: SoftwareHardwareSigner;
 
@@ -92,12 +105,19 @@ class FakePassport {
     const pub = HDKey.fromExtendedKey(await this.device.getXpub(ACCOUNT), NETWORKS.regtest.bip32).derive('m/0/0').publicKey!;
     const address = messageAddresses(pub, 'regtest').p2pkh;
     const [base, ext] = [name.slice(0, name.lastIndexOf('.')), name.slice(name.lastIndexOf('.'))];
-    this.card.files.set(`${base}-signed-001${ext}`, `-----BEGIN BITCOIN SIGNED MESSAGE-----\n${text}\n-----BEGIN BITCOIN SIGNATURE-----\n${address}\n${sig}\n-----END BITCOIN SIGNATURE-----\n`);
+    this.card.write(`${base}-signed-001${ext}`, `-----BEGIN BITCOIN SIGNED MESSAGE-----\n${text}\n-----BEGIN BITCOIN SIGNATURE-----\n${address}\n${sig}\n-----END BITCOIN SIGNATURE-----\n`);
   }
 
   private async answer(r: QrRequest) {
     this.shown.push(r);
     if (r.type === 'show') return this.bridge.finishShow();
+    if (r.type === 'notice') {
+      // The owner deletes the files it names from the card, then says so.
+      this.notices.push(r);
+      if (this.holdNotice) return;
+      for (const name of r.items) this.card.files.delete(name);
+      return this.bridge.acknowledge();
+    }
     if (r.type === 'scan') {
       if (r.purpose !== 'device-key') return this.bridge.cancel();
       const xpub = await this.device.getXpub(ACCOUNT);
@@ -168,17 +188,30 @@ describe('a Passport (2nd generation) signing from its microSD card, in the app'
     expect(svc.wallet!.state.hardware).toMatchObject({ kind: 'qr', qrModel: 'passport' });
     const pair = passport.requests[0]!;
     expect(pair).toMatchObject({ purpose: 'message-file', title: 'Sign on your Passport (2nd generation)', file: { name: 'trikey-pair.txt' } });
-    expect(card.files.get('trikey-pair.txt')).toMatch(/^Trikey pair v1 wallet=[0-9a-f]{16} guardian=0[23][0-9a-f]{64}\nm\/48h\/1h\/0h\/2h\/0\/0\n$/);
-    expect(card.files.has('trikey-pair-signed-001.txt')).toBe(true);
+    expect(card.written.get('trikey-pair.txt')).toMatch(/^Trikey pair v1 wallet=[0-9a-f]{16} guardian=0[23][0-9a-f]{64}\nm\/48h\/1h\/0h\/2h\/0\/0\n$/);
+    expect(card.written.has('trikey-pair-signed-001.txt')).toBe(true);
     expect(pair.notes!.join(' ')).toMatch(/proves to your guardian/);
     // Picking Trikey's own file first was caught, and the owner could pick again.
     expect(passport.hints[0]).toMatch(/the file Trikey made \(the request\)/);
     // Then the rules the wallet starts with (seq=0), in a file of its own, which the device shows.
     expect(passport.signed).toEqual([expect.stringMatching(/^Trikey pair v1 /), expect.stringMatching(/^Trikey policy v1 wallet=[0-9a-f]{16} seq=0 limit=100000 delay=7d feecap=\d+ contacts=\d+ hash=[0-9a-f]{64} expires=\S+Z$/)]);
-    expect(card.files.get('trikey-rules.txt')).toMatch(/^Trikey policy v1 wallet=[0-9a-f]{16} seq=0 /);
+    expect(card.written.get('trikey-rules.txt')).toMatch(/^Trikey policy v1 wallet=[0-9a-f]{16} seq=0 /);
     expect(passport.requests[1]!.notes!.join(' ')).toMatch(/rules your wallet starts with/);
+    // After each round trip: delete the request and the signed file, by name, before the app goes on.
+    expect(passport.notices.map((n) => n.items)).toEqual([
+      ['trikey-pair.txt', 'trikey-pair-signed-001.txt'],
+      ['trikey-rules.txt', 'trikey-rules-signed-001.txt'],
+    ]);
+    expect(passport.notices[0]).toMatchObject({
+      purpose: 'delete-files',
+      title: 'Delete these files from the card',
+      instructions: 'Delete these files from the card now, and from any computer or email you copied them through. Trikey does not need them again.',
+      continueLabel: 'I deleted them',
+    });
+    expect(passport.notices[0]!.notes!.join(' ')).not.toMatch(/notes/);
+    expect([...card.files.keys()]).toEqual([]);
     // The wallet goes onto the device and the first address is compared, by QR as for any QR device.
-    expect(passport.shown.map((r) => r.purpose)).toEqual(['device-key', 'message-file', 'wallet', 'message-file', 'address']);
+    expect(passport.shown.map((r) => r.purpose)).toEqual(['device-key', 'message-file', 'delete-files', 'wallet', 'message-file', 'delete-files', 'address']);
   });
 
   it('notes on the guardian: two files, one per round, each screen saying which round', async () => {
@@ -192,6 +225,47 @@ describe('a Passport (2nd generation) signing from its microSD card, in the app'
     ]);
     expect(card.saved.slice(-2)).toEqual(['trikey-notes-1of2.txt', 'trikey-notes-2of2.txt']);
     expect(new Set(rounds.map((r) => r.detail))).toEqual(new Set([expect.stringMatching(/^Trikey labels key v1 /)]));
+    expect(svc.notes!.state()).toMatchObject({ on: true });
+    await svc.notes!.disable();
+  });
+
+  it('notes: after each round, the request and the signed file to delete, by name, because they can open the notes; the app waits for "I deleted them"', async () => {
+    const n = passport.notices.length;
+    passport.holdNotice = true;
+    let done = false;
+    const enabling = svc.notes!.enable().then(() => (done = true));
+    for (let i = 0; i < 500 && passport.notices.length === n; i++) await new Promise((r) => setTimeout(r, 2));
+    const first = passport.notices[n]!;
+    expect(first).toEqual({
+      type: 'notice',
+      purpose: 'delete-files',
+      title: 'Delete these files from the card',
+      instructions: 'Delete these files from the card now, and from any computer or email you copied them through. They can open your notes.',
+      items: ['trikey-notes-1of2.txt', 'trikey-notes-1of2-signed-001.txt'],
+      notes: [
+        expect.stringMatching(/^trikey-notes-1of2-signed-001\.txt holds the signature your Passport \(2nd generation\) just made, and that signature is the key to your notes: with it and a copy of the encrypted notes from your guardian, anyone could read them\./),
+        expect.stringMatching(/another name that starts with trikey-notes-1of2-signed.*empty the trash/),
+      ],
+      continueLabel: 'I deleted them',
+    });
+    // The signed file is still on the card, and the app does not go on: no second round, no cancel past it.
+    expect(card.files.has('trikey-notes-1of2-signed-001.txt')).toBe(true);
+    bridge.cancel();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(bridge.getSnapshot()?.request).toBe(first);
+    expect(passport.requests.at(-1)!.file.name).toBe('trikey-notes-1of2.txt');
+    expect(done).toBe(false);
+    // The owner deletes them and says so: round 2, then its own step.
+    passport.holdNotice = false;
+    for (const name of first.items) card.files.delete(name);
+    bridge.acknowledge();
+    await enabling;
+    expect(passport.notices.slice(n).map((x) => x.items)).toEqual([
+      ['trikey-notes-1of2.txt', 'trikey-notes-1of2-signed-001.txt'],
+      ['trikey-notes-2of2.txt', 'trikey-notes-2of2-signed-001.txt'],
+    ]);
+    expect(passport.notices.at(-1)!.instructions).toMatch(/They can open your notes\.$/);
+    expect([...card.files.keys()].filter((f) => f.startsWith('trikey-notes'))).toEqual([]);
     expect(svc.notes!.state()).toMatchObject({ on: true });
     await svc.notes!.disable();
   });

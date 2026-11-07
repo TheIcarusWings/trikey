@@ -33,6 +33,17 @@ releaseNotes: >-
 dependencies:
   - bitcoin
   - electrs
+# The guardian's whole data folder stays out of umbrelOS backups, on purpose, as on Start9 (DESIGN.md, "Holds no
+# backup of key 3"): it holds key 3's keystore, the nostr key, the alert channels' key file, the hardware unlock slots
+# and the rules' state, and a restored copy would bring back old daily-limit accounting and a key 3 that was reset.
+# An Umbrel restored from a backup starts a new, empty guardian; the owner moves the wallet to it with Replace
+# guardian (phone + hardware wallet). umbreld reads these paths relative to the app's folder, where `data` is the
+# folder docker-compose.yml mounts at /data; `data/*` keeps the (empty) folder itself in the backup, so a restore
+# brings it back owned by the image's user, not made by Docker as root. Read from umbreld's source (getumbrel/umbrel,
+# modules/apps/app.ts getBackupIgnoredFilePaths, modules/backups/backups.ts); TODO(verify): a backup and restore on a
+# real Umbrel (the guardian starts empty and can write /data).
+backupIgnore:
+  - data/*
 path: ""
 defaultUsername: ""
 defaultPassword: ""

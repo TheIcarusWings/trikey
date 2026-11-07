@@ -17,8 +17,10 @@
  *   okm = HKDF-SHA256(ikm = r || s, salt = utf8(walletId), info = "trikey/labels/v1", 64 bytes)
  *   encryption key = okm[0..32), check key = okm[32..64)
  *
- * The guardian knows every xpub of the wallet, so nothing here derives from public data; the signature never leaves the
- * phone, and the phone keeps the derived 64 bytes in its secure store to upload later changes without the device.
+ * The guardian knows every xpub of the wallet, so nothing here derives from public data; the guardian never sees the
+ * signature, and the phone keeps the derived 64 bytes in its secure store to upload later changes without the device.
+ * With most devices the signature never leaves the phone either; Passport gen 2 and Krux write it to a file on their
+ * microSD card, and the phone then asks the owner to delete it (DESIGN.md, "Cleaning up the card").
  *
  * **The blob.** Version byte, nonce, key check, then XChaCha20-Poly1305 over the padded plaintext:
  *

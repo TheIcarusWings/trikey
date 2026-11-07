@@ -7,7 +7,7 @@ import { Text } from '@/components/ui/text';
 import { IS_IOS, pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 import { deviceFileIo } from '@/platform/device-files';
-import { defaultQrBridge, type DeviceFileIo, type QrBridge, type QrFileRequest, type QrScanRequest, type QrShowRequest } from '../qr/bridge';
+import { defaultQrBridge, type DeviceFileIo, type QrBridge, type QrFileRequest, type QrNoticeRequest, type QrScanRequest, type QrShowRequest } from '../qr/bridge';
 import { AnimatedQr } from './animated-qr';
 import { QrScanner } from './qr-scanner';
 
@@ -136,8 +136,29 @@ function FileRequest({ request, bridge, io, hint, saved }: { request: QrFileRequ
 }
 
 /**
+ * A step the owner must confirm: after a microSD round trip, the files to delete from the card, by name. One button and
+ * no cancel (the signature is already taken; the bridge ignores a cancel, the system back gesture included).
+ */
+function NoticeRequest({ request, bridge }: { request: QrNoticeRequest; bridge: QrBridge }) {
+  return (
+    <>
+      <View className="bg-muted gap-1 self-stretch rounded-lg px-3 py-2.5">
+        {request.items.map((item) => (
+          <Text key={item} selectable className="text-foreground font-mono text-[13px] leading-[20px]">
+            {item}
+          </Text>
+        ))}
+      </View>
+      <Steps request={request} />
+      <AppButton title={request.continueLabel} size="hero" onPress={() => bridge.acknowledge()} />
+    </>
+  );
+}
+
+/**
  * Renders what the QR signer asks for: an animated QR to scan with the device, the camera to scan the device's QR, or a
- * file to carry to the device on its microSD card and the signed file to bring back (`io`: the phone's file pickers).
+ * file to carry to the device on its microSD card and the signed file to bring back (`io`: the phone's file pickers), and
+ * then the files to delete from the card.
  * Mount it once near the root of the app (inside the theme and safe-area providers); it shows a full-screen sheet while a
  * request is waiting and nothing otherwise. Pass the same `bridge` you gave `createHardwareProviders` (or none, to use the
  * default bridge, which is what the providers use when they are not given one).
@@ -170,6 +191,8 @@ export function QrBridgeHost({ bridge = defaultQrBridge, io = deviceFileIo }: { 
                 <ShowRequest request={request} bridge={bridge} />
               ) : request.type === 'file' ? (
                 <FileRequest key={request.file.name} request={request} bridge={bridge} io={io} hint={snapshot?.hint} saved={snapshot?.saved} />
+              ) : request.type === 'notice' ? (
+                <NoticeRequest request={request} bridge={bridge} />
               ) : (
                 <ScanRequest request={request} bridge={bridge} progress={snapshot?.progress} hint={snapshot?.hint} />
               )}

@@ -37,7 +37,7 @@ export type { JadeBleLink, JadeBleDevice, JadeConnection } from './jade/link';
 export { NfcBridge, type NfcRequest, type NfcReadRequest, type NfcShowRequest, type NfcWriteRequest, type NfcTapState } from './nfc/bridge';
 export { defaultNfcBridge } from './nfc/default';
 export type { NfcTransport } from './nfc/transport';
-export { QrBridge, defaultQrBridge, type DeviceFile, type DeviceFileIo, type QrFileRequest, type QrRequest, type QrScanRequest, type QrShowRequest } from './qr/bridge';
+export { QrBridge, defaultQrBridge, type DeviceFile, type DeviceFileIo, type QrFileRequest, type QrNoticeRequest, type QrRequest, type QrScanRequest, type QrShowRequest } from './qr/bridge';
 export type { QrFormat, QrPayload, QrProgress } from './qr/types';
 export { QR_DEVICES_WITHOUT_MESSAGE_SIGNING } from './qr/signer';
 export { signMessageRequest, parseMessageAnswer, checkMessageAnswer, type MessageAnswer } from './qr/message';

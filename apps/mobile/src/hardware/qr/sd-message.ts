@@ -29,6 +29,7 @@
  */
 import type { QrModel } from '@trikey/wallet';
 import { HardwareError } from '../errors';
+import type { QrNoticeRequest } from './bridge';
 import { formatPath, parsePath } from '../common/path';
 import { parseAnswerText, type MessageAnswer } from './message';
 
@@ -120,4 +121,48 @@ export function parseSignedFile(file: PickedDeviceFile, request: SdRequestFile, 
   if (norm(text) === norm(request.text))
     throw bad(`That is the file Trikey made (the request), not the signed one. Pick the file your ${label} wrote next to it: its name has -signed.`);
   return parseAnswerText(text, 'file');
+}
+
+/**
+ * The step after a microSD round trip: delete the request file and the signed file, from the card and from wherever
+ * they were copied, and say so ("I deleted them"). Shown for every purpose, because each signed file names the wallet
+ * and the guardian; for the notes it is the reason the step exists: the notes key is HKDF of that signature (DESIGN.md,
+ * "Notes that survive recovery"), so the signed file and a copy of the guardian's encrypted notes are enough to read
+ * them. Over QR, Bluetooth, USB or NFC the signature never leaves the phone; here it was written to the card.
+ *
+ * `signedName` is the name of the file the owner picked, as the file chooser gave it (Passport `<name>-signed-001.txt`,
+ * Krux `<name>-signed.txt` unless renamed on the device); undefined when the signature came back as a QR code (Krux).
+ */
+export function sdCleanupNotice(o: { request: SdRequestFile; signedName?: string; purpose?: string; label: string }): Omit<QrNoticeRequest, 'type'> {
+  const notes = o.purpose === 'notes';
+  const base = baseName(o.request.name);
+  if (o.signedName === undefined) {
+    return {
+      purpose: 'delete-files',
+      title: 'Delete this file from the card',
+      instructions: 'Delete this file from the card now, and from any computer or email you copied it through. Trikey does not need it again.',
+      items: [o.request.name],
+      notes: [
+        notes
+          ? `The signature came back as a QR code, so it is not on the card. If your ${o.label} also wrote a signed file for it (its name starts with ${base}-signed), delete that too: it can open your notes.`
+          : `It holds the text your ${o.label} signed, which names this wallet and your guardian. If your ${o.label} also wrote a signed file for it (its name starts with ${base}-signed), delete that too.`,
+      ],
+      continueLabel: 'I deleted it',
+    };
+  }
+  return {
+    purpose: 'delete-files',
+    title: 'Delete these files from the card',
+    instructions: notes
+      ? 'Delete these files from the card now, and from any computer or email you copied them through. They can open your notes.'
+      : 'Delete these files from the card now, and from any computer or email you copied them through. Trikey does not need them again.',
+    items: [o.request.name, o.signedName],
+    notes: [
+      notes
+        ? `${o.signedName} holds the signature your ${o.label} just made, and that signature is the key to your notes: with it and a copy of the encrypted notes from your guardian, anyone could read them. Trikey does not need the files again: this phone keeps the key, and your ${o.label} makes the same signature whenever Trikey asks for it (after a recovery, for example).`
+        : `They hold the text your ${o.label} signed and its signature, which name this wallet and your guardian. Nobody else needs them.`,
+      `If your ${o.label} wrote more than one signed file for it (another name that starts with ${base}-signed), delete those too. On a computer, empty the trash as well.`,
+    ],
+    continueLabel: 'I deleted them',
+  };
 }
