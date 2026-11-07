@@ -476,6 +476,11 @@ export interface GuardedWallet {
    * that was set to the maximum before the guardian knew "off" (a recovery then restores 0, "never", until approved).
    */
   limitBeforeOff?: bigint;
+  /**
+   * A limit stored before 1,000 BTC and more counted as "off" (`LIMIT_OFF_THRESHOLD_SATS`, security review 2026-11),
+   * at or above it but below `LIMIT_OFF_SATS`, was announced once as `limit_off` when the guardian first loaded it.
+   */
+  limitOffAnnounced?: true;
 }
 
 /**

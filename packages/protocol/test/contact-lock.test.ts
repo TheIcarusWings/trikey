@@ -10,6 +10,7 @@ import {
   Alert,
   GUARDIAN_FEATURES,
   LIMIT_OFF_SATS,
+  LIMIT_OFF_THRESHOLD_SATS,
   MAX_APPROVAL_MESSAGE_LENGTH,
   MAX_SATS,
   Policy,
@@ -81,7 +82,7 @@ describe('contact lock: the approval text', () => {
 
   it('fits on every device with the longest values', () => {
     const biggest: PolicyType = {
-      dailyLimitSats: LIMIT_OFF_SATS - 1,
+      dailyLimitSats: LIMIT_OFF_THRESHOLD_SATS - 1,
       recoveryDelayDays: 30,
       sweepFeeCapSats: MAX_SATS,
       alertContacts: Array.from({ length: 20 }, (_, i) => (i + 16).toString(16).padStart(64, '0')),

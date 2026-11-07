@@ -48,7 +48,7 @@ import { DAY, systemClock, type ChainTime, type ChainTimeSource, type Clock } fr
 import { BLOCKS_PER_DAY, MAINNET_CONTACT_REQUIRED, LIMIT_OFF_AT_PAIRING, rulesApprovalRefusal, MAX_ACCESS_GRANTS, MAX_APPROVAL_TTL_MS, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_SEQUENCE_STEP, NOTICE_TTL_MS, isRefusalEvent, policyWarnings, pruneActivity, type CosignResult, type GuardianStatus, type PhoneSpendingStatus, type RecoveryView } from '../policy/engine.js';
 import { addCosignerSignatures } from '../policy/inspect.js';
 import { pruneSpends, pruneTime, splitOutflow, usageWith, windowUsage } from '../policy/limit.js';
-import { isContactLockOn, isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from '../policy/rules.js';
+import { LIMIT_OFF_SATS, isContactLockOn, isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from '../policy/rules.js';
 import type { CosignerSigner } from '../policy/signer.js';
 import type { AccessGrant, CancelActor, CancelledBy, HardwareApproval, Rules, RulesApproval, SurvivingRole } from '../policy/index.js';
 import {
@@ -281,7 +281,32 @@ export class HostedEngine {
     if (!/^[0-9a-f]{16}$/.test(opts.slotId)) throw new Error('slotId must be 8 bytes of hex');
     const state = (await opts.store.load()) ?? emptyHostedState(opts.slotId);
     if (state.slotId !== opts.slotId) throw new Error('the slot state belongs to another slot');
-    return new HostedEngine(opts.store, state, opts);
+    const engine = new HostedEngine(opts.store, state, opts);
+    await engine.announceLimitOffKept();
+    return engine;
+  }
+
+  /** As the host's engine (`PolicyEngine.announceLimitOffKept`): a stored limit that counts as off since the threshold, told once. */
+  private async announceLimitOffKept(): Promise<void> {
+    const due = (s: HostedState) => {
+      const w = s.active;
+      return !!w && isLimitOff(w.rules) && w.rules.dailyLimitSats < LIMIT_OFF_SATS && w.limitBeforeOff === undefined && !w.limitOffAnnounced;
+    };
+    if (!due(this.state)) return;
+    await this.mutate((draft, now) => {
+      if (!due(draft)) return;
+      const w = draft.active!;
+      w.limitOffAnnounced = true;
+      const phone = w.registration.appNostrPubkey;
+      this.addNotice(draft, now, {
+        id: `limit-${draft.nextActivityId}-kept`,
+        kind: 'limit_off',
+        walletId: w.registration.walletId,
+        at: now,
+        recipients: [phone, ...w.rules.alertContacts.filter((c) => c !== phone)],
+        sent: [],
+      });
+    });
   }
 
   // -------------------------------------------------------------------------

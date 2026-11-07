@@ -10,6 +10,7 @@ import {
   Alert,
   GUARDIAN_FEATURES,
   LIMIT_OFF_SATS,
+  LIMIT_OFF_THRESHOLD_SATS,
   MAX_APPROVAL_MESSAGE_LENGTH,
   MAX_SATS,
   Policy,
@@ -18,6 +19,7 @@ import {
   isLimitOff,
   methods,
   normalizePolicy,
+  pairingRulesMessage,
   policyHash,
   type Policy as PolicyType,
 } from '../src/index.js';
@@ -33,8 +35,20 @@ describe('no daily limit: the value', () => {
     expect(LIMIT_OFF_SATS).toBe(MAX_SATS);
     expect(LIMIT_OFF_SATS).toBe(2_100_000_000_000_000);
     expect(isLimitOff(LIMIT_OFF_SATS)).toBe(true);
-    expect(isLimitOff(LIMIT_OFF_SATS - 1)).toBe(false);
     expect(isLimitOff(0)).toBe(false);
+  });
+
+  it('is off from 1,000 BTC up, for every purpose (security review 2026-11: one satoshi under it was an ordinary number)', () => {
+    expect(LIMIT_OFF_THRESHOLD_SATS).toBe(1_000 * 100_000_000);
+    expect(isLimitOff(LIMIT_OFF_SATS - 1)).toBe(true);
+    expect(isLimitOff(LIMIT_OFF_THRESHOLD_SATS)).toBe(true);
+    expect(isLimitOff(LIMIT_OFF_THRESHOLD_SATS - 1)).toBe(false);
+    // The device says "off" in words for it, never a 16-digit number.
+    expect(approvalMessage({ action: 'policy', policy: { ...on, dailyLimitSats: LIMIT_OFF_SATS - 1 } }, ctx)).toMatch(/^Trikey policy v2 .* limit=off /);
+    expect(pairingRulesMessage({ ...on, dailyLimitSats: LIMIT_OFF_SATS - 1 }, { walletId: WALLET_ID, expiresAt: 1_900_000_000 })).toMatch(/^Trikey policy v2 .* limit=off /);
+  });
+
+  it('is a valid Policy, hashed like any other limit', () => {
     expect(Policy.safeParse(off).success).toBe(true);
     expect(Policy.safeParse({ ...off, dailyLimitSats: LIMIT_OFF_SATS + 1 }).success).toBe(false);
     // No new member: the canonical JSON is the four members, the limit a number.
@@ -54,7 +68,7 @@ describe('no daily limit: the approval text', () => {
     expect(approvalMessage({ action: 'policy', policy: on }, ctx)).toBe(
       `Trikey policy v1 wallet=${WALLET_ID} seq=12 limit=100000 delay=14d feecap=20000 contacts=1 hash=${policyHash(on)} expires=2030-03-17T17:46:40Z`,
     );
-    expect(approvalMessage({ action: 'policy', policy: { ...on, dailyLimitSats: LIMIT_OFF_SATS - 1 } }, ctx)).toContain(' limit=2099999999999999 ');
+    expect(approvalMessage({ action: 'policy', policy: { ...on, dailyLimitSats: LIMIT_OFF_THRESHOLD_SATS - 1 } }, ctx)).toContain(' limit=99999999999 ');
   });
 
   it('for a guardian without the feature, the version-1 text it rebuilds (legacyPolicyText)', () => {

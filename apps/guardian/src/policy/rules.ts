@@ -5,17 +5,25 @@ import { RECOVERY_DELAYS, RecoveryDelayDays, Rules } from './types.js';
 
 const MAX_SATS = 21_000_000n * 100_000_000n;
 /**
- * "No daily limit" (DESIGN.md, rule 3): the largest limit there is, all bitcoin there will ever be. Not a rule of its
+ * "No daily limit" (DESIGN.md, rule 3) as the phone sets it: the largest limit there is, all bitcoin there will ever be
+ * (any limit from `LIMIT_OFF_THRESHOLD_SATS` up counts as off). Not a rule of its
  * own, so `policyHash` is unchanged; what changes is the approval text (`Trikey policy v2 ... limit=off`, authorizer.ts),
  * that pairing refuses it, and that a recovery's new wallet starts with the limit back on (`GuardedWallet.limitBeforeOff`).
  * The same value as @trikey/protocol's `LIMIT_OFF_SATS`.
  */
 export const LIMIT_OFF_SATS = MAX_SATS;
+/**
+ * From this limit up there is no daily limit for every purpose (security review 2026-11): 1,000 BTC. Such a limit brakes
+ * nothing a phone could hold, so it gets every safeguard of "off" (pairing refuses it, the version-2 text says
+ * `limit=off`, the phone and the contacts are alerted, a recovery turns the limit back on), where one satoshi under
+ * `LIMIT_OFF_SATS` used to be an ordinary number. The same value as @trikey/protocol's `LIMIT_OFF_THRESHOLD_SATS`.
+ */
+export const LIMIT_OFF_THRESHOLD_SATS = 1_000n * 100_000_000n;
 export const MAX_ALERT_CONTACTS = 20;
 
-/** True when the rules have no daily limit. */
+/** True when the rules have no daily limit: `LIMIT_OFF_THRESHOLD_SATS` (1,000 BTC) or more. */
 export function isLimitOff(r: Pick<Rules, 'dailyLimitSats'>): boolean {
-  return r.dailyLimitSats >= LIMIT_OFF_SATS;
+  return r.dailyLimitSats >= LIMIT_OFF_THRESHOLD_SATS;
 }
 /** True when the alert contacts may lock the guardian (`Rules.contactLock`, DESIGN.md rule 8). */
 export function isContactLockOn(r: Pick<Rules, 'contactLock'>): boolean {

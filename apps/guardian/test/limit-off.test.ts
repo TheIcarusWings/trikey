@@ -13,11 +13,18 @@
 import { hex } from '@scure/base';
 import { describe, expect, it } from 'vitest';
 import { RECEIVE, buildSweep } from '@trikey/core';
-import { LIMIT_OFF_SATS as PROTOCOL_LIMIT_OFF, approvalMessage as protocolApprovalMessage, policyHash as protocolPolicyHash } from '@trikey/protocol';
+import {
+  LIMIT_OFF_SATS as PROTOCOL_LIMIT_OFF,
+  LIMIT_OFF_THRESHOLD_SATS as PROTOCOL_LIMIT_OFF_THRESHOLD,
+  approvalMessage as protocolApprovalMessage,
+  policyHash as protocolPolicyHash,
+} from '@trikey/protocol';
 import { engineEntry } from '../src/http/activity.js';
 import {
+  ClockChain,
   LIMIT_OFF_AT_PAIRING,
   LIMIT_OFF_SATS,
+  LIMIT_OFF_THRESHOLD_SATS,
   MemoryStore,
   NOTICE_TTL_MS,
   PolicyEngine,
@@ -75,8 +82,12 @@ describe('no daily limit: the value and the text', () => {
     expect(approvalMessage(OFF, ctx)).toBe(text);
     // The hash is the one every guardian computes: "off" is no new rule.
     expect(protocolPolicyHash(rulesToPolicyJson(OFF) as never)).toBe(policyHash(OFF));
-    // One sat less is still a limit, in the version-1 text.
-    expect(approvalMessage(r({ dailyLimitSats: LIMIT_OFF_SATS - 1n }), ctx)).toMatch(/^Trikey policy v1 .* limit=2099999999999999 /);
+    // Security review 2026-11 (finding 3): one sat less used to be an ordinary 16-digit limit, skipping every "off"
+    // safeguard. 1,000 BTC and more is "off" for every purpose; one sat under that is still a limit, version 1.
+    expect(approvalMessage(r({ dailyLimitSats: LIMIT_OFF_SATS - 1n }), ctx)).toMatch(/^Trikey policy v2 .* limit=off /);
+    expect(approvalMessage(r({ dailyLimitSats: LIMIT_OFF_THRESHOLD_SATS }), ctx)).toMatch(/^Trikey policy v2 .* limit=off /);
+    expect(approvalMessage(r({ dailyLimitSats: LIMIT_OFF_THRESHOLD_SATS - 1n }), ctx)).toMatch(/^Trikey policy v1 .* limit=99999999999 /);
+    expect(LIMIT_OFF_THRESHOLD_SATS).toBe(BigInt(PROTOCOL_LIMIT_OFF_THRESHOLD));
   });
 });
 
@@ -281,6 +292,83 @@ describe('after a recovery', () => {
     expect(ctx.engine.status().rules!.dailyLimitSats).toBe(100_000n);
     expect(ctx.engine.activity().find((e) => e.type === 'wallet_rotated')).not.toHaveProperty('limitRestoredSats');
     expect(ctx.engine.dueNotices()).toEqual([]);
+  });
+});
+
+/**
+ * Security review 2026-11, finding 3 (MEDIUM): one satoshi under "no limit" skipped every "off" safeguard. `isLimitOff`
+ * was `>= LIMIT_OFF_SATS` (21M BTC): LIMIT_OFF_SATS - 1 was an ordinary limit, accepted at pairing (even approved), shown
+ * on the device as a 16-digit number instead of `limit=off`, with no `limit_off` alert, and not turned back on by a
+ * recovery. Now 1,000 BTC and more is "off" for every purpose, here and in the protocol package (the phone).
+ */
+describe('one satoshi under "no limit" (review 2026-11, finding 3)', () => {
+  const ALMOST = r({ dailyLimitSats: LIMIT_OFF_SATS - 1n });
+  async function recover(ctx: Pick<Ctx, 'engine' | 'wallet' | 'clock'>) {
+    const dest = await makeWallet({ app: MNEMONICS.app2 });
+    const plan = buildSweep({ from: ctx.wallet, utxos: [fund(ctx.wallet, RECEIVE, 9, 400_000n)], destination: dest, destinationIndex: 0, feeRate: 2 });
+    const started = await ctx.engine.startRecovery({ psbt: await hwSigner().signPsbt(plan.psbt, network), destinationDescriptor: dest.descriptor(), initiator: nostrKey(21) });
+    if (!started.ok) throw new Error(JSON.stringify(started.refusal));
+    ctx.clock.set(started.recovery.readyAt);
+    expect((await ctx.engine.completeRecovery()).ok).toBe(true);
+    const rotated = await ctx.engine.rotateAfterSweep(started.recovery.id);
+    if (!rotated.ok || !rotated.adopted) throw new Error(JSON.stringify(rotated));
+  }
+
+  it('PoC: is refused at pairing, even with the rules hardware-approved', async () => {
+    const engine = await PolicyEngine.open({ store: new MemoryStore() });
+    const wallet = await makeWallet();
+    const cosigner = hex.encode(wallet.accountPubkeys().cosigner);
+    for (const rules of [ALMOST, r({ dailyLimitSats: LIMIT_OFF_THRESHOLD_SATS })]) {
+      const res = await engine.register({
+        network: 'regtest',
+        descriptor: wallet.descriptor(),
+        cosignerAccountPubkey: cosigner,
+        rules,
+        hardwareAuth: { kind: 'bip137', pubkey: hwAuthPubkey(), path: AUTH_PATH },
+        hardwareAuthProof: signMessage(pairingMessage(wallet.fingerprint(), cosigner), hwAuthPrivateKey()),
+        rulesApproval: approveRules(wallet.fingerprint(), rules, Date.now()),
+        appNostrPubkey: APP_NOSTR,
+      });
+      expect(res).toMatchObject({ ok: false, refusal: { reason: 'invalid_registration', detail: `rules: ${LIMIT_OFF_AT_PAIRING}` } });
+    }
+    expect(engine.registration()).toBeUndefined();
+  });
+
+  it('PoC: raising the limit to it is "off": the device says so, the phone and the contacts are told, a recovery turns it back on', async () => {
+    const ctx = await setup({ rules: { alertContacts: [CONTACT_A, CONTACT_B] } });
+    // The text the device shows: `limit=off`, never 2099999999999999.
+    expect(engineApprovalMessage({ action: 'policy', rules: ALMOST }, { walletId: ctx.walletId, sequence: 1, expiresAt: 1_900_000_000 })).toMatch(/^Trikey policy v2 .* limit=off /);
+    await turnOff(ctx, 1, ALMOST);
+    expect(ctx.engine.status().dailyLimit).toMatchObject({ off: true, limitBeforeOff: 100_000n });
+    expect(ctx.engine.dueNotices().find((n) => n.kind === 'limit_off')).toMatchObject({ recipients: [APP_NOSTR, CONTACT_A, CONTACT_B] });
+    await recover(ctx);
+    expect(ctx.engine.status().rules!.dailyLimitSats).toBe(100_000n);
+  });
+
+  it('a limit just under 1,000 BTC is still a limit, in numbers', async () => {
+    const ctx = await setup();
+    const big = r({ dailyLimitSats: LIMIT_OFF_THRESHOLD_SATS - 1n });
+    expect((await ctx.engine.changeRules(big, { authenticatedBy: 'hardware', approval: approve(ctx, { action: 'policy', rules: big }, 1) })).ok).toBe(true);
+    expect(ctx.engine.status().dailyLimit!.off).toBeUndefined();
+    expect(ctx.engine.dueNotices()).toEqual([]);
+  });
+
+  it('a stored limit that is "off" since this release (an older guardian took it) is announced once, at load', async () => {
+    const ctx = await setup({ rules: { alertContacts: [CONTACT_A, CONTACT_B] } });
+    const state = (await ctx.store.load())!;
+    state.active!.rules = { ...state.active!.rules, dailyLimitSats: LIMIT_OFF_SATS - 1n };
+    await ctx.store.save(state);
+    const reopen = () => PolicyEngine.open({ store: ctx.store, clock: ctx.clock, signer: ctx.signer, chain: new ClockChain(ctx.clock) });
+    const engine = await reopen();
+    expect(engine.status().dailyLimit).toMatchObject({ off: true });
+    expect(engine.dueNotices()).toMatchObject([{ kind: 'limit_off', recipients: [APP_NOSTR, CONTACT_A, CONTACT_B] }]);
+    // Not again at the next start.
+    const again = await reopen();
+    expect(again.dueNotices()).toHaveLength(1);
+    // A recovery brings the limit back on at 0 (nothing before it is known), until the hardware wallet raises it.
+    const ctx2 = { ...ctx, engine: again };
+    await recover(ctx2);
+    expect(again.status().rules!.dailyLimitSats).toBe(0n);
   });
 });
 

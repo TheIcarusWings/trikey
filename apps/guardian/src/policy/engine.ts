@@ -43,7 +43,7 @@ import { ChainTime, ChainTimeSource, Clock, DAY, HOUR, systemClock } from './clo
 import { MAX_SELF_INDEX, NO_HIGH_WATER, addCosignerSignatures, feeRateRefusal, inspectPsbt, maxHighWater } from './inspect.js';
 import { PUBLIC_SOURCE_MAX_RISE, addPendingMark, chainMarksOf, changeWindow, cosignRateRefusal, marksAfterScan, migrateMarks, scanFloorOf, type MarkJump, type ScanNote } from './marks.js';
 import { pruneSpends, pruneTime, splitOutflow, usageWith, windowUsage } from './limit.js';
-import { isContactLockOn, isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from './rules.js';
+import { LIMIT_OFF_SATS, isContactLockOn, isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from './rules.js';
 import { CosignerSigner } from './signer.js';
 import { StateStore, deserializeState, serializeState } from './storage.js';
 import {
@@ -109,7 +109,8 @@ export const MAINNET_CONTACT_REQUIRED =
   'on mainnet at least one alert contact is required (it can be your own nostr app on another device), so a recovery is never announced only to a phone a thief may hold';
 
 /** Why pairing refuses a policy with no daily limit. */
-export const LIMIT_OFF_AT_PAIRING = 'a wallet cannot be paired with the daily limit off; pair with a limit, then turn it off with the hardware wallet';
+export const LIMIT_OFF_AT_PAIRING =
+  'a wallet cannot be paired with the daily limit off (1,000 BTC or more counts as off); pair with a limit, then turn it off with the hardware wallet';
 /** Why pairing refuses rules the hardware wallet did not approve (an app from before `pairing_rules_approval`). */
 export const RULES_APPROVAL_MISSING =
   'the hardware wallet must approve the rules the wallet starts with (rulesApproval); update the Trikey app and pair again';
@@ -435,7 +436,37 @@ export class PolicyEngine {
   /** Loads persisted state (or starts empty). A version-1 file is migrated on load and written back as version 2 at the next change. */
   static async open(opts: PolicyEngineOptions): Promise<PolicyEngine> {
     const state = (await opts.store.load()) ?? emptyState();
-    return new PolicyEngine(opts.store, state, opts);
+    const engine = new PolicyEngine(opts.store, state, opts);
+    await engine.announceLimitOffKept();
+    return engine;
+  }
+
+  /**
+   * A limit stored before 1,000 BTC and more counted as "off" (rules.ts `LIMIT_OFF_THRESHOLD_SATS`): one at or above it
+   * but below `LIMIT_OFF_SATS` (a malicious app's pairing "one satoshi under no limit", or a huge limit the owner set)
+   * is off from now on, and nobody was told: the phone and every alert contact are, once (`limit_off`), as when the
+   * limit is turned off. A recovery restores 0 for it (no limit before is known), until the hardware wallet raises it.
+   */
+  private async announceLimitOffKept(): Promise<void> {
+    const due = (s: GuardianState) => {
+      const w = s.active;
+      return !!w && isLimitOff(w.rules) && w.rules.dailyLimitSats < LIMIT_OFF_SATS && w.limitBeforeOff === undefined && !w.limitOffAnnounced;
+    };
+    if (!due(this.state)) return;
+    await this.mutate((draft, now) => {
+      if (!due(draft)) return;
+      const w = draft.active!;
+      w.limitOffAnnounced = true;
+      const phone = w.registration.appNostrPubkey;
+      this.addNotice(draft, now, {
+        id: `limit-${draft.nextActivityId}-kept`,
+        kind: 'limit_off',
+        walletId: w.registration.walletId,
+        at: now,
+        recipients: [phone, ...w.rules.alertContacts.filter((c) => c !== phone)],
+        sent: [],
+      });
+    });
   }
 
   // -------------------------------------------------------------------------

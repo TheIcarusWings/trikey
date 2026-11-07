@@ -49,7 +49,7 @@ export {
   signMessage,
   addressFor,
 } from './bip137.js';
-export { normalizeRules, canonicalRules, rulesToPolicyJson, policyHash, phoneMayApply, MAX_ALERT_CONTACTS, LIMIT_OFF_SATS, isLimitOff, isContactLockOn } from './rules.js';
+export { normalizeRules, canonicalRules, rulesToPolicyJson, policyHash, phoneMayApply, MAX_ALERT_CONTACTS, LIMIT_OFF_SATS, LIMIT_OFF_THRESHOLD_SATS, isLimitOff, isContactLockOn } from './rules.js';
 export { type AlertKind, type DueAlert } from './alerts.js';
 export { LIMIT_WINDOW_MS, SPEND_RETENTION_MS, splitOutflow, windowUsage } from './limit.js';
 export { MAX_SELF_INDEX, CHANGE_WINDOW, MIN_COSIGN_FEE_SAT_PER_KVB, NO_HIGH_WATER, maxHighWater, inspectPsbt, hasTaprootOutput, type Inspection, type InspectOptions } from './inspect.js';
