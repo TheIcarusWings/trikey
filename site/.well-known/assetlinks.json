@@ -8,5 +8,15 @@
         "REPLACE_WITH_SHA256_FINGERPRINT"
       ]
     }
+  },
+  {
+    "relation": ["delegate_permission/common.get_login_creds"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.trikey.wallet.foss",
+      "sha256_cert_fingerprints": [
+        "REPLACE_WITH_SHA256_FINGERPRINT"
+      ]
+    }
   }
 ]

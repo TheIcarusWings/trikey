@@ -8,20 +8,48 @@ needs one last uninstall (which deletes the wallet on that phone: make a backup 
 Pull-request builds and manual runs of the **Android test APK** workflow on a branch still get a one-off key: they never see
 the release key (their jobs are passed no secrets at all), and they cannot update a release build or be updated by one.
 
-## Two APKs, one app
+## Two APKs, two apps
 
-From 0.1.9-alpha, every release has two APKs of the same app:
+From 0.1.9-alpha, every release has two APKs, built from the same code:
 
-| APK | What it is |
-|---|---|
-| `trikey-alpha-v<version>.apk` | The **standard** build. It contains Google's libraries: Google Sign-In, for the Google Drive backup a later release can switch on (it needs Google Play services on the phone), Google's ML Kit to read QR codes, and the Google Play services provider for passkeys. |
-| `trikey-alpha-foss-v<version>.apk` | **No Google code**, for phones without Google Play services (GrapheneOS, /e/OS, LineageOS) and for app stores that take only free software. QR codes are read by the open source zxing-cpp. There is no Google Drive backup: the backup is the recovery code plus the backup file, which you can still save to Google Drive, or anywhere else, by hand from the share sheet. Settings, About says "Trikey (no Google)". |
+| APK | App (launcher label, application id) | What it is |
+|---|---|---|
+| `trikey-alpha-v<version>.apk` | **Trikey**, `app.trikey.wallet` | The **standard** build. It contains Google's libraries: Google Sign-In, for the Google Drive backup a later release can switch on (it needs Google Play services on the phone), Google's ML Kit to read QR codes, and the Google Play services provider for passkeys. |
+| `trikey-alpha-foss-v<version>.apk` | **Trikey FOSS**, `app.trikey.wallet.foss` | **No Google code**, for phones without Google Play services (GrapheneOS, /e/OS, LineageOS) and for app stores that take only free software. QR codes are read by the open source zxing-cpp. There is no Google Drive backup: the backup is the recovery code plus the backup file, which you can still save to Google Drive, or anywhere else, by hand from the share sheet. Settings, About says "Trikey (no Google)". |
 
-Both have the same package name (`app.trikey.wallet`) and are signed with the same release key, so Android treats them as
-one app: installing the other APK over the app switches builds and keeps the wallet. Only a downgrade (an older version)
-is refused. The in-app **Check for updates** offers the APK of the build that is installed; tell Obtainium which one you
-want (below). The build of the FOSS APK fails if any Google Play services, Firebase, ML Kit or Google data transport
-class, or ML Kit's `libbarhopper` library, is in it (`apps/mobile/scripts/apk-google-scan.mts`).
+From 0.1.22-alpha they are **two apps**: each has its own application id (the FOSS one adds `.foss`), launcher label and
+URL scheme (`trikey-foss://` for the FOSS app, so Trezor Suite Lite's answer reaches the app that asked). Both can be
+installed on one phone and are listed separately (Zapstore, Obtainium). Both are signed with the same release key, and
+each release updates the same app: the standard APK updates Trikey, the FOSS APK updates Trikey FOSS. Only a downgrade (an
+older version) is refused. Each app keeps its own wallet: installing one does not move or copy the other's wallet;
+restoring a backup does. The in-app **Check for updates** offers the APK of the app it runs in. The build of the FOSS APK
+fails if any Google Play services, Firebase, ML Kit or Google data transport class, or ML Kit's `libbarhopper` library, is
+in it (`apps/mobile/scripts/apk-google-scan.mts`).
+
+Up to 0.1.21-alpha both APKs had the standard app's id (`app.trikey.wallet`), so one replaced the other.
+
+### Moving from the no-Google APK of 0.1.21-alpha or earlier
+
+That APK installed as `app.trikey.wallet`, the standard app's id. Android cannot turn an installed app into another
+one, so the new FOSS APK does not update it: it installs as a second app, **Trikey FOSS**, which starts empty. Your
+wallet is still in the old app (its launcher label is "Trikey"), and nothing has happened to it. Two ways on:
+
+1. **Stay without Google (recommended for this build's users).** Have your backup ready: the recovery code and the
+   backup file. If you are not sure you still have both, make a new backup in the old app first (Security tab, the
+   backup row).
+   1. Install `trikey-alpha-foss-v<version>.apk` (0.1.22-alpha or later). It appears next to the old app as Trikey FOSS.
+   2. Open Trikey FOSS. Its first screen has "Used Trikey without Google before?", which says the same as this list.
+      Tap **I already have a Trikey wallet**, then **My phone, but I have its backup**, open the backup file and enter
+      the recovery code. A Recovery Key wallet: **I have a Recovery Kit**, with the kit and your hardware wallet.
+   3. Check that Trikey FOSS shows your wallet and its balance, then uninstall the old app. Until then keep it: it still
+      holds the wallet. Both hold the same phone key after the restore, so keeping both gives no extra safety, and only
+      one should be in use.
+2. **Switch to the standard build.** Install `trikey-alpha-v<version>.apk` over the old app: it has the same id, so it
+   updates in place and keeps the wallet, now with Google's libraries.
+
+The old app's **Check for updates** offers the new FOSS APK, which installs as the second app as in step 1. Obtainium
+cannot install it over the old app either (the package differs): remove that entry and add the repository again with
+the FOSS filter (below).
 
 ## The release key's certificate
 
@@ -42,13 +70,14 @@ The digest it prints must equal the one in that file.
 1. Install Obtainium (from its GitHub releases or F-Droid).
 2. **Add app**, URL `https://github.com/TheIcarusWings/trikey`. Under the source options, turn on **Include prereleases**:
    every Trikey release is a pre-release for now.
-3. Tell Obtainium which of the two APKs you want: under **Filter APKs by regular expression**, enter
-   - `^trikey-alpha-v.*\.apk$` for the standard build, or
-   - `^trikey-alpha-foss-v.*\.apk$` for the build without Google code.
+3. Tell Obtainium which of the two apps you want: under **Filter APKs by regular expression**, enter
+   - `^trikey-alpha-v.*\.apk$` for the standard app (Trikey), or
+   - `^trikey-alpha-foss-v.*\.apk$` for the app without Google code (Trikey FOSS).
 
    Without a filter Obtainium asks which APK to install each time (or picks one), and the `.apk.sha256` files are not
-   APKs, so they never match. To switch builds later, change the filter: the next update installs the other APK over
-   the app, and the wallet stays.
+   APKs, so they never match. The two are separate apps: to have both, add the repository twice, once with each filter.
+   Changing the filter of an entry does not switch apps (Obtainium refuses an APK with another package); to move from
+   one to the other, see "Moving from the no-Google APK" above: the wallet moves by restoring its backup.
 4. Optionally, under **Verify the certificate**, paste the SHA-256 from `packaging/android/release-cert.sha256`, so
    Obtainium refuses an APK signed by another key. Android refuses such an update anyway. Both APKs have that certificate.
 

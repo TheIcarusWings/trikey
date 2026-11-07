@@ -1,6 +1,6 @@
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 // CommonJS, shared with metro.config.js, react-native.config.js and the config plugin.
-import { androidVariant } from './android-variant';
+import { androidAppFor, androidVariant } from './android-variant';
 import { iosNfcEnabled } from './ios-nfc';
 
 // Expo reads app.json first and passes it in as `config`; this file adds what depends on the
@@ -40,6 +40,12 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   const icloudEnabled = env('TRIKEY_DISABLE_ICLOUD') !== '1';
   // The standard Android build or the one without Google code (android-variant.js). iOS has one build.
   const variant = androidVariant();
+  // Two Android apps: the FOSS one has its own application id, launcher label and URL scheme (android-variant.js), so
+  // both can be installed side by side. The standard one keeps app.json's, so it updates in place.
+  const name = config.name ?? 'Trikey';
+  const scheme = typeof config.scheme === 'string' ? config.scheme : 'trikey';
+  if (!androidPackage) throw new Error('app.json must set android.package (or set TRIKEY_ANDROID_PACKAGE)');
+  const androidApp = androidAppFor(variant, { package: androidPackage, label: name, scheme });
   // NFC on iOS (a Coldcard over NFC) needs a capability a free Apple account cannot sign: off unless TRIKEY_IOS_NFC=1 (ios-nfc.js).
   const iosNfc = iosNfcEnabled();
 
@@ -56,8 +62,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
           "Trikey asks for Face ID before it signs a payment with this phone's key.",
       },
     ],
-    // What the Android variant links and leaves out, written into the generated Gradle files.
-    ['./plugins/with-android-variant.js', { variant }],
+    // What the Android variant links and leaves out, written into the generated Gradle files, and its launcher label.
+    ['./plugins/with-android-variant.js', { variant, label: androidApp.label }],
   ];
   // The NFC entitlement and NFCReaderUsageDescription (plugins/with-ios-nfc.js); without it iOS links no NFC code at all.
   if (iosNfc) plugins.push('./plugins/with-ios-nfc.js');
@@ -76,12 +82,15 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   const existing = (config.plugins ?? []) as PluginEntry[];
   const have = new Set(existing.map(pluginName));
 
+  // app.json's `scheme` is set per platform below, so the FOSS Android app can have its own without changing iOS.
+  const { scheme: _sharedScheme, ...rest } = config;
   return {
-    ...config,
-    name: config.name ?? 'Trikey',
+    ...rest,
+    name,
     slug: config.slug ?? 'trikey',
     ios: {
       ...config.ios,
+      scheme,
       bundleIdentifier: iosBundleId,
       ...(env('TRIKEY_APPLE_TEAM_ID') ? { appleTeamId: env('TRIKEY_APPLE_TEAM_ID') } : {}),
       // Passkeys: the app must be associated with the relying party's domain. The domain also has
@@ -90,7 +99,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     },
     android: {
       ...config.android,
-      package: androidPackage,
+      package: androidApp.package,
+      scheme: androidApp.scheme,
       versionCode: config.android?.versionCode ?? androidVersionCode(config.version),
     },
     // For reading the build's configuration (`npx expo config`); the app itself knows its Android variant from its bundle.

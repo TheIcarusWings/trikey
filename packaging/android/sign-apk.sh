@@ -111,6 +111,8 @@ for abi in "${abis[@]}"; do
 done
 
 (cd dist && sha256sum "${name}.apk" > "${name}.apk.sha256")
+# For the launch check, which runs once per variant and cannot tell the two jobs' outputs apart.
+printf '%s\n' "${APPLICATION_ID}" > "dist/application-id-${TRIKEY_ANDROID_VARIANT}.txt"
 echo "name=${name}" >> "${GITHUB_OUTPUT}"
 echo "sha256=$(cut -d' ' -f1 "dist/${name}.apk.sha256")" >> "${GITHUB_OUTPUT}"
 echo "size=$(stat -c %s "dist/${name}.apk")" >> "${GITHUB_OUTPUT}"

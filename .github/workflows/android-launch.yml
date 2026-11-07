@@ -4,7 +4,8 @@ name: Android launch check
 # testers' arm64-v8a APK: android-build.yml), installs it in an Android emulator, opens it, and fails if the
 # app is not running 25 seconds later or its log shows a crash. Catches an APK that installs but closes
 # straight away, which no unit test or bundler run sees. Both variants, side by side (`variant` in the matrix): the
-# standard build and the one without Google code, whose build also fails if the APK has any Google code in it.
+# standard app (app.trikey.wallet) and the one without Google code (app.trikey.wallet.foss), whose build also fails if
+# the APK has any Google code in it. Each is launched by its own application id.
 #
 # What it reports (CI log downloads are blocked for us; annotations can be read through the checks API):
 # - failed: `::error` annotations with the lines that say why, most telling first: the FATAL EXCEPTION
@@ -67,8 +68,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      # The same for both variants (one package, so either installs over the other).
-      APP_ID: ${{ needs.build.outputs.application-id }}
+      # APP_ID (the application id) is this variant's, read from its artifact below: the two apps have different ids
+      # (app.trikey.wallet and app.trikey.wallet.foss), and the build's application-id output holds only one of them.
       OUT: launch-out
       WAIT_SECONDS: '25'
       WALK_OUT: walk-out
@@ -85,13 +86,19 @@ jobs:
           name: trikey-android-apk-x86_64-${{ matrix.variant }}
           path: apk
 
-      # This variant's APK (the build's apk-name output is one of the two, the matrix's last).
+      # This variant's APK and application id (the build's outputs are one of the two, the matrix's last).
       - name: Find the APK
+        env:
+          VARIANT: ${{ matrix.variant }}
         run: |
           set -euo pipefail
           apks=(apk/*.apk)
           [ "${#apks[@]}" = 1 ] && [ -f "${apks[0]}" ] || { echo "::error::Expected one APK in the artifact"; exit 1; }
           echo "APK=${apks[0]}" >> "${GITHUB_ENV}"
+          id="$(tr -d '[:space:]' < "apk/application-id-${VARIANT}.txt")"
+          [[ "${id}" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] || { echo "::error::Unexpected application id in the artifact: ${id}"; exit 1; }
+          echo "Application id: ${id}"
+          echo "APP_ID=${id}" >> "${GITHUB_ENV}"
 
       # Maestro (the demo walk) runs on Java 17 or newer.
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0

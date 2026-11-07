@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ExpoConfig } from 'expo/config';
 import { appDisplayName } from './lib/app-name';
+import { fossMigrationNote } from './lib/foss-migration';
 
 const mobileRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const requireHere = createRequire(path.join(mobileRoot, 'package.json'));
@@ -45,6 +46,15 @@ describe('the switch: TRIKEY_ANDROID_VARIANT', () => {
 
   it('refuses anything else, so a typo cannot build the other app', () => {
     for (const v of ['fdroid', 'oss', 'no-google', '1']) expect(() => variant.androidVariant({ TRIKEY_ANDROID_VARIANT: v })).toThrow(/standard" or "foss/);
+  });
+
+  it('gives the FOSS build its own application id, launcher label and URL scheme; the standard build keeps its own', () => {
+    const standard = { package: 'app.trikey.wallet', label: 'Trikey', scheme: 'trikey' };
+    expect(variant.androidAppFor('standard', standard)).toEqual(standard);
+    expect(variant.androidAppFor('foss', standard)).toEqual({ package: 'app.trikey.wallet.foss', label: 'Trikey FOSS', scheme: 'trikey-foss' });
+    // A fork's own id gets the same suffix.
+    expect(variant.androidAppFor('foss', { ...standard, package: 'com.example.wallet' }).package).toBe('com.example.wallet.foss');
+    expect(() => variant.androidAppFor('fdroid' as never, standard)).toThrow(/unknown Android variant/);
   });
 
   it('names real dependencies and the local module', () => {
@@ -113,6 +123,15 @@ describe('the config plugin (plugins/with-android-variant.js)', () => {
     expect(standard).not.toContain('exclude group');
   });
 
+  it('strings.xml: the launcher label replaces the app_name Expo wrote from the config name', () => {
+    const labelled = (plugin as unknown as { stringsXmlWithLabel(xml: object, label: string): { resources: { string: { $: { name: string }; _: string }[] } } }).stringsXmlWithLabel(
+      { resources: { string: [{ $: { name: 'app_name' }, _: 'Trikey' }, { $: { name: 'other' }, _: 'x' }] } },
+      'Trikey FOSS',
+    );
+    expect(labelled.resources.string.filter((e) => e.$.name === 'app_name').map((e) => e._)).toEqual(['Trikey FOSS']);
+    expect(labelled.resources.string.find((e) => e.$.name === 'other')?._).toBe('x');
+  });
+
   it('fails loudly on a settings.gradle it does not recognise', () => {
     expect(() => plugin.settingsGradleForVariant('rootProject.name = "x"\n', 'foss')).toThrow(/useExpoModules/);
   });
@@ -127,15 +146,38 @@ describe('app.config.ts', () => {
     return appConfig({ config: structuredClone(appJson.expo) } as never);
   };
 
-  it('passes the variant to the config plugin and records it, with the same package for both', async () => {
-    for (const v of ['standard', 'foss'] as const) {
+  it('passes the variant and its launcher label to the config plugin and records the variant', async () => {
+    for (const [v, label] of [['standard', 'Trikey'], ['foss', 'Trikey FOSS']] as const) {
       const c = await resolve(v);
-      expect(c.plugins).toContainEqual(['./plugins/with-android-variant.js', { variant: v }]);
+      expect(c.plugins).toContainEqual(['./plugins/with-android-variant.js', { variant: v, label }]);
       expect(c.extra?.androidVariant).toBe(v);
-      expect(c.android?.package).toBe('app.trikey.wallet'); // one installs over the other
-      expect(c.name).toBe('Trikey');
+      expect(c.name).toBe('Trikey'); // the iOS name, and Expo's app_name before the plugin's label
     }
     expect((await resolve('')).extra?.androidVariant).toBe('standard');
+  });
+
+  it('two Android apps: the standard one keeps its id (it updates in place), the FOSS one has its own id and scheme', async () => {
+    const standard = await resolve('standard');
+    const foss = await resolve('foss');
+    expect(standard.android?.package).toBe('app.trikey.wallet');
+    expect(foss.android?.package).toBe('app.trikey.wallet.foss');
+    expect(standard.android?.scheme).toBe('trikey');
+    expect(foss.android?.scheme).toBe('trikey-foss');
+    // The scheme is per platform, so the FOSS app registers only its own (Trezor Suite Lite's answer finds one app).
+    expect(standard.scheme).toBeUndefined();
+    expect(foss.scheme).toBeUndefined();
+    // iOS is the same whatever the Android variant.
+    for (const c of [standard, foss]) {
+      expect(c.ios?.bundleIdentifier).toBe('app.trikey.wallet');
+      expect(c.ios?.scheme).toBe('trikey');
+    }
+    expect(foss.android?.versionCode).toBe(standard.android?.versionCode);
+  });
+
+  it('a fork: TRIKEY_ANDROID_PACKAGE names the standard app, the FOSS app adds .foss to it', async () => {
+    vi.stubEnv('TRIKEY_ANDROID_PACKAGE', 'com.example.wallet');
+    expect((await resolve('standard')).android?.package).toBe('com.example.wallet');
+    expect((await resolve('foss')).android?.package).toBe('com.example.wallet.foss');
   });
 
   it('refuses an unknown variant', async () => {
@@ -234,6 +276,64 @@ describe('the QR camera module (modules/trikey-qr-camera)', () => {
     const gradle = readFileSync(path.join(dir, 'android/build.gradle'), 'utf8');
     expect(gradle).toMatch(/implementation 'io\.github\.zxing-cpp:android:3\.\d+\.\d+'/);
     expect(gradle).not.toMatch(/com\.google\.(android\.gms|firebase|mlkit)|play-services/);
+  });
+});
+
+describe('content providers of the native libraries', () => {
+  // Android refuses to install an app whose provider authority another installed app already has. Every library
+  // manifest must build its authorities from the application id, so the two apps (and any fork) never share one.
+  it('name every authority after ${applicationId}', () => {
+    const manifests: string[] = [];
+    const isDir = (p: string) => existsSync(p) && statSync(p).isDirectory();
+    /** Every AndroidManifest.xml under `dir` (an `android` folder), skipping build output. */
+    const walk = (dir: string, depth = 0) => {
+      if (depth > 8) return;
+      for (const name of readdirSync(dir)) {
+        if (name === 'build' || name === '.gradle' || name === 'node_modules') continue;
+        const full = path.join(dir, name);
+        if (isDir(full)) walk(full, depth + 1);
+        else if (name === 'AndroidManifest.xml') manifests.push(full);
+      }
+    };
+    /** The `android` folder of every package in a node_modules folder (scoped ones too), and of the local modules. */
+    const packages = (nm: string) =>
+      !isDir(nm)
+        ? []
+        : readdirSync(nm).flatMap((n) => (n.startsWith('@') && isDir(path.join(nm, n)) ? readdirSync(path.join(nm, n)).map((m) => path.join(nm, n, m)) : [path.join(nm, n)]));
+    for (const pkgDir of [
+      ...packages(path.join(mobileRoot, 'node_modules')),
+      ...packages(path.join(mobileRoot, '..', '..', 'node_modules')),
+      ...packages(path.join(mobileRoot, 'modules')),
+    ]) {
+      if (isDir(path.join(pkgDir, 'android'))) walk(path.join(pkgDir, 'android'));
+    }
+    expect(manifests.length).toBeGreaterThan(5);
+    const authorities = manifests.flatMap((m) => [...readFileSync(m, 'utf8').matchAll(/android:authorities="([^"]*)"/g)].map((x) => ({ m, a: x[1]! })));
+    expect(authorities.length).toBeGreaterThan(0);
+    for (const { m, a } of authorities) {
+      for (const one of a.split(';')) expect(one, `${m}`).toMatch(/^\$\{applicationId\}\./);
+    }
+  });
+});
+
+describe('Welcome (FOSS app): moving a wallet from the earlier build without Google', () => {
+  it('only in the FOSS Android app, and it says how: restore the backup, then remove the old app', () => {
+    expect(fossMigrationNote('android', 'standard')).toBeNull();
+    expect(fossMigrationNote('ios', 'foss')).toBeNull();
+    expect(fossMigrationNote('web', 'foss')).toBeNull();
+    const note = fossMigrationNote('android', 'foss');
+    expect(note?.body).toMatch(/I already have a Trikey wallet/);
+    expect(note?.body).toMatch(/My phone, but I have its backup/);
+    expect(note?.body).toMatch(/backup file with your recovery code/);
+    expect(note?.body).toMatch(/Keep the old app until your wallet shows here/);
+  });
+
+  it('names the restore options the app really has', () => {
+    const choose = readFileSync(path.join(mobileRoot, 'app', 'recover', 'choose.tsx'), 'utf8');
+    const welcome = readFileSync(path.join(mobileRoot, 'app', '(onboarding)', 'welcome.tsx'), 'utf8');
+    expect(welcome).toContain('title="I already have a Trikey wallet"');
+    expect(choose).toContain('title="My phone, but I have its backup"');
+    expect(choose).toContain('title="I have a Recovery Kit"');
   });
 });
 

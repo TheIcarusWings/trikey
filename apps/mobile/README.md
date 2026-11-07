@@ -164,14 +164,23 @@ native project is generated and built (`android-variant.js` has the details):
 | | `standard` (the default) | `foss` |
 |---|---|---|
 | Release APK | `trikey-alpha-v<version>.apk` | `trikey-alpha-foss-v<version>.apk` |
+| Application id | `app.trikey.wallet` (`android.package`, or `TRIKEY_ANDROID_PACKAGE`) | the same plus `.foss`: `app.trikey.wallet.foss` |
+| Launcher label | Trikey | Trikey FOSS |
+| URL scheme (Trezor Suite Lite's answer) | `trikey://` | `trikey-foss://` |
 | Google code | Google Sign-In, Google's ML Kit (QR codes), the Google Play services passkey provider | none: the build fails if any is in the APK |
 | QR codes read by | ML Kit, through `expo-camera` | zxing-cpp (open source), through the app's own camera module, `modules/trikey-qr-camera` (CameraX) |
 | Google Drive backup | when `EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID` is set (needs Google Play services on the phone) | never offered; the backup is the recovery code plus the backup file, which the share sheet can still put in Google Drive |
 | Passkeys | `androidx.credentials` with the Play services provider (when `EXPO_PUBLIC_PASSKEY_RP_ID` is set) | `androidx.credentials` without it: only other credential providers, on Android 14 and later |
 | Settings → About | Trikey | Trikey (no Google) |
 
-Both have the same package name and are signed with the same release key, so either installs over the other and the wallet
-stays. Check for updates (Settings → About) offers the APK of the build that is installed. iOS has one build.
+They are two apps, signed with the same release key: both can be installed on one phone, each with its own storage
+(Keystore keys, the wallet database, file provider authorities, which libraries name after `${applicationId}`), and each
+release updates the same app. Installing one does not move a wallet from the other; restoring its backup does. Up to
+0.1.21-alpha both had `app.trikey.wallet`, so moving from that no-Google APK takes a restore (docs/android-signing.md,
+"Moving from the no-Google APK"; the FOSS app's Welcome screen says it too). `app.config.ts` sets the id and scheme for
+the variant (`android-variant.js`, `androidAppFor`) and the config plugin the launcher label; iOS keeps `trikey://` and its
+bundle id whatever the variant. Check for updates (Settings → About) offers the APK of the app it runs in. iOS has one
+build.
 
 How the FOSS build leaves Google out:
 
@@ -268,7 +277,7 @@ variables in your build service (for example EAS secrets).
 | Variable | What it is | If unset |
 |---|---|---|
 | `TRIKEY_IOS_BUNDLE_ID` | Your iOS bundle identifier | `app.trikey.wallet` from `app.json` (the Trikey project's own, you cannot sign it) |
-| `TRIKEY_ANDROID_PACKAGE` | Your Android package name | `app.trikey.wallet` from `app.json` |
+| `TRIKEY_ANDROID_PACKAGE` | Your Android package name (the build without Google code, `TRIKEY_ANDROID_VARIANT=foss`, adds `.foss` to it) | `app.trikey.wallet` from `app.json` |
 | `TRIKEY_APPLE_TEAM_ID` | Your Apple Team ID | Xcode asks |
 | `TRIKEY_ICLOUD_CONTAINER` | `iCloud.<your bundle id>` | `iCloud.<bundle id>` |
 | `TRIKEY_ICLOUD_ENVIRONMENT` | `Development` or `Production` | `Production` |

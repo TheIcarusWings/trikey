@@ -229,6 +229,7 @@ jobs:
             dist/*.apk
             dist/*.apk.sha256
             dist/release-notes-*.md
+            dist/application-id-*.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -296,5 +297,6 @@ jobs:
             dist/*.apk
             dist/*.apk.sha256
             dist/release-notes-*.md
+            dist/application-id-*.txt
           if-no-files-found: error
           retention-days: 30

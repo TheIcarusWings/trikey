@@ -27,18 +27,25 @@ if [ "${TRIKEY_ANDROID_VARIANT}" = standard ]; then
 
 ${signing_note}
 
-**Which APK?** There are two builds of the same app. They have the same name, package and signature, so you can
-switch at any time by installing the other one over the app; the wallet stays.
+**Which APK?** There are two builds of the same code, as two apps: each updates itself, and both can be on one
+phone, each with its own wallet.
 
-- \`${standard_name}.apk\`: the **standard** build. It contains Google's libraries: QR codes are read with
-  Google's ML Kit, and Google Drive backup can be switched on in a later release (it needs Google Play services
-  on the phone).
-- \`${foss_name}.apk\`: **no Google code**, for phones without Google Play services (GrapheneOS, /e/OS,
-  LineageOS) or if you prefer an app without it. QR codes are read with the open source zxing-cpp. It will never
-  offer Google Drive backup: the backup is the recovery code plus the backup file, which you can still save to
-  Google Drive or anywhere else from the share sheet. Settings, About says "Trikey (no Google)".
+- \`${standard_name}.apk\`: the **standard** build, "Trikey" (app.trikey.wallet). It contains Google's
+  libraries: QR codes are read with Google's ML Kit, and Google Drive backup can be switched on in a later release
+  (it needs Google Play services on the phone).
+- \`${foss_name}.apk\`: **no Google code**, "Trikey FOSS" (app.trikey.wallet.foss), for phones without Google
+  Play services (GrapheneOS, /e/OS, LineageOS) or if you prefer an app without it. QR codes are read with the
+  open source zxing-cpp. It will never offer Google Drive backup: the backup is the recovery code plus the backup
+  file, which you can still save to Google Drive or anywhere else from the share sheet. Settings, About says
+  "Trikey (no Google)".
 
 Today both do the same: Google Drive backup is not switched on in either yet. Not sure? Take the standard one.
+
+**Had the no-Google APK of 0.1.21-alpha or earlier?** It had the standard app's id, so this FOSS APK cannot
+update it: it installs as a second app, next to the old one, and starts empty. Your wallet is still in the old
+app. In Trikey FOSS, tap "I already have a Trikey wallet", then "My phone, but I have its backup", and open your
+backup file with your recovery code. Uninstall the old app once the wallet shows in the new one. (Or install
+the standard APK over the old app: it updates in place and keeps the wallet, with Google's libraries.)
 
 - Pre-alpha, open source, not audited. Test networks only (signet, testnet4). Never put real bitcoin in it.
 - Install: download the APK on the phone, open it, and allow installing from this source when Android asks.

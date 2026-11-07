@@ -20,7 +20,7 @@ a plain stack of cards and reads the same.
 | `favicon.svg` | The logo |
 | `vercel.json` | Response headers: `application/json` for the Apple file and `nostr.json` (plus CORS for the latter), HSTS and other security headers |
 | `.well-known/apple-app-site-association` | iOS: passkeys for `app.trikey.wallet` (needs a Team ID) |
-| `.well-known/assetlinks.json` | Android: passkeys for `app.trikey.wallet` (needs a signing fingerprint) |
+| `.well-known/assetlinks.json` | Android: passkeys for `app.trikey.wallet` and `app.trikey.wallet.foss`, the app without Google code (needs a signing fingerprint) |
 | `.well-known/nostr.json` | NIP-05: `trikey@trikey.app` and `_@trikey.app` (shown as just `trikey.app`) name Trikey's publisher npub, the key that signs the Zapstore listing (`docs/zapstore.md`). No `relays` hint: `relay.trikey.app` stores only gift wraps and Nostr Connect events, not profiles, so a client following a hint there would find nothing. Served as JSON with `Access-Control-Allow-Origin: *`, which NIP-05 requires |
 | `.well-known/security.txt` | RFC 9116 contact, points to the repo's private security advisories |
 
@@ -81,7 +81,9 @@ under Membership details. Keep the `.app.trikey.wallet` bundle id after it.
 
 ### `.well-known/assetlinks.json`
 
-Edit the line `"REPLACE_WITH_SHA256_FINGERPRINT"` and replace it with the SHA-256
+The file has one statement per Android app: Trikey (`app.trikey.wallet`) and Trikey FOSS
+(`app.trikey.wallet.foss`, the build without Google code). Both are signed with the same release key. In each, edit
+the line `"REPLACE_WITH_SHA256_FINGERPRINT"` and replace it with the SHA-256
 fingerprint of the key that **signs the build the user installs**, in the form
 `AA:BB:CC:...` (32 colon-separated bytes). To support several builds, add one
 string per key to the `sha256_cert_fingerprints` array:
@@ -101,7 +103,7 @@ string per key to the `sha256_cert_fingerprints` array:
   file, so a change can take a while to appear.
 - **Google.** Open
   `https://digitalassetlinks.googleapis.com/v1/statements:list?source.web.site=https://trikey.app&relation=delegate_permission/common.get_login_creds`.
-  It should list your package and fingerprint.
+  It should list both packages and the fingerprint.
 
 Both files must be served over HTTPS with no redirect. The apex domain serves them directly; only `www` redirects.
 

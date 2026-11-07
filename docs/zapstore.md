@@ -10,7 +10,13 @@ Trikey is listed on Zapstore from 0.1.10-alpha. Install Zapstore (from zapstore.
 listing's publisher is Trikey's own npub (below), and the APK is the same file as on the
 [GitHub releases page](https://github.com/TheIcarusWings/trikey/releases), signed with the Trikey release key
 (certificate SHA-256 in [`packaging/android/release-cert.sha256`](../packaging/android/release-cert.sha256)). An APK
-from Zapstore, Obtainium or GitHub installs over the others and keeps the wallet.
+of the same app from Zapstore, Obtainium or GitHub installs over the others and keeps the wallet.
+
+There are two apps (from 0.1.22-alpha; [android-signing.md](android-signing.md), "Two APKs, two apps"): **Trikey**
+(`app.trikey.wallet`, the standard build, with Google's libraries) and **Trikey FOSS** (`app.trikey.wallet.foss`, no
+Google code). The **Trikey** listing has the standard app. **Trikey FOSS** gets its own listing once the maintainer has
+published it (below); until then, take its APK from GitHub or Obtainium. Each app has its own wallet: to move one from
+the other, restore your backup file and recovery code in the new app.
 
 Publisher npub: `npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`. Check it on the listing before installing. It is also
 `trikey@trikey.app` (NIP-05, from [`site/.well-known/nostr.json`](../site/.well-known/nostr.json)), so nostr apps and Zapstore
@@ -50,3 +56,56 @@ publishes it on its next visit. The proof expires after a while; `zsp` says when
 What it publishes: the standard APK (`trikey-alpha-v<version>.apk`, the `match` in `zapstore.yaml`), on Zapstore's
 main channel although every Trikey release is still a GitHub pre-release (`prerelease_channel: main`), with that
 version's changelog section as release notes.
+
+## For the maintainer: the second listing, Trikey FOSS (once, after the first release with it)
+
+Zapstore lists apps by application id, so Trikey FOSS (`app.trikey.wallet.foss`) is a listing of its own, beside Trikey's,
+from the same repository, publisher npub and APK certificate. Its description is
+[`packaging/zapstore/foss/zapstore.yaml`](../packaging/zapstore/foss/zapstore.yaml): the same as the root file but
+`match` takes only the FOSS APK (`trikey-alpha-foss-v<version>.apk`), `release_filter` skips the releases up to
+0.1.21-alpha (whose FOSS APK still had the standard app's id: publishing one would put it under the wrong app), and the
+name, summary and description are Trikey FOSS's. zsp's wizard reads `./zapstore.yaml`, which is why the file is in a
+folder of its own.
+
+Run this on your own computer, after the release workflow has published the first release with the new id (0.1.22-alpha
+or later) and both APKs are on its GitHub release page:
+
+1. Update `zsp` (step 2 above) and check what Zapstore would publish; this reads only, it signs and uploads nothing:
+
+   ```sh
+   cd <your checkout of the repository>
+   git pull
+   zsp check packaging/zapstore/foss/zapstore.yaml
+   ```
+
+   It must find `trikey-alpha-foss-v<version>.apk` with app id `app.trikey.wallet.foss` and the certificate in
+   `packaging/android/release-cert.sha256`, say the app is not listed yet, and find Trikey's proof for that certificate
+   (the same key signs both apps, so the proof made for Trikey covers it).
+2. Publish the first release, which creates the listing:
+
+   ```sh
+   cd packaging/zapstore/foss
+   zsp
+   ```
+
+   The wizard says `Using the local zapstore.yaml (...)` and `Found Trikey FOSS (v<version>)`. It finds the existing
+   proof (`... is claimed by npub1qussfn...`); have the keystore (`trikey-release.p12`) at hand anyway, in case the proof
+   is due for renewal. It asks for the signer (the same `bunker://` from Amber or nsec.app as for Trikey; keep the
+   signer app in front). Choose **Publish now**, check the
+   preview page it opens (name Trikey FOSS, app id `app.trikey.wallet.foss`, the Trikey icon), and approve. When it asks
+   how new releases reach Zapstore, choose **Let Zapstore publish them for you**. It may say it wrote or changed
+   `zapstore.yaml` in that folder: do not commit a change that drops `match` or `release_filter`; send any other change
+   as a pull request.
+3. Check the next release. After the next GitHub release, run `zsp check packaging/zapstore/foss/zapstore.yaml` again
+   (or look at the listing in Zapstore): it should show the new version as published. If Zapstore did not pick it up by
+   itself (its indexer may look only at the repository-root `zapstore.yaml`, which takes the standard APK), publish each
+   release yourself, from the repository root, after the release workflow has attached the APKs:
+
+   ```sh
+   zsp publish packaging/zapstore/foss/zapstore.yaml
+   ```
+
+   and ask Zapstore (an issue on [zapstore/relay](https://github.com/zapstore/relay), with both app ids, the repository
+   URL and the path of the second config) to track the second app. Nothing about Trikey's own listing changes.
+
+Like the first listing, this needs no secret in the repository or in GitHub.

@@ -9,8 +9,11 @@
 //   by the app's own camera module (modules/trikey-qr-camera: CameraX and the open source zxing-cpp decoder) in place
 //   of expo-camera. Backup is the recovery code plus a backup file.
 //
-// Both have the same package name and are signed with the same key, so one installs over the other and the wallet stays.
-// iOS has one build; this setting does not change it.
+// They are two apps: each has its own application id, launcher label and URL scheme (ANDROID_APP_SUFFIXES below),
+// so both can be installed on one phone and listed separately in app stores. Both are signed with the same key. The
+// standard build keeps the id it always had (app.trikey.wallet), so it updates in place; the FOSS build is
+// app.trikey.wallet.foss. Each app has its own storage: installing one does not move a wallet from the other, restoring
+// its backup does. iOS has one build; this setting does not change it.
 //
 // CommonJS without dependencies, because it is read by app.config.ts, metro.config.js, react-native.config.js and the
 // config plugin in plugins/, and by the tests.
@@ -28,6 +31,32 @@ function androidVariant(env = process.env) {
   if (!raw) return 'standard';
   if (raw === 'standard' || raw === 'foss') return raw;
   throw new Error(`TRIKEY_ANDROID_VARIANT must be "standard" or "foss", not "${env.TRIKEY_ANDROID_VARIANT}"`);
+}
+
+/**
+ * What tells the two Android apps apart on a phone and in a store, as suffixes to the standard app's values (app.json,
+ * or the TRIKEY_ANDROID_PACKAGE of a fork). The standard app adds nothing, so its users update in place.
+ * - `package`: the application id. `app.trikey.wallet.foss`, the usual way to name a flavour of the same app.
+ * - `label`: the name under the launcher icon, in the app list and in Android's dialogs. "Trikey FOSS" is short enough
+ *   for a home screen ("Trikey (no Google)" would be cut on most launchers); Settings > About says "Trikey (no Google)".
+ * - `scheme`: the URL scheme the app registers. Trezor Suite Lite answers on `<scheme>://trezor-callback`: with both
+ *   apps on a phone and one scheme, Android would ask which app to open, and the wrong answer loses the Trezor's reply.
+ *   No other `trikey://` link is opened by Android (pairing, invite and recovery codes are scanned or pasted in the app).
+ */
+const ANDROID_APP_SUFFIXES = {
+  standard: { package: '', label: '', scheme: '' },
+  foss: { package: '.foss', label: ' FOSS', scheme: '-foss' },
+};
+
+/**
+ * `variant`'s application id, launcher label and URL scheme, from the standard app's.
+ * @param {'standard' | 'foss'} variant
+ * @param {{ package: string; label: string; scheme: string }} standard
+ */
+function androidAppFor(variant, standard) {
+  const add = ANDROID_APP_SUFFIXES[variant];
+  if (!add) throw new Error(`unknown Android variant ${variant}`);
+  return { package: standard.package + add.package, label: standard.label + add.label, scheme: standard.scheme + add.scheme };
 }
 
 /**
@@ -59,10 +88,12 @@ const FOSS_FORBIDDEN_PACKAGES = [...FOSS_UNLINKED_LIBRARIES, ...UNLINKED_EXPO_MO
 const FOSS_EXCLUDED_MAVEN_MODULES = [{ group: 'androidx.credentials', module: 'credentials-play-services-auth' }];
 
 module.exports = {
+  ANDROID_APP_SUFFIXES,
   ANDROID_VARIANTS,
   FOSS_EXCLUDED_MAVEN_MODULES,
   FOSS_FORBIDDEN_PACKAGES,
   FOSS_UNLINKED_LIBRARIES,
   UNLINKED_EXPO_MODULES,
+  androidAppFor,
   androidVariant,
 };
