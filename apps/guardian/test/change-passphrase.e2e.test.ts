@@ -50,7 +50,7 @@ const phoneKey = generateSecretKey();
 const phonePub = getPublicKey(phoneKey);
 let phone: RpcClient;
 let walletId: string;
-const slot = '0123456789abcdef';
+let slot = '0123456789abcdef';
 const phoneAlerts: Alert[] = [];
 const OLD = 'correct horse battery staple';
 const NEW = 'a brand new passphrase for the box';
@@ -126,6 +126,7 @@ beforeAll(async () => {
     rules: { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [], sweepFeeCapSats: 20_000 },
   }, rig.nowSec() * 1000));
   // Hardware unlock on before the change (in the clear: the add's sealing is sealed-unlock.e2e's business).
+  slot = (await phone.call('guardian.status', {})).hardwareUnlockOffer!.slot;
   await phone.call('unlock.hardware.add', { walletId, slot, signature: hwSig() });
 }, 30_000);
 

@@ -452,7 +452,7 @@ export const PhoneResumeParams = z.strictObject({
 });
 export const PhoneResumeResult = z.object({ phoneSpending: z.literal('enabled') });
 
-/** An unlock slot's id (`unlockKeyMessage`): 8 random bytes in hex, picked by the phone when it turns hardware unlock on. */
+/** An unlock slot's id (`unlockKeyMessage`): 8 random bytes in hex, offered by the guardian (`unlock_slot_offer`), else picked by the phone. */
 export const UnlockSlotId = z.string().regex(/^[0-9a-f]{16}$/, 'expected 8 bytes of lowercase hex');
 
 const PassphraseUnlock = z.strictObject({ kind: z.literal('passphrase'), passphrase: z.string().min(1).max(1024) });
@@ -722,6 +722,12 @@ export const GuardianStatusResult = z
      * locked too: it is what the phone signs to unlock.
      */
     hardwareUnlock: z.object({ slot: UnlockSlotId, addedAt: UnixSeconds }).optional(),
+    /**
+     * Guardians with `unlock_slot_offer`, while unlocked: the slot id for this wallet's next `unlock.hardware.add`, picked
+     * by the guardian (random, in its memory only, the same until it is used or `expiresAt`, unix seconds, passes; a
+     * restart makes a new one). The phone has the hardware wallet sign `unlockKeyMessage` for it. Never to a guest.
+     */
+    hardwareUnlockOffer: z.object({ slot: UnlockSlotId, expiresAt: UnixSeconds }).optional(),
     /**
      * Guardians with `sealed_unlock`: the public half of its sealing key (in memory only; new at every lock and every
      * unlock, after every failed unlock and after every `unlock.hardware.add` that used it). The phone seals
@@ -1375,7 +1381,8 @@ export const LabelsDeleteResult = z.object({ deleted: z.array(WalletId).max(64) 
 
 /**
  * Turns hardware unlock on for one wallet of the owner (PROTOCOL.md, "Unlocking with the hardware wallet"): the hardware
- * wallet's BIP 137 signature of `unlockKeyMessage` for a fresh `slot`. The paired phone of that wallet only, the guardian
+ * wallet's BIP 137 signature of `unlockKeyMessage` for a fresh `slot` (on guardians with `unlock_slot_offer`, the one
+ * `guardian.status.hardwareUnlockOffer` names; another is refused). The paired phone of that wallet only, the guardian
  * unlocked, never a guest. The guardian checks the signature against the wallet's authorization key, derives the slot's
  * key from it, encrypts its seed under that key as one more unlock slot, and forgets the signature and the key. It
  * replaces the wallet's earlier slot, if any. The passphrase always stays.

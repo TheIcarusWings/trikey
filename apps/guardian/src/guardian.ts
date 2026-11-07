@@ -51,6 +51,7 @@ import type { SimplePool } from 'nostr-tools/pool';
 import { normalizeURL } from 'nostr-tools/utils';
 import { GUARDIAN_FEATURES, RpcServer, UnlockKeyHolder, unlockKeyMessage, type SealedUnlock, type UnlockSecret, SeenWraps, SimplePoolRelayPool, checkRelayList, checkRelayUrl, createSimplePool, sameRelays, type Alert, type MethodName } from '@trikey/protocol';
 import { assertRandomSourceHealthy } from '@trikey/core/random-health';
+import { secureRandomBytes } from '@trikey/core/random';
 import { ChainService } from './chain/chain.js';
 import { RelayedTxs } from './chain/relayed.js';
 import { BitcoinRpc } from './chain/bitcoind.js';
@@ -229,10 +230,13 @@ export type UnlockOutcome =
 /** How an unlock attempt came (`Guardian.unlockAttempt`): for its failure code, the log and the Activity. */
 type AttemptHow = { hardwareOf?: string; sealed?: boolean; badSeal?: boolean; unsealed?: boolean; caller?: Caller };
 
+/** How long a hardware unlock slot id the guardian offered stays good (`guardian.status.hardwareUnlockOffer`). */
+export const SLOT_OFFER_MS = 30 * 60_000;
+
 /** What `unlock.hardware.add` did, or why not. */
 export type HardwareUnlockAddOutcome =
   | { ok: true; walletId: string; slot: string; addedAt: number }
-  | { ok: false; code: 'locked' | 'not_registered' | 'wallet_changed' | 'hardware_unconfirmed' | 'bad_signature' | 'setup_required'; message: string }
+  | { ok: false; code: 'locked' | 'not_registered' | 'wallet_changed' | 'hardware_unconfirmed' | 'bad_signature' | 'setup_required' | 'slot_not_offered'; message: string }
   /**
    * The signature sealed (`sealed_unlock`): `unlock_key_stale`, sealed to a key the guardian no longer holds or expired
    * (seal again, nothing was opened); `bad_seal`, sealed to the current key but it does not open, or is not this
@@ -654,6 +658,7 @@ export class Guardian implements WalletRuntime {
     GUARDIAN_FEATURES.ownWallets2,
     GUARDIAN_FEATURES.labelsBackup,
     GUARDIAN_FEATURES.hardwareUnlock,
+    GUARDIAN_FEATURES.hardwareUnlockOffer,
     GUARDIAN_FEATURES.sealedUnlock,
     GUARDIAN_FEATURES.passphraseChange,
     GUARDIAN_FEATURES.pairingRulesApproval,
@@ -1444,6 +1449,29 @@ export class Guardian implements WalletRuntime {
     return s ? { slot: s.slot, addedAt: Math.floor(s.addedAt / 1000) } : undefined;
   }
 
+  /**
+   * The slot ids offered for each wallet's next `unlock.hardware.add` (`hardwareUnlockOfferOf`): picked here, in memory
+   * only, each taken once. With the phone picking them, an old signature (kept by malware, or read from an unsealed add)
+   * could make its old slot again after the owner turned the option off and on (security review 2026-11, sweep 2).
+   */
+  private readonly slotOffers = new Map<string, { slot: string; until: number }>();
+
+  /**
+   * `guardian.status.hardwareUnlockOffer` of `walletId` (guardians with `unlock_slot_offer`, unlocked only): the slot id
+   * its hardware wallet signs to turn the option on. The same one until it is used or `SLOT_OFFER_MS` passes.
+   */
+  hardwareUnlockOfferOf(walletId: string | undefined): { slot: string; expiresAt: number } | undefined {
+    if (!walletId || this.locked || !this.features.includes(GUARDIAN_FEATURES.hardwareUnlock) || !this.features.includes(GUARDIAN_FEATURES.hardwareUnlockOffer))
+      return undefined;
+    const now = this.clock.now();
+    let offer = this.slotOffers.get(walletId);
+    if (!offer || offer.until <= now) {
+      offer = { slot: hex.encode(secureRandomBytes(8)), until: now + SLOT_OFFER_MS };
+      this.slotOffers.set(walletId, offer);
+    }
+    return { slot: offer.slot, expiresAt: Math.floor(offer.until / 1000) };
+  }
+
   /** The text the hardware wallet of `walletId` signs for unlock slot `slot` (`@trikey/protocol` `unlockKeyMessage`). */
   private unlockText(walletId: string, slot: string): string {
     return unlockKeyMessage({ walletId, guardianPubkey: this.identity!.pubkey, network: this.config.network, slot });
@@ -1503,6 +1531,17 @@ export class Guardian implements WalletRuntime {
       return { ok: false, code: 'wallet_changed', message: `This guardian guards wallet ${reg.walletId} now: sign the text for it.` };
     if (w.engine.status().hardwareConfirmRequired)
       return { ok: false, code: 'hardware_unconfirmed', message: 'Confirm your hardware wallet for this wallet first (after the recovery).' };
+    // Only the slot id this guardian offered (`hardwareUnlockOfferOf`), still fresh: an old signature for an id of before
+    // never makes a slot again. Checked before the seal is opened: nothing secret is read for a refused id.
+    const offer = this.features.includes(GUARDIAN_FEATURES.hardwareUnlockOffer) ? this.slotOffers.get(reg.walletId) : undefined;
+    if (this.features.includes(GUARDIAN_FEATURES.hardwareUnlockOffer) && (!offer || offer.slot !== input.slot || offer.until <= this.clock.now())) {
+      this.log.warn('unlock_slots.not_offered', { walletId: reg.walletId });
+      return {
+        ok: false,
+        code: 'slot_not_offered',
+        message: 'The guardian did not offer that unlock slot, or it ran out (the guardian restarted, or more than 30 minutes went by). Turn it on again. If this keeps happening, update the Trikey app.',
+      };
+    }
     // The signature: sealed to the guardian's current sealing key (PROTOCOL.md, "Sealed unlock"), or from an older phone
     // in the clear (accepted, and marked).
     let signature: string;
@@ -1539,6 +1578,7 @@ export class Guardian implements WalletRuntime {
     // Opened once before it counts: a slot that would not open is never stored.
     openSlot(slot, signature, binding).fill(0);
     await this.unlockSlots.put(slot);
+    this.slotOffers.delete(reg.walletId); // taken: the next add needs a new id, and a new signature
     this.log.info('unlock_slots.added', { walletId: reg.walletId, ...(unsealed ? { unsealed: true } : {}) });
     await w.logEvent({ type: 'unlock_slot_added', walletId: reg.walletId, ...(unsealed ? { unsealed: true as const } : {}) });
     return { ok: true, walletId: reg.walletId, slot: slot.slot, addedAt: slot.addedAt };

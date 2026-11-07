@@ -68,6 +68,8 @@ async function rpcError(p: Promise<unknown>): Promise<RpcError> {
 }
 
 const status = () => phone.call('guardian.status', {});
+/** The slot id the guardian offers for the next add (unlocked only; `unlock_slot_offer`). */
+const offered = async () => (await status()).hardwareUnlockOffer!.slot;
 const unlockKeyNow = async () => (await status()).unlockKey?.pubkey;
 const activity = () => rig.guardian.service.get().activity;
 const reason = (e: RpcError) => (e.data as { reason?: string } | undefined)?.reason;
@@ -185,7 +187,8 @@ beforeAll(async () => {
     hardwareAuthProof: signMessage(pairingMessage(walletId, hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!)), hwAuthPrivateKey()),
     rules: { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [], sweepFeeCapSats: 20_000 },
   }, rig.nowSec() * 1000));
-  // Hardware unlock on, the signature sealed (the guardian is unlocked: its sealing key for now).
+  // Hardware unlock on, the signature sealed (the guardian is unlocked: its sealing key for now), for the slot it offers.
+  slot = await offered();
   await sealedAdd(slot, (await unlockKeyNow())!);
 }, 30_000);
 
@@ -360,8 +363,8 @@ describe('sealed unlock', { timeout: 60_000 }, () => {
   });
 
   it('unlock.hardware.add takes the signature sealed; the key is replaced after each use; a stale key changes nothing', async () => {
+    const next = await offered();
     const k1 = (await unlockKeyNow())!;
-    const next = '1111222233334444';
     expect(await sealedAdd(next, k1)).toMatchObject({ walletId, slot: next });
     slot = next;
     expect((await status()).hardwareUnlock).toMatchObject({ slot });
@@ -370,28 +373,30 @@ describe('sealed unlock', { timeout: 60_000 }, () => {
     // Used: a new key. The same key again is stale, and nothing changes.
     const k2 = (await unlockKeyNow())!;
     expect(k2).not.toBe(k1);
-    const e = await rpcError(sealedAdd('5555666677778888', k1));
+    const pending = await offered();
+    const e = await rpcError(sealedAdd(pending, k1));
     expect(e.code).toBe(ErrorCode.UnlockFailed);
     expect(reason(e)).toBe('unlock_key_stale');
     expect((await status()).hardwareUnlock).toMatchObject({ slot });
     expect(await unlockKeyNow()).toBe(k2);
     // Expired: stale, nothing added; but it was decrypted, so the key is used up too.
-    expect(reason(await rpcError(sealedAdd('5555666677778888', k2, { expiresAt: rig.nowSec() })))).toBe('unlock_key_stale');
+    expect(reason(await rpcError(sealedAdd(pending, k2, { expiresAt: rig.nowSec() })))).toBe('unlock_key_stale');
     expect((await status()).hardwareUnlock).toMatchObject({ slot });
     const k3 = (await unlockKeyNow())!;
     expect(k3).not.toBe(k2);
     // A replay to an old key does not burn the live one.
-    expect(reason(await rpcError(sealedAdd('5555666677778888', k2)))).toBe('unlock_key_stale');
+    expect(reason(await rpcError(sealedAdd(pending, k2)))).toBe('unlock_key_stale');
     expect(await unlockKeyNow()).toBe(k3);
   });
 
   it("an add's seal that does not open, or is bound to another slot, request or purpose, is refused and uses up the key", async () => {
+    const pending = await offered();
     const cases: [string, (k: string) => Promise<unknown>][] = [
-      ['tampered', (k) => sealedAdd('5555666677778888', k, { tamper: (s) => ({ ...s, payload: base64.encode(base64.decode(s.payload).map((b, i) => (i === 60 ? b ^ 1 : b))) }) })],
-      ['another slot inside', (k) => sealedAdd('5555666677778888', k, { innerSlot: '9999aaaabbbbcccc' })],
-      ['another request', (k) => sealedAdd('5555666677778888', k, { id: generateMessageId() })],
+      ['tampered', (k) => sealedAdd(pending, k, { tamper: (s) => ({ ...s, payload: base64.encode(base64.decode(s.payload).map((b, i) => (i === 60 ? b ^ 1 : b))) }) })],
+      ['another slot inside', (k) => sealedAdd(pending, k, { innerSlot: '9999aaaabbbbcccc' })],
+      ['another request', (k) => sealedAdd(pending, k, { id: generateMessageId() })],
       // An unlock's seal of a good signature, sent as an add.
-      ['an unlock\'s seal', (k) => sealedAdd('5555666677778888', k, { purpose: 'guardian.unlock' })],
+      ['an unlock\'s seal', (k) => sealedAdd(pending, k, { purpose: 'guardian.unlock' })],
     ];
     for (const [what, call] of cases) {
       const key = (await unlockKeyNow())!;
@@ -407,7 +412,7 @@ describe('sealed unlock', { timeout: 60_000 }, () => {
     const key = (await unlockKeyNow())!;
     const opens = vi.spyOn(rig.guardian.unlockKey, 'open');
     try {
-      expect((await rpcError(sealedAdd('5555666677778888', key))).code).toBe(ErrorCode.GuardianLocked);
+      expect((await rpcError(sealedAdd(pending, key))).code).toBe(ErrorCode.GuardianLocked);
       expect(opens).not.toHaveBeenCalled();
     } finally {
       opens.mockRestore();
@@ -423,7 +428,7 @@ describe('sealed unlock', { timeout: 60_000 }, () => {
     const lockedKey = Uint8Array.from(heldSecret()!);
     expect(await sealedUnlock(PASS(), (await unlockKeyNow())!)).toEqual({ unlocked: true });
     const unlockedKey = Uint8Array.from(heldSecret()!);
-    const next = 'ddddeeeeffff0000';
+    const next = await offered();
     expect(await sealedAdd(next, (await unlockKeyNow())!)).toMatchObject({ slot: next });
     slot = next;
     const files = await dataFiles(rig.dir);
@@ -458,8 +463,11 @@ describe('sealed unlock', { timeout: 60_000 }, () => {
     await rig.lock();
     expect(await phone.call('guardian.unlock', { kind: 'hardware', walletId, slot, signature: hwSig() })).toEqual({ unlocked: true });
     expect(activity().at(-1)).toMatchObject({ type: 'unlocked', method: 'hardware', unsealed: true });
-    // An older phone turning hardware unlock on.
-    const old = '0000111122223333';
+    // An older phone turning hardware unlock on picks its own slot id: refused now, and told to update (an old signature
+    // must never make its slot again); the signature in the clear for the guardian's own id still works, marked.
+    const own = '0000111122223333';
+    expect((await rpcError(phone.call('unlock.hardware.add', { walletId, slot: own, signature: hwSig(own) }))).data).toMatchObject({ reason: 'unlock_slot_not_offered' });
+    const old = await offered();
     expect(await phone.call('unlock.hardware.add', { walletId, slot: old, signature: hwSig(old) })).toMatchObject({ slot: old });
     slot = old;
     expect(activity().at(-1)).toMatchObject({ type: 'unlock_slot_added', walletId, unsealed: true });

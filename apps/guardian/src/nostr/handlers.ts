@@ -403,6 +403,8 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
         ...(s.walletId ? { walletId: s.walletId, hardwareConfirmRequired: s.hardwareConfirmRequired } : {}),
         // Unlocking with the hardware wallet: the slot this wallet's hardware wallet signs for (locked too: that is when it is needed).
         ...(g.hardwareUnlockOf(s.walletId) ? { hardwareUnlock: g.hardwareUnlockOf(s.walletId)! } : {}),
+        // The slot id the guardian picked for the next `unlock.hardware.add` (unlocked only; an old signature never fits it).
+        ...(g.hardwareUnlockOfferOf(s.walletId) ? { hardwareUnlockOffer: g.hardwareUnlockOfferOf(s.walletId)! } : {}),
         // Sealed unlock: the key the phone seals `guardian.unlock` and `unlock.hardware.add` to (memory only; new at every lock, unlock and use).
         ...(unlockKey ? { unlockKey: { pubkey: unlockKey } } : {}),
         ...(s.registered ? { key3Mixed: !!w.engine.registration()?.key3Mix } : {}),
@@ -961,6 +963,9 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
           throw new RpcError(ErrorCode.ApprovalInvalid, r.message, { reason: 'sealed_unlock_invalid' });
         case 'wallet_changed':
           throw new RpcError(ErrorCode.InvalidParams, r.message, { reason: 'unlock_wallet_changed', walletId: w.engine.registration()?.walletId });
+        // A slot id the guardian did not offer (an older app picks its own), or one that ran out: sign the offered one.
+        case 'slot_not_offered':
+          throw new RpcError(ErrorCode.InvalidParams, r.message, { reason: 'unlock_slot_not_offered' });
         default:
           throw new RpcError(ErrorCode.Unavailable, r.message);
       }

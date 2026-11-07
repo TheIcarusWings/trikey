@@ -9,6 +9,8 @@
  * - after a restart the phone unlocks with one signature; a wrong one counts against the phone's throttle like a wrong
  *   passphrase, 5 in a row stop the phone until the web UI unlocks, and a recovery the phone did not start refuses it;
  * - a stale slot id (turned off, or on again) is not a guess; turning it off and on again makes old signatures worthless;
+ * - the guardian picks the slot id (`guardian.status.hardwareUnlockOffer`, once each): an old signature never makes its
+ *   slot again, and an id the phone picked (an older app) is refused;
  * - Activity: added, removed, unlocked with the hardware wallet; a guest's phone is refused;
  * - retiring the wallet, a recovery that leaves the guardian (rotation) and a reset delete the slots.
  * Regtest, throwaway keys and published BIP 39 test mnemonics only.
@@ -36,7 +38,7 @@ import {
   unlockKeyMessage,
 } from '@trikey/protocol';
 import { signMessage } from '../src/policy/index.js';
-import { PHONE_UNLOCK_MAX_FAILURES, RESET_CONFIRMATION } from '../src/guardian.js';
+import { PHONE_UNLOCK_MAX_FAILURES, RESET_CONFIRMATION, SLOT_OFFER_MS } from '../src/guardian.js';
 import { UNLOCK_SLOTS_FILE } from '../src/unlock-slots.js';
 import { GUEST_FEATURES } from '../src/hosting/service.js';
 import { STOP_NOW_CONFIRMATION } from '../src/hosting/types.js';
@@ -75,6 +77,12 @@ const hwSig = (slot: string, key = hwAuthPrivateKey()) => signMessage(text(slot)
 const activity = () => rig.guardian.service.get().activity;
 const slotsPath = () => join(rig.dir, UNLOCK_SLOTS_FILE);
 const unlockHw = (slot: string, signature = hwSig(slot), c = phone) => c.call('guardian.unlock', { kind: 'hardware', walletId, slot, signature });
+/** The slot id the guardian offers for the next `unlock.hardware.add` (unlocked only). */
+const offered = async (c = phone): Promise<string> => {
+  const offer = (await c.call('guardian.status', {})).hardwareUnlockOffer;
+  if (!offer) throw new Error('no hardware unlock slot offered');
+  return offer.slot;
+};
 
 beforeAll(async () => {
   rig = await GuardianRig.start({ http: true });
@@ -105,7 +113,8 @@ afterAll(async () => {
 });
 
 describe('unlocking the guardian with the hardware wallet', { timeout: 60_000 }, () => {
-  const SLOT = '0123456789abcdef';
+  // Any id while nothing is on; the guardian's offer once it is unlocked.
+  let SLOT = '0123456789abcdef';
 
   it("is a feature of the owner's guardian, never offered to guests, and off by default", async () => {
     const st = await phone.call('guardian.status', {});
@@ -124,7 +133,9 @@ describe('unlocking the guardian with the hardware wallet', { timeout: 60_000 },
   it('turning it on needs the guardian unlocked and the wallet\'s own hardware wallet', async () => {
     // Locked: the seed is not in memory, so there is nothing to seal.
     expect((await rpcError(phone.call('unlock.hardware.add', { walletId, slot: SLOT, signature: hwSig(SLOT) }))).code).toBe(ErrorCode.GuardianLocked);
+    expect((await phone.call('guardian.status', {})).hardwareUnlockOffer).toBeUndefined(); // offered only while unlocked
     await rig.unlock();
+    SLOT = await offered();
     // A phone alone cannot make it: any key but the hardware wallet's authorization key is refused.
     const phoneMade = await rpcError(phone.call('unlock.hardware.add', { walletId, slot: SLOT, signature: hwSig(SLOT, new Uint8Array(32).fill(0x33)) }));
     expect(phoneMade.code).toBe(ErrorCode.ApprovalInvalid);
@@ -248,6 +259,7 @@ describe('unlocking the guardian with the hardware wallet', { timeout: 60_000 },
     const gst = await guest.call('guardian.status', {});
     expect(gst.features ?? []).not.toContain(GUARDIAN_FEATURES.hardwareUnlock);
     expect(gst.hardwareUnlock).toBeUndefined();
+    expect(gst.hardwareUnlockOffer).toBeUndefined();
     const guestText = unlockKeyMessage({ walletId: fx.walletId, guardianPubkey: rig.pubkey, network: 'regtest', slot: SLOT });
     for (const call of [
       () => guest.call('unlock.hardware.add', { walletId: fx.walletId, slot: SLOT, signature: signMessage(guestText, hwAuthPrivateKey()) }),
@@ -264,8 +276,9 @@ describe('unlocking the guardian with the hardware wallet', { timeout: 60_000 },
   });
 
   it('off and on again: a new slot id, and the old signature is worthless (not even a guess)', async () => {
-    const NEW = 'fedcba9876543210';
     await rig.unlock();
+    const NEW = await offered();
+    expect(NEW).not.toBe(SLOT);
     expect(await phone.call('unlock.hardware.add', { walletId, slot: NEW, signature: hwSig(NEW) })).toMatchObject({ slot: NEW });
     expect(rig.guardian.unlockSlots.list().length).toBe(1);
     await rig.lock();
@@ -275,6 +288,30 @@ describe('unlocking the guardian with the hardware wallet', { timeout: 60_000 },
     // The old slot's signature sent as the new slot's: it does not verify.
     expect((await rpcError(unlockHw(NEW, hwSig(SLOT)))).data).toMatchObject({ reason: 'hardware_unlock_failed' });
     expect(await unlockHw(NEW)).toEqual({ unlocked: true });
+  });
+
+  it('PoC (sweep 2): an old signature cannot make its old slot again; the guardian picks every slot id, once', async () => {
+    // Malware kept the first slot's signature, and the owner turned the option off and on (slot NEW now).
+    const now = rig.guardian.unlockSlots.get(walletId)!.slot;
+    expect(now).not.toBe(SLOT);
+    const replay = await rpcError(phone.call('unlock.hardware.add', { walletId, slot: SLOT, signature: hwSig(SLOT) }));
+    expect(replay.code).toBe(ErrorCode.InvalidParams);
+    expect(replay.data).toMatchObject({ reason: 'unlock_slot_not_offered' });
+    expect(rig.guardian.unlockSlots.get(walletId)!.slot).toBe(now);
+    // Nor the current slot again (its id was taken), nor an id the phone picked itself (an older app: told to update).
+    expect((await rpcError(phone.call('unlock.hardware.add', { walletId, slot: now, signature: hwSig(now) }))).data).toMatchObject({ reason: 'unlock_slot_not_offered' });
+    const own = 'aaaabbbbccccdddd';
+    const older = await rpcError(phone.call('unlock.hardware.add', { walletId, slot: own, signature: hwSig(own) }));
+    expect(older.message).toMatch(/update the Trikey app/);
+    // The offer: the same id until it is used or 30 minutes pass, then a new one; a restart forgets it.
+    const a = await offered();
+    expect(await offered()).toBe(a);
+    rig.clock.advance(SLOT_OFFER_MS);
+    const b = await offered();
+    expect(b).not.toBe(a);
+    expect((await rpcError(phone.call('unlock.hardware.add', { walletId, slot: a, signature: hwSig(a) }))).data).toMatchObject({ reason: 'unlock_slot_not_offered' });
+    expect(rig.guardian.unlockSlots.get(walletId)!.slot).toBe(now);
+    expect(activity().filter((e) => e.type === 'unlock_slot_added').length).toBe(2);
   });
 
   it('turning it off deletes the slot (locked too), logged once; the passphrase stays', async () => {
@@ -289,6 +326,7 @@ describe('unlocking the guardian with the hardware wallet', { timeout: 60_000 },
   });
 
   it('retiring the wallet deletes its slot', async () => {
+    SLOT = await offered();
     await phone.call('unlock.hardware.add', { walletId, slot: SLOT, signature: hwSig(SLOT) });
     expect(existsSync(slotsPath())).toBe(true);
     const sequence = (await phone.call('guardian.status', {})).nextHardwareSequence;

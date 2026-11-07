@@ -76,6 +76,15 @@ export const GUARDIAN_FEATURES = {
    */
   hardwareUnlock: 'hardware_unlock',
   /**
+   * The guardian picks hardware unlock slot ids (PROTOCOL.md, "Unlocking with the hardware wallet"): while unlocked,
+   * `guardian.status.hardwareUnlockOffer` names a fresh slot id for the wallet, held in memory only, for 30 minutes,
+   * and `unlock.hardware.add` takes only that id (once). An old signature can then never make a slot again, so turning
+   * the option off and on revokes it (security review 2026-11, sweep 2). Such a guardian refuses a slot id it did not
+   * offer (`-32602`, `data.reason` `unlock_slot_not_offered`): a phone without this picks its own and is told to update.
+   * A phone picks its own id only for a guardian that does not list it. Never listed to a guest.
+   */
+  hardwareUnlockOffer: 'unlock_slot_offer',
+  /**
    * Sealed unlock (PROTOCOL.md, "Sealed unlock"): while locked, `guardian.status.unlockKey` names a key the guardian made
    * when it locked and holds in memory only; `guardian.unlock` takes `kind: "sealed"`, the passphrase or the hardware
    * signature sealed to that key, so an archived gift wrap plus the guardian's disk no longer reveal it. A phone sends

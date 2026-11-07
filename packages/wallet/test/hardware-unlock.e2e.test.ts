@@ -7,7 +7,7 @@
  * - turning it on asks the hardware wallet twice for the same text and refuses a device whose signatures differ;
  * - the phone keeps neither the signature nor anything derived from it: every unlock asks the hardware wallet again;
  * - after a restart (or a lock) one device confirmation unlocks the guardian; the passphrase still works;
- * - turning it off removes the slot; turning it on again makes a new slot;
+ * - turning it off removes the slot; turning it on again makes a new slot, with the id the guardian offers;
  * - several wallets: each its own slot, opened by its own hardware wallet.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -159,6 +159,30 @@ describe('unlock the guardian with the hardware wallet', { timeout: 60_000 }, ()
     const e = await rig.guardian.unlockWithHardware({ walletId, slot: next, signature });
     expect(e).toMatchObject({ ok: false, code: 'bad_hardware' });
     expect(await A.unlockGuardianWithHardware()).toEqual({ ok: true });
+  });
+
+  it("signs the slot id the guardian offers (an old signature never makes its slot again); an older guardian's is the phone's own", async () => {
+    const offer = rig.guardian.hardwareUnlockOfferOf(walletId)!;
+    expect(offer.slot).toMatch(/^[0-9a-f]{16}$/);
+    await A.enableHardwareUnlock();
+    expect(rig.guardian.unlockSlots.get(walletId)?.slot).toBe(offer.slot);
+    // Locked, the guardian offers none, and the phone says so before it asks the device.
+    await A.lockGuardian();
+    const before = signs();
+    expect((await walletError(A.enableHardwareUnlock())).code).toBe('wrong_state');
+    expect(signs()).toBe(before);
+    expect(await A.unlockGuardianWithHardware()).toEqual({ ok: true });
+    // A guardian from before offers: the phone picks the id, as it always did.
+    const features = rig.guardian.features;
+    rig.guardian.features = features.filter((f) => f !== GUARDIAN_FEATURES.hardwareUnlockOffer);
+    try {
+      await A.enableHardwareUnlock();
+      const own = rig.guardian.unlockSlots.get(walletId)!.slot;
+      expect(own).not.toBe(offer.slot);
+      expect(A.state.guardianStatus!.hardwareUnlock!.slot).toBe(own);
+    } finally {
+      rig.guardian.features = features;
+    }
   });
 
   it('turning it off removes the slot; then only the passphrase unlocks', async () => {

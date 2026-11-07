@@ -208,7 +208,7 @@ describe('lost phone, no backup: recovery ends with the new phone co-signing fro
     expect((await rig.api('GET', '/recovery-code')).body.error.code).toBe('locked');
     await rig.unlock();
     // The old phone had turned on unlocking with the hardware wallet: the recovery must take that slot away.
-    const slot = '00112233aabbccdd';
+    const slot = (await oldPhone.rpc.call('guardian.status', {})).hardwareUnlockOffer!.slot;
     const text = unlockKeyMessage({ walletId: oldId, guardianPubkey: rig.pubkey, network: 'regtest', slot });
     await oldPhone.rpc.call('unlock.hardware.add', { walletId: oldId, slot, signature: signMessage(text, hwAuthPrivateKey()) });
     expect(rig.guardian.unlockSlots.list().map((s) => s.walletId)).toEqual([oldId]);

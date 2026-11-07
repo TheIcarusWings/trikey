@@ -169,7 +169,10 @@ export function recoveryAccessMessage(ctx: { guardianPubkey: string; phonePubkey
   ]);
 }
 
-/** An unlock slot's id: 8 random bytes in hex, chosen by the phone when it turns hardware unlock on. */
+/**
+ * An unlock slot's id: 8 random bytes in hex. Guardians with `unlock_slot_offer` choose it (`guardian.status.hardwareUnlockOffer`,
+ * a fresh one for every slot made); older guardians took the one the phone picked when it turned hardware unlock on.
+ */
 export const UNLOCK_SLOT_ID = /^[0-9a-f]{16}$/;
 
 /**
@@ -182,7 +185,9 @@ export const UNLOCK_SLOT_ID = /^[0-9a-f]{16}$/;
  * the same device makes the same signature again for the same slot: the guardian derives the slot's key from it
  * (HKDF-SHA256 over `r || s`, `trikey/guardian-unlock/v1`, `@trikey/core` `keyFromSignature`) and checks the signature
  * against the wallet's authorization key first, so nothing but the hardware wallet can add or open a slot. The slot id
- * is fresh each time the option is turned on, so turning it off and on again makes every earlier signature worthless.
+ * is fresh each time the option is turned on, and on guardians with `unlock_slot_offer` the guardian picks it and takes
+ * each id once, so turning it off and on again makes every earlier signature worthless for the guardian's live data (a
+ * copy of its slots file made before still opens with the old signature: only "Replace guardian" ends that).
  * Never an approval: no sequence, no expiry; it opens one slot and nothing else.
  */
 export function unlockKeyMessage(ctx: { walletId: string; guardianPubkey: string; network: string; slot: string }): string {
