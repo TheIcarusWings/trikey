@@ -11,6 +11,7 @@
 import { MultisigWallet, getNetwork, type NetworkName } from '@trikey/core';
 import { JADE_DISPLAY_LENGTH, BITBOX02_SIGNATURE_NOTE, type HardwareDeviceInfo, type HardwareKind, type HardwareProvider, type HardwareSigner, type HardwareWalletPolicy, type SignMessageContext } from '@trikey/wallet';
 import { WalletServiceError } from './errors';
+import { approvalContactsNote } from './format';
 import type { DevicePrompt } from './types';
 
 export class DevicePromptStore {
@@ -132,6 +133,8 @@ export interface PromptOptions {
   network: NetworkName;
   /** Kinds whose own screens already tell the person what to do (QR devices show a full-screen scanner). */
   silentKinds?: readonly HardwareKind[];
+  /** The name this phone keeps for an alert contact, by the device's form of it (`deviceContactId`). */
+  contactName?: (id: string) => string | undefined;
 }
 
 function expectedAddress(policy: HardwareWalletPolicy, chain: 0 | 1, index: number, network: NetworkName): string | undefined {
@@ -210,7 +213,12 @@ class PromptingSigner implements HardwareSigner {
     const round = context?.round && context.round.of > 1 ? context.round : undefined;
     const title = round ? `Confirm on your device (${round.n} of ${round.of})` : 'Confirm on your device';
     const twice = round?.n === 1 ? '\n\nYour device will show the same text twice: approve it both times.' : '';
-    return this.run(title, `Check that the device shows exactly this text:\n${message}${trezorNote}${jadeNote}${bitboxNote}${twice}`, () => this.inner.signMessage(path, message, context));
+    // A rule approval that names the alert contacts: each one as the device shows it, with this phone's name for it.
+    const contacts = approvalContactsNote(message, this.opts.contactName);
+    const contactsNote = contacts ? `\n\n${contacts}` : '';
+    return this.run(title, `Check that the device shows exactly this text:\n${message}${contactsNote}${trezorNote}${jadeNote}${bitboxNote}${twice}`, () =>
+      this.inner.signMessage(path, message, context),
+    );
   }
 
   close() {

@@ -75,7 +75,7 @@ export const GUEST_RECOVERY_METHODS: ReadonlySet<MethodName> = new Set<MethodNam
  * scripts are never subscribed or imported (BIP 89: the host knows no address of a guest wallet), and the guest's phone
  * reads its own chain server.
  */
-export const GUEST_FEATURES = [GUARDIAN_FEATURES.familyHosting, GUARDIAN_FEATURES.limitOff, GUARDIAN_FEATURES.contactLock, GUARDIAN_FEATURES.shortWraps, GUARDIAN_FEATURES.pairingRulesApproval];
+export const GUEST_FEATURES = [GUARDIAN_FEATURES.familyHosting, GUARDIAN_FEATURES.limitOff, GUARDIAN_FEATURES.contactLock, GUARDIAN_FEATURES.shortWraps, GUARDIAN_FEATURES.pairingRulesApproval, GUARDIAN_FEATURES.approvalContacts];
 
 /** What a guest is told of the host's chain source: its kind, and a public server's name; never the host's own node's address. */
 export interface GuestChainSource {

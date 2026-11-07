@@ -229,8 +229,8 @@ describe('@trikey/wallet end to end', { timeout: 60_000 }, () => {
     // The device signed exactly the text the guardian rebuilt.
     const text = prompts().at(-1)!;
     const expiresAt = Number(new Date(text.match(/expires=(\S+)$/)![1]!).getTime() / 1000);
-    expect(text).toBe(approvalMessage({ action: 'policy', policy: raised.policy }, { walletId, sequence: 1, expiresAt }));
-    expect(text).toContain(`limit=150000 delay=7d feecap=20000 contacts=0 hash=${policyHash(raised.policy)}`);
+    expect(text).toBe(approvalMessage({ action: 'policy', policy: raised.policy }, { walletId, sequence: 1, expiresAt, contactsInText: true }));
+    expect(text).toContain('limit=150000 delay=7d feecap=20000 lock=off contacts=none expires=');
     expect(rig.guardian.engine.status().rules?.dailyLimitSats).toBe(150_000n);
 
     // A longer delay is a tightening too; a new alert contact needs the hardware wallet.

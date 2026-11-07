@@ -142,15 +142,25 @@ async function failing(call: () => Promise<unknown>): Promise<RpcError> {
   }
 }
 
-/** Every file under the data directory, raw. */
+/**
+ * Every file under the data directory, raw. The guardian keeps writing (an atomic write's temp file can be renamed
+ * between the listing and the read), so a file that vanished starts the whole scan again: every file is read as one
+ * listing found it.
+ */
 async function dataFiles(dir: string): Promise<{ path: string; bytes: Buffer }[]> {
-  const out: { path: string; bytes: Buffer }[] = [];
-  for (const e of await readdir(dir, { withFileTypes: true, recursive: true })) {
-    if (!e.isFile()) continue;
-    const path = join(e.parentPath, e.name);
-    out.push({ path, bytes: await readFile(path) });
+  for (let attempt = 0; ; attempt++) {
+    const out: { path: string; bytes: Buffer }[] = [];
+    try {
+      for (const e of await readdir(dir, { withFileTypes: true, recursive: true })) {
+        if (!e.isFile()) continue;
+        const path = join(e.parentPath, e.name);
+        out.push({ path, bytes: await readFile(path) });
+      }
+      return out;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT' || attempt >= 20) throw err;
+    }
   }
-  return out;
 }
 
 /** What a thief with the disk and an archive of the relays could read: every wrap to the guardian, opened with its nostr key. */

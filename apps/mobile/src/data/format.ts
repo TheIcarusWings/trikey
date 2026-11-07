@@ -109,6 +109,8 @@ export function promptDetailText(text: string): string {
   return text.replace(/[,:]\s+(network fee|fee)\b/gi, (_m, w: string) => `\n${w[0]!.toUpperCase()}${w.slice(1)}`);
 }
 
+export { approvalContactsNote } from '../hardware/common/contacts-note';
+
 /** "4,210,000" or "0.0421" depending on the unit the user picked. */
 export function formatAmount(sats: Sats, unit: AmountUnit): string {
   return unit === 'btc' ? formatBtc(sats) : formatSats(sats);

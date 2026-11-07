@@ -38,6 +38,11 @@ export {
   proofId,
   recoveryAccessMessage,
   MAX_MESSAGE_LENGTH,
+  DEVICE_VISIBLE_LENGTH,
+  contactId,
+  contactsCode,
+  verifyPolicyApproval,
+  CONTACTS_NOT_SHOWN,
 } from './authorizer.js';
 export {
   type Bip137AddressType,

@@ -19,6 +19,7 @@ import type {
   RecoveryInProgress,
   RelaySettings,
   Rules,
+  OwnWalletsSecurity,
   SetupPreflight,
   WalletOverview,
 } from './types';
@@ -169,6 +170,9 @@ export function createHttpApi(base = '', session: SessionSecret = pageSessionSec
     // The same key 3 under a new passphrase: no new key, so no browser entropy.
     changePassphrase: (input) => request<GuardianStatus>('POST', '/passphrase', { passphrase: input.passphrase, newPassphrase: input.newPassphrase }),
     resetGuardian: async (input) => request<GuardianStatus>('POST', '/reset', withBrowserEntropy(input)),
+    getOwnWallets: async () => request<OwnWalletsSecurity>('GET', '/own-wallets'),
+    removeUnlockSlot: async (walletId) => request<OwnWalletsSecurity>('DELETE', `/unlock-slots/${encodeURIComponent(walletId)}`),
+    removeOwnWallet: async (walletId, input) => request<OwnWalletsSecurity>('POST', `/own-wallets/${encodeURIComponent(walletId)}/remove`, input),
 
     startPairing: () => request<PairingSession>('POST', '/pairing'),
     getPairingSession: (id) => request<PairingSession>('GET', `/pairing/${encodeURIComponent(id)}`),

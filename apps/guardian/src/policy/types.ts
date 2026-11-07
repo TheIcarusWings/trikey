@@ -283,6 +283,11 @@ export type Refusal =
   | { reason: 'hardware_approval_required'; detail: string }
   | { reason: 'unsupported_approval'; kind: string }
   | { reason: 'approval_invalid_signature' }
+  /**
+   * The approval is a valid signature over a text this guardian no longer accepts for it (an app from before
+   * `approval_contacts` setting or changing the alert contacts over a policy text that shows only their number).
+   */
+  | { reason: 'app_update_required'; detail: string }
   /** A `recovery.access` signature whose grant a wallet rotation or retirement revoked. */
   | { reason: 'approval_revoked' }
   | { reason: 'approval_stale_sequence'; sequence: number; lastSequence: number }
@@ -326,7 +331,8 @@ export type Result<T> = ({ ok: true } & T) | { ok: false; refusal: Refusal };
 // Activity log (what the web UI shows)
 
 export type ActivityEvent =
-  | { type: 'registered'; walletId: string; replacesWalletId?: string; watching?: boolean }
+  /** `alertContacts`: the contacts the wallet was paired with (absent in entries from before it was logged). */
+  | { type: 'registered'; walletId: string; replacesWalletId?: string; watching?: boolean; alertContacts?: string[] }
   | { type: 'wallet_unwatched'; walletId: string }
   /** The phone asked the guardian to watch its Savings wallet (`replaced`: the Savings wallet it watched before). */
   | { type: 'savings_registered'; walletId: string; replaced?: string }
@@ -402,6 +408,11 @@ export type ActivityEvent =
     }
   | { type: 'wallet_retired'; walletId: string; sequence: number; revokedGrants: number }
   | { type: 'wallet_retire_refused'; refusal: Refusal }
+  /** The first wallet's hardware wallet approved adding wallet `newWalletId` (`wallet.add`, `add_wallet_approval`). */
+  | { type: 'wallet_add_approved'; newWalletId: string; sequence: number }
+  | { type: 'wallet_add_approval_refused'; newWalletId: string; refusal: Refusal }
+  /** The box's owner removed this wallet in the web page (an own wallet after the first; never while its recovery runs). */
+  | { type: 'wallet_removed_by_owner'; walletId: string; revokedGrants: number }
   | { type: 'hardware_auth_confirmed'; walletId: string }
   | { type: 'hardware_auth_confirm_refused'; refusal: Refusal }
   | { type: 'recovery_access_granted'; phone: string; until: number }
@@ -494,7 +505,20 @@ export interface GuardedWallet {
 export interface LimitNotice {
   /** `limit-<n>`, `lock-<n>` or `lockrule-<n>`, unique (the next activity id when it was queued). */
   id: string;
-  kind: 'limit_off' | 'limit_on' | 'contact_lock' | 'contact_lock_on' | 'contact_lock_off' | 'savings_moved' | 'savings_unwatched' | 'savings_unchecked';
+  kind:
+    | 'limit_off'
+    | 'limit_on'
+    | 'contact_lock'
+    | 'contact_lock_on'
+    | 'contact_lock_off'
+    | 'contact_added'
+    | 'contact_removed'
+    | 'wallet_added'
+    | 'wallet_removed'
+    | 'unlock_slot_added'
+    | 'savings_moved'
+    | 'savings_unwatched'
+    | 'savings_unchecked';
   walletId: string;
   /** ms */
   at: number;
@@ -506,6 +530,22 @@ export interface LimitNotice {
   reason?: 'phone' | 'hardware' | 'recovery';
   /** `contact_lock`: the alert contact who locked the guardian (nostr pubkey). */
   contact?: string;
+  /**
+   * `contact_added` (to the contacts added) / `contact_removed` (to the contacts removed): every contact the change added
+   * and removed (nostr pubkeys), so each message and the owner's channels can name them; `pairing`: the wallet was paired
+   * (or added) with these contacts.
+   */
+  added?: string[];
+  removed?: string[];
+  pairing?: true;
+  /**
+   * `wallet_added` / `wallet_removed` / `unlock_slot_added` (to the first wallet's alert contacts, and the wallet's own):
+   * the wallet added, removed by the owner in the web page, or given a hardware unlock slot, and its name.
+   * `approved`: `wallet_added` with the first wallet's hardware approval (`add_wallet_approval`).
+   */
+  subjectWalletId?: string;
+  name?: string;
+  approved?: true;
   /**
    * `savings_moved`: the Savings wallet, the spending transaction and what left Savings (sats, fee included).
    * `savings_unwatched`: the Savings wallet no longer watched, and `replacedBy` the one watched instead (absent: none).
@@ -531,7 +571,9 @@ export type Retirement =
   /** A recovery swept it; `successorWalletId` is the destination the guardian adopted, if it did. */
   | { reason: 'recovered'; recoveryId: string; successorWalletId?: string }
   /** `wallet.retire` with a hardware approval ("Replace guardian"). */
-  | { reason: 'retired'; sequence: number };
+  | { reason: 'retired'; sequence: number }
+  /** The box's owner removed it in the web page, without its hardware wallet (an own wallet after the first). */
+  | { reason: 'removed'; by: 'owner' };
 
 /** A wallet the guardian guarded before: read-only history. Nothing is signed or started for it again. */
 export interface RetiredWallet {

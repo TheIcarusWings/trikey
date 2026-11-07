@@ -151,8 +151,15 @@ describe('adding a wallet', { timeout: 60_000 }, () => {
     // refuses a wallet.add without that (security review 2026-11).
     const rulesSigned = trezor.calls.filter((c) => c.op === 'signMessage' && c.context?.purpose === 'rules');
     expect(rulesSigned.map((c) => (c.op === 'signMessage' ? c.message : ''))).toEqual([
-      expect.stringMatching(new RegExp(`^Trikey policy v1 wallet=${business.state.wallet!.walletId} seq=0 limit=${BUSINESS_RULES.dailyLimitSats} `)),
+      expect.stringMatching(new RegExp(`^Trikey policy v4 wallet=${business.state.wallet!.walletId} seq=0 limit=${BUSINESS_RULES.dailyLimitSats} `)),
     ]);
+    // And the FIRST wallet's device (the Ledger) approved adding it, naming both wallets (`add_wallet_approval`): a phone
+    // alone cannot add a wallet (security review 2026-11). The Trezor signed no such text.
+    const addSigned = ledger.calls.filter((c) => c.op === 'signMessage' && c.message.startsWith('Trikey add-wallet '));
+    expect(addSigned.map((c) => (c.op === 'signMessage' ? c.message : ''))).toEqual([
+      expect.stringMatching(new RegExp(`^Trikey add-wallet v1 wallet=${daily.state.wallet!.walletId} new=${business.state.wallet!.walletId} seq=\\d+ expires=\\S+Z$`)),
+    ]);
+    expect(trezor.calls.some((c) => c.op === 'signMessage' && c.message.startsWith('Trikey add-wallet '))).toBe(false);
     // The guardian guards it with its own engine.
     expect(rig.guardian.wallets.byWalletId(business.state.wallet!.walletId)).toBeDefined();
     toClose.push(business);

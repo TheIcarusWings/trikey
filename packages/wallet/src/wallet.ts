@@ -1907,14 +1907,16 @@ export class TrikeyWallet {
 
   /**
    * The device's approval of the rules a wallet starts with (`pairingRulesMessage`: the policy text with `seq=0`, which the
-   * device shows: limit, delay, fee cap, number of contacts), for `pair`, `wallet.add` and `hosted.pair` at a guardian that
+   * device shows: limit, delay, fee cap, contacts), for `pair`, `wallet.add` and `hosted.pair` at a guardian that
    * lists `pairing_rules_approval` in `features` (it refuses rules without it). Undefined for a guardian without the
    * feature: its strict schema would refuse the member, and it accepts the rules as before. DESIGN.md, rule 4.
+   * A guardian with `approval_contacts` gets the version-4 text, which names each contact (it refuses an older one).
    */
   private async approveInitialRules(hw: HardwareSigner, rec: HardwareRecord, walletId: string, rules: Policy, features: readonly string[] | undefined): Promise<PairingRulesApproval | undefined> {
     if (!features?.includes(GUARDIAN_FEATURES.pairingRulesApproval)) return undefined;
     const expiresAt = this.nowSec() + APPROVAL_TTL_SEC;
-    const signature = await this.signWithAuthKey(hw, rec, pairingRulesMessage(rules, { walletId, expiresAt }), 'rules');
+    const contactsInText = features.includes(GUARDIAN_FEATURES.approvalContacts);
+    const signature = await this.signWithAuthKey(hw, rec, pairingRulesMessage(rules, { walletId, expiresAt, ...(contactsInText ? { contactsInText } : {}) }), 'rules');
     return { kind: 'bip137', expiresAt, signature };
   }
 
@@ -2187,8 +2189,9 @@ export class TrikeyWallet {
    * 2. `wallet.add.prepare`: key 3 at `account` (the same seed as this wallet's key 3).
    * 3. Key 2 at `account` (one biometric prompt), the descriptor, registered on the device as "Trikey <name>", the pairing
    *    proof signed by the device.
-   * 4. `wallet.add`: the guardian checks it all and announces it. The new wallet's state is saved at `storageKey`.
-   * 5. The device shows the first address, which must match (`address_mismatch` otherwise: do not receive yet).
+   * 4. This wallet's own hardware wallet approves adding it (`add-wallet`, guardians with `add_wallet_approval`).
+   * 5. `wallet.add`: the guardian checks it all and announces it. The new wallet's state is saved at `storageKey`.
+   * 6. The device shows the first address, which must match (`address_mismatch` otherwise: do not receive yet).
    */
   async addOwnWallet(opts: AddOwnWalletOptions): Promise<TrikeyWallet> {
     this.requirePaired();
@@ -2255,6 +2258,9 @@ export class TrikeyWallet {
       const reg = await hw.registerWallet({ name: policyName, descriptor });
       // The new wallet's rules, shown on its device and signed (rule 4).
       const rulesApproval = await this.approveInitialRules(hw, rec, walletId, rules, features);
+      // This (the first) wallet's hardware wallet approves adding it (guardians with `add_wallet_approval`, which
+      // require it): a phone alone cannot add a wallet, nor through it a way to unlock the guardian.
+      const addApproval = features?.includes(GUARDIAN_FEATURES.addWalletApproval) ? await this.approveWalletAdd(walletId) : undefined;
 
       // 4. The guardian.
       const res = await this.call('wallet.add', {
@@ -2265,6 +2271,7 @@ export class TrikeyWallet {
         hardwareAuthProof: proof,
         rules,
         ...(rulesApproval ? { rulesApproval } : {}),
+        ...(addApproval ? { addApproval } : {}),
         ...(opts.firstName ? { firstName: opts.firstName.slice(0, 16) } : {}),
         // A guardian with phase 2 keeps the device's kind, so a phone rebuilding this wallet connects the right one.
         ...(this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.ownWallets2) ? { hardwareKind: rec.kind } : {}),
@@ -2309,6 +2316,23 @@ export class TrikeyWallet {
     } finally {
       await hw.close().catch(() => {});
     }
+  }
+
+  /**
+   * This (the first) wallet's hardware approval of adding wallet `newWalletId` to the guardian (`wallet.add`'s
+   * `addApproval`, guardians with `add_wallet_approval`): the `add-wallet` text with this wallet's id and sequence, signed
+   * on this wallet's device. `on`: the guardian it is for; when it is the one this wallet is moving to ("Replace
+   * guardian", the move not finished), this wallet's wallet and sequence there.
+   */
+  async approveWalletAdd(newWalletId: string, on?: { pubkey: string }): Promise<HardwareApproval> {
+    this.requirePaired();
+    if (this.s.own) throw new WalletError('wrong_state', "The first wallet's hardware wallet approves adding a wallet.");
+    const r = this.s.replacing;
+    if (on && r && r.guardian.pubkey === on.pubkey && this.s.guardian?.pubkey !== on.pubkey) {
+      const st = await (await this.replacementRpc(r)).call('guardian.status', {});
+      return this.approve({ action: 'add-wallet', newWalletId }, { walletId: r.wallet.walletId, sequence: Math.max(st.nextHardwareSequence, r.rules.nextHardwareSequence) });
+    }
+    return this.approve({ action: 'add-wallet', newWalletId });
   }
 
   /**
@@ -4343,8 +4367,15 @@ export class TrikeyWallet {
     if (!walletId) throw new WalletError('wrong_state', 'The wallet is not paired yet.');
     const sequence = opts.sequence ?? (await this.nextSequence());
     const expiresAt = this.nowSec() + APPROVAL_TTL_SEC;
-    // A guardian without "no daily limit" rebuilds only the version-1 policy text (PROTOCOL.md, "Hardware approvals").
-    const text = approvalMessage(action, { walletId, sequence, expiresAt, ...(this.limitOffSupported ? {} : { legacyPolicyText: true }) });
+    // A guardian without "no daily limit" rebuilds only the version-1 policy text (PROTOCOL.md, "Hardware approvals"); one
+    // with `approval_contacts` the version-4 text, which names the alert contacts.
+    const text = approvalMessage(action, {
+      walletId,
+      sequence,
+      expiresAt,
+      ...(this.limitOffSupported ? {} : { legacyPolicyText: true }),
+      ...(this.contactsInApprovals ? { contactsInText: true } : {}),
+    });
     const signature = await this.withHardware((hw, rec) => this.signWithAuthKey(hw, rec, text, 'approval'));
     return { kind: 'bip137', sequence, expiresAt, signature };
   }
@@ -4415,6 +4446,14 @@ export class TrikeyWallet {
    */
   get limitOffSupported(): boolean {
     return !!this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.limitOff);
+  }
+
+  /**
+   * The guardian has the hardware wallet name the alert contacts in a rule approval (`approval_contacts`, as last read):
+   * the version-4 policy text. An older guardian rebuilds only versions 1 to 3, which show their number.
+   */
+  get contactsInApprovals(): boolean {
+    return !!this.s.guardianStatus?.features?.includes(GUARDIAN_FEATURES.approvalContacts);
   }
 
   /** There is no daily limit now (as the guardian last said). */
@@ -7274,7 +7313,7 @@ export class TrikeyWallet {
    * `awaiting_broadcast` move, an app restart). Refused while this wallet's recovery runs, and when the old guardian does
    * not answer unless the person confirmed it is gone (`oldGuardianReachable: false`).
    */
-  async moveToGuardian(target: GuardianRecord, opts: { oldGuardianReachable?: false } = {}): Promise<ReplaceOutcome> {
+  async moveToGuardian(target: GuardianRecord, opts: { oldGuardianReachable?: false; addApproval?: (newWalletId: string) => Promise<HardwareApproval> } = {}): Promise<ReplaceOutcome> {
     this.requirePaired();
     if (!this.s.own) throw new WalletError('wrong_state', 'The first wallet moves with the new guardian\'s pairing code ("Replace guardian").');
     if (target.hosted) throw new WalletError('wrong_state', 'Wallets move to a guardian of your own, not to a hosted slot.');
@@ -7294,14 +7333,14 @@ export class TrikeyWallet {
           throw new WalletError('old_guardian_unreachable', "Your old guardian isn't answering. If it is gone for good, confirm, and the move goes ahead without it.", {
             refusal: { kind: 'unreachable', message: 'The old guardian did not answer.' },
           });
-        await this.addAtNewGuardian(target, !st);
+        await this.addAtNewGuardian(target, !st, opts.addApproval);
       }
       return this.continueReplace();
     });
   }
 
   /** `moveToGuardian`'s first step: the wallet at its own account on the new guardian, naming the one it replaces. */
-  private async addAtNewGuardian(target: GuardianRecord, oldOffline: boolean): Promise<void> {
+  private async addAtNewGuardian(target: GuardianRecord, oldOffline: boolean, approveAdd?: (newWalletId: string) => Promise<HardwareApproval>): Promise<void> {
     const own = this.s.own!;
     const conn = await this.connect(target.pubkey, target.relays, this.replacementNaming(target.pubkey));
     let keep = false;
@@ -7312,6 +7351,9 @@ export class TrikeyWallet {
         st = await conn.rpc.call('guardian.status', {}, { timeoutMs: this.deps.probeTimeoutMs ?? Math.min(10_000, this.deps.rpcTimeoutMs ?? 30_000) });
         // Watching the old wallet (`replacesDescriptor`) needs phase 2; an older guardian could not relay the sweep.
         if (!st.features?.includes(GUARDIAN_FEATURES.ownWallets2)) throw new WalletError('guardian_unsupported', 'Update your new guardian: it cannot take more than one wallet yet.');
+        // Adding it there needs the first wallet's hardware wallet (`add_wallet_approval`): only the wallet set can ask it.
+        if (st.features?.includes(GUARDIAN_FEATURES.addWalletApproval) && !approveAdd)
+          throw new WalletError('wrong_state', "Move this wallet with Replace guardian: your first wallet's hardware wallet approves adding it to the new guardian.");
         prep = await conn.rpc.call('wallet.add.prepare', { account: own.account });
       } catch (e) {
         throw asWalletError(e, 'wallet.add.prepare');
@@ -7348,6 +7390,8 @@ export class TrikeyWallet {
         const rulesApproval = await this.approveInitialRules(hw, rec, walletId, rules, st.features);
         return { proof, hmac: reg.hmac, rulesApproval };
       });
+      // The first wallet's device approves adding this wallet there (its own approval on the new guardian).
+      const addApproval = st.features?.includes(GUARDIAN_FEATURES.addWalletApproval) ? await approveAdd!(walletId) : undefined;
       let res: Result<'wallet.add'>;
       try {
         res = await conn.rpc.call('wallet.add', {
@@ -7358,6 +7402,7 @@ export class TrikeyWallet {
           hardwareAuthProof: proof,
           rules,
           ...(rulesApproval ? { rulesApproval } : {}),
+          ...(addApproval ? { addApproval } : {}),
           hardwareKind: this.s.hardware!.kind,
           replacesWalletId: this.s.wallet!.walletId,
           replacesDescriptor: this.s.wallet!.descriptor,

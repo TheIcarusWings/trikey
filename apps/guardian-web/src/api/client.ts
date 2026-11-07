@@ -22,6 +22,7 @@ import type {
   RelaysInput,
   PublicStatus,
   ResetInput,
+  OwnWalletsSecurity,
   ChangePassphraseInput,
   Rules,
   SetupInput,
@@ -182,6 +183,17 @@ export interface GuardianApi {
    * `sweep_pending` while a co-signed sweep waits to be broadcast; `bad_passphrase`, `rate_limited`.
    */
   resetGuardian(input: ResetInput): Promise<GuardianStatus>;
+
+  /** The box's wallets with their hardware unlock and a running recovery (`GET /api/own-wallets`). */
+  getOwnWallets(): Promise<OwnWalletsSecurity>;
+  /** Turns hardware unlock off for a wallet (the passphrase still unlocks). Rejects with `not_found`. */
+  removeUnlockSlot(walletId: string): Promise<OwnWalletsSecurity>;
+  /**
+   * Stops guarding a wallet after the first, without its hardware wallet (`confirm: REMOVE_WALLET_CONFIRMATION`): it is
+   * retired here, its money stays with its phone key and hardware wallet. Rejects with `recovery_pending` /
+   * `sweep_pending` while a recovery of it runs or its sweep waits, `invalid`, `first_wallet`, `not_found`.
+   */
+  removeOwnWallet(walletId: string, input: { confirm: string }): Promise<OwnWalletsSecurity>;
 
   /** Creates a fresh one-time pairing session and invalidates the previous one. */
   startPairing(): Promise<PairingSession>;

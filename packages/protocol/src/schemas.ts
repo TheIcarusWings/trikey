@@ -625,6 +625,13 @@ export const WalletAddParams = z
     rules: Policy,
     /** As `pair`'s: the new wallet's hardware wallet approves `rules` (guardians with `pairing_rules_approval`, which require it). */
     rulesApproval: PairingRulesApproval.optional(),
+    /**
+     * Guardians with `add_wallet_approval` (which require it): the FIRST wallet's hardware wallet approves adding this
+     * wallet, a `HardwareApproval` over `approvalMessage({ action: 'add-wallet', newWalletId }, { walletId: <the first
+     * wallet's id>, sequence, expiresAt })`, with the first wallet's approval sequence. Without it the paired phone alone
+     * could add a wallet whose "hardware wallet" is its own key (security review 2026-11).
+     */
+    addApproval: HardwareApproval.optional(),
     /** The first wallet's name on the phone, so the guardian's alerts can tell the two apart ("Daily"). */
     firstName: OwnWalletName.optional(),
     /** Guardians with `own_wallets_2`: the kind of hardware wallet, kept and listed in `guardian.status.wallets`. */

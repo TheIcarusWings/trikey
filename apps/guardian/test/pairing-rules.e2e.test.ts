@@ -29,7 +29,7 @@ import {
   type Policy,
 } from '@trikey/protocol';
 import { signMessage } from '../src/policy/index.js';
-import { AUTH_PATH, MNEMONICS, appSigner, approveRules, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network } from './helpers.js';
+import { AUTH_PATH, MNEMONICS, appSigner, approveRules, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withAddApproval } from './helpers.js';
 import { fakeMap, hostedWallet } from './support/hosted.js';
 import { GuardianRig } from './support/index.js';
 
@@ -160,15 +160,17 @@ describe('pair: the rules a wallet starts with need the hardware wallet', { time
       rules: DRAIN,
     };
     const old = await rpcError(phone.rpc.call('wallet.add', params));
+    // (The first wallet's hardware wallet approves adding it, `add_wallet_approval`: sent from here on.)
+    const withAdd = <T extends { descriptor: string }>(p: T) => withAddApproval(p, rig.guardian, rig.clock.now());
     expect(old.code).toBe(ErrorCode.InvalidParams);
     expect(old.data).toEqual({ reason: 'app_update_required' });
     const shown = approveRules(walletId, SHOWN, rig.clock.now(), { privateKey: hwAuthPrivateKey(AUTH_PATH, HW2) });
-    expect((await rpcError(phone.rpc.call('wallet.add', { ...params, rulesApproval: shown }))).code).toBe(ErrorCode.ApprovalInvalid);
+    expect((await rpcError(phone.rpc.call('wallet.add', withAdd({ ...params, rulesApproval: shown })))).code).toBe(ErrorCode.ApprovalInvalid);
     // The first wallet's hardware wallet cannot approve the new wallet's rules.
     const firstDevice = approveRules(walletId, DRAIN, rig.clock.now());
-    expect((await rpcError(phone.rpc.call('wallet.add', { ...params, rulesApproval: firstDevice }))).code).toBe(ErrorCode.ApprovalInvalid);
+    expect((await rpcError(phone.rpc.call('wallet.add', withAdd({ ...params, rulesApproval: firstDevice })))).code).toBe(ErrorCode.ApprovalInvalid);
     expect((await phone.rpc.call('guardian.status', {})).wallets).toBeUndefined();
-    const res = await phone.rpc.call('wallet.add', { ...params, rules: SHOWN, rulesApproval: shown });
+    const res = await phone.rpc.call('wallet.add', withAdd({ ...params, rules: SHOWN, rulesApproval: shown }));
     expect(res.walletId).toBe(walletId);
     expect((await phone.rpc.call('policy.get', { walletId })).policy).toEqual(SHOWN);
   });

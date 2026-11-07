@@ -214,7 +214,10 @@ Passport 83d1d576, KeyOS 4ea7bc9, SeedSigner ada81cd, Krux 28d14c2, Specter DIY 
 
 Text lengths: Coldcard's 240 is exactly `MAX_APPROVAL_MESSAGE_LENGTH`, and the longest text Trikey can build (a version 3
 policy approval with a 16-digit sequence) is 238 characters; a test (`packages/wallet/test/qr-devices.e2e.test.ts`)
-fails if any text grows past the smallest limit. On Jade's screen the pairing text (114), notes key (60), unlock key
+fails if any text grows past the smallest limit. The version-4 policy text (guardians with `approval_contacts`, DESIGN.md
+rule 4) names the alert contacts and is at most 205 characters; its contacts always end within Jade's 188, or it shows
+their number and a code instead (`packages/protocol/test/approval-contacts.test.ts` checks every count at the longest
+values). On Jade's screen the pairing text (114), notes key (60), unlock key
 (156), cancel-recovery (about 135) and resume or retire (about 82) show in full; a policy approval (about 190-238) and
 recovery access (199 or 223) are cut, with the values first and the end of `hash=` and `expires=` cut off. The phone
 says so on Jade's screen.

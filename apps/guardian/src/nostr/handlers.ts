@@ -577,6 +577,8 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
         // The pairing code carried the current relays: no relay change is left for a phone to confirm.
         await g.relaysKnownByNewPhone();
         g.log.info('guardian.paired', { walletId: res.walletId, key3Mixed: !!key.mix });
+        // Every alert contact is told it is one (the engine queued `contact_added`).
+        void w.alerts.run();
         return {
           guardianKey: originOf(key.pub),
           descriptor: w.engine.registration()!.descriptor,
@@ -611,9 +613,12 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
       const before = w.engine.status().rules;
       const wasOff = isLimitOff(before ?? { dailyLimitSats: 0n });
       const lockWas = isContactLockOn(before ?? {});
+      const contactsBefore = before?.alertContacts.join(',');
       const res = await w.engine.changeRules(rulesFromPolicy(params.policy), auth);
       if (!res.ok) throw refusalError(res.refusal);
       g.log.info('rules.changed', { by: auth.authenticatedBy });
+      // Every contact added or removed is told (the engine queued `contact_added` / `contact_removed`).
+      if (res.rules.alertContacts.join(',') !== contactsBefore) void w.alerts.run();
       // The alert contacts may now lock the guardian, or no longer may: they are told (the engine queued it).
       if (isContactLockOn(res.rules) !== lockWas) {
         g.log.warn('rules.contact_lock', { on: !lockWas, by: auth.authenticatedBy, sequence: params.approval?.sequence });
