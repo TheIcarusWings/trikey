@@ -280,6 +280,15 @@ device's xpub (`checkMessageAnswer`). Each refusal is a hint on the same screen,
 double signature (two files): both firmwares are RFC 6979 by their source, so one would probably do, but the second
 signature is what checks it on the owner's own device, and it is asked once.
 
+**Afterwards, the card.** The signed file stays on the card, and for the notes that signature is the key (HKDF of
+`r || s`, DESIGN.md "Notes that survive recovery"): with it and a copy of the guardian's `labels/` folder anyone reads
+the notes. So once the signature checks, the phone puts a *notice* on the bridge before it returns it
+(`sdCleanupNotice`): "Delete these files from the card now, and from any computer or email you copied them through",
+the request and the signed file by name (the signed one as the file chooser named it: Passport `<name>-signed-001.txt`,
+Krux `<name>-signed.txt`; only the request after Krux's Sign to QR code), one button, "I deleted them", no cancel. For
+the notes it says "They can open your notes"; for the other texts that Trikey does not need them again. DESIGN.md,
+"Cleaning up the card".
+
 Not offered: hardware unlock (a card round trip after every guardian restart; the passphrase works).
 
 ## 8. Coldcard over NFC (built 2026-11-06; untested on devices)

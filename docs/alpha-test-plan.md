@@ -1152,9 +1152,14 @@ Do, for each device you have:
      long number instead, stop and report it: it did not read the file. After signing, choose **Sign to SD card** (keep
      the name `trikey-pair-signed.txt`); once, choose **Sign to QR code** instead and use **Scan the signature instead**
      on the phone.
-4. **Bring it back.** Card back in the reader, **Open the signed file**, pick the `-signed` file. The phone should go
-   on (the wallet is added to the device, then the address is compared, as for any QR device). Write down how long the
-   whole round trip took.
+4. **Bring it back.** Card back in the reader, **Open the signed file**, pick the `-signed` file. The phone should then
+   show **Delete these files from the card**, naming the request and the signed file exactly as on the card
+   (`trikey-pair.txt` and `trikey-pair-signed-001.txt` on Passport, `trikey-pair-signed.txt` on Krux; only
+   `trikey-pair.txt`, under **Delete this file from the card**, after Krux's Sign to QR code), with one button, **I
+   deleted them**. Try the system back gesture once: the screen should stay. Delete both files (from the computer too if
+   you shared the file) and tap the button; the phone should go on (the wallet is added to the device, then the address
+   is compared, as for any QR device). Write down whether the names matched the card and how long the whole round trip
+   took.
 5. **Wrong files on purpose** (once): pick `trikey-pair.txt` itself (the phone should say it is "the file Trikey made
    (the request)"), and any other text file ("not a signed message"). Edit a copy of the signed file on a computer,
    change one character of the text, and pick it ("a different text"). Each should stay on the same screen with the
@@ -1164,13 +1169,16 @@ Do, for each device you have:
 7. **Notes, twice** (step 18c): turning notes on asks for two files, **"(1 of 2)"** `trikey-notes-1of2.txt` and
    **"(2 of 2)"** `trikey-notes-2of2.txt`. Sign both. In round 2, first pick round 1's signed file: the phone should say
    it is "the signed file of the other round". If the app says the device "gave two different signatures", report the
-   device and firmware.
+   device and firmware. After each round the delete screen should say the files "can open your notes": the signed
+   notes files are the notes' key, so delete them for real (and empty the computer's trash).
 8. **Hardware unlock is not offered.** Settings, **Guardian**: under "Unlocking" there is no switch, only a sentence
    saying the device signs only from a microSD card and that the passphrase unlocks the guardian.
 9. **Recovery access** (step 12, the lost-phone path, if you run it with this device): the new phone asks the device to sign its request the same way (`trikey-access.txt`).
 
-If it goes wrong, collect: device model and firmware, the step, the request and signed files (they hold no secret: the
-text, the address and the signature), a photo of the device screen, and the exact message.
+If it goes wrong, collect: device model and firmware, the step, a photo of the device screen, and the exact message.
+The request and signed files of pairing, approvals and recovery access hold no secret (the text, the address and the
+signature) and can be sent. **Never send the signed notes files** (`trikey-notes-…-signed…`): that signature is the key
+to your notes on the guardian.
 
 ---
 
