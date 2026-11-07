@@ -6,6 +6,8 @@
  * Sending: to the guardian's relays plus the recipient's DM inbox relays
  * (their kind-10050 list, looked up on our relays; only `wss://` entries are
  * used, so a contact's list cannot point the guardian at hosts on the LAN).
+ * Up to 8 of the recipient's relays are always added, however many relays the
+ * guardian has: their app reads its DMs there (NIP-17).
  *
  * Receiving: kind-14 rumors are handed to `onMessage` with the verified author.
  * In the guardian the shared `Inbox` opens every wrap once and passes the DMs
@@ -133,7 +135,10 @@ export class DirectMessages {
       theirs = await this.lookupDmRelays(pubkey).catch(() => []);
       this.relayCache.set(pubkey, { at: Date.now(), relays: theirs });
     }
-    return [...new Set([...own, ...theirs])].slice(0, Math.max(own.length, MAX_DM_RELAYS));
+    // Every one of ours, and the recipient's own inbox relays (at most `MAX_DM_RELAYS`, see `lookupDmRelays`) on top:
+    // up to 0.1.21 the list was cut at `max(ours, 8)`, so a guardian with 8 relays of its own never reached a
+    // contact's inbox relays, where their app reads DMs.
+    return [...new Set([...own, ...theirs])];
   }
 
   /** The recipient's kind-10050 DM inbox relays, as found on our relays (wss:// only). */
