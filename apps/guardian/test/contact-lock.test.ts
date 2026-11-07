@@ -167,7 +167,8 @@ describe('contact lock: turning it on', () => {
       });
       expect(res.ok).toBe(true);
       expect(engine.status().rules!.contactLock).toBe(rules.contactLock);
-      expect(engine.dueNotices()).toEqual([]);
+      // No lock notice at pairing: only every contact told they are one (`contact_added`).
+      expect(engine.dueNotices().map((n) => n.kind)).toEqual(['contact_added']);
     }
   });
 });

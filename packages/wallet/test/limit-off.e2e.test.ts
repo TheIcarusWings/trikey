@@ -11,7 +11,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as nip17 from 'nostr-tools/nip17';
 import { getPublicKey, type Event as NostrEvent } from 'nostr-tools/pure';
-import { LIMIT_OFF_SATS, SimplePoolRelayPool, approvalMessage, policyHash, type Policy } from '@trikey/protocol';
+import { LIMIT_OFF_SATS, SimplePoolRelayPool, approvalMessage, contactId, policyHash, type Policy } from '@trikey/protocol';
 import { GuardianRig } from '@trikey/guardian/testing';
 import { TrikeyWallet, WalletError, type WalletEvent } from '../src/index.js';
 import { MemoryCloudBackupStore, MemoryPasskeyPrf, SoftwareHardwareProvider, SoftwareHardwareSigner } from '../src/testing/index.js';
@@ -86,11 +86,16 @@ describe('turning the daily limit off and on again', { timeout: 90_000 }, () => 
     const res = await w.turnLimitOff();
     expect(res).toMatchObject({ approvedBy: 'hardware', policy: { dailyLimitSats: LIMIT_OFF_SATS } });
     expect(signs()).toBe(before + 1);
-    // The device showed, and signed, the version-2 text: "limit=off" in words.
+    // The device showed, and signed, the version-4 text (this guardian lists `approval_contacts`): "limit=off" in words,
+    // and the contact by name.
     const text = prompts().at(-1)!;
     const expiresAt = Number(new Date(text.match(/expires=(\S+)$/)![1]!).getTime() / 1000);
-    expect(text).toBe(approvalMessage({ action: 'policy', policy: res.policy }, { walletId: w.multisig().fingerprint(), sequence: 1, expiresAt }));
-    expect(text).toMatch(new RegExp(`^Trikey policy v2 wallet=[0-9a-f]{16} seq=1 limit=off delay=7d feecap=20000 contacts=1 hash=${policyHash(res.policy)} expires=`));
+    expect(text).toBe(approvalMessage({ action: 'policy', policy: res.policy }, { walletId: w.multisig().fingerprint(), sequence: 1, expiresAt, contactsInText: true }));
+    expect(text).toMatch(new RegExp(`^Trikey policy v4 wallet=[0-9a-f]{16} seq=1 limit=off delay=7d feecap=20000 lock=off contacts=${contactId(res.policy.alertContacts[0]!).replace(/\./g, '\\.')} expires=`));
+    // A guardian without the feature (older) gets the version-2 text, as before.
+    expect(approvalMessage({ action: 'policy', policy: res.policy }, { walletId: w.multisig().fingerprint(), sequence: 1, expiresAt })).toMatch(
+      new RegExp(`^Trikey policy v2 wallet=[0-9a-f]{16} seq=1 limit=off delay=7d feecap=20000 contacts=1 hash=${policyHash(res.policy)} expires=`),
+    );
     expect(device.calls.filter((c) => c.op === 'signMessage').at(-1)).toMatchObject({ message: text });
 
     expect(rig.guardian.engine.status().dailyLimit).toMatchObject({ off: true, limitBeforeOff: 100_000n });
@@ -102,7 +107,7 @@ describe('turning the daily limit off and on again', { timeout: 90_000 }, () => 
     // The phone gets `limit_off`; the contact a DM in plain words.
     const alert = await waitFor(() => alerts().find((a) => a.type === 'limit_off'), 'limit_off alert');
     expect(alert).toMatchObject({ type: 'limit_off', sequence: 1, limitBeforeSats: 100_000 });
-    const dm = await waitFor(() => contactInbox.find((m) => m.includes('daily limit')), 'contact DM');
+    const dm = await waitFor(() => contactInbox.find((m) => m.includes('daily limit') && m.includes('was turned off')), 'contact DM');
     expect(dm).toMatch(/was turned off/);
     expect(dm).toMatch(/can send everything/);
     // Once each: both are recorded as delivered.

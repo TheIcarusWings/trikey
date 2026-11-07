@@ -151,7 +151,8 @@ describe('Telegram alerts, end to end', { timeout: 60_000 }, () => {
     await rig.restart();
     expect(rig.guardian.locked).toBe(true);
     await waitFor(() => tg.to(OWNER_CHAT).some((t) => /restarted and is locked/.test(t)), 'the restart message while locked');
-    expect(tg.to(ALICE_CHAT)).toEqual([]);
+    // (Alice also hears, once, that she became an alert contact at pairing: `contact_added`.)
+    expect(tg.to(ALICE_CHAT).filter((t) => !/Alert contacts changed/.test(t))).toEqual([]);
     await rig.unlock();
   });
 

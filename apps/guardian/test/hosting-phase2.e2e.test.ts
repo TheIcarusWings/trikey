@@ -188,6 +188,10 @@ beforeAll(async () => {
   guests.dad = await acceptGuest('Dad', 91, { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [dadContact.pubkey, dadContact2.pubkey, both.pubkey], sweepFeeCapSats: 20_000, contactLock: true }, { app: MNEMONICS.app2, hardware: MNEMONICS.hardware });
   // Ana: the setting off.
   guests.ana = await acceptGuest('Ana', 92, { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [anaContact.pubkey], sweepFeeCapSats: 20_000 }, { app: MNEMONICS.stranger, hardware: MNEMONICS.hardware2 });
+  // Every contact hears it became one (`contact_added`, at each pairing): delivered and recorded before the steps below,
+  // which compare the host's state byte for byte and expect quiet inboxes.
+  await waitFor(() => !rig.guardian.engine.dueNotices().length && [hostContact, dadContact, dadContact2, anaContact].every((p) => p.inbox.some((m) => m.includes('now an alert contact'))), 'contact_added notices');
+  for (const p of people) p.inbox.length = 0;
   hostBytes = await settledHostState();
 }, 60_000);
 

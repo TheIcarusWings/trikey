@@ -65,14 +65,32 @@ export function RulesPage() {
               How long a recovery waits, sending alerts every day.
             </RuleRow>
             <RuleRow title="Alert contacts" value={contacts.length}>
-              Who gets the daily recovery alerts
+              Who gets the daily recovery alerts{contacts.length > 0 ? (phoneToo ? ', and the paired phone:' : ':') : '.'}
               {contacts.length > 0 && (
-                <>
-                  : {contacts.map((c) => c.name).join(', ')}
-                  {phoneToo ? ', and the paired phone' : ''}
-                </>
+                <ul className="m-0 mt-1 list-none p-0" aria-label="Alert contacts">
+                  {contacts.map((c) => (
+                    <li key={c.id} className="font-mono text-[13px] leading-5 text-foreground" title={c.npub ?? c.id}>
+                      {c.name}
+                    </li>
+                  ))}
+                </ul>
               )}
-              .
+              {contacts.length > 0 && (
+                <span className="mt-1 block">
+                  Your hardware wallet shows each contact like this when it approves the rules; check them against each
+                  contact's nostr app.
+                  {rules.contactsCode && (
+                    <>
+                      {' '}
+                      With more contacts than fit on its screen it shows their number and this code instead:{' '}
+                      <span className="font-mono text-foreground" data-testid="contacts-code">
+                        {rules.contactsCode}
+                      </span>
+                      .
+                    </>
+                  )}
+                </span>
+              )}
             </RuleRow>
             <RuleRow title="Contacts can lock the guardian" value={contactLockText(rules)}>
               {contactLockDetail(rules)}

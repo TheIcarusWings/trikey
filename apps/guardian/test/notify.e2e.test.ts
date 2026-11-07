@@ -140,16 +140,19 @@ describe('extra alert channels, end to end', { timeout: 60_000 }, () => {
     const wrap = wrapDirectMessage('LOCK', { senderSecretKey: alice.secretKey, recipient: rig.pubkey, now: rig.nowSec() });
     await pool.publish(rig.relayUrls, wrap as NostrEvent);
     await waitFor(() => rig.guardian.locked, 'locked by alice');
-    await waitFor(() => smtp.mails.length >= 2 && hook.requests.length >= 1, 'lock alerts');
-    const owner = smtp.mails.find((m) => m.to[0] === 'owner@example.com')!;
+    // (Each contact also hears it became one, at pairing: `contact_added`, a mail of its own.)
+    const lockMails = () => smtp.mails.filter((m) => !/Alert contacts changed/.test(m.subject));
+    await waitFor(() => lockMails().length >= 2 && hook.requests.some((r) => JSON.parse(r.body).type === 'contact_lock'), 'lock alerts');
+    const owner = lockMails().find((m) => m.to[0] === 'owner@example.com')!;
     expect(owner.subject).toBe('Home vault: Guardian locked by an alert contact');
     expect(owner.text).toMatch(/An alert contact locked your guardian/);
-    const toBob = smtp.mails.find((m) => m.to[0] === 'bob@example.org')!;
+    const toBob = lockMails().find((m) => m.to[0] === 'bob@example.org')!;
     expect(toBob.text).toMatch(/was locked by another alert contact/);
     expect(smtp.mails.some((m) => m.to[0] === 'alice@example.com')).toBe(false);
-    const payload = JSON.parse(hook.requests.at(-1)!.body);
+    const lockHook = hook.requests.find((r) => JSON.parse(r.body).type === 'contact_lock')!;
+    const payload = JSON.parse(lockHook.body);
     expect(payload).toMatchObject({ version: 1, type: 'contact_lock', guardian: 'Home vault' });
-    expect(hook.requests.at(-1)!.headers['x-trikey-signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
+    expect(lockHook.headers['x-trikey-signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
     for (const m of smtp.mails) expect(m.text).not.toMatch(/https?:\/\//);
   });
 

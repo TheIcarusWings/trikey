@@ -129,6 +129,8 @@ beforeAll(async () => {
     hardwareAuthProof: signMessage(pairingMessage(hostWallet.fingerprint(), hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!)), hwAuthPrivateKey()),
     rules: HOST_RULES,
   }, rig.nowSec() * 1000));
+  // The host's contacts are told they are its contacts (`contact_added`): delivered before the byte-for-byte snapshot.
+  await waitFor(() => !rig.guardian.engine.dueNotices().length, 'the pairing contact notice');
   hostBytes = await readFile(stateFile(), 'utf8');
 }, 60_000);
 
@@ -190,7 +192,7 @@ describe('family hosting, end to end', { timeout: 60_000 }, () => {
     await expect(dad().rpc.call('hosted.prepare', { inviteSecret: a.secret, network: 'regtest' } as never)).rejects.toThrow(/expected string/);
     const prep = await dad().rpc.call('hosted.prepare', { inviteSecret: a.secret, network: 'regtest', entropy: 'ab'.repeat(31) + 'cd' });
     expect(prep.cosignerAccountPubkey).toMatch(/^0[23][0-9a-f]{64}$/);
-    expect(prep.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps', 'pairing_rules_approval']);
+    expect(prep.features).toEqual(['family_hosting', 'limit_off', 'contact_lock', 'short_wraps', 'pairing_rules_approval', 'approval_contacts']);
     expect(prep.cosignerAccountPubkey).not.toBe(hex.encode(hostWallet.accountPubkeys().cosigner));
     const other = client(generateSecretKey());
     const e = await rpcError(other.call('hosted.prepare', { inviteSecret: a.secret, network: 'regtest', entropy: 'cd'.repeat(32) }));
@@ -219,7 +221,7 @@ describe('family hosting, end to end', { timeout: 60_000 }, () => {
 
   it("the guest's guardian.status is its slot's view: its key-set id, family_hosting only, nothing of the host's wallet", async () => {
     const st = await dad().rpc.call('guardian.status', {});
-    expect(st).toMatchObject({ paired: true, walletId: dad().fx!.walletId, features: ['family_hosting', 'limit_off', 'contact_lock', 'short_wraps', 'pairing_rules_approval'], hosting: { state: 'active' }, key3Mixed: true });
+    expect(st).toMatchObject({ paired: true, walletId: dad().fx!.walletId, features: ['family_hosting', 'limit_off', 'contact_lock', 'short_wraps', 'pairing_rules_approval', 'approval_contacts'], hosting: { state: 'active' }, key3Mixed: true });
     expect(st.walletId).not.toBe(hostWallet.fingerprint());
     expect(st).not.toHaveProperty('savingsWalletId');
     expect(st).not.toHaveProperty('watchedWalletId');

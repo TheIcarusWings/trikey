@@ -16,6 +16,7 @@ import { PassphrasePage } from '@/pages/passphrase';
 import { PhonesPage } from '@/pages/phones';
 import { RecoveryPage } from '@/pages/recovery';
 import { ResetPage } from '@/pages/reset';
+import { OwnWalletsPage } from '@/pages/own-wallets';
 import { RulesPage } from '@/pages/rules';
 import { SettingsPage } from '@/pages/settings';
 import { SignInPage } from '@/pages/sign-in';
@@ -117,6 +118,7 @@ export function App() {
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/passphrase" element={<PassphrasePage />} />
                 <Route path="/reset" element={<ResetPage />} />
+                <Route path="/own-wallets" element={<OwnWalletsPage />} />
                 <Route path="/host" element={<HostPage />} />
                 {/* Earlier addresses of the pages that became Phones, Home and Settings. */}
                 <Route path="/pair" element={<Navigate to="/phones" replace />} />

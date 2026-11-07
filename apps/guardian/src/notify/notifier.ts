@@ -159,7 +159,8 @@ export interface NotifyEvent {
   owner?: string;
   /** The contacts' text; absent: not for contacts. */
   contacts?: {
-    text: (reach: Reach) => string;
+    /** Undefined: not for a channel of that reach. */
+    text: (reach: Reach) => string | undefined;
     /** The nostr pubkeys the matching nostr alert goes to: a contact's channels get it only if the contact is one. Default: the rules' contacts. */
     recipients?: string[];
   };

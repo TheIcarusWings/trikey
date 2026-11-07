@@ -227,15 +227,22 @@ export class SoftwareHardwareProvider implements HardwareProvider {
   readonly kinds: readonly HardwareKind[] = ['ledger', 'trezor', 'coldcard', 'bitbox02', 'jade', 'qr', 'coldcard-nfc', 'jade-ble'];
   connects = 0;
 
+  /**
+   * Other devices at hand: one the wallet asks for by fingerprint (`known`, a wallet's own device) is the one that
+   * connects, as when the owner plugs in the device the phone names (adding a wallet asks the first wallet's device too).
+   */
+  others: SoftwareHardwareSigner[] = [];
+
   constructor(public device: SoftwareHardwareSigner) {}
 
   async isAvailable(): Promise<boolean> {
     return true;
   }
 
-  async connect(): Promise<HardwareSigner> {
+  async connect(opts?: { kind?: HardwareKind; known?: { fingerprint: string } }): Promise<HardwareSigner> {
     this.connects++;
-    return this.device;
+    const known = opts?.known?.fingerprint;
+    return (known && this.device.info.fingerprint !== known ? this.others.find((d) => d.info.fingerprint === known) : undefined) ?? this.device;
   }
 }
 

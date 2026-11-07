@@ -302,6 +302,27 @@ export interface ResetInput {
   /** Exactly `RESET_CONFIRMATION`. */
   confirm: string;
 }
+/** Typed to remove a wallet after the first without its hardware wallet (`removeOwnWallet`). */
+export const REMOVE_WALLET_CONFIRMATION = 'REMOVE WALLET';
+
+/** One wallet of the box on the Wallets page: what the owner checks for a wallet or an unlock they did not add. */
+export interface OwnWalletSecurity {
+  walletId: string;
+  name: string;
+  /** The first wallet: it holds the pairing and is not removed here (Reset forgets every wallet). */
+  first: boolean;
+  account: number;
+  hardwareFingerprint: string;
+  addedAt?: ISODate;
+  /** Hardware unlock is on for it: its hardware wallet can unlock the whole guardian through the phone. */
+  unlockSlot?: { addedAt: ISODate };
+  recovery?: { id: string; readyAt: ISODate };
+}
+
+export interface OwnWalletsSecurity {
+  wallets: OwnWalletSecurity[];
+  removeConfirmation: string;
+}
 
 // --- relays -------------------------------------------------------------
 
@@ -549,8 +570,11 @@ export type RecoveryDelayDays = 7 | 14 | 30;
 
 export interface AlertContact {
   id: string;
+  /** For a contact: as the hardware wallet shows it in an approval (`npub1` + 8 … last 4, `contactId`). */
   name: string;
   kind: 'paired-phone' | 'contact';
+  /** A contact's whole npub. Absent from guardians before `approval_contacts`. */
+  npub?: string;
 }
 
 export interface Rules {
@@ -565,6 +589,11 @@ export interface Rules {
   recoveryDelayDays: RecoveryDelayDays;
   /** Everyone who gets daily recovery alerts and can cancel. */
   contacts: AlertContact[];
+  /**
+   * The code of the alert contacts (`contactsCode`): what the hardware wallet shows instead of the contacts when they do
+   * not all fit on its screen (`contacts=<k>:<code>`). Absent without contacts, and from guardians before `approval_contacts`.
+   */
+  contactsCode?: string;
   /** A recovery sweep can't pay more than this in fees (sats). The guardian enforces an absolute cap. */
   sweepFeeCapSats: number;
   /**

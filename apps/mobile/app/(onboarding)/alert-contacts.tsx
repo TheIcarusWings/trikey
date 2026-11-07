@@ -8,7 +8,7 @@ import { Screen } from '@/components/screen';
 import { Icon } from '@/components/ui/icon';
 import { Input } from '@/components/ui/input';
 import { Text } from '@/components/ui/text';
-import { errorText, looksLikeNpub, useWallet, useWalletService } from '@/data';
+import { deviceContactId, errorText, looksLikeNpub, useWallet, useWalletService } from '@/data';
 import { pick } from '@/lib/platform';
 
 type Contact = { name: string; npub: string };
@@ -73,9 +73,7 @@ export default function AlertContacts() {
             <View key={c.npub} className="min-h-14 flex-row items-center gap-3 px-4 py-2" accessible accessibilityLabel={`${c.name}, ${c.npub}`}>
               <View className="flex-1">
                 <Text className="text-base leading-[21px]">{c.name}</Text>
-                <Text className="text-muted-foreground font-mono text-[13px] leading-[18px]">
-                  {c.npub.slice(0, 12)}…{c.npub.slice(-4)}
-                </Text>
+                <Text className="text-muted-foreground font-mono text-[13px] leading-[18px]">{deviceContactId(c.npub)}</Text>
               </View>
               <Icon as={Check} size={18} strokeWidth={2.4} className="text-good" />
             </View>
@@ -119,7 +117,10 @@ export default function AlertContacts() {
         </ListGroup>
       )}
       {problem && !adding ? <Text className="text-destructive text-[13px] leading-[18px]">{problem}</Text> : null}
-      <Footnote className={pick('', 'text-xs leading-4')}>Alerts are nostr messages. You can change this list later in Security, with your hardware wallet.</Footnote>
+      <Footnote className={pick('', 'text-xs leading-4')}>
+        Alerts are nostr messages. Your hardware wallet will show each contact as written here when it approves your rules: check them there. Each
+        contact is told they are one. You can change this list later in Security, with your hardware wallet.
+      </Footnote>
     </Screen>
   );
 }
