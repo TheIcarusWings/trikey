@@ -116,7 +116,7 @@ export function looksLocal(host: string): boolean {
 /**
  * What the web UI sends (`PUT /api/chain`, `POST /api/chain/test`), checked. `current` fills the RPC password when the
  * owner left it out (write-only, like the notification secrets), and so does `nodeRpc`, the Bitcoin Core the guardian
- * was started with (BITCOIN_RPC_*: Umbrel and StartOS pass it), for the same host and user. Throws `ChainSourceError`
+ * was started with (BITCOIN_RPC_*: Umbrel and StartOS pass it), for the same host, port and user. Throws `ChainSourceError`
  * in plain words.
  */
 export function parseChainSource(input: unknown, current?: ChainSource, nodeRpc?: Omit<RpcSettings, 'allowPublic'>): ChainSource {
@@ -155,8 +155,12 @@ export function parseChainSource(input: unknown, current?: ChainSource, nodeRpc?
       const user = typeof rpc['user'] === 'string' ? rpc['user'].trim() : '';
       if (!user || user.length > 128 || /[:\s]/.test(user)) throw new ChainSourceError('RPC user: enter the user name (no colon or spaces), or __cookie__ with the cookie’s password.');
       let pass = typeof rpc['pass'] === 'string' && rpc['pass'] !== '' ? rpc['pass'] : undefined;
-      if (pass === undefined && current?.kind === 'core' && current.rpc.host === host && current.rpc.user === user) pass = current.rpc.pass;
-      if (pass === undefined && nodeRpc && nodeRpc.host === host && nodeRpc.user === user) pass = nodeRpc.pass;
+      // A kept password stays with the exact address it was saved for: host, port and user (Bitcoin Core's RPC is always
+      // plain HTTP, so there is no scheme to tell apart). Another port on the same host can be anyone's listener
+      // (security review 2026-11, "RPC password reused for any port").
+      const sameServer = (s: { host: string; port: number; user: string }) => s.host === host && s.port === port && s.user === user;
+      if (pass === undefined && current?.kind === 'core' && sameServer(current.rpc)) pass = current.rpc.pass;
+      if (pass === undefined && nodeRpc && sameServer(nodeRpc)) pass = nodeRpc.pass;
       if (!pass) throw new ChainSourceError('RPC password: enter it (it is kept by the guardian and never shown again).');
       if (pass.length > 256) throw new ChainSourceError('RPC password: at most 256 characters.');
       const allowPublic = rpc['allowPublic'] === true;

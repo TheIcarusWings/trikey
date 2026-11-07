@@ -223,6 +223,9 @@ describe('Settings > Server: the server Umbrel or StartOS set', () => {
     expect(draftError(d, passKnown(d, umbrel()))).toBeUndefined();
     expect(inputFrom(d)).toEqual({ kind: 'core', rpc: { host: '10.21.21.8', port: 8332, user: 'umbrel' } });
     expect(passKnown({ ...d, user: 'other' }, umbrel())).toBe(false);
+    // Another port on the same host needs the password again (the guardian refuses to send it there).
+    expect(passKnown({ ...d, port: '9999' }, umbrel())).toBe(false);
+    expect(draftError({ ...d, port: '9999' }, passKnown({ ...d, port: '9999' }, umbrel()))).toBeDefined();
     expect(coreDraft(umbrel({ nodeRpc: undefined }))).toMatchObject({ kind: 'core', host: '', user: '' });
   });
 });
