@@ -69,7 +69,7 @@ import {
   type HostedWallet,
   type LedgerEntry,
 } from './types.js';
-import { MAX_WALLET_MAP_BYTES } from '@trikey/protocol';
+import { MAX_WALLET_MAP_BYTES, safeName } from '@trikey/protocol';
 
 const MAX_NOTICES = 32;
 
@@ -633,8 +633,11 @@ export class HostedEngine {
       if (signer && hex.encode(signer.accountPubkey) !== keys.cosigner) return bad("the slot's key 3 differs from cosignerAccountPubkey");
       const appNostr = String(input.appNostrPubkey).toLowerCase();
       if (!isNostrPubkey(appNostr)) return bad('appNostrPubkey must be 32-byte hex');
-      const label = String(input.walletLabel ?? '').trim();
-      if (!label || label.length > 64) return bad('walletLabel must be 1 to 64 characters');
+      const given = String(input.walletLabel ?? '').trim();
+      if (!given || given.length > 64) return bad('walletLabel must be 1 to 64 characters');
+      // Kept as alerts show it (letters, digits, spaces, `-` and `'`: protocol names.ts); an older app's label with other
+      // characters is cleaned, never refused.
+      const label = safeName(given, 64) || 'Wallet';
       let rules: Rules;
       try {
         rules = normalizeRules(input.rules);

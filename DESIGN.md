@@ -560,6 +560,12 @@ printed and kept with the hardware wallet.
   command only as the one line left once blank and quoted (`>`) lines are dropped, as for `LOCK`; anything else that
   names the running recovery's line gets a short DM with the exact line to send, and cancels nothing (up to 0.1.19 the
   line was found anywhere in the message, quotes included).
+- **Names in alerts carry no link.** The contacts' DMs name a wallet by the name the phone chose (an own wallet's
+  name, the first wallet's name, a guest's label), and a phone thief can choose it: renamed `trikey-help.io`, every
+  alert about the thief's recovery would carry a link, and a contact who knows that real alerts never do would dismiss
+  it. So an alert shows only a name's letters, digits, spaces, `-` and `'`; anything else becomes a space (no dot, colon,
+  slash or line break). The app refuses other characters when a name is typed; the guardian never refuses one, it
+  cleans what it shows (up to 0.1.21 names went in unfiltered).
 - **Answers to `CANCEL` cannot hold up recoveries.** Every answer is a DM published to relays the contact chose (their
   kind-10050 list). The guardian decides it under the wallet's recovery lock and sends it after the lock is released;
   a sender gets at most 10 answers an hour, and only to a message dated within 10 minutes of the guardian's clock,

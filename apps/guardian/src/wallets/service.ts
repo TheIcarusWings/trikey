@@ -12,7 +12,7 @@
 import { join } from 'node:path';
 import { hex } from '@scure/base';
 import { MultisigWallet, getNetwork, type NetworkName } from '@trikey/core';
-import { ErrorCode, GUARDIAN_FEATURES, RpcError, type Handlers, type MethodName, type Params, type Result } from '@trikey/protocol';
+import { ErrorCode, GUARDIAN_FEATURES, RpcError, safeName, type Handlers, type MethodName, type Params, type Result } from '@trikey/protocol';
 import type { Guardian } from '../guardian.js';
 import { RECOVERY_PEER_METHODS } from '../guardian.js';
 import type { GuardianSeed, KeystoreSigner } from '../keystore.js';
@@ -132,13 +132,19 @@ export class OwnWallets implements OwnWalletHost {
   // ---------------------------------------------------------------------------
   // Names
 
+  /**
+   * An own wallet's name in alerts while the box has more than one wallet. The phone chose it (a phone thief can too),
+   * and the alert contacts read it in the guardian's DMs, so only its letters, digits, spaces, `-` and `'` are shown
+   * (`safeName`): no link, no domain, no line break. The name itself is kept as given: the phone rebuilds the hardware
+   * wallet's registration name from it.
+   */
   label(w: OwnWallet): string | undefined {
-    return this.count() > 1 ? w.name : undefined;
+    return this.count() > 1 ? safeName(w.name, 16) || `Wallet ${w.account / 2 + 1}` : undefined;
   }
 
-  /** The first wallet's name in alerts while the box has more than one wallet. */
+  /** The first wallet's name in alerts while the box has more than one wallet (`wallet.add`'s `firstName`, as `label`). */
   firstLabel(): string | undefined {
-    return this.active().length ? (this.registry.firstName ?? DEFAULT_FIRST_NAME) : undefined;
+    return this.active().length ? safeName(this.registry.firstName, 16) || DEFAULT_FIRST_NAME : undefined;
   }
 
   async markRetired(slotId: string, at: number): Promise<void> {

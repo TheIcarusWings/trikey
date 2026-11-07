@@ -11,7 +11,7 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hex } from '@scure/base';
 import type { Alert, MethodName } from '@trikey/protocol';
-import { GUARDIAN_FEATURES } from '@trikey/protocol';
+import { GUARDIAN_FEATURES, safeName } from '@trikey/protocol';
 import type { Guardian } from '../guardian.js';
 import { hostedKey3Context, hostedKey3Mix, type GuardianSeed, type KeystoreSigner } from '../keystore.js';
 import { errorText } from '../log.js';
@@ -253,7 +253,7 @@ export class Hosting {
       if (!engine.contactMayPause(contact)) continue;
       const res = await engine.pauseSlot({ kind: 'contact', contact });
       if (!res.ok) continue;
-      const label = engine.registration()?.walletLabel ?? 'a wallet';
+      const label = safeName(engine.registration()?.walletLabel, 64) || 'a wallet';
       if (res.outcome === 'paused') {
         out.paused.push(label);
         await this.g.logEvent({ type: 'hosting_paused', name: slot.name, state: 'paused', by: 'contact' });

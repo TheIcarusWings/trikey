@@ -2,6 +2,7 @@
  * Several wallets in one app (docs/design/multi-wallet.md): the words the switcher, Send, Receive and Settings > Wallets
  * use. Every wallet shares the phone (one key, one backup) and the guardian; only the hardware wallet differs.
  */
+import { isSafeName } from '@trikey/protocol';
 import { formatSats } from './format';
 import type { Sats, WalletListItem, WalletsView } from './types';
 
@@ -44,11 +45,15 @@ export function toLine(view: WalletsView | undefined): string | null {
   return view && hasSeveralWallets(view) ? `To: ${view.current.name}` : null;
 }
 
-/** A wallet name as typed: 1 to 16 characters, not one the phone uses already. Undefined when it is fine. */
+/**
+ * A wallet name as typed: 1 to 16 letters, digits, spaces, `-` and `'` (the guardian repeats it in alerts to the
+ * contacts, so no link or line break), not one the phone uses already. Undefined when it is fine.
+ */
 export function walletNameProblem(name: string, view: WalletsView | undefined): string | undefined {
   const n = name.trim();
   if (!n) return 'Give the wallet a name.';
   if (n.length > 16) return 'At most 16 characters: the hardware wallet shows it.';
+  if (!isSafeName(n)) return "Use letters, digits, spaces, - and ' only.";
   if (view?.list.some((w) => w.name.toLowerCase() === n.toLowerCase())) return 'A wallet has this name already.';
   return undefined;
 }

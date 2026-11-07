@@ -165,5 +165,9 @@ describe('wallet names', () => {
     expect(walletNameProblem('x'.repeat(17), view)).toMatch(/16/);
     expect(walletNameProblem('main', view)).toMatch(/already/);
     expect(walletNameProblem('Business', view)).toBeUndefined();
+    // The guardian repeats it in alerts to the contacts: no link, no line break (security sweep 2, finding 15).
+    expect(walletNameProblem('trikey-help.io', view)).toMatch(/letters/);
+    expect(walletNameProblem('OK\nTEST', view)).toMatch(/letters/);
+    expect(walletNameProblem("Kids' savings", view)).toBeUndefined();
   });
 });
