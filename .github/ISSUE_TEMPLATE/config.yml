@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/TheIcarusWings/trikey/security/advisories/new
+    about: Report anything that could put funds at risk privately — do not open a public issue.
+  - name: Design and threat model
+    url: https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md
+    about: Read DESIGN.md before proposing large protocol or policy changes.

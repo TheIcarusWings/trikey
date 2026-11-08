@@ -1,0 +1,42 @@
+name: Bug report
+description: Something does not work as documented
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Trikey is **pre-alpha and not audited**. Prefer testnet, signet or regtest.
+        If this could put funds at risk, use [private security reporting](https://github.com/TheIcarusWings/trikey/security/advisories/new) instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: App / guardian version (e.g. 0.1.22-alpha), and Android / iOS / Umbrel / Docker.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps. No seeds, passphrases, or private keys.
+    validations:
+      required: true
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network
+      options:
+        - regtest
+        - signet
+        - testnet
+        - mainnet (amount I can afford to lose)
+    validations:
+      required: true
