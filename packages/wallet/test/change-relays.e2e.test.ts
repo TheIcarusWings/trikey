@@ -172,13 +172,18 @@ describe('changing the guardian\'s relays', { timeout: 60_000 }, () => {
   });
 
   it('the next backup carries the new relays', async () => {
+    expect(A.state.guardian!.relays).toEqual([C]);
     const b = await A.createBackup({ recoveryCode: true });
     rig.clock.advance(6 * 60_000);
-    const phoneE = newPhone(new Set(old));
+    // Cut the setup relays and the abandoned D from the earlier "cannot reach" test. Relays still
+    // re-deliver that test's relays_changed([D]); without cutting D, a restored phone can follow D
+    // and fail this assertion flakily (D is otherwise still up in the rig).
+    const phoneE = newPhone(new Set([...old, D]));
     const E = track(await TrikeyWallet.restoreFromBackup(phoneE.deps, { recoveryCode: b.recoveryCode! }, { name: b.name }));
     expect(E.state.guardian!.relays).toEqual([C]);
     expect(phoneE.relayPools[0]!.subscribed[0]).toEqual([C]);
     expect(await E.refreshStatus()).toMatchObject({ paired: true });
+    expect(E.state.guardian!.relays).toEqual([C]);
     await E.close();
   });
 
