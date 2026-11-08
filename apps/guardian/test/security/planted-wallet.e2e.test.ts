@@ -25,6 +25,7 @@ import { RESET_CONFIRMATION } from '../../src/guardian.js';
 import { boxNoticeText } from '../../src/alerts.js';
 import { AUTH_PATH, MNEMONICS, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, nostrKey, withAddApproval, withRulesApproval } from '../helpers.js';
 import { GuardianRig, type FundedOutput } from '../support/index.js';
+import { sealedHardwareAdd } from '../support/sealed-phone.js';
 
 const ATTACKER_HW = 'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote';
 const OWNER_HW2 = MNEMONICS.hardware2;
@@ -153,7 +154,10 @@ describe('security: a wallet added with the phone alone', { timeout: 90_000 }, (
     // The slot id the guardian offers for that wallet (`unlock_slot_offer`).
     const SLOT = (await rpc.call('guardian.status', { walletId: business.walletId })).hardwareUnlockOffer!.slot;
     const signature = signMessage(unlockKeyMessage({ walletId: business.walletId, guardianPubkey: rig.pubkey, network: 'regtest', slot: SLOT }), hwAuthPrivateKey(AUTH_PATH, OWNER_HW2));
-    await rpc.call('unlock.hardware.add', { walletId: business.walletId, slot: SLOT, signature });
+    await sealedHardwareAdd(
+      { phone: rpc, phonePubkey: phonePub, guardianPubkey: rig.pubkey, nowSec: rig.nowSec() },
+      { walletId: business.walletId, slot: SLOT, signature },
+    );
     expect(notices().find((n) => n.kind === 'unlock_slot_added' && n.subjectWalletId === business.walletId)).toMatchObject({ recipients: [FIRST_CONTACT] });
     const listed = (await rig.api('GET', '/own-wallets')).body;
     expect(listed.wallets.map((w: { name: string; first: boolean }) => [w.name, w.first])).toEqual([
@@ -167,6 +171,7 @@ describe('security: a wallet added with the phone alone', { timeout: 90_000 }, (
     expect(rig.guardian.unlockSlots.get(business.walletId)).toBeUndefined();
     expect((await rig.api('DELETE', `/unlock-slots/${business.walletId}`)).status).toBe(404);
     // Turned off in the web page, it stays off: the old signature cannot make its slot again (the guardian offers a new id).
+    // Cleartext is enough: slot-not-offered is checked before the seal requirement.
     const again = await refusal(rpc.call('unlock.hardware.add', { walletId: business.walletId, slot: SLOT, signature }));
     expect(again.data).toMatchObject({ reason: 'unlock_slot_not_offered' });
     expect(rig.guardian.unlockSlots.get(business.walletId)).toBeUndefined();

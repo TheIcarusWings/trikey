@@ -34,6 +34,7 @@ import { createLogger } from '../src/log.js';
 import { DAY, ManualClock, signMessage } from '../src/policy/index.js';
 import { FakeElectrum } from './support/fake-electrum.js';
 import { AUTH_PATH, MNEMONICS, appSigner, fund, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, phoneSpend, withRulesApproval } from './helpers.js';
+import { sealedPassphraseUnlock } from './support/sealed-phone.js';
 
 const PASS = 'correct horse battery staple';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -521,9 +522,10 @@ describe('Trikey Guardian service, end to end', { timeout: 30_000 }, () => {
     expect((await phone.call('policy.get', {})).policy).toEqual(rules);
     expect((await phone.call('recovery.status', { recoveryId: recovery1Id })).recovery).toMatchObject({ state: 'cancelled', cancelledBy: 'contact' });
 
-    const e = await rpcError(phone.call('guardian.unlock', { kind: 'passphrase', passphrase: 'wrong wrong wrong' }));
+    const unlockCtx = { phone, phonePubkey: phonePub, guardianPubkey: guardianPub, nowSec: nowSec() };
+    const e = await rpcError(sealedPassphraseUnlock(unlockCtx, 'wrong wrong wrong'));
     expect(e.code).toBe(ErrorCode.UnlockFailed);
-    expect((await phone.call('guardian.unlock', { kind: 'passphrase', passphrase: PASS })).unlocked).toBe(true);
+    expect((await sealedPassphraseUnlock(unlockCtx, PASS)).unlocked).toBe(true);
     expect((await api('GET', '/status')).body.state).toBe('unlocked');
 
     const events = (await api('GET', '/activity?limit=200')).body.entries.map((x: { event: string }) => x.event);

@@ -125,9 +125,17 @@ beforeAll(async () => {
     hardwareAuthProof: signMessage(pairingMessage(walletId, hex.encode(HDKey.fromExtendedKey(prep.guardianKey.xpub, network.bip32).publicKey!)), hwAuthPrivateKey()),
     rules: { dailyLimitSats: 100_000, recoveryDelayDays: 7, alertContacts: [], sweepFeeCapSats: 20_000 },
   }, rig.nowSec() * 1000));
-  // Hardware unlock on before the change (in the clear: the add's sealing is sealed-unlock.e2e's business).
+  // Hardware unlock on before the change (signature sealed: a current app).
   slot = (await phone.call('guardian.status', {})).hardwareUnlockOffer!.slot;
-  await phone.call('unlock.hardware.add', { walletId, slot, signature: hwSig() });
+  {
+    const id = generateMessageId();
+    const unlockKey = (await phone.call('guardian.status', {})).unlockKey!.pubkey;
+    const sealed = sealUnlock(
+      { kind: 'hardware', walletId, slot, signature: hwSig() },
+      { purpose: 'unlock.hardware.add', guardianPubkey: rig.pubkey, unlockKey, phonePubkey: phonePub, id, expiresAt: rig.nowSec() + 300 },
+    );
+    await phone.call('unlock.hardware.add', { walletId, slot, sealed }, { id });
+  }
 }, 30_000);
 
 afterAll(async () => {

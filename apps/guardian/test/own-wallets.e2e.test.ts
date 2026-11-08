@@ -16,6 +16,7 @@ import { signMessage } from '../src/policy/index.js';
 import { cosignerFromSeed } from '../src/keystore.js';
 import { AUTH_PATH, MNEMONICS, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withAddApproval, withRulesApproval } from './helpers.js';
 import { GuardianRig, type FundedOutput } from './support/index.js';
+import { sealedPassphraseUnlock } from './support/sealed-phone.js';
 
 const HW2 = MNEMONICS.hardware2;
 const HW3 = 'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote';
@@ -322,9 +323,14 @@ describe('own wallets: two wallets of one owner on one guardian', { timeout: 90_
     expect(reset.status).toBe(409);
     expect(reset.body.error.code).toBe('recovery_pending');
 
-    // The phone started it, so it may still unlock.
+    // The phone started it, so it may still unlock (sealed: a current app).
     await phone.rpc.call('guardian.lock', {});
-    expect(await phone.rpc.call('guardian.unlock', { kind: 'passphrase', passphrase: rig.passphrase })).toEqual({ unlocked: true });
+    expect(
+      await sealedPassphraseUnlock(
+        { phone: phone.rpc, phonePubkey: phone.pubkey, guardianPubkey: rig.pubkey, nowSec: rig.nowSec() },
+        rig.passphrase,
+      ),
+    ).toEqual({ unlocked: true });
 
     // After the delay the guardian completes it: Business moves to the new wallet, Daily is untouched.
     rig.clock.set(started.recovery.readyAt * 1000 + 2 * HOUR_MS);

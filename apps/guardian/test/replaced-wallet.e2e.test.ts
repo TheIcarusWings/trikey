@@ -36,6 +36,7 @@ import { RESET_CONFIRMATION } from '../src/guardian.js';
 import { signMessage } from '../src/policy/index.js';
 import { AUTH_PATH, MNEMONICS, OTHER_COSIGNER_PRIV, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, makeWallet, network, withRulesApproval } from './helpers.js';
 import { GuardianRig, type FundedOutput } from './support/index.js';
+import { sealedPassphraseUnlock } from './support/sealed-phone.js';
 
 const HOUR_MS = 3_600_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -650,7 +651,12 @@ describe('atMs: alerts and guardian.status carry milliseconds', { timeout: 60_00
     await alert('lock from the phone', 'remote');
     rig.clock.advance(300);
     await status('status while locked');
-    expect(await phone.rpc.call('guardian.unlock', { kind: 'passphrase', passphrase: rig.passphrase })).toEqual({ unlocked: true });
+    expect(
+      await sealedPassphraseUnlock(
+        { phone: phone.rpc, phonePubkey: phone.pubkey, guardianPubkey: rig.pubkey, nowSec: rig.nowSec() },
+        rig.passphrase,
+      ),
+    ).toEqual({ unlocked: true });
     rig.clock.advance(300);
     await status('status after unlock');
     await rig.lock();

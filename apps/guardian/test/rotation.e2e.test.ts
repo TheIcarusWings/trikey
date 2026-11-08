@@ -33,6 +33,7 @@ import { signMessage } from '../src/policy/index.js';
 import { RESET_CONFIRMATION } from '../src/guardian.js';
 import { AUTH_PATH, MNEMONICS, appSigner, externalAddress, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, withRulesApproval } from './helpers.js';
 import { GuardianRig, type FundedOutput } from './support/index.js';
+import { sealedHardwareAdd, sealedPassphraseUnlock } from './support/sealed-phone.js';
 
 const HOUR_MS = 3_600_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -210,7 +211,10 @@ describe('lost phone, no backup: recovery ends with the new phone co-signing fro
     // The old phone had turned on unlocking with the hardware wallet: the recovery must take that slot away.
     const slot = (await oldPhone.rpc.call('guardian.status', {})).hardwareUnlockOffer!.slot;
     const text = unlockKeyMessage({ walletId: oldId, guardianPubkey: rig.pubkey, network: 'regtest', slot });
-    await oldPhone.rpc.call('unlock.hardware.add', { walletId: oldId, slot, signature: signMessage(text, hwAuthPrivateKey()) });
+    await sealedHardwareAdd(
+      { phone: oldPhone.rpc, phonePubkey: oldPhone.pubkey, guardianPubkey: rig.pubkey, nowSec: rig.nowSec() },
+      { walletId: oldId, slot, signature: signMessage(text, hwAuthPrivateKey()) },
+    );
     expect(rig.guardian.unlockSlots.list().map((s) => s.walletId)).toEqual([oldId]);
   });
 
@@ -387,7 +391,12 @@ describe('remote lock from the phone', { timeout: 60_000 }, () => {
     await sleep(100);
     expect(locks()).toBe(n);
 
-    expect(await phone.rpc.call('guardian.unlock', { kind: 'passphrase', passphrase: rig.passphrase })).toEqual({ unlocked: true });
+    expect(
+      await sealedPassphraseUnlock(
+        { phone: phone.rpc, phonePubkey: phone.pubkey, guardianPubkey: rig.pubkey, nowSec: rig.nowSec() },
+        rig.passphrase,
+      ),
+    ).toEqual({ unlocked: true });
     expect((await phone.rpc.call('sign', { psbt })).psbt).toBeDefined();
     const events = (await rig.api('GET', '/activity?limit=20')).body.entries.map((e: { event: string }) => e.event);
     expect(events).toContain('Guardian locked from the phone');
