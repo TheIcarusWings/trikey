@@ -31,6 +31,6 @@
   },
   "devDependencies": {
     "@trikey/wallet": "*",
-    "smtp-server": "3.19.23"
+    "smtp-server": "3.21.3"
   }
 }
