@@ -30,6 +30,7 @@ import {
 import { ElectrumError } from '../chain/electrum.js';
 import type { Guardian } from '../guardian.js';
 import type { WalletRuntime } from '../runtime.js';
+import { takeRequestWrite, throwIfRefusalsBlocked } from '../rate-limit.js';
 import { errorText } from '../log.js';
 import { isContactLockOn, isLimitOff, policyHash, type CancelActor, type RecoveryRecord, type WatchedWallet } from '../policy/index.js';
 import { helperAccount } from '../singlekey.js';
@@ -248,17 +249,38 @@ const STATE_CHANGING: MethodName[] = [
   'savings.unregister',
   'unlock.hardware.add',
   'unlock.hardware.remove',
+  // Also recorded: a replay after a restart would put labels again, broadcast again, ack a relay change twice, or
+  // add a wallet twice (security sweep 2 follow-up; up to 0.1.22 these five were left off the list).
+  'labels.put',
+  'labels.delete',
+  'tx.broadcast',
+  'relays.ack',
 ];
 /** How long a request id is remembered: the protocol's longest request TTL (1 h) plus clock skew. */
 const REMEMBER_MS = (3600 + 120) * 1000;
+
+/**
+ * The checks a state-changing request of wallet `w` must pass that cost nothing (no disk, no engine), made before the
+ * request is recorded: the handler would refuse it anyway, with the same answer. A cancel or an update must name the
+ * running recovery; a sender over its refusal limit is refused `RateLimited`.
+ */
+function precheck(g: Guardian, w: WalletRuntime, method: MethodName, params: unknown, sender: string): void {
+  const p = (params ?? {}) as { recoveryId?: unknown };
+  if (method === 'recovery.cancel' || method === 'recovery.update') runningRecovery(w, String(p.recoveryId ?? ''));
+  if (method === 'recovery.start' || method === 'recovery.update') throwIfRefusalsBlocked(g, sender);
+}
 
 /**
  * Runs each state-changing request at most once per (sender, id) across
  * restarts too (`ServiceState.rememberRequest`). Within one process the
  * RpcServer already answers duplicates from its cache; a duplicate that gets
  * here arrived after a restart, and is refused instead of run again.
+ *
+ * The record is a durable write (the whole service state, fsync'd), so a request is checked first (`precheck`) and
+ * then counted against the sender's limit (`takeRequestWrite`): a flood of requests that would be refused, or of more
+ * than the limit, writes nothing (security sweep 2, finding 13; up to 0.1.21 every one was written first).
  */
-function runOnceAcrossRestarts(g: Guardian, handlers: Handlers): Handlers {
+function runOnceAcrossRestarts(g: Guardian, w: WalletRuntime, handlers: Handlers): Handlers {
   const out: Record<string, unknown> = { ...handlers };
   for (const m of STATE_CHANGING) {
     const h = handlers[m] as ((p: unknown, ctx: HandlerContext) => unknown) | undefined;
@@ -270,6 +292,8 @@ function runOnceAcrossRestarts(g: Guardian, handlers: Handlers): Handlers {
         const check = g.pairing.check(String((params as { pairingSecret?: unknown })?.pairingSecret ?? ''), ctx.sender, g.clock.now());
         if (!check.ok) throw new RpcError(ErrorCode.PairingRejected, PAIRING_REJECTIONS[check.reason]);
       }
+      precheck(g, w, m, params, ctx.sender);
+      takeRequestWrite(g, ctx.sender);
       const fresh = await g.service.rememberRequest(`${ctx.sender}:${ctx.id}`, ctx.createdAt * 1000 + REMEMBER_MS, g.clock.now());
       if (!fresh) {
         g.log.warn('rpc.replay_after_restart', { method: m });
@@ -445,6 +469,15 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
         throw new RpcError(ErrorCode.UnlockFailed, 'Unlocking with the hardware wallet is not supported yet; use the passphrase.');
       // As a guardian before sealed unlock answers (its schema has no `sealed`).
       if (params.kind === 'sealed' && !g.sealsUnlocks) throw new RpcError(ErrorCode.InvalidParams);
+      // A guardian that seals unlocks refuses the secret in the clear: an older app must update (security sweep 2
+      // follow-up). Up to 0.1.22 it was accepted and marked in the Activity; a thief with the disk and archived wraps
+      // could then read the passphrase or slot signature from those wraps.
+      if (params.kind !== 'sealed' && g.sealsUnlocks) {
+        g.log.warn('guardian.unlock_unsealed', { method: 'guardian.unlock', refused: true });
+        throw new RpcError(ErrorCode.UnlockFailed, 'Update the Trikey app: this guardian only accepts a sealed unlock.', {
+          reason: 'app_update_required',
+        });
+      }
       // The same throttle and refusals for all (Guardian.unlockAttempt); the passphrase and the signature are never logged or kept.
       const r =
         params.kind === 'sealed'
@@ -971,6 +1004,8 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
         // A slot id the guardian did not offer (an older app picks its own), or one that ran out: sign the offered one.
         case 'slot_not_offered':
           throw new RpcError(ErrorCode.InvalidParams, r.message, { reason: 'unlock_slot_not_offered' });
+        case 'app_update_required':
+          throw new RpcError(ErrorCode.InvalidParams, r.message, { reason: 'app_update_required' });
         default:
           throw new RpcError(ErrorCode.Unavailable, r.message);
       }
@@ -1140,14 +1175,14 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
 }
 
 /** Runs each state-changing request of a wallet's handlers at most once per (sender, id), across restarts too. */
-export function onceAcrossRestarts(g: Guardian, handlers: Handlers): Handlers {
-  return runOnceAcrossRestarts(g, handlers);
+export function onceAcrossRestarts(g: Guardian, w: WalletRuntime, handlers: Handlers): Handlers {
+  return runOnceAcrossRestarts(g, w, handlers);
 }
 
 export function buildHandlers(g: Guardian): Handlers {
   // Own wallets' requests are routed by `walletId` in front of the first wallet's (wallets/handlers.ts); guests' to their
   // own slots in front of all of them (hosting/handlers.ts). The first wallet's are unchanged.
-  return withHosting(g, withOwnWallets(g, runOnceAcrossRestarts(g, walletHandlers(g, g))));
+  return withHosting(g, withOwnWallets(g, runOnceAcrossRestarts(g, g, walletHandlers(g, g))));
 }
 
 /**

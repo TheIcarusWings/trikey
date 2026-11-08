@@ -89,6 +89,8 @@ import {
   type RpcClientOptions,
   type WalletUtxo,
   SEALED_UNLOCK_TTL_SEC,
+  isSafeName,
+  safeName,
   sealUnlock,
   type UnlockSecret,
 } from '@trikey/protocol';
@@ -2198,7 +2200,8 @@ export class TrikeyWallet {
     if (this.s.own) throw new WalletError('wrong_state', 'Add wallets from your first wallet.');
     if (!this.ownWalletsSupported) throw new WalletError('guardian_unsupported', 'Update your guardian to add a wallet.');
     const name = opts.name.trim();
-    if (!name || name.length > 16) throw new WalletError('invalid_rules', 'A wallet name has 1 to 16 characters.');
+    // The guardian repeats it in alerts to the contacts: no link, no line break (protocol names.ts).
+    if (!name || name.length > 16 || !isSafeName(name)) throw new WalletError('invalid_rules', 'A wallet name has 1 to 16 characters: letters, digits, spaces, - and \' only.');
     if (!Number.isSafeInteger(opts.account) || opts.account < 2 || opts.account > 14 || opts.account % 2 !== 0)
       throw new WalletError('wrong_state', `Account ${opts.account} is not a wallet's account.`);
     let rules: Policy;
@@ -2460,7 +2463,7 @@ export class TrikeyWallet {
   async renameOwnWallet(name: string): Promise<void> {
     const n = name.trim();
     if (!this.s.own) throw new WalletError('wrong_state', 'Only an added wallet has a name here.');
-    if (!n || n.length > 16) throw new WalletError('invalid_rules', 'A wallet name has 1 to 16 characters.');
+    if (!n || n.length > 16 || !isSafeName(n)) throw new WalletError('invalid_rules', 'A wallet name has 1 to 16 characters: letters, digits, spaces, - and \' only.');
     await this.update((s) => void (s.own!.name = n));
   }
 
@@ -6713,8 +6716,10 @@ export class TrikeyWallet {
       throw new WalletError('invalid_rules', `Invalid rules: ${(e as Error).message}`, { cause: e });
     }
     if (isLimitOff(rules.dailyLimitSats)) throw new WalletError('invalid_rules', 'A hosted wallet keeps a daily limit.');
-    const walletLabel = opts.walletLabel.trim();
-    if (!walletLabel || walletLabel.length > 64) throw new WalletError('invalid_rules', 'Give the wallet a name of 1 to 64 characters.');
+    if (!opts.walletLabel.trim() || opts.walletLabel.trim().length > 64) throw new WalletError('invalid_rules', 'Give the wallet a name of 1 to 64 characters.');
+    // The guardian repeats it in alerts to the contacts, so it keeps letters, digits, spaces, - and ' only (protocol
+    // names.ts); the default is the device's name ("Anna’s iPhone (2)"), which is cleaned rather than refused.
+    const walletLabel = safeName(opts.walletLabel, 64) || 'Wallet';
     if (!this.deps.hostedChain) throw new WalletError('chain_source_required', 'This app has no chain server for a hosted wallet.');
     if (hwRec.auth.path.replace(/h/g, "'") !== authKeyPath(this.network)) throw new WalletError('hardware_invalid_response', 'The hardware authorization key is not at the wallet path.');
     let contribution: Uint8Array;

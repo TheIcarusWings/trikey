@@ -13,7 +13,7 @@
  * and the per-slot contact lock: `contact_lock` (a contact PAUSED this wallet: `wallet_paused` to the phone, a DM to the
  * other contacts) and `contact_lock_on` / `_off` (the contacts may now pause it, or no longer may).
  */
-import type { Alert } from '@trikey/protocol';
+import { safeName, type Alert } from '@trikey/protocol';
 import { contactChangeText, formatBtc, formatWhen, noticeToWire } from '../alerts.js';
 import { npubEncode } from 'nostr-tools/nip19';
 import type { Guardian } from '../guardian.js';
@@ -229,7 +229,8 @@ export class HostedAlerter {
     const g = this.g;
     if (!g.rpc || !g.dm) return;
     const reg = engine.registration();
-    const label = reg?.walletLabel ?? 'your wallet';
+    // The guest chose it: only its letters, digits, spaces, `-` and `'` (no link, no line break; protocol names.ts).
+    const label = safeName(reg?.walletLabel, 64) || 'your wallet';
     const phone = reg?.appNostrPubkey;
     const canPause = !!engine.rules()?.contactLock;
     for (const n of engine.dueNotices()) {

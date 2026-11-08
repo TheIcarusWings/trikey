@@ -393,15 +393,17 @@ export function openGiftWrap(wrap: NostrEvent, opts: OpenOptions): OpenedWrap {
     if (
       typeof inner['id'] !== 'string' ||
       typeof inner['kind'] !== 'number' ||
-      typeof inner['created_at'] !== 'number' ||
       typeof inner['content'] !== 'string' ||
-      !isTags(inner['tags'])
+      !isTags(inner['tags']) ||
+      // `typeof NaN === 'number'`: a NaN `created_at` would pass every freshness comparison as false and never stick in
+      // the replay guard (security sweep 2, protocol finding 6). Safe integers only.
+      !Number.isSafeInteger(inner['created_at'])
     )
       throw new Error('malformed rumor');
     rumor = {
       id: inner['id'],
       pubkey: sealPubkey,
-      created_at: inner['created_at'],
+      created_at: inner['created_at'] as number,
       kind: inner['kind'],
       tags: inner['tags'],
       content: inner['content'],

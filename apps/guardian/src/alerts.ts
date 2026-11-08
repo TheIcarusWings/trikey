@@ -12,7 +12,7 @@
  * engine's `DueAlert` lacks (`cancelledBy`, `contested`, the txid) come from
  * the recovery record and the engine's activity log.
  */
-import type { Alert } from '@trikey/protocol';
+import { safeName, type Alert } from '@trikey/protocol';
 import type { Guardian } from './guardian.js';
 import { labelled, type WalletRuntime } from './runtime.js';
 import { errorText } from './log.js';
@@ -250,7 +250,9 @@ export function contactChangeText(
  * a wallet (`unlock_slot_added`). The phone's own alerts and the owner's channels say it in their own words.
  */
 export function boxNoticeText(n: Pick<LimitNotice, 'at' | 'subjectWalletId' | 'name' | 'approved'> & { kind: 'wallet_added' | 'wallet_removed' | 'unlock_slot_added' }, guardian: string): string {
-  const wallet = `${n.name ? `"${n.name}" (${n.subjectWalletId ?? ''})` : (n.subjectWalletId ?? 'a wallet')}`;
+  // The phone chose the name (a thief's phone can): only its letters, digits, spaces, `-` and `'` (protocol names.ts).
+  const name = safeName(n.name, 16);
+  const wallet = `${name ? `"${name}" (${n.subjectWalletId ?? ''})` : (n.subjectWalletId ?? 'a wallet')}`;
   if (n.kind === 'wallet_added')
     return [
       `Trikey alert: a wallet was added to the guardian "${guardian}", which also guards the bitcoin wallet you help protect.`,

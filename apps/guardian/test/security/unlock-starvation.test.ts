@@ -9,11 +9,33 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { RECEIVE, buildSweep } from '@trikey/core';
-import { ErrorCode, RpcError } from '@trikey/protocol';
+import { ErrorCode, RpcError, generateMessageId, sealUnlock, type HandlerContext } from '@trikey/protocol';
 import { PHONE_UNLOCK_MAX_FAILURES } from '../../src/guardian.js';
+import { buildHandlers } from '../../src/nostr/handlers.js';
 import { GuardianRig } from '../support/index.js';
-import { MNEMONICS, appSigner, hwSigner, makeWallet, network, nostrKey } from '../helpers.js';
+import { APP_NOSTR, MNEMONICS, appSigner, hwSigner, makeWallet, network, nostrKey } from '../helpers.js';
 import { callHandler, pairInRig } from './support.js';
+
+/** `guardian.unlock` sealed through the handler (cleartext is refused while `sealed_unlock` is on). */
+async function sealedUnlockHandler(rig: GuardianRig, passphrase: string): Promise<unknown> {
+  const handlers = buildHandlers(rig.guardian) as Record<string, (p: unknown, ctx: HandlerContext) => unknown>;
+  const id = generateMessageId();
+  const unlockKey = rig.guardian.currentUnlockKey();
+  if (!unlockKey) throw new Error('no unlock key');
+  const sealed = sealUnlock(
+    { kind: 'passphrase', passphrase },
+    {
+      purpose: 'guardian.unlock',
+      guardianPubkey: rig.pubkey,
+      unlockKey,
+      phonePubkey: APP_NOSTR,
+      id,
+      expiresAt: rig.nowSec() + 300,
+    },
+  );
+  const ctx: HandlerContext = { sender: APP_NOSTR, id, wrapId: 'test', createdAt: rig.nowSec() };
+  return handlers['guardian.unlock']!({ kind: 'sealed', sealed }, ctx);
+}
 
 /** Fails `n` phone unlocks, waiting out the throttle each time like a patient attacker. */
 async function phoneGuesses(rig: GuardianRig, n: number): Promise<string[]> {
@@ -74,7 +96,7 @@ describe('security: a stolen phone starving unlock (finding 4)', () => {
     if (!r.ok) throw new Error(JSON.stringify(r.refusal));
     await g.lock('remote');
     expect(await g.unlock(rig.passphrase, 'phone')).toMatchObject({ ok: false, code: 'recovery_pending' });
-    await expect(callHandler(rig, 'guardian.unlock', { kind: 'passphrase', passphrase: rig.passphrase })).rejects.toSatisfy(
+    await expect(sealedUnlockHandler(rig, rig.passphrase)).rejects.toSatisfy(
       (e: unknown) => e instanceof RpcError && e.code === ErrorCode.UnlockFailed && (e.data as { reason?: string })?.reason === 'recovery_pending',
     );
     // `guardian.lock` from the phone still works (it only takes capability away).

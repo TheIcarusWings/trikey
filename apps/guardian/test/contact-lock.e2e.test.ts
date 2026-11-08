@@ -35,6 +35,7 @@ import { isLockCommand } from '../src/dm-lock.js';
 import { signMessage } from '../src/policy/index.js';
 import { AUTH_PATH, appSigner, fund, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, phoneSpend, withRulesApproval } from './helpers.js';
 import { GuardianRig } from './support/index.js';
+import { sealedPassphraseUnlock } from './support/sealed-phone.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function waitFor<T>(fn: () => T | undefined | false | Promise<T | undefined | false>, what: string, timeoutMs = 8000): Promise<T> {
@@ -211,7 +212,7 @@ describe('alert contacts lock the guardian', { timeout: 60_000 }, () => {
   });
 
   it('unlocking is unchanged: the phone unlocks with the passphrase', async () => {
-    expect(await phone.call('guardian.unlock', { kind: 'passphrase', passphrase: rig.passphrase })).toEqual({ unlocked: true });
+    expect(await sealedPassphraseUnlock({ phone, phonePubkey: phonePub, guardianPubkey: rig.pubkey, nowSec: rig.nowSec() }, rig.passphrase)).toEqual({ unlocked: true });
     expect(rig.guardian.locked).toBe(false);
     expect((await phone.call('guardian.status', {})).lock).toBeUndefined();
   });

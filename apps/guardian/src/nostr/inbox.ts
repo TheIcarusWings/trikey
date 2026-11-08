@@ -164,7 +164,7 @@ export class Inbox {
     } finally {
       this.opening.delete(id);
     }
-    if (this.o.isPeer?.(opened.sender)) this.seenPeers.add(wrap);
+    if (this.o.isPeer?.(opened.sender)) this.seenPeers.add(wrap, opened.sender);
     else this.seenOthers.seen(id);
     try {
       if (opened.rumor.kind === TRIKEY_RPC_KIND) await this.o.onRpc(opened);

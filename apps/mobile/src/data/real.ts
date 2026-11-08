@@ -51,7 +51,7 @@ import {
   type WalletSnapshot,
 } from '@trikey/wallet';
 import { parseScannedCode } from '@trikey/wallet/scan';
-import { GUARDIAN_FEATURES, SimplePoolRelayPool, contactId, encodeRecoveryUri, type Policy, type RelayPool } from '@trikey/protocol';
+import { GUARDIAN_FEATURES, SimplePoolRelayPool, contactId, isSafeName, encodeRecoveryUri, type Policy, type RelayPool } from '@trikey/protocol';
 import { hostedChainFactory, publicServer } from './hosted';
 import { parseServerUrl } from './rk-server';
 import { addEvent, buildActivity, emptyLog, hostFromLabel, loadLog, saveLog, takeLegacySends, type AppLog } from './app-log';
@@ -1064,7 +1064,7 @@ class Service implements RealWalletService {
         if (!set || !first) throw new WalletServiceError('wrong_state', 'Pair your first wallet before you add another.');
         if (!first.ownWalletsSupported) throw new WalletServiceError('guardian_update_needed', 'Update your guardian to add a wallet.');
         const name = input.name.trim();
-        if (!name || name.length > 16) throw new WalletServiceError('invalid_input', 'Give the wallet a name of 1 to 16 characters.');
+        if (!name || name.length > 16 || !isSafeName(name)) throw new WalletServiceError('invalid_input', "Give the wallet a name of 1 to 16 letters, digits, spaces, - and ' only.");
         const kind = toWalletKind(input.hardware);
         // The other rules are the first wallet's: its waiting period, alert contacts and fee cap.
         const base = first.state.rules?.policy;

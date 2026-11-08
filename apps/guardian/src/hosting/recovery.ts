@@ -47,7 +47,7 @@ export class HostedRecoveryRunner {
         const rec = engine.activeRecord();
         if (!rec || this.g.clock.now() < rec.readyAt) this.waits.delete(slot.slotId);
         else
-          await this.g.recoveryMutex.run(async () => {
+          await engine.recoveryMutex.run(async () => {
             const again = engine.activeRecord();
             if (again && again.id === rec.id) await this.tryComplete(slot, engine, again);
           });
@@ -172,7 +172,7 @@ export class HostedRecoveryRunner {
     for (const rec of engine.records()) {
       if (rec.status !== 'completed' || rec.rotatedAt !== undefined || rec.walletId !== active) continue;
       if (this.h.slotFile(slot.slotId).sweeps.find((s) => s.recoveryId === rec.id)?.broadcastAt === undefined) continue;
-      const res = await this.g.recoveryMutex.run(() => engine.rotateAfterSweep(rec.id));
+      const res = await engine.recoveryMutex.run(() => engine.rotateAfterSweep(rec.id));
       if (!res.ok) {
         this.g.log.error('hosting.rotation_refused', { slot: slot.slotId, reason: res.refusal.reason });
         return;

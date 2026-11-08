@@ -1,3 +1,6 @@
+import { ErrorCode, RpcError } from '@trikey/protocol';
+import type { Guardian } from './guardian.js';
+
 /**
  * A sliding-window rate limit per key (here: per paired phone). In memory only: it protects the box's
  * Electrs from a phone (or a stolen phone key) that keeps asking for expensive checks, and a restart
@@ -75,3 +78,39 @@ export const DEFAULT_BROADCAST_LIMIT: RateLimitOptions = { max: 20, windowMs: 10
  * contact (or someone with a contact's nostr key) cannot flood the guardian, the owner or the other contacts.
  */
 export const DEFAULT_CONTACT_LOCK_LIMIT: RateLimitOptions = { max: 5, windowMs: 60 * 60 * 1000 };
+
+/**
+ * Answers to `CANCEL` DMs per sender (dm-cancel.ts): each one is a DM published to the guardian's relays and the
+ * sender's own, so a contact (or a key a guest named as its contact) cannot make the guardian publish one DM for each
+ * DM it sends. Only the answers are limited: a cancel is always applied.
+ */
+export const DEFAULT_CONTACT_REPLY_LIMIT: RateLimitOptions = { max: 10, windowMs: 60 * 60 * 1000 };
+
+/**
+ * State-changing requests per sender that reach the durable request record (nostr/handlers.ts `takeRequestWrite`): each
+ * one rewrites the service state on disk (fsync'd) before it runs, so an alert contact, a guest or a key a guest named as
+ * its contact cannot wear the box's disk or queue the owner's own writes behind theirs. Far above what a phone sends
+ * (state-changing requests are rules, recoveries, lock and unlock, Savings and the like).
+ */
+export const DEFAULT_REQUEST_WRITE_LIMIT: RateLimitOptions = { max: 60, windowMs: 10 * 60 * 1000 };
+
+/** `sender` is over its refusal limit (`refusable`): the same answer, without reserving a slot or touching anything. */
+export function throwIfRefusalsBlocked(g: Guardian, sender: string): void {
+  const v = g.refusalLimiter.blocked(sender, g.clock.now());
+  if (!v.ok) {
+    g.log.warn('rpc.refusals_rate_limited');
+    throw new RpcError(ErrorCode.RateLimited, 'Too many refused requests; wait and try again.', { retryAfterSeconds: Math.ceil(v.retryAfterMs / 1000) });
+  }
+}
+
+/**
+ * Counts one durable request record for `sender` (`Guardian.requestWriteLimiter`), or refuses it with `RateLimited`
+ * before anything is written. Shared by the host's, the own wallets' and the guests' state-changing methods.
+ */
+export function takeRequestWrite(g: Guardian, sender: string): void {
+  const v = g.requestWriteLimiter.take(sender, g.clock.now());
+  if (!v.ok) {
+    g.log.warn('rpc.request_writes_rate_limited');
+    throw new RpcError(ErrorCode.RateLimited, 'Too many requests; wait and try again.', { retryAfterSeconds: Math.ceil(v.retryAfterMs / 1000) });
+  }
+}

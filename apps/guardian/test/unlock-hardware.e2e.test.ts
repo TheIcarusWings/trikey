@@ -45,6 +45,7 @@ import { STOP_NOW_CONFIRMATION } from '../src/hosting/types.js';
 import { AUTH_PATH, MNEMONICS, appSigner, hwAuthPrivateKey, hwAuthPubkey, hwSigner, makeWallet, network, nostrKey, withRulesApproval } from './helpers.js';
 import { GuardianRig } from './support/index.js';
 import { fakeMap, hostedWallet, withHostedRulesApproval } from './support/hosted.js';
+import { sealedHardwareAdd, sealedHardwareUnlock, sealedPassphraseUnlock } from './support/sealed-phone.js';
 
 async function rpcError(p: Promise<unknown>): Promise<RpcError> {
   try {
@@ -76,7 +77,14 @@ const text = (slot: string, id = walletId) => unlockKeyMessage({ walletId: id, g
 const hwSig = (slot: string, key = hwAuthPrivateKey()) => signMessage(text(slot), key);
 const activity = () => rig.guardian.service.get().activity;
 const slotsPath = () => join(rig.dir, UNLOCK_SLOTS_FILE);
-const unlockHw = (slot: string, signature = hwSig(slot), c = phone) => c.call('guardian.unlock', { kind: 'hardware', walletId, slot, signature });
+const owner = () => ({ phone, phonePubkey: phonePub, guardianPubkey: rig.pubkey, nowSec: rig.nowSec() });
+/** Sealed hardware unlock from the paired phone. Other clients stay cleartext (they are refused before the seal is checked). */
+const unlockHw = (slot: string, signature = hwSig(slot), c: RpcClient = phone) =>
+  c === phone
+    ? sealedHardwareUnlock(owner(), { walletId, slot, signature })
+    : c.call('guardian.unlock', { kind: 'hardware', walletId, slot, signature });
+/** Sealed `unlock.hardware.add` for the owner's phone. */
+const addHw = (slot: string, signature = hwSig(slot)) => sealedHardwareAdd(owner(), { walletId, slot, signature });
 /** The slot id the guardian offers for the next `unlock.hardware.add` (unlocked only). */
 const offered = async (c = phone): Promise<string> => {
   const offer = (await c.call('guardian.status', {})).hardwareUnlockOffer;
@@ -131,18 +139,18 @@ describe('unlocking the guardian with the hardware wallet', { timeout: 60_000 },
   });
 
   it('turning it on needs the guardian unlocked and the wallet\'s own hardware wallet', async () => {
-    // Locked: the seed is not in memory, so there is nothing to seal.
+    // Locked: the seed is not in memory, so there is nothing to seal. Cleartext is enough to hit the lock check.
     expect((await rpcError(phone.call('unlock.hardware.add', { walletId, slot: SLOT, signature: hwSig(SLOT) }))).code).toBe(ErrorCode.GuardianLocked);
     expect((await phone.call('guardian.status', {})).hardwareUnlockOffer).toBeUndefined(); // offered only while unlocked
     await rig.unlock();
     SLOT = await offered();
     // A phone alone cannot make it: any key but the hardware wallet's authorization key is refused.
-    const phoneMade = await rpcError(phone.call('unlock.hardware.add', { walletId, slot: SLOT, signature: hwSig(SLOT, new Uint8Array(32).fill(0x33)) }));
+    const phoneMade = await rpcError(addHw(SLOT, hwSig(SLOT, new Uint8Array(32).fill(0x33))));
     expect(phoneMade.code).toBe(ErrorCode.ApprovalInvalid);
     expect(phoneMade.data).toMatchObject({ reason: 'unlock_signature_invalid' });
     // The hardware wallet's signature of another text (another slot) is not this slot's either.
-    expect((await rpcError(phone.call('unlock.hardware.add', { walletId, slot: SLOT, signature: hwSig('ffffffffffffffff') }))).code).toBe(ErrorCode.ApprovalInvalid);
-    // Another wallet's id: refused before anything happens.
+    expect((await rpcError(addHw(SLOT, hwSig('ffffffffffffffff')))).code).toBe(ErrorCode.ApprovalInvalid);
+    // Another wallet's id: refused before anything happens (cleartext: unknown wallet before the seal check).
     expect((await rpcError(phone.call('unlock.hardware.add', { walletId: 'fedcba9876543210', slot: SLOT, signature: hwSig(SLOT) }))).data).toMatchObject({ reason: 'unknown_wallet' });
     expect(existsSync(slotsPath())).toBe(false);
     expect(activity().filter((e) => e.type === 'unlock_slot_added')).toEqual([]);
@@ -152,7 +160,7 @@ describe('unlocking the guardian with the hardware wallet', { timeout: 60_000 },
     const keystoreBefore = await readFile(join(rig.dir, 'keystore.json'), 'utf8');
     const t0 = rig.nowSec();
     const signature = hwSig(SLOT);
-    expect(await phone.call('unlock.hardware.add', { walletId, slot: SLOT, signature })).toEqual({ walletId, slot: SLOT, addedAt: t0 });
+    expect(await addHw(SLOT, signature)).toEqual({ walletId, slot: SLOT, addedAt: t0 });
     expect((await phone.call('guardian.status', {})).hardwareUnlock).toEqual({ slot: SLOT, addedAt: t0 });
     const file = await readFile(slotsPath(), 'utf8');
     expect(JSON.parse(file)).toMatchObject({ format: 'trikey-unlock-slots', version: 1, slots: [{ walletId, slot: SLOT, kind: 'hardware' }] });
@@ -199,7 +207,7 @@ describe('unlocking the guardian with the hardware wallet', { timeout: 60_000 },
     // Even the right signature is refused now, and so is the passphrase from the phone: the same throttle.
     rig.clock.advance(3_600_000);
     expect((await rpcError(unlockHw(SLOT))).data).toMatchObject({ reason: 'phone_unlock_disabled' });
-    expect((await rpcError(phone.call('guardian.unlock', { kind: 'passphrase', passphrase: rig.passphrase }))).data).toMatchObject({ reason: 'phone_unlock_disabled' });
+    expect((await rpcError(sealedPassphraseUnlock(owner(), rig.passphrase))).data).toMatchObject({ reason: 'phone_unlock_disabled' });
     expect(activity().filter((e) => e.type === 'unlock_failed' && e.method === 'hardware').length).toBe(PHONE_UNLOCK_MAX_FAILURES);
     // The owner at the box unlocks; the phone may again.
     await rig.unlock();
@@ -279,7 +287,7 @@ describe('unlocking the guardian with the hardware wallet', { timeout: 60_000 },
     await rig.unlock();
     const NEW = await offered();
     expect(NEW).not.toBe(SLOT);
-    expect(await phone.call('unlock.hardware.add', { walletId, slot: NEW, signature: hwSig(NEW) })).toMatchObject({ slot: NEW });
+    expect(await addHw(NEW)).toMatchObject({ slot: NEW });
     expect(rig.guardian.unlockSlots.list().length).toBe(1);
     await rig.lock();
     const failures = rig.guardian.phoneThrottle.failures;
@@ -294,6 +302,7 @@ describe('unlocking the guardian with the hardware wallet', { timeout: 60_000 },
     // Malware kept the first slot's signature, and the owner turned the option off and on (slot NEW now).
     const now = rig.guardian.unlockSlots.get(walletId)!.slot;
     expect(now).not.toBe(SLOT);
+    // Cleartext: slot-not-offered is checked before the seal requirement.
     const replay = await rpcError(phone.call('unlock.hardware.add', { walletId, slot: SLOT, signature: hwSig(SLOT) }));
     expect(replay.code).toBe(ErrorCode.InvalidParams);
     expect(replay.data).toMatchObject({ reason: 'unlock_slot_not_offered' });
@@ -322,12 +331,12 @@ describe('unlocking the guardian with the hardware wallet', { timeout: 60_000 },
     expect(existsSync(slotsPath())).toBe(false);
     expect((await rpcError(unlockHw('fedcba9876543210'))).data).toMatchObject({ reason: 'hardware_unlock_off' });
     expect(activity().filter((e) => e.type === 'unlock_slot_removed')).toEqual([expect.objectContaining({ walletIds: [walletId], by: 'phone' })]);
-    expect(await phone.call('guardian.unlock', { kind: 'passphrase', passphrase: rig.passphrase })).toEqual({ unlocked: true });
+    expect(await sealedPassphraseUnlock(owner(), rig.passphrase)).toEqual({ unlocked: true });
   });
 
   it('retiring the wallet deletes its slot', async () => {
     SLOT = await offered();
-    await phone.call('unlock.hardware.add', { walletId, slot: SLOT, signature: hwSig(SLOT) });
+    await addHw(SLOT);
     expect(existsSync(slotsPath())).toBe(true);
     const sequence = (await phone.call('guardian.status', {})).nextHardwareSequence;
     const expiresAt = rig.nowSec() + 600;

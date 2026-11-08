@@ -168,6 +168,11 @@ describe('adding a wallet', { timeout: 60_000 }, () => {
   it('the same device for a third wallet is refused, and a name used twice', async () => {
     expect((await walletError(set.addWallet({ name: 'Third', rules: RULES, hardwareKind: 'trezor' }))).code).toBe('hardware_in_use');
     expect((await walletError(set.addWallet({ name: 'business', rules: RULES, hardwareKind: 'coldcard' }))).code).toBe('invalid_rules');
+    // A name the guardian would repeat in alerts with a link or a line break is refused before any device is asked
+    // (security sweep 2, finding 15); renaming likewise.
+    expect((await walletError(set.addWallet({ name: 'trikey-help.io', rules: RULES, hardwareKind: 'coldcard' }))).code).toBe('invalid_rules');
+    expect((await walletError(set.rename(set.first, 'OK\nTEST'))).code).toBe('invalid_rules');
+    expect((await walletError(set.rename(business, 'see x.example'))).code).toBe('invalid_rules');
     // The failed attempt took no account the guardian knows of; the next wallet would get account 4.
     expect(set.nextAccount()).toBe(4);
   });

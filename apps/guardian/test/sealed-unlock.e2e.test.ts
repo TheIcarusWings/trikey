@@ -10,8 +10,8 @@
  *   unlock off; an add while locked or expired) replaces the key too; a seal to an old key (a replay) changes nothing;
  * - `unlock.hardware.add` takes the signature sealed (while unlocked), the key is replaced after each use, a stale key is
  *   refused without effect; an add's seal is no unlock and an unlock's seal no add;
- * - an "old phone" (plaintext unlock and add) still works, marked in the Activity; an "old guardian" refuses `sealed`
- *   as -32602;
+ * - an "old phone" (plaintext unlock and add) is refused with `app_update_required` while this guardian seals; an "old
+ *   guardian" refuses `sealed` as -32602 and still accepts plaintext;
  * - the sealing keys never reach the data directory or the log;
  * - the threat itself: the relays' wraps opened with the guardian's nostr key (as a thief with the disk could) show no
  *   passphrase or slot signature from this phone, while an old phone's plaintext unlock and add are right there.
@@ -465,32 +465,32 @@ describe('sealed unlock', { timeout: 60_000 }, () => {
     for (const sig of sealedSignatures) expect(all).not.toContain(sig);
   });
 
-  it('an older phone (the passphrase, the signature and the add in the clear) still works, marked in the Activity and the log', async () => {
+  it('an older phone (the passphrase, the signature and the add in the clear) is refused: update the app', async () => {
     await rig.lock();
-    expect(await phone.call('guardian.unlock', { kind: 'passphrase', passphrase: rig.passphrase })).toEqual({ unlocked: true });
-    expect(activity().at(-1)).toMatchObject({ type: 'unlocked', via: 'phone', unsealed: true });
-    expect(rig.logLines.some((l) => l.includes('guardian.unlock_unsealed'))).toBe(true);
-    await rig.lock();
-    expect(await phone.call('guardian.unlock', { kind: 'hardware', walletId, slot, signature: hwSig() })).toEqual({ unlocked: true });
-    expect(activity().at(-1)).toMatchObject({ type: 'unlocked', method: 'hardware', unsealed: true });
-    // An older phone turning hardware unlock on picks its own slot id: refused now, and told to update (an old signature
-    // must never make its slot again); the signature in the clear for the guardian's own id still works, marked.
-    const own = '0000111122223333';
-    expect((await rpcError(phone.call('unlock.hardware.add', { walletId, slot: own, signature: hwSig(own) }))).data).toMatchObject({ reason: 'unlock_slot_not_offered' });
-    const old = await offered();
-    expect(await phone.call('unlock.hardware.add', { walletId, slot: old, signature: hwSig(old) })).toMatchObject({ slot: old });
-    slot = old;
-    expect(activity().at(-1)).toMatchObject({ type: 'unlock_slot_added', walletId, unsealed: true });
-    expect(serviceEntry(activity().at(-1)!).event).toMatch(/turned on unlocking with the hardware wallet.*The phone sent it unsealed \(an older Trikey app\): update the app/);
-    // And that is exactly the exposure sealing closes: these are readable in the archive.
-    const all = archivedRumors().join('\n');
-    expect(all).toContain(rig.passphrase);
-    expect(all).toContain(hwSig(old));
-    // The web UI's own unlock is not a phone's: never marked.
-    await rig.lock();
+    expect((await rpcError(phone.call('guardian.unlock', { kind: 'passphrase', passphrase: rig.passphrase }))).data).toMatchObject({
+      reason: 'app_update_required',
+    });
+    expect(rig.guardian.locked).toBe(true);
+    expect(rig.logLines.some((l) => l.includes('guardian.unlock_unsealed') && l.includes('refused'))).toBe(true);
+    expect((await rpcError(phone.call('guardian.unlock', { kind: 'hardware', walletId, slot, signature: hwSig() }))).data).toMatchObject({
+      reason: 'app_update_required',
+    });
+    // Unlock in the web UI (never over the relays), then try a cleartext add.
     await rig.unlock();
     expect(activity().at(-1)).toEqual(expect.objectContaining({ type: 'unlocked', via: 'web' }));
     expect(activity().at(-1)).not.toHaveProperty('unsealed');
+    // An older phone's own picked slot id is still unlock_slot_not_offered; a cleartext signature for the offered id is refused.
+    const own = '0000111122223333';
+    expect((await rpcError(phone.call('unlock.hardware.add', { walletId, slot: own, signature: hwSig(own) }))).data).toMatchObject({ reason: 'unlock_slot_not_offered' });
+    const old = await offered();
+    expect((await rpcError(phone.call('unlock.hardware.add', { walletId, slot: old, signature: hwSig(old) }))).data).toMatchObject({
+      reason: 'app_update_required',
+    });
+    expect(rig.logLines.some((l) => l.includes('guardian.unlock_unsealed') && l.includes('refused'))).toBe(true);
+    // The wraps still carried the secrets: that is exactly the exposure sealing closes, and why cleartext is refused.
+    const all = archivedRumors().join('\n');
+    expect(all).toContain(rig.passphrase);
+    expect(all).toContain(hwSig(old));
   });
 
   it('a guardian from before sealed unlock: no sealing key, `sealed` refused as invalid params, plaintext unmarked', async () => {

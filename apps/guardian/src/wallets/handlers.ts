@@ -16,8 +16,12 @@
  */
 import { ErrorCode, RpcError, type HandlerContext, type Handlers, type MethodName } from '@trikey/protocol';
 import type { Guardian } from '../guardian.js';
+import { takeRequestWrite } from '../rate-limit.js';
 import { BOX_METHODS, ROUTED_METHODS, type OwnWallets } from './service.js';
 import type { OwnWallet } from './runtime.js';
+
+/** How long a request id is remembered: the protocol's longest request TTL (1 h) plus clock skew (as `runOnceAcrossRestarts`). */
+const REMEMBER_MS = (3600 + 120) * 1000;
 
 type AnyHandler = (params: unknown, ctx: HandlerContext) => unknown;
 
@@ -98,6 +102,13 @@ export function withOwnWallets(g: Guardian, first: Handlers): Handlers {
       throw firstError ?? new RpcError(ErrorCode.PolicyViolation, 'No wallet of this guardian matches that hardware wallet.');
     };
   out['wallet.add.prepare'] = (params: unknown, ctx: HandlerContext) => wallets.prepare(ctx.sender, params as never);
-  out['wallet.add'] = (params: unknown, ctx: HandlerContext) => g.pairMutex.run(() => wallets.add(ctx.sender, params as never));
+  // Outside `runOnceAcrossRestarts` (this wrapper sits in front of it), so the durable record is applied here: a
+  // replayed `wallet.add` after a restart must not create a second wallet (security sweep 2 follow-up).
+  out['wallet.add'] = async (params: unknown, ctx: HandlerContext) => {
+    takeRequestWrite(g, ctx.sender);
+    const fresh = await g.service.rememberRequest(`${ctx.sender}:${ctx.id}`, ctx.createdAt * 1000 + REMEMBER_MS, g.clock.now());
+    if (!fresh) throw new RpcError(ErrorCode.Unavailable, 'This request was already handled before the guardian restarted. Send a new request.');
+    return g.pairMutex.run(() => wallets.add(ctx.sender, params as never));
+  };
   return out as Handlers;
 }

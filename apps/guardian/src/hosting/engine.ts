@@ -70,7 +70,7 @@ import {
   type HostedWallet,
   type LedgerEntry,
 } from './types.js';
-import { MAX_WALLET_MAP_BYTES } from '@trikey/protocol';
+import { MAX_WALLET_MAP_BYTES, safeName } from '@trikey/protocol';
 
 const MAX_NOTICES = 32;
 
@@ -257,6 +257,12 @@ function selfOutputs(psbt: Uint8Array, analysis: PsbtAnalysis, acct: AccountPubk
 
 export class HostedEngine {
   readonly slotId: string;
+  /**
+   * Serialises this slot's recovery start/update/cancel/retire and the hosted recovery runner for it. Each guest has its
+   * own: sharing the host's `Guardian.recoveryMutex` let one guest's Electrs-bound retire or a contact's CANCEL DM queue
+   * every other guest and the host (security sweep 2 follow-up). The engine's private `mutex` still guards its state.
+   */
+  readonly recoveryMutex = new Mutex();
   private readonly mutex = new Mutex();
   private readonly clock: Clock;
   private readonly chain?: ChainTimeSource;
@@ -651,8 +657,11 @@ export class HostedEngine {
       if (signer && hex.encode(signer.accountPubkey) !== keys.cosigner) return bad("the slot's key 3 differs from cosignerAccountPubkey");
       const appNostr = String(input.appNostrPubkey).toLowerCase();
       if (!isNostrPubkey(appNostr)) return bad('appNostrPubkey must be 32-byte hex');
-      const label = String(input.walletLabel ?? '').trim();
-      if (!label || label.length > 64) return bad('walletLabel must be 1 to 64 characters');
+      const given = String(input.walletLabel ?? '').trim();
+      if (!given || given.length > 64) return bad('walletLabel must be 1 to 64 characters');
+      // Kept as alerts show it (letters, digits, spaces, `-` and `'`: protocol names.ts); an older app's label with other
+      // characters is cleaned, never refused.
+      const label = safeName(given, 64) || 'Wallet';
       let rules: Rules;
       try {
         rules = normalizeRules(input.rules);

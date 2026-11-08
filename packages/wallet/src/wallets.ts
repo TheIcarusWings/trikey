@@ -12,7 +12,7 @@
  *   order, the names, every account ever used (an account is never used twice) and the wallet shown last.
  */
 import { z } from 'zod';
-import { GUARDIAN_FEATURES, type Policy } from '@trikey/protocol';
+import { GUARDIAN_FEATURES, isSafeName, type Policy } from '@trikey/protocol';
 import { WalletError } from './errors.js';
 import type { HardwareKind } from './platform.js';
 import type { QrModel } from './qr-devices.js';
@@ -210,7 +210,8 @@ export class WalletSet {
 
   async rename(w: TrikeyWallet, name: string): Promise<void> {
     const n = name.trim();
-    if (!n || n.length > 16) throw new WalletError('invalid_rules', 'A wallet name has 1 to 16 characters.');
+    // The guardian repeats it in alerts to the contacts: no link, no line break (protocol names.ts).
+    if (!n || n.length > 16 || !isSafeName(n)) throw new WalletError('invalid_rules', 'A wallet name has 1 to 16 characters: letters, digits, spaces, - and \' only.');
     if (w === this.first) {
       this.index = { ...this.index, firstName: n };
       await this.saveIndex();

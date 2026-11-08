@@ -49,7 +49,7 @@ import type { Server } from 'node:http';
 import { hex } from '@scure/base';
 import type { SimplePool } from 'nostr-tools/pool';
 import { normalizeURL } from 'nostr-tools/utils';
-import { GUARDIAN_FEATURES, RpcServer, UnlockKeyHolder, unlockKeyMessage, type SealedUnlock, type UnlockSecret, SeenWraps, SimplePoolRelayPool, checkRelayList, checkRelayUrl, createSimplePool, sameRelays, type Alert, type MethodName } from '@trikey/protocol';
+import { GUARDIAN_FEATURES, RpcServer, safeName, UnlockKeyHolder, unlockKeyMessage, type SealedUnlock, type UnlockSecret, SeenWraps, SimplePoolRelayPool, checkRelayList, checkRelayUrl, createSimplePool, sameRelays, type Alert, type MethodName } from '@trikey/protocol';
 import { assertRandomSourceHealthy } from '@trikey/core/random-health';
 import { secureRandomBytes } from '@trikey/core/random';
 import { ChainService } from './chain/chain.js';
@@ -112,7 +112,7 @@ import { savingsWallet } from './savings.js';
 import type { MultisigWallet, NetworkName } from '@trikey/core';
 import type { SavingsWatch } from './policy/index.js';
 import { stampOf, toSeconds } from './nostr/wire.js';
-import { DEFAULT_BROADCAST_LIMIT, DEFAULT_CONTACT_LOCK_LIMIT, DEFAULT_REFUSAL_LIMIT, SlidingWindowLimiter, type RateLimitOptions } from './rate-limit.js';
+import { DEFAULT_BROADCAST_LIMIT, DEFAULT_CONTACT_LOCK_LIMIT, DEFAULT_CONTACT_REPLY_LIMIT, DEFAULT_REFUSAL_LIMIT, DEFAULT_REQUEST_WRITE_LIMIT, SlidingWindowLimiter, type RateLimitOptions } from './rate-limit.js';
 import { Alerter } from './alerts.js';
 import { RecoveryRunner } from './recovery-runner.js';
 import { onContactDm } from './dm-cancel.js';
@@ -170,6 +170,10 @@ export interface GuardianOptions {
   refusalLimit?: RateLimitOptions;
   /** `LOCK` DMs handled per alert contact per window (dm-lock.ts). Default 5 per hour. */
   contactLockLimit?: RateLimitOptions;
+  /** Answers to `CANCEL` DMs per sender per window (dm-cancel.ts). Default 10 per hour. */
+  contactReplyLimit?: RateLimitOptions;
+  /** State-changing requests recorded on disk per sender per window (nostr/handlers.ts). Default 60 per 10 minutes. */
+  requestWriteLimit?: RateLimitOptions;
   /** Encrypted notes: uploads per wallet per hour (labels.ts `DEFAULT_LABELS_UPLOAD_LIMIT`). */
   labelsUploadLimit?: RateLimitOptions;
   /** How often the watched Savings wallet is scanned when no block came (savings.ts). Default 2 minutes. */
@@ -236,7 +240,20 @@ export const SLOT_OFFER_MS = 30 * 60_000;
 /** What `unlock.hardware.add` did, or why not. */
 export type HardwareUnlockAddOutcome =
   | { ok: true; walletId: string; slot: string; addedAt: number }
-  | { ok: false; code: 'locked' | 'not_registered' | 'wallet_changed' | 'hardware_unconfirmed' | 'bad_signature' | 'setup_required' | 'slot_not_offered'; message: string }
+  | {
+      ok: false;
+      code:
+        | 'locked'
+        | 'not_registered'
+        | 'wallet_changed'
+        | 'hardware_unconfirmed'
+        | 'bad_signature'
+        | 'setup_required'
+        | 'slot_not_offered'
+        /** Cleartext signature on a guardian that seals unlocks: update the app. */
+        | 'app_update_required';
+      message: string;
+    }
   /**
    * The signature sealed (`sealed_unlock`): `unlock_key_stale`, sealed to a key the guardian no longer holds or expired
    * (seal again, nothing was opened); `bad_seal`, sealed to the current key but it does not open, or is not this
@@ -273,6 +290,15 @@ export type StopWatchingOutcome = { ok: true; dropped: string[] } | { ok: false;
  * are the ones that must keep working.
  */
 export const MAX_RETIRING_RELAYS = 16;
+
+/**
+ * Replay entries an alert contact, a hosted guest's phone or contact, or any other peer that is not the owner's phone may
+ * hold: in the RPC replay guard (each request kept up to an hour) and among the handled wraps (each kept until it can no
+ * longer arrive). Far above what such a sender sends; a sender at it is dropped until its entries expire, and never
+ * pushes out another sender's (security sweep 2, finding 12).
+ */
+export const PEER_REPLAY_QUOTA = 256;
+export const PEER_SEEN_QUOTA = 512;
 
 /** The relay list of a setup or a relay change: 1 to 8 entries, normalised, duplicates dropped (protocol `checkRelayList`). */
 export function parseRelayList(input: unknown): { ok: true; relays: string[] } | { ok: false; message: string } {
@@ -355,6 +381,10 @@ export class Guardian implements WalletRuntime {
   readonly refusalLimiter: SlidingWindowLimiter;
   /** Per alert contact: `LOCK` DMs (dm-lock.ts), whatever they lead to. */
   readonly contactLockLimiter: SlidingWindowLimiter;
+  /** Per sender: answers to `CANCEL` DMs (dm-cancel.ts); the cancels themselves are never limited. */
+  readonly contactReplyLimiter: SlidingWindowLimiter;
+  /** Per sender: state-changing requests that reach the durable request record (checked first, then counted, then written). */
+  readonly requestWriteLimiter: SlidingWindowLimiter;
   /** The silent payment scanner (needs the node RPC; works while locked). */
   readonly sp: SilentPaymentService;
   /** Watches the phone's Savings wallet, if it registered one: chain data and the `savings_moved` tripwire (savings.ts). */
@@ -560,6 +590,8 @@ export class Guardian implements WalletRuntime {
     this.broadcastLimiter = new SlidingWindowLimiter(opts.broadcastLimit ?? DEFAULT_BROADCAST_LIMIT);
     this.refusalLimiter = new SlidingWindowLimiter(opts.refusalLimit ?? DEFAULT_REFUSAL_LIMIT);
     this.contactLockLimiter = new SlidingWindowLimiter(opts.contactLockLimit ?? DEFAULT_CONTACT_LOCK_LIMIT);
+    this.contactReplyLimiter = new SlidingWindowLimiter(opts.contactReplyLimit ?? DEFAULT_CONTACT_REPLY_LIMIT);
+    this.requestWriteLimiter = new SlidingWindowLimiter(opts.requestWriteLimit ?? DEFAULT_REQUEST_WRITE_LIMIT);
   }
 
   private path(name: keyof typeof FILES): string {
@@ -575,6 +607,7 @@ export class Guardian implements WalletRuntime {
     g.keystore = await readKeystore(g.path('keystore'));
     g.identity = await loadIdentity(g.path('identity'));
     g.service = new ServiceState(g.path('service'));
+    g.service.protectRequests = (sender) => g.isOwnerPhone(sender);
     await g.service.load();
     g.throttle = new CallerThrottle(g.path('throttle'), g.clock, opts.throttle);
     await g.throttle.load();
@@ -849,6 +882,10 @@ export class Guardian implements WalletRuntime {
       authorize: (sender, method) => this.authorize(sender, method),
       // Strangers (anyone who is not one of these) get their own small replay cache (protocol server.ts).
       isPeer: (sender) => this.isKnownSender(sender),
+      // Among peers, the owner's phones' entries are never pushed out by an alert contact's or a guest's, who each hold
+      // at most `PEER_REPLAY_QUOTA` (security sweep 2, finding 12).
+      peerQuota: (sender) => (this.isOwnerPhone(sender) ? Infinity : PEER_REPLAY_QUOTA),
+      protectPeer: (sender) => this.isOwnerPhone(sender),
       listen: false, // the inbox below opens every wrap once and hands RPC rumors over
       now: () => this.nowSec(),
       onDrop: (d) => {
@@ -882,6 +919,9 @@ export class Guardian implements WalletRuntime {
       isPeer: (sender) => this.isKnownSender(sender),
       seen: new SeenWraps({
         storage: seenWrapsFile(this.path('seenWraps')),
+        // As the replay guard above: the owner's phones' ids are never pushed out by another sender's.
+        quota: (sender) => (this.isOwnerPhone(sender) ? Infinity : PEER_SEEN_QUOTA),
+        protect: (sender) => this.isOwnerPhone(sender),
         now: () => this.nowSec(),
         onError: (e) => this.log.warn('inbox.seen_wraps_failed', { error: errorText(e) }),
       }),
@@ -936,6 +976,17 @@ export class Guardian implements WalletRuntime {
     if (method === 'recovery.access') return !!reg;
     if (method === 'pair.prepare' || method === 'pair') return this.pairing.answering(this.clock.now());
     return false;
+  }
+
+  /**
+   * The owner's own phones: the first wallet's paired phone, an own wallet's, and a phone the owner's hardware wallet let
+   * in (`recovery.access`). Their replay entries (the RPC replay guard, the handled wraps, the durable request record)
+   * are never pushed out to make room for anyone else's, an alert contact's or a hosted guest's (security sweep 2,
+   * finding 12): those could otherwise flood the shared memory and have a relay re-deliver one of the phone's requests.
+   */
+  isOwnerPhone(sender: string): boolean {
+    if (this.engine.registration()?.appNostrPubkey === sender || this.hasRecoveryAccess(sender)) return true;
+    return this.wallets.forSender(sender).length > 0;
   }
 
   /** The paired phone, an alert contact (or a running recovery's recipient), or a phone with recovery access: not a stranger. */
@@ -1544,10 +1595,17 @@ export class Guardian implements WalletRuntime {
         message: 'The guardian did not offer that unlock slot, or it ran out (the guardian restarted, or more than 30 minutes went by). Turn it on again. If this keeps happening, update the Trikey app.',
       };
     }
-    // The signature: sealed to the guardian's current sealing key (PROTOCOL.md, "Sealed unlock"), or from an older phone
-    // in the clear (accepted, and marked).
+    // The signature: sealed to the guardian's current sealing key (PROTOCOL.md, "Sealed unlock"). An older phone's
+    // signature in the clear is refused while this guardian seals unlocks (security sweep 2 follow-up).
     let signature: string;
-    const unsealed = !('sealed' in input) && this.sealsUnlocks;
+    if (!('sealed' in input) && this.sealsUnlocks) {
+      this.log.warn('guardian.unlock_unsealed', { method: 'unlock.hardware.add', refused: true });
+      return {
+        ok: false,
+        code: 'app_update_required',
+        message: 'Update the Trikey app: this guardian only accepts a sealed hardware-unlock signature.',
+      };
+    }
     if ('sealed' in input) {
       const opened = this.unlockKey.open(input.sealed, { purpose: 'unlock.hardware.add', guardianPubkey: this.identity.pubkey, phonePubkey: ctx.phone, id: ctx.id, now: this.nowSec() });
       // Used: whatever comes next (expired included: it was decrypted), this key seals nothing more. A stale seal was
@@ -1568,8 +1626,8 @@ export class Guardian implements WalletRuntime {
       }
       signature = secret.signature;
     } else {
+      // Guardian without `sealed_unlock`: older path, signature in the clear.
       signature = input.signature;
-      if (unsealed) this.log.warn('guardian.unlock_unsealed', { method: 'unlock.hardware.add' });
     }
     if (!reg.hardwareAuth || !bip137Authorizer.verify(this.unlockText(reg.walletId, input.slot), signature, reg.hardwareAuth)) {
       this.log.warn('unlock_slots.bad_signature', { walletId: reg.walletId });
@@ -1581,11 +1639,11 @@ export class Guardian implements WalletRuntime {
     openSlot(slot, signature, binding).fill(0);
     await this.unlockSlots.put(slot);
     this.slotOffers.delete(reg.walletId); // taken: the next add needs a new id, and a new signature
-    this.log.info('unlock_slots.added', { walletId: reg.walletId, ...(unsealed ? { unsealed: true } : {}) });
-    await w.logEvent({ type: 'unlock_slot_added', walletId: reg.walletId, ...(unsealed ? { unsealed: true as const } : {}) });
+    this.log.info('unlock_slots.added', { walletId: reg.walletId });
+    await w.logEvent({ type: 'unlock_slot_added', walletId: reg.walletId });
     // A new way to open the whole box: the owner's channels, the first wallet's alert contacts and this wallet's hear of
     // it (security review 2026-11), not only the phone that asked (it may be a thief's).
-    const name = w.slotId === undefined ? this.wallets.registry.firstName : w.label() ?? undefined;
+    const name = (w.slotId === undefined ? safeName(this.wallets.registry.firstName, 16) : w.label()) || undefined;
     this.notifyOwner(
       'unlock_slot_added',
       `Unlocking your guardian with the hardware wallet of ${name ? `"${name}" (${reg.walletId})` : `wallet ${reg.walletId}`} was turned on from your phone: it can now unlock the guardian without the passphrase. If you did not do this, turn it off in the guardian's web page.`,
@@ -1819,16 +1877,16 @@ export class Guardian implements WalletRuntime {
   }
 
   /**
-   * Unlock with the passphrase (web UI or `guardian.unlock`). Rate limited; the passphrase is never logged. From the phone
-   * on a guardian that seals unlocks, this is an older app's unsealed passphrase: accepted, and marked in the Activity.
-   * `caller`: who tries it in the web UI (its own count in the web throttle).
+   * Unlock with the passphrase (web UI or `guardian.unlock`). Rate limited; the passphrase is never logged. The phone's
+   * cleartext path is refused when this guardian seals unlocks (the handler answers `app_update_required` first); the web
+   * UI still uses this. `caller`: who tries it in the web UI (its own count in the web throttle).
    */
   unlock(passphrase: unknown, via: 'web' | 'phone', caller?: Caller): Promise<UnlockOutcome> {
     return this.unlockMutex.run(async (): Promise<UnlockOutcome> => {
       const file = this.keystore;
       if (!file) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
       if (!this.locked) return { ok: true };
-      return this.passphraseAttempt(file, passphrase, via, { unsealed: via === 'phone' && this.sealsUnlocks, ...(caller ? { caller } : {}) });
+      return this.passphraseAttempt(file, passphrase, via, { ...(caller ? { caller } : {}) });
     });
   }
 
@@ -1850,7 +1908,8 @@ export class Guardian implements WalletRuntime {
       const file = this.keystore;
       if (!file || !this.identity) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
       if (!this.locked) return { ok: true };
-      return this.hardwareAttempt(file, input, { unsealed: this.sealsUnlocks });
+      // Cleartext hardware unlock: only for a guardian without `sealed_unlock` (the handler refuses it when sealing).
+      return this.hardwareAttempt(file, input, {});
     });
   }
 

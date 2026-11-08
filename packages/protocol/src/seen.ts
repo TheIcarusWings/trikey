@@ -1,4 +1,5 @@
 import type { Event as NostrEvent } from 'nostr-tools/pure';
+import { biggestHolder } from './envelope.js';
 import { SUBSCRIPTION_LOOKBACK_SEC, wrapExpiration } from './transport.js';
 
 /** Where `SeenWraps` keeps its ids between runs: one text value (the app's key-value store, a file in the guardian's data directory). */
@@ -8,8 +9,12 @@ export interface SeenWrapsStorage {
 }
 
 export interface SeenWrapsOptions {
-  /** Ids kept at most; the oldest are dropped first. Default 4096. */
+  /** Ids kept at most; past it the sender holding the most loses its oldest (see `SeenWraps`). Default 4096. */
   max?: number;
+  /** Most live ids one sender may hold (`add`'s `sender`); a sender at it has its new ids not kept. Default: no quota. */
+  quota?: (sender: string) => number;
+  /** Senders whose ids are never dropped to make room for another sender's (the guardian: the owner's phones). */
+  protect?: (sender: string) => boolean;
   /** Persist the ids here (debounced). Default: memory only. */
   storage?: SeenWrapsStorage;
   /** Wait this long after a change before saving (ms). Default 2000. */
@@ -38,10 +43,15 @@ const FORMAT = 1;
  *
  * An id is forgotten once its wrap can no longer arrive: at its NIP-40 `expiration` (relays drop it then, and
  * receivers drop an expired wrap before any crypto), or when its `created_at` falls behind every subscription's
- * `since` (`SUBSCRIPTION_LOOKBACK_SEC`), whichever comes first, plus ten minutes. Bounded by `max`, oldest first.
+ * `since` (`SUBSCRIPTION_LOOKBACK_SEC`), whichever comes first, plus ten minutes. Bounded by `max`: past it, the
+ * sender that holds the most ids loses its oldest, and a protected sender (`protect`) only when nobody else holds any,
+ * so a sender flooding the set pushes out its own ids, never the paired phone's; a per-sender `quota` keeps a sender's
+ * new ids out instead (security sweep 2, finding 12). Ids added without a sender count as one sender.
  */
 export class SeenWraps {
-  private readonly ids = new Map<string, number>();
+  private readonly ids = new Map<string, { until: number; sender: string }>();
+  /** The same ids by sender ('' for none), oldest first. */
+  private readonly bySender = new Map<string, Set<string>>();
   private readonly max: number;
   private readonly now: () => number;
   private timer?: ReturnType<typeof setTimeout>;
@@ -72,13 +82,16 @@ export class SeenWraps {
         // Stored oldest first; anything added before the load finished stays newer.
         const added = [...this.ids];
         this.ids.clear();
+        this.bySender.clear();
         for (const e of data.ids) {
           if (!Array.isArray(e) || typeof e[0] !== 'string' || !/^[0-9a-f]{64}$/.test(e[0]) || typeof e[1] !== 'number') continue;
-          if (e[1] > now) this.ids.set(e[0], e[1]);
+          // The sender is a third member; a file written before senders were kept has none (and an older reader ignores it).
+          const sender = typeof e[2] === 'string' && /^[0-9a-f]{64}$/.test(e[2]) ? e[2] : '';
+          if (e[1] > now) this.put(e[0], e[1], sender);
         }
-        for (const [id, until] of added) {
-          this.ids.delete(id);
-          this.ids.set(id, until);
+        for (const [id, v] of added) {
+          this.remove(id);
+          this.put(id, v.until, v.sender);
         }
         this.trim();
       } catch (e) {
@@ -90,21 +103,43 @@ export class SeenWraps {
 
   /** Whether `id` was handled and is still remembered. */
   has(id: string): boolean {
-    const until = this.ids.get(id);
-    if (until === undefined) return false;
-    if (until > this.now()) return true;
-    this.ids.delete(id);
+    const v = this.ids.get(id);
+    if (v === undefined) return false;
+    if (v.until > this.now()) return true;
+    this.remove(id);
     return false;
   }
 
-  /** Remember `wrap` (verified!) until it can no longer arrive (see the class). */
-  add(wrap: Pick<NostrEvent, 'id' | 'created_at' | 'tags'>): void {
-    const until = keepUntil(wrap, this.now());
-    if (until <= this.now()) return;
-    this.ids.delete(wrap.id);
-    this.ids.set(wrap.id, until);
+  /** Remember `wrap` (verified!) until it can no longer arrive (see the class); `sender` is the seal's verified author. */
+  add(wrap: Pick<NostrEvent, 'id' | 'created_at' | 'tags'>, sender = ''): void {
+    const now = this.now();
+    const until = keepUntil(wrap, now);
+    if (until <= now) return;
+    this.remove(wrap.id);
+    const quota = sender ? this.o.quota?.(sender) : undefined;
+    if (quota !== undefined && (this.bySender.get(sender)?.size ?? 0) >= quota) {
+      for (const id of [...(this.bySender.get(sender) ?? [])]) if (this.ids.get(id)!.until <= now) this.remove(id);
+      if ((this.bySender.get(sender)?.size ?? 0) >= quota) return; // at its quota: not kept (it may be opened again)
+    }
+    this.put(wrap.id, until, sender);
     this.trim();
     this.changed();
+  }
+
+  private put(id: string, until: number, sender: string): void {
+    this.ids.set(id, { until, sender });
+    let set = this.bySender.get(sender);
+    if (!set) this.bySender.set(sender, (set = new Set()));
+    set.add(id);
+  }
+
+  private remove(id: string): void {
+    const v = this.ids.get(id);
+    if (!v) return;
+    this.ids.delete(id);
+    const set = this.bySender.get(v.sender);
+    set?.delete(id);
+    if (set && !set.size) this.bySender.delete(v.sender);
   }
 
   get size(): number {
@@ -120,7 +155,14 @@ export class SeenWraps {
   }
 
   private trim(): void {
-    while (this.ids.size > this.max) this.ids.delete(this.ids.keys().next().value!);
+    if (this.ids.size <= this.max) return;
+    const now = this.now();
+    for (const [id, v] of [...this.ids]) if (v.until <= now) this.remove(id);
+    while (this.ids.size > this.max) {
+      const victim = biggestHolder(this.bySender, (s) => s !== '' && !!this.o.protect?.(s));
+      if (victim === undefined) break;
+      this.remove(this.bySender.get(victim)!.values().next().value!);
+    }
   }
 
   private changed(): void {
@@ -141,8 +183,8 @@ export class SeenWraps {
       await this.loaded?.catch(() => undefined); // never overwrite ids not read yet
       this.dirty = false;
       const now = this.now();
-      const ids: [string, number][] = [];
-      for (const [id, until] of this.ids) if (until > now) ids.push([id, until]);
+      const ids: ([string, number] | [string, number, string])[] = [];
+      for (const [id, v] of this.ids) if (v.until > now) ids.push(v.sender ? [id, v.until, v.sender] : [id, v.until]);
       try {
         await storage.save(JSON.stringify({ v: FORMAT, ids }));
       } catch (e) {
