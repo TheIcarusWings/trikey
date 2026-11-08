@@ -257,6 +257,12 @@ function selfOutputs(psbt: Uint8Array, analysis: PsbtAnalysis, acct: AccountPubk
 
 export class HostedEngine {
   readonly slotId: string;
+  /**
+   * Serialises this slot's recovery start/update/cancel/retire and the hosted recovery runner for it. Each guest has its
+   * own: sharing the host's `Guardian.recoveryMutex` let one guest's Electrs-bound retire or a contact's CANCEL DM queue
+   * every other guest and the host (security sweep 2 follow-up). The engine's private `mutex` still guards its state.
+   */
+  readonly recoveryMutex = new Mutex();
   private readonly mutex = new Mutex();
   private readonly clock: Clock;
   private readonly chain?: ChainTimeSource;

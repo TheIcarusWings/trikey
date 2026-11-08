@@ -275,6 +275,10 @@ export function checkFreshness(
   limits: Limits = DEFAULT_LIMITS,
 ): FreshnessVerdict {
   const l = limits[meta.cls];
+  // Non-finite timestamps make every comparison false (`NaN <= now` is false), so refuse them as malformed time
+  // rather than "ok" (security sweep 2, protocol finding 6).
+  if (!Number.isSafeInteger(meta.createdAt) || !Number.isSafeInteger(meta.expiration) || !Number.isSafeInteger(now))
+    return 'stale';
   if (meta.expiration <= now) return 'expired';
   if (meta.createdAt > now + limits.clockSkewSec) return 'future';
   if (meta.createdAt < now - l.maxAgeSec) return 'stale';

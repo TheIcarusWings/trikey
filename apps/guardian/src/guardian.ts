@@ -240,7 +240,20 @@ export const SLOT_OFFER_MS = 30 * 60_000;
 /** What `unlock.hardware.add` did, or why not. */
 export type HardwareUnlockAddOutcome =
   | { ok: true; walletId: string; slot: string; addedAt: number }
-  | { ok: false; code: 'locked' | 'not_registered' | 'wallet_changed' | 'hardware_unconfirmed' | 'bad_signature' | 'setup_required' | 'slot_not_offered'; message: string }
+  | {
+      ok: false;
+      code:
+        | 'locked'
+        | 'not_registered'
+        | 'wallet_changed'
+        | 'hardware_unconfirmed'
+        | 'bad_signature'
+        | 'setup_required'
+        | 'slot_not_offered'
+        /** Cleartext signature on a guardian that seals unlocks: update the app. */
+        | 'app_update_required';
+      message: string;
+    }
   /**
    * The signature sealed (`sealed_unlock`): `unlock_key_stale`, sealed to a key the guardian no longer holds or expired
    * (seal again, nothing was opened); `bad_seal`, sealed to the current key but it does not open, or is not this
@@ -1582,10 +1595,17 @@ export class Guardian implements WalletRuntime {
         message: 'The guardian did not offer that unlock slot, or it ran out (the guardian restarted, or more than 30 minutes went by). Turn it on again. If this keeps happening, update the Trikey app.',
       };
     }
-    // The signature: sealed to the guardian's current sealing key (PROTOCOL.md, "Sealed unlock"), or from an older phone
-    // in the clear (accepted, and marked).
+    // The signature: sealed to the guardian's current sealing key (PROTOCOL.md, "Sealed unlock"). An older phone's
+    // signature in the clear is refused while this guardian seals unlocks (security sweep 2 follow-up).
     let signature: string;
-    const unsealed = !('sealed' in input) && this.sealsUnlocks;
+    if (!('sealed' in input) && this.sealsUnlocks) {
+      this.log.warn('guardian.unlock_unsealed', { method: 'unlock.hardware.add', refused: true });
+      return {
+        ok: false,
+        code: 'app_update_required',
+        message: 'Update the Trikey app: this guardian only accepts a sealed hardware-unlock signature.',
+      };
+    }
     if ('sealed' in input) {
       const opened = this.unlockKey.open(input.sealed, { purpose: 'unlock.hardware.add', guardianPubkey: this.identity.pubkey, phonePubkey: ctx.phone, id: ctx.id, now: this.nowSec() });
       // Used: whatever comes next (expired included: it was decrypted), this key seals nothing more. A stale seal was
@@ -1606,8 +1626,8 @@ export class Guardian implements WalletRuntime {
       }
       signature = secret.signature;
     } else {
+      // Guardian without `sealed_unlock`: older path, signature in the clear.
       signature = input.signature;
-      if (unsealed) this.log.warn('guardian.unlock_unsealed', { method: 'unlock.hardware.add' });
     }
     if (!reg.hardwareAuth || !bip137Authorizer.verify(this.unlockText(reg.walletId, input.slot), signature, reg.hardwareAuth)) {
       this.log.warn('unlock_slots.bad_signature', { walletId: reg.walletId });
@@ -1619,8 +1639,8 @@ export class Guardian implements WalletRuntime {
     openSlot(slot, signature, binding).fill(0);
     await this.unlockSlots.put(slot);
     this.slotOffers.delete(reg.walletId); // taken: the next add needs a new id, and a new signature
-    this.log.info('unlock_slots.added', { walletId: reg.walletId, ...(unsealed ? { unsealed: true } : {}) });
-    await w.logEvent({ type: 'unlock_slot_added', walletId: reg.walletId, ...(unsealed ? { unsealed: true as const } : {}) });
+    this.log.info('unlock_slots.added', { walletId: reg.walletId });
+    await w.logEvent({ type: 'unlock_slot_added', walletId: reg.walletId });
     // A new way to open the whole box: the owner's channels, the first wallet's alert contacts and this wallet's hear of
     // it (security review 2026-11), not only the phone that asked (it may be a thief's).
     const name = (w.slotId === undefined ? safeName(this.wallets.registry.firstName, 16) : w.label()) || undefined;
@@ -1857,16 +1877,16 @@ export class Guardian implements WalletRuntime {
   }
 
   /**
-   * Unlock with the passphrase (web UI or `guardian.unlock`). Rate limited; the passphrase is never logged. From the phone
-   * on a guardian that seals unlocks, this is an older app's unsealed passphrase: accepted, and marked in the Activity.
-   * `caller`: who tries it in the web UI (its own count in the web throttle).
+   * Unlock with the passphrase (web UI or `guardian.unlock`). Rate limited; the passphrase is never logged. The phone's
+   * cleartext path is refused when this guardian seals unlocks (the handler answers `app_update_required` first); the web
+   * UI still uses this. `caller`: who tries it in the web UI (its own count in the web throttle).
    */
   unlock(passphrase: unknown, via: 'web' | 'phone', caller?: Caller): Promise<UnlockOutcome> {
     return this.unlockMutex.run(async (): Promise<UnlockOutcome> => {
       const file = this.keystore;
       if (!file) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
       if (!this.locked) return { ok: true };
-      return this.passphraseAttempt(file, passphrase, via, { unsealed: via === 'phone' && this.sealsUnlocks, ...(caller ? { caller } : {}) });
+      return this.passphraseAttempt(file, passphrase, via, { ...(caller ? { caller } : {}) });
     });
   }
 
@@ -1888,7 +1908,8 @@ export class Guardian implements WalletRuntime {
       const file = this.keystore;
       if (!file || !this.identity) return { ok: false, code: 'setup_required', message: 'Set up the guardian first.' };
       if (!this.locked) return { ok: true };
-      return this.hardwareAttempt(file, input, { unsealed: this.sealsUnlocks });
+      // Cleartext hardware unlock: only for a guardian without `sealed_unlock` (the handler refuses it when sealing).
+      return this.hardwareAttempt(file, input, {});
     });
   }
 

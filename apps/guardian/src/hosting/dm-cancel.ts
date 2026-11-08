@@ -15,8 +15,8 @@ export async function onHostedCancelDm(g: Guardian, dm: IncomingDm, id: string, 
   const live = slotId ? g.hosting.liveSlots().find((x) => x.slot.slotId === slotId) : undefined;
   if (!live) return;
   const { slot, engine } = live;
-  // Decided under the mutex (shared with the host's recoveries), sent after it: dm-cancel.ts.
-  const answer = await g.recoveryMutex.run(async (): Promise<string | undefined> => {
+  // Decided under this slot's recovery mutex (not the host's: each guest has its own), sent after it: dm-cancel.ts.
+  const answer = await engine.recoveryMutex.run(async (): Promise<string | undefined> => {
     const reg = engine.registration();
     if (!reg) return undefined;
     if (dm.sender !== reg.appNostrPubkey && !engine.isAlertContact(dm.sender)) {

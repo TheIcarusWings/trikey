@@ -4,8 +4,9 @@
  * Primal show as DMs, so alert contacts need nothing but their usual nostr app.
  *
  * Sending: to the guardian's relays plus the recipient's DM inbox relays
- * (their kind-10050 list, looked up on our relays; only `wss://` entries are
- * used, so a contact's list cannot point the guardian at hosts on the LAN).
+ * (their kind-10050 list, looked up on our relays; only public `wss://` entries
+ * are used: loopback, LAN / private IPs and local names are dropped, so a
+ * contact's list cannot point the guardian at hosts on the box's network).
  * Up to 8 of the recipient's relays are always added, however many relays the
  * guardian has: their app reads its DMs there (NIP-17).
  *
@@ -13,6 +14,7 @@
  * In the guardian the shared `Inbox` opens every wrap once and passes the DMs
  * to `handleOpened` (`listen: false`); standalone, this subscribes itself.
  */
+import { isIP } from 'node:net';
 import {
   RecentSet,
   normalizeRelayUrl,
@@ -27,6 +29,7 @@ import {
 } from '@trikey/protocol';
 import { verifyEvent } from 'nostr-tools/pure';
 import { errorText, silentLogger, type Logger } from '../log.js';
+import { classifyIp, isLocalName } from '../notify/net.js';
 import type { GuardianIdentity } from '../identity.js';
 
 export const DM_KIND = 14;
@@ -141,7 +144,7 @@ export class DirectMessages {
     return [...new Set([...own, ...theirs])];
   }
 
-  /** The recipient's kind-10050 DM inbox relays, as found on our relays (wss:// only). */
+  /** The recipient's kind-10050 DM inbox relays, as found on our relays (public wss:// only). */
   private lookupDmRelays(pubkey: string, timeoutMs = 3000): Promise<string[]> {
     return new Promise((resolve) => {
       let best: NostrEvent | undefined;
@@ -157,7 +160,7 @@ export class DirectMessages {
           if (t[0] !== 'relay' || typeof t[1] !== 'string') continue;
           try {
             const u = normalizeRelayUrl(t[1]);
-            if (u.startsWith('wss://')) urls.push(u);
+            if (isPublicDmRelay(u)) urls.push(u);
           } catch {
             /* skip malformed entries */
           }
@@ -179,4 +182,26 @@ export class DirectMessages {
       if (done) sub.close();
     });
   }
+}
+
+/**
+ * A kind-10050 relay the guardian may open a connection to: `wss://` only, and not a loopback, private or local host
+ * (by the form of the host name or a literal IP). Up to 0.1.22 any `wss://` was kept, so `wss://192.168.1.1` or
+ * `wss://umbrel.local` on a contact's list made the guardian reach into the box's LAN (security sweep 2 follow-up).
+ * Host names are not resolved here: a public name that later points at a private address is a DNS-rebinding concern for
+ * the owner's own relays too, and looking every inbox relay up would let a contact's list stall the send.
+ */
+export function isPublicDmRelay(url: string): boolean {
+  if (!url.startsWith('wss://')) return false;
+  let host: string;
+  try {
+    host = new URL(url).hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  } catch {
+    return false;
+  }
+  if (!host) return false;
+  if (host === 'localhost' || host.endsWith('.localhost')) return false;
+  if (isLocalName(host)) return false;
+  if (isIP(host)) return classifyIp(host) === 'public';
+  return true;
 }

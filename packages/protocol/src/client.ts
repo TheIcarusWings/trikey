@@ -543,8 +543,23 @@ export class RpcClient {
    */
   private remember(wrap: NostrEvent, outcome: EnvelopeReason | 'ok' | 'unmatched'): void {
     if (outcome === 'bad_wrap' || outcome === 'future') return;
-    if (outcome === 'wrong_peer' || outcome === 'unmatched' || outcome === 'replay') this.seenHere.seen(wrap.id);
-    else this.seen.add(wrap);
+    // Stranger wraps that fail to open (`decrypt_failed`, and other non-peer outcomes below) stay in the small
+    // in-memory set only: persisting them in `seenWraps` let an attacker fill the 4096-entry file and push real
+    // handled ids out (security sweep 2, protocol finding 3). Same split as the guardian's inbox.
+    if (
+      outcome === 'wrong_peer' ||
+      outcome === 'unmatched' ||
+      outcome === 'replay' ||
+      outcome === 'decrypt_failed' ||
+      outcome === 'bad_rumor' ||
+      outcome === 'bad_payload' ||
+      outcome === 'stale' ||
+      outcome === 'expired'
+    ) {
+      this.seenHere.seen(wrap.id);
+      return;
+    }
+    this.seen.add(wrap);
   }
 
   /** The result of `response` to a `method` call: resolves with the validated result, rejects with its error. */

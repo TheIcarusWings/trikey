@@ -61,7 +61,7 @@ describe("security: other senders cannot push the phone's replay entries out (fi
     const kept = trimRequests(records, 4096, (s) => s === APP_NOSTR);
     expect(kept).toHaveLength(4096);
     expect(kept[0]!.key).toBe(`${APP_NOSTR}:phone-unlock`);
-    // The small holder (one LOCK record) is not the one that loses.
+    // A contact's LOCK row is never trimmed by an RPC flood (sweep 2 protocol #2).
     expect(kept.some((r) => r.key.startsWith('lock:'))).toBe(true);
   }, 30_000);
 });

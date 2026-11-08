@@ -278,24 +278,41 @@ export function senderOfRequestKey(key: string): string {
   return parts[0] === 'lock' ? (parts[1] ?? '') : (parts[0] ?? '');
 }
 
+/** A contact's `LOCK` DM id (`lock:<sender>:<rumorId>`): kept until its freshness window ends, never trimmed by RPC flood. */
+export function isLockRequestKey(key: string): boolean {
+  return key.startsWith('lock:');
+}
+
 /**
  * `requests` cut to `max`: the sender holding the most records loses its oldest first, a protected sender only when
  * nobody else holds any. One global "keep the newest" let an alert contact or a hosted guest push the paired phone's
  * records out with its own (security sweep 2, finding 12); each sender's records are bounded already by the limit on
  * recorded requests (`DEFAULT_REQUEST_WRITE_LIMIT`).
+ *
+ * `lock:…` rows are never trimmed here (security sweep 2, protocol finding 2): a flood of state-changing RPCs used to
+ * drop a contact's `LOCK` while it was still fresh, so a relay redelivery could lock again after the setting was
+ * turned on. They expire by their own `until` in `rememberRequest`.
  */
 export function trimRequests(requests: { key: string; until: number }[], max: number, protect?: (sender: string) => boolean): { key: string; until: number }[] {
   if (requests.length <= max) return requests;
   const bySender = new Map<string, Set<number>>();
+  let lockCount = 0;
   requests.forEach((r, i) => {
+    if (isLockRequestKey(r.key)) {
+      lockCount++;
+      return;
+    }
     const s = senderOfRequestKey(r.key);
     let set = bySender.get(s);
     if (!set) bySender.set(s, (set = new Set()));
     set.add(i);
   });
+  // Cap is for RPC / other rows; locks sit outside it. If locks alone exceed `max`, keep them all (bounded by contact
+  // rate limits and short TTL) and drop nothing of them.
+  const target = Math.max(lockCount, max);
   const dropped = new Set<number>();
   let left = requests.length;
-  while (left > max) {
+  while (left > target) {
     const victim = biggestHolder(bySender, protect);
     if (victim === undefined) break;
     const set = bySender.get(victim)!;

@@ -198,7 +198,7 @@ function guestHandlers(g: Guardian, h: Hosting): Partial<Record<MethodName, Gues
     },
 
     'recovery.start': (params: Params<'recovery.start'>, ctx, route) =>
-      g.recoveryMutex.run(async () => {
+      route.engine.recoveryMutex.run(async () => {
         if (!('destinationKeys' in params)) throw new RpcError(ErrorCode.InvalidParams, "A hosted wallet's recovery names its destination by account pubkeys (destinationKeys), with its wallet map.");
         const res = await refusable(g, ctx.sender, () =>
           route.engine.startRecovery({ psbt: base64.decode(params.sweepPsbt), destinationKeys: params.destinationKeys, destinationMap: params.destinationMap, abandon: params.abandon, initiator: ctx.sender }),
@@ -211,7 +211,7 @@ function guestHandlers(g: Guardian, h: Hosting): Partial<Record<MethodName, Gues
       }),
 
     'recovery.update': (params: Params<'recovery.update'>, ctx, route) =>
-      g.recoveryMutex.run(async () => {
+      route.engine.recoveryMutex.run(async () => {
         const rec = recoveryOf(route, params.recoveryId);
         const res = await refusable(g, ctx.sender, () => route.engine.updateRecovery({ recoveryId: rec.id, psbt: base64.decode(params.sweepPsbt), abandon: params.abandon }));
         if (!res.ok) throw hostedRefusalError(res.refusal);
@@ -258,21 +258,32 @@ function guestHandlers(g: Guardian, h: Hosting): Partial<Record<MethodName, Gues
       return { walletId: res.registration.walletId, hardwareAuth: { pubkey: key.pubkey, path: key.path }, nextHardwareSequence: route.engine.status().nextHardwareSequence };
     },
 
-    'wallet.retire': (params: Params<'wallet.retire'>, ctx, route) =>
-      g.recoveryMutex.run(async () => {
-        // Leaving (section 16): retiring deletes this slot's key 3 for good. Refused while a coin key 3 co-signed is still
-        // unspent (checked on the host's own Electrs by the coins' own scripts, so nothing leaks): such a coin may be one
-        // only the phone key and key 3 can move (section 4), and it would be lost.
-        await chainCall(g, 'wallet.retire', async () => {
-          const left = await h.unspentLedger(route.engine);
-          if (left.coins) throw hostedRefusalError({ reason: 'ledger_unspent', coins: left.coins, sats: left.sats });
-        });
+    'wallet.retire': async (params: Params<'wallet.retire'>, ctx, route) => {
+      // Leaving (section 16): retiring deletes this slot's key 3 for good. Refused while a coin key 3 co-signed is still
+      // unspent (checked on the host's own Electrs by the coins' own scripts, so nothing leaks): such a coin may be one
+      // only the phone key and key 3 can move (section 4), and it would be lost.
+      // The Electrs scan runs outside the slot's recovery mutex: holding it through the scan queued every other recovery
+      // of this slot (and, before per-slot mutexes, the host and every guest) behind a slow chain call (security sweep 2
+      // follow-up). Spent coins are pruned from the ledger here; the mutex then only checks the in-memory remainder.
+      await chainCall(g, 'wallet.retire', async () => {
+        const left = await h.unspentLedger(route.engine);
+        if (left.coins) throw hostedRefusalError({ reason: 'ledger_unspent', coins: left.coins, sats: left.sats });
+      });
+      return route.engine.recoveryMutex.run(async () => {
+        const left = route.engine.ledger();
+        if (left.length)
+          throw hostedRefusalError({
+            reason: 'ledger_unspent',
+            coins: left.length,
+            sats: left.reduce((a, c) => a + c.valueSats, 0n),
+          });
         const res = await route.engine.retireWallet(params.approval);
         if (!res.ok) throw hostedRefusalError(res.refusal);
         await h.noteLeft(route.slot.slotId);
         await g.notifyPeer(ctx.sender, { type: 'wallet_retired', walletId: res.walletId, reason: 'retired', ...g.stampNow() });
         return { walletId: res.walletId, retiredAt: Math.floor(res.retiredAt / 1000) };
-      }),
+      });
+    },
 
     'fees.estimate': (params: Params<'fees.estimate'>, _ctx, route) =>
       chainCall(g, 'fees.estimate', async () => {
@@ -325,7 +336,7 @@ function guestHandlers(g: Guardian, h: Hosting): Partial<Record<MethodName, Gues
   };
 
   async function cancelIn(route: GuestRoute, params: Params<'recovery.cancel'>, sender: string) {
-    return g.recoveryMutex.run(async () => {
+    return route.engine.recoveryMutex.run(async () => {
       recoveryOf(route, params.recoveryId);
       const actor: CancelActor = params.approval ? { kind: 'hardware', approval: params.approval } : { kind: 'nostr', pubkey: sender };
       const res = await route.engine.cancelRecovery(actor);
@@ -470,7 +481,20 @@ function runningGuestRecovery(slotId: string, engine: HostedEngine, id: string) 
 }
 
 /** Methods whose replay after a restart would matter (as the host's `runOnceAcrossRestarts`). */
-const GUEST_STATE_CHANGING = new Set<MethodName>(['guardian.lock', 'policy.update', 'recovery.start', 'recovery.update', 'recovery.cancel', 'phone.resume', 'hardware.confirm', 'wallet.retire', 'hosted.pair']);
+const GUEST_STATE_CHANGING = new Set<MethodName>([
+  'guardian.lock',
+  'policy.update',
+  'recovery.start',
+  'recovery.update',
+  'recovery.cancel',
+  'phone.resume',
+  'hardware.confirm',
+  'wallet.retire',
+  'hosted.pair',
+  // Same follow-up as the host's STATE_CHANGING: a replayed broadcast or relay ack after a restart must not run again.
+  'tx.broadcast',
+  'relays.ack',
+]);
 const REMEMBER_MS = (3600 + 120) * 1000;
 
 /**

@@ -249,6 +249,12 @@ const STATE_CHANGING: MethodName[] = [
   'savings.unregister',
   'unlock.hardware.add',
   'unlock.hardware.remove',
+  // Also recorded: a replay after a restart would put labels again, broadcast again, ack a relay change twice, or
+  // add a wallet twice (security sweep 2 follow-up; up to 0.1.22 these five were left off the list).
+  'labels.put',
+  'labels.delete',
+  'tx.broadcast',
+  'relays.ack',
 ];
 /** How long a request id is remembered: the protocol's longest request TTL (1 h) plus clock skew. */
 const REMEMBER_MS = (3600 + 120) * 1000;
@@ -463,6 +469,15 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
         throw new RpcError(ErrorCode.UnlockFailed, 'Unlocking with the hardware wallet is not supported yet; use the passphrase.');
       // As a guardian before sealed unlock answers (its schema has no `sealed`).
       if (params.kind === 'sealed' && !g.sealsUnlocks) throw new RpcError(ErrorCode.InvalidParams);
+      // A guardian that seals unlocks refuses the secret in the clear: an older app must update (security sweep 2
+      // follow-up). Up to 0.1.22 it was accepted and marked in the Activity; a thief with the disk and archived wraps
+      // could then read the passphrase or slot signature from those wraps.
+      if (params.kind !== 'sealed' && g.sealsUnlocks) {
+        g.log.warn('guardian.unlock_unsealed', { method: 'guardian.unlock', refused: true });
+        throw new RpcError(ErrorCode.UnlockFailed, 'Update the Trikey app: this guardian only accepts a sealed unlock.', {
+          reason: 'app_update_required',
+        });
+      }
       // The same throttle and refusals for all (Guardian.unlockAttempt); the passphrase and the signature are never logged or kept.
       const r =
         params.kind === 'sealed'
@@ -989,6 +1004,8 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
         // A slot id the guardian did not offer (an older app picks its own), or one that ran out: sign the offered one.
         case 'slot_not_offered':
           throw new RpcError(ErrorCode.InvalidParams, r.message, { reason: 'unlock_slot_not_offered' });
+        case 'app_update_required':
+          throw new RpcError(ErrorCode.InvalidParams, r.message, { reason: 'app_update_required' });
         default:
           throw new RpcError(ErrorCode.Unavailable, r.message);
       }
