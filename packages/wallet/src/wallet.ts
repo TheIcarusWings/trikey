@@ -127,6 +127,7 @@ import { GuardianSilentPaymentScanner, GuardianSingleKeyChain } from './guardian
 import { TxCache } from './txcache.js';
 import { FEE_BUMP_DATA_REASONS, FeeBumpCheckError, checkFeeBump, type FeeBumpCheckReason } from './fee-bump-check.js';
 import { applyOwnSpends, ownSpendOf, reconcileOwnSpends, withOwnSpend } from './own-spends.js';
+import { boundNext, marksFromNext, raiseMarks } from './index-marks.js';
 import { coinList, receivedLabels, selectableCoins, type CoinList, type SelectableCoins } from './coins.js';
 import { bip329Origin } from './labels-bip329.js';
 import { LabelStore, LabelsDocument, addressKey, labelStoreKey, type Bip329ImportResult } from './labels-store.js';
@@ -338,7 +339,12 @@ export type WalletEvent =
    * "Speed up" refused a replacement before signing it: the check of the original and the replacement failed
    * (fee-bump-check.ts). Only the reason code, never transaction data: for a log line.
    */
-  | { type: 'speed_up_refused'; wallet: 'spending' | 'savings'; reason: FeeBumpCheckReason };
+  | { type: 'speed_up_refused'; wallet: 'spending' | 'savings'; reason: FeeBumpCheckReason }
+  /**
+   * A sync reported a next address index more than a gap past the highest one this phone knows is used, and the phone
+   * uses `used` instead (index-marks.ts): a guardian that lies, or coins received elsewhere. For a log line.
+   */
+  | { type: 'address_index_capped'; wallet: 'spending' | 'savings'; chain: 0 | 1; reported: number; used: number };
 
 /** Encrypted notes on the guardian (`TrikeyWallet.notesView`). */
 export interface NotesView {
@@ -3158,12 +3164,29 @@ export class TrikeyWallet {
     await this.update((s) => {
       s.ownSpends = withOwnSpend(s.ownSpends, record, sure ? opts.replaces : undefined);
       if (s.chain) s.chain = applyOwnSpends(s.chain, [record]);
+      // Its change is used now, whatever a later sync says.
+      if (s.indexMarks?.walletId === walletId) s.indexMarks = { walletId, ...raiseMarks(s.indexMarks, record.outputs) };
     });
   }
 
-  /** Stores a sync's chain data with this phone's own unconfirmed spends applied, and keeps the records still current. */
+  /**
+   * Stores a sync's chain data with this phone's own unconfirmed spends applied, and keeps the records still current.
+   * The next indexes it reports are cut to a gap past the highest index this phone knows is used (index-marks.ts); the
+   * wallet's first sync seeds that record.
+   */
   private storeChain(s: WalletState, chain: NonNullable<WalletState['chain']>): void {
-    const r = reconcileOwnSpends(chain, s.ownSpends, s.wallet?.walletId, this.now());
+    const walletId = s.wallet?.walletId;
+    let bounded = chain;
+    if (walletId) {
+      const known = s.indexMarks?.walletId === walletId ? s.indexMarks : marksFromNext(chain);
+      const own = s.ownSpends.filter((r) => r.walletId === walletId).flatMap((r) => r.outputs);
+      const marks = raiseMarks(known, [...chain.utxos, ...own]);
+      const b = boundNext(chain, marks);
+      bounded = b.next;
+      s.indexMarks = { walletId, receive: marks.receive, change: marks.change };
+      for (const c of b.capped) this.emit({ type: 'address_index_capped', wallet: 'spending', ...c });
+    }
+    const r = reconcileOwnSpends(bounded, s.ownSpends, walletId, this.now());
     s.chain = r.chain;
     s.ownSpends = r.ownSpends;
   }
@@ -8081,12 +8104,20 @@ export class TrikeyWallet {
     }
     if (snap.walletId && snap.walletId !== sv.walletId) throw new WalletError('guardian_mismatch', `The guardian answered for ${snap.walletId}, not Savings ${sv.walletId}.`);
     const now = this.now();
+    const capped: { chain: 0 | 1; reported: number; used: number }[] = [];
     await this.update((s) => {
       if (!s.savings || s.savings.walletId !== sv.walletId) return;
-      s.savings.chain = { ...snap, syncedAt: now };
-      s.savings.nextReceiveIndex = Math.max(s.savings.nextReceiveIndex, snap.nextReceiveIndex);
-      s.savings.nextChangeIndex = Math.max(s.savings.nextChangeIndex, snap.nextChangeIndex);
+      // The reported next indexes, cut to a gap past what this phone knows is used (index-marks.ts). The record's own
+      // indexes (this phone's, or the backup's) seed what it knows.
+      const marks = raiseMarks(s.savings.indexMarks ?? marksFromNext(s.savings), snap.utxos);
+      const b = boundNext(snap, marks);
+      capped.push(...b.capped);
+      s.savings.indexMarks = marks;
+      s.savings.chain = { ...b.next, syncedAt: now };
+      s.savings.nextReceiveIndex = Math.max(s.savings.nextReceiveIndex, b.next.nextReceiveIndex);
+      s.savings.nextChangeIndex = Math.max(s.savings.nextChangeIndex, b.next.nextChangeIndex);
     });
+    for (const c of capped) this.emit({ type: 'address_index_capped', wallet: 'savings', ...c });
     await this.prefetchPrevTxs(snap.utxos, this.savingsChain()).catch(() => undefined);
     return this.savingsSnapshot();
   }
@@ -8266,6 +8297,8 @@ export class TrikeyWallet {
       if (!refusal) throw e;
       return { ok: false, refusal, signedTx: { txid, txHex } };
     }
+    // Its change (or the merged coin) is at Savings' next change index: used now.
+    if (quote.changeSats > 0 || quote.consolidate) await this.noteSavingsUsed([{ chain: 1, index: quote.changeIndex }]);
     const label = quote.request.label?.trim().slice(0, 200);
     await this.logSavingsSend({
       txid,
@@ -8280,6 +8313,17 @@ export class TrikeyWallet {
     await this.syncSavings().catch(() => undefined);
     if (quote.toSpending) await this.sync().catch(() => undefined);
     return { ok: true, txid, txHex, amountSats: quote.request.amountSats, feeSats: quote.feeSats, signedBy: signers };
+  }
+
+  /** Savings change this phone paid: used, for the bound on the next index (index-marks.ts). */
+  private async noteSavingsUsed(used: { chain: 0 | 1; index: number }[]): Promise<void> {
+    const sv = this.s.savings;
+    if (!sv || !used.length) return;
+    const known = sv.indexMarks ?? marksFromNext(sv);
+    if (raiseMarks(known, used) === known && sv.indexMarks) return;
+    await this.update((s) => {
+      if (s.savings?.walletId === sv.walletId) s.savings.indexMarks = raiseMarks(s.savings.indexMarks ?? marksFromNext(s.savings), used);
+    });
   }
 
   private async logSavingsSend(entry: SavingsSendEntry): Promise<void> {

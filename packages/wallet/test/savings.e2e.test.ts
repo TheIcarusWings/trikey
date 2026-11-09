@@ -174,6 +174,50 @@ describe('creating Savings', { timeout: 60_000 }, () => {
     // Spending's balance is its own.
     expect(w.snapshot()!.balance.totalSats).toBe(800_000);
   });
+
+  it('a guardian reporting a far next address index: Spending and Savings stay within a gap of what the phone knows is used', async () => {
+    // The guardian lies about the next indexes (security review 2026-11, sweep 2, finding 8).
+    const far = <T extends { nextReceiveIndex: number; nextChangeIndex: number }>(snap: T): T => ({ ...snap, nextReceiveIndex: 90_000, nextChangeIndex: 90_000 });
+    const priv = w as unknown as { chain: { sync: (o?: object) => Promise<unknown> }; savingsChain: () => { sync: (o?: object) => Promise<unknown> } };
+    const chain = priv.chain;
+    const realSync = chain.sync.bind(chain);
+    const realSavings = priv.savingsChain.bind(w);
+    chain.sync = async (o) => far((await realSync(o)) as { nextReceiveIndex: number; nextChangeIndex: number });
+    priv.savingsChain = () => {
+      const c = realSavings();
+      const s = c.sync.bind(c);
+      c.sync = async (o) => far((await s(o)) as { nextReceiveIndex: number; nextChangeIndex: number });
+      return c;
+    };
+    const capped: WalletEvent[] = [];
+    const off = w.on((e) => void (e.type === 'address_index_capped' && capped.push(e)));
+    try {
+      const before = { spending: w.snapshot()!, savings: w.state.savings! };
+      await w.sync();
+      // Spending's coins are at receive 0 and 1, no change yet: a gap past those.
+      expect((await w.receiveAddress()).index).toBe(1 + 20);
+      expect(w.state.chain!.nextChangeIndex).toBe(19);
+      // Savings: its coin at receive 0.
+      expect((await w.savingsReceiveAddress()).index).toBe(20);
+      expect(w.state.savings!.nextChangeIndex).toBe(19);
+      expect(capped).toEqual(expect.arrayContaining([
+        expect.objectContaining({ wallet: 'spending', chain: 0, reported: 90_000 }),
+        expect.objectContaining({ wallet: 'savings', chain: 0, reported: 90_000 }),
+      ]));
+      // The balances are what they were: only the indexes are cut.
+      expect(w.snapshot()!.balance.totalSats).toBe(before.spending.balance.totalSats);
+      expect(w.savingsSnapshot()!.balance.totalSats).toBe(2_000_000);
+    } finally {
+      off();
+      chain.sync = realSync;
+      priv.savingsChain = realSavings;
+    }
+    // The honest guardian again: its indexes are within the bound, and are used as they are.
+    await w.sync();
+    expect((await w.receiveAddress()).index).toBe(2);
+    // Savings keeps its own record of indexes (the backup's), raised to the cut one: still within a gap of its coin.
+    expect((await w.savingsReceiveAddress()).index).toBe(20);
+  });
 });
 
 describe('moving money', { timeout: 90_000 }, () => {
