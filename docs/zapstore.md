@@ -6,7 +6,7 @@ signed by the same APK key.
 
 ## For users
 
-Trikey is listed on Zapstore from 0.1.10-alpha. Install Zapstore (from zapstore.dev), search for **Trikey**, and install it. Updates then show up in Zapstore. The
+Trikey is listed on Zapstore from 0.1.10-alpha, and Trikey FOSS from 0.1.24-alpha. Install Zapstore (from zapstore.dev), search for **Trikey**, and install the one you want. Updates then show up in Zapstore. The
 listing's publisher is Trikey's own npub (below), and the APK is the same file as on the
 [GitHub releases page](https://github.com/TheIcarusWings/trikey/releases), signed with the Trikey release key
 (certificate SHA-256 in [`packaging/android/release-cert.sha256`](../packaging/android/release-cert.sha256)). An APK
@@ -14,8 +14,7 @@ of the same app from Zapstore, Obtainium or GitHub installs over the others and 
 
 There are two apps (from 0.1.23-alpha; [android-signing.md](android-signing.md), "Two APKs, two apps"): **Trikey**
 (`app.trikey.wallet`, the standard build, with Google's libraries) and **Trikey FOSS** (`app.trikey.wallet.foss`, no
-Google code). The **Trikey** listing has the standard app. **Trikey FOSS** gets its own listing once the maintainer has
-published it (below); until then, take its APK from GitHub or Obtainium. Each app has its own wallet: to move one from
+Google code). The **Trikey** listing has the standard app; **Trikey FOSS** has a listing of its own. Each app has its own wallet: to move one from
 the other, restore your backup file and recovery code in the new app.
 
 Publisher npub: `npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`. Check it on the listing before installing. It is also

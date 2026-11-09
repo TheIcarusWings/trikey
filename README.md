@@ -79,9 +79,9 @@ The image is reproducible: [packaging/VERIFY.md](packaging/VERIFY.md) shows how 
 
 - **iPhone:** not in the App Store yet; build it from source with a free Apple ID
   ([apps/mobile/README.md](apps/mobile/README.md)).
-- **Android:** every [GitHub release](https://github.com/TheIcarusWings/trikey/releases) has two apps, which
-  Obtainium can keep up to date (**[add to Obtainium in one tap](https://trikey.app/obtainium)**) ([Zapstore](docs/zapstore.md) lists Trikey, and Trikey FOSS
-  once its listing is published). Both are signed with the same release key; its certificate is in
+- **Android:** every [GitHub release](https://github.com/TheIcarusWings/trikey/releases) has two apps. Get them from
+  [Zapstore](docs/zapstore.md) (search **Trikey**; both are listed) or with Obtainium
+  (**[add to Obtainium in one tap](https://trikey.app/obtainium)**), which keep them up to date. Both are signed with the same release key; its certificate is in
   [packaging/android/release-cert.sha256](packaging/android/release-cert.sha256).
   - **Trikey** (`trikey-alpha-v<version>.apk`, `app.trikey.wallet`): the standard build, with Google's libraries.
   - **Trikey FOSS** (`trikey-alpha-foss-v<version>.apk`, `app.trikey.wallet.foss`): no Google code, for phones without
