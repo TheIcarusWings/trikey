@@ -21,12 +21,20 @@
  * A message counts only once (durably, across restarts: relays re-deliver old gift wraps), only while it is fresh
  * (`LOCK_WINDOW_SEC` either side of the guardian's clock), and at most `DEFAULT_CONTACT_LOCK_LIMIT` per contact per hour.
  */
+import { SUBSCRIPTION_LOOKBACK_SEC } from '@trikey/protocol';
 import type { Guardian } from './guardian.js';
 import type { IncomingDm } from './nostr/dm.js';
 import { shortNpub } from './http/activity.js';
 
 /** How far a `LOCK` message's own timestamp may be from the guardian's clock (the contact's clock may be off a little). */
 export const LOCK_WINDOW_SEC = 600;
+/**
+ * A `LOCK` dated further ahead than this is never handled, and remembered only this far: the guardian's subscriptions
+ * ask relays for wraps from `SUBSCRIPTION_LOOKBACK_SEC` back, so past it a relay no longer hands the same wrap over.
+ */
+export const LOCK_MAX_AHEAD_SEC = SUBSCRIPTION_LOOKBACK_SEC;
+/** Clock skew allowed on top of the window when remembering a message (as the guardian's other replay guards). */
+const SKEW_MS = 120_000;
 
 /**
  * True when `content` is the lock command: the single word `lock`, any case, optionally followed by `.` or `!`, with
@@ -81,13 +89,18 @@ export async function onLockDm(g: Guardian, dm: IncomingDm): Promise<void> {
     return;
   }
   const now = g.nowSec();
-  if (Math.abs(dm.createdAt - now) > LOCK_WINDOW_SEC) {
+  // Too old: it can never be fresh again, so there is nothing to remember.
+  if (!(dm.createdAt >= now - LOCK_WINDOW_SEC)) {
     g.log.info('dm.lock_ignored', { reason: 'stale', contact: shortNpub(dm.sender) });
     return;
   }
   // Each message once, also after a restart (relays re-deliver old wraps): an old LOCK must not lock again after the
-  // owner unlocked. Kept until the message is no longer fresh, when the check above drops it anyway. A message already
-  // handled is dropped before the rate limit, so re-deliveries do not use up the contact's allowance.
+  // owner unlocked. A message already handled is dropped before the rate limit, so re-deliveries do not use up the
+  // contact's allowance. Remembered BEFORE the freshness check, a message dated ahead too (security sweep 3): one dropped
+  // as "not fresh yet" without being remembered locked when a relay handed it over again later, inside the window,
+  // even after the owner had turned the setting on, breaking "remembered while the setting is off". It is kept until it
+  // can no longer be fresh (its date plus the window), or, dated beyond the relays' look-back, until a relay no longer
+  // hands it over; such messages count against the contact's rate limit, so they cannot grow the memory without end.
   const key = `lock:${dm.sender}:${dm.rumorId}`;
   if (g.service.hasRequest(key, g.clock.now())) return;
   const verdict = g.contactLockLimiter.take(dm.sender, g.clock.now());
@@ -95,8 +108,12 @@ export async function onLockDm(g: Guardian, dm: IncomingDm): Promise<void> {
     g.log.warn('dm.lock_rate_limited', { contact: shortNpub(dm.sender), retryAfterSeconds: Math.ceil(verdict.retryAfterMs / 1000) });
     return;
   }
-  const until = (Math.max(dm.createdAt, now) + LOCK_WINDOW_SEC) * 1000 + 120_000;
+  const until = (Math.max(now, Math.min(dm.createdAt, now + LOCK_MAX_AHEAD_SEC)) + LOCK_WINDOW_SEC) * 1000 + SKEW_MS;
   if (!(await g.service.rememberRequest(key, until, g.clock.now()))) return;
+  if (dm.createdAt > now + LOCK_WINDOW_SEC) {
+    g.log.info('dm.lock_ignored', { reason: dm.createdAt > now + LOCK_MAX_AHEAD_SEC ? 'too far ahead' : 'not fresh yet', contact: shortNpub(dm.sender) });
+    return;
+  }
   // Setting off (for the host's wallet and for every guest wallet that lists the sender): as if the command did not
   // exist, so no answer and nothing in the activity log. The message is still remembered (above): a relay handing it
   // over again after an owner turned the setting on must not lock or pause then.
