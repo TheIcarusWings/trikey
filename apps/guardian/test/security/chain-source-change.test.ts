@@ -15,6 +15,9 @@ import { FakeElectrum, GuardianRig } from '../support/index.js';
 import { MNEMONICS, hwSigner, makeWallet, network, nostrKey } from '../helpers.js';
 import { pairInRig } from './support.js';
 
+/** An address on the internet (TEST-NET-3), sent as "your own Electrum server". */
+const OUTSIDE = '203.0.113.7';
+
 let rig: GuardianRig | undefined;
 let other: FakeElectrum | undefined;
 afterEach(async () => {
@@ -24,12 +27,12 @@ afterEach(async () => {
   other = undefined;
 });
 
-/** Public servers and anything named `other.lan` go to the second fake Electrs; the rest as in production. */
+/** Public servers and anything named `other.lan` or `203.0.113.7` go to the second fake Electrs; the rest as in production. */
 async function rigWithTwoServers(opts: { platform?: 'umbrel' | 'start9' | 'docker' } = {}) {
   other = new FakeElectrum({ blocks: 40, startTime: Math.floor(Date.now() / 1000) - 40 * 600 });
   const port = await other.start();
   const factory = (s: ChainSource, o: { probe: boolean }) => {
-    if (s.kind === 'public' || (s.kind === 'electrum' && s.host === 'other.lan'))
+    if (s.kind === 'public' || (s.kind === 'electrum' && (s.host === 'other.lan' || s.host === OUTSIDE)))
       return new ElectrumBackend(new ElectrumClient({ host: '127.0.0.1', port, minBackoffMs: 20, maxBackoffMs: 100 }));
     return buildBackend(s, { network: 'regtest', electrum: { minBackoffMs: 20, maxBackoffMs: 100 }, probe: o.probe });
   };
@@ -113,6 +116,34 @@ describe('security: changing where the guardian reads the chain', () => {
     const own = await rig.api('PUT', '/chain', { kind: 'electrum', host: 'other.lan', tls: false });
     expect(own.status).toBe(200);
     expect(g.chainSource).toEqual({ kind: 'electrum', host: 'other.lan', port: 50001, tls: false });
+  }, 60_000);
+
+  it('judges a server by its address, not by the kind sent: one on the internet sent as "your own" counts as public (sweep 2 #29)', async () => {
+    const { rig } = await rigWithTwoServers();
+    const g = rig.guardian;
+    const { wallet } = await pairInRig(rig);
+    const phone = vi.spyOn(g, 'notifyPhone');
+    const coin = rig.fund(wallet.derive(RECEIVE, 0).script, 500_000n);
+    const dest = await makeWallet({ app: MNEMONICS.app2 });
+    const plan = buildSweep({ from: wallet, utxos: [{ txid: coin.txid, vout: 0, value: coin.value, chain: RECEIVE, index: 0, prevTxHex: coin.rawTx }], destination: dest, destinationIndex: 0, feeRate: 2 });
+    const rec = await g.engine.startRecovery({ psbt: await hwSigner().signPsbt(plan.psbt, network), destinationDescriptor: dest.descriptor(), initiator: nostrKey(21) });
+    expect(rec.ok).toBe(true);
+
+    // During the recovery: refused like a public server (it used to pass as "your own Electrum server").
+    const refused = await rig.api('PUT', '/chain', { kind: 'electrum', host: OUTSIDE, port: 50002, tls: true });
+    expect(refused).toMatchObject({ status: 409, body: { error: { code: 'recovery_pending', message: expect.stringMatching(/your own network/) } } });
+    expect(g.chainSource).toMatchObject({ kind: 'electrum', host: '127.0.0.1' });
+    expect(phone).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'chain_source_changed' }));
+
+    // Once it is over, allowed, but announced with the public server's warning, and to the phone as public.
+    expect((await g.engine.cancelRecovery({ kind: 'nostr', pubkey: g.engine.registration()!.appNostrPubkey })).ok).toBe(true);
+    expect((await rig.api('GET', '/chain')).body.recoveryRunning).toBe(false);
+    expect((await rig.api('PUT', '/chain', { kind: 'electrum', host: OUTSIDE, port: 50002, tls: true })).status).toBe(200);
+    const alert = phone.mock.calls.map((c) => c[0]).find((a) => a.type === 'chain_source_changed') as { kind: string; message: string };
+    expect(alert.kind).toBe('public');
+    expect(alert.message).toMatch(/the Electrum server 203\.0\.113\.7:50002 \(not on your own network\)/);
+    expect(alert.message).not.toMatch(/your own Electrum server 203/);
+    expect(alert.message).toMatch(/could hide coins/);
   }, 60_000);
 
   it('refuses what cannot work before switching, and needs a signed-in, unlocked guardian', async () => {

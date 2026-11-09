@@ -144,21 +144,21 @@ describe('registration of a hosted wallet', () => {
     expect(!r.ok && r.refusal).toMatchObject({ reason: 'invalid_registration' });
   });
 
-  it('on mainnet needs an alert contact, as for the host', async () => {
-    const clock = new ManualClock(T0);
-    const engine = await HostedEngine.open({ slotId: SLOT, store: new MemoryHostedStore(), clock });
-    const r = await engine.register({
-      network: 'bitcoin',
-      accountPubkeys: { app: `02${'11'.repeat(32)}`, hardware: `03${'22'.repeat(32)}` },
-      cosignerAccountPubkey: hex.encode(secp256k1.getPublicKey(K3, true)),
-      rules: { ...RULES, alertContacts: [] },
-      hardwareAuth: { pubkey: `02${'33'.repeat(32)}`, path: "m/48'/0'/0'/2'/0/0", tweak: '44'.repeat(32) },
-      hardwareAuthProof: 'x',
-      appNostrPubkey: APP_NOSTR,
-      walletLabel: 'Ana',
-      walletMap: fakeMap(),
+  it("on mainnet needs an alert contact, as for the host, and the guest phone's own key is none (sweep 2)", async () => {
+    for (const alertContacts of [[], [APP_NOSTR]]) {
+      const r = await attempt((i) => {
+        i.network = 'bitcoin';
+        i.rules = { ...RULES, alertContacts };
+      });
+      expect(!r.ok && r.refusal).toMatchObject({ reason: 'invalid_registration', detail: expect.stringMatching(/alert contact/) });
+    }
+    // With a real contact it gets past that check (to the next one: these test keys are not a mainnet wallet's).
+    const real = await attempt((i) => {
+      i.network = 'bitcoin';
+      i.rules = { ...RULES, alertContacts: [APP_NOSTR, CONTACT_A] };
     });
-    expect(!r.ok && r.refusal).toMatchObject({ reason: 'invalid_registration' });
+    expect(!real.ok && real.refusal).toMatchObject({ reason: 'invalid_registration' });
+    expect(!real.ok && (real.refusal as { detail?: string }).detail).not.toMatch(/alert contact/);
   });
 });
 
@@ -204,7 +204,7 @@ describe('delegated co-signing under the limit', () => {
     expect(engine.ledger().map((c) => c.script)).toEqual([hex.encode(changeScript)]);
   });
 
-  it('a later payment spending a ledger coin replaces it; the ledger is bounded (ledger_full)', async () => {
+  it('the ledger is bounded (ledger_full)', async () => {
     const { engine, fx } = await setup({ maxLedgerCoins: 1 });
     const u = fund(fx.wallet, 0, 0, 500_000n);
     const first = await offPathPayment(fx, u, 10_000n, 489_000n, externalScript());

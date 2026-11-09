@@ -21,6 +21,7 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import { Agent, request as httpRequest, type IncomingMessage } from 'node:http';
 import { isIP } from 'node:net';
 import type { BitcoinRpcConfig } from '../config.js';
+import { isLinkLocalIp } from '../ip-address.js';
 import { isLocalAddress } from './electrum.js';
 
 /**
@@ -62,10 +63,9 @@ export const RPC_METHODS_CORE_ALONE = [
 /** One connection pool for every client (keyed by the checked address and port), as fetch kept one. */
 const agent = new Agent({ keepAlive: true, timeout: 5_000 });
 
-/** 169.254/16 and fe80::/10 (IPv4-mapped included). */
+/** 169.254/16 and fe80::/10, in any spelling (IPv4-mapped included, `ip-address.ts`). */
 export function isLinkLocal(ip: string): boolean {
-  const a = ip.replace(/^\[|\]$/g, '').toLowerCase().replace(/^::ffff:(?=\d)/, '');
-  return /^169\.254\./.test(a) || /^fe[89ab][0-9a-f]:/.test(a);
+  return isLinkLocalIp(ip);
 }
 
 export class BitcoinRpcError extends Error {
