@@ -23,6 +23,9 @@ describe('security: kind-10050 inbox relays reject loopback and LAN (sweep 2 pro
       'wss://guardian.lan',
       'wss://localhost',
       'ws://relay.example',
+      // The guardian has no Tor: a .onion name would only leak to the DNS resolver (sweep 2 #18).
+      'wss://inboxrelayexampleaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion',
+      'wss://inbox.onion.',
     ];
     for (const u of bad) expect(isPublicDmRelay(u), u).toBe(false);
   });

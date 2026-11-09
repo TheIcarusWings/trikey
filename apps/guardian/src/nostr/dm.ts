@@ -5,7 +5,7 @@
  *
  * Sending: to the guardian's relays plus the recipient's DM inbox relays
  * (their kind-10050 list, looked up on our relays; only public `wss://` entries
- * are used: loopback, LAN / private IPs and local names are dropped, so a
+ * are used: loopback, LAN / private IPs, local names and .onion are dropped, so a
  * contact's list cannot point the guardian at hosts on the box's network).
  * Up to 8 of the recipient's relays are always added, however many relays the
  * guardian has: their app reads its DMs there (NIP-17).
@@ -185,7 +185,7 @@ export class DirectMessages {
 
 /**
  * A kind-10050 relay the guardian may open a connection to: `wss://` only, and not a loopback, private or local host
- * (by the form of the host name or a literal IP). Up to 0.1.22 any `wss://` was kept, so `wss://192.168.1.1` or
+ * (by the form of the host name or a literal IP in any spelling, `ip-address.ts`), nor `.onion`. Up to 0.1.22 any `wss://` was kept, so `wss://192.168.1.1` or
  * `wss://umbrel.local` on a contact's list made the guardian reach into the box's LAN (security sweep 2 follow-up).
  * Host names are not resolved here: a public name that later points at a private address is a DNS-rebinding concern for
  * the owner's own relays too, and looking every inbox relay up would let a contact's list stall the send.
@@ -202,5 +202,7 @@ export function isPublicDmRelay(url: string): boolean {
   // An IP address in any spelling (`ip-address.ts`) is judged as an address, before the name rules.
   if (canonicalIp(host)) return classifyIp(host) === 'public';
   if (host === 'localhost' || host.endsWith('.localhost')) return false;
+  // The guardian has no Tor: a `.onion` name would only go to the system's DNS resolver, which leaks it.
+  if (host.endsWith('.onion') || host.endsWith('.onion.')) return false;
   return !isLocalName(host);
 }
