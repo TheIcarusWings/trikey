@@ -81,7 +81,11 @@ store repository with the image pinned by that digest (failing if the tag no lon
 and pushes. It needs one secret, `UMBREL_STORE_TOKEN`: a fine-grained personal access token with
 "Contents: read and write" on the store repository only, best kept in the `release` environment
 (`docs/android-signing.md`, "The `release` environment").
-Without the secret it does nothing and says so in the run's annotations. (To use another
+It runs only when the repository variable `UMBREL_STORE_AUTOPUBLISH` is `true` (**Settings → Secrets and variables →
+Actions → Variables**): set it together with the token. Without it the job is skipped, so a release does not stop to
+ask for approval of a job with nothing to do, and the maintainer copies the store by hand: the same files from the
+release tag, the image pinned by the digest in the release's `trikey-guardian-compose.yml`. With the variable but
+without the secret, it does nothing and says so in the run's annotations. (To use another
 repository name, set the repository variable `UMBREL_STORE_REPO` to `owner/name`.) The workflow
 refuses to publish if `umbrel-app.yml` and `docker-compose.yml` do not name the tag's version, so
 bump both before tagging. Bump the image version in `compose/docker-compose.yml` with them
