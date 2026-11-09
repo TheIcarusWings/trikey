@@ -204,7 +204,7 @@ describe('delegated co-signing under the limit', () => {
     expect(engine.ledger().map((c) => c.script)).toEqual([hex.encode(changeScript)]);
   });
 
-  it('a later payment spending a ledger coin replaces it; the ledger is bounded (ledger_full)', async () => {
+  it('the ledger is bounded (ledger_full)', async () => {
     const { engine, fx } = await setup({ maxLedgerCoins: 1 });
     const u = fund(fx.wallet, 0, 0, 500_000n);
     const first = await offPathPayment(fx, u, 10_000n, 489_000n, externalScript());

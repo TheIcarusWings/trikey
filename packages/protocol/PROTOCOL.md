@@ -523,7 +523,10 @@ co-signed), `relays.ack`, `hosted.coins`, `hosted.map.get`, `hosted.access`; any
 
 **Co-signing.** As for the owner's wallet, but change is an output whose three tweaks rebuild its script from the
 account pubkeys (no index window: it cannot be checked without learning addresses). Every such output is recorded in the
-slot's ledger (`hosted.coins`; at most 2,000, then `sign` answers `1200` with `reason: "ledger_full"`). PSBTs sent to the
+slot's ledger (`hosted.coins`; at most 2,000, then `sign` answers `1200` with `reason: "ledger_full"`). A coin leaves
+the ledger only when the guardian's chain check finds it spent, never because a co-signed PSBT spends it (that PSBT may
+never be broadcast), so `hosted.coins` can list coins already spent: check them on chain. When the ledger is full,
+`sign` first prunes the spent ones. PSBTs sent to the
 guardian need no BIP 32 derivations (the phone strips them). `sign` is limited to 60 requests per hour per slot.
 
 **Recovery.** `recovery.start` takes `{ sweepPsbt, destinationKeys: { app, hardware, cosigner }, destinationMap,

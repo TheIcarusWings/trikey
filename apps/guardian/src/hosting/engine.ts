@@ -761,7 +761,10 @@ export class HostedEngine {
   // -------------------------------------------------------------------------
   // Phone-only payments
 
-  /** Co-signs a phone-signed payment within the daily limit; every tweak-proven change coin goes into the ledger. */
+  /**
+   * Co-signs a phone-signed payment within the daily limit; every tweak-proven change coin goes into the ledger. The
+   * coins it spends stay in the ledger until a chain check prunes them (`pruneLedger`).
+   */
   async cosign(psbt: Uint8Array): Promise<HostedResult<CosignResult & { ledgered: number }>> {
     const chain = await this.chainTime();
     return this.mutate(async (draft, now) => {
@@ -805,10 +808,13 @@ export class HostedEngine {
       const shares = splitOutflow(analysis.inputs, outflow);
       const wouldUse = replay ? used : usageWith(w.spends, shares, at);
       if (!replay && wouldUse > rules.dailyLimitSats) return refuse({ reason: 'over_daily_limit', limit: rules.dailyLimitSats, used, outflow, wouldUse }, txid);
-      // The ledger: this PSBT's change replaces the coins it spends. Bounded, so a guest cannot grow the host's disk without end.
-      const spent = new Set(analysis.inputs.map((i) => i.outpoint));
+      // The ledger: this PSBT's change is added. The coins it spends stay until a chain check finds them spent
+      // (`pruneLedger`): a co-signature is only an intention to spend (security sweep 2). Dropping them here let a
+      // phone thief co-sign a spend of an off-path coin, never broadcast it, and so erase the only record of that
+      // coin's tweaks from the guardian. Bounded, so a guest cannot grow the host's disk without end (the `sign`
+      // handler prunes spent coins on chain and tries again when it is full).
       const fresh = selfOutputs(psbt, analysis, acct, now).filter((e) => !w.ledger.some((l) => l.txid === e.txid && l.vout === e.vout));
-      const kept = w.ledger.filter((l) => !spent.has(outpointOf(l.txid, l.vout)));
+      const kept = w.ledger;
       if (kept.length + fresh.length > this.maxLedger) return refuse({ reason: 'ledger_full', limit: this.maxLedger }, txid);
       if (!this.signer) return refuse({ reason: 'guardian_locked' }, txid);
       const signed = await addCosignerSignatures(psbt, analysis, this.signer);
