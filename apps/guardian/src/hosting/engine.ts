@@ -46,7 +46,7 @@ import { dueAlerts as computeDueAlerts, isKnownAlertId, type DueAlert } from '..
 import { CONTACTS_NOT_SHOWN, bip137Authorizer, approvalMessage, pairingMessage, proofId, recoveryAccessMessage, verifyPolicyApproval, type HardwareAction, type HardwareAuthorizer } from '../policy/authorizer.js';
 import { contactsDelta } from '../policy/contacts.js';
 import { DAY, systemClock, type ChainTime, type ChainTimeSource, type Clock } from '../policy/clock.js';
-import { BLOCKS_PER_DAY, MAINNET_CONTACT_REQUIRED, LIMIT_OFF_AT_PAIRING, rulesApprovalRefusal, MAX_ACCESS_GRANTS, MAX_APPROVAL_TTL_MS, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_SEQUENCE_STEP, NOTICE_TTL_MS, isRefusalEvent, policyWarnings, pruneActivity, type CosignResult, type GuardianStatus, type PhoneSpendingStatus, type RecoveryView } from '../policy/engine.js';
+import { BLOCKS_PER_DAY, MAINNET_CONTACT_REQUIRED, contactsBesidesPhone, dropsLastContact, LIMIT_OFF_AT_PAIRING, rulesApprovalRefusal, MAX_ACCESS_GRANTS, MAX_APPROVAL_TTL_MS, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_SEQUENCE_STEP, NOTICE_TTL_MS, isRefusalEvent, policyWarnings, pruneActivity, type CosignResult, type GuardianStatus, type PhoneSpendingStatus, type RecoveryView } from '../policy/engine.js';
 import { addCosignerSignatures } from '../policy/inspect.js';
 import { pruneSpends, pruneTime, splitOutflow, usageWith, windowUsage } from '../policy/limit.js';
 import { LIMIT_OFF_SATS, isContactLockOn, isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from '../policy/rules.js';
@@ -396,7 +396,7 @@ export class HostedEngine {
         : undefined,
       hardwareConfirmRequired: !!reg && !reg.hardwareAuthConfirmed,
       retiredWallets: s.retired.length,
-      warnings: policyWarnings(rules),
+      warnings: policyWarnings(rules, reg?.appNostrPubkey),
       ...(w?.pause ? { pause: { ...w.pause } } : {}),
     };
   }
@@ -668,7 +668,7 @@ export class HostedEngine {
       } catch (e) {
         return bad(`rules: ${(e as Error).message}`);
       }
-      if (network.name === 'bitcoin' && !rules.alertContacts.length) return bad(`rules: ${MAINNET_CONTACT_REQUIRED}`);
+      if (network.name === 'bitcoin' && !contactsBesidesPhone(rules, appNostr).length) return bad(`rules: ${MAINNET_CONTACT_REQUIRED}`);
       if (isLimitOff(rules)) return bad(`rules: ${LIMIT_OFF_AT_PAIRING}`);
       const authRefusal = this.authKeyRefusal(network.name, keys.hardware, input.hardwareAuth);
       if (authRefusal) return bad(authRefusal);
@@ -865,7 +865,7 @@ export class HostedEngine {
       } catch (e) {
         return refuse({ reason: 'invalid_rules', detail: (e as Error).message });
       }
-      if (w.registration.network === 'bitcoin' && !rules.alertContacts.length) return refuse({ reason: 'invalid_rules', detail: MAINNET_CONTACT_REQUIRED });
+      if (w.registration.network === 'bitcoin' && dropsLastContact(current, rules, w.registration.appNostrPubkey)) return refuse({ reason: 'invalid_rules', detail: MAINNET_CONTACT_REQUIRED });
       let sequence: number | undefined;
       if (auth.authenticatedBy === 'app') {
         const may = phoneMayApply(current, rules);

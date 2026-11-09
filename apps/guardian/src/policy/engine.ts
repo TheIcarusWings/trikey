@@ -109,7 +109,26 @@ export const MAX_CLOCK_AHEAD_OF_CHAIN_MS = 3 * HOUR;
 export const BLOCKS_PER_DAY: Record<NetworkName, number> = { bitcoin: 144, testnet: 144, signet: 144, regtest: 1 };
 /** Mainnet policies must name an alert contact (it may be the owner's own nostr app on another device). */
 export const MAINNET_CONTACT_REQUIRED =
-  'on mainnet at least one alert contact is required (it can be your own nostr app on another device), so a recovery is never announced only to a phone a thief may hold';
+  'on mainnet at least one alert contact other than the paired phone itself is required (it can be your own nostr app on another device), so a recovery is never announced only to a phone a thief may hold';
+
+/**
+ * The alert contacts that count: every one but the wallet's own paired phone (security sweep 2). Alerts are sent once
+ * per recipient, so the phone's own key as a "contact" told no one else, yet met the mainnet minimum and silenced the
+ * `no_alert_contacts` warning.
+ */
+export function contactsBesidesPhone(rules: Rules, phone: string | undefined): string[] {
+  return phone ? rules.alertContacts.filter((c) => c !== phone) : rules.alertContacts;
+}
+
+/**
+ * Whether a rule change leaves the wallet without a contact that counts, which mainnet refuses. A wallet paired before
+ * this check with only its own phone as contact is not made worse by keeping it, so only a change that drops the last
+ * real contact (or every contact) is refused there.
+ */
+export function dropsLastContact(current: Rules, next: Rules, phone: string): boolean {
+  if (contactsBesidesPhone(next, phone).length) return false;
+  return !next.alertContacts.length || contactsBesidesPhone(current, phone).length > 0;
+}
 
 /** Why pairing refuses a policy with no daily limit. */
 export const LIMIT_OFF_AT_PAIRING =
@@ -168,8 +187,9 @@ export const SAVINGS_UNCHECKED_NOTICE_EVERY_MS = DAY;
 /** Weak spots of a policy the phone and the web UI should show. */
 export type PolicyWarning = 'no_alert_contacts';
 
-export function policyWarnings(rules: Rules | undefined): PolicyWarning[] {
-  return rules && !rules.alertContacts.length ? ['no_alert_contacts'] : [];
+/** `phone`: the wallet's paired phone, which never counts as one of its contacts (`contactsBesidesPhone`). */
+export function policyWarnings(rules: Rules | undefined, phone?: string): PolicyWarning[] {
+  return rules && !contactsBesidesPhone(rules, phone).length ? ['no_alert_contacts'] : [];
 }
 
 export interface PolicyEngineOptions {
@@ -539,7 +559,7 @@ export class PolicyEngine {
         : undefined,
       hardwareConfirmRequired: !!reg && !reg.hardwareAuthConfirmed,
       retiredWallets: s.retired.length,
-      warnings: policyWarnings(rules),
+      warnings: policyWarnings(rules, reg?.appNostrPubkey),
     };
   }
 
@@ -835,7 +855,7 @@ export class PolicyEngine {
         return bad(`rules: ${(e as Error).message}`);
       }
       // Without a contact, a recovery's alerts reach only the paired phone, which a thief may hold.
-      if (network.name === 'bitcoin' && !rules.alertContacts.length) return bad(`rules: ${MAINNET_CONTACT_REQUIRED}`);
+      if (network.name === 'bitcoin' && !contactsBesidesPhone(rules, appNostr).length) return bad(`rules: ${MAINNET_CONTACT_REQUIRED}`);
       // "Off" is never where a wallet starts, even hardware-approved: pair with a limit, then turn it off with its own
       // approval (the version-2 text that says so in words), which also alerts the contacts.
       if (isLimitOff(rules)) return bad(`rules: ${LIMIT_OFF_AT_PAIRING}`);
@@ -1404,7 +1424,7 @@ export class PolicyEngine {
       } catch (e) {
         return refuse({ reason: 'invalid_rules', detail: (e as Error).message });
       }
-      if (w.registration.network === 'bitcoin' && !rules.alertContacts.length) return refuse({ reason: 'invalid_rules', detail: MAINNET_CONTACT_REQUIRED });
+      if (w.registration.network === 'bitcoin' && dropsLastContact(current, rules, w.registration.appNostrPubkey)) return refuse({ reason: 'invalid_rules', detail: MAINNET_CONTACT_REQUIRED });
       let sequence: number | undefined;
       if (auth.authenticatedBy === 'app') {
         const may = phoneMayApply(current, rules);
