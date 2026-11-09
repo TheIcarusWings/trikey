@@ -845,6 +845,66 @@ describe('publish-release.yml: the last comparison before publishing', () => {
     });
     expect(out).toContain('Published');
   });
+
+  /** Runs the Publish step against a stand-in gh whose files change once the release is published. */
+  function publishWithFilesChanged(immutable: boolean) {
+    const pub = workflow('publish-release.yml').jobs['publish']!.steps!.find((s) => s.name === 'Publish')!;
+    const temp = mkdtempSync(join(tmpdir(), 'trikey-publish-'));
+    const assets = [{ id: 1, name: 'a.yml', size: 10, digest: 'sha256:' + 'a'.repeat(64) }];
+    const swapped = [{ id: 9, name: 'a.yml', size: 11, digest: 'sha256:' + 'f'.repeat(64) }];
+    writeFileSync(join(temp, 'assets.json'), JSON.stringify(assets));
+    const bin = join(temp, 'bin');
+    mkdirSync(bin);
+    const log = join(temp, 'calls.log');
+    writeFileSync(
+      join(bin, 'gh'),
+      [
+        '#!/usr/bin/env bash',
+        `echo "$*" >> '${log}'`,
+        'args="$*"',
+        `state='${join(temp, 'published')}'`,
+        // Publishing works; going back to a draft is refused when the release is immutable.
+        'if [[ "$args" == *"draft=false"* ]]; then touch "$state"; echo \'{"html_url":"https://example.invalid/r","body":"The notes."}\'; exit 0; fi',
+        `if [[ "$args" == *"draft=true"* ]]; then ${immutable ? 'echo "HTTP 422: Cannot convert an immutable release to a draft" >&2; exit 1' : 'rm -f "$state"; echo "{}"; exit 0'}; fi`,
+        'if [[ "$args" == *"-X PATCH"* ]]; then echo "{}"; exit 0; fi',
+        'if [[ "$args" == *"/assets"* ]]; then',
+        `  if [ -e "$state" ]; then data='${JSON.stringify(swapped)}'; else data='${JSON.stringify(assets)}'; fi`,
+        '  for ((i=1;i<=$#;i++)); do if [ "${!i}" = --jq ]; then j=$((i+1)); jq -cS "${!j}" <<<"$data"; exit 0; fi; done',
+        '  echo "$data"; exit 0',
+        'fi',
+        'echo false',
+      ].join('\n'),
+      { mode: 0o755 }
+    );
+    try {
+      execFileSync('bash', ['-c', pub.run!], {
+        env: { PATH: `${bin}:${process.env['PATH']}`, RUNNER_TEMP: temp, ID: '7', TAG: 'v0.1.99-alpha', GITHUB_REPOSITORY: 'o/r' },
+        encoding: 'utf8',
+        stdio: 'pipe',
+      });
+      return { ok: true, out: '', calls: readFileSync(log, 'utf8') };
+    } catch (e) {
+      return { ok: false, out: String((e as { stdout?: string }).stdout), calls: readFileSync(log, 'utf8') };
+    }
+  }
+
+  it('puts a release whose files changed while publishing back to a draft (sweep 3 #7)', () => {
+    const r = publishWithFilesChanged(false);
+    expect(r.ok).toBe(false);
+    expect(r.calls).toContain('api -X PATCH repos/o/r/releases/7 -F draft=true');
+    expect(r.out).toContain('is a draft again');
+    expect(r.calls).not.toContain('withdrawn');
+  });
+
+  it('marks an immutable one withdrawn in its title and notes, since it cannot go back to a draft, and fails', () => {
+    const r = publishWithFilesChanged(true);
+    expect(r.ok).toBe(false);
+    expect(r.calls).toContain('-F draft=true');
+    expect(r.calls).toContain('name=Trikey v0.1.99-alpha: withdrawn, do not install');
+    expect(r.calls).toMatch(/body=\*\*Do not install this release\.\*\*[^\n]*\n\nThe notes\./);
+    expect(r.calls).toContain('make_latest=false');
+    expect(r.out).toContain('Release is public, marked withdrawn');
+  });
 });
 
 describe('ios-launch.yml: `launch` is a required check on main, so it must report on every pull request', () => {

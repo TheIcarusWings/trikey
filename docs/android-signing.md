@@ -182,6 +182,12 @@ right before the draft is published. **The owner turns it on once:** the reposit
 after is immutable. The Publish release run says "is immutable" on success, and warns "Release is not immutable" while
 the setting is off.
 
+The files are compared once more right before the release is published, and again right after. A file swapped in
+between (a second or so) is caught by the second comparison. The run then fails and puts the release back to a draft. An
+immutable release cannot go back to a draft, and its files cannot change, but its title and notes can: the run renames
+it "withdrawn, do not install", puts a warning at the top of its notes, and takes it off "latest". Delete such a release
+by hand (Releases page, the release, **Delete**) and release a new version.
+
 ## The `release` environment
 
 Everything that publishes or signs runs in a GitHub environment named `release`: the `sign` job of
