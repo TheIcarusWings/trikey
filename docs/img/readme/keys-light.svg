@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 470" width="800" height="470" role="img" aria-label="Trikey: three keys, any two move your bitcoin. Phone and guardian: everyday payments up to your daily limit. Phone and hardware wallet: big payments and rule changes. Hardware wallet and guardian: recovery if your phone is lost." font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<title>Trikey: three keys, any two move your bitcoin. Phone and guardian: everyday payments up to your daily limit. Phone and hardware wallet: big payments and rule changes. Hardware wallet and guardian: recovery if your phone is lost.</title>
+<g stroke="#d4d4d8" stroke-width="3" fill="none">
+  <path d="M400 92 L170 352"/><path d="M400 92 L630 352"/><path d="M170 352 L630 352"/>
+</g>
+<circle cx="400" cy="92" r="38" fill="#ea580c"/>
+<circle cx="170" cy="352" r="38" fill="#09090b"/>
+<circle cx="630" cy="352" r="38" fill="#09090b"/>
+<g font-size="28" font-weight="700" text-anchor="middle" fill="#ffffff">
+  <text x="400" y="102">1</text><text x="170" y="362">2</text><text x="630" y="362">3</text>
+</g>
+<g text-anchor="middle">
+  <text x="400" y="30" font-size="20" font-weight="650" fill="#09090b">Key 1 · your hardware wallet</text>
+  <text x="170" y="420" font-size="20" font-weight="650" fill="#09090b">Key 2 · your phone</text>
+  <text x="630" y="420" font-size="20" font-weight="650" fill="#09090b">Key 3 · your guardian</text>
+  <text x="630" y="446" font-size="16" fill="#71717a">at home: Umbrel, Start9 or Docker</text>
+  <text x="400" y="232" font-size="30" font-weight="750" fill="#ea580c">any 2 of 3</text>
+  <text x="400" y="258" font-size="16" fill="#71717a">move your bitcoin</text>
+  <text x="400" y="318" font-size="17" font-weight="600" fill="#3f3f46">Everyday payments</text>
+  <text x="400" y="339" font-size="15" fill="#71717a">up to your daily limit</text>
+</g>
+<g font-size="17" font-weight="600" fill="#3f3f46">
+  <text x="262" y="200" text-anchor="end">Big payments,</text>
+  <text x="262" y="222" text-anchor="end">rule changes</text>
+  <text x="538" y="200" text-anchor="start">Recovery if your</text>
+  <text x="538" y="222" text-anchor="start">phone is lost</text>
+</g>
+</svg>

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" width="900" height="300" role="img" aria-label="A recovery waits 7, 14 or 30 days. Every day you and your alert contacts are alerted, and any of them can cancel it. At the end your bitcoin moves to a new 2-of-3 with a replacement key." font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<title>A recovery waits 7, 14 or 30 days. Every day you and your alert contacts are alerted, and any of them can cancel it. At the end your bitcoin moves to a new 2-of-3 with a replacement key.</title>
+<path d="M70 120 H830" stroke="#d4d4d8" stroke-width="4" stroke-linecap="round"/>
+<g fill="#ea580c"><circle cx="230" cy="120" r="6"/><circle cx="350" cy="120" r="6"/><circle cx="470" cy="120" r="6"/><circle cx="590" cy="120" r="6"/><circle cx="710" cy="120" r="6"/></g>
+<circle cx="70" cy="120" r="16" fill="#09090b"/>
+<circle cx="830" cy="120" r="16" fill="#ea580c"/>
+<path d="M823 120 L829 126 L839 114" stroke="#ffffff" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<g font-size="17" fill="#09090b" font-weight="650">
+  <text x="70" y="62" text-anchor="start">Day 0</text>
+  <text x="830" y="62" text-anchor="end">Day 7, 14 or 30</text>
+  <text x="470" y="62" text-anchor="middle">Every day</text>
+</g>
+<g font-size="15" fill="#71717a">
+  <text x="70" y="168" text-anchor="start">A key is lost: you start a</text>
+  <text x="70" y="188" text-anchor="start">recovery with the other two</text>
+  <text x="470" y="88" text-anchor="middle">an alert to you and your contacts</text>
+  <text x="830" y="168" text-anchor="end">Your bitcoin moves to a new</text>
+  <text x="830" y="188" text-anchor="end">2-of-3 with a replacement key</text>
+</g>
+<rect x="280" y="222" width="380" height="58" rx="12" fill="#ffedd5"/>
+<text x="470" y="246" text-anchor="middle" font-size="16" font-weight="650" fill="#09090b">Not you? Anyone can cancel it:</text>
+<text x="470" y="268" text-anchor="middle" font-size="15" fill="#3f3f46">your phone, your hardware wallet or a contact</text>
+</svg>

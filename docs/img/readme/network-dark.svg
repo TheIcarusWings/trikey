@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 400" width="1000" height="400" role="img" aria-label="Your phone and your guardian each connect out to nostr relays, which pass end-to-end encrypted messages between them. The hardware wallet connects to the phone. The guardian reads the chain from your own Bitcoin node." font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<title>Your phone and your guardian each connect out to nostr relays, which pass end-to-end encrypted messages between them. The hardware wallet connects to the phone. The guardian reads the chain from your own Bitcoin node.</title>
+<g stroke="#3f3f46" stroke-width="3" fill="none" stroke-linecap="round">
+  <path d="M190 170 H430"/><path d="M810 170 H570"/>
+  <path d="M135 252 V296" stroke-dasharray="2 9"/><path d="M870 232 V286" stroke-dasharray="2 9"/>
+</g>
+<g stroke="#a1a1aa" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M418 162 L432 170 L418 178"/><path d="M582 162 L568 170 L582 178"/>
+</g>
+<rect x="95" y="70" width="80" height="160" rx="16" fill="#18181b" stroke="#fafafa" stroke-width="3"/>
+<rect x="125" y="82" width="20" height="5" rx="2.5" fill="#fafafa"/>
+<rect x="100" y="300" width="70" height="48" rx="10" fill="#18181b" stroke="#fafafa" stroke-width="3"/>
+<rect x="112" y="312" width="30" height="18" rx="3" fill="#fb923c"/>
+<g fill="#431407" stroke="#fb923c" stroke-width="3">
+  <circle cx="470" cy="170" r="13"/><circle cx="500" cy="144" r="13"/><circle cx="530" cy="170" r="13"/>
+</g>
+<rect x="815" y="110" width="110" height="110" rx="14" fill="#18181b" stroke="#fafafa" stroke-width="3"/>
+<g stroke="#3f3f46" stroke-width="3"><path d="M835 140 H905"/><path d="M835 160 H905"/></g>
+<circle cx="870" cy="192" r="5" fill="#fb923c"/>
+<rect x="780" y="290" width="180" height="48" rx="10" fill="none" stroke="#fafafa" stroke-width="3"/>
+<g text-anchor="middle">
+  <text x="135" y="50" font-size="20" font-weight="650" fill="#fafafa">Key 2 · your phone</text>
+  <text x="135" y="380" font-size="20" font-weight="650" fill="#fafafa">Key 1 · hardware wallet</text>
+  <text x="500" y="105" font-size="20" font-weight="650" fill="#fafafa">nostr relays</text>
+  <text x="500" y="222" font-size="16" fill="#a1a1aa">see only ciphertext</text>
+  <text x="310" y="155" font-size="16" fill="#a1a1aa">outbound only</text>
+  <text x="690" y="155" font-size="16" fill="#a1a1aa">outbound only</text>
+  <text x="870" y="90" font-size="20" font-weight="650" fill="#fafafa">Key 3 · your guardian</text>
+  <text x="870" y="319" font-size="16" fill="#d4d4d8">your Bitcoin node</text>
+  <text x="870" y="380" font-size="16" fill="#a1a1aa">on your Umbrel, Start9 or Docker</text>
+</g>
+<text x="152" y="280" font-size="15" fill="#a1a1aa">USB, Bluetooth, NFC, QR</text>
+
+</svg>
