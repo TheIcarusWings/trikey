@@ -193,12 +193,13 @@ describe('the savings_moved tripwire', () => {
     expect(ctx.engine.savings()!.highWater).toEqual({ receive: 1, change: 1 });
   });
 
-  it('a scan that could not check every transaction yet records no history: only the high-water marks', async () => {
+  it('a scan that could not check every transaction yet is not the baseline: its spends are history, the rest waits', async () => {
     const ctx = await setup({ rules: { alertContacts: [CONTACT_A] } });
     const sv = await registered(ctx);
     // Not baselined from half a history: an older spend checked later would read as news.
     expect(await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 3, nextChangeIndex: 1, spends: [{ txid: TXID(1), amountSats: 5_000n }], complete: false })).toEqual([]);
-    expect(ctx.engine.savings()).toMatchObject({ baselined: false, seenSpends: [], highWater: { receive: 2, change: 0 } });
+    // Its spends are remembered as history (the tripwire hands spends over in batches), the baseline waits.
+    expect(ctx.engine.savings()).toMatchObject({ baselined: false, seenSpends: [TXID(1)], highWater: { receive: 2, change: 0 } });
     // Complete: the history (both spends), not news.
     const all = [{ txid: TXID(2), amountSats: 7_000n }, { txid: TXID(1), amountSats: 5_000n }];
     expect(await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 3, nextChangeIndex: 1, spends: all })).toEqual([]);

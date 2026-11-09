@@ -11,7 +11,8 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { MultisigWallet, RECEIVE, SAVINGS_ACCOUNT, SoftwareSigner, buildSpend, combinePsbts, finalizePsbt } from '@trikey/core';
-import { SAVINGS_SCAN_HISTORY, SAVINGS_UNCHECKED_ALERT_MS, SavingsSpendIndex } from '../../src/savings.js';
+import { SAVINGS_SCAN_HISTORY, SAVINGS_SPENDS_MAX, SAVINGS_UNCHECKED_ALERT_MS, SavingsSpendIndex } from '../../src/savings.js';
+import type { WalletHistoryEntry, WalletSync } from '../../src/chain/chain.js';
 import { GuardianRig } from '../support/index.js';
 import { APP_NOSTR, CONTACT_A, appSigner, externalAddress, hwSigner, network } from '../helpers.js';
 import { pairInRig } from './support.js';
@@ -149,4 +150,87 @@ describe('security: the Savings tripwire and a flood of payments into Savings (r
     expect(g.engine.activity({ limit: 1000 }).find((e) => e.type === 'savings_moved')).toMatchObject({ txid: spend.txid });
     expect(g.engine.activity({ limit: 1000 }).filter((e) => e.type === 'savings_unchecked')).toHaveLength(1);
   }, 120_000);
+});
+
+/**
+ * Security sweep 3, finding 3 (MEDIUM): the tripwire handed the engine only the newest `SAVINGS_SPENDS_MAX` (400) spends,
+ * unconfirmed first, and called the scan complete once every transaction was checked. Someone holding two Savings keys
+ * could spend a large coin and bury the spend behind 400 small unconfirmed spends: it was never handed over, never
+ * announced. Now each batch holds spends not handed over yet, the largest first, and the scan is not complete while some
+ * are left, so the engine pages through all of them.
+ */
+describe('security: a Savings spend behind 400 small spends (sweep 3, finding 3)', () => {
+  let rig: GuardianRig;
+  afterEach(async () => rig?.stop());
+
+  const txid = (n: number) => n.toString(16).padStart(64, '0');
+  const spend = (n: number, height: number, amount: bigint): WalletHistoryEntry => ({
+    txid: txid(n),
+    height,
+    confirmations: height > 0 ? 10 : 0,
+    net: -amount,
+    spent: [`${txid(100_000 + n)}:0`],
+    paidOut: [{ script: `0014${n.toString(16).padStart(40, '0')}`, amount }],
+  });
+  const scan = (history: WalletHistoryEntry[]): WalletSync => ({
+    tipHeight: 200,
+    tipHash: '00'.repeat(32),
+    utxos: [],
+    utxosTruncated: false,
+    confirmedSats: 0n,
+    unconfirmedSats: 0n,
+    history,
+    historyTruncated: false,
+    nextReceiveIndex: 1,
+    nextChangeIndex: 1,
+    gapLimit: 20,
+    txHeights: new Map(history.map((h) => [h.txid, h.height])),
+    ownScripts: new Map(),
+  });
+
+  it('PoC: a large confirmed spend and 401 small unconfirmed ones: the large one is announced, then every other', async () => {
+    rig = await GuardianRig.start({ liveWallet: false });
+    const g = rig.guardian;
+    await pairInRig(rig);
+    const reg = await g.engine.registerSavings((await savingsWallet()).descriptor());
+    if (!reg.ok) throw new Error(JSON.stringify(reg.refusal));
+    const id = reg.savings.walletId;
+    await g.savingsWatch.note(id, scan([]));
+    expect(g.engine.savings()?.baselined).toBe(true);
+
+    const big = spend(1, 150, 5_000_000n);
+    const dust = Array.from({ length: SAVINGS_SPENDS_MAX + 1 }, (_, i) => spend(2 + i, 0, 1_000n));
+    const r = scan([...dust, big]);
+    await g.savingsWatch.note(id, r);
+    const moved = () => g.engine.activity({ limit: 5000 }).filter((e) => e.type === 'savings_moved') as { txid?: string }[];
+    // Before the fix: the newest 400 (all small, unconfirmed) only, and "complete": the large spend never.
+    expect(moved().map((e) => e.txid)).toContain(big.txid);
+    expect(g.savingsWatch.index.backlog).toBe(2);
+    // The next scan hands the rest; then nothing is left and nothing is announced twice.
+    await g.savingsWatch.note(id, r);
+    expect(g.savingsWatch.index.backlog).toBe(0);
+    expect(new Set(moved().map((e) => e.txid)).size).toBe(dust.length + 1);
+    expect(moved()).toHaveLength(dust.length + 1);
+    await g.savingsWatch.note(id, r);
+    expect(moved()).toHaveLength(dust.length + 1);
+  }, 60_000);
+
+  it('the index hands the largest first, leaves out what was handed or seen, and says how many are left', async () => {
+    const index = new SavingsSpendIndex();
+    const none = { getTransaction: async () => { throw new Error('no reads'); } };
+    const history = [spend(1, 0, 10n), spend(2, 0, 30n), spend(3, 120, 20n)];
+    const first = await index.check(none, 'w', scan(history), new Map(), new Set([txid(2)]));
+    expect(first.spends.map((x) => x.txid)).toEqual([txid(1), txid(3)]); // picked largest first, listed newest first
+    expect(first.unhanded).toBe(0);
+    index.markHanded([txid(3)]);
+    expect((await index.check(none, 'w', scan(history))).spends.map((x) => x.txid).sort()).toEqual([txid(1), txid(2)]);
+    // More than a batch: the largest is picked, the rest waits.
+    const many = [spend(9, 100, 5_000n), ...Array.from({ length: SAVINGS_SPENDS_MAX + 3 }, (_, i) => spend(10 + i, 0, 1n))];
+    const fresh = new SavingsSpendIndex();
+    const c = await fresh.check(none, 'w', scan(many));
+    expect(c.spends).toHaveLength(SAVINGS_SPENDS_MAX);
+    expect(c.spends.map((x) => x.txid)).toContain(txid(9));
+    expect(c.unhanded).toBe(4);
+    expect(fresh.backlog).toBe(4);
+  });
 });

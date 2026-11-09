@@ -1193,8 +1193,10 @@ export class PolicyEngine {
       const cur = sv.highWater ?? NO_HIGH_WATER;
       const used = usedOf(cur);
       const rises = (ok(used.receive) && used.receive > cur.receive) || (ok(used.change) && used.change > cur.change);
-      if (scan.complete === false && !sv.baselined) return rises ? { fresh: [] as typeof scan.spends, hold: true } : undefined;
       const fresh = scan.spends.filter((x) => /^[0-9a-f]{64}$/.test(x.txid) && !sv.seenSpends.includes(x.txid));
+      // Before the first complete scan everything is history: remembered as seen (the tripwire hands spends over in
+      // batches, savings.ts `SAVINGS_SPENDS_MAX`), but the baseline waits for the rest.
+      if (scan.complete === false && !sv.baselined) return rises || fresh.length ? { fresh, hold: true } : undefined;
       return rises || fresh.length || !sv.baselined ? { fresh, hold: false } : undefined;
     };
     if (!pending(this.state)) return [];
@@ -1206,7 +1208,6 @@ export class PolicyEngine {
       const clamp = (n: number) => (Number.isSafeInteger(n) ? Math.min(n, MAX_SELF_INDEX) : -1);
       const used = usedOf(sv.highWater ?? NO_HIGH_WATER);
       sv.highWater = maxHighWater(sv.highWater ?? NO_HIGH_WATER, { receive: clamp(used.receive), change: clamp(used.change) });
-      if (p.hold) return [];
       // Oldest first, so the log and the notices read in the order the coins moved.
       const fresh = [...new Map(p.fresh.map((x) => [x.txid, x])).values()].reverse();
       sv.seenSpends = [...sv.seenSpends, ...fresh.map((x) => x.txid)].slice(-MAX_SAVINGS_SPENDS);
@@ -1217,9 +1218,9 @@ export class PolicyEngine {
         if (outpoints.length) details.push({ txid: x.txid, outpoints, ...(typeof x.payment === 'string' ? { payment: x.payment } : {}), amountSats: x.amountSats });
       };
       if (!sv.baselined) {
-        sv.baselined = true;
         for (const x of fresh) remember(x);
         sv.spendDetails = details.slice(-MAX_SAVINGS_SPEND_DETAILS);
+        if (!p.hold) sv.baselined = true;
         return [];
       }
       const recipients = [w.registration.appNostrPubkey, ...w.rules.alertContacts.filter((c) => c !== w.registration.appNostrPubkey)];

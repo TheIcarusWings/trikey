@@ -160,7 +160,10 @@ pass the phase 4a test and who want "hardware mandatory" in its literal form.
 
 The `savings_moved` alert is a tripwire, nothing more. An honest guardian tells the contacts that Savings moved, which
 catches "phone + Recovery Key" or "phone + hardware" in other hands after the fact. A compromised guardian stays
-silent, which costs nothing it was trusted with.
+silent, which costs nothing it was trusted with. Every spend counts, not the newest few: the guardian checks every
+transaction its server lists for Savings, hands the spends to the engine in batches of at most 400 (the largest first
+among those not handed over yet) and keeps paging until none is left, so many small spends cannot hide a large one
+(security sweep 3). Contacts hear of every spend, however many come in one scan (DESIGN.md, "Savings").
 
 ### Recovery and rotation
 
