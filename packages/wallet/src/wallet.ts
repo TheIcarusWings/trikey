@@ -8636,6 +8636,11 @@ export class TrikeyWallet {
     // The descriptor keeps the order the app writes: phone, hardware wallet, Recovery Key.
     const k = wallet.keys;
     if (!sameKey(k.hardware, keyExpressionOf(account))) throw new WalletError('hardware_mismatch', "This Savings wallet does not hold your hardware wallet's Savings key.");
+    // The Recovery Key too (security review 2026-11, sweep 2): a forged descriptor could otherwise carry another key with
+    // its fingerprint, and the new Savings would keep that key in place of the owner's Recovery Key.
+    const rkKind = opts.recoveryKeyKind ?? rec.kind;
+    const rkAccount = await this.withSavingsDevice({ kind: rkKind, fingerprint: k.cosigner.fingerprint }, (hw) => this.readSavingsKey(hw));
+    if (!sameKey(k.cosigner, keyExpressionOf(rkAccount))) throw new WalletError('hardware_mismatch', "This Savings wallet does not hold your Recovery Key's Savings key.");
     const asDev = (o: KeyOrigin, kind: HardwareKind): SavingsDevice => ({ kind, fingerprint: o.fingerprint, account: o, policyName: SAVINGS_POLICY_NAME, addressVerified: false });
     return {
       descriptor: wallet.descriptor(),

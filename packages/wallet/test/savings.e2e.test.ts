@@ -496,6 +496,29 @@ describe('replacing a lost key', { timeout: 120_000 }, () => {
     const before = signs();
     expect((await walletError(B.replaceSavingsKey({ lost: 'phone', descriptor: forged.descriptor(), recoveryKeyKind: 'trezor' }))).code).toBe('hardware_mismatch');
     expect(signs()).toBe(before);
+    // A guardian that forges the Recovery Key's slot (security review 2026-11, sweep 2): another key under the Recovery
+    // Key's fingerprint and path, and no coins to sign for. The Recovery Key's own key is read and compared: refused
+    // before anything is registered on a device or told to the guardian.
+    const impostor = new SoftwareHardwareSigner({ mnemonic: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about', network: 'regtest', kind: 'trezor' });
+    const forgedRk = new MultisigWallet(B.network, { app: keys[0]!, hardware: keys[1]!, cosigner: { ...keys[2]!, xpub: await impostor.getXpub("m/48'/1'/1'/2'") } });
+    const priv = B as unknown as { savingsChain: () => { sync: (o?: object) => Promise<{ utxos: unknown[] }> } };
+    const realSavings = priv.savingsChain.bind(B);
+    priv.savingsChain = () => {
+      const c = realSavings();
+      const s = c.sync.bind(c);
+      c.sync = async (o) => ({ ...(await s(o)), walletId: forgedRk.fingerprint(), utxos: [], balance: { confirmedSats: 0, unconfirmedSats: 0 } });
+      return c;
+    };
+    const registers = () => ledger.calls.filter((c) => c.op === 'registerWallet').length + recoveryKey.calls.filter((c) => c.op === 'registerWallet').length;
+    const registered = registers();
+    try {
+      expect((await walletError(B.replaceSavingsKey({ lost: 'phone', descriptor: forgedRk.descriptor(), recoveryKeyKind: 'trezor' }))).code).toBe('hardware_mismatch');
+    } finally {
+      priv.savingsChain = realSavings;
+    }
+    expect(registers()).toBe(registered);
+    expect(B.state.savings).toBeUndefined();
+    expect(rig.guardian.engine.savings()?.walletId).toBe(old.walletId);
     const r = await B.replaceSavingsKey({ lost: 'phone', descriptor: found!.descriptor, recoveryKeyKind: 'trezor' });
     expect(r.previousWalletId).toBe(old.walletId);
     expect(B.state.savings!.phone.xpub).not.toBe(old.phone.xpub);
