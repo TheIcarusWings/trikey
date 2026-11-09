@@ -6,6 +6,36 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## 0.1.24-alpha (2026-11-09)
+
+The last, low-severity findings of the second security review, and every dependency advisory fixed. Update the
+guardian, then the app.
+
+- **Your own phone no longer counts as your alert contact.** On mainnet a wallet needs at least one alert contact other
+  than its paired phone, at pairing and at every rule change; a wallet already paired with only the phone keeps working
+  and is warned (#194).
+- **"Lost my hardware wallet" checks the new device first.** Before anything is swept to the new wallet, the new device
+  registers it, shows its first address (it must match) and signs a proof. When a new phone replaces a lost one, the
+  Recovery Key's key is read from the device too, not only from the guardian (#195).
+- **The recovery code is harder to leak.** No Copy button, the words can't be selected, Android blocks screenshots of
+  the screen, and the app covers it in the app switcher (#195).
+- **The BitBox02 pairing key moved to the phone's secure storage**, out of phone backups (#195).
+- **The phone no longer trusts any address number the guardian reports**: at most 20 past the last one it knows is
+  used (#195).
+- **Family hosting: a co-signature no longer drops a guest's coins from the host's ledger** before the chain shows them
+  spent (#194).
+- **A chain server is judged by its address, not its label**: an internet server labelled "your own" is treated as
+  public (refused during a recovery) (#194).
+- **Local-network filters catch every spelling of an address** (IPv6 forms of local addresses, shorthand IPv4), in one
+  shared filter; contacts' `.onion` relays are skipped (#193).
+- **Strangers can't fill the guardian's log** with fake CANCEL messages or refused recovery requests, and the right setup
+  code always works even while wrong ones are being tried (#194).
+- **Dependencies: npm audit reports nothing.** nodemailer (the guardian's email alerts) and Expo's and Ledger's
+  libraries updated or pinned past their advisories (#189, #190, #198, #201); the guardian image no longer keeps a code
+  cache in /tmp, and the Zapstore tool is pinned (#193).
+- **Releases:** the last check before publishing compared the files wrongly and stopped 0.1.23 (#200); the iOS launch
+  check now reports on every pull request (#196); a full-history secret scan is clean (#197).
+
 ## 0.1.23-alpha (2026-11-09)
 
 A security release, from a second review of the whole project (two independent AI-run audits compared, each finding
