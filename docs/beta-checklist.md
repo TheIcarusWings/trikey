@@ -72,19 +72,20 @@ unlock where the device supports it (DESIGN.md, "Hardware wallets by feature"; d
 - [x] Umbrel: the community app store, pinned by digest each release.
 - [ ] **Plain Docker** (owner or testers): `trikey-guardian-compose.yml` from a release on a Mac, a Linux box or a NAS,
       against a node, once.
-- [ ] **Start9** (owner decision): publish the package (it needs a signing key and a home for the `.s9pk`), or say in
-      the README and the site that Start9 is "build it yourself" for the beta.
+- [x] **Start9** (owner decision, 2026-11-09): "build it yourself" for the beta. The package builds in CI on every
+      release; publishing it (a signing key and a home for the `.s9pk`) waits until after the beta.
 - [x] Android: GitHub releases, Obtainium (trikey.app/obtainium), Zapstore (both apps, from 0.1.24).
 - [ ] **Zapstore picks up a release by itself** (dev): check with `zsp check` after the next release; if not, keep
       publishing by hand (docs/zapstore.md) and ask Zapstore.
-- [ ] **iPhone for testers** (owner decision): build from source only (as now), or TestFlight, which needs the Apple
-      developer account the donations are for. Build-from-source is enough for the beta if the docs say so.
+- [x] **iPhone for testers** (owner decision, 2026-11-09): build from source for the beta (apps/mobile/README.md),
+      rebuilt every 7 days with a free Apple ID. TestFlight once the donations cover the Apple developer account.
 
 ## 5. Product
 
 - [x] **Multi-wallet off by default**, behind a Settings toggle (dev; 0.1.25, #211).
-- [ ] **Defaults decided** (owner; DESIGN.md "Open questions" 3): the daily limit, the recovery delay and the relays a
-      new wallet starts with.
+- [x] **Defaults decided** (owner, 2026-11-09; DESIGN.md "Open questions" 3): the ones the app and guardian already
+      use: a daily limit of 200,000 sats suggested (presets 100k, 200k, 500k), a 7-day recovery delay (7, 14 or 30), and
+      four relays offered at setup (relay.trikey.app, relay.damus.io, nos.lol, relay.primal.net).
 - [x] **The website says what testers can do**: trikey.app still says "Coming soon, there's no release yet"; for the
       beta it points to the test plan, the tutorials and the installs (dev; #210).
 
