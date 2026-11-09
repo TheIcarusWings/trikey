@@ -6,7 +6,7 @@
  * Every check first writes the address one way (`canonicalIp`), so another spelling of the same address cannot get
  * past a list: brackets and an IPv6 zone (`%eth0`) are dropped; an IPv4-mapped IPv6 address, also in its hex form
  * (`::ffff:7f00:1`, which is how `new URL` writes `[::ffff:127.0.0.1]`), is its IPv4 address; an IPv4 shorthand
- * (`127.1`, `2130706433`, `0x7f.1`), which the system resolver also accepts, is written out. Up to 0.1.22 only the
+ * (`127.1`, `2130706433`, `0x7f.1`), which the system resolver also accepts, is written out. Up to 0.1.23 only the
  * dotted `::ffff:a.b.c.d` was unwrapped, so `https://[::ffff:7f00:1]/` counted as a public address (security sweep 2).
  */
 import { BlockList, isIP } from 'node:net';

@@ -43,7 +43,7 @@ links the APK signing certificate to Trikey's publisher npub (NIP-C1).
    with the publisher signer. Whoever can publish a new zsp version (a taken-over account or a bad merge upstream) would
    get the key that signs every Trikey APK; `@latest` would install that version without anyone looking. To move to a
    newer zsp, read its changes since the pinned version, then change the version and the `h1:` hash here in a pull
-   request (security sweep 2). Up to 0.1.22 these steps said `@latest`.
+   request (security sweep 2). Up to 0.1.23 these steps said `@latest`.
 3. **Run `zsp` in a checkout of this repository** and follow the wizard. It asks for the signer (a `bunker://` URL
    from your signer app is safer than pasting the nsec) and for the release keystore (`trikey-release.p12` and its
    password) to prove the certificate is yours. The keystore and the key never leave your computer. When it asks how
