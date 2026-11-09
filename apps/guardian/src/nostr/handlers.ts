@@ -928,7 +928,9 @@ export function walletHandlers(g: Guardian, w: WalletRuntime): Handlers {
       // The engine rebuilds the text with this guardian's key and the sender's, and checks it against the hardware key.
       const res = await w.engine.grantRecoveryAccess({ phonePubkey: ctx.sender, guardianPubkey: g.identity.pubkey, approval: params.approval });
       if (!res.ok) {
-        g.log.warn('recovery.access_refused', { reason: res.refusal.reason });
+        // Anyone can send one (once per wallet tried): a few an hour reach the log, the rest are counted.
+        const fields = g.strangerLog.take('recovery.access_refused', { reason: res.refusal.reason });
+        if (fields) g.log.warn('recovery.access_refused', fields);
         throw refusalError(res.refusal);
       }
       const reg = w.engine.registration()!;

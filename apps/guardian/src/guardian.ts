@@ -98,7 +98,7 @@ import {
   type KeystoreFile,
   type KeystoreSigner,
 } from './keystore.js';
-import { errorText, silentLogger, type Logger } from './log.js';
+import { errorText, LogBudget, silentLogger, type Logger } from './log.js';
 import { ObservedStore } from './observed-store.js';
 import { PairingSessions } from './pairing.js';
 import { DAY, JsonFileStore, PolicyEngine, systemClock, type Clock, type RecoveryRecord, type StateStore } from './policy/index.js';
@@ -445,6 +445,8 @@ export class Guardian implements WalletRuntime {
   readonly setupCode?: SetupCode;
   /** Who reaches the guardian only through the platform's login (TRIKEY_TRUSTED_PROXY; http/trusted-proxy.ts). */
   readonly trustedProxy?: TrustedProxy;
+  /** Log lines strangers can cause (a refused `recovery.access`): 20 an hour of each, then counted (log.ts `LogBudget`). */
+  readonly strangerLog = new LogBudget({ max: 20, windowMs: 3_600_000 }, () => this.clock.now());
   /** Wrong setup codes, all callers together: 10 a minute. The code has 80 bits; this keeps the log quiet. The right code always opens. */
   readonly setupCodeLimiter = new SlidingWindowLimiter({ max: 10, windowMs: 60_000 });
   keystore?: KeystoreFile;

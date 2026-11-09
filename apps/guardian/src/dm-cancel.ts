@@ -90,6 +90,12 @@ export function cancelHintText(id: string): string {
   return `Trikey: nothing was cancelled. To cancel recovery ${id}, reply with exactly this line and nothing else:\n\nCANCEL ${id}`;
 }
 
+/** The wallet's paired phone or one of its alert contacts (or a running recovery's recipients): the only senders heard. */
+function isKnown(w: WalletRuntime, sender: string): boolean {
+  const reg = w.engine.registration();
+  return !!reg && (sender === reg.appNostrPubkey || w.isAlertContact(sender));
+}
+
 export async function onContactDm(g: Guardian, dm: IncomingDm): Promise<void> {
   if (isLockCommand(dm.content)) return onLockDm(g, dm);
   const command = parseCancel(dm.content);
@@ -105,12 +111,18 @@ export async function onContactDm(g: Guardian, dm: IncomingDm): Promise<void> {
 
 /** `hintOnly`: the message names `CANCEL <id>` but is not the command (quoted, or more words): never cancels. */
 async function cancelByDm(g: Guardian, w: WalletRuntime, dm: IncomingDm, id: string, hintOnly: boolean): Promise<void> {
+  // Anyone can send a DM: a stranger's is dropped before the mutex, the alerts and the log (debug only; security sweep 2:
+  // each used to add an INFO line, so strangers could fill the log).
+  if (!isKnown(w, dm.sender)) {
+    g.log.debug('dm.cancel_ignored', { reason: 'not an alert contact' });
+    return;
+  }
   // Decided under the mutex, sent after it (see the file comment).
   const answer = await w.recoveryMutex.run(async (): Promise<string | undefined> => {
     const reg = w.engine.registration();
     if (!reg) return undefined;
-    if (dm.sender !== reg.appNostrPubkey && !w.isAlertContact(dm.sender)) {
-      g.log.info('dm.cancel_ignored', { reason: 'not an alert contact' });
+    if (!isKnown(w, dm.sender)) {
+      g.log.debug('dm.cancel_ignored', { reason: 'not an alert contact' });
       return undefined;
     }
     const fresh = mayAnswer(dm.createdAt, g.nowSec());
