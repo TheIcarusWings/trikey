@@ -25,7 +25,7 @@ import {
   parseBackup,
   type WalletEvent,
 } from '../src/index.js';
-import { MemoryCloudBackupStore, MemoryPasskeyPrf, SoftwareHardwareProvider, SoftwareHardwareSigner } from '../src/testing/index.js';
+import { MemoryCloudBackupStore, MemoryPasskeyPrf, SoftwareHardwareProvider, SoftwareHardwareSigner, SwappedExportSigner } from '../src/testing/index.js';
 import { FlakyPool, MNEMONICS, externalAddress, phone, waitFor, type Phone } from './helpers.js';
 
 let rig: GuardianRig;
@@ -353,12 +353,28 @@ describe('@trikey/wallet end to end', { timeout: 60_000 }, () => {
     expect(await A.send({ address: externalAddress(), amountSats: 2_000 })).toMatchObject({ ok: true, signedBy: 'phone+guardian' });
   });
 
+  it('recovery: a new hardware wallet whose key export was swapped is caught before anything moves', async () => {
+    // Security review 2026-11, sweep 2: the new device registers the destination and shows its first address before
+    // recovery.start, so a swapped export (another key under its fingerprint) is refused, not swept to.
+    const swapped = new SwappedExportSigner({ mnemonic: MNEMONICS.hardware2, impostorMnemonic: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about', network: 'regtest', kind: 'trezor' });
+    provider.device = swapped;
+    try {
+      await expect(A.startRecovery({ lostKey: 'hardware' })).rejects.toMatchObject({ code: 'address_mismatch' });
+    } finally {
+      provider.device = device;
+    }
+    expect(swapped.calls.map((c) => c.op)).not.toContain('signMessage');
+    expect(rig.guardian.engine.status().recoveryStatus).toBe('none');
+  });
+
   it('recovery: the phone starts one after losing the hardware wallet, and the old hardware wallet cancels it', async () => {
     const newDevice = new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware2, network: 'regtest', kind: 'trezor' });
     provider.device = newDevice;
     const rec = await A.startRecovery({ lostKey: 'hardware' });
     provider.device = device;
     expect(rec).toMatchObject({ state: 'pending', survivingRole: 'app' });
+    // The new device proved its key before the recovery started: registered, first address shown, a pairing proof.
+    expect(newDevice.calls.map((c) => c.op)).toEqual(expect.arrayContaining(['registerWallet', 'displayAddress', 'signMessage']));
     const dest = MultisigWallet.fromDescriptor(A.state.recovery!.destination!.descriptor, A.network);
     expect(dest.keys.app.xpub).toBe(A.state.key2.xpub);
     expect(dest.keys.hardware.fingerprint).toBe(newDevice.info.fingerprint);

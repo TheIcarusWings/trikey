@@ -458,7 +458,7 @@ alternatives (WhatsApp among them): docs/design/notifications.md.
 | Big payment, raise the limit | phone + hardware | The guardian isn't involved |
 | New phone, backup available | none | Restore key 2 with the passkey, no waiting |
 | Lost phone, no backup | hardware + guardian | The new phone scans the guardian's recovery code, the hardware wallet lets it in, Delay & Notify, a sweep to a new wallet, and the guardian then guards that wallet |
-| Lost hardware wallet | none, or phone + guardian | Restore the seed words, or use Delay & Notify (the guardian then guards the new wallet) |
+| Lost hardware wallet | none, or phone + guardian | Restore the seed words, or use Delay & Notify (the guardian then guards the new wallet). Before the recovery starts, the new device registers the new wallet, shows its first address and signs a pairing proof, so a swapped key export is caught before anything moves |
 | Someone fakes a recovery | any device or contact | Tap Cancel on the alert |
 | Guardian offline or locked | phone + hardware | Phone-only payments wait until it's back |
 | Box may have been tampered with | phone | Lock the guardian from the phone; unlock with the passphrase once checked |

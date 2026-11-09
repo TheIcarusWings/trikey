@@ -5122,6 +5122,26 @@ export class TrikeyWallet {
     return plan.psbt;
   }
 
+  /**
+   * "Lost my hardware wallet": before anything moves to `destination`, the NEW device proves it holds the key the phone
+   * read (security review 2026-11, sweep 2). It registers the destination wallet, shows its first address (it must match)
+   * and signs a pairing proof with its authorization key over the destination's id, checked here. A swapped key export
+   * (a QR code, an NFC read, a relay) is caught now, not after the guardian swept every coin to it. `confirmHardware`
+   * still runs once the guardian adopted the wallet, as before.
+   */
+  private async proveNewHardware(hw: HardwareSigner, rec: HardwareRecord, destination: MultisigWallet): Promise<void> {
+    const walletId = this.isHosted ? keySetId(destination.accountPubkeys()) : destination.fingerprint();
+    const name = policyNameOf(walletId);
+    const descriptor = destination.descriptor();
+    this.emit({ type: 'hardware_prompt', purpose: 'register', text: `Register the 2-of-3 wallet "${name}"` });
+    const reg = await hw.registerWallet({ name, descriptor });
+    const first = destination.derive(0, 0).address;
+    const shown = await hw.displayAddress({ name, descriptor, ...(reg.hmac ? { registration: { hmac: reg.hmac } } : {}) }, 0, 0);
+    if (shown !== first)
+      throw new WalletError('address_mismatch', `The new hardware wallet shows ${shown}, but the new wallet's first address is ${first}. Nothing was moved. Do not use this device for the recovery.`);
+    await this.signWithAuthKey(hw, rec, pairingMessage(walletId, hex.encode(destination.accountPubkeys().cosigner)), 'pairing');
+  }
+
   private async startWithSweep(sweep: Uint8Array, destination: MultisigWallet, extra: Partial<RecoveryRecord>, feeCapSats: number): Promise<Recovery> {
     const txid = parsePsbt(sweep).id;
     const res = await this.callChanging(
@@ -5153,18 +5173,22 @@ export class TrikeyWallet {
     this.requirePaired();
     if (opts.lostKey !== 'hardware') throw new WalletError('wrong_state', 'Without the phone key, recover from a new phone with recoverWithHardware().');
     const old = this.s.hardware!;
+    const current = this.multisig();
     const hw = await this.hardwareProvider().connect({ kind: opts.newHardwareKind, ...(opts.newHardwareModel ? { qrModel: opts.newHardwareModel } : {}) });
     let rec: HardwareRecord;
+    let destination: MultisigWallet;
     try {
       rec = await this.readHardware(hw);
+      if (rec.fingerprint === old.fingerprint || rec.account.xpub === old.account.xpub)
+        throw new WalletError('hardware_mismatch', 'Connect the NEW hardware wallet: this is the one being replaced.');
+      // A hosted wallet: the same key 3 account, with a fresh chaincode this phone picks (the guardian still learns no address).
+      const cosigner = this.isHosted ? cosignerKeyExpression(current.accountPubkeys().cosigner, secureRandomBytes(32), this.network) : current.keys.cosigner;
+      destination = new MultisigWallet(this.network, { app: current.keys.app, hardware: keyExpressionOf(rec.account), cosigner });
+      await this.proveNewHardware(hw, rec, destination);
     } finally {
       await hw.close().catch(() => {});
     }
-    if (rec.fingerprint === old.fingerprint || rec.account.xpub === old.account.xpub)
-      throw new WalletError('hardware_mismatch', 'Connect the NEW hardware wallet: this is the one being replaced.');
-    if (this.isHosted) return this.startHostedRecovery(rec, opts);
-    const current = this.multisig();
-    const destination = new MultisigWallet(this.network, { app: current.keys.app, hardware: keyExpressionOf(rec.account), cosigner: current.keys.cosigner });
+    if (this.isHosted) return this.startHostedRecovery(rec, destination, opts);
     const { policy } = await this.getRules();
     const sweep = await this.buildSweepPsbt(destination, policy.sweepFeeCapSats);
     const signed = await this.withKey2('Approve the recovery', async (m) => new SoftwareSigner('app', m).signPsbt(sweep, this.network));
@@ -6973,11 +6997,8 @@ export class TrikeyWallet {
   }
 
   /** "Lost my hardware wallet" for a hosted wallet: key 2 signs every coin (by tweak), off-path ones included. */
-  private async startHostedRecovery(rec: HardwareRecord, opts: { allowSingleServer?: boolean }): Promise<Recovery> {
+  private async startHostedRecovery(rec: HardwareRecord, destination: MultisigWallet, opts: { allowSingleServer?: boolean }): Promise<Recovery> {
     const current = this.multisig();
-    const acct = current.accountPubkeys();
-    // The same key 3 account, with a fresh chaincode this phone picks: the guardian still learns no address.
-    const destination = new MultisigWallet(this.network, { app: current.keys.app, hardware: keyExpressionOf(rec.account), cosigner: cosignerKeyExpression(acct.cosigner, secureRandomBytes(32), this.network) });
     const { policy } = await this.getRules();
     const { psbt } = await this.buildHostedSweep(current, destination, policy.sweepFeeCapSats, 'app', undefined, opts);
     const signed = await this.withKey2('Approve the recovery', async (m) => {
