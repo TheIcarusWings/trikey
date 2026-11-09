@@ -1,14 +1,14 @@
 /**
- * The demo's second wallet (wallets-mock.ts): two wallets in the switcher, each with its own balance and device; rename,
- * move the money, remove; "Replace guardian" moves both.
+ * The demo's second wallet (wallets-mock.ts, `secondWallet`): two wallets in the switcher, each with its own balance and
+ * device; rename, move the money, remove; "Replace guardian" moves both. The demo itself starts with one wallet.
  */
 import { describe, expect, it } from 'vitest';
 import { createMockWalletService } from './mock';
 import { WalletServiceError } from './errors';
 
-const fast = () => createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0 });
+const fast = () => createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0, secondWallet: true });
 
-describe('the demo has a second wallet', () => {
+describe('the demo with a second wallet', () => {
   it('lists Main and Business, with their own devices, balances and the total of the limits', () => {
     const v = fast().getState().wallets!;
     expect(v.list.map((w) => [w.account, w.name, w.device, w.current])).toEqual([

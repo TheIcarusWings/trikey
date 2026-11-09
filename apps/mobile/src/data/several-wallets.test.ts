@@ -117,25 +117,43 @@ describe('where the setting is kept', () => {
 });
 
 describe('the demo', () => {
-  it('starts off, but its two wallets keep it on and locked; back to one, it is off again', async () => {
-    const svc = createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0 });
-    const s = svc.getState();
+  it('starts as a phone does: one wallet, the setting off and unlocked, nothing at the top of Home, no Wallets row', () => {
+    const s = createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0 }).getState();
+    expect(s.wallets!.list.map((w) => w.name)).toEqual(['Main']);
+    expect(s.wallets!.canAdd).toBe(true);
     expect(s.severalWallets).toBe(false);
-    expect(s.wallets!.list).toHaveLength(2);
-    expect(severalWalletsSetting(s)).toMatchObject({ on: true, locked: true });
-    expect(showsWalletSwitcher(s)).toBe(true);
+    expect(severalWalletsSetting(s)).toEqual({ on: false, locked: false, lockedText: null });
+    expect(showsWalletSwitcher(s)).toBe(false);
+    expect(walletsSettingsRows(s)).toEqual({ toggle: true, wallets: false });
+  });
+
+  it('turned on: the switcher and the Wallets row; a wallet added (empty, like a new one) locks it on', async () => {
+    const svc = createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0 });
     svc.setSeveralWallets(true);
-    expect(svc.getState().severalWallets).toBe(true);
+    expect(showsWalletSwitcher(svc.getState())).toBe(true);
+    expect(walletsSettingsRows(svc.getState())).toEqual({ toggle: true, wallets: true });
+    const added = await svc.addWallet!({ name: 'Business', hardware: 'trezor', dailyLimitSats: 50_000 });
+    expect(added).toMatchObject({ account: 2, name: 'Business', balanceSats: 0 });
+    // Its coins: none (the sample coins are only for the tests that start with "Business").
+    await svc.switchWallet!(2);
+    expect(svc.coins!.list('spending')!.coins).toEqual([]);
+    await svc.switchWallet!(0);
     svc.setSeveralWallets(false);
-    expect(svc.getState().severalWallets).toBe(false);
-    // Remove "Business" (move its money first): one wallet, the setting off, and the switcher and Wallets row go.
-    await svc.moveWalletFunds!(2, 0, { includeFrozen: true });
+    expect(severalWalletsSetting(svc.getState())).toMatchObject({ on: true, locked: true, lockedText: 'Stays on while this phone holds 2 wallets.' });
+    expect(showsWalletSwitcher(svc.getState())).toBe(true);
+    // Removed again (it is empty): one wallet, and the setting as left (off), so the switcher and the Wallets row go.
     await svc.removeWallet!(2);
     const one = svc.getState();
     expect(one.wallets!.list).toHaveLength(1);
     expect(severalWalletsSetting(one)).toEqual({ on: false, locked: false, lockedText: null });
     expect(showsWalletSwitcher(one)).toBe(false);
     expect(walletsSettingsRows(one)).toEqual({ toggle: true, wallets: false });
+  });
+
+  it('a demo started with a second wallet ("Business", for the tests of several wallets) is on and locked', () => {
+    const s = createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0, secondWallet: true }).getState();
+    expect(s.wallets!.list.map((w) => w.name)).toEqual(['Main', 'Business']);
+    expect(severalWalletsSetting(s)).toMatchObject({ on: true, locked: true });
   });
 });
 

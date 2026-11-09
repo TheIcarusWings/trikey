@@ -76,6 +76,12 @@ export interface MockOptions {
    * unlocked by a recovery code, shown once: a fake one, `DEMO_RECOVERY_CODE`.
    */
   passkeys?: boolean;
+  /**
+   * Start with a second wallet, "Business" on a Trezor (wallets-mock.ts), for the tests of several wallets. The demo
+   * itself starts with one wallet, as a phone does: "Several wallets" off, nothing at the top of Home. Turned on, its
+   * "Add a wallet" adds one (empty, like a new wallet).
+   */
+  secondWallet?: boolean;
 }
 
 /** The demo's recovery code: the real format, but with letters a real code never has (O), so it can't pass for one. */
@@ -242,7 +248,7 @@ export function createDemoState(platform: 'ios' | 'android' = 'ios'): WalletStat
     mode: 'guardian',
     unit: 'sats',
     theme: 'system',
-    // Off, as on every phone until the person turns it on; the demo's two wallets keep it on (and locked) anyway.
+    // Off, as on every phone until the person turns it on.
     severalWallets: false,
 
     hardware: HARDWARE.ledger,
@@ -312,8 +318,8 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
   let shownCode: string | null = null;
 
   let state = createDemoState(platform);
-  /** Several wallets in the demo: "Main" (shown) and "Business"; the others' fields are parked here (wallets-mock.ts). */
-  const demoWallets: DemoWallet[] = [{ account: 0, name: 'Main' }, demoBusinessWallet(MARIA)];
+  /** Several wallets in the demo: "Main" (shown), and those added; the others' fields are parked here (wallets-mock.ts). */
+  const demoWallets: DemoWallet[] = [{ account: 0, name: 'Main' }, ...(options.secondWallet ? [demoBusinessWallet(MARIA)] : [])];
   let shownAccount = 0;
   /** Coin control: each demo wallet's frozen coins (set once the coin lists exist, just below). */
   let frozenOf: ((account: number) => { coins: number; sats: number } | undefined) | undefined;
@@ -359,7 +365,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     return `${prefix}-${counter}`;
   }
   /** Coin control in the demo (./coins-mock.ts): its coins follow the demo's balance. */
-  const coins = createMockCoins({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW, nextId });
+  const coins = createMockCoins({ get: () => state, update, wait, deviceDelay, networkDelay, now: NOW, nextId, businessWallet: !!options.secondWallet });
   frozenOf = (account) => coins.frozenOf(account);
   state = withWallets(state);
 

@@ -268,6 +268,7 @@ several.
 - **Where it lives:** with the phone's other preferences (amount unit, theme) in `trikey.app.prefs.v1`, on this phone
   only; not in the backup. A restore that brings back several wallets shows it on and locked. Recovery Key mode and a
   hosted wallet don't show it (they hold one wallet).
+- **The demo** starts with one wallet ("Main"), so it shows the default: the toggle off, nothing at the top of Home.
 
 ### Adding a wallet
 
@@ -378,7 +379,7 @@ sheets printed from the app.
 | Rename, remove | Settings > Wallets > a wallet. Remove only when empty (Savings too): the money moves to another wallet first, then the guardian retires the wallet (refused while it sees coins: `wallet_not_empty`), announces it, and keeps its account taken. |
 | A new phone without a backup | Recovering an added wallet with its hardware wallet builds the new wallet at that wallet's own account (from key 3's path), not at `0'`. |
 | Rebuilding from the guardian's list | `wallet.add` keeps the device's kind; `guardian.status.wallets` lists it, so a rebuilt wallet asks for the right device (older entries fall back to the first wallet's kind). |
-| Demo | A second wallet ("Business" on a Trezor). |
+| Demo | Starts with one wallet, as a phone does (2026-11-09): "Several wallets" off, nothing at the top of Home. Turned on, "Add a wallet" adds one (empty). The tests of several wallets start it with a second wallet, "Business" on a Trezor (`secondWallet`). |
 
 **Per-wallet recovery sheets (built 2026-11-05):** Settings > Wallets (or Settings > Guardian), "Print a recovery
 sheet": each wallet's name, hardware wallet, wallet id, the guardian's npub and relays, and its "Recover on a new
