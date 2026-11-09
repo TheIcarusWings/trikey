@@ -220,6 +220,12 @@ describe('lost hardware wallet: this phone and the guardian move to a new device
     expect(e.refusal?.kind).toBe('hardware_confirm_required');
     // Tightening works meanwhile.
     expect(await C.setDailyLimit(90_000)).toMatchObject({ approvedBy: 'phone' });
+    // The swept coins reach the phone's coin list a sync or two after the switch; the payments below need them. (Paying
+    // right after the switch was flaky in CI: "Not enough funds: 0 sats available".)
+    await waitFor(async () => {
+      await C.sync();
+      return C.coins().totals.spendableSats > 0;
+    }, 'the swept coins in the new wallet');
   });
 
   it('the new device confirms, then a rule is loosened with it', async () => {
