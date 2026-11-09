@@ -6,7 +6,7 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
-## 0.1.25-alpha (2026-11-09)
+## [0.1.25-alpha] - 2026-11-09
 
 Fixes from a third security review (Grok only, on 0.1.24's code), a simpler Home screen for one wallet, and Trikey on
 Zapstore and Obtainium. Update the guardian, then the app.
@@ -38,7 +38,7 @@ Zapstore and Obtainium. Update the guardian, then the app.
   docs cover an iPhone on a newer iOS than Xcode knows, and docs/beta-checklist.md lists what stands between this alpha
   and a beta (#203, #204, #206, #209, #210).
 
-## 0.1.24-alpha (2026-11-09)
+## [0.1.24-alpha] - 2026-11-09
 
 The last, low-severity findings of the second security review, and every dependency advisory fixed. Update the
 guardian, then the app.
@@ -68,7 +68,7 @@ guardian, then the app.
 - **Releases:** the last check before publishing compared the files wrongly and stopped 0.1.23 (#200); the iOS launch
   check now reports on every pull request (#196); a full-history secret scan is clean (#197).
 
-## 0.1.23-alpha (2026-11-09)
+## [0.1.23-alpha] - 2026-11-09
 
 A security release, from a second review of the whole project (two independent AI-run audits compared, each finding
 checked against the code and fixed with a test that reproduces it). 0.1.22-alpha was never published: its release
@@ -135,7 +135,7 @@ app.
 - The daily-limit bar on the guardian's home page is visible again (#172). The docs explain renewing the iPhone's
   7-day profile (#174).
 
-## 0.1.21-alpha (2026-11-06)
+## [0.1.21-alpha] - 2026-11-06
 
 A security release: fixes from an external review of the whole project (an AI-run audit, each finding checked against
 the code before fixing). Update the guardian, then the app: a guardian with this release refuses to pair with an older
@@ -166,7 +166,7 @@ app. Nothing here was exploited that we know of.
   first address too; no vault address is shown until one has; key exports that don't match their path are refused
   (#165).
 
-## 0.1.20-alpha (2026-11-06)
+## [0.1.20-alpha] - 2026-11-06
 
 Change the guardian's passphrase, and BitBox02. Update the guardian, then the app; each works with the other side's
 older version.
@@ -186,7 +186,7 @@ older version.
   recovery phrase to another brand, turn them on again. Not yet tried on a real BitBox02: please test (alpha test plan,
   step 18i) (#159).
 
-## 0.1.19-alpha (2026-11-06)
+## [0.1.19-alpha] - 2026-11-06
 
 A fix for the iPhone app, and Jade over Bluetooth. Update the app; the guardian has no changes.
 
@@ -200,7 +200,7 @@ A fix for the iPhone app, and Jade over Bluetooth. Update the app; the guardian 
   unlocks, never your PIN or keys, and the app says so before the first unlock. In QR mode Trikey contacts no PIN
   server. Not yet tried on a real Jade: please test (alpha test plan, step 18h) (#156).
 
-## 0.1.18-alpha (2026-11-06)
+## [0.1.18-alpha] - 2026-11-06
 
 More hardware wallets for guardian wallets: Coldcard over NFC, and Passport (2nd generation) and Krux from a microSD
 card. Update the guardian, then the app; each works with the other side's older version.
@@ -226,7 +226,7 @@ card. Update the guardian, then the app; each works with the other side's older 
   Settings, show the project's one public donation address, what donations pay for, and a plain warning: you get
   nothing in return, so give only what you'd be fine never seeing again (#137).
 
-## 0.1.17-alpha (2026-11-06)
+## [0.1.17-alpha] - 2026-11-06
 
 Unlock the guardian with your hardware wallet, sealed unlocks, and QR hardware wallets for guardian wallets. Update the
 guardian, then the app; each works with the other side's older version.
@@ -252,7 +252,7 @@ guardian, then the app; each works with the other side's older version.
 - **Clearer unlock errors.** When the phone may not unlock (too many wrong tries, or a recovery this phone didn't
   start), the app says to unlock on the guardian's web page (#147).
 
-## 0.1.16-alpha (2026-11-05)
+## [0.1.16-alpha] - 2026-11-05
 
 Notes that survive losing your phone, a check on every Speed up, and a note about the phone itself. Update the
 guardian, then the app; each works with the other side's older version.
@@ -275,7 +275,7 @@ guardian, then the app; each works with the other side's older version.
   security update is more than 6 months old, or when Trikey runs in an emulator or simulator (fine for testing, not for
   real money). It is worked out on the phone and never sent anywhere (#145).
 
-## 0.1.15-alpha (2026-11-05)
+## [0.1.15-alpha] - 2026-11-05
 
 Coin control, Telegram alerts, labels everywhere, and a calmer guardian home page. Update the guardian, then the app;
 each works with the other side's older version.
@@ -315,7 +315,7 @@ each works with the other side's older version.
   lost, in one round trip, re-reading only what changed (#141).
 - Demo: coins with labels, a frozen one, and coin picking in Savings.
 
-## 0.1.14-alpha (2026-11-05)
+## [0.1.14-alpha] - 2026-11-05
 
 Several wallets in one app, and a clearer Server page. Update the guardian first, then the app: an app with several
 wallets needs a guardian with this release.
@@ -345,7 +345,7 @@ wallets needs a guardian with this release.
 - Coin control is on the way: its plan and decisions are in DESIGN.md (#129), and its groundwork (BIP 329 labels, a
   label and freeze store, the coin list) is in (#130); the screens come next.
 
-## 0.1.13-alpha (2026-11-05)
+## [0.1.13-alpha] - 2026-11-05
 
 Fixes from testing 0.1.12 on an Umbrel on mainnet, and a Wallet page on the guardian. Update the guardian and the
 app; each works with the other side's older version.
@@ -374,7 +374,7 @@ app; each works with the other side's older version.
 - When every fee speed costs the same, Review picks Fast and says so. The hardware wallet sketch shows the amount and
   the fee with the same decimals, and the fee gets its own line (#121).
 
-## 0.1.12-alpha (2026-11-04)
+## [0.1.12-alpha] - 2026-11-04
 
 Live payments, a faster app, a way to unstick a payment, and family hosting. Update the guardian and the app; each
 works with the other side's older version (an older app ignores the new alerts; an older guardian means no live
@@ -408,7 +408,7 @@ updates, and the app syncs as before).
   (#92, #99).
 - Docs: the entropy review's last two suspicions ruled out (#115); the site's Watch section (#113).
 
-## 0.1.11-alpha (2026-11-04)
+## [0.1.11-alpha] - 2026-11-04
 
 A fix release for what was seen on an iPhone with 0.1.10, and the guardian on plain Docker. Update the app and the guardian; each fix works with the
 other side's older version.
@@ -453,7 +453,7 @@ other side's older version.
   Settings > Guardian (#105).
 - Test plan: what to do when Play Protect says "Unsafe app blocked" when installing or updating the APK.
 
-## 0.1.10-alpha (2026-11-03)
+## [0.1.10-alpha] - 2026-11-03
 
 A fix release for the phone app freezing when it opens. Update the app and the guardian; either alone already helps,
 and they work with each other's older versions.
@@ -481,7 +481,7 @@ and they work with each other's older versions.
 - Compatibility: a 0.1.10 guardian still reads requests from older phones (dated up to two days back), and a 0.1.10
   phone still reads answers from older guardians. The guardian lists `short_wraps` in its features.
 
-## 0.1.9-alpha (2026-11-03)
+## [0.1.9-alpha] - 2026-11-03
 
 - **The phone keeps hearing the guardian after a connection drops.** Found on a Pixel 10a (Android 16): Android closes the
   sockets of an app in the background, and the relay library (nostr-tools 2.25) then ended the app's subscription
@@ -514,7 +514,7 @@ and they work with each other's older versions.
   longer points clients to relay.trikey.app for the publisher's profile, and the test plan no longer says relays cannot
   be changed after setup (#109).
 
-## 0.1.8-alpha (2026-11-01)
+## [0.1.8-alpha] - 2026-11-01
 
 - **Savings, an optional vault that phone + guardian can never spend** (option K). Settings > Savings: your hardware
   wallet and a second hardware wallet as the Recovery Key; any two of phone, hardware wallet and Recovery Key move it,
@@ -545,7 +545,7 @@ and they work with each other's older versions.
   (#80).
 - CI: every GitHub Action moved to its Node 24 release (#81).
 
-## 0.1.7-alpha (2026-11-01)
+## [0.1.7-alpha] - 2026-11-01
 
 - **Android: releases now update in place.** Every release APK from this one on is signed with the Trikey release key
   (certificate SHA-256 in `packaging/android/release-cert.sha256`), so a newer release installs over the older one and
@@ -570,7 +570,7 @@ and they work with each other's older versions.
 - CI: the demo walk is walked again once when Maestro's iOS driver loses its connection mid-walk (#64), and other apps'
   "isn't responding" dialogs on the Android emulator no longer hide the app from it (#67).
 
-## 0.1.6-alpha (2026-10-31)
+## [0.1.6-alpha] - 2026-10-31
 
 - **App: fixes connecting a Ledger** ("Ledger error: invalid number provided"; every Ledger, from 0.1.0). The app
   gave Ledger's signer kit key paths with a leading `m/` (`m/48'/0'/0'/2'`), which it reads as a number and refuses;
@@ -589,7 +589,7 @@ and they work with each other's older versions.
   against the firmware sources: no Trezor refuses that path ([docs/design/hardware-auth-path.md](docs/design/hardware-auth-path.md),
   #61, #62).
 
-## 0.1.5-alpha (2026-10-31)
+## [0.1.5-alpha] - 2026-10-31
 
 - **You can turn the daily limit off, with your hardware wallet.** It is an option for people who do not want a
   limit: Settings, Daily limit, "Turn off the daily limit". The hardware wallet must approve it, and its screen says
@@ -622,7 +622,7 @@ and they work with each other's older versions.
 - Site: `trikey.app/passkey-test` checks whether your password manager supports the passkey PRF extension that
   passkey unlock will need (#43).
 
-## 0.1.4-alpha (2026-10-30)
+## [0.1.4-alpha] - 2026-10-30
 
 - **App: a lost-phone recovery no longer shows the guardian offline for most of the wait.** The new phone's access to
   the guardian lasts 12 hours at a time (your hardware wallet vouches for it), and once it ran out the guardian ignored
@@ -667,7 +667,7 @@ and they work with each other's older versions.
   instead of leaving the app at 502 (#30).
 - Recovery Key: the kit's word-check positions are picked uniformly (entropy review I4, #33).
 
-## 0.1.3-alpha (2026-10-30)
+## [0.1.3-alpha] - 2026-10-30
 
 - **Guardian: fixes the guardian stopping right after setup** ("Maximum call stack size exceeded") when a
   nostr relay could not be reached. nostr-tools' relay calls `close()` from its own error handler and Node's
@@ -680,7 +680,7 @@ and they work with each other's older versions.
 - Design proposal for passkey sign-in and unlock: [docs/design/passkey-unlock.md](docs/design/passkey-unlock.md)
   (#28).
 
-## 0.1.2-alpha (2026-10-30)
+## [0.1.2-alpha] - 2026-10-30
 
 - **Guardian: fixes the image not starting** ("Cannot find package 'zod'"): 0.1.0-alpha and 0.1.1-alpha left
   a dependency out of the image. CI now starts the built image and waits for `/api/status` before a release
@@ -700,7 +700,7 @@ and they work with each other's older versions.
 - Docs: the test plan covers installing from the community store and testing on mainnet or a test network
   (#18).
 
-## 0.1.1-alpha (2026-10-30)
+## [0.1.1-alpha] - 2026-10-30
 
 - Mainnet in guardian mode, behind a pre-alpha warning the tester must accept; Recovery Key mode stays on test
   networks (#8).
@@ -710,7 +710,7 @@ and they work with each other's older versions.
   Android back no longer leaves no-going-back screens, a button to the setting when Bluetooth is off or its
   permission was refused, the recovery's line for coins that arrive late.
 
-## 0.1.0-alpha (2026-10-30)
+## [0.1.0-alpha] - 2026-10-30
 
 - First pre-release: the phone app (guardian mode and Recovery Key mode), the guardian with its web UI, the
   Umbrel and Start9 packages, and the Android test APK.
