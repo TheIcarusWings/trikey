@@ -321,6 +321,12 @@ export interface WalletService {
   setUnit(unit: AmountUnit): void;
   setTheme(theme: ThemePreference): void;
   /**
+   * Settings > "Several wallets" (docs/design/multi-wallet.md, section 5): off by default. Off, Home has no wallet
+   * switcher and Settings no Wallets row. A phone that holds more than one wallet keeps it on whatever this says
+   * (`severalWalletsSetting`). Kept on this phone only, not in the backup.
+   */
+  setSeveralWallets(on: boolean): void;
+  /**
    * Before a wallet exists: which kind onboarding makes (guardian, or Recovery Key mode for "No home server?"). Once a
    * wallet exists the phone runs that one, and this does nothing, except in the demo, which shows either home.
    */

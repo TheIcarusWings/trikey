@@ -892,7 +892,9 @@ BIP 48 account (the second at `2'`), so nothing on chain links them (docs/design
 
 Do:
 
-1. **Add it.** Settings, **Wallets**, **Add a wallet**: a name ("Business"), a daily limit, then connect the **new**
+1. **Add it.** First, with one wallet: Home shows no wallet name at the top, and Settings shows **Several wallets**, off,
+   with no Wallets row. Turn it on: the Wallets row appears, and Home shows the wallet's name at the top. Then Settings,
+   **Wallets**, **Add a wallet**: a name ("Business"), a daily limit, then connect the **new**
    hardware wallet. You should see: the device registers the wallet as "Trikey Business" and shows its first address, which
    matches the phone; the guardian's Activity shows "Wallet "Business" added"; the phone says anyone who can unlock it can
    spend up to each wallet's daily limit. Connecting the first wallet's device instead must be refused.
@@ -923,6 +925,8 @@ Do:
 7. **Rename and remove.** Settings, Wallets, "Business": rename it. Then **Remove this wallet**: refused while it holds
    money; **Move everything to "Main"** (over its limit, its own device signs), then remove it (one approval on its device).
    You should see: the guardian's Activity says the wallet was retired; the account is not offered again to a new wallet.
+   While both wallets are there, Settings, **Several wallets** is on and can't be turned off ("Stays on while this phone
+   holds 2 wallets."); after the remove it can be turned off again.
    **With a frozen coin** (step 18b): before moving, freeze a small coin of "Business" in its Coins. You should see:
    **Include 1 frozen coin (N sats)**, off, saying the coin stays and the wallet can't be removed while it holds it. Move
    with it off: the frozen coin stays, and Remove says so. Switch it on and move again: the wallet is empty in one

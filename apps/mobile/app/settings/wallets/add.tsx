@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
+import { BackToSettings } from '@/components/back-to-settings';
 import { HardwareList } from '@/components/hardware-list';
 import { HardwareWallet, Smartphone } from '@/components/icons';
 import { Body, FieldLabel, Footnote, Notice } from '@/components/panels';
@@ -17,6 +18,7 @@ import {
   useWallet,
   useWalletService,
   walletNameProblem,
+  walletsSettingsRows,
   hardwareBrandOf,
   type HardwareKind,
   type QrModel,
@@ -32,7 +34,8 @@ const DEFAULT_LIMIT = 100_000;
  * "Add a wallet" (docs/design/multi-wallet.md): a name, its daily limit, then the NEW hardware wallet. The phone key is
  * the same; the guardian gives the wallet its own key at its own account, so nothing on chain links it to the others.
  * The device registers the wallet under its name and shows the first address. The first wallet's hardware wallet approves
- * adding it (guardians with `add_wallet_approval`). Then a new backup.
+ * adding it (guardians with `add_wallet_approval`). Then a new backup. Only while Settings > "Several wallets" is on: a
+ * link here otherwise (Recovery Key mode, a hosted wallet, the toggle off) goes back to Settings.
  */
 export default function AddWallet() {
   const router = useRouter();
@@ -47,6 +50,8 @@ export default function AddWallet() {
   const { busy, run, message, error } = useAction();
   const problem = name ? walletNameProblem(name, view) : undefined;
   const limitSats = Number(limit.replace(/\D/g, ''));
+
+  if (!added && !walletsSettingsRows(state).wallets) return <BackToSettings />;
 
   if (view && !view.canAdd && !added)
     return (

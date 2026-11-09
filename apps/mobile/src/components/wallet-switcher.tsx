@@ -6,15 +6,16 @@ import { Footnote, ListGroup } from '@/components/panels';
 import { Sheet } from '@/components/sheet';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
-import { formatSats, hasSeveralWallets, totalLimitText, useWallet, useWalletService, walletLine } from '@/data';
+import { formatSats, hasSeveralWallets, showsWalletSwitcher, totalLimitText, useWallet, useWalletService, walletLine } from '@/data';
 import { useAction } from '@/lib/use-action';
 import { ActionNotice } from '@/components/action-notice';
 import { cn } from '@/lib/utils';
 
 /**
  * The top of Home with several wallets (docs/design/multi-wallet.md): the wallet shown and its hardware wallet ("Daily ·
- * Trezor Safe 3"); a tap opens the sheet of every wallet with its balance, and "Add a wallet". Hidden while the phone
- * holds one wallet and its guardian cannot hold more.
+ * Trezor Safe 3"); a tap opens the sheet of every wallet with its balance, and "Add a wallet". Hidden while Settings >
+ * "Several wallets" is off (the default, with one wallet), and while the phone holds one wallet and its guardian cannot
+ * hold more (`showsWalletSwitcher`).
  */
 export function WalletSwitcher() {
   const state = useWallet();
@@ -23,9 +24,8 @@ export function WalletSwitcher() {
   const [open, setOpen] = useState(false);
   const { run, message, error } = useAction();
   const view = state.wallets;
-  if (state.mode !== 'guardian' || !view) return null;
+  if (!view || !showsWalletSwitcher(state)) return null;
   const several = hasSeveralWallets(view);
-  if (!several && !view.canAdd) return null;
   const total = several ? totalLimitText(view.total) : null;
 
   const choose = async (account: number) => {

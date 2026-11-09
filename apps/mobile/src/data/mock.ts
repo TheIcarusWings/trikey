@@ -242,6 +242,8 @@ export function createDemoState(platform: 'ios' | 'android' = 'ios'): WalletStat
     mode: 'guardian',
     unit: 'sats',
     theme: 'system',
+    // Off, as on every phone until the person turns it on; the demo's two wallets keep it on (and locked) anyway.
+    severalWallets: false,
 
     hardware: HARDWARE.ledger,
     addressVerified: true,
@@ -965,6 +967,7 @@ export function createMockWalletService(options: MockOptions = {}): WalletServic
     // -- preferences --------------------------------------------------
     setUnit: (unit: AmountUnit) => update({ unit }),
     setTheme: (theme: ThemePreference) => update({ theme }),
+    setSeveralWallets: (on: boolean) => update({ severalWallets: on }),
     setMode: (mode: WalletMode) => update({ mode }),
 
     // -- development --------------------------------------------------
