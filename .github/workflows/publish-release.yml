@@ -8,13 +8,15 @@ name: Publish release
 # in GitHub's public API, so nobody outside the repository (Obtainium, Zapstore, the app's "Check for updates", someone
 # on the releases page) sees the release until this workflow publishes it.
 #
-# `wait` waits for the newest Docker and Android test APK runs of the tag, which must succeed. `publish`, in the
+# `wait` waits for the newest Docker and Android test APK runs of the tag, which must succeed: found by the tag's commit
+# and the jobs only a tag runs, not by name (.github/scripts/release-run.sh). `publish`, in the
 # `release` environment (so it runs only on refs the environment allows, after the owner's approval when the
 # environment asks for one), checks the draft with packaging/check-release-assets.sh: exactly the expected files, each
 # the one GitHub lists, the checksums, both APKs signed by packaging/android/release-cert.sha256 and nothing else and
-# each the right app, the compose file running the guardian image by the digest docker.yml pushed (and its `verified`
-# job found reproduced), and that digest still being what the version tag names. Only then is the draft published, and its files
-# are compared with what was checked once more after. With immutable releases on (docs/android-signing.md, "Immutable
+# each the right app, the compose files byte for byte what docker.yml makes from the tag's packaging/compose with the
+# digest it pushed (and its `verified` job found reproduced), and that digest still being what the version tag names. Only then is the draft published, and its files
+# are compared with what was checked once more after; if they changed, the release goes back to a draft, or, immutable
+# (which cannot), is renamed and annotated "withdrawn, do not install", and the run fails. With immutable releases on (docs/android-signing.md, "Immutable
 # releases") nothing can change a published release's files or tag afterwards; the job warns while they are off.
 #
 # A tag pushed by hand starts it too (`push`). To retry, re-run its failed jobs, or run it by hand on the tag.
@@ -48,6 +50,15 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ github.ref_name }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts/release-run.sh
+          sparse-checkout-cone-mode: false
+
+      # The runs of the tag's commit (head_sha), started by a push or a dispatch, in which the job that runs only on a
+      # v* tag ran (docker.yml's `verified`, android-apk.yml's `release`): never by name, which a branch called like the
+      # tag shares (.github/scripts/release-run.sh).
       - name: Wait for the release builds
         id: wait
         run: |
@@ -58,8 +69,8 @@ jobs:
           while :; do
             pending=""
             for wf in docker.yml android-apk.yml; do
-              run="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow "${wf}" --branch "${TAG}" --limit 1 \
-                --json databaseId,status,conclusion,url --jq '.[0] // empty | [.databaseId, .status, .conclusion, .url] | @tsv')"
+              case "${wf}" in docker.yml) job=verified ;; android-apk.yml) job=release ;; esac
+              run="$(bash .github/scripts/release-run.sh newest "${wf}" "${job}")"
               if [ -z "${run}" ]; then pending="${pending} ${wf}(no run yet)"; continue; fi
               IFS=$'\t' read -r id status conclusion url <<<"${run}"
               if [ "${status}" != completed ]; then pending="${pending} ${wf}(${status})"; continue; fi
@@ -94,13 +105,16 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ github.ref_name }}
     steps:
-      # The check script and the pinned certificate, from the tag's commit.
+      # The check script, the pinned certificate and what docker.yml makes the compose files from, from the tag's commit.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: |
             packaging/check-release-assets.sh
             packaging/android/release-cert.sha256
+            packaging/compose/release-compose.sh
+            packaging/compose/docker-compose.yml
+            packaging/compose/.env.example
             apps/mobile/app.json
           sparse-checkout-cone-mode: false
 
@@ -161,10 +175,28 @@ jobs:
           # Right before publishing, the files must still be the ones checked.
           now="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${ID}/assets?per_page=100" --jq '[.[] | {id, name, size, digest}] | sort_by(.name)')"
           [ "$(jq -cS . <<<"${now}")" = "${checked}" ] || { echo "::error::The draft's files changed during the check. Re-run this workflow."; exit 1; }
+          # What is left: a file swapped between that comparison and this PATCH (a second or so, by a token with
+          # contents: write). The comparison after the PATCH catches it; with immutable releases on, the published files
+          # cannot change after that.
           gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${ID}" -F draft=false -F prerelease=true > "${RUNNER_TEMP}/published.json"
           after="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${ID}/assets?per_page=100" --jq '[.[] | {id, name, size, digest}] | sort_by(.name)')"
           if [ "$(jq -cS . <<<"${after}")" != "${checked}" ]; then
-            echo "::error title=Files changed while publishing::${TAG}'s files are not the ones checked. Look at the release now: delete it if a file is not what the builds made."
+            echo "::error title=Files changed while publishing::${TAG}'s files are not the ones checked."
+            # Hide it again: back to a draft, which GitHub allows for a release that is not immutable.
+            if gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${ID}" -F draft=true > /dev/null; then
+              echo "::error title=Release back to draft::${TAG} is a draft again, so nobody outside the repository sees it. Look at its files: delete the release if one is not what the builds made, and release a new version."
+              exit 1
+            fi
+            # An immutable release cannot go back to a draft and its files cannot change, but its title and notes can, and
+            # it can stop being the latest: say on the release itself not to install it.
+            notes="$(jq -r '.body // ""' "${RUNNER_TEMP}/published.json")"
+            warning="**Do not install this release.** Its files changed while it was being published, so they are not the files that were checked (publish-release.yml). It will be deleted; use the next release."
+            if gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${ID}" -f name="Trikey ${TAG}: withdrawn, do not install" \
+              -f body="$(printf '%s\n\n%s' "${warning}" "${notes}")" -F prerelease=true -f make_latest=false > /dev/null; then
+              echo "::error title=Release is public, marked withdrawn::${TAG} could not go back to a draft (immutable), so its title and notes now say not to install it. Delete it now (Releases page, the release, Delete), then release a new version."
+            else
+              echo "::error title=Release is public and NOT marked::${TAG} could not go back to a draft nor be marked withdrawn. Delete it now (Releases page, the release, Delete), then release a new version."
+            fi
             exit 1
           fi
           echo "::notice title=Published::${TAG}: $(jq -r '.html_url' "${RUNNER_TEMP}/published.json")"

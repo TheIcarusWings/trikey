@@ -24,4 +24,20 @@ export { WalletProvider, useWallet, useWalletService, useNow, useActivity } from
 // The mock is exported for the app root only. Screens must go through useWallet().
 export { createMockWalletService } from './mock';
 export { ALERT_CHANNELS, alertChannelText, alertChannelsLine, groupAlertChannels } from './alert-channels';
-export { BACKUP_AFTER_ADD, GUARDIAN_UPDATE_NOTICE, SHARED_PHONE_NOTICE, fromLine, hasSeveralWallets, movedText, removeBlocker, toLine, totalLimitText, walletLine, walletNameProblem } from './wallets';
+export {
+  BACKUP_AFTER_ADD,
+  GUARDIAN_UPDATE_NOTICE,
+  SEVERAL_WALLETS,
+  SHARED_PHONE_NOTICE,
+  fromLine,
+  hasSeveralWallets,
+  movedText,
+  removeBlocker,
+  severalWalletsSetting,
+  showsWalletSwitcher,
+  toLine,
+  totalLimitText,
+  walletLine,
+  walletNameProblem,
+  walletsSettingsRows,
+} from './wallets';

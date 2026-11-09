@@ -493,6 +493,9 @@ fine to share in a bug report (except the `setup.code` line before setup).
   **tag** (overridable with `TRIKEY_IMAGE`), for development; to run the guardian, use the release's
   `trikey-guardian-compose.yml`, which names it by digest ([Quick start](#quick-start)).
 - `.env.example`: every setting, with comments.
+- `release-compose.sh`: makes a release's copies of the two files above, with the image pinned by digest. Run by
+  `docker.yml` to attach them, and again by `publish-release.yml`, which publishes only if the attached files are
+  exactly what it makes.
 - `smoke-test.sh`: CI's check (`.github/workflows/compose.yml`): the compose file is valid, the guardian from it comes
   up healthy on `127.0.0.1`, reaches Electrs on regtest, and keeps setup closed without the setup code.
 

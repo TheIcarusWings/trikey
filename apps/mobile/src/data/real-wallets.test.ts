@@ -3,6 +3,7 @@
  * (regtest, throwaway keys). One phone, two wallets each with its own (software) hardware wallet.
  *
  * - With one wallet nothing changes: the list holds it, "Add a wallet" is offered (the guardian lists `own_wallets`).
+ *   Settings > "Several wallets" is off, so Home has no switcher, until it is turned on (kept across a restart).
  * - "Add a wallet" with the first wallet's device is refused; with a new one it is added at account 2, not shown yet.
  * - The switcher shows the other wallet: it pays within its own limit, receives at its own address, names its device.
  * - The total of the daily limits; the wallet shown last opens again after a restart.
@@ -18,7 +19,7 @@ import { openBackup } from '@trikey/wallet';
 import { MemoryCloudBackupStore, MemoryKeyValueStore, MemoryPasskeyPrf, MemorySecureKeyStore, SoftwareHardwareProvider, SoftwareHardwareSigner } from '@trikey/wallet/testing';
 import { createRealWalletService, type RealWalletService } from './real';
 import { WalletServiceError } from './errors';
-import { fromLine, toLine, totalLimitText } from './wallets';
+import { fromLine, severalWalletsSetting, showsWalletSwitcher, toLine, totalLimitText, walletsSettingsRows } from './wallets';
 
 const ledger = new SoftwareHardwareSigner({ mnemonic: 'legal winner thank year wave sausage worth useful legal winner thank yellow', network: 'regtest', kind: 'ledger', model: 'Nano X (simulated)' });
 const trezor = new SoftwareHardwareSigner({ mnemonic: 'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong', network: 'regtest', kind: 'trezor', model: 'Safe 3 (simulated)' });
@@ -91,6 +92,20 @@ describe('several wallets in the app', { timeout: 90_000 }, () => {
     expect(toLine(v)).toBeNull();
   });
 
+  it('"Several wallets" is off at first: no switcher, no Wallets row; turned on, both, and it is kept', async () => {
+    const st = svc.getState();
+    expect(st.severalWallets).toBe(false);
+    expect(severalWalletsSetting(st)).toMatchObject({ on: false, locked: false });
+    expect(showsWalletSwitcher(st)).toBe(false);
+    expect(walletsSettingsRows(st)).toEqual({ toggle: true, wallets: false });
+    svc.setSeveralWallets(true);
+    expect(showsWalletSwitcher(svc.getState())).toBe(true);
+    expect(walletsSettingsRows(svc.getState())).toEqual({ toggle: true, wallets: true });
+    const again = await service({ kv, secure });
+    expect(again.getState().severalWallets).toBe(true);
+    await again.close();
+  });
+
   it('refuses the first wallet\'s device, and adds Business with a new one (not shown yet)', async () => {
     provider.device = ledger;
     expect((await failure(svc.addWallet!({ name: 'Business', hardware: 'simulated', dailyLimitSats: 50_000 }))).kind).toBe('hardware_in_use');
@@ -104,6 +119,11 @@ describe('several wallets in the app', { timeout: 90_000 }, () => {
     expect(v.total).toEqual({ sats: 150_000, off: false });
     expect(totalLimitText(v.total)).toMatch(/150,000 sats a day/);
     expect(svc.getState().activity.some((i) => i.type === 'security' && i.event.kind === 'wallet-added')).toBe(true);
+    // Two wallets: "Several wallets" stays on, and can't be turned off.
+    svc.setSeveralWallets(false);
+    expect(severalWalletsSetting(svc.getState())).toMatchObject({ on: true, locked: true });
+    expect(showsWalletSwitcher(svc.getState())).toBe(true);
+    svc.setSeveralWallets(true);
   });
 
   it('switches to Business: it receives at its own address, pays within its own limit, and names itself', async () => {
@@ -156,6 +176,10 @@ describe('several wallets in the app', { timeout: 90_000 }, () => {
       [0, 'Main'],
       [2, 'Business'],
     ]);
+    // A new phone: the setting is this phone's (off), but both wallets show: on and locked.
+    expect(P.getState().severalWallets).toBe(false);
+    expect(severalWalletsSetting(P.getState())).toMatchObject({ on: true, locked: true });
+    expect(showsWalletSwitcher(P.getState())).toBe(true);
   });
 });
 

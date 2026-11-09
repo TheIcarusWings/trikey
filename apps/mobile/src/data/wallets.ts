@@ -4,7 +4,7 @@
  */
 import { isSafeName } from '@trikey/protocol';
 import { formatSats } from './format';
-import type { Sats, WalletListItem, WalletsView } from './types';
+import type { Sats, WalletListItem, WalletState, WalletsView } from './types';
 
 /** Said when a second wallet is added, and in Settings > Wallets (the threat model's "a shared phone is a shared key"). */
 export const SHARED_PHONE_NOTICE = 'Anyone who can unlock this phone can see this wallet and spend up to its daily limit.';
@@ -33,6 +33,43 @@ export function totalLimitText(total: { sats: Sats; off: boolean } | undefined):
   if (!total) return null;
   if (total.off) return 'One of these wallets has no daily limit: anyone who can unlock this phone can send everything in it with your guardian.';
   return `Anyone who can unlock this phone can send up to ${formatSats(total.sats)} sats a day from these wallets together, without a hardware wallet.`;
+}
+
+/** Settings > "Several wallets": the toggle's words. */
+export const SEVERAL_WALLETS = {
+  title: 'Several wallets',
+  short: 'Keep more than one wallet on this phone, each with its own hardware wallet.',
+} as const;
+
+/**
+ * Settings > "Several wallets" (docs/design/multi-wallet.md, section 5), as it works: `on` is the setting, or more than
+ * one wallet on the phone; `locked` (it can't be turned off) while there is more than one, so no wallet with money in it
+ * is ever hidden. `lockedText` says why.
+ */
+export function severalWalletsSetting(state: Pick<WalletState, 'severalWallets' | 'wallets'>): { on: boolean; locked: boolean; lockedText: string | null } {
+  const count = state.wallets?.list.length ?? 0;
+  const locked = count > 1;
+  return { on: !!state.severalWallets || locked, locked, lockedText: locked ? `Stays on while this phone holds ${count} wallets.` : null };
+}
+
+/**
+ * Home's wallet switcher: guardian mode with a wallet, "Several wallets" on, and something to switch to or add (not
+ * shown while the phone holds one wallet and its guardian cannot hold more).
+ */
+export function showsWalletSwitcher(state: Pick<WalletState, 'mode' | 'severalWallets' | 'wallets'>): boolean {
+  const view = state.wallets;
+  if (state.mode !== 'guardian' || !view) return false;
+  if (!severalWalletsSetting(state).on) return false;
+  return hasSeveralWallets(view) || view.canAdd;
+}
+
+/**
+ * Settings: the "Several wallets" toggle wherever the phone's wallet can have others (guardian mode, its own guardian,
+ * paired), and the Wallets row (the list, "Add a wallet") only while it is on.
+ */
+export function walletsSettingsRows(state: Pick<WalletState, 'mode' | 'severalWallets' | 'wallets'>): { toggle: boolean; wallets: boolean } {
+  const toggle = state.mode !== 'recoveryKey' && !!state.wallets;
+  return { toggle, wallets: toggle && severalWalletsSetting(state).on };
 }
 
 /** Send's review: "From: Daily", only when the phone holds more than one wallet. */

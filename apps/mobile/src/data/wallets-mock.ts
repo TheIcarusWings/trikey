@@ -1,8 +1,9 @@
 /**
- * The demo's second wallet (docs/design/multi-wallet.md): "Business" on a Trezor next to "Main" on the Ledger, so the
- * switcher, Settings > Wallets (rename, move the money, remove) and "Replace guardian" with several wallets can be
- * tried without a guardian. The wallet shown fills the screens' fields as before; the others are kept here, parked,
- * and swapped in when shown.
+ * Several wallets in the demo (docs/design/multi-wallet.md). The demo starts with "Main" only; "Add a wallet" adds empty
+ * ones. "Business" on a Trezor, with money and a frozen coin, is the second wallet the tests of several wallets start it
+ * with (`MockOptions.secondWallet`): the switcher, Settings > Wallets (rename, move the money, remove) and "Replace
+ * guardian". The wallet shown fills the screens' fields as before; the others are kept here, parked, and swapped in when
+ * shown.
  */
 import { isLimitOffSats } from './rules';
 import { emptySavings } from './savings-mock';

@@ -78,6 +78,7 @@ import {
   type WalletMode,
   type WalletState,
 } from './types';
+import { PREFS_KEY, defaultPrefs, parsePrefs, type AppPrefs } from './prefs';
 
 export interface RkPlatform {
   os: UiOs;
@@ -124,7 +125,6 @@ export interface RkWalletService extends WalletService {
   close(): Promise<void>;
 }
 
-export const PREFS_KEY = 'trikey.app.prefs.v1';
 export const networkPrefKey = (mode: string) => `trikey.app.network.${mode}`;
 /** Where the wallet's state lives: `trikey.rk.<mode>.<network>` (and `.app` for the app's own notes). */
 export const rkWalletKey = (mode: string, network: NetworkName) => `trikey.rk.${mode}.${network}`;
@@ -183,7 +183,7 @@ class Service implements RkWalletService {
   private readonly listeners = new Set<() => void>();
   private hw?: HardwareProvider;
   private rawProviders: HardwareProvider[] = [];
-  private prefs: { unit: AmountUnit; theme: ThemePreference } = { unit: 'sats', theme: 'system' };
+  private prefs: AppPrefs = defaultPrefs();
   private doc: AppDoc = emptyDoc();
   private home?: HomeState;
   private rates: FeeRates = {};
@@ -249,16 +249,7 @@ class Service implements RkWalletService {
 
   async init(): Promise<void> {
     const kv = this.deps.platform.kv;
-    try {
-      const raw = await kv.get(PREFS_KEY);
-      if (raw) {
-        const p = JSON.parse(raw) as Partial<typeof this.prefs>;
-        if (p.unit === 'sats' || p.unit === 'btc') this.prefs.unit = p.unit;
-        if (p.theme === 'system' || p.theme === 'light' || p.theme === 'dark') this.prefs.theme = p.theme;
-      }
-    } catch {
-      /* defaults */
-    }
+    this.prefs = parsePrefs(await kv.get(PREFS_KEY).catch(() => null));
 
     // The network: the wallet that exists on this phone (in this mode) wins, then the choice made last time.
     const candidates: NetworkName[] = this.mode === 'simulator' ? ['regtest'] : RK_NETWORKS;
@@ -575,6 +566,7 @@ class Service implements RkWalletService {
       mode: 'recoveryKey',
       unit: this.prefs.unit,
       theme: this.prefs.theme,
+      severalWallets: this.prefs.severalWallets,
       hardware: this.hardwareView(),
       addressVerified: !!s?.hardware?.addressVerified,
       backup: null,
@@ -1044,6 +1036,12 @@ class Service implements RkWalletService {
 
   setTheme(theme: ThemePreference): void {
     this.prefs.theme = theme;
+    void this.savePrefs();
+    this.refresh();
+  }
+
+  setSeveralWallets(on: boolean): void {
+    this.prefs.severalWallets = on;
     void this.savePrefs();
     this.refresh();
   }

@@ -131,6 +131,7 @@ import {
   type WalletListItem,
   type WalletsView,
 } from './types';
+import { PREFS_KEY, defaultPrefs, parsePrefs, type AppPrefs } from './prefs';
 
 /** What the real wallet needs from the phone. `createPlatform()` fits; tests pass the in-memory stand-ins. */
 
@@ -247,7 +248,6 @@ const RELAYS_BACK_WAIT_MS = 3_000;
 const SHORT_PAUSE_MS = 2_000;
 /** A helper coin below this cannot pay its share of the fee of a payment at ordinary rates: shown as not funded. */
 const HELPER_USABLE_SATS = 1_000;
-const PREFS_KEY = 'trikey.app.prefs.v1';
 /**
  * A pull to refresh (or the timer) joins a sync that began less than this long ago instead of asking the guardian again:
  * its answer is as fresh as a new one would be. (ms)
@@ -399,7 +399,7 @@ class Service implements RealWalletService {
   private hw?: HardwareProvider;
   private rawProviders: HardwareProvider[] = [];
   private log: AppLog = emptyLog();
-  private prefs: { unit: AmountUnit; theme: ThemePreference } = { unit: 'sats', theme: 'system' };
+  private prefs: AppPrefs = defaultPrefs();
   private progress: string | null = null;
   /**
    * A sync comes in two parts (see `sync`). The first, `core`: the guardian's status and the wallet's chain data, what
@@ -516,16 +516,7 @@ class Service implements RealWalletService {
 
   async init(): Promise<void> {
     const kv = this.deps.platform.kv;
-    try {
-      const raw = await kv.get(PREFS_KEY);
-      if (raw) {
-        const p = JSON.parse(raw) as Partial<typeof this.prefs>;
-        if (p.unit === 'sats' || p.unit === 'btc') this.prefs.unit = p.unit;
-        if (p.theme === 'system' || p.theme === 'light' || p.theme === 'dark') this.prefs.theme = p.theme;
-      }
-    } catch {
-      /* defaults */
-    }
+    this.prefs = parsePrefs(await kv.get(PREFS_KEY).catch(() => null));
 
     // The network: the wallet that exists on this phone (in this mode) wins, then the choice made last time.
     const candidates: NetworkName[] = this.mode === 'simulator' ? ['regtest'] : GUARDIAN_NETWORKS;
@@ -889,6 +880,7 @@ class Service implements RealWalletService {
       mode: 'guardian',
       unit: this.prefs.unit,
       theme: this.prefs.theme,
+      severalWallets: this.prefs.severalWallets,
       hardware,
       addressVerified: !!s?.hardware?.addressVerified,
       backup: backup
@@ -2957,6 +2949,12 @@ class Service implements RealWalletService {
 
   setTheme(theme: ThemePreference): void {
     this.prefs.theme = theme;
+    void this.savePrefs();
+    this.refresh();
+  }
+
+  setSeveralWallets(on: boolean): void {
+    this.prefs.severalWallets = on;
     void this.savePrefs();
     this.refresh();
   }

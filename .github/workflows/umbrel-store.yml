@@ -3,11 +3,14 @@ name: Umbrel store
 # An Umbrel community app store is a repository whose root holds umbrel-app-store.yml
 # (packaging/README.md). This monorepo keeps the store under packaging/umbrel/, so on a release
 # tag this workflow copies it to its own repository, trikey-umbrel-store, with the image pinned
-# by digest: the digest docker.yml's `publish` job pushed, which docker.yml passes in when it
-# calls this workflow (`image-digest`). The tag is not re-resolved for the pin; it only has to
-# still point at that digest, or the job fails. To retry by hand, run it on the tag with the
-# digest from docker.yml's run summary. It runs only on a v* tag ref, in the `release`
-# environment (docs/android-signing.md, "The `release` environment").
+# by digest: the digest docker.yml's `verified` job let through (pushed by `publish`, rebuilt by
+# reproducible.yml). Called by docker.yml, it gets it as `image-digest` and requires it to be the
+# guardian-image-digest artifact `verified` left in that same run. Run by hand on the tag (a
+# retry), it takes no digest from anyone: it finds the docker.yml run of the tag's commit in which
+# `verified` succeeded (.github/scripts/release-run.sh) and uses that run's artifact. The tag is
+# not re-resolved for the pin; it only has to still point at that digest, or the job fails. It
+# runs only on a v* tag ref, in the `release` environment (docs/android-signing.md, "The
+# `release` environment").
 #
 # It needs a secret, UMBREL_STORE_TOKEN: a fine-grained personal access token with
 # "Contents: read and write" on the store repository, and nothing else; best kept as a secret of
@@ -26,17 +29,14 @@ on:
     secrets:
       UMBREL_STORE_TOKEN:
         required: false
-  # A retry by hand, on the tag, with the digest from docker.yml's run summary.
+  # A retry by hand, on the tag: the digest comes from the docker.yml run that verified the tag's commit, never from
+  # an input.
   workflow_dispatch:
-    inputs:
-      image-digest:
-        description: 'The digest (sha256:...) docker.yml published for this tag (its run summary).'
-        required: true
-        type: string
 
 permissions:
   contents: read
   packages: read
+  actions: read # the docker.yml run of the tag's commit, and its digest artifact
 
 jobs:
   publish:
@@ -78,16 +78,49 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The digest docker.yml pushed, not whatever the tag resolves to now; the tag must still agree with it.
+      # Called by docker.yml: the artifact of this very run. By hand: the run of this commit in which `verified` succeeded.
+      - name: The docker.yml run that verified this commit's image
+        if: env.HAS_TOKEN == 'true' && inputs.image-digest == ''
+        id: run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          run="$(bash .github/scripts/release-run.sh verified docker.yml verified)"
+          IFS=$'\t' read -r id url <<<"${run}"
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
+          echo "The digest of ${url}"
+
+      - name: Download its digest
+        if: env.HAS_TOKEN == 'true' && inputs.image-digest == ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: guardian-image-digest
+          path: ${{ runner.temp }}/digest
+          run-id: ${{ steps.run.outputs.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download this run's digest
+        if: env.HAS_TOKEN == 'true' && inputs.image-digest != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: guardian-image-digest
+          path: ${{ runner.temp }}/digest
+
+      # The digest `verified` let through, not whatever the tag resolves to now; the tag must still agree with it.
       - name: Check the image digest
         if: env.HAS_TOKEN == 'true'
         id: digest
         env:
-          DIGEST: ${{ inputs.image-digest }}
+          GIVEN: ${{ inputs.image-digest }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::image-digest is not a sha256 digest: '${DIGEST}'"; exit 1; }
+          DIGEST="$(tr -d ' \n\r' < "${RUNNER_TEMP}/digest/guardian-image-digest.txt")"
+          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::the verified digest is not a sha256 digest: '${DIGEST}'"; exit 1; }
+          if [ -n "${GIVEN}" ] && [ "${GIVEN}" != "${DIGEST}" ]; then
+            echo "::error::image-digest ${GIVEN} is not the ${DIGEST} docker.yml's verified job let through"; exit 1
+          fi
           docker buildx imagetools inspect "${IMAGE}@${DIGEST}" > /dev/null \
             || { echo "::error::${IMAGE}@${DIGEST} does not exist"; exit 1; }
           current=$(docker buildx imagetools inspect "${IMAGE}:${version}" --format '{{.Manifest.Digest}}')

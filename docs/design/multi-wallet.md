@@ -255,6 +255,21 @@ authorization key; the version-2 text names the wallet id.
 - **The wrong device is caught:** "This is the Ledger of 'Business'. Connect the Trezor of 'Daily'."
 - **Alerts** for another wallet name it; tapping one switches.
 
+**Settings > "Several wallets"** (2026-11-09, the owner's decision): a toggle on this phone, **off by default**, for new
+installs and for phones that hold one wallet. Most people keep one wallet, so the app should not look as if it had
+several.
+
+- **Off:** Home shows no switcher (no wallet name, no dropdown at the top), and Settings shows only the toggle, not the
+  Wallets row (the list and "Add a wallet"). Settings > Wallets and "Add a wallet" opened by a link go back to Settings.
+- **On:** the switcher at the top of Home (while the phone holds more than one wallet, or the guardian can take another)
+  and the Wallets row with "Add a wallet" in Settings.
+- **More than one wallet on the phone:** on and locked (the switch is disabled), with "Stays on while this phone holds 2
+  wallets." under it, so no wallet with money in it is ever hidden. It works as `setting || wallets > 1`.
+- **Where it lives:** with the phone's other preferences (amount unit, theme) in `trikey.app.prefs.v1`, on this phone
+  only; not in the backup. A restore that brings back several wallets shows it on and locked. Recovery Key mode and a
+  hosted wallet don't show it (they hold one wallet).
+- **The demo** starts with one wallet ("Main"), so it shows the default: the toggle off, nothing at the top of Home.
+
 ### Adding a wallet
 
 Settings > Wallets > "Add a wallet": a name, connect the new hardware wallet, then `wallet.add.prepare` / `wallet.add`
@@ -364,7 +379,7 @@ sheets printed from the app.
 | Rename, remove | Settings > Wallets > a wallet. Remove only when empty (Savings too): the money moves to another wallet first, then the guardian retires the wallet (refused while it sees coins: `wallet_not_empty`), announces it, and keeps its account taken. |
 | A new phone without a backup | Recovering an added wallet with its hardware wallet builds the new wallet at that wallet's own account (from key 3's path), not at `0'`. |
 | Rebuilding from the guardian's list | `wallet.add` keeps the device's kind; `guardian.status.wallets` lists it, so a rebuilt wallet asks for the right device (older entries fall back to the first wallet's kind). |
-| Demo | A second wallet ("Business" on a Trezor). |
+| Demo | Starts with one wallet, as a phone does (2026-11-09): "Several wallets" off, nothing at the top of Home. Turned on, "Add a wallet" adds one (empty). The tests of several wallets start it with a second wallet, "Business" on a Trezor (`secondWallet`). |
 
 **Per-wallet recovery sheets (built 2026-11-05):** Settings > Wallets (or Settings > Guardian), "Print a recovery
 sheet": each wallet's name, hardware wallet, wallet id, the guardian's npub and relays, and its "Recover on a new
@@ -402,3 +417,4 @@ simple." What follows from it:
 | Accounts (2026-11-05, accepted) | A hidden BIP 48 account per wallet on the shared phone and key 3 seeds: Spending at 2*n*, Savings at 2*n*+1 (wallet 2 at 2' and 3', wallet 3 at 4' and 5'), key 3 at the Spending number (section 2). |
 | Adding a wallet (2026-11-05, accepted) | By the paired phone with the new hardware wallet's pairing proof, announced on the phone, the owner's channels and the web UI's Activity (section 3). Revised 2026-11 (security review): also the first wallet's hardware wallet approves it, and the first wallet's contacts are told; the web page can remove a wallet after the first and its unlock slot. |
 | Other guardians and hosted wallets in the same app (2026-11-05, accepted) | Later. For now the app holds the wallets of one guardian. |
+| A toggle for several wallets (2026-11-09) | "I want the multi wallet setup to be a toggle in the settings and the default is off." Off: no switcher on Home, no Wallets row in Settings. On and locked while the phone holds more than one wallet (section 5). |

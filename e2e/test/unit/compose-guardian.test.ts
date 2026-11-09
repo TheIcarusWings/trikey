@@ -108,7 +108,8 @@ describe('.github/workflows/docker.yml: the release files', () => {
   });
 
   it('pins the image by digest and attaches the compose file and the settings to the release', () => {
-    const script = job.steps.map((s) => s.run ?? '').join('\n');
+    // The pin itself is packaging/compose/release-compose.sh, which publish-release.yml runs again to check the draft.
+    const script = [...job.steps.map((s) => s.run ?? ''), read('packaging/compose/release-compose.sh')].join('\n');
     expect(script).toContain('pinned="${IMAGE}:${VERSION}@${DIGEST}"');
     expect(script).toContain('gh release upload');
     for (const f of ['trikey-guardian-compose.yml', 'trikey-guardian.env.example', 'trikey-guardian-compose.sha256']) expect(script).toContain(f);

@@ -7,7 +7,7 @@
  * the largest coins that are not frozen paying and the change coming back as a coin (`reconcile`). A manual pick and a
  * consolidation change the list exactly. The coins hold nothing: their txids are samples.
  *
- * "Business", the demo's second wallet, starts with a frozen dust coin too, so "Move everything" before removing it
+ * "Business", the second wallet some tests start the demo with, has a frozen dust coin too, so "Move everything" before removing it
  * offers "Include 1 frozen coin". An address labeled on Receive names the coins received there afterwards.
  */
 import { WalletServiceError } from './errors';
@@ -80,6 +80,8 @@ function startingMarks(coins: DemoCoin[]): Map<string, { label?: string; frozen?
 
 export interface CoinsMockHost extends MockHooks {
   nextId(prefix: string): string;
+  /** The demo started with "Business" at account 2 (`MockOptions.secondWallet`): its two coins. Else a wallet added there starts empty. */
+  businessWallet?: boolean;
 }
 
 export interface MockCoins {
@@ -135,10 +137,11 @@ export function createMockCoins(h: CoinsMockHost): MockCoins {
   const started = (key: string, wallet: CoinWallet, s: WalletState): DemoCoin[] => {
     if (!lists.has(key)) {
       // The first wallet's Spending starts with the seven coins, Business with its two; another demo wallet with whatever its balance is.
-      const start = wallet === 'savings' ? savingsStart(s) : key === '0:spending' ? startingCoins() : key === '2:spending' ? businessCoins() : [];
+      const business = key === '2:spending' && !!h.businessWallet;
+      const start = wallet === 'savings' ? savingsStart(s) : key === '0:spending' ? startingCoins() : business ? businessCoins() : [];
       lists.set(key, start);
       if (key === '0:spending') markMaps.set(key, startingMarks(start));
-      else if (key === '2:spending') markMaps.set(key, new Map([[start[1]!.outpoint, { label: 'Dust: unknown sender', frozen: true as const }]]));
+      else if (business) markMaps.set(key, new Map([[start[1]!.outpoint, { label: 'Dust: unknown sender', frozen: true as const }]]));
       else if (wallet === 'savings' && start[0]) marksAt(key).set(start[0].outpoint, { label: 'Cold storage' });
     }
     return lists.get(key)!;

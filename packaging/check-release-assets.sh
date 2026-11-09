@@ -8,7 +8,8 @@
 # - each .sha256 file names its own file and matches it;
 # - both APKs are signed by the release key, packaging/android/release-cert.sha256, and nothing else, and each is the
 #   app it should be (app.trikey.wallet, app.trikey.wallet.foss);
-# - the compose file runs the guardian image by the digest docker.yml pushed and reproducible.yml rebuilt.
+# - the compose file runs the guardian image by the digest docker.yml pushed and reproducible.yml rebuilt, and the
+#   compose files are byte for byte what packaging/compose/release-compose.sh makes from this commit with that digest.
 #
 # Input (environment):
 #   TAG               the release tag, v0.1.22-alpha
@@ -18,9 +19,11 @@
 #   STANDARD_PACKAGE  the standard app's application id (android.package in apps/mobile/app.json); FOSS adds .foss
 #   CERT_FILE         default packaging/android/release-cert.sha256
 #   BUILD_TOOLS       a folder with apksigner and aapt2; default the newest under $ANDROID_HOME/build-tools
+#   COMPOSE_SCRIPT    default packaging/compose/release-compose.sh (with docker-compose.yml and .env.example beside it)
 set -euo pipefail
 : "${TAG:?}" "${ASSETS_DIR:?}" "${ASSETS_JSON:?}" "${IMAGE:?}" "${DIGEST:?}" "${STANDARD_PACKAGE:?}"
 CERT_FILE="${CERT_FILE:-packaging/android/release-cert.sha256}"
+COMPOSE_SCRIPT="${COMPOSE_SCRIPT:-packaging/compose/release-compose.sh}"
 if [ -z "${BUILD_TOOLS:-}" ]; then
   BUILD_TOOLS="$(find "${ANDROID_HOME:?}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
 fi
@@ -91,11 +94,20 @@ check_apk() { # <file> <application id>
 check_apk "${standard}" "${STANDARD_PACKAGE}"
 check_apk "${foss}" "${STANDARD_PACKAGE}.foss"
 
-# 5. The compose file runs exactly the pushed image, by digest, and nothing can swap it.
+# 5. The compose files are exactly what docker.yml makes from this commit's packaging/compose with the pushed digest:
+# the same script, run again here, byte for byte. So not only the image line: no other entrypoint, command, user,
+# privileges, capabilities, mounts (docker.sock) or services, and the settings file is the repository's.
 images="$(grep -E '^ *image: *[^ ]*trikey-guardian' "${ASSETS_DIR}/${compose}" || true)"
 [ "${images}" = "    image: ${IMAGE}:${version}@${DIGEST}" ] \
   || fail "${compose} does not run ${IMAGE}:${version}@${DIGEST} (it has: ${images:-no guardian image})"
-if grep -q 'TRIKEY_IMAGE' "${ASSETS_DIR}/${compose}"; then fail "${compose} still lets TRIKEY_IMAGE replace the image"; fi
-echo "${compose}: ${IMAGE}:${version}@${DIGEST}"
+made="$(mktemp -d)"
+IMAGE="${IMAGE}" VERSION="${version}" DIGEST="${DIGEST}" TAG="${TAG}" OUT="${made}" bash "${COMPOSE_SCRIPT}" > /dev/null \
+  || fail "could not make the compose files from ${COMPOSE_SCRIPT}"
+for file in "${compose}" "${env_example}" "${compose_sums}"; do
+  cmp -s "${made}/${file}" "${ASSETS_DIR}/${file}" \
+    || fail "${file} is not the file docker.yml makes from packaging/compose at ${TAG}: $(diff "${made}/${file}" "${ASSETS_DIR}/${file}" | head -n 20 | tr '\n' ' ')"
+done
+rm -rf "${made}"
+echo "${compose}, ${env_example}: as made from packaging/compose at ${TAG}, ${IMAGE}:${version}@${DIGEST}"
 
 echo "All $(wc -l <<<"${expected}") files of ${TAG} checked."
