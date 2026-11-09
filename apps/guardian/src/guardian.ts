@@ -63,6 +63,7 @@ import {
   ChainSourceError,
   ChainSourceStore,
   describe as describeSource,
+  onOwnNetwork,
   environmentSourceName,
   parseChainSource,
   sameChainSource,
@@ -198,6 +199,8 @@ export type ChainSourceOutcome =
   | { ok: false; code: 'invalid' | 'setup_required' | 'recovery_pending' | 'not_found'; message: string };
 
 const RECOVERY_BLOCKS_PUBLIC = 'A recovery is running: the guardian switches to a public server only after it ends. You can switch to your own node now.';
+const RECOVERY_BLOCKS_OUTSIDE =
+  'A recovery is running: until it ends, the guardian switches only to a server on this box or your own network, and this one is not (or its name does not resolve to one). You can switch to your own node now.';
 
 
 export interface ChainTestOutcome {
@@ -1273,9 +1276,13 @@ export class Guardian implements WalletRuntime {
       if (next.kind === 'public' && this.recoveryBlocksPublicSource()) return { ok: false, code: 'recovery_pending', message: RECOVERY_BLOCKS_PUBLIC };
       // The source in use again (saved twice, or the form left as it was): nothing to log, announce or pin.
       if (this.chainSource && sameChainSource(this.chainSource, next)) return { ok: true, changed: false };
+      // Judged by its address, not by the kind the page sent (security sweep 2): a server on the internet sent as "your
+      // own" is refused during a recovery like a public one, and announced with the public server's warning.
+      const outside = !(await onOwnNetwork(next));
+      if (outside && this.recoveryBlocksPublicSource()) return { ok: false, code: 'recovery_pending', message: RECOVERY_BLOCKS_OUTSIDE };
       await this.chainSourceStore.save(next, this.clock.now());
       this.chainSourceOrigin = 'settings';
-      await this.switchChainSource(next);
+      await this.switchChainSource(next, undefined, outside);
       return { ok: true, changed: true };
     });
   }
@@ -1311,12 +1318,12 @@ export class Guardian implements WalletRuntime {
   }
 
   /** Switches to `next` and announces it: Activity, the phone, the owner's and the contacts' channels, guests' phones. */
-  private async switchChainSource(next: ChainSource, backTo?: NonNullable<GuardianConfig['platform']>): Promise<void> {
+  private async switchChainSource(next: ChainSource, backTo?: NonNullable<GuardianConfig['platform']>, outside = false): Promise<void> {
     const before = this.chainSource;
     this.chainSource = next;
     this.chain.setBackend(this.makeBackend(next, false));
     const from = before ? summarize(before) : undefined;
-    const to = summarize(next);
+    const to = summarize(next, { outside });
     await this.logEvent({
       type: 'chain_source_changed',
       ...(from ? { from: `${from.kind}:${from.backend}:${from.host}:${from.port}` } : {}),
@@ -1327,7 +1334,7 @@ export class Guardian implements WalletRuntime {
     const text =
       (backTo
         ? `Your guardian is back on ${environmentSourceName(backTo)}: it now reads the blockchain from ${describeSource(next)}${before ? ` (before: ${describeSource(before)})` : ''}.`
-        : `Your guardian now reads the blockchain from ${describeSource(next)}${before ? ` (before: ${describeSource(before)})` : ''}.`) +
+        : `Your guardian now reads the blockchain from ${describeSource(next, { outside })}${before ? ` (before: ${describeSource(before)})` : ''}.`) +
       (to.kind === 'public' ? ' A public server sees your wallet\'s addresses and could hide coins or delay confirmations; it cannot spend or change rules.' : '') +
       ' If you did not change this in the guardian\'s web page, check the guardian.';
     await this.notifyPhone({ type: 'chain_source_changed', kind: to.kind, backend: to.backend, host: to.host.slice(0, 255), ...this.stampNow(), message: text.slice(0, 500) });

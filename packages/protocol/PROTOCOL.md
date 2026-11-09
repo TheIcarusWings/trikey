@@ -356,7 +356,9 @@ It is not in the policy and no phone can change it. The phone only sees **`guard
 node) and the **`chain_source_changed`** alert (the same members) when the owner switches. A public server sees every
 address of the wallet and the box's IP address and could hide coins or delay confirmations from the guardian (it
 cannot spend or change a rule); the phone shows that warning while `kind` is `public`. During a recovery the guardian
-refuses to switch to a public server.
+refuses to switch to a public server. "Public" is judged by the server's address, not by the kind chosen: a private
+Electrum server or Bitcoin Core whose host is not on the box or the owner's network (an internet address, or a name
+that resolves to one) is refused during a recovery too, and `chain_source_changed` then says `kind: "public"`.
 
 **Unconfirmed transactions.** Some Electrum servers report no mempool at all: Electrs 0.11 reads none of Bitcoin Core
 32's (Core dropped `bip125-replaceable` from mempool entries, Electrs requires it and skips every entry), so every

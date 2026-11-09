@@ -17,6 +17,7 @@
  */
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import type { NetworkName } from '@trikey/core';
 import { readJsonFile, writeFileAtomic } from '../files.js';
@@ -113,6 +114,42 @@ export function looksLocal(host: string): boolean {
   return !h.includes('.') || ['.local', '.lan', '.home.arpa', '.internal', '.home', '.ts.net'].some((s) => h.endsWith(s));
 }
 
+/** Every address a host name resolves to (`dns.lookup`, all of them). */
+export type ResolveHost = (host: string) => Promise<string[]>;
+
+const lookupAll: ResolveHost = async (host) => (await dnsLookup(host, { all: true, verbatim: true })).map((a) => a.address);
+/** A host name that takes longer than this to resolve counts as not on the owner's network. */
+const RESOLVE_TIMEOUT_MS = 5_000;
+
+/**
+ * Whether `s` is on this box or the owner's own network, judged by its address, never by its kind (security sweep 2):
+ * the kind is whatever the web page sent, so a server on the internet sent as `electrum` ("your own Electrum server")
+ * got past "no public server during a recovery" and was announced without the public-server warning. A `public` source
+ * never is; an `electrum` or `core` one is when its host is a local IP address, or a name every address of which is
+ * local. A name that does not resolve now (or not within 5 s) is judged by its form (`looksLocal`): the guardian could
+ * not reach it either.
+ */
+export async function onOwnNetwork(s: ChainSource, resolve: ResolveHost = lookupAll): Promise<boolean> {
+  if (s.kind === 'public') return false;
+  const host = bare(s.kind === 'core' ? s.rpc.host : s.host);
+  if (isIP(host)) return isLocalAddress(host);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const addrs = await Promise.race([
+      resolve(host),
+      new Promise<string[]>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('timeout')), RESOLVE_TIMEOUT_MS);
+      }),
+    ]);
+    if (!addrs.length) return looksLocal(host);
+    return addrs.every((a) => isLocalAddress(bare(a)));
+  } catch {
+    return looksLocal(host);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * What the web UI sends (`PUT /api/chain`, `POST /api/chain/test`), checked. `current` fills the RPC password when the
  * owner left it out (write-only, like the notification secrets), and so does `nodeRpc`, the Bitcoin Core the guardian
@@ -207,17 +244,21 @@ export interface ChainSourceSummary {
   port: number;
 }
 
-export function summarize(s: ChainSource): ChainSourceSummary {
-  if (s.kind === 'core') return { kind: 'own', backend: 'core', host: s.rpc.host, port: s.rpc.port };
-  return { kind: s.kind === 'public' ? 'public' : 'own', backend: 'electrum', host: s.host, port: s.port };
+/** `outside`: the source is not on the owner's network (`onOwnNetwork`), whatever its kind says: it counts as `public`. */
+export function summarize(s: ChainSource, opts: { outside?: boolean } = {}): ChainSourceSummary {
+  if (s.kind === 'core') return { kind: opts.outside ? 'public' : 'own', backend: 'core', host: s.rpc.host, port: s.rpc.port };
+  return { kind: s.kind === 'public' || opts.outside ? 'public' : 'own', backend: 'electrum', host: s.host, port: s.port };
 }
 
-/** "your own Electrum server electrs:50001", "your own Bitcoin Core 192.168.1.5:8332", "the public server mempool.space:40002". */
-export function describe(s: ChainSource): string {
+/**
+ * "your own Electrum server electrs:50001", "your own Bitcoin Core 192.168.1.5:8332", "the public server mempool.space:40002";
+ * with `outside` (not on the owner's network, `onOwnNetwork`), "the Electrum server ... (not on your own network)".
+ */
+export function describe(s: ChainSource, opts: { outside?: boolean } = {}): string {
   const at = (h: string, p: number) => `${h.includes(':') && !h.startsWith('[') ? `[${h}]` : h}:${p}`;
-  if (s.kind === 'core') return `your own Bitcoin Core ${at(s.rpc.host, s.rpc.port)}`;
+  if (s.kind === 'core') return opts.outside ? `the Bitcoin Core ${at(s.rpc.host, s.rpc.port)} (not on your own network)` : `your own Bitcoin Core ${at(s.rpc.host, s.rpc.port)}`;
   if (s.kind === 'public') return `the public server ${at(s.host, s.port)}`;
-  return `your own Electrum server ${at(s.host, s.port)}`;
+  return opts.outside ? `the Electrum server ${at(s.host, s.port)} (not on your own network)` : `your own Electrum server ${at(s.host, s.port)}`;
 }
 
 /** The view the web UI gets: everything but the RPC password (only whether one is set). */
