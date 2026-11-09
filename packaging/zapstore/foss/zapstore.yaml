@@ -22,13 +22,16 @@ description: |
   LineageOS) and for anyone who prefers it. QR codes are read with the open source zxing-cpp; the backup is a recovery
   code plus a backup file, never Google Drive. It is a separate app from the standard Trikey, with its own wallet.
 
-  Trikey is a 2-of-3 bitcoin wallet: your hardware wallet (Ledger or Trezor), this phone, and the Trikey Guardian
-  on your own Umbrel. Everyday payments need only the phone, under a daily limit the guardian enforces. Bigger
+  Trikey is a 2-of-3 bitcoin wallet: your hardware wallet (Ledger, Trezor, Coldcard, BitBox, Jade and more), this
+  phone, and the Trikey Guardian on your own Umbrel, Start9 or computer. Everyday payments need only the phone, under a daily limit the guardian enforces. Bigger
   payments and rule changes need your hardware wallet. Lose the phone and a Delay & Notify recovery gets your money
   back while your alert contacts are told over nostr.
 
   Used the no-Google Trikey of 0.1.21 or earlier? It was the same app as the standard Trikey; this one starts empty.
   Restore your wallet here from your backup file and recovery code ("I already have a Trikey wallet").
+
+  Made by Icarus Wings, nostr:npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5 (icaruswings@trikey.app).
+  Published by Trikey's own npub (trikey@trikey.app), and signed with the same key as the GitHub releases.
 
   **Pre-alpha, open source, not audited.** Use test networks, or on mainnet only an amount you can afford to lose.
 license: MIT

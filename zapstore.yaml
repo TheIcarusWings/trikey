@@ -14,10 +14,13 @@ prerelease_channel: main
 name: Trikey
 summary: A 2-of-3 bitcoin wallet where every key is yours. Pre-alpha, open source, not audited.
 description: |
-  Trikey is a 2-of-3 bitcoin wallet: your hardware wallet (Ledger or Trezor), this phone, and the Trikey Guardian
-  on your own Umbrel. Everyday payments need only the phone, under a daily limit the guardian enforces. Bigger
+  Trikey is a 2-of-3 bitcoin wallet: your hardware wallet (Ledger, Trezor, Coldcard, BitBox, Jade and more), this
+  phone, and the Trikey Guardian on your own Umbrel, Start9 or computer. Everyday payments need only the phone, under a daily limit the guardian enforces. Bigger
   payments and rule changes need your hardware wallet. Lose the phone and a Delay & Notify recovery gets your money
   back while your alert contacts are told over nostr.
+
+  Made by Icarus Wings, nostr:npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5 (icaruswings@trikey.app).
+  Published by Trikey's own npub (trikey@trikey.app), and signed with the same key as the GitHub releases.
 
   **Pre-alpha, open source, not audited.** Use test networks, or on mainnet only an amount you can afford to lose.
 license: MIT
