@@ -225,6 +225,11 @@ export class HostedAlerter {
     return this.running;
   }
 
+  /** Resolves once no pass is running (one set off in the background included): `Guardian.stop` waits for it. */
+  async idle(): Promise<void> {
+    while (this.running) await this.running;
+  }
+
   private async once(engine: HostedEngine): Promise<void> {
     const g = this.g;
     if (!g.rpc || !g.dm) return;

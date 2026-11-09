@@ -403,6 +403,9 @@ describe('remote lock from the phone', { timeout: 60_000 }, () => {
   });
 
   it('is dropped without an answer from a stranger, a recovery-access phone or an alert contact', async () => {
+    // Starts from an unlocked guardian whatever the test above left (it unlocks at its end, unless it failed before).
+    if (rig.guardian.locked) await rig.unlock();
+    expect(rig.guardian.locked).toBe(false);
     const stranger = phoneOn(rig);
     await expect(stranger.rpc.call('guardian.lock', {}, { timeoutMs: 400 })).rejects.toBeInstanceOf(RpcTimeoutError);
     const recovering = phoneOn(rig);
