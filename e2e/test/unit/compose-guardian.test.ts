@@ -5,7 +5,9 @@
  * profile on the same pinned images as the regtest stack; every setting of .env.example used; and the release job that
  * attaches the pinned file. The running guardian is checked by packaging/compose/smoke-test.sh (compose.yml).
  */
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
@@ -127,5 +129,36 @@ describe('the platforms leave the guardian out of their backups (DESIGN.md, "The
 
   it('Start9: the backup holds no volume', () => {
     expect(read('packaging/start9/startos/backups.ts')).toMatch(/sdk\.Backups\.ofSyncs\(\)/);
+  });
+});
+
+describe('the guardian image loads code only from its root-owned source (sweep 2 #42)', () => {
+  /** Runs a TypeScript file the way the image's CMD does, with TMPDIR in a fresh folder; returns what tsx left there. */
+  function leftInTmp(env: Record<string, string>): string[] {
+    const dir = mkdtempSync(join(tmpdir(), 'trikey-tsx-'));
+    try {
+      writeFileSync(join(dir, 'main.ts'), 'const n: number = 1;\nconsole.log(n);\n');
+      const tmp = join(dir, 'tmp');
+      mkdirSync(tmp);
+      const { TSX_DISABLE_CACHE: _, ...base } = process.env;
+      execFileSync(process.execPath, ['--import', 'tsx', join(dir, 'main.ts')], { cwd: ROOT, env: { ...base, TMPDIR: tmp, ...env }, stdio: 'pipe' });
+      return readdirSync(tmp, { recursive: true }).map(String);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('turns off tsx\'s compile cache, which would sit in the writable /tmp and be loaded at the next start', () => {
+    const runtime = read('packaging/docker/Dockerfile').split(/^FROM /m).at(-1)!;
+    expect(runtime).toMatch(/^ENV [^]*?\bTSX_DISABLE_CACHE=1\b/m);
+    expect(runtime.indexOf('TSX_DISABLE_CACHE=1')).toBeLessThan(runtime.indexOf('CMD ['));
+    expect(runtime).toMatch(/CMD \["node", "--import", "tsx"/);
+    // StartOS runs the image's CMD with its own environment: it sets the switch too.
+    expect(read('packaging/start9/startos/main.ts')).toMatch(/TSX_DISABLE_CACHE: '1'/);
+  });
+
+  it('the switch works in the tsx the lockfile installs (a tsx update that drops it fails here)', () => {
+    expect(leftInTmp({}).length).toBeGreaterThan(0);
+    expect(leftInTmp({ TSX_DISABLE_CACHE: '1' })).toEqual([]);
   });
 });

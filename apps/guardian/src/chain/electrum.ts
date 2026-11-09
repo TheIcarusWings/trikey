@@ -29,7 +29,7 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import { connect, isIP, type Socket } from 'node:net';
 import { connect as tlsConnect, type TLSSocket } from 'node:tls';
 import { errorText, silentLogger, type Logger } from '../log.js';
-import { classifyIp } from '../notify/net.js';
+import { classifyIp, isLinkLocalIp } from '../ip-address.js';
 
 /** Splits a text stream into lines. Throws if a line grows past `maxLength` characters. */
 export class LineDecoder {
@@ -111,9 +111,7 @@ export interface HeaderNotification {
  */
 export function isLocalAddress(ip: string): boolean {
   const cls = classifyIp(ip);
-  if (cls === 'loopback' || cls === 'private') return true;
-  const a = ip.replace(/^\[|\]$/g, '').toLowerCase().replace(/^::ffff:(?=\d)/, '');
-  return /^169\.254\./.test(a) || /^fe[89ab][0-9a-f]:/.test(a);
+  return cls === 'loopback' || cls === 'private' || isLinkLocalIp(ip);
 }
 
 /** A SHA-256 certificate fingerprint as Node writes it (`AB:CD:...`, 32 pairs), from 64 hex digits with or without colons. */
