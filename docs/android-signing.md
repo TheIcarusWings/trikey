@@ -193,7 +193,8 @@ below are done.
    No branch rule: no branch may deploy to `release`.
 3. Optional but recommended: tick **Required reviewers**, add yourself, and click **Save protection rules**. Every
    release then waits for your approval before it signs or publishes (Actions shows *Review deployments* on the run;
-   docker.yml, each of the two Android signing jobs, the Umbrel store job and Publish release ask, so approve all waiting
+   docker.yml, each of the two Android signing jobs, the Umbrel store job (only when `UMBREL_STORE_AUTOPUBLISH` is set,
+   packaging/README.md) and Publish release ask, so approve all waiting
    jobs; the last one, Publish release, comes once the draft release has every file and they are checked). This is
    what stops someone with only write access (a stolen token, a misbehaving automation) from releasing by pushing a
    `v*` tag. Leave **Allow administrators to bypass configured protection rules** off if you want the rule to bind you

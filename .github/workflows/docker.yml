@@ -349,10 +349,12 @@ jobs:
       image-digest: ${{ needs.verified.outputs.digest }}
 
   # The Umbrel store copy, with the image pinned by the digest `publish` pushed. Its job declares the `release`
-  # environment, where the store token can live (docs/android-signing.md, "The `release` environment").
+  # environment, where the store token can live (docs/android-signing.md, "The `release` environment"). Only when the
+  # repository variable UMBREL_STORE_AUTOPUBLISH is `true` (set it with UMBREL_STORE_TOKEN): otherwise the job would
+  # only ask the owner to approve a deployment that then does nothing, on every release (packaging/README.md).
   umbrel-store:
     needs: verified
-    if: needs.verified.outputs.digest != ''
+    if: needs.verified.outputs.digest != '' && vars.UMBREL_STORE_AUTOPUBLISH == 'true'
     permissions:
       contents: read
       packages: read

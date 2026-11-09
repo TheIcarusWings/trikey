@@ -88,7 +88,9 @@ describe('docker.yml', () => {
       const job = wf.jobs[name]!;
       expect(job.uses).toBe(`./.github/workflows/${name}.yml`);
       expect(job.needs).toBe('verified');
-      expect(job.if).toBe("needs.verified.outputs.digest != ''");
+      // The store copy runs only when its automation is turned on, so a release without the store token asks for no
+      // approval of a job that would do nothing.
+      expect(job.if).toBe(name === 'umbrel-store' ? "needs.verified.outputs.digest != '' && vars.UMBREL_STORE_AUTOPUBLISH == 'true'" : "needs.verified.outputs.digest != ''");
       expect(job.with).toEqual({ 'image-digest': '${{ needs.verified.outputs.digest }}' });
       expect(job.permissions?.packages ?? 'read').toBe('read');
     }
