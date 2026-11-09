@@ -556,9 +556,12 @@ stop a recovery's delay, alerts or completion, and carries over to a recovery's 
 owner's contacts still locks the whole box, guests included; a contact of both does both, and the answer says both.
 
 **Leaving.** A guest leaves with `wallet.retire` (a `retire-wallet` approval), which retires the wallet in its slot and
-deletes the slot's key 3 record. It is refused (`1200`, `data: { reason: "ledger_unspent", coins, sats }`) while a coin
+deletes the slot's key 3 record. The approval is checked first. It is refused (`1200`, `data: { reason: "ledger_unspent", coins, sats, unconfirmed? }`) while a coin
 key 3 co-signed is still unspent on the guardian's chain source (looked up by the coins' own outpoints and scripts, as the
-recovery's coin check does; nothing imported into Bitcoin Core), since some of them may need key 3 to move; the phone checks the rest (an empty wallet on two servers) before it asks.
+recovery's coin check does; nothing imported into Bitcoin Core), or could still appear (`unconfirmed` of them: a payment
+it co-signed that is not on the chain while the coin it spends is unspent, so it could still be broadcast; moving that
+coin settles it), since some of them may need key 3 to move; the phone checks the rest (an empty wallet on two servers)
+before it asks. A malformed answer from the chain source refuses it (`1501`), never counts as "no coins".
 
 **No live wallet for guests.** The guardian never subscribes to a guest wallet's scripts, never imports anything of
 it into Bitcoin Core, and sends its phone no `wallet_tx` (a guest's `features` do not list `live_wallet`): it knows no

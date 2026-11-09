@@ -1024,7 +1024,14 @@ is left are in docs/design/family-hosting.md.
   co-signs (amount and recipient), the total of a recovery, and the guest's contacts' nostr keys.
 - **The daily limit without addresses:** inputs and change are proven by the PSBT's tweaks; "change only within reach of
   a scan" cannot be checked without learning addresses, so every co-signed change coin goes into the slot's ledger, which
-  a recovery must sweep (or name in `abandon`), and a phone key backup is required for guests (decision 2).
+  a recovery must sweep (or name in `abandon`), and a phone key backup is required for guests (decision 2). A coin leaves
+  the ledger only once the chain shows it **settled**: it is not unspent, and the coin its transaction spends is gone too
+  (so that transaction confirmed, or a conflict means it never will). A coin of a co-signed payment not broadcast yet
+  stays, and so does every coin when the chain source's answer is malformed (an error, never "no coins"). Before
+  security sweep 3 anything the chain did not list as unspent was dropped, before `wallet.retire` even looked at the
+  hardware approval: a thief with the guest's phone could co-sign a payment, keep it, make the ledger forget its output
+  and broadcast it once the guest had left and key 3 was gone. `wallet.retire` checks the approval first, prunes
+  nothing, and needs every ledger coin settled.
 - **Recovery:** the guest's phone (or a new phone the hardware wallet lets in with `hosted.access`) builds the sweep from
   its own chain data and, without a backup, from the encrypted, write-once wallet map the host stores but cannot read.
 - **Chain data:** never from the host (it would learn every address): the guest's own server, else a public Esplora,

@@ -137,6 +137,8 @@ export class FakeElectrum {
   applyBroadcasts = false;
   /** Answer as a server that does not see the mempool (see the file comment). */
   hideMempool = false;
+  /** Answer `listunspent` with this instead of a list (a broken or lying server). */
+  malformedUnspent?: unknown;
   /** `blockchain.estimatefee` answers, BTC/kvB by target; targets not listed answer -1 (no estimate). */
   feeRates = new Map<number, number>([
     [1, 0.0002],
@@ -535,6 +537,7 @@ export class FakeElectrum {
       case 'blockchain.scripthash.get_history':
         return ok(this.visibleHistory(p[0] as string));
       case 'blockchain.scripthash.listunspent':
+        if (this.malformedUnspent !== undefined) return ok(this.malformedUnspent);
         return ok(this.visibleUnspent(p[0] as string).map((u) => ({ tx_hash: u.txid, tx_pos: u.vout, height: u.height, value: u.value })));
       case 'blockchain.transaction.get': {
         const tx = this.hideMempool && this.mempool.has(p[0] as string) ? undefined : this.txs.get(p[0] as string);

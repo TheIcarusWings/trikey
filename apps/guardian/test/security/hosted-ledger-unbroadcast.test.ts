@@ -12,15 +12,23 @@
  *
  * Now a co-signature only adds to the ledger; a coin leaves it only when a chain check finds it spent. When the ledger
  * is full, `sign` prunes spent coins on chain and tries once more.
+ *
+ * Security sweep 3, finding 2 (MEDIUM-HIGH): that chain check still dropped every coin the chain did not list as
+ * unspent: T1's own output (not broadcast yet, so a thief could broadcast it once the guest had left and key 3 was
+ * gone), and every coin at once when the server answered something other than a list. It ran in `wallet.retire` before
+ * the hardware approval was looked at, so a phone alone could trigger it. Now a coin leaves only once settled (its
+ * transaction can add it no more: the coin it spends is gone too), a malformed answer is an error, and `wallet.retire`
+ * checks the approval first and prunes nothing.
  */
 import { getPublicKey } from 'nostr-tools/pure';
 import * as btc from '@scure/btc-signer';
 import { hex } from '@scure/base';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ROLES, TX_OPTS, ccdtKey, delegatedScripts, finalizePsbt, tweakPrivateKey, tweakToBytes } from '@trikey/core';
-import { RpcClient, SimplePoolRelayPool, decodeInviteUri } from '@trikey/protocol';
+import { ErrorCode, RpcClient, SimplePoolRelayPool, approvalMessage, decodeInviteUri, type RpcError } from '@trikey/protocol';
 import type { HostedEngine } from '../../src/hosting/engine.js';
-import { MNEMONICS, appSigner, network } from '../helpers.js';
+import { AUTH_PATH, MNEMONICS, appSigner, hwAuthPrivateKey, network } from '../helpers.js';
+import { signMessage } from '../../src/policy/index.js';
 import { GuardianRig } from '../support/index.js';
 import { externalScript, fakeMap, hostedWallet, offPathPayment, type HostedFixture, withHostedRulesApproval } from '../support/hosted.js';
 import { pairInRig } from './support.js';
@@ -103,11 +111,28 @@ function spendLedgerCoinAtZeroFee(outpoint: string, prevTxHex: string): Uint8Arr
   return tx.toPSBT();
 }
 
-describe('security: an unbroadcast co-signature keeps the ledger (sweep 2 #6)', { timeout: 60_000 }, () => {
+describe('security: an unbroadcast co-signature keeps the ledger (sweep 2 #6, sweep 3 #2)', { timeout: 60_000 }, () => {
   let x = '';
   let t0Hex = '';
+  let t1Hex = '';
+  let y = '';
+  const ledgerOps = () => engine.ledger().map((l) => `${l.txid}:${l.vout}`);
+  const retire = async (approval: unknown) => {
+    try {
+      await guestRpc.call('wallet.retire', { approval } as never);
+      return undefined;
+    } catch (e) {
+      return e as RpcError;
+    }
+  };
+  const approveRetire = async (sequence?: number) => {
+    const seq = sequence ?? (await guestRpc.call('guardian.status', {})).nextHardwareSequence;
+    const expiresAt = rig.nowSec() + 600;
+    const text = approvalMessage({ action: 'retire-wallet' }, { walletId: guest.walletId, sequence: seq, expiresAt });
+    return { kind: 'bip137' as const, sequence: seq, expiresAt, signature: signMessage(text, hwAuthPrivateKey(AUTH_PATH, MNEMONICS.hardware2)) };
+  };
 
-  it('PoC: a co-signed spend that is never broadcast leaves the coin it spends in the ledger', async () => {
+  it('PoC: a co-signed spend that is never broadcast leaves the coin it spends in the ledger, and its own output too', async () => {
     // T0, broadcast: the guest's coin moves to an off-path output X.
     const u = rig.fund(guest.wallet.derive(0, 0).script, 300_000n);
     const t0 = await offPathPayment(guest, { txid: u.txid, vout: 0, value: u.value, chain: 0, index: 0, prevTxHex: u.rawTx }, 10_000n, 289_000n, externalScript(), guest.app);
@@ -116,36 +141,74 @@ describe('security: an unbroadcast co-signature keeps the ledger (sweep 2 #6)', 
     expect((await guestRpc.call('tx.broadcast', { txHex: final0.txHex })).txid).toBe(final0.txid);
     x = `${final0.txid}:1`;
     t0Hex = final0.txHex;
-    expect(engine.ledger().map((l) => `${l.txid}:${l.vout}`)).toEqual([x]);
+    expect(ledgerOps()).toEqual([x]);
 
-    // T1, never broadcast: spends X at a fee of 0 to another off-path output.
+    // T1, never broadcast: spends X at a fee of 0 to another off-path output Y.
     const t1 = spendLedgerCoinAtZeroFee(x, final0.txHex);
-    expect((await guestRpc.call('sign', { psbt: Buffer.from(t1).toString('base64') })).psbt).toBeTruthy();
+    const signed1 = await guestRpc.call('sign', { psbt: Buffer.from(t1).toString('base64') });
+    const final1 = finalizePsbt(Buffer.from(signed1.psbt, 'base64'));
+    t1Hex = final1.txHex;
+    y = `${final1.txid}:0`;
 
     // X is still unspent on chain, and still in the ledger with its tweaks: listed, and in the way of leaving the host.
-    expect(engine.ledger().map((l) => `${l.txid}:${l.vout}`)).toContain(x);
+    expect(ledgerOps()).toContain(x);
     const listed = await guestRpc.call('hosted.coins', {});
     expect(listed.coins.map((c: { txid: string; vout: number }) => `${c.txid}:${c.vout}`)).toContain(x);
-    const left = await rig.guardian.hosting.unspentLedger(engine);
-    expect(left.coins).toBe(1);
-    expect(left.sats).toBe(289_000n);
-    // The chain check pruned T1's output, which never reached the chain; X stays.
-    expect(engine.ledger().map((l) => `${l.txid}:${l.vout}`)).toEqual([x]);
+    // Y is not on the chain, but T1 could still be broadcast (X is unspent): it stays too (sweep 3: it was pruned).
+    const left = await rig.guardian.hosting.settleLedger(engine);
+    expect(left).toEqual({ coins: 2, sats: 578_000n });
+    expect(ledgerOps()).toEqual([x, y]);
   });
 
-  it('a full ledger: sign prunes spent coins on chain and tries once more', async () => {
-    // Make the ledger look full with T1's unbroadcast output in it again.
-    const t1 = spendLedgerCoinAtZeroFee(x, t0Hex);
-    await guestRpc.call('sign', { psbt: Buffer.from(t1).toString('base64') });
-    expect(engine.ledger()).toHaveLength(2);
+  it('PoC (sweep 3 #2): wallet.retire with a bad approval prunes nothing, and with a good one is refused while T1 could still be broadcast', async () => {
+    const bad = await approveRetire();
+    bad.signature = (await approveRetire(bad.sequence + 1)).signature; // signed for another sequence
+    const e = await retire(bad);
+    expect(e?.code).toBe(ErrorCode.ApprovalInvalid);
+    // Before the fix, the retire's chain check pruned Y here, before it looked at the approval.
+    expect(ledgerOps()).toEqual([x, y]);
+    const e2 = await retire(await approveRetire());
+    expect(e2?.code).toBe(ErrorCode.PolicyViolation);
+    expect(e2?.data).toMatchObject({ reason: 'ledger_unspent', coins: 2, unconfirmed: 1 });
+    expect(ledgerOps()).toEqual([x, y]);
+  });
+
+  it('PoC (sweep 3 #2): a listunspent answer that is not a list refuses, and prunes nothing', async () => {
+    rig.electrs.malformedUnspent = null;
+    try {
+      const e = await retire(await approveRetire());
+      expect(e?.code).toBe(ErrorCode.Unavailable);
+      await expect(rig.guardian.hosting.settleLedger(engine)).rejects.toThrow();
+      expect(ledgerOps()).toEqual([x, y]);
+    } finally {
+      rig.electrs.malformedUnspent = undefined;
+    }
+  });
+
+  it('a full ledger: sign checks the chain and tries once more, but never drops a coin the chain has not settled', async () => {
     (engine as unknown as { maxLedger: number }).maxLedger = 2;
     const u = rig.fund(guest.wallet.derive(0, 1).script, 50_000n);
     const t2 = await offPathPayment(guest, { txid: u.txid, vout: 0, value: u.value, chain: 0, index: 1, prevTxHex: u.rawTx }, 1_000n, 48_000n, externalScript(), guest.app);
+    let err: RpcError | undefined;
+    try {
+      await guestRpc.call('sign', { psbt: Buffer.from(t2.psbt).toString('base64') });
+    } catch (e) {
+      err = e as RpcError;
+    }
+    expect(err?.data).toMatchObject({ reason: 'ledger_full' });
+    expect(ledgerOps()).toEqual([x, y]);
+  });
+
+  it('a coin really spent on chain is still pruned: T1 confirms, X goes, Y stays (unspent)', async () => {
+    expect(rig.electrs.applyTransaction(t1Hex, rig.electrs.height)).toBeUndefined();
+    const left = await rig.guardian.hosting.settleLedger(engine);
+    expect(ledgerOps()).toEqual([y]);
+    expect(left).toEqual({ coins: 1, sats: 289_000n });
+    // Room again: the payment the full ledger refused goes through.
+    const u = rig.fund(guest.wallet.derive(0, 2).script, 50_000n);
+    const t2 = await offPathPayment(guest, { txid: u.txid, vout: 0, value: u.value, chain: 0, index: 2, prevTxHex: u.rawTx }, 1_000n, 48_000n, externalScript(), guest.app);
     expect((await guestRpc.call('sign', { psbt: Buffer.from(t2.psbt).toString('base64') })).psbt).toBeTruthy();
-    // T1's output (never on chain) was pruned to make room; X stays, T2's change is in.
-    const now = engine.ledger().map((l) => `${l.txid}:${l.vout}`);
-    expect(now).toHaveLength(2);
-    expect(now).toContain(x);
     expect(engine.ledger().some((l) => l.script === hex.encode(t2.changeScript))).toBe(true);
+    expect(t0Hex).toBeTruthy();
   });
 });
