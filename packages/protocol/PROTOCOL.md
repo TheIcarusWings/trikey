@@ -326,7 +326,7 @@ Opt-in (`Policy.contactLock`, DESIGN.md rule 8, docs/design/contact-lock.md). On
 
 * **The command** is a NIP-17 DM to the guardian whose text is the single word `LOCK` (case-insensitive, an optional trailing `.` or `!`, surrounding blank lines and quoted `>` lines ignored, so a reply quoting an alert works). Anything else is not the command (`don't lock it`, `lock?`, `LOCK 3-0123…`). It needs no code from an alert: a contact may lock on what they hear from the owner as much as on an alert, and a mistaken lock costs only an unlock.
 * **The effect** is exactly the locked state of `guardian.lock`: key 3 leaves memory, nothing is co-signed (phone-only payments get `1100`); recoveries, their timers and their alerts run on as on any locked guardian (a ready recovery is co-signed once the owner unlocks). Nothing else changes: not the rules, not a recovery. A contact can only lock: never unlock, change rules or read anything.
-* **Answers.** While the setting is on, the contact gets one short DM: locked; or already locked (nothing changed, nobody alerted). While it is off, the command does not exist: no answer, nothing changed, nothing logged. Anyone who is not an alert contact of the active wallet (a stranger, the paired phone's key, a running recovery's recipient no longer in the rules) gets **no answer at all**, so the command cannot be used to probe who is a contact or whether the setting is on. Only messages whose own timestamp is within 10 minutes of the guardian's clock count, each message once (remembered durably, as state-changing requests are: relays re-deliver old wraps after a restart), and at most 5 per contact per hour (more are dropped silently).
+* **Answers.** While the setting is on, the contact gets one short DM: locked; or already locked (nothing changed, nobody alerted). While it is off, the command does not exist: no answer, nothing changed, nothing logged. Anyone who is not an alert contact of the active wallet (a stranger, the paired phone's key, a running recovery's recipient no longer in the rules) gets **no answer at all**, so the command cannot be used to probe who is a contact or whether the setting is on. Only messages whose own timestamp is within 10 minutes of the guardian's clock count, each message once (remembered durably, as state-changing requests are: relays re-deliver old wraps after a restart; a message dated ahead is remembered when first seen, so it never counts later; one dated more than the subscription look-back ahead never counts), and at most 5 per contact per hour, dated-ahead ones included (more are dropped silently).
 * **Alerts.** A lock is logged (`Locked by alert contact npub… via nostr`) and alerts, retried for 7 days like `limit_off`: `guardian_locked` with `reason: "contact"` and `contact` to the paired phone, and a NIP-17 DM to every **other** alert contact saying who locked it and when. The guardian also DMs the alert contacts when the setting goes on (how to lock) or off (`LOCK` no longer works), and while it is on, its recovery and `limit_off` DMs end with how to lock.
 * **Unlocking** is unchanged: the owner's passphrase in the web UI, or the phone's `guardian.unlock` with its own throttle.
 * **The setting**: on is a tightening (the phone alone, also in `pair` and during a recovery); off needs a hardware approval over the version-3 text, `lock=off` (refused during a recovery, like every hardware-approved change). The rules, `contactLock` included, carry over to a wallet a recovery adopts.
@@ -556,9 +556,12 @@ stop a recovery's delay, alerts or completion, and carries over to a recovery's 
 owner's contacts still locks the whole box, guests included; a contact of both does both, and the answer says both.
 
 **Leaving.** A guest leaves with `wallet.retire` (a `retire-wallet` approval), which retires the wallet in its slot and
-deletes the slot's key 3 record. It is refused (`1200`, `data: { reason: "ledger_unspent", coins, sats }`) while a coin
+deletes the slot's key 3 record. The approval is checked first. It is refused (`1200`, `data: { reason: "ledger_unspent", coins, sats, unconfirmed? }`) while a coin
 key 3 co-signed is still unspent on the guardian's chain source (looked up by the coins' own outpoints and scripts, as the
-recovery's coin check does; nothing imported into Bitcoin Core), since some of them may need key 3 to move; the phone checks the rest (an empty wallet on two servers) before it asks.
+recovery's coin check does; nothing imported into Bitcoin Core), or could still appear (`unconfirmed` of them: a payment
+it co-signed that is not on the chain while the coin it spends is unspent, so it could still be broadcast; moving that
+coin settles it), since some of them may need key 3 to move; the phone checks the rest (an empty wallet on two servers)
+before it asks. A malformed answer from the chain source refuses it (`1501`), never counts as "no coins".
 
 **No live wallet for guests.** The guardian never subscribes to a guest wallet's scripts, never imports anything of
 it into Bitcoin Core, and sends its phone no `wallet_tx` (a guest's `features` do not list `live_wallet`): it knows no
@@ -894,7 +897,7 @@ The guardian service maps the engine's `Refusal.reason` to an error code and put
 | `recovery_in_progress` | 1301 |
 | `invalid_psbt`, `invalid_helper_input`, `foreign_input`, `missing_non_witness_utxo`, `non_witness_utxo_mismatch`, `invalid_signature` | 1400 |
 | `cosign_rate_limited` (more than 30 successful `sign` in an hour or 200 in a day for the wallet: `max`, `windowMs`, `retryAfterSeconds`) | 1500 |
-| `chain_unavailable` (no chain data: a recovery cannot start or complete, nor a co-signature once the last chain observation is old), `clock_ahead_of_chain` (the guardian's clock is more than 3 h ahead of the chain's median time past: it co-signs nothing) | 1501 |
+| `chain_unavailable` (no chain data: a recovery cannot start or complete, nor a co-signature once the last chain observation is old), `clock_ahead_of_chain` (the guardian's clock is more than 3 h ahead of the chain's median time past: it co-signs nothing), `clock_behind_chain` (more than 3 h behind it: the same; an app that does not know this reason shows it as any `1501`) | 1501 |
 
 ## 4. Validation, expiry and replay
 

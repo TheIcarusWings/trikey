@@ -52,8 +52,12 @@ export type GuardianRefusal = { message: string } & (
    */
   | { kind: 'unlock_failed'; retryAfterSeconds?: number; reason?: string }
   | { kind: 'rate_limited'; retryAfterSeconds?: number }
-  /** 1501: try again later. Also chain data unavailable. */
-  | { kind: 'unavailable' }
+  /**
+   * 1501: try again later. Also chain data unavailable. `reason` when the guardian names one: `chain_unavailable`, or
+   * `clock_ahead_of_chain` / `clock_behind_chain` (its clock disagrees with the chain by more than 3 hours: it co-signs
+   * nothing until the box's clock is right).
+   */
+  | { kind: 'unavailable'; reason?: string }
   | { kind: 'tx_not_found' }
   | { kind: 'broadcast_rejected'; reason?: string }
   /** `tx.broadcast` of a transaction the guardian does not relay; `reason` names the rule that failed (PROTOCOL.md, "Chain data"). */
@@ -135,7 +139,7 @@ export function refusalFromError(e: unknown): GuardianRefusal | undefined {
     case ErrorCode.RateLimited:
       return { kind: 'rate_limited', retryAfterSeconds: num(data['retryAfterSeconds']), message };
     case ErrorCode.Unavailable:
-      return { kind: 'unavailable', message };
+      return { kind: 'unavailable', ...(reason ? { reason } : {}), message };
     case ErrorCode.TxNotFound:
       return { kind: 'tx_not_found', message };
     case ErrorCode.BroadcastRejected:

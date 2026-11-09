@@ -31,7 +31,7 @@ import {
   type Policy,
 } from '@trikey/protocol';
 import { onContactDm } from '../src/dm-cancel.js';
-import { isLockCommand } from '../src/dm-lock.js';
+import { LOCK_MAX_AHEAD_SEC, LOCK_WINDOW_SEC, isLockCommand } from '../src/dm-lock.js';
 import { signMessage } from '../src/policy/index.js';
 import { AUTH_PATH, appSigner, fund, hwAuthPrivateKey, hwAuthPubkey, hwSigner, network, phoneSpend, withRulesApproval } from './helpers.js';
 import { GuardianRig } from './support/index.js';
@@ -266,6 +266,29 @@ describe('alert contacts lock the guardian', { timeout: 60_000 }, () => {
     // Now on: the same message, re-delivered by a relay, still does nothing.
     await onContactDm(rig.guardian, { sender: alice.pubkey, content: 'LOCK', ...off });
     expect(rig.guardian.locked).toBe(false);
+  });
+
+  it('sweep 3 #5: a LOCK dated ahead is remembered at once: handed over again once fresh, it does not lock', async () => {
+    const requests = () => (rig.guardian.service.get() as { requests: { key: string; until: number }[] }).requests;
+    const ahead = { createdAt: rig.nowSec() + 30 * 60, rumorId: '1f'.repeat(32) };
+    // Dropped (not fresh yet, the contact's clock half an hour ahead), and before the fix not remembered either...
+    await onContactDm(rig.guardian, { sender: bob.pubkey, content: 'LOCK', ...ahead });
+    expect(rig.guardian.locked).toBe(false);
+    const row = requests().find((r) => r.key === `lock:${bob.pubkey}:${ahead.rumorId}`);
+    expect(row?.until).toBe((ahead.createdAt + LOCK_WINDOW_SEC) * 1000 + 120_000);
+    // ...so a relay handing it over 25 minutes later, inside the window, locked the guardian then.
+    rig.clock.advance(25 * 60_000);
+    await onContactDm(rig.guardian, { sender: bob.pubkey, content: 'LOCK', ...ahead });
+    expect(rig.guardian.locked).toBe(false);
+    // Dated beyond the relays' look-back: never handled, remembered only as long as a relay may hand it over, and such
+    // messages count against the contact's rate limit, so they cannot grow the memory without end.
+    const far = (i: number) => ({ createdAt: rig.nowSec() + 30 * 86_400, rumorId: `${i}`.padStart(64, 'f') });
+    for (let i = 0; i < 7; i++) await onContactDm(rig.guardian, { sender: bob.pubkey, content: 'LOCK', ...far(i) });
+    const farRows = requests().filter((r) => r.key.startsWith(`lock:${bob.pubkey}:`) && /^f*\d$/.test(r.key.split(':')[2]!));
+    expect(farRows).toHaveLength(4); // 5 an hour, one used above
+    for (const r of farRows) expect(r.until).toBe((rig.nowSec() + LOCK_MAX_AHEAD_SEC + LOCK_WINDOW_SEC) * 1000 + 120_000);
+    expect(rig.guardian.locked).toBe(false);
+    rig.clock.advance(3_600_001); // the rate limit's hour, for the tests below
   });
 
   it('turning it off needs the hardware wallet (version-3 text, lock=off); then a LOCK gets no answer', async () => {

@@ -46,9 +46,9 @@ import { dueAlerts as computeDueAlerts, isKnownAlertId, type DueAlert } from '..
 import { CONTACTS_NOT_SHOWN, bip137Authorizer, approvalMessage, pairingMessage, proofId, recoveryAccessMessage, verifyPolicyApproval, type HardwareAction, type HardwareAuthorizer } from '../policy/authorizer.js';
 import { contactsDelta } from '../policy/contacts.js';
 import { DAY, systemClock, type ChainTime, type ChainTimeSource, type Clock } from '../policy/clock.js';
-import { BLOCKS_PER_DAY, MAINNET_CONTACT_REQUIRED, contactsBesidesPhone, dropsLastContact, LIMIT_OFF_AT_PAIRING, rulesApprovalRefusal, MAX_ACCESS_GRANTS, MAX_APPROVAL_TTL_MS, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_SEQUENCE_STEP, NOTICE_TTL_MS, isRefusalEvent, policyWarnings, pruneActivity, type CosignResult, type GuardianStatus, type PhoneSpendingStatus, type RecoveryView } from '../policy/engine.js';
+import { BLOCKS_PER_DAY, MAINNET_CONTACT_REQUIRED, contactsBesidesPhone, dropsLastContact, LIMIT_OFF_AT_PAIRING, rulesApprovalRefusal, MAX_ACCESS_GRANTS, MAX_APPROVAL_TTL_MS, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_CLOCK_BEHIND_CHAIN_MS, MAX_SEQUENCE_STEP, NOTICE_TTL_MS, isRefusalEvent, withNotice, policyWarnings, pruneActivity, type CosignResult, type GuardianStatus, type PhoneSpendingStatus, type RecoveryView } from '../policy/engine.js';
 import { addCosignerSignatures } from '../policy/inspect.js';
-import { pruneSpends, pruneTime, splitOutflow, usageWith, windowUsage } from '../policy/limit.js';
+import { limitClock, pruneSpends, pruneTime, splitOutflow, usageWith, windowUsage } from '../policy/limit.js';
 import { LIMIT_OFF_SATS, isContactLockOn, isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from '../policy/rules.js';
 import type { CosignerSigner } from '../policy/signer.js';
 import type { AccessGrant, CancelActor, CancelledBy, HardwareApproval, Rules, RulesApproval, SurvivingRole } from '../policy/index.js';
@@ -71,8 +71,6 @@ import {
   type LedgerEntry,
 } from './types.js';
 import { MAX_WALLET_MAP_BYTES, safeName } from '@trikey/protocol';
-
-const MAX_NOTICES = 32;
 
 /** Where a hosted engine keeps its state. `save` must be durable before it resolves. */
 export interface HostedStore {
@@ -245,12 +243,16 @@ function analyze(psbt: Uint8Array, acct: AccountPubkeys, network: NetworkName, o
 function selfOutputs(psbt: Uint8Array, analysis: PsbtAnalysis, acct: AccountPubkeys, now: number): LedgerEntry[] {
   const tx = parsePsbt(psbt);
   const out: LedgerEntry[] = [];
+  // The first input it spends: once that coin is gone, this transaction is confirmed or never will be (service.ts `classifyLedger`).
+  const first = analysis.inputs[0];
+  const firstScript = first ? tx.getInput(first.index).witnessUtxo?.script : undefined;
+  const from = first && firstScript ? { txid: first.outpoint.split(':')[0]!, vout: Number(first.outpoint.split(':')[1]), script: hex.encode(firstScript) } : undefined;
   for (const o of analysis.outputs) {
     if (!o.isSelf) continue;
     const prop = tx.getOutput(o.index).proprietary;
     const t = {} as Record<Role, string>;
     for (const r of ROLES) t[r] = hex.encode(tweakToBytes(findTweak(prop, acct[r])!));
-    out.push({ txid: analysis.txid, vout: o.index, valueSats: o.amount, script: hex.encode(o.script), tweaks: t, at: now });
+    out.push({ txid: analysis.txid, vout: o.index, valueSats: o.amount, script: hex.encode(o.script), tweaks: t, at: now, ...(from ? { from } : {}) });
   }
   return out;
 }
@@ -548,11 +550,9 @@ export class HostedEngine {
     if (chain && (!seen || chain.height > seen.height || (chain.height === seen.height && chain.medianTimePastMs > seen.medianTimePastMs))) draft.chainSeen = { ...chain, at: now };
   }
 
+  /** As the host's engine (policy/limit.ts `limitClock`): refused while the clock is too far ahead of or behind the chain. */
   private limitTime(draft: HostedState, now: number, chain: ChainTime | undefined): { ok: true; at: number } | { ok: false; refusal: HostedRefusal } {
-    const seen = chain ?? draft.chainSeen;
-    if (!seen) return { ok: false, refusal: { reason: 'chain_unavailable', detail: 'no chain data to check the clock against yet' } };
-    if (now > seen.medianTimePastMs + MAX_CLOCK_AHEAD_OF_CHAIN_MS) return { ok: false, refusal: { reason: 'clock_ahead_of_chain', systemTime: now, chainTime: seen.medianTimePastMs } };
-    return { ok: true, at: Math.max(draft.timeFloor ?? 0, now) };
+    return limitClock(now, chain, draft.chainSeen, draft.timeFloor, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_CLOCK_BEHIND_CHAIN_MS);
   }
 
   private log(draft: HostedState, now: number, event: HostedActivityEvent): void {
@@ -566,8 +566,7 @@ export class HostedEngine {
   }
 
   private addNotice(draft: HostedState, now: number, notice: HostedNotice): void {
-    const live = draft.notices.filter((n) => n.at > now - NOTICE_TTL_MS && n.sent.length < n.recipients.length);
-    draft.notices = [...live, notice].slice(-MAX_NOTICES);
+    draft.notices = withNotice(draft.notices, now, notice);
   }
 
   private checkApproval(draft: HostedState, now: number, approval: HardwareApproval, action: HardwareAction): HostedRefusal | undefined {
@@ -1289,7 +1288,31 @@ export class HostedEngine {
     });
   }
 
-  async retireWallet(approval: HardwareApproval): Promise<HostedResult<{ walletId: string; retiredAt: number }>> {
+  /**
+   * What `retireWallet(approval)` would refuse now for the wallet or the approval (not the ledger), without using the
+   * approval. The handler asks it before the ledger's chain check, so a phone without the hardware wallet gets no
+   * further. A refusal is logged as `retireWallet`'s.
+   */
+  async retireRefusal(approval: HardwareApproval): Promise<HostedRefusal | undefined> {
+    const draft = clone(this.state);
+    const w = draft.active;
+    if (!w) return { reason: 'not_registered' };
+    const active = activeRecovery(draft);
+    const refusal = active ? ({ reason: 'recovery_in_progress', recoveryId: active.id } as const) : this.checkApproval(draft, this.clock.now(), approval, { action: 'retire-wallet' });
+    if (refusal)
+      await this.mutate((d, now) => {
+        this.log(d, now, { type: 'wallet_retire_refused', refusal: refusal as never });
+        return refused(refusal);
+      });
+    return refusal;
+  }
+
+  /**
+   * Retires the active wallet (the guest leaves): deletes nothing yet, but key 3 goes with the slot. `settled`: the ledger
+   * coins a chain check found settled (hosting/service.ts `checkLedger`); any other ledger coin refuses it
+   * (`ledger_unspent`), before the approval is used.
+   */
+  async retireWallet(approval: HardwareApproval, settled: ReadonlySet<string> = new Set()): Promise<HostedResult<{ walletId: string; retiredAt: number }>> {
     return this.mutate((draft, now) => {
       const refuse = (refusal: HostedRefusal) => {
         this.log(draft, now, { type: 'wallet_retire_refused', refusal: refusal as never });
@@ -1299,6 +1322,8 @@ export class HostedEngine {
       if (!w) return refused({ reason: 'not_registered' });
       const active = activeRecovery(draft);
       if (active) return refuse({ reason: 'recovery_in_progress', recoveryId: active.id });
+      const open = w.ledger.filter((l) => !settled.has(outpointOf(l.txid, l.vout)));
+      if (open.length) return refuse({ reason: 'ledger_unspent', coins: open.length, sats: open.reduce((a, l) => a + l.valueSats, 0n) });
       const r = this.checkApproval(draft, now, approval, { action: 'retire-wallet' });
       if (r) return refuse(r);
       const walletId = w.registration.walletId;

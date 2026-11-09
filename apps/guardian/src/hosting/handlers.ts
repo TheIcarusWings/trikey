@@ -40,8 +40,12 @@ const PAUSED_TEXT = {
   phone: 'This wallet is paused (from your phone). It co-signs no payment until your hardware wallet resumes it.',
 } as const;
 
-function ledgerUnspentText(coins: number, sats: bigint): string {
-  return `This guardian co-signed ${coins} coin${coins === 1 ? '' : 's'} of this wallet (${formatBtc(sats)}) that ${coins === 1 ? 'is' : 'are'} still unspent. Retiring deletes its key, which they may need: move them first.`;
+function ledgerUnspentText(coins: number, sats: bigint, unconfirmed = 0): string {
+  const base = `This guardian co-signed ${coins} coin${coins === 1 ? '' : 's'} of this wallet (${formatBtc(sats)}) that ${coins === 1 ? 'is' : 'are'} still unspent`;
+  const pending = unconfirmed
+    ? `, or not on the chain yet: ${unconfirmed === 1 ? 'one comes' : `${unconfirmed} come`} from a payment it co-signed that was never broadcast and still could be. Retiring deletes its key, which they may need: move them first (for a payment never broadcast, move the coins it spends).`
+    : '. Retiring deletes its key, which they may need: move them first.';
+  return base + pending;
 }
 
 /** A slot's refusal as a protocol error (the engine's reasons as the host maps them, plus the slot's own). */
@@ -58,7 +62,7 @@ export function hostedRefusalError(r: HostedRefusal): RpcError {
     case 'wallet_paused':
       return new RpcError(ErrorCode.PhoneSpendingPaused, PAUSED_TEXT[r.by], { reason: r.reason, by: r.by, at: Math.floor(r.at / 1000) });
     case 'ledger_unspent':
-      return new RpcError(ErrorCode.PolicyViolation, ledgerUnspentText(r.coins, r.sats), { reason: r.reason, coins: r.coins, sats: Number(r.sats) });
+      return new RpcError(ErrorCode.PolicyViolation, ledgerUnspentText(r.coins, r.sats, r.unconfirmed), { reason: r.reason, coins: r.coins, sats: Number(r.sats), ...(r.unconfirmed ? { unconfirmed: r.unconfirmed } : {}) });
     default:
       return refusalError(r);
   }
@@ -77,7 +81,7 @@ export function hostedRefusalText(r: HostedRefusal): string {
     case 'wallet_paused':
       return PAUSED_TEXT[r.by];
     case 'ledger_unspent':
-      return ledgerUnspentText(r.coins, r.sats);
+      return ledgerUnspentText(r.coins, r.sats, r.unconfirmed);
     default:
       return refusalText(r);
   }
@@ -180,9 +184,9 @@ function guestHandlers(g: Guardian, h: Hosting): Partial<Record<MethodName, Gues
       const res = await refusable(g, ctx.sender, async () => {
         const first = await route.engine.cosign(psbt);
         if (first.ok || first.refusal.reason !== 'ledger_full') return first;
-        // The ledger keeps the coins co-signed payments spend until the chain shows them spent: check it, and try once more.
+        // The ledger keeps the coins co-signed payments spend until the chain shows them settled: check it, and try once more.
         try {
-          await h.unspentLedger(route.engine);
+          await h.settleLedger(route.engine);
         } catch {
           return first;
         }
@@ -273,22 +277,21 @@ function guestHandlers(g: Guardian, h: Hosting): Partial<Record<MethodName, Gues
       // Leaving (section 16): retiring deletes this slot's key 3 for good. Refused while a coin key 3 co-signed is still
       // unspent (checked on the host's own Electrs by the coins' own scripts, so nothing leaks): such a coin may be one
       // only the phone key and key 3 can move (section 4), and it would be lost.
+      // The hardware wallet's approval is checked first, before any chain call: a phone alone gets no further (security
+      // sweep 3: the check used to prune the ledger before the approval was looked at, so a stolen phone's retire with
+      // a bad approval dropped coins). Nothing is pruned here at all: retiring needs every ledger coin settled (spent, or
+      // never to exist: hosting/service.ts `classifyLedger`), and drops the ledger with the wallet.
       // The Electrs scan runs outside the slot's recovery mutex: holding it through the scan queued every other recovery
       // of this slot (and, before per-slot mutexes, the host and every guest) behind a slow chain call (security sweep 2
-      // follow-up). Spent coins are pruned from the ledger here; the mutex then only checks the in-memory remainder.
-      await chainCall(g, 'wallet.retire', async () => {
-        const left = await h.unspentLedger(route.engine);
-        if (left.coins) throw hostedRefusalError({ reason: 'ledger_unspent', coins: left.coins, sats: left.sats });
-      });
+      // follow-up). The mutex then checks that no coin was added since.
+      const pre = await route.engine.retireRefusal(params.approval);
+      if (pre) throw hostedRefusalError(pre);
+      const check = await chainCall(g, 'wallet.retire', () => h.checkLedger(route.engine.ledger()));
+      const open = [...check.unspent, ...check.unknown];
+      if (open.length)
+        throw hostedRefusalError({ reason: 'ledger_unspent', coins: open.length, sats: open.reduce((a, c) => a + c.valueSats, 0n), ...(check.unknown.length ? { unconfirmed: check.unknown.length } : {}) });
       return route.engine.recoveryMutex.run(async () => {
-        const left = route.engine.ledger();
-        if (left.length)
-          throw hostedRefusalError({
-            reason: 'ledger_unspent',
-            coins: left.length,
-            sats: left.reduce((a, c) => a + c.valueSats, 0n),
-          });
-        const res = await route.engine.retireWallet(params.approval);
+        const res = await route.engine.retireWallet(params.approval, new Set(check.settled));
         if (!res.ok) throw hostedRefusalError(res.refusal);
         await h.noteLeft(route.slot.slotId);
         await g.notifyPeer(ctx.sender, { type: 'wallet_retired', walletId: res.walletId, reason: 'retired', ...g.stampNow() });

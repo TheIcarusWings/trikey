@@ -95,7 +95,8 @@ Rough split: the must-review items below touch about 25,000 to 30,000 of these l
     block count), complete without alerts having been queued to every contact, sweep to a destination that drops
     the surviving key or keeps the lost one, or exceed the fee cap? Are `recovery.update`, contested cancel,
     `phone.resume`, superseded recoveries and dead sweeps sound?
-  - Clock and chain time: `clock_ahead_of_chain` (3 h), the persisted monotonic window time, `chain_unavailable`.
+  - Clock and chain time: `clock_ahead_of_chain` and `clock_behind_chain` (3 h each way), the persisted monotonic window
+    time, `chain_unavailable`.
     What can a lying Electrs do to these checks?
   - Retired wallets and rotation: can a retired key set be co-signed, recovered, re-paired or swept to under any
     descriptor (rule 7)? Does adoption carry over only what PROTOCOL.md "Wallet rotation" lists (limit back on,

@@ -310,6 +310,8 @@ export type Refusal =
   | { reason: 'chain_unavailable'; detail: string }
   /** The system clock is more than `MAX_CLOCK_AHEAD_OF_CHAIN_MS` ahead of the chain's median time past: nothing is co-signed. */
   | { reason: 'clock_ahead_of_chain'; systemTime: number; chainTime: number }
+  /** The system clock is more than `MAX_CLOCK_BEHIND_CHAIN_MS` behind the chain's median time past: nothing is co-signed. */
+  | { reason: 'clock_behind_chain'; systemTime: number; chainTime: number }
   /** The PSBT pays less than `MIN_COSIGN_FEE_SAT_PER_KVB` (inspect.ts): it would never relay, so it is no real payment. */
   | { reason: 'fee_rate_too_low'; fee: bigint; vsize: number; minSatPerKvb: number }
   /** More successful co-signatures in the window than `COSIGN_RATE_LIMITS` allow (engine.ts). */
@@ -561,6 +563,11 @@ export interface LimitNotice {
   previousAmountSats?: bigint;
   /** `savings_moved` of a consolidation (coin control): Savings coins merged into one, only the fee (`amountSats`) left. */
   consolidated?: true;
+  /**
+   * `savings_moved` summing up several spends nobody had received yet (`withNotice`, past `MAX_NOTICES`): how many;
+   * `amountSats` is their total and `txid` the largest's.
+   */
+  count?: number;
   /** The paired phone first, then the contacts (nostr pubkeys). */
   recipients: string[];
   /** Recipients it reached. */

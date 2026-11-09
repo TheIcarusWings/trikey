@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { hex } from '@scure/base';
 import { RECEIVE, buildSpend, buildSweep } from '@trikey/core';
 import { HostedEngine, MemoryHostedStore } from '../../src/hosting/engine.js';
-import { DAY, HOUR, MAX_CLOCK_AHEAD_OF_CHAIN_MS, ManualChain, ManualClock, SoftwareCosignerSigner } from '../../src/policy/index.js';
+import { DAY, HOUR, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_CLOCK_BEHIND_CHAIN_MS, ManualChain, ManualClock, SoftwareCosignerSigner } from '../../src/policy/index.js';
 import { GuardianRig } from '../support/index.js';
 import { fakeMap, hostedWallet } from '../support/hosted.js';
 import { APP_NOSTR, CONTACT_A, MNEMONICS, OTHER_COSIGNER_PRIV, T0, appSigner, fund, hwSigner, makeWallet, network, phoneSpend, setup, type Ctx } from '../helpers.js';
@@ -65,17 +65,19 @@ describe('security: the daily limit window and a clock moved forward (finding 2b
     const ctx = await setup({ rules: { dailyLimitSats: 100_000n }, chain });
     const spend = async (i: number, amount: bigint) => ctx.engine.cosign((await phoneSpend(ctx.wallet, [fund(ctx.wallet, RECEIVE, i, 200_000n)], amount)).psbt);
     expect(await spend(0, 10_000n)).toMatchObject({ ok: true });
-    // The clock set back 20 h: a spend now would be recorded 20 h in the past by the clock...
+    // The clock set back 20 h: refused outright, it is that far behind the chain (sweep 3 below).
     ctx.clock.advance(-20 * HOUR);
-    const b = await spend(1, 85_000n);
-    expect(b).toMatchObject({ ok: true });
-    // ...and fall out of the window 20 h early once the clock is put right: 4 h later, a fresh limit.
-    ctx.clock.set(T0 + 4 * HOUR);
-    chain.advance(2 * HOUR);
+    expect(await spend(1, 85_000n)).toMatchObject({ ok: false, refusal: { reason: 'clock_behind_chain' } });
+    // Set back 2 h, within the tolerance: a spend now would be recorded 2 h in the past by the clock...
+    ctx.clock.set(T0 - 2 * HOUR);
+    expect(await spend(1, 85_000n)).toMatchObject({ ok: true });
+    // ...and fall out of the window 2 h early once the clock is put right: 23 h on, still the same day's limit.
+    ctx.clock.set(T0 + 23 * HOUR);
+    chain.advance(23 * HOUR);
     expect(await spend(2, 85_000n)).toMatchObject({ ok: false, refusal: { reason: 'over_daily_limit' } });
     // A full day after both spends, on the monotonic time, the window has moved on.
     ctx.clock.set(T0 + DAY + 1);
-    chain.advance(DAY - 2 * HOUR);
+    chain.advance(HOUR);
     expect(await spend(3, 85_000n)).toMatchObject({ ok: true });
   });
 
@@ -92,6 +94,98 @@ describe('security: the daily limit window and a clock moved forward (finding 2b
     expect(await spend(2)).toMatchObject({ ok: true });
     ctx.clock.advance(2 * HOUR);
     expect(await spend(3)).toMatchObject({ ok: false, refusal: { reason: 'clock_ahead_of_chain' } });
+  });
+});
+
+/**
+ * Security sweep 3, finding 1 (HIGH): the limit's time had no lower bound. The monotonic time only stops the clock
+ * going back after a co-signature: with the phone and the box's clock, set the clock days back BEFORE any spend, spend
+ * the limit "in the past", step the clock a day forward (the first spend now outside the strict 24 h window), spend
+ * again, and so on until the clock caught up with the present. Now the engines also refuse to co-sign while the clock is
+ * more than `MAX_CLOCK_BEHIND_CHAIN_MS` behind the chain's median time past (`clock_behind_chain`).
+ */
+describe('security: a clock set back walks the daily limit (sweep 3, finding 1)', () => {
+  it('PoC: clock set back 48 h before any spend, spend the limit, step a day forward with the chain still: refused', async () => {
+    const chain = new ManualChain(HEIGHT0, T0 - HOUR); // real time T0: the chain does not move while this runs
+    const ctx = await setup({ rules: { dailyLimitSats: 100_000n }, chain, clock: new ManualClock(T0 - 48 * HOUR) });
+    let total = 0n;
+    const refusals: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await ctx.engine.cosign((await phoneSpend(ctx.wallet, [fund(ctx.wallet, RECEIVE, i, 200_000n)], 95_000n)).psbt);
+      if (r.ok) total += r.outflow;
+      else refusals.push(r.refusal.reason);
+      ctx.clock.advance(DAY);
+    }
+    // Before the fix: three limits' worth (T0-48h, T0-24h, T0), each outside the window of the one before.
+    expect(total).toBeLessThanOrEqual(100_000n);
+    expect(refusals).toContain('clock_behind_chain');
+    expect(refusals.filter((r) => r !== 'clock_behind_chain').every((r) => r === 'over_daily_limit')).toBe(true);
+    expect(ctx.engine.status().dailyLimit!.used).toBeLessThanOrEqual(100_000n);
+  });
+
+  it('an honest clock co-signs: ahead of the median time past, or a little behind it (within the tolerance)', async () => {
+    const chain = new ManualChain(HEIGHT0, T0 - HOUR);
+    const ctx = await setup({ chain });
+    const spend = async (i: number) => ctx.engine.cosign((await phoneSpend(ctx.wallet, [fund(ctx.wallet, RECEIVE, i, 200_000n)], 10_000n)).psbt);
+    expect(await spend(0)).toMatchObject({ ok: true });
+    ctx.clock.set(chain.medianTimePastMs - MAX_CLOCK_BEHIND_CHAIN_MS);
+    expect(await spend(1)).toMatchObject({ ok: true });
+    ctx.clock.set(chain.medianTimePastMs - MAX_CLOCK_BEHIND_CHAIN_MS - 1);
+    expect(await spend(2)).toMatchObject({ ok: false, refusal: { reason: 'clock_behind_chain', chainTime: chain.medianTimePastMs } });
+    // The clock put right: co-signing resumes.
+    ctx.clock.set(T0 + 10 * 60_000);
+    expect(await spend(3)).toMatchObject({ ok: true });
+  });
+
+  it('checks against the highest median time past seen: a server answering with an old tip does not loosen it', async () => {
+    const chain = new ManualChain(HEIGHT0, T0 - HOUR);
+    const ctx = await setup({ chain });
+    const spend = async (i: number) => ctx.engine.cosign((await phoneSpend(ctx.wallet, [fund(ctx.wallet, RECEIVE, i, 200_000n)], 10_000n)).psbt);
+    expect(await spend(0)).toMatchObject({ ok: true });
+    // The tip "goes back" 2 days, the clock with it.
+    chain.height = HEIGHT0 - 288;
+    chain.medianTimePastMs = T0 - 2 * DAY;
+    ctx.clock.set(T0 - 2 * DAY + HOUR);
+    expect(await spend(1)).toMatchObject({ ok: false, refusal: { reason: 'clock_behind_chain', chainTime: T0 - HOUR } });
+  });
+
+  it('PoC: the hosted engine (a guest slot) refuses the same way', async () => {
+    const clock = new ManualClock(T0 - 48 * HOUR);
+    const chain = new ManualChain(HEIGHT0, T0 - HOUR);
+    const signer = new SoftwareCosignerSigner(new Uint8Array(32).fill(21));
+    const engine = await HostedEngine.open({ slotId: '0123456789abcdef', store: new MemoryHostedStore(), clock, chain, blocksPerDay: 1 });
+    const fx = await hostedWallet({ cosignerPub: hex.encode(signer.accountPubkey) });
+    const rules = { dailyLimitSats: 100_000n, recoveryDelayDays: 7 as const, alertContacts: [CONTACT_A], sweepFeeCapSats: 20_000n };
+    const reg = await engine.register(
+      {
+        network: 'regtest',
+        accountPubkeys: { app: fx.accountPubkeys.app, hardware: fx.accountPubkeys.hardware },
+        cosignerAccountPubkey: fx.accountPubkeys.cosigner,
+        rules,
+        hardwareAuth: fx.hardwareAuth,
+        hardwareAuthProof: fx.proof,
+        rulesApproval: fx.approveRules(rules, clock.now()),
+        appNostrPubkey: APP_NOSTR,
+        walletLabel: 'Ana',
+        walletMap: fakeMap(),
+      },
+      signer,
+    );
+    if (!reg.ok) throw new Error(JSON.stringify(reg.refusal));
+    engine.setSigner(signer);
+    const to = 'bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080';
+    const pay = async (i: number, amount: bigint) =>
+      engine.cosign(await appSigner().signPsbt(buildSpend({ wallet: fx.wallet, utxos: [fund(fx.wallet, 0, i, 200_000n)], recipients: [{ address: to, amount }], feeRate: 2, changeIndex: i }).psbt, network));
+    let total = 0n;
+    for (let i = 0; i < 3; i++) {
+      const r = await pay(i, 95_000n);
+      if (r.ok) total += r.outflow;
+      else expect(['clock_behind_chain', 'over_daily_limit']).toContain(r.refusal.reason);
+      clock.advance(DAY);
+    }
+    // Refused twice (clock behind), then the honest clock co-signs once.
+    expect(total).toBeGreaterThan(0n);
+    expect(total).toBeLessThanOrEqual(100_000n);
   });
 });
 

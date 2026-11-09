@@ -75,7 +75,11 @@ and an old `LOCK` must never lock again after the owner unlocked. Each message i
 as state-changing RPC requests) until it is no longer fresh, and only messages whose own timestamp is within 10 minutes
 of the guardian's clock count. A message already handled is dropped before the rate limit, so re-deliveries do not use
 up a contact's allowance. At most 5 `LOCK` messages per contact per hour are handled (in memory: a restart locks the
-guardian anyway). Rejected: "ignore messages written before the last unlock", which a contact whose clock is a minute
+guardian anyway). A message dated ahead of the guardian's clock is remembered at once too, before the freshness check,
+until it can no longer be fresh (security sweep 3: one dated half an hour ahead was dropped without being remembered,
+and a relay handing it over again later, inside the window, locked then, even after the owner had turned the setting
+on). One dated more than the relays' look-back ahead (two days and ten minutes) is never handled and remembered only for
+that look-back, and these count against the contact's rate limit, so they cannot grow the memory without end. Rejected: "ignore messages written before the last unlock", which a contact whose clock is a minute
 behind could never get past.
 
 **7. Who is alerted.** The paired phone and every other alert contact, durably, like `limit_off`; not the contact who

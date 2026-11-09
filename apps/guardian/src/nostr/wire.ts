@@ -102,6 +102,7 @@ const CODES: Record<RefusalReason, number> = {
   hardware_auth_unconfirmed: ErrorCode.HardwareAuthUnconfirmed,
   chain_unavailable: ErrorCode.Unavailable,
   clock_ahead_of_chain: ErrorCode.Unavailable,
+  clock_behind_chain: ErrorCode.Unavailable,
   // Internal to the service (markAlertSent, rotateAfterSweep); never sent to a peer in practice.
   unknown_alert: ErrorCode.InternalError,
   not_adoptable: ErrorCode.InternalError,
@@ -157,6 +158,8 @@ export function refusalText(r: Refusal): string {
       return `Too many payments co-signed: at most ${r.max} in ${r.windowMs >= 86_400_000 ? `${r.windowMs / 86_400_000} day` : `${r.windowMs / 3_600_000} hour`}; try again in ${r.retryAfterSeconds} seconds`;
     case 'clock_ahead_of_chain':
       return `The guardian's clock (${new Date(r.systemTime).toISOString()}) is ahead of the chain (${new Date(r.chainTime).toISOString()}); it co-signs nothing until they agree`;
+    case 'clock_behind_chain':
+      return `The guardian's clock (${new Date(r.systemTime).toISOString()}) is behind the chain (${new Date(r.chainTime).toISOString()}); it co-signs nothing until they agree`;
     case 'recovery_signers':
       return `Recovery signatures: ${r.detail}`;
     case 'invalid_destination':

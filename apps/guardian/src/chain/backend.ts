@@ -143,8 +143,13 @@ function parseHistory(r: unknown): ElectrumHistoryItem[] {
   });
 }
 
+/**
+ * A `listunspent` answer. Anything but a list is an error, never "no coins": a server answering `null` or an object made
+ * every coin look spent, and the hosted ledger pruned on that (security sweep 3).
+ */
 function parseUnspent(list: unknown): BackendUnspent[] {
-  return (Array.isArray(list) ? (list as ElectrumUnspent[]) : []).map((x) => {
+  if (!Array.isArray(list)) throw new BackendUnavailableError('the Electrum server returned a malformed unspent list');
+  return (list as ElectrumUnspent[]).map((x) => {
     if (typeof x?.tx_hash !== 'string' || !/^[0-9a-f]{64}$/i.test(x.tx_hash) || !Number.isSafeInteger(x.tx_pos) || !Number.isSafeInteger(x.value) || x.value < 0)
       throw new BackendUnavailableError('the Electrum server returned a malformed unspent output');
     return { txid: x.tx_hash.toLowerCase(), vout: x.tx_pos, value: BigInt(x.value), height: x.height };

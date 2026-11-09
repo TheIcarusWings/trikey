@@ -21,6 +21,7 @@ import { parseRawTx } from '../chain/chain.js';
 import type { Guardian } from '../guardian.js';
 import { errorText } from '../log.js';
 import type { HostedEngine } from './engine.js';
+import { checkLedger } from './ledger.js';
 import type { Hosting } from './service.js';
 import type { HostedRecoveryRecord, SlotRecord } from './types.js';
 import { hostedRefusalText } from './handlers.js';
@@ -98,7 +99,10 @@ export class HostedRecoveryRunner {
     void this.h.alerts.run();
   }
 
-  /** The sweep's inputs are unspent, and every unspent ledger coin is swept or abandoned. Spent ledger coins are pruned. */
+  /**
+   * The sweep's inputs are unspent, and every unspent ledger coin is swept or abandoned. Settled ledger coins (spent, or
+   * never to exist: service.ts `classifyLedger`) are pruned; a coin whose transaction is not on the chain stays.
+   */
   async checkCoverage(engine: HostedEngine, rec: HostedRecoveryRecord): Promise<{ ok: true } | { ok: false; reason: 'sweep_incomplete' | 'sweep_inputs_missing'; detail: string }> {
     const tx = parsePsbt(base64.decode(rec.sweepPsbt));
     const inputs = new Map<string, Uint8Array>();
@@ -110,15 +114,15 @@ export class HostedRecoveryRunner {
       coins.push({ txid, vout: inp.index!, script: inp.witnessUtxo!.script });
     }
     const ledger = engine.ledger();
-    for (const l of ledger) coins.push({ txid: l.txid, vout: l.vout, script: hex.decode(l.script) });
     // By outpoint: nothing is imported into the host's Bitcoin Core wallet, nothing derived from the guest's wallet.
-    const unspent = await this.g.chain.outpointsUnspent(coins);
+    const check = await checkLedger(this.g.chain, ledger, coins);
+    const unspent = check.unspentSet;
     const gone = [...inputs.keys()].filter((o) => !unspent.has(o));
     if (gone.length)
       return { ok: false, reason: 'sweep_inputs_missing', detail: `The sweep spends coins that are no longer unspent (${gone.slice(0, 5).join(', ')}), so it cannot be broadcast.` };
     const abandoned = new Set(rec.abandon);
     const missed = ledger.filter((l) => unspent.has(`${l.txid}:${l.vout}`) && !inputs.has(`${l.txid}:${l.vout}`) && !abandoned.has(`${l.txid}:${l.vout}`));
-    const spentLedger = ledger.filter((l) => !unspent.has(`${l.txid}:${l.vout}`) && !inputs.has(`${l.txid}:${l.vout}`)).map((l) => `${l.txid}:${l.vout}`);
+    const spentLedger = check.settled.filter((o) => !inputs.has(o));
     if (spentLedger.length) await engine.pruneLedger(spentLedger);
     if (missed.length) {
       const total = missed.reduce((s, l) => s + l.valueSats, 0n);

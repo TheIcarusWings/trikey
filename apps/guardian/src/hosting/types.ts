@@ -114,6 +114,13 @@ export interface LedgerEntry {
   tweaks: { app: string; hardware: string; cosigner: string };
   /** ms */
   at: number;
+  /**
+   * One coin the co-signed transaction spends (its first input: outpoint and scriptPubKey hex). Once that coin is gone
+   * from the chain, the transaction is confirmed or can never be (a conflict spent it), so a coin it created that is not
+   * unspent either is settled and may leave the ledger (hosting/service.ts `classifyLedger`). Absent in entries from
+   * before security sweep 3.
+   */
+  from?: { txid: string; vout: number; script: string };
 }
 
 /**
@@ -253,8 +260,12 @@ export type HostedRefusal =
   | { reason: 'not_in_phase_1'; detail: string }
   /** The slot is paused (a contact's `LOCK` or the guest's `guardian.lock`): only the guest's hardware wallet resumes it. */
   | { reason: 'wallet_paused'; by: 'contact' | 'phone'; at: number }
-  /** `wallet.retire` while coins key 3 co-signed are still unspent: retiring deletes key 3, which they may need. */
-  | { reason: 'ledger_unspent'; coins: number; sats: bigint };
+  /**
+   * `wallet.retire` while coins key 3 co-signed are still unspent, or may still appear (`unconfirmed` of them: their
+   * transaction is not on the chain, and the coin it spends is not spent either, so it could still be broadcast):
+   * retiring deletes key 3, which they may need.
+   */
+  | { reason: 'ledger_unspent'; coins: number; sats: bigint; unconfirmed?: number };
 
 export type HostedResult<T> = ({ ok: true } & T) | { ok: false; refusal: HostedRefusal };
 

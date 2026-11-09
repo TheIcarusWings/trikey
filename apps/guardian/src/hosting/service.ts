@@ -21,7 +21,8 @@ import { HostedEngine, deserializeHosted, keySetKey, serializeHosted, type Hoste
 import { HostingRegistry } from './registry.js';
 import { HostedAlerter } from './alerts.js';
 import { HostedRecoveryRunner } from './recovery.js';
-import { HOSTED_SIGN_LIMIT, STOP_HOSTING_NOTICE_MS, STOP_NOW_CONFIRMATION, type HostedState, type SlotFile, type SlotRecord } from './types.js';
+import { HOSTED_SIGN_LIMIT, STOP_HOSTING_NOTICE_MS, STOP_NOW_CONFIRMATION, type HostedState, type LedgerEntry, type SlotFile, type SlotRecord } from './types.js';
+import { checkLedger, type ChainCoin, type LedgerCheck } from './ledger.js';
 
 /** A guest wallet's recovery id: `<slotId>g<n>-<txid12>` (fits the protocol's `RecoveryId` and the `CANCEL` DM's pattern). */
 export const HOSTED_RECOVERY_ID = /^([0-9a-f]{16})g\d+-[0-9a-f]{12}$/;
@@ -226,18 +227,24 @@ export class Hosting {
   }
 
   /**
-   * The ledger coins of a slot's active wallet that are still unspent, by their own outpoints and scripts on the host's
-   * chain source (nothing leaks: the guardian co-signed them). Spent ones are pruned from the ledger on the way.
+   * A slot's ledger as the host's chain source shows it (`classifyLedger`), by the coins' own outpoints and scripts and
+   * those of the coin each one's transaction spends (nothing leaks: the guardian co-signed them). Prunes nothing.
    * `outpointsUnspent`, never a script listing: Bitcoin Core's watch-only wallet holds nothing of a guest (and must not),
-   * so a listing there would call every ledger coin spent and prune them all; by outpoint (`gettxout`) it is exact.
+   * so a listing there would call every ledger coin spent; by outpoint (`gettxout`) it is exact. Throws when the chain
+   * source cannot answer (a malformed answer included): nothing is settled on a guess.
    */
-  async unspentLedger(engine: HostedEngine): Promise<{ coins: number; sats: bigint }> {
-    const ledger = engine.ledger();
-    if (!ledger.length) return { coins: 0, sats: 0n };
-    const unspent = await this.g.chain.outpointsUnspent(ledger.map((l) => ({ txid: l.txid, vout: l.vout, script: hex.decode(l.script) })));
-    const left = ledger.filter((l) => unspent.has(`${l.txid}:${l.vout}`));
-    const spent = ledger.filter((l) => !unspent.has(`${l.txid}:${l.vout}`)).map((l) => `${l.txid}:${l.vout}`);
-    if (spent.length) await engine.pruneLedger(spent);
+  async checkLedger(ledger: readonly LedgerEntry[], extra: readonly ChainCoin[] = []): Promise<LedgerCheck & { unspentSet: ReadonlySet<string> }> {
+    return checkLedger(this.g.chain, ledger, extra);
+  }
+
+  /**
+   * Prunes a slot's settled ledger coins (`checkLedger`) and returns what is left: coins unspent, or whose transaction
+   * could still be broadcast. For `sign` when the ledger is full.
+   */
+  async settleLedger(engine: HostedEngine): Promise<{ coins: number; sats: bigint }> {
+    const check = await this.checkLedger(engine.ledger());
+    if (check.settled.length) await engine.pruneLedger(check.settled);
+    const left = [...check.unspent, ...check.unknown];
     return { coins: left.length, sats: left.reduce((a, l) => a + l.valueSats, 0n) };
   }
 

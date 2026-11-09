@@ -122,7 +122,7 @@ mix record (section 7). Absent file: no guests, which is every guardian today. A
 - `startRecovery`, `updateRecovery`, `completeRecovery`, `rotateAfterSweep` take the destination as account pubkeys in
   delegated mode (section 5).
 - Per-engine options: `maxActivity` 1,000 and `maxRefusals` 200 for guests (host: today's 5,000 and 1,000), a ledger
-  cap (2,000 unspent coins), notices as today (`MAX_NOTICES` 32), access grants as today (`MAX_ACCESS_GRANTS` 8).
+  cap (2,000 unspent coins), notices as today (none still owed to someone is dropped for room, `MAX_NOTICES` 64), access grants as today (`MAX_ACCESS_GRANTS` 8).
 - Recovery ids carry the slot (`<slotId>-<n>-<txid12>`), so `recovery.cancel` and the `CANCEL <id>` DM
   (`dm-cancel.ts`) find the right slot.
 
@@ -224,7 +224,7 @@ recovery).
 |---|---|
 | `Σ inputs − Σ change`, fee included | **Works.** Inputs and their amounts are proven by tweaks plus `nonWitnessUtxo`; an output is change when its three tweaks rebuild its script from the guest's account pubkeys. This is core's `analysis.outflow` / `vaultIn − selfOut` (`packages/core/src/psbt.ts`). |
 | Rolling 24 hours, keyed by outpoint; a replay counted once; an RBF replacement counts as the larger amount | **Works.** Outpoints and shares (`splitOutflow`, `usageWith`, `apps/guardian/src/policy/limit.ts`) need no addresses. The app's "Speed up" (RBF) of a Spending payment is not offered to a guest yet: the slot's ledger would keep the replaced payment's change (DESIGN.md, "Speed up"). |
-| Clock checked against the chain (`clock_ahead_of_chain`, monotonic `timeFloor`) | **Works.** Chain time comes from the host's own node. |
+| Clock checked against the chain (`clock_ahead_of_chain`, `clock_behind_chain`, monotonic `timeFloor`) | **Works.** Chain time comes from the host's own node. |
 | Payments to Savings count as leaving | Works trivially: the guardian does not know Savings. |
 | Limit off | Works (same rule, same approval text); built in phase 2 (section 16). |
 | Coins spent by phone + hardware wallet | Not seen, and need not be: the limit bounds only what key 3 co-signs. Same as today ("Big payment ... the guardian isn't involved"). |
@@ -265,9 +265,15 @@ limit per day, as today).
 **Recommendation: P for phase 1**, with:
 
 1. **The ledger** (`slot.json`): every self output of every co-signed PSBT, pruned only when a chain check (a
-   recovery's, retiring's, or `sign`'s when the ledger is full) finds it spent. A co-signed PSBT that spends a ledger
+   recovery's, or `sign`'s when the ledger is full) finds it **settled**. A co-signed PSBT that spends a ledger
    coin does not remove it: it may never be broadcast, and the ledger may be the only record of the coin's tweaks
-   (security sweep 2). `hosted.coins` returns it to the slot's phone and to a recovery-access phone.
+   (security sweep 2). Settled means the coin is not unspent and the coin its transaction spends (`from`, recorded with
+   the entry) is gone too: the transaction confirmed (the coin was created and spent) or a conflict spent its input and
+   it never will. That input may itself be a ledger coin, which must then be settled too. A coin whose transaction could
+   still be broadcast stays, and a malformed answer from the chain source is an error, not "no coins" (security sweep 3:
+   both used to drop coins). Entries from before `from` are settled only if the chain source knows their transaction.
+   A spend seen only in the mempool counts as a spend. `hosted.coins` returns it to the slot's phone and to a
+   recovery-access phone.
 2. **The new phone classifies ledger coins** against the descriptor: it searches each coin's tweaks on chains 0 and 1
    up to index 10,000 (one HMAC-SHA512 per index and role, no curve work) and reports coins that match no path as
    "reachable only with your phone key and the guardian".
@@ -875,9 +881,12 @@ passes, the golden state file loads and saves byte for byte, and the end-to-end 
    wallet and retires it on the host's guardian once a node accepted the sweep; an empty wallet can be released directly.
    Releasing (`wallet.retire`) deletes the slot's key 3 for good, which is safe only when nothing needs it, so: the phone
    checks that no recovery runs, that its chain server **and** a second, independent one see no coin, and that no coin the
-   guardian co-signed is unspent (`hostedLeaveCheck`); the guardian, for its part, **refuses** `wallet.retire` while a
-   ledger coin is unspent on its own chain source (`ledger_unspent`), since an off-path coin (section 4) needs key 3 and
-   would be lost. A host's chain source that is down blocks the release (the money still moves with phone + hardware
+   guardian co-signed is unspent (`hostedLeaveCheck`); the guardian, for its part, checks the hardware approval first
+   and then **refuses** `wallet.retire` while a ledger coin is not settled on its own chain source (`ledger_unspent`;
+   `unconfirmed` counts those from a co-signed payment never broadcast, which could still be), since an off-path coin
+   (section 4) needs key 3 and would be lost. Moving the coins such a payment spends settles it. The check prunes
+   nothing (security sweep 3: it pruned before the approval was checked, so a stolen phone's refused retire dropped
+   coins). A host's chain source that is down blocks the release (the money still moves with phone + hardware
    wallet); the host's Stop hosting remains the other way out. Since chain sources (#105) the check asks by outpoint
    (`ChainService.outpointsUnspent`, as the recovery's coin check does, section 15 "Chain sources and guests"): with
    Bitcoin Core a listing of the scripts would read the host's watch-only wallet, which holds nothing of a guest, and

@@ -42,7 +42,11 @@ export const SAVINGS_SCAN_HISTORY = 200;
 export const SAVINGS_CHECK_BUDGET = 500;
 /** Transactions of Savings the tripwire remembers as checked; past this it says it cannot check everything. */
 export const SAVINGS_CHECK_MAX = 20_000;
-/** Spends handed to the engine per scan, newest first: fewer than it remembers as seen (500), so none reads as news twice. */
+/**
+ * Spends handed to the engine per scan, at most: fewer than it remembers as seen (500), so none reads as news twice.
+ * The largest first among those not handed over yet; while some are left, the scan is not complete and the next one
+ * hands the next batch (security sweep 3: the newest 400 only, and "complete", hid an older spend behind 400 small ones).
+ */
 export const SAVINGS_SPENDS_MAX = 400;
 /** How long transactions may wait unchecked, or reading Savings keep failing, before the phone and the contacts are told. */
 export const SAVINGS_UNCHECKED_ALERT_MS = 30 * 60_000;
@@ -113,10 +117,15 @@ function newestFirst(a: [string, number], b: [string, number]): number {
 
 /** What a check of Savings found (`SavingsSpendIndex.check`). */
 export interface SpendCheck {
-  /** Every spend of Savings among the transactions checked, newest first, at most `SAVINGS_SPENDS_MAX`. */
+  /**
+   * Spends of Savings among the transactions checked that were not handed to the engine yet (`markHanded`) and that it
+   * has not seen (`seen`): at most `SAVINGS_SPENDS_MAX`, the largest picked first, listed newest first.
+   */
   spends: SavingsSpend[];
   /** Transactions not checked yet (they wait for the next scans). */
   unchecked: number;
+  /** Spends found but left for the next batch (more than `SAVINGS_SPENDS_MAX`). */
+  unhanded: number;
   /** Transactions read from the server by this check. */
   read: number;
 }
@@ -142,10 +151,19 @@ export class SavingsSpendIndex {
   private readonly outputs = new Map<string, ReadonlyMap<number, bigint>>();
   /** Waiting to be checked, first seen first (a Set keeps the order things were added in). */
   private readonly queue = new Set<string>();
+  /** Spends the engine has taken (`markHanded`): never handed again while listed. */
+  private readonly handed = new Set<string>();
+  /** Spends the last check left for the next batch. */
+  private unhanded = 0;
 
-  /** Transactions waiting to be checked. */
+  /** Transactions waiting to be checked, and spends waiting to be handed to the engine. */
   get backlog(): number {
-    return this.queue.size;
+    return this.queue.size + this.unhanded;
+  }
+
+  /** The engine took these spends (after `noteSavingsScan` returned): later checks leave them out. */
+  markHanded(txids: readonly string[]): void {
+    for (const id of txids) this.handed.add(id);
   }
 
   /**
@@ -153,11 +171,13 @@ export class SavingsSpendIndex {
    * already count as checked) and `extra` (spends relayed here: txid to raw hex), within the budget, and returns every
    * spend among those checked. Throws only when the chain is unavailable midway (what was checked stays checked).
    */
-  async check(chain: TxSource, walletId: string, r: WalletSync, extra: ReadonlyMap<string, string> = new Map()): Promise<SpendCheck> {
+  async check(chain: TxSource, walletId: string, r: WalletSync, extra: ReadonlyMap<string, string> = new Map(), seen: ReadonlySet<string> = new Set()): Promise<SpendCheck> {
     if (this.walletId !== walletId) {
       this.checked.clear();
       this.outputs.clear();
       this.queue.clear();
+      this.handed.clear();
+      this.unhanded = 0;
       this.walletId = walletId;
     }
     const present = new Map<string, number>(r.txHeights ?? []);
@@ -167,6 +187,7 @@ export class SavingsSpendIndex {
     for (const id of [...this.checked.keys()]) if (!present.has(id)) this.checked.delete(id);
     for (const id of [...this.outputs.keys()]) if (!present.has(id)) this.outputs.delete(id);
     for (const id of [...this.queue]) if (!present.has(id)) this.queue.delete(id);
+    for (const id of [...this.handed]) if (!present.has(id)) this.handed.delete(id);
     // What the scan computed itself (its newest entries): checked without a read.
     for (const h of r.history) {
       this.checked.set(h.txid, spendsOf({ history: [h] })[0] ?? null);
@@ -235,13 +256,18 @@ export class SavingsSpendIndex {
         }
       }
     }
-    const spends = [...this.checked]
-      .filter((e): e is [string, SavingsSpend] => e[1] !== null && present.has(e[0]))
+    // Not the newest only: a large spend must not hide behind many small ones (unconfirmed sort first).
+    const waiting = [...this.checked]
+      .filter((e): e is [string, SavingsSpend] => e[1] !== null && present.has(e[0]) && !this.handed.has(e[0]) && !seen.has(e[0]))
       .map(([id, x]) => [id, present.get(id)!, x] as const)
-      .sort((a, b) => newestFirst([a[0], a[1]], [b[0], b[1]]))
+      .sort((a, b) => (a[2].amountSats > b[2].amountSats ? -1 : a[2].amountSats < b[2].amountSats ? 1 : newestFirst([a[0], a[1]], [b[0], b[1]])));
+    // The batch itself newest first, as the engine expects (it logs and announces them oldest first).
+    const spends = waiting
       .slice(0, SAVINGS_SPENDS_MAX)
+      .sort((a, b) => newestFirst([a[0], a[1]], [b[0], b[1]]))
       .map(([, , x]) => x);
-    return { spends, unchecked: this.queue.size, read };
+    this.unhanded = waiting.length - spends.length;
+    return { spends, unchecked: this.queue.size, unhanded: this.unhanded, read };
   }
 }
 
@@ -359,22 +385,25 @@ export class SavingsMonitor {
       else extra.set(txid, x.txHex);
     }
     let check: SpendCheck;
+    const seenBefore = new Set(w.engine.savings()?.seenSpends ?? []);
     try {
-      check = await this.checking.run(() => this.index.check(g.chain, walletId, r, extra));
-      if (check.read) g.log.debug('savings.checked', { read: check.read, unchecked: check.unchecked });
+      check = await this.checking.run(() => this.index.check(g.chain, walletId, r, extra, seenBefore));
+      if (check.read || check.unhanded) g.log.debug('savings.checked', { read: check.read, unchecked: check.unchecked, unhanded: check.unhanded });
     } catch (e) {
       // The chain went away midway: what the scan computed itself, and the rest next time.
       g.log.warn('savings.check_failed', { error: errorText(e) });
-      check = { spends: spendsOf(r), unchecked: Math.max(1, this.index.backlog), read: 0 };
+      check = { spends: spendsOf(r).slice(0, SAVINGS_SPENDS_MAX), unchecked: Math.max(1, this.index.backlog), unhanded: 0, read: 0 };
     }
     try {
       const fresh = await w.engine.noteSavingsScan(walletId, {
         nextReceiveIndex: r.nextReceiveIndex,
         nextChangeIndex: r.nextChangeIndex,
         spends: check.spends,
-        complete: check.unchecked === 0,
+        // Complete only once every spend was checked AND handed over: the engine then pages through the rest.
+        complete: check.unchecked === 0 && check.unhanded === 0,
         ...(g.chainSourceSummary()?.kind === 'public' ? { publicSource: true } : {}),
       });
+      this.index.markHanded(check.spends.map((x) => x.txid));
       for (const x of fresh) {
         const fields = { walletId, txid: x.txid, amountSats: Number(x.amountSats), ...(x.replaces ? { replaces: x.replaces } : {}), ...(x.consolidated ? { consolidated: true } : {}) };
         // A fee bump of a spend already announced is the same payment: logged, not announced again.
@@ -388,7 +417,7 @@ export class SavingsMonitor {
     } catch (e) {
       g.log.error('savings.note_failed', { error: errorText(e) });
     }
-    await this.noteUnchecked(walletId, check.unchecked);
+    await this.noteUnchecked(walletId, check.unchecked + check.unhanded);
   }
 
   /**

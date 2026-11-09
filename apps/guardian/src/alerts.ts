@@ -324,7 +324,9 @@ export function noticeToWire(n: LimitNotice): Alert | undefined {
           txid: n.txid,
           amountSats: Number(n.amountSats ?? 0n),
           ...(n.replacesTxid ? { replaces: n.replacesTxid, ...(n.previousAmountSats !== undefined ? { previousAmountSats: Number(n.previousAmountSats) } : {}) } : {}),
-          message: n.replacesTxid
+          message: n.count && n.count > 1
+            ? `${n.count} payments moved ${satsText(n.amountSats ?? 0n)} out of Savings in total. That needs your hardware wallet or your Recovery Key with another key: if you did not do this, act now.`
+            : n.replacesTxid
             ? `A payment out of Savings was replaced: it now moves ${satsText(n.amountSats ?? 0n)}${n.previousAmountSats !== undefined ? ` instead of ${satsText(n.previousAmountSats)}` : ''}, and pays out something else. Only one of the two can confirm. That needs your hardware wallet or your Recovery Key with another key: if you did not do this, act now.`
             : n.consolidated
               ? `Savings consolidated: coins merged into one, still in Savings. Only the network fee, ${satsText(n.amountSats ?? 0n)}, left. That needs your hardware wallet or your Recovery Key with another key: if you did not do this, act now.`
@@ -390,6 +392,15 @@ export function noticeText(n: LimitNotice, canLock = false, reach: ContactReach 
         : `What happened: since ${formatWhen(n.at)}, the guardian has not been able to read the Savings wallet, so it would not see a payment out of it.`,
       '',
       'If the owner knows why, nothing else is needed. If not, or you are not sure, call them: someone may hold two of their keys.',
+    ].join('\n');
+  if (n.kind === 'savings_moved' && n.count && n.count > 1)
+    return [
+      'Trikey alert: money moved out of the Savings wallet of the bitcoin wallet you help protect, in many payments.',
+      '',
+      `What happened: since ${formatWhen(n.at)}, ${n.count} payments moved ${formatBtc(n.amountSats ?? 0n)} out of Savings in total (the largest in transaction ${n.txid ?? '(unknown)'}). There were too many to send one message each.`,
+      "The guardian cannot sign for Savings: this took two of the owner's other keys (their phone with their hardware wallet, or one of them with their Recovery Key).",
+      '',
+      'If the owner moved it, nothing else is needed. If not, or you are not sure, call them now: they may need to move what is left with their hardware wallet and Recovery Key.',
     ].join('\n');
   if (n.kind === 'savings_moved' && n.replacesTxid)
     return [

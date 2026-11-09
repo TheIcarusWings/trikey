@@ -130,7 +130,8 @@ After every start the guardian is locked: key 3 is decrypted only by an unlock
   highest index seen used or co-signed; `wallet.sync` raises it to what it
   finds), so take change and self-transfer addresses from `wallet.sync`'s
   `nextChangeIndex` / `nextReceiveIndex`. The guardian refuses to co-sign while
-  its clock is more than 3 h ahead of the chain (`1501`, `clock_ahead_of_chain`).
+  its clock is more than 3 h ahead of the chain (`1501`, `clock_ahead_of_chain`) or
+  more than 3 h behind it (`1501`, `clock_behind_chain`).
   Refused `sign` / `recovery.start` / `recovery.update` are rate limited per
   sender (30 per 10 minutes, then `RateLimited`).
 - **Recovery without the old phone or a backup**: the new phone's nostr key

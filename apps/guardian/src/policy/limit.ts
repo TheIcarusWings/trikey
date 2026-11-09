@@ -12,7 +12,7 @@
  * most this sum, so the limit is never under-counted whatever the replacements.
  */
 import { DAY } from './clock.js';
-import { SpendRecord } from './types.js';
+import type { Refusal, SpendRecord } from './types.js';
 
 export const LIMIT_WINDOW_MS = DAY;
 /** Spend records are kept this long, so replays of older txs are still recognized. */
@@ -73,4 +73,30 @@ export function pruneSpends(spends: SpendRecord[], now: number): SpendRecord[] {
 export function pruneTime(timeFloor: number | undefined, chainSeen: { medianTimePastMs: number } | undefined, maxAheadOfChainMs: number): number | undefined {
   if (timeFloor === undefined || !Number.isFinite(timeFloor)) return undefined;
   return chainSeen ? Math.min(timeFloor, chainSeen.medianTimePastMs + maxAheadOfChainMs) : timeFloor;
+}
+
+/**
+ * The time the daily limit counts with: the system clock, but never earlier than the last time used (`timeFloor`,
+ * monotonic). Refused while the clock is more than `maxAheadMs` ahead of the chain's median time past (the live tip,
+ * else the last one seen: a clock pushed forward would open a fresh 24 h window with every step), or more than
+ * `maxBehindMs` behind it (the higher of the live tip and the last one seen, so a server answering with an old tip does
+ * not loosen it). An honest clock is always ahead of the median time past, which trails real time by about an hour.
+ * Without the lower bound (security sweep 3), a clock set back days before any spend let a stolen phone spend the limit
+ * "in the past", step the clock a day forward, spend again (the first spend now outside the window), and so on until
+ * the clock caught up with the present: the monotonic time only stops the clock going back AFTER a co-signature.
+ */
+export function limitClock(
+  now: number,
+  live: { medianTimePastMs: number } | undefined,
+  seen: { medianTimePastMs: number } | undefined,
+  timeFloor: number | undefined,
+  maxAheadMs: number,
+  maxBehindMs: number,
+): { ok: true; at: number } | { ok: false; refusal: Refusal } {
+  const ref = live ?? seen;
+  if (!ref) return { ok: false, refusal: { reason: 'chain_unavailable', detail: 'no chain data to check the clock against yet' } };
+  if (now > ref.medianTimePastMs + maxAheadMs) return { ok: false, refusal: { reason: 'clock_ahead_of_chain', systemTime: now, chainTime: ref.medianTimePastMs } };
+  const highest = Math.max(ref.medianTimePastMs, seen?.medianTimePastMs ?? -Infinity);
+  if (!(now >= highest - maxBehindMs)) return { ok: false, refusal: { reason: 'clock_behind_chain', systemTime: now, chainTime: highest } };
+  return { ok: true, at: Math.max(timeFloor ?? 0, now) };
 }
