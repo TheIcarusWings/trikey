@@ -17,7 +17,7 @@ From 0.1.9-alpha, every release has two APKs, built from the same code:
 | `trikey-alpha-v<version>.apk` | **Trikey**, `app.trikey.wallet` | The **standard** build. It contains Google's libraries: Google Sign-In, for the Google Drive backup a later release can switch on (it needs Google Play services on the phone), Google's ML Kit to read QR codes, and the Google Play services provider for passkeys. |
 | `trikey-alpha-foss-v<version>.apk` | **Trikey FOSS**, `app.trikey.wallet.foss` | **No Google code**, for phones without Google Play services (GrapheneOS, /e/OS, LineageOS) and for app stores that take only free software. QR codes are read by the open source zxing-cpp. There is no Google Drive backup: the backup is the recovery code plus the backup file, which you can still save to Google Drive, or anywhere else, by hand from the share sheet. Settings, About says "Trikey (no Google)". |
 
-From 0.1.22-alpha they are **two apps**: each has its own application id (the FOSS one adds `.foss`), launcher label and
+From 0.1.23-alpha they are **two apps**: each has its own application id (the FOSS one adds `.foss`), launcher label and
 URL scheme (`trikey-foss://` for the FOSS app, so Trezor Suite Lite's answer reaches the app that asked). Both can be
 installed on one phone and are listed separately (Zapstore, Obtainium). Both are signed with the same release key, and
 each release updates the same app: the standard APK updates Trikey, the FOSS APK updates Trikey FOSS. Only a downgrade (an
@@ -37,7 +37,7 @@ wallet is still in the old app (its launcher label is "Trikey"), and nothing has
 1. **Stay without Google (recommended for this build's users).** Have your backup ready: the recovery code and the
    backup file. If you are not sure you still have both, make a new backup in the old app first (Security tab, the
    backup row).
-   1. Install `trikey-alpha-foss-v<version>.apk` (0.1.22-alpha or later). It appears next to the old app as Trikey FOSS.
+   1. Install `trikey-alpha-foss-v<version>.apk` (0.1.23-alpha or later). It appears next to the old app as Trikey FOSS.
    2. Open Trikey FOSS. Its first screen has "Used Trikey without Google before?", which says the same as this list.
       Tap **I already have a Trikey wallet**, then **My phone, but I have its backup**, open the backup file and enter
       the recovery code. A Recovery Key wallet: **I have a Recovery Kit**, with the kit and your hardware wallet.
@@ -57,14 +57,14 @@ installs it whoever signed it, and the old app's update sheet showed only a chec
 proves nothing about who made the file). So before step 1.2: install [AppVerifier](https://github.com/soupslurpr/AppVerifier)
 (F-Droid or Accrescent), open it, pick **Trikey FOSS** (`app.trikey.wallet.foss`), and compare the SHA-256 it shows
 with [the release key's](#the-release-keys-certificate). If they differ, uninstall Trikey FOSS and restore nothing.
-From 0.1.22-alpha the app's update sheet shows the release certificate built into the app, and warns when an update
+From 0.1.23-alpha the app's update sheet shows the release certificate built into the app, and warns when an update
 would install as a new app.
 
 ## The release key's certificate
 
 Its SHA-256 is in [`packaging/android/release-cert.sha256`](../packaging/android/release-cert.sha256):
 `C6:C4:6A:13:32:72:51:11:41:3A:7B:03:13:E2:F2:F3:7B:10:F0:CE:4C:8D:A1:CA:C3:C9:2D:17:9A:16:2D:A7`. The release build
-refuses to publish an APK signed by anything else, each release's notes repeat it, and from 0.1.22-alpha the app has
+refuses to publish an APK signed by anything else, each release's notes repeat it, and from 0.1.23-alpha the app has
 it built in (`apps/mobile/src/lib/release-cert.ts`) and shows it in Settings, About, Check for updates. On the phone,
 [AppVerifier](https://github.com/soupslurpr/AppVerifier) shows an installed app's certificate SHA-256. To check an APK
 file on a computer (Android SDK build tools):

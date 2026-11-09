@@ -235,7 +235,7 @@ Where it comes from: every release on [GitHub's Releases page](https://github.co
 `trikey-alpha-v<version>.apk` and its `.apk.sha256`, built by the **Android test APK** workflow
 (`.github/workflows/android-apk.yml`). Take the newest pre-release.
 
-**Which APK.** From 0.1.9-alpha a release has two APKs; from 0.1.22-alpha they are two apps (each with its own wallet),
+**Which APK.** From 0.1.9-alpha a release has two APKs; from 0.1.23-alpha they are two apps (each with its own wallet),
 pick one or install both:
 
 - `trikey-alpha-v<version>.apk`, the **standard** build, **Trikey** on the home screen: it contains Google's libraries (ML Kit reads the QR codes, and

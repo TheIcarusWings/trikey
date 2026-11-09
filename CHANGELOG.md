@@ -6,12 +6,14 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
-## 0.1.22-alpha (2026-11-07)
+## 0.1.23-alpha (2026-11-09)
 
 A security release, from a second review of the whole project (two independent AI-run audits compared, each finding
-checked against the code and fixed with a test that reproduces it). Update the guardian, then the app: with this
-guardian an older app cannot pair a new wallet, add a wallet or change your alert contacts (it says "update the app").
-Nothing here was exploited that we know of. And on Android, the build without Google is now its own app.
+checked against the code and fixed with a test that reproduces it). 0.1.22-alpha was never published: its release
+stopped at a check of its own files (#185), so this one has everything it had, and more. Update the guardian, then the
+app: with this guardian an older app cannot pair a new wallet, add a wallet or change your alert contacts (it says
+"update the app"). Nothing here was exploited that we know of. And on Android, the build without Google is now its own
+app.
 
 - **Your hardware wallet now names your alert contacts** when it approves rules (pairing, adding a wallet, a rule
   change): `contacts=npub1abcdefgh..wxyz`, the start and end of each contact's npub, or for many contacts their number
@@ -36,13 +38,38 @@ Nothing here was exploited that we know of. And on Android, the build without Go
   **Replace guardian** with your phone and hardware wallet. Backups made by 0.1.21-alpha or earlier still hold a copy
   of the guardian's data (its key under your passphrase): delete them if you can. microSD signing (Passport gen 2,
   Krux) now ends with a step to delete the signed files from the card (#176).
+- **Turning hardware unlock off and on again now really replaces it.** The guardian picks the new unlock's id, so an
+  old signature (one malware kept, say) can never make the old unlock again. An old copy of the guardian's data still
+  opens with the old signature: only Replace guardian revokes that. An older app can't turn hardware unlock on with
+  this guardian ("update the app"); unlocking with one you have keeps working (#181).
+- **A stranger who reaches the guardian's page can no longer keep you waiting to unlock.** Failed passphrases count
+  per address; on Umbrel, your own logins through Umbrel never wait for anyone else's (#181).
+- **Bitcoin Core's password is tied to its port too**: changing the port asks for the password again (#181).
+- **Messages to your alert contacts reach their own inbox relays**, also when the guardian has its maximum of relays
+  (#183).
+- **Wallet names in alerts are plain text**: letters, digits, spaces, `-` and `'` only, so a thief can't send your
+  contacts a link in a wallet's name (#183).
+- **The guardian refuses floods before writing them**: per-sender limits on stored requests, on its memory of handled
+  messages (your own phones' entries are never pushed out), and on CANCEL replies (#183).
+- **The guardian no longer accepts an unsealed unlock from the phone** (the passphrase or a hardware unlock sent in
+  the clear, as apps before 0.1.17-alpha did): an older app must be updated to unlock the guardian or turn hardware
+  unlock on. Family hosting: each guest's recovery now has its own lock, so one guest can't hold up another's or the
+  host's. Repeated requests (notes, broadcasts, adding a wallet) are recognised after a restart too, contacts' inbox
+  relays on your local network are never used, and the phone no longer stores strangers' unreadable messages (#186).
+- **Trezor: the reply from Trezor Suite Lite must carry a one-time token**, and the key and addresses must be for the
+  path asked for (#182).
+- **Recovery Key mode checks the second hardware wallet too**: it registers the vault and shows the same first
+  address (test networks only for now) (#182).
+- **Jade over Bluetooth reaches only Blockstream's PIN server**, or one you confirm as your own, over https, with no
+  redirects (#182).
+- **Recovery Key mode's pre-signed refills are encrypted on the phone**, so a phone backup can't broadcast them (#182).
 - **Android: Trikey FOSS.** The build without Google code is now its own app (`app.trikey.wallet.foss`, "Trikey FOSS"),
   installable beside the standard Trikey. Had the no-Google APK of 0.1.21-alpha or earlier? The new one installs as a
   separate, empty app: restore your wallet in it from your backup file and recovery code, check it, then uninstall the
   old one (docs/android-signing.md) (#169).
 - **Releases are checked before they go out.** A release starts as a draft and is published only after its 7 files,
   their checksums and both APKs' signatures are checked; each release pushes one image tag, which a re-release cannot
-  change; the build tools are pinned (#177, #171).
+  change; the build tools are pinned (#177, #171, #185).
 - The daily-limit bar on the guardian's home page is visible again (#172). The docs explain renewing the iPhone's
   7-day profile (#174).
 
