@@ -13,7 +13,8 @@
  *   `https:`, so alert text never crosses the internet in clear.
  * - Never the guardian's own box or the cloud metadata service: loopback (127/8, ::1, `localhost`), "this host"
  *   (0.0.0.0, ::), link-local (169.254/16, fe80::/10, where cloud metadata services live), multicast and reserved
- *   ranges are refused, also when a name RESOLVES to them. `.onion` is refused (the guardian has no Tor).
+ *   ranges are refused, also when a name RESOLVES to them, in any spelling of the address (`ip-address.ts`).
+ *   `.onion` is refused (the guardian has no Tor).
  * - The name is resolved once per send and the connection goes to the checked address (no second lookup a DNS
  *   rebinding could change); `http:` to a name whose address turns out public is refused.
  * - Redirects are not followed, the answer is read only up to 4 KiB (Telegram's `getUpdates`: 512 KiB), and a send
@@ -26,7 +27,8 @@ import type { LookupAddress } from 'node:dns';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import { BlockList, isIP, type LookupFunction } from 'node:net';
+import { isIP, type LookupFunction } from 'node:net';
+import { classifyIp, isLocalName } from '../ip-address.js';
 
 export const MAX_URL_LENGTH = 512;
 export const HTTP_TIMEOUT_MS = 15_000;
@@ -46,65 +48,7 @@ export interface NetPolicy {
   resolve?: (host: string) => Promise<LookupAddress[]>;
 }
 
-const refusedV4 = new BlockList();
-for (const [net, bits] of [
-  ['0.0.0.0', 8],
-  ['169.254.0.0', 16],
-  ['224.0.0.0', 4],
-  ['240.0.0.0', 4],
-] as const)
-  refusedV4.addSubnet(net, bits, 'ipv4');
-const loopV4 = new BlockList();
-loopV4.addSubnet('127.0.0.0', 8, 'ipv4');
-const refusedV6 = new BlockList();
-for (const [net, bits] of [
-  ['::', 128],
-  ['fe80::', 10],
-  ['ff00::', 8],
-  ['64:ff9b::', 96],
-  ['2001:db8::', 32],
-] as const)
-  refusedV6.addSubnet(net, bits, 'ipv6');
-const loopV6 = new BlockList();
-loopV6.addAddress('::1', 'ipv6');
-const privateNets = new BlockList();
-for (const [net, bits] of [
-  ['10.0.0.0', 8],
-  ['172.16.0.0', 12],
-  ['192.168.0.0', 16],
-  ['100.64.0.0', 10],
-] as const)
-  privateNets.addSubnet(net, bits, 'ipv4');
-privateNets.addSubnet('fc00::', 7, 'ipv6');
-
-export type AddressClass = 'loopback' | 'refused' | 'private' | 'public';
-
-/** What kind of address `ip` is (IPv4-mapped IPv6 counts as its IPv4 address). */
-export function classifyIp(ip: string): AddressClass {
-  let addr = ip.replace(/^\[|\]$/g, '').toLowerCase();
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(addr);
-  if (mapped) addr = mapped[1]!;
-  const family = isIP(addr);
-  if (family === 4) {
-    if (loopV4.check(addr, 'ipv4')) return 'loopback';
-    if (refusedV4.check(addr, 'ipv4')) return 'refused';
-    return privateNets.check(addr, 'ipv4') ? 'private' : 'public';
-  }
-  if (family === 6) {
-    if (loopV6.check(addr, 'ipv6')) return 'loopback';
-    if (refusedV6.check(addr, 'ipv6')) return 'refused';
-    return privateNets.check(addr, 'ipv6') ? 'private' : 'public';
-  }
-  return 'refused';
-}
-
-const LOCAL_SUFFIXES = ['.local', '.lan', '.home.arpa', '.internal', '.home'];
-
-/** A host name that is on the owner's own network by its form (not resolved). */
-export function isLocalName(host: string): boolean {
-  const h = host.toLowerCase().replace(/\.$/, '');
-  return !h.includes('.') || LOCAL_SUFFIXES.some((s) => h.endsWith(s));
-}
+export { classifyIp, isLocalName, type AddressClass } from '../ip-address.js';
 
 export interface CheckedUrl {
   /** The URL as the guardian stores and uses it. */

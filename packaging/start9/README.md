@@ -104,6 +104,7 @@ bridge and passes the guardian the same variables as the Umbrel package (CI chec
 | `BITCOIN_RPC_HOST`, `BITCOIN_RPC_PORT` | the bridge address of Bitcoin's RPC binding (host id `rpc`, port 8332, the RPC proxy that also serves pruned blocks) |
 | `BITCOIN_RPC_USER`, `BITCOIN_RPC_PASS` | Bitcoin's RPC cookie `/.cookie` on the `bitcoind` volume, `__cookie__:<password>`, read by the package runtime and passed only as environment. The volume is mounted read-only into a subcontainer of its own that runs nothing (`bitcoind-cookie`), not into the guardian's: the guardian never sees Bitcoin's datadir or any wallet file in it (security review 2026-11, finding 5). The cookie cannot be mounted alone: dependency mounts take a directory, and bitcoind replaces the file at every start |
 | `BITCOIN_NETWORK` | `bitcoin`: Start9's Bitcoin package runs mainnet only |
+| `TSX_DISABLE_CACHE` | `1`, as the image sets it: read by tsx, not by `config.ts` (CI's exception list), so no compiled code sits in the writable `/tmp` to be loaded at the next start |
 
 The four `BITCOIN_RPC_*` go together (the guardian takes all or none). With them it reports sync
 progress, broadcasts as a fallback, scans for silent payments (`getblock <hash> 3`), and reads

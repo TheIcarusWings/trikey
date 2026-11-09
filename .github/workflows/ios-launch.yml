@@ -40,16 +40,10 @@ name: iOS launch check
 # job warns and uses the image's default Xcode.
 
 on:
+  # Every pull request, so the `launch` check always reports: it is a required check on main, and a check that never
+  # starts would block every PR that does not touch the app. The `changes` job decides; without app changes `launch`
+  # is skipped, which counts as passing. The paths are APP_PATHS below.
   pull_request:
-    paths:
-      - 'apps/mobile/**'
-      - 'packages/**'
-      - 'package-lock.json'
-      - '.github/workflows/ios-launch.yml'
-      - '.github/scripts/ios-launch*'
-      - '.github/scripts/ios-walk.sh'
-      - '.github/scripts/demo-walk-report.py'
-      - '.github/scripts/install-maestro.sh'
   workflow_dispatch:
 
 permissions:
@@ -60,7 +54,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Whether the pull request touches what the app is built from (a Mac runner for nothing otherwise).
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      app: ${{ steps.files.outputs.app }}
+    steps:
+      - name: Files of the pull request that the app is built from
+        id: files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PR}" ]; then echo "app=true" >> "$GITHUB_OUTPUT"; exit 0; fi # workflow_dispatch: always
+          app=false
+          while IFS= read -r f; do
+            # APP_PATHS
+            case "$f" in
+              apps/mobile/*|packages/*|package-lock.json|.github/workflows/ios-launch.yml|.github/scripts/ios-launch*|\
+              .github/scripts/ios-walk.sh|.github/scripts/demo-walk-report.py|.github/scripts/install-maestro.sh)
+                echo "App change: $f"; app=true ;;
+            esac
+          done < <(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" --jq '.[].filename')
+          echo "app=${app}" >> "$GITHUB_OUTPUT"
+          [ "${app}" = true ] || echo "::notice::No app change: the iOS launch check is skipped."
+
   launch:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: macos-26
     timeout-minutes: 100
     env:

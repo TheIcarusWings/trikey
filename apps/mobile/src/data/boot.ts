@@ -12,8 +12,8 @@
  * runs: a phone has one wallet of one kind per mode and network.
  */
 import { Platform } from 'react-native';
-import type { HardwareKind, HardwareProvider, KeyValueStore } from '@trikey/wallet';
-import { createHardwareProviders, deserializePairing, serializePairing } from '@/hardware';
+import type { HardwareKind, HardwareProvider, KeyValueStore, SecureKeyStore } from '@trikey/wallet';
+import { createBitBoxPairingStore, createHardwareProviders } from '@/hardware';
 import { getPlatform, type TrikeyPlatform } from '@/platform';
 import { clearSharedBackups, pickBackupFile, shareBackupFile } from '@/platform/backup-files';
 import { clearSharedLabels, pickLabelsFile, shareLabelsFile } from '@/platform/labels-files';
@@ -33,7 +33,10 @@ const SIM_DEVICE2_KEY = 'trikey.sim.device2.v1';
 const JADE_NOTICE_KEY = 'trikey.jade.pin-server-notice.v1';
 /** The PIN servers (other than Blockstream's) the owner said are their own, as a JSON list. */
 const JADE_PIN_SERVERS_KEY = 'trikey.jade.pin-servers.v1';
-/** This phone's pairing with BitBox02s (its Noise key and theirs), so the pairing code is asked once per BitBox02. */
+/**
+ * This phone's pairing with BitBox02s, so the pairing code is asked once per BitBox02: their Noise keys here, the
+ * phone's own (a private key) in the secure store (`createBitBoxPairingStore`, which moves it out of here).
+ */
 const BITBOX02_PAIRING_KEY = 'trikey.bitbox02.pairing.v1';
 
 /** Where `npm run rk-sim -w @trikey/mobile` listens. An Android emulator reaches the computer at 10.0.2.2 instead: change it in Settings. */
@@ -89,7 +92,7 @@ function simControl() {
  * Trezor link, and only the kind in use ever asks them for anything. The Ledger's "what the device wants now" hints go to
  * both kinds' prompt sheets (the one that is not waiting ignores them).
  */
-function sharedHardware(kv: KeyValueStore) {
+function sharedHardware(kv: KeyValueStore, secure: SecureKeyStore) {
   const cache = new Map<NetworkName, HardwareProvider[]>();
   // The PIN-server notice is shown once, before a Jade's first unlock over Bluetooth.
   const notices = {
@@ -111,12 +114,9 @@ function sharedHardware(kv: KeyValueStore) {
       if (!now.includes(server)) await kv.set(JADE_PIN_SERVERS_KEY, JSON.stringify([...now, server]));
     },
   };
-  // The phone's BitBox02 pairing: kept in the app's own storage (the key only lets this phone skip the pairing code with a
-  // BitBox02 it already paired with; the BitBox02 still asks for its password and every approval).
-  const bitbox02Pairing = {
-    load: async () => deserializePairing(await kv.get(BITBOX02_PAIRING_KEY)),
-    save: (d: Parameters<typeof serializePairing>[0]) => kv.set(BITBOX02_PAIRING_KEY, serializePairing(d)),
-  };
+  // The phone's BitBox02 pairing (the key only lets this phone skip the pairing code with a BitBox02 it already paired
+  // with; the BitBox02 still asks for its password and every approval). The phone's key stays out of phone backups.
+  const bitbox02Pairing = createBitBoxPairingStore(kv, secure, BITBOX02_PAIRING_KEY);
   const hints = new Set<(interaction: string) => void>();
   return (network: NetworkName, hooks: { onLedgerInteraction: (interaction: string) => void }): HardwareProvider[] => {
     hints.add(hooks.onLedgerInteraction);
@@ -217,7 +217,7 @@ export async function bootWallet(mode: AppMode, platform: TrikeyPlatform = getPl
     return createRoutedWalletService({ mode, kv, guardian, recoveryKey, initial });
   }
 
-  const hardware = sharedHardware(platform.kv);
+  const hardware = sharedHardware(platform.kv, platform.secureKeys);
   const deviceName = Platform.OS === 'ios' ? 'iPhone' : Platform.OS === 'android' ? 'Android phone' : 'Trikey phone';
   const guardian = await createRealWalletService({
     mode: 'real',

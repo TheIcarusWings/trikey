@@ -264,8 +264,10 @@ limit per day, as today).
 
 **Recommendation: P for phase 1**, with:
 
-1. **The ledger** (`slot.json`): every self output of every co-signed PSBT, pruned when a later co-signed PSBT or a
-   recovery check finds it spent. `hosted.coins` returns it to the slot's phone and to a recovery-access phone.
+1. **The ledger** (`slot.json`): every self output of every co-signed PSBT, pruned only when a chain check (a
+   recovery's, retiring's, or `sign`'s when the ledger is full) finds it spent. A co-signed PSBT that spends a ledger
+   coin does not remove it: it may never be broadcast, and the ledger may be the only record of the coin's tweaks
+   (security sweep 2). `hosted.coins` returns it to the slot's phone and to a recovery-access phone.
 2. **The new phone classifies ledger coins** against the descriptor: it searches each coin's tweaks on chains 0 and 1
    up to index 10,000 (one HMAC-SHA512 per index and role, no curve work) and reports coins that match no path as
    "reachable only with your phone key and the guardian".

@@ -570,3 +570,27 @@ describe('every workflow', () => {
     }
   });
 });
+
+describe('ios-launch.yml: `launch` is a required check on main, so it must report on every pull request', () => {
+  const wf = workflow('ios-launch.yml');
+  it('runs on every pull request (no path filter) and skips the Mac job without app changes', () => {
+    expect(wf.on['pull_request']).toBeNull();
+    expect(wf.jobs['launch']!.needs).toBe('changes');
+    expect(wf.jobs['launch']!.if).toBe("needs.changes.outputs.app == 'true'");
+    const run = wf.jobs['changes']!.steps![0]!.run!;
+    for (const p of ['apps/mobile/*', 'packages/*', 'package-lock.json', '.github/workflows/ios-launch.yml', '.github/scripts/ios-launch*'])
+      expect(run).toContain(p);
+  });
+});
+
+describe('the Zapstore steps (docs/zapstore.md)', () => {
+  it('install zsp, which is handed the release keystore, at a pinned version with its Go checksum (sweep 2 #41)', () => {
+    const doc = read('docs/zapstore.md');
+    const installs = [...doc.matchAll(/go install (\S+)/g)].map((m) => m[1]!);
+    expect(installs.length).toBeGreaterThan(0);
+    for (const i of installs) expect(i).toMatch(/^github\.com\/zapstore\/zsp\/v\d+\/cmd\/zsp@v\d+\.\d+\.\d+$/);
+    expect(doc).not.toMatch(/zsp\S*@latest/);
+    const version = installs[0]!.split('@')[1]!;
+    expect(doc).toMatch(new RegExp(`github\\.com/zapstore/zsp/v\\d+ ${version.replace(/\./g, '\\.')} h1:[A-Za-z0-9+/]{43}=`));
+  });
+});

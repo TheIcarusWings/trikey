@@ -24,6 +24,7 @@ import {
   signMessage,
   type Rules,
 } from '../../src/policy/index.js';
+import { dropsLastContact } from '../../src/policy/engine.js';
 import { GuardianRig } from '../support/index.js';
 import { APP_NOSTR, CONTACT_A, COSIGNER_PRIV, DAY, DEFAULT_RULES, MNEMONICS, OTHER_COSIGNER_PRIV, T0, appSigner, fund, hwSigner, makeWallet, network, setup, approveRules } from '../helpers.js';
 import { callHandler, pairInRig } from './support.js';
@@ -87,6 +88,37 @@ describe('security: alert contacts (finding 5)', () => {
     // Replacing the contact is fine.
     const other = { ...DEFAULT_RULES, alertContacts: [APP_NOSTR.replace(/^./, 'f')] };
     expect(await m.engine.changeRules(other, { authenticatedBy: 'hardware', approval: approval(other) })).toMatchObject({ ok: true });
+  });
+
+  it("sweep 2: the paired phone's own key is no contact: refused on mainnet at pairing and as the only contact left", async () => {
+    const m = await mainnet();
+    // A malicious app pairs with itself as the only contact: every recovery alert would reach only the phone.
+    expect(await m.register({ ...DEFAULT_RULES, alertContacts: [APP_NOSTR] })).toMatchObject({
+      ok: false,
+      refusal: { reason: 'invalid_registration', detail: expect.stringMatching(/alert contact other than the paired phone/) },
+    });
+    expect(await m.register({ ...DEFAULT_RULES, alertContacts: [APP_NOSTR, CONTACT_A] })).toMatchObject({ ok: true });
+    expect(m.engine.status().warnings).toEqual([]);
+    // Dropping the real contact and keeping the phone's own key, even with a hardware approval, is refused.
+    const expiresAt = Math.floor(m.clock.now() / 1000) + 600;
+    const phoneOnly = { ...DEFAULT_RULES, alertContacts: [APP_NOSTR] };
+    const signature = signMessage(approvalMessage({ action: 'policy', rules: phoneOnly }, { walletId: m.wallet.fingerprint(), sequence: 1, expiresAt, contactsInText: true }), m.authPriv);
+    expect(await m.engine.changeRules(phoneOnly, { authenticatedBy: 'hardware', approval: { kind: 'bip137', sequence: 1, expiresAt, signature } })).toMatchObject({
+      ok: false,
+      refusal: { reason: 'invalid_rules', detail: expect.stringMatching(/alert contact/) },
+    });
+  });
+
+  it("sweep 2: on a test network the phone's own key as the only contact gets the warning", async () => {
+    const ctx = await setup({ rules: { alertContacts: [APP_NOSTR] } });
+    expect(ctx.engine.status().warnings).toEqual(['no_alert_contacts']);
+    // On mainnet, a phone-only wallet paired before this check may still change other rules (it is not made worse);
+    // dropping a real contact, or every contact, is what is refused.
+    const r = (alertContacts: string[]) => ({ ...DEFAULT_RULES, alertContacts });
+    expect(dropsLastContact(r([APP_NOSTR]), r([APP_NOSTR]), APP_NOSTR)).toBe(false);
+    expect(dropsLastContact(r([APP_NOSTR]), r([]), APP_NOSTR)).toBe(true);
+    expect(dropsLastContact(r([APP_NOSTR, CONTACT_A]), r([APP_NOSTR]), APP_NOSTR)).toBe(true);
+    expect(dropsLastContact(r([CONTACT_A]), r([APP_NOSTR, CONTACT_A]), APP_NOSTR)).toBe(false);
   });
 
   it('PoC on regtest: allowed, but the status says alerts reach only the paired phone', async () => {

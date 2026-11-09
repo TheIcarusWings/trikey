@@ -14,6 +14,7 @@ import { QrScanner } from '@/hardware/ui';
 import { pick } from '@/lib/platform';
 import { printKit } from '@/lib/print-kit';
 import { useAction } from '@/lib/use-action';
+import { useSecureScreen } from '@/lib/use-secure-screen';
 import { cn } from '@/lib/utils';
 
 /**
@@ -98,16 +99,25 @@ function PrintStage({ kit, hardwareBrand, onContinue, onCancel }: { kit: Recover
           ? 'The print sheet also saves a PDF or sends one with AirDrop. Printers, print queues and anywhere you send a PDF can keep a copy of a key: print on a printer you trust, and delete any PDF afterwards. Trikey does not keep the sheet.'
           : 'The print sheet also saves a PDF. This one holds no secret, so a copy is harmless.'}
       </Footnote>
-      {seed && showWords ? (
-        <Card className="gap-3 p-4">
-          <Text className="text-sm font-medium leading-5">Write all {kit.recoveryWords.length + kit.mapWords.length} words down, in order, by hand</Text>
-          <Text className="font-mono text-[13px] leading-5" selectable testID="kit-words">
-            {[...kit.recoveryWords, ...kit.mapWords].map((word, i) => `${i + 1} ${word}`).join('   ')}
-          </Text>
-          <Footnote>The first 12 are your Recovery Key. The rest map your wallet. Anyone who sees them can take your money: not in a photo, not on a screen share.</Footnote>
-        </Card>
-      ) : null}
+      {seed && showWords ? <KitWords words={[...kit.recoveryWords, ...kit.mapWords]} /> : null}
     </Screen>
+  );
+}
+
+/**
+ * The kit's words, for writing down by hand: not selectable (no clipboard), kept out of screenshots and recordings where
+ * the phone can and covered while the app is not in front (`useSecureScreen`).
+ */
+function KitWords({ words }: { words: string[] }) {
+  const { hidden } = useSecureScreen();
+  return (
+    <Card className="gap-3 p-4">
+      <Text className="text-sm font-medium leading-5">Write all {words.length} words down, in order, by hand</Text>
+      <Text className="font-mono text-[13px] leading-5" testID="kit-words">
+        {hidden ? 'Hidden while Trikey is in the background.' : words.map((word, i) => `${i + 1} ${word}`).join('   ')}
+      </Text>
+      <Footnote>The first 12 are your Recovery Key. The rest map your wallet. Anyone who sees them can take your money: not in a photo, not on a screen share.</Footnote>
+    </Card>
   );
 }
 

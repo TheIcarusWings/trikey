@@ -79,11 +79,17 @@ LABEL org.opencontainers.image.title="Trikey Guardian" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.vendor="Trikey contributors"
 
+# TSX_DISABLE_CACHE: tsx would otherwise keep the compiled modules in /tmp
+# (/tmp/tsx-1000), writable by the guardian's user, and load them at the next
+# start in place of the root-owned source: code that got in once would survive
+# a restart and run before the unlock (security sweep 2). Without the cache tsx
+# compiles the source at every start (esbuild: about a second).
 ENV NODE_ENV=production \
     PORT=3000 \
     TRIKEY_DATA_DIR=/data \
     TRIKEY_WEB_DIR=/app/apps/guardian-web/dist \
-    BITCOIN_NETWORK=bitcoin
+    BITCOIN_NETWORK=bitcoin \
+    TSX_DISABLE_CACHE=1
 
 WORKDIR /app
 
@@ -111,7 +117,8 @@ COPY --from=build /app/apps/guardian/src ./apps/guardian/src
 COPY --from=build /app/apps/guardian-web/dist ./apps/guardian-web/dist
 
 # The node image already has a `node` user at uid/gid 1000. Code stays
-# root-owned and read-only; only /data is writable.
+# root-owned and read-only; only /data (and /tmp, which nothing loads code from:
+# TSX_DISABLE_CACHE above) is writable.
 RUN mkdir -p /data && chown 1000:1000 /data
 VOLUME ["/data"]
 

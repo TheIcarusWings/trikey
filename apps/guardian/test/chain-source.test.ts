@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { ElectrumBackend } from '../src/chain/backend.js';
 import { CoreBackend, descriptorsOf } from '../src/chain/core-backend.js';
-import { ChainSourceStore, PUBLIC_SERVERS, buildBackend, describe as describeSource, environmentSourceName, parseChainSource, sameChainSource, publicServersFor, publicView, summarize } from '../src/chain/source.js';
+import { ChainSourceStore, PUBLIC_SERVERS, buildBackend, describe as describeSource, environmentSourceName, onOwnNetwork, parseChainSource, sameChainSource, publicServersFor, publicView, summarize, type ChainSource } from '../src/chain/source.js';
 import { HelperAccount } from '../src/singlekey.js';
 import { makeWallet } from './helpers.js';
 
@@ -61,6 +61,32 @@ describe('choosing a chain source (Settings > Server)', () => {
     expect(summarize({ kind: 'public', host: 'mempool.space', port: 60602 })).toEqual({ kind: 'public', backend: 'electrum', host: 'mempool.space', port: 60602 });
     expect(describeSource({ kind: 'electrum', host: 'fd00::1', port: 50001, tls: false })).toBe('your own Electrum server [fd00::1]:50001');
     expect(describeSource({ kind: 'public', host: 'mempool.space', port: 40002 })).toBe('the public server mempool.space:40002');
+  });
+
+  it('tells by its address whether a source is on the owner network, whatever its kind says (sweep 2 #29)', async () => {
+    const dns = (table: Record<string, string[]>) => async (h: string) => {
+      if (!(h in table)) throw new Error('ENOTFOUND');
+      return table[h]!;
+    };
+    const resolve = dns({ 'electrs.home.example': ['192.168.1.20'], 'evil.example': ['203.0.113.7'], 'mixed.example': ['10.0.0.2', '203.0.113.8'], 'host.docker.internal': ['172.17.0.1'] });
+    const e = (host: string): ChainSource => ({ kind: 'electrum', host, port: 50002, tls: true });
+    expect(await onOwnNetwork(e('203.0.113.7'), resolve)).toBe(false);
+    expect(await onOwnNetwork(e('192.168.1.20'), resolve)).toBe(true);
+    expect(await onOwnNetwork(e('[fd00::1]'), resolve)).toBe(true);
+    expect(await onOwnNetwork(e('evil.example'), resolve)).toBe(false);
+    expect(await onOwnNetwork(e('mixed.example'), resolve)).toBe(false);
+    expect(await onOwnNetwork(e('electrs.home.example'), resolve)).toBe(true);
+    expect(await onOwnNetwork(e('host.docker.internal'), resolve)).toBe(true);
+    // Not resolvable now: by its form (the guardian could not reach it either).
+    expect(await onOwnNetwork(e('electrs'), resolve)).toBe(true);
+    expect(await onOwnNetwork(e('umbrel.local'), resolve)).toBe(true);
+    expect(await onOwnNetwork(e('gone.example'), resolve)).toBe(false);
+    expect(await onOwnNetwork({ kind: 'core', rpc: { host: '203.0.113.9', port: 8332, user: 'u', pass: 'p', allowPublic: true } }, resolve)).toBe(false);
+    expect(await onOwnNetwork({ kind: 'core', rpc: { host: '10.21.21.8', port: 8332, user: 'u', pass: 'p' } }, resolve)).toBe(true);
+    expect(await onOwnNetwork({ kind: 'public', host: 'electrum.example.org', port: 50002 }, resolve)).toBe(false);
+    // Told like a public one.
+    expect(summarize(e('evil.example'), { outside: true })).toMatchObject({ kind: 'public' });
+    expect(describeSource(e('evil.example'), { outside: true })).toBe('the Electrum server evil.example:50002 (not on your own network)');
   });
 
   it('lists public servers per network, all TLS ports, and none for regtest', () => {
