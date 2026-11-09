@@ -51,7 +51,7 @@ refilled by pre-signed, timelocked refills.
 </picture>
 </p>
 
-The full design, threat model and open questions are in [DESIGN.md](DESIGN.md).
+The full design, threat model and open questions are in [DESIGN.md](DESIGN.md). What stands between this alpha and a beta: [docs/beta-checklist.md](docs/beta-checklist.md).
 
 ### In the app
 
