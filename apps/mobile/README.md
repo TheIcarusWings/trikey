@@ -139,6 +139,11 @@ If the build fails, these are the snags met on a first build from a Mac (Xcode 2
 - **The first run ends with `Unable to launch ... profile has not been explicitly trusted`**: the app is installed. Trust your
   developer profile on the phone (Settings, General, VPN & Device Management; the entry appears once an app signed with your
   Apple ID is on the phone) and open Trikey from the home screen.
+- **`Unable to find a destination matching ... id=<UDID>`** although the phone is connected: the phone runs a newer iOS
+  than your Xcode knows (met with iOS 27.2 and Xcode 26.6). Build for any iOS device instead, `-destination
+  'generic/platform=iOS'`, and install with `devicectl` as below: the app runs on the newer iOS. (Or update Xcode.)
+- **`devicectl` fails with `DeviceLocked`** (while mounting the developer disk image): unlock the phone and keep it unlocked
+  until the install finishes.
 
 **Renewing an expired profile** (after the 7 days; checked with Xcode 26.6). From `apps/mobile`, after the usual
 `TRIKEY_DISABLE_ICLOUD=1 npx expo prebuild --platform ios` (or with the `ios/` folder from your last build), with your
@@ -150,6 +155,9 @@ xcodebuild -workspace Trikey.xcworkspace -scheme Trikey -configuration Release \
   -destination 'id=<UDID>' -allowProvisioningUpdates -derivedDataPath build
 xcrun devicectl device install app --device <UDID> build/Build/Products/Release-iphoneos/Trikey.app
 ```
+
+If `xcodebuild` says `Unable to find a destination matching ...` (the phone's iOS is newer than your Xcode), use
+`-destination 'generic/platform=iOS'` instead of `'id=<UDID>'`; the `devicectl` line stays the same.
 
 `-allowProvisioningUpdates` lets Xcode make a new 7-day profile for your Personal Team. Then, on the phone: Settings,
 General, VPN & Device Management, trust the developer profile again (iOS refuses to open the app until you do), and open
