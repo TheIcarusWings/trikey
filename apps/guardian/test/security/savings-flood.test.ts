@@ -213,6 +213,12 @@ describe('security: a Savings spend behind 400 small spends (sweep 3, finding 3)
     expect(moved()).toHaveLength(dust.length + 1);
     await g.savingsWatch.note(id, r);
     expect(moved()).toHaveLength(dust.length + 1);
+    // The phone and the contacts hear of every one (sweep 3 #4: only the newest 32 notices were kept), the large one on
+    // its own, the small ones folded into a summary with their total.
+    const due = g.engine.dueNotices().filter((n) => n.kind === 'savings_moved');
+    expect(due.find((n) => n.txid === big.txid && !n.count)).toMatchObject({ amountSats: big.net * -1n });
+    expect(due.reduce((a, n) => a + (n.count ?? 1), 0)).toBe(dust.length + 1);
+    expect(due.reduce((a, n) => a + (n.amountSats ?? 0n), 0n)).toBe(5_000_000n + 1_000n * BigInt(dust.length));
   }, 60_000);
 
   it('the index hands the largest first, leaves out what was handed or seen, and says how many are left', async () => {

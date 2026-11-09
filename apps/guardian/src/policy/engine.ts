@@ -181,8 +181,60 @@ export function rulesApprovalRefusal(
 
 /** How long a `limit_off` / `limit_on` notice is retried for someone it has not reached (the alerts' TTL). */
 export const NOTICE_TTL_MS = 7 * DAY;
-/** Notices kept (the oldest dropped first). */
-const MAX_NOTICES = 32;
+/**
+ * Notices kept before `savings_moved` ones are folded into one summary (`withNotice`). Nothing undelivered is ever
+ * dropped for room: a notice leaves once everyone it is for was reached, or after `NOTICE_TTL_MS`.
+ */
+export const MAX_NOTICES = 64;
+
+/**
+ * `notices` with `notice` queued: the delivered and the expired ones dropped, never one still owed to someone (security
+ * sweep 3: the newest 32 were kept, so one scan finding 33 Savings spends dropped the oldest before anyone heard of them).
+ * Past `MAX_NOTICES`, the `savings_moved` notices nobody has received yet (to the same people, for the same Savings) are
+ * folded, the smallest first, into one summary (`count`: how many, `amountSats`: their total, `txid`: the largest's), so
+ * the phone and the contacts still hear of every spend and the total. The other kinds have bounded sources (approvals,
+ * per-contact limits) and the TTL.
+ */
+export function withNotice<T extends { id: string; at: number; recipients: string[]; sent: string[] }>(notices: readonly T[] | undefined, now: number, notice: T): T[] {
+  const live = (notices ?? []).filter((n) => n.at > now - NOTICE_TTL_MS && n.sent.length < n.recipients.length);
+  const out = [...live, notice];
+  return out.length > MAX_NOTICES ? (foldSavingsMoved(out as unknown as LimitNotice[], out.length - MAX_NOTICES) as unknown as T[]) : out;
+}
+
+function foldSavingsMoved(list: LimitNotice[], excess: number): LimitNotice[] {
+  const groups = new Map<string, LimitNotice[]>();
+  for (const n of list) {
+    if (n.kind !== 'savings_moved' || n.sent.length > 0 || !n.txid) continue;
+    const key = `${n.walletId}|${n.savingsWalletId ?? ''}|${n.recipients.join(',')}`;
+    groups.set(key, [...(groups.get(key) ?? []), n]);
+  }
+  const group = [...groups.values()].sort((a, b) => b.length - a.length)[0];
+  if (!group || group.length < 2) return list;
+  const amount = (n: LimitNotice) => n.amountSats ?? 0n;
+  // An earlier summary is always folded in (one summary per group), then the smallest spends.
+  const bySize = [...group].sort((a, b) => (a.count ? -1 : 0) - (b.count ? -1 : 0) || (amount(a) < amount(b) ? -1 : amount(a) > amount(b) ? 1 : a.at - b.at));
+  const fold = bySize.slice(0, Math.min(group.length, excess + 1));
+  const largest = fold.reduce((m, n) => (amount(n) > amount(m) ? n : m));
+  const first = fold.reduce((m, n) => (n.at < m.at ? n : m));
+  const count = fold.reduce((s, n) => s + (n.count ?? 1), 0);
+  const summary: LimitNotice = {
+    id: `${first.id}-sum${count}`,
+    kind: 'savings_moved',
+    walletId: first.walletId,
+    at: first.at,
+    ...(first.savingsWalletId ? { savingsWalletId: first.savingsWalletId } : {}),
+    txid: largest.txid,
+    amountSats: fold.reduce((s, n) => s + amount(n), 0n),
+    count,
+    recipients: [...first.recipients],
+    sent: [],
+  };
+  const folded = new Set(fold);
+  const at = list.findIndex((n) => folded.has(n));
+  const rest = list.filter((n) => !folded.has(n));
+  rest.splice(at, 0, summary);
+  return rest;
+}
 /** Savings spends remembered as seen (`SavingsWatch.seenSpends`): more than one scan's history ever lists. */
 const MAX_SAVINGS_SPENDS = 500;
 /** Savings spends whose coins and payment are remembered (`SavingsWatch.spendDetails`), to tell a replacement (RBF) apart. */
@@ -705,8 +757,7 @@ export class PolicyEngine {
 
   /** Queues a limit notice for the service to deliver; drops ones that are done or too old. */
   private addNotice(draft: GuardianState, now: number, notice: LimitNotice): void {
-    const live = (draft.notices ?? []).filter((n) => n.at > now - NOTICE_TTL_MS && n.sent.length < n.recipients.length);
-    draft.notices = [...live, notice].slice(-MAX_NOTICES);
+    draft.notices = withNotice(draft.notices, now, notice);
   }
 
   /**

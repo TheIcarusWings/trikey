@@ -985,7 +985,10 @@ no policy hash or approval text changes, the same version-1 backup).
   at most 400 per scan, the largest first among those not handed over yet, and a scan is not complete while some are
   left (security sweep 3: only the newest 400 went, and the scan counted as complete, so a large spend behind 400 small
   ones was never announced). A wallet with more spends than the engine remembers (500) may have an old one announced
-  again after a restart: louder, never quieter. A Savings spend relayed through
+  again after a restart: louder, never quieter. Notices still owed to someone are never dropped for room (the newest 32
+  were kept, so one scan with 33 spends lost the oldest, before sweep 3); past 64 queued, the smallest `savings_moved`
+  ones nobody has received yet fold into one summary ("N payments moved X out of Savings in total"), so the phone and
+  the contacts hear of every spend and the total. A Savings spend relayed through
   `tx.broadcast` stays in view until the engine has recorded it. It refuses to watch any
   wallet it could sign for (the guarded, watched or a retired key set, or one holding key 3). A rotation carries the
   record to the adopted wallet; retirement and reset drop it. The web UI shows a "Savings (watched)" card.

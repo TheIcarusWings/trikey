@@ -46,7 +46,7 @@ import { dueAlerts as computeDueAlerts, isKnownAlertId, type DueAlert } from '..
 import { CONTACTS_NOT_SHOWN, bip137Authorizer, approvalMessage, pairingMessage, proofId, recoveryAccessMessage, verifyPolicyApproval, type HardwareAction, type HardwareAuthorizer } from '../policy/authorizer.js';
 import { contactsDelta } from '../policy/contacts.js';
 import { DAY, systemClock, type ChainTime, type ChainTimeSource, type Clock } from '../policy/clock.js';
-import { BLOCKS_PER_DAY, MAINNET_CONTACT_REQUIRED, contactsBesidesPhone, dropsLastContact, LIMIT_OFF_AT_PAIRING, rulesApprovalRefusal, MAX_ACCESS_GRANTS, MAX_APPROVAL_TTL_MS, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_CLOCK_BEHIND_CHAIN_MS, MAX_SEQUENCE_STEP, NOTICE_TTL_MS, isRefusalEvent, policyWarnings, pruneActivity, type CosignResult, type GuardianStatus, type PhoneSpendingStatus, type RecoveryView } from '../policy/engine.js';
+import { BLOCKS_PER_DAY, MAINNET_CONTACT_REQUIRED, contactsBesidesPhone, dropsLastContact, LIMIT_OFF_AT_PAIRING, rulesApprovalRefusal, MAX_ACCESS_GRANTS, MAX_APPROVAL_TTL_MS, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_CLOCK_BEHIND_CHAIN_MS, MAX_SEQUENCE_STEP, NOTICE_TTL_MS, isRefusalEvent, withNotice, policyWarnings, pruneActivity, type CosignResult, type GuardianStatus, type PhoneSpendingStatus, type RecoveryView } from '../policy/engine.js';
 import { addCosignerSignatures } from '../policy/inspect.js';
 import { limitClock, pruneSpends, pruneTime, splitOutflow, usageWith, windowUsage } from '../policy/limit.js';
 import { LIMIT_OFF_SATS, isContactLockOn, isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from '../policy/rules.js';
@@ -71,8 +71,6 @@ import {
   type LedgerEntry,
 } from './types.js';
 import { MAX_WALLET_MAP_BYTES, safeName } from '@trikey/protocol';
-
-const MAX_NOTICES = 32;
 
 /** Where a hosted engine keeps its state. `save` must be durable before it resolves. */
 export interface HostedStore {
@@ -568,8 +566,7 @@ export class HostedEngine {
   }
 
   private addNotice(draft: HostedState, now: number, notice: HostedNotice): void {
-    const live = draft.notices.filter((n) => n.at > now - NOTICE_TTL_MS && n.sent.length < n.recipients.length);
-    draft.notices = [...live, notice].slice(-MAX_NOTICES);
+    draft.notices = withNotice(draft.notices, now, notice);
   }
 
   private checkApproval(draft: HostedState, now: number, approval: HardwareApproval, action: HardwareAction): HostedRefusal | undefined {

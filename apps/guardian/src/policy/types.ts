@@ -563,6 +563,11 @@ export interface LimitNotice {
   previousAmountSats?: bigint;
   /** `savings_moved` of a consolidation (coin control): Savings coins merged into one, only the fee (`amountSats`) left. */
   consolidated?: true;
+  /**
+   * `savings_moved` summing up several spends nobody had received yet (`withNotice`, past `MAX_NOTICES`): how many;
+   * `amountSats` is their total and `txid` the largest's.
+   */
+  count?: number;
   /** The paired phone first, then the contacts (nostr pubkeys). */
   recipients: string[];
   /** Recipients it reached. */

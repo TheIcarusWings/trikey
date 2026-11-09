@@ -23,6 +23,7 @@ import { engineEntry } from '../src/http/activity.js';
 import { noticeText, noticeToWire } from '../src/alerts.js';
 import { paymentDigest, spendsOf } from '../src/savings.js';
 import { policyHash, type SavingsWatch } from '../src/policy/index.js';
+import { MAX_NOTICES } from '../src/policy/engine.js';
 import { APP_NOSTR, COSIGNER_PRIV, CONTACT_A, DEFAULT_RULES, MNEMONICS, approve, appSigner, fund, hwSigner, makeWallet, network, phoneSpend, setup, type Ctx } from './helpers.js';
 
 const RECOVERY_KEY = 'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong';
@@ -207,6 +208,39 @@ describe('the savings_moved tripwire', () => {
     // Baselined, an incomplete scan's spends are news as ever.
     const fresh = await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 3, nextChangeIndex: 1, spends: [{ txid: TXID(3), amountSats: 1_000n }, ...all], complete: false });
     expect(fresh).toEqual([{ txid: TXID(3), amountSats: 1_000n, announced: true }]);
+  });
+
+  it('security sweep 3 #4: a scan with many spends drops no notice; past the cap the smallest fold into one summary', async () => {
+    const ctx = await setup({ rules: { alertContacts: [CONTACT_A] } });
+    const sv = await registered(ctx);
+    await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 1, nextChangeIndex: 0, spends: [] });
+    const due = () => ctx.engine.dueNotices().filter((n) => n.kind === 'savings_moved');
+    const total = (ns: ReturnType<typeof due>) => ns.reduce((a, n) => a + (n.amountSats ?? 0n), 0n);
+    const count = (ns: ReturnType<typeof due>) => ns.reduce((a, n) => a + (n.count ?? 1), 0);
+    // 40 spends in one scan (the newest first, as the tripwire hands them): before, only the newest 32 notices stayed.
+    const spends = Array.from({ length: 40 }, (_, i) => ({ txid: TXID(10 + i), amountSats: 1_000n + BigInt(i) }));
+    spends[39] = { txid: TXID(49), amountSats: 9_000_000n }; // the oldest, and the largest
+    await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 1, nextChangeIndex: 0, spends });
+    expect(due()).toHaveLength(40);
+    expect(total(due())).toBe(spends.reduce((a, x) => a + x.amountSats, 0n));
+    expect(due().find((n) => n.txid === TXID(49))).toMatchObject({ amountSats: 9_000_000n, recipients: [APP_NOSTR, CONTACT_A] });
+    // 100 more: past the cap, the smallest fold into one summary; nothing is lost, the large one stays on its own.
+    const more = Array.from({ length: 100 }, (_, i) => ({ txid: (0x1000 + i).toString(16).padStart(64, '0'), amountSats: 500n }));
+    await ctx.engine.noteSavingsScan(sv.walletId, { nextReceiveIndex: 1, nextChangeIndex: 0, spends: more });
+    const after = due();
+    expect(after.length).toBeLessThanOrEqual(MAX_NOTICES);
+    expect(count(after)).toBe(140);
+    expect(total(after)).toBe(spends.reduce((a, x) => a + x.amountSats, 0n) + 50_000n);
+    expect(after.find((n) => n.txid === TXID(49) && !n.count)).toBeDefined();
+    const summary = after.filter((n) => n.count && n.count > 1);
+    expect(summary).toHaveLength(1);
+    expect(summary[0]!.recipients).toEqual([APP_NOSTR, CONTACT_A]);
+    expect(noticeToWire(summary[0]!)).toMatchObject({ type: 'savings_moved', txid: summary[0]!.txid, amountSats: Number(summary[0]!.amountSats) });
+    expect(noticeToWire(summary[0]!)!.message).toMatch(new RegExp(`^${summary[0]!.count} payments moved`));
+    expect(noticeText(summary[0]!)).toMatch(/payments moved .* out of Savings in total/);
+    // A notice delivered to everyone leaves; one still owed to someone never does.
+    await ctx.engine.markNoticeSent(after[0]!.id, after[0]!.recipients);
+    expect(due()).toHaveLength(after.length - 1);
   });
 
   it('"not fully checked" is told to the phone and every contact once baselined, at most once a day', async () => {

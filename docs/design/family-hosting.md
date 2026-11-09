@@ -122,7 +122,7 @@ mix record (section 7). Absent file: no guests, which is every guardian today. A
 - `startRecovery`, `updateRecovery`, `completeRecovery`, `rotateAfterSweep` take the destination as account pubkeys in
   delegated mode (section 5).
 - Per-engine options: `maxActivity` 1,000 and `maxRefusals` 200 for guests (host: today's 5,000 and 1,000), a ledger
-  cap (2,000 unspent coins), notices as today (`MAX_NOTICES` 32), access grants as today (`MAX_ACCESS_GRANTS` 8).
+  cap (2,000 unspent coins), notices as today (none still owed to someone is dropped for room, `MAX_NOTICES` 64), access grants as today (`MAX_ACCESS_GRANTS` 8).
 - Recovery ids carry the slot (`<slotId>-<n>-<txid12>`), so `recovery.cancel` and the `CANCEL <id>` DM
   (`dm-cancel.ts`) find the right slot.
 
