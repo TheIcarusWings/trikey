@@ -76,7 +76,9 @@ from the same repository, publisher npub and APK certificate. Its description is
 `match` takes only the FOSS APK (`trikey-alpha-foss-v<version>.apk`), `release_filter` skips the releases up to
 0.1.21-alpha (whose FOSS APK still had the standard app's id: publishing one would put it under the wrong app), and the
 name, summary and description are Trikey FOSS's. zsp's wizard reads `./zapstore.yaml`, which is why the file is in a
-folder of its own.
+folder of its own. zsp reads local files only from inside the config's folder, so that file names its icon and the
+changelog by URL (this repository's main branch), not by a `../` path, which zsp refuses with "outside the base
+directory". `zsp check` does not load the icon, so only `zsp publish` (or the wizard) would show such an error.
 
 Run this on your own computer, after the release workflow has published the first release with the new id (0.1.23-alpha
 or later) and both APKs are on its GitHub release page:

@@ -2,7 +2,9 @@
 # standard app's listing in the repository root's zapstore.yaml. Zapstore lists apps by application id, so the two apps
 # are two listings with one publisher npub and one APK signing certificate. zsp's wizard reads ./zapstore.yaml, so run it
 # from this folder (`cd packaging/zapstore/foss && zsp`), or publish with `zsp publish packaging/zapstore/foss/zapstore.yaml`.
-# Relative paths are read from this folder. See docs/zapstore.md. No key or secret belongs in this file or in this
+# zsp reads local files (icon, release_notes) only from inside this folder (zsp v2.0.1, internal/localpath), so
+# `../../../...` is refused ("outside the base directory"): the icon and the changelog are URLs to this repository's
+# main branch instead. See docs/zapstore.md. No key or secret belongs in this file or in this
 # repository.
 repository: https://github.com/TheIcarusWings/trikey
 release_source: https://github.com/TheIcarusWings/trikey
@@ -32,6 +34,6 @@ description: |
 license: MIT
 website: https://trikey.app
 tags: [bitcoin, wallet, multisig, nostr, foss]
-icon: ../../../apps/mobile/assets/icon.png
-release_notes: ../../../CHANGELOG.md
+icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/mobile/assets/icon.png
+release_notes: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/CHANGELOG.md
 metadata_sources: [github]

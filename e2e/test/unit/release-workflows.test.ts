@@ -630,3 +630,18 @@ describe('the Zapstore steps (docs/zapstore.md)', () => {
     expect(doc).toMatch(new RegExp(`github\\.com/zapstore/zsp/v\\d+ ${version.replace(/\./g, '\\.')} h1:[A-Za-z0-9+/]{43}=`));
   });
 });
+
+describe('the Zapstore listings (zapstore.yaml, packaging/zapstore/foss/zapstore.yaml)', () => {
+  it('name local files only inside their own folder, or by URL (zsp refuses anything outside it)', () => {
+    for (const file of ['zapstore.yaml', 'packaging/zapstore/foss/zapstore.yaml']) {
+      const cfg = parse(read(file)) as Record<string, unknown>;
+      const refs = [cfg['icon'], cfg['release_notes'], ...((cfg['images'] as unknown[] | undefined) ?? [])].filter((v): v is string => typeof v === 'string');
+      expect(refs.length, file).toBeGreaterThan(0);
+      for (const r of refs) {
+        if (/^https:\/\//.test(r)) continue;
+        expect(r, `${file}: ${r}`).not.toMatch(/(^|\/)\.\.(\/|$)/);
+        expect(r.startsWith('/'), `${file}: ${r}`).toBe(false);
+      }
+    }
+  });
+});
