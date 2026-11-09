@@ -13,7 +13,17 @@ import { Segmented } from '@/components/segmented';
 import { Switch } from '@/components/ui/switch';
 import { Text } from '@/components/ui/text';
 import { CAN_CHECK_FOR_UPDATES, UpdateCheck } from '@/components/update-check';
-import { formatSats, serverHost, useWallet, useWalletService, type GuardianStatus, type ThemePreference } from '@/data';
+import {
+  SEVERAL_WALLETS,
+  formatSats,
+  serverHost,
+  severalWalletsSetting,
+  useWallet,
+  useWalletService,
+  walletsSettingsRows,
+  type GuardianStatus,
+  type ThemePreference,
+} from '@/data';
 import { ANDROID_VARIANT } from '@/lib/android-variant';
 import { appDisplayName } from '@/lib/app-name';
 import { donationAddress } from '@/lib/donation';
@@ -48,6 +58,8 @@ export default function SettingsScreen() {
   const router = useRouter();
   const state = useWallet();
   const rk = state.mode === 'recoveryKey';
+  // Several wallets: the toggle wherever the wallet can have others; the list and "Add a wallet" only while it is on.
+  const walletRows = walletsSettingsRows(state);
   const silentValue = silentPaymentsSummary(state);
   // Recovery Key mode has no descriptor to export (getWalletDetails gives null there).
   const hasWalletDetails = !rk;
@@ -60,17 +72,20 @@ export default function SettingsScreen() {
         <SettingsRow title="Show amounts in" value={state.unit === 'btc' ? 'BTC' : 'sats'} onPress={() => router.push('/settings/units')} />
       </ListGroup>
 
-      {!rk && state.wallets ? (
+      {walletRows.toggle && state.wallets ? (
         <>
           <SectionLabel>Wallets</SectionLabel>
           <ListGroup>
-            <SettingsRow
-              title="Wallets"
-              value={state.wallets.list.length > 1 ? `${state.wallets.current.name} of ${state.wallets.list.length}` : state.wallets.current.name}
-              subtitle="Each with its own hardware wallet"
-              onPress={() => router.push('/settings/wallets')}
-              accessibilityHint="This phone's wallets, and adding one"
-            />
+            <SeveralWalletsRow />
+            {walletRows.wallets ? (
+              <SettingsRow
+                title="Wallets"
+                value={state.wallets.list.length > 1 ? `${state.wallets.current.name} of ${state.wallets.list.length}` : state.wallets.current.name}
+                subtitle="Each with its own hardware wallet"
+                onPress={() => router.push('/settings/wallets')}
+                accessibilityHint="This phone's wallets, and adding one"
+              />
+            ) : null}
           </ListGroup>
         </>
       ) : null}
@@ -138,6 +153,37 @@ export default function SettingsScreen() {
         ) : null}
       </ListGroup>
     </Screen>
+  );
+}
+
+/**
+ * "Several wallets" (docs/design/multi-wallet.md, section 5): off by default, and then Home has no wallet switcher and
+ * Settings no Wallets row. On and locked while the phone holds more than one wallet, so none with money in it is hidden.
+ */
+function SeveralWalletsRow() {
+  const wallet = useWalletService();
+  const state = useWallet();
+  const { on, locked, lockedText } = severalWalletsSetting(state);
+  return (
+    <View className="min-h-16 flex-row items-center justify-between gap-4 px-4 py-3">
+      <View className="flex-1">
+        <Text nativeID="several-wallets-label" className="text-base leading-6">
+          {SEVERAL_WALLETS.title}
+        </Text>
+        <Text className="text-muted-foreground text-sm leading-5">{SEVERAL_WALLETS.short}</Text>
+        {lockedText ? <Text className="text-muted-foreground text-sm leading-5">{lockedText}</Text> : null}
+      </View>
+      <Switch
+        checked={on}
+        disabled={locked}
+        onCheckedChange={(next) => {
+          if (!locked) wallet.setSeveralWallets(next);
+        }}
+        aria-labelledby="several-wallets-label"
+        accessibilityLabel={SEVERAL_WALLETS.title}
+        accessibilityHint={lockedText ?? SEVERAL_WALLETS.short}
+      />
+    </View>
   );
 }
 

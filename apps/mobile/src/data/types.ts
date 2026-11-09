@@ -1078,6 +1078,11 @@ export interface WalletState {
   mode: WalletMode;
   unit: AmountUnit;
   theme: ThemePreference;
+  /**
+   * Settings > "Several wallets" as set on this phone (off by default). What it does depends on the wallets too: read it
+   * through `severalWalletsSetting` (on and locked while the phone holds more than one wallet).
+   */
+  severalWallets: boolean;
 
   hardware: HardwareWallet;
   /** The hardware wallet has shown the first address and it matched. */

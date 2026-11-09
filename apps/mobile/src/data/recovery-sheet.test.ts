@@ -130,7 +130,7 @@ describe('recovery sheet: the page', () => {
 
 describe('recovery sheet: the demo', () => {
   it('lists both demo wallets, marked as the demo, one page each or all on one', async () => {
-    const svc = createMockWalletService({ networkDelayMs: 0, deviceDelayMs: 0 });
+    const svc = createMockWalletService({ networkDelayMs: 0, deviceDelayMs: 0, secondWallet: true });
     const each = svc.recoverySheet!('each')!;
     expect(each).toMatchObject({ demo: true, layout: 'each' });
     expect(each.wallets.map((w) => [w.name, w.device])).toEqual([
@@ -139,5 +139,10 @@ describe('recovery sheet: the demo', () => {
     ]);
     expect(each.html).toContain('DEMO. Made-up guardian and wallet ids');
     expect(svc.recoverySheet!('list')!.layout).toBe('list');
+  });
+
+  it('the demo as it starts: one wallet, one page', () => {
+    const svc = createMockWalletService({ networkDelayMs: 0, deviceDelayMs: 0 });
+    expect(svc.recoverySheet!('each')!.wallets.map((w) => w.name)).toEqual(['Main']);
   });
 });

@@ -101,6 +101,9 @@ export function createRoutedWalletService(opts: { mode: string; kv: KeyValueStor
     setTheme(theme: ThemePreference) {
       for (const m of members) m.setTheme(theme);
     },
+    setSeveralWallets(on: boolean) {
+      for (const m of members) m.setSeveralWallets(on);
+    },
     setMode(mode: WalletMode) {
       switchTo(mode);
     },

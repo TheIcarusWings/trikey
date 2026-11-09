@@ -133,7 +133,7 @@ describe('coin control in the demo: the follow-ups', () => {
   });
 
   it('Receive: a label on the address names the coin received there later; its own label wins', async () => {
-    const svc = fast();
+    const svc = createMockWalletService({ deviceDelayMs: 0, networkDelayMs: 0, secondWallet: true });
     const address = svc.getState().receiveAddress;
     await svc.coins!.setAddressLabel('spending', address, 'From Business');
     expect(svc.coins!.addressLabel('spending', address)).toBe('From Business');

@@ -1,13 +1,15 @@
 import { useRouter } from 'expo-router';
 import { AppButton } from '@/components/app-button';
+import { BackToSettings } from '@/components/back-to-settings';
 import { Plus, Smartphone } from '@/components/icons';
 import { Body, Footnote, ListGroup, Notice, SettingsRow } from '@/components/panels';
 import { Screen } from '@/components/screen';
-import { GUARDIAN_UPDATE_NOTICE, SHARED_PHONE_NOTICE, formatSats, hasSeveralWallets, totalLimitText, useWallet } from '@/data';
+import { GUARDIAN_UPDATE_NOTICE, SHARED_PHONE_NOTICE, formatSats, hasSeveralWallets, totalLimitText, useWallet, walletsSettingsRows } from '@/data';
 
 /**
  * Settings > Wallets (docs/design/multi-wallet.md): this phone's wallets on its guardian, each with its own hardware
- * wallet and rules, and "Add a wallet". They share the phone's key, its backup and the guardian.
+ * wallet and rules, and "Add a wallet". They share the phone's key, its backup and the guardian. Only while Settings >
+ * "Several wallets" is on: otherwise (a link from elsewhere) back to Settings, where the toggle is.
  */
 export default function WalletsSettings() {
   const router = useRouter();
@@ -15,6 +17,8 @@ export default function WalletsSettings() {
   const view = state.wallets;
   const several = hasSeveralWallets(view);
   const total = several ? totalLimitText(view?.total) : null;
+
+  if (!walletsSettingsRows(state).wallets) return <BackToSettings />;
 
   return (
     <Screen

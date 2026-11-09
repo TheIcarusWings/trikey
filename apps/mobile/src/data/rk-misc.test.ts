@@ -137,6 +137,7 @@ function member(state: Partial<WalletState>, opts: { refuse?: (network: string) 
     acceptMainnetRisk: (a: boolean) => void calls.push(`accept:${a}`),
     setUnit: (u: string) => void calls.push(`unit:${u}`),
     setTheme: (t: string) => void calls.push(`theme:${t}`),
+    setSeveralWallets: (on: boolean) => void calls.push(`several:${on}`),
     sync: async () => void calls.push('sync'),
     quoteSendMax: (r: { address: string }) => (calls.push(`max:${r.address}`), { ok: false, problem: 'other', message: `from the ${state.mode} wallet` }),
     close: async () => void calls.push('close'),
@@ -195,9 +196,10 @@ describe('routing between a guardian wallet and a Recovery Key wallet', () => {
 
     // Preferences and the network go to both: either may be the one in use after a restart.
     routed.setUnit('btc');
+    routed.setSeveralWallets(true);
     routed.setNetwork('signet');
-    expect(guardian.calls).toEqual(expect.arrayContaining(['unit:btc', 'network:signet']));
-    expect(recoveryKey.calls).toEqual(expect.arrayContaining(['unit:btc', 'network:signet']));
+    expect(guardian.calls).toEqual(expect.arrayContaining(['unit:btc', 'several:true', 'network:signet']));
+    expect(recoveryKey.calls).toEqual(expect.arrayContaining(['unit:btc', 'several:true', 'network:signet']));
 
     // Once the wallet is finished the phone keeps it.
     routed.setMode('recoveryKey');
