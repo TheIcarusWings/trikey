@@ -442,7 +442,7 @@ export class Guardian implements WalletRuntime {
   readonly setupCode?: SetupCode;
   /** Who reaches the guardian only through the platform's login (TRIKEY_TRUSTED_PROXY; http/trusted-proxy.ts). */
   readonly trustedProxy?: TrustedProxy;
-  /** Wrong setup codes, all callers together: 10 a minute. The code has 80 bits; this keeps the log quiet. */
+  /** Wrong setup codes, all callers together: 10 a minute. The code has 80 bits; this keeps the log quiet. The right code always opens. */
   readonly setupCodeLimiter = new SlidingWindowLimiter({ max: 10, windowMs: 60_000 });
   keystore?: KeystoreFile;
   identity?: GuardianIdentity;
