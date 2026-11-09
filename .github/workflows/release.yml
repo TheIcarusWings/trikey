@@ -3,7 +3,7 @@ name: Release
 # Makes a release when a release PR lands on main, so nobody has to create the tag by hand.
 #
 # On every push to main it reads the version in package.json. If CHANGELOG.md has a section for that version
-# ("## <version>-alpha (...)") and the tag v<version>-alpha does not exist yet, it creates the tag on that commit and a
+# ("## [<version>-alpha] - <date>", Keep a Changelog's form, which zsp also reads) and the tag v<version>-alpha does not exist yet, it creates the tag on that commit and a
 # DRAFT pre-release whose notes are that CHANGELOG section. A push without a version bump, or whose version is
 # already tagged, does nothing.
 #
@@ -65,7 +65,7 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           # Its CHANGELOG section, up to the next "## " heading.
-          awk -v v="## ${version}-alpha " 'index($0, v) == 1 { on = 1; next } on && /^## / { exit } on { print }' CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
+          awk -v v="## [${version}-alpha] " 'index($0, v) == 1 { on = 1; next } on && /^## / { exit } on { print }' CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
           if [ ! -s "${RUNNER_TEMP}/notes.md" ]; then
             echo "No CHANGELOG section for ${version}-alpha: nothing to release."
             echo "act=none" >> "$GITHUB_OUTPUT"

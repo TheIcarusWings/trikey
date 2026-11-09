@@ -945,3 +945,26 @@ describe('the Zapstore listings (zapstore.yaml, packaging/zapstore/foss/zapstore
     }
   });
 });
+
+describe('CHANGELOG.md: one section per release, in the form release.yml and zsp both read', () => {
+  // zsp (Zapstore) takes only the release's own section from a Keep a Changelog file ("## [x.y.z] - date"); anything
+  // else and it sends the whole file as release notes, which outgrew what a signer accepts (NIP-44's 64 KB) at
+  // 0.1.25-alpha and stopped its Zapstore publish.
+  const changelog = read('CHANGELOG.md');
+  const headings = changelog.split('\n').filter((l) => l.startsWith('## '));
+
+  it('heads every release section the Keep a Changelog way', () => {
+    expect(headings.length).toBeGreaterThan(0);
+    for (const h of headings) expect(h).toMatch(/^## \[\d+\.\d+\.\d+(-alpha)?\] - \d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("gives release.yml's notes step this version's section, small enough to sign", () => {
+    const step = workflow('release.yml').jobs['release']!.steps!.find((x) => (x.run ?? '').includes('awk -v v='))!;
+    const awk = /awk -v v="[^"]*" '[^']*' CHANGELOG\.md/.exec(step.run!)![0];
+    const version = (JSON.parse(read('package.json')) as { version: string }).version;
+    const notes = execFileSync('bash', ['-c', awk], { cwd: ROOT, env: { PATH: process.env['PATH'], version }, encoding: 'utf8' });
+    expect(notes.trim().length).toBeGreaterThan(0);
+    expect(notes).not.toContain('\n## ');
+    expect(Buffer.byteLength(notes)).toBeLessThan(16_000);
+  });
+});
