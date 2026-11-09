@@ -185,6 +185,11 @@ real use case, so internal addresses are allowed, with rules (`notify/net.ts`):
   (169.254/16 where cloud metadata lives, fe80::/10), multicast and reserved ranges are refused, also when a name
   *resolves* to them. The name is resolved once per send and the connection goes to the checked address (no second lookup a
   DNS rebinding could change); `http://` to a name that resolves to a public address is refused.
+- **Every spelling of an address counts the same** (`ip-address.ts`, which the chain clients, the trusted proxy and the
+  contacts' DM relays use too): an IPv4-mapped IPv6 address, also in hex (`[::ffff:7f00:1]` is 127.0.0.1), is its IPv4
+  address, IPv4 shorthand (`127.1`, `2130706433`) is written out, and NAT64 (64:ff9b::/96, 64:ff9b:1::/48),
+  IPv4-compatible (::/96) and IPv4-translated addresses are refused. Up to 0.1.22 only the dotted `::ffff:a.b.c.d` was
+  unwrapped, so `https://[::ffff:7f00:1]/` passed as public (security sweep 2).
 - Redirects are not followed; the answer is read up to 4 KiB; a send gives up after 15 seconds. `.onion` is refused (the
   guardian has no Tor).
 

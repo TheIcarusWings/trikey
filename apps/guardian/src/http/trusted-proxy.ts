@@ -31,6 +31,7 @@ import type { LookupAddress } from 'node:dns';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { readFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
+import { canonicalIp, classifyIp } from '../ip-address.js';
 import type { LogFields, Logger } from '../log.js';
 
 export interface TrustedProxyOptions {
@@ -41,12 +42,10 @@ export interface TrustedProxyOptions {
   log?: Logger;
 }
 
-/** `::ffff:10.21.0.1` → `10.21.0.1`; lower case; no brackets. */
+/** `::ffff:10.21.0.1` (or `::ffff:a15:1`) → `10.21.0.1`: one spelling per address (`canonicalIp`); anything else lower case, no brackets. */
 export function normalizeAddress(addr: string | undefined): string | undefined {
   if (!addr) return undefined;
-  const a = addr.replace(/^\[|\]$/g, '').toLowerCase();
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(a);
-  return mapped ? mapped[1] : a;
+  return canonicalIp(addr) ?? addr.replace(/^\[|\]$/g, '').toLowerCase();
 }
 
 /** The IPv4 default gateway in `/proc/net/route` (little-endian hex), or undefined. */
@@ -64,8 +63,7 @@ export function defaultGateway(routeTable: string): string | undefined {
 
 /** Whether `addr` is loopback (a process in the guardian's own container). */
 export function isLoopback(addr: string | undefined): boolean {
-  const a = normalizeAddress(addr);
-  return !!a && (a === '::1' || /^127\./.test(a));
+  return !!addr && classifyIp(addr) === 'loopback';
 }
 
 export class TrustedProxy {

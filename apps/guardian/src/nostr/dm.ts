@@ -14,7 +14,6 @@
  * In the guardian the shared `Inbox` opens every wrap once and passes the DMs
  * to `handleOpened` (`listen: false`); standalone, this subscribes itself.
  */
-import { isIP } from 'node:net';
 import {
   RecentSet,
   normalizeRelayUrl,
@@ -29,7 +28,7 @@ import {
 } from '@trikey/protocol';
 import { verifyEvent } from 'nostr-tools/pure';
 import { errorText, silentLogger, type Logger } from '../log.js';
-import { classifyIp, isLocalName } from '../notify/net.js';
+import { canonicalIp, classifyIp, isLocalName } from '../ip-address.js';
 import type { GuardianIdentity } from '../identity.js';
 
 export const DM_KIND = 14;
@@ -200,8 +199,8 @@ export function isPublicDmRelay(url: string): boolean {
     return false;
   }
   if (!host) return false;
+  // An IP address in any spelling (`ip-address.ts`) is judged as an address, before the name rules.
+  if (canonicalIp(host)) return classifyIp(host) === 'public';
   if (host === 'localhost' || host.endsWith('.localhost')) return false;
-  if (isLocalName(host)) return false;
-  if (isIP(host)) return classifyIp(host) === 'public';
-  return true;
+  return !isLocalName(host);
 }
