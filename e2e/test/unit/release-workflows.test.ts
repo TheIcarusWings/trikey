@@ -583,26 +583,111 @@ describe('packaging/check-release-assets.sh', () => {
 });
 
 describe('start9.yml and umbrel-store.yml', () => {
-  it('run on a release tag only when called (or dispatched) with the digest, not on a tag push', () => {
-    for (const name of ['start9.yml', 'umbrel-store.yml']) {
+  const steps = {
+    'start9.yml': workflow('start9.yml').jobs['build']!.steps!,
+    'umbrel-store.yml': workflow('umbrel-store.yml').jobs['publish']!.steps!,
+  };
+  const digestStep = { 'start9.yml': 'The verified digest', 'umbrel-store.yml': 'Check the image digest' };
+
+  it('run on a release tag only when called with the digest, or dispatched with none: no digest can be typed in (sweep 3 #4)', () => {
+    for (const name of ['start9.yml', 'umbrel-store.yml'] as const) {
       const wf = workflow(name);
       expect(wf.on, name).not.toHaveProperty('push');
       expect(wf.on, name).toHaveProperty('workflow_call');
       expect((wf.on['workflow_call'] as { inputs: Record<string, { required: boolean }> }).inputs['image-digest']!.required).toBe(true);
+      // A run by hand takes no input at all.
+      expect(wf.on['workflow_dispatch'], name).toBeNull();
+      expect(wf.permissions?.['actions'], name).toBe('read');
+      // The digest comes from the artifact `verified` left: this run's when called, else the verified run's of this commit.
+      const s = steps[name];
+      const find = s.find((x) => x.name === "The docker.yml run that verified this commit's image")!;
+      expect(find.if, name).toContain("inputs.image-digest == ''");
+      expect(find.run, name).toMatch(/release-run\.sh"? verified docker\.yml verified\)/);
+      const downloads = s.filter((x) => x.uses?.startsWith('actions/download-artifact@'));
+      expect(downloads.map((d) => [d.if, d.with]), name).toEqual([
+        [expect.stringContaining("inputs.image-digest == ''"), expect.objectContaining({ name: 'guardian-image-digest', 'run-id': '${{ steps.run.outputs.id }}' })],
+        [expect.stringContaining("inputs.image-digest != ''"), { name: 'guardian-image-digest', path: '${{ runner.temp }}/digest' }],
+      ]);
+      const check = s.find((x) => x.name === digestStep[name])!;
+      expect(check.env, name).toEqual({ GIVEN: '${{ inputs.image-digest }}' });
+      expect(s.indexOf(check), name).toBeGreaterThan(s.indexOf(downloads[1]!));
+      // Only the checked digest goes further.
+      expect(JSON.stringify(s.filter((x) => x !== check)), name).not.toMatch(/\$\{\{ inputs\.image-digest \}\}/);
+    }
+    // docker.yml lets the called workflows read its artifacts.
+    const docker = workflow('docker.yml');
+    for (const name of ['start9', 'umbrel-store']) expect(docker.jobs[name]!.permissions?.['actions'], name).toBe('read');
+  });
+
+  it("finds the docker.yml run of the tag's commit in which `verified` succeeded, never another commit's", () => {
+    for (const name of ['start9.yml', 'umbrel-store.yml'] as const) {
+      const step = steps[name].find((x) => x.name === "The docker.yml run that verified this commit's image")!;
+      const run = (runs: Record<string, FakeRun[]>) => {
+        const temp = mkdtempSync(join(tmpdir(), 'trikey-digest-'));
+        const output = join(temp, 'output');
+        writeFileSync(output, '');
+        try {
+          execFileSync('bash', ['-c', step.run!], {
+            cwd: ROOT,
+            env: { PATH: `${fakeGh(runs)}:${process.env['PATH']}`, GITHUB_OUTPUT: output, GITHUB_REPOSITORY: 'o/r', GITHUB_SHA: TAG_SHA, GITHUB_WORKSPACE: ROOT },
+            encoding: 'utf8',
+            stdio: 'pipe',
+          });
+          return readFileSync(output, 'utf8');
+        } catch (e) {
+          return `failed: ${String((e as { stderr?: string }).stderr)}`;
+        }
+      };
+      expect(run(RELEASE_RUNS), name).toBe('id=200\n');
+      // Only a branch named like the tag (another commit, its own `verified`) and a run of the commit without `verified`.
+      const others = { 'docker.yml': RELEASE_RUNS['docker.yml']!.filter((r) => r.id !== 200) };
+      expect(run(others), name).toContain('No docker.yml run of');
     }
   });
 
-  it('pack and pin the given digest, and fail if the tag moved', () => {
-    const start9 = workflow('start9.yml').jobs['build']!.steps!.find((s) => s.name === 'Guardian image')!;
-    expect(start9.env!['DIGEST']).toBe('${{ inputs.image-digest }}');
+  it('refuses a given digest that is not the one `verified` left, and a tag that moved', () => {
+    const temp = mkdtempSync(join(tmpdir(), 'trikey-digest-'));
+    const verified = `sha256:${'c'.repeat(64)}`;
+    mkdirSync(join(temp, 'digest'));
+    writeFileSync(join(temp, 'digest', 'guardian-image-digest.txt'), `${verified}\n`);
+    const bin = join(temp, 'bin');
+    mkdirSync(bin);
+    // A stand-in for `docker buildx imagetools inspect`: the version tag names TAG_DIGEST.
+    writeFileSync(join(bin, 'docker'), '#!/usr/bin/env bash\necho "${TAG_DIGEST}"\n', { mode: 0o755 });
+    for (const name of ['start9.yml', 'umbrel-store.yml'] as const) {
+      const step = steps[name].find((x) => x.name === digestStep[name])!;
+      const run = (given: string, tagDigest = verified) => {
+        writeFileSync(join(temp, 'output'), '');
+        try {
+          execFileSync('bash', ['-c', step.run!], {
+            env: { PATH: `${bin}:${process.env['PATH']}`, RUNNER_TEMP: temp, GITHUB_OUTPUT: join(temp, 'output'), GIVEN: given, TAG_DIGEST: tagDigest, IMAGE: 'ghcr.io/theicaruswings/trikey-guardian', GITHUB_REF_NAME: 'v0.1.99-alpha' },
+            encoding: 'utf8',
+            stdio: 'pipe',
+          });
+          return readFileSync(join(temp, 'output'), 'utf8');
+        } catch (e) {
+          return `failed: ${String((e as { stdout?: string }).stdout)}`;
+        }
+      };
+      expect(run(''), name).toBe(`digest=${verified}\n`); // by hand
+      expect(run(verified), name).toBe(`digest=${verified}\n`); // called by docker.yml
+      expect(run(`sha256:${'e'.repeat(64)}`), name).toContain("is not the sha256:cccc");
+      if (name === 'umbrel-store.yml') expect(run(verified, `sha256:${'e'.repeat(64)}`)).toContain('the tag was changed');
+    }
+  });
+
+  it('pack and pin the checked digest, and fail if the tag moved', () => {
+    const start9 = steps['start9.yml'].find((s) => s.name === 'Guardian image')!;
+    expect(start9.env!['DIGEST']).toBe('${{ steps.digest.outputs.digest }}');
     expect(start9.run).toContain('docker pull --platform "${platform}" "${IMAGE}@${DIGEST}"');
     expect(start9.run).toContain('the tag was changed');
+    expect(steps['start9.yml'].find((s) => s.name === 'The packed image is the pushed digest')!.env!['DIGEST']).toBe('${{ steps.digest.outputs.digest }}');
     const umbrel = workflow('umbrel-store.yml').jobs['publish']!;
     expect(umbrel.if).toBe(RELEASE_TAG);
     expect(umbrel.environment).toBe('release');
     const check = umbrel.steps!.find((s) => s.name === 'Check the image digest')!;
-    expect(check.env!['DIGEST']).toBe('${{ inputs.image-digest }}');
     expect(check.run).toContain('the tag was changed');
+    expect(umbrel.steps!.find((s) => s.name === 'Copy the store')!.env!['DIGEST']).toBe('${{ steps.digest.outputs.digest }}');
     expect(JSON.stringify(umbrel.steps)).not.toMatch(/seq 1 60/);
   });
 });

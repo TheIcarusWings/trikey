@@ -22,8 +22,18 @@ name: Docker
 # digest `publish` pushed, and start9.yml and umbrel-store.yml fail if the tag no longer points at it. They get it only
 # through `verified`: on a release tag this workflow also calls reproducible.yml, which builds the same commit twice
 # more from nothing, and `verified` lets the digest through only if those builds give exactly the pushed image index.
+# `verified` also keeps it as the artifact guardian-image-digest, which start9.yml and umbrel-store.yml require their
+# input to equal, and which they and publish-release.yml use when run by hand: only ever from the run of the tag's
+# commit in which `verified` succeeded (.github/scripts/release-run.sh), never a digest someone types in.
 # release.yml therefore dispatches this workflow and android-apk.yml (and publish-release.yml); reproducible.yml,
 # start9.yml and umbrel-store.yml run from here.
+#
+# Why the version tag is pushed before `verified`, not after: pushing it after would take a second job with
+# `packages: write` in the `release` environment (so a second approval on every release, and a second job holding
+# GHCR_PUSH_TOKEN), plus a push by digest only, then a re-tag. What it would buy is small, since nothing this repository
+# ships reads the tag. The cost of not doing it: if `verified` fails, the tag keeps the unreproduced image (for people
+# who type the tag), while the release stops (no compose file, store, package or published release) and a re-run must
+# push that same digest; fix the build and release a new version.
 #
 # The image is built to be reproducible: see packaging/VERIFY.md, and
 # .github/workflows/reproducible.yml, which builds it twice and compares the digests.
@@ -331,6 +341,7 @@ jobs:
     if: needs.verified.outputs.digest != ''
     permissions:
       contents: read
+      actions: read # start9.yml reads the digest artifact `verified` left
     uses: ./.github/workflows/start9.yml
     with:
       image-digest: ${{ needs.verified.outputs.digest }}
@@ -345,6 +356,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      actions: read # umbrel-store.yml reads the digest artifact `verified` left
     uses: ./.github/workflows/umbrel-store.yml
     with:
       image-digest: ${{ needs.verified.outputs.digest }}

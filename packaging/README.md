@@ -78,9 +78,10 @@ This folder lives in the monorepo, so the store has to live in its own repositor
 a README. Then, in Umbrel: App Store, then Community App Stores, and add that repository's URL.
 
 `.github/workflows/umbrel-store.yml` keeps the store in step. On a release tag `v*`, `docker.yml`
-calls it once the image is pushed, with the digest it pushed; it copies `packaging/umbrel/` into the
-store repository with the image pinned by that digest (failing if the tag no longer points at it),
-and pushes. It needs one secret, `UMBREL_STORE_TOKEN`: a fine-grained personal access token with
+calls it once the image is pushed and reproduced, with that digest, which must be the artifact docker.yml's `verified`
+job left in the same run; it copies `packaging/umbrel/` into the store repository with the image pinned by that digest
+(failing if the tag no longer points at it), and pushes. Run by hand on the tag (a retry), it takes no digest as input:
+it uses the artifact of the docker.yml run of the tag's commit in which `verified` succeeded. It needs one secret, `UMBREL_STORE_TOKEN`: a fine-grained personal access token with
 "Contents: read and write" on the store repository only, best kept in the `release` environment
 (`docs/android-signing.md`, "The `release` environment").
 It runs only when the repository variable `UMBREL_STORE_AUTOPUBLISH` is `true` (**Settings → Secrets and variables →
@@ -136,6 +137,7 @@ has to be published first (or built locally under that name).
 
 `.github/workflows/start9.yml` type-checks the package and builds both `.s9pk` files on every pull
 request that touches it (or the guardian's environment contract) and on every release tag (called by
-`docker.yml` with the digest of the image it pushed, which is the image packed), and keeps
+`docker.yml` with the digest of the image it pushed and `verified` reproduced, which is the image packed; run by hand on
+a tag, it takes that digest from the verified docker.yml run of the tag's commit, never from an input), and keeps
 them as workflow artifacts. They are signed with a throwaway key, so they are for testing, not
 attached to releases: `start9/README.md`, "CI".

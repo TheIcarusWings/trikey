@@ -168,6 +168,10 @@ to the guardian, even with a matching `.sha256`). Only then does it publish the 
 If a release stays a draft, the Publish release run says why. Fix that (re-run the failed build), then re-run Publish
 release. Do not publish a draft by hand: that skips the checks.
 
+Start9 package and Umbrel store can be run by hand on the tag to retry them. They take no digest as input: they use
+the one `docker.yml`'s `verified` job kept (the artifact `guardian-image-digest`) in the run of the tag's commit
+where it succeeded, and stop if there is none.
+
 ### Immutable releases
 
 A token with `contents: write` (every release job has one, and so could a workflow edited on a branch) can replace a
