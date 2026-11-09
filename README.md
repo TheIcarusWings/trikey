@@ -3,6 +3,13 @@
 A 2-of-3 bitcoin wallet that feels like [Bitkey](https://bitkey.world), with no
 company holding a key. Website: [trikey.app](https://trikey.app).
 
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/readme/keys-dark.svg">
+  <img src="docs/img/readme/keys-light.svg" alt="Three keys, any two move your bitcoin. Phone and guardian: everyday payments up to your daily limit. Phone and hardware wallet: big payments and rule changes. Hardware wallet and guardian: recovery if your phone is lost." width="640">
+</picture>
+</p>
+
 | Key | Where it lives | Used for |
 |---|---|---|
 | 1 | **Any hardware wallet** (Ledger, Trezor, Coldcard, BitBox, Jade…) | Big payments, changing rules, recovery |
@@ -23,6 +30,13 @@ refilled by pre-signed, timelocked refills.
 
 ## How it works
 
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/readme/network-dark.svg">
+  <img src="docs/img/readme/network-light.svg" alt="Your phone and your guardian each connect out to nostr relays, which pass end-to-end encrypted messages between them. The hardware wallet connects to the phone. The guardian reads the chain from your own Bitcoin node.">
+</picture>
+</p>
+
 - Wallets are plain `wsh(sortedmulti(2, …))` descriptors on BIP48 paths, so any
   multisig-capable wallet can recover them without Trikey.
 - The guardian checks every request against the descriptor, a rolling 24-hour
@@ -30,7 +44,23 @@ refilled by pre-signed, timelocked refills.
 - Losing a device starts a recovery that waits 7, 14 or 30 days and alerts you
   and your contacts every day. Any of them can cancel it.
 
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/readme/recovery-dark.svg">
+  <img src="docs/img/readme/recovery-light.svg" alt="A recovery waits 7, 14 or 30 days. Every day you and your alert contacts are alerted, and any of them can cancel it. At the end your bitcoin moves to a new 2-of-3 with a replacement key.">
+</picture>
+</p>
+
 The full design, threat model and open questions are in [DESIGN.md](DESIGN.md).
+
+### In the app
+
+<p align="center">
+<picture><source media="(prefers-color-scheme: dark)" srcset="site/img/phone-home-dark.webp"><img src="site/img/phone-home.webp" width="190" alt="Home: the balance, how much the phone can still send today without the hardware wallet, the guardian online, recent activity."></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="site/img/phone-onb-limit-dark.webp"><img src="site/img/phone-onb-limit.webp" width="190" alt="Setup, Your protection: a daily limit for the phone alone and a 7-day security waiting period, approved on the Ledger."></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="site/img/phone-send-review-dark.webp"><img src="site/img/phone-send-review.webp" width="190" alt="Review before sending: signed by this phone and the guardian, within today's limit, so no hardware wallet needed."></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="site/img/phone-recovery-alert-dark.webp"><img src="site/img/phone-recovery-alert.webp" width="190" alt="Someone started a recovery: when the money would move, with Cancel recovery and This was me."></picture>
+</p>
 
 ## Install (alpha test builds)
 
