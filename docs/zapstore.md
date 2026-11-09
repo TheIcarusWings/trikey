@@ -6,7 +6,7 @@ signed by the same APK key.
 
 ## For users
 
-Trikey is listed on Zapstore from 0.1.10-alpha. Install Zapstore (from zapstore.dev), search for **Trikey**, and install it. Updates then show up in Zapstore. The
+Trikey is listed on Zapstore from 0.1.10-alpha, and Trikey FOSS from 0.1.24-alpha. Install Zapstore (from zapstore.dev), search for **Trikey**, and install the one you want. Updates then show up in Zapstore. The
 listing's publisher is Trikey's own npub (below), and the APK is the same file as on the
 [GitHub releases page](https://github.com/TheIcarusWings/trikey/releases), signed with the Trikey release key
 (certificate SHA-256 in [`packaging/android/release-cert.sha256`](../packaging/android/release-cert.sha256)). An APK
@@ -14,8 +14,7 @@ of the same app from Zapstore, Obtainium or GitHub installs over the others and 
 
 There are two apps (from 0.1.23-alpha; [android-signing.md](android-signing.md), "Two APKs, two apps"): **Trikey**
 (`app.trikey.wallet`, the standard build, with Google's libraries) and **Trikey FOSS** (`app.trikey.wallet.foss`, no
-Google code). The **Trikey** listing has the standard app. **Trikey FOSS** gets its own listing once the maintainer has
-published it (below); until then, take its APK from GitHub or Obtainium. Each app has its own wallet: to move one from
+Google code). The **Trikey** listing has the standard app; **Trikey FOSS** has a listing of its own. Each app has its own wallet: to move one from
 the other, restore your backup file and recovery code in the new app.
 
 Publisher npub: `npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`. Check it on the listing before installing. It is also
@@ -85,7 +84,9 @@ from the same repository, publisher npub and APK certificate. Its description is
 `match` takes only the FOSS APK (`trikey-alpha-foss-v<version>.apk`), `release_filter` skips the releases up to
 0.1.21-alpha (whose FOSS APK still had the standard app's id: publishing one would put it under the wrong app), and the
 name, summary and description are Trikey FOSS's. zsp's wizard reads `./zapstore.yaml`, which is why the file is in a
-folder of its own.
+folder of its own. zsp reads local files only from inside the config's folder, so that file names its icon and the
+changelog by URL (this repository's main branch), not by a `../` path, which zsp refuses with "outside the base
+directory". `zsp check` does not load the icon, so only `zsp publish` (or the wizard) would show such an error.
 
 Run this on your own computer, after the release workflow has published the first release with the new id (0.1.23-alpha
 or later) and both APKs are on its GitHub release page:
