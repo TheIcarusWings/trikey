@@ -156,13 +156,21 @@ with its own key, made as above.
 `release.yml` creates the tag and a **draft** release. The builds attach their files to the draft: both APKs and their
 `.sha256` (`android-apk.yml`), and the compose files with the guardian image pinned by digest (`docker.yml`). A draft is
 invisible outside the repository: GitHub's public API does not list it, so Obtainium, Zapstore and the app's **Check for
-updates** do not see it, nor does anyone on the releases page. Last, `publish-release.yml` waits for the builds, then,
+updates** do not see it, nor does anyone on the releases page. Last, `publish-release.yml` waits for the builds (the
+runs of the tag's commit, started by the tag or a dispatch on it, in which the tag-only jobs ran: a branch named like
+the tag does not count, `.github/scripts/release-run.sh`), then,
 in the `release` environment, checks the draft (`packaging/check-release-assets.sh`): exactly the expected files, each
 the one GitHub lists, the checksums, both APKs signed by the pinned certificate and nothing else and each the right
-app, and the compose file running the image by the digest `docker.yml` pushed. Only then does it publish the release.
+app, and the compose files byte for byte what `docker.yml` makes from the tag's `packaging/compose` with the digest it
+pushed (`packaging/compose/release-compose.sh`, run again: so a swapped file cannot add a mount, a command or a privilege
+to the guardian, even with a matching `.sha256`). Only then does it publish the release.
 
 If a release stays a draft, the Publish release run says why. Fix that (re-run the failed build), then re-run Publish
 release. Do not publish a draft by hand: that skips the checks.
+
+Start9 package and Umbrel store can be run by hand on the tag to retry them. They take no digest as input: they use
+the one `docker.yml`'s `verified` job kept (the artifact `guardian-image-digest`) in the run of the tag's commit
+where it succeeded, and stop if there is none.
 
 ### Immutable releases
 
@@ -173,6 +181,12 @@ right before the draft is published. **The owner turns it on once:** the reposit
 **Releases**, tick **Enable release immutability**, and save. Releases published before stay as they were; every one
 after is immutable. The Publish release run says "is immutable" on success, and warns "Release is not immutable" while
 the setting is off.
+
+The files are compared once more right before the release is published, and again right after. A file swapped in
+between (a second or so) is caught by the second comparison. The run then fails and puts the release back to a draft. An
+immutable release cannot go back to a draft, and its files cannot change, but its title and notes can: the run renames
+it "withdrawn, do not install", puts a warning at the top of its notes, and takes it off "latest". Delete such a release
+by hand (Releases page, the release, **Delete**) and release a new version.
 
 ## The `release` environment
 

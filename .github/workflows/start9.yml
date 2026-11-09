@@ -17,10 +17,11 @@ name: Start9 package
 #
 # The image: the package names ghcr.io/theicaruswings/trikey-guardian:<version> in packaging/start9/startos/manifest/index.ts,
 # and `s9pk pack` copies it into the .s9pk, using a local image of that name as is. On a release tag this workflow is
-# called by docker.yml with the digest its `publish` job just pushed (`image-digest`): the job pulls exactly that
-# digest, checks the tag still points at it, and tags it locally under the manifest's name, so the tag is never
-# re-resolved for what goes into the package. (A manual run on a tag must be given that digest, from docker.yml's run
-# summary.) Before packing, it checks that the local image of that name is the one pulled by the digest, and after
+# called by docker.yml with the digest its `verified` job let through (`image-digest`), which must be the
+# guardian-image-digest artifact `verified` left in that same run: the job pulls exactly that digest, checks the tag
+# still points at it, and tags it locally under the manifest's name, so the tag is never re-resolved for what goes into
+# the package. A manual run on a tag takes no digest from anyone: it uses the artifact of the docker.yml run of the
+# tag's commit in which `verified` succeeded (.github/scripts/release-run.sh). Before packing, it checks that the local image of that name is the one pulled by the digest, and after
 # packing that it has not changed, so the package refuses anything but the pushed image. On a pull request it uses the published image when the tag exists; when it does not yet (a release PR that
 # bumps the version) it builds the image from the checkout for the runner's own architecture and tags it with that
 # name, so the pack finds it locally. Each architecture builds on a runner of that architecture, so nothing is emulated.
@@ -40,16 +41,12 @@ on:
         description: 'The digest (sha256:...) of the guardian image docker.yml just pushed for this tag.'
         required: true
         type: string
+  # By hand. On a tag, the digest comes from the docker.yml run that verified the tag's commit, never from an input.
   workflow_dispatch:
-    inputs:
-      image-digest:
-        description: 'On a tag: the digest (sha256:...) docker.yml published for it (its run summary). Ignored elsewhere.'
-        required: false
-        default: ''
-        type: string
 
 permissions:
   contents: read
+  actions: read # on a tag: the docker.yml run of the tag's commit, and its digest artifact
 
 concurrency:
   group: start9-${{ github.ref }}
@@ -196,11 +193,55 @@ jobs:
           echo "Signed by this run's throwaway key:"
           start-cli pubkey
 
+      # On a tag. Called by docker.yml: the artifact of this very run. By hand: the run of this commit in which `verified`
+      # succeeded.
+      - name: The docker.yml run that verified this commit's image
+        if: github.ref_type == 'tag' && inputs.image-digest == ''
+        id: run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          run="$(bash "${GITHUB_WORKSPACE}/.github/scripts/release-run.sh" verified docker.yml verified)"
+          IFS=$'\t' read -r id url <<<"${run}"
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
+          echo "The digest of ${url}"
+
+      - name: Download its digest
+        if: github.ref_type == 'tag' && inputs.image-digest == ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: guardian-image-digest
+          path: ${{ runner.temp }}/digest
+          run-id: ${{ steps.run.outputs.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download this run's digest
+        if: github.ref_type == 'tag' && inputs.image-digest != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: guardian-image-digest
+          path: ${{ runner.temp }}/digest
+
+      - name: The verified digest
+        if: github.ref_type == 'tag'
+        id: digest
+        env:
+          GIVEN: ${{ inputs.image-digest }}
+        run: |
+          set -euo pipefail
+          digest="$(tr -d ' \n\r' < "${RUNNER_TEMP}/digest/guardian-image-digest.txt")"
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::the verified digest is not a sha256 digest: '${digest}'"; exit 1; }
+          if [ -n "${GIVEN}" ] && [ "${GIVEN}" != "${digest}" ]; then
+            echo "::error::image-digest ${GIVEN} is not the ${digest} docker.yml's verified job let through"; exit 1
+          fi
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
       - name: Guardian image
         id: image
         env:
           ARCH: ${{ matrix.arch }}
-          DIGEST: ${{ inputs.image-digest }}
+          DIGEST: ${{ steps.digest.outputs.digest }}
         run: |
           set -euo pipefail
           tag=$(grep -oE "${IMAGE}:[^'\"]+" startos/manifest/index.ts | head -1)
@@ -208,7 +249,7 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             # Exactly the image docker.yml pushed, by digest: the tag is not re-resolved for what is packed.
             [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] \
-              || { echo "::error::On a tag this workflow packs the digest docker.yml pushed (image-digest), got '${DIGEST}'"; exit 1; }
+              || { echo "::error::On a tag this workflow packs the digest docker.yml verified, got '${DIGEST}'"; exit 1; }
             case "${ARCH}" in x86_64) platform=linux/amd64 ;; aarch64) platform=linux/arm64 ;; esac
             # A tripwire: the tag must still point at what was pushed (an overwritten tag fails the release).
             current=$(docker buildx imagetools inspect "${tag}" --format '{{.Manifest.Digest}}')
@@ -252,7 +293,7 @@ jobs:
         env:
           TAG: ${{ steps.image.outputs.tag }}
           ID: ${{ steps.image.outputs.id }}
-          DIGEST: ${{ inputs.image-digest }}
+          DIGEST: ${{ steps.digest.outputs.digest }}
         run: |
           set -euo pipefail
           now=$(docker image inspect "${TAG}" --format '{{.Id}}')

