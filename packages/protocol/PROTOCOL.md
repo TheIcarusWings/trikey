@@ -894,7 +894,7 @@ The guardian service maps the engine's `Refusal.reason` to an error code and put
 | `recovery_in_progress` | 1301 |
 | `invalid_psbt`, `invalid_helper_input`, `foreign_input`, `missing_non_witness_utxo`, `non_witness_utxo_mismatch`, `invalid_signature` | 1400 |
 | `cosign_rate_limited` (more than 30 successful `sign` in an hour or 200 in a day for the wallet: `max`, `windowMs`, `retryAfterSeconds`) | 1500 |
-| `chain_unavailable` (no chain data: a recovery cannot start or complete, nor a co-signature once the last chain observation is old), `clock_ahead_of_chain` (the guardian's clock is more than 3 h ahead of the chain's median time past: it co-signs nothing) | 1501 |
+| `chain_unavailable` (no chain data: a recovery cannot start or complete, nor a co-signature once the last chain observation is old), `clock_ahead_of_chain` (the guardian's clock is more than 3 h ahead of the chain's median time past: it co-signs nothing), `clock_behind_chain` (more than 3 h behind it: the same; an app that does not know this reason shows it as any `1501`) | 1501 |
 
 ## 4. Validation, expiry and replay
 

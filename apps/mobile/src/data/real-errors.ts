@@ -25,8 +25,16 @@ export function refusalToError(r: GuardianRefusal): WalletServiceError {
     }
     case 'guardian_locked':
       return new WalletServiceError('guardian_locked', 'The guardian is locked. Unlock it on Home, or approve this with your hardware wallet.', opts(true));
-    case 'unreachable':
     case 'unavailable':
+      // The guardian's clock and the Bitcoin network disagree by hours (set wrong, or moved by someone): it co-signs nothing.
+      if (r.reason === 'clock_ahead_of_chain' || r.reason === 'clock_behind_chain')
+        return new WalletServiceError(
+          'guardian_unreachable',
+          "Your guardian's clock is off by hours from the Bitcoin network's time, so it co-signs nothing until that is fixed. Check the date and time on the guardian's box. Your hardware wallet can approve payments without it.",
+          opts(true),
+        );
+      return refusalToError({ kind: 'unreachable', message: r.message });
+    case 'unreachable':
       return new WalletServiceError(
         'guardian_unreachable',
         "Trikey can't reach your guardian right now. Check that it is on and online. Your hardware wallet can approve payments without it.",

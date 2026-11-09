@@ -46,9 +46,9 @@ import { dueAlerts as computeDueAlerts, isKnownAlertId, type DueAlert } from '..
 import { CONTACTS_NOT_SHOWN, bip137Authorizer, approvalMessage, pairingMessage, proofId, recoveryAccessMessage, verifyPolicyApproval, type HardwareAction, type HardwareAuthorizer } from '../policy/authorizer.js';
 import { contactsDelta } from '../policy/contacts.js';
 import { DAY, systemClock, type ChainTime, type ChainTimeSource, type Clock } from '../policy/clock.js';
-import { BLOCKS_PER_DAY, MAINNET_CONTACT_REQUIRED, contactsBesidesPhone, dropsLastContact, LIMIT_OFF_AT_PAIRING, rulesApprovalRefusal, MAX_ACCESS_GRANTS, MAX_APPROVAL_TTL_MS, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_SEQUENCE_STEP, NOTICE_TTL_MS, isRefusalEvent, policyWarnings, pruneActivity, type CosignResult, type GuardianStatus, type PhoneSpendingStatus, type RecoveryView } from '../policy/engine.js';
+import { BLOCKS_PER_DAY, MAINNET_CONTACT_REQUIRED, contactsBesidesPhone, dropsLastContact, LIMIT_OFF_AT_PAIRING, rulesApprovalRefusal, MAX_ACCESS_GRANTS, MAX_APPROVAL_TTL_MS, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_CLOCK_BEHIND_CHAIN_MS, MAX_SEQUENCE_STEP, NOTICE_TTL_MS, isRefusalEvent, policyWarnings, pruneActivity, type CosignResult, type GuardianStatus, type PhoneSpendingStatus, type RecoveryView } from '../policy/engine.js';
 import { addCosignerSignatures } from '../policy/inspect.js';
-import { pruneSpends, pruneTime, splitOutflow, usageWith, windowUsage } from '../policy/limit.js';
+import { limitClock, pruneSpends, pruneTime, splitOutflow, usageWith, windowUsage } from '../policy/limit.js';
 import { LIMIT_OFF_SATS, isContactLockOn, isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from '../policy/rules.js';
 import type { CosignerSigner } from '../policy/signer.js';
 import type { AccessGrant, CancelActor, CancelledBy, HardwareApproval, Rules, RulesApproval, SurvivingRole } from '../policy/index.js';
@@ -548,11 +548,9 @@ export class HostedEngine {
     if (chain && (!seen || chain.height > seen.height || (chain.height === seen.height && chain.medianTimePastMs > seen.medianTimePastMs))) draft.chainSeen = { ...chain, at: now };
   }
 
+  /** As the host's engine (policy/limit.ts `limitClock`): refused while the clock is too far ahead of or behind the chain. */
   private limitTime(draft: HostedState, now: number, chain: ChainTime | undefined): { ok: true; at: number } | { ok: false; refusal: HostedRefusal } {
-    const seen = chain ?? draft.chainSeen;
-    if (!seen) return { ok: false, refusal: { reason: 'chain_unavailable', detail: 'no chain data to check the clock against yet' } };
-    if (now > seen.medianTimePastMs + MAX_CLOCK_AHEAD_OF_CHAIN_MS) return { ok: false, refusal: { reason: 'clock_ahead_of_chain', systemTime: now, chainTime: seen.medianTimePastMs } };
-    return { ok: true, at: Math.max(draft.timeFloor ?? 0, now) };
+    return limitClock(now, chain, draft.chainSeen, draft.timeFloor, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_CLOCK_BEHIND_CHAIN_MS);
   }
 
   private log(draft: HostedState, now: number, event: HostedActivityEvent): void {

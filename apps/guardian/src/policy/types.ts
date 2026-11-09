@@ -310,6 +310,8 @@ export type Refusal =
   | { reason: 'chain_unavailable'; detail: string }
   /** The system clock is more than `MAX_CLOCK_AHEAD_OF_CHAIN_MS` ahead of the chain's median time past: nothing is co-signed. */
   | { reason: 'clock_ahead_of_chain'; systemTime: number; chainTime: number }
+  /** The system clock is more than `MAX_CLOCK_BEHIND_CHAIN_MS` behind the chain's median time past: nothing is co-signed. */
+  | { reason: 'clock_behind_chain'; systemTime: number; chainTime: number }
   /** The PSBT pays less than `MIN_COSIGN_FEE_SAT_PER_KVB` (inspect.ts): it would never relay, so it is no real payment. */
   | { reason: 'fee_rate_too_low'; fee: bigint; vsize: number; minSatPerKvb: number }
   /** More successful co-signatures in the window than `COSIGN_RATE_LIMITS` allow (engine.ts). */

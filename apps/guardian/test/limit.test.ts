@@ -55,9 +55,13 @@ describe('daily limit', () => {
     const { engine, wallet, clock } = await setup({ rules: { dailyLimitSats: 100_000n } });
     const a = await phoneSpend(wallet, [fund(wallet, RECEIVE, 0, 500_000n)], 90_000n);
     expect((await engine.cosign(a.psbt)).ok).toBe(true);
-    clock.advance(-2 * DAY);
+    // Within the tolerance behind the chain: counted on the limit's monotonic time, so still today's limit.
+    clock.advance(-2 * 3_600_000);
     const b = await phoneSpend(wallet, [fund(wallet, RECEIVE, 1, 500_000n)], 90_000n);
     expect(await engine.cosign(b.psbt)).toMatchObject({ ok: false, refusal: { reason: 'over_daily_limit' } });
+    // Further back than that, nothing is co-signed at all (`clock_behind_chain`).
+    clock.advance(-2 * DAY);
+    expect(await engine.cosign(b.psbt)).toMatchObject({ ok: false, refusal: { reason: 'clock_behind_chain' } });
   });
 
   it('a replay of the same transaction is re-signed but never counted twice', async () => {

@@ -224,7 +224,7 @@ recovery).
 |---|---|
 | `Σ inputs − Σ change`, fee included | **Works.** Inputs and their amounts are proven by tweaks plus `nonWitnessUtxo`; an output is change when its three tweaks rebuild its script from the guest's account pubkeys. This is core's `analysis.outflow` / `vaultIn − selfOut` (`packages/core/src/psbt.ts`). |
 | Rolling 24 hours, keyed by outpoint; a replay counted once; an RBF replacement counts as the larger amount | **Works.** Outpoints and shares (`splitOutflow`, `usageWith`, `apps/guardian/src/policy/limit.ts`) need no addresses. The app's "Speed up" (RBF) of a Spending payment is not offered to a guest yet: the slot's ledger would keep the replaced payment's change (DESIGN.md, "Speed up"). |
-| Clock checked against the chain (`clock_ahead_of_chain`, monotonic `timeFloor`) | **Works.** Chain time comes from the host's own node. |
+| Clock checked against the chain (`clock_ahead_of_chain`, `clock_behind_chain`, monotonic `timeFloor`) | **Works.** Chain time comes from the host's own node. |
 | Payments to Savings count as leaving | Works trivially: the guardian does not know Savings. |
 | Limit off | Works (same rule, same approval text); built in phase 2 (section 16). |
 | Coins spent by phone + hardware wallet | Not seen, and need not be: the limit bounds only what key 3 co-signs. Same as today ("Big payment ... the guardian isn't involved"). |

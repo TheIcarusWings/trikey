@@ -443,6 +443,12 @@ describe('guardian refusals', () => {
     expect(refusalFromError(new RpcError(ErrorCode.RateLimited, 'r', { retryAfterSeconds: 30 }))).toMatchObject({ kind: 'rate_limited', retryAfterSeconds: 30 });
   });
 
+  it('keep the reason of a 1501, so a guardian clock off from the chain reads as such', () => {
+    expect(refusalFromError(new RpcError(ErrorCode.Unavailable, 'c', { reason: 'clock_behind_chain', systemTime: 1, chainTime: 2 }))).toMatchObject({ kind: 'unavailable', reason: 'clock_behind_chain' });
+    expect(refusalFromError(new RpcError(ErrorCode.Unavailable, 'c', { reason: 'clock_ahead_of_chain' }))).toMatchObject({ kind: 'unavailable', reason: 'clock_ahead_of_chain' });
+    expect(refusalFromError(new RpcError(ErrorCode.Unavailable))).toEqual({ kind: 'unavailable', message: expect.any(String) });
+  });
+
   it('1005 reads as "nothing watched"', () => {
     expect(isWalletNotWatched(new RpcError(ErrorCode.WalletNotWatched))).toBe(true);
     expect(isWalletNotWatched(new WalletError('guardian_refused', 'x', { refusal: { kind: 'other', code: ErrorCode.WalletNotWatched, message: 'x' } }))).toBe(true);

@@ -45,7 +45,7 @@ import { contactsDelta } from './contacts.js';
 import { ChainTime, ChainTimeSource, Clock, DAY, HOUR, systemClock } from './clock.js';
 import { MAX_SELF_INDEX, NO_HIGH_WATER, addCosignerSignatures, feeRateRefusal, inspectPsbt, maxHighWater } from './inspect.js';
 import { PUBLIC_SOURCE_MAX_RISE, addPendingMark, chainMarksOf, changeWindow, cosignRateRefusal, marksAfterScan, migrateMarks, scanFloorOf, type MarkJump, type ScanNote } from './marks.js';
-import { pruneSpends, pruneTime, splitOutflow, usageWith, windowUsage } from './limit.js';
+import { limitClock, pruneSpends, pruneTime, splitOutflow, usageWith, windowUsage } from './limit.js';
 import { LIMIT_OFF_SATS, isContactLockOn, isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from './rules.js';
 import { CosignerSigner } from './signer.js';
 import { StateStore, deserializeState, serializeState } from './storage.js';
@@ -101,6 +101,12 @@ export const MAX_ACCESS_GRANTS = 8;
  * fresh 24 h limit window with every step. Also the most the limit's monotonic time can jump ahead.
  */
 export const MAX_CLOCK_AHEAD_OF_CHAIN_MS = 3 * HOUR;
+/**
+ * How far the system clock may run behind the chain's median time past before the engine stops co-signing. An honest
+ * clock is always ahead of it (it trails real time by about an hour); a clock set back further would let a stolen phone
+ * spend the limit at a time in the past, step the clock forward a day, spend again, and so on (security sweep 3).
+ */
+export const MAX_CLOCK_BEHIND_CHAIN_MS = 3 * HOUR;
 /**
  * Blocks a recovery's delay must also span, per day of delay: a clock AND a median time past that both
  * claim the delay is over are not enough without the blocks to match. 144 on public networks (one per
@@ -677,17 +683,12 @@ export class PolicyEngine {
   }
 
   /**
-   * The time the daily limit counts with: the system clock, but never earlier than the last time used
-   * (monotonic), and refused while the clock is more than `MAX_CLOCK_AHEAD_OF_CHAIN_MS` ahead of the
-   * chain's median time past (the live one, else the last one seen): a clock pushed forward would open
-   * a fresh 24 h window with every step.
+   * The time the daily limit counts with (policy/limit.ts `limitClock`): the system clock, but never earlier than the
+   * last time used (monotonic), and refused while the clock is more than `MAX_CLOCK_AHEAD_OF_CHAIN_MS` ahead of the
+   * chain's median time past or more than `MAX_CLOCK_BEHIND_CHAIN_MS` behind it.
    */
   private limitTime(draft: GuardianState, now: number, chain: ChainTime | undefined): { ok: true; at: number } | { ok: false; refusal: Refusal } {
-    const seen = chain ?? draft.chainSeen;
-    if (!seen) return { ok: false, refusal: { reason: 'chain_unavailable', detail: 'no chain data to check the clock against yet' } };
-    if (now > seen.medianTimePastMs + MAX_CLOCK_AHEAD_OF_CHAIN_MS)
-      return { ok: false, refusal: { reason: 'clock_ahead_of_chain', systemTime: now, chainTime: seen.medianTimePastMs } };
-    return { ok: true, at: Math.max(draft.timeFloor ?? 0, now) };
+    return limitClock(now, chain, draft.chainSeen, draft.timeFloor, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_CLOCK_BEHIND_CHAIN_MS);
   }
 
   /** Blocks per day of delay a recovery of a wallet on `network` must span. */
