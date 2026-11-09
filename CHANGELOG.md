@@ -6,6 +6,23 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## [0.1.26-alpha] - 2026-11-09
+
+A guardian fix for shutting down, and how releases reach you. Update the guardian, then the app.
+
+- **The guardian finishes what it started before it stops.** When the guardian stopped (an Umbrel update or restart),
+  an alert still being sent to your contacts, for example about money leaving Savings, could be cut short, and so
+  could a save of its state. Now it waits for both, up to a few seconds (#222).
+- **Releases are normal GitHub releases now**, not pre-releases: Obtainium no longer needs "Include prereleases", and
+  Zapstore should pick each release up by itself. The version still says "alpha", and Trikey is still pre-alpha and not
+  audited. After each release a check watches Zapstore and opens an issue if an app isn't updated there (#221).
+- For testers: [docs/testers.md](docs/testers.md), a one-page start, and a "Hardware wallet test report" issue form;
+  every device but the Ledger is still to be tried on real hardware (#216). The beta checklist records the defaults
+  (a 200,000 sats daily limit suggested, a 7-day delay), Start9 as "build it yourself" and the iPhone built from source
+  for the beta (#215).
+- For maintainers: `tools/release/bump.mjs` moves the version everywhere, docs/releasing.md is the runbook, and the
+  changelog uses Keep a Changelog headings so Zapstore gets one release's notes (#217, #218); a flaky test fixed (#220).
+
 ## [0.1.25-alpha] - 2026-11-09
 
 Fixes from a third security review (Grok only, on 0.1.24's code), a simpler Home screen for one wallet, and Trikey on
