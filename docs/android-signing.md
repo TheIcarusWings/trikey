@@ -79,6 +79,11 @@ The digest it prints must equal the one in that file.
 
 [Obtainium](https://github.com/ImranR98/Obtainium) watches a GitHub repository's releases and installs new APKs:
 
+**One tap:** open [trikey.app/obtainium](https://trikey.app/obtainium) on the phone, with Obtainium installed, and tap
+**Add Trikey** or **Add Trikey FOSS**. It adds the app with the settings below already filled in (pre-releases on, that
+app's APK filter); the certificate check (step 4) you add yourself. By hand:
+
+
 1. Install Obtainium (from its GitHub releases or F-Droid).
 2. **Add app**, URL `https://github.com/TheIcarusWings/trikey`. Under the source options, turn on **Include prereleases**:
    every Trikey release is a pre-release for now.

@@ -1,0 +1,77 @@
+/* The Obtainium page (obtainium.html). Same tokens as style.css, nothing else from it. */
+@font-face {
+  font-family: "Geist";
+  src: url("fonts/geist-latin-wght-normal.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("fonts/geist-mono-latin-wght-normal.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --surface: #f4f4f5;
+  --ink: #09090b;
+  --body: #3f3f46;
+  --muted: #52525b;
+  --line: #e4e4e7;
+  --brand: #ea580c;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #09090b;
+    --surface: #18181b;
+    --ink: #fafafa;
+    --body: #d4d4d8;
+    --muted: #a1a1aa;
+    --line: #27272a;
+    --brand: #fb923c;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--body);
+  font: 16px/1.55 "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+main { max-width: 640px; margin: 0 auto; padding: 32px 16px 64px; }
+h1, h2 { color: var(--ink); line-height: 1.2; }
+h1 { font-size: 32px; margin: 0 0 12px; }
+h2 { font-size: 20px; margin: 32px 0 8px; }
+a { color: var(--ink); }
+.back { margin: 0 0 24px; font-size: 14px; }
+.back a { color: var(--muted); text-decoration: none; }
+.lead { margin: 0 0 24px; }
+.mono { font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; overflow-wrap: anywhere; }
+.apps { display: grid; gap: 12px; }
+.app { background: var(--surface); border-radius: 14px; padding: 20px; }
+.app h2 { margin: 0 0 6px; }
+.app p { margin: 0 0 16px; }
+.app .mono { display: block; color: var(--muted); margin-top: 4px; }
+.button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 10px;
+  background: var(--ink);
+  color: var(--bg);
+  font-weight: 600;
+  text-decoration: none;
+}
+.button:focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; }
+.cert { background: var(--surface); border-radius: 10px; padding: 12px 14px; }
+ul { padding-left: 20px; }
+li { margin-bottom: 6px; }
+.small { font-size: 14px; color: var(--muted); }
+.notice { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--line); }
