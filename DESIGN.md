@@ -1433,8 +1433,11 @@ and the guardian as the pocket's watchtower (Spark's watchtower "holds no toxic 
    - Real push on iOS needs Apple's push service, called with credentials only the app's publisher holds. That means running a stateless "empty ping" bridge, which conflicts with "we run nothing".
    - Built: the guardian also sends its alerts by email through the user's own account, ntfy, webhook and Telegram
      (docs/design/notifications.md); an ntfy app on the phone gives real push without anyone running a bridge.
-3. **Defaults:** daily limit, delay (7 days?), relays.
-4. **Start9 packaging details** (SDK version), and how the official Umbrel store submission works.
+3. **Defaults:** decided 2026-11-09, as built: a daily limit of 200,000 sats suggested (presets 100,000, 200,000 and
+   500,000), a 7-day recovery delay (7, 14 or 30), and four relays offered at setup, all ticked: relay.trikey.app (the
+   project's own, which stores only gift wraps), relay.damus.io, nos.lol and relay.primal.net.
+4. **Start9 packaging details** (SDK version), and how the official Umbrel store submission works. For the beta (decided
+   2026-11-09) Start9 is "build it yourself": the package builds in CI, publishing it waits until after the beta.
 
 ## Repository state
 
