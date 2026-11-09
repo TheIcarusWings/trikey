@@ -172,7 +172,8 @@ Zapstore's indexer, which is meant to publish each release by itself, never pick
 older releases stay pre-releases. The app's **Check for updates** reads GitHub's release list, which has both kinds.
 
 Last, Publish release dispatches **Zapstore check** (`zapstore-check.yml`, no secret): it asks Zapstore's relay every
-10 minutes for about three hours whether both apps have the new version, and if not it opens an issue "Zapstore hasn't
+10 minutes for about three hours whether both apps have the new version (signed by Trikey's npub or, when Zapstore
+publishes it by itself, possibly by Zapstore's own key), and if not it opens an issue "Zapstore hasn't
 picked up v<version>" saying which app is missing and how to publish it by hand ([zapstore.md](zapstore.md), "Check it
 after each release").
 

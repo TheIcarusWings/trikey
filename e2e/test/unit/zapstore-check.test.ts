@@ -46,7 +46,9 @@ const workflow = (name: string) => parse(read(`.github/workflows/${name}`)) as W
 
 /** Trikey's publisher npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9, in hex. */
 const AUTHOR = '072104ced2b692c1c7502757f59befb428184086f5c7749c41984bb4beb9a495';
+/** Other keys: Zapstore's indexer may sign the release events it publishes with its own. */
 const OTHER = 'f'.repeat(64);
+const OTHER2 = 'e'.repeat(64);
 
 let n = 0;
 /** A release event (kind 30063) as zsp writes it: `d` is `<app id>@<version>`. Unsigned: the relay does not verify. */
@@ -97,7 +99,7 @@ describe('zapstore-published.mjs, against a local relay', () => {
     return relay.start();
   }
 
-  it("asks for kind 30063 by Trikey's publisher with both apps' d tags, and exits 0 when both are there", async () => {
+  it("asks for kind 30063 with both apps' d tags, by any author, and exits 0 when both are there", async () => {
     const standard = releaseEvent('app.trikey.wallet', '0.1.26-alpha');
     const foss = releaseEvent('app.trikey.wallet.foss', '0.1.26-alpha');
     const logged = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -110,22 +112,40 @@ describe('zapstore-published.mjs, against a local relay', () => {
     ]);
     const req = logged.mock.calls.find((c) => c[1] === 'REQ')!;
     expect(JSON.parse(String(req[3]))).toEqual([
-      { kinds: [30063], authors: [AUTHOR], '#d': ['app.trikey.wallet@0.1.26-alpha', 'app.trikey.wallet.foss@0.1.26-alpha'] },
+      { kinds: [30063], '#d': ['app.trikey.wallet@0.1.26-alpha', 'app.trikey.wallet.foss@0.1.26-alpha'] },
     ]);
     // A leading v is the tag; the version is the same.
     expect((await runScript('v0.1.26-alpha', url)).code).toBe(0);
   });
 
-  it('exits 1 and names the app that is missing, not counting another version or another author', async () => {
+  it('exits 1 and names the app that is missing, not counting another version', async () => {
     const url = await relayWith([
       releaseEvent('app.trikey.wallet', '0.1.26-alpha'),
       releaseEvent('app.trikey.wallet.foss', '0.1.25-alpha'),
-      releaseEvent('app.trikey.wallet.foss', '0.1.26-alpha', OTHER),
+      releaseEvent('app.trikey.wallet.foss', '0.1.25-alpha', OTHER),
     ]);
     const r = await runScript('0.1.26-alpha', url);
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/^found app\.trikey\.wallet@0\.1\.26-alpha [0-9a-f]{64}$/m);
     expect(r.out).toContain('missing app.trikey.wallet.foss@0.1.26-alpha');
+    expect(r.out).not.toContain('notice');
+  });
+
+  it("counts an event signed by another key (Zapstore's indexer), with a notice naming the key(s)", async () => {
+    const standard = releaseEvent('app.trikey.wallet', '0.1.26-alpha');
+    const standardByOther = releaseEvent('app.trikey.wallet', '0.1.26-alpha', OTHER);
+    const foss = releaseEvent('app.trikey.wallet.foss', '0.1.26-alpha', OTHER);
+    const foss2 = releaseEvent('app.trikey.wallet.foss', '0.1.26-alpha', OTHER2);
+    const url = await relayWith([standard, standardByOther, foss, foss2]);
+    const r = await runScript('0.1.26-alpha', url);
+    expect(r.code).toBe(0);
+    const lines = r.out.trim().split('\n');
+    // Trikey's own event wins, with no notice for that app.
+    expect(lines[0]).toBe(`found app.trikey.wallet@0.1.26-alpha ${standard.id}`);
+    expect(lines[1]).toMatch(new RegExp(`^found app\\.trikey\\.wallet\\.foss@0\\.1\\.26-alpha (${foss.id}|${foss2.id})$`));
+    expect(lines[2]).toMatch(/^notice app\.trikey\.wallet\.foss@0\.1\.26-alpha is signed by [0-9a-f,]+, not Trikey's publisher key$/);
+    expect(/signed by ([0-9a-f,]+),/.exec(lines[2]!)![1]!.split(',').sort()).toEqual([OTHER2, OTHER]);
+    expect(lines.length).toBe(3);
   });
 
   it('exits 1 with both missing when the relay answers only EOSE', async () => {
@@ -135,12 +155,12 @@ describe('zapstore-published.mjs, against a local relay', () => {
     expect(r.out.trim().split('\n')).toEqual(['missing app.trikey.wallet@0.1.26-alpha', 'missing app.trikey.wallet.foss@0.1.26-alpha']);
   });
 
-  it('checks the author and the d tag itself, whatever the relay sends', async () => {
+  it('checks the kind and the d tag itself, whatever the relay sends', async () => {
     const url = await relayWith([releaseEvent('app.trikey.wallet', '0.1.26-alpha'), releaseEvent('app.trikey.wallet.foss', '0.1.26-alpha')]);
-    // A relay that answers with what was not asked for: another author's event, and one of another version.
+    // A relay that answers with what was not asked for: an event of another kind, and one of another version.
     relay!.transformOutgoing = (e) =>
       e.tags[0]![1] === 'app.trikey.wallet@0.1.26-alpha'
-        ? { ...e, pubkey: OTHER }
+        ? { ...e, kind: 30064 }
         : { ...e, tags: [['d', 'app.trikey.wallet.foss@0.1.27-alpha'], ...e.tags.slice(1)] };
     const r = await runScript('0.1.26-alpha', url);
     expect(r.code).toBe(1);
@@ -273,6 +293,18 @@ describe('zapstore-check.yml: no secrets, only a dispatch, an issue when Zapstor
     expect(r.calls).toEqual(Array(3).fill('.github/scripts/zapstore-published.mjs 0.1.26-alpha'));
     expect(r.output).toBe('');
     expect(r.out).toContain('found app.trikey.wallet.foss@0.1.26-alpha bb');
+  });
+
+  it('turns the notice of another signer into a ::notice on the run', () => {
+    const notice = "notice app.trikey.wallet.foss@0.1.26-alpha is signed by ffff, not Trikey's publisher key";
+    const r = waitFor([{ code: 0, out: `${both.out}${notice}\n` }]);
+    expect(r.ok).toBe(true);
+    expect(r.out).toContain(`::notice title=Zapstore signer::${notice.slice('notice '.length)}`);
+    const late = waitFor([{ code: 1, out: `found app.trikey.wallet@0.1.26-alpha aa\nnotice app.trikey.wallet@0.1.26-alpha is signed by ffff, not Trikey's publisher key\nmissing app.trikey.wallet.foss@0.1.26-alpha\n` }]);
+    expect(late.ok).toBe(false);
+    expect(late.out.match(/::notice title=Zapstore signer::/g)).toHaveLength(1);
+    expect(late.output).toBe('missing=app.trikey.wallet.foss\nrelay-answered=true\n');
+    expect(waitFor([both]).out).not.toContain('Zapstore signer');
   });
 
   it('gives up after three hours, with the apps still missing, and fails', () => {

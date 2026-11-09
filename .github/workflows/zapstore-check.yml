@@ -4,9 +4,10 @@ name: Zapstore check
 # (docs/zapstore.md), but it did not for months, and nobody noticed until a tester did (zapstore/relay#16).
 #
 # publish-release.yml dispatches it with the version once the release is published. It asks Zapstore's relay
-# (wss://relay.zapstore.dev), read-only, for the release events of Trikey and Trikey FOSS at that version signed by
-# Trikey's publisher npub (.github/scripts/zapstore-published.mjs), every 10 minutes for about three hours. When both
-# are there it succeeds. When not, it opens an issue "Zapstore hasn't picked up v<version>" (unless one is open
+# (wss://relay.zapstore.dev), read-only, for the release events of Trikey and Trikey FOSS at that version
+# (.github/scripts/zapstore-published.mjs), every 10 minutes for about three hours. When both are there it succeeds.
+# An event signed by another key than Trikey's publisher npub (Zapstore's indexer may sign with its own) counts too,
+# with a notice naming the key. When not, it opens an issue "Zapstore hasn't picked up v<version>" (unless one is open
 # already) that says which app is missing and how to publish it by hand, and fails.
 #
 # No secret: it reads a public relay and writes only an issue, with GITHUB_TOKEN. To check a version again (after
@@ -58,21 +59,25 @@ jobs:
           [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-alpha)?$ ]] || { echo "::error::Expected a version like 0.1.26-alpha, got ${VERSION}"; exit 1; }
           deadline=$((SECONDS + 180 * 60))
           answered=""
+          # An app found only under another key than Trikey's: say whose, on the run's summary.
+          signers() { sed -n 's/^notice //p' "$1" | while IFS= read -r line; do echo "::notice title=Zapstore signer::${line}"; done; }
           while :; do
             code=0
             node .github/scripts/zapstore-published.mjs "${VERSION}" > "${RUNNER_TEMP}/answer.txt" || code=$?
             cat "${RUNNER_TEMP}/answer.txt"
             if [ "${code}" = 0 ]; then
+              signers "${RUNNER_TEMP}/answer.txt"
               echo "::notice title=On Zapstore::Trikey and Trikey FOSS ${VERSION} are published on Zapstore."
               exit 0
             fi
-            if [ "${code}" = 1 ]; then answered="$(cat "${RUNNER_TEMP}/answer.txt")"; fi
+            if [ "${code}" = 1 ]; then cp "${RUNNER_TEMP}/answer.txt" "${RUNNER_TEMP}/answered.txt"; answered=true; fi
             if [ "${SECONDS}" -ge "${deadline}" ]; then break; fi
             sleep 600
           done
           # The apps missing in the last answer; both if the relay never answered.
           if [ -n "${answered}" ]; then
-            missing="$(sed -n 's/^missing \([^@]*\)@.*/\1/p' <<<"${answered}" | paste -sd ' ' -)"
+            signers "${RUNNER_TEMP}/answered.txt"
+            missing="$(sed -n 's/^missing \([^@]*\)@.*/\1/p' "${RUNNER_TEMP}/answered.txt" | paste -sd ' ' -)"
           else
             missing="app.trikey.wallet app.trikey.wallet.foss"
           fi
@@ -98,7 +103,7 @@ jobs:
             exit 0
           fi
           {
-            echo "Zapstore's relay (\`wss://relay.zapstore.dev\`) has no release event for v${VERSION}, signed by Trikey's publisher npub, of:"
+            echo "Zapstore's relay (\`wss://relay.zapstore.dev\`) has no release event (kind 30063, by any key) for v${VERSION} of:"
             echo
             for app in ${MISSING}; do
               case "${app}" in

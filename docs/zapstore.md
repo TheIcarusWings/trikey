@@ -73,9 +73,12 @@ published").
 
 **Check it after each release.** The **Zapstore check** workflow (`.github/workflows/zapstore-check.yml`) does it for
 you: Publish release dispatches it once the GitHub release is public. It asks Zapstore's relay (`wss://relay.zapstore.dev`,
-read only, no key or secret) every 10 minutes, for about three hours, for the release events (kind 30063) signed by the
-publisher npub above whose `d` tag is `app.trikey.wallet@<version>` and `app.trikey.wallet.foss@<version>`
-(`.github/scripts/zapstore-published.mjs`). If both are there, the run succeeds and logs their event ids. If not, it
+read only, no key or secret) every 10 minutes, for about three hours, for the release events (kind 30063) whose `d` tag
+is `app.trikey.wallet@<version>` and `app.trikey.wallet.foss@<version>` (`.github/scripts/zapstore-published.mjs`), by
+any author: one Zapstore publishes by itself may be signed by Zapstore's own key rather than the publisher npub above
+(zsp: "shown as developed by you"). An event by the publisher npub is preferred; one only by another key counts too,
+and the run shows a **Zapstore signer** notice naming that key. If both are there, the run succeeds and logs their
+event ids. If not, it
 opens an issue titled `Zapstore hasn't picked up v<version>` (one per version: not a second while one is open) that
 says which app is missing, and the run fails.
 
