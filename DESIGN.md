@@ -248,8 +248,9 @@ anti-klepto, the firmware's own message signatures) and a fake BitBox02 written 
 - **Pairing.** The BitBox02 asks for its password on its own screen. The first time a phone and a BitBox02 meet, the
   phone shows a pairing code (four groups of five characters from the encrypted channel's handshake) and the BitBox02
   shows the same; the owner confirms it on the BitBox02. A different code means something between them changes the
-  connection: reject it. The phone keeps its channel key and the BitBox02's in its app storage, so later connections ask
-  only for the password.
+  connection: reject it. The phone keeps its own channel key in the secure store (Keychain / Keystore, this device
+  only, so never in a phone backup) and the BitBox02's public key in its app storage, so later connections ask only for
+  the password. An older app kept its own key in the app storage too; the app moves it on the first connection.
 - **Payments with anti-klepto (decided).** For every input the phone sends a commitment to a random number, the BitBox02
   commits to its signature nonce, then the phone sends the number and checks the signature used both. A BitBox02 with
   malicious firmware therefore cannot leak key 1 through its nonces, which no other adapter in Trikey can check. Then
@@ -591,8 +592,9 @@ printed and kept with the hardware wallet.
 - **A BitBox02** ("BitBox02 over USB-C and Bluetooth"). Its payments and most texts use anti-klepto, checked by the phone,
   so malicious BitBox02 firmware cannot leak key 1 through those signatures' nonces. Notes and hardware unlock cannot
   (they need the same signature every time): there, as with every other brand, the firmware is trusted. The phone's
-  pairing with a BitBox02 (its channel key) sits in the app's storage: someone who copies it can skip only the pairing
-  code with that BitBox02, never its password or an approval on it.
+  channel key for its BitBox02 pairing sits in the secure store, out of phone backups (security review 2026-11, sweep 2);
+  someone who copied it anyway could skip only the pairing code with that BitBox02, never its password or an approval
+  on it.
 - **A Jade over Bluetooth and its PIN server** ("Jade over Bluetooth"). Unlocking it sends an encrypted exchange from the phone to the PIN server the Jade names (Blockstream's by default): that server learns the phone's IP address, when this Jade unlocks and failed PIN counts, never the PIN, keys or wallet. It cannot unlock the Jade without the PIN, and a server that is down or refuses only keeps the Jade locked (the passphrase and the other keys are unaffected; QR mode works without Trikey contacting it). The phone reaches only Blockstream's PIN server or one the owner said is their own, over https, with no redirect, and calls nothing on the Jade but `pin` with the answer. Payments over Bluetooth do not use Jade's anti-exfil (its PSBT path has none), so a Jade with malicious firmware could in theory leak key 1 through its signature nonces: alone that moves nothing, with a stolen phone it would.
 - **Malicious relays** can drop messages but can't read or forge them. A relay change from the web UI (a security event in the activity log) can at worst move the phone to relays that drop everything; the old relays stay watched until the owner stops them and the phone moves only to relays the guardian answered it over.
 - **Contested recovery** (a thief cancels a genuine recovery): phone-only spending stays paused, so the thief can't drain either. Same as Bitkey.
