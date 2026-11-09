@@ -9,8 +9,10 @@ that image; `compose/` runs it with Docker Compose.
 - `umbrel/`: an Umbrel community app store (`umbrel-app-store.yml` plus the app folder `trikey-guardian/`).
 - `compose/`: plain Docker (a Mac, a Windows PC, Linux, a NAS): `docker-compose.yml`, `.env.example` and the user guide
   (`compose/README.md`), with an optional node profile. Each release attaches the compose file with the image pinned by
-  digest (`trikey-guardian-compose.yml`) and the settings (`trikey-guardian.env.example`): `docker.yml`, job
-  `compose-files`. `.github/workflows/compose.yml` runs `compose/smoke-test.sh` against the regtest stack.
+  digest (`trikey-guardian-compose.yml`) and the settings (`trikey-guardian.env.example`), made by
+  `compose/release-compose.sh` (`docker.yml`, job `compose-files`); `publish-release.yml` runs that script again and
+  publishes only if the release's files are byte for byte the same. `.github/workflows/compose.yml` runs
+  `compose/smoke-test.sh` against the regtest stack.
 - `start9/`: the StartOS package (TypeScript SDK 3.1). It has its own `package.json`, and is not
   one of the monorepo's npm workspaces (`packages/*`, `apps/*`), so a root `npm install` does not touch it.
 

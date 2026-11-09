@@ -12,8 +12,8 @@ name: Publish release
 # `release` environment (so it runs only on refs the environment allows, after the owner's approval when the
 # environment asks for one), checks the draft with packaging/check-release-assets.sh: exactly the expected files, each
 # the one GitHub lists, the checksums, both APKs signed by packaging/android/release-cert.sha256 and nothing else and
-# each the right app, the compose file running the guardian image by the digest docker.yml pushed (and its `verified`
-# job found reproduced), and that digest still being what the version tag names. Only then is the draft published, and its files
+# each the right app, the compose files byte for byte what docker.yml makes from the tag's packaging/compose with the
+# digest it pushed (and its `verified` job found reproduced), and that digest still being what the version tag names. Only then is the draft published, and its files
 # are compared with what was checked once more after. With immutable releases on (docs/android-signing.md, "Immutable
 # releases") nothing can change a published release's files or tag afterwards; the job warns while they are off.
 #
@@ -94,13 +94,16 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ github.ref_name }}
     steps:
-      # The check script and the pinned certificate, from the tag's commit.
+      # The check script, the pinned certificate and what docker.yml makes the compose files from, from the tag's commit.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: |
             packaging/check-release-assets.sh
             packaging/android/release-cert.sha256
+            packaging/compose/release-compose.sh
+            packaging/compose/docker-compose.yml
+            packaging/compose/.env.example
             apps/mobile/app.json
           sparse-checkout-cone-mode: false
 
