@@ -688,6 +688,10 @@ printed and kept with the hardware wallet.
   - **The app's update check** shows the release certificate built into the app, never a checksum from the offered
     release, and warns when an APK would install as a new app (another application id), which Android cannot check
     against the installed one. Android itself refuses an update signed by another key.
+  - **Zapstore's `zsp`** is handed the release keystore on the maintainer's computer (docs/zapstore.md), so it is
+    installed at a pinned version, which Go checks against its public checksum database; a newer one is reviewed and
+    pinned in a pull request. Up to 0.1.22 the steps said `zsp@latest`, so whoever could publish a new zsp version could
+    have taken the APK signing key (security sweep 2).
   - **Not built yet (TODO):** downloading the APK in the app and checking its signing certificate before handing it to
     Android's installer (`PackageManager.getPackageArchiveInfo(path, GET_SIGNING_CERTIFICATES)` against the built-in
     certificate, in a small local Expo module without Google code, both variants). It needs the
