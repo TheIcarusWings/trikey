@@ -64,7 +64,8 @@ unlock where the device supports it (DESIGN.md, "Hardware wallets by feature"; d
 | SeedSigner | QR (payments only, by design) | Not yet |
 | Specter DIY | QR | Not yet |
 
-- [ ] **Every row tried once** (owner and testers). A row may also be closed by marking the device "not supported in
+- [ ] **Every row tried once** (owner and testers). Each result comes in as a
+      [hardware wallet test report](https://github.com/TheIcarusWings/trikey/issues/new?template=hardware-test.yml). A row may also be closed by marking the device "not supported in
       the beta" in the app and the docs, if nobody can test it.
 
 ## 4. Platforms and installs
@@ -91,7 +92,8 @@ unlock where the device supports it (DESIGN.md, "Hardware wallets by feature"; d
 
 ## 6. Outside testers
 
-- [ ] **At least five people outside the project** set up a wallet on a test network and do the core path (testers).
+- [ ] **At least five people outside the project** set up a wallet on a test network and do the core path (testers;
+      [docs/testers.md](testers.md) is where they start).
 - [ ] **One to two weeks** with no open bug that loses funds, locks a wallet for good or breaks a recovery (dev).
 - [ ] **Their questions answered** in the docs or the site's FAQ (dev).
 

@@ -1,0 +1,81 @@
+name: Hardware wallet test report
+description: You tried Trikey with a hardware wallet on a real device. Tell us what worked, even if everything did.
+title: "hardware test: <device> over <connection>, <version>"
+labels: ["hardware-test"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you! Every report fills a row of the [beta checklist](https://github.com/TheIcarusWings/trikey/blob/main/docs/beta-checklist.md#3-hardware-wallets-on-real-devices), even "all of it worked".
+        Use a **test network** (signet or testnet4) if you can. **Never paste** seed words, PINs, passphrases, the recovery code, an nsec or a backup file. A screenshot of the device's screen is welcome, if it shows none of those.
+        If something could put funds at risk, use [private security reporting](https://github.com/TheIcarusWings/trikey/security/advisories/new) instead.
+  - type: dropdown
+    id: device
+    attributes:
+      label: Device
+      options:
+        - Ledger (Nano X, Flex, Stax)
+        - Trezor (Safe 3, Safe 5, Model T)
+        - Coldcard Q
+        - Coldcard Mk4
+        - Jade or Jade Plus
+        - BitBox02 or BitBox02 Nova
+        - Keystone 3
+        - Passport Prime
+        - Passport (2nd generation)
+        - Krux
+        - SeedSigner
+        - Specter DIY
+        - Other (say which below)
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: How it connected
+      options:
+        - Bluetooth
+        - USB-C
+        - QR codes
+        - NFC
+        - microSD card
+        - Trezor Suite Lite
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Device model and firmware version
+      placeholder: "e.g. Jade Plus, firmware 1.0.36"
+    validations:
+      required: true
+  - type: input
+    id: trikey
+    attributes:
+      label: Trikey version, phone and network
+      placeholder: "e.g. app 0.1.25 on a Pixel 8 (Android 16), guardian 0.1.25 on Umbrel, signet"
+    validations:
+      required: true
+  - type: checkboxes
+    id: worked
+    attributes:
+      label: What worked
+      description: Tick each step you did and that worked. Leave a step unticked if you didn't try it or it failed (say which below).
+      options:
+        - label: Connected and read the wallet (the first vault address matched on the device)
+        - label: Paired the guardian (the device approved the rules, with your alert contacts named)
+        - label: A payment inside the daily limit (phone and guardian, no device)
+        - label: A payment over the limit, signed on the device
+        - label: A rule change approved on the device (for example the daily limit)
+        - label: Hardware unlock turned on, the guardian locked, then unlocked with the device
+        - label: Notes saved and read back on the guardian
+  - type: textarea
+    id: notes
+    attributes:
+      label: What didn't work, or looked odd
+      description: Which step, what the device and the phone said (exact words help), and anything confusing. "Nothing" is a fine answer.
+  - type: textarea
+    id: screens
+    attributes:
+      label: What the device showed (optional)
+      description: For an approval or a payment, what the device's screen said, or a screenshot that shows no secrets.

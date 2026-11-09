@@ -90,7 +90,7 @@ The image is reproducible: [packaging/VERIFY.md](packaging/VERIFY.md) shows how 
 Both Android apps can be on one phone, each with its own wallet. Had the no-Google APK of 0.1.21-alpha or earlier? It was the same
 app as Trikey, so the new Trikey FOSS installs next to it and starts empty: restore your backup file and recovery code
 in it, then uninstall the old one ([how](docs/android-signing.md#moving-from-the-no-google-apk-of-0121-alpha-or-earlier)).
-How to install and test: [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
+Want to help test? Start with [docs/testers.md](docs/testers.md); the full steps are in [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
 ## Repository
 
