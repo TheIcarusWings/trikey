@@ -696,6 +696,14 @@ printed and kept with the hardware wallet.
   - **The app's update check** shows the release certificate built into the app, never a checksum from the offered
     release, and warns when an APK would install as a new app (another application id), which Android cannot check
     against the installed one. Android itself refuses an update signed by another key.
+  - **Zapstore's `zsp`** is handed the release keystore on the maintainer's computer (docs/zapstore.md), so it is
+    installed at a pinned version, which Go checks against its public checksum database; a newer one is reviewed and
+    pinned in a pull request. Up to 0.1.23 the steps said `zsp@latest`, so whoever could publish a new zsp version could
+    have taken the APK signing key (security sweep 2).
+  - **The running image** loads code only from its root-owned source: tsx's compile cache, which would sit in the
+    writable `/tmp` and be loaded at the next start in place of the source, is turned off (`TSX_DISABLE_CACHE=1` in the
+    Dockerfile, and in the Start9 package's environment). Up to 0.1.23 code that got into the guardian once could leave
+    a cache entry there and run again after every restart, before the unlock (security sweep 2).
   - **Not built yet (TODO):** downloading the APK in the app and checking its signing certificate before handing it to
     Android's installer (`PackageManager.getPackageArchiveInfo(path, GET_SIGNING_CERTIFICATES)` against the built-in
     certificate, in a small local Expo module without Google code, both variants). It needs the
