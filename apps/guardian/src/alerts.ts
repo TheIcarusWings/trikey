@@ -504,6 +504,11 @@ export class Alerter {
     return this.running;
   }
 
+  /** Resolves once no pass is running (one set off in the background included): `Guardian.stop` waits for it. */
+  async idle(): Promise<void> {
+    while (this.running) await this.running;
+  }
+
   /**
    * Limit changes (`limit_off`, `limit_on`): a protocol alert to the phone among the recipients (the wallet's paired
    * phone), a NIP-17 DM to the alert contacts. Undelivered ones are retried at the next pass, as recovery alerts are.

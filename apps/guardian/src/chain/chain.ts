@@ -1501,6 +1501,15 @@ export class ChainService {
   }
 
   /**
+   * Resolves once the work this service runs in the background is done: a mempool check under way (it may end relayed
+   * records) and the saves of the relayed records (relayed-txs.json). `Guardian.stop` waits for it after `stop()`.
+   */
+  async idle(): Promise<void> {
+    await this.checkingMempool;
+    await this.relayed.flush();
+  }
+
+  /**
    * What the guardian checks about the mempool, from its tick (cheap; runs one at a time):
    *
    * - With Bitcoin Core's RPC, each relayed transaction the server does not list: still in Core's mempool

@@ -844,10 +844,17 @@ export class Guardian implements WalletRuntime {
     await Promise.race([this.notifier.idle(), new Promise<void>((r) => setTimeout(r, 5000).unref?.())]);
     this.inbox?.close();
     await this.inbox?.drain();
+    // Alert passes set off in the background (a Savings spend announced, a guest's wallet paused) send on the relays and
+    // record what they sent in the state files: they finish before the relays close, so nothing is written after the stop
+    // (and the contacts are told). As for the notifier, a relay that never answers does not hold the stop up for long.
+    const alerters = [this.alerts, ...this.wallets.all.map((w) => w.alerts), this.hosting.alerts];
+    await Promise.race([Promise.all(alerters.map((a) => a.idle())), new Promise<void>((r) => setTimeout(r, 5000).unref?.())]);
     this.rpc?.close();
     this.dm?.close();
     this.pool?.close();
     this.chain.stop();
+    // A mempool check under way and the saves of relayed transactions, in the background until now.
+    await this.chain.idle();
     if (this.http) {
       const http = this.http;
       await new Promise<void>((resolve) => {
