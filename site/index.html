@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; form-action 'none'">
 <title>Trikey: One key gone. Your bitcoin isn’t.</title>
-<meta name="description" content="Trikey is an open source 2-of-3 bitcoin wallet that is easy to use, and no company holds a key: your phone, your hardware wallet and your own home server. Coming soon. Pre-alpha, not audited.">
+<meta name="description" content="Trikey is an open source 2-of-3 bitcoin wallet that is easy to use, and no company holds a key: your phone, your hardware wallet and your own home server. Pre-alpha, for testers. Not audited.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)">
@@ -41,7 +41,7 @@
   <section class="hero" aria-labelledby="hero-h">
     <div class="wrap">
       <div class="hero-copy">
-        <p class="status"><span class="status-dot" aria-hidden="true"></span>Coming soon · pre-alpha, not audited, open source</p>
+        <p class="status"><span class="status-dot" aria-hidden="true"></span>Pre-alpha, for testers · not audited, open source</p>
         <h1 id="hero-h"><span><svg class="h-mark" viewBox="0 0 88 80" aria-hidden="true" focusable="false"><path d="M44 14 L16 62 L72 62 Z" pathLength="1"/><circle cx="16" cy="62" r="12"/><circle cx="72" cy="62" r="12"/><circle class="top" cx="44" cy="14" r="12"/></svg>One key gone.</span> <span>Your bitcoin isn’t.</span></h1>
         <p class="hero-sub">Three keys. No company. Your keys, your server, your bitcoin.</p>
         <p class="lead">Trikey is a 2-of-3 bitcoin wallet that's easy to use, and no company holds a key. Your phone, your hardware wallet and your own home server: any two move your money.</p>
@@ -412,7 +412,7 @@
           </tbody>
         </table>
       </div>
-      <p class="aside footnote">Trikey is coming soon and isn't audited yet. It keeps the everyday ease of multisig with a company key, and gives the third key back to you.</p>
+      <p class="aside footnote">Trikey is in pre-alpha testing and isn't audited yet. It keeps the everyday ease of multisig with a company key, and gives the third key back to you.</p>
     </div>
   </section>
 
@@ -500,7 +500,7 @@
   <section id="setup" class="act" aria-labelledby="setup-h">
     <div class="wrap">
       <div class="section-head">
-        <p class="eyebrow">Setup, once it ships</p>
+        <p class="eyebrow">Setup</p>
         <h2 id="setup-h">Set it up once. Then just use your phone.</h2>
       </div>
       <ol class="steps">
@@ -663,13 +663,14 @@
         <li class="road-now">
           <p class="road-state">In the repo</p>
           <h3>The phone app</h3>
-          <p>Onboarding, send and receive, recovery and settings, with Ledger, Trezor and QR devices. Recovery Key mode screens are still a demo.</p>
+          <p>Onboarding, send and receive, recovery and settings, with Ledger, Trezor, Coldcard, BitBox, Jade and QR devices. Android and iPhone; Recovery Key mode on test networks.</p>
           <a class="road-link" href="https://github.com/TheIcarusWings/trikey/tree/main/apps/mobile">apps/mobile</a>
         </li>
         <li class="road-next">
           <p class="road-state">Next</p>
           <h3>Testnet and signet beta</h3>
-          <p>Open testing with coins that have no value.</p>
+          <p>Open testing with coins that have no value. Alpha releases are out for testers now.</p>
+          <a class="road-link" href="https://github.com/TheIcarusWings/trikey/blob/main/docs/beta-checklist.md">beta checklist</a>
         </li>
         <li class="road-later">
           <p class="road-state">Before mainnet</p>
@@ -696,7 +697,7 @@
       <div class="qa">
         <details open>
           <summary>Is Trikey ready to use?</summary>
-          <p>No. It's pre-alpha and hasn't been audited, so don't use it with real funds. It runs on testnet, signet and regtest while it's built, and there's no release to download yet. An independent security review is planned before mainnet.</p>
+          <p>No. It's pre-alpha and hasn't been audited, so don't use it with real funds. Alpha releases are out for testers on testnet, signet and regtest: <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/alpha-test-plan.md">the test plan</a> says how to install and what to try. An independent security review is planned before mainnet.</p>
         </details>
         <details>
           <summary>Does anyone at Trikey hold one of my keys?</summary>
@@ -753,7 +754,7 @@
         <img class="media" src="media/window.webp" width="1600" height="900" loading="lazy" alt="A lit apartment window at night, a small grey box glowing on a shelf inside.">
         <div class="overlay overlay-center">
           <svg class="logo-form logo-end" viewBox="0 0 88 80" aria-hidden="true" focusable="false"><path d="M44 14 L16 62 L72 62 Z" pathLength="1"/><circle cx="16" cy="62" r="12"/><circle cx="72" cy="62" r="12"/><circle cx="44" cy="14" r="12"/><circle class="top" cx="44" cy="14" r="12"/></svg>
-          <h2 id="follow-h" class="beat beat-hero">Coming soon. Built in public.</h2>
+          <h2 id="follow-h" class="beat beat-hero">Pre-alpha. Built in public.</h2>
           <div class="actions">
             <a class="btn btn-light" href="https://github.com/TheIcarusWings/trikey">Follow on GitHub</a>
             <a class="btn btn-ghost" href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md">Read the design</a>
@@ -761,8 +762,8 @@
         </div>
       </div>
       <div class="follow">
-        <p class="notice"><strong>Pre-alpha and not audited. Don't use it with real funds.</strong> There's no release yet, so there's nothing to download. It runs on testnet, signet and regtest while it's built. An independent security review is planned before mainnet. Know the trade-offs too: a remote compromise of your home server gives up one key of three, and phone-only payments wait while the guardian is offline.</p>
-        <p class="aside">Notes on nostr are coming soon.</p>
+        <p class="notice"><strong>Pre-alpha and not audited. Don't use it with real funds.</strong> Alpha releases are for testers, on testnet, signet and regtest: the <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/alpha-test-plan.md">test plan</a>, the <a href="#watch">setup tutorials</a>, and the Android app on <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/zapstore.md">Zapstore</a> or <a href="/obtainium">Obtainium</a>. An independent security review is planned before mainnet. Know the trade-offs too: a remote compromise of your home server gives up one key of three, and phone-only payments wait while the guardian is offline.</p>
+        <p class="aside">On nostr: <span class="mono">trikey@trikey.app</span>.</p>
       </div>
     </div>
   </section>
