@@ -28,7 +28,7 @@
     "@trikey/recovery-key": "*",
     "@trikey/silent-payments": "*",
     "@trikey/wallet": "*",
-    "nostr-tools": "^2.23.0"
+    "nostr-tools": "^2.25.5"
   },
   "devDependencies": {
     "yaml": "^2.8.0"
