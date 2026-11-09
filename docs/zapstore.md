@@ -61,8 +61,17 @@ links the APK signing certificate to Trikey's publisher npub (NIP-C1).
    (`packaging/android/release-cert.sha256`), then run `zsp` again once the key is admitted.
 5. The publisher npub is on this page (it is public).
 
-Releases after that need nothing: when the release workflow publishes a GitHub release with the APK, Zapstore
-publishes it on its next visit. The proof expires after a while; `zsp` says when and renews it.
+Releases after that should need nothing: when the release workflow publishes a GitHub release with the APK, Zapstore
+is meant to publish it on its next visit. The proof expires after a while; `zsp` says when and renews it.
+
+**Check it after each release**: `zsp check zapstore.yaml` (read-only) shows the version Zapstore has published
+(`published_version_code`) next to the newest release it finds. It did not pick releases up by itself here: the listing
+stayed at 0.1.10 until 0.1.24. If it lags, publish the release yourself from the repository root, with the same signer:
+
+```sh
+zsp publish zapstore.yaml
+zsp publish packaging/zapstore/foss/zapstore.yaml   # Trikey FOSS, once its listing exists
+```
 
 What it publishes: the standard APK (`trikey-alpha-v<version>.apk`, the `match` in `zapstore.yaml`), on Zapstore's
 main channel although every Trikey release is still a GitHub pre-release (`prerelease_channel: main`), with that

@@ -79,6 +79,11 @@ The digest it prints must equal the one in that file.
 
 [Obtainium](https://github.com/ImranR98/Obtainium) watches a GitHub repository's releases and installs new APKs:
 
+**One tap:** open [trikey.app/obtainium](https://trikey.app/obtainium) on the phone, with Obtainium installed, and tap
+**Add Trikey** or **Add Trikey FOSS**. It adds the app with the settings below already filled in (pre-releases on, that
+app's APK filter); the certificate check (step 4) you add yourself. By hand:
+
+
 1. Install Obtainium (from its GitHub releases or F-Droid).
 2. **Add app**, URL `https://github.com/TheIcarusWings/trikey`. Under the source options, turn on **Include prereleases**:
    every Trikey release is a pre-release for now.
@@ -193,7 +198,8 @@ below are done.
    No branch rule: no branch may deploy to `release`.
 3. Optional but recommended: tick **Required reviewers**, add yourself, and click **Save protection rules**. Every
    release then waits for your approval before it signs or publishes (Actions shows *Review deployments* on the run;
-   docker.yml, each of the two Android signing jobs, the Umbrel store job and Publish release ask, so approve all waiting
+   docker.yml, each of the two Android signing jobs, the Umbrel store job (only when `UMBREL_STORE_AUTOPUBLISH` is set,
+   packaging/README.md) and Publish release ask, so approve all waiting
    jobs; the last one, Publish release, comes once the draft release has every file and they are checked). This is
    what stops someone with only write access (a stolen token, a misbehaving automation) from releasing by pushing a
    `v*` tag. Leave **Allow administrators to bypass configured protection rules** off if you want the rule to bind you
