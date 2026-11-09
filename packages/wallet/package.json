@@ -15,7 +15,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@noble/ciphers": "^2.1.1",
+    "@noble/ciphers": "^2.4.0",
     "@noble/curves": "^2.4.0",
     "@noble/hashes": "^2.4.0",
     "@scure/base": "^2.4.0",
@@ -25,7 +25,7 @@
     "@trikey/core": "*",
     "@trikey/protocol": "*",
     "@trikey/silent-payments": "*",
-    "nostr-tools": "^2.23.0",
+    "nostr-tools": "^2.25.5",
     "zod": "^4.0.0"
   },
   "devDependencies": {

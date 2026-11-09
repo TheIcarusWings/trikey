@@ -94,7 +94,7 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `pair.prepare` | `pairingSecret`, `network`, `entropy?: Hex32` (the phone's contribution to key 3, see "Key 3 from both sides") | `guardianKey: KeyOrigin`, `guardianVersion`, `key3Mixed?: boolean`, `features?` (as `guardian.status.features`, which an unpaired phone cannot call: the phone puts `contactLock` in `pair`'s rules only when it lists `contact_lock`) |
 | `pair` | `pairingSecret`, `deviceName` (1-64), `network` (`bitcoin`\|`testnet`\|`signet`\|`regtest`), `phoneKey: KeyOrigin`, `descriptor`, `phoneNostrPubkey: Hex32`, `hardwareAuth: { pubkey, path }`, `hardwareAuthProof`, `rules: Policy`, `rulesApproval?` (required by guardians with `pairing_rules_approval`, see "Pairing"), `replacesWalletId?: WalletId`, `replacesDescriptor?` (needs `replacesWalletId`; see "Replacing the guardian") | `guardianKey: KeyOrigin`, `descriptor`, `walletId`, `guardianVersion`, `key3Mixed?: boolean` |
 | `sign` | `psbt`, `memo?` | `psbt` (with the guardian's partial signatures) |
-| `policy.get` | `{}` | `policy`, `nextHardwareSequence`, `policyHash`, `warnings?` (`["no_alert_contacts"]`: no alert contact, so a recovery is announced only to the paired phone; mainnet guardians refuse such a policy, test networks warn) |
+| `policy.get` | `{}` | `policy`, `nextHardwareSequence`, `policyHash`, `warnings?` (`["no_alert_contacts"]`: no alert contact other than the paired phone itself, so a recovery is announced only to the paired phone; mainnet guardians refuse such a policy, test networks warn) |
 | `policy.update` | `policy`, `approval?` | `policy`, `nextHardwareSequence`, `policyHash` |
 | `recovery.start` | `sweepPsbt`, `newDescriptor` | `recovery` |
 | `recovery.update` | `recoveryId`, `sweepPsbt` | `recovery` (same id and `readyAt`, the new `sweepTxid`, `amountSats` and `feeSats`) |
@@ -283,7 +283,7 @@ A `Recovery` object (the engine's `RecoveryView`, with times in seconds):
 
 **Names in alerts.** The guardian repeats names the phone chose in the DMs it signs for alert contacts: an own wallet's `name` and the first wallet's `firstName` (`wallet.add`), a guest's `walletLabel` (`hosted.pair`). A phone thief can choose them too, so an alert shows only a name's letters (any script), digits, spaces, `-` and `'` (`safeName` in `@trikey/protocol`): every run of other characters becomes one space, so no link, domain or line break reaches a contact. A wallet's `name` and `firstName` are kept and answered as given (a phone rebuilds the hardware wallet's registration name from them); a `walletLabel` is cleaned when it is set, never refused. Apps from this version refuse such names when they are typed (`isSafeName`). Up to 0.1.21 names went into the DMs unfiltered.
 
-**Cancelling from a regular nostr app.** Alert contacts also get each recovery alert as a NIP-17 private DM (kind 14 rumor in a NIP-59 gift wrap), so they can read it in Damus, Amethyst or Primal. A contact cancels by replying to that DM with `CANCEL <recoveryId>` as the whole message: case-insensitive, an optional trailing `.` or `!`, and nothing else but blank lines and quoted lines (starting with `>`), exactly as for `LOCK`. The alert itself names that line, so a reply that quotes it, adds words ("CANCEL <id> please") or holds it in a sentence cancels nothing; a known contact who sends one while the named recovery runs gets a short DM with the exact line to send; the guardian treats it like `recovery.cancel` from that contact. Alert contacts may call `recovery.cancel` and nothing else. The guardian sends each DM to its own relays and to the contact's NIP-17 inbox relays (their kind-10050 list, `wss://` only, at most 8), however many relays it has; up to 0.1.21 a guardian with 8 relays of its own never reached the inbox relays. Answers to `CANCEL` (no such recovery, the hint, done) go only to a message dated within 10 minutes of the guardian's clock, either way, and at most 10 an hour to one sender; the cancel itself is never limited.
+**Cancelling from a regular nostr app.** Alert contacts also get each recovery alert as a NIP-17 private DM (kind 14 rumor in a NIP-59 gift wrap), so they can read it in Damus, Amethyst or Primal. A contact cancels by replying to that DM with `CANCEL <recoveryId>` as the whole message: case-insensitive, an optional trailing `.` or `!`, and nothing else but blank lines and quoted lines (starting with `>`), exactly as for `LOCK`. The alert itself names that line, so a reply that quotes it, adds words ("CANCEL <id> please") or holds it in a sentence cancels nothing; a known contact who sends one while the named recovery runs gets a short DM with the exact line to send; the guardian treats it like `recovery.cancel` from that contact. Alert contacts may call `recovery.cancel` and nothing else. The guardian sends each DM to its own relays and to the contact's NIP-17 inbox relays (their kind-10050 list, at most 8, public `wss://` hosts only: entries on loopback, private, link-local or local-name hosts, in any spelling of the address, and `.onion` are dropped, so a contact's list cannot point the guardian into the box's network), however many relays it has; up to 0.1.21 a guardian with 8 relays of its own never reached the inbox relays. Answers to `CANCEL` (no such recovery, the hint, done) go only to a message dated within 10 minutes of the guardian's clock, either way, and at most 10 an hour to one sender; the cancel itself is never limited.
 
 ### Wallet rotation: the guardian adopts a recovery's destination wallet
 
@@ -356,7 +356,9 @@ It is not in the policy and no phone can change it. The phone only sees **`guard
 node) and the **`chain_source_changed`** alert (the same members) when the owner switches. A public server sees every
 address of the wallet and the box's IP address and could hide coins or delay confirmations from the guardian (it
 cannot spend or change a rule); the phone shows that warning while `kind` is `public`. During a recovery the guardian
-refuses to switch to a public server.
+refuses to switch to a public server. "Public" is judged by the server's address, not by the kind chosen: a private
+Electrum server or Bitcoin Core whose host is not on the box or the owner's network (an internet address, or a name
+that resolves to one) is refused during a recovery too, and `chain_source_changed` then says `kind: "public"`.
 
 **Unconfirmed transactions.** Some Electrum servers report no mempool at all: Electrs 0.11 reads none of Bitcoin Core
 32's (Core dropped `bip125-replaceable` from mempool entries, Electrs requires it and skips every entry), so every
@@ -521,7 +523,10 @@ co-signed), `relays.ack`, `hosted.coins`, `hosted.map.get`, `hosted.access`; any
 
 **Co-signing.** As for the owner's wallet, but change is an output whose three tweaks rebuild its script from the
 account pubkeys (no index window: it cannot be checked without learning addresses). Every such output is recorded in the
-slot's ledger (`hosted.coins`; at most 2,000, then `sign` answers `1200` with `reason: "ledger_full"`). PSBTs sent to the
+slot's ledger (`hosted.coins`; at most 2,000, then `sign` answers `1200` with `reason: "ledger_full"`). A coin leaves
+the ledger only when the guardian's chain check finds it spent, never because a co-signed PSBT spends it (that PSBT may
+never be broadcast), so `hosted.coins` can list coins already spent: check them on chain. When the ledger is full,
+`sign` first prunes the spent ones. PSBTs sent to the
 guardian need no BIP 32 derivations (the phone strips them). `sign` is limited to 60 requests per hour per slot.
 
 **Recovery.** `recovery.start` takes `{ sweepPsbt, destinationKeys: { app, hardware, cosigner }, destinationMap,

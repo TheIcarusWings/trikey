@@ -153,6 +153,8 @@ export const main = sdk.setupMain(async ({ effects }) => {
             PORT: String(uiPort),
             TRIKEY_DATA_DIR: dataDir,
             TRIKEY_PLATFORM: 'start9',
+            // As the image sets it (Dockerfile): no tsx compile cache in the writable /tmp.
+            TSX_DISABLE_CACHE: '1',
             // Until it is set up, the guardian asks for this code: the basic-auth gate covers only
             // the TLS interface, and other services on this server reach the plaintext port
             // without it (DESIGN.md, "First run"). The owner reads it in StartOS (Actions > Show

@@ -20,7 +20,7 @@ name: trikey-guardian
 
 services:
   guardian:
-    image: ${TRIKEY_IMAGE:-ghcr.io/theicaruswings/trikey-guardian:0.1.22-alpha}
+    image: ${TRIKEY_IMAGE:-ghcr.io/theicaruswings/trikey-guardian:0.1.23-alpha}
     restart: unless-stopped
     init: true
     ports:

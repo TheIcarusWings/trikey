@@ -15,12 +15,21 @@ export async function onHostedCancelDm(g: Guardian, dm: IncomingDm, id: string, 
   const live = slotId ? g.hosting.liveSlots().find((x) => x.slot.slotId === slotId) : undefined;
   if (!live) return;
   const { slot, engine } = live;
+  // A stranger's DM is dropped before the mutex, the alerts and the log (debug only; security sweep 2: dm-cancel.ts).
+  const known = (sender: string) => {
+    const reg = engine.registration();
+    return !!reg && (sender === reg.appNostrPubkey || engine.isAlertContact(sender));
+  };
+  if (!known(dm.sender)) {
+    g.log.debug('dm.cancel_ignored', { reason: 'not a contact of this hosted wallet' });
+    return;
+  }
   // Decided under this slot's recovery mutex (not the host's: each guest has its own), sent after it: dm-cancel.ts.
   const answer = await engine.recoveryMutex.run(async (): Promise<string | undefined> => {
     const reg = engine.registration();
     if (!reg) return undefined;
-    if (dm.sender !== reg.appNostrPubkey && !engine.isAlertContact(dm.sender)) {
-      g.log.info('dm.cancel_ignored', { reason: 'not a contact of this hosted wallet' });
+    if (!known(dm.sender)) {
+      g.log.debug('dm.cancel_ignored', { reason: 'not a contact of this hosted wallet' });
       return undefined;
     }
     const fresh = mayAnswer(dm.createdAt, g.nowSec());

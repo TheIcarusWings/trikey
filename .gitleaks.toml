@@ -11,6 +11,10 @@ description = "Public test vectors used in known-answer tests"
 paths = [
   '''packages/core/src/random-health\.ts''',
   '''packages/core/test/random-health\.test\.ts''',
+  # BIP 352's own send/receive test vectors (silent payments), copied unchanged from the BIP's repository.
+  '''packages/silent-payments/test/vectors/send_and_receive_test_vectors\.json''',
+  # Published UR test vectors (BlockchainCommons bc-ur test.cpp, BCR-2020-007 HDKey test vector 2).
+  '''apps/mobile/src/hardware/qr/ur-vectors\.ts''',
 ]
 regexes = [
   # BIP 32 test vector 1: master and m/0'/1 extended private keys, wherever they are quoted.
@@ -37,4 +41,9 @@ regexes = [
   '''^trikey/labels/v1$''',
   '''^0e45904aea76eede0b7a98612e3235f9e42b1fec3bd1658030f5fb999199482caf3176f968993dc4630296dd0a9c74ecefc6c8e386592e69b9b3f8088a2d9c8f$''',
   '''^fedcba9876543210$''',
+  # NIP-06's published test vectors (packages/protocol/test/identity.test.ts): the private keys of its two example mnemonics.
+  '''^7f7ff03d123792d6ac594bfa67bf6d0c0ab55b6b1fdb6249303fe861f1ccba9a$''',
+  '''^c15d739894c81a2fcfd3a2df85a0d2c0dbc47a280d092799f144d73d7ae78add$''',
+  # An expression, not a value (packages/recovery-key/src/wallet.ts, an older commit): `key.xpub === this.s.key2.vault.xpub`.
+  '''^this\.s\.key2\.vault\.xpub$''',
 ]

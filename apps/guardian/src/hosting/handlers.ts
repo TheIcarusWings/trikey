@@ -176,7 +176,18 @@ function guestHandlers(g: Guardian, h: Hosting): Partial<Record<MethodName, Gues
     sign: async (params: Params<'sign'>, ctx, route) => {
       const turn = h.signLimiter.take(route.slot.slotId, g.clock.now());
       if (!turn.ok) throw new RpcError(ErrorCode.RateLimited, 'Too many signing requests for this wallet; wait and try again.', { retryAfterSeconds: Math.ceil(turn.retryAfterMs / 1000) });
-      const res = await refusable(g, ctx.sender, () => route.engine.cosign(base64.decode(params.psbt)));
+      const psbt = base64.decode(params.psbt);
+      const res = await refusable(g, ctx.sender, async () => {
+        const first = await route.engine.cosign(psbt);
+        if (first.ok || first.refusal.reason !== 'ledger_full') return first;
+        // The ledger keeps the coins co-signed payments spend until the chain shows them spent: check it, and try once more.
+        try {
+          await h.unspentLedger(route.engine);
+        } catch {
+          return first;
+        }
+        return route.engine.cosign(psbt);
+      });
       if (!res.ok) throw hostedRefusalError(res.refusal);
       g.log.info('hosting.cosigned', { slot: route.slot.slotId, replay: res.replay, ledgered: res.ledgered });
       return { psbt: base64.encode(res.psbt) };

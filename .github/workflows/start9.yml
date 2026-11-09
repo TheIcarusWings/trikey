@@ -102,8 +102,12 @@ jobs:
           umbrel=$(yq -r '.services.server.environment | keys | .[]' "$compose" | sort -u)
           echo "Start9 passes: $(echo $passed)"
           echo "Umbrel passes: $(echo $umbrel)"
+          # Read by something other than config.ts, on purpose: TSX_DISABLE_CACHE is read by tsx, which runs the
+          # guardian's source (no compile cache in the writable /tmp; the image sets it too, packaging/docker/Dockerfile).
+          read_elsewhere="TSX_DISABLE_CACHE"
           fail=0
           for v in $passed; do
+            grep -qx "$v" <<<"$read_elsewhere" && continue
             grep -qx "$v" <<<"$read_vars" || { echo "::error file=$main::$v is not read by $config"; fail=1; }
           done
           # Umbrel-only on purpose: TRIKEY_TRUSTED_PROXY names Umbrel's login gateway, the one address first-run setup

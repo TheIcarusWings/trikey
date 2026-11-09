@@ -479,6 +479,8 @@ export const SavingsRecord = z.object({
   nextReceiveIndex: z.number().int().min(0).default(0),
   nextChangeIndex: z.number().int().min(0).default(0),
   chain: ChainCache.optional(),
+  /** As `WalletState.indexMarks`, for Savings. Absent: seeded from `nextReceiveIndex` and `nextChangeIndex` above. */
+  indexMarks: z.object({ receive: z.number().int().min(-1), change: z.number().int().min(-1) }).optional(),
   /** The guardian watches it (`savings.register` went through), and which guardian. */
   registration: z.object({ walletId: z.string(), guardian: Hex32, at: z.number() }).optional(),
   sendLog: z.array(SavingsSendEntry).default([]),
@@ -590,6 +592,12 @@ export const WalletState = z.object({
     })
     .optional(),
   chain: ChainCache.optional(),
+  /**
+   * Per chain of `wallet`, the highest address index this phone knows is used: coins a sync listed and its own
+   * payments' outputs (index-marks.ts). A reported next index more than a gap past it is cut. Absent
+   * until the wallet's first sync, which seeds it (also for state saved before the marks existed).
+   */
+  indexMarks: z.object({ walletId: z.string(), receive: z.number().int().min(-1), change: z.number().int().min(-1) }).optional(),
   guardianStatus: GuardianStatusCache.optional(),
   /** Spends the guardian co-signed, for the local "spent today" estimate (ms, sats). */
   spends: z

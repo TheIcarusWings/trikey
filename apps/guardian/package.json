@@ -1,6 +1,6 @@
 {
   "name": "@trikey/guardian",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "description": "Trikey Guardian: the key-3 cosigner that enforces the daily limit and Delay & Notify recovery",
   "license": "MIT",
   "private": true,
@@ -16,7 +16,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@noble/ciphers": "^2.1.1",
+    "@noble/ciphers": "^2.4.0",
     "@noble/curves": "^2.4.0",
     "@noble/hashes": "^2.4.0",
     "@scure/base": "^2.4.0",
@@ -26,11 +26,11 @@
     "@trikey/core": "*",
     "@trikey/protocol": "*",
     "@trikey/silent-payments": "*",
-    "nodemailer": "10.1.2",
-    "nostr-tools": "^2.23.0"
+    "nodemailer": "10.3.1",
+    "nostr-tools": "^2.25.5"
   },
   "devDependencies": {
     "@trikey/wallet": "*",
-    "smtp-server": "3.19.23"
+    "smtp-server": "3.21.3"
   }
 }

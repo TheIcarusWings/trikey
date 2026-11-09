@@ -570,3 +570,63 @@ describe('every workflow', () => {
     }
   });
 });
+
+describe('publish-release.yml: the last comparison before publishing', () => {
+  it('finds unchanged files equal, though `gh --jq` prints keys sorted (0.1.23-alpha stopped here)', () => {
+    const pub = workflow('publish-release.yml').jobs['publish']!.steps!.find((s) => s.name === 'Publish')!;
+    const temp = mkdtempSync(join(tmpdir(), 'trikey-publish-'));
+    const assets = [
+      { id: 2, name: 'b.apk', size: 20, digest: 'sha256:' + 'b'.repeat(64), state: 'uploaded' },
+      { id: 1, name: 'a.yml', size: 10, digest: 'sha256:' + 'a'.repeat(64), state: 'uploaded' },
+    ];
+    writeFileSync(join(temp, 'assets.json'), JSON.stringify(assets));
+    // A stand-in for gh: `--jq` output goes through jq -S, as gh's gojq prints keys sorted.
+    const bin = join(temp, 'bin');
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, 'gh'),
+      [
+        '#!/usr/bin/env bash',
+        'args="$*"',
+        'if [[ "$args" == *"-X PATCH"* ]]; then echo \'{"html_url":"https://example.invalid/r"}\'; exit 0; fi',
+        'if [[ "$args" == *"/assets"* ]]; then',
+        `  data='${JSON.stringify(assets)}'`,
+        '  for ((i=1;i<=$#;i++)); do if [ "${!i}" = --jq ]; then j=$((i+1)); jq -cS "${!j}" <<<"$data"; exit 0; fi; done',
+        '  echo "$data"; exit 0',
+        'fi',
+        'echo false',
+      ].join('\n'),
+      { mode: 0o755 },
+    );
+    const out = execFileSync('bash', ['-c', pub.run!], {
+      env: { PATH: `${bin}:${process.env['PATH']}`, RUNNER_TEMP: temp, ID: '7', TAG: 'v0.1.99-alpha', GITHUB_REPOSITORY: 'o/r' },
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    expect(out).toContain('Published');
+  });
+});
+
+describe('ios-launch.yml: `launch` is a required check on main, so it must report on every pull request', () => {
+  const wf = workflow('ios-launch.yml');
+  it('runs on every pull request (no path filter) and skips the Mac job without app changes', () => {
+    expect(wf.on['pull_request']).toBeNull();
+    expect(wf.jobs['launch']!.needs).toBe('changes');
+    expect(wf.jobs['launch']!.if).toBe("needs.changes.outputs.app == 'true'");
+    const run = wf.jobs['changes']!.steps![0]!.run!;
+    for (const p of ['apps/mobile/*', 'packages/*', 'package-lock.json', '.github/workflows/ios-launch.yml', '.github/scripts/ios-launch*'])
+      expect(run).toContain(p);
+  });
+});
+
+describe('the Zapstore steps (docs/zapstore.md)', () => {
+  it('install zsp, which is handed the release keystore, at a pinned version with its Go checksum (sweep 2 #41)', () => {
+    const doc = read('docs/zapstore.md');
+    const installs = [...doc.matchAll(/go install (\S+)/g)].map((m) => m[1]!);
+    expect(installs.length).toBeGreaterThan(0);
+    for (const i of installs) expect(i).toMatch(/^github\.com\/zapstore\/zsp\/v\d+\/cmd\/zsp@v\d+\.\d+\.\d+$/);
+    expect(doc).not.toMatch(/zsp\S*@latest/);
+    const version = installs[0]!.split('@')[1]!;
+    expect(doc).toMatch(new RegExp(`github\\.com/zapstore/zsp/v\\d+ ${version.replace(/\./g, '\\.')} h1:[A-Za-z0-9+/]{43}=`));
+  });
+});

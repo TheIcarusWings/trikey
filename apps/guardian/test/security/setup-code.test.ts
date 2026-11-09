@@ -82,13 +82,19 @@ describe('security: first-run setup on plain Docker needs the setup code from th
     expect(rig.logLines.join('\n')).not.toContain(rig.passphrase);
   }, 30_000);
 
-  it('throttles wrong codes: after 10 in a minute even the right one waits', async () => {
+  it('throttles wrong codes, never the right one: a stranger sending wrong codes cannot keep the owner out (sweep 2)', async () => {
     rig = await GuardianRig.start({ http: true, setup: false, platform: 'docker' });
+    // Someone who reached the port sends 10 wrong codes a minute, for as long as they like.
     for (let i = 0; i < 10; i++) expect((await rig.api('POST', '/setup/code', { code: `AAAA-AAAA-AAAA-AAA${i}` }, { session: false })).status).toBe(401);
-    const blocked = await rig.api('POST', '/setup/code', { code: rig.guardian.setupCode!.code }, { session: false });
-    expect(blocked).toMatchObject({ status: 429, body: { error: { code: 'rate_limited' } } });
-    rig.clock.advance(61_000);
-    expect((await rig.api('POST', '/setup/code', { code: rig.guardian.setupCode!.code }, { session: false })).status).toBe(200);
+    const wrong = await rig.api('POST', '/setup/code', { code: 'AAAA-AAAA-AAAA-AAAX' }, { session: false });
+    expect(wrong).toMatchObject({ status: 429, body: { error: { code: 'rate_limited' } } });
+    const logged = rig.logLines.filter((l) => l.includes('setup.bad_code')).length;
+    expect(logged).toBe(10); // over the limit, wrong codes are no longer logged
+    // The owner's right code still opens, at once (it used to wait behind the stranger's for good).
+    expect(await rig.api('POST', '/setup/code', { code: rig.guardian.setupCode!.code }, { session: false })).toMatchObject({ status: 200, body: { ok: true } });
+    const done = await rig.api('POST', '/setup', setupBody({ setupCode: rig.guardian.setupCode!.code }));
+    expect(done.status).toBe(200);
+    expect(rig.guardian.setupComplete).toBe(true);
   }, 30_000);
 
   it('prints a new code at every start, so a restart before setup invalidates the old one', async () => {

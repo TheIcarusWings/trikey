@@ -155,13 +155,15 @@ jobs:
           ID: ${{ steps.draft.outputs.id }}
         run: |
           set -euo pipefail
-          checked="$(jq -c '[.[] | {id, name, size, digest}] | sort_by(.name)' "${RUNNER_TEMP}/assets.json")"
+          # -S on both sides: `gh --jq` (gojq) prints an object's keys sorted, jq in the order written, so the same files
+          # would never compare equal as text (0.1.23-alpha's first publish stopped here).
+          checked="$(jq -cS '[.[] | {id, name, size, digest}] | sort_by(.name)' "${RUNNER_TEMP}/assets.json")"
           # Right before publishing, the files must still be the ones checked.
           now="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${ID}/assets?per_page=100" --jq '[.[] | {id, name, size, digest}] | sort_by(.name)')"
-          [ "$(jq -c . <<<"${now}")" = "${checked}" ] || { echo "::error::The draft's files changed during the check. Re-run this workflow."; exit 1; }
+          [ "$(jq -cS . <<<"${now}")" = "${checked}" ] || { echo "::error::The draft's files changed during the check. Re-run this workflow."; exit 1; }
           gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${ID}" -F draft=false -F prerelease=true > "${RUNNER_TEMP}/published.json"
           after="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${ID}/assets?per_page=100" --jq '[.[] | {id, name, size, digest}] | sort_by(.name)')"
-          if [ "$(jq -c . <<<"${after}")" != "${checked}" ]; then
+          if [ "$(jq -cS . <<<"${after}")" != "${checked}" ]; then
             echo "::error title=Files changed while publishing::${TAG}'s files are not the ones checked. Look at the release now: delete it if a file is not what the builds made."
             exit 1
           fi

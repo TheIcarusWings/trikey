@@ -46,6 +46,36 @@ export function createLogger(opts: { level?: LogLevel; write?: (line: string) =>
   return { debug: at('debug'), info: at('info'), warn: at('warn'), error: at('error') };
 }
 
+/**
+ * Log lines that anyone can cause, a stranger's refused request (security sweep 2): at most `max` lines of each event
+ * per `windowMs`, the rest counted; the next line that gets through says how many were left out (`suppressed`). The
+ * events are a fixed few names from the code, so this stays small.
+ */
+export class LogBudget {
+  private readonly events = new Map<string, { times: number[]; suppressed: number }>();
+
+  constructor(
+    private readonly opts: { max: number; windowMs: number },
+    private readonly now: () => number,
+  ) {}
+
+  /** The fields to log `event` with (plus `suppressed` after a quiet spell), or `undefined`: leave this line out. */
+  take(event: string, fields: LogFields = {}): LogFields | undefined {
+    const now = this.now();
+    const e = this.events.get(event) ?? { times: [], suppressed: 0 };
+    e.times = e.times.filter((t) => t > now - this.opts.windowMs && t <= now);
+    this.events.set(event, e);
+    if (e.times.length >= this.opts.max) {
+      e.suppressed++;
+      return undefined;
+    }
+    e.times.push(now);
+    const suppressed = e.suppressed;
+    e.suppressed = 0;
+    return suppressed ? { ...fields, suppressed } : fields;
+  }
+}
+
 export const silentLogger: Logger = { debug() {}, info() {}, warn() {}, error() {} };
 
 /** A short, log-safe description of an error (message only, no stack, no data). */

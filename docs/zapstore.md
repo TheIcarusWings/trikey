@@ -12,7 +12,7 @@ listing's publisher is Trikey's own npub (below), and the APK is the same file a
 (certificate SHA-256 in [`packaging/android/release-cert.sha256`](../packaging/android/release-cert.sha256)). An APK
 of the same app from Zapstore, Obtainium or GitHub installs over the others and keeps the wallet.
 
-There are two apps (from 0.1.22-alpha; [android-signing.md](android-signing.md), "Two APKs, two apps"): **Trikey**
+There are two apps (from 0.1.23-alpha; [android-signing.md](android-signing.md), "Two APKs, two apps"): **Trikey**
 (`app.trikey.wallet`, the standard build, with Google's libraries) and **Trikey FOSS** (`app.trikey.wallet.foss`, no
 Google code). The **Trikey** listing has the standard app. **Trikey FOSS** gets its own listing once the maintainer has
 published it (below); until then, take its APK from GitHub or Obtainium. Each app has its own wallet: to move one from
@@ -31,8 +31,19 @@ links the APK signing certificate to Trikey's publisher npub (NIP-C1).
 1. **A nostr key just for Trikey**, not a personal one: make it in a nostr app or signer (Amber, nsec.app), give it a
    profile (name Trikey, the icon, website `https://trikey.app`), and keep its nsec in your password manager next to
    the APK key's backup.
-2. **Install `zsp`** on your own computer, from [its releases](https://github.com/zapstore/zsp/releases) or with
-   `go install github.com/zapstore/zsp/v2/cmd/zsp@latest`.
+2. **Install `zsp`** on your own computer, at the version named here and no other:
+
+   ```sh
+   go install github.com/zapstore/zsp/v2/cmd/zsp@v2.0.1
+   ```
+
+   Go checks the download against its public checksum database (`go.sum` line
+   `github.com/zapstore/zsp/v2 v2.0.1 h1:Md7GkOXv3t4B64PMjRpOa4hH1ruhi8kjEaDVZZV+soE=`), so this is the code everyone
+   else gets for v2.0.1. **Why pinned:** zsp is handed the Android release keystore, its password and a live session
+   with the publisher signer. Whoever can publish a new zsp version (a taken-over account or a bad merge upstream) would
+   get the key that signs every Trikey APK; `@latest` would install that version without anyone looking. To move to a
+   newer zsp, read its changes since the pinned version, then change the version and the `h1:` hash here in a pull
+   request (security sweep 2). Up to 0.1.23 these steps said `@latest`.
 3. **Run `zsp` in a checkout of this repository** and follow the wizard. It asks for the signer (a `bunker://` URL
    from your signer app is safer than pasting the nsec) and for the release keystore (`trikey-release.p12` and its
    password) to prove the certificate is yours. The keystore and the key never leave your computer. When it asks how
@@ -67,10 +78,10 @@ from the same repository, publisher npub and APK certificate. Its description is
 name, summary and description are Trikey FOSS's. zsp's wizard reads `./zapstore.yaml`, which is why the file is in a
 folder of its own.
 
-Run this on your own computer, after the release workflow has published the first release with the new id (0.1.22-alpha
+Run this on your own computer, after the release workflow has published the first release with the new id (0.1.23-alpha
 or later) and both APKs are on its GitHub release page:
 
-1. Update `zsp` (step 2 above) and check what Zapstore would publish; this reads only, it signs and uploads nothing:
+1. Install `zsp` at the version step 2 above pins (`zsp --version`) and check what Zapstore would publish; this reads only, it signs and uploads nothing:
 
    ```sh
    cd <your checkout of the repository>
