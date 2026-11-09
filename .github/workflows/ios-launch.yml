@@ -122,7 +122,8 @@ jobs:
           xcodebuild -version
           xcrun simctl list runtimes available
 
-      - run: npm ci
+      # --ignore-scripts: no dependency install hook runs here (docker/Dockerfile does the same). esbuild works without its postinstall.
+      - run: npm ci --ignore-scripts
 
       # The bundle id the build will have: ios.bundleIdentifier from app.json, as app.config.ts resolves it. The
       # built app is checked against it below.

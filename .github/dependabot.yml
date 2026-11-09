@@ -19,6 +19,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Do not propose a release until it is a week old. Hijacked npm releases (a maintainer's workflow or token taken
+    # over, a malicious postinstall added) are usually found and pulled within hours or days, so a version that has
+    # survived a week is far less likely to be one. Applies to version-update PRs only; security updates are not held.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 10
     groups:
       npm-production:

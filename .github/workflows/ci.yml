@@ -34,7 +34,8 @@ jobs:
             consensus-verify-${{ runner.os }}-
       - run: cargo build --release --locked --manifest-path tools/consensus-verify/Cargo.toml
       - run: test -x "$TRIKEY_CONSENSUS_VERIFY"
-      - run: npm ci
+      # --ignore-scripts: no dependency install hook runs here (docker/Dockerfile does the same). esbuild works without its postinstall.
+      - run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm test
 
