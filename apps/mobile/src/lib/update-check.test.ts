@@ -149,6 +149,10 @@ describe('picking the release', () => {
 
   it('counts pre-releases and full releases alike', () => {
     expect(pickRelease([release('v0.1.6-alpha'), release('v0.1.7', { prerelease: false })])?.tag).toBe('v0.1.7');
+    // From 0.1.26-alpha releases are normal releases (still -alpha); the older ones stay pre-releases.
+    const list = [release('v0.1.26-alpha', { prerelease: false }), release('v0.1.25-alpha'), release('v0.1.24-alpha')];
+    expect(pickRelease(list)?.tag).toBe('v0.1.26-alpha');
+    expect(pickRelease(list.slice(1))?.tag).toBe('v0.1.25-alpha');
   });
 
   it('copes with what is not a release', () => {

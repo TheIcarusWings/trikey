@@ -8,7 +8,8 @@ release_source: https://github.com/TheIcarusWings/trikey
 pubkey: npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9
 # The standard APK only (trikey-alpha-v<version>.apk), never its .sha256.
 match: '^trikey-alpha-v[0-9][^/]*\.apk$'
-# Every release is a GitHub pre-release while Trikey is pre-alpha; publish them on the main channel.
+# Releases up to 0.1.25-alpha are GitHub pre-releases (later ones are normal releases); publish those on the main
+# channel too.
 prerelease_channel: main
 
 name: Trikey

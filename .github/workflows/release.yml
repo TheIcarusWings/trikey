@@ -4,8 +4,12 @@ name: Release
 #
 # On every push to main it reads the version in package.json. If CHANGELOG.md has a section for that version
 # ("## [<version>-alpha] - <date>", Keep a Changelog's form, which zsp also reads) and the tag v<version>-alpha does not exist yet, it creates the tag on that commit and a
-# DRAFT pre-release whose notes are that CHANGELOG section. A push without a version bump, or whose version is
+# DRAFT release whose notes are that CHANGELOG section. A push without a version bump, or whose version is
 # already tagged, does nothing.
+#
+# A normal release, not a GitHub pre-release, though the version still ends in -alpha and the notes, the app and the
+# site still say pre-alpha: Zapstore's indexer never picked up the pre-releases (up to 0.1.25-alpha every release was
+# one; zapstore/relay#16), and publish-release.yml marks it the latest release when it publishes it.
 #
 # A draft, so nothing outside this repository sees the release until it is complete: the builds attach their files to
 # the draft (drafts are not in GitHub's public API, so Obtainium, Zapstore and the app's "Check for updates" do not
@@ -99,7 +103,7 @@ jobs:
             echo "attached trikey-guardian-compose.yml names it by digest. This release is published only once every file is"
             echo "attached and checked (publish-release.yml). How to install and test: docs/alpha-test-plan.md."
           } > "${RUNNER_TEMP}/body.md"
-          gh release create "${TAG}" --draft --prerelease --verify-tag --title "Trikey ${TAG}" --notes-file "${RUNNER_TEMP}/body.md"
+          gh release create "${TAG}" --draft --verify-tag --title "Trikey ${TAG}" --notes-file "${RUNNER_TEMP}/body.md"
           echo "::notice title=Draft release::${TAG} on ${GITHUB_SHA::7}: the builds attach their files, then publish-release.yml publishes it."
 
       # publish-release.yml last: it waits for the builds dispatched before it.
@@ -111,7 +115,7 @@ jobs:
           set -euo pipefail
           # A redispatch whose release was never made (the run stopped after the tag): make the draft now.
           if ! gh release view "${TAG}" >/dev/null 2>&1; then
-            gh release create "${TAG}" --draft --prerelease --verify-tag --title "Trikey ${TAG}" --notes-file "${RUNNER_TEMP}/notes.md"
+            gh release create "${TAG}" --draft --verify-tag --title "Trikey ${TAG}" --notes-file "${RUNNER_TEMP}/notes.md"
           fi
           for wf in docker.yml android-apk.yml publish-release.yml; do
             gh workflow run "${wf}" --ref "${TAG}"

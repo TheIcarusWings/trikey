@@ -142,7 +142,7 @@ jobs:
           set -euo pipefail
           if ! gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             # A tag pushed by hand. `|| true`: docker.yml may make it at the same moment; the view below decides.
-            gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft --prerelease --verify-tag \
+            gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft --verify-tag \
               --title "Trikey ${TAG}" --notes "Trikey ${TAG}." || true
           fi
           draft="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)"
