@@ -6,7 +6,7 @@ tagline: Key 3 of your 2-of-3 bitcoin wallet, on your own node
 # TODO(verify): the icon is a placeholder (the web UI favicon). Replace with a proper icon URL.
 icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/guardian-web/public/favicon.svg
 category: bitcoin
-version: "0.1.24-alpha"
+version: "0.1.25-alpha"
 # TODO(verify): host-facing port for the app_proxy. Pick one that no other app in the store uses.
 port: 3010
 description: >-
@@ -26,9 +26,9 @@ support: https://github.com/TheIcarusWings/trikey/issues
 # TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
 gallery: []
 releaseNotes: >-
-  The last, low-severity fixes from the second security review, and every dependency advisory fixed. Your own phone
-  no longer counts as your alert contact on mainnet (add a contact in the app if it asks), a chain server is judged by
-  its address rather than its label, and strangers can no longer fill the guardian's log. Update the app too.
+  Fixes from a third security review: the guardian refuses to co-sign while its clock is behind the chain, family
+  hosting keeps a guest's coins in view until they are really spent, and Savings alerts can no longer be crowded out.
+  Update the app too: one wallet now looks like one wallet (several wallets is a setting).
 dependencies:
   - bitcoin
   - electrs

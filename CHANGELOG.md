@@ -6,6 +6,38 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## 0.1.25-alpha (2026-11-09)
+
+Fixes from a third security review (Grok only, on 0.1.24's code), a simpler Home screen for one wallet, and Trikey on
+Zapstore and Obtainium. Update the guardian, then the app.
+
+- **The guardian refuses to co-sign while its clock is behind the chain**, as it already did while ahead. Before, a
+  phone thief who could also set the home server's clock back could spend the daily limit again for every day they
+  moved it. The app now says the guardian's clock is off and to check the box's date and time (#213).
+- **Family hosting keeps a guest's coins in view until they are really spent.** A coin left the host's list when the
+  chain server did not list it, which is also true of a payment not broadcast yet, or of a malformed reply; a stolen
+  guest phone could then make a coin only the guardian can co-sign drop out of a later recovery. Now a coin leaves only
+  once the coin its transaction spends is gone, a reply that isn't a list is an error, and leaving the host checks the
+  hardware approval first and needs every coin settled (#213).
+- **Savings alerts can't be crowded out.** A large spend from Savings hidden behind 400 small ones was never announced,
+  and alerts to contacts kept only the last 32. Now every spend is handed over (largest first) before a scan counts as
+  complete, and no alert still owed to someone is dropped: past 64, the smallest fold into one total (#213).
+- **A `LOCK` dated in the future is remembered and counted** against the contact's limit, so a relay delivering it
+  again later can't lock the guardian then (#213).
+
+- **One wallet looks like one wallet.** Home no longer shows a wallet name and switcher by default. Several wallets is
+  now a setting (Settings, Wallets), off unless you turn it on; it stays on while the phone holds more than one wallet,
+  so no wallet is ever hidden. The demo starts with one wallet (#211).
+- **Releases are checked more strictly.** The publish check rebuilds the release's compose file from the tagged code and
+  the verified image, and requires it byte for byte; the Umbrel store and Start9 jobs take only the digest verified for
+  that commit; release runs are matched by commit, not by name; and a release whose files changed while publishing is
+  pulled back (#212).
+- **Get it on Android:** both apps are on Zapstore (Trikey and Trikey FOSS), and
+  [trikey.app/obtainium](https://trikey.app/obtainium) adds either to Obtainium in one tap (#205, #207, #208).
+- The README explains Trikey with diagrams and screenshots, the site no longer says "coming soon", the iPhone build
+  docs cover an iPhone on a newer iOS than Xcode knows, and docs/beta-checklist.md lists what stands between this alpha
+  and a beta (#203, #204, #206, #209, #210).
+
 ## 0.1.24-alpha (2026-11-09)
 
 The last, low-severity findings of the second security review, and every dependency advisory fixed. Update the

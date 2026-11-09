@@ -13,9 +13,9 @@ project).
 
 ## 1. Security
 
-- [ ] **Third security sweep (Grok only) triaged** (dev). Every finding checked against the code; each real one fixed
+- [x] **Third security sweep (Grok only) triaged** (dev; 0.1.25: 9 findings, all fixed, #212, #213). Every finding checked against the code; each real one fixed
       with a regression test, or written down in DESIGN.md as accepted, with the reason.
-- [ ] **No open finding rated High or Medium** (dev).
+- [x] **No open finding rated High or Medium** (dev; 0.1.25).
 - [x] Second sweep (Grok and Opus): all three batches fixed (0.1.23, 0.1.24).
 - [x] Repository settings for a public repo: secret scanning with push protection, private vulnerability reporting,
       required status checks on main, release tags that can't be moved or deleted, immutable releases, Dependabot
@@ -82,11 +82,11 @@ unlock where the device supports it (DESIGN.md, "Hardware wallets by feature"; d
 
 ## 5. Product
 
-- [ ] **Multi-wallet off by default**, behind a Settings toggle (dev; in progress).
+- [x] **Multi-wallet off by default**, behind a Settings toggle (dev; 0.1.25, #211).
 - [ ] **Defaults decided** (owner; DESIGN.md "Open questions" 3): the daily limit, the recovery delay and the relays a
       new wallet starts with.
-- [ ] **The website says what testers can do**: trikey.app still says "Coming soon, there's no release yet"; for the
-      beta it points to the test plan, the tutorials and the installs (dev, with the owner's wording).
+- [x] **The website says what testers can do**: trikey.app still says "Coming soon, there's no release yet"; for the
+      beta it points to the test plan, the tutorials and the installs (dev; #210).
 
 ## 6. Outside testers
 
