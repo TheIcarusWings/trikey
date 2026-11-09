@@ -18,7 +18,9 @@ Google code). The **Trikey** listing has the standard app. **Trikey FOSS** gets 
 published it (below); until then, take its APK from GitHub or Obtainium. Each app has its own wallet: to move one from
 the other, restore your backup file and recovery code in the new app.
 
-Publisher npub: `npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`. Check it on the listing before installing. It is also
+Publisher npub: `npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`. Check it on the listing before installing.
+The listings name the founder too, Icarus Wings (`npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5`,
+`icaruswings@trikey.app`): Trikey's own npub publishes the apps, so they don't depend on one person's key. It is also
 `trikey@trikey.app` (NIP-05, from [`site/.well-known/nostr.json`](../site/.well-known/nostr.json)), so nostr apps and Zapstore
 show it verified by the trikey.app domain.
 
