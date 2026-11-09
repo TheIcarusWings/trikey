@@ -10,7 +10,7 @@
  * so pre-releases count. Drafts never do: GitHub's public API does not list them, and a draft in the answer is skipped
  * anyway (a release is a draft until every file is attached and checked: .github/workflows/publish-release.yml). From
  * 0.1.9 a release carries two Android builds: the standard one and the one without Google code
- * (`trikey-alpha-foss-v0.1.9-alpha.apk`), from 0.1.22 two apps (app.trikey.wallet, app.trikey.wallet.foss). The check
+ * (`trikey-alpha-foss-v0.1.9-alpha.apk`), from 0.1.23 two apps (app.trikey.wallet, app.trikey.wallet.foss). The check
  * offers the APK of the build that is installed, so an update never swaps one for the other.
  *
  * Who signed the APK is not something a file of the same release can show: the release's `.sha256` comes from the same
@@ -90,7 +90,7 @@ export function assetNames(tag: string, variant: AndroidVariant = 'standard'): {
   return { apk: variant === 'foss' ? `trikey-alpha-foss-${tag}.apk` : `trikey-alpha-${tag}.apk` };
 }
 
-/** The application id of the app each release APK installs as (android-variant.js; from 0.1.22, two apps). */
+/** The application id of the app each release APK installs as (android-variant.js; from 0.1.23, two apps). */
 export function releaseAppId(variant: AndroidVariant = 'standard'): string {
   return variant === 'foss' ? 'app.trikey.wallet.foss' : 'app.trikey.wallet';
 }

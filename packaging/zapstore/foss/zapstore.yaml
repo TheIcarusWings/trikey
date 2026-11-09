@@ -10,7 +10,7 @@ release_source: https://github.com/TheIcarusWings/trikey
 match: '^trikey-alpha-foss-v[0-9][^/]*\.apk$'
 # Every release is a GitHub pre-release while Trikey is pre-alpha; publish them on the main channel.
 prerelease_channel: main
-# APKs up to 0.1.21-alpha had the standard app's id (app.trikey.wallet): only 0.1.22 and later are this app.
+# APKs up to 0.1.21-alpha had the standard app's id (app.trikey.wallet): only 0.1.23 and later are this app (0.1.22 was never published).
 release_filter: '^v(0\.1\.(2[2-9]|[3-9][0-9])|0\.([2-9]|[1-9][0-9])\.[0-9]+|[1-9][0-9]*\.[0-9]+\.[0-9]+)(-alpha)?$'
 
 name: Trikey FOSS
