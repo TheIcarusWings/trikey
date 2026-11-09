@@ -8,7 +8,8 @@ name: Publish release
 # in GitHub's public API, so nobody outside the repository (Obtainium, Zapstore, the app's "Check for updates", someone
 # on the releases page) sees the release until this workflow publishes it.
 #
-# `wait` waits for the newest Docker and Android test APK runs of the tag, which must succeed. `publish`, in the
+# `wait` waits for the newest Docker and Android test APK runs of the tag, which must succeed: found by the tag's commit
+# and the jobs only a tag runs, not by name (.github/scripts/release-run.sh). `publish`, in the
 # `release` environment (so it runs only on refs the environment allows, after the owner's approval when the
 # environment asks for one), checks the draft with packaging/check-release-assets.sh: exactly the expected files, each
 # the one GitHub lists, the checksums, both APKs signed by packaging/android/release-cert.sha256 and nothing else and
@@ -48,6 +49,15 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ github.ref_name }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts/release-run.sh
+          sparse-checkout-cone-mode: false
+
+      # The runs of the tag's commit (head_sha), started by a push or a dispatch, in which the job that runs only on a
+      # v* tag ran (docker.yml's `verified`, android-apk.yml's `release`): never by name, which a branch called like the
+      # tag shares (.github/scripts/release-run.sh).
       - name: Wait for the release builds
         id: wait
         run: |
@@ -58,8 +68,8 @@ jobs:
           while :; do
             pending=""
             for wf in docker.yml android-apk.yml; do
-              run="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow "${wf}" --branch "${TAG}" --limit 1 \
-                --json databaseId,status,conclusion,url --jq '.[0] // empty | [.databaseId, .status, .conclusion, .url] | @tsv')"
+              case "${wf}" in docker.yml) job=verified ;; android-apk.yml) job=release ;; esac
+              run="$(bash .github/scripts/release-run.sh newest "${wf}" "${job}")"
               if [ -z "${run}" ]; then pending="${pending} ${wf}(no run yet)"; continue; fi
               IFS=$'\t' read -r id status conclusion url <<<"${run}"
               if [ "${status}" != completed ]; then pending="${pending} ${wf}(${status})"; continue; fi

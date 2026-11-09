@@ -62,6 +62,80 @@ function secretsRead(job: Job): string[] {
   return [...new Set([...text.matchAll(/secrets\.([A-Z0-9_]+)/g)].map((m) => m[1]!))].filter((s) => s !== 'GITHUB_TOKEN').sort();
 }
 
+interface FakeRun {
+  id: number;
+  head_sha: string;
+  head_branch: string;
+  event: string;
+  status: string;
+  conclusion: string | null;
+  /** The run's jobs, by name, and how they ended. */
+  jobs: Record<string, string>;
+}
+
+/**
+ * A stand-in for gh that answers from these runs, as GitHub would: `gh run list --branch` (by head_branch), the
+ * workflow runs API (by head_sha) and a run's jobs. `--jq` is applied with jq, raw. Also a `sleep` that does nothing.
+ */
+function fakeGh(runs: Record<string, FakeRun[]>): string {
+  const dir = mkdtempSync(join(tmpdir(), 'trikey-gh-'));
+  const bin = join(dir, 'bin');
+  mkdirSync(bin);
+  const api = Object.fromEntries(
+    Object.entries(runs).map(([wf, list]) => [
+      wf,
+      list.map((r) => ({ ...r, html_url: `https://github.com/o/r/actions/runs/${r.id}`, url: `https://github.com/o/r/actions/runs/${r.id}`, databaseId: r.id })),
+    ])
+  );
+  writeFileSync(join(dir, 'runs.json'), JSON.stringify(api));
+  writeFileSync(
+    join(bin, 'gh'),
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      `RUNS='${join(dir, 'runs.json')}'`,
+      'jqexpr=""; wf=""; branch=""; args=("$@")',
+      'for ((i=0;i<${#args[@]};i++)); do case "${args[$i]}" in --jq) jqexpr="${args[$((i+1))]}";; --workflow) wf="${args[$((i+1))]}";; --branch) branch="${args[$((i+1))]}";; esac; done',
+      'out() { if [ -n "$jqexpr" ]; then jq -r "$jqexpr" <<<"$1"; else echo "$1"; fi; }',
+      'if [ "$1" = run ] && [ "$2" = list ]; then',
+      '  out "$(jq --arg wf "$wf" --arg b "$branch" \'[.[$wf][] | select(.head_branch == $b)] | sort_by(-.id)\' "$RUNS")"; exit 0',
+      'fi',
+      'if [ "$1" = api ]; then',
+      '  path="$2"',
+      '  if [[ "$path" =~ /actions/workflows/([^/]+)/runs\\?head_sha=([0-9a-f]+) ]]; then',
+      '    out "$(jq --arg wf "${BASH_REMATCH[1]}" --arg sha "${BASH_REMATCH[2]}" \'{workflow_runs: [.[$wf][] | select(.head_sha == $sha)]}\' "$RUNS")"; exit 0',
+      '  fi',
+      '  if [[ "$path" =~ /actions/runs/([0-9]+)/jobs ]]; then',
+      '    out "$(jq --argjson id "${BASH_REMATCH[1]}" \'{jobs: [.[][] | select(.id == $id) | .jobs | to_entries[] | {name: .key, conclusion: .value, status: "completed"}]}\' "$RUNS")"; exit 0',
+      '  fi',
+      'fi',
+      'echo "fake gh: unexpected call: $*" >&2; exit 2',
+    ].join('\n'),
+    { mode: 0o755 }
+  );
+  writeFileSync(join(bin, 'sleep'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+  return bin;
+}
+
+const TAG_SHA = 'a'.repeat(40);
+const BRANCH_SHA = 'b'.repeat(40);
+/** A release tag's runs, and newer ones on a branch named like the tag (sweep 3 #8). */
+const RELEASE_RUNS: Record<string, FakeRun[]> = {
+  'docker.yml': [
+    { id: 200, head_sha: TAG_SHA, head_branch: 'v0.1.99-alpha', event: 'workflow_dispatch', status: 'completed', conclusion: 'success', jobs: { publish: 'success', verified: 'success' } },
+    // A branch called like the tag, its own commit.
+    { id: 300, head_sha: BRANCH_SHA, head_branch: 'v0.1.99-alpha', event: 'workflow_dispatch', status: 'completed', conclusion: 'success', jobs: { build: 'success', verified: 'success' } },
+    // The same commit dispatched on such a branch: `verified` cannot run there.
+    { id: 310, head_sha: TAG_SHA, head_branch: 'v0.1.99-alpha', event: 'workflow_dispatch', status: 'completed', conclusion: 'success', jobs: { build: 'success', verified: 'skipped' } },
+    // A pull request at the same commit.
+    { id: 320, head_sha: TAG_SHA, head_branch: 'v0.1.99-alpha', event: 'pull_request', status: 'completed', conclusion: 'success', jobs: { build: 'success' } },
+  ],
+  'android-apk.yml': [
+    { id: 210, head_sha: TAG_SHA, head_branch: 'v0.1.99-alpha', event: 'workflow_dispatch', status: 'completed', conclusion: 'success', jobs: { release: 'success' } },
+    { id: 330, head_sha: BRANCH_SHA, head_branch: 'v0.1.99-alpha', event: 'push', status: 'completed', conclusion: 'success', jobs: { apk: 'success' } },
+  ],
+};
+
 describe('docker.yml', () => {
   const wf = workflow('docker.yml');
 
@@ -282,10 +356,48 @@ describe('release files: attached to a draft, published only after the checks', 
     const wait = pub.jobs['wait']!;
     expect(wait.if).toBe(RELEASE_TAG);
     expect(wait.permissions).toEqual({ actions: 'read', contents: 'read' });
-    const run = wait.steps![0]!.run!;
+    const run = wait.steps!.find((s) => s.name === 'Wait for the release builds')!.run!;
     expect(run).toContain('for wf in docker.yml android-apk.yml; do');
-    expect(run).toContain('--branch "${TAG}"');
+    expect(run).not.toContain('--branch');
     expect(run).toMatch(/if \[ "\$\{conclusion\}" != success \]; then[\s\S]*?exit 1/);
+  });
+
+  it("takes the tag's own runs, by commit and by the jobs only a tag runs, not a branch named like the tag (sweep 3 #8)", () => {
+    const step = pub.jobs['wait']!.steps!.find((s) => s.name === 'Wait for the release builds')!;
+    const temp = mkdtempSync(join(tmpdir(), 'trikey-wait-'));
+    const output = join(temp, 'output');
+    writeFileSync(output, '');
+    const out = execFileSync('bash', ['-c', step.run!], {
+      cwd: ROOT,
+      env: { PATH: `${fakeGh(RELEASE_RUNS)}:${process.env['PATH']}`, GITHUB_OUTPUT: output, GITHUB_REPOSITORY: 'o/r', GITHUB_SHA: TAG_SHA, TAG: 'v0.1.99-alpha' },
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    expect(out).toContain('succeeded for v0.1.99-alpha');
+    // Run 200, whose digest artifact `publish` then downloads; not 300 (another commit) nor 310 (no `verified`).
+    expect(readFileSync(output, 'utf8')).toBe('docker-run=200\n');
+    // The checkout the step needs.
+    const checkout = pub.jobs['wait']!.steps!.find((s) => s.uses?.startsWith('actions/checkout@'))!;
+    expect(checkout.with!['sparse-checkout']).toBe('.github/scripts/release-run.sh');
+  });
+
+  it("fails when the tag's newest run failed, even if an older one succeeded", () => {
+    const step = pub.jobs['wait']!.steps!.find((s) => s.name === 'Wait for the release builds')!;
+    const runs = structuredClone(RELEASE_RUNS);
+    runs['docker.yml']!.push({ id: 400, head_sha: TAG_SHA, head_branch: 'v0.1.99-alpha', event: 'workflow_dispatch', status: 'completed', conclusion: 'failure', jobs: { verified: 'failure' } });
+    const temp = mkdtempSync(join(tmpdir(), 'trikey-wait-'));
+    let failed = '';
+    try {
+      execFileSync('bash', ['-c', step.run!], {
+        cwd: ROOT,
+        env: { PATH: `${fakeGh(runs)}:${process.env['PATH']}`, GITHUB_OUTPUT: join(temp, 'output'), GITHUB_REPOSITORY: 'o/r', GITHUB_SHA: TAG_SHA, TAG: 'v0.1.99-alpha' },
+        encoding: 'utf8',
+        stdio: 'pipe',
+      });
+    } catch (e) {
+      failed = String((e as { stdout?: string }).stdout);
+    }
+    expect(failed).toContain('docker.yml for v0.1.99-alpha ended failure');
   });
 
   it('publishes in the release environment, after checking every file, and compares the files after', () => {

@@ -156,7 +156,9 @@ with its own key, made as above.
 `release.yml` creates the tag and a **draft** release. The builds attach their files to the draft: both APKs and their
 `.sha256` (`android-apk.yml`), and the compose files with the guardian image pinned by digest (`docker.yml`). A draft is
 invisible outside the repository: GitHub's public API does not list it, so Obtainium, Zapstore and the app's **Check for
-updates** do not see it, nor does anyone on the releases page. Last, `publish-release.yml` waits for the builds, then,
+updates** do not see it, nor does anyone on the releases page. Last, `publish-release.yml` waits for the builds (the
+runs of the tag's commit, started by the tag or a dispatch on it, in which the tag-only jobs ran: a branch named like
+the tag does not count, `.github/scripts/release-run.sh`), then,
 in the `release` environment, checks the draft (`packaging/check-release-assets.sh`): exactly the expected files, each
 the one GitHub lists, the checksums, both APKs signed by the pinned certificate and nothing else and each the right
 app, and the compose files byte for byte what `docker.yml` makes from the tag's `packaging/compose` with the digest it
