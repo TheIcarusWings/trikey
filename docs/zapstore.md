@@ -65,18 +65,37 @@ links the APK signing certificate to Trikey's publisher npub (NIP-C1).
 Releases after that should need nothing: when the release workflow publishes a GitHub release with the APK, Zapstore
 is meant to publish it on its next visit. The proof expires after a while; `zsp` says when and renews it.
 
-**Check it after each release**: `zsp check zapstore.yaml` (read-only) shows the version Zapstore has published
-(`published_version_code`) next to the newest release it finds. It did not pick releases up by itself here: the listing
-stayed at 0.1.10 until 0.1.24. If it lags, publish the release yourself from the repository root, with the same signer:
+It did not pick releases up by itself here: the listing stayed at 0.1.10, then at 0.1.24 and 0.1.25, until they were
+published by hand (zapstore/relay#16). Up to 0.1.25-alpha every Trikey GitHub release was a **pre-release**, the likely
+reason. Since then the release workflow publishes normal releases, marked latest (the version still ends in `-alpha`,
+and the notes, the app and the site still say pre-alpha; [android-signing.md](android-signing.md), "How a release is
+published").
+
+**Check it after each release.** The **Zapstore check** workflow (`.github/workflows/zapstore-check.yml`) does it for
+you: Publish release dispatches it once the GitHub release is public. It asks Zapstore's relay (`wss://relay.zapstore.dev`,
+read only, no key or secret) every 10 minutes, for about three hours, for the release events (kind 30063) signed by the
+publisher npub above whose `d` tag is `app.trikey.wallet@<version>` and `app.trikey.wallet.foss@<version>`
+(`.github/scripts/zapstore-published.mjs`). If both are there, the run succeeds and logs their event ids. If not, it
+opens an issue titled `Zapstore hasn't picked up v<version>` (one per version: not a second while one is open) that
+says which app is missing, and the run fails.
+
+**When it opens that issue**, publish the release yourself, from the repository root of an up-to-date checkout of main,
+with the same signer (only the line of the app the issue names, or both):
 
 ```sh
-zsp publish zapstore.yaml
-zsp publish packaging/zapstore/foss/zapstore.yaml   # Trikey FOSS, once its listing exists
+git switch main && git pull
+zsp publish zapstore.yaml                            # Trikey
+zsp publish packaging/zapstore/foss/zapstore.yaml    # Trikey FOSS
 ```
 
+Then run the check again (Actions, **Zapstore check**, Run workflow, version `0.1.26-alpha` without the `v`); when it
+succeeds, close the issue. If Zapstore keeps lagging, tell them on [zapstore/relay](https://github.com/zapstore/relay).
+You can also look by hand: `zsp check zapstore.yaml` (read-only) shows the version Zapstore has published
+(`published_version_code`) next to the newest release it finds.
+
 What it publishes: the standard APK (`trikey-alpha-v<version>.apk`, the `match` in `zapstore.yaml`), on Zapstore's
-main channel although every Trikey release is still a GitHub pre-release (`prerelease_channel: main`), with that
-version's changelog section as release notes.
+main channel (`prerelease_channel: main`, so the older releases, which are GitHub pre-releases, go there too), with
+that version's changelog section as release notes.
 
 ## For the maintainer: the second listing, Trikey FOSS (once, after the first release with it)
 
@@ -120,7 +139,7 @@ or later) and both APKs are on its GitHub release page:
    `zapstore.yaml` in that folder: do not commit a change that drops `match` or `release_filter`; send any other change
    as a pull request.
 3. Check the next release. After the next GitHub release, run `zsp check packaging/zapstore/foss/zapstore.yaml` again
-   (or look at the listing in Zapstore): it should show the new version as published. If Zapstore did not pick it up by
+   (or look at the listing in Zapstore, or at the Zapstore check run): it should show the new version as published. If Zapstore did not pick it up by
    itself (its indexer may look only at the repository-root `zapstore.yaml`, which takes the standard APK), publish each
    release yourself, from the repository root, after the release workflow has attached the APKs:
 

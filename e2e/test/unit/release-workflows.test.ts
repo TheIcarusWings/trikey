@@ -303,7 +303,7 @@ describe('release.yml', () => {
 
   it('creates the tag, then the release as a draft on it, never a published one', () => {
     const createTag = script.indexOf('gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${TAG}" -f sha="${GITHUB_SHA}"');
-    const createDraft = script.indexOf('gh release create "${TAG}" --draft --prerelease --verify-tag');
+    const createDraft = script.indexOf('gh release create "${TAG}" --draft --verify-tag');
     expect(createTag).toBeGreaterThan(-1);
     expect(createDraft).toBeGreaterThan(createTag);
     for (const m of script.matchAll(/gh release create [^\n]*/g)) expect(m[0]).toContain('--draft');
@@ -328,8 +328,27 @@ describe('release files: attached to a draft, published only after the checks', 
 
   it('lets only publish-release.yml publish a release', () => {
     expect(publishingLines()).toEqual([
-      'publish-release.yml: gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${ID}" -F draft=false -F prerelease=true > "${RUNNER_TEMP}/published.json"',
+      'publish-release.yml: gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${ID}" -F draft=false -F prerelease=false -f make_latest=true > "${RUNNER_TEMP}/published.json"',
     ]);
+  });
+
+  it('makes releases normal releases, not GitHub pre-releases, and the published one the latest (Zapstore skipped pre-releases)', () => {
+    const creates = readdirSync(WORKFLOWS)
+      .filter((f) => f.endsWith('.yml'))
+      .flatMap((f) => [...read(`.github/workflows/${f}`).matchAll(/gh release create [^\n]*/g)].map((m) => `${f}: ${m[0]}`));
+    // release.yml (twice: a new release and a redispatch), android-apk.yml and docker.yml (a tag pushed by hand).
+    expect(creates.length).toBe(4);
+    for (const c of creates) {
+      expect(c).toContain('--draft');
+      expect(c).not.toContain('--prerelease');
+    }
+    const publish = pub.jobs['publish']!.steps!.find((s) => s.name === 'Publish')!.run!;
+    const patch = publish.split('\n').find((l) => l.includes('-F draft=false'))!;
+    expect(patch).toContain('-F prerelease=false');
+    expect(patch).toContain('-f make_latest=true');
+    // Only a withdrawn release (files changed while publishing) is taken off latest.
+    expect([...publish.matchAll(/prerelease=true/g)].length).toBe(1);
+    expect(publish.slice(publish.indexOf('withdrawn, do not install'))).toContain('-f make_latest=false');
   });
 
   it('attaches the APKs and the compose files only to a draft, never replacing a published release\'s files', () => {

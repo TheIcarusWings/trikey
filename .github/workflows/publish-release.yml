@@ -19,6 +19,10 @@ name: Publish release
 # (which cannot), is renamed and annotated "withdrawn, do not install", and the run fails. With immutable releases on (docs/android-signing.md, "Immutable
 # releases") nothing can change a published release's files or tag afterwards; the job warns while they are off.
 #
+# It publishes the release as a normal release (not a GitHub pre-release; the version still ends in -alpha) and marks it
+# the latest. Then `zapstore-check` dispatches zapstore-check.yml, which waits for Zapstore to publish the version and
+# opens an issue if it has not after about three hours (docs/zapstore.md, "Check it after each release").
+#
 # A tag pushed by hand starts it too (`push`). To retry, re-run its failed jobs, or run it by hand on the tag.
 
 on:
@@ -178,7 +182,8 @@ jobs:
           # What is left: a file swapped between that comparison and this PATCH (a second or so, by a token with
           # contents: write). The comparison after the PATCH catches it; with immutable releases on, the published files
           # cannot change after that.
-          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${ID}" -F draft=false -F prerelease=true > "${RUNNER_TEMP}/published.json"
+          # A normal release (not a GitHub pre-release, which Zapstore's indexer skipped), and the latest one.
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${ID}" -F draft=false -F prerelease=false -f make_latest=true > "${RUNNER_TEMP}/published.json"
           after="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${ID}/assets?per_page=100" --jq '[.[] | {id, name, size, digest}] | sort_by(.name)')"
           if [ "$(jq -cS . <<<"${after}")" != "${checked}" ]; then
             echo "::error title=Files changed while publishing::${TAG}'s files are not the ones checked."
@@ -205,3 +210,22 @@ jobs:
           else
             echo "::warning title=Release is not immutable::Immutable releases are off, so a token with contents: write can still replace ${TAG}'s files. Turn them on: docs/android-signing.md, \"Immutable releases\"."
           fi
+
+  # A release published with GITHUB_TOKEN starts no `release:` workflow, but a dispatch does. On main: the check and
+  # its script as they are now, whichever tag this run is on. It reads only a public nostr relay and needs no secret.
+  zapstore-check:
+    needs: publish
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write # dispatch zapstore-check.yml
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Dispatch the Zapstore check
+        run: |
+          set -euo pipefail
+          gh workflow run zapstore-check.yml --repo "${GITHUB_REPOSITORY}" --ref main -f version="${TAG#v}"
+          echo "::notice title=Zapstore check::Dispatched zapstore-check.yml for ${TAG#v}: it opens an issue if Zapstore has not published it within about three hours."

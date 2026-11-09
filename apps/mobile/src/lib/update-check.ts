@@ -6,8 +6,9 @@
  * check, and none should be added: a wallet should not phone home unasked, and every request tells GitHub this phone's
  * IP address and that it runs Trikey. The request carries no account, token or wallet data.
  *
- * Every Trikey release is a GitHub pre-release for now (tag `v0.1.6-alpha`, asset `trikey-alpha-v0.1.6-alpha.apk`),
- * so pre-releases count. Drafts never do: GitHub's public API does not list them, and a draft in the answer is skipped
+ * Releases are tagged `v0.1.6-alpha` (asset `trikey-alpha-v0.1.6-alpha.apk`). Up to 0.1.25-alpha every one was a GitHub
+ * pre-release; later ones are normal releases. The list (not `/releases/latest`, which skips pre-releases) has both, and
+ * both count. Drafts never do: GitHub's public API does not list them, and a draft in the answer is skipped
  * anyway (a release is a draft until every file is attached and checked: .github/workflows/publish-release.yml). From
  * 0.1.9 a release carries two Android builds: the standard one and the one without Google code
  * (`trikey-alpha-foss-v0.1.9-alpha.apk`), from 0.1.23 two apps (app.trikey.wallet, app.trikey.wallet.foss). The check

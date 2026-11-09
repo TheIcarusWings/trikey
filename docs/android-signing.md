@@ -80,13 +80,14 @@ The digest it prints must equal the one in that file.
 [Obtainium](https://github.com/ImranR98/Obtainium) watches a GitHub repository's releases and installs new APKs:
 
 **One tap:** open [trikey.app/obtainium](https://trikey.app/obtainium) on the phone, with Obtainium installed, and tap
-**Add Trikey** or **Add Trikey FOSS**. It adds the app with the settings below already filled in (pre-releases on, that
-app's APK filter); the certificate check (step 4) you add yourself. By hand:
+**Add Trikey** or **Add Trikey FOSS**. It adds the app with the settings below already filled in (that app's APK
+filter, and pre-releases on, which does no harm); the certificate check (step 4) you add yourself. By hand:
 
 
 1. Install Obtainium (from its GitHub releases or F-Droid).
-2. **Add app**, URL `https://github.com/TheIcarusWings/trikey`. Under the source options, turn on **Include prereleases**:
-   every Trikey release is a pre-release for now.
+2. **Add app**, URL `https://github.com/TheIcarusWings/trikey`. New releases are normal GitHub releases, so the
+   default source options find them. Releases up to 0.1.25-alpha are GitHub pre-releases: an entry added earlier with
+   **Include prereleases** on keeps working, and you can leave it on.
 3. Tell Obtainium which of the two apps you want: under **Filter APKs by regular expression**, enter
    - `^trikey-alpha-v.*\.apk$` for the standard app (Trikey), or
    - `^trikey-alpha-foss-v.*\.apk$` for the app without Google code (Trikey FOSS).
@@ -164,6 +165,16 @@ the one GitHub lists, the checksums, both APKs signed by the pinned certificate 
 app, and the compose files byte for byte what `docker.yml` makes from the tag's `packaging/compose` with the digest it
 pushed (`packaging/compose/release-compose.sh`, run again: so a swapped file cannot add a mount, a command or a privilege
 to the guardian, even with a matching `.sha256`). Only then does it publish the release.
+
+It publishes it as a **normal** GitHub release, marked latest, not a pre-release: the version still ends in `-alpha`,
+and the notes, the app and the site still say pre-alpha. Up to 0.1.25-alpha every release was a GitHub pre-release, and
+Zapstore's indexer, which is meant to publish each release by itself, never picked one up (zapstore/relay#16); the
+older releases stay pre-releases. The app's **Check for updates** reads GitHub's release list, which has both kinds.
+
+Last, Publish release dispatches **Zapstore check** (`zapstore-check.yml`, no secret): it asks Zapstore's relay every
+10 minutes for about three hours whether both apps have the new version, and if not it opens an issue "Zapstore hasn't
+picked up v<version>" saying which app is missing and how to publish it by hand ([zapstore.md](zapstore.md), "Check it
+after each release").
 
 If a release stays a draft, the Publish release run says why. Fix that (re-run the failed build), then re-run Publish
 release. Do not publish a draft by hand: that skips the checks.

@@ -233,7 +233,7 @@ limit), pay 25,000 (over it), raise the limit to 50,000.
 
 Where it comes from: every release on [GitHub's Releases page](https://github.com/TheIcarusWings/trikey/releases) has
 `trikey-alpha-v<version>.apk` and its `.apk.sha256`, built by the **Android test APK** workflow
-(`.github/workflows/android-apk.yml`). Take the newest pre-release.
+(`.github/workflows/android-apk.yml`). Take the newest release (up to 0.1.25-alpha every release was marked a pre-release).
 
 **Which APK.** From 0.1.9-alpha a release has two APKs; from 0.1.23-alpha they are two apps (each with its own wallet),
 pick one or install both:
