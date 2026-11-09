@@ -46,7 +46,7 @@ import { dueAlerts as computeDueAlerts, isKnownAlertId, type DueAlert } from '..
 import { CONTACTS_NOT_SHOWN, bip137Authorizer, approvalMessage, pairingMessage, proofId, recoveryAccessMessage, verifyPolicyApproval, type HardwareAction, type HardwareAuthorizer } from '../policy/authorizer.js';
 import { contactsDelta } from '../policy/contacts.js';
 import { DAY, systemClock, type ChainTime, type ChainTimeSource, type Clock } from '../policy/clock.js';
-import { BLOCKS_PER_DAY, MAINNET_CONTACT_REQUIRED, LIMIT_OFF_AT_PAIRING, rulesApprovalRefusal, MAX_ACCESS_GRANTS, MAX_APPROVAL_TTL_MS, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_SEQUENCE_STEP, NOTICE_TTL_MS, isRefusalEvent, policyWarnings, pruneActivity, type CosignResult, type GuardianStatus, type PhoneSpendingStatus, type RecoveryView } from '../policy/engine.js';
+import { BLOCKS_PER_DAY, MAINNET_CONTACT_REQUIRED, contactsBesidesPhone, dropsLastContact, LIMIT_OFF_AT_PAIRING, rulesApprovalRefusal, MAX_ACCESS_GRANTS, MAX_APPROVAL_TTL_MS, MAX_CLOCK_AHEAD_OF_CHAIN_MS, MAX_SEQUENCE_STEP, NOTICE_TTL_MS, isRefusalEvent, policyWarnings, pruneActivity, type CosignResult, type GuardianStatus, type PhoneSpendingStatus, type RecoveryView } from '../policy/engine.js';
 import { addCosignerSignatures } from '../policy/inspect.js';
 import { pruneSpends, pruneTime, splitOutflow, usageWith, windowUsage } from '../policy/limit.js';
 import { LIMIT_OFF_SATS, isContactLockOn, isLimitOff, isNostrPubkey, normalizeRules, phoneMayApply } from '../policy/rules.js';
@@ -396,7 +396,7 @@ export class HostedEngine {
         : undefined,
       hardwareConfirmRequired: !!reg && !reg.hardwareAuthConfirmed,
       retiredWallets: s.retired.length,
-      warnings: policyWarnings(rules),
+      warnings: policyWarnings(rules, reg?.appNostrPubkey),
       ...(w?.pause ? { pause: { ...w.pause } } : {}),
     };
   }
@@ -668,7 +668,7 @@ export class HostedEngine {
       } catch (e) {
         return bad(`rules: ${(e as Error).message}`);
       }
-      if (network.name === 'bitcoin' && !rules.alertContacts.length) return bad(`rules: ${MAINNET_CONTACT_REQUIRED}`);
+      if (network.name === 'bitcoin' && !contactsBesidesPhone(rules, appNostr).length) return bad(`rules: ${MAINNET_CONTACT_REQUIRED}`);
       if (isLimitOff(rules)) return bad(`rules: ${LIMIT_OFF_AT_PAIRING}`);
       const authRefusal = this.authKeyRefusal(network.name, keys.hardware, input.hardwareAuth);
       if (authRefusal) return bad(authRefusal);
@@ -761,7 +761,10 @@ export class HostedEngine {
   // -------------------------------------------------------------------------
   // Phone-only payments
 
-  /** Co-signs a phone-signed payment within the daily limit; every tweak-proven change coin goes into the ledger. */
+  /**
+   * Co-signs a phone-signed payment within the daily limit; every tweak-proven change coin goes into the ledger. The
+   * coins it spends stay in the ledger until a chain check prunes them (`pruneLedger`).
+   */
   async cosign(psbt: Uint8Array): Promise<HostedResult<CosignResult & { ledgered: number }>> {
     const chain = await this.chainTime();
     return this.mutate(async (draft, now) => {
@@ -805,10 +808,13 @@ export class HostedEngine {
       const shares = splitOutflow(analysis.inputs, outflow);
       const wouldUse = replay ? used : usageWith(w.spends, shares, at);
       if (!replay && wouldUse > rules.dailyLimitSats) return refuse({ reason: 'over_daily_limit', limit: rules.dailyLimitSats, used, outflow, wouldUse }, txid);
-      // The ledger: this PSBT's change replaces the coins it spends. Bounded, so a guest cannot grow the host's disk without end.
-      const spent = new Set(analysis.inputs.map((i) => i.outpoint));
+      // The ledger: this PSBT's change is added. The coins it spends stay until a chain check finds them spent
+      // (`pruneLedger`): a co-signature is only an intention to spend (security sweep 2). Dropping them here let a
+      // phone thief co-sign a spend of an off-path coin, never broadcast it, and so erase the only record of that
+      // coin's tweaks from the guardian. Bounded, so a guest cannot grow the host's disk without end (the `sign`
+      // handler prunes spent coins on chain and tries again when it is full).
       const fresh = selfOutputs(psbt, analysis, acct, now).filter((e) => !w.ledger.some((l) => l.txid === e.txid && l.vout === e.vout));
-      const kept = w.ledger.filter((l) => !spent.has(outpointOf(l.txid, l.vout)));
+      const kept = w.ledger;
       if (kept.length + fresh.length > this.maxLedger) return refuse({ reason: 'ledger_full', limit: this.maxLedger }, txid);
       if (!this.signer) return refuse({ reason: 'guardian_locked' }, txid);
       const signed = await addCosignerSignatures(psbt, analysis, this.signer);
@@ -865,7 +871,7 @@ export class HostedEngine {
       } catch (e) {
         return refuse({ reason: 'invalid_rules', detail: (e as Error).message });
       }
-      if (w.registration.network === 'bitcoin' && !rules.alertContacts.length) return refuse({ reason: 'invalid_rules', detail: MAINNET_CONTACT_REQUIRED });
+      if (w.registration.network === 'bitcoin' && dropsLastContact(current, rules, w.registration.appNostrPubkey)) return refuse({ reason: 'invalid_rules', detail: MAINNET_CONTACT_REQUIRED });
       let sequence: number | undefined;
       if (auth.authenticatedBy === 'app') {
         const may = phoneMayApply(current, rules);

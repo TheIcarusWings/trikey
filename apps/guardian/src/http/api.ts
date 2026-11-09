@@ -81,16 +81,19 @@ function whereIsTheCode(g: Guardian): string {
 
 /**
  * Until setup completes, setup needs the setup code (`setupCodeRequired`). Throws 403 `setup_code_required` without
- * one, 401 `bad_setup_code` for a wrong one, 429 after too many wrong ones.
+ * one, 401 `bad_setup_code` for a wrong one, 429 for a wrong one after too many (the right one still opens).
  */
 async function requireSetupCode(g: Guardian, input: unknown, remote: string | undefined): Promise<void> {
   const gate = g.setupCode;
   if (!gate || !(await setupCodeRequired(g, remote))) return;
   if (typeof input !== 'string' || input.trim() === '') throw new HttpError(403, 'setup_code_required', whereIsTheCode(g));
+  // The right code always opens, whatever the limiter says (security sweep 2): it counts only wrong codes, all callers
+  // together, so anyone who reached the port could otherwise keep the owner's own code refused for good. With 80 bits
+  // the limiter was never what stops guessing; it keeps the log quiet.
+  if (gate.matches(input)) return;
   const now = g.clock.now();
   const blocked = g.setupCodeLimiter.blocked('setup', now);
   if (!blocked.ok) throw new HttpError(429, 'rate_limited', 'Too many wrong setup codes. Wait a minute and try again.', Math.ceil(blocked.retryAfterMs / 1000));
-  if (gate.matches(input)) return;
   g.setupCodeLimiter.take('setup', now);
   g.log.warn('setup.bad_code');
   throw new HttpError(

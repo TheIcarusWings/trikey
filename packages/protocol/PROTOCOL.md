@@ -94,7 +94,7 @@ Envelopes, request `params` and `policy`/`approval` objects are strict: an unkno
 | `pair.prepare` | `pairingSecret`, `network`, `entropy?: Hex32` (the phone's contribution to key 3, see "Key 3 from both sides") | `guardianKey: KeyOrigin`, `guardianVersion`, `key3Mixed?: boolean`, `features?` (as `guardian.status.features`, which an unpaired phone cannot call: the phone puts `contactLock` in `pair`'s rules only when it lists `contact_lock`) |
 | `pair` | `pairingSecret`, `deviceName` (1-64), `network` (`bitcoin`\|`testnet`\|`signet`\|`regtest`), `phoneKey: KeyOrigin`, `descriptor`, `phoneNostrPubkey: Hex32`, `hardwareAuth: { pubkey, path }`, `hardwareAuthProof`, `rules: Policy`, `rulesApproval?` (required by guardians with `pairing_rules_approval`, see "Pairing"), `replacesWalletId?: WalletId`, `replacesDescriptor?` (needs `replacesWalletId`; see "Replacing the guardian") | `guardianKey: KeyOrigin`, `descriptor`, `walletId`, `guardianVersion`, `key3Mixed?: boolean` |
 | `sign` | `psbt`, `memo?` | `psbt` (with the guardian's partial signatures) |
-| `policy.get` | `{}` | `policy`, `nextHardwareSequence`, `policyHash`, `warnings?` (`["no_alert_contacts"]`: no alert contact, so a recovery is announced only to the paired phone; mainnet guardians refuse such a policy, test networks warn) |
+| `policy.get` | `{}` | `policy`, `nextHardwareSequence`, `policyHash`, `warnings?` (`["no_alert_contacts"]`: no alert contact other than the paired phone itself, so a recovery is announced only to the paired phone; mainnet guardians refuse such a policy, test networks warn) |
 | `policy.update` | `policy`, `approval?` | `policy`, `nextHardwareSequence`, `policyHash` |
 | `recovery.start` | `sweepPsbt`, `newDescriptor` | `recovery` |
 | `recovery.update` | `recoveryId`, `sweepPsbt` | `recovery` (same id and `readyAt`, the new `sweepTxid`, `amountSats` and `feeSats`) |
@@ -356,7 +356,9 @@ It is not in the policy and no phone can change it. The phone only sees **`guard
 node) and the **`chain_source_changed`** alert (the same members) when the owner switches. A public server sees every
 address of the wallet and the box's IP address and could hide coins or delay confirmations from the guardian (it
 cannot spend or change a rule); the phone shows that warning while `kind` is `public`. During a recovery the guardian
-refuses to switch to a public server.
+refuses to switch to a public server. "Public" is judged by the server's address, not by the kind chosen: a private
+Electrum server or Bitcoin Core whose host is not on the box or the owner's network (an internet address, or a name
+that resolves to one) is refused during a recovery too, and `chain_source_changed` then says `kind: "public"`.
 
 **Unconfirmed transactions.** Some Electrum servers report no mempool at all: Electrs 0.11 reads none of Bitcoin Core
 32's (Core dropped `bip125-replaceable` from mempool entries, Electrs requires it and skips every entry), so every
@@ -521,7 +523,10 @@ co-signed), `relays.ack`, `hosted.coins`, `hosted.map.get`, `hosted.access`; any
 
 **Co-signing.** As for the owner's wallet, but change is an output whose three tweaks rebuild its script from the
 account pubkeys (no index window: it cannot be checked without learning addresses). Every such output is recorded in the
-slot's ledger (`hosted.coins`; at most 2,000, then `sign` answers `1200` with `reason: "ledger_full"`). PSBTs sent to the
+slot's ledger (`hosted.coins`; at most 2,000, then `sign` answers `1200` with `reason: "ledger_full"`). A coin leaves
+the ledger only when the guardian's chain check finds it spent, never because a co-signed PSBT spends it (that PSBT may
+never be broadcast), so `hosted.coins` can list coins already spent: check them on chain. When the ledger is full,
+`sign` first prunes the spent ones. PSBTs sent to the
 guardian need no BIP 32 derivations (the phone strips them). `sign` is limited to 60 requests per hour per slot.
 
 **Recovery.** `recovery.start` takes `{ sweepPsbt, destinationKeys: { app, hardware, cosigner }, destinationMap,
