@@ -29,6 +29,7 @@ export { BitBox02Provider } from './bitbox02/provider';
 export { BitBoxBridge, type BitBoxBridgeScreen } from './bitbox02/bridge';
 export { defaultBitBoxBridge } from './bitbox02/default';
 export { deserializePairing, memoryPairingStore, serializePairing, type BitBoxPairingStore } from './bitbox02/session';
+export { BITBOX02_NOISE_KEY_ID, createBitBoxPairingStore } from './bitbox02/pairing-store';
 export type { BitBoxLink, BitBoxDevice, BitBoxConnection } from './bitbox02/link';
 export { JadeBleProvider, PIN_SERVER_NOTICE } from './jade/provider';
 export { JadeBleBridge, memoryNoticeStore, type JadeBridgeScreen, type JadeNoticeStore } from './jade/bridge';

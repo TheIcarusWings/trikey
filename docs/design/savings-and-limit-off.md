@@ -363,7 +363,10 @@ Where the build differs from the proposal above, and why:
 - **The watched record carries over at a rotation** instead of waiting for the phone to send it again ("Recovery and
   rotation" above). Savings' coins are still the owner's after a recovery, the tripwire keeps working, and a new phone
   without a backup can read the descriptor back (`savings.get`), which it needs to move Savings to its new key. The cost:
-  whoever completes a recovery can read Savings' descriptor and balance. Open question 9.
+  whoever completes a recovery can read Savings' descriptor and balance. Open question 9. The phone does not take that
+  descriptor on trust: before anything is signed or registered, the hardware wallet and the Recovery Key each share
+  their Savings key, and both must be in it (security review 2026-11, sweep 2; before, only the hardware wallet's was
+  checked, so a forged Recovery Key slot could have carried over into the new Savings).
 - **The printed Savings wallet map is its own page, not Recovery Kit format 1** (built after the owner's answer 10). The
   kit's xpub format, its map words and its "Recover with your Recovery Kit" flow are Recovery Key mode's. Savings' map
   (`apps/mobile/src/data/savings-map.ts`, screen `app/savings/map.tsx`) is meant for any descriptor-capable wallet

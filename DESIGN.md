@@ -248,8 +248,9 @@ anti-klepto, the firmware's own message signatures) and a fake BitBox02 written 
 - **Pairing.** The BitBox02 asks for its password on its own screen. The first time a phone and a BitBox02 meet, the
   phone shows a pairing code (four groups of five characters from the encrypted channel's handshake) and the BitBox02
   shows the same; the owner confirms it on the BitBox02. A different code means something between them changes the
-  connection: reject it. The phone keeps its channel key and the BitBox02's in its app storage, so later connections ask
-  only for the password.
+  connection: reject it. The phone keeps its own channel key in the secure store (Keychain / Keystore, this device
+  only, so never in a phone backup) and the BitBox02's public key in its app storage, so later connections ask only for
+  the password. An older app kept its own key in the app storage too; the app moves it on the first connection.
 - **Payments with anti-klepto (decided).** For every input the phone sends a commitment to a random number, the BitBox02
   commits to its signature nonce, then the phone sends the number and checks the signature used both. A BitBox02 with
   malicious firmware therefore cannot leak key 1 through its nonces, which no other adapter in Trikey can check. Then
@@ -457,7 +458,7 @@ alternatives (WhatsApp among them): docs/design/notifications.md.
 | Big payment, raise the limit | phone + hardware | The guardian isn't involved |
 | New phone, backup available | none | Restore key 2 with the passkey, no waiting |
 | Lost phone, no backup | hardware + guardian | The new phone scans the guardian's recovery code, the hardware wallet lets it in, Delay & Notify, a sweep to a new wallet, and the guardian then guards that wallet |
-| Lost hardware wallet | none, or phone + guardian | Restore the seed words, or use Delay & Notify (the guardian then guards the new wallet) |
+| Lost hardware wallet | none, or phone + guardian | Restore the seed words, or use Delay & Notify (the guardian then guards the new wallet). Before the recovery starts, the new device registers the new wallet, shows its first address and signs a pairing proof, so a swapped key export is caught before anything moves |
 | Someone fakes a recovery | any device or contact | Tap Cancel on the alert |
 | Guardian offline or locked | phone + hardware | Phone-only payments wait until it's back |
 | Box may have been tampered with | phone | Lock the guardian from the phone; unlock with the passphrase once checked |
@@ -542,6 +543,11 @@ printed and kept with the hardware wallet.
   - If the thief keeps the guardian powered, they can only reach the daily limit, and any recovery triggers the 7-day alerts.
   - Tell users to keep the hardware wallet's seed words outside the home.
 - **Remote compromise of the home server** gives up one key of three. That's the same exposure as Bitkey's server being breached.
+  - *Address indexes.* The phone receives and sends change at the next indexes `wallet.sync` reports. A lying guardian
+    could report one near the limit (100,000), so coins land where a later gap-limit scan does not look. The phone
+    keeps, per chain, the highest index it knows is used (coins a sync listed, its own payments' outputs) and uses at
+    most 20 past it (`packages/wallet/src/index-marks.ts`); a larger report is cut and logged (security review 2026-11,
+    sweep 2). A wallet's first sync on a phone is taken as it is.
 - **Savings (optional).** Phone + guardian, together or compromised, cannot move Savings: the guardian holds no Savings key. What can: the phone with the hardware wallet, or the Recovery Key with either of them. A burglar who finds the phone, a powered box and a Recovery Key kept at home takes Savings too, so the Recovery Key belongs away from home, apart from the hardware wallet's seed words. A compromised guardian can hide Savings' balance from the phone or stay silent when it moves (its tripwire), which costs nothing it was trusted with. Turning the Savings watch off or swapping it for another wallet (the paired phone alone can) is announced to the phone and every alert contact (`savings_unwatched`), so a phone thief cannot quietly blind the tripwire before moving Savings with a second key. The watched Savings record survives a recovery, so whoever completes one (normally the owner) can read Savings' descriptor and balance from the guardian; it moves nothing.
 - **Encrypted notes on the guardian (opt-in).** The guardian stores ciphertext it cannot open (the key comes from a hardware wallet signature the guardian never sees). With most devices that signature never leaves the phone: it comes back over USB, Bluetooth, NFC or a QR code the phone reads, and only the derived key is kept, in the secure store. **Passport gen 2 and Krux write it to a file on their microSD card** (`trikey-notes-1of2-signed-001.txt` and the like, two when notes are turned on), so a copy of that file, from the card or from a computer or email it passed through, plus a copy of the guardian's `labels/` folder (a stolen box or disk, an old copy of the data) opens every note. What protects it: the file alone opens nothing (the ciphertext is only in the guardian's data, which no platform backup holds: "The platforms' backups leave the guardian out"), and after each round trip the phone names the request and the signed file to delete, from the card and wherever they were copied, and goes on only when the owner says they did ("microSD message signing", "Cleaning up the card"). A file that was not deleted keeps that power for as long as the notes stay on the guardian under that key: the device makes the same signature every time, so turning notes off and on does not change it. It learns **roughly how many notes the owner keeps** (the copy is padded to a size bucket: 4 KiB doubling to 512 KiB) and **when they change** (each upload, at most one stored version per 10 minutes), nothing of what they say. A thief holding the unlocked phone can overwrite or delete the copy (as they could the labels on that phone); the guardian keeps the three newest versions, and the money is never at stake.
 - **Unlocking with the hardware wallet (opt-in; "Unlocking the guardian with the hardware wallet").** What an unlock slot changes, case by case:
@@ -582,12 +588,13 @@ printed and kept with the hardware wallet.
   its token, a new webhook URL loses the signing secret, and a new email server, port, encryption, user name or pinned
   certificate needs the app password again (docs/design/notifications.md, "A secret stays with the address it was saved
   for"; security review 2026-11, findings 1 and 2).
-- **The phone itself.** The Security tab shows a calm note when the phone has no screen lock (Android KeyguardManager.isDeviceSecure, iOS deviceOwnerAuthentication, via expo-local-authentication), an Android security patch older than 6 months (`Build.VERSION.SECURITY_PATCH`, `modules/trikey-phone-safety`; iOS has no robust way to tell a supported version, so it is skipped there) or an emulator or simulator (expo-device): read on the phone, never sent to the guardian, any server or analytics.
+- **The phone itself.** The Security tab shows a calm note when the phone has no screen lock (Android KeyguardManager.isDeviceSecure, iOS deviceOwnerAuthentication, via expo-local-authentication), an Android security patch older than 6 months (`Build.VERSION.SECURITY_PATCH`, `modules/trikey-phone-safety`; iOS has no robust way to tell a supported version, so it is skipped there) or an emulator or simulator (expo-device): read on the phone, never sent to the guardian, any server or analytics. The backup's recovery code and the Recovery Kit's words are never put on the clipboard (clipboard history and cloud clipboards keep copies the app cannot clear); while they are on screen, Android keeps the app out of screenshots, recordings and the recents picture (FLAG_SECURE, through `modules/trikey-phone-safety`), and on both systems they are covered whenever the app is not in front, so the app switcher's picture does not show them. iOS cannot block a screenshot (security review 2026-11, sweep 2).
 - **A BitBox02** ("BitBox02 over USB-C and Bluetooth"). Its payments and most texts use anti-klepto, checked by the phone,
   so malicious BitBox02 firmware cannot leak key 1 through those signatures' nonces. Notes and hardware unlock cannot
   (they need the same signature every time): there, as with every other brand, the firmware is trusted. The phone's
-  pairing with a BitBox02 (its channel key) sits in the app's storage: someone who copies it can skip only the pairing
-  code with that BitBox02, never its password or an approval on it.
+  channel key for its BitBox02 pairing sits in the secure store, out of phone backups (security review 2026-11, sweep 2);
+  someone who copied it anyway could skip only the pairing code with that BitBox02, never its password or an approval
+  on it.
 - **A Jade over Bluetooth and its PIN server** ("Jade over Bluetooth"). Unlocking it sends an encrypted exchange from the phone to the PIN server the Jade names (Blockstream's by default): that server learns the phone's IP address, when this Jade unlocks and failed PIN counts, never the PIN, keys or wallet. It cannot unlock the Jade without the PIN, and a server that is down or refuses only keeps the Jade locked (the passphrase and the other keys are unaffected; QR mode works without Trikey contacting it). The phone reaches only Blockstream's PIN server or one the owner said is their own, over https, with no redirect, and calls nothing on the Jade but `pin` with the answer. Payments over Bluetooth do not use Jade's anti-exfil (its PSBT path has none), so a Jade with malicious firmware could in theory leak key 1 through its signature nonces: alone that moves nothing, with a stolen phone it would.
 - **Strangers cannot fill the log** (security sweep 2). Anyone with the guardian's npub can send it DMs and requests. A `CANCEL` DM from someone who is not the wallet's phone or contact is dropped before anything else, logged at debug level only, and a refused `recovery.access` reaches the log at most 20 times an hour (the next line says how many were left out), so the container log cannot be grown without limit on the node's disk.
 - **Malicious relays** can drop messages but can't read or forge them. A relay change from the web UI (a security event in the activity log) can at worst move the phone to relays that drop everything; the old relays stay watched until the owner stops them and the phone moves only to relays the guardian answered it over.
@@ -689,6 +696,14 @@ printed and kept with the hardware wallet.
   - **The app's update check** shows the release certificate built into the app, never a checksum from the offered
     release, and warns when an APK would install as a new app (another application id), which Android cannot check
     against the installed one. Android itself refuses an update signed by another key.
+  - **Zapstore's `zsp`** is handed the release keystore on the maintainer's computer (docs/zapstore.md), so it is
+    installed at a pinned version, which Go checks against its public checksum database; a newer one is reviewed and
+    pinned in a pull request. Up to 0.1.23 the steps said `zsp@latest`, so whoever could publish a new zsp version could
+    have taken the APK signing key (security sweep 2).
+  - **The running image** loads code only from its root-owned source: tsx's compile cache, which would sit in the
+    writable `/tmp` and be loaded at the next start in place of the source, is turned off (`TSX_DISABLE_CACHE=1` in the
+    Dockerfile, and in the Start9 package's environment). Up to 0.1.23 code that got into the guardian once could leave
+    a cache entry there and run again after every restart, before the unlock (security sweep 2).
   - **Not built yet (TODO):** downloading the APK in the app and checking its signing certificate before handing it to
     Android's installer (`PackageManager.getPackageArchiveInfo(path, GET_SIGNING_CERTIFICATES)` against the built-in
     certificate, in a small local Expo module without Google code, both variants). It needs the
