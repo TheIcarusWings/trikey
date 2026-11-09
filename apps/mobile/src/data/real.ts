@@ -1358,6 +1358,11 @@ class Service implements RealWalletService {
         // code only: no txid, amount or address.
         console.warn(`speedup.check_failed wallet=${e.wallet} reason=${e.reason}`);
         break;
+      case 'address_index_capped':
+        // The guardian reported a next address index far past any this phone knows is used: the phone stays within a
+        // gap of its own (index-marks.ts). Indexes only, no address.
+        console.warn(`sync.index_capped wallet=${e.wallet} chain=${e.chain} reported=${e.reported} used=${e.used}`);
+        break;
       case 'payment_signed':
         // Signed (the hardware wallet is done): the screen says "Sending…" now, not "Waiting for your Ledger".
         this.paymentSending = true;

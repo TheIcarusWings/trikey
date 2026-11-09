@@ -1,10 +1,9 @@
-import * as Clipboard from 'expo-clipboard';
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { Check, Copy, TriangleAlert } from '@/components/icons';
+import { Check, TriangleAlert } from '@/components/icons';
 import { Body, Notice } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Card } from '@/components/ui/card';
@@ -14,12 +13,16 @@ import { useWallet, useWalletService } from '@/data';
 import { pick } from '@/lib/platform';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
-import { haptic } from '@/lib/haptics';
+import { useSecureScreen } from '@/lib/use-secure-screen';
 
 /**
  * The recovery code of the backup just made, shown once. Without a passkey it is what unlocks the backup, so the
  * screen asks the person to write it down before it lets go of it. The code is held in memory by the wallet and
  * forgotten when they confirm; it is never stored and never put into the navigation state.
+ *
+ * It is never put on the clipboard either, and the screen keeps it out of screenshots, recordings and the app switcher
+ * where the phone can (`useSecureScreen`): clipboard history, cloud clipboards and app-switcher pictures keep it in places
+ * the app cannot clear (security review 2026-11, sweep 2, finding 34). Paper is the place for it.
  */
 export default function RecoveryCode() {
   const router = useRouter();
@@ -27,21 +30,11 @@ export default function RecoveryCode() {
   const { backup } = useWallet();
   const { again } = useLocalSearchParams<{ again?: string }>();
   const [code] = useState(() => wallet.recoveryCode());
-  const [copied, setCopied] = useState(false);
   const [written, setWritten] = useState(false);
   const { busy, run, message, error } = useAction();
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
+  const { hidden } = useSecureScreen();
 
   if (!code) return <Redirect href={again === '1' ? '/home' : '/all-set'} />;
-
-  const copy = async () => {
-    await Clipboard.setStringAsync(code);
-    haptic('light');
-    setCopied(true);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setCopied(false), 2000);
-  };
 
   const done = () => {
     wallet.dismissRecoveryCode();
@@ -68,17 +61,13 @@ export default function RecoveryCode() {
         your hardware wallet's seed words.
       </Body>
       <Card className="items-center gap-3 px-4 py-5">
-        <Text selectable accessibilityLabel={`Recovery code: ${code}`} className="text-center font-mono text-[19px] font-medium leading-8 tracking-[0.5px]">
-          {code}
-        </Text>
-        <AppButton
-          title={copied ? 'Copied' : 'Copy'}
-          icon={copied ? Check : Copy}
-          variant="secondary"
-          size="compact"
-          onPress={() => void copy()}
-          accessibilityLabel={copied ? 'Recovery code copied' : 'Copy recovery code'}
-        />
+        {hidden ? (
+          <Text className="text-center text-muted-foreground">Hidden while Trikey is in the background.</Text>
+        ) : (
+          <Text accessibilityLabel={`Recovery code: ${code}`} className="text-center font-mono text-[19px] font-medium leading-8 tracking-[0.5px]">
+            {code}
+          </Text>
+        )}
       </Card>
       {hasFile ? (
         <View className="gap-3">
