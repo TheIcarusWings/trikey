@@ -122,7 +122,36 @@ import {
 } from './keys.js';
 import { QR_KINDS, defaultQrModelOf, isQrModel, qrMessageMethod, qrModelInfo, type QrModel } from './qr-devices.js';
 import { isNfcModel } from './nfc-devices.js';
-import { isHardwareDisconnect, type CloudBackupStore, type HardwareKind, type HardwareProvider, type HardwareSigner, type HardwareWalletPolicy, type KnownHardware, type KeyValueStore, type PasskeyPrf, type SecureKeyStore } from './platform.js';
+import {
+  isHardwareDisconnect,
+  type CloudBackupStore,
+  type HardwareKind,
+  type HardwareProvider,
+  type HardwareSigner,
+  type HardwareWalletPolicy,
+  type KnownHardware,
+  type KeyValueStore,
+  type PasskeyPrf,
+  type SecureKeyStore,
+  type SecurityKeySlot,
+  type SecurityKeyUnlock,
+} from './platform.js';
+import {
+  KEY2_LOCK_MAX_SLOTS,
+  addKey2LockSlot,
+  encodeKey2Lock,
+  isKey2LockEnvelope,
+  key2FingerprintOf,
+  key2LockSlots,
+  key2LockWalletId,
+  openKey2Lock,
+  parseKey2Lock,
+  removeKey2LockSlot,
+  sealKey2Lock,
+  unwrapKey2LockKey,
+  type Key2LockEnvelope,
+  type Key2LockSlotInput,
+} from './key2-lock.js';
 import { GuardianSilentPaymentScanner, GuardianSingleKeyChain } from './guardian-sp.js';
 import { TxCache } from './txcache.js';
 import { FEE_BUMP_DATA_REASONS, FeeBumpCheckError, checkFeeBump, type FeeBumpCheckReason } from './fee-bump-check.js';
@@ -237,6 +266,11 @@ export interface WalletDeps {
   hardware?: HardwareProvider;
   cloud?: CloudBackupStore;
   passkey?: PasskeyPrf;
+  /**
+   * Security keys for the optional lock on key 2 (key2-lock.ts, docs/design/yubikey-key2.md). Without it the lock can't
+   * be turned on, and a key 2 locked on this phone can't be used (`key_locked_needs_security_key`).
+   */
+  securityKey?: SecurityKeyUnlock;
   clock?: Clock;
   /** Builds the guardian client; default `new RpcClient(opts)`. */
   createRpc?: (opts: RpcClientOptions) => GuardianRpc;
@@ -1236,6 +1270,40 @@ function withFrozenNote<T>(pick: SelectableCoins & { frozenSats?: number }, sele
   }
 }
 
+/** The optional lock on key 2 as Settings shows it (key2-lock.ts, docs/design/yubikey-key2.md). Nothing secret. */
+export interface Key2LockStatus {
+  on: boolean;
+  /** The enrolled security keys, in the lock's order (`removeKey2LockKey` takes an index into it). Empty when off. */
+  keys: { type: 'fido-prf' | 'piv-ecdh'; label: string }[];
+}
+
+/** What the person calls a security key: 1 to 64 characters. */
+function lockKeyLabel(label: string): string {
+  const l = label.trim();
+  if (!l || l.length > 64) throw new WalletError('invalid_label', 'Name the security key (1 to 64 characters), e.g. "Main YubiKey".');
+  return l;
+}
+
+/** A slot's public details only (what the platform may see): never its KEK material. */
+function publicSlotOf(i: Key2LockSlotInput): SecurityKeySlot {
+  return i.type === 'fido-prf'
+    ? { type: 'fido-prf', credentialId: i.credentialId, rpId: i.rpId, aaguid: i.aaguid, label: i.label, prfSalt: i.prfSalt }
+    : { type: 'piv-ecdh', serial: i.serial, slot: i.slot, cardPub: i.cardPub, ephemeralPub: i.ephemeralPub, label: i.label };
+}
+
+function sameSecurityKey(a: SecurityKeySlot, b: SecurityKeySlot): boolean {
+  if (a.type === 'fido-prf' && b.type === 'fido-prf') return a.rpId === b.rpId && a.credentialId === b.credentialId;
+  if (a.type === 'piv-ecdh' && b.type === 'piv-ecdh') return a.serial === b.serial;
+  return false;
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a[i]! ^ b[i]!;
+  return d === 0;
+}
+
 export class TrikeyWallet {
   readonly network: Network;
   private readonly clock: Clock;
@@ -1570,15 +1638,25 @@ export class TrikeyWallet {
   // ===========================================================================
   // Keys and connections
 
-  /** Loads key 2 behind the biometric prompt (`reason` is shown), runs `fn`, and drops it. */
+  /**
+   * Loads key 2 behind the biometric prompt (`reason` is shown), runs `fn`, and drops it. With the optional lock on
+   * (key2-lock.ts), the store holds an envelope instead of the entropy: a security key then unlocks it (`reason` is
+   * shown again), and the entropy must be this wallet's key 2. Every use of key 2 goes through here.
+   */
   private async withKey2<T>(reason: string, fn: (mnemonic: string) => Promise<T>): Promise<T> {
-    let entropy: Uint8Array | null;
-    try {
-      entropy = await this.deps.secureStore.load(this.s.secrets.key2, reason);
-    } catch (e) {
-      throw new WalletError('key_unavailable', 'The phone key could not be unlocked.', { cause: e });
+    const stored = await this.loadKey2Entry(reason);
+    let entropy: Uint8Array;
+    if (isKey2LockEnvelope(stored)) {
+      try {
+        entropy = await this.openLockedKey2(stored, reason);
+      } finally {
+        stored.fill(0);
+      }
+    } else {
+      entropy = stored;
+      // The lock was turned off, and a crash kept the setting from saying so.
+      if (this.s.key2Lock) await this.noteKey2Lock(undefined).catch(() => undefined);
     }
-    if (!entropy) throw new WalletError('key_unavailable', 'The phone key is missing from this phone.');
     let mnemonic: string;
     try {
       mnemonic = mnemonicFromEntropy(entropy);
@@ -1586,6 +1664,301 @@ export class TrikeyWallet {
       entropy.fill(0);
     }
     return fn(mnemonic);
+  }
+
+  /** Key 2's secure store entry, as stored (the entropy, or the lock's envelope): the biometric prompt. */
+  private async loadKey2Entry(reason: string): Promise<Uint8Array> {
+    let stored: Uint8Array | null;
+    try {
+      stored = await this.deps.secureStore.load(this.s.secrets.key2, reason);
+    } catch (e) {
+      throw new WalletError('key_unavailable', 'The phone key could not be unlocked.', { cause: e });
+    }
+    if (!stored) throw new WalletError('key_unavailable', 'The phone key is missing from this phone.');
+    return stored;
+  }
+
+  // ===========================================================================
+  // The optional lock on key 2 (key2-lock.ts, docs/design/yubikey-key2.md)
+  //
+  // Off by default. One setting for the phone: the wallets of a phone share one key 2 entry (`secrets.key2`, multi-wallet),
+  // so locking it locks every wallet, and a wallet added while it's on shares the locked entry. The setting is kept on the
+  // first wallet (`key2Lock` in its state); the flows run there (`WalletSet` calls them). Each flow writes the secure store
+  // once: a crash before that leaves the old entry, and a crash after it leaves the setting behind, which the next use of
+  // key 2 or the next flow brings back in line (the entry is what counts).
+
+  /** An own wallet's view of the lock is the first wallet's (`WalletSet` links it): they share key 2. */
+  key2LockOf?: () => Key2LockStatus;
+
+  /** Whether the lock on key 2 is on, and which security keys are enrolled. */
+  get key2Lock(): Key2LockStatus {
+    if (this.s.own && this.key2LockOf) return this.key2LockOf();
+    const l = this.s.key2Lock;
+    return { on: !!l, keys: l ? l.keys.map((k) => ({ ...k })) : [] };
+  }
+
+  /** Whether this phone can use a security key, so "Require a security key to sign" can be offered. */
+  async key2LockSupported(): Promise<boolean> {
+    const sk = this.deps.securityKey;
+    if (!sk) return false;
+    try {
+      return await sk.isSupported();
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Turns the lock on: the biometric prompt, enrol the main security key, then the spare when given (strongly suggested:
+   * without one, a lost key means restoring key 2 from the recovery code or the backup), then a test unlock with each
+   * key in turn (the main, then the spare), and only then the locked entry replaces the plain one, in one write.
+   */
+  async turnOnKey2Lock(opts: { main: { label: string }; spare?: { label: string } }): Promise<Key2LockStatus> {
+    this.mustHoldKey2Lock();
+    const labels = [lockKeyLabel(opts.main.label), ...(opts.spare ? [lockKeyLabel(opts.spare.label)] : [])];
+    const sk = this.deps.securityKey;
+    if (!sk || !(await this.key2LockSupported())) throw new WalletError('security_key_unavailable', "This phone can't use a security key, so the lock can't be turned on.");
+    const stored = await this.loadKey2Entry('Require a security key to sign');
+    const inputs: Key2LockSlotInput[] = [];
+    let dk: Uint8Array | undefined;
+    let opened: Uint8Array | undefined;
+    try {
+      if (isKey2LockEnvelope(stored)) {
+        await this.noteKey2Lock(this.parseOwnLock(stored));
+        throw new WalletError('wrong_state', 'The security key lock is already on.');
+      }
+      const key2Fingerprint = key2FingerprintOf(stored);
+      if (key2Fingerprint !== this.s.key2.fingerprint) throw new WalletError('internal', "The phone key on this phone isn't this wallet's.");
+      inputs.push(await this.enrolSecurityKey(sk, labels[0]!, 'Hold your security key to the phone to add it', []));
+      if (labels[1]) inputs.push(await this.enrolSecurityKey(sk, labels[1], 'Now hold your spare security key to the phone', inputs.map(publicSlotOf)));
+      const env = sealKey2Lock({ entropy: stored, walletId: key2LockWalletId(this.s.secrets.key2), key2Fingerprint, slots: inputs });
+      // The test unlock: every key enrolled must give the same answer again before the plain entry goes. The spare is
+      // there for when the main key is lost, so an untested spare is the one failure the lock can't recover from.
+      const notOn = (e: unknown) =>
+        e instanceof WalletError && e.code === 'key_lock_wrong_key'
+          ? new WalletError('security_key_failed', "The security key didn't unlock what it just locked, so the lock was not turned on.", { cause: e })
+          : e;
+      try {
+        dk = await this.unlockKey2Lock(
+          inputs.length > 1 ? { ...env, slots: [env.slots[0]!] } : env,
+          inputs.length > 1 ? 'Hold your main security key to the phone to check it unlocks' : 'Hold your security key to the phone to check it unlocks',
+        );
+        opened = openKey2Lock(env, dk);
+      } catch (e) {
+        throw notOn(e);
+      }
+      if (!sameBytes(opened, stored)) throw new WalletError('internal', 'The test unlock gave another key; the lock was not turned on.');
+      for (let i = 1; i < inputs.length; i++) {
+        let again: Uint8Array | undefined;
+        try {
+          const r = await this.askSecurityKey(() => sk.unlock([key2LockSlots(env)[i]!], 'Now hold your spare security key to the phone to check it unlocks'));
+          try {
+            if (r.slotIndex !== 0) throw new WalletError('security_key_failed', 'Another security key answered, so the lock was not turned on.');
+            again = unwrapKey2LockKey(env, i, r.kekMaterial);
+          } finally {
+            r.kekMaterial.fill(0);
+          }
+          if (!sameBytes(again, dk)) throw new WalletError('internal', 'The spare security key unlocked another key; the lock was not turned on.');
+        } catch (e) {
+          throw notOn(e);
+        } finally {
+          again?.fill(0);
+        }
+      }
+      await this.deps.secureStore.save(this.s.secrets.key2, encodeKey2Lock(env), { requireBiometrics: true });
+      await this.noteKey2Lock(env);
+    } finally {
+      stored.fill(0);
+      dk?.fill(0);
+      opened?.fill(0);
+      for (const i of inputs) i.kekMaterial.fill(0);
+    }
+    return this.key2Lock;
+  }
+
+  /** Turns the lock off: an enrolled security key unlocks key 2, which goes back to the plain biometric entry. */
+  async turnOffKey2Lock(): Promise<Key2LockStatus> {
+    this.mustHoldKey2Lock();
+    const stored = await this.loadKey2Entry('Turn off the security key lock');
+    let dk: Uint8Array | undefined;
+    let entropy: Uint8Array | undefined;
+    try {
+      if (!isKey2LockEnvelope(stored)) {
+        await this.noteKey2Lock(undefined);
+        return this.key2Lock;
+      }
+      const env = this.parseOwnLock(stored);
+      dk = await this.unlockKey2Lock(env, 'Hold your security key to the phone to turn the lock off');
+      entropy = openKey2Lock(env, dk);
+      await this.deps.secureStore.save(this.s.secrets.key2, entropy, { requireBiometrics: true });
+      await this.noteKey2Lock(undefined);
+    } finally {
+      stored.fill(0);
+      dk?.fill(0);
+      entropy?.fill(0);
+    }
+    return this.key2Lock;
+  }
+
+  /**
+   * Adds a security key (a spare): an enrolled key unlocks the lock, the new one is enrolled, then held once more to check
+   * it unlocks, and the lock is saved with it. At most three keys.
+   */
+  async addKey2LockKey(opts: { label: string }): Promise<Key2LockStatus> {
+    this.mustHoldKey2Lock();
+    const label = lockKeyLabel(opts.label);
+    const stored = await this.loadKey2Entry('Add a security key');
+    let dk: Uint8Array | undefined;
+    let input: Key2LockSlotInput | undefined;
+    let test: Uint8Array | undefined;
+    try {
+      const env = this.lockedEntry(stored);
+      if (env.slots.length >= KEY2_LOCK_MAX_SLOTS) throw new WalletError('wrong_state', `The lock takes at most ${KEY2_LOCK_MAX_SLOTS} security keys. Remove one first.`);
+      const sk = this.needSecurityKey();
+      dk = await this.unlockKey2Lock(env, 'Hold a security key you already use to the phone');
+      input = await this.enrolSecurityKey(sk, label, 'Now hold the new security key to the phone', key2LockSlots(env));
+      const next = addKey2LockSlot(env, dk, input);
+      const added = key2LockSlots(next)[next.slots.length - 1]!;
+      const r = await this.askSecurityKey(() => sk.unlock([added], 'Hold the new security key to the phone again to check it unlocks'));
+      try {
+        if (r.slotIndex !== 0) throw new WalletError('security_key_failed', 'Another security key answered.');
+        test = unwrapKey2LockKey(next, next.slots.length - 1, r.kekMaterial);
+      } catch (e) {
+        if (e instanceof WalletError && e.code === 'key_lock_wrong_key')
+          throw new WalletError('security_key_failed', "The new security key didn't give the same answer twice, so it was not added.", { cause: e });
+        throw e;
+      } finally {
+        r.kekMaterial.fill(0);
+      }
+      if (!sameBytes(test, dk)) throw new WalletError('internal', 'The new security key unlocked another key; it was not added.');
+      await this.deps.secureStore.save(this.s.secrets.key2, encodeKey2Lock(next), { requireBiometrics: true });
+      await this.noteKey2Lock(next);
+    } finally {
+      stored.fill(0);
+      dk?.fill(0);
+      test?.fill(0);
+      input?.kekMaterial.fill(0);
+    }
+    return this.key2Lock;
+  }
+
+  /**
+   * Removes the security key at `index` (in `key2Lock.keys`): any enrolled key unlocks the lock first (the one removed
+   * too, or a spare when it is lost). Never the last one: turn the lock off instead.
+   */
+  async removeKey2LockKey(index: number): Promise<Key2LockStatus> {
+    this.mustHoldKey2Lock();
+    const stored = await this.loadKey2Entry('Remove a security key');
+    let dk: Uint8Array | undefined;
+    try {
+      const env = this.lockedEntry(stored);
+      if (!Number.isInteger(index) || !env.slots[index]) throw new WalletError('wrong_state', 'No such security key in the lock.');
+      if (env.slots.length <= 1) throw new WalletError('wrong_state', "The last security key can't be removed: turn the lock off instead.");
+      dk = await this.unlockKey2Lock(env, 'Hold one of your security keys to the phone to remove a key');
+      const next = removeKey2LockSlot(env, dk, index);
+      await this.deps.secureStore.save(this.s.secrets.key2, encodeKey2Lock(next), { requireBiometrics: true });
+      await this.noteKey2Lock(next);
+    } finally {
+      stored.fill(0);
+      dk?.fill(0);
+    }
+    return this.key2Lock;
+  }
+
+  /** The lock's flows run on the first wallet: its key 2 entry is every wallet's. */
+  private mustHoldKey2Lock(): void {
+    if (this.s.own) throw new WalletError('wrong_state', 'The security key lock is set from your first wallet: it covers every wallet on this phone.');
+  }
+
+  private needSecurityKey(): SecurityKeyUnlock {
+    const sk = this.deps.securityKey;
+    if (!sk)
+      throw new WalletError(
+        'key_locked_needs_security_key',
+        "Your phone key is locked with a security key, and this app can't ask for one. Restore the phone key from your recovery code or backup to use it without the lock.",
+      );
+    return sk;
+  }
+
+  /** The stored entry as this wallet's lock (`wrong_state` while the lock is off). */
+  private lockedEntry(stored: Uint8Array): Key2LockEnvelope {
+    if (!isKey2LockEnvelope(stored)) {
+      void this.noteKey2Lock(undefined).catch(() => undefined);
+      throw new WalletError('wrong_state', 'The security key lock is off. Turn it on first.');
+    }
+    return this.parseOwnLock(stored);
+  }
+
+  /** Parses the stored envelope and checks it is this wallet's key 2 (`key_lock_wrong_wallet` otherwise). */
+  private parseOwnLock(stored: Uint8Array): Key2LockEnvelope {
+    const env = parseKey2Lock(stored);
+    if (env.walletId !== key2LockWalletId(this.s.secrets.key2) || env.key2Fingerprint !== this.s.key2.fingerprint)
+      throw new WalletError('key_lock_wrong_wallet', 'The locked phone key on this phone belongs to another wallet.');
+    return env;
+  }
+
+  /** A locked key 2: a security key gives the DK, the DK the entropy (checked against key 2's fingerprint). */
+  private async openLockedKey2(stored: Uint8Array, reason: string): Promise<Uint8Array> {
+    const env = this.parseOwnLock(stored);
+    const dk = await this.unlockKey2Lock(env, reason);
+    let entropy: Uint8Array;
+    try {
+      entropy = openKey2Lock(env, dk);
+    } finally {
+      dk.fill(0);
+    }
+    await this.noteKey2Lock(env).catch(() => undefined);
+    return entropy;
+  }
+
+  /** Asks for any enrolled security key and unwraps the DK with its answer. The caller zeroes the DK. */
+  private async unlockKey2Lock(env: Key2LockEnvelope, reason: string): Promise<Uint8Array> {
+    const sk = this.needSecurityKey();
+    const r = await this.askSecurityKey(() => sk.unlock(key2LockSlots(env), reason));
+    try {
+      if (!Number.isInteger(r.slotIndex)) throw new WalletError('security_key_failed', 'The security key answered for a key that is not enrolled.');
+      return unwrapKey2LockKey(env, r.slotIndex, r.kekMaterial);
+    } finally {
+      r.kekMaterial.fill(0);
+    }
+  }
+
+  /** Enrols one security key, with a fresh PRF salt; refuses one already in `exclude`. The caller zeroes its material. */
+  private async enrolSecurityKey(sk: SecurityKeyUnlock, label: string, reason: string, exclude: SecurityKeySlot[]): Promise<Key2LockSlotInput> {
+    const prfSalt = secureRandomBytes(32);
+    const e = await this.askSecurityKey(() => sk.enrol({ reason, label, prfSalt, exclude }));
+    const input: Key2LockSlotInput =
+      e.type === 'fido-prf'
+        ? { type: 'fido-prf', credentialId: e.credentialId, rpId: e.rpId, aaguid: e.aaguid, label, prfSalt, kekMaterial: e.kekMaterial }
+        : { type: 'piv-ecdh', serial: e.serial, slot: e.slot, cardPub: e.cardPub, ephemeralPub: e.ephemeralPub, label, kekMaterial: e.kekMaterial };
+    if (exclude.some((x) => sameSecurityKey(x, input))) {
+      input.kekMaterial.fill(0);
+      throw new WalletError('wrong_state', 'This security key is already in the lock. Use another one.');
+    }
+    return input;
+  }
+
+  /** Runs a security key prompt; a cancel is `security_key_cancelled`, anything else `security_key_failed`. */
+  private async askSecurityKey<T>(ask: () => Promise<T>): Promise<T> {
+    try {
+      return await ask();
+    } catch (e) {
+      if (e instanceof WalletError) throw e;
+      const { name, kind } = (e ?? {}) as { name?: unknown; kind?: unknown };
+      if (name === 'SecurityKeyError' && kind === 'cancelled') throw new WalletError('security_key_cancelled', 'The security key was not used.', { cause: e });
+      throw new WalletError('security_key_failed', `The security key could not be used: ${(e as Error)?.message ?? String(e)}`, { cause: e });
+    }
+  }
+
+  /** Brings the setting (`key2Lock` in the first wallet's state) in line with the stored entry: `env`, or plain. */
+  private async noteKey2Lock(env: Key2LockEnvelope | undefined): Promise<void> {
+    if (this.s.own) return;
+    const keys = env?.slots.map((s) => ({ type: s.type, label: s.label }));
+    if (JSON.stringify(this.s.key2Lock?.keys) === JSON.stringify(keys)) return;
+    await this.update((s) => {
+      if (keys) s.key2Lock = { keys, since: s.key2Lock?.since ?? this.now() };
+      else delete s.key2Lock;
+    });
   }
 
   private async nostrSecret(): Promise<Uint8Array> {

@@ -56,6 +56,11 @@ Hardware (key 1) ───┘   outbound only           └── alerts: nostr 
 
 ### Mobile app (React Native)
 - **Key 2:** BIP39 seed, encrypted at rest with a key from the Secure Enclave or Android Keystore. Those chips can't hold secp256k1 keys directly, so they wrap the seed instead. Unlocking needs biometrics.
+  - **Optional security key lock (wallet core only, not in the app yet; off by default):** the wallet core can also
+    lock the seed under a key only a YubiKey gives (FIDO2 PRF or PIV key agreement), so every use of key 2 needs
+    biometrics and the YubiKey. It's one setting for the phone, covering every wallet on it, and it doesn't touch the
+    descriptor, the guardian or the protocol. The backup still holds the plain key 2 under the recovery code
+    (`packages/wallet/src/key2-lock.ts`, `withKey2` in `wallet.ts`; [docs/design/yubikey-key2.md](docs/design/yubikey-key2.md)).
 - **Hardware wallets:**
   - Ledger over Bluetooth (`@ledgerhq/device-signer-kit-bitcoin`);
   - a Jade or Jade Plus over Bluetooth (its own RPC over `react-native-ble-plx`, the library the Ledger transport already
