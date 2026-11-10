@@ -16,7 +16,7 @@ import { GUARDIAN_FEATURES, isSafeName, type Policy } from '@trikey/protocol';
 import { WalletError } from './errors.js';
 import type { HardwareKind } from './platform.js';
 import type { QrModel } from './qr-devices.js';
-import { TrikeyWallet, type ReplaceOutcome, type ReplacePlan, type WalletDeps, type WalletEvent } from './wallet.js';
+import { TrikeyWallet, type Key2LockStatus, type ReplaceOutcome, type ReplacePlan, type WalletDeps, type WalletEvent } from './wallet.js';
 
 /** "Replace guardian" with several wallets: what moves, wallet by wallet (`WalletSet.previewReplaceGuardian`). */
 export interface MoveAllPlan {
@@ -170,7 +170,49 @@ export class WalletSet {
       w.siblings = () => this.list.filter((o) => o !== w).flatMap(idsOf);
       w.otherDevices = () => this.list.filter((o) => o !== w).flatMap((o) => devicesOf(o));
       if (labels && w !== this.first && w.labels !== labels) w.useLabelStore(labels);
+      // The lock on key 2 is the first wallet's setting: every wallet shares its key 2 entry.
+      if (w !== this.first) w.key2LockOf = () => this.first.key2Lock;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // The optional lock on key 2 (key2-lock.ts, docs/design/yubikey-key2.md): one setting for the phone
+
+  /** Whether the lock is on, and which security keys are enrolled (Settings > Security). */
+  get key2Lock(): Key2LockStatus {
+    return this.first.key2Lock;
+  }
+
+  /** Whether this phone can use a security key, so the setting can be offered. */
+  key2LockSupported(): Promise<boolean> {
+    return this.first.key2LockSupported();
+  }
+
+  /** Turns the lock on for every wallet of the phone (they share one key 2 entry): `TrikeyWallet.turnOnKey2Lock`. */
+  turnOnKey2Lock(opts: Parameters<TrikeyWallet['turnOnKey2Lock']>[0]): Promise<Key2LockStatus> {
+    this.oneKey2();
+    return this.first.turnOnKey2Lock(opts);
+  }
+
+  turnOffKey2Lock(): Promise<Key2LockStatus> {
+    this.oneKey2();
+    return this.first.turnOffKey2Lock();
+  }
+
+  addKey2LockKey(opts: { label: string }): Promise<Key2LockStatus> {
+    this.oneKey2();
+    return this.first.addKey2LockKey(opts);
+  }
+
+  removeKey2LockKey(index: number): Promise<Key2LockStatus> {
+    this.oneKey2();
+    return this.first.removeKey2LockKey(index);
+  }
+
+  /** Every wallet here uses the first wallet's key 2 entry, so locking that one locks them all. */
+  private oneKey2(): void {
+    const id = this.first.state.secrets.key2;
+    if (this.others.some((w) => w.state.secrets.key2 !== id)) throw new WalletError('internal', "The wallets on this phone don't share one phone key.");
   }
 
   /** The phone's wallets: the first, then the ones added, in order. */

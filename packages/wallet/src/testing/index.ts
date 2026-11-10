@@ -9,7 +9,7 @@
  *   PSBT inputs outside that wallet unless they are already finalized (external
  *   inputs, like Trezor's: the helper coin of a silent payment), and derives
  *   addresses itself.
- * - `MemorySecureKeyStore`, `MemoryKeyValueStore`, `MemoryCloudBackupStore`,
+ * - `MemorySecureKeyStore`, `MemoryKeyValueStore`, `MemoryCloudBackupStore`, `MemorySecurityKeys`,
  *   `MemoryPasskeyPrf`.
  *
  * NEVER for real funds: the software hardware wallet refuses network `bitcoin`.
@@ -37,7 +37,12 @@ import type {
   KeyValueStore,
   PasskeyPrf,
   SecureKeyStore,
+  SecurityKeyEnrolment,
+  SecurityKeySlot,
+  SecurityKeyUnlock,
 } from '../platform.js';
+import { SecurityKeyError } from '../platform.js';
+import { p256 } from '@noble/curves/nist.js';
 import { secureRandomBytes } from '@trikey/core/random';
 
 function refuseMainnet(network: NetworkName): Network {
@@ -338,6 +343,119 @@ export class MemoryPasskeyPrf implements PasskeyPrf {
     const c = id === undefined ? undefined : this.credentials.get(id);
     if (!c || id === undefined) throw new Error('no such passkey');
     return { credentialId: id, prfOutput: this.eval(c.secret, opts.salt) };
+  }
+}
+
+/** One simulated security key (`MemorySecurityKeys`). */
+export interface MemorySecurityKey {
+  name: string;
+  type: 'fido-prf' | 'piv-ecdh';
+  /** Fixed per key (from its `seed`): the same input always gives the same answer. Made-up bytes, never a real key's. */
+  secret: Uint8Array;
+  credentialId: string;
+  serial: number;
+}
+
+/**
+ * Security keys for the optional lock on key 2 (key2-lock.ts), in memory and deterministic: each key's secret comes from
+ * its seed. A `fido-prf` key answers PRF as `MemoryPasskeyPrf` does (HMAC-SHA256 of its secret over the WebAuthn PRF
+ * salt); a `piv-ecdh` key holds a P-256 key made from its secret and answers ECDH (the shared point's x). `held` names the
+ * key the person holds to the phone next. Test hooks: `cancelNext`, `failNext`, `wrongAnswerNext`, `supported`.
+ */
+export class MemorySecurityKeys implements SecurityKeyUnlock {
+  static readonly RP_ID = 'trikey.test';
+  readonly keys: MemorySecurityKey[];
+  held: string;
+  supported = true;
+  /** The next prompt is cancelled by the person (`SecurityKeyError` `cancelled`). */
+  cancelNext = false;
+  /** The next prompt fails (`SecurityKeyError` `failed`). */
+  failNext = false;
+  /** The next unlock answers with other bytes, as a key whose PRF changed would. */
+  wrongAnswerNext = false;
+  /** Every prompt, for assertions. */
+  readonly calls: { op: 'enrol' | 'unlock'; reason: string; key: string; slots?: number }[] = [];
+  /** Every KEK material handed out (tests check the wallet zeroed it). */
+  readonly handedOut: Uint8Array[] = [];
+
+  constructor(keys: { name: string; type?: 'fido-prf' | 'piv-ecdh'; seed: number }[]) {
+    this.keys = keys.map((k) => {
+      const secret = sha256(utf8ToBytes(`trikey test security key ${k.seed}`));
+      return { name: k.name, type: k.type ?? 'fido-prf', secret, credentialId: base64.encode(sha256(concatBytes(secret, utf8ToBytes('credential'))).subarray(0, 16)), serial: 10_000_000 + k.seed };
+    });
+    this.held = this.keys[0]!.name;
+  }
+
+  async isSupported(): Promise<boolean> {
+    return this.supported;
+  }
+
+  private key(): MemorySecurityKey {
+    const k = this.keys.find((x) => x.name === this.held);
+    if (!k) throw new SecurityKeyError('failed', `no security key "${this.held}"`);
+    return k;
+  }
+
+  private hooks(): void {
+    if (this.cancelNext) {
+      this.cancelNext = false;
+      throw new SecurityKeyError('cancelled', 'The person cancelled.');
+    }
+    if (this.failNext) {
+      this.failNext = false;
+      throw new SecurityKeyError('failed', 'The security key did not answer.');
+    }
+  }
+
+  private prf(k: MemorySecurityKey, salt: Uint8Array): Uint8Array {
+    return hmac(sha256, k.secret, sha256(concatBytes(utf8ToBytes('WebAuthn PRF'), Uint8Array.of(0), salt)));
+  }
+
+  private handOut(material: Uint8Array): Uint8Array {
+    this.handedOut.push(material);
+    return material;
+  }
+
+  private matches(k: MemorySecurityKey, s: SecurityKeySlot): boolean {
+    return s.type === 'fido-prf' ? k.type === 'fido-prf' && s.credentialId === k.credentialId && s.rpId === MemorySecurityKeys.RP_ID : k.type === 'piv-ecdh' && s.serial === k.serial;
+  }
+
+  async enrol(opts: { reason: string; label: string; prfSalt: Uint8Array; exclude: readonly SecurityKeySlot[] }): Promise<SecurityKeyEnrolment> {
+    const k = this.key();
+    this.calls.push({ op: 'enrol', reason: opts.reason, key: k.name });
+    this.hooks();
+    if (opts.exclude.some((s) => this.matches(k, s))) throw new SecurityKeyError('failed', 'This security key is already enrolled.');
+    if (k.type === 'fido-prf')
+      return { type: 'fido-prf', credentialId: k.credentialId, rpId: MemorySecurityKeys.RP_ID, aaguid: bytesToHex(sha256(utf8ToBytes('test aaguid')).subarray(0, 16)), kekMaterial: this.handOut(this.prf(k, opts.prfSalt)) };
+    const ephemeral = p256.utils.randomSecretKey();
+    try {
+      const cardPub = p256.getPublicKey(k.secret, false);
+      return {
+        type: 'piv-ecdh',
+        serial: k.serial,
+        slot: '9d',
+        cardPub,
+        ephemeralPub: p256.getPublicKey(ephemeral, false),
+        kekMaterial: this.handOut(p256.getSharedSecret(ephemeral, cardPub, true).slice(1)),
+      };
+    } finally {
+      ephemeral.fill(0);
+    }
+  }
+
+  async unlock(slots: readonly SecurityKeySlot[], reason: string): Promise<{ slotIndex: number; kekMaterial: Uint8Array }> {
+    const k = this.key();
+    this.calls.push({ op: 'unlock', reason, key: k.name, slots: slots.length });
+    this.hooks();
+    const slotIndex = slots.findIndex((s) => this.matches(k, s));
+    if (slotIndex < 0) throw new SecurityKeyError('failed', 'This security key is not enrolled here.');
+    const s = slots[slotIndex]!;
+    const material = s.type === 'fido-prf' ? this.prf(k, s.prfSalt) : p256.getSharedSecret(k.secret, s.ephemeralPub, true).slice(1);
+    if (this.wrongAnswerNext) {
+      this.wrongAnswerNext = false;
+      material[0]! ^= 1;
+    }
+    return { slotIndex, kekMaterial: this.handOut(material) };
   }
 }
 

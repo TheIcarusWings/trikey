@@ -656,6 +656,19 @@ export const WalletState = z.object({
   retiredByGuardian: z.object({ walletId: z.string(), reason: z.enum(['retired', 'recovered', 'reset', 'hosting_ended']), successorWalletId: z.string().optional(), at: z.number() }).optional(),
   /** Encrypted notes on the guardian (labels-crypto.ts; DESIGN.md, "Notes that survive recovery"). Absent: never used. */
   notes: NotesRecord.optional(),
+  /**
+   * The optional lock on key 2 is on (key2-lock.ts, docs/design/yubikey-key2.md): which security keys are enrolled, by
+   * type and the name the person gave, in the lock's order. Absent: off, as for everyone who never turns it on. Nothing
+   * secret: it only lets the app show the setting; the secure store's entry is what counts (`withKey2` reads that, and
+   * brings this back in line if a crash left it behind). Kept on the first wallet, whose key 2 entry every wallet shares.
+   */
+  key2Lock: z
+    .object({
+      keys: z.array(z.object({ type: z.enum(['fido-prf', 'piv-ecdh']), label: z.string().min(1).max(64) })).min(1).max(3),
+      /** ms: when it was turned on. */
+      since: z.number(),
+    })
+    .optional(),
 });
 export type WalletState = z.infer<typeof WalletState>;
 
