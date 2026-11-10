@@ -30,8 +30,10 @@ repository root describes the listing; Zapstore reads it and picks up each GitHu
 links the APK signing certificate to Trikey's publisher npub (NIP-C1).
 
 1. **A nostr key just for Trikey**, not a personal one: make it in a nostr app or signer (Amber, nsec.app), give it a
-   profile (name Trikey, the icon, website `https://trikey.app`), and keep its nsec in your password manager next to
-   the APK key's backup.
+   profile (name Trikey, the icon, website `https://trikey.app`). The same key signs every GitHub release's manifest
+   (docs/design/signed-releases.md, `tools/release/sign-release.mjs`), so guard it like the APK key: use it only
+   through the signer app (a `bunker://` URL), and keep its one backup offline (on paper, or in a password manager that
+   does not sync), never on GitHub or in a file on the computer you build from.
 2. **Install `zsp`** on your own computer, at the version named here and no other:
 
    ```sh

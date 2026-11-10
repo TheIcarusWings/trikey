@@ -1,6 +1,7 @@
 # Signed releases: a manifest signed with Trikey's nostr key
 
-Status: decided, not built. Written 2026-11-10, against `main` at 0.1.26.
+Status: decided and built (2026-11-10), against `main` at 0.1.26. The first release it applies to is the first after
+0.1.26-alpha.
 
 Like Sparrow Wallet ([sparrowwallet.com/download](https://sparrowwallet.com/download/), read 2026-11-10: a manifest of
 every file's SHA-256 and a PGP signature of it), each Trikey release gets a **manifest of its files, signed by a key
@@ -33,20 +34,19 @@ every release.
 
 ## 3. What is signed
 
-**The manifest**, `trikey-<tag>-SHA256SUMS`, in `sha256sum` format (so `sha256sum -c --ignore-missing` works on it),
-one line per file of the release, in a fixed order:
-
-```
-<sha256>  trikey-alpha-<tag>.apk
-<sha256>  trikey-alpha-foss-<tag>.apk
-<sha256>  trikey-guardian-compose.yml
-<sha256>  trikey-guardian.env.example
-```
+**The manifest**, `trikey-<tag>-SHA256SUMS`, in `sha256sum` format (so `sha256sum -c` works on it): one
+`<sha256>  <name>` line for **every other file of the release**, sorted by name. Today that is the two APKs and their
+`.sha256` files, the compose file, the settings file and `trikey-guardian-compose.sha256`: every file anyone downloads
+is covered, and a file added to or missing from the release breaks the signature.
 
 The guardian image is covered through the compose file, which pins it by digest (and the digest is the one
-`reproducible.yml` rebuilt). The existing per-file `.sha256` files stay, for whoever uses them today.
+`reproducible.yml` rebuilt). The existing per-file `.sha256` files stay, for whoever uses them today (open question 1).
 
-CI makes the manifest from the files `packaging/check-release-assets.sh` checked, and attaches it to the draft.
+**The owner's signing tool makes the manifest** (`tools/release/sign-release.mjs`, through
+`packaging/release-signature.py manifest`), from the draft's files it downloads, so the hashes the owner signs are
+computed on the owner's own computer; the checks make it again from the files they download and compare byte for byte.
+(The first version of this note had CI make it. Making it where it is signed is simpler, and needs no CI job with
+write access.)
 
 **The signature**, `trikey-<tag>-SHA256SUMS.event.json`: a nostr event signed by the publisher key.
 
@@ -66,10 +66,12 @@ against `sha256sum trikey-<tag>-SHA256SUMS`, then `sha256sum -c` on the manifest
 
 Unchanged up to the draft (docs/releasing.md, section 4). Then:
 
-1. The pipeline builds and checks every file as today and attaches the manifest to the draft.
-2. **The owner signs**: `node tools/release/sign-release.mjs v0.1.27-alpha`. The tool downloads the manifest from the
-   draft (`gh`), prints the files and their hashes and the tag, asks the signer app over NIP-46 (a `bunker://` URL,
-   approved in Amber), checks the signature it gets back against the pinned npub, and uploads the event to the draft.
+1. The pipeline builds and checks every file as today and attaches them to the draft.
+2. **The owner signs**: `node tools/release/sign-release.mjs v0.1.27-alpha`. The tool downloads every file of the
+   draft (`gh`), makes the manifest, prints it, asks for the tag to be typed back, asks the signer app over NIP-46 (a
+   `bunker://` URL, approved in Amber; the tool refuses an nsec), checks that the signer's key is the pinned one and
+   that the result passes the very check `publish-release.yml` runs, and uploads the manifest and the event to the
+   draft (never replacing a file there).
    Sign only once the pipeline's checks are green: the signature says "the owner released these exact files".
    It then **publishes the event to relays**: the relays in the publisher npub's relay list (kind 10002) if it has
    one, else relay.damus.io, nos.lol and relay.primal.net, and says which accepted it. relay.trikey.app stores only
@@ -92,12 +94,19 @@ files too):
 - its pubkey is the one in `packaging/release-signer.npub` (a test keeps it equal to `zapstore.yaml`'s);
 - its kind is the reserved one, its `version` tag is the tag being published, its `x` tag is the SHA-256 of the
   manifest as attached;
-- the manifest lists exactly the release's other files, in the fixed order, each with the hash of the file GitHub
-  serves;
-- the check runs again in the step that compares the published files after publishing, as the other checks do.
+- the manifest lists exactly the release's other files, sorted by name, each with the hash of the file GitHub serves
+  (and `check-release-assets.sh` already checks each download against the digest GitHub lists);
+- the event has exactly a nostr event's fields, nothing else, and was made no earlier than 2026-11-10 and at most an
+  hour ahead of the checker's clock;
+- the step that compares the published files with the checked ones, right after publishing, covers the manifest and
+  the event like every other file.
 
-It runs in Node with `nostr-tools` (already a dependency), installed with `--ignore-scripts`. Changing the pinned key
-is a pull request, so it is visible.
+An unsigned draft fails first, with its own message: the command to sign it.
+
+It runs in **Python with the standard library only** (`packaging/release-signature.py`, BIP 340 from the BIP's
+reference code, tested against the BIP's own test vectors), so the `release`-environment jobs, which hold write
+tokens, run no package code for it, and anyone can run the same check with Python 3 (packaging/VERIFY.md). Changing
+the pinned key is a pull request, so it is visible.
 
 ### The Umbrel store
 
@@ -131,10 +140,12 @@ the signature.
 
 ## 7. Plan
 
-1. **This decision:** the manifest in CI, `tools/release/sign-release.mjs` (signing, upload, relays), the check in
-   `publish-release.yml` and `umbrel-store.yml`, the store update moved to after publishing,
-   `packaging/release-signer.npub` and its test, the steps in docs/releasing.md. A small PR.
-2. **People can check it:** a "Check a release's signature" section in packaging/VERIFY.md.
+1. **Built:** `packaging/release-signature.py` (the manifest and the check), `tools/release/sign-release.mjs`
+   (signing, upload, relays), the check in `check-release-assets.sh` (so `publish-release.yml`) and `umbrel-store.yml`,
+   the store update moved to after publishing, `packaging/release-signer.npub` and its test, the steps in
+   docs/releasing.md, tests in `e2e/test/unit/release-signature.test.ts` and `release-workflows.test.ts`. Not yet
+   tried against a real signer app: the first release after this is that test.
+2. **Built: people can check it:** "Check a release's signature" in packaging/VERIFY.md.
 3. **The app checks it** (a later decision): "Check for updates" offers an APK only when the release's manifest is
    signed by the npub built into the app and lists that APK's hash. This is what catches a release published by hand
    from a stolen GitHub account. A new key then needs an app release signed by the old one that names the new one.

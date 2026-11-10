@@ -18,15 +18,15 @@ name: Docker
 # Start9 package's packed image) and only development files name the tag. A re-run of a release must push the very
 # same digest (the build is reproducible); if the version is on GHCR already with another digest, `publish` fails.
 #
-# Downstream of the push, nothing re-resolves the tag: compose-files, start9.yml and umbrel-store.yml are given the
-# digest `publish` pushed, and start9.yml and umbrel-store.yml fail if the tag no longer points at it. They get it only
-# through `verified`: on a release tag this workflow also calls reproducible.yml, which builds the same commit twice
-# more from nothing, and `verified` lets the digest through only if those builds give exactly the pushed image index.
-# `verified` also keeps it as the artifact guardian-image-digest, which start9.yml and umbrel-store.yml require their
-# input to equal, and which they and publish-release.yml use when run by hand: only ever from the run of the tag's
-# commit in which `verified` succeeded (.github/scripts/release-run.sh), never a digest someone types in.
-# release.yml therefore dispatches this workflow and android-apk.yml (and publish-release.yml); reproducible.yml,
-# start9.yml and umbrel-store.yml run from here.
+# Downstream of the push, nothing re-resolves the tag: compose-files and start9.yml are given the digest `publish`
+# pushed, and start9.yml and umbrel-store.yml fail if the tag no longer points at it. They get it only through
+# `verified`: on a release tag this workflow also calls reproducible.yml, which builds the same commit twice more from
+# nothing, and `verified` lets the digest through only if those builds give exactly the pushed image index. `verified`
+# also keeps it as the artifact guardian-image-digest, which start9.yml requires its input to equal, and which
+# start9.yml (by hand), umbrel-store.yml and publish-release.yml use: only ever from the run of the tag's commit in
+# which `verified` succeeded (.github/scripts/release-run.sh), never a digest someone types in.
+# release.yml therefore dispatches this workflow and android-apk.yml (and publish-release.yml); reproducible.yml and
+# start9.yml run from here. umbrel-store.yml runs from publish-release.yml, once the release is published and signed.
 #
 # Why the version tag is pushed before `verified`, not after: pushing it after would take a second job with
 # `packages: write` in the `release` environment (so a second approval on every release, and a second job holding
@@ -346,22 +346,8 @@ jobs:
     with:
       image-digest: ${{ needs.verified.outputs.digest }}
 
-  # The Umbrel store copy, with the image pinned by the digest `publish` pushed. Its job declares the `release`
-  # environment, where the store token can live (docs/android-signing.md, "The `release` environment"). Only when the
-  # repository variable UMBREL_STORE_AUTOPUBLISH is `true` (set it with UMBREL_STORE_TOKEN): otherwise the job would
-  # only ask the owner to approve a deployment that then does nothing, on every release (packaging/README.md).
-  umbrel-store:
-    needs: verified
-    if: needs.verified.outputs.digest != '' && vars.UMBREL_STORE_AUTOPUBLISH == 'true'
-    permissions:
-      contents: read
-      packages: read
-      actions: read # umbrel-store.yml reads the digest artifact `verified` left
-    uses: ./.github/workflows/umbrel-store.yml
-    with:
-      image-digest: ${{ needs.verified.outputs.digest }}
-    secrets:
-      UMBREL_STORE_TOKEN: ${{ secrets.UMBREL_STORE_TOKEN }}
+  # The Umbrel store copy is not made here any more: publish-release.yml dispatches umbrel-store.yml once the release is
+  # published and signed (docs/design/signed-releases.md), and it takes this run's guardian-image-digest artifact.
 
   # Builds the image for this machine and starts it: the guardian must come up and answer /api/status.
   # Building alone does not show that every module the service imports is in the image (0.1.0-alpha and

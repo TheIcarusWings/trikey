@@ -708,12 +708,13 @@ printed and kept with the hardware wallet.
     writable `/tmp` and be loaded at the next start in place of the source, is turned off (`TSX_DISABLE_CACHE=1` in the
     Dockerfile, and in the Start9 package's environment). Up to 0.1.23 code that got into the guardian once could leave
     a cache entry there and run again after every restart, before the unlock (security sweep 2).
-  - **Decided, not built (2026-11-10): signed releases.** Each release gets a manifest of its files' SHA-256, signed
+  - **Signed releases (built 2026-11-10).** Each release gets a manifest of its files' SHA-256, signed
     with Trikey's nostr publisher key from the owner's signer app (never a GitHub secret) as a kind-1420 event, also
     published to relays, and `publish-release.yml` refuses to publish without it; the Umbrel store is updated only
-    after publishing, and only once the signature checks. It stops a compromised workflow or build dependency from publishing; a release made
-    by hand from a stolen GitHub account is caught only where the signature is checked (the app, later). Design:
-    docs/design/signed-releases.md.
+    after publishing, and only once the signature checks (`packaging/release-signature.py`, standard-library Python;
+    the owner signs with `tools/release/sign-release.mjs`). It stops a compromised workflow or build dependency from
+    publishing; a release made by hand from a stolen GitHub account is caught only where the signature is checked (the
+    app, later). Design: docs/design/signed-releases.md.
   - **Not built yet (TODO):** downloading the APK in the app and checking its signing certificate before handing it to
     Android's installer (`PackageManager.getPackageArchiveInfo(path, GET_SIGNING_CERTIFICATES)` against the built-in
     certificate, in a small local Expo module without Google code, both variants). It needs the

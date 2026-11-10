@@ -5,6 +5,9 @@ server, so the Docker image is built to be reproducible: building the source of 
 gives the same image, byte for byte, as the one on GHCR. You can check that yourself in about
 fifteen minutes.
 
+Every release (from the first after 0.1.26-alpha) is also **signed by Trikey's publisher key**, off GitHub: see
+[Check a release's signature](#check-a-releases-signature) at the end. That takes a minute and Python.
+
 ## What you need
 
 - `git`, `jq`, and Docker with `buildx`.
@@ -167,3 +170,37 @@ see `SECURITY.md`.
 
 To update a pin (the base image, BuildKit), change it in a commit of its own with the new digest
 and the reason, so the change is visible in review.
+
+## Check a release's signature
+
+Each release has, next to its other files, a manifest `trikey-<tag>-SHA256SUMS` (the SHA-256 of every other file) and
+`trikey-<tag>-SHA256SUMS.event.json`, a nostr event that signs the manifest with Trikey's publisher key. That key is
+in the owner's signer app, never on GitHub, so a release that someone else put on GitHub (a hijacked account, a
+malicious workflow) does not carry a valid signature. Why and what it does not prove: docs/design/signed-releases.md.
+
+**With this repository's script** (Python 3, standard library only):
+
+```sh
+git clone https://github.com/TheIcarusWings/trikey && cd trikey
+tag=v0.1.27-alpha
+mkdir "/tmp/${tag}" && gh release download "${tag}" --repo TheIcarusWings/trikey --dir "/tmp/${tag}"
+python3 -I packaging/release-signature.py check --tag "${tag}" --dir "/tmp/${tag}"
+```
+
+(Without `gh`, download every file of the release from its page into one folder.) It checks that the manifest lists
+exactly the release's other files with their hashes, and that the event is the expected one, signed by the key in
+`packaging/release-signer.npub`. Compare that npub with the one on Trikey's Zapstore listings (docs/zapstore.md): the
+script trusts the file in your checkout, so a checkout from somewhere else proves nothing.
+
+**With standard tools**, without our script:
+
+1. The files: `sha256sum -c trikey-<tag>-SHA256SUMS` in the folder with the release's files.
+2. The event: `nak verify < trikey-<tag>-SHA256SUMS.event.json` ([nak](https://github.com/fiatjaf/nak)), and its
+   `pubkey` is Trikey's publisher key (`npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`, which is
+   `072104ced2b692c1c7502757f59befb428184086f5c7749c41984bb4beb9a495` in hex), its `kind` is 1420 and its tags are
+   `["x", "<sha256sum of the manifest>"]` and `["version", "<tag>"]`.
+3. The same event is on nostr relays: `nak req -k 1420 -a 072104ced2b692c1c7502757f59befb428184086f5c7749c41984bb4beb9a495 wss://relay.damus.io`
+   lists every release the publisher signed. A release on GitHub with no signature there is a reason to ask.
+
+What a valid signature proves: the holder of Trikey's publisher key released exactly these files. What it does not:
+that the code is safe (reproducible builds and reading the code are for that), or that the key was not stolen.
