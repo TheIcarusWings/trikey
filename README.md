@@ -20,8 +20,8 @@ Any two keys move money. The guardian only co-signs what its rules allow, it
 talks to your phone over encrypted nostr relays, and it never opens a port on
 your home network.
 
-No home server? **Recovery Key mode** keeps key 3 offline (a printed kit, an NFC
-card or a second hardware wallet) and gives the phone a small spending balance
+No home server? **Recovery Key mode** keeps key 3 offline (a printed kit or a
+second hardware wallet) and gives the phone a small spending balance
 refilled by pre-signed, timelocked refills.
 
 > **Status: pre-alpha.** Not audited. Use testnet, signet or regtest. The app also
