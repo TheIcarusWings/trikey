@@ -127,7 +127,7 @@ and a packaging workspace set up:
 
 ```sh
 cd packaging/start9
-npm ci
+npm ci --ignore-scripts
 make            # trikey-guardian_x86_64.s9pk and trikey-guardian_aarch64.s9pk
 ```
 

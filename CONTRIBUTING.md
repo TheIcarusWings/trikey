@@ -12,6 +12,12 @@ npm run typecheck
 npm test
 ```
 
+`.npmrc` turns off dependency install scripts, as CI and the Docker build do
+(`npm ci --ignore-scripts`), so a hijacked release can't run code on your machine while it
+installs. If a package ever needs its script, run `npm rebuild <package> --ignore-scripts=false`
+for that one package. `packaging/start9` is a separate project, so pass `--ignore-scripts` to its
+`npm ci` yourself.
+
 ## Layout
 
 | Path | What it is |
