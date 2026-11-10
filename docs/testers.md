@@ -13,9 +13,9 @@ on mainnet anyway, use only an amount you can afford to lose.
   quick to sync ([test plan, "Signet or testnet4 on the Umbrel"](alpha-test-plan.md#signet-or-testnet4-on-the-umbrel-path-b-only)).
 - **A phone (key 2):** Android 7 or newer is easiest. An iPhone works too, but for now you build the app yourself on a
   Mac with a free Apple ID, and rebuild it every 7 days ([apps/mobile/README.md](../apps/mobile/README.md)).
-- **A hardware wallet (key 1):** Ledger, Trezor, Coldcard, Jade, BitBox02, Keystone, Passport, Krux, SeedSigner or Specter
-  DIY. Every device except the Ledger is **still untested on real hardware**, so a report on any of them is very
-  welcome. Have its test-network app or mode ready (a Ledger needs "Bitcoin Test").
+- **A hardware wallet (key 1):** Ledger, Trezor, Coldcard, Jade, BitBox02, Keystone, Passport, Krux or Specter DIY.
+  (A SeedSigner can't approve the guardian's rule changes, so it only works with Recovery Key mode.) Every device
+  except the Ledger is **still untested on real hardware**, so a report on any of them is very welcome. Have its test-network app or mode ready (a Ledger needs "Bitcoin Test").
 - **A nostr app** (Damus, Amethyst, Primal) with an account you can read: it becomes your alert contact.
 - **Paper and a pen** for the recovery code.
 
