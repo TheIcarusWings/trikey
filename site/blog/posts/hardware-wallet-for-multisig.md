@@ -86,7 +86,7 @@ In a multisig, using devices from different vendors means one vendor's bug or su
 
 ## How Trikey approaches it
 
-In [Trikey](https://trikey.app), the hardware wallet is key 1: it approves payments over your daily limit, every loosening of the rules, pairing with the guardian, and recovery access for a new phone. That puts more weight on the features above than a plain multisig does. From the design document's [hardware wallets by feature](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#hardware-wallets-by-feature):
+In [Trikey](/), the hardware wallet is key 1: it approves payments over your daily limit, every loosening of the rules, pairing with the guardian, and recovery access for a new phone. That puts more weight on the features above than a plain multisig does. From the design document's [hardware wallets by feature](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#hardware-wallets-by-feature):
 
 - **Script:** plain `wsh(sortedmulti(2,…))` on BIP 48 paths, chosen because every major device can co-sign it.
 - **Registration and address check:** the wallet is registered on devices that need it (Ledger, BitBox02, Jade, Coldcard), and the vault's first address is shown on the device for you to compare, for every device.

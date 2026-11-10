@@ -84,7 +84,7 @@ Larger setups such as 3-of-5 tolerate two lost keys and make theft harder, but e
 
 ## How Trikey approaches it
 
-[Trikey](https://trikey.app) is an open-source 2-of-3 wallet in which you hold all three keys, and each pair has one job:
+[Trikey](/) is an open-source 2-of-3 wallet in which you hold all three keys, and each pair has one job:
 
 - **Key 1, any hardware wallet** (Ledger, Trezor, Coldcard, Jade, BitBox02 and others), kept in a drawer.
 - **Key 2, your phone**, behind its biometrics.

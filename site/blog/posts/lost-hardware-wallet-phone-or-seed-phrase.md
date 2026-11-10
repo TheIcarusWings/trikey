@@ -75,7 +75,7 @@ Some wallets let a single surviving key start a recovery, but only after a waiti
 
 ## How Trikey approaches it
 
-[Trikey](https://trikey.app) is a 2-of-3 wallet with a hardware wallet (key 1), your phone (key 2) and the Trikey Guardian on your own home server (key 3). Its recovery flows follow the cases above:
+[Trikey](/) is a 2-of-3 wallet with a hardware wallet (key 1), your phone (key 2) and the Trikey Guardian on your own home server (key 3). Its recovery flows follow the cases above:
 
 | What you lost | What happens in Trikey |
 |---|---|

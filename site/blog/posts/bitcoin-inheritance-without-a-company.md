@@ -80,7 +80,7 @@ Several collaborative custody companies (Casa, Unchained and Nunchuk among them)
 
 ## How Trikey approaches it
 
-[Trikey](https://trikey.app) has **no dedicated inheritance feature today**. It is a 2-of-3 wallet where you hold all three keys (a hardware wallet, your phone, and the Trikey Guardian on your own home server), and several of its choices make the plan above easier:
+[Trikey](/) has **no dedicated inheritance feature today**. It is a 2-of-3 wallet where you hold all three keys (a hardware wallet, your phone, and the Trikey Guardian on your own home server), and several of its choices make the plan above easier:
 
 - **A standard descriptor.** Every wallet is a plain `wsh(sortedmulti(2,…))` on BIP 48 paths, and the phone's backup holds it. Any multisig-capable wallet can recover the coins with two of your keys, without Trikey, so your heirs do not depend on the project still existing.
 - **A pair that needs no server.** The phone key and the hardware wallet together can move any amount without the guardian. The phone key comes back from an encrypted backup file plus a recovery code written on paper, which the app tells you to keep apart: your letter should say where each is.

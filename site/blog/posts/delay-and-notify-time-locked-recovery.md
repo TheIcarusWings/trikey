@@ -81,7 +81,7 @@ A week is a common floor. Thirty days suits people who are often out of reach. W
 
 ## How Trikey approaches it
 
-[Trikey](https://trikey.app) uses a cosigner-enforced Delay & Notify, with one difference from Bitkey: the cosigner, the Trikey Guardian, runs on your own home server, so no company holds a key or decides on a recovery. From the design document's [rules the guardian enforces](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces):
+[Trikey](/) uses a cosigner-enforced Delay & Notify, with one difference from Bitkey: the cosigner, the Trikey Guardian, runs on your own home server, so no company holds a key or decides on a recovery. From the design document's [rules the guardian enforces](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces):
 
 - **You pick the delay:** 7, 14 or 30 days.
 - **Starting a recovery pauses phone-only payments**, so a phone thief who starts one gains nothing in the meantime.

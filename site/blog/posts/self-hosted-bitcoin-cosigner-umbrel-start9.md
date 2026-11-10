@@ -70,7 +70,7 @@ Automatic backups of a server can quietly create extra copies of the co-signer's
 
 ## How Trikey approaches it
 
-[Trikey](https://trikey.app)'s key 3 is the **Trikey Guardian**, an app for your own home server: an Umbrel (through a community app store), a Start9 (a package you build yourself for now), or any Mac, PC, Linux machine or NAS with Docker. From the design document's [components](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#components) and [threat model](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model):
+[Trikey](/)'s key 3 is the **Trikey Guardian**, an app for your own home server: an Umbrel (through a community app store), a Start9 (a package you build yourself for now), or any Mac, PC, Linux machine or NAS with Docker. From the design document's [components](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#components) and [threat model](https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model):
 
 - **It reads the chain from your own node** by default (the box's Electrs on Umbrel and Start9), or from Bitcoin Core alone. A public Electrum server is possible for people without a node, behind a warning: it would see the wallet's addresses and could hide coins, but never spend or change a rule.
 - **It opens no port at home.** The phone and the guardian talk through nostr relays, both connecting outwards, with messages end-to-end encrypted ([NIP-44](https://github.com/nostr-protocol/nips/blob/master/44.md)) inside gift wraps ([NIP-59](https://github.com/nostr-protocol/nips/blob/master/59.md)). Relays see ciphertext and metadata; they can drop a message, not read or forge one.
