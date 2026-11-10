@@ -24,7 +24,7 @@ Visual walkthrough (private canvas): https://claude.ai/artifact/NV7SCZja8ik9LAvu
 | Script | Plain `wsh(sortedmulti(2,…))`, BIP48 paths (`m/48'/coin'/0'/2'`) | The only script every hardware wallet can co-sign, Trezor included. Miniscript, taproot multisig and MuSig2 all exclude major devices. |
 | Key 3 | Trikey Guardian on the user's Umbrel or Start9 (both in the MVP), or on plain Docker (`packaging/compose`: a Mac, a PC, Linux, a NAS) against the user's own node | Bitkey's features with no third party |
 | No home server | Recovery Key mode (below) | Same script; Bitcoin's timelock rules enforce the limit |
-| Key 2 backup | Encrypted cloud backup, unlocked by passkey | The user picks the cloud. Losing the backup is survivable: see the recovery flows. |
+| Key 2 backup | Encrypted backup file, unlocked by the recovery code (or a passkey, in builds with a passkey domain) | The user picks where it goes (a file, iCloud or Google Drive where the build has them). Losing the backup is survivable: see the recovery flows. |
 | Optional extra | Timelocked heir/backstop path for miniscript-capable devices | Opt-in only, so the default stays universal |
 | Savings (optional) | A second wallet, `wsh(sortedmulti(2, phone, hardware, recoveryKey))` at BIP 48 account 1', the Recovery Key a second hardware wallet; the guardian only watches it ("Savings" below) | The daily limit lives in the guardian's code; only a script keeps phone + guardian away from money. Opt-in, never part of onboarding |
 | First client | React Native mobile app | Ledger Bluetooth and Trezor Connect have JS SDKs |
@@ -71,8 +71,12 @@ Hardware (key 1) ───┘   outbound only           └── alerts: nostr 
 - **Wallet registration** on devices that need it (Ledger, BitBox02, Jade, Coldcard), plus showing the first address on the device.
 - **Cloud backup of key 2 + the descriptor:**
   - XChaCha20-Poly1305 under a random data key;
-  - the data key is wrapped by a passkey PRF slot (WebAuthn L3, iOS 18+, Google Password Manager);
-  - more unlock slots can be added later, such as a Recovery Code.
+  - the data key is wrapped by a recovery-code slot (Argon2id; always there), and by a passkey PRF slot (WebAuthn L3,
+    iOS 18+, Google Password Manager) in builds that set a passkey domain (`EXPO_PUBLIC_PASSKEY_RP_ID`). The published
+    Android builds and the iPhone built from source leave it unset for now (`android-build.yml`, `ios-launch.yml`), so
+    their backups open with the recovery code;
+  - the backup is a file the person saves where they like, and iCloud or Google Drive in builds that have them
+    (`packages/wallet/src/backup.ts`).
 
 ### Hardware wallets by feature
 
@@ -456,7 +460,7 @@ alternatives (WhatsApp among them): docs/design/notifications.md.
 |---|---|---|
 | Everyday payment | phone + guardian | Within the limit, Face ID only |
 | Big payment, raise the limit | phone + hardware | The guardian isn't involved |
-| New phone, backup available | none | Restore key 2 with the passkey, no waiting |
+| New phone, backup available | none | Restore key 2 with the recovery code (or the passkey, where the build has one), no waiting |
 | Lost phone, no backup | hardware + guardian | The new phone scans the guardian's recovery code, the hardware wallet lets it in, Delay & Notify, a sweep to a new wallet, and the guardian then guards that wallet |
 | Lost hardware wallet | none, or phone + guardian | Restore the seed words, or use Delay & Notify (the guardian then guards the new wallet). Before the recovery starts, the new device registers the new wallet, shows its first address and signs a pairing proof, so a swapped key export is caught before anything moves |
 | Someone fakes a recovery | any device or contact | Tap Cancel on the alert |
