@@ -299,8 +299,8 @@ From `apps/guardian/src/http/api.ts` and `apps/guardian-web/API.md`. All need a 
 
 ### Security-relevant third-party dependencies
 
-Versions as resolved in `package-lock.json` (the `package.json` ranges are carets; the lockfile pins them, and the
-Docker build uses `npm ci`).
+Versions as resolved in `package-lock.json` (the `package.json` ranges are carets; the lockfile pins them, and CI and the
+Docker build use `npm ci --ignore-scripts`; Dependabot waits seven days after a release before proposing it).
 
 | Package | Version | Used by | For |
 |---|---|---|---|
@@ -415,7 +415,7 @@ a simulated phone and contact), `rotation*.test.ts`, `limit*.test.ts`, `recovery
 
 | Workflow | What it checks |
 |---|---|
-| `ci.yml` | Builds `tools/consensus-verify`, `npm ci`, `npm run typecheck`, `npm test`; a `secrets` job runs gitleaks (`.gitleaks.toml`); an `action-pins` job fails if any `uses:` is not pinned to a full commit SHA (Dependabot, `.github/dependabot.yml`, proposes updates) |
+| `ci.yml` | Builds `tools/consensus-verify`, `npm ci --ignore-scripts`, `npm run typecheck`, `npm test`; a `secrets` job runs gitleaks (`.gitleaks.toml`); an `action-pins` job fails if any `uses:` is not pinned to a full commit SHA (Dependabot, `.github/dependabot.yml`, proposes updates) |
 | `e2e.yml` | The regtest end-to-end suite with real bitcoind and Electrs |
 | `docker.yml` | Builds the guardian image and smoke-starts it (waits for `/api/status`); pushes only on `v*` tags (one tag, `<version>`), from a `publish` job in the `release` environment; calls `reproducible.yml` beside it, and only if that rebuilds the pushed digest (`verified`) attaches the compose file and calls `start9.yml` and `umbrel-store.yml` with it |
 | `reproducible.yml` | Builds the image twice and compares digests; on a release tag, its digest gates docker.yml's downstream jobs |

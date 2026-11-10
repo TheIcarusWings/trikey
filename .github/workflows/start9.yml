@@ -72,7 +72,8 @@ jobs:
 
       - name: Install
         working-directory: packaging/start9
-        run: npm ci
+        # --ignore-scripts: no dependency install hook runs here (docker/Dockerfile does the same). esbuild works without its postinstall.
+        run: npm ci --ignore-scripts
 
       - name: Type-check
         working-directory: packaging/start9
@@ -180,7 +181,8 @@ jobs:
           start-cli --version
 
       - name: Install
-        run: npm ci
+        # --ignore-scripts: no dependency install hook runs here (docker/Dockerfile does the same). esbuild works without its postinstall.
+        run: npm ci --ignore-scripts
 
       # A throwaway key, made here and gone with the runner: the .s9pk is signed, but by no key anyone could trust.
       # `init-key` makes the identity key; `s9pk pack` signs with the workspace build key in the nearest `.startos/`.

@@ -137,7 +137,8 @@ jobs:
             *) echo "::error::Unknown variant: ${TRIKEY_ANDROID_VARIANT} (standard or foss)"; exit 1 ;;
           esac
 
-      - run: npm ci
+      # --ignore-scripts: this job builds the APK that the sign job below signs, so no dependency install hook may run here (docker/Dockerfile does the same). esbuild works without its postinstall.
+      - run: npm ci --ignore-scripts
 
       # The application id the build will have: android.package from app.json, as app.config.ts resolves it
       # (TRIKEY_ANDROID_PACKAGE overrides it for a fork). The APK is checked against it below, and the launch
