@@ -1,17 +1,22 @@
 name: Site
 
 # Checks site/ before Vercel deploys it to https://trikey.app.
-# Vercel deploys on its own from the GitHub repo; see site/README.md.
+# Vercel deploys on its own from the GitHub repo and runs no build step; see site/README.md.
+# The blog's HTML is generated from site/blog/posts/*.md by tools/site/build-blog.mjs and
+# committed, so this fails if a post changed without regenerating.
 
 on:
   push:
     branches: [main]
     paths:
       - "site/**"
+      - "tools/site/**"
       - ".github/workflows/site.yml"
   pull_request:
     paths:
       - "site/**"
+      - "tools/site/**"
+      - ".github/workflows/site.yml"
   workflow_dispatch:
 
 permissions:
@@ -22,26 +27,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
 
-      - name: Validate the site
+      - name: Validate the JSON files
         shell: bash
         run: |
           set -euo pipefail
-
           # The domain verification files must be valid JSON.
           for f in site/.well-known/apple-app-site-association site/.well-known/assetlinks.json site/vercel.json; do
             node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$f"
             echo "valid JSON: $f"
           done
 
-          # The page must load nothing from other sites. Links to github.com
-          # and to trikey.app itself are the only absolute URLs allowed in
-          # src and href attributes.
-          bad=$(grep -oE '(src|href)="https?://[^"]*"' site/index.html \
-            | grep -vE '="https?://(www\.)?(github\.com|trikey\.app)(/|")' || true)
-          if [ -n "$bad" ]; then
-            echo "::error file=site/index.html::Disallowed external URL in src/href:"
-            echo "$bad"
-            exit 1
-          fi
-          echo "no external references in site/index.html"
+      # No dependencies: both scripts use only Node's standard library, so no npm ci.
+      - name: The blog's generated files match its posts
+        run: node tools/site/build-blog.mjs --check
+
+      # Every page: lang, the strict CSP, title, one h1, description and canonical
+      # (unless noindex), alt/width/height on images, JSON-LD that parses, links
+      # that resolve, and nothing loaded from another site. Links to other sites:
+      # only github.com and trikey.app, except cited sources in blog posts.
+      # sitemap.xml and the feed must be well-formed and complete.
+      - name: Check every page
+        run: node tools/site/check-site.mjs

@@ -4,15 +4,136 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; form-action 'none'">
-<title>Trikey: One key gone. Your bitcoin isn’t.</title>
-<meta name="description" content="Trikey is an open source 2-of-3 bitcoin wallet that is easy to use, and no company holds a key: your phone, your hardware wallet and your own home server. Pre-alpha, for testers. Not audited.">
+<title>Trikey: 2-of-3 multisig bitcoin wallet with no company key</title>
+<meta name="description" content="Trikey is an open source 2-of-3 multisig bitcoin wallet: your phone, any hardware wallet and a guardian on your own home server. No company key. Pre-alpha.">
+<meta name="dcterms.modified" content="2026-11-10">
+<link rel="canonical" href="https://trikey.app/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Trikey">
+<meta property="og:url" content="https://trikey.app/">
+<meta property="og:title" content="Trikey: a 2-of-3 multisig bitcoin wallet. No company holds a key.">
+<meta property="og:description" content="Your phone, any hardware wallet and a guardian on your own Umbrel, Start9 or Docker box. Any two keys move your money. Open source, pre-alpha, not audited.">
+<meta property="og:image" content="https://trikey.app/img/share.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The Trikey logo, a triangle of three dots, next to the words: A 2-of-3 multisig bitcoin wallet. No company holds a key.">
+<meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="alternate" type="application/rss+xml" title="Trikey blog" href="/blog/feed.xml">
 <link rel="preload" href="fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="style.css">
-<script src="js/story.js"></script>
+<script src="js/story.js" defer></script>
+<!-- Structured data for search engines. JSON-LD is data, not script: the CSP doesn't apply to it and nothing runs. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://trikey.app/#organization",
+      "name": "Trikey",
+      "url": "https://trikey.app/",
+      "logo": "https://trikey.app/apple-touch-icon.png",
+      "sameAs": ["https://github.com/TheIcarusWings/trikey"]
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://trikey.app/#website",
+      "name": "Trikey",
+      "url": "https://trikey.app/",
+      "inLanguage": "en",
+      "publisher": { "@id": "https://trikey.app/#organization" }
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://trikey.app/#app",
+      "name": "Trikey",
+      "description": "An open source 2-of-3 multisig bitcoin wallet. The keys are your phone, any hardware wallet and Trikey Guardian on your own home server (Umbrel, Start9 or Docker). Payments under a daily limit need only the phone; a lost key is recovered with a Delay & Notify waiting period. Pre-alpha, not audited.",
+      "url": "https://trikey.app/",
+      "applicationCategory": "FinanceApplication",
+      "operatingSystem": "Android, iOS",
+      "license": "https://opensource.org/licenses/MIT",
+      "isAccessibleForFree": true,
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "downloadUrl": "https://github.com/TheIcarusWings/trikey/releases",
+      "sameAs": ["https://github.com/TheIcarusWings/trikey"],
+      "screenshot": "https://trikey.app/img/phone-send-review.webp",
+      "image": "https://trikey.app/img/share.png",
+      "publisher": { "@id": "https://trikey.app/#organization" }
+    }
+  ]
+}
+</script>
+<!-- FAQPage: generated from the Questions section below by tools/site/build-blog.mjs. Edit the questions, then rebuild. -->
+<script type="application/ld+json" id="faq-jsonld">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Is Trikey ready to use?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. It's pre-alpha and hasn't been audited, so don't use it with real funds. Alpha releases are out for testers on testnet, signet and regtest: the test plan says how to install and what to try. An independent security review is planned before mainnet."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does anyone at Trikey hold one of my keys?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. All three keys are yours. Nobody runs a server, a guardian or a cosigner for you: the guardian is an app on your own home server."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What if Trikey goes away?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Your wallet is a plain wsh(sortedmulti(2,…)) descriptor on standard BIP 48 paths, and your phone's backup holds it. Any multisig-capable wallet can recover your coins with two of your keys, no Trikey needed."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Do I need a home server?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. Recovery Key mode keeps key 3 offline, on a printed Recovery Kit or a second hardware wallet, and gives the phone a small spending balance refilled by timelocked, pre-signed refills. Recovery then takes any two keys, with no waiting period."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Which hardware wallets work?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Ledger and Trezor over Bluetooth, and QR devices such as Coldcard, Keystone, Passport, Jade and Krux. SeedSigner can't approve the guardian's rule changes, so it co-signs payments only and works with Recovery Key mode."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can the nostr relays see my wallet?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. Every message is end-to-end encrypted to the other side. A relay can drop messages, but it can't read or forge them. You can use several relays, or run your own."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What if someone hacks my home server?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "They get one key of three: the same exposure as a company's cosigning server being breached. They still need a second key to move anything, and the guardian only co-signs phone payments under your limit."
+      }
+    }
+  ]
+}
+</script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -29,6 +150,7 @@
       <a class="nav-wide" href="#missing">If a key goes missing</a>
       <a class="nav-wide" href="#watch">Watch</a>
       <a class="nav-wide" href="#faq">Questions</a>
+      <a href="/blog">Blog</a>
       <a class="nav-cta" href="https://github.com/TheIcarusWings/trikey">Follow on GitHub</a>
     </nav>
   </header>
@@ -64,7 +186,7 @@
       <div class="chapter" aria-hidden="true"><span>I · The old choice</span><i></i></div>
       <div class="shot shot-wide" data-from="0" data-to="0.3">
         <div class="frame frame-dark">
-          <img class="media" src="media/scrub-tower.webp" width="1280" height="720" alt="A tall glass office tower at night, every window lit.">
+          <img class="media" src="media/scrub-tower.webp" width="1280" height="720" loading="lazy" alt="A tall glass office tower at night, every window lit.">
           <video class="media" data-scrub muted playsinline preload="metadata" poster="media/scrub-tower.webp" aria-hidden="true"><source src="media/scrub-tower.mp4" type="video/mp4"></video>
           <div class="overlay overlay-center"><h2 id="choice-h" class="beat beat-hero">For years, holding bitcoin meant a choice.</h2></div>
         </div>
@@ -116,7 +238,7 @@
       <div class="shot" data-from="0.6" data-to="0.8">
         <div class="frame frame-dark">
           <img class="media" src="media/loop-shelf.webp" width="1280" height="720" loading="lazy" alt="A small grey box with a soft white light on a home bookshelf, between books and plants.">
-          <video class="media" autoplay muted loop playsinline preload="none" poster="media/loop-shelf.webp" aria-hidden="true"><source src="media/loop-shelf.mp4" type="video/mp4"></video>
+          <video class="media" data-loop muted loop playsinline preload="none" poster="media/loop-shelf.webp" aria-hidden="true"><source src="media/loop-shelf.mp4" type="video/mp4"></video>
           <div class="overlay"><p class="eyebrow">Key 3 · Trikey Guardian</p><p class="beat beat-hero">One on a shelf at home.</p></div>
         </div>
       </div>
@@ -336,7 +458,7 @@
       <div class="shot shot-creed" data-from="0" data-to="1">
         <div class="frame frame-dark">
           <img class="media" src="media/loop-bridge.webp" width="1280" height="720" loading="lazy" alt="">
-          <video class="media" autoplay muted loop playsinline preload="none" poster="media/loop-bridge.webp" aria-hidden="true"><source src="media/loop-bridge.mp4" type="video/mp4"></video>
+          <video class="media" data-loop muted loop playsinline preload="none" poster="media/loop-bridge.webp" aria-hidden="true"><source src="media/loop-bridge.mp4" type="video/mp4"></video>
           <ul class="overlay creed">
             <li class="beat beat-hero" data-from="0" data-to="1">No company holds a key.</li>
             <li class="beat beat-hero" data-from="0.3" data-to="1">No server but yours.</li>
@@ -762,7 +884,7 @@
         </div>
       </div>
       <div class="follow">
-        <p class="notice"><strong>Pre-alpha and not audited. Don't use it with real funds.</strong> Alpha releases are for testers, on testnet, signet and regtest: the <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/alpha-test-plan.md">test plan</a>, the <a href="#watch">setup tutorials</a>, and the Android app on <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/zapstore.md">Zapstore</a> or <a href="/obtainium">Obtainium</a>. An independent security review is planned before mainnet. Know the trade-offs too: a remote compromise of your home server gives up one key of three, and phone-only payments wait while the guardian is offline.</p>
+        <p class="notice"><strong>Pre-alpha and not audited. Don't use it with real funds.</strong> Alpha releases are for testers, on testnet, signet and regtest: the <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md">testers' quickstart</a>, the <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/alpha-test-plan.md">test plan</a>, the <a href="#watch">setup tutorials</a>, and the Android app on <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/zapstore.md">Zapstore</a> or <a href="/obtainium">Obtainium</a>. An independent security review is planned before mainnet. Know the trade-offs too: a remote compromise of your home server gives up one key of three, and phone-only payments wait while the guardian is offline.</p>
         <p class="aside">On nostr: <span class="mono">trikey@trikey.app</span>.</p>
       </div>
     </div>
@@ -778,8 +900,18 @@
           <p class="eyebrow">Project</p>
           <ul>
             <li><a href="https://github.com/TheIcarusWings/trikey">Source on GitHub</a></li>
+            <li><a href="/blog">Blog</a></li>
             <li><a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md">Design</a></li>
             <li><a href="https://github.com/TheIcarusWings/trikey/blob/main/LICENSE">MIT license</a></li>
+          </ul>
+        </div>
+        <div>
+          <p class="eyebrow">Test it</p>
+          <ul>
+            <li><a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md">Testers' quickstart</a></li>
+            <li><a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/alpha-test-plan.md">Test plan</a></li>
+            <li><a href="/obtainium">Android with Obtainium</a></li>
+            <li><a href="https://github.com/TheIcarusWings/trikey/releases">Releases</a></li>
           </ul>
         </div>
         <div>
