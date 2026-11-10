@@ -55,7 +55,7 @@ Hardware (key 1) ───┘   outbound only           └── alerts: nostr 
 ```
 
 ### Mobile app (React Native)
-- **Key 2:** BIP39 seed, encrypted at rest with a key from the Secure Enclave or Android Keystore. Those chips can't hold secp256k1 keys directly, so they wrap the seed instead. Unlocking needs biometrics.
+- **Key 2:** BIP39 seed, encrypted at rest with a key from the Secure Enclave or Android Keystore. Those chips can't hold secp256k1 keys directly, so they wrap the seed instead. Unlocking needs biometrics. Everything else the phone keeps, and where (secure store or the app's files), is listed in [docs/security/phone-storage.md](docs/security/phone-storage.md).
   - **Optional security key lock (wallet core only, not in the app yet; off by default):** the wallet core can also
     lock the seed under a key only a YubiKey gives (FIDO2 PRF or PIV key agreement), so every use of key 2 needs
     biometrics and the YubiKey. It's one setting for the phone, covering every wallet on it, and it doesn't touch the
