@@ -1,0 +1,7 @@
+# trikey.app: everything public may be crawled. Pages that shouldn't be in
+# search results (the 404 page, the passkey test) say so with a noindex meta
+# tag, which crawlers can only see if they may fetch the page.
+User-agent: *
+Allow: /
+
+Sitemap: https://trikey.app/sitemap.xml

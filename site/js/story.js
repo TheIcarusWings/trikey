@@ -55,7 +55,9 @@
 // As the track scrolls past, the section gets --p (0..1), every element with
 // data-from/data-to inside it gets the class "on" while --p is in its range,
 // and --q (0..1, progress within that range). A video with data-scrub follows
-// the progress of its shot instead of playing.
+// the progress of its shot instead of playing; a video with data-loop plays
+// while its scene is on screen. Neither downloads until its scene comes near,
+// so the page's first load is just the poster images.
 //
 // Without this script, or with reduced motion, nothing here runs and the
 // scenes stay a plain stack of cards.
@@ -83,12 +85,8 @@
           video: part.querySelector('video[data-scrub]'),
         };
       });
-      parts.forEach(function (part) {
-        if (!part.video) return;
-        part.video.preload = 'auto';
-        part.video.load();
-      });
-      return { el: el, parts: parts, visible: false };
+      var loops = Array.prototype.slice.call(el.querySelectorAll('video[data-loop]'));
+      return { el: el, parts: parts, loops: loops, visible: false, loaded: false };
     });
     if (!pins.length) return;
 
@@ -130,7 +128,24 @@
     var io = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
         pins.forEach(function (pin) {
-          if (pin.el === entry.target) pin.visible = entry.isIntersecting;
+          if (pin.el !== entry.target) return;
+          pin.visible = entry.isIntersecting;
+          if (pin.visible && !pin.loaded) {
+            pin.loaded = true;
+            pin.parts.forEach(function (part) {
+              if (!part.video) return;
+              part.video.preload = 'auto';
+              part.video.load();
+            });
+          }
+          pin.loops.forEach(function (video) {
+            if (pin.visible) {
+              var playing = video.play();
+              if (playing && playing.catch) playing.catch(function () {});
+            } else {
+              video.pause();
+            }
+          });
         });
       });
       queue();
