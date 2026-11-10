@@ -653,6 +653,8 @@ export function markdownToHtml(markdown, options = {}) {
       }
       if (!t.external && options.checkInternal) {
         const problem = options.checkInternal(t.href);
+        // A post that's queued but not out yet: the words stay, the link appears once it's published.
+        if (problem && typeof problem === 'object' && problem.asText) return innerHtml;
         if (problem) errors.push(problem);
       }
       const rel = t.external && !/^mailto:/i.test(t.href) ? ' rel="noopener"' : '';

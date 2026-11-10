@@ -2,8 +2,11 @@
 export interface MarkdownOptions {
   /** Headings below this level are an error (2 for posts: the title is the only h1). */
   minHeading?: number;
-  /** Returns an error message for a bad link to this site, or null. */
-  checkInternal?: (href: string) => string | null;
+  /**
+   * Returns an error message for a bad link to this site, null when it's fine, or { asText: true } to render the
+   * link's words without the link (a queued post that isn't published yet).
+   */
+  checkInternal?: (href: string) => string | null | { asText: true };
   /** Returns the image's size, an error message, or null when unknown. */
   image?: (src: string) => { width: number; height: number } | string | null;
 }

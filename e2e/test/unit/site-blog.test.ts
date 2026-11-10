@@ -14,9 +14,12 @@ import {
   diffSite,
   htmlText,
   parseFrontMatter,
+  publishedSource,
+  queuedPosts,
   validatePost,
   writeSite,
 } from '../../../tools/site/build-blog.mjs';
+import { publishNext } from '../../../tools/site/publish-next.mjs';
 import { checkPage, checkSite, checkXml } from '../../../tools/site/check-site.mjs';
 import { markdownToHtml, wordCount } from '../../../tools/site/markdown.mjs';
 
@@ -25,11 +28,19 @@ afterEach(() => {
   for (const d of temps.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-/** A copy of site/ without the films and photos (big, and nothing here reads them). */
+/**
+ * A copy of site/ without the films and photos (big, and nothing here reads them), and with no posts but the example
+ * draft, so the tests don't depend on what's been published. The real posts' pages are left over in the copy until a
+ * test writes a build, which removes them.
+ */
 function siteCopy(): string {
   const dir = mkdtempSync(join(tmpdir(), 'trikey-site-'));
   temps.push(dir);
-  cpSync(SITE_DIR, dir, { recursive: true, filter: (src) => !src.startsWith(join(SITE_DIR, 'media')) });
+  const posts = join(SITE_DIR, 'blog', 'posts');
+  cpSync(SITE_DIR, dir, {
+    recursive: true,
+    filter: (src) => !src.startsWith(join(SITE_DIR, 'media')) && !(src.startsWith(`${posts}/`) && !src.endsWith('/example-post.md')),
+  });
   return dir;
 }
 
@@ -279,6 +290,74 @@ describe('front matter', () => {
     expect(validatePost({ ...ok, draft: 'yes' }, 'f.md', 'f').errors[0]).toMatch(/"draft" must be true or false/);
     expect(validatePost({ ...ok, author: 'me' }, 'f.md', 'f').warnings[0]).toMatch(/unknown front matter key "author"/);
     expect(validatePost({ ...ok, slug: 'Bad_Slug' }, 'f.md', 'Bad_Slug').errors[0]).toMatch(/lower-case words/);
+  });
+
+  it('takes "queue" on drafts only, as a whole number', () => {
+    const ok = { title: 'T', description: 'x'.repeat(140), date: '2026-11-10', draft: true };
+    expect(validatePost({ ...ok, queue: '3' }, 'f.md', 'f').post).toMatchObject({ queue: 3 });
+    expect(validatePost(ok, 'f.md', 'f').post).toMatchObject({ queue: null });
+    expect(validatePost({ ...ok, queue: '0' }, 'f.md', 'f').errors[0]).toMatch(/whole number from 1 to 9999/);
+    expect(validatePost({ ...ok, queue: 'soon' }, 'f.md', 'f').errors[0]).toMatch(/whole number/);
+    expect(validatePost({ ...ok, draft: false, queue: '1' }, 'f.md', 'f').errors[0]).toMatch(/only goes on a draft/);
+  });
+});
+
+describe('the daily queue', () => {
+  it('publishes the lowest queued draft, dated today, and links to it once it is out', () => {
+    const site = siteCopy();
+    const posts = join(site, 'blog/posts');
+    writeFileSync(
+      join(posts, 'first-post.md'),
+      post({ title: '"First"', description: DESC, date: '2026-11-01' }, 'See [the second](/blog/second-post) and [the third](/blog/third-post).'),
+    );
+    writeFileSync(
+      join(posts, 'second-post.md'),
+      post({ title: '"Second"', description: DESC, date: '2026-11-01', updated: '2026-11-02', draft: 'true', queue: '2' }, 'Body two.\n\n---\n\nqueue: 9 in the body stays.'),
+    );
+    writeFileSync(join(posts, 'third-post.md'), post({ title: '"Third"', description: DESC, date: '2026-11-01', draft: 'true', queue: '1' }, 'Body three.'));
+    writeFileSync(join(posts, 'held-post.md'), post({ title: '"Held"', description: DESC, date: '2026-11-01', draft: 'true' }, 'Never queued.'));
+
+    // Links to queued posts show their words without the link, with a warning.
+    const first = buildSite(site);
+    expect(first.posts.map((p) => p.slug)).toEqual(['first-post']);
+    expect(first.files.get('blog/first-post.html')).toContain('See the second and the third.');
+    expect(first.warnings.filter((w) => w.includes('is queued'))).toHaveLength(2);
+    writeSite(site, first.files);
+    expect(queuedPosts(site).map((q) => q.slug)).toEqual(['third-post', 'second-post']);
+
+    expect(publishNext(site, '2026-11-11')).toBe('third-post');
+    const third = parseFrontMatter(readFileSync(join(posts, 'third-post.md'), 'utf8')).data;
+    expect(third).toMatchObject({ draft: false, date: '2026-11-11' });
+    expect(third).not.toHaveProperty('queue');
+    const page = readFileSync(join(site, 'blog/first-post.html'), 'utf8');
+    expect(page).toContain('<a href="/blog/third-post">the third</a>');
+    expect(page).not.toContain('href="/blog/second-post"');
+    expect(diffSite(site, buildSite(site).files)).toEqual([]);
+    expect(checkSite(site)).toEqual([]);
+
+    expect(publishNext(site, '2026-11-12')).toBe('second-post');
+    const second = readFileSync(join(posts, 'second-post.md'), 'utf8');
+    expect(parseFrontMatter(second).data).toEqual(expect.objectContaining({ draft: false, date: '2026-11-12' }));
+    expect(second).not.toMatch(/^updated:/m);
+    expect(second).toContain('queue: 9 in the body stays.'); // only the front matter changes
+    expect(publishNext(site, '2026-11-13')).toBeNull(); // the held draft is never published by the queue
+    expect(readFileSync(join(site, 'blog/index.html'), 'utf8')).not.toContain('held-post');
+  });
+
+  it('leaves the post as it was when the build fails', () => {
+    const site = siteCopy();
+    const posts = join(site, 'blog/posts');
+    const src = post({ title: '"Broken"', description: DESC, date: '2026-11-01', draft: 'true', queue: '1' }, 'A [missing page](/nowhere).');
+    writeFileSync(join(posts, 'broken-post.md'), src);
+    expect(() => publishNext(site, '2026-11-11')).toThrow(BuildError);
+    expect(readFileSync(join(posts, 'broken-post.md'), 'utf8')).toBe(src);
+  });
+
+  it('rewrites only the front matter', () => {
+    expect(publishedSource('---\ntitle: "T"\ndate: 2026-11-01\ndraft: true   # queued\nqueue: 4\n---\n\ndraft: true\n', '2026-11-20')).toBe(
+      '---\ntitle: "T"\ndate: 2026-11-20\ndraft: false\n---\n\ndraft: true\n',
+    );
+    expect(() => publishedSource('---\n---\n', 'today')).toThrow(/not a date/);
   });
 });
 
