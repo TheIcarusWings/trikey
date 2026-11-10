@@ -4,8 +4,7 @@ description: "What happens to your bitcoin if you lose a hardware wallet, a phon
 date: 2026-11-10
 slug: lost-hardware-wallet-phone-or-seed-phrase
 keywords: [lost hardware wallet, lost seed phrase, phone stolen bitcoin wallet, recover bitcoin wallet, lost bitcoin keys]
-draft: true
-queue: 1
+draft: false
 ---
 Your bitcoin is not inside your hardware wallet or your phone. It sits on the blockchain, locked to keys, and a device is only a safe place to keep and use those keys. So what losing a device means depends on one question: **do you still have another way to produce the same keys?** This guide goes through the common cases, from a lost device with a good backup to a lost seed phrase, for single-key wallets and for multisig, and says what to do in each.
 
