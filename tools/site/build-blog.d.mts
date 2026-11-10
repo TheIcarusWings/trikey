@@ -13,6 +13,7 @@ export interface Post {
   slug: string;
   keywords: string[];
   draft: boolean;
+  queue: number | null;
   image: string | null;
   imageAlt: string | null;
   html?: string;
@@ -40,3 +41,5 @@ export function buildSite(
 export function staleFiles(siteDir: string, files: Map<string, string>): string[];
 export function diffSite(siteDir: string, files: Map<string, string>): string[];
 export function writeSite(siteDir: string, files: Map<string, string>): { written: string[]; removed: string[] };
+export function queuedPosts(siteDir?: string): { slug: string; title: string; queue: number; path: string }[];
+export function publishedSource(text: string, today: string): string;

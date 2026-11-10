@@ -26,7 +26,7 @@ const REPO = 'https://github.com/TheIcarusWings/trikey';
 const CSP = "default-src 'self'; base-uri 'none'; form-action 'none'";
 const DEFAULT_IMAGE = { path: '/img/share.png', width: 1200, height: 630, alt: 'The Trikey logo, a triangle of three dots, next to the words: A 2-of-3 multisig bitcoin wallet. No company holds a key.' };
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const KNOWN_KEYS = new Set(['title', 'description', 'date', 'updated', 'slug', 'keywords', 'draft', 'image', 'image_alt']);
+const KNOWN_KEYS = new Set(['title', 'description', 'date', 'updated', 'slug', 'keywords', 'draft', 'queue', 'image', 'image_alt']);
 const WORDS_PER_MINUTE = 225;
 
 export class BuildError extends Error {
@@ -156,6 +156,16 @@ export function validatePost(data, file, fileSlug) {
   const draft = data.draft ?? false;
   if (typeof draft !== 'boolean') err(`"draft" must be true or false (got ${JSON.stringify(draft)})`);
 
+  // queue: the order tools/site/publish-next.mjs takes drafts in, one a day (lowest first). A draft without it is
+  // never published by the queue.
+  let queue = data.queue ?? null;
+  if (queue !== null) {
+    const n = typeof queue === 'number' ? queue : typeof queue === 'string' && /^\d{1,4}$/.test(queue) ? Number(queue) : NaN;
+    if (!Number.isInteger(n) || n < 1 || n > 9999) err(`"queue" must be a whole number from 1 to 9999 (got ${JSON.stringify(queue)})`);
+    else if (draft !== true) err('"queue" only goes on a draft: it is the order the daily publish takes drafts in');
+    queue = n;
+  }
+
   const image = data.image ?? null;
   if (image !== null && (typeof image !== 'string' || !image.startsWith('/'))) err('"image" must be a path on this site, like /blog/img/post.png');
   const imageAlt = typeof data.image_alt === 'string' ? data.image_alt.trim() : null;
@@ -171,6 +181,7 @@ export function validatePost(data, file, fileSlug) {
       slug,
       keywords: keywords.map((k) => k.trim()).filter(Boolean),
       draft,
+      queue,
       image,
       imageAlt,
     },
@@ -647,7 +658,12 @@ export function buildSite(siteDir = SITE_DIR, { drafts = false } = {}) {
       const m = /^\/blog\/([^/]+)$/.exec(path);
       if (m && m[1] !== 'feed.xml' && !m[1].includes('.')) {
         if (slugs.has(m[1])) return null;
-        const isDraft = all.some((p) => p.slug === m[1]);
+        const target = all.find((p) => p.slug === m[1]);
+        if (target?.queue) {
+          warnings.push(`${post.file}: "${href}" is queued, not published yet: its words show without the link until it is`);
+          return { asText: true };
+        }
+        const isDraft = Boolean(target);
         return `${post.file}: link "${href}" goes to ${isDraft ? 'a draft' : 'a post that doesn\'t exist'}`;
       }
       if (path === '/blog' || path === '/blog/') return null;
@@ -708,6 +724,39 @@ export function buildSite(siteDir = SITE_DIR, { drafts = false } = {}) {
   files.set('sitemap.xml', sitemap(entries));
 
   return { files, posts, warnings };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The queue: one draft a day (tools/site/publish-next.mjs)
+
+/** The queued drafts in site/blog/posts, in publishing order (lowest "queue" first, then by slug). */
+export function queuedPosts(siteDir = SITE_DIR) {
+  const postsDir = join(siteDir, 'blog', 'posts');
+  if (!existsSync(postsDir)) return [];
+  const out = [];
+  for (const name of readdirSync(postsDir).filter((f) => f.endsWith('.md'))) {
+    const file = `site/blog/posts/${name}`;
+    const v = validatePost(parseFrontMatter(readFileSync(join(postsDir, name), 'utf8'), file).data, file, name.replace(/\.md$/, ''));
+    if (v.post?.queue) out.push({ slug: v.post.slug, title: v.post.title, queue: v.post.queue, path: join(postsDir, name) });
+  }
+  return out.sort((a, b) => a.queue - b.queue || a.slug.localeCompare(b.slug));
+}
+
+/**
+ * Turns a queued draft's front matter into a published post dated `today`: "draft: false", "date: today", and no
+ * "queue" or "updated" lines. Only the front matter changes; the body is left byte for byte.
+ */
+export function publishedSource(text, today) {
+  if (!isDate(today)) throw new Error(`not a date: ${today}`);
+  const src = String(text).replace(/\r\n?/g, '\n');
+  const end = src.indexOf('\n---', 3);
+  if (!src.startsWith('---\n') || end < 0) throw new Error('no front matter');
+  const head = src
+    .slice(4, end)
+    .split('\n')
+    .filter((l) => !/^(queue|updated)[ \t]*:/.test(l))
+    .map((l) => (/^draft[ \t]*:/.test(l) ? 'draft: false' : /^date[ \t]*:/.test(l) ? `date: ${today}` : l));
+  return `---\n${head.join('\n')}${src.slice(end)}`;
 }
 
 /** Generated files in site/blog/ that the current build no longer produces (a post was deleted or made a draft). */

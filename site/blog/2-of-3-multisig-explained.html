@@ -180,8 +180,8 @@
 <h2 id="what-multisig-does-not-fix">What multisig does not fix</h2>
 <ul>
 <li><strong>Two keys in one place.</strong> A burglar who finds two keys in the same house holds a spending pair.</li>
-<li><strong>Coercion.</strong> If someone can force you to use two keys, multisig alone does not stop them. Waiting periods and limits help more here (see <a href="/blog/delay-and-notify-time-locked-recovery">Delay &amp; Notify: why recovery should wait</a>).</li>
-<li><strong>Signing the wrong thing.</strong> If malware swaps the destination address and you approve it on both devices without reading the screen, the payment goes out. Devices that show the address you are paying, and the wallet&#39;s own change, are what protect you (see <a href="/blog/hardware-wallet-for-multisig">choosing a hardware wallet for multisig</a>).</li>
+<li><strong>Coercion.</strong> If someone can force you to use two keys, multisig alone does not stop them. Waiting periods and limits help more here (see Delay &amp; Notify: why recovery should wait).</li>
+<li><strong>Signing the wrong thing.</strong> If malware swaps the destination address and you approve it on both devices without reading the screen, the payment goes out. Devices that show the address you are paying, and the wallet&#39;s own change, are what protect you (see choosing a hardware wallet for multisig).</li>
 <li><strong>Lost metadata.</strong> Without the descriptor (or all the xpubs), the keys you hold may not be enough to find the coins.</li>
 </ul>
 <h2 id="2-of-3-or-3-of-5">2-of-3 or 3-of-5?</h2>
@@ -200,7 +200,7 @@
 <h3 id="is-2-of-3-multisig-safer-than-a-single-hardware-wallet">Is 2-of-3 multisig safer than a single hardware wallet?</h3>
 <p>It removes the single point of failure: one lost or stolen key no longer decides the outcome. It is only safer if you keep the three keys apart and back up the descriptor. Done carelessly, it adds ways to make mistakes.</p>
 <h3 id="can-i-recover-a-multisig-wallet-with-just-the-seed-words">Can I recover a multisig wallet with just the seed words?</h3>
-<p>Usually not with two seeds alone. You also need the third key&#39;s xpub, which is in the descriptor. Keep a copy of the descriptor with each key backup; it reveals your balance and history to whoever reads it, but it cannot spend. More in <a href="/blog/bitcoin-inheritance-without-a-company">bitcoin inheritance without a company</a>.</p>
+<p>Usually not with two seeds alone. You also need the third key&#39;s xpub, which is in the descriptor. Keep a copy of the descriptor with each key backup; it reveals your balance and history to whoever reads it, but it cannot spend. More in bitcoin inheritance without a company.</p>
 <h3 id="does-multisig-cost-more-in-fees">Does multisig cost more in fees?</h3>
 <p>Yes. Each multisig input carries two signatures and the script, so it is larger than a single-sig input and costs more to spend. Fewer, larger coins keep the difference small.</p>
 <h3 id="can-i-mix-hardware-wallet-brands-in-one-multisig">Can I mix hardware wallet brands in one multisig?</h3>
@@ -213,32 +213,6 @@
       <p class="post-note-links"><a href="/">How Trikey works</a> <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md">Help test it</a> <a href="https://github.com/TheIcarusWings/trikey">Source on GitHub</a></p>
     </aside>
   </article>
-  <section class="related" aria-labelledby="related-h">
-    <h2 id="related-h">Keep reading</h2>
-    <ul class="post-list">
-      <li>
-        <article>
-          <p class="post-meta"><time datetime="2026-11-10">10 November 2026</time> · 6 min read</p>
-          <h3><a href="/blog/address-poisoning-clipboard-malware-daily-limit">Address Poisoning and Clipboard Malware: Limit the Damage</a></h3>
-          <p>How address poisoning, clipboard malware and phishing trick people into sending bitcoin to attackers, how to check addresses, and how a daily limit caps losses.</p>
-        </article>
-      </li>
-      <li>
-        <article>
-          <p class="post-meta"><time datetime="2026-11-10">10 November 2026</time> · 7 min read</p>
-          <h3><a href="/blog/bitcoin-inheritance-without-a-company">Bitcoin Inheritance Without a Company: A Practical Plan</a></h3>
-          <p>How to pass on self-custodied bitcoin without a custodian: what heirs need, how multisig helps, the descriptor most plans forget, and mistakes to avoid.</p>
-        </article>
-      </li>
-      <li>
-        <article>
-          <p class="post-meta"><time datetime="2026-11-10">10 November 2026</time> · 7 min read</p>
-          <h3><a href="/blog/collaborative-custody-compared">Collaborative Custody Compared: Who Holds the Third Key?</a></h3>
-          <p>Bitkey, Casa, Unchained, Nunchuk and DIY multisig compared fairly: who holds which key, what each key can do, and what happens if a company goes away.</p>
-        </article>
-      </li>
-    </ul>
-  </section>
 </div>
 </main>
 

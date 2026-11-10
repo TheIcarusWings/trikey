@@ -4,7 +4,8 @@ description: "Why a waiting period with alerts is the safest way to recover a bi
 date: 2026-11-10
 slug: delay-and-notify-time-locked-recovery
 keywords: [delay and notify, time-locked recovery, bitcoin timelock recovery, recovery waiting period, bitcoin vault timelock]
-draft: false
+draft: true
+queue: 2
 ---
 Any wallet that lets you recover with fewer keys than usual has a problem: whatever lets *you* in after a loss would also let a thief in. A waiting period solves this in a simple way. The recovery is allowed, but it takes days, and everyone who should know is told every day. The real owner, who lost a key, can afford to wait. A thief cannot wait unnoticed. This article explains why that works, the two ways a waiting period can be enforced (by a cosigner, or by Bitcoin's own timelocks), and how to choose its length.
 

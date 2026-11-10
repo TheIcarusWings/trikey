@@ -4,7 +4,8 @@ description: "How to pass on self-custodied bitcoin without a custodian: what he
 date: 2026-11-10
 slug: bitcoin-inheritance-without-a-company
 keywords: [bitcoin inheritance, bitcoin inheritance without third party, multisig inheritance, bitcoin estate planning, multisig descriptor backup]
-draft: false
+draft: true
+queue: 7
 ---
 If you hold your own bitcoin, nobody will hand it to your family when you die. There is no account to close and no bank to call. That is the point of self-custody, and it means the plan has to come from you. The good news is that a solid plan needs no company at all: it needs keys stored so that your heirs can gather enough of them and no thief can, the wallet's description written down, and plain instructions. This guide explains each part, how multisig makes it easier, and the mistakes that most often break a plan.
 

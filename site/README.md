@@ -82,6 +82,7 @@ updated: 2026-11-12    # optional: last real change
 slug: two-of-three-multisig-explained   # optional; must equal the file name
 keywords: [multisig, self-custody]      # optional: picks the related posts; no meta keywords tag
 draft: false           # true = not built, listed, in the feed or in the sitemap
+queue: 3               # drafts only: its place in the daily queue (below)
 image: /blog/img/two-of-three.png       # optional link-preview image, 1200×630, in site/
 image_alt: "…"         # required with image
 ---
@@ -95,7 +96,8 @@ The Markdown: `##`–`######` headings, paragraphs, line breaks (two trailing sp
 (nested by indenting), `>` quotes, fenced code blocks with a language, `---` rules, pipe tables with `:--:` alignment,
 `[links](/path)`, `<https://autolinks>`, `[reference][links]`, `![images](/img/x.webp "caption")`, `**bold**`,
 `*italic*`, `~~struck~~`, `` `code` `` and footnotes (`[^1]` plus a one-line `[^1]: …`). Raw HTML is escaped and shows
-as text. The build stops with a message if a post links somewhere that doesn't exist on this site (or to a draft),
+as text. A link to a queued post shows its words without the link until that post is published. The build stops with
+a message if a post links somewhere that doesn't exist on this site (or to a draft that isn't queued),
 uses a `javascript:`-style link, or has an image that isn't a file in `site/` or has no alt text. Images get their
 `width` and `height` from the file. Put a post's images in `site/blog/img/`.
 
@@ -114,6 +116,11 @@ Commit the post and the generated files together. Deleting a post, or making it 
 next build. Node 22 is all it needs: no `npm install`.
 
 `blog/posts/example-post.md` is a draft that shows every supported piece of Markdown; it's never published.
+
+**One post a day** ([docs/blog-plan.md](../docs/blog-plan.md)). A reviewed post waits in `blog/posts/` as a draft
+with a `queue` number. Each day `node tools/site/publish-next.mjs` takes the lowest one, dates it today, drops
+`draft`, `queue` and `updated`, and rebuilds; `--list` shows the queue. A draft without `queue` is never published by
+it.
 
 The build also writes the home page's `FAQPage` structured data (the `faq-jsonld` block in `index.html`) from the
 Questions section on the page, so edit the questions and rebuild. The sitemap lists every top-level page without
