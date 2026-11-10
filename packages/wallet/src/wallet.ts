@@ -1710,8 +1710,8 @@ export class TrikeyWallet {
 
   /**
    * Turns the lock on: the biometric prompt, enrol the main security key, then the spare when given (strongly suggested:
-   * without one, a lost key means restoring key 2 from the recovery code or the backup), then one test unlock with
-   * either, and only then the locked entry replaces the plain one, in one write.
+   * without one, a lost key means restoring key 2 from the recovery code or the backup), then a test unlock with each
+   * key in turn (the main, then the spare), and only then the locked entry replaces the plain one, in one write.
    */
   async turnOnKey2Lock(opts: { main: { label: string }; spare?: { label: string } }): Promise<Key2LockStatus> {
     this.mustHoldKey2Lock();
@@ -1732,16 +1732,39 @@ export class TrikeyWallet {
       inputs.push(await this.enrolSecurityKey(sk, labels[0]!, 'Hold your security key to the phone to add it', []));
       if (labels[1]) inputs.push(await this.enrolSecurityKey(sk, labels[1], 'Now hold your spare security key to the phone', inputs.map(publicSlotOf)));
       const env = sealKey2Lock({ entropy: stored, walletId: key2LockWalletId(this.s.secrets.key2), key2Fingerprint, slots: inputs });
-      // The test unlock: the key must give the same answer again before the plain entry goes.
+      // The test unlock: every key enrolled must give the same answer again before the plain entry goes. The spare is
+      // there for when the main key is lost, so an untested spare is the one failure the lock can't recover from.
+      const notOn = (e: unknown) =>
+        e instanceof WalletError && e.code === 'key_lock_wrong_key'
+          ? new WalletError('security_key_failed', "The security key didn't unlock what it just locked, so the lock was not turned on.", { cause: e })
+          : e;
       try {
-        dk = await this.unlockKey2Lock(env, 'Hold one of your security keys to the phone to check it unlocks');
+        dk = await this.unlockKey2Lock(
+          inputs.length > 1 ? { ...env, slots: [env.slots[0]!] } : env,
+          inputs.length > 1 ? 'Hold your main security key to the phone to check it unlocks' : 'Hold your security key to the phone to check it unlocks',
+        );
         opened = openKey2Lock(env, dk);
       } catch (e) {
-        if (e instanceof WalletError && e.code === 'key_lock_wrong_key')
-          throw new WalletError('security_key_failed', "The security key didn't unlock what it just locked, so the lock was not turned on.", { cause: e });
-        throw e;
+        throw notOn(e);
       }
       if (!sameBytes(opened, stored)) throw new WalletError('internal', 'The test unlock gave another key; the lock was not turned on.');
+      for (let i = 1; i < inputs.length; i++) {
+        let again: Uint8Array | undefined;
+        try {
+          const r = await this.askSecurityKey(() => sk.unlock([key2LockSlots(env)[i]!], 'Now hold your spare security key to the phone to check it unlocks'));
+          try {
+            if (r.slotIndex !== 0) throw new WalletError('security_key_failed', 'Another security key answered, so the lock was not turned on.');
+            again = unwrapKey2LockKey(env, i, r.kekMaterial);
+          } finally {
+            r.kekMaterial.fill(0);
+          }
+          if (!sameBytes(again, dk)) throw new WalletError('internal', 'The spare security key unlocked another key; the lock was not turned on.');
+        } catch (e) {
+          throw notOn(e);
+        } finally {
+          again?.fill(0);
+        }
+      }
       await this.deps.secureStore.save(this.s.secrets.key2, encodeKey2Lock(env), { requireBiometrics: true });
       await this.noteKey2Lock(env);
     } finally {

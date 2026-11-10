@@ -35,6 +35,8 @@ let deps: WalletDeps;
 let cloud: MemoryCloudBackupStore;
 let w: TrikeyWallet;
 let words: string;
+/** The prompts turning the lock on made (`turned on`). */
+let turnOnCalls: unknown[][];
 
 /** What the secure store holds under key 2's id. */
 const entry = () => ph.secure.items.get(w.state.secrets.key2)!;
@@ -93,13 +95,8 @@ describe('off by default', () => {
 describe('turned on', () => {
   beforeEach(async () => {
     keys.held = 'main';
-    // Enrol the main key, then the spare; the test unlock is answered by whichever is held then.
-    const enrol = keys.enrol.bind(keys);
-    keys.enrol = async (opts) => {
-      const r = await enrol(opts);
-      keys.held = keys.held === 'main' ? 'spare' : 'main';
-      return r;
-    };
+    // Enrol the main key, then the spare; then each is held once more to test it.
+    keys.queue = ['main', 'spare', 'main', 'spare'];
     expect(await w.turnOnKey2Lock({ main: { label: 'Main YubiKey' }, spare: { label: 'Spare YubiKey' } })).toEqual({
       on: true,
       keys: [
@@ -107,11 +104,17 @@ describe('turned on', () => {
         { type: 'fido-prf', label: 'Spare YubiKey' },
       ],
     });
-    keys.enrol = enrol;
+    turnOnCalls = keys.calls.map((c) => [c.op, c.key, c.slots]);
     keys.calls.length = 0;
   });
 
-  it('enrolled both keys, tested one, then replaced the entry in one write, still behind biometrics', async () => {
+  it('enrolled both keys, tested each in turn, then replaced the entry in one write, still behind biometrics', async () => {
+    expect(turnOnCalls).toEqual([
+      ['enrol', 'main', undefined],
+      ['enrol', 'spare', undefined],
+      ['unlock', 'main', 1],
+      ['unlock', 'spare', 1],
+    ]);
     expect(isKey2LockEnvelope(entry().secret)).toBe(true);
     expect(entry().requireBiometrics).toBe(true);
     const env = parseKey2Lock(entry().secret);
@@ -311,6 +314,44 @@ describe('a crash between steps leaves the previous state usable', () => {
     };
     expect((await walletError(w.turnOnKey2Lock({ main: { label: 'Main' } }))).code).toBe('security_key_failed');
     keys.unlock = unlock;
+    expect(entry().secret).toHaveLength(32);
+    expect(w.key2Lock.on).toBe(false);
+  });
+
+  it("the spare's test answer differing: the lock is not turned on, though the main key passed", async () => {
+    keys.queue = ['main', 'spare', 'main', 'spare'];
+    keys.wrongAnswerNextFrom = 'spare'; // the spare enrols fine; its test unlock answers differently
+    expect((await walletError(w.turnOnKey2Lock({ main: { label: 'Main' }, spare: { label: 'Spare' } }))).code).toBe('security_key_failed');
+    expect(keys.calls.map((c) => [c.op, c.key])).toEqual([
+      ['enrol', 'main'],
+      ['enrol', 'spare'],
+      ['unlock', 'main'],
+      ['unlock', 'spare'],
+    ]);
+    expect(entry().secret).toHaveLength(32);
+    expect(mnemonicFromEntropy(entry().secret)).toBe(words);
+    expect(w.key2Lock.on).toBe(false);
+    for (const m of keys.handedOut) expect(m.every((b) => b === 0)).toBe(true);
+    keys.calls.length = 0;
+    expect(await useKey2()).toBe(words);
+    expect(keys.calls).toEqual([]);
+  });
+
+  it("a spare that doesn't answer its test (cancelled, or the main key held instead) leaves the plain entry", async () => {
+    keys.queue = ['main', 'spare', 'main'];
+    keys.held = 'main';
+    const unlock = keys.unlock.bind(keys);
+    let n = 0;
+    keys.unlock = async (slots, reason) => {
+      if (++n === 2) keys.cancelNext = true;
+      return unlock(slots, reason);
+    };
+    expect((await walletError(w.turnOnKey2Lock({ main: { label: 'Main' }, spare: { label: 'Spare' } }))).code).toBe('security_key_cancelled');
+    keys.unlock = unlock;
+    expect(entry().secret).toHaveLength(32);
+    // The main key held again for the spare's test: it isn't in the one slot asked for.
+    keys.queue = ['main', 'spare', 'main', 'main'];
+    expect((await walletError(w.turnOnKey2Lock({ main: { label: 'Main' }, spare: { label: 'Spare' } }))).code).toBe('security_key_failed');
     expect(entry().secret).toHaveLength(32);
     expect(w.key2Lock.on).toBe(false);
   });

@@ -89,15 +89,15 @@ describe('the lock on a phone with two wallets', { timeout: 60_000 }, () => {
   it('turns on while the second wallet exists: one entry, locked for both', async () => {
     expect(business.state.secrets.key2).toBe(daily.state.secrets.key2);
     expect((await walletError(business.turnOnKey2Lock({ main: { label: 'Main' } }))).code).toBe('wrong_state');
-    const enrol = keys.enrol.bind(keys);
-    keys.enrol = async (opts) => {
-      const r = await enrol(opts);
-      keys.held = 'spare';
-      return r;
-    };
-    keys.held = 'main';
+    // Enrol the main key and the spare, then each is held once more to test it.
+    keys.queue = ['main', 'spare', 'main', 'spare'];
     await set.turnOnKey2Lock({ main: { label: 'Main YubiKey' }, spare: { label: 'Spare YubiKey' } });
-    keys.enrol = enrol;
+    expect(keys.calls.map((c) => [c.op, c.key])).toEqual([
+      ['enrol', 'main'],
+      ['enrol', 'spare'],
+      ['unlock', 'main'],
+      ['unlock', 'spare'],
+    ]);
     expect(isKey2LockEnvelope(entry().secret)).toBe(true);
     expect(entry().requireBiometrics).toBe(true);
     expect(set.key2Lock).toEqual({ on: true, keys: [{ type: 'fido-prf', label: 'Main YubiKey' }, { type: 'fido-prf', label: 'Spare YubiKey' }] });

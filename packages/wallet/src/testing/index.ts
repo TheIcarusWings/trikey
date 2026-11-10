@@ -360,7 +360,8 @@ export interface MemorySecurityKey {
  * Security keys for the optional lock on key 2 (key2-lock.ts), in memory and deterministic: each key's secret comes from
  * its seed. A `fido-prf` key answers PRF as `MemoryPasskeyPrf` does (HMAC-SHA256 of its secret over the WebAuthn PRF
  * salt); a `piv-ecdh` key holds a P-256 key made from its secret and answers ECDH (the shared point's x). `held` names the
- * key the person holds to the phone next. Test hooks: `cancelNext`, `failNext`, `wrongAnswerNext`, `supported`.
+ * key the person holds to the phone next (`queue`: the keys for the next prompts, in order). Test hooks: `cancelNext`,
+ * `failNext`, `wrongAnswerNext`, `wrongAnswerNextFrom`, `supported`.
  */
 export class MemorySecurityKeys implements SecurityKeyUnlock {
   static readonly RP_ID = 'trikey.test';
@@ -373,6 +374,10 @@ export class MemorySecurityKeys implements SecurityKeyUnlock {
   failNext = false;
   /** The next unlock answers with other bytes, as a key whose PRF changed would. */
   wrongAnswerNext = false;
+  /** The next unlock by the key with this name answers with other bytes (only that key's). */
+  wrongAnswerNextFrom: string | undefined;
+  /** The keys the person holds for the next prompts, in order (each prompt takes the first; then `held` stays). */
+  queue: string[] = [];
   /** Every prompt, for assertions. */
   readonly calls: { op: 'enrol' | 'unlock'; reason: string; key: string; slots?: number }[] = [];
   /** Every KEK material handed out (tests check the wallet zeroed it). */
@@ -391,6 +396,7 @@ export class MemorySecurityKeys implements SecurityKeyUnlock {
   }
 
   private key(): MemorySecurityKey {
+    if (this.queue.length) this.held = this.queue.shift()!;
     const k = this.keys.find((x) => x.name === this.held);
     if (!k) throw new SecurityKeyError('failed', `no security key "${this.held}"`);
     return k;
@@ -451,8 +457,9 @@ export class MemorySecurityKeys implements SecurityKeyUnlock {
     if (slotIndex < 0) throw new SecurityKeyError('failed', 'This security key is not enrolled here.');
     const s = slots[slotIndex]!;
     const material = s.type === 'fido-prf' ? this.prf(k, s.prfSalt) : p256.getSharedSecret(k.secret, s.ephemeralPub, true).slice(1);
-    if (this.wrongAnswerNext) {
-      this.wrongAnswerNext = false;
+    if (this.wrongAnswerNext || this.wrongAnswerNextFrom === k.name) {
+      if (this.wrongAnswerNextFrom === k.name) this.wrongAnswerNextFrom = undefined;
+      else this.wrongAnswerNext = false;
       material[0]! ^= 1;
     }
     return { slotIndex, kekMaterial: this.handOut(material) };
