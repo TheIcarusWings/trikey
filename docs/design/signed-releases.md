@@ -13,6 +13,9 @@ GitHub never holds**, and the pipeline **refuses to publish a release without th
    Zapstore listings, already kept off GitHub, and the app can already check its signatures (BIP 340, `@noble/curves`).
 2. **No signature, no release.** `publish-release.yml` publishes a draft only when the manifest carries a valid
    signature by that key.
+3. **The event kind is 1420**, a free kind (section 3).
+4. **The signature event is published to relays too**, as a public, dated record GitHub cannot remove (section 4).
+5. **The Umbrel store is gated too**: it gets a version only after its signature checks (section 5).
 
 ## 2. Why the key must never be a GitHub secret
 
@@ -47,12 +50,14 @@ CI makes the manifest from the files `packaging/check-release-assets.sh` checked
 
 **The signature**, `trikey-<tag>-SHA256SUMS.event.json`: a nostr event signed by the publisher key.
 
-- `kind`: one regular kind reserved for this, used for nothing else (picked when it is built from the kinds no NIP
-  assigns, and checked exactly), so a signature for a release can never pass for a note, a Zapstore event or anything a
-  nostr app acts on.
+- `kind`: **1420**, a regular kind (stored by relays) that no NIP assigns (the kinds list in
+  [nostr-protocol/nips](https://github.com/nostr-protocol/nips/blob/master/README.md), read 2026-11-10, goes from 1337
+  to 1617; it is not one of Zapstore's either), and an echo of Trikey's RPC kind 21420. Used for nothing else and checked
+  exactly, so a signature for a release can never pass for a note, a Zapstore event or anything a nostr app acts on. If
+  a NIP ever assigns 1420, the check keeps accepting it only with this exact form (tags, content line, pubkey).
 - `tags`: `["x", "<sha256 of the manifest>"]` and `["version", "<tag>"]`.
 - `content`: one line for people, `Trikey release <tag>: the files listed in trikey-<tag>-SHA256SUMS`.
-- It is attached to the draft release. It is not published to relays (open question 2).
+- It is attached to the draft release, which is what the checks read, **and published to relays** (section 4).
 
 Anyone can check it with standard tools: `nak verify` on the event, the pubkey against the npub above, the `x` tag
 against `sha256sum trikey-<tag>-SHA256SUMS`, then `sha256sum -c` on the manifest.
@@ -66,6 +71,14 @@ Unchanged up to the draft (docs/releasing.md, section 4). Then:
    draft (`gh`), prints the files and their hashes and the tag, asks the signer app over NIP-46 (a `bunker://` URL,
    approved in Amber), checks the signature it gets back against the pinned npub, and uploads the event to the draft.
    Sign only once the pipeline's checks are green: the signature says "the owner released these exact files".
+   It then **publishes the event to relays**: the relays in the publisher npub's relay list (kind 10002) if it has
+   one, else relay.damus.io, nos.lol and relay.primal.net, and says which accepted it. relay.trikey.app stores only
+   kinds 1059 and 24133 today; to keep the events there too, 1420 joins its allowlist (its configuration is not in this
+   repository). Publishing is a record, not part of the gate: relays may be down or drop events, so the checks read the
+   file attached to the release. Anyone can find every Trikey release signature with a filter
+   `{"kinds": [1420], "authors": ["<the publisher's hex key>"]}`, and a release whose signature is missing there is a
+   reason to ask why. Being published also means clients that list every kind may show these events on the publisher
+   npub's profile; the content line says what they are.
 3. **The owner approves** the `release` environment, as today.
 4. **`publish-release.yml` checks the signature** (below) and publishes. Without it, the job fails with the command to
    run; sign, then re-run the job.
@@ -86,6 +99,21 @@ files too):
 It runs in Node with `nostr-tools` (already a dependency), installed with `--ignore-scripts`. Changing the pinned key
 is a pull request, so it is visible.
 
+### The Umbrel store
+
+Today the store is updated **before** the release is public: `docker.yml` calls `umbrel-store.yml` right after the
+image is pushed and verified, while the release is still a draft, so an Umbrel can be offered a version nobody can see
+on the releases page yet. To gate it, the store update moves to **after publishing**:
+
+- `docker.yml` no longer calls `umbrel-store.yml`; `publish-release.yml` dispatches it once the release is published
+  (as it already dispatches `zapstore-check.yml`).
+- `umbrel-store.yml` runs the same signature check on the published release (the manifest and its event as attached),
+  then checks that the digest it pins is the one in the signed compose file, before copying the store. Run by hand on a
+  tag (a retry), it does the same. No valid signature, no store update.
+- The `release` environment and `UMBREL_STORE_TOKEN` stay as they are.
+
+Start9 is "build it yourself" for the beta; when its package is published, the same check goes in front of it.
+
 ## 6. What it protects, and what it doesn't
 
 | Attack | Before | With the signed manifest |
@@ -103,7 +131,8 @@ the signature.
 
 ## 7. Plan
 
-1. **This decision:** the manifest in CI, `tools/release/sign-release.mjs`, the check in `publish-release.yml`,
+1. **This decision:** the manifest in CI, `tools/release/sign-release.mjs` (signing, upload, relays), the check in
+   `publish-release.yml` and `umbrel-store.yml`, the store update moved to after publishing,
    `packaging/release-signer.npub` and its test, the steps in docs/releasing.md. A small PR.
 2. **People can check it:** a "Check a release's signature" section in packaging/VERIFY.md.
 3. **The app checks it** (a later decision): "Check for updates" offers an APK only when the release's manifest is
@@ -115,9 +144,7 @@ the signature.
 
 ## 8. Open questions for the owner
 
-1. **The event kind:** fine to pick a free regular kind when it is built, or should it go through a NIP?
-2. **Publish the event to relays too?** It would leave a public, dated record GitHub cannot remove, and give the app
-   (phase 3) a second channel for it. It would also show on the publisher's npub in clients that list every kind.
-3. **The Umbrel store:** `umbrel-store.yml` updates the store after a release. Should it also refuse a release whose
-   signature does not check, so the box gets nothing the owner did not sign?
-4. **The per-file `.sha256` files:** keep them (as proposed) or drop them once the manifest is there?
+Answered 2026-11-10: a free kind (1420), published to relays, the Umbrel store gated (section 1).
+
+1. **The per-file `.sha256` files:** kept, as proposed, unless the owner prefers to drop them once the manifest is
+   there.
