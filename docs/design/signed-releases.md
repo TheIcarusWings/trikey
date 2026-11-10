@@ -17,6 +17,7 @@ GitHub never holds**, and the pipeline **refuses to publish a release without th
 3. **The event kind is 1420**, a free kind (section 3).
 4. **The signature event is published to relays too**, as a public, dated record GitHub cannot remove (section 4).
 5. **The Umbrel store is gated too**: it gets a version only after its signature checks (section 5).
+6. **The per-file `.sha256` files stay** next to the manifest (section 3).
 
 ## 2. Why the key must never be a GitHub secret
 
@@ -40,7 +41,8 @@ every release.
 is covered, and a file added to or missing from the release breaks the signature.
 
 The guardian image is covered through the compose file, which pins it by digest (and the digest is the one
-`reproducible.yml` rebuilt). The existing per-file `.sha256` files stay, for whoever uses them today (open question 1).
+`reproducible.yml` rebuilt). The existing per-file `.sha256` files stay (the owner's decision), for whoever uses them today; the manifest
+lists them too, so they are signed like everything else.
 
 **The owner's signing tool makes the manifest** (`tools/release/sign-release.mjs`, through
 `packaging/release-signature.py manifest`), from the draft's files it downloads, so the hashes the owner signs are
@@ -155,7 +157,5 @@ the signature.
 
 ## 8. Open questions for the owner
 
-Answered 2026-11-10: a free kind (1420), published to relays, the Umbrel store gated (section 1).
-
-1. **The per-file `.sha256` files:** kept, as proposed, unless the owner prefers to drop them once the manifest is
-   there.
+None left. Answered 2026-11-10: a free kind (1420), published to relays, the Umbrel store gated, and the per-file
+`.sha256` files kept (section 1).
