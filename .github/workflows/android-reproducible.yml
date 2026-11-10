@@ -96,9 +96,10 @@ jobs:
         id: compare
         run: |
           set -uo pipefail
+          # Actions runs this with `bash -e`: catch the status, or "they differ" (1) ends the step before the report.
+          status=0
           python3 -I packaging/android/compare-apks.py \
-            "${RUNNER_TEMP}/a/app-release.apk" "${RUNNER_TEMP}/b/app-release.apk" > "${RUNNER_TEMP}/report.md"
-          status=$?
+            "${RUNNER_TEMP}/a/app-release.apk" "${RUNNER_TEMP}/b/app-release.apk" > "${RUNNER_TEMP}/report.md" || status=$?
           cat "${RUNNER_TEMP}/report.md"
           {
             echo "## ${VARIANT} APK, build A against build B"
@@ -126,10 +127,16 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends diffoscope
           diffoscope --version
+          rc=0
           diffoscope --max-report-size 50000000 --html "${RUNNER_TEMP}/diffoscope.html" --text "${RUNNER_TEMP}/diffoscope.txt" \
-            "${RUNNER_TEMP}/a/app-release.apk" "${RUNNER_TEMP}/b/app-release.apk"
-          rc=$?
+            "${RUNNER_TEMP}/a/app-release.apk" "${RUNNER_TEMP}/b/app-release.apk" || rc=$?
           head -c 60000 "${RUNNER_TEMP}/diffoscope.txt" || true
+          {
+            echo "### diffoscope (${VARIANT}, the first 20,000 characters)"
+            echo '```'
+            head -c 20000 "${RUNNER_TEMP}/diffoscope.txt" || true
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
           # 1 means "differences found", which is why this step runs.
           [ "${rc}" -le 1 ]
 
