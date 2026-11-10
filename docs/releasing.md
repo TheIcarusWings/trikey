@@ -32,7 +32,7 @@ Commit with the usual author, push, and open a PR titled `Release 0.1.26-alpha`.
 including the iOS and Android launch checks, with **squash** (GitHub signs the commit it writes). Nothing else should
 be merged between the release PR's CI and its merge.
 
-## 4. The pipeline, and three approvals
+## 4. The pipeline: approvals and your signature
 
 On the merge, `release.yml` sees a new version with a CHANGELOG section, tags `v0.1.26-alpha`, makes a **draft**
 pre-release and dispatches the builds. The `release` environment asks the owner to approve, on the
@@ -40,8 +40,24 @@ pre-release and dispatches the builds. The `release` environment asks the owner 
 
 1. **Docker**: pushes the guardian image with `GHCR_PUSH_TOKEN`, after two clean builds give the same digest.
 2. **Android test APK**: signs both APKs with the release key (one approval covers both).
-3. **Publish release**, last: checks the draft's files (byte-for-byte compose files, the verified digest, both APKs'
-   certificate and app id, checksums), then publishes. The release is immutable from then on.
+3. **Sign the draft** (not an approval, a command on your computer), once 1 and 2 are green:
+
+   ```sh
+   node tools/release/sign-release.mjs v0.1.26-alpha
+   ```
+
+   In a checkout with `npm ci` done, `gh` signed in and python3. It downloads the draft's files, shows the manifest of
+   their SHA-256, asks you to type the tag back, then asks your signer app (Amber, nsec.app) over NIP-46 for a
+   signature with Trikey's publisher key: paste the `bunker://` URL from the signer app (or set `TRIKEY_BUNKER`) and
+   approve there, with the signer app in front. Never an nsec: the tool refuses one. It checks the signature, uploads
+   `trikey-<tag>-SHA256SUMS` and its `.event.json` to the draft and publishes the event to relays. If no relay took it,
+   `node tools/release/sign-release.mjs v0.1.26-alpha --relays-only` tries again later. Why and what it guards:
+   docs/design/signed-releases.md.
+4. **Publish release**, last: checks the draft's files (byte-for-byte compose files, the verified digest, both APKs'
+   certificate and app id, checksums, and your signature), then publishes. The release is immutable from then on.
+   Without the signature it fails with the command above: sign, then re-run its `publish` job.
+5. **Umbrel store**, when `UMBREL_STORE_AUTOPUBLISH` is set: `publish-release.yml` dispatches it once the release is
+   published; it checks the signature again and asks for one more approval.
 
 Each run shows **Review deployments**: tick `release`, then **Approve and deploy**. An approval can take a minute to
 show. If a check fails, the release stays a draft: fix the cause and re-run that workflow. Don't publish a draft by

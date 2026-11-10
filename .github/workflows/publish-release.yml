@@ -14,13 +14,17 @@ name: Publish release
 # environment asks for one), checks the draft with packaging/check-release-assets.sh: exactly the expected files, each
 # the one GitHub lists, the checksums, both APKs signed by packaging/android/release-cert.sha256 and nothing else and
 # each the right app, the compose files byte for byte what docker.yml makes from the tag's packaging/compose with the
-# digest it pushed (and its `verified` job found reproduced), and that digest still being what the version tag names. Only then is the draft published, and its files
+# digest it pushed (and its `verified` job found reproduced), and that digest still being what the version tag names,
+# and the owner's signature: a manifest of every file signed with Trikey's nostr publisher key, which GitHub never holds
+# (packaging/release-signature.py, docs/design/signed-releases.md). The owner signs the draft with
+# tools/release/sign-release.mjs before approving; an unsigned draft fails here and stays a draft. Only then is the draft published, and its files
 # are compared with what was checked once more after; if they changed, the release goes back to a draft, or, immutable
 # (which cannot), is renamed and annotated "withdrawn, do not install", and the run fails. With immutable releases on (docs/android-signing.md, "Immutable
 # releases") nothing can change a published release's files or tag afterwards; the job warns while they are off.
 #
 # It publishes the release as a normal release (not a GitHub pre-release; the version still ends in -alpha) and marks it
-# the latest. Then `zapstore-check` dispatches zapstore-check.yml, which waits for Zapstore to publish the version and
+# the latest. Then `umbrel-store` dispatches umbrel-store.yml on the tag (when UMBREL_STORE_AUTOPUBLISH is on), which
+# checks the published release's signature again before Umbrels are offered the version, and `zapstore-check` dispatches zapstore-check.yml, which waits for Zapstore to publish the version and
 # opens an issue if it has not after about three hours (docs/zapstore.md, "Check it after each release").
 #
 # A tag pushed by hand starts it too (`push`). To retry, re-run its failed jobs, or run it by hand on the tag.
@@ -115,6 +119,8 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             packaging/check-release-assets.sh
+            packaging/release-signature.py
+            packaging/release-signer.npub
             packaging/android/release-cert.sha256
             packaging/compose/release-compose.sh
             packaging/compose/docker-compose.yml
@@ -210,6 +216,27 @@ jobs:
           else
             echo "::warning title=Release is not immutable::Immutable releases are off, so a token with contents: write can still replace ${TAG}'s files. Turn them on: docs/android-signing.md, \"Immutable releases\"."
           fi
+
+  # The Umbrel store, only once the release is public and signed: umbrel-store.yml (on the tag, in the `release`
+  # environment) checks the published release's signature and that its signed compose file pins the digest it is about
+  # to pin, then copies the store. Until 0.1.26 docker.yml called it while the release was still a draft. Only when the
+  # repository variable UMBREL_STORE_AUTOPUBLISH is `true` (set it with UMBREL_STORE_TOKEN), as before.
+  umbrel-store:
+    needs: publish
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v') && vars.UMBREL_STORE_AUTOPUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write # dispatch umbrel-store.yml
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Dispatch the Umbrel store update
+        run: |
+          set -euo pipefail
+          gh workflow run umbrel-store.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}"
+          echo "::notice title=Umbrel store::Dispatched umbrel-store.yml on ${TAG}: it checks the release's signature, then updates the store (approve the \`release\` environment)."
 
   # A release published with GITHUB_TOKEN starts no `release:` workflow, but a dispatch does. On main: the check and
   # its script as they are now, whichever tag this run is on. It reads only a public nostr relay and needs no secret.
