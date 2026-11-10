@@ -45,6 +45,14 @@ import { SecurityKeyError } from '../platform.js';
 import { p256 } from '@noble/curves/nist.js';
 import { secureRandomBytes } from '@trikey/core/random';
 
+/** A P-256 secret key from `secureRandomBytes` (the randomness lint allows no other source), redrawn if out of range. */
+function p256SecretKey(): Uint8Array {
+  for (;;) {
+    const k = secureRandomBytes(32);
+    if (p256.utils.isValidSecretKey(k)) return k;
+  }
+}
+
 function refuseMainnet(network: NetworkName): Network {
   if (network === 'bitcoin') throw new Error('software hardware wallets are for tests and regtest only; refusing network "bitcoin"');
   return getNetwork(network);
@@ -433,7 +441,7 @@ export class MemorySecurityKeys implements SecurityKeyUnlock {
     if (opts.exclude.some((s) => this.matches(k, s))) throw new SecurityKeyError('failed', 'This security key is already enrolled.');
     if (k.type === 'fido-prf')
       return { type: 'fido-prf', credentialId: k.credentialId, rpId: MemorySecurityKeys.RP_ID, aaguid: bytesToHex(sha256(utf8ToBytes('test aaguid')).subarray(0, 16)), kekMaterial: this.handOut(this.prf(k, opts.prfSalt)) };
-    const ephemeral = p256.utils.randomSecretKey();
+    const ephemeral = p256SecretKey();
     try {
       const cardPub = p256.getPublicKey(k.secret, false);
       return {
