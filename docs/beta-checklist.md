@@ -73,6 +73,11 @@ unlock where the device supports it (DESIGN.md, "Hardware wallets by feature"; d
 - [x] Umbrel: the community app store, pinned by digest each release.
 - [ ] **Plain Docker** (owner or testers): `trikey-guardian-compose.yml` from a release on a Mac, a Linux box or a NAS,
       against a node, once.
+      - **Linux, 2026-11-11 (dev):** 0.1.26's two release files, following packaging/compose/README.md word for word,
+        with `--profile node` on regtest. The image pulled by digest; the setup code in the log and the first-run page
+        worked; setup gave the pairing code; after a restart it came back locked and the passphrase unlocked it. No step
+        in the guide was wrong. Not covered: pairing a phone (the test machine had no nostr relays) and a signet or
+        testnet4 node (no disk for the sync). Still open for the owner or a tester: a phone paired to a plain-Docker guardian on signet.
 - [x] **Start9** (owner decision, 2026-11-09): "build it yourself" for the beta. The package builds in CI on every
       release; publishing it (a signing key and a home for the `.s9pk`) waits until after the beta.
 - [x] Android: GitHub releases, Obtainium (trikey.app/obtainium), Zapstore (both apps, from 0.1.24).
