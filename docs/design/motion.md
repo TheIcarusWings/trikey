@@ -250,3 +250,16 @@ Mobbin: Cash App, Monzo, Lloyds and Venmo sent screens. Borrowed: the sparse sen
 key marks, limit meter, device ring, tiles and opening sequence are Trikey's own. Rule
 sets used for a review pass: `better-ui` and `better-accessibility` from
 `jakubkrehel/skills` (written for the web; applied as principles).
+
+## Questions for the implementer
+
+- Is there, or can there be, a signal between "phone signed" and "guardian co-signed"? Only
+  `busy` and `state.paymentSending` are visible today, so section 1 uses two steps.
+- Does the destructive button in dark mode use dark text on `#F87171`, or white as on the
+  design board (2.77:1)?
+- Is there a last-sync time for the guardian, or only `synced` and `syncing`? The Security
+  tile says "in sync" and needs no time, but a time would be better.
+- Does `expo-splash-screen` hide cleanly over an app-drawn logo of the same size on both
+  platforms, or is there a visible jump today?
+- `haptics.ts` fires `success` when Sent opens; section 1 moves it to the moment the check
+  starts drawing, about 240ms later. Any objection?

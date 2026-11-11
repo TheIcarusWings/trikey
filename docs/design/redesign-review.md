@@ -1,6 +1,8 @@
 # Review of the Redesign page
 
-Status: findings only. Nothing on the canvas or in the app was changed.
+Status: findings only, all proposed. The owner asked for the review and that it be passed to
+the implementing session; no finding has been individually approved. Nothing on the canvas or
+in the app was changed.
 
 Subject: the 27 boards on the "Redesign" page of the "Trikey App Design" canvas
 (<https://claude.ai/artifact/1aLGuH7Ydub81z98fBPxcE>, private to the owner), reviewed against
