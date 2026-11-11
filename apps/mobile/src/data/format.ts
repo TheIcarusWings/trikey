@@ -134,6 +134,26 @@ export function groupAddress(address: string): string {
   return address.replace(/(.{4})/g, '$1 ').trim();
 }
 
+/**
+ * An address grouped as `groupAddress` does, cut where its first four and last four characters end, so those can be
+ * set in bold: the parts people compare against the device. `head + middle + tail` is the grouped address.
+ */
+export function addressEnds(address: string): { head: string; middle: string; tail: string } {
+  const grouped = groupAddress(address);
+  if (address.length <= 8) return { head: grouped, middle: '', tail: '' };
+  // Where in the grouped text the 4th character ends and the 4th-from-last begins (spaces are not characters).
+  let seen = 0;
+  let headEnd = 0;
+  let tailStart = grouped.length;
+  for (let i = 0; i < grouped.length; i++) {
+    if (grouped[i] === ' ') continue;
+    seen += 1;
+    if (seen === 4) headEnd = i + 1;
+    if (seen === address.length - 3) tailStart = i;
+  }
+  return { head: grouped.slice(0, headEnd), middle: grouped.slice(headEnd, tailStart), tail: grouped.slice(tailStart) };
+}
+
 // ---------------------------------------------------------------- dates
 
 function sameDay(a: Date, b: Date): boolean {

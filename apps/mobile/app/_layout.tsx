@@ -97,7 +97,10 @@ function Shell({ restarts }: { restarts: number }) {
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
       {/* On web the app is a phone-sized column so the layouts stay as designed. */}
       <View className="bg-background w-full flex-1 self-center" style={Platform.OS === 'web' ? { maxWidth: 480 } : undefined}>
-        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.screen } }} />
+        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.screen } }}>
+          {/* Sent replaces Review or the hardware wallet's screen with a fade (docs/design/motion.md, section 1). */}
+          <Stack.Screen name="send/done" options={{ animation: 'fade' }} />
+        </Stack>
         <PortalHost />
         {/* These sheets show only while the wallet waits for a hardware wallet. */}
         <QrBridgeHost />

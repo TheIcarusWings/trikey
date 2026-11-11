@@ -3,12 +3,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
-import { DeviceMock } from '@/components/device-mock';
+import { DeviceMock, type DeviceStatus } from '@/components/device-mock';
+import { WaitingStatus } from '@/components/motion';
 import { Info, TriangleAlert } from '@/components/icons';
 import { Body, Notice } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import {
+  addressEnds,
   deviceBtc,
   formatSats,
   groupAddress,
@@ -18,8 +20,12 @@ import {
   type FeeSpeed,
   type QuoteOutcome,
 } from '@/data';
+import { useHapticOnce } from '@/lib/haptics';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
+
+/** Geist Mono at 600 (src/lib/fonts.ts): React Native picks a weight by family name. */
+const ADDRESS_END = { fontFamily: 'GeistMono-SemiBold' } as const;
 
 export default function SendHardware() {
   const router = useRouter();
@@ -51,6 +57,16 @@ export default function SendHardware() {
   // A payment is started once per attempt, even where React runs effects twice in development: the device must never
   // be asked for the same payment twice.
   const startedFor = useRef(-1);
+  // The device signed (`paymentSending`), or the payment went: approved. Cancelled by the person: no refusal shown.
+  const [approved, setApproved] = useState(false);
+  const [cancelled, setCancelled] = useState(false);
+  useEffect(() => {
+    if (busy && state.paymentSending) setApproved(true);
+  }, [busy, state.paymentSending]);
+  const asked = startedFor.current === attempt;
+  const deviceStatus: DeviceStatus | undefined = !asked ? undefined : approved ? 'approved' : !busy && error && !cancelled ? 'declined' : 'waiting';
+  // Approved on the device: felt once per attempt (a refusal is felt by the error under the buttons).
+  useHapticOnce('success', deviceStatus === 'approved', attempt);
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -61,7 +77,13 @@ export default function SendHardware() {
   useEffect(() => {
     if (!quote || startedFor.current === attempt || (quote.warning && !acknowledged)) return;
     startedFor.current = attempt;
-    void run(wallet.sendPayment(quote)).then((r) => {
+    setApproved(false);
+    // Approved as the payment resolves, before `busy` ends, so "Try again" never shows for a moment in between.
+    const approve = wallet.sendPayment(quote).then((tx) => {
+      if (alive.current) setApproved(true);
+      return tx;
+    });
+    void run(approve).then((r) => {
       if (r.ok && alive.current) router.replace({ pathname: '/send/done', params: { id: r.value.id, speed: feeSpeed } });
     });
     // The quote is fixed for this screen.
@@ -83,6 +105,7 @@ export default function SendHardware() {
   // A silent payment goes to a plain taproot address that only this phone worked out: that is what the device shows.
   const silent = quote.silentPayment;
   const shown = silent?.outputAddress ?? address;
+  const ends = addressEnds(shown);
 
   return (
     <Screen
@@ -93,6 +116,7 @@ export default function SendHardware() {
       holdBack={
         busy
           ? (leave) => {
+              setCancelled(true);
               wallet.cancelDevicePrompt();
               leave();
             }
@@ -103,19 +127,24 @@ export default function SendHardware() {
           <ActionNotice message={message} error={error} />
           {quote.warning && !acknowledged ? (
             <AppButton title={`I understand, ask my ${brand}`} onPress={() => setAcknowledged(true)} />
-          ) : busy ? (
-            // Once the device has signed, the payment is on its way: say so at once.
-            <View className="flex-row items-center justify-center gap-2.5" accessibilityLiveRegion="polite">
-              <View className={state.paymentSending ? 'bg-good size-2 rounded-full' : 'bg-warn size-2 rounded-full'} />
-              <Text className="text-muted-foreground text-sm leading-5">{state.paymentSending ? 'Signed. Sending…' : `Waiting for your ${brand}…`}</Text>
-            </View>
+          ) : busy || approved ? (
+            // Once the device has signed, the payment is on its way: say so at once. The amber dot breathes while it waits.
+            <WaitingStatus tone={approved ? 'good' : 'waiting'} text={approved ? 'Signed. Sending…' : `Waiting for your ${brand}…`} />
           ) : (
-            <AppButton title="Try again" onPress={() => setAttempt((a) => a + 1)} />
+            <AppButton
+              title="Try again"
+              onPress={() => {
+                setCancelled(false);
+                setAttempt((a) => a + 1);
+              }}
+            />
           )}
           <AppButton
             title="Cancel"
             variant="outline"
             onPress={() => {
+              // Nothing plays on Cancel: no shake, no red outline.
+              setCancelled(true);
               wallet.cancelDevicePrompt();
               router.back();
             }}
@@ -124,6 +153,7 @@ export default function SendHardware() {
       }>
       {/* Why the hardware wallet signs was said on Review; here it is only what to do. */}
       <Body>Unlock it, open the Bitcoin app and approve the payment there.</Body>
+      {/* The warning never animates: it is there, still, from the first frame. */}
       {quote.warning ? (
         <Notice icon={TriangleAlert} iconClass="text-destructive" tone="warn-outline" title="This ends your refills">
           {quote.warning}
@@ -134,6 +164,8 @@ export default function SendHardware() {
         height={140}
         label={`${brand} screen showing: Send ${btc} BTC to ${shorten(shown)}`}
         lines={[`Send ${btc} BTC`, `to ${shorten(shown)}`, `Fee ${deviceBtc(quote.feeSats)} BTC`]}
+        status={deviceStatus}
+        animateIn
       />
       {silent ? (
         <View className="gap-1.5">
@@ -148,8 +180,15 @@ export default function SendHardware() {
       ) : null}
       <View className="gap-1.5">
         <Text className="text-sm font-medium leading-5">{silent ? 'Check that your device shows this address' : 'Check the address on the device matches'}</Text>
+        {/* The first and last four characters in bold: the parts people compare against the device. */}
         <Text className={cn('text-muted-foreground font-mono text-sm leading-[22px]')} selectable>
-          {groupAddress(shown)}
+          <Text className="text-foreground" style={ADDRESS_END}>
+            {ends.head}
+          </Text>
+          {ends.middle}
+          <Text className="text-foreground" style={ADDRESS_END}>
+            {ends.tail}
+          </Text>
         </Text>
       </View>
     </Screen>

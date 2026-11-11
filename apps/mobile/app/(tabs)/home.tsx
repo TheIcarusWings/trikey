@@ -63,7 +63,7 @@ export default function HomeScreen() {
       {/* Several wallets: the wallet shown and its device; a tap switches or adds one. */}
       <WalletSwitcher />
       {/* With Savings, the main balance is Spending's; Savings has its own row below. */}
-      <BalanceHeader label={state.savings.status === 'active' ? 'Spending' : 'Balance'} sats={state.balanceSats} />
+      <BalanceHeader label={state.savings.status === 'active' ? 'Spending' : 'Balance'} sats={state.balanceSats} showIncoming />
       {paused ? <StatusLine tone="warn" text={state.recovery ? 'Phone-only payments paused during recovery' : 'Phone-only payments paused'} /> : <LimitLine newWallet={newWallet} />}
       {/* Online but slow to send the chain data (a slow node): the balance above is the last one, not "offline". */}
       {/* Back at the front: the connection to the guardian is being made again. Calm: nothing is wrong yet. */}

@@ -1,10 +1,12 @@
 import { useRouter } from 'expo-router';
-import { useState, useSyncExternalStore } from 'react';
-import { Pressable, View } from 'react-native';
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { Pressable, View, type LayoutChangeEvent } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withDelay } from 'react-native-reanimated';
 import { ActivityRow } from '@/components/activity-row';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { ArrowDownLeft, ArrowUpRight, Clock, Eye, EyeOff, HardwareWallet, Lock, Settings, TriangleAlert } from '@/components/icons';
+import { FadeLayer, Swap, reducedFade, standard, usePressScale, useReduceMotion } from '@/components/motion';
 import { Notice } from '@/components/panels';
 import { Sheet } from '@/components/sheet';
 import { Card } from '@/components/ui/card';
@@ -29,9 +31,14 @@ import {
   type Sats,
 } from '@/data';
 import { guardianBox } from '@/lib/labels';
+import { incomingLine } from '@/lib/payment-texts';
+import { NEW_ROW } from '@/theme/motion';
 import { useAction } from '@/lib/use-action';
 import { IS_IOS, pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
+
+/** A layer over another, centred on it, with room to be wider. */
+const OVER_CENTRED = { position: 'absolute', top: 0, bottom: 0, left: -64, right: -64, alignItems: 'center' } as const;
 
 /** Tap-to-hide for the balance: remembered while the app runs, so Home and its states agree. */
 let balanceHidden = false;
@@ -67,19 +74,27 @@ export function HomeTopActions() {
   );
 }
 
-/** The big number, centred. Sats by default, BTC when the user switched units; tap it to hide it. */
+/**
+ * The big number, centred. Sats by default, BTC when the user switched units; tap it to hide it. Hiding and showing
+ * crossfade (160ms, no blur). A new balance changes as a whole number (the old one lifts away, the new one rises), never
+ * while hidden. With `showIncoming`, the line under it reads "+21,000 sats · unconfirmed" while the incoming toast is up.
+ */
 export function BalanceHeader({
   label,
   sats,
   caption,
+  showIncoming = false,
 }: {
   label: string;
   sats: Sats;
   /** Replaces the BTC line, e.g. "Spend with Face ID, no Ledger needed". */
   caption?: string;
+  /** The wallet's main balance: an incoming payment's toast also shows under it. */
+  showIncoming?: boolean;
 }) {
-  const { unit, synced, syncing, guardianSlow, backing } = useWallet();
+  const { unit, synced, syncing, guardianSlow, backing, toast } = useWallet();
   const [hidden, toggle] = useBalanceHidden();
+  const incoming = showIncoming && !hidden ? incomingLine(toast) : null;
   const waiting =
     backing !== 'demo' && !synced
       ? syncing
@@ -91,24 +106,30 @@ export function BalanceHeader({
   const main = formatAmount(sats, unit);
   const unitText = unit === 'btc' ? 'BTC' : 'sats';
   const secondary = unit === 'btc' ? `BTC · ${formatSats(sats)} sats` : `sats · ${formatBtc(sats)} BTC`;
+  const big = cn('tabular-nums', pick('text-[56px] font-semibold leading-[64px] tracking-[-2.2px]', 'text-[56px] font-normal leading-[64px] tracking-[-1.1px]'));
+  const line = cn('tabular-nums', pick('text-[15px] leading-5', 'text-sm leading-5'));
+  const under = hidden ? 'Balance hidden' : (incoming ?? waiting ?? secondary);
   return (
     <Pressable
       role="button"
       testID="home-balance"
       onPress={toggle}
-      accessibilityLabel={hidden ? `${label} hidden. Tap to show` : `${label}: ${main} ${unitText}. Tap to hide`}
+      accessibilityLabel={hidden ? `${label} hidden. Tap to show` : `${label}: ${main} ${unitText}${incoming ? `, ${incoming}` : ''}. Tap to hide`}
       className="items-center gap-0.5 pt-2">
-      <Text
-        className={cn(
-          'tabular-nums',
-          pick('text-[56px] font-semibold leading-[64px] tracking-[-2.2px]', 'text-[56px] font-normal leading-[64px] tracking-[-1.1px]')
-        )}>
-        {hidden ? '••••••' : main}
-      </Text>
+      <View>
+        <FadeLayer shown={!hidden}>
+          <Swap id={main} kind="lift" animate={!hidden}>
+            <Text className={big}>{main}</Text>
+          </Swap>
+        </FadeLayer>
+        <FadeLayer shown={hidden} style={OVER_CENTRED}>
+          <Text className={big}>••••••</Text>
+        </FadeLayer>
+      </View>
       <View className="flex-row items-center gap-1.5">
-        <Text className={cn('text-muted-foreground tabular-nums', pick('text-[15px] leading-5', 'text-sm leading-5'))}>
-          {hidden ? 'Balance hidden' : (waiting ?? secondary)}
-        </Text>
+        <Swap id={under} align="center">
+          <Text className={cn(line, incoming ? 'text-good font-medium' : 'text-muted-foreground')}>{under}</Text>
+        </Swap>
         <Icon as={hidden ? EyeOff : Eye} size={16} strokeWidth={2} className="text-muted-foreground" />
       </View>
       {caption ? <Text className={cn('text-muted-foreground text-center', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{caption}</Text> : null}
@@ -135,17 +156,7 @@ export function SendReceiveButtons({ sendEmphasis = true, newWallet = false }: {
   const router = useRouter();
   const [nothingToSend, setNothingToSend] = useState(false);
   const button = (title: string, icon: typeof ArrowUpRight, look: 'primary' | 'secondary' | 'quiet', onPress: () => void, hint?: string) => (
-    <Pressable role="button" accessibilityLabel={title} accessibilityHint={hint} onPress={onPress} className="items-center gap-2 active:opacity-70">
-      <View className={cn('size-16 items-center justify-center rounded-full', look === 'primary' ? 'bg-primary' : 'bg-secondary')}>
-        <Icon
-          as={icon}
-          size={26}
-          strokeWidth={2}
-          className={look === 'primary' ? 'text-primary-foreground' : look === 'quiet' ? 'text-muted-foreground' : 'text-foreground'}
-        />
-      </View>
-      <Text className={cn('text-sm font-medium leading-5', look === 'quiet' && 'text-muted-foreground')}>{title}</Text>
-    </Pressable>
+    <RoundButton title={title} icon={icon} look={look} onPress={onPress} hint={hint} />
   );
   const showAddress = () => {
     setNothingToSend(false);
@@ -165,6 +176,26 @@ export function SendReceiveButtons({ sendEmphasis = true, newWallet = false }: {
         <AppButton title="Close" variant="ghost" onPress={() => setNothingToSend(false)} />
       </Sheet>
     </View>
+  );
+}
+
+/** Send or Receive: a round button with its name under it. Pressed, the circle shrinks a little and springs back. */
+function RoundButton({ title, icon, look, onPress, hint }: { title: string; icon: typeof ArrowUpRight; look: 'primary' | 'secondary' | 'quiet'; onPress: () => void; hint?: string }) {
+  const press = usePressScale();
+  return (
+    <Pressable role="button" accessibilityLabel={title} accessibilityHint={hint} onPress={onPress} {...press.handlers} className="items-center gap-2 active:opacity-70">
+      <Animated.View style={press.style}>
+        <View className={cn('size-16 items-center justify-center rounded-full', look === 'primary' ? 'bg-primary' : 'bg-secondary')}>
+          <Icon
+            as={icon}
+            size={26}
+            strokeWidth={2}
+            className={look === 'primary' ? 'text-primary-foreground' : look === 'quiet' ? 'text-muted-foreground' : 'text-foreground'}
+          />
+        </View>
+      </Animated.View>
+      <Text className={cn('text-sm font-medium leading-5', look === 'quiet' && 'text-muted-foreground')}>{title}</Text>
+    </Pressable>
   );
 }
 
@@ -273,6 +304,12 @@ export function ActivityPreview({ limit, newWallet = false }: { limit: number; n
     .filter((item): item is Extract<ActivityItem, { type: 'payment' }> => item.type === 'payment')
     .slice(0, limit);
   const ctx = { now, unit: state.unit, hardwareBrand: state.hardware.brand };
+  // A payment that shows up while Home is open (not the rows there when it opened) opens its place in the list.
+  const seen = useRef<Set<string> | null>(null);
+  const arriving = (id: string, pending: boolean) => pending && seen.current !== null && !seen.current.has(id);
+  useEffect(() => {
+    seen.current = new Set([...(seen.current ?? []), ...items.map((i) => i.tx.id)]);
+  });
   return (
     <View>
       <View className="flex-row items-center justify-between">
@@ -285,9 +322,49 @@ export function ActivityPreview({ limit, newWallet = false }: { limit: number; n
       </View>
       {items.length === 0 ? newWallet ? <FirstPaymentCard /> : <Text className="text-muted-foreground py-4 text-[15px] leading-5">No payments yet.</Text> : null}
       {items.map((item, i) => (
-        <ActivityRow key={item.tx.id} item={item} variant="home" last={i === items.length - 1} ctx={ctx} />
+        <ArrivingRow key={item.tx.id} arriving={arriving(item.tx.id, item.tx.status === 'pending')}>
+          {/* Waiting to confirm: its amber dot pulses three times, then rests until the first confirmation. */}
+          <ActivityRow item={item} variant="home" last={i === items.length - 1} ctx={ctx} pulse />
+        </ArrivingRow>
       ))}
     </View>
+  );
+}
+
+/**
+ * A row that has just arrived: its place opens from nothing to its height (280ms, one of the two layout animations the
+ * motion design allows), and its content fades in while dropping 6px into place. Reduce Motion: the row is there at
+ * once and fades in. A row that was already there renders as it is.
+ */
+function ArrivingRow({ arriving: arrivingNow, children }: { arriving: boolean; children: ReactNode }) {
+  // Decided when the row first renders: it stays arriving until its entrance is over.
+  const [arriving] = useState(arrivingNow);
+  const reduced = useReduceMotion();
+  const height = useSharedValue(0);
+  const open = useSharedValue(arriving && !reduced ? 0 : 1);
+  const shown = useSharedValue(arriving ? 0 : 1);
+  const started = useRef(false);
+  const onLayout = (e: LayoutChangeEvent) => {
+    // The row's own height, kept up to date (a line added later is not cut off).
+    height.value = e.nativeEvent.layout.height;
+    if (started.current) return;
+    started.current = true;
+    if (reduced) {
+      shown.value = reducedFade(1);
+      return;
+    }
+    open.value = withDelay(NEW_ROW.heightDelayMs, standard(1, NEW_ROW.heightMs));
+    shown.value = withDelay(NEW_ROW.contentDelayMs, standard(1, NEW_ROW.contentMs));
+  };
+  const place = useAnimatedStyle(() => ({ height: height.value * open.value }));
+  const content = useAnimatedStyle(() => ({ opacity: shown.value, transform: [{ translateY: -NEW_ROW.drop * (1 - shown.value) }] }));
+  if (!arriving) return <>{children}</>;
+  return (
+    <Animated.View style={[{ overflow: 'hidden' }, reduced ? null : place]}>
+      <Animated.View onLayout={onLayout} style={content}>
+        {children}
+      </Animated.View>
+    </Animated.View>
   );
 }
 
