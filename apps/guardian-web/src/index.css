@@ -8,6 +8,8 @@
  * Tokens. Neutrals are shadcn/ui's zinc palette; the values are the ones used in
  * design/screens/Guardian-*.dc.html. `ground` is the page/sidebar tint behind
  * white cards, `brand` is the orange of the logo and is not used elsewhere.
+ * `input` is the boundary of a form control (text field, select, checkbox): at least 3:1 against the page and the
+ * field in both themes (WCAG 1.4.11), so it is darker than `border`, which only separates content.
  */
 :root {
   --background: #ffffff;
@@ -27,7 +29,7 @@
   --destructive: #dc2626;
   --destructive-foreground: #ffffff;
   --border: #e4e4e7;
-  --input: #e4e4e7;
+  --input: #71717a;
   --ring: #a1a1aa;
 
   --ground: #f4f4f5;
@@ -65,7 +67,7 @@
   --destructive: #f87171;
   --destructive-foreground: #09090b;
   --border: #27272a;
-  --input: #27272a;
+  --input: #71717a;
   --ring: #71717a;
 
   --ground: #18181b;
@@ -130,6 +132,23 @@
   --radius-md: 8px;
   --radius-lg: 10px;
   --radius-xl: 12px;
+}
+
+/*
+ * At least a 40 x 40 px hit area for a control drawn smaller (a 32px button, a text link on its own line), without
+ * changing how it looks or what is around it. Keep 8px between such controls so the areas do not overlap.
+ */
+@utility hit-40 {
+  position: relative;
+  &::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 40px);
+    height: max(100%, 40px);
+    transform: translate(-50%, -50%);
+  }
 }
 
 @layer base {

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Outlet } from 'react-router-dom';
 import { LogoMark } from '@/components/logo';
 import { NetworkPill, NetworkStrip } from '@/components/network-pill';
+import { PAGE_TITLE_CLASS } from '@/components/page-header';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { cn } from '@/lib/utils';
 
@@ -41,7 +42,7 @@ export function AuthHeader({ title }: { title: string }) {
   return (
     <div className="flex flex-col items-center gap-3 text-center">
       <LogoMark size={76} />
-      <h1 className="m-0 text-2xl leading-8 font-semibold tracking-[-0.02em]">{title}</h1>
+      <h1 className={PAGE_TITLE_CLASS}>{title}</h1>
       <NetworkPill />
     </div>
   );

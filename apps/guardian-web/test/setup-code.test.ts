@@ -18,7 +18,7 @@ describe('the first-run chain check', () => {
     expect(chainCheckCopy({ ...base, platform: 'umbrel', electrs: 'missing' })).toEqual({
       ok: false,
       title: 'Electrs not found',
-      body: 'Install and start both apps on this box, then reload this page. The guardian only reads chain data from them.',
+      body: 'Install and start both apps on this box, then reload this page. The guardian only reads from them, to see your wallet’s payments.',
     });
     expect(chainCheckCopy({ ...base, synced: false, syncProgress: 0.42 }).body).toMatch(/Still syncing \(42%\)/);
   });

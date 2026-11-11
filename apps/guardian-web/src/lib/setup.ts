@@ -33,7 +33,7 @@ export function chainCheckCopy(p: SetupPreflight): ChainCheckCopy {
   return {
     ok: false,
     title: `${p.node === 'missing' ? 'Bitcoin Node' : 'Electrs'} not found`,
-    body: 'Install and start both apps on this box, then reload this page. The guardian only reads chain data from them.',
+    body: 'Install and start both apps on this box, then reload this page. The guardian only reads from them, to see your wallet’s payments.',
   };
 }
 
