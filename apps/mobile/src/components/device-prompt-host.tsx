@@ -1,6 +1,7 @@
 import { Modal, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
 import { HardwareWallet } from '@/components/icons';
+import { WaitingStatus } from '@/components/motion';
 import { GUTTER, useScreenInsets } from '@/components/screen';
 import { Card } from '@/components/ui/card';
 import { Icon } from '@/components/ui/icon';
@@ -49,12 +50,8 @@ export function DevicePromptHost() {
             </Card>
           ) : null}
           {prompt?.hint ? <Text className="text-sm leading-5">{prompt.hint}</Text> : null}
-          <View className="flex-row items-center gap-2.5" accessibilityLiveRegion="polite">
-            <View className="bg-warn size-2 rounded-full" />
-            <Text className={cn('text-muted-foreground', pick('text-[15px] leading-5', 'text-sm leading-5'))}>
-              Waiting for your {hardware.brand}{'…'}
-            </Text>
-          </View>
+          {/* The same waiting line as on the payment screens: the amber dot breathes while the device is asked. */}
+          <WaitingStatus className="justify-start" tone="waiting" text={`Waiting for your ${hardware.brand}…`} textClassName={pick('text-[15px] leading-5', 'text-sm leading-5')} />
           <AppButton title="Cancel" variant="outline" onPress={() => wallet.cancelDevicePrompt()} />
         </View>
       </View>

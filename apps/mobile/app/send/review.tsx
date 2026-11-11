@@ -1,9 +1,11 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { HardwareWallet, Info, ShieldCheck, TriangleAlert } from '@/components/icons';
+import { FadeLayer, KeyMarks, Swap, useLeave } from '@/components/motion';
 import { explainHardware } from '@/components/hardware-reason';
 import { InfoRow, Notice, Panel } from '@/components/panels';
 import { RadioRow } from '@/components/choice';
@@ -15,8 +17,10 @@ import { Text } from '@/components/ui/text';
 import { useQuote } from '@/data/use-quote';
 import { SAME_FEE_NOTE, WalletServiceError, formatSats, groupAddress, mixedLabelsText, sameFeeEverySpeed, shorten, useWallet, useWalletService, type FeeSpeed, fromLine } from '@/data';
 import { pick } from '@/lib/platform';
+import { signingView } from '@/lib/payment-texts';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
+import { REVIEW, STANDARD } from '@/theme/motion';
 
 /** How long each speed usually takes, in words. */
 const ARRIVES: Record<FeeSpeed, { name: string; short: string; long: string }> = {
@@ -46,6 +50,9 @@ export default function SendReview() {
   const { busy, run, message, error } = useAction();
   // Once signing starts the wallet state changes (limit used), and the quote must not flip under us.
   const sending = useRef(false);
+  const [sent, setSent] = useState(false);
+  const [signedOnce, setSignedOnce] = useState(false);
+  const { style: leaving, leave } = useLeave(REVIEW.exitLift);
   const forced = signer === 'hardware' ? { signer: 'hardware' as const } : {};
 
   // Re-quoted when the speed or what the plan depends on changes (the daily limit may have moved).
@@ -88,9 +95,24 @@ export default function SendReview() {
 
   const send = async () => {
     sending.current = true;
-    const r = await run(wallet.sendPayment(quote));
-    if (r.ok) router.replace({ pathname: '/send/done', params: { id: r.value.id, speed, ...(toSavings ? { savings: '1' } : {}) } });
+    setSignedOnce(false);
+    // Marked sent as the payment resolves, before `busy` ends, so the strip never flickers back to the button.
+    const r = await run(
+      wallet.sendPayment(quote).then((tx) => {
+        setSent(true);
+        return tx;
+      }),
+    );
+    if (!r.ok) return;
+    // Sent: the strip stays on "Signed. Sending…" while this screen's content leaves upward, then Sent fades in.
+    leave(() => router.replace({ pathname: '/send/done', params: { id: r.value.id, speed, ...(toSavings ? { savings: '1' } : {}) } }));
   };
+  // While it is signed (busy) and once it is sent, the Send button is a status strip in the same place, and the details
+  // above it dim. Only two steps can be seen: busy, then `paymentSending` (docs/design/motion.md, section 1). Once
+  // signed it stays signed, though `paymentSending` ends a moment before the payment resolves.
+  if (busy && state.paymentSending && !signedOnce) setSignedOnce(true);
+  const signing = busy || sent;
+  const signingAs = quote.plan.signer === 'phone' ? ('phone' as const) : ('phone+guardian' as const);
 
   // The hardware wallet signs this one (over the limit, guardian away, from the vault): Review says why, then hands over.
   const reviewOnDevice = () =>
@@ -111,7 +133,7 @@ export default function SendReview() {
       androidTitle="Review"
       backLabel="Back"
       footer={
-        <>
+        <Animated.View style={[{ gap: 16 }, leaving]}>
           <ActionNotice message={message} error={error} />
           {quote.plan.signer === 'hardware' ? (
             <View className="flex-row items-start gap-2.5">
@@ -119,14 +141,16 @@ export default function SendReview() {
               <Text className="flex-1 text-sm leading-5">{explainHardware(quote.plan.reason, quote.request.amountSats, state)}</Text>
             </View>
           ) : !offerHardware ? (
-            <View className="flex-row items-start gap-2.5">
-              <Icon as={ShieldCheck} size={18} strokeWidth={2} className="text-good mt-px" />
-              <Text className="text-muted-foreground flex-1 text-sm leading-5">
-                {quote.plan.signer === 'phone'
-                  ? `From your spending balance: this phone signs it alone. No ${state.hardware.brand} needed.`
-                  : `Within today's limit: this phone and your guardian sign it. No ${state.hardware.brand} needed.`}
-              </Text>
-            </View>
+            <FadeLayer shown={!signing} dim={REVIEW.dimTo} ms={STANDARD.duration}>
+              <View className="flex-row items-start gap-2.5">
+                <Icon as={ShieldCheck} size={18} strokeWidth={2} className="text-good mt-px" />
+                <Text className="text-muted-foreground flex-1 text-sm leading-5">
+                  {quote.plan.signer === 'phone'
+                    ? `From your spending balance: this phone signs it alone. No ${state.hardware.brand} needed.`
+                    : `Within today's limit: this phone and your guardian sign it. No ${state.hardware.brand} needed.`}
+                </Text>
+              </View>
+            </FadeLayer>
           ) : null}
           {hardware ? (
             <AppButton title={feesLanding ? 'Updating the network fee…' : `Review on ${state.hardware.brand}`} busy={feesLanding} onPress={reviewOnDevice} />
@@ -136,16 +160,26 @@ export default function SendReview() {
               onPress={() => router.replace({ pathname: '/send/hardware', params: { address, amount, speed, signer: 'hardware', ...(picked.length ? { coins: picked.join(',') } : {}) } })}
             />
           ) : (
-            <AppButton
-              title={busy ? 'Signing…' : feesLanding ? 'Updating the network fee…' : pick('Send with Face ID', 'Send with fingerprint')}
-              busy={busy || feesLanding}
-              onPress={send}
-            />
+            // The button crossfades (240ms) into a status strip in the same place while the payment is signed.
+            <View>
+              <FadeLayer shown={!signing} ms={STANDARD.duration}>
+                <AppButton
+                  title={feesLanding ? 'Updating the network fee…' : pick('Send with Face ID', 'Send with fingerprint')}
+                  busy={feesLanding}
+                  onPress={send}
+                />
+              </FadeLayer>
+              <FadeLayer shown={signing} ms={STANDARD.duration} style={StyleSheet.absoluteFill}>
+                <SigningStrip {...signingView(signingAs, sent || signedOnce || !!state.paymentSending)} />
+              </FadeLayer>
+            </View>
           )}
-        </>
+        </Animated.View>
       }>
+      <Animated.View style={[{ gap: 16 }, leaving]}>
       {/* Several wallets: the wallet this pays from, and so the device it may need. */}
       {fromLine(state.wallets) ? <Text className="text-muted-foreground text-center text-[15px] font-medium">{`${fromLine(state.wallets)} · ${state.hardware.model}`}</Text> : null}
+      <FadeLayer shown={!signing} dim={REVIEW.dimTo} ms={STANDARD.duration}>
       <Panel>
         <View className={pick('flex-row justify-between gap-4 px-4 py-3.5', 'flex-row justify-between gap-4 p-4')}>
           <Text className="text-muted-foreground text-[15px] leading-5">To</Text>
@@ -185,6 +219,7 @@ export default function SendReview() {
         <InfoRow label="Total" value={`${about}${formatSats(total)} sats`} strong tabular />
         {picked.length ? <InfoRow label="Paid with" value={pickedLine} /> : null}
       </Panel>
+      </FadeLayer>
       {quote.mixesLabels ? (
         <Notice icon={TriangleAlert} tone="warn-outline" title="Coins with different labels">
           {mixedLabelsText(quote.mixesLabels)}
@@ -201,6 +236,7 @@ export default function SendReview() {
           {'\n'}It's the address worked out for this one payment. Check that your device shows exactly this.
         </Notice>
       ) : null}
+      </Animated.View>
 
       <Sheet visible={choosingSpeed} title="Arrival time" onClose={() => setChoosingSpeed(false)}>
         <RadioGroup
@@ -227,5 +263,22 @@ export default function SendReview() {
         <AppButton title="Done" onPress={() => setChoosingSpeed(false)} />
       </Sheet>
     </Screen>
+  );
+}
+
+/**
+ * Where the Send button was, while the payment is signed: the keys that sign (breathing while asked, green once signed,
+ * joined by a short line) and what is happening, in words.
+ */
+function SigningStrip({ text, marks, linked }: ReturnType<typeof signingView>) {
+  return (
+    <View role="status" accessibilityLabel={text} className="bg-secondary h-12 flex-row items-center justify-center gap-3 rounded-[10px] px-4">
+      <KeyMarks marks={marks} linked={linked} />
+      <Swap id={text} align="start" style={{ flexShrink: 1 }}>
+        <Text className="text-[15px] font-medium leading-5" numberOfLines={1}>
+          {text}
+        </Text>
+      </Swap>
+    </View>
   );
 }
