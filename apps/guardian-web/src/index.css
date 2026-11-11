@@ -9,7 +9,8 @@
  * design/screens/Guardian-*.dc.html. `ground` is the page/sidebar tint behind
  * white cards, `brand` is the orange of the logo and is not used elsewhere.
  * `input` is the boundary of a form control (text field, select, checkbox): at least 3:1 against the page and the
- * field in both themes (WCAG 1.4.11), so it is darker than `border`, which only separates content.
+ * field in both themes (WCAG 1.4.11), so it is darker than `border`, which only separates content. `ring`, the focus
+ * indicator, clears 3:1 the same way: zinc-500 is 4.83:1 on white, 4.40:1 on `ground`, 4.12:1 and 3.67:1 in dark.
  */
 :root {
   --background: #ffffff;
@@ -30,7 +31,7 @@
   --destructive-foreground: #ffffff;
   --border: #e4e4e7;
   --input: #71717a;
-  --ring: #a1a1aa;
+  --ring: #71717a;
 
   --ground: #f4f4f5;
   --sidebar: #f4f4f5;
