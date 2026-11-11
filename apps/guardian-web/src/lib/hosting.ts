@@ -4,12 +4,13 @@
  * does store what it co-signs), and Stop hosting must say what it costs.
  */
 import type { HostedWallet } from '@/api';
+import { formatDateYear } from './format';
 
 /** What the host is told when making an invite (section 9). */
 export const HOST_DISCLOSURE_TITLE = "You'll hold one of their three keys";
 export const HOST_DISCLOSURE = [
   "You can't spend their money, and this page never shows their balance or their payments. Your box does store the payments it co-signs for them: treat its data as theirs.",
-  "They're counting on you to keep this box online, unlock it after every restart, let a recovery wait run its full length, and never help anyone get around it. While you host, Reset is refused. To stop, use Stop hosting: they get 30 days to move.",
+  "They're counting on you to keep this box online, unlock it after every restart, let a recovery's security waiting period run its full length, and never help anyone get around it. While you host, Reset is refused. To stop, use Stop hosting: they get 30 days to move.",
 ] as const;
 
 /** What "stop now" must be confirmed with, typed exactly (the guardian checks it too). */
@@ -20,7 +21,8 @@ export const STOP_NOW_WARNING =
 
 export const LINK_SHOWN_ONCE = 'The link is shown only once: this box keeps just a fingerprint of it. If you lost it, cancel this invite and make a new one.';
 
-const day = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+/** "Oct 1, 2026", as every date with a year in the web UI. */
+const day = (iso: string) => formatDateYear(iso);
 
 /** The second line of a hosted wallet's row. Names, states and dates only: never an amount. */
 export function hostedWalletLine(w: HostedWallet): string {
@@ -36,7 +38,7 @@ export function hostedWalletLine(w: HostedWallet): string {
     case 'left':
       return `They moved their wallet away${w.endedAt ? ` ${day(w.endedAt)}` : ''}`;
     case 'active':
-      return `Since ${w.since ? day(w.since) : 'recently'}${w.recoveryDelayDays ? ` · ${w.recoveryDelayDays}-day recovery wait` : ''}`;
+      return `Since ${w.since ? day(w.since) : 'recently'}${w.recoveryDelayDays ? ` · ${w.recoveryDelayDays}-day security waiting period` : ''}`;
   }
 }
 

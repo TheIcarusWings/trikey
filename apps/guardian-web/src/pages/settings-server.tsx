@@ -343,7 +343,7 @@ export function ServerSection() {
 
       {mode === 'platform' ? (
         <details ref={advancedRef as RefObject<HTMLDetailsElement>} open={advancedOpen} onToggle={(e) => setAdvancedOpen(e.currentTarget.open)} className="group/server scroll-mt-4">
-          <summary className="flex w-fit cursor-pointer list-none items-center gap-1 rounded-sm text-sm leading-5 font-medium outline-none marker:content-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+          <summary className="hit-40 flex w-fit cursor-pointer list-none items-center gap-1 rounded-sm text-sm leading-5 font-medium outline-none marker:content-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
             <ChevronRight className="size-4 text-muted-foreground transition-transform group-open/server:rotate-90" aria-hidden="true" />
             Advanced: use a different server
           </summary>

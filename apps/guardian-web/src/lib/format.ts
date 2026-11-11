@@ -88,13 +88,16 @@ function dayDiff(a: Date, now: Date): number {
   return Math.round((startOfDay(now) - startOfDay(a)) / 86_400_000);
 }
 
-/** "Today 14:20", "Yesterday 18:30", "Oct 27 08:11". */
+/**
+ * "Today, 14:20", "Yesterday, 18:30", "Oct 27, 08:11": a day and a time always take a comma, as in `formatDateTime`
+ * and the phone app ("at" is only for running sentences, `formatDateAt`).
+ */
 export function formatWhen(iso: string, now = new Date()): string {
   const d = new Date(iso);
   const hhmm = time.format(d);
   const diff = dayDiff(d, now);
-  if (diff === 0) return `Today ${hhmm}`;
-  return diff === 1 ? `Yesterday ${hhmm}` : `${monthDay.format(d)} ${hhmm}`;
+  if (diff === 0) return `Today, ${hhmm}`;
+  return diff === 1 ? `Yesterday, ${hhmm}` : `${monthDay.format(d)}, ${hhmm}`;
 }
 
 /** Dashboard style: "14:20" today, "Yesterday", else "Oct 21". */
@@ -112,7 +115,7 @@ export function formatDateTime(iso: string): string {
   return `${monthDay.format(d)}, ${time.format(d)}`;
 }
 
-/** "Nov 5 at 14:05". */
+/** "Nov 5 at 14:05", inside a sentence ("Money moves to the new wallet on Nov 5 at 14:05"); a label takes `formatDateTime`. */
 export function formatDateAt(iso: string): string {
   const d = new Date(iso);
   return `${monthDay.format(d)} at ${time.format(d)}`;

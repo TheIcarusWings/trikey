@@ -53,7 +53,7 @@ function Details({ recovery }: { recovery: RecoveryInProgress }) {
   const overCap = recovery.feeSats > recovery.feeCapSats;
   return (
     <details className="group">
-      <summary className="w-fit cursor-pointer rounded-sm text-sm leading-5 text-muted-foreground underline underline-offset-3 outline-none marker:content-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+      <summary className="hit-40 w-fit cursor-pointer rounded-sm text-sm leading-5 text-muted-foreground underline underline-offset-3 outline-none marker:content-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
         Details: signed with, amount, fee, destination
       </summary>
       <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(min(300px,100%),1fr))] gap-x-10 gap-y-6">
@@ -153,7 +153,7 @@ export function RecoveryPage() {
         <Fact Icon={Bell} title="Alerts go out daily">
           {alertsText(recovery)}
         </Fact>
-        <Fact Icon={Clock} title={`Started ${formatDateAt(recovery.startedAt)}`}>
+        <Fact Icon={Clock} title={`Started ${formatDateTime(recovery.startedAt)}`}>
           {startedBy(recovery)}
         </Fact>
       </ul>
@@ -170,7 +170,7 @@ export function RecoveryPage() {
           <li>Your hardware wallet, from the Trikey app.</li>
         </ol>
         <p className="m-0 text-[13px] leading-[18px] text-muted-foreground">
-          This page can't cancel: a web page on your home server isn't one of the keys.
+          This page can't cancel: only the keys above can, and a web page on your guardian isn't one of them.
         </p>
       </section>
 
