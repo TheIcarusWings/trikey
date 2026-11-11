@@ -1,6 +1,6 @@
 # Motion in the phone app
 
-Status: design handover, not yet implemented. Written by the motion design session for the
+Status: design handover, approved by the owner on 2026-11-11 (decisions at the end); being implemented. Written by the motion design session for the
 session that implements it. No app code was changed.
 
 Canvas with the live prototypes: <https://claude.ai/artifact/NV6PFVBx7RSymcqBTtDdh8>
@@ -263,3 +263,17 @@ sets used for a review pass: `better-ui` and `better-accessibility` from
   platforms, or is there a visible jump today?
 - `haptics.ts` fires `success` when Sent opens; section 1 moves it to the moment the check
   starts drawing, about 240ms later. Any objection?
+
+## Owner decisions (2026-11-11, recorded by the implementing session)
+
+- Build as drawn: the Sent screen extras (key marks, "Signed by…", the limit card), the bold first and last four characters of the address, "Guardian unlocked / Phone payments work again.", the Security tab tiles as the final layout, and the second opening animation (about 2s).
+- Springs: keep the small overshoot as specified.
+- The Redesign review: each finding is checked against the shipped app, and the real ones are fixed in a separate PR for review.
+
+## Answers to the questions for the implementer
+
+- **A signal between "phone signed" and "guardian co-signed":** there is none. The app sees `busy`, then `payment_signed` (`paymentSending`), then the result. Section 1's two steps stay.
+- **The destructive button in dark mode:** the app already uses dark ink on the red (`--destructive-foreground`, `#09090B`, in `apps/mobile/global.css`). Review finding 1 is a board-only issue.
+- **The guardian's last-sync time:** `syncedAt` exists in the wallet state, so the Security tile can say "in sync · 2 min ago".
+- **The splash hand-off:** checked on a device when section 9 is built.
+- **Moving the `success` haptic** to when the check starts drawing: agreed.
