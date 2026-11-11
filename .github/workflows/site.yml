@@ -48,7 +48,7 @@ jobs:
       # Every page: lang, the strict CSP, title, one h1, description and canonical
       # (unless noindex), alt/width/height on images, JSON-LD that parses, links
       # that resolve, and nothing loaded from another site. Links to other sites:
-      # only github.com and trikey.app, except cited sources in blog posts.
+      # only github.com, trikey.app and zapstore.dev, except cited sources in blog posts.
       # sitemap.xml and the feed must be well-formed and complete.
       - name: Check every page
         run: node tools/site/check-site.mjs
