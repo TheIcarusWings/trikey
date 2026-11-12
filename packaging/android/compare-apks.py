@@ -17,19 +17,21 @@ debug key; the release is then re-signed (packaging/android/sign-apk.sh). So thi
 
 With --ignore-signature, the verdict is whether the two APKs are the same apart from their signatures. That is how a
 rebuild is checked against a release APK, which is signed with the release key (by apksigner) while a rebuild has
-Expo's debug signature (by Gradle). A signature is two things in the file, and only these are set aside:
+Expo's debug signature (by Gradle). Signing with apksigner writes these into the file, and only these are set aside:
 
 - the APK Signing Block (v2/v3 signatures), between the last entry and the central directory, and the zero bytes
-  a signer may put just before it so that it starts on a 4096-byte boundary (apksigner does; fewer than 4096, all
-  zero, after the last entry);
-- the v1 (JAR) signature files apksigner adds: META-INF/MANIFEST.MF, META-INF/*.SF and META-INF/*.RSA, *.DSA or *.EC
-  (each one's local entry and its central directory record).
+  a signer may put just before it so that it starts on a 4096-byte boundary (fewer than 4096, all zero, after the last
+  entry);
+- the v1 (JAR) signature files: META-INF/MANIFEST.MF, META-INF/*.SF and META-INF/*.RSA, *.DSA or *.EC (each one's
+  local entry and its central directory record);
+- the alignment apksigner gives each uncompressed entry's data, in the entry's local header: an extra field record
+  with ID 0xd935 that holds the alignment and zeros, or zero bytes at the end of the extra field (zipalign's way).
 
-Every other byte must be the same: each entry's local header and data, whatever lies between entries, every other
-central directory record (with entry offsets as they are once those files are cut out) and the end record (with its
-counts, size and offset adjusted the same way). So equal means the release APK is this build plus a signature, and
-nothing else. Whether that signature is valid and by the release key is a separate check
-(`apksigner verify --print-certs`, which also checks the v1 files against the entries).
+Every other byte must be the same: each entry's local header (but for the length of its extra field) and data,
+whatever lies between entries, every other central directory record (with entry offsets as they are once the above is
+taken out) and the end record (with its counts, size and offset adjusted the same way). So equal means the release APK
+is this build plus a signature, and nothing else. Whether that signature is valid and by the release key is a
+separate check (`apksigner verify --print-certs`, which also checks the v1 files against the entries).
 
 Exit status: 0 identical, 1 different, 2 could not read an APK. The report is Markdown, for the job summary.
 """
@@ -133,13 +135,39 @@ def signing_block_entries(path: str) -> list[str]:
     return pairs
 
 
-def without_signature(path: str) -> tuple[bytes, int, int, list[str]]:
-    """The file without its APK Signing Block and v1 signature files, with the ZIP offsets adjusted to match.
+ALIGNMENT_EXTRA_ID = 0xD935  # apksigner's (and AGP's) extra field record that aligns an entry's data
 
-    Returns those bytes, the signing block's size (0 if none), the zero padding before it and the v1 signature files
-    set aside. Every other byte of
-    the file is kept, so two APKs that differ only in their signatures give the same bytes here. No ZIP64 (an APK is
-    far below 4 GB), one disk, nothing after the end record but its comment.
+
+def without_alignment(extra: bytes) -> bytes:
+    """A local extra field without what only aligns the entry's data: 0xd935 records (a 2-byte alignment, then zeros)
+    and zero bytes at the end. Anything else in it is kept, so it is still compared."""
+    out = bytearray()
+    p = 0
+    while p < len(extra):
+        rest = extra[p:]
+        if rest.count(0) == len(rest):
+            break  # zero padding to the end
+        if len(rest) < 4:
+            out += rest
+            break
+        record_id, size = struct.unpack_from("<HH", extra, p)
+        body = extra[p + 4:p + 4 + size]
+        if len(body) < size:
+            out += rest  # not a well-formed record: keep the rest as it is
+            break
+        if not (record_id == ALIGNMENT_EXTRA_ID and size >= 2 and body[2:].count(0) == size - 2):
+            out += extra[p:p + 4 + size]
+        p += 4 + size
+    return bytes(out)
+
+
+def without_signature(path: str) -> tuple[bytes, int, int, list[str], int]:
+    """The file without what signing with apksigner adds to it (see the module's docstring), offsets adjusted to match.
+
+    Returns those bytes, the signing block's size (0 if none), the zero padding before it, the v1 signature files set
+    aside and how many local headers had alignment taken out. Every other byte of the file is kept, so two APKs that
+    differ only in their signatures give the same bytes here. No ZIP64 (an APK is far below 4 GB), one disk, nothing
+    after the end record but its comment.
     """
     with open(path, "rb") as f:
         data = f.read()
@@ -155,84 +183,83 @@ def without_signature(path: str) -> tuple[bytes, int, int, list[str]]:
         raise ValueError("bytes between the central directory and its end record (or ZIP64)")
 
     # The APK Signing Block: its size (uint64, not counting this first field) at both ends, then the magic.
-    start = cd_offset
+    block_start = cd_offset
     if cd_offset >= 32 and data[cd_offset - 16:cd_offset] == SIG_BLOCK_MAGIC:
         (size,) = struct.unpack_from("<Q", data, cd_offset - 24)
-        start = cd_offset - (size + 8)
-        if start < 0 or struct.unpack_from("<Q", data, start)[0] != size:
+        block_start = cd_offset - (size + 8)
+        if block_start < 0 or struct.unpack_from("<Q", data, block_start)[0] != size:
             raise ValueError("malformed APK Signing Block")
 
-    # The central directory, record by record.
-    records = []  # (name, local header offset, central directory record bytes)
+    # The central directory, record by record, and where each entry's local record (header, data, data descriptor)
+    # ends.
+    records = []  # (index, name, local header offset, local record end, central directory record)
     p = cd_offset
-    for _ in range(count):
+    for i in range(count):
         if data[p:p + 4] != b"PK\x01\x02":
             raise ValueError(f"no central directory record at {p}")
         (flags,) = struct.unpack_from("<H", data, p + 8)
         (csize,) = struct.unpack_from("<I", data, p + 20)
         name_len, extra_len, comment_len = struct.unpack_from("<HHH", data, p + 28)
         (local,) = struct.unpack_from("<I", data, p + 42)
-        raw_name = data[p + 46:p + 46 + name_len]
-        name = raw_name.decode("utf-8" if flags & 0x800 else "cp437")
+        name = data[p + 46:p + 46 + name_len].decode("utf-8" if flags & 0x800 else "cp437")
         rec_end = p + 46 + name_len + extra_len + comment_len
-        records.append((name, local, csize, flags, data[p:rec_end]))
+        if data[local:local + 4] != b"PK\x03\x04":
+            raise ValueError(f"no local header for {name}")
+        local_name_len, local_extra_len = struct.unpack_from("<HH", data, local + 26)
+        end = local + 30 + local_name_len + local_extra_len + csize
+        if flags & 0x08:
+            end += 16 if data[end:end + 4] == b"PK\x07\x08" else 12
+        records.append((i, name, local, end, data[p:rec_end]))
         p = rec_end
     if p != eocd:
         raise ValueError("the central directory is not the size its end record says")
-
-    # Each entry's local record (header, data, data descriptor); the v1 signature files' ones are cut out.
-    cuts: list[tuple[int, int]] = []
-    v1 = []
-    last_end = 0
-    for name, local, csize, flags, _ in records:
-        if data[local:local + 4] != b"PK\x03\x04":
-            raise ValueError(f"no local header for {name}")
-        name_len, extra_len = struct.unpack_from("<HH", data, local + 26)
-        end = local + 30 + name_len + extra_len + csize
-        if flags & 0x08:
-            end += 16 if data[end:end + 4] == b"PK\x07\x08" else 12
-        last_end = max(last_end, end)
-        if V1_SIGNATURE_FILE.fullmatch(name):
-            cuts.append((local, end))
-            v1.append(name)
-    if last_end > start:
+    last_end = max((r[3] for r in records), default=0)
+    if last_end > block_start:
         raise ValueError("an entry runs into the signing block")
+
     # Zero padding a signer put after the last entry so that the signing block starts on a 4096-byte boundary.
-    block_start = start
-    gap = data[last_end:start]
-    if gap and len(gap) < 4096 and gap.count(0) == len(gap) and start % 4096 == 0:
+    start = block_start
+    gap = data[last_end:block_start]
+    if gap and len(gap) < 4096 and gap.count(0) == len(gap) and block_start % 4096 == 0:
         start = last_end
-    cuts.sort()
-    for (s1, e1), (s2, _) in zip(cuts, cuts[1:]):
-        if e1 > s2:
-            raise ValueError("overlapping v1 signature entries")
-    if cuts and cuts[-1][1] > start:
-        raise ValueError("a v1 signature entry runs into the signing block")
 
-    def moved(offset: int) -> int:
-        for s0, e0 in cuts:
-            if s0 < offset < e0:
-                raise ValueError(f"an entry at {offset} lies inside a v1 signature entry")
-        return offset - sum(e0 - s0 for s0, e0 in cuts if e0 <= offset)
-
+    # The entries section again, in file order: the bytes between entries as they are, each entry's local record
+    # without its alignment, the v1 signature files' not at all.
     entries_part = bytearray()
+    new_offset: dict[int, int] = {}
+    v1: list[str] = []
+    realigned = 0
     pos = 0
-    for s0, e0 in cuts:
-        entries_part += data[pos:s0]
-        pos = e0
-    entries_part += data[pos:start]
-    directory = bytearray()
-    kept = 0
-    for name, local, _, _, rec in records:
+    for i, name, local, end, _ in sorted(records, key=lambda r: r[2]):
+        if local < pos:
+            raise ValueError(f"{name} overlaps the entry before it")
+        entries_part += data[pos:local]
+        pos = end
         if V1_SIGNATURE_FILE.fullmatch(name):
+            v1.append(name)
+            continue
+        name_len, extra_len = struct.unpack_from("<HH", data, local + 26)
+        extra = data[local + 30 + name_len:local + 30 + name_len + extra_len]
+        kept_extra = without_alignment(extra)
+        realigned += kept_extra != extra
+        header = bytearray(data[local:local + 30])
+        struct.pack_into("<H", header, 28, len(kept_extra))
+        new_offset[i] = len(entries_part)
+        entries_part += header + data[local + 30:local + 30 + name_len] + kept_extra
+        entries_part += data[local + 30 + name_len + extra_len:end]
+    entries_part += data[pos:start]
+
+    directory = bytearray()
+    for i, name, _, _, rec in records:
+        if i not in new_offset:
             continue
         rec = bytearray(rec)
-        struct.pack_into("<I", rec, 42, moved(local))
+        struct.pack_into("<I", rec, 42, new_offset[i])
         directory += rec
-        kept += 1
     end_record = bytearray(data[eocd:])
+    kept = len(new_offset)
     struct.pack_into("<HHII", end_record, 8, kept, kept, len(directory), len(entries_part))
-    return bytes(entries_part + directory + end_record), cd_offset - block_start, block_start - start, v1
+    return bytes(entries_part + directory + end_record), cd_offset - block_start, block_start - start, v1, realigned
 
 
 def main(argv: list[str]) -> int:
@@ -246,8 +273,8 @@ def main(argv: list[str]) -> int:
     try:
         hash_a, hash_b = sha256_file(a), sha256_file(b)
         if ignore_signature:
-            unsigned_a, sig_size_a, pad_a, v1_a = without_signature(a)
-            unsigned_b, sig_size_b, pad_b, v1_b = without_signature(b)
+            unsigned_a, sig_size_a, pad_a, v1_a, aligned_a = without_signature(a)
+            unsigned_b, sig_size_b, pad_b, v1_b, aligned_b = without_signature(b)
         order_a, info_a = entries(a)
         order_b, info_b = entries(b)
         block_a, block_b = outside_entries(a), outside_entries(b)
@@ -270,7 +297,8 @@ def main(argv: list[str]) -> int:
 
         out.append("")
         out.append(f"Set aside as the signature: signing block {sig_size_a} / {sig_size_b} bytes; zero padding before it "
-                   f"{pad_a} / {pad_b} bytes; v1 signature files in A: {v1_list(v1_a)}; in B: {v1_list(v1_b)}.")
+                   f"{pad_a} / {pad_b} bytes; v1 signature files in A: {v1_list(v1_a)}; in B: {v1_list(v1_b)}; "
+                   f"alignment in the local headers of {aligned_a} / {aligned_b} entries.")
         for label, pairs in (("A", pairs_a), ("B", pairs_b)):
             out.append(f"Signing block of {label}: {'; '.join(pairs) if pairs else 'none'}.")
         if unsigned_a == unsigned_b:
