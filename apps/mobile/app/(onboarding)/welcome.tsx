@@ -5,7 +5,7 @@ import { AppButton } from '@/components/app-button';
 import { Logo } from '@/components/icons';
 import { ModeSwitcher } from '@/components/mode-switcher';
 import { NetworkPicker, mainnetBlocked } from '@/components/network-picker';
-import { Notice, Pill } from '@/components/panels';
+import { Notice, Pill, networkLabel } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import { useWallet } from '@/data';
@@ -48,7 +48,8 @@ export default function Welcome() {
           {/* Honest from the first screen: what kind of build this is. */}
           <View className="flex-row justify-center pb-1">
             <Pill dot="warn" strong>
-              {backing === 'demo' ? 'Demo · sample data' : mainnet ? 'Pre-alpha · not audited · open source' : 'Pre-alpha · test network'}
+              {/* The network by its name, as the strip at the top says it ("Signet", "Testnet"). */}
+              {backing === 'demo' ? 'Demo · sample data' : mainnet ? 'Pre-alpha · not audited · open source' : `Pre-alpha · ${networkLabel(backing, state.network) ?? 'test network'}`}
             </Pill>
           </View>
           {picks ? <NetworkPicker /> : null}

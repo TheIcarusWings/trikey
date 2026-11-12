@@ -12,6 +12,8 @@ export const palette = {
     frame: '#E4E4E7',
     ink: '#09090B',
     muted: '#71717A',
+    /** Grey text on a grey fill (the Security tiles' value lines): 7.0:1 on `fill`, where `muted` is only 4.4:1. */
+    mutedStrong: '#52525B',
     line: '#E4E4E7',
     fill: '#F4F4F5',
     seg: '#F4F4F5',
@@ -38,6 +40,7 @@ export const palette = {
     frame: '#27272A',
     ink: '#FAFAFA',
     muted: '#A1A1AA',
+    mutedStrong: '#A1A1AA',
     line: '#27272A',
     fill: '#27272A',
     seg: '#27272A',

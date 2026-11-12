@@ -9,8 +9,12 @@ import {
   SendReceiveButtons,
   SilentPaymentsRow,
   StatusLine,
+  recoveryNeedsAnswer,
+  useGuardianNotice,
   useNewWallet,
 } from '@/components/home';
+import { Swap } from '@/components/motion';
+import { View } from 'react-native';
 import { RecoveryKeyNotices, VaultCard } from '@/components/home-rk';
 import { CoinsLink } from '@/components/coins';
 import { SavingsRow, SavingsSuggestion } from '@/components/savings';
@@ -30,6 +34,7 @@ export default function HomeScreen() {
   const state = useWallet();
   const wallet = useWalletService();
   const newWallet = useNewWallet();
+  const notice = useGuardianNotice(state.mode !== 'recoveryKey');
   const refresh = () => wallet.sync();
   // Android shows the network and the gear in its top bar; iOS has no bar on Home, so they lead the content.
   const screen = { tab: true, untitled: true, title: 'Trikey', titleAccessory: IS_IOS ? undefined : <HomeTopActions />, androidTitleWeight: 'normal' as const, gap: 20, onRefresh: refresh };
@@ -46,39 +51,59 @@ export default function HomeScreen() {
       <Screen {...screen}>
         {top}
         <RecoveryKeyNotices />
-        <BalanceHeader label="Spending balance" sats={state.recoveryKey.spendingSats} />
-        <StatusLine tone="good" text={caption} />
-        <SendReceiveButtons />
+        <BalanceHeader label="Spending balance" sats={state.recoveryKey.spendingSats} opening />
+        {/* No daily limit here: the opening's orange key has no dot to land on and fades where it is. */}
+        <StatusLine tone="good" text={caption} opening />
+        <SendReceiveButtons opening />
         <VaultCard />
-        <ActivityPreview limit={2} />
+        <ActivityPreview limit={2} opening />
       </Screen>
     );
   }
 
   const down = state.guardian.status !== 'online';
-  const paused = down || !!state.recovery || state.phoneSpending === 'paused_contested';
+  // The guardian notice follows the status with its own timing (section 5 of the motion design): after an unlock it says
+  // "Guardian unlocked" for a moment, and the limit line comes back as it collapses. The line under the balance follows
+  // the notice, so the two never disagree.
+  const noticeDown = (notice.look === 'locked' || notice.look === 'offline') && !notice.closing;
+  const paused = noticeDown || !!state.recovery || state.phoneSpending === 'paused_contested';
+  const pausedText = state.recovery ? 'Phone-only payments paused during recovery' : 'Phone-only payments paused';
+  // "Guardian unlocked" is showing: "paused" is no longer true, and the limit line arrives as the notice collapses.
+  const line = paused ? `paused:${pausedText}` : notice.look === 'unlocked' && !notice.closing ? 'unlocked' : 'limit';
   return (
     <Screen {...screen}>
       {top}
       {/* Several wallets: the wallet shown and its device; a tap switches or adds one. */}
       <WalletSwitcher />
       {/* With Savings, the main balance is Spending's; Savings has its own row below. */}
-      <BalanceHeader label={state.savings.status === 'active' ? 'Spending' : 'Balance'} sats={state.balanceSats} />
-      {paused ? <StatusLine tone="warn" text={state.recovery ? 'Phone-only payments paused during recovery' : 'Phone-only payments paused'} /> : <LimitLine newWallet={newWallet} />}
+      {/* `opening`: these parts fill in as the app opens (docs/design/motion.md, section 9). */}
+      <BalanceHeader label={state.savings.status === 'active' ? 'Spending' : 'Balance'} sats={state.balanceSats} showIncoming opening />
+      <Swap id={line}>
+        {paused ? (
+          <StatusLine tone="warn" text={pausedText} opening />
+        ) : line === 'unlocked' ? (
+          <View className="-mt-3 min-h-11" />
+        ) : (
+          <LimitLine newWallet={newWallet} opening />
+        )}
+      </Swap>
       {/* Online but slow to send the chain data (a slow node): the balance above is the last one, not "offline". */}
       {/* Back at the front: the connection to the guardian is being made again. Calm: nothing is wrong yet. */}
       {state.guardianReconnecting && !down ? <StatusLine text="Reconnecting to your guardian…" /> : null}
       {state.guardianSlow && !down && state.synced ? (
         <StatusLine tone="warn" text={state.syncing ? 'Syncing… your guardian is slow to answer' : 'Slow to answer · last balance shown'} />
       ) : null}
-      <SendReceiveButtons newWallet={newWallet} />
+      {/* A recovery someone else started, not answered yet: above Send and Receive, and Send is no longer primary. */}
+      <RecoveryBanner placement="urgent" />
+      {/* With the urgent recovery card above them, the opening's keys do not land on the buttons: they fade. */}
+      <SendReceiveButtons newWallet={newWallet} sendEmphasis={!recoveryNeedsAnswer(state.recovery)} opening landOn={!recoveryNeedsAnswer(state.recovery)} />
       <SavingsRow />
       <RecoveryBanner />
       <HardwareConfirmCard />
-      {down ? <GuardianDownNotice /> : null}
+      {notice.look ? <GuardianDownNotice notice={notice} /> : null}
       <SilentPaymentsRow />
       <SavingsSuggestion />
-      <ActivityPreview limit={3} newWallet={newWallet} />
+      <ActivityPreview limit={3} newWallet={newWallet} opening />
       {/* Coin control: the coins, their labels and freezes, Consolidate. */}
       {newWallet ? null : <CoinsLink />}
     </Screen>

@@ -55,7 +55,12 @@ Hardware (key 1) ───┘   outbound only           └── alerts: nostr 
 ```
 
 ### Mobile app (React Native)
-- **Key 2:** BIP39 seed, encrypted at rest with a key from the Secure Enclave or Android Keystore. Those chips can't hold secp256k1 keys directly, so they wrap the seed instead. Unlocking needs biometrics.
+- **Key 2:** BIP39 seed, encrypted at rest with a key from the Secure Enclave or Android Keystore. Those chips can't hold secp256k1 keys directly, so they wrap the seed instead. Unlocking needs biometrics. Everything else the phone keeps, and where (secure store or the app's files), is listed in [docs/security/phone-storage.md](docs/security/phone-storage.md).
+  - **Optional security key lock (wallet core only, not in the app yet; off by default):** the wallet core can also
+    lock the seed under a key only a YubiKey gives (FIDO2 PRF or PIV key agreement), so every use of key 2 needs
+    biometrics and the YubiKey. It's one setting for the phone, covering every wallet on it, and it doesn't touch the
+    descriptor, the guardian or the protocol. The backup still holds the plain key 2 under the recovery code
+    (`packages/wallet/src/key2-lock.ts`, `withKey2` in `wallet.ts`; [docs/design/yubikey-key2.md](docs/design/yubikey-key2.md)).
 - **Hardware wallets:**
   - Ledger over Bluetooth (`@ledgerhq/device-signer-kit-bitcoin`);
   - a Jade or Jade Plus over Bluetooth (its own RPC over `react-native-ble-plx`, the library the Ledger transport already
@@ -708,6 +713,13 @@ printed and kept with the hardware wallet.
     writable `/tmp` and be loaded at the next start in place of the source, is turned off (`TSX_DISABLE_CACHE=1` in the
     Dockerfile, and in the Start9 package's environment). Up to 0.1.23 code that got into the guardian once could leave
     a cache entry there and run again after every restart, before the unlock (security sweep 2).
+  - **Signed releases (built 2026-11-10).** Each release gets a manifest of its files' SHA-256, signed
+    with Trikey's nostr publisher key from the owner's signer app (never a GitHub secret) as a kind-1420 event, also
+    published to relays, and `publish-release.yml` refuses to publish without it; the Umbrel store is updated only
+    after publishing, and only once the signature checks (`packaging/release-signature.py`, standard-library Python;
+    the owner signs with `tools/release/sign-release.mjs`). It stops a compromised workflow or build dependency from
+    publishing; a release made by hand from a stolen GitHub account is caught only where the signature is checked (the
+    app, later). Design: docs/design/signed-releases.md.
   - **Not built yet (TODO):** downloading the APK in the app and checking its signing certificate before handing it to
     Android's installer (`PackageManager.getPackageArchiveInfo(path, GET_SIGNING_CERTIFICATES)` against the built-in
     certificate, in a small local Expo module without Google code, both variants). It needs the

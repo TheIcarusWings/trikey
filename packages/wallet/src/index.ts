@@ -11,6 +11,8 @@ export * from './fee-bump-check.js';
 export * from './keys.js';
 export * from './wallet.js';
 export * from './wallets.js';
+// The optional lock on key 2 with a security key (docs/design/yubikey-key2.md): the envelope, off by default.
+export * from './key2-lock.js';
 // Coin control (DESIGN.md, "Coin control"): BIP 329 labels, the label and freeze store, the coin list.
 export * from './labels-bip329.js';
 export * from './labels-store.js';

@@ -229,7 +229,7 @@ export function FirstRunPage() {
             aria-expanded={relaysOpen}
             aria-controls="relay-options"
             onClick={() => setRelaysOpen((v) => !v)}
-            className="w-fit rounded-sm text-sm leading-5 text-muted-foreground underline underline-offset-3 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            className="hit-40 w-fit rounded-sm text-sm leading-5 text-muted-foreground underline underline-offset-3 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
             Advanced: relays
           </button>

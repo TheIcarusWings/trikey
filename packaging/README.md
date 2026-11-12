@@ -77,17 +77,20 @@ This folder lives in the monorepo, so the store has to live in its own repositor
 `trikey-umbrel-store` (suggested name, next to this repository) with one commit in it, for example
 a README. Then, in Umbrel: App Store, then Community App Stores, and add that repository's URL.
 
-`.github/workflows/umbrel-store.yml` keeps the store in step. On a release tag `v*`, `docker.yml`
-calls it once the image is pushed and reproduced, with that digest, which must be the artifact docker.yml's `verified`
-job left in the same run; it copies `packaging/umbrel/` into the store repository with the image pinned by that digest
-(failing if the tag no longer points at it), and pushes. Run by hand on the tag (a retry), it takes no digest as input:
-it uses the artifact of the docker.yml run of the tag's commit in which `verified` succeeded. It needs one secret, `UMBREL_STORE_TOKEN`: a fine-grained personal access token with
+`.github/workflows/umbrel-store.yml` keeps the store in step. On a release tag `v*`, `publish-release.yml`
+dispatches it once the release is **published and signed** (docs/design/signed-releases.md). It checks the published
+release's signature (`packaging/release-signature.py`, the publisher key in `packaging/release-signer.npub`), takes the
+digest from the artifact of the docker.yml run of the tag's commit in which `verified` succeeded, requires the signed
+compose file to pin that same digest (and the tag to still point at it), copies `packaging/umbrel/` into the store
+repository with the image pinned by that digest, and pushes. A draft, an unsigned release or another digest: no store
+update. Run it by hand on the tag to retry. (Up to 0.1.26 `docker.yml` called it while the release was still a draft.) It needs one secret, `UMBREL_STORE_TOKEN`: a fine-grained personal access token with
 "Contents: read and write" on the store repository only, best kept in the `release` environment
 (`docs/android-signing.md`, "The `release` environment").
 It runs only when the repository variable `UMBREL_STORE_AUTOPUBLISH` is `true` (**Settings → Secrets and variables →
 Actions → Variables**): set it together with the token. Without it the job is skipped, so a release does not stop to
 ask for approval of a job with nothing to do, and the maintainer copies the store by hand: the same files from the
-release tag, the image pinned by the digest in the release's `trikey-guardian-compose.yml`. With the variable but
+release tag, the image pinned by the digest in the release's `trikey-guardian-compose.yml`, once
+`python3 packaging/release-signature.py check` passes on the release's files. With the variable but
 without the secret, it does nothing and says so in the run's annotations. (To use another
 repository name, set the repository variable `UMBREL_STORE_REPO` to `owner/name`.) The workflow
 refuses to publish if `umbrel-app.yml` and `docker-compose.yml` do not name the tag's version, so

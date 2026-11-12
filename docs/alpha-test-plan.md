@@ -466,10 +466,10 @@ If it goes wrong, collect:
 
 #### The phone itself (Security tab)
 
-- Check: with no screen lock on the phone, the **Security** tab says "Set a screen lock"; set one,
-  come back to Trikey, and the note is gone. On an Android phone whose last security update is more than 6 months old
-  it says "Look for a system update"; in an emulator or the iOS simulator it says the app is fine for testing, not for
-  real money on mainnet. None of this is sent anywhere (the guardian's Activity page shows nothing about it).
+- Check: with no screen lock on the phone, the **Security** tab's **Phone safety** tile says "Set a screen lock" (tap
+  it for the advice); set one, come back to Trikey, and it says "No issues found". On an Android phone whose last
+  security update is more than 6 months old it says "Look for a system update"; in an emulator or the iOS simulator it
+  says the app is fine for testing, not for real money on mainnet. None of this is sent anywhere (the guardian's Activity page shows nothing about it).
 
 ### 5. Backup: the recovery code and the backup file
 
@@ -564,7 +564,7 @@ Do:
   on its details screen). It is easiest when the network is busy, or on signet or testnet4 right after a block.
 - Tap it. You should see the amount and the address **unchanged**, the network fee now and the new one (sats and
   sat/vB), the three speeds with their fees, and what speeding up costs, all before anything is signed. Pick **Fast**.
-- Within today's limit: **Speed up with fingerprint**, no prompt on the hardware wallet, then "Signed. Sending…".
+- Within your daily limit: **Speed up with fingerprint**, no prompt on the hardware wallet, then "Signed. Sending…".
 - Then speed the same payment up again at a fee over what is left of today's limit (or with the guardian locked from its
   web page): the screen says the hardware wallet signs this one, and the device shows the same payment with the higher fee.
 
@@ -969,7 +969,7 @@ Do:
    the change comes back as a new coin. On the explorer, the transaction spends exactly those two coins.
 5. **Consolidate.** Receive two or three more small coins and let them confirm. Coins, **Consolidate coins**, **All small
    coins**, Slow. You should see: "Fees are low now" or "Fees are not low right now" with the rate; the coins merged,
-   the fee and the new coin; "Only the network fee counts toward today's limit". Approve it even if the coins hold more
+   the fee and the new coin; "Only the network fee counts toward your daily limit". Approve it even if the coins hold more
    than what is left of today's limit: the guardian co-signs, and the daily limit used goes up by **the fee only** (Home,
    and the guardian's Rules page). Activity shows "Coins consolidated" with the fee.
 6. **Savings** (if you did step 17). Savings, **Coins**: label one, then **Consolidate coins** with your hardware wallet

@@ -1,9 +1,11 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { HardwareWallet, Info, ShieldCheck, TriangleAlert } from '@/components/icons';
+import { FadeLayer, KeyMarks, Swap, useLeave } from '@/components/motion';
 import { explainHardware } from '@/components/hardware-reason';
 import { InfoRow, Notice, Panel } from '@/components/panels';
 import { RadioRow } from '@/components/choice';
@@ -13,10 +15,12 @@ import { Icon } from '@/components/ui/icon';
 import { RadioGroup } from '@/components/ui/radio-group';
 import { Text } from '@/components/ui/text';
 import { useQuote } from '@/data/use-quote';
-import { SAME_FEE_NOTE, WalletServiceError, formatSats, groupAddress, mixedLabelsText, sameFeeEverySpeed, shorten, useWallet, useWalletService, type FeeSpeed, fromLine } from '@/data';
+import { SAME_FEE_NOTE, WalletServiceError, formatSats, groupAddress, mixedLabelsText, sameFeeEverySpeed, useWallet, useWalletService, type FeeSpeed, fromLine } from '@/data';
 import { pick } from '@/lib/platform';
+import { signingView } from '@/lib/payment-texts';
 import { useAction } from '@/lib/use-action';
 import { cn } from '@/lib/utils';
+import { REVIEW, STANDARD } from '@/theme/motion';
 
 /** How long each speed usually takes, in words. */
 const ARRIVES: Record<FeeSpeed, { name: string; short: string; long: string }> = {
@@ -35,7 +39,7 @@ export default function SendReview() {
   // Coin control: the coins picked on "Choose coins", every one of them spent.
   const picked = useMemo(() => (coins ? coins.split(',').filter(Boolean) : []), [coins]);
   const coinPick = picked.length ? { coins: picked } : {};
-  // "Add to Savings": a payment from Spending like any other, so it counts toward today's limit (the owner's decision).
+  // "Add to Savings": a payment from Spending like any other, so it counts toward the daily limit (the owner's decision).
   const toSavings = savings === '1';
   const sendMax = max === '1';
   const [speed, setSpeed] = useState<FeeSpeed>('normal');
@@ -46,6 +50,9 @@ export default function SendReview() {
   const { busy, run, message, error } = useAction();
   // Once signing starts the wallet state changes (limit used), and the quote must not flip under us.
   const sending = useRef(false);
+  const [sent, setSent] = useState(false);
+  const [signedOnce, setSignedOnce] = useState(false);
+  const { style: leaving, leave } = useLeave(REVIEW.exitLift);
   const forced = signer === 'hardware' ? { signer: 'hardware' as const } : {};
 
   // Re-quoted when the speed or what the plan depends on changes (the daily limit may have moved).
@@ -88,9 +95,24 @@ export default function SendReview() {
 
   const send = async () => {
     sending.current = true;
-    const r = await run(wallet.sendPayment(quote));
-    if (r.ok) router.replace({ pathname: '/send/done', params: { id: r.value.id, speed, ...(toSavings ? { savings: '1' } : {}) } });
+    setSignedOnce(false);
+    // Marked sent as the payment resolves, before `busy` ends, so the strip never flickers back to the button.
+    const r = await run(
+      wallet.sendPayment(quote).then((tx) => {
+        setSent(true);
+        return tx;
+      }),
+    );
+    if (!r.ok) return;
+    // Sent: the strip stays on "Signed. Sending…" while this screen's content leaves upward, then Sent fades in.
+    leave(() => router.replace({ pathname: '/send/done', params: { id: r.value.id, speed, ...(toSavings ? { savings: '1' } : {}) } }));
   };
+  // While it is signed (busy) and once it is sent, the Send button is a status strip in the same place, and the details
+  // above it dim. Only two steps can be seen: busy, then `paymentSending` (docs/design/motion.md, section 1). Once
+  // signed it stays signed, though `paymentSending` ends a moment before the payment resolves.
+  if (busy && state.paymentSending && !signedOnce) setSignedOnce(true);
+  const signing = busy || sent;
+  const signingAs = quote.plan.signer === 'phone' ? ('phone' as const) : ('phone+guardian' as const);
 
   // The hardware wallet signs this one (over the limit, guardian away, from the vault): Review says why, then hands over.
   const reviewOnDevice = () =>
@@ -111,7 +133,7 @@ export default function SendReview() {
       androidTitle="Review"
       backLabel="Back"
       footer={
-        <>
+        <Animated.View style={[{ gap: 16 }, leaving]}>
           <ActionNotice message={message} error={error} />
           {quote.plan.signer === 'hardware' ? (
             <View className="flex-row items-start gap-2.5">
@@ -119,14 +141,16 @@ export default function SendReview() {
               <Text className="flex-1 text-sm leading-5">{explainHardware(quote.plan.reason, quote.request.amountSats, state)}</Text>
             </View>
           ) : !offerHardware ? (
-            <View className="flex-row items-start gap-2.5">
-              <Icon as={ShieldCheck} size={18} strokeWidth={2} className="text-good mt-px" />
-              <Text className="text-muted-foreground flex-1 text-sm leading-5">
-                {quote.plan.signer === 'phone'
-                  ? `From your spending balance: this phone signs it alone. No ${state.hardware.brand} needed.`
-                  : `Within today's limit: this phone and your guardian sign it. No ${state.hardware.brand} needed.`}
-              </Text>
-            </View>
+            <FadeLayer shown={!signing} dim={REVIEW.dimTo} ms={STANDARD.duration}>
+              <View className="flex-row items-start gap-2.5">
+                <Icon as={ShieldCheck} size={18} strokeWidth={2} className="text-good mt-px" />
+                <Text className="text-muted-foreground flex-1 text-sm leading-5">
+                  {quote.plan.signer === 'phone'
+                    ? `From your spending balance: this phone signs it alone. No ${state.hardware.brand} needed.`
+                    : `Within your daily limit: this phone and your guardian sign it. No ${state.hardware.brand} needed.`}
+                </Text>
+              </View>
+            </FadeLayer>
           ) : null}
           {hardware ? (
             <AppButton title={feesLanding ? 'Updating the network fee…' : `Review on ${state.hardware.brand}`} busy={feesLanding} onPress={reviewOnDevice} />
@@ -136,35 +160,60 @@ export default function SendReview() {
               onPress={() => router.replace({ pathname: '/send/hardware', params: { address, amount, speed, signer: 'hardware', ...(picked.length ? { coins: picked.join(',') } : {}) } })}
             />
           ) : (
-            <AppButton
-              title={busy ? 'Signing…' : feesLanding ? 'Updating the network fee…' : pick('Send with Face ID', 'Send with fingerprint')}
-              busy={busy || feesLanding}
-              onPress={send}
-            />
+            // The button crossfades (240ms) into a status strip in the same place while the payment is signed.
+            <View>
+              <FadeLayer shown={!signing} ms={STANDARD.duration}>
+                <AppButton
+                  title={feesLanding ? 'Updating the network fee…' : pick('Send with Face ID', 'Send with fingerprint')}
+                  busy={feesLanding}
+                  onPress={send}
+                />
+              </FadeLayer>
+              <FadeLayer shown={signing} ms={STANDARD.duration} style={StyleSheet.absoluteFill}>
+                <SigningStrip {...signingView(signingAs, sent || signedOnce || !!state.paymentSending)} />
+              </FadeLayer>
+            </View>
           )}
-        </>
+        </Animated.View>
       }>
+      <Animated.View style={[{ gap: 16 }, leaving]}>
       {/* Several wallets: the wallet this pays from, and so the device it may need. */}
       {fromLine(state.wallets) ? <Text className="text-muted-foreground text-center text-[15px] font-medium">{`${fromLine(state.wallets)} · ${state.hardware.model}`}</Text> : null}
+      <FadeLayer shown={!signing} dim={REVIEW.dimTo} ms={STANDARD.duration}>
       <Panel>
-        <View className={pick('flex-row justify-between gap-4 px-4 py-3.5', 'flex-row justify-between gap-4 p-4')}>
-          <Text className="text-muted-foreground text-[15px] leading-5">To</Text>
-          <View className="max-w-[220px] shrink items-end gap-0.5">
-            <Text selectable className="text-right font-mono text-[14px] leading-5">
-              {silent ? shorten(address, 12) : groupAddress(address)}
+        {silent ? (
+          // A silent payment address is long (about 116 characters): in full, wrapped across the panel, so the person
+          // can check all of it where they confirm where the money goes.
+          <View className={cn('gap-1.5', pick('px-4 py-3.5', 'p-4'))}>
+            <View className="flex-row justify-between gap-4">
+              <Text className="text-muted-foreground text-[15px] leading-5">To</Text>
+              <Text className="text-muted-foreground text-[13px] leading-5">Silent payment</Text>
+            </View>
+            <Text selectable className="font-mono text-[14px] leading-5">
+              {groupAddress(address)}
             </Text>
-            {silent ? <Text className="text-muted-foreground text-[13px] leading-[18px]">Silent payment</Text> : null}
-            {toSavings ? <Text className="text-muted-foreground text-[13px] leading-[18px]">Your Savings</Text> : null}
           </View>
-        </View>
+        ) : (
+          <View className={pick('flex-row justify-between gap-4 px-4 py-3.5', 'flex-row justify-between gap-4 p-4')}>
+            <Text className="text-muted-foreground text-[15px] leading-5">To</Text>
+            <View className="max-w-[220px] shrink items-end gap-0.5">
+              <Text selectable className="text-right font-mono text-[14px] leading-5">
+                {groupAddress(address)}
+              </Text>
+              {toSavings ? <Text className="text-muted-foreground text-[13px] leading-[18px]">Your Savings</Text> : null}
+            </View>
+          </View>
+        )}
         <InfoRow label={quote.max ? 'Amount (everything)' : 'Amount'} value={`${formatSats(quote.request.amountSats)} sats`} tabular />
-        {toSavings ? <InfoRow label="From Spending to Savings" value="Counts toward today's limit" /> : null}
-        <View className={cn('flex-row items-center justify-between gap-4 px-4', pick('py-2', 'py-2.5'))}>
+        {toSavings ? <InfoRow label="From Spending to Savings" value="Counts toward your daily limit" /> : null}
+        {/* The two rows with a control: 44pt targets, in rows as tall as their siblings (48 on iOS, 52 on Android). */}
+        <View className={cn('flex-row items-center justify-between gap-4 px-4', pick('py-0.5', 'py-1'))}>
           <Pressable
             role="button"
             accessibilityLabel="What are network fees?"
+            aria-expanded={aboutFees}
             onPress={() => setAboutFees((v) => !v)}
-            className="min-h-10 flex-row items-center gap-1.5 active:opacity-60">
+            className="min-h-11 flex-row items-center gap-1.5 pr-2 active:opacity-60">
             <Text className="text-muted-foreground text-[15px] leading-5">Network fees</Text>
             <Icon as={Info} size={16} strokeWidth={2} className="text-muted-foreground" />
           </Pressable>
@@ -175,9 +224,9 @@ export default function SendReview() {
             Network fees go to the miners who confirm your payment. Trikey takes nothing.
           </Text>
         ) : null}
-        <View className={cn('flex-row items-center justify-between gap-4 px-4', pick('py-2', 'py-2.5'))}>
+        <View className={cn('flex-row items-center justify-between gap-4 px-4', pick('py-0.5', 'py-1'))}>
           <Text className="text-muted-foreground text-[15px] leading-5">Arrives</Text>
-          <Pressable role="button" accessibilityLabel={`Arrives ${ARRIVES[speed].long}. Change`} onPress={() => setChoosingSpeed(true)} className="min-h-10 flex-row items-center gap-2 active:opacity-60">
+          <Pressable role="button" accessibilityLabel={`Arrives ${ARRIVES[speed].long}. Change`} onPress={() => setChoosingSpeed(true)} className="min-h-11 flex-row items-center gap-2 pl-2 active:opacity-60">
             <Text className="text-[15px] leading-5">{ARRIVES[speed].short}</Text>
             <Text className="text-[15px] font-semibold leading-5 underline">Change</Text>
           </Pressable>
@@ -185,6 +234,7 @@ export default function SendReview() {
         <InfoRow label="Total" value={`${about}${formatSats(total)} sats`} strong tabular />
         {picked.length ? <InfoRow label="Paid with" value={pickedLine} /> : null}
       </Panel>
+      </FadeLayer>
       {quote.mixesLabels ? (
         <Notice icon={TriangleAlert} tone="warn-outline" title="Coins with different labels">
           {mixedLabelsText(quote.mixesLabels)}
@@ -196,11 +246,12 @@ export default function SendReview() {
         </Notice>
       ) : null}
       {silent?.outputAddress && hardware ? (
-        <Notice tone="outline" title="Your hardware wallet will show this address">
+        <Notice tone="outline" title={`Your ${state.hardware.brand} will show this address`}>
           {groupAddress(silent.outputAddress)}
-          {'\n'}It's the address worked out for this one payment. Check that your device shows exactly this.
+          {'\n'}It's the address worked out for this one payment. Check that your {state.hardware.brand} shows exactly this.
         </Notice>
       ) : null}
+      </Animated.View>
 
       <Sheet visible={choosingSpeed} title="Arrival time" onClose={() => setChoosingSpeed(false)}>
         <RadioGroup
@@ -227,5 +278,22 @@ export default function SendReview() {
         <AppButton title="Done" onPress={() => setChoosingSpeed(false)} />
       </Sheet>
     </Screen>
+  );
+}
+
+/**
+ * Where the Send button was, while the payment is signed: the keys that sign (breathing while asked, green once signed,
+ * joined by a short line) and what is happening, in words.
+ */
+function SigningStrip({ text, marks, linked }: ReturnType<typeof signingView>) {
+  return (
+    <View role="status" accessibilityLabel={text} className="bg-secondary h-12 flex-row items-center justify-center gap-3 rounded-[10px] px-4">
+      <KeyMarks marks={marks} linked={linked} />
+      <Swap id={text} align="start" style={{ flexShrink: 1 }}>
+        <Text className="text-[15px] font-medium leading-5" numberOfLines={1}>
+          {text}
+        </Text>
+      </Swap>
+    </View>
   );
 }

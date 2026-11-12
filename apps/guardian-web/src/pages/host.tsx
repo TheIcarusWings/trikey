@@ -151,7 +151,7 @@ export function HostPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Host a guardian for someone"
-        description="Help someone you know who doesn't have a home server. Their wallet gets its own key here, separate from yours."
+        description="Help someone you know who doesn't have a guardian of their own. Their wallet gets its own key here, separate from yours."
       />
 
       <Alert variant="warning" className="max-w-[720px] border-transparent">
@@ -202,7 +202,7 @@ export function HostPage() {
                 Works once · expires in {formatShortRemaining(Date.parse(current.expiresAt) - now)}
               </div>
               <p className="m-0 text-[13px] leading-[18px] text-muted-foreground">
-                Send it in person or over a chat you trust. They'll see this box's name and what you can and can't do before they accept.
+                Send it in person or over a chat you trust. They'll see this guardian's name and what you can and can't do before they accept.
               </p>
               <Button
                 variant="outline"
@@ -259,8 +259,8 @@ export function HostPage() {
           </ul>
         )}
         <p className="m-0 text-[13px] leading-[18px] text-muted-foreground">
-          Stop hosting gives them 30 days to move their wallet to another guardian; until then this box keeps co-signing and
-          running their recovery wait. Hosting cannot stop while their recovery runs.
+          Stop hosting gives them 30 days to move their wallet to another guardian; until then this guardian keeps co-signing and
+          runs the security waiting period of any recovery they start. Hosting cannot stop while their recovery runs.
         </p>
       </section>
     </div>

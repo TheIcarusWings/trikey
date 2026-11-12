@@ -22,6 +22,7 @@ export {
   Eye,
   EyeOff,
   FileText,
+  Gauge,
   House,
   HouseWifi,
   Info,
@@ -31,6 +32,8 @@ export {
   LockKeyhole,
   Plus,
   QrCode,
+  RefreshCw,
+  RotateCcwKey,
   Server,
   Settings,
   Share2,
@@ -51,6 +54,12 @@ export {
 export const HardwareWallet = createLucideIcon('HardwareWallet', [
   ['rect', { x: '7', y: '2', width: '10', height: '20', rx: '3', key: 'body' }],
   ['path', { d: 'M10 6h4', key: 'notch' }],
+]);
+
+/** A phone with a check on its screen: the Security tab's "Phone safety" tile. */
+export const PhoneCheck = createLucideIcon('PhoneCheck', [
+  ['rect', { x: '7', y: '3', width: '10', height: '18', rx: '2', key: 'body' }],
+  ['path', { d: 'M10 12l1.5 1.5L14 10.5', key: 'check' }],
 ]);
 
 /** The Trikey mark: three keys on a triangle. The top one is the only orange in the app. */

@@ -2064,3 +2064,80 @@ html:not(.story) .frame > video.media {
     animation: none !important;
   }
 }
+
+/* Get the app (#get): Zapstore first, then the other ways in. */
+.hero-get {
+  margin: 0.75rem 0 0;
+  color: var(--muted);
+  font-size: 0.9375rem;
+  text-align: center;
+}
+
+.hero-get a {
+  color: var(--ink);
+}
+
+.get {
+  display: grid;
+  gap: 1rem;
+}
+
+@media (min-width: 760px) {
+  .get {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .get-main {
+    grid-column: 1 / -1;
+  }
+}
+
+.get-card {
+  display: grid;
+  align-content: start;
+  gap: 0.625rem;
+  padding: 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--bg);
+}
+
+.get-main {
+  border: 2px solid var(--ink);
+}
+
+.get-main h3 {
+  font-size: clamp(1.5rem, 4vw, 2rem);
+  letter-spacing: -0.02em;
+}
+
+.get-card h3 {
+  margin: 0;
+}
+
+.get-card p {
+  margin: 0;
+}
+
+.get-card .actions {
+  margin-top: 0.375rem;
+}
+
+.get-tag {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.get-note,
+.get-next {
+  color: var(--muted);
+  font-size: 0.9375rem;
+}
+
+.get-next {
+  margin: 1.5rem 0 0;
+}
+

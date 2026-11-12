@@ -88,7 +88,7 @@ export default function CoinScreen() {
               Frozen
             </Text>
             <Text className="text-muted-foreground text-[13px] leading-[18px]">
-              {coin.frozen ? 'Left out of payments, Send max and Consolidate.' : 'Payments may spend it.'}
+              {coin.frozen ? 'Left out of payments, Send everything and Consolidate.' : 'Payments may spend it.'}
             </Text>
           </View>
           <Switch

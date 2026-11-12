@@ -37,14 +37,22 @@ export function confirmationsText(c: Pick<CoinView, 'confirmations' | 'pendingCh
 }
 
 /**
- * One coin: its label (or where it came from), its amount, and a second line (confirmations, frozen). `selected` turns it
- * into a choice (Send's picker, Consolidate's): a check circle, and a frozen coin cannot be chosen.
+ * A coin's state in plain words, for the lists: "Confirmed", "Waiting to confirm". The count of confirmations is a
+ * detail, on the coin's own screen (`confirmationsText`).
+ */
+export function coinStateText(c: Pick<CoinView, 'confirmations' | 'pendingChange'>): string {
+  return c.confirmations === 0 ? confirmationsText(c) : 'Confirmed';
+}
+
+/**
+ * One coin: its label (or where it came from), its amount, and a second line (confirmed or waiting, frozen). `selected`
+ * turns it into a choice (Send's picker, Consolidate's): a check circle, and a frozen coin cannot be chosen.
  */
 export function CoinRow({ coin, onPress, selected, disabledReason }: { coin: CoinView; onPress?: () => void; selected?: boolean; disabledReason?: string }) {
   const { unit } = useWallet();
   const choosing = selected !== undefined;
   const disabled = !!disabledReason;
-  const second = [coin.frozen ? 'Frozen' : null, disabledReason && !coin.frozen ? disabledReason : null, confirmationsText(coin)].filter(Boolean).join(' · ');
+  const second = [coin.frozen ? 'Frozen' : null, disabledReason && !coin.frozen ? disabledReason : null, coinStateText(coin)].filter(Boolean).join(' · ');
   const amount = `${formatAmount(coin.valueSats, unit)} ${unit === 'btc' ? 'BTC' : 'sats'}`;
   const content = (
     <View className={cn('flex-row items-center gap-3', pick('min-h-[60px] px-4 py-2.5', 'min-h-[64px] py-2.5'), disabled && 'opacity-50')}>

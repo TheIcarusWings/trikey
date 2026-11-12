@@ -6,7 +6,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; form-action 'none'">
 <title>Trikey: 2-of-3 multisig bitcoin wallet with no company key</title>
 <meta name="description" content="Trikey is an open source 2-of-3 multisig bitcoin wallet: your phone, any hardware wallet and a guardian on your own home server. No company key. Pre-alpha.">
-<meta name="dcterms.modified" content="2026-11-10">
+<meta name="dcterms.modified" content="2026-11-11">
 <link rel="canonical" href="https://trikey.app/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Trikey">
@@ -151,7 +151,7 @@
       <a class="nav-wide" href="#watch">Watch</a>
       <a class="nav-wide" href="#faq">Questions</a>
       <a href="/blog">Blog</a>
-      <a class="nav-cta" href="https://github.com/TheIcarusWings/trikey">Follow on GitHub</a>
+      <a class="nav-cta" href="#get">Get the app</a>
     </nav>
   </header>
 </div>
@@ -168,9 +168,10 @@
         <p class="hero-sub">Three keys. No company. Your keys, your server, your bitcoin.</p>
         <p class="lead">Trikey is a 2-of-3 bitcoin wallet that's easy to use, and no company holds a key. Your phone, your hardware wallet and your own home server: any two move your money.</p>
         <div class="actions">
-          <a class="btn" href="https://github.com/TheIcarusWings/trikey">Follow on GitHub</a>
-          <a class="btn btn-quiet" href="#choice">Watch the story <span aria-hidden="true">↓</span></a>
+          <a class="btn" href="#get">Get the app</a>
+          <a class="btn btn-quiet" href="https://github.com/TheIcarusWings/trikey">Follow on GitHub</a>
         </div>
+        <p class="hero-get">Android: <a href="https://zapstore.dev/apps/app.trikey.wallet">Zapstore</a> · <a href="/obtainium">Obtainium</a> · iPhone: <a href="https://github.com/TheIcarusWings/trikey/blob/main/apps/mobile/README.md">build it yourself</a></p>
       </div>
       <figure class="frame frame-hero frame-film">
         <video class="film" controls playsinline preload="none" poster="media/three-keys.webp" aria-label="Film: Nobody in the middle. 74 seconds, with voiceover and captions. Before it plays: a phone, a small hardware wallet and a small grey home server laid out in a triangle on a linen tablecloth."><source src="media/films/f1-nobody-in-the-middle.mp4" type="video/mp4"><track kind="captions" srclang="en" label="English" src="media/films/f1-nobody-in-the-middle.vtt"></video>
@@ -619,6 +620,56 @@
   </section>
 
   <!-- Setup -->
+  <!-- Get the app -->
+  <section id="get" class="act act-surface" aria-labelledby="get-h">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Get Trikey</p>
+        <h2 id="get-h">Install it in a minute.</h2>
+        <p class="aside">Pre-alpha and not audited: use it on signet or testnet4, with coins that have no value.</p>
+      </div>
+      <div class="get">
+        <article class="get-card get-main">
+          <p class="get-tag">Android · recommended</p>
+          <h3>Zapstore</h3>
+          <p>An open app store built on nostr. It installs an update only when Trikey signed it (trikey@trikey.app), and updates come in by themselves.</p>
+          <div class="actions">
+            <a class="btn" href="https://zapstore.dev/apps/app.trikey.wallet">Trikey on Zapstore</a>
+            <a class="btn btn-quiet" href="https://zapstore.dev/apps/app.trikey.wallet.foss">Trikey FOSS</a>
+          </div>
+          <p class="get-note">No Zapstore yet? Get it at <a href="https://zapstore.dev">zapstore.dev</a>, then search for Trikey. Trikey FOSS is the same app without any Google code.</p>
+        </article>
+        <article class="get-card">
+          <p class="get-tag">Android · other ways</p>
+          <h3>Obtainium or the APK</h3>
+          <p>Add Trikey to Obtainium in one tap, and it follows our GitHub releases. Or download the APK from a release and check it against its checksum.</p>
+          <div class="actions">
+            <a class="btn btn-quiet" href="/obtainium">Add to Obtainium</a>
+            <a class="btn btn-quiet" href="https://github.com/TheIcarusWings/trikey/releases/latest">Latest release</a>
+          </div>
+        </article>
+        <article class="get-card">
+          <p class="get-tag">iPhone</p>
+          <h3>Build it yourself, for now</h3>
+          <p>Trikey isn't on the App Store yet. Testers build it from the source on a Mac with a free Apple ID, and rebuild it every 7 days. TestFlight comes once donations cover the developer account.</p>
+          <div class="actions">
+            <a class="btn btn-quiet" href="https://github.com/TheIcarusWings/trikey/blob/main/apps/mobile/README.md">How to build it</a>
+          </div>
+        </article>
+        <article class="get-card">
+          <p class="get-tag">Key 3 · your home server</p>
+          <h3>Trikey Guardian</h3>
+          <p>On an Umbrel, add our community app store and install Trikey Guardian. On any Mac, PC, Linux box or NAS, run it with Docker. On a Start9, build the package yourself for now.</p>
+          <div class="actions">
+            <a class="btn btn-quiet" href="https://github.com/TheIcarusWings/trikey-umbrel-store">Umbrel app store</a>
+            <a class="btn btn-quiet" href="https://github.com/TheIcarusWings/trikey/blob/main/packaging/compose/README.md">Docker</a>
+          </div>
+        </article>
+      </div>
+      <p class="get-next">New here? The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md">testers' quickstart</a> takes you from nothing to a working wallet, and the <a href="#watch">setup tutorials</a> show each step.</p>
+    </div>
+  </section>
+
   <section id="setup" class="act" aria-labelledby="setup-h">
     <div class="wrap">
       <div class="section-head">

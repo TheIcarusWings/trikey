@@ -1,10 +1,14 @@
-import { useRouter } from 'expo-router';
-import { useState, useSyncExternalStore } from 'react';
-import { Pressable, View } from 'react-native';
+import { useIsFocused, useRouter } from 'expo-router';
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { Pressable, View, type LayoutChangeEvent } from 'react-native';
+import Animated, { interpolateColor, useAnimatedStyle, useSharedValue, withDelay, type SharedValue } from 'react-native-reanimated';
+import Svg, { Path, Rect } from 'react-native-svg';
 import { ActivityRow } from '@/components/activity-row';
 import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { ArrowDownLeft, ArrowUpRight, Clock, Eye, EyeOff, HardwareWallet, Lock, Settings, TriangleAlert } from '@/components/icons';
+import { FadeLayer, HIDDEN, Swap, announce, exit, fade, reducedFade, standard, usePressScale, useReduceMotion } from '@/components/motion';
+import { OpeningPart, OpeningReveal, useLandingPlace } from '@/components/opening';
 import { Notice } from '@/components/panels';
 import { Sheet } from '@/components/sheet';
 import { Card } from '@/components/ui/card';
@@ -13,7 +17,7 @@ import { Text } from '@/components/ui/text';
 import {
   formatAmount,
   formatBtc,
-  formatCountdown,
+  countdownParts,
   formatSats,
   guardianLockedLine,
   hostLockedLine,
@@ -29,9 +33,16 @@ import {
   type Sats,
 } from '@/data';
 import { guardianBox } from '@/lib/labels';
+import { incomingLine } from '@/lib/payment-texts';
+import { GUARDIAN_NOTICE, NEW_ROW, REDUCED_FADE_MS, guardianNoticeMove, type GuardianNoticeLook } from '@/theme/motion';
+import { useTheme } from '@/theme/use-theme';
+import { haptic } from '@/lib/haptics';
 import { useAction } from '@/lib/use-action';
 import { IS_IOS, pick } from '@/lib/platform';
 import { cn } from '@/lib/utils';
+
+/** A layer over another, centred on it, with room to be wider. */
+const OVER_CENTRED = { position: 'absolute', top: 0, bottom: 0, left: -64, right: -64, alignItems: 'center' } as const;
 
 /** Tap-to-hide for the balance: remembered while the app runs, so Home and its states agree. */
 let balanceHidden = false;
@@ -67,19 +78,30 @@ export function HomeTopActions() {
   );
 }
 
-/** The big number, centred. Sats by default, BTC when the user switched units; tap it to hide it. */
+/**
+ * The big number, centred. Sats by default, BTC when the user switched units; tap it to hide it. Hiding and showing
+ * crossfade (160ms, no blur). A new balance changes as a whole number (the old one lifts away, the new one rises), never
+ * while hidden. With `showIncoming`, the line under it reads "+21,000 sats · unconfirmed" while the incoming toast is up.
+ */
 export function BalanceHeader({
   label,
   sats,
   caption,
+  showIncoming = false,
+  opening = false,
 }: {
   label: string;
   sats: Sats;
   /** Replaces the BTC line, e.g. "Spend with Face ID, no Ledger needed". */
   caption?: string;
+  /** The wallet's main balance: an incoming payment's toast also shows under it. */
+  showIncoming?: boolean;
+  /** Home's balance: it rises into place when the app opens (section 9), the line under it a moment later. */
+  opening?: boolean;
 }) {
-  const { unit, synced, syncing, guardianSlow, backing } = useWallet();
+  const { unit, synced, syncing, guardianSlow, backing, toast } = useWallet();
   const [hidden, toggle] = useBalanceHidden();
+  const incoming = showIncoming && !hidden ? incomingLine(toast) : null;
   const waiting =
     backing !== 'demo' && !synced
       ? syncing
@@ -91,26 +113,32 @@ export function BalanceHeader({
   const main = formatAmount(sats, unit);
   const unitText = unit === 'btc' ? 'BTC' : 'sats';
   const secondary = unit === 'btc' ? `BTC · ${formatSats(sats)} sats` : `sats · ${formatBtc(sats)} BTC`;
+  const big = cn('tabular-nums', pick('text-[56px] font-semibold leading-[64px] tracking-[-2.2px]', 'text-[56px] font-normal leading-[64px] tracking-[-1.1px]'));
+  const line = cn('tabular-nums', pick('text-[15px] leading-5', 'text-sm leading-5'));
+  const under = hidden ? 'Balance hidden' : (incoming ?? waiting ?? secondary);
   return (
     <Pressable
       role="button"
       testID="home-balance"
       onPress={toggle}
-      accessibilityLabel={hidden ? `${label} hidden. Tap to show` : `${label}: ${main} ${unitText}. Tap to hide`}
+      accessibilityLabel={hidden ? `${label} hidden. Tap to show` : `${label}: ${main} ${unitText}${incoming ? `, ${incoming}` : ''}. Tap to hide`}
       className="items-center gap-0.5 pt-2">
-      <Text
-        className={cn(
-          'tabular-nums',
-          pick('text-[56px] font-semibold leading-[64px] tracking-[-2.2px]', 'text-[56px] font-normal leading-[64px] tracking-[-1.1px]')
-        )}>
-        {hidden ? '••••••' : main}
-      </Text>
-      <View className="flex-row items-center gap-1.5">
-        <Text className={cn('text-muted-foreground tabular-nums', pick('text-[15px] leading-5', 'text-sm leading-5'))}>
-          {hidden ? 'Balance hidden' : (waiting ?? secondary)}
-        </Text>
+      <OpeningPart part="balance" play={opening}>
+        <FadeLayer shown={!hidden}>
+          <Swap id={main} kind="lift" animate={!hidden}>
+            <Text className={big}>{main}</Text>
+          </Swap>
+        </FadeLayer>
+        <FadeLayer shown={hidden} style={OVER_CENTRED}>
+          <Text className={big}>••••••</Text>
+        </FadeLayer>
+      </OpeningPart>
+      <OpeningPart part="balanceLine" play={opening} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <Swap id={under} align="center">
+          <Text className={cn(line, incoming ? 'text-good font-medium' : 'text-muted-foreground')}>{under}</Text>
+        </Swap>
         <Icon as={hidden ? EyeOff : Eye} size={16} strokeWidth={2} className="text-muted-foreground" />
-      </View>
+      </OpeningPart>
       {caption ? <Text className={cn('text-muted-foreground text-center', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{caption}</Text> : null}
     </Pressable>
   );
@@ -131,21 +159,24 @@ export function useNewWallet(): boolean {
  * Send and Receive as two round buttons with their names under them. In a new wallet Receive leads and Send is greyed,
  * but still a button: it explains there is nothing to send yet and offers the address.
  */
-export function SendReceiveButtons({ sendEmphasis = true, newWallet = false }: { sendEmphasis?: boolean; newWallet?: boolean }) {
+export function SendReceiveButtons({
+  sendEmphasis = true,
+  newWallet = false,
+  opening = false,
+  landOn = opening,
+}: {
+  sendEmphasis?: boolean;
+  newWallet?: boolean;
+  /** Home's buttons: they fill in when the app opens (section 9). */
+  opening?: boolean;
+  /** ...and the two dark keys of the opening land on them (not when something urgent sits above them). */
+  landOn?: boolean;
+}) {
   const router = useRouter();
   const [nothingToSend, setNothingToSend] = useState(false);
-  const button = (title: string, icon: typeof ArrowUpRight, look: 'primary' | 'secondary' | 'quiet', onPress: () => void, hint?: string) => (
-    <Pressable role="button" accessibilityLabel={title} accessibilityHint={hint} onPress={onPress} className="items-center gap-2 active:opacity-70">
-      <View className={cn('size-16 items-center justify-center rounded-full', look === 'primary' ? 'bg-primary' : 'bg-secondary')}>
-        <Icon
-          as={icon}
-          size={26}
-          strokeWidth={2}
-          className={look === 'primary' ? 'text-primary-foreground' : look === 'quiet' ? 'text-muted-foreground' : 'text-foreground'}
-        />
-      </View>
-      <Text className={cn('text-sm font-medium leading-5', look === 'quiet' && 'text-muted-foreground')}>{title}</Text>
-    </Pressable>
+  // `index`: 0 Send (the logo's left key lands on it), 1 Receive (the right key).
+  const button = (index: number, title: string, icon: typeof ArrowUpRight, look: 'primary' | 'secondary' | 'quiet', onPress: () => void, hint?: string) => (
+    <RoundButton title={title} icon={icon} look={look} onPress={onPress} hint={hint} index={index} opening={opening} landOn={landOn} />
   );
   const showAddress = () => {
     setNothingToSend(false);
@@ -154,9 +185,9 @@ export function SendReceiveButtons({ sendEmphasis = true, newWallet = false }: {
   return (
     <View className="flex-row justify-center gap-12">
       {newWallet
-        ? button('Send', ArrowUpRight, 'quiet', () => setNothingToSend(true), 'Nothing to send yet. Shows how to receive bitcoin.')
-        : button('Send', ArrowUpRight, sendEmphasis ? 'primary' : 'secondary', () => router.push('/send/to'))}
-      {button('Receive', ArrowDownLeft, newWallet ? 'primary' : 'secondary', () => router.push('/receive'))}
+        ? button(0, 'Send', ArrowUpRight, 'quiet', () => setNothingToSend(true), 'Nothing to send yet. Shows how to receive bitcoin.')
+        : button(0, 'Send', ArrowUpRight, sendEmphasis ? 'primary' : 'secondary', () => router.push('/send/to'))}
+      {button(1, 'Receive', ArrowDownLeft, newWallet ? 'primary' : 'secondary', () => router.push('/receive'))}
       <Sheet visible={nothingToSend} title="Nothing to send yet" onClose={() => setNothingToSend(false)}>
         <Text className={cn('text-muted-foreground', pick('text-[15px] leading-[22px]', 'text-sm leading-5'))}>
           Your wallet is empty. Once bitcoin arrives, Send works from here.
@@ -168,28 +199,95 @@ export function SendReceiveButtons({ sendEmphasis = true, newWallet = false }: {
   );
 }
 
-/** One line under the balance: what the phone can still pay today without the hardware wallet. Opens the limit. */
-export function LimitLine({ newWallet = false }: { newWallet?: boolean }) {
+/**
+ * Send or Receive: a round button with its name under it. Pressed, the circle shrinks a little and springs back. When
+ * the app opens (`opening`), a key of the logo lands on its circle (`landOn`; Send is the left key, Receive the right),
+ * the circle takes over at 1.1 and settles, and the name follows. The button itself is there and works throughout.
+ */
+function RoundButton({
+  title,
+  icon,
+  look,
+  onPress,
+  hint,
+  index,
+  opening,
+  landOn,
+}: {
+  title: string;
+  icon: typeof ArrowUpRight;
+  look: 'primary' | 'secondary' | 'quiet';
+  onPress: () => void;
+  hint?: string;
+  index: number;
+  opening: boolean;
+  landOn: boolean;
+}) {
+  const press = usePressScale();
+  const { colors } = useTheme();
+  const place = useLandingPlace(index === 0 ? 'phone' : 'guardian', look === 'primary' ? colors.accent : colors.fill, opening && landOn);
+  return (
+    <Pressable role="button" accessibilityLabel={title} accessibilityHint={hint} onPress={onPress} {...press.handlers} className="items-center gap-2 active:opacity-70">
+      <Animated.View style={press.style}>
+        {/* The circle's place, measured for the opening (no transform of its own). */}
+        <View ref={place} collapsable={false}>
+          <OpeningPart part="button" index={index} play={opening}>
+            <View className={cn('size-16 items-center justify-center rounded-full', look === 'primary' ? 'bg-primary' : 'bg-secondary')}>
+              <Icon
+                as={icon}
+                size={26}
+                strokeWidth={2}
+                className={look === 'primary' ? 'text-primary-foreground' : look === 'quiet' ? 'text-muted-foreground' : 'text-foreground'}
+              />
+            </View>
+          </OpeningPart>
+        </View>
+      </Animated.View>
+      <OpeningPart part="label" play={opening}>
+        <Text className={cn('text-sm font-medium leading-5', look === 'quiet' && 'text-muted-foreground')}>{title}</Text>
+      </OpeningPart>
+    </Pressable>
+  );
+}
+
+/**
+ * One line under the balance: what the phone can still pay today without the hardware wallet. Opens the limit. When the
+ * app opens (`opening`), the orange key of the logo lands on its dot (a new wallet's line has none: the key then fades).
+ */
+export function LimitLine({ newWallet = false, opening = false }: { newWallet?: boolean; opening?: boolean }) {
   const router = useRouter();
   const state = useWallet();
   const left = remainingToday(state);
   const { limitSats } = state.dailyLimit;
   const brand = state.hardware.brand;
+  const open = () => router.push('/settings/limit');
   // No daily limit: say so, in the warning tone, whatever has been sent.
-  if (limitIsOff(state)) return <StatusLine tone="warn" text={LIMIT_OFF_LINE} onPress={() => router.push('/settings/limit')} />;
+  if (limitIsOff(state)) return <StatusLine tone="warn" text={LIMIT_OFF_LINE} onPress={open} opening={opening} landOn />;
   // Nothing to count yet: say what the limit is, not how much of it is left.
-  if (newWallet) return <StatusLine text={`Daily limit ${formatSats(limitSats)} sats, without your ${brand}`} onPress={() => router.push('/settings/limit')} />;
+  if (newWallet) return <StatusLine text={`Daily limit ${formatSats(limitSats)} sats, without your ${brand}`} onPress={open} opening={opening} />;
   const low = limitSats > 0 && left < limitSats * 0.1;
   const text = low ? `${formatSats(left)} sats left today. Bigger payments need your ${brand}.` : `${formatSats(left)} sats left today without your ${brand}`;
-  return <StatusLine tone={low ? 'warn' : 'good'} text={text} onPress={() => router.push('/settings/limit')} />;
+  return <StatusLine tone={low ? 'warn' : 'good'} text={text} onPress={open} opening={opening} landOn />;
 }
 
-/** A dot and a short sentence, centred under the balance. */
-export function StatusLine({ tone, text, onPress }: { tone?: 'good' | 'warn'; text: string; onPress?: () => void }) {
+/**
+ * A dot and a short sentence, centred under the balance. `opening`: Home's line under the balance as the app opens
+ * (section 9): the dot shows, then the sentence is revealed from it, left to right. `landOn`: the logo's orange key
+ * lands on the dot.
+ */
+export function StatusLine({ tone, text, onPress, opening = false, landOn = false }: { tone?: 'good' | 'warn'; text: string; onPress?: () => void; opening?: boolean; landOn?: boolean }) {
+  const { colors } = useTheme();
+  const place = useLandingPlace('hardware', tone === 'warn' ? colors.warn : colors.good, opening && landOn && !!tone);
   const body = (
     <View className="min-h-11 flex-row items-center justify-center gap-2 px-2">
-      {tone ? <View className={cn('size-2 rounded-full', tone === 'good' ? 'bg-good' : 'bg-warn')} /> : null}
-      <Text className={cn('text-muted-foreground shrink text-center tabular-nums', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{text}</Text>
+      {tone ? (
+        <OpeningPart part="dot" play={opening}>
+          <View ref={place} collapsable={false} className={cn('size-2 rounded-full', tone === 'good' ? 'bg-good' : 'bg-warn')} />
+        </OpeningPart>
+      ) : null}
+      <OpeningReveal play={opening}>
+        <Text className={cn('text-muted-foreground shrink text-center tabular-nums', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{text}</Text>
+      </OpeningReveal>
     </View>
   );
   if (!onPress) return body;
@@ -228,44 +326,217 @@ export function SilentPaymentsRow() {
 }
 
 /**
+ * What Home's guardian notice shows (docs/design/motion.md, section 5): `look` is the guardian locked or offline,
+ * "Guardian unlocked" for a moment, or nothing; `closing` while it collapses; `opening` while it opens.
+ */
+export type GuardianNotice = { look: GuardianNoticeLook; closing: boolean; opening: boolean };
+
+/**
+ * Follows the guardian's status for Home's notice. Locked to online: "Guardian unlocked" (`success` felt, said politely),
+ * held 1.4s, then it collapses. Offline to online: it collapses at once. Online to locked or offline: it opens, with no
+ * haptic (the wallet state does not say whether this phone locked it). A change that happens while Home is not on screen
+ * (unlocked on Settings > Guardian) plays when Home is back, so it is seen.
+ */
+export function useGuardianNotice(shown = true): GuardianNotice {
+  const status = useWallet().guardian.status;
+  const focused = useIsFocused();
+  const reduced = useReduceMotion();
+  const [notice, setNotice] = useState<GuardianNotice>({ look: status === 'online' ? null : status, closing: false, opening: false });
+  // The status the notice last followed.
+  const [followed, setFollowed] = useState(status);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  useEffect(() => {
+    if (followed === status || (shown && !focused)) return;
+    // What was under way (a hold, a collapse) gives way to the new change, from where things are.
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    setFollowed(status);
+    // Not on Home's face (Recovery Key mode): follow quietly, with no motion and no haptic.
+    if (!shown) {
+      setNotice({ look: status === 'online' ? null : status, closing: false, opening: false });
+      return;
+    }
+    const move = guardianNoticeMove(followed, status);
+    const later = (ms: number, then: () => void) => void timers.current.push(setTimeout(then, ms));
+    const closeMs = reduced ? REDUCED_FADE_MS : GUARDIAN_NOTICE.closeMs;
+    const gone = () => setNotice({ look: null, closing: false, opening: false });
+    if (move.kind === 'open' || move.kind === 'swap') {
+      // From nothing, or back from "unlocked" or a collapse under way: it opens (or turns back) into the new status.
+      setNotice({ look: status === 'online' ? null : status, closing: false, opening: true });
+      later(reduced ? REDUCED_FADE_MS : GUARDIAN_NOTICE.openMs, () => setNotice((n) => ({ ...n, opening: false })));
+    } else if (move.kind === 'unlocked') {
+      if (move.haptic) haptic(move.haptic);
+      announce('Guardian unlocked. Phone payments work again.');
+      setNotice({ look: 'unlocked', closing: false, opening: false });
+      later(GUARDIAN_NOTICE.holdMs, () => {
+        setNotice((n) => ({ ...n, closing: true }));
+        later(closeMs, gone);
+      });
+    } else if (move.kind === 'close') {
+      setNotice((n) => ({ ...n, closing: true }));
+      later(closeMs, gone);
+    }
+  }, [shown, focused, status, followed, reduced]);
+  return notice;
+}
+
+/**
  * Guardian locked (after a restart) or offline: phone-only payments wait, the hardware wallet can still pay. A locked
  * guardian is unlocked on the guardian's page: with its passphrase, or the hardware wallet when that is on.
+ *
+ * Motion (section 5), driven by `useGuardianNotice`: unlocked, the padlock's shackle opens (240ms) while the notice turns
+ * from amber to green and shrinks to one line, "Guardian unlocked / Phone payments work again." (280ms); it then
+ * collapses (280ms). Locking opens it (280ms) as the shackle closes. "Guardian offline" opens and closes the same way,
+ * with its own icon. These two height changes are the only layout animations Home has besides a new row. Reduce
+ * Motion: no movement; the words and colours fade (150ms) and the notice fades out.
  */
-export function GuardianDownNotice() {
+export function GuardianDownNotice({ notice }: { notice: GuardianNotice }) {
   const router = useRouter();
   const service = useWalletService();
+  const reduced = useReduceMotion();
+  const { colors } = useTheme();
   const { guardian, hardware, hosted } = useWallet();
   // Unlocking with the hardware wallet is on: the guardian page offers it first.
   const byHardware = !!service.hardwareUnlock?.state()?.on;
-  const locked = guardian.status === 'locked';
+  const unlocked = notice.look === 'unlocked';
+  // What the amber words say: "unlocked" only ever follows "locked".
+  const locked = notice.look !== 'offline';
   const host = guardianBox(guardian);
 
+  // ok: amber to green, and the notice's height from the full notice to one line. words: the crossfade of the words.
+  // open: the notice's own height and opacity. shackle: 0 closed, 1 open.
+  const ok = useSharedValue(unlocked ? 1 : 0);
+  const words = useSharedValue(unlocked ? 1 : 0);
+  const open = useSharedValue(notice.opening ? 0 : 1);
+  const shackle = useSharedValue(unlocked || (notice.opening && !reduced) ? 1 : 0);
+  // The two layers' heights, measured; -1 until they are.
+  const downH = useSharedValue(-1);
+  const upH = useSharedValue(-1);
+
+  useEffect(() => {
+    const to = unlocked ? 1 : 0;
+    if (reduced) {
+      ok.value = reducedFade(to);
+      words.value = reducedFade(to);
+      shackle.value = to;
+      return;
+    }
+    ok.value = standard(to, GUARDIAN_NOTICE.turnMs);
+    words.value = fade(to, GUARDIAN_NOTICE.wordsMs);
+    shackle.value = standard(to, GUARDIAN_NOTICE.shackleMs);
+  }, [unlocked, reduced, ok, words, shackle]);
+  useEffect(() => {
+    const to = notice.closing ? 0 : 1;
+    open.value = reduced ? reducedFade(to) : notice.closing ? exit(to, GUARDIAN_NOTICE.closeMs) : standard(to, GUARDIAN_NOTICE.openMs);
+  }, [notice.closing, reduced, open]);
+
+  const box = useAnimatedStyle(() => {
+    const background = interpolateColor(ok.value, [0, 1], [colors.warnSoft, colors.goodSoft]);
+    // Not measured yet: as it lays itself out (or nothing, while it is about to open).
+    if (downH.value < 0) return open.value < 1 ? { backgroundColor: background, opacity: 0, height: 0 } : { backgroundColor: background, opacity: 1 };
+    const up = upH.value < 0 ? downH.value : upH.value;
+    // Reduce Motion: the height changes at once, never in steps.
+    const full = reduced ? (ok.value < 0.5 ? downH.value : up) : downH.value + (up - downH.value) * ok.value;
+    return { backgroundColor: background, opacity: open.value, height: reduced ? full : full * open.value };
+  }, [colors, reduced]);
+  const downWords = useAnimatedStyle(() => ({ opacity: 1 - words.value }));
+  const upWords = useAnimatedStyle(() => ({ opacity: words.value }));
+
   return (
-    <View className={cn('bg-warn-soft gap-1 px-4 pt-3.5', locked ? 'pb-1.5' : 'pb-3.5', pick('rounded-[10px]', 'rounded-xl'))}>
-      <View className="flex-row items-start gap-3">
-        <Icon as={locked ? Lock : TriangleAlert} size={20} className="text-warn mt-px" strokeWidth={2} />
-        <View className="flex-1 gap-0.5">
-          <Text className="text-[15px] font-semibold leading-5">{locked ? 'Guardian locked' : 'Guardian offline'}</Text>
-          <Text className="text-sm leading-5">
-            {locked
-              ? hosted
-                ? hostLockedLine(hosted.hostLabel ?? `Your host's ${host}`, hardware.brand)
-                : guardianLockedLine(guardian, host, hardware.brand)
-              : `Trikey can't reach your ${host}. Phone-only payments wait until it's back; your ${hardware.brand} can still pay.`}
-          </Text>
-          {locked && !hosted ? (
-            <Pressable role="link" onPress={() => router.push('/settings/guardian')} className="min-h-11 justify-center self-start active:opacity-60">
-              <Text className="text-[15px] font-semibold leading-5">{byHardware ? `Unlock with your ${hardware.brand}` : 'Unlock with passphrase'}</Text>
-            </Pressable>
-          ) : null}
+    <Animated.View style={[{ overflow: 'hidden', borderRadius: pick(10, 12) }, box]}>
+      {/* The notice as it was: it sets the notice's full height. */}
+      <Animated.View style={downWords} onLayout={(e) => (downH.value = e.nativeEvent.layout.height)} {...(unlocked ? HIDDEN : {})}>
+        <View className={cn('gap-1 px-4 pt-3.5', locked ? 'pb-1.5' : 'pb-3.5')}>
+          <View className="flex-row items-start gap-3">
+            <View className="size-5" />
+            <View className="flex-1 gap-0.5">
+              <Text className="text-[15px] font-semibold leading-5">{locked ? 'Guardian locked' : 'Guardian offline'}</Text>
+              <Text className="text-sm leading-5">
+                {locked
+                  ? hosted
+                    ? hostLockedLine(hosted.hostLabel ?? `Your host's ${host}`, hardware.brand)
+                    : guardianLockedLine(guardian, host, hardware.brand)
+                  : `Trikey can't reach your ${host}. Phone-only payments wait until it's back; your ${hardware.brand} can still pay.`}
+              </Text>
+              {locked && !hosted ? (
+                <Pressable role="link" onPress={() => router.push('/settings/guardian')} className="min-h-11 justify-center self-start active:opacity-60">
+                  <Text className="text-[15px] font-semibold leading-5">{byHardware ? `Unlock with your ${hardware.brand}` : 'Unlock with passphrase'}</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
         </View>
+      </Animated.View>
+      {/* Unlocked: one line. */}
+      <Animated.View
+        style={[{ position: 'absolute', top: 0, left: 0, right: 0 }, upWords]}
+        onLayout={(e) => (upH.value = e.nativeEvent.layout.height)}
+        {...(unlocked ? { accessible: true, accessibilityLabel: 'Guardian unlocked. Phone payments work again.' } : HIDDEN)}>
+        <View className="flex-row items-start gap-3 px-4 py-3.5">
+          <View className="size-5" />
+          <View className="flex-1 gap-0.5">
+            <Text className="text-[15px] font-semibold leading-5">Guardian unlocked</Text>
+            <Text className="text-sm leading-5">Phone payments work again.</Text>
+          </View>
+        </View>
+      </Animated.View>
+      {/* The icon both share, where the notice's icon always was. */}
+      <View style={{ position: 'absolute', left: 16, top: 15 }} {...HIDDEN}>
+        {locked ? <Padlock shackle={shackle} ok={ok} /> : <Icon as={TriangleAlert} size={20} className="text-warn" strokeWidth={2} />}
       </View>
+    </Animated.View>
+  );
+}
+
+/** Lucide's lock, drawn in two parts so its shackle can open: it lifts and turns about its right foot. */
+const LOCK_SHACKLE = 'M7 11V7a5 5 0 0 1 10 0v4';
+
+/** The padlock of the guardian notice: amber and shut, or green with its shackle open. Decorative. */
+function Padlock({ shackle, ok, size = 20 }: { shackle: SharedValue<number>; ok: SharedValue<number>; size?: number }) {
+  const { colors } = useTheme();
+  const k = size / 24;
+  // The shackle turns about its right foot (17, 11 in Lucide's 24-unit box), measured from the icon's centre.
+  const px = 17 * k - size / 2;
+  const py = 11 * k - size / 2;
+  const turn = useAnimatedStyle(() => ({
+    transform: [
+      { translateY: -GUARDIAN_NOTICE.shackleLift * k * shackle.value },
+      { translateX: px },
+      { translateY: py },
+      { rotate: `${GUARDIAN_NOTICE.shackleDeg * shackle.value}deg` },
+      { translateX: -px },
+      { translateY: -py },
+    ],
+  }));
+  const bodyAmber = useAnimatedStyle(() => ({ opacity: 1 - ok.value }));
+  const bodyGreen = useAnimatedStyle(() => ({ opacity: ok.value }));
+  const shackleAmber = useAnimatedStyle(() => ({ opacity: 1 - ok.value }));
+  const shackleGreen = useAnimatedStyle(() => ({ opacity: ok.value }));
+  const fill = { position: 'absolute', top: 0, left: 0, width: size, height: size } as const;
+  const drawn = (color: string, part: ReactNode) => (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      {part}
+    </Svg>
+  );
+  const body = <Rect x={3} y={11} width={18} height={11} rx={2} ry={2} />;
+  return (
+    <View style={{ width: size, height: size, marginTop: 0 }}>
+      <Animated.View style={[fill, bodyAmber]}>{drawn(colors.warn, body)}</Animated.View>
+      <Animated.View style={[fill, bodyGreen]}>{drawn(colors.good, body)}</Animated.View>
+      <Animated.View style={[fill, turn]}>
+        <Animated.View style={[fill, shackleAmber]}>{drawn(colors.warn, <Path d={LOCK_SHACKLE} />)}</Animated.View>
+        <Animated.View style={[fill, shackleGreen]}>{drawn(colors.good, <Path d={LOCK_SHACKLE} />)}</Animated.View>
+      </Animated.View>
     </View>
   );
 }
 
-/** The latest few items under "Activity" on the home tab. */
-export function ActivityPreview({ limit, newWallet = false }: { limit: number; newWallet?: boolean }) {
+/**
+ * The latest few items under "Activity" on the home tab. `opening`: when the app opens (section 9), the heading and then
+ * each row rise into place, 80ms apart.
+ */
+export function ActivityPreview({ limit, newWallet = false, opening = false }: { limit: number; newWallet?: boolean; opening?: boolean }) {
   const router = useRouter();
   const state = useWallet();
   const now = useNow();
@@ -273,21 +544,73 @@ export function ActivityPreview({ limit, newWallet = false }: { limit: number; n
     .filter((item): item is Extract<ActivityItem, { type: 'payment' }> => item.type === 'payment')
     .slice(0, limit);
   const ctx = { now, unit: state.unit, hardwareBrand: state.hardware.brand };
+  // A payment that shows up while Home is open (not the rows there when it opened) opens its place in the list.
+  const seen = useRef<Set<string> | null>(null);
+  const arriving = (id: string, pending: boolean) => pending && seen.current !== null && !seen.current.has(id);
+  useEffect(() => {
+    seen.current = new Set([...(seen.current ?? []), ...items.map((i) => i.tx.id)]);
+  });
   return (
     <View>
-      <View className="flex-row items-center justify-between">
+      <OpeningPart part="recent" index={0} play={opening} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <Text role="heading" className={pick('text-xl font-bold leading-[26px]', 'text-base font-medium leading-6')}>
           Recent
         </Text>
         <Pressable role="link" testID="home-see-all" onPress={() => router.push('/activity')} className="min-h-11 justify-center pl-4 active:opacity-60">
           <Text className={cn('text-muted-foreground font-medium', pick('text-[15px]', 'text-sm'))}>See all</Text>
         </Pressable>
-      </View>
-      {items.length === 0 ? newWallet ? <FirstPaymentCard /> : <Text className="text-muted-foreground py-4 text-[15px] leading-5">No payments yet.</Text> : null}
+      </OpeningPart>
+      {items.length === 0 ? (
+        <OpeningPart part="recent" index={1} play={opening}>
+          {newWallet ? <FirstPaymentCard /> : <Text className="text-muted-foreground py-4 text-[15px] leading-5">No payments yet.</Text>}
+        </OpeningPart>
+      ) : null}
       {items.map((item, i) => (
-        <ActivityRow key={item.tx.id} item={item} variant="home" last={i === items.length - 1} ctx={ctx} />
+        <OpeningPart key={item.tx.id} part="recent" index={i + 1} play={opening}>
+          <ArrivingRow arriving={arriving(item.tx.id, item.tx.status === 'pending')}>
+            {/* Waiting to confirm: its amber dot pulses three times, then rests until the first confirmation. */}
+            <ActivityRow item={item} variant="home" last={i === items.length - 1} ctx={ctx} pulse />
+          </ArrivingRow>
+        </OpeningPart>
       ))}
     </View>
+  );
+}
+
+/**
+ * A row that has just arrived: its place opens from nothing to its height (280ms, one of the two layout animations the
+ * motion design allows), and its content fades in while dropping 6px into place. Reduce Motion: the row is there at
+ * once and fades in. A row that was already there renders as it is.
+ */
+function ArrivingRow({ arriving: arrivingNow, children }: { arriving: boolean; children: ReactNode }) {
+  // Decided when the row first renders: it stays arriving until its entrance is over.
+  const [arriving] = useState(arrivingNow);
+  const reduced = useReduceMotion();
+  const height = useSharedValue(0);
+  const open = useSharedValue(arriving && !reduced ? 0 : 1);
+  const shown = useSharedValue(arriving ? 0 : 1);
+  const started = useRef(false);
+  const onLayout = (e: LayoutChangeEvent) => {
+    // The row's own height, kept up to date (a line added later is not cut off).
+    height.value = e.nativeEvent.layout.height;
+    if (started.current) return;
+    started.current = true;
+    if (reduced) {
+      shown.value = reducedFade(1);
+      return;
+    }
+    open.value = withDelay(NEW_ROW.heightDelayMs, standard(1, NEW_ROW.heightMs));
+    shown.value = withDelay(NEW_ROW.contentDelayMs, standard(1, NEW_ROW.contentMs));
+  };
+  const place = useAnimatedStyle(() => ({ height: height.value * open.value }));
+  const content = useAnimatedStyle(() => ({ opacity: shown.value, transform: [{ translateY: -NEW_ROW.drop * (1 - shown.value) }] }));
+  if (!arriving) return <>{children}</>;
+  return (
+    <Animated.View style={[{ overflow: 'hidden' }, reduced ? null : place]}>
+      <Animated.View onLayout={onLayout} style={content}>
+        {children}
+      </Animated.View>
+    </Animated.View>
   );
 }
 
@@ -310,9 +633,10 @@ function FirstPaymentCard() {
 
 /**
  * Shown on home while a recovery is running or waiting for the user's answer, and after a recovery someone else cancelled:
- * phone-only payments stay paused until the hardware wallet resumes them.
+ * phone-only payments stay paused until the hardware wallet resumes them. `placement="urgent"` shows only a recovery that
+ * needs the owner's answer (Home puts it above Send and Receive); the default shows everything else.
  */
-export function RecoveryBanner() {
+export function RecoveryBanner({ placement = 'calm' }: { placement?: 'urgent' | 'calm' }) {
   const router = useRouter();
   const now = useNow();
   const wallet = useWalletService();
@@ -320,6 +644,7 @@ export function RecoveryBanner() {
   const { busy, run, message, error } = useAction();
 
   if (!recovery) {
+    if (placement === 'urgent') return null;
     // A hosted wallet that is paused (family hosting phase 2): only this wallet, and only the hardware wallet resumes it.
     if (hosted?.paused && !retired && phoneSpending !== 'retired') {
       return (
@@ -359,18 +684,37 @@ export function RecoveryBanner() {
     }
     return null;
   }
-  const remaining = formatCountdown(new Date(recovery.completesAt).getTime() - now.getTime());
-  const needsAnswer = recovery.origin === 'someone-else' && !recovery.acknowledged;
+  // The time left as the countdown screen says it: "5 days 14 hours left".
+  const left = countdownParts(new Date(recovery.completesAt).getTime() - now.getTime());
+  const remaining = `${left.big} ${left.rest}`;
+  const urgent = recoveryNeedsAnswer(recovery);
+  // Home places the urgent card above Send and Receive and the others below: each place shows only its own.
+  if (urgent !== (placement === 'urgent')) return null;
+  if (urgent) {
+    // Someone else started it and the owner has not answered: urgent. The destructive tone and a real button to the
+    // alert, where they can cancel it. Home puts it above Send and Receive, and Send is no longer the primary button.
+    return (
+      <View className="gap-3">
+        <Notice icon={TriangleAlert} iconClass="text-destructive" tone="bad" title="Someone started a recovery">
+          {`If it wasn't you, cancel it now. ${remaining}, then your money moves to a new wallet.`}
+        </Notice>
+        <AppButton title="Review the recovery" variant="destructive" onPress={() => router.push('/recover/alert')} />
+      </View>
+    );
+  }
+  // Answered ("This was me") or started from this phone: calmer, a link to the countdown.
   return (
-    <Pressable
-      role="link"
-      onPress={() => router.push(needsAnswer ? '/recover/alert' : '/recover/waiting')}
-      accessibilityLabel={needsAnswer ? 'Someone started a recovery. Review it.' : `Recovery in progress, ${remaining} left`}>
-      <Notice icon={needsAnswer ? TriangleAlert : Clock} iconClass={needsAnswer ? 'text-destructive' : 'text-warn'} tone="warn-outline" title={needsAnswer ? 'Someone started a recovery' : 'Recovery in progress'}>
-        {needsAnswer ? 'Tap to review it and cancel if it was not you.' : `${remaining} until your money moves to the new wallet.`}
+    <Pressable role="link" onPress={() => router.push('/recover/waiting')} accessibilityLabel={`Recovery in progress, ${remaining}. Opens the countdown`}>
+      <Notice icon={Clock} iconClass="text-warn" tone="warn-outline" title="Recovery in progress">
+        {`${remaining}, then your money moves to the new wallet.`}
       </Notice>
     </Pressable>
   );
+}
+
+/** A recovery someone else started that the owner has not answered yet: Home treats it as urgent. */
+export function recoveryNeedsAnswer(recovery: { origin?: string; acknowledged?: boolean } | null | undefined): boolean {
+  return !!recovery && recovery.origin === 'someone-else' && !recovery.acknowledged;
 }
 
 /**

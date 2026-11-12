@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import type { LucideIcon } from 'lucide-react-native';
 import { Pressable, View } from 'react-native';
 import { ArrowDownLeft, ArrowUpRight, Lock, Shield, Vault } from '@/components/icons';
+import { PulseDot } from '@/components/motion';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import {
@@ -303,11 +304,14 @@ export function ActivityRow({
   variant,
   last,
   ctx,
+  pulse = false,
 }: {
   item: ActivityItem;
   variant: 'home' | 'activity';
   last?: boolean;
   ctx: ActivityContext;
+  /** A row waiting to confirm: its amber dot pulses three times when it appears, then rests (Home's Recent). */
+  pulse?: boolean;
 }) {
   const router = useRouter();
   const d = describeActivity(item, variant, ctx);
@@ -335,7 +339,7 @@ export function ActivityRow({
           {d.title}
         </Text>
         <View className="flex-row items-center gap-1.5">
-          {d.subtitleTone === 'warn' ? <View className="bg-warn size-1.5 rounded-full" /> : null}
+          {d.subtitleTone === 'warn' ? pulse ? <PulseDot className="bg-warn" size={6} /> : <View className="bg-warn size-1.5 rounded-full" /> : null}
           <Text
             numberOfLines={1}
             className={cn(

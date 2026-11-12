@@ -7,7 +7,97 @@
     <description>Articles on bitcoin self-custody: how 2-of-3 multisig works, what to do when a key goes missing, and how Trikey is built to keep your coins safe.</description>
     <language>en</language>
     <atom:link href="https://trikey.app/blog/feed.xml" rel="self" type="application/rss+xml"/>
-    <lastBuildDate>Tue, 10 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Wed, 11 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>Delay &amp; Notify: Why Bitcoin Recovery Should Wait</title>
+      <link>https://trikey.app/blog/delay-and-notify-time-locked-recovery</link>
+      <guid isPermaLink="true">https://trikey.app/blog/delay-and-notify-time-locked-recovery</guid>
+      <pubDate>Wed, 11 Nov 2026 00:00:00 GMT</pubDate>
+      <description>Why a waiting period with alerts is the safest way to recover a bitcoin wallet with one key, and how cosigner delays compare with on-chain timelocks.</description>
+      <category>delay and notify</category>
+      <category>time-locked recovery</category>
+      <category>bitcoin timelock recovery</category>
+      <category>recovery waiting period</category>
+      <category>bitcoin vault timelock</category>
+      <content:encoded><![CDATA[<p>Any wallet that lets you recover with fewer keys than usual has a problem: whatever lets <em>you</em> in after a loss would also let a thief in. A waiting period solves this in a simple way. The recovery is allowed, but it takes days, and everyone who should know is told every day. The real owner, who lost a key, can afford to wait. A thief cannot wait unnoticed. This article explains why that works, the two ways a waiting period can be enforced (by a cosigner, or by Bitcoin&#39;s own timelocks), and how to choose its length.</p>
+<h2 id="the-recovery-dilemma">The recovery dilemma</h2>
+<p>In a <a href="https://trikey.app/blog/2-of-3-multisig-explained">2-of-3 multisig</a> wallet, two keys spend. If you lose one key, the other two are enough. But some setups want more than that: a way to recover when only <em>one</em> of your own keys survives, with help from a third party or a server that holds the third key.</p>
+<p>That help is dangerous if it is instant. Whoever steals your one remaining key, or tricks the helper, would get the same instant recovery. Asking security questions or sending an email code does not settle who is the owner; both can be phished or guessed.</p>
+<p>Time can. A legitimate recovery is rarely urgent by the hour. A theft almost always is: the attacker wants the coins before you notice. So a recovery that waits, and announces itself loudly while it waits, turns the attacker&#39;s need for speed against them.</p>
+<h2 id="what-delay-notify-means">What &quot;Delay &amp; Notify&quot; means</h2>
+<p>The name comes from <a href="https://bitkey.world/blog/sharing-our-recovery-design" rel="noopener">Bitkey</a>, which uses it for recovering a lost key. The pattern has three parts:</p>
+<ol>
+<li><strong>Delay.</strong> A recovery started with one key does not complete until a fixed period has passed. Bitkey&#39;s support pages describe a seven-day delay.</li>
+<li><strong>Notify.</strong> During the delay, the owner is alerted, ideally on several channels and devices, including ones the attacker does not hold.</li>
+<li><strong>Cancel.</strong> Anyone legitimately alerted can stop the recovery before it completes.</li>
+</ol>
+<p>At the end of the delay, the funds move to a new wallet with a replacement key. They do not simply unlock.</p>
+<h2 id="two-ways-to-enforce-a-waiting-period">Two ways to enforce a waiting period</h2>
+<h3 id="a-cosigner-that-follows-rules">A cosigner that follows rules</h3>
+<p>One of the keys is held by a cosigner (a company&#39;s server, or a server you run) that signs a recovery only after the delay has passed and nobody cancelled. This is how Bitkey&#39;s Delay + Notify works, with Block&#39;s server holding one of the three keys.</p>
+<p>Strengths: the delay can be cancelled, alerts are built in, rules can be changed later, and it works with any hardware wallet because the Bitcoin script is an ordinary multisig.</p>
+<p>Limits: the delay is enforced by software, not by Bitcoin. If the cosigner is compromised <strong>and</strong> an attacker holds one of your keys, they have two keys and can skip the delay. The cosigner also has to be online and honest about time, so a good design checks the clock against the blockchain rather than trusting the server&#39;s clock alone.</p>
+<h3 id="timelocks-in-the-bitcoin-script">Timelocks in the Bitcoin script</h3>
+<p>Bitcoin can enforce time itself:</p>
+<ul>
+<li><strong>Absolute timelocks</strong> make a transaction or a script path valid only after a given block height or date (<a href="https://github.com/bitcoin/bips/blob/master/bip-0065.mediawiki" rel="noopener">BIP 65</a>, <code>OP_CHECKLOCKTIMEVERIFY</code>).</li>
+<li><strong>Relative timelocks</strong> make a path valid only after a coin has been confirmed for a given number of blocks or amount of time (<a href="https://github.com/bitcoin/bips/blob/master/bip-0068.mediawiki" rel="noopener">BIP 68</a> and <a href="https://github.com/bitcoin/bips/blob/master/bip-0112.mediawiki" rel="noopener">BIP 112</a>, <code>OP_CHECKSEQUENCEVERIFY</code>).</li>
+</ul>
+<p>Wallets built on <a href="https://bitcoin.sipa.be/miniscript/" rel="noopener">miniscript</a>, such as Liana, use these to add a <strong>recovery path</strong>: your normal keys spend at any time, and a recovery key (or an heir&#39;s key) can spend only after the coins have sat unmoved for, say, a year.</p>
+<p>Strengths: no server is needed, and nobody can shorten the wait, not even with every server compromised.</p>
+<p>Limits: a relative timelock counts from when each coin was confirmed, so you must move (&quot;refresh&quot;) your coins before the timer runs out, or the recovery path becomes spendable. There is no cancel button: you &quot;cancel&quot; by spending the coins to a new address. Alerts are not built in; someone has to watch the chain. And fewer hardware wallets can sign these scripts than plain multisig.</p>
+<h3 id="covenants-not-available-yet">Covenants: not available yet</h3>
+<p>Covenant proposals would let coins themselves enforce &quot;wait, and allow a cancel to a safe address&quot; on-chain. The best known, <code>OP_VAULT</code> (<a href="https://github.com/bitcoin/bips/blob/master/bip-0345.mediawiki" rel="noopener">BIP 345</a>), is marked Closed in the BIP repository. Any such proposal would need a soft fork, and <strong>none is active on Bitcoin</strong>, so no wallet can use one today.</p>
+<h3 id="side-by-side">Side by side</h3>
+<div class="table-scroll" role="region" aria-label="Table" tabindex="0">
+<table>
+<thead>
+<tr><th scope="col"></th><th scope="col">Cosigner-enforced delay</th><th scope="col">Script timelock (miniscript)</th></tr>
+</thead>
+<tbody>
+<tr><td>Who enforces the wait</td><td>The cosigner&#39;s software</td><td>Every Bitcoin node</td></tr>
+<tr><td>Can a recovery be cancelled?</td><td>Yes, by anyone alerted</td><td>Only by moving the coins first</td></tr>
+<tr><td>Alerts</td><td>Built in</td><td>Need a separate watcher</td></tr>
+<tr><td>Coins need refreshing</td><td>No</td><td>Yes, before each timelock expires</td></tr>
+<tr><td>Hardware wallet support</td><td>Any device that signs multisig</td><td>Fewer devices</td></tr>
+<tr><td>Bypassed by</td><td>Cosigner compromise plus one stolen key</td><td>Theft of the keys in the normal spending path</td></tr>
+</tbody>
+</table>
+</div>
+<p>Neither is strictly better. A cosigner delay is flexible and loud; a script timelock is strict and quiet.</p>
+<h2 id="choosing-the-length">Choosing the length</h2>
+<ul>
+<li><strong>Longer</strong> gives you time to notice while travelling, ill or offline, and gives your contacts time to reach you.</li>
+<li><strong>Shorter</strong> gets you back to your money sooner after a genuine loss.</li>
+</ul>
+<p>A week is a common floor. Thirty days suits people who are often out of reach. Whatever you choose, the wait only protects you if the alerts reach someone: send them to more than one device and at least one person you trust, through channels a phone thief does not control.</p>
+<h2 id="two-failure-modes-worth-knowing">Two failure modes worth knowing</h2>
+<p><strong>Phishing that imitates an alert.</strong> A fake &quot;recovery started, click here to cancel&quot; message is an obvious attack. Real alerts should never need you to click a link or sign in. If a wallet&#39;s alerts never contain links, any message with one is fake.</p>
+<p><strong>Contested recovery.</strong> If a thief holds one of your keys and you hold another, each can cancel the other&#39;s recovery. The result is a stalemate: the funds are frozen, not stolen. That is the price of letting any key holder cancel. You get out by finding a second key (a backup) or by outlasting the thief.</p>
+<h2 id="how-trikey-approaches-it">How Trikey approaches it</h2>
+<p><a href="https://trikey.app/">Trikey</a> uses a cosigner-enforced Delay &amp; Notify, with one difference from Bitkey: the cosigner, the Trikey Guardian, runs on your own home server, so no company holds a key or decides on a recovery. From the design document&#39;s <a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces" rel="noopener">rules the guardian enforces</a>:</p>
+<ul>
+<li><strong>You pick the delay:</strong> 7, 14 or 30 days.</li>
+<li><strong>Starting a recovery pauses phone-only payments</strong>, so a phone thief who starts one gains nothing in the meantime.</li>
+<li><strong>Alerts go out every day</strong> as end-to-end encrypted nostr messages to your devices and your alert contacts, and optionally by email, ntfy, a webhook or Telegram. On mainnet the guardian requires at least one alert contact.</li>
+<li><strong>Any of them can cancel.</strong> A cancel from someone other than the person who started the recovery keeps phone payments paused until the hardware wallet resumes them.</li>
+<li><strong>Three clocks must agree</strong> before the guardian co-signs: the system clock, the blockchain&#39;s median time past, and the number of blocks mined since the start. A tampered clock cannot shorten the wait.</li>
+<li><strong>Alerts never carry a link or a button</strong> and never ask anyone to sign in.</li>
+<li><strong>A fee cap</strong> stops a recovery from burning the funds in fees, and the funds move to a new 2-of-3 wallet.</li>
+</ul>
+<p>The honest limit is the one above: if someone took over your home server <em>and</em> held one of your other keys, they would hold two keys of three. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model" rel="noopener">threat model</a> goes through this and the other cases, including the contested stalemate.</p>
+<p>Trikey also uses Bitcoin&#39;s own timelocks, in its <strong>Recovery Key mode</strong> for people without a home server: the phone&#39;s small spending balance is refilled by a chain of pre-signed refills, each of which can confirm only 1,008 blocks (about a week) after the one before it (a BIP 68 relative timelock), so even a phone thief holding every refill gets at most one per period. Recovery in that mode needs any two keys and has no waiting period. Recovery Key mode is for test networks only.</p>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Use it on test networks (signet, testnet4 or regtest); if you try mainnet, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> suggests starting a recovery as if you had lost your phone and letting it run in the background.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="why-can-t-recovery-be-instant-if-i-can-prove-who-i-am">Why can&#39;t recovery be instant if I can prove who I am?</h3>
+<p>Because anything that proves your identity online (an email, a code, an answer to a question) can be stolen or faked. Time and alerts to several people are much harder to fake.</p>
+<h3 id="what-happens-if-i-miss-the-alerts">What happens if I miss the alerts?</h3>
+<p>The recovery completes at the end of the delay. That is why alerts should reach more than one device and at least one other person, and why a longer delay suits people who are often offline.</p>
+<h3 id="can-a-thief-cancel-my-genuine-recovery">Can a thief cancel my genuine recovery?</h3>
+<p>If they hold one of your keys, yes, and you can cancel theirs. Neither side can take the funds; they stay frozen until one side gives up or you restore a second key.</p>
+<h3 id="do-timelocks-work-on-any-hardware-wallet">Do timelocks work on any hardware wallet?</h3>
+<p>Plain multisig works almost everywhere. Script paths with timelocks need devices that can sign those scripts, which is a shorter list. Check before you commit to a design. See choosing a hardware wallet for multisig.</p>]]></content:encoded>
+    </item>
     <item>
       <title>2-of-3 Multisig Explained: How It Works and What It Costs</title>
       <link>https://trikey.app/blog/2-of-3-multisig-explained</link>
@@ -68,7 +158,7 @@
 <h2 id="what-multisig-does-not-fix">What multisig does not fix</h2>
 <ul>
 <li><strong>Two keys in one place.</strong> A burglar who finds two keys in the same house holds a spending pair.</li>
-<li><strong>Coercion.</strong> If someone can force you to use two keys, multisig alone does not stop them. Waiting periods and limits help more here (see Delay &amp; Notify: why recovery should wait).</li>
+<li><strong>Coercion.</strong> If someone can force you to use two keys, multisig alone does not stop them. Waiting periods and limits help more here (see <a href="https://trikey.app/blog/delay-and-notify-time-locked-recovery">Delay &amp; Notify: why recovery should wait</a>).</li>
 <li><strong>Signing the wrong thing.</strong> If malware swaps the destination address and you approve it on both devices without reading the screen, the payment goes out. Devices that show the address you are paying, and the wallet&#39;s own change, are what protect you (see choosing a hardware wallet for multisig).</li>
 <li><strong>Lost metadata.</strong> Without the descriptor (or all the xpubs), the keys you hold may not be enough to find the coins.</li>
 </ul>
@@ -95,6 +185,168 @@
 <p>Yes, and many people do, so that one vendor&#39;s bug does not affect every key. Each device must support the script type and, ideally, let you register the wallet and check addresses on its screen.</p>
 <h3 id="how-is-multisig-different-from-splitting-a-seed-shamir-or-slip-39">How is multisig different from splitting a seed (Shamir or SLIP-39)?</h3>
 <p>A split seed is still one key: the shares are combined into the full seed when you need it, at which point it exists in one place. Multisig keeps the keys separate forever; each device signs on its own and no device ever holds the others&#39; keys.</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>worse_query: What an iOS Bug Can Take From Your Wallet</title>
+      <link>https://trikey.app/blog/ios-worse-query-wallet-files</link>
+      <guid isPermaLink="true">https://trikey.app/blog/ios-worse-query-wallet-files</guid>
+      <pubDate>Tue, 10 Nov 2026 00:00:00 GMT</pubDate>
+      <description>An iOS bug lets malicious apps read other apps&apos; files. What that exposes in a bitcoin wallet, what it doesn&apos;t, and what to do today.</description>
+      <category>worse_query</category>
+      <category>ios vulnerability</category>
+      <category>iphone crypto wallet</category>
+      <category>seed phrase security</category>
+      <category>mobile wallet security</category>
+      <category>multisig</category>
+      <content:encoded><![CDATA[<p>On 10 November 2026, Binance warned iPhone users about <strong>worse_query</strong>, a bug in iOS that lets a malicious app read files that belong to other apps. Binance named seed phrases, private keys and login credentials as being at risk &quot;across the entire ecosystem&quot; (<a href="https://bitcoinmagazine.com/news/binance-warns-ios-flaw-wallet-seed-phrases" rel="noopener">Bitcoin Magazine</a>). That is alarming for anyone with a wallet on their phone. But what a bug like this can take depends on one thing: <strong>where your wallet keeps its keys.</strong> This post explains that, so you can judge your own wallet, and lists what to do today.</p>
+<h2 id="what-worse-query-is-as-reported-so-far">What worse_query is, as reported so far</h2>
+<p>These are the facts as reported on 10 November 2026. Check the latest news before you act on them.</p>
+<ul>
+<li><strong>It is a sandbox escape.</strong> Every iPhone app is meant to live in its own sandbox: it can read its own files and nobody else&#39;s. worse_query breaks that wall, so an app you install can read files that another app wrote.</li>
+<li><strong>A researcher, forcequitOS, published it</strong> as a public proof of concept on 8 November. The security firm SlowMist lists <strong>iOS 26.0 to 26.7.2 and iOS 27.2</strong> as affected; Binance&#39;s warning names 26.7.1, 27.0.1 and 27.2 (<a href="https://x.com/SlowMist_Team/status/2120045378792010166" rel="noopener">SlowMist on X</a>, <a href="https://cryptoticker.io/en/ios-vulnerability-worse-query-crypto-wallets-iphone/" rel="noopener">CryptoTicker</a>). If your version sits between those, assume it is affected too.</li>
+<li><strong>Apple released iOS 27.2.1 and 26.7.3 on 9 November.</strong> SlowMist says 27.2.1 stops the bug, but Apple&#39;s security notes don&#39;t mention it, so treat the fix as likely, not confirmed (<a href="https://securityaffairs.com/202788/hacking/ios-sandbox-escape-is-public-and-apple-hasnt-confirmed-a-fix.html" rel="noopener">Security Affairs</a>).</li>
+<li><strong>No attack or theft had been reported</strong> when this was written.</li>
+<li><strong>SlowMist&#39;s point is the one that matters here:</strong> the bug alone doesn&#39;t steal anything. The risk is an untrusted app on your phone, combined with a wallet that keeps seeds, keystores or caches in plain files.</li>
+<li><strong>The attacker needs an app on your phone.</strong> It is not a remote attack: someone has to get you to install a malicious app, most likely from outside the App Store (a &quot;sideloaded&quot; or manually signed app).</li>
+</ul>
+<h2 id="files-and-the-keychain-are-two-different-places">Files and the Keychain are two different places</h2>
+<p>A phone wallet can keep its secrets in two kinds of storage, and worse_query reaches only one of them.</p>
+<ol>
+<li><strong>The app&#39;s own files.</strong> A database, settings, caches. These live in the app&#39;s folder, and the sandbox is the only thing that protects them from other apps. A sandbox escape like worse_query reads them.</li>
+<li><strong>The Keychain</strong> (on Android, the Keystore). It is a system service, not a file in the app&#39;s folder. Its items are encrypted with keys guarded by the phone&#39;s secure chip (the Secure Enclave on iPhone). An item can also be set to need Face ID or a fingerprint every time it is read, and to never leave the device. A bug that only reads files doesn&#39;t hand over what is in the Keychain.</li>
+</ol>
+<p>So the question for any wallet is: <strong>does it write the seed, or a private key, into its own files?</strong> A wallet that keeps them in the Keychain loses privacy to a bug like this: your addresses, your balance, your history. A wallet that keeps a seed in a file, even &quot;obfuscated&quot;, can lose the money.</p>
+<p>How to find out for your wallet:</p>
+<ul>
+<li>Look for a security page or a threat model in the wallet&#39;s documentation that says where keys are stored. For an open-source wallet you can also read the code.</li>
+<li>Words to look for: Keychain, Secure Enclave, Android Keystore, &quot;this device only&quot;, &quot;biometric&quot;.</li>
+<li>Be wary of wallets that never say. &quot;Bank-grade encryption&quot; doesn&#39;t tell you where the key is.</li>
+</ul>
+<h2 id="what-a-file-reading-bug-can-expose">What a file-reading bug can expose</h2>
+<p>Even when the keys are safe, an app&#39;s files hold things you&#39;d rather keep to yourself:</p>
+<ul>
+<li><strong>Your public keys and addresses.</strong> Many wallets store an extended public key (xpub) or a descriptor. With it, someone can list every address of the wallet, so your <strong>balance and your whole history</strong>. They can&#39;t spend with it, but it tells them what you hold, which matters for phishing and physical safety.</li>
+<li><strong>Labels and notes:</strong> what you called each payment and who you paid.</li>
+<li><strong>Session tokens</strong> for exchanges and other services, if an app keeps them in files. This is where &quot;logins at risk&quot; comes from.</li>
+</ul>
+<h2 id="what-to-do-today">What to do today</h2>
+<ol>
+<li><p><strong>Update iOS.</strong> Settings, General, Software Update. Take the newest version offered: 27.2.1 or later on iOS 27, 26.7.3 or later if your phone stays on iOS 26. On 27.1, 27.0.x or an older 26.x, update.</p></li>
+<li><p><strong>Remove apps you don&#39;t trust</strong>, especially ones that didn&#39;t come from the App Store: sideloaded or manually signed apps from strangers, &quot;modded&quot; apps, cracked games. The bug needs one of those on your phone to do anything.</p></li>
+<li><p><strong>Don&#39;t panic-move your coins into something new.</strong> Scammers follow security news: expect fake &quot;migration tools&quot;, fake support accounts and &quot;verify your wallet&quot; messages. Nobody legitimate will ask for your seed words.</p></li>
+<li><p><strong>If you have reason to think your phone was compromised</strong> (a strange app you installed, signs of tampering), treat its keys as exposed:</p>
+<ul>
+<li>Create a new wallet on a clean, updated device.</li>
+<li>Move the funds there.</li>
+<li>Reset your exchange sessions and passwords.</li>
+</ul>
+<p>A restore of the same seed on a new phone isn&#39;t enough: whoever has a copy can still use it. Our post on <a href="https://trikey.app/blog/lost-hardware-wallet-phone-or-seed-phrase">losing a phone, a hardware wallet or a seed phrase</a> goes through the cases.</p></li>
+</ol>
+<h2 id="why-a-phone-key-shouldn-t-be-the-only-key">Why a phone key shouldn&#39;t be the only key</h2>
+<p>worse_query is one bug. There will be others, in iOS, in Android, in apps. That is the strongest argument against keeping all your bitcoin behind <strong>one key on a phone</strong>. A phone runs hundreds of other apps and connects to everything; it is the most exposed device you own.</p>
+<p>With <a href="https://trikey.app/blog/2-of-3-multisig-explained">2-of-3 multisig</a>, the phone&#39;s key is one of three, and moving money needs two. A phone bug, even one that did reach the key, would give an attacker one key. Pair that with a daily limit and an alert on the second key, and the worst case of a phone compromise becomes &quot;at most one day&#39;s limit&quot;, not &quot;everything&quot;.</p>
+<h2 id="trikey-and-worse-query">Trikey and worse_query</h2>
+<p><a href="https://trikey.app/">Trikey</a> is an open-source 2-of-3 wallet: your hardware wallet (key 1), your phone (key 2) and the Trikey Guardian on your own home server (key 3). How it stands against a file-reading bug:</p>
+<ul>
+<li><strong>Key 2 lives in the Keychain</strong>, set to &quot;this device only&quot;, never in backups, and readable only with Face ID. Every other key the app holds is in the Keychain or Keystore too. The app&#39;s files hold the wallet&#39;s public descriptor, the guardian&#39;s pairing details, labels and history: a privacy loss if read, with no power to sign. The full list, item by item, is in <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/security/phone-storage.md" rel="noopener">what the phone app keeps, and where</a>.</li>
+<li><strong>Even key 2 alone moves at most the daily limit.</strong> The guardian co-signs phone-only payments within a limit you set. Raising the limit, changing a rule or starting a recovery needs your hardware wallet, or waits through a Delay &amp; Notify period that alerts you every day (<a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#rules-the-guardian-enforces" rel="noopener">rules the guardian enforces</a>).</li>
+<li><strong>If you suspect your phone,</strong> you can lock the guardian from the phone or its web page, restore key 2 on a clean phone from your backup, and use &quot;Replace guardian&quot; to move your coins to a fresh wallet.</li>
+<li><strong>About &quot;manually signed apps&quot;:</strong> while the iPhone app isn&#39;t on the App Store, testers build Trikey themselves from its public source code, which iOS counts as a manually signed app. Building an open-source app yourself is not what the warning is about. The warning is about apps from people you don&#39;t know. Keep your own build, update iOS, and remove anything you don&#39;t trust.</li>
+</ul>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Use it on test networks (signet, testnet4 or regtest); if you try mainnet anyway, use only an amount you can afford to lose.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="is-my-seed-phrase-exposed-by-worse-query">Is my seed phrase exposed by worse_query?</h3>
+<p>Only if your wallet writes it into its own files. Wallets that keep the seed in the iPhone Keychain, especially with Face ID required, are not exposed by a bug that only reads files. Check your wallet&#39;s documentation, update iOS, and remove apps you don&#39;t trust.</p>
+<h3 id="do-i-need-to-move-my-bitcoin">Do I need to move my bitcoin?</h3>
+<p>Not because of the news alone. Move it if you installed something you don&#39;t trust, or see signs your phone was tampered with. Then move it to a wallet created on a clean device, not to the same seed restored elsewhere.</p>
+<h3 id="does-a-hardware-wallet-protect-me">Does a hardware wallet protect me?</h3>
+<p>Its keys never touch the phone, so a phone bug can&#39;t read them. What it can reveal is your xpub, if a companion app stores it: that is privacy, not access to the coins.</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>Lost Your Hardware Wallet, Phone or Seed Phrase?</title>
+      <link>https://trikey.app/blog/lost-hardware-wallet-phone-or-seed-phrase</link>
+      <guid isPermaLink="true">https://trikey.app/blog/lost-hardware-wallet-phone-or-seed-phrase</guid>
+      <pubDate>Tue, 10 Nov 2026 00:00:00 GMT</pubDate>
+      <description>What happens to your bitcoin if you lose a hardware wallet, a phone or a seed phrase, case by case, with the steps to take and the scams to avoid.</description>
+      <category>lost hardware wallet</category>
+      <category>lost seed phrase</category>
+      <category>phone stolen bitcoin wallet</category>
+      <category>recover bitcoin wallet</category>
+      <category>lost bitcoin keys</category>
+      <content:encoded><![CDATA[<p>Your bitcoin is not inside your hardware wallet or your phone. It sits on the blockchain, locked to keys, and a device is only a safe place to keep and use those keys. So what losing a device means depends on one question: <strong>do you still have another way to produce the same keys?</strong> This guide goes through the common cases, from a lost device with a good backup to a lost seed phrase, for single-key wallets and for multisig, and says what to do in each.</p>
+<h2 id="first-three-rules-that-apply-to-every-case">First, three rules that apply to every case</h2>
+<ol>
+<li><strong>Nobody can recover keys for you.</strong> No support desk, &quot;recovery service&quot; or website can bring back a lost seed phrase. People who search for help after a loss are a favourite target for scams: fake support numbers, paid &quot;recovery&quot; firms and pages that ask you to type your seed words. Never enter seed words on a website or give them to anyone.</li>
+<li><strong>If a key may be in someone else&#39;s hands, move the coins.</strong> A backup lets you restore, but it does not make the lost copy harmless. When in doubt, send everything to a new wallet with fresh keys.</li>
+<li><strong>Act on the backup you actually have.</strong> Check it before you need it: the words are legible, the order is right, and any passphrase is recorded somewhere you will find it.</li>
+</ol>
+<h2 id="single-key-wallets-case-by-case">Single-key wallets: case by case</h2>
+<h3 id="you-lost-the-hardware-wallet-but-have-the-seed-phrase">You lost the hardware wallet but have the seed phrase</h3>
+<p>Your funds are safe. Restore the seed phrase on a new device (same brand or any other that supports the standard, usually <a href="https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki" rel="noopener">BIP 39</a>), add the passphrase if you used one, and check that your balance appears.</p>
+<p>Then decide whether to move the coins. The lost device is protected by its PIN, and most devices wipe or permanently lock themselves after a number of wrong PINs, but you cannot know who has it or what they can try. If the amount matters, create a new wallet with a new seed, back it up, and send everything to it.</p>
+<h3 id="the-device-was-stolen">The device was stolen</h3>
+<p>Same steps, with more urgency. Restore from your seed on another device and move the funds to a fresh wallet before a thief has time to work on the PIN or the device.</p>
+<h3 id="you-still-have-the-device-but-lost-the-seed-phrase">You still have the device but lost the seed phrase</h3>
+<p>Nothing is lost yet, but you are one accident away from it. Do not wait:</p>
+<ol>
+<li>Set up a new wallet with a new seed and write that seed down carefully.</li>
+<li>Check the new backup (many devices offer a &quot;verify backup&quot; step).</li>
+<li>Send all funds from the old wallet to the new one.</li>
+</ol>
+<p>Avoid trying to &quot;recover&quot; the old seed through software or online tools. A new, properly backed-up wallet is faster and safer.</p>
+<h3 id="your-seed-phrase-may-have-been-seen">Your seed phrase may have been seen</h3>
+<p>A photo in the cloud, a sheet left in a drawer that someone else opened, words typed into a website: treat the seed as compromised. Move everything to a new wallet with a new seed now. Restoring or &quot;securing&quot; the old seed does nothing.</p>
+<h3 id="you-lost-both-the-device-and-the-seed-phrase">You lost both the device and the seed phrase</h3>
+<p>If there is no other copy of the seed and no wallet file on an old computer, the coins cannot be moved by anyone. This is the hard edge of self-custody, and the main reason people move to setups with more than one key.</p>
+<h3 id="a-phone-wallet-was-lost-or-stolen">A phone wallet was lost or stolen</h3>
+<p>For a single-key wallet on a phone, the seed phrase backup is everything. If you have it, restore it on another device and move the funds to a new wallet: the old phone still holds a copy of the key, protected only by its screen lock and the app&#39;s own lock. Also lock or erase the phone remotely and secure the email and phone number accounts it was signed into.</p>
+<h2 id="multisig-wallets-losing-one-key-is-survivable">Multisig wallets: losing one key is survivable</h2>
+<p>In a <a href="https://trikey.app/blog/2-of-3-multisig-explained">2-of-3 multisig</a> wallet any two keys spend, so losing one key is an inconvenience, not a loss.</p>
+<h3 id="the-recovery-routine">The recovery routine</h3>
+<ol>
+<li>Use the two keys you still have.</li>
+<li>Create a new wallet: the two surviving keys plus a fresh third key (often at a new account on the same devices).</li>
+<li>Send everything from the old wallet to the new one.</li>
+<li>Back up the new wallet&#39;s descriptor and the new key.</li>
+</ol>
+<p>Why move instead of just replacing the lost device? The old wallet&#39;s rule includes the lost key forever. If someone finds that key, they hold one of the three. Moving to a new wallet takes it out of the picture.</p>
+<h3 id="what-you-need-besides-the-keys">What you need besides the keys</h3>
+<p>Two seeds alone are usually not enough to find the coins. Your wallet software also needs the <strong>descriptor</strong>: the three public keys and how they are combined. Keep a copy of it with each key backup. It holds no secret (it cannot spend), but it shows your balance and history to whoever reads it.</p>
+<h3 id="when-two-keys-are-lost">When two keys are lost</h3>
+<p>If two of three keys are gone, a 2-of-3 wallet is in the same position as a single-key wallet with no backup. Restore whatever seeds you have from their backups before you consider anything else.</p>
+<h2 id="why-some-wallets-make-you-wait">Why some wallets make you wait</h2>
+<p>Some wallets let a single surviving key start a recovery, but only after a waiting period, with alerts sent to you during it. The point is to make a stolen key slow and noisy rather than fast and silent: if you did not start the recovery, you have days to cancel it. We cover this in <a href="https://trikey.app/blog/delay-and-notify-time-locked-recovery">Delay &amp; Notify: why recovery should wait</a>.</p>
+<h2 id="how-trikey-approaches-it">How Trikey approaches it</h2>
+<p><a href="https://trikey.app/">Trikey</a> is a 2-of-3 wallet with a hardware wallet (key 1), your phone (key 2) and the Trikey Guardian on your own home server (key 3). Its recovery flows follow the cases above:</p>
+<div class="table-scroll" role="region" aria-label="Table" tabindex="0">
+<table>
+<thead>
+<tr><th scope="col">What you lost</th><th scope="col">What happens in Trikey</th></tr>
+</thead>
+<tbody>
+<tr><td>Phone, with its backup</td><td>Restore the phone key on a new phone from your encrypted backup file and recovery code. No waiting.</td></tr>
+<tr><td>Phone, no backup</td><td>The hardware wallet lets a new phone reach the guardian, and a recovery starts. It waits 7, 14 or 30 days (your choice), alerts you and your alert contacts every day, and any of you can cancel it. Then the money moves to a new 2-of-3 wallet.</td></tr>
+<tr><td>Phone stolen</td><td>A thief with an unlocked phone can spend at most your daily limit. Raising the limit needs the hardware wallet. Starting a recovery pauses phone-only payments.</td></tr>
+<tr><td>Hardware wallet</td><td>Restore its seed words on a new device, or use the phone and guardian to run the same waiting-period recovery.</td></tr>
+<tr><td>Hardware wallet stolen</td><td>It is PIN-locked and one key of three. A recovery someone starts with it triggers the daily alerts, and you cancel it.</td></tr>
+<tr><td>Home server dies or is stolen</td><td>The phone and hardware wallet still move any amount. &quot;Replace guardian&quot; moves the coins to a new wallet with a new guardian. The guardian keeps key 3 encrypted and locks itself after any restart, so an unplugged box is useless to a thief.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Because the wallet is a standard <code>wsh(sortedmulti(2,…))</code> descriptor, any two of your keys can also move the coins in another multisig wallet, without Trikey.</p>
+<p>The full table, including the cases where a thief and the owner each hold one key, is in the design document&#39;s <a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#recovery-flows" rel="noopener">recovery flows</a> and <a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model" rel="noopener">threat model</a>. The site&#39;s <a href="https://trikey.app/#missing">pick a key to lose</a> section walks through it with short videos.</p>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Use it on test networks (signet, testnet4 or regtest); if you try mainnet, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> includes a step where you delete the app and restore from your backup, which is worth rehearsing with any wallet.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="is-my-bitcoin-gone-if-i-lose-my-hardware-wallet">Is my bitcoin gone if I lose my hardware wallet?</h3>
+<p>No, not if you have the seed phrase (and passphrase, if you used one). Restore it on a new device. Consider moving the funds to a fresh wallet afterwards.</p>
+<h3 id="can-the-manufacturer-recover-my-wallet">Can the manufacturer recover my wallet?</h3>
+<p>No. Hardware wallet makers do not have your seed. Anyone claiming to recover a wallet for a fee, or asking for your seed words, should be treated as a scam.</p>
+<h3 id="i-forgot-my-pin-but-have-the-seed-what-now">I forgot my PIN but have the seed. What now?</h3>
+<p>Most devices wipe or lock themselves after too many wrong attempts, and many let you reset them. Either way, restore from the seed phrase on the reset device or a new one.</p>
+<h3 id="should-i-move-my-coins-after-restoring">Should I move my coins after restoring?</h3>
+<p>If the lost device or seed could be in someone else&#39;s hands, yes. A restore gives you access; only a move to new keys makes the lost copy worthless.</p>
+<h3 id="what-do-i-need-to-recover-a-multisig-wallet">What do I need to recover a multisig wallet?</h3>
+<p>Enough keys to meet the threshold (two of three for 2-of-3) and the wallet&#39;s descriptor. With both, any multisig-capable wallet can rebuild it.</p>]]></content:encoded>
     </item>
   </channel>
 </rss>

@@ -6,7 +6,7 @@ tagline: Key 3 of your 2-of-3 bitcoin wallet, on your own node
 # TODO(verify): the icon is a placeholder (the web UI favicon). Replace with a proper icon URL.
 icon: https://raw.githubusercontent.com/TheIcarusWings/trikey/main/apps/guardian-web/public/favicon.svg
 category: bitcoin
-version: "0.1.26-alpha"
+version: "0.1.27-alpha"
 # TODO(verify): host-facing port for the app_proxy. Pick one that no other app in the store uses.
 port: 3010
 description: >-
@@ -26,8 +26,9 @@ support: https://github.com/TheIcarusWings/trikey/issues
 # TODO(verify): the store's gallery format. Add screenshots once the UI is stable.
 gallery: []
 releaseNotes: >-
-  The guardian now finishes what it started before it stops: an alert still being sent to your contacts during an
-  update or restart is no longer cut short. Update the app too.
+  The guardian's web page is easier to use: larger click targets, field borders and focus outlines you can see, and
+  plainer words. Releases are now signed with Trikey's key. Update the app too: it has a new Security tab and motion
+  throughout.
 dependencies:
   - bitcoin
   - electrs
