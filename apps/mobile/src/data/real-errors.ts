@@ -279,7 +279,8 @@ export function mapError(e: unknown): WalletServiceError {
       case 'backup_wrong_secret':
         return make('backup_wrong_secret', "That didn't unlock the backup. Check the recovery code, or use the passkey you made it with.");
       case 'recovery_code_typo':
-        return make('backup_wrong_secret', 'That recovery code has a typo in it. Check every group of characters.');
+        // A character from another alphabet (text recognition, another keyboard) is named by its group: keep those words.
+        return make('backup_wrong_secret', /^Group \d/.test(e.message) ? e.message : 'That recovery code has a typo in it. Check every group of characters.');
       case 'passkey_unavailable':
         return make('backup_unavailable', "Passkeys aren't available on this phone yet. Use the recovery code.");
       case 'hardware_unconfirmed':

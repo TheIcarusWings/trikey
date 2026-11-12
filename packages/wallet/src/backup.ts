@@ -296,10 +296,34 @@ export function generateRecoveryCode(): string {
  * matter, and O/I/L read as 0/1/1. Throws `recovery_code_typo` if the check
  * character does not match.
  */
+/**
+ * Characters that look like the code's own, from other alphabets: what text recognition (copying the code from a photo
+ * or a screenshot) or another keyboard layout puts in their place. Found on a phone: a Cyrillic З and М where the code
+ * had 3 and M. Each maps to the character it is mistaken for; the check character still catches a wrong guess.
+ */
+const LOOKALIKES: Record<string, string> = {
+  // Cyrillic capitals (lower case is folded by toUpperCase first)
+  А: 'A', В: 'B', Е: 'E', З: '3', К: 'K', М: 'M', Н: 'H', О: '0', Р: 'P', С: 'C', Т: 'T', Х: 'X', Ѕ: 'S', І: '1', Ј: 'J', У: 'Y', Б: '6',
+  // Greek capitals
+  Α: 'A', Β: 'B', Ε: 'E', Ζ: 'Z', Η: 'H', Ι: '1', Κ: 'K', Μ: 'M', Ν: 'N', Ο: '0', Ρ: 'P', Τ: 'T', Υ: 'Y', Χ: 'X',
+  // A slashed or crossed zero
+  Ø: '0',
+  Θ: '0',
+};
+
+/** The code as typed or pasted, folded to Crockford base32: case, separators, look-alikes, then O to 0 and I/L to 1. */
+function foldRecoveryCode(input: string): string {
+  // NFKC first: full-width and other compatibility forms (Ａ, ３) become their plain letters and digits.
+  const upper = input.normalize('NFKC').toUpperCase().replace(/[\s\-\u2010-\u2015\u2212]/g, '');
+  return [...upper].map((c) => LOOKALIKES[c] ?? c).join('').replace(/O/g, '0').replace(/[IL]/g, '1');
+}
+
 export function normalizeRecoveryCode(input: string): string {
-  const s = input.toUpperCase().replace(/[\s-]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
-  if (s.length !== CODE_DATA_CHARS + 1 || ![...s].every((c) => CROCKFORD.includes(c)))
-    throw new WalletError('recovery_code_typo', 'A recovery code is 25 letters and digits.');
+  const s = foldRecoveryCode(input);
+  if (s.length !== CODE_DATA_CHARS + 1) throw new WalletError('recovery_code_typo', 'A recovery code is 25 letters and digits.');
+  const bad = [...s].findIndex((c) => !CROCKFORD.includes(c));
+  if (bad >= 0)
+    throw new WalletError('recovery_code_typo', `Group ${Math.floor(bad / 5) + 1} of the recovery code has a character that isn't one of its letters or digits. Type it again by hand.`);
   const data = s.slice(0, CODE_DATA_CHARS);
   if (checkChar(data) !== s[CODE_DATA_CHARS]) throw new WalletError('recovery_code_typo', 'This recovery code has a typo.');
   return data;
