@@ -6,6 +6,29 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## [0.1.27-alpha] - 2026-11-12
+
+The app gets motion throughout and a new Security tab, both screens get fixes from a design review, and releases are
+signed with Trikey's key. Update the guardian, then the app.
+
+- **Motion that shows what's happening** (#246, #247, #250). Sending shows the two signing steps and ends on a drawn
+  check, with who signed and what's left of today's daily limit. Waiting for the hardware wallet, money arriving, a
+  recovery's countdown, unlocking the guardian and pairing all move now, and the app opens with the Trikey keys landing
+  on Home. Buttons never wait for an animation, warnings never move, and with Reduce Motion on nothing moves at all.
+- **A new Security tab** (#249): your three keys drawn as the Trikey mark, green when all is well and amber with the
+  one thing that needs you, then tiles for each key and each protection.
+- **Safer screens** (#248). Approving on a hardware wallet now lists the amount and fee in the unit your device shows,
+  next to the address. An unanswered recovery on Home is red, with a button to review it, above Send. Checking a receive
+  address no longer says "Your device agrees" before you have compared. Review shows a silent payment's full address,
+  "Send max" is now "Send everything", small buttons are larger, and the same things have the same names everywhere.
+- **The guardian's web page** (#245): larger click targets, field borders and focus outlines you can see, plainer
+  words, and the same title size and date format on every page.
+- **Signed releases** (#234). Each release carries `trikey-<tag>-SHA256SUMS`, signed with Trikey's nostr key, and the
+  pipeline won't publish without that signature. [packaging/VERIFY.md](packaging/VERIFY.md) shows how to check it.
+- For developers: an optional security-key (YubiKey) lock for key 2 in the wallet core, off and not in the app yet
+  (#236; design in docs/design/yubikey-key2.md, #227); dependency install scripts off in CI (#219); Start9 build tooling
+  updated for two advisories (#225, #244). Docs: what the phone keeps where (docs/security/phone-storage.md, #237).
+
 ## [0.1.26-alpha] - 2026-11-09
 
 A guardian fix for shutting down, and how releases reach you. Update the guardian, then the app.
