@@ -32,14 +32,14 @@ export default function AlertContacts() {
 
   const startAdding = (kind: 'self' | 'someone') => {
     setAdding(kind);
-    setName(kind === 'self' ? 'My nostr app' : '');
+    setName(kind === 'self' ? 'Me, on another device' : '');
     setNpub('');
     setProblem(null);
   };
   const add = () => {
     const next = { name: name.trim() || 'Alert contact', npub: npub.trim() };
     if (!looksLikeNpub(next.npub)) {
-      setProblem("That doesn't look like a nostr public key (npub…).");
+      setProblem("That doesn't look like a nostr key. It starts with npub1.");
       return;
     }
     setContacts((list) => (list.some((c) => c.npub === next.npub) ? list : [...list, next]));
@@ -84,10 +84,10 @@ export default function AlertContacts() {
         <View className="gap-3">
           <View className="gap-1.5">
             <FieldLabel nativeID="contact-name">Name</FieldLabel>
-            <Input aria-labelledby="contact-name" value={name} onChangeText={setName} placeholder={adding === 'self' ? 'My nostr app' : 'Their name'} />
+            <Input aria-labelledby="contact-name" value={name} onChangeText={setName} placeholder={adding === 'self' ? 'Me, on another device' : 'Their name'} />
           </View>
           <View className="gap-1.5">
-            <FieldLabel nativeID="contact-npub">Their nostr public key</FieldLabel>
+            <FieldLabel nativeID="contact-npub">{adding === 'self' ? 'Your nostr key' : 'Their nostr key'}</FieldLabel>
             <Input
               aria-labelledby="contact-npub"
               value={npub}
@@ -101,6 +101,8 @@ export default function AlertContacts() {
               spellCheck={false}
               className="font-mono text-[13px]"
             />
+            {/* The one technical word left: what to look for in the app. */}
+            <Footnote>In the nostr app's profile. It starts with npub1.</Footnote>
           </View>
           {problem ? <Text className="text-destructive text-[13px] leading-[18px]">{problem}</Text> : null}
           <View className="flex-row gap-3">
@@ -111,9 +113,9 @@ export default function AlertContacts() {
       ) : (
         <ListGroup>
           {contacts.length === 0 ? (
-            <SettingsRow title="My own nostr app" subtitle="On another device, like a laptop" onPress={() => startAdding('self')} />
+            <SettingsRow title="Me, on another device" subtitle="A laptop or another phone, with a nostr app" onPress={() => startAdding('self')} />
           ) : null}
-          <SettingsRow title="Add someone you trust" subtitle="They need a nostr app too" onPress={() => startAdding('someone')} />
+          <SettingsRow title="Add someone you trust" subtitle="They need a nostr app, like Damus or Primal" onPress={() => startAdding('someone')} />
         </ListGroup>
       )}
       {problem && !adding ? <Text className="text-destructive text-[13px] leading-[18px]">{problem}</Text> : null}

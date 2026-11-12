@@ -16,7 +16,7 @@ import { Text } from '@/components/ui/text';
 import {
   formatAmount,
   formatBtc,
-  formatCountdown,
+  countdownParts,
   formatSats,
   guardianLockedLine,
   hostLockedLine,
@@ -560,9 +560,10 @@ function FirstPaymentCard() {
 
 /**
  * Shown on home while a recovery is running or waiting for the user's answer, and after a recovery someone else cancelled:
- * phone-only payments stay paused until the hardware wallet resumes them.
+ * phone-only payments stay paused until the hardware wallet resumes them. `placement="urgent"` shows only a recovery that
+ * needs the owner's answer (Home puts it above Send and Receive); the default shows everything else.
  */
-export function RecoveryBanner() {
+export function RecoveryBanner({ placement = 'calm' }: { placement?: 'urgent' | 'calm' }) {
   const router = useRouter();
   const now = useNow();
   const wallet = useWalletService();
@@ -570,6 +571,7 @@ export function RecoveryBanner() {
   const { busy, run, message, error } = useAction();
 
   if (!recovery) {
+    if (placement === 'urgent') return null;
     // A hosted wallet that is paused (family hosting phase 2): only this wallet, and only the hardware wallet resumes it.
     if (hosted?.paused && !retired && phoneSpending !== 'retired') {
       return (
@@ -609,18 +611,37 @@ export function RecoveryBanner() {
     }
     return null;
   }
-  const remaining = formatCountdown(new Date(recovery.completesAt).getTime() - now.getTime());
-  const needsAnswer = recovery.origin === 'someone-else' && !recovery.acknowledged;
+  // The time left as the countdown screen says it: "5 days 14 hours left".
+  const left = countdownParts(new Date(recovery.completesAt).getTime() - now.getTime());
+  const remaining = `${left.big} ${left.rest}`;
+  const urgent = recoveryNeedsAnswer(recovery);
+  // Home places the urgent card above Send and Receive and the others below: each place shows only its own.
+  if (urgent !== (placement === 'urgent')) return null;
+  if (urgent) {
+    // Someone else started it and the owner has not answered: urgent. The destructive tone and a real button to the
+    // alert, where they can cancel it. Home puts it above Send and Receive, and Send is no longer the primary button.
+    return (
+      <View className="gap-3">
+        <Notice icon={TriangleAlert} iconClass="text-destructive" tone="bad" title="Someone started a recovery">
+          {`If it wasn't you, cancel it now. ${remaining}, then your money moves to a new wallet.`}
+        </Notice>
+        <AppButton title="Review the recovery" variant="destructive" onPress={() => router.push('/recover/alert')} />
+      </View>
+    );
+  }
+  // Answered ("This was me") or started from this phone: calmer, a link to the countdown.
   return (
-    <Pressable
-      role="link"
-      onPress={() => router.push(needsAnswer ? '/recover/alert' : '/recover/waiting')}
-      accessibilityLabel={needsAnswer ? 'Someone started a recovery. Review it.' : `Recovery in progress, ${remaining} left`}>
-      <Notice icon={needsAnswer ? TriangleAlert : Clock} iconClass={needsAnswer ? 'text-destructive' : 'text-warn'} tone="warn-outline" title={needsAnswer ? 'Someone started a recovery' : 'Recovery in progress'}>
-        {needsAnswer ? 'Tap to review it and cancel if it was not you.' : `${remaining} until your money moves to the new wallet.`}
+    <Pressable role="link" onPress={() => router.push('/recover/waiting')} accessibilityLabel={`Recovery in progress, ${remaining}. Opens the countdown`}>
+      <Notice icon={Clock} iconClass="text-warn" tone="warn-outline" title="Recovery in progress">
+        {`${remaining}, then your money moves to the new wallet.`}
       </Notice>
     </Pressable>
   );
+}
+
+/** A recovery someone else started that the owner has not answered yet: Home treats it as urgent. */
+export function recoveryNeedsAnswer(recovery: { origin?: string; acknowledged?: boolean } | null | undefined): boolean {
+  return !!recovery && recovery.origin === 'someone-else' && !recovery.acknowledged;
 }
 
 /**

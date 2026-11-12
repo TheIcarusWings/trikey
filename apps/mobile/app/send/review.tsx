@@ -15,7 +15,7 @@ import { Icon } from '@/components/ui/icon';
 import { RadioGroup } from '@/components/ui/radio-group';
 import { Text } from '@/components/ui/text';
 import { useQuote } from '@/data/use-quote';
-import { SAME_FEE_NOTE, WalletServiceError, formatSats, groupAddress, mixedLabelsText, sameFeeEverySpeed, shorten, useWallet, useWalletService, type FeeSpeed, fromLine } from '@/data';
+import { SAME_FEE_NOTE, WalletServiceError, formatSats, groupAddress, mixedLabelsText, sameFeeEverySpeed, useWallet, useWalletService, type FeeSpeed, fromLine } from '@/data';
 import { pick } from '@/lib/platform';
 import { signingView } from '@/lib/payment-texts';
 import { useAction } from '@/lib/use-action';
@@ -39,7 +39,7 @@ export default function SendReview() {
   // Coin control: the coins picked on "Choose coins", every one of them spent.
   const picked = useMemo(() => (coins ? coins.split(',').filter(Boolean) : []), [coins]);
   const coinPick = picked.length ? { coins: picked } : {};
-  // "Add to Savings": a payment from Spending like any other, so it counts toward today's limit (the owner's decision).
+  // "Add to Savings": a payment from Spending like any other, so it counts toward the daily limit (the owner's decision).
   const toSavings = savings === '1';
   const sendMax = max === '1';
   const [speed, setSpeed] = useState<FeeSpeed>('normal');
@@ -147,7 +147,7 @@ export default function SendReview() {
                 <Text className="text-muted-foreground flex-1 text-sm leading-5">
                   {quote.plan.signer === 'phone'
                     ? `From your spending balance: this phone signs it alone. No ${state.hardware.brand} needed.`
-                    : `Within today's limit: this phone and your guardian sign it. No ${state.hardware.brand} needed.`}
+                    : `Within your daily limit: this phone and your guardian sign it. No ${state.hardware.brand} needed.`}
                 </Text>
               </View>
             </FadeLayer>
@@ -181,24 +181,39 @@ export default function SendReview() {
       {fromLine(state.wallets) ? <Text className="text-muted-foreground text-center text-[15px] font-medium">{`${fromLine(state.wallets)} · ${state.hardware.model}`}</Text> : null}
       <FadeLayer shown={!signing} dim={REVIEW.dimTo} ms={STANDARD.duration}>
       <Panel>
-        <View className={pick('flex-row justify-between gap-4 px-4 py-3.5', 'flex-row justify-between gap-4 p-4')}>
-          <Text className="text-muted-foreground text-[15px] leading-5">To</Text>
-          <View className="max-w-[220px] shrink items-end gap-0.5">
-            <Text selectable className="text-right font-mono text-[14px] leading-5">
-              {silent ? shorten(address, 12) : groupAddress(address)}
+        {silent ? (
+          // A silent payment address is long (about 116 characters): in full, wrapped across the panel, so the person
+          // can check all of it where they confirm where the money goes.
+          <View className={cn('gap-1.5', pick('px-4 py-3.5', 'p-4'))}>
+            <View className="flex-row justify-between gap-4">
+              <Text className="text-muted-foreground text-[15px] leading-5">To</Text>
+              <Text className="text-muted-foreground text-[13px] leading-5">Silent payment</Text>
+            </View>
+            <Text selectable className="font-mono text-[14px] leading-5">
+              {groupAddress(address)}
             </Text>
-            {silent ? <Text className="text-muted-foreground text-[13px] leading-[18px]">Silent payment</Text> : null}
-            {toSavings ? <Text className="text-muted-foreground text-[13px] leading-[18px]">Your Savings</Text> : null}
           </View>
-        </View>
+        ) : (
+          <View className={pick('flex-row justify-between gap-4 px-4 py-3.5', 'flex-row justify-between gap-4 p-4')}>
+            <Text className="text-muted-foreground text-[15px] leading-5">To</Text>
+            <View className="max-w-[220px] shrink items-end gap-0.5">
+              <Text selectable className="text-right font-mono text-[14px] leading-5">
+                {groupAddress(address)}
+              </Text>
+              {toSavings ? <Text className="text-muted-foreground text-[13px] leading-[18px]">Your Savings</Text> : null}
+            </View>
+          </View>
+        )}
         <InfoRow label={quote.max ? 'Amount (everything)' : 'Amount'} value={`${formatSats(quote.request.amountSats)} sats`} tabular />
-        {toSavings ? <InfoRow label="From Spending to Savings" value="Counts toward today's limit" /> : null}
-        <View className={cn('flex-row items-center justify-between gap-4 px-4', pick('py-2', 'py-2.5'))}>
+        {toSavings ? <InfoRow label="From Spending to Savings" value="Counts toward your daily limit" /> : null}
+        {/* The two rows with a control: 44pt targets, in rows as tall as their siblings (48 on iOS, 52 on Android). */}
+        <View className={cn('flex-row items-center justify-between gap-4 px-4', pick('py-0.5', 'py-1'))}>
           <Pressable
             role="button"
             accessibilityLabel="What are network fees?"
+            aria-expanded={aboutFees}
             onPress={() => setAboutFees((v) => !v)}
-            className="min-h-10 flex-row items-center gap-1.5 active:opacity-60">
+            className="min-h-11 flex-row items-center gap-1.5 pr-2 active:opacity-60">
             <Text className="text-muted-foreground text-[15px] leading-5">Network fees</Text>
             <Icon as={Info} size={16} strokeWidth={2} className="text-muted-foreground" />
           </Pressable>
@@ -209,9 +224,9 @@ export default function SendReview() {
             Network fees go to the miners who confirm your payment. Trikey takes nothing.
           </Text>
         ) : null}
-        <View className={cn('flex-row items-center justify-between gap-4 px-4', pick('py-2', 'py-2.5'))}>
+        <View className={cn('flex-row items-center justify-between gap-4 px-4', pick('py-0.5', 'py-1'))}>
           <Text className="text-muted-foreground text-[15px] leading-5">Arrives</Text>
-          <Pressable role="button" accessibilityLabel={`Arrives ${ARRIVES[speed].long}. Change`} onPress={() => setChoosingSpeed(true)} className="min-h-10 flex-row items-center gap-2 active:opacity-60">
+          <Pressable role="button" accessibilityLabel={`Arrives ${ARRIVES[speed].long}. Change`} onPress={() => setChoosingSpeed(true)} className="min-h-11 flex-row items-center gap-2 pl-2 active:opacity-60">
             <Text className="text-[15px] leading-5">{ARRIVES[speed].short}</Text>
             <Text className="text-[15px] font-semibold leading-5 underline">Change</Text>
           </Pressable>
@@ -231,9 +246,9 @@ export default function SendReview() {
         </Notice>
       ) : null}
       {silent?.outputAddress && hardware ? (
-        <Notice tone="outline" title="Your hardware wallet will show this address">
+        <Notice tone="outline" title={`Your ${state.hardware.brand} will show this address`}>
           {groupAddress(silent.outputAddress)}
-          {'\n'}It's the address worked out for this one payment. Check that your device shows exactly this.
+          {'\n'}It's the address worked out for this one payment. Check that your {state.hardware.brand} shows exactly this.
         </Notice>
       ) : null}
       </Animated.View>

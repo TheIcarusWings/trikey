@@ -37,6 +37,7 @@ import {
 import type { HardwareKind as WalletHardwareKind, HardwareProvider, KeyValueStore, SecureKeyStore } from '@trikey/wallet';
 import { parseScannedCode } from '@trikey/wallet/scan';
 import { DevicePromptStore, compositeProvider, ledgerHint, withDevicePrompts } from './device';
+import { deviceAmountUnit, inDeviceUnit } from './format';
 import { WalletServiceError, notAvailableYet } from './errors';
 import { SIMULATED_OPTION, hardwareBrandOf, hardwareOptionTable, type UiOs } from './hardware-options';
 import { RK_MAINNET_REFUSED, mapRkError, kitNetworkError } from './rk-errors';
@@ -634,7 +635,9 @@ class Service implements RkWalletService {
         break;
       case 'hardware_prompt':
         if (e.purpose === 'refills') this.prompts.queueDetail(e.text, e.step, e.steps);
-        else if (e.purpose === 'vault-payment' || e.purpose === 'recovery-sweep') this.prompts.pendingDetail = e.text;
+        // A vault payment's amounts in the unit the device shows, so the sheet and the device read alike.
+        else if (e.purpose === 'vault-payment') this.prompts.pendingDetail = inDeviceUnit(e.text, deviceAmountUnit(this.hardwareView().kind));
+        else if (e.purpose === 'recovery-sweep') this.prompts.pendingDetail = e.text;
         break;
       case 'cpfp_suggested':
         this.cpfp = { index: e.position, txid: e.txid, feeSats: e.childFeeSats, targetRate: e.targetRate, currentRate: e.parentRate };

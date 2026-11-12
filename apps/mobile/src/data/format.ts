@@ -1,4 +1,4 @@
-import type { AmountUnit, IsoDate, Sats } from './types';
+import type { AmountUnit, HardwareKind, IsoDate, Sats } from './types';
 import { SATS_PER_BTC } from './rules';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -98,6 +98,39 @@ export function formatBtc(sats: Sats): string {
  */
 export function deviceBtc(sats: Sats): string {
   return (Math.abs(sats) / SATS_PER_BTC).toFixed(8);
+}
+
+/** The unit a hardware wallet's own screen shows a payment's amounts in. */
+export type DeviceAmountUnit = 'BTC' | 'sats';
+
+/**
+ * Which unit the hardware wallet shows a payment in, so the phone can say the amount and the fee the same way while the
+ * person compares the two screens. A BitBox02 is asked for sats (the sign request's format unit, `bitbox02/proto.ts`).
+ * A Ledger, a Trezor (no `amount_unit` is passed, so its default, BTC), a Jade and a Coldcard show BTC. A QR device's
+ * unit can be a setting of its own (SeedSigner, Krux): BTC is what they show unless the owner changed it.
+ */
+export function deviceAmountUnit(kind: HardwareKind): DeviceAmountUnit {
+  return kind === 'bitbox02' ? 'sats' : 'BTC';
+}
+
+/** An amount as the hardware wallet shows it: "0.00012000 BTC", or "12,000 sats" on a device that shows sats. */
+export function deviceAmount(sats: Sats, unit: DeviceAmountUnit): string {
+  return unit === 'BTC' ? `${deviceBtc(sats)} BTC` : `${formatSats(sats)} sats`;
+}
+
+/**
+ * A payment's `hardware_prompt` text with its amounts in the device's unit, so the sheet reads like the device's screen:
+ * "Send 12000 sats to tb1q…, fee 420 sats" -> "Send 0.00012000 BTC to tb1q…, fee 0.00000420 BTC" on a device that
+ * shows BTC. "network fee 400 -> 600 sats (200 more)" turns all three numbers. Only for a payment's text: a message the
+ * device signs is shown exactly as written.
+ */
+export function inDeviceUnit(text: string, unit: DeviceAmountUnit): string {
+  if (unit === 'sats') return text;
+  const btc = (n: string) => deviceBtc(Number(n));
+  return text
+    .replace(/\b(\d+) -> (\d+) sats \((\d+) more\)/g, (_m, a: string, b: string, c: string) => `${btc(a)} -> ${btc(b)} BTC (${btc(c)} BTC more)`)
+    .replace(/\b(\d+) -> (\d+) sats\b/g, (_m, a: string, b: string) => `${btc(a)} -> ${btc(b)} BTC`)
+    .replace(/\b(\d+) sats\b/g, (_m, n: string) => `${btc(n)} BTC`);
 }
 
 /**

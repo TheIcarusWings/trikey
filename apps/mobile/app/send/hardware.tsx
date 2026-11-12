@@ -6,13 +6,13 @@ import { AppButton } from '@/components/app-button';
 import { DeviceMock, type DeviceStatus } from '@/components/device-mock';
 import { WaitingStatus } from '@/components/motion';
 import { Info, TriangleAlert } from '@/components/icons';
-import { Body, Notice } from '@/components/panels';
+import { Body, InfoRow, Notice, Panel } from '@/components/panels';
 import { Screen } from '@/components/screen';
 import { Text } from '@/components/ui/text';
 import {
   addressEnds,
-  deviceBtc,
-  formatSats,
+  deviceAmount,
+  deviceAmountUnit,
   groupAddress,
   shorten,
   useWallet,
@@ -100,8 +100,11 @@ export default function SendHardware() {
     );
   }
 
-  // The amount and the fee with the same eight decimals, so they read alike.
-  const btc = deviceBtc(quote.request.amountSats);
+  // The amount and the fee in the unit the device shows them in (BTC with all eight decimals on most, sats on a
+  // BitBox02), the same on the sketch and in the list under it, so the person compares like with like.
+  const unit = deviceAmountUnit(state.hardware.kind);
+  const amountShown = deviceAmount(quote.request.amountSats, unit);
+  const feeShown = deviceAmount(quote.feeSats, unit);
   // A silent payment goes to a plain taproot address that only this phone worked out: that is what the device shows.
   const silent = quote.silentPayment;
   const shown = silent?.outputAddress ?? address;
@@ -140,7 +143,7 @@ export default function SendHardware() {
             />
           )}
           <AppButton
-            title="Cancel"
+            title="Cancel payment"
             variant="outline"
             onPress={() => {
               // Nothing plays on Cancel: no shake, no red outline.
@@ -162,8 +165,8 @@ export default function SendHardware() {
       <DeviceMock
         width={220}
         height={140}
-        label={`${brand} screen showing: Send ${btc} BTC to ${shorten(shown)}`}
-        lines={[`Send ${btc} BTC`, `to ${shorten(shown)}`, `Fee ${deviceBtc(quote.feeSats)} BTC`]}
+        label={`${brand} screen showing: Send ${amountShown} to ${shorten(shown)}, fee ${feeShown}`}
+        lines={[`Send ${amountShown}`, `to ${shorten(shown)}`, `Fee ${feeShown}`]}
         status={deviceStatus}
         animateIn
       />
@@ -178,8 +181,16 @@ export default function SendHardware() {
           </Notice>
         </View>
       ) : null}
+      {/* What the device shows, in its own unit: the amount and the fee, then the address. */}
       <View className="gap-1.5">
-        <Text className="text-sm font-medium leading-5">{silent ? 'Check that your device shows this address' : 'Check the address on the device matches'}</Text>
+        <Text className="text-sm font-medium leading-5">{`Check that your ${brand} shows this amount and fee`}</Text>
+        <Panel>
+          <InfoRow label="Amount" value={amountShown} tabular />
+          <InfoRow label="Network fee" value={feeShown} tabular />
+        </Panel>
+      </View>
+      <View className="gap-1.5">
+        <Text className="text-sm font-medium leading-5">{`Check that your ${brand} shows this address`}</Text>
         {/* The first and last four characters in bold: the parts people compare against the device. */}
         <Text className={cn('text-muted-foreground font-mono text-sm leading-[22px]')} selectable>
           <Text className="text-foreground" style={ADDRESS_END}>

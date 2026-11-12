@@ -24,7 +24,7 @@ const textAt = (n: number) => RECOVERY_ALERT.textAtMs + n * RECOVERY_ALERT.textS
  * What a guardian alert opens: someone, maybe not the owner, started a recovery.
  *
  * Motion (docs/design/motion.md, section 6): the red mark scales 0.85 to 1 in 240ms with no bounce, and the words rise
- * in after it, 50ms apart. "Cancel recovery" and "This was me" are there and usable from the first frame and never
+ * in after it, 50ms apart. "Cancel recovery" and "This was me, let it continue" are there and usable from the first frame and never
  * move. Nothing loops. A screen reader hears it at once (assertive), with `warning` felt as before.
  */
 export default function RecoverAlert() {
@@ -66,7 +66,8 @@ export default function RecoverAlert() {
         <>
           <ActionNotice message={message} error={error} />
           <AppButton title="Cancel recovery" variant="destructive" busy={busy} onPress={cancel} />
-          <AppButton title="This was me" variant="outline" disabled={busy} onPress={itWasMe} />
+          {/* Says what happens next: the recovery goes on. */}
+          <AppButton title="This was me, let it continue" variant="outline" disabled={busy} onPress={itWasMe} />
         </>
       }>
       <AlertMark />

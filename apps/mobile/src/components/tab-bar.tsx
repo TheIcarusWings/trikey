@@ -70,7 +70,7 @@ export function TabBar({ state, emitter, navigateToTab, insets }: BottomTabBarPr
           onLayout={(e) => setTabX(index, e.nativeEvent.layout.x, e.nativeEvent.layout.width)}
           className="min-h-[52px] flex-1 items-center justify-center gap-px rounded-full">
           <Icon as={tab.icon} size={24} strokeWidth={1.8} className={focused ? 'text-foreground' : 'text-muted-foreground'} />
-          <Text className={cn('text-[10px] leading-3', focused ? 'text-foreground font-semibold' : 'text-muted-foreground font-medium')}>{tab.label}</Text>
+          <Text className={cn('text-xs leading-4', focused ? 'text-foreground font-semibold' : 'text-muted-foreground font-medium')}>{tab.label}</Text>
         </Pressable>
       );
     }

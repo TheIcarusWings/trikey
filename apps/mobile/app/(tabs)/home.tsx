@@ -9,6 +9,7 @@ import {
   SendReceiveButtons,
   SilentPaymentsRow,
   StatusLine,
+  recoveryNeedsAnswer,
   useGuardianNotice,
   useNewWallet,
 } from '@/components/home';
@@ -84,7 +85,9 @@ export default function HomeScreen() {
       {state.guardianSlow && !down && state.synced ? (
         <StatusLine tone="warn" text={state.syncing ? 'Syncing… your guardian is slow to answer' : 'Slow to answer · last balance shown'} />
       ) : null}
-      <SendReceiveButtons newWallet={newWallet} />
+      {/* A recovery someone else started, not answered yet: above Send and Receive, and Send is no longer primary. */}
+      <RecoveryBanner placement="urgent" />
+      <SendReceiveButtons newWallet={newWallet} sendEmphasis={!recoveryNeedsAnswer(state.recovery)} />
       <SavingsRow />
       <RecoveryBanner />
       <HardwareConfirmCard />
