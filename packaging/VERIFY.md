@@ -271,7 +271,11 @@ in the owner's signer app, never on GitHub, so a release that someone else put o
 malicious workflow) does not carry a valid signature. Why and what it does not prove: docs/design/signed-releases.md.
 
 **Which key signed which release.** The publisher key moved to the founder's own npub at 0.1.28-alpha
-(docs/design/publisher-key-switch.md). The old key announced the new one in a note it signed, HANDOVER_NOTE.
+(docs/design/publisher-key-switch.md). The old key announced the new one in a note it signed on 2026-11-12, event id
+`b827ae9455387962b1c84cf588d46c9b5bdda7ad904b88b42a91073fca87f423`
+([`nevent1qqstsfawj32ns7tzk8yyeavg63kfkk7a57keqjugks4fzpele2rlggc7una39`](https://primal.net/e/nevent1qqstsfawj32ns7tzk8yyeavg63kfkk7a57keqjugks4fzpele2rlggc7una39)).
+A copy is in [`publisher-handover.event.json`](publisher-handover.event.json): `nak verify < packaging/publisher-handover.event.json`,
+and its `pubkey` is the old key below.
 
 | Releases | Publisher key | File in this repository |
 |---|---|---|
