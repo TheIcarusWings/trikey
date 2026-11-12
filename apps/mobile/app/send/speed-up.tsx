@@ -122,7 +122,7 @@ export default function SpeedUp() {
               <View className="flex-row items-start gap-2.5">
                 <Icon as={ShieldCheck} size={18} strokeWidth={2} className="text-good mt-px" />
                 <Text className="text-muted-foreground flex-1 text-sm leading-5">
-                  Within today's limit: this phone and your guardian sign it. {quote.limitSats === quote.extraFeeSats ? `Only the extra ${formatSats(quote.extraFeeSats)} sats count toward the limit.` : `It counts ${formatSats(quote.limitSats)} sats toward the limit.`}
+                  Within your daily limit: this phone and your guardian sign it. {quote.limitSats === quote.extraFeeSats ? `Only the extra ${formatSats(quote.extraFeeSats)} sats count toward the limit.` : `It counts ${formatSats(quote.limitSats)} sats toward the limit.`}
                 </Text>
               </View>
             ) : null

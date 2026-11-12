@@ -56,7 +56,7 @@ import { hostedChainFactory, publicServer } from './hosted';
 import { parseServerUrl } from './rk-server';
 import { addEvent, buildActivity, emptyLog, hostFromLabel, loadLog, saveLog, takeLegacySends, type AppLog } from './app-log';
 import { groupAlertChannels } from './alert-channels';
-import { formatSats } from './format';
+import { deviceAmountUnit, formatSats, inDeviceUnit } from './format';
 import { deviceContactId, isLimitOffSats } from './rules';
 import { DevicePromptStore, compositeProvider, ledgerHint, withDevicePrompts } from './device';
 import { WalletServiceError, notAvailableYet } from './errors';
@@ -1309,7 +1309,10 @@ class Service implements RealWalletService {
         this.refresh();
         break;
       case 'hardware_prompt':
-        if (e.purpose === 'payment' || e.purpose === 'recovery-sweep') this.prompts.pendingDetail = e.text;
+        // A payment's amounts in the unit the device shows (BTC on most), so the sheet and the device read alike. A
+        // recovery's sweep may be signed by the replacement device, whose unit this phone does not know yet: as written.
+        if (e.purpose === 'payment') this.prompts.pendingDetail = inDeviceUnit(e.text, deviceAmountUnit(this.hardwareView().kind));
+        else if (e.purpose === 'recovery-sweep') this.prompts.pendingDetail = e.text;
         break;
       case 'progress':
         if (e.operation === 'replace-guardian') {

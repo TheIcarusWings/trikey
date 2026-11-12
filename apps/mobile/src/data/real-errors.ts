@@ -19,7 +19,7 @@ export function refusalToError(r: GuardianRefusal): WalletServiceError {
       const left = r.limitSats !== undefined && r.usedSats !== undefined ? Math.max(0, r.limitSats - r.usedSats) : undefined;
       return new WalletServiceError(
         'over_limit',
-        `That is more than today's limit allows${left !== undefined ? ` (${formatSats(left)} sats left)` : ''}. Your hardware wallet can approve it instead.`,
+        `That is more than your daily limit allows${left !== undefined ? ` (${formatSats(left)} sats left)` : ''}. Your hardware wallet can approve it instead.`,
         opts(true),
       );
     }

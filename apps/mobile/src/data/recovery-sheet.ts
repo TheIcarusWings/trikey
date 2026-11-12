@@ -74,7 +74,7 @@ function steps(w: { device: string; hosted?: boolean }): string[] {
   return [
     `<b>This sheet is not a key: nobody can move money with it.</b> It tells a new phone where this wallet's guardian lives.`,
     `If you lose this phone <b>and</b> its backup: install Trikey on a new phone, choose <i>I already have a Trikey wallet</i>, then <i>My phone and its backup</i>, and scan this code (or type the npub and relays below).`,
-    `Approve on the ${device}. ${w.hosted ? "Your host's guardian" : 'The guardian'} waits the recovery delay and tells your alert contacts, then moves the money to a new wallet of the new phone and the ${device}.`,
+    `Approve on the ${device}. ${w.hosted ? "Your host's guardian" : 'The guardian'} waits the security waiting period and tells your alert contacts, then moves the money to a new wallet of the new phone and the ${device}.`,
     `Lost the backup only? Make a new one from the phone instead. Lost the ${device}? Recover from this phone: you don't need this sheet.`,
     `Keep this sheet with the ${device} or with your papers. Don't keep it with any seed words.`,
   ];
