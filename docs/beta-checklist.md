@@ -48,24 +48,28 @@ simulated answers. Until someone has done it once on the device, a beta tester c
 device, the latest firmware, a payment, a guardian pairing (or the reason it can't), one rule approval, and hardware
 unlock where the device supports it (DESIGN.md, "Hardware wallets by feature"; docs/alpha-test-plan.md has the steps).
 
-| Device | How it connects | Status |
-|---|---|---|
-| Ledger (Nano X, Flex, Stax) | Bluetooth | Tested by the owner (core path); hardware unlock and every 0.1.2x approval text still to check |
-| Trezor (Safe 3, Safe 5, Model T) | Trezor Suite Lite (Android) | Not yet. Also checks the one-time reply token (0.1.24) |
-| Coldcard Q | QR | Not yet |
-| Coldcard Mk4 / Q | NFC (Android; iPhone needs a paid developer account) | Not yet |
-| Jade, Jade Plus | QR | Not yet |
-| Jade, Jade Plus | Bluetooth (PIN server relayed by the phone) | Not yet |
-| BitBox02 / BitBox02 Nova | USB-C (Android), Bluetooth (Nova) | Not yet |
-| Keystone 3 | QR | Not yet |
-| Passport Prime | QR | Not yet |
-| Passport gen 2 | QR payments, microSD approvals | Not yet |
-| Krux | QR payments, microSD approvals | Not yet |
-| SeedSigner | QR (payments only, by design) | Not yet |
-| Specter DIY | QR | Not yet |
+| Device | How it connects | Status | Checklist |
+|---|---|---|---|
+| Ledger (Nano X, Flex, Stax) | Bluetooth | Tested by the owner (core path); hardware unlock, every 0.1.2x approval text and key 3 with no origin (hosted wallets) still to check | [#273](https://github.com/TheIcarusWings/trikey/issues/273) |
+| Trezor (Safe 3, Safe 5, Model T) | Trezor Suite Lite (Android) | Not yet. Also checks the one-time reply token (0.1.24) | [#274](https://github.com/TheIcarusWings/trikey/issues/274) |
+| Coldcard Q | QR | Not yet | [#265](https://github.com/TheIcarusWings/trikey/issues/265) |
+| Coldcard Mk4 / Q | NFC (Android; iPhone needs a paid developer account) | Not yet | [#265](https://github.com/TheIcarusWings/trikey/issues/265) |
+| Jade, Jade Plus | QR | Not yet | [#266](https://github.com/TheIcarusWings/trikey/issues/266) |
+| Jade, Jade Plus | Bluetooth (PIN server relayed by the phone) | Not yet | [#266](https://github.com/TheIcarusWings/trikey/issues/266) |
+| BitBox02 / BitBox02 Nova | USB-C (Android), Bluetooth (Nova) | Not yet | [#267](https://github.com/TheIcarusWings/trikey/issues/267) |
+| Keystone 3 | QR | Not yet | [#268](https://github.com/TheIcarusWings/trikey/issues/268) |
+| Passport Prime | QR | Not yet | [#264](https://github.com/TheIcarusWings/trikey/issues/264) |
+| Passport gen 2 | QR payments, microSD approvals | Not yet | [#264](https://github.com/TheIcarusWings/trikey/issues/264) |
+| Krux | QR payments, microSD approvals | Not yet | [#269](https://github.com/TheIcarusWings/trikey/issues/269) |
+| SeedSigner | QR (payments only, by design) | Not yet | [#271](https://github.com/TheIcarusWings/trikey/issues/271) |
+| Specter DIY | QR | Not yet | [#270](https://github.com/TheIcarusWings/trikey/issues/270) |
+
+Each device's issue (overview: [#272](https://github.com/TheIcarusWings/trikey/issues/272)) holds its feature checklist, ticked as each item passes on a real
+device; a device is marked tested in DESIGN.md, with its firmware version, once its checklist passes.
 
 - [ ] **Every row tried once** (owner and testers). Each result comes in as a
-      [hardware wallet test report](https://github.com/TheIcarusWings/trikey/issues/new?template=hardware-test.yml). A row may also be closed by marking the device "not supported in
+      [hardware wallet test report](https://github.com/TheIcarusWings/trikey/issues/new?template=hardware-test.yml) or a
+      comment on the device's issue. A row may also be closed by marking the device "not supported in
       the beta" in the app and the docs, if nobody can test it.
 
 ## 4. Platforms and installs
