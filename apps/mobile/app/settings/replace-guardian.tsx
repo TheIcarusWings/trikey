@@ -196,12 +196,18 @@ export default function ReplaceGuardian() {
         backLabel="Guardian"
         footer={
           <>
+            {/* The move first connects to the hardware wallet, before its steps show: say so while it waits, or the owner
+                sees only a spinner until the connection times out. */}
+            {busy ? <Footnote>Connecting to your {hardware.brand}. Turn it on, unlock it and keep it close to the phone.</Footnote> : null}
             <ActionNotice message={message} error={error} />
             <AppButton title="Start the move" busy={busy} disabled={needsConfirm && !gone} onPress={() => void start()} />
             <AppButton title="Cancel" variant="ghost" onPress={() => void wallet.cancelReplaceGuardian().then(() => router.back())} />
           </>
         }>
-        <Body>Here is what happens. Your phone and {hardware.brand} stay the same; the new guardian gets a new wallet with them.</Body>
+        <Body>
+          Here is what happens. Your phone and {hardware.brand} stay the same; the new guardian gets a new wallet with them. Have your{' '}
+          {hardware.brand} at hand: the move starts by connecting to it.
+        </Body>
         <Panel>
           <InfoRow plainLabel label="New guardian" value={plan.newGuardian.label ?? hostLabel(plan.newGuardian.host)} />
           <InfoRow plainLabel label="Moving" value={`${formatSats(plan.movingSats)} sats`} tabular />
