@@ -75,6 +75,16 @@ on:
         required: false
         default: 'standard'
         type: string
+      keep-unsigned:
+        description: "Also upload the APK as Gradle made it, before any re-signing, as <artifact-name>-unsigned (always done for 'release'). android-reproducible.yml compares two of them."
+        required: false
+        default: false
+        type: boolean
+      gradle-cache:
+        description: 'Use the Gradle cache. false builds with nothing restored from an earlier run.'
+        required: false
+        default: true
+        type: boolean
     secrets:
       ANDROID_RELEASE_KEYSTORE:
         description: 'The release keystore (PKCS12), base64. Needed for signing: release. A secret of the same name in the `release` environment takes precedence.'
@@ -162,6 +172,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
           cache-read-only: false
+          cache-disabled: ${{ !inputs.gradle-cache }}
 
       - name: Build the release APK
         working-directory: apps/mobile/android
@@ -169,10 +180,16 @@ jobs:
           [[ "${ARCHITECTURES}" =~ ^[a-z0-9_,-]+$ ]] || { echo "::error::Unexpected architectures: ${ARCHITECTURES}"; exit 1; }
           # Minifying (R8) is switched off for a test build: it shrinks nothing a tester needs, and a
           # stripped class in a crypto or Bluetooth library would look like a wallet bug.
+          # reactNativeDevServerIp: React Native's Gradle plugin otherwise writes the build machine's own IPv4 address
+          # into the APK (the string resource react_native_dev_server_ip, which only the dev menu of a debug build
+          # reads), so two builds of the same commit on two machines differ in resources.arsc, and the published APK
+          # would carry the address of the runner that built it. `localhost` is React Native's own default for that
+          # resource. Same command in packaging/VERIFY.md ("Rebuild the Android APK").
           ./gradlew assembleRelease --no-daemon --stacktrace \
             -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" \
             -PreactNativeArchitectures="${ARCHITECTURES}" \
-            -Pandroid.enableMinifyInReleaseBuilds=false
+            -Pandroid.enableMinifyInReleaseBuilds=false \
+            -PreactNativeDevServerIp=localhost
 
       # Every dex file (any class of these packages, or any mention of one), the native libraries, the files Google's
       # libraries leave at the APK's root and the manifest. The FOSS APK must have none of it; the standard APK's
@@ -234,9 +251,10 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # The release key: the APK goes to the `sign` job below, which is the only one that sees the key.
+      # The release key: the APK goes to the `sign` job below, which is the only one that sees the key. With
+      # keep-unsigned, the same file is kept for android-reproducible.yml, which compares two builds of it.
       - name: Keep the APK for the signing job
-        if: inputs.signing == 'release'
+        if: inputs.signing == 'release' || inputs.keep-unsigned
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.artifact-name || 'trikey-android-apk' }}-unsigned

@@ -34,6 +34,7 @@ interface Step {
   if?: string;
   env?: Record<string, string>;
   with?: Record<string, unknown>;
+  'continue-on-error'?: boolean;
 }
 interface Job {
   if?: string;
@@ -866,6 +867,62 @@ describe('the release job of android-apk.yml', () => {
       expect(String(d.with?.['name'])).not.toMatch(/unsigned/);
     }
     expect(downloads.map((d) => d.with?.['name']).sort()).toEqual(['trikey-android-apk-foss', 'trikey-android-apk-standard']);
+  });
+});
+
+describe('android-reproducible.yml', () => {
+  const repro = workflow('android-reproducible.yml');
+  const build = workflow('android-build.yml');
+
+  it('builds with a one-off key and no secrets, never the release key', () => {
+    for (const name of ['build-a', 'build-b']) {
+      const job = repro.jobs[name]!;
+      expect(job.uses, name).toBe('./.github/workflows/android-build.yml');
+      expect(job.with!['signing'], name).toBe('one-off');
+      expect(job.with!['keep-unsigned'], name).toBe(true);
+      expect(job.secrets, name).toBeUndefined();
+    }
+    expect(Object.entries(repro.jobs).filter(([, j]) => secretsRead(j).length > 0)).toEqual([]);
+    expect(repro.permissions).toEqual({ contents: 'read' });
+  });
+
+  it('builds B after A and without the Gradle cache', () => {
+    expect(repro.jobs['build-b']!.needs).toBe('build-a');
+    expect(repro.jobs['build-a']!.with!['gradle-cache']).toBe(true);
+    expect(repro.jobs['build-b']!.with!['gradle-cache']).toBe(false);
+    expect(read('.github/workflows/android-build.yml')).toContain('cache-disabled: ${{ !inputs.gradle-cache }}');
+  });
+
+  it('compares the two unsigned APKs of the same variant, and A as re-signed with B', () => {
+    const steps = repro.jobs['compare']!.steps!;
+    const names = steps.filter((s) => s.uses?.startsWith('actions/download-artifact@')).map((s) => s.with?.['name']);
+    expect(names).toEqual([
+      `${repro.jobs['build-a']!.with!['artifact-name']}-unsigned`,
+      `${repro.jobs['build-b']!.with!['artifact-name']}-unsigned`,
+      `${repro.jobs['build-a']!.with!['artifact-name']}`,
+    ]);
+    // Both comparisons decide the job: neither swallows "they differ".
+    const runs = steps.filter((s) => s.run?.includes('compare-apks.py')).map((s) => s.run!);
+    expect(runs).toHaveLength(2);
+    expect(runs[1]).toContain('--ignore-signature');
+    for (const run of runs) expect(run).toContain('exit "${status}"');
+    for (const s of steps.filter((s) => s.run?.includes('compare-apks.py'))) expect(s['continue-on-error']).toBeUndefined();
+  });
+
+  it('builds with a fixed dev server address, not the build machine\'s IP', () => {
+    // React Native's Gradle plugin writes the build machine's IPv4 address into resources.arsc otherwise.
+    expect(read('.github/workflows/android-build.yml')).toContain('-PreactNativeDevServerIp=localhost');
+  });
+
+  it('leaves release builds as they were: keep-unsigned and gradle-cache keep their defaults there', () => {
+    const inputs = (build.on['workflow_call'] as { inputs: Record<string, { default?: unknown }> }).inputs;
+    expect(inputs['keep-unsigned']!.default).toBe(false);
+    expect(inputs['gradle-cache']!.default).toBe(true);
+    const apk = workflow('android-apk.yml');
+    for (const job of Object.values(apk.jobs)) {
+      expect(job.with?.['keep-unsigned']).toBeUndefined();
+      expect(job.with?.['gradle-cache']).toBeUndefined();
+    }
   });
 });
 
