@@ -6,6 +6,22 @@ Trikey is pre-alpha and not audited. Each release has a guardian image
 [GitHub release](https://github.com/TheIcarusWings/trikey/releases). How to install and test:
 [docs/alpha-test-plan.md](docs/alpha-test-plan.md).
 
+## [0.1.28-alpha] - 2026-11-12
+
+Releases now come from the founder's own nostr key, and the Android APK can be rebuilt byte for byte. Nothing changes
+in how the app or the guardian work.
+
+- **A new publisher** (#260, #261). From this release, Trikey's releases and its Zapstore listings are signed by Icarus
+  Wings, the founder (`npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5`, `icaruswings@trikey.app`),
+  instead of the Trikey account. The Trikey account announced the change in a note it signed
+  ([packaging/VERIFY.md](packaging/VERIFY.md), "Check a release's signature"). **On Zapstore,** install Trikey (or
+  Trikey FOSS) from the Icarus Wings listing: the old listings get no more updates. Android updates the app in place and
+  keeps your wallet.
+- **Reproducible Android builds** (#231). Two builds of the same commit now give the same APK, and VERIFY.md explains how
+  to rebuild a release and compare it. APKs up to 0.1.27-alpha carried the private network address of the build
+  machine in an unused resource; they no longer do.
+- **Donations over Lightning** (#259): `icaruswings@getalby.com`, next to the on-chain address on trikey.app.
+
 ## [0.1.27-alpha] - 2026-11-12
 
 The app gets motion throughout and a new Security tab, both screens get fixes from a design review, and releases are

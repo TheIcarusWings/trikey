@@ -18,7 +18,7 @@ export const manifest = setupManifest({
     // packaging/VERIFY.md. Keep this tag equal to the version in startos/versions/current.ts.
     guardian: {
       source: {
-        dockerTag: 'ghcr.io/theicaruswings/trikey-guardian:0.1.27-alpha',
+        dockerTag: 'ghcr.io/theicaruswings/trikey-guardian:0.1.28-alpha',
       },
       arch: ['x86_64', 'aarch64'],
       emulateMissing: false,
