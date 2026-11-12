@@ -1,4 +1,6 @@
-# The key that signs every Trikey release's manifest (docs/design/signed-releases.md): Trikey's nostr publisher key,
-# the same npub as zapstore.yaml's `pubkey` (a test keeps them equal). Its secret half is only in the owner's signer
-# app, never on GitHub. Changing it is a pull request, so it is visible.
-npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9
+# The key that signs every Trikey release's manifest (docs/design/signed-releases.md): Trikey's publisher key, from
+# 0.1.28-alpha the founder's own npub (Icarus Wings, icaruswings@trikey.app; docs/design/publisher-key-switch.md), the
+# same npub as zapstore.yaml's `pubkey` (a test keeps them equal). Its secret half is only in the owner's signer app,
+# never on GitHub. Changing it is a pull request, so it is visible. Releases up to 0.1.27-alpha were signed by the key in
+# release-signer-until-v0.1.27-alpha.npub.
+npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5

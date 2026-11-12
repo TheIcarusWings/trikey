@@ -7,7 +7,7 @@ signed by the same APK key.
 ## For users
 
 Trikey is listed on Zapstore from 0.1.10-alpha, and Trikey FOSS from 0.1.24-alpha. Install Zapstore (from zapstore.dev), search for **Trikey**, and install the one you want. Updates then show up in Zapstore. The
-listing's publisher is Trikey's own npub (below), and the APK is the same file as on the
+listing's publisher is the founder's npub (below), and the APK is the same file as on the
 [GitHub releases page](https://github.com/TheIcarusWings/trikey/releases), signed with the Trikey release key
 (certificate SHA-256 in [`packaging/android/release-cert.sha256`](../packaging/android/release-cert.sha256)). An APK
 of the same app from Zapstore, Obtainium or GitHub installs over the others and keeps the wallet.
@@ -17,20 +17,23 @@ There are two apps (from 0.1.23-alpha; [android-signing.md](android-signing.md),
 Google code). The **Trikey** listing has the standard app; **Trikey FOSS** has a listing of its own. Each app has its own wallet: to move one from
 the other, restore your backup file and recovery code in the new app.
 
-Publisher npub: `npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`. Check it on the listing before installing.
-The listings name the founder too, Icarus Wings (`npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5`,
-`icaruswings@trikey.app`): Trikey's own npub publishes the apps, so they don't depend on one person's key. It is also
-`trikey@trikey.app` (NIP-05, from [`site/.well-known/nostr.json`](../site/.well-known/nostr.json)), so nostr apps and Zapstore
-show it verified by the trikey.app domain.
+Publisher npub, from 0.1.28-alpha: Icarus Wings, the founder, `npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5`
+(`icaruswings@trikey.app`, and `trikey@trikey.app` from [`site/.well-known/nostr.json`](../site/.well-known/nostr.json), so
+nostr apps and Zapstore show it verified by the trikey.app domain). Check it on the listing before installing.
+
+Up to 0.1.27-alpha the apps were listed by Trikey's own npub (`npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`), now
+retired: those listings get no more updates. If you installed from one of them, install the same app from the Icarus
+Wings listing; Android updates it in place and keeps the wallet, because the APK signing key is the same. Why and how
+the key moved: [design/publisher-key-switch.md](design/publisher-key-switch.md).
 
 ## For the maintainer: setting it up (once)
 
 Nothing secret goes into the repository or into GitHub's secrets. [`zapstore.yaml`](../zapstore.yaml) at the
 repository root describes the listing; Zapstore reads it and picks up each GitHub release by itself, once a proof
-links the APK signing certificate to Trikey's publisher npub (NIP-C1).
+links the APK signing certificate to the publisher npub (NIP-C1).
 
-1. **A nostr key just for Trikey**, not a personal one: make it in a nostr app or signer (Amber, nsec.app), give it a
-   profile (name Trikey, the icon, website `https://trikey.app`). The same key signs every GitHub release's manifest
+1. **The publisher key**: from 0.1.28-alpha the founder's own npub (design/publisher-key-switch.md; until then a key
+   just for Trikey). The same key signs every GitHub release's manifest
    (docs/design/signed-releases.md, `tools/release/sign-release.mjs`), so guard it like the APK key: use it only
    through the signer app (a `bunker://` URL), and keep its one backup offline (on paper, or in a password manager that
    does not sync), never on GitHub or in a file on the computer you build from.
