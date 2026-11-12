@@ -287,3 +287,42 @@ describe('replace guardian, the old guardian offline, a new guardian that does n
     expect(again[0]!.sweptSats + again[0]!.feeSats).toBe(20_000);
   });
 });
+
+describe('replace guardian with the same box after a reset (it keeps its nostr address)', { timeout: 120_000 }, () => {
+  // Found on a real Umbrel: the owner reset the guardian, then replaced it with itself. The box answers the phone again,
+  // now for the new wallet; the move must treat the old wallet as gone there, not stop with "guards another wallet".
+  const device = new SoftwareHardwareSigner({ mnemonic: MNEMONICS.hardware, network: 'regtest', kind: 'ledger' });
+  const provider = new SoftwareHardwareProvider(device);
+  const RESET_CONFIRMATION = 'RESET GUARDIAN';
+  let R4: GuardianRig;
+  let C: TrikeyWallet;
+  let oldId: string;
+
+  beforeAll(async () => {
+    R4 = await GuardianRig.start({ clock });
+    const phoneC = phone({ clock, hardware: provider, cloud, passkey, rpcTimeoutMs: 8000 });
+    phoneC.deps.probeTimeoutMs = 1500;
+    C = await TrikeyWallet.create(phoneC.deps, { deviceName: 'Phone C' });
+    opened.push(C);
+    await C.onboard({ pairingUri: R4.pairingUri(), rules: RULES });
+    oldId = C.state.wallet!.walletId;
+    expect(await R4.guardian.reset({ passphrase: R4.passphrase, confirm: RESET_CONFIRMATION })).toMatchObject({ ok: true });
+    await R4.unlock().catch(() => undefined); // unlocked already, or locked by the reset: either way open
+  }, 60_000);
+
+  afterAll(async () => {
+    await R4?.stop();
+  });
+
+  it('the reset box no longer has the old wallet: the preview says it is not there, and the move ends on the same box', async () => {
+    const plan = await C.previewReplaceGuardian(R4.pairingUri());
+    expect(plan).toMatchObject({ oldGuardianReachable: false, coins: 0, balanceSats: 0 });
+    const out = await C.replaceGuardian({ oldGuardianReachable: false });
+    expect(out).toMatchObject({ status: 'done', walletId: plan.newWalletId, previousWalletId: oldId });
+    expect(C.state.replacing).toBeUndefined();
+    expect(C.state.wallet!.walletId).toBe(plan.newWalletId);
+    // The phone and the box agree on the wallet from now on.
+    await C.sync();
+    expect(C.state.guardianStatus?.walletId).toBe(plan.newWalletId);
+  });
+});
