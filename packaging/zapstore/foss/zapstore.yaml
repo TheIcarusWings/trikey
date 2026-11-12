@@ -34,6 +34,10 @@ description: |
   Made by Icarus Wings, nostr:npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5 (icaruswings@trikey.app).
   Published by Trikey's own npub (trikey@trikey.app), and signed with the same key as the GitHub releases.
 
+  **This listing moves.** From 0.1.28-alpha, Trikey FOSS is published by Icarus Wings (the npub above) instead of Trikey's
+  npub, and this listing gets no more updates. Install Trikey FOSS from the Icarus Wings listing then: Android updates the
+  app in place, keeping your wallet. Details: https://github.com/TheIcarusWings/trikey/blob/main/docs/design/publisher-key-switch.md
+
   **Pre-alpha, open source, not audited.** Use test networks, or on mainnet only an amount you can afford to lose.
 license: MIT
 website: https://trikey.app
