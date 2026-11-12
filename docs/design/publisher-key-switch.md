@@ -1,122 +1,123 @@
-# Switching the publisher key to the founder's npub: plan
+# Moving the publisher key to the founder's npub: migration
 
-Status: proposal, not decided. Written 2026-11-12, against `main` after 0.1.27-alpha.
+Status: **decided** by the owner on 2026-11-12. In progress; the checklist in section 3 tracks it.
 
-The owner asked what it would take to publish Trikey with their personal nostr key (Icarus Wings,
-`npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5`) and retire the separate Trikey account
-(`npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`, `trikey@trikey.app`). Fewer accounts, one
-profile, one Lightning address. This document lists what the Trikey key does today, what a switch costs, and the
-order to do it in, so the decision can be made on paper first.
+Trikey's releases and Zapstore listings move from the Trikey account
+(`npub1qussfnkjk6fvr36syatltxl0ks5pssyx7hrhf8zpnp9mf04e5j2sswedj9`, hex `072104ce…a495`, `trikey@trikey.app`) to
+the founder's own key (Icarus Wings, `npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5`, hex
+`2ac413fd31b7f60945a22ec4f04f8c907dc210a52c51bfcb64e9a070dc4b979d`, `icaruswings@trikey.app`). The reasons: one account
+and one profile to keep, and that profile already carries the donation Lightning address. The Trikey account is
+retired at the end.
 
-## 1. What the Trikey key does today
+**Cutover release: 0.1.28-alpha.** 0.1.27-alpha and every earlier release stay signed by the Trikey key, and the
+checks keep accepting them as they are. From 0.1.28-alpha on, only the founder's key is accepted.
 
-| Job | Where | What a switch changes |
-|---|---|---|
-| Signs every GitHub release's manifest (kind 1420) | `packaging/release-signer.npub`, `tools/release/sign-release.mjs`, `packaging/release-signature.py` | The pinned npub |
-| Gates publishing: `publish-release.yml` refuses a release it didn't sign; `umbrel-store.yml` checks it again before pinning the Umbrel image | `packaging/check-release-assets.sh` (reads the pinned file) | Nothing beyond the pinned file |
-| Publishes both Zapstore listings, `app.trikey.wallet` and `app.trikey.wallet.foss` | `zapstore.yaml`, `packaging/zapstore/foss/zapstore.yaml` (`pubkey:`), the NIP-C1 proof linking the APK signing certificate to it | New listings under the new key (section 3) |
-| Checks Zapstore picked up a release | `.github/scripts/zapstore-published.mjs` (`AUTHOR`), `e2e/test/unit/zapstore-check.test.ts` | The hex key |
-| Is `trikey@trikey.app` and `_@trikey.app` (NIP-05) | `site/.well-known/nostr.json` | Point both at the new key, or drop them |
-| Is what people verify against | `packaging/VERIFY.md`, `docs/zapstore.md` | Both keys, with the release where the change happened |
-| Not a secret anywhere in the repo | `.gitleaks.toml` allowlists its hex | The new hex |
+## 1. What the publisher key does
 
-The apps don't check the key yet. "The app checks it" is phase 3 of docs/design/signed-releases.md, not built. So no
-installed app needs an update to follow a switch. **That makes now the cheapest time to switch.** Once phase 3
-ships, every installed app pins the key, and changing it needs a release signed by the old key that names the new one.
+| Job | Where |
+|---|---|
+| Signs every GitHub release's manifest (kind 1420) | `packaging/release-signer.npub`, `tools/release/sign-release.mjs`, `packaging/release-signature.py` |
+| Gates publishing: `publish-release.yml` refuses a release it didn't sign; `umbrel-store.yml` checks it again before pinning the Umbrel image | `packaging/check-release-assets.sh` (reads the pinned file) |
+| Publishes both Zapstore listings, `app.trikey.wallet` and `app.trikey.wallet.foss`, after a NIP-C1 proof links the APK signing certificate to it | `zapstore.yaml`, `packaging/zapstore/foss/zapstore.yaml` (`pubkey:`) |
+| Is what the Zapstore check looks for | `.github/scripts/zapstore-published.mjs` (`AUTHOR`), `e2e/test/unit/zapstore-check.test.ts` |
+| Is `trikey@trikey.app` and `_@trikey.app` (NIP-05) | `site/.well-known/nostr.json` |
+| Is what people verify against | `packaging/VERIFY.md`, `docs/zapstore.md`, docs/design/signed-releases.md |
 
-## 2. What it costs
+The apps don't check the key yet: that is phase 3 of signed-releases.md, not built. So no installed app needs an
+update to follow the move.
 
-**Security, the main cost.** Whoever holds the publisher key can sign a release that the pipeline, the Umbrel store
-and Zapstore accept. A stolen key alone isn't enough: the attacker also needs the files on GitHub (signed-releases.md,
-section 6). But it is one of the two locks.
+## 2. What the move costs, and how it is kept small
 
-- **Today:** the Trikey key does one thing. It lives in Amber and is used only to sign releases and Zapstore events.
-- **After a switch:** the personal key would sign releases *and* everything personal: notes, likes, DMs, zaps, logins
-  to nostr websites.
-- **Why that matters:** more use means more ways to lose it, such as a client that holds the nsec, a phishing login
-  page, or a browser extension.
-- **If the personal key leaks,** the attacker gets the personal identity and one of the two locks on every Trikey
-  update.
-- **The mitigation:** the personal key also lives only in a signer (Amber, a bunker), never pasted into a client. Is
-  that true today? Check every app signed in as Icarus Wings: does it hold the nsec, or ask Amber?
+- **One key for everything.** The founder's key now signs releases as well as notes, zaps and nostr logins.
+  - A leak of it is one of the two locks on every Trikey update. The other lock is the GitHub account
+    (signed-releases.md, section 6).
+  - **Rule from now on:** the founder's key is used only through a signer (Amber, or a bunker), and never pasted into
+    a nostr client or website. Any app that holds the nsec directly is signed out and signed in again through Amber.
+- **Bus factor.** A co-maintainer can't be handed a personal key. If one joins, releases move to a project key again,
+  following this same procedure.
+- **Zapstore users** move to the new listings once. The APK signing key is unchanged, so Android updates in place
+  whichever listing a Trikey came from.
 
-**Bus factor.** Today the listings say "Trikey's own npub publishes the apps, so they don't depend on one person's
-key" (docs/zapstore.md). The Trikey key could be handed to a co-maintainer one day without handing over a personal
-identity. A personal key can't. While Trikey has one maintainer this is theoretical, but a switch makes it harder to
-add one later.
+## 3. Checklist
 
-**Zapstore users.** A listing belongs to the key that publishes it. New key, new listings. People who installed
-Trikey from the current listings keep getting updates only from those, so they must be told to move (section 3).
+The old key vouches for the new one before it steps back, so anyone who trusts it can follow the change. **Owner**
+steps need the owner's signer; the Mac ones run in the local session on the owner's Mac. Secrets never pass through a
+Claude session: the owner types bunker links and keystore passwords themselves.
 
-**What gets simpler.** One account and one profile to keep. No second identity in Amber. The Lightning address
-(`icaruswings@getalby.com`, on the site since TheIcarusWings/trikey#259) is on the same profile people zap.
+1. [ ] **Repo:** both Zapstore descriptions announce the move (merged with this document).
+2. [ ] **Owner (Mac):** publish 0.1.27-alpha on the current listings with the Trikey key, from an up-to-date `main`.
+   This also closes TheIcarusWings/trikey#258.
 
-## 3. The switch, in order
+   ```
+   zsp publish zapstore.yaml
+   zsp publish packaging/zapstore/foss/zapstore.yaml
+   ```
 
-The idea is that the old key vouches for the new one before it steps back, so anyone who trusts the old key can
-follow the change.
+   Zapstore users get 0.1.27 and the notice that the listing moves.
+3. [ ] **Owner (Mac):** `node tools/release/sign-release.mjs v0.1.27-alpha --relays-only`, which publishes 0.1.27's
+   signature to relays.
+4. [ ] **Owner (phone):** the handover note. Post it from the **Trikey** account, signing in Amber with the Trikey key:
 
-1. **Decide the cutover release**, for example 0.1.28-alpha. Everything below lands before or with it.
-2. **The old key announces the new one.** The Trikey key signs, through Amber, a public note:
-   > "From Trikey 0.1.28-alpha, releases and Zapstore listings are signed by
-   > npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5. This key stops signing releases."
+   > Trikey's publisher key changes. From Trikey 0.1.28-alpha, releases and the Zapstore listings are signed by
+   > Icarus Wings, npub19tzp8lf3klmqj3dz9mz0qnuvjp7uyy9993gmljmyaxs8phztj7wsnujvq5 (icaruswings@trikey.app). This key
+   > signs no more releases. Install Trikey from the new Zapstore listing to keep getting updates. Details:
+   > https://github.com/TheIcarusWings/trikey/blob/main/docs/design/publisher-key-switch.md
 
-   It's published to the same relays as release events. The note's id goes into VERIFY.md, so the handover is
-   checkable from the repository and from nostr.
-3. **One PR changes the pins:**
+   Then send the note's link (`nevent1…` or `note1…`; public) to the controller session.
+5. [ ] **Repo:** one PR moves the pins:
    - `packaging/release-signer.npub`;
    - `AUTHOR` in `zapstore-published.mjs` and its test;
-   - `pubkey:` and the "Published by" text in both `zapstore.yaml` files;
-   - `nostr.json`: `trikey` and `_` move to the new hex, so `trikey@trikey.app` keeps working and points at the
-     founder;
+   - `pubkey:` and the "published by" text in both `zapstore.yaml` files;
+   - `nostr.json`: `trikey` and `_` point at the founder's key;
    - the `.gitleaks.toml` allowlist;
-   - VERIFY.md: a table with each key and the releases it signed;
+   - VERIFY.md: a table of keys and the releases each signed, with the handover note's id;
    - docs/zapstore.md and signed-releases.md.
 
-   0.1.27-alpha and earlier stay signed by the old key, and the checks keep accepting them as they are. Only new
-   tags need the new key.
-4. **The cutover release is signed with the new key** (`sign-release.mjs`, a bunker link from the personal account in
-   Amber).
-5. **New Zapstore listings:**
-   - `zsp` makes a new NIP-C1 proof, linking the same APK signing certificate to the new key;
-   - then `zsp publish` for both apps.
-   - The APK signing key doesn't change, so Android accepts the update over an installed Trikey whichever listing it
-     came from.
-6. **Point the old listings at the new ones:**
-   - publish one last update of each old listing (old key), whose description says where the new listing is;
-   - then, if Zapstore supports it, a deletion request (NIP-09) for the old app events, so they stop showing in
-     search.
-7. **Retire the old key.** Remove it from Amber and from the signer bunker connections. Keep its offline backup for a
-   while, in case a deletion or a correction needs signing. The `~/.config/trikey/nip46/<old signer>.key` file
-   `sign-release.mjs` kept can be deleted.
+   Merged before 0.1.28-alpha is tagged.
+6. [ ] **Repo:** release 0.1.28-alpha (release.yml), as usual.
+7. [ ] **Owner (Mac):** sign 0.1.28-alpha with the founder's key:
+   - in Amber, create a new bunker connection for the Icarus Wings account;
+   - run `node tools/release/sign-release.mjs v0.1.28-alpha` and give it that link.
+
+   The tool refuses any key other than the pinned one, so it also proves step 5 is in place.
+8. [ ] **Owner (Mac):** the new Zapstore listings. Run `zsp` with the founder's bunker link, which links the APK
+   signing certificate to the founder's key (NIP-C1). Then:
+
+   ```
+   zsp publish zapstore.yaml
+   zsp publish packaging/zapstore/foss/zapstore.yaml
+   ```
+
+   If zsp or Zapstore refuses a second key for the same certificate, stop and ask on zapstore/relay#16 (section 5).
+9. [ ] **Repo:** the Zapstore check passes for 0.1.28-alpha under the new key, and the release's signature is on
+   relays (VERIFY.md, `nak req -k 1420 -a 2ac413fd…`).
+10. [ ] **Owner:** retire the Trikey account:
+    - optionally, a deletion request (NIP-09) for the old listings' app events, if Zapstore honours it;
+    - remove the Trikey key from Amber and its bunker connections;
+    - delete `~/.config/trikey/nip46/072104ce…a495.key` on the Mac;
+    - keep the offline backup of the key for a few months, in case a correction ever needs signing with it.
 
 Nothing else moves:
 - the APK signing key and its certificate pin (`packaging/android/release-cert.sha256`);
 - the Docker images;
 - the Umbrel and Start9 packages;
 - the guardian;
-- the app's nostr protocol.
+- the app's nostr protocol;
+- the guardian relay.
 
 ## 4. What users see
 
-- **Zapstore:** a new Trikey listing by Icarus Wings. The old one says "moved" in its description, then disappears
-  if the deletion works. People who installed from the old listing have to install from the new one once: Android
-  updates in place, since the APK signature is the same.
-- **People who verify releases:** VERIFY.md says which key signed which releases, and links the old key's handover
-  note.
-- **The site and README:** "published by Icarus Wings" instead of "published by Trikey's own npub".
+- **Zapstore:** the current listings get 0.1.27 with a note that the listing moves. From 0.1.28, Trikey is listed by
+  Icarus Wings. Installing from the new listing updates the app in place, with no data lost.
+- **People who verify releases:** VERIFY.md says which key signed which releases, and links the handover note signed
+  by the old key.
+- **trikey@trikey.app** keeps resolving, to the founder's key.
 
-## 5. Open questions
+## 5. Open questions for Zapstore
 
-For the owner:
-1. **Switch or keep?** Our recommendation is to keep the Trikey key for releases and Zapstore. Using the personal
-   Lightning address for donations is fine either way: it only decides where gifts land and can't affect what users
-   install.
-2. If switching: **which release is the cutover?**
-3. Is the personal key used only through a signer today? (Section 2.)
+Ask on zapstore/relay#16, before step 8 if possible:
 
-For Zapstore (zapstore/relay#16 is the place to ask):
-4. Can one APK signing certificate be linked (NIP-C1) to two publisher keys while listings move? If not, the old
-   proof must be removed first, and there's a window with no working listing.
-5. Does Zapstore honour a deletion request for an app's events, or keep showing the old listing?
-6. Is there a way to move an app's listing to a new key, so that installed users follow it without reinstalling?
+1. Can one APK signing certificate be linked (NIP-C1) to two publisher keys while the listings move? If not, the old
+   proof has to go first, which leaves a short window with no working listing.
+2. Does Zapstore honour a deletion request for an app's events, or keep showing the old listing?
+3. Is there a way to move a listing to a new key, so that installed users follow without reinstalling?
