@@ -11,7 +11,7 @@
 //    nsec: the secret key stays in the signer app, and this tool refuses one. The signer's key must be the pinned one,
 //    packaging/release-signer.npub.
 // 4. Checks the signed event with the same check publish-release.yml runs, uploads the manifest and the event to the
-//    draft, and publishes the event to relays (the publisher's relay list, kind 10002, else three public relays).
+//    draft, and publishes the event to relays (the publisher's relay list, kind 10002, plus Trikey's relay and free public ones).
 //
 //   node tools/release/sign-release.mjs v0.1.27-alpha --relays-only
 //
@@ -51,7 +51,9 @@ const SCRIPT = join(root, 'packaging', 'release-signature.py');
 const MANIFEST = `trikey-${tag}-SHA256SUMS`;
 const EVENT = `${MANIFEST}.event.json`;
 const KIND = 1420;
-const FALLBACK_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net'];
+// Always published to as well as the publisher's own list (whose write relays may be paid ones that refuse it): Trikey's
+// relay and free public ones. The event is public by design; anyone may copy it anywhere.
+const FALLBACK_RELAYS = ['wss://relay.trikey.app', 'wss://nos.lol', 'wss://relay.primal.net', 'wss://relay.damus.io'];
 
 const npub = readFileSync(join(root, 'packaging', 'release-signer.npub'), 'utf8')
   .split('\n')
@@ -77,7 +79,7 @@ async function publishToRelays(event) {
   } catch {
     // No relay list found: the fallback relays below.
   }
-  if (relays.length === 0) relays = FALLBACK_RELAYS;
+  relays = [...new Set([...relays, ...FALLBACK_RELAYS])];
   console.log(`\nPublishing the event to ${relays.join(', ')}`);
   const results = await Promise.allSettled(pool.publish(relays, event));
   let ok = 0;
