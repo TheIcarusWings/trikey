@@ -81,7 +81,9 @@ export function describeHardwareError(e: unknown): string {
     case 'disconnected':
       return 'The device disconnected. Check the connection and try again.';
     case 'timeout':
-      return 'The device did not respond in time.';
+      // Each adapter says what it waited for ("No Ledger found. Unlock it, enable Bluetooth on it, …"): that is what the
+      // owner can act on, so keep its words; the generic line only for an error no adapter worded.
+      return e.kind ? e.message : 'The device did not respond in time.';
     case 'cancelled':
       return 'Cancelled.';
     case 'wallet-not-registered':
