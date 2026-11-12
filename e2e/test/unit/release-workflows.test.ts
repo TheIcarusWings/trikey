@@ -34,6 +34,7 @@ interface Step {
   if?: string;
   env?: Record<string, string>;
   with?: Record<string, unknown>;
+  'continue-on-error'?: boolean;
 }
 interface Job {
   if?: string;
@@ -892,12 +893,25 @@ describe('android-reproducible.yml', () => {
     expect(read('.github/workflows/android-build.yml')).toContain('cache-disabled: ${{ !inputs.gradle-cache }}');
   });
 
-  it('compares exactly the two unsigned APKs of the same variant', () => {
-    const names = repro.jobs['compare']!.steps!.filter((s) => s.uses?.startsWith('actions/download-artifact@')).map((s) => s.with?.['name']);
+  it('compares the two unsigned APKs of the same variant, and A as re-signed with B', () => {
+    const steps = repro.jobs['compare']!.steps!;
+    const names = steps.filter((s) => s.uses?.startsWith('actions/download-artifact@')).map((s) => s.with?.['name']);
     expect(names).toEqual([
       `${repro.jobs['build-a']!.with!['artifact-name']}-unsigned`,
       `${repro.jobs['build-b']!.with!['artifact-name']}-unsigned`,
+      `${repro.jobs['build-a']!.with!['artifact-name']}`,
     ]);
+    // Both comparisons decide the job: neither swallows "they differ".
+    const runs = steps.filter((s) => s.run?.includes('compare-apks.py')).map((s) => s.run!);
+    expect(runs).toHaveLength(2);
+    expect(runs[1]).toContain('--ignore-signature');
+    for (const run of runs) expect(run).toContain('exit "${status}"');
+    for (const s of steps.filter((s) => s.run?.includes('compare-apks.py'))) expect(s['continue-on-error']).toBeUndefined();
+  });
+
+  it('builds with a fixed dev server address, not the build machine\'s IP', () => {
+    // React Native's Gradle plugin writes the build machine's IPv4 address into resources.arsc otherwise.
+    expect(read('.github/workflows/android-build.yml')).toContain('-PreactNativeDevServerIp=localhost');
   });
 
   it('leaves release builds as they were: keep-unsigned and gradle-cache keep their defaults there', () => {

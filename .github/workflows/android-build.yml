@@ -180,10 +180,16 @@ jobs:
           [[ "${ARCHITECTURES}" =~ ^[a-z0-9_,-]+$ ]] || { echo "::error::Unexpected architectures: ${ARCHITECTURES}"; exit 1; }
           # Minifying (R8) is switched off for a test build: it shrinks nothing a tester needs, and a
           # stripped class in a crypto or Bluetooth library would look like a wallet bug.
+          # reactNativeDevServerIp: React Native's Gradle plugin otherwise writes the build machine's own IPv4 address
+          # into the APK (the string resource react_native_dev_server_ip, which only the dev menu of a debug build
+          # reads), so two builds of the same commit on two machines differ in resources.arsc, and the published APK
+          # would carry the address of the runner that built it. `localhost` is React Native's own default for that
+          # resource. Same command in packaging/VERIFY.md ("Rebuild the Android APK").
           ./gradlew assembleRelease --no-daemon --stacktrace \
             -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" \
             -PreactNativeArchitectures="${ARCHITECTURES}" \
-            -Pandroid.enableMinifyInReleaseBuilds=false
+            -Pandroid.enableMinifyInReleaseBuilds=false \
+            -PreactNativeDevServerIp=localhost
 
       # Every dex file (any class of these packages, or any mention of one), the native libraries, the files Google's
       # libraries leave at the APK's root and the manifest. The FOSS APK must have none of it; the standard APK's

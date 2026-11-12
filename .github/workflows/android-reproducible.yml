@@ -1,32 +1,41 @@
 name: Reproducible Android APK
 
-# Step 1 of making the Android APKs reproducible: measure. Builds each variant (standard, foss) twice from the same
-# commit with the very steps of a release (android-build.yml, arm64-v8a), compares the two APKs Gradle made, and fails
-# when they differ, with a report of what differs (packaging/android/compare-apks.py) and, for a closer look,
-# diffoscope's. Same inputs must give the same bytes: that is what would let anyone rebuild a release and check it
-# against the APK on the releases page, as packaging/VERIFY.md does for the guardian's image.
+# Checks that the Android APKs are reproducible. Builds each variant (standard, foss) twice from the same commit with
+# the very steps of a release (android-build.yml, arm64-v8a) and fails unless:
 #
-# What is compared: the APK as Gradle made it (`<artifact>-unsigned`), before the re-signing. Expo's generated
-# project signs it with its public debug key (RSA, so the signature itself is deterministic); a release replaces that
-# signature with the release key's, which only the `sign` job holds. Comparing before re-signing keeps the release
-# key out of this workflow; checking a published APK against a rebuild, signature aside, is a later step.
+# 1. the two APKs Gradle made (`<artifact>-unsigned`, before any re-signing) are identical, byte for byte; and
+# 2. build A's APK as sign-apk.sh re-signed it (with a one-off key, as a release is with the release key) equals
+#    build B's unsigned APK apart from the signing block. That is the check packaging/VERIFY.md asks of anyone who
+#    rebuilds a release: `compare-apks.py --ignore-signature <published APK> <your build>`.
+#
+# Same inputs must give the same bytes: that is what lets anyone rebuild a release and check it against the APK on the
+# releases page, as packaging/VERIFY.md does for the guardian's image. When they differ, the job says what differs
+# (packaging/android/compare-apks.py), decodes resources.arsc with aapt2 and runs diffoscope, and keeps both APKs.
+#
+# The release key stays out of this workflow: Expo's generated project signs the APK with its public debug key (RSA,
+# so the signature itself is deterministic), and the re-signing here uses the one-off key.
 #
 # How the two builds differ on purpose:
 # - B runs after A, not beside it, so anything taken from the clock shows up;
-# - B uses no Gradle cache (A uses the usual one), so nothing restored from an earlier run can hide a difference.
+# - B uses no Gradle cache (A uses the usual one), so nothing restored from an earlier run can hide a difference;
+# - they run on two runners, so anything taken from the machine shows up (the runner's IP address did, until
+#   android-build.yml set reactNativeDevServerIp).
 # What they share, so this does not catch it yet: the runner image (the same JDK, SDK command-line tools, the build
 # tools and NDK Gradle downloads, both fetched fresh) and the checkout path. A build in a pinned container, at another
-# path, is step 2.
+# path, is a later step.
 #
-# Not a gate yet: nothing waits on it. It runs by hand (Actions, "Reproducible Android APK", Run workflow) and on
-# changes to itself. Each run is four full builds, so it does not run on every pull request that touches the app.
+# It runs by hand (Actions, "Reproducible Android APK", Run workflow) and on pull requests that change the Android
+# build's workflow or these scripts. Each run is four full builds, so it does not run on every pull request that
+# touches the app.
 
 on:
   workflow_dispatch:
   pull_request:
     paths:
       - '.github/workflows/android-reproducible.yml'
+      - '.github/workflows/android-build.yml'
       - 'packaging/android/compare-apks.py'
+      - 'packaging/android/sign-apk.sh'
 
 permissions:
   contents: read
@@ -92,6 +101,12 @@ jobs:
           name: repro-b-${{ matrix.variant }}-unsigned
           path: ${{ runner.temp }}/b
 
+      # Build A's APK after sign-apk.sh re-signed it, as a release's is.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: repro-a-${{ matrix.variant }}
+          path: ${{ runner.temp }}/a-signed
+
       - name: Compare the two APKs
         id: compare
         run: |
@@ -111,6 +126,34 @@ jobs:
           case "${status}" in
             0) echo "::notice title=Reproducible (${VARIANT})::The two builds of the ${VARIANT} APK are identical." ;;
             1) echo "::error title=Not reproducible (${VARIANT})::The two builds of the ${VARIANT} APK differ. The job summary lists what differs; the repro-diff-${VARIANT} artifact has both APKs and diffoscope's report." ;;
+            *) echo "::error title=Comparison failed (${VARIANT})::Could not read the APKs (exit ${status})." ;;
+          esac
+          exit "${status}"
+
+      # What a verifier does with a release (packaging/VERIFY.md): the published APK has the release key's signature,
+      # their rebuild Expo's debug one, so everything but the signing block must be the same. Here build A re-signed
+      # with the one-off key stands for the published APK, build B's unsigned APK for the rebuild.
+      - name: Compare build A as re-signed with build B, signing blocks aside
+        if: success() || failure()
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          signed=("${RUNNER_TEMP}"/a-signed/*.apk)
+          [ "${#signed[@]}" = 1 ] || { echo "::error::Expected one signed APK in repro-a-${VARIANT}, found ${#signed[@]}"; exit 2; }
+          status=0
+          python3 -I packaging/android/compare-apks.py --ignore-signature \
+            "${signed[0]}" "${RUNNER_TEMP}/b/app-release.apk" > "${RUNNER_TEMP}/report-signed.md" || status=$?
+          cat "${RUNNER_TEMP}/report-signed.md"
+          {
+            echo "## ${VARIANT} APK, build A re-signed against build B unsigned, signing blocks aside"
+            echo
+            echo "A: \`$(basename "${signed[0]}")\` (one-off key, as sign-apk.sh signs a release). B: as Gradle made it."
+            echo
+            cat "${RUNNER_TEMP}/report-signed.md"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          case "${status}" in
+            0) echo "::notice title=Re-signed APK matches (${VARIANT})::Build A, re-signed, equals build B apart from the signing block." ;;
+            1) echo "::error title=Re-signed APK differs (${VARIANT})::Build A, re-signed, differs from build B in more than the signing block, so a rebuild could not be checked against a release this way." ;;
             *) echo "::error title=Comparison failed (${VARIANT})::Could not read the APKs (exit ${status})." ;;
           esac
           exit "${status}"
@@ -201,15 +244,17 @@ jobs:
           # 1 means "differences found", which is why this step runs.
           [ "${rc}" -le 1 ]
 
-      - name: Keep both APKs and the reports when they differ
-        if: failure() && steps.compare.outcome == 'failure'
+      - name: Keep the APKs and the reports when they differ
+        if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: repro-diff-${{ matrix.variant }}
           path: |
             ${{ runner.temp }}/a/app-release.apk
             ${{ runner.temp }}/b/app-release.apk
+            ${{ runner.temp }}/a-signed/*.apk
             ${{ runner.temp }}/report.md
+            ${{ runner.temp }}/report-signed.md
             ${{ runner.temp }}/diffoscope.html
             ${{ runner.temp }}/diffoscope.txt
             ${{ runner.temp }}/arsc/

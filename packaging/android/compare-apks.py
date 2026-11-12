@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare two builds of the same APK and say where they differ.
 
-Usage: python3 -I packaging/android/compare-apks.py A.apk B.apk
+Usage: python3 -I packaging/android/compare-apks.py [--ignore-signature] A.apk B.apk
 
 Used by .github/workflows/android-reproducible.yml, and by anyone checking a build by hand. Standard library only.
 
@@ -14,6 +14,13 @@ debug key; the release is then re-signed (packaging/android/sign-apk.sh). So thi
 3. entries whose content differs (each one's SHA-256 of the uncompressed bytes);
 4. entries with the same content but other ZIP metadata (time stamp, compression, attributes, extra field, order);
 5. whether the bytes outside the entries differ (the signing block and the rest of the ZIP structure).
+
+With --ignore-signature, the verdict is whether the two APKs are the same apart from their APK Signing Blocks: every
+byte the v2/v3 signatures cover (the entries, the central directory and its end record, with the central directory's
+offset taken as if there were no signing block) must be the same. That is how a rebuild is checked against a release
+APK, which is signed with the release key while a rebuild has Expo's debug signature: the signature changes nothing
+else in the file, so equal signed content means the release APK is this build plus a signature. Whether that
+signature is valid and by the release key is a separate check (`apksigner verify --print-certs`).
 
 Exit status: 0 identical, 1 different, 2 could not read an APK. The report is Markdown, for the job summary.
 """
@@ -78,17 +85,48 @@ def outside_entries(path: str) -> bytes:
     return data[end:cd_offset]
 
 
+SIG_BLOCK_MAGIC = b"APK Sig Block 42"
+
+
+def signed_content(path: str) -> tuple[bytes, int]:
+    """The file without its APK Signing Block, as the v2/v3 signatures see it, and the block's size (0 if none).
+
+    The block sits just before the central directory and ends with its size (uint64) and a 16-byte magic; it starts
+    with the same size. Without it, the end of central directory record must point at where the block started.
+    """
+    with open(path, "rb") as f:
+        data = f.read()
+    eocd = data.rfind(b"PK\x05\x06")
+    if eocd < 0:
+        raise ValueError("no end of central directory record")
+    (cd_offset,) = struct.unpack_from("<I", data, eocd + 16)
+    start = cd_offset
+    if cd_offset >= 32 and data[cd_offset - 16:cd_offset] == SIG_BLOCK_MAGIC:
+        (size,) = struct.unpack_from("<Q", data, cd_offset - 24)
+        start = cd_offset - (size + 8)
+        if start < 0 or struct.unpack_from("<Q", data, start)[0] != size:
+            raise ValueError("malformed APK Signing Block")
+    eocd_record = bytearray(data[eocd:])
+    struct.pack_into("<I", eocd_record, 16, start)
+    return data[:start] + data[cd_offset:eocd] + bytes(eocd_record), cd_offset - start
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != 3:
+    args = argv[1:]
+    ignore_signature = "--ignore-signature" in args
+    args = [x for x in args if x != "--ignore-signature"]
+    if len(args) != 2:
         print(__doc__.strip().splitlines()[2], file=sys.stderr)
         return 2
-    a, b = argv[1], argv[2]
+    a, b = args
     try:
         hash_a, hash_b = sha256_file(a), sha256_file(b)
+        signed_a, sig_size_a = signed_content(a)
+        signed_b, sig_size_b = signed_content(b)
         order_a, info_a = entries(a)
         order_b, info_b = entries(b)
         block_a, block_b = outside_entries(a), outside_entries(b)
-    except (OSError, ValueError, zipfile.BadZipFile) as e:
+    except (OSError, ValueError, struct.error, zipfile.BadZipFile) as e:
         print(f"Could not read the APKs: {e}")
         return 2
 
@@ -100,9 +138,18 @@ def main(argv: list[str]) -> int:
         out.append("**The two APKs are identical, byte for byte.**")
         print("\n".join(out))
         return 0
+    if ignore_signature and signed_a == signed_b:
+        out.append("")
+        out.append(
+            "**The two APKs are identical apart from their signing blocks** "
+            f"({sig_size_a} / {sig_size_b} bytes): every byte the signatures cover is the same "
+            f"(SHA-256 `{hashlib.sha256(signed_a).hexdigest()}` without the block)."
+        )
+        print("\n".join(out))
+        return 0
 
     out.append("")
-    out.append("**The two APKs differ.**")
+    out.append("**The two APKs differ, in more than their signing blocks.**" if ignore_signature else "**The two APKs differ.**")
 
     only_a = [n for n in order_a if n not in info_b]
     only_b = [n for n in order_b if n not in info_a]
