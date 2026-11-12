@@ -6,6 +6,7 @@ import { AccessibilityInfo, Pressable, StyleSheet, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { House, Shield } from '@/components/icons';
 import { FadeLayer, spring, useReduceMotion } from '@/components/motion';
+import { useOpeningPart } from '@/components/opening';
 import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { IS_IOS, IS_WEB } from '@/lib/platform';
@@ -42,6 +43,8 @@ function useReduceTransparency(): boolean {
  */
 export function TabBar({ state, emitter, navigateToTab, insets }: BottomTabBarProps) {
   const reduceTransparency = useReduceTransparency();
+  // As the app opens (docs/design/motion.md, section 9) the bar springs up from the bottom; otherwise it is in place.
+  const rise = useOpeningPart('tabBar');
   // Where each iOS tab is in the bar, for the pill to slide to.
   const [tabX, setTabXs] = useState<({ x: number; width: number } | undefined)[]>([]);
   const setTabX = (index: number, x: number, width: number) =>
@@ -101,34 +104,38 @@ export function TabBar({ state, emitter, navigateToTab, insets }: BottomTabBarPr
     const blur = !IS_WEB && !reduceTransparency;
     return (
       <View pointerEvents="box-none" className="absolute inset-x-0 bottom-0 items-center" style={{ paddingBottom: bottom - 6 }}>
-        <View
-          className="rounded-full"
-          style={{ shadowColor: '#000', shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 8 }, elevation: 6 }}>
+        <Animated.View style={rise}>
           <View
-            role="tablist"
-            accessibilityLabel="Main"
-            className={cn(
-              'border-foreground/10 w-[200px] flex-row gap-1 overflow-hidden rounded-full border p-1',
-              blur ? 'bg-background/40' : reduceTransparency ? 'bg-background' : 'bg-background/80'
-            )}
-            style={IS_WEB ? ({ backdropFilter: 'blur(24px) saturate(180%)', WebkitBackdropFilter: 'blur(24px) saturate(180%)' } as object) : undefined}>
-            {blur ? <BlurView tint="systemChromeMaterial" intensity={80} style={StyleSheet.absoluteFill} /> : null}
-            <TabPill at={tabX[state.index]} />
-            {tabs}
+            className="rounded-full"
+            style={{ shadowColor: '#000', shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 8 }, elevation: 6 }}>
+            <View
+              role="tablist"
+              accessibilityLabel="Main"
+              className={cn(
+                'border-foreground/10 w-[200px] flex-row gap-1 overflow-hidden rounded-full border p-1',
+                blur ? 'bg-background/40' : reduceTransparency ? 'bg-background' : 'bg-background/80'
+              )}
+              style={IS_WEB ? ({ backdropFilter: 'blur(24px) saturate(180%)', WebkitBackdropFilter: 'blur(24px) saturate(180%)' } as object) : undefined}>
+              {blur ? <BlurView tint="systemChromeMaterial" intensity={80} style={StyleSheet.absoluteFill} /> : null}
+              <TabPill at={tabX[state.index]} />
+              {tabs}
+            </View>
           </View>
-        </View>
+        </Animated.View>
       </View>
     );
   }
 
   return (
-    <View
-      role="tablist"
-      accessibilityLabel="Main"
-      className="bg-background border-border flex-row border-t"
-      style={{ paddingTop: 12, paddingHorizontal: 8, paddingBottom: bottom }}>
-      {tabs}
-    </View>
+    <Animated.View style={rise}>
+      <View
+        role="tablist"
+        accessibilityLabel="Main"
+        className="bg-background border-border flex-row border-t"
+        style={{ paddingTop: 12, paddingHorizontal: 8, paddingBottom: bottom }}>
+        {tabs}
+      </View>
+    </Animated.View>
   );
 }
 

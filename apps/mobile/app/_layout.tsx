@@ -7,10 +7,11 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
 import { colorScheme } from 'nativewind';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AppState, Platform, View } from 'react-native';
 import { AppButton } from '@/components/app-button';
 import { DevicePromptHost } from '@/components/device-prompt-host';
+import { OpeningOverlay, hideSplash } from '@/components/opening';
 import { ToastHost } from '@/components/toast-host';
 import { Screen } from '@/components/screen';
 import { Body } from '@/components/panels';
@@ -189,34 +190,46 @@ export default function RootLayout() {
     return () => sub.remove();
   }, []);
 
+  // Ready: the fonts are in and the wallet is open (or failed to open). The opening overlay hides the native splash over
+  // its own copy of the logo as soon as that is drawn; this only makes sure the splash goes, whatever the overlay does.
+  const ready = !!(fontsLoaded || fontError) && !!(booted || failure);
   useEffect(() => {
-    if ((fontsLoaded || fontError) && (booted || failure)) SplashScreen.hideAsync();
-  }, [fontsLoaded, fontError, booted, failure]);
+    if (ready) hideSplash();
+  }, [ready]);
 
   const control = useMemo<AppModeControl | null>(
     () => (booted ? { mode: booted.mode, available: availableModes(getPlatform()), switchTo } : null),
     [booted, switchTo],
   );
 
-  if (!fontsLoaded && !fontError) return null;
-  if (failure && !booted) {
-    return (
-      <BootFailure
-        message={failure}
-        onDemo={() => {
-          setFailure(null);
-          void switchTo('demo');
-        }}
-      />
-    );
+  let content: ReactNode = null;
+  if (fontsLoaded || fontError) {
+    if (failure && !booted) {
+      content = (
+        <BootFailure
+          message={failure}
+          onDemo={() => {
+            setFailure(null);
+            void switchTo('demo');
+          }}
+        />
+      );
+    } else if (booted && control) {
+      content = (
+        <AppModeProvider value={control}>
+          <WalletProvider service={booted.wallet}>
+            <Shell restarts={epoch} />
+          </WalletProvider>
+        </AppModeProvider>
+      );
+    }
   }
-  if (!booted || !control) return null;
 
   return (
-    <AppModeProvider value={control}>
-      <WalletProvider service={booted.wallet}>
-        <Shell restarts={epoch} />
-      </WalletProvider>
-    </AppModeProvider>
+    <>
+      {content}
+      {/* Opening the app (docs/design/motion.md, section 9): over everything, never taking a touch. */}
+      <OpeningOverlay ready={ready} />
+    </>
   );
 }

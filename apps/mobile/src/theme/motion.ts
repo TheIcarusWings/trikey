@@ -31,6 +31,11 @@ export const SPRINGS = {
   toast: { damping: 16, stiffness: 200, mass: 1 },
   /** The guardian pairing frame. */
   scanFrame: { damping: 20, stiffness: 260, mass: 1 },
+  /**
+   * Opening the app: the keys landing on Home and the tab bar springing up. It stands in for the board's 600ms overshoot
+   * curve, `cubic-bezier(.3, 1.45, .5, 1)`: about 6% past the target at about 400ms, settled by about 650ms.
+   */
+  land: { damping: 14, stiffness: 112, mass: 1 },
 } as const satisfies Record<string, SpringToken>;
 
 export type SpringName = keyof typeof SPRINGS;
@@ -296,3 +301,99 @@ export function limitShare(leftSats: number, limitSats: number): number {
   if (!(limitSats > 0)) return 0;
   return Math.min(1, Math.max(0, leftSats / limitSats));
 }
+
+/**
+ * Section 9, opening the app (board `Open.dc.html`, about 2s). Three stages, each with its own clock:
+ *
+ * - Booting, from when the app-drawn logo is on screen: still at first; if the app is not ready `loopAfterMs` later, an
+ *   orange dash runs round the triangle (a lap in 1.4s, linear) and each key swells to 1.24 and sends out a ring as the
+ *   dash passes it. A fast boot never starts the loop.
+ * - Ready (`readyMs`), from when the wallet is open: one last lap in 480ms, the keys answer as it passes them (160ms
+ *   apart), and the triangle's lines retract (300ms from 460ms).
+ * - Landing, from when Home's places are measured: the backdrop fades (200ms) while the keys fly to Home (560ms, x and
+ *   y on their own curves, so the path bends), the two dark keys grow into Send and Receive and the orange key shrinks
+ *   to the limit line's dot; the real ones take over at 580ms. Home fills in on the same clock.
+ *
+ * The board's overshoot curves are the `land` spring here. Times are ms from the start of their stage.
+ */
+export const OPENING = {
+  /** Booting: the loop starts only if the app is still not ready this long after the logo is drawn. */
+  loopAfterMs: 400,
+  lapMs: 1400,
+  /** As the dash passes a key (shares of a lap, linear between): it swells to 1.24 by 8% and is back by 24%... */
+  swell: { scale: 1.24, peakAt: 0.08, endAt: 0.24 },
+  /** ...and its ring grows to 2.1 while fading from 0.55, by 36%. */
+  swellRing: { scaleTo: 2.1, opacityFrom: 0.55, endAt: 0.36 },
+  /** The dash's length, as a share of the triangle's outline (the board's 26 of 167.2). */
+  dashShare: 26 / 167.2,
+
+  /** Ready: one last lap, fading over its last 10%. */
+  lastLapMs: 480,
+  lastLapFadeFrom: 0.9,
+  /**
+   * Each key answers as the last lap passes it: it grows to 1.28 by 40% of 320ms and comes back (standard curve each
+   * way), and sends a ring to 2.3 from 0.6 opacity in 500ms (standard).
+   */
+  answer: { scale: 1.28, peakShare: 0.4, ms: 320, ringScaleTo: 2.3, ringOpacityFrom: 0.6, ringMs: 500 },
+  /** The triangle's lines retract. */
+  retractAtMs: 460,
+  retractMs: 300,
+  /** The ready stage's length: the landing starts after it (once Home's places are measured). */
+  readyMs: 780,
+  /** How long the landing waits for Home's places to be measured; a place not measured by then is missing. */
+  measureWaitMs: 120,
+  /** Home not drawn yet when the ready stage ends (no place registered): the landing waits this long at most for it. */
+  homeWaitMs: 300,
+
+  /** Landing: the overlay's backdrop fades (linear), uncovering Home. */
+  backdropFadeMs: 200,
+  /** The keys fly for 560ms: x on one curve, y on another, so the path bends. */
+  flyMs: 560,
+  xCurve: [0.3, 0, 0.2, 1] as Curve,
+  yCurve: [0.55, 0, 0.15, 1] as Curve,
+  /** Each key's start: the orange key (to the limit line's dot), the left key (to Send), the right key (to Receive). */
+  keyDelayMs: { hardware: 0, phone: 0, guardian: 60 },
+  /** Each key's colour turns to its place's (400ms, linear) from here... */
+  colourAtMs: { hardware: 100, phone: 100, guardian: 160 },
+  colourMs: 400,
+  /** ...and it fades out (120ms, linear) as the real one takes over. */
+  handOverAtMs: { hardware: 580, phone: 580, guardian: 640 },
+  handOverMs: 120,
+  /** A key with no place on screen fades where it is. */
+  missingFadeMs: 200,
+
+  /** Home fills in. The balance rises 18px (fade 400ms, rise 500ms, standard), the line under it 80ms later. */
+  balanceAtMs: 300,
+  balanceLineAtMs: 380,
+  balanceFadeMs: 400,
+  balanceRiseMs: 500,
+  balanceRise: 18,
+  /** The limit line's dot shows as the orange key arrives; its sentence is revealed from the dot, left to right. */
+  dotAtMs: 560,
+  dotFadeMs: 100,
+  revealAtMs: 620,
+  revealMs: 450,
+  /** Send, then Receive: the circle and its arrow show at 1.1 and settle to 1 (standard); the labels follow. */
+  buttonAtMs: [560, 620] as readonly number[],
+  buttonFadeMs: 100,
+  buttonLandAtMs: [580, 640] as readonly number[],
+  buttonLandMs: 400,
+  buttonLandFrom: 1.1,
+  labelsAtMs: 700,
+  labelsFadeMs: 240,
+  /** Recent: its heading, then its rows, 80ms apart; each rises 14px (320ms, standard). */
+  recentAtMs: 740,
+  recentStepMs: 80,
+  recentMs: 320,
+  recentRise: 14,
+  /** The tab bar springs up from 70px below (land spring) while it fades in (200ms, linear). */
+  tabBarAtMs: 660,
+  tabBarFadeMs: 200,
+  tabBarFrom: 70,
+  /** The landing's clock runs this long: the last Recent row and the tab bar are in place by then. */
+  landingMs: 1400,
+  /** Whatever happens, everything is in place and the overlay gone this long after the app is ready. */
+  maxMs: 2800,
+  /** Reduce Motion: the logo fades once Home is there, waiting this long at most for it after the app is ready. */
+  reducedWaitMs: 700,
+} as const;

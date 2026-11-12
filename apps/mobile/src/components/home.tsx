@@ -8,6 +8,7 @@ import { ActionNotice } from '@/components/action-notice';
 import { AppButton } from '@/components/app-button';
 import { ArrowDownLeft, ArrowUpRight, Clock, Eye, EyeOff, HardwareWallet, Lock, Settings, TriangleAlert } from '@/components/icons';
 import { FadeLayer, HIDDEN, Swap, announce, exit, fade, reducedFade, standard, usePressScale, useReduceMotion } from '@/components/motion';
+import { OpeningPart, OpeningReveal, useLandingPlace } from '@/components/opening';
 import { Notice } from '@/components/panels';
 import { Sheet } from '@/components/sheet';
 import { Card } from '@/components/ui/card';
@@ -87,6 +88,7 @@ export function BalanceHeader({
   sats,
   caption,
   showIncoming = false,
+  opening = false,
 }: {
   label: string;
   sats: Sats;
@@ -94,6 +96,8 @@ export function BalanceHeader({
   caption?: string;
   /** The wallet's main balance: an incoming payment's toast also shows under it. */
   showIncoming?: boolean;
+  /** Home's balance: it rises into place when the app opens (section 9), the line under it a moment later. */
+  opening?: boolean;
 }) {
   const { unit, synced, syncing, guardianSlow, backing, toast } = useWallet();
   const [hidden, toggle] = useBalanceHidden();
@@ -119,7 +123,7 @@ export function BalanceHeader({
       onPress={toggle}
       accessibilityLabel={hidden ? `${label} hidden. Tap to show` : `${label}: ${main} ${unitText}${incoming ? `, ${incoming}` : ''}. Tap to hide`}
       className="items-center gap-0.5 pt-2">
-      <View>
+      <OpeningPart part="balance" play={opening}>
         <FadeLayer shown={!hidden}>
           <Swap id={main} kind="lift" animate={!hidden}>
             <Text className={big}>{main}</Text>
@@ -128,13 +132,13 @@ export function BalanceHeader({
         <FadeLayer shown={hidden} style={OVER_CENTRED}>
           <Text className={big}>••••••</Text>
         </FadeLayer>
-      </View>
-      <View className="flex-row items-center gap-1.5">
+      </OpeningPart>
+      <OpeningPart part="balanceLine" play={opening} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <Swap id={under} align="center">
           <Text className={cn(line, incoming ? 'text-good font-medium' : 'text-muted-foreground')}>{under}</Text>
         </Swap>
         <Icon as={hidden ? EyeOff : Eye} size={16} strokeWidth={2} className="text-muted-foreground" />
-      </View>
+      </OpeningPart>
       {caption ? <Text className={cn('text-muted-foreground text-center', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{caption}</Text> : null}
     </Pressable>
   );
@@ -155,11 +159,24 @@ export function useNewWallet(): boolean {
  * Send and Receive as two round buttons with their names under them. In a new wallet Receive leads and Send is greyed,
  * but still a button: it explains there is nothing to send yet and offers the address.
  */
-export function SendReceiveButtons({ sendEmphasis = true, newWallet = false }: { sendEmphasis?: boolean; newWallet?: boolean }) {
+export function SendReceiveButtons({
+  sendEmphasis = true,
+  newWallet = false,
+  opening = false,
+  landOn = opening,
+}: {
+  sendEmphasis?: boolean;
+  newWallet?: boolean;
+  /** Home's buttons: they fill in when the app opens (section 9). */
+  opening?: boolean;
+  /** ...and the two dark keys of the opening land on them (not when something urgent sits above them). */
+  landOn?: boolean;
+}) {
   const router = useRouter();
   const [nothingToSend, setNothingToSend] = useState(false);
-  const button = (title: string, icon: typeof ArrowUpRight, look: 'primary' | 'secondary' | 'quiet', onPress: () => void, hint?: string) => (
-    <RoundButton title={title} icon={icon} look={look} onPress={onPress} hint={hint} />
+  // `index`: 0 Send (the logo's left key lands on it), 1 Receive (the right key).
+  const button = (index: number, title: string, icon: typeof ArrowUpRight, look: 'primary' | 'secondary' | 'quiet', onPress: () => void, hint?: string) => (
+    <RoundButton title={title} icon={icon} look={look} onPress={onPress} hint={hint} index={index} opening={opening} landOn={landOn} />
   );
   const showAddress = () => {
     setNothingToSend(false);
@@ -168,9 +185,9 @@ export function SendReceiveButtons({ sendEmphasis = true, newWallet = false }: {
   return (
     <View className="flex-row justify-center gap-12">
       {newWallet
-        ? button('Send', ArrowUpRight, 'quiet', () => setNothingToSend(true), 'Nothing to send yet. Shows how to receive bitcoin.')
-        : button('Send', ArrowUpRight, sendEmphasis ? 'primary' : 'secondary', () => router.push('/send/to'))}
-      {button('Receive', ArrowDownLeft, newWallet ? 'primary' : 'secondary', () => router.push('/receive'))}
+        ? button(0, 'Send', ArrowUpRight, 'quiet', () => setNothingToSend(true), 'Nothing to send yet. Shows how to receive bitcoin.')
+        : button(0, 'Send', ArrowUpRight, sendEmphasis ? 'primary' : 'secondary', () => router.push('/send/to'))}
+      {button(1, 'Receive', ArrowDownLeft, newWallet ? 'primary' : 'secondary', () => router.push('/receive'))}
       <Sheet visible={nothingToSend} title="Nothing to send yet" onClose={() => setNothingToSend(false)}>
         <Text className={cn('text-muted-foreground', pick('text-[15px] leading-[22px]', 'text-sm leading-5'))}>
           Your wallet is empty. Once bitcoin arrives, Send works from here.
@@ -182,48 +199,95 @@ export function SendReceiveButtons({ sendEmphasis = true, newWallet = false }: {
   );
 }
 
-/** Send or Receive: a round button with its name under it. Pressed, the circle shrinks a little and springs back. */
-function RoundButton({ title, icon, look, onPress, hint }: { title: string; icon: typeof ArrowUpRight; look: 'primary' | 'secondary' | 'quiet'; onPress: () => void; hint?: string }) {
+/**
+ * Send or Receive: a round button with its name under it. Pressed, the circle shrinks a little and springs back. When
+ * the app opens (`opening`), a key of the logo lands on its circle (`landOn`; Send is the left key, Receive the right),
+ * the circle takes over at 1.1 and settles, and the name follows. The button itself is there and works throughout.
+ */
+function RoundButton({
+  title,
+  icon,
+  look,
+  onPress,
+  hint,
+  index,
+  opening,
+  landOn,
+}: {
+  title: string;
+  icon: typeof ArrowUpRight;
+  look: 'primary' | 'secondary' | 'quiet';
+  onPress: () => void;
+  hint?: string;
+  index: number;
+  opening: boolean;
+  landOn: boolean;
+}) {
   const press = usePressScale();
+  const { colors } = useTheme();
+  const place = useLandingPlace(index === 0 ? 'phone' : 'guardian', look === 'primary' ? colors.accent : colors.fill, opening && landOn);
   return (
     <Pressable role="button" accessibilityLabel={title} accessibilityHint={hint} onPress={onPress} {...press.handlers} className="items-center gap-2 active:opacity-70">
       <Animated.View style={press.style}>
-        <View className={cn('size-16 items-center justify-center rounded-full', look === 'primary' ? 'bg-primary' : 'bg-secondary')}>
-          <Icon
-            as={icon}
-            size={26}
-            strokeWidth={2}
-            className={look === 'primary' ? 'text-primary-foreground' : look === 'quiet' ? 'text-muted-foreground' : 'text-foreground'}
-          />
+        {/* The circle's place, measured for the opening (no transform of its own). */}
+        <View ref={place} collapsable={false}>
+          <OpeningPart part="button" index={index} play={opening}>
+            <View className={cn('size-16 items-center justify-center rounded-full', look === 'primary' ? 'bg-primary' : 'bg-secondary')}>
+              <Icon
+                as={icon}
+                size={26}
+                strokeWidth={2}
+                className={look === 'primary' ? 'text-primary-foreground' : look === 'quiet' ? 'text-muted-foreground' : 'text-foreground'}
+              />
+            </View>
+          </OpeningPart>
         </View>
       </Animated.View>
-      <Text className={cn('text-sm font-medium leading-5', look === 'quiet' && 'text-muted-foreground')}>{title}</Text>
+      <OpeningPart part="label" play={opening}>
+        <Text className={cn('text-sm font-medium leading-5', look === 'quiet' && 'text-muted-foreground')}>{title}</Text>
+      </OpeningPart>
     </Pressable>
   );
 }
 
-/** One line under the balance: what the phone can still pay today without the hardware wallet. Opens the limit. */
-export function LimitLine({ newWallet = false }: { newWallet?: boolean }) {
+/**
+ * One line under the balance: what the phone can still pay today without the hardware wallet. Opens the limit. When the
+ * app opens (`opening`), the orange key of the logo lands on its dot (a new wallet's line has none: the key then fades).
+ */
+export function LimitLine({ newWallet = false, opening = false }: { newWallet?: boolean; opening?: boolean }) {
   const router = useRouter();
   const state = useWallet();
   const left = remainingToday(state);
   const { limitSats } = state.dailyLimit;
   const brand = state.hardware.brand;
+  const open = () => router.push('/settings/limit');
   // No daily limit: say so, in the warning tone, whatever has been sent.
-  if (limitIsOff(state)) return <StatusLine tone="warn" text={LIMIT_OFF_LINE} onPress={() => router.push('/settings/limit')} />;
+  if (limitIsOff(state)) return <StatusLine tone="warn" text={LIMIT_OFF_LINE} onPress={open} opening={opening} landOn />;
   // Nothing to count yet: say what the limit is, not how much of it is left.
-  if (newWallet) return <StatusLine text={`Daily limit ${formatSats(limitSats)} sats, without your ${brand}`} onPress={() => router.push('/settings/limit')} />;
+  if (newWallet) return <StatusLine text={`Daily limit ${formatSats(limitSats)} sats, without your ${brand}`} onPress={open} opening={opening} />;
   const low = limitSats > 0 && left < limitSats * 0.1;
   const text = low ? `${formatSats(left)} sats left today. Bigger payments need your ${brand}.` : `${formatSats(left)} sats left today without your ${brand}`;
-  return <StatusLine tone={low ? 'warn' : 'good'} text={text} onPress={() => router.push('/settings/limit')} />;
+  return <StatusLine tone={low ? 'warn' : 'good'} text={text} onPress={open} opening={opening} landOn />;
 }
 
-/** A dot and a short sentence, centred under the balance. */
-export function StatusLine({ tone, text, onPress }: { tone?: 'good' | 'warn'; text: string; onPress?: () => void }) {
+/**
+ * A dot and a short sentence, centred under the balance. `opening`: Home's line under the balance as the app opens
+ * (section 9): the dot shows, then the sentence is revealed from it, left to right. `landOn`: the logo's orange key
+ * lands on the dot.
+ */
+export function StatusLine({ tone, text, onPress, opening = false, landOn = false }: { tone?: 'good' | 'warn'; text: string; onPress?: () => void; opening?: boolean; landOn?: boolean }) {
+  const { colors } = useTheme();
+  const place = useLandingPlace('hardware', tone === 'warn' ? colors.warn : colors.good, opening && landOn && !!tone);
   const body = (
     <View className="min-h-11 flex-row items-center justify-center gap-2 px-2">
-      {tone ? <View className={cn('size-2 rounded-full', tone === 'good' ? 'bg-good' : 'bg-warn')} /> : null}
-      <Text className={cn('text-muted-foreground shrink text-center tabular-nums', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{text}</Text>
+      {tone ? (
+        <OpeningPart part="dot" play={opening}>
+          <View ref={place} collapsable={false} className={cn('size-2 rounded-full', tone === 'good' ? 'bg-good' : 'bg-warn')} />
+        </OpeningPart>
+      ) : null}
+      <OpeningReveal play={opening}>
+        <Text className={cn('text-muted-foreground shrink text-center tabular-nums', pick('text-[15px] leading-5', 'text-sm leading-5'))}>{text}</Text>
+      </OpeningReveal>
     </View>
   );
   if (!onPress) return body;
@@ -468,8 +532,11 @@ function Padlock({ shackle, ok, size = 20 }: { shackle: SharedValue<number>; ok:
   );
 }
 
-/** The latest few items under "Activity" on the home tab. */
-export function ActivityPreview({ limit, newWallet = false }: { limit: number; newWallet?: boolean }) {
+/**
+ * The latest few items under "Activity" on the home tab. `opening`: when the app opens (section 9), the heading and then
+ * each row rise into place, 80ms apart.
+ */
+export function ActivityPreview({ limit, newWallet = false, opening = false }: { limit: number; newWallet?: boolean; opening?: boolean }) {
   const router = useRouter();
   const state = useWallet();
   const now = useNow();
@@ -485,20 +552,26 @@ export function ActivityPreview({ limit, newWallet = false }: { limit: number; n
   });
   return (
     <View>
-      <View className="flex-row items-center justify-between">
+      <OpeningPart part="recent" index={0} play={opening} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <Text role="heading" className={pick('text-xl font-bold leading-[26px]', 'text-base font-medium leading-6')}>
           Recent
         </Text>
         <Pressable role="link" testID="home-see-all" onPress={() => router.push('/activity')} className="min-h-11 justify-center pl-4 active:opacity-60">
           <Text className={cn('text-muted-foreground font-medium', pick('text-[15px]', 'text-sm'))}>See all</Text>
         </Pressable>
-      </View>
-      {items.length === 0 ? newWallet ? <FirstPaymentCard /> : <Text className="text-muted-foreground py-4 text-[15px] leading-5">No payments yet.</Text> : null}
+      </OpeningPart>
+      {items.length === 0 ? (
+        <OpeningPart part="recent" index={1} play={opening}>
+          {newWallet ? <FirstPaymentCard /> : <Text className="text-muted-foreground py-4 text-[15px] leading-5">No payments yet.</Text>}
+        </OpeningPart>
+      ) : null}
       {items.map((item, i) => (
-        <ArrivingRow key={item.tx.id} arriving={arriving(item.tx.id, item.tx.status === 'pending')}>
-          {/* Waiting to confirm: its amber dot pulses three times, then rests until the first confirmation. */}
-          <ActivityRow item={item} variant="home" last={i === items.length - 1} ctx={ctx} pulse />
-        </ArrivingRow>
+        <OpeningPart key={item.tx.id} part="recent" index={i + 1} play={opening}>
+          <ArrivingRow arriving={arriving(item.tx.id, item.tx.status === 'pending')}>
+            {/* Waiting to confirm: its amber dot pulses three times, then rests until the first confirmation. */}
+            <ActivityRow item={item} variant="home" last={i === items.length - 1} ctx={ctx} pulse />
+          </ArrivingRow>
+        </OpeningPart>
       ))}
     </View>
   );
