@@ -5,7 +5,7 @@ name: Reproducible Android APK
 #
 # 1. the two APKs Gradle made (`<artifact>-unsigned`, before any re-signing) are identical, byte for byte; and
 # 2. build A's APK as sign-apk.sh re-signed it (with a one-off key, as a release is with the release key) equals
-#    build B's unsigned APK apart from the signing block. That is the check packaging/VERIFY.md asks of anyone who
+#    build B's unsigned APK apart from the signature. That is the check packaging/VERIFY.md asks of anyone who
 #    rebuilds a release: `compare-apks.py --ignore-signature <published APK> <your build>`.
 #
 # Same inputs must give the same bytes: that is what lets anyone rebuild a release and check it against the APK on the
@@ -19,7 +19,8 @@ name: Reproducible Android APK
 # - B runs after A, not beside it, so anything taken from the clock shows up;
 # - B uses no Gradle cache (A uses the usual one), so nothing restored from an earlier run can hide a difference;
 # - they run on two runners, so anything taken from the machine shows up (the runner's IP address did, until
-#   android-build.yml set reactNativeDevServerIp).
+#   android-build.yml set reactNativeDevServerIp), and anything random (the Android Gradle Plugin's encrypted
+#   dependency list did, until plugins/with-reproducible-android.js turned it off).
 # What they share, so this does not catch it yet: the runner image (the same JDK, SDK command-line tools, the build
 # tools and NDK Gradle downloads, both fetched fresh) and the checkout path. A build in a pinned container, at another
 # path, is a later step.
@@ -36,6 +37,7 @@ on:
       - '.github/workflows/android-build.yml'
       - 'packaging/android/compare-apks.py'
       - 'packaging/android/sign-apk.sh'
+      - 'apps/mobile/plugins/with-reproducible-android.js'
 
 permissions:
   contents: read
@@ -131,9 +133,10 @@ jobs:
           exit "${status}"
 
       # What a verifier does with a release (packaging/VERIFY.md): the published APK has the release key's signature,
-      # their rebuild Expo's debug one, so everything but the signing block must be the same. Here build A re-signed
+      # their rebuild Expo's debug one, so everything but the signature (the APK Signing Block, and the v1 signature
+      # files apksigner adds under META-INF/) must be the same. Here build A re-signed
       # with the one-off key stands for the published APK, build B's unsigned APK for the rebuild.
-      - name: Compare build A as re-signed with build B, signing blocks aside
+      - name: Compare build A as re-signed with build B, signatures aside
         if: success() || failure()
         run: |
           set -uo pipefail
@@ -145,15 +148,15 @@ jobs:
             "${signed[0]}" "${RUNNER_TEMP}/b/app-release.apk" > "${RUNNER_TEMP}/report-signed.md" || status=$?
           cat "${RUNNER_TEMP}/report-signed.md"
           {
-            echo "## ${VARIANT} APK, build A re-signed against build B unsigned, signing blocks aside"
+            echo "## ${VARIANT} APK, build A re-signed against build B unsigned, signatures aside"
             echo
             echo "A: \`$(basename "${signed[0]}")\` (one-off key, as sign-apk.sh signs a release). B: as Gradle made it."
             echo
             cat "${RUNNER_TEMP}/report-signed.md"
           } >> "${GITHUB_STEP_SUMMARY}"
           case "${status}" in
-            0) echo "::notice title=Re-signed APK matches (${VARIANT})::Build A, re-signed, equals build B apart from the signing block." ;;
-            1) echo "::error title=Re-signed APK differs (${VARIANT})::Build A, re-signed, differs from build B in more than the signing block, so a rebuild could not be checked against a release this way." ;;
+            0) echo "::notice title=Re-signed APK matches (${VARIANT})::Build A, re-signed, equals build B apart from the signature." ;;
+            1) echo "::error title=Re-signed APK differs (${VARIANT})::Build A, re-signed, differs from build B in more than the signature, so a rebuild could not be checked against a release this way." ;;
             *) echo "::error title=Comparison failed (${VARIANT})::Could not read the APKs (exit ${status})." ;;
           esac
           exit "${status}"

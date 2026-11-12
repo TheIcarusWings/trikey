@@ -64,6 +64,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     ],
     // What the Android variant links and leaves out, written into the generated Gradle files, and its launcher label.
     ['./plugins/with-android-variant.js', { variant, label: androidApp.label }],
+    // The same APK from two builds of the same commit: no encrypted dependency list in the signing block.
+    './plugins/with-reproducible-android.js',
   ];
   // The NFC entitlement and NFCReaderUsageDescription (plugins/with-ios-nfc.js); without it iOS links no NFC code at all.
   if (iosNfc) plugins.push('./plugins/with-ios-nfc.js');
