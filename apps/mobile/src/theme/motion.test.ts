@@ -49,6 +49,8 @@ describe('motion tokens', () => {
       pop: { damping: 12, stiffness: 220, mass: 1 },
       toast: { damping: 16, stiffness: 200, mass: 1 },
       scanFrame: { damping: 20, stiffness: 260, mass: 1 },
+      // Not in the table: the opening's landing (section 9), in place of the board's overshoot curve.
+      land: { damping: 14, stiffness: 112, mass: 1 },
     });
     expect(BREATHE).toEqual({ from: 1, to: 0.35, periodMs: 2400, smallPeriodMs: 1600 });
     expect(PULSE_RING).toMatchObject({ scaleTo: 2.6, opacityFrom: 0.55, periodMs: 1800, curve: [0.2, 0, 0.3, 1] });

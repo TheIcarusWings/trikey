@@ -51,11 +51,12 @@ export default function HomeScreen() {
       <Screen {...screen}>
         {top}
         <RecoveryKeyNotices />
-        <BalanceHeader label="Spending balance" sats={state.recoveryKey.spendingSats} />
-        <StatusLine tone="good" text={caption} />
-        <SendReceiveButtons />
+        <BalanceHeader label="Spending balance" sats={state.recoveryKey.spendingSats} opening />
+        {/* No daily limit here: the opening's orange key has no dot to land on and fades where it is. */}
+        <StatusLine tone="good" text={caption} opening />
+        <SendReceiveButtons opening />
         <VaultCard />
-        <ActivityPreview limit={2} />
+        <ActivityPreview limit={2} opening />
       </Screen>
     );
   }
@@ -75,9 +76,16 @@ export default function HomeScreen() {
       {/* Several wallets: the wallet shown and its device; a tap switches or adds one. */}
       <WalletSwitcher />
       {/* With Savings, the main balance is Spending's; Savings has its own row below. */}
-      <BalanceHeader label={state.savings.status === 'active' ? 'Spending' : 'Balance'} sats={state.balanceSats} showIncoming />
+      {/* `opening`: these parts fill in as the app opens (docs/design/motion.md, section 9). */}
+      <BalanceHeader label={state.savings.status === 'active' ? 'Spending' : 'Balance'} sats={state.balanceSats} showIncoming opening />
       <Swap id={line}>
-        {paused ? <StatusLine tone="warn" text={pausedText} /> : line === 'unlocked' ? <View className="-mt-3 min-h-11" /> : <LimitLine newWallet={newWallet} />}
+        {paused ? (
+          <StatusLine tone="warn" text={pausedText} opening />
+        ) : line === 'unlocked' ? (
+          <View className="-mt-3 min-h-11" />
+        ) : (
+          <LimitLine newWallet={newWallet} opening />
+        )}
       </Swap>
       {/* Online but slow to send the chain data (a slow node): the balance above is the last one, not "offline". */}
       {/* Back at the front: the connection to the guardian is being made again. Calm: nothing is wrong yet. */}
@@ -87,14 +95,15 @@ export default function HomeScreen() {
       ) : null}
       {/* A recovery someone else started, not answered yet: above Send and Receive, and Send is no longer primary. */}
       <RecoveryBanner placement="urgent" />
-      <SendReceiveButtons newWallet={newWallet} sendEmphasis={!recoveryNeedsAnswer(state.recovery)} />
+      {/* With the urgent recovery card above them, the opening's keys do not land on the buttons: they fade. */}
+      <SendReceiveButtons newWallet={newWallet} sendEmphasis={!recoveryNeedsAnswer(state.recovery)} opening landOn={!recoveryNeedsAnswer(state.recovery)} />
       <SavingsRow />
       <RecoveryBanner />
       <HardwareConfirmCard />
       {notice.look ? <GuardianDownNotice notice={notice} /> : null}
       <SilentPaymentsRow />
       <SavingsSuggestion />
-      <ActivityPreview limit={3} newWallet={newWallet} />
+      <ActivityPreview limit={3} newWallet={newWallet} opening />
       {/* Coin control: the coins, their labels and freezes, Consolidate. */}
       {newWallet ? null : <CoinsLink />}
     </Screen>
