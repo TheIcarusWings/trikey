@@ -7,7 +7,82 @@
     <description>Articles on bitcoin self-custody: how 2-of-3 multisig works, what to do when a key goes missing, and how Trikey is built to keep your coins safe.</description>
     <language>en</language>
     <atom:link href="https://trikey.app/blog/feed.xml" rel="self" type="application/rss+xml"/>
-    <lastBuildDate>Wed, 11 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Thu, 12 Nov 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>A Bitcoin Co-Signer on Your Home Server: What It Protects</title>
+      <link>https://trikey.app/blog/self-hosted-bitcoin-cosigner-umbrel-start9</link>
+      <guid isPermaLink="true">https://trikey.app/blog/self-hosted-bitcoin-cosigner-umbrel-start9</guid>
+      <pubDate>Thu, 12 Nov 2026 00:00:00 GMT</pubDate>
+      <description>What running a bitcoin node and a co-signing key on Umbrel, Start9 or Docker protects against, what it does not, and how to run one safely at home.</description>
+      <category>self-hosted bitcoin cosigner</category>
+      <category>Umbrel bitcoin wallet</category>
+      <category>Start9 bitcoin</category>
+      <category>run your own bitcoin node</category>
+      <category>Electrum server privacy</category>
+      <content:encoded><![CDATA[<p>Home servers such as Umbrel and Start9 made it easy to run a Bitcoin node in a box on a shelf. Most people use one to check their own transactions and keep their addresses private. A newer idea goes one step further: let the box hold one key of a <a href="https://trikey.app/blog/2-of-3-multisig-explained">2-of-3 multisig</a> wallet and co-sign payments under rules you set, the way a company&#39;s server does in collaborative custody. This article explains what a home node protects, what a home co-signer adds, what neither protects against, and how to run one without creating new risks.</p>
+<h2 id="what-your-own-node-already-gives-you">What your own node already gives you</h2>
+<h3 id="you-check-the-chain-yourself">You check the chain yourself</h3>
+<p>A wallet has to learn which coins you own and whether a payment confirmed. Without a node, it asks someone else&#39;s server, and trusts the answer. With your own node, your wallet asks software you run, which has checked every block itself.</p>
+<h3 id="your-addresses-stay-private">Your addresses stay private</h3>
+<p>Most mobile and desktop wallets look up addresses through an <strong>Electrum server</strong>. A public one learns every address you ask about, and usually your IP address too, so it can link your whole wallet together. Umbrel and Start9 offer Electrum server apps (such as Electrs or Fulcrum) that run next to Bitcoin Core, so your wallet can ask your own box instead.</p>
+<h3 id="you-broadcast-your-own-transactions">You broadcast your own transactions</h3>
+<p>Sending through your own node means no third party sees a payment before the network does.</p>
+<p>What a node does <strong>not</strong> do on its own: hold keys or enforce any rule about spending. That is the co-signer&#39;s job.</p>
+<h2 id="what-a-co-signer-on-the-box-adds">What a co-signer on the box adds</h2>
+<p>A co-signer is a key that signs only when a request meets its rules. Companies run them for collaborative custody (see collaborative custody compared). Running one at home gives you the same kinds of rules without a company holding a key:</p>
+<ul>
+<li><strong>A spending limit.</strong> Your phone plus the co-signer can pay up to a daily amount. Above it, the hardware wallet must sign. A stolen phone is worth at most the limit.</li>
+<li><strong>A waiting period for recovery.</strong> If you lose a key, the co-signer helps you recover, but only after a delay with alerts (see <a href="https://trikey.app/blog/delay-and-notify-time-locked-recovery">Delay &amp; Notify</a>).</li>
+<li><strong>Rules that only a stronger key can loosen.</strong> Raising the limit or shortening the delay needs the hardware wallet, not just the phone.</li>
+<li><strong>Alerts</strong> to you and people you trust when something unusual happens.</li>
+</ul>
+<p>A few open-source projects explore self-hosted co-signers with policies, such as Ledger&#39;s <a href="https://github.com/LedgerHQ/resigner" rel="noopener">resigner</a> and Coinkite&#39;s <a href="https://github.com/Coldcard/ckbunker" rel="noopener">CKBunker</a>; check each project&#39;s repository for its status and intended use.</p>
+<h2 id="what-it-does-not-protect-against">What it does not protect against</h2>
+<p>Being honest about the limits is the most useful part of this article.</p>
+<h3 id="a-compromised-box-is-one-key-of-three">A compromised box is one key of three</h3>
+<p>If someone takes over your home server remotely, they hold the co-signer&#39;s key. In a 2-of-3 wallet that is one key: not enough to spend. It is the same exposure as a company&#39;s co-signing server being breached. But it means the co-signer must never be your only line of defence: someone holding the box <em>and</em> one of your other keys holds two keys.</p>
+<h3 id="burglary">Burglary</h3>
+<p>A burglar who takes your phone and your home server has two of your three devices. If they keep the box running and its rules hold, that buys them the daily limit, and any recovery they start sets off the alerts. If they unplug it, a good design makes the server lock itself on restart (a key encrypted on disk is useless without its passphrase), so the box is worthless. Either way, keep your hardware wallet&#39;s seed words <strong>outside your home</strong>: the hardware wallet plus the phone would be a pair with no limit.</p>
+<h3 id="downtime">Downtime</h3>
+<p>Power cuts, internet outages, a failed disk or an update gone wrong all stop the co-signer. A design worth trusting keeps your money reachable without it: in a 2-of-3, your phone and hardware wallet are still a spending pair.</p>
+<h3 id="other-apps-on-the-same-box">Other apps on the same box</h3>
+<p>App platforms run many containers side by side. Treat every other app as a neighbour that might be compromised: the co-signer should not trust requests just because they come from the local network, and its web page should sit behind the platform&#39;s login.</p>
+<h3 id="backups-that-copy-the-key">Backups that copy the key</h3>
+<p>Automatic backups of a server can quietly create extra copies of the co-signer&#39;s key, and restoring an old copy can roll back its records (for example, how much of today&#39;s limit was used). For a key that is one of three, &quot;no backup, replace it if lost&quot; is often the safer rule: the other two keys move the coins to a new wallet with a new co-signer.</p>
+<h2 id="running-one-safely">Running one safely</h2>
+<ul>
+<li><strong>Open no ports.</strong> Port forwarding exposes the box to the whole internet. Prefer designs that only connect outwards (through relays or Tor) and reach the box&#39;s web page through the platform&#39;s own login, a VPN such as Tailscale, or an HTTPS proxy.</li>
+<li><strong>Use a strong, unique passphrase</strong> for the co-signer&#39;s key, and know where it is written.</li>
+<li><strong>Keep the node&#39;s own wallet empty.</strong> Apps on the box often get broad access to Bitcoin Core&#39;s RPC. If the node holds a wallet with funds, an app that is taken over could use it. Where you can, give each app a restricted RPC user with Bitcoin Core&#39;s <a href="https://github.com/bitcoin/bitcoin/tree/master/share/rpcauth" rel="noopener"><code>rpcauth</code></a> and <code>rpcwhitelist</code> settings.</li>
+<li><strong>Send alerts somewhere a phone thief cannot reach:</strong> a second device, a family member, an email account.</li>
+<li><strong>Plan for the box dying.</strong> Write down how you would move the coins with your other two keys, and try it once on a test network.</li>
+<li><strong>Keep it physically modest.</strong> A small box on a shelf, on a UPS if power is unreliable, not advertised to visitors.</li>
+</ul>
+<h2 id="how-trikey-approaches-it">How Trikey approaches it</h2>
+<p><a href="https://trikey.app/">Trikey</a>&#39;s key 3 is the <strong>Trikey Guardian</strong>, an app for your own home server: an Umbrel (through a community app store), a Start9 (a package you build yourself for now), or any Mac, PC, Linux machine or NAS with Docker. From the design document&#39;s <a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#components" rel="noopener">components</a> and <a href="https://github.com/TheIcarusWings/trikey/blob/main/DESIGN.md#threat-model" rel="noopener">threat model</a>:</p>
+<ul>
+<li><strong>It reads the chain from your own node</strong> by default (the box&#39;s Electrs on Umbrel and Start9), or from Bitcoin Core alone. A public Electrum server is possible for people without a node, behind a warning: it would see the wallet&#39;s addresses and could hide coins, but never spend or change a rule.</li>
+<li><strong>It opens no port at home.</strong> The phone and the guardian talk through nostr relays, both connecting outwards, with messages end-to-end encrypted (<a href="https://github.com/nostr-protocol/nips/blob/master/44.md" rel="noopener">NIP-44</a>) inside gift wraps (<a href="https://github.com/nostr-protocol/nips/blob/master/59.md" rel="noopener">NIP-59</a>). Relays see ciphertext and metadata; they can drop a message, not read or forge one.</li>
+<li><strong>Key 3 lives in memory only while unlocked.</strong> On disk it is encrypted under your passphrase (Argon2id). After any restart the guardian is locked until you unlock it with the passphrase, or, if you turn it on, with a confirmation on your hardware wallet.</li>
+<li><strong>The platforms&#39; backups leave the guardian out</strong>, on purpose, for the reasons above. If the box dies, your phone and hardware wallet move the coins to a new wallet with a fresh guardian (&quot;Replace guardian&quot;).</li>
+<li><strong>A one-time setup code</strong> protects the first run, so another app on the box cannot set up the guardian before you do.</li>
+<li><strong>Its rules:</strong> phone payments within a rolling 24-hour limit, a 7, 14 or 30-day Delay &amp; Notify recovery, and any loosening only with a hardware wallet approval.</li>
+<li><strong>Alerts go beyond nostr</strong> if you want: email through your own account, ntfy, a webhook or Telegram, and they still go out while the guardian is locked.</li>
+</ul>
+<p>The design is explicit about the limit: a remote compromise of the home server gives up one key of three, and phone-only payments wait while the guardian is offline.</p>
+<p><strong>Status:</strong> Trikey is pre-alpha and has <strong>not been audited</strong>. Use it on test networks (signet, testnet4 or regtest); if you try mainnet, use only an amount you can afford to lose. The <a href="https://github.com/TheIcarusWings/trikey/blob/main/docs/testers.md" rel="noopener">testers guide</a> shows how to install the guardian on Umbrel or Docker with a signet node, and the site has <a href="https://trikey.app/#watch">setup videos</a>.</p>
+<h2 id="faq">FAQ</h2>
+<h3 id="do-i-need-my-own-node-to-use-a-hardware-wallet">Do I need my own node to use a hardware wallet?</h3>
+<p>No. But without one, your wallet trusts someone else&#39;s server for your balance and history, and that server learns your addresses.</p>
+<h3 id="is-it-safe-to-keep-a-bitcoin-key-on-an-umbrel-or-start9">Is it safe to keep a bitcoin key on an Umbrel or Start9?</h3>
+<p>As one key of a 2-of-3, with a passphrase-encrypted key, no open ports and the other keys elsewhere, it is a reasonable design. As your only key, or as two keys of three, it is not.</p>
+<h3 id="what-happens-if-my-home-server-is-hacked">What happens if my home server is hacked?</h3>
+<p>The attacker holds one key of three and cannot spend alone. Move the coins to a new wallet with your other two keys and set up a fresh co-signer.</p>
+<h3 id="what-if-my-internet-or-power-goes-down">What if my internet or power goes down?</h3>
+<p>The co-signer stops answering. In a 2-of-3 your other two keys can still spend; the everyday shortcut waits until the box is back.</p>
+<h3 id="does-a-home-co-signer-need-port-forwarding">Does a home co-signer need port forwarding?</h3>
+<p>It should not. Designs that connect outwards only, through relays or Tor, avoid exposing your home network.</p>]]></content:encoded>
+    </item>
     <item>
       <title>Delay &amp; Notify: Why Bitcoin Recovery Should Wait</title>
       <link>https://trikey.app/blog/delay-and-notify-time-locked-recovery</link>
