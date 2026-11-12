@@ -466,10 +466,10 @@ If it goes wrong, collect:
 
 #### The phone itself (Security tab)
 
-- Check: with no screen lock on the phone, the **Security** tab says "Set a screen lock"; set one,
-  come back to Trikey, and the note is gone. On an Android phone whose last security update is more than 6 months old
-  it says "Look for a system update"; in an emulator or the iOS simulator it says the app is fine for testing, not for
-  real money on mainnet. None of this is sent anywhere (the guardian's Activity page shows nothing about it).
+- Check: with no screen lock on the phone, the **Security** tab's **Phone safety** tile says "Set a screen lock" (tap
+  it for the advice); set one, come back to Trikey, and it says "No issues found". On an Android phone whose last
+  security update is more than 6 months old it says "Look for a system update"; in an emulator or the iOS simulator it
+  says the app is fine for testing, not for real money on mainnet. None of this is sent anywhere (the guardian's Activity page shows nothing about it).
 
 ### 5. Backup: the recovery code and the backup file
 

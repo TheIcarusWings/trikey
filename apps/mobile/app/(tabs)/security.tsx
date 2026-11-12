@@ -1,148 +1,104 @@
-import { useRouter } from 'expo-router';
+import { useIsFocused, useRouter, type Href } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
-import { Check, TriangleAlert } from '@/components/icons';
 import { ListGroup, SectionLabel, SettingsRow } from '@/components/panels';
-import { PhoneSafetySection } from '@/components/phone-safety';
+import { PhoneSafetyNotes, usePhoneSafetyNotes } from '@/components/phone-safety';
 import { Screen } from '@/components/screen';
-import { Icon } from '@/components/ui/icon';
-import { Text } from '@/components/ui/text';
-import { formatSats, useWallet, useWalletService, type RecoveryKeyKind, type WalletState } from '@/data';
-import { cloudLabel, guardianBox } from '@/lib/labels';
-import { pick } from '@/lib/platform';
-import { cn } from '@/lib/utils';
+import { SecurityBannerView, TileGrid } from '@/components/security-hub';
+import { Sheet } from '@/components/sheet';
+import { useNow, useWallet, useWalletService } from '@/data';
+import { IS_IOS, pick } from '@/lib/platform';
+import {
+  guardianChecking,
+  needsYou,
+  securityBanner,
+  securitySignature,
+  securityTiles,
+  shouldPlayEntrance,
+  type Fix,
+  type SecurityTile,
+} from '@/lib/security-view';
+import { SECURITY_ENTRANCE } from '@/theme/motion';
 
-const KEY_LABEL: Record<RecoveryKeyKind, string> = {
-  paper: 'Printed kit',
-  nfc: 'NFC card',
-  hardware: 'Second hardware wallet',
-};
+/** The entrance is over by then (the soft ring ends at 2.15s). */
+const ENTRANCE_MS = SECURITY_ENTRANCE.haloAtMs + SECURITY_ENTRANCE.haloMs + 200;
 
-/** What needs the person's attention, most urgent first. An empty list is "You're all set". */
-function needsYou(state: WalletState): string[] {
-  const out: string[] = [];
-  const brand = state.hardware.brand;
-  if (state.recovery) out.push('A recovery is running. Check it, or cancel it if it was not you.');
-  if (state.phoneSpending === 'paused_contested') out.push(`Phone payments are paused until your ${brand} resumes them.`);
-  if (state.hardwareConfirmRequired) out.push(`Your ${brand} needs to see the new wallet once.`);
-  if (state.mode === 'recoveryKey') {
-    if (state.recoveryKey.refillsLeft <= 1) out.push('Your refills are running out. Approve more with your hardware wallet.');
-    return out;
-  }
-  if (state.guardian.status === 'locked') out.push('Your guardian is locked, so phone-only payments are paused.');
-  if (state.guardian.status === 'offline') out.push("Your guardian can't be reached, so phone-only payments are paused.");
-  if (!state.backup) out.push('This phone is not backed up.');
-  // A backup made before Savings existed does not know it.
-  else if (state.savings.status === 'active' && state.savings.createdAt && state.backup.lastBackedUpAt < state.savings.createdAt)
-    out.push("Your backup doesn't include Savings yet. Back up this phone again.");
-  // Coin control: labels and freezes changed since (they come back with a restore only if they are in it).
-  else if (state.backup.labelsNewer) out.push("Your backup doesn't have your latest coin labels and freezes. Back up this phone again.");
-  if (state.contacts.length === 0) out.push('Nobody would be alerted about a recovery. Add an alert contact.');
-  return out;
-}
+/** What the tab last showed (`securitySignature`), for as long as the app runs: its entrance plays again after a change. */
+let lastShown: string | null = null;
 
-function StatusCard({ issues }: { issues: string[] }) {
-  const ok = issues.length === 0;
-  const title = ok ? "You're all set" : issues.length === 1 ? '1 thing needs you' : `${issues.length} things need you`;
-  const detail = ok ? 'All three keys are working. Any two of them can move your money.' : issues[0];
-  return (
-    <View accessible accessibilityLabel={`${title}. ${detail}`} className={cn('flex-row items-center gap-3.5 rounded-xl p-4', ok ? 'bg-good-soft' : 'bg-warn-soft')}>
-      <Icon as={ok ? Check : TriangleAlert} size={26} strokeWidth={2} className={ok ? 'text-good' : 'text-warn'} />
-      <View className="flex-1 gap-0.5">
-        <Text className="text-[17px] font-semibold leading-[22px]">{title}</Text>
-        <Text className="text-foreground text-sm leading-5">{detail}</Text>
-      </View>
-    </View>
-  );
-}
-
-/** The Security tab: are the keys fine, the rules that protect the money, and what to do when something is lost. */
+/**
+ * The Security tab (docs/design/motion.md, section 8): a banner with the three keys drawn as the Trikey mark and what
+ * needs the person, then the keys and the rules that protect the money as tiles. Every tile goes where the row it
+ * replaced went. The entrance plays on the first visit after launch and after a change, not on every tab switch.
+ */
 export default function SecurityScreen() {
   const router = useRouter();
   const wallet = useWalletService();
   const state = useWallet();
+  const now = useNow();
+  const focused = useIsFocused();
   const rk = state.mode === 'recoveryKey';
-  const { guardian } = state;
-  const guardianDot = guardian.status === 'online' ? 'good' : guardian.status === 'locked' ? 'warn' : 'bad';
-  const box = guardianBox(guardian);
+  // Calm advice about the phone itself (no screen lock, an old security patch, an emulator); read on the phone, sent nowhere.
+  const notes = usePhoneSafetyNotes();
+  const [safetyOpen, setSafetyOpen] = useState(false);
+
+  const banner = securityBanner(needsYou(state));
+  const checking = !rk && guardianChecking(state);
+  const tiles = securityTiles(state, { now, os: IS_IOS ? 'ios' : 'android', checking, phoneNotes: notes, needing: banner.needing });
+  const signature = securitySignature(banner, [...tiles.keys, ...tiles.protection]);
+
+  // `n` remounts the banner and tiles for an entrance; `play` says this mount is one.
+  const [run, setRun] = useState(() => ({ n: 0, play: shouldPlayEntrance(lastShown, signature) }));
+  const wasFocused = useRef<boolean | null>(null);
+  useEffect(() => {
+    // Coming into view after a change made elsewhere: the entrance again. A change seen here plays its own motion.
+    if (wasFocused.current === false && focused && shouldPlayEntrance(lastShown, signature)) setRun((r) => ({ n: r.n + 1, play: true }));
+    wasFocused.current = focused;
+    if (focused) lastShown = signature;
+  }, [focused, signature]);
+  // Once the entrance is over, anything that mounts later (a piece that appears with a change) is simply there.
+  useEffect(() => {
+    if (!run.play) return;
+    const t = setTimeout(() => setRun((r) => (r.play ? { ...r, play: false } : r)), ENTRANCE_MS);
+    return () => clearTimeout(t);
+  }, [run]);
+
+  const go = (fix: Fix) => router.push(fix as Href);
+  const openTile = (t: SecurityTile) => {
+    if (t.action === 'phone-safety') setSafetyOpen(true);
+    else if (t.action) go(t.action);
+  };
 
   return (
     <Screen tab title="Security" gap={pick(12, 0)} onRefresh={() => wallet.sync()}>
-      <StatusCard issues={needsYou(state)} />
-      {/* Calm advice about the phone itself (no screen lock, an old security patch, an emulator); read on the phone, sent nowhere. */}
-      <PhoneSafetySection />
+      <View key={run.n} className={pick('gap-3', '')}>
+        <SecurityBannerView
+          banner={banner}
+          checking={checking}
+          third={rk ? 'recoveryKey' : 'guardian'}
+          play={run.play}
+          focused={focused}
+          onFix={() => banner.fix && go(banner.fix)}
+        />
 
-      <SectionLabel>Your keys</SectionLabel>
-      <ListGroup>
-        <SettingsRow title="Hardware wallet" value={state.hardware.model} />
-        {rk ? (
-          <SettingsRow title="This phone" value={pick('Spends with Face ID', 'Spends with your fingerprint')} />
-        ) : (
-          <SettingsRow
-            title="This phone"
-            value={pick(
-              state.backup ? 'Backed up' : 'Not backed up',
-              state.backup ? `Backed up to ${cloudLabel(state.backup.provider)}` : 'Not backed up'
-            )}
-            dot={state.backup ? undefined : 'warn'}
-            onPress={() => router.push({ pathname: '/backup', params: { again: '1' } })}
-            accessibilityHint="Make a new backup"
-          />
-        )}
-        {rk ? (
-          <SettingsRow
-            title="Recovery Key"
-            value={state.recoveryKey.savedKey === 'hardware' ? 'Second hardware wallet' : state.recoveryKey.savedKey === 'kit' ? 'Printed kit' : KEY_LABEL[state.recoveryKey.keyKind]}
-          />
-        ) : (
-          <SettingsRow title="Guardian" value={pick(box, `${box} · ${guardian.status}`)} dot={guardianDot} onPress={() => router.push('/settings/guardian')} />
-        )}
-      </ListGroup>
+        <SectionLabel>Your keys</SectionLabel>
+        <TileGrid tiles={tiles.keys} first={0} play={run.play} onPress={openTile} />
+        {/* Savings: a new phone without a backup finds it at the guardian, so the row is there whenever Savings can be had. */}
+        {tiles.savingsLost ? (
+          <View className={pick('', 'mt-2')}>
+            <ListGroup>
+              <SettingsRow title="Lost a Savings key?" onPress={() => router.push('/savings/replace')} />
+            </ListGroup>
+          </View>
+        ) : null}
 
-      <SectionLabel>Protection</SectionLabel>
-      {rk ? (
-        <ListGroup>
-          <SettingsRow title="Refills" value={`${state.recoveryKey.refillsLeft} of ${state.recoveryKey.refillsTotal} left`} onPress={() => router.push('/rk/refills')} />
-          <SettingsRow
-            title="Refill amount"
-            value={pick(`${formatSats(state.recoveryKey.refillAmountSats)} sats`, `${formatSats(state.recoveryKey.refillAmountSats)} sats, ${state.recoveryKey.refillCount} at a time`)}
-            tabular
-            onPress={() => router.push('/settings/refills')}
-          />
-        </ListGroup>
-      ) : (
-        <ListGroup>
-          <SettingsRow
-            title="Daily limit"
-            value={state.dailyLimit.off ? 'Off' : `${formatSats(state.dailyLimit.limitSats)} sats`}
-            dot={state.dailyLimit.off ? 'warn' : undefined}
-            tabular
-            onPress={() => router.push('/settings/limit')}
-          />
-          <SettingsRow title="Security waiting period" value={`${state.recoveryDelayDays} days`} onPress={() => router.push('/settings/delay')} />
-          <SettingsRow
-            title="Alert contacts"
-            value={pick(String(state.contacts.length), `${state.contacts.length} ${state.contacts.length === 1 ? 'person' : 'people'}`)}
-            dot={state.contacts.length === 0 ? 'warn' : undefined}
-            onPress={() => router.push('/settings/contacts')}
-          />
-        </ListGroup>
-      )}
+        <SectionLabel>Protection</SectionLabel>
+        <TileGrid tiles={tiles.protection} first={tiles.keys.length} play={run.play} onPress={openTile} />
+      </View>
 
-      <SectionLabel>If something is lost</SectionLabel>
-      <ListGroup>
-        {rk ? (
-          <>
-            <SettingsRow title="Lost your Recovery Kit?" onPress={() => router.push('/rk/replace')} />
-            <SettingsRow title="Lost your hardware wallet?" onPress={() => router.push({ pathname: '/recover/kit', params: { with: 'phone' } })} />
-          </>
-        ) : (
-          <>
-            <SettingsRow title="Lost a phone or hardware wallet?" onPress={() => router.push('/recover/choose')} />
-            {/* Savings: a new phone without a backup finds it at the guardian, so the row is there whenever Savings can be had. */}
-            {state.savings.status !== 'not-available' ? <SettingsRow title="Lost a Savings key?" onPress={() => router.push('/savings/replace')} /> : null}
-          </>
-        )}
-      </ListGroup>
+      <Sheet visible={safetyOpen} title="Phone safety" onClose={() => setSafetyOpen(false)}>
+        <PhoneSafetyNotes notes={notes} />
+      </Sheet>
     </Screen>
   );
 }

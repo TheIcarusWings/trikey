@@ -149,6 +149,81 @@ export const PAIRING = { closeTo: 0.68, dimTo: 0.45, statusFadeMs: 200, nextStep
 export const ALL_SET = { circleFromScale: 0.6, circleFadeMs: 200, checkAtMs: 140, checkDrawMs: 320, titleAtMs: 200, listAtMs: 280, listFadeMs: 200, firstRowAtMs: 340, rowStepMs: 70, rise: 8 } as const;
 
 /**
+ * Section 8, the Security tab's entrance (about 1.8s), in ms from when the tab shows: the banner fades in (240ms); the
+ * hardware mark pops at 150ms; the links draw for 450ms from 450ms; the phone mark at 700ms; the guardian mark at
+ * 900ms; the check draws at 1.35s; one soft ring spreads from the centre at 1.45s. When something needs the person, its
+ * dashed links fade in at 900ms (300ms) and the alert mark at 1.3s (200ms) instead of the check and the ring. The tiles
+ * rise 8px, 50ms apart, and their dots pop from 300ms, 60ms apart.
+ */
+export const SECURITY_ENTRANCE = {
+  bannerFadeMs: 240,
+  markAtMs: { hardware: 150, phone: 700, guardian: 900 },
+  linksAtMs: 450,
+  linksMs: 450,
+  checkAtMs: 1350,
+  checkMs: 320,
+  haloAtMs: 1450,
+  haloMs: 700,
+  dashedAtMs: 900,
+  dashedMs: 300,
+  alertAtMs: 1300,
+  alertMs: 200,
+  tileStepMs: 50,
+  tileRise: 8,
+  dotsAtMs: 300,
+  dotStepMs: 60,
+} as const;
+
+/**
+ * Section 8, "not set" to "all set" (about 1.2s, haptic `success`), in ms from the change: a green ring draws clockwise
+ * round the fixed key (500ms), whose own ring turns green as it closes; the banner's colour crossfades from amber to
+ * green from 200ms (500ms); the dashed links fade from 300ms (250ms); the solid links draw from 350ms (400ms); the old
+ * text lifts out at 450ms and the new rises in at 540ms (the banner is never empty); the alert mark fades at 550ms
+ * (150ms); the check draws at 750ms, with `success`; one soft ring spreads from the centre at 850ms (800ms). On the
+ * tile, the dot turns green with a bump from 100ms (its colour over 300ms) and the value line crossfades.
+ */
+export const SECURITY_FIX = {
+  ringMs: 500,
+  markOkAtMs: 500,
+  colourAtMs: 200,
+  colourMs: 500,
+  dashedOutAtMs: 300,
+  dashedOutMs: 250,
+  linksAtMs: 350,
+  linksMs: 400,
+  textOutAtMs: 450,
+  textInAtMs: 540,
+  alertOutAtMs: 550,
+  alertOutMs: 150,
+  checkAtMs: 750,
+  checkMs: 320,
+  haloAtMs: 850,
+  haloMs: 800,
+  tileAtMs: 100,
+  tileColourMs: 300,
+} as const;
+
+/** The soft ring from the banner mark's centre: scale 0.6 to 2.4 while it fades from 0.4. */
+export const SECURITY_HALO = { fromScale: 0.6, toScale: 2.4, opacityFrom: 0.4 } as const;
+
+/** The banner's links: solid ones at half strength, dashed (amber) ones at 0.8. The old text lifts 5px. */
+export const SECURITY_LINKS = { solidOpacity: 0.5, dashedOpacity: 0.8, textLift: 5 } as const;
+
+/** The guardian tile's dot while it is being asked: a ring every 1.2s, for as long as it lasts. */
+export const SYNC_RING = { ...PULSE_RING, periodMs: 1200 } as const;
+
+/** A status dot or key mark that changes: it grows to 1.25 (200ms) and springs back (pop). */
+export const BUMP = { scale: 1.25, upMs: 200 } as const;
+
+/** Section 8: when the `index`-th tile rises and when its dot pops (the stagger rule's cap of six applies to both). */
+export function securityTileTimes(index: number): { riseAt: number; dotAt: number } {
+  return {
+    riseAt: staggerDelay(index, SECURITY_ENTRANCE.tileStepMs),
+    dotAt: staggerDelay(index, SECURITY_ENTRANCE.dotStepMs, SECURITY_ENTRANCE.dotsAtMs),
+  };
+}
+
+/**
  * The countdown ring's `strokeDashoffset` for a share of the waiting period that has passed: the whole circumference is
  * an empty ring, 0 a full one. The share is held between `COUNTDOWN.minShare` and 1.
  */

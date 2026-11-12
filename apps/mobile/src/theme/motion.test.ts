@@ -26,6 +26,12 @@ import {
   SPRINGS,
   STANDARD,
   STATUS_PULSES,
+  BUMP,
+  SECURITY_ENTRANCE,
+  SECURITY_FIX,
+  SECURITY_HALO,
+  SYNC_RING,
+  securityTileTimes,
   limitShare,
   loopRepeats,
   motionPlan,
@@ -207,5 +213,62 @@ describe('the limit bar', () => {
     expect(limitShare(300_000, 200_000)).toBe(1);
     expect(limitShare(-5, 200_000)).toBe(0);
     expect(limitShare(10, 0)).toBe(0);
+  });
+});
+
+describe('section 8: the Security tab', () => {
+  it('enters as the spec says: banner, hardware 150ms, links 450ms for 450ms, phone 700ms, guardian 900ms, check 1.35s, ring 1.45s', () => {
+    expect(SECURITY_ENTRANCE).toMatchObject({
+      bannerFadeMs: 240,
+      markAtMs: { hardware: 150, phone: 700, guardian: 900 },
+      linksAtMs: 450,
+      linksMs: 450,
+      checkAtMs: 1350,
+      haloAtMs: 1450,
+      tileStepMs: 50,
+      tileRise: 8,
+      dotsAtMs: 300,
+    });
+    // About 1.8s in all: the soft ring is the last thing to move.
+    expect(SECURITY_ENTRANCE.haloAtMs + SECURITY_ENTRANCE.haloMs).toBeGreaterThanOrEqual(1800);
+    expect(SECURITY_ENTRANCE.haloAtMs + SECURITY_ENTRANCE.haloMs).toBeLessThanOrEqual(2200);
+  });
+
+  it('rises the tiles 50ms apart and pops their dots from 300ms, within the stagger rule', () => {
+    expect([0, 1, 2, 3].map((i) => securityTileTimes(i))).toEqual([
+      { riseAt: 0, dotAt: 300 },
+      { riseAt: 50, dotAt: 360 },
+      { riseAt: 100, dotAt: 420 },
+      { riseAt: 150, dotAt: 480 },
+    ]);
+    // At most six items are staggered: the seventh and eighth tiles arrive with the sixth.
+    expect(securityTileTimes(7)).toEqual(securityTileTimes(5));
+  });
+
+  it('turns "not set" into "all set" following the timing table exactly', () => {
+    const table: [number, string][] = [
+      [SECURITY_FIX.colourAtMs, 'colour'],
+      [SECURITY_FIX.dashedOutAtMs, 'dashed links fade'],
+      [SECURITY_FIX.linksAtMs, 'solid links draw'],
+      [SECURITY_FIX.textOutAtMs, 'old text lifts out'],
+      [SECURITY_FIX.textInAtMs, 'new text rises in'],
+      [SECURITY_FIX.alertOutAtMs, 'alert mark fades'],
+      [SECURITY_FIX.checkAtMs, 'check draws'],
+      [SECURITY_FIX.haloAtMs, 'soft ring'],
+    ];
+    expect(table.map(([ms]) => ms)).toEqual([200, 300, 350, 450, 540, 550, 750, 850]);
+    expect(SECURITY_FIX).toMatchObject({ ringMs: 500, colourMs: 500, dashedOutMs: 250, linksMs: 400 });
+  });
+
+  it('never leaves the banner empty: the new words start before the old have gone', () => {
+    expect(SECURITY_FIX.textInAtMs).toBeGreaterThan(SECURITY_FIX.textOutAtMs);
+    expect(SECURITY_FIX.textInAtMs).toBeLessThan(SECURITY_FIX.textOutAtMs + NUMBER_SWAP.outMs);
+  });
+
+  it('rings every 1.2s while syncing, spreads one soft ring from the centre, and bumps a changed dot', () => {
+    expect(SYNC_RING.periodMs).toBe(1200);
+    expect(SYNC_RING.scaleTo).toBe(PULSE_RING.scaleTo);
+    expect(SECURITY_HALO).toEqual({ fromScale: 0.6, toScale: 2.4, opacityFrom: 0.4 });
+    expect(BUMP.scale).toBeGreaterThan(1);
   });
 });

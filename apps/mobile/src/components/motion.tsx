@@ -33,6 +33,7 @@ import type { KeyMark, KeyName } from '@/lib/payment-texts';
 import { cn } from '@/lib/utils';
 import {
   BREATHE,
+  BUMP,
   CROSSFADE_MS,
   EXIT,
   NO_BOUNCE,
@@ -69,6 +70,14 @@ export function exit(to: number, ms: number = EXIT.duration) {
 /** One of the named springs (the settle, toast and pop springs overshoot a little; firm does not). */
 export function spring(to: number, name: SpringName) {
   return withSpring(to, { ...SPRINGS[name], overshootClamping: NO_BOUNCE.includes(name) });
+}
+
+/**
+ * A status dot or key mark that changed: it grows to 1.25 (200ms) and springs back with the pop spring (a small
+ * overshoot). Assign to a scale. Reduce Motion: none (the colour and the words say it).
+ */
+export function bump() {
+  return withSequence(withTiming(BUMP.scale, { duration: BUMP.upMs, easing: STANDARD_EASING }), spring(1, 'pop'));
 }
 
 /** Reduce Motion's one gesture: a 150ms linear opacity fade, played even though the system asks for less motion. */
@@ -109,25 +118,29 @@ export function announce(text: string, politeness: 'polite' | 'assertive' = 'pol
 
 /**
  * Arrives once, when it mounts: fades in while rising `distance` px, `delay` ms after mount. Reduce Motion: a 150ms
- * fade with no delay and no rise.
+ * fade with no delay and no rise. `play={false}`: in place from the first frame (the same view, so a screen can choose
+ * per mount without remounting what is inside).
  */
 export function Rise({
   children,
   delay = 0,
   distance = 8,
   duration = STANDARD.duration,
+  play = true,
   style,
 }: {
   children: ReactNode;
   delay?: number;
   distance?: number;
   duration?: number;
+  play?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
   const reduced = useReduceMotion();
-  const o = useSharedValue(0);
-  const y = useSharedValue(reduced ? 0 : distance);
+  const o = useSharedValue(play ? 0 : 1);
+  const y = useSharedValue(reduced || !play ? 0 : distance);
   useEffect(() => {
+    if (!play) return;
     if (reduced) {
       o.value = reducedFade(1);
       return;
@@ -202,8 +215,8 @@ type SwapKind = 'fade' | 'lift';
 /**
  * Shows `children`; when `id` changes, the old content leaves and the new arrives in its place, so the place is never
  * empty. `fade`: a plain 160ms crossfade (status text). `lift`: a whole number changing: the old one lifts `lift` px
- * and fades (200ms), the new one rises into place (280ms). `animate={false}` swaps at once (the hidden balance).
- * A change while one is under way starts from where things are.
+ * and fades (200ms), the new one rises into place (280ms) `inDelay` ms after (140ms unless given). `animate={false}`
+ * swaps at once (the hidden balance). A change while one is under way starts from where things are.
  */
 export function Swap({
   id,
@@ -212,6 +225,7 @@ export function Swap({
   lift = NUMBER_SWAP.lift,
   animate = true,
   align = 'center',
+  inDelay = NUMBER_SWAP.inDelayMs,
   style,
 }: {
   id: string;
@@ -219,7 +233,9 @@ export function Swap({
   kind?: SwapKind;
   lift?: number;
   animate?: boolean;
-  align?: 'center' | 'start';
+  inDelay?: number;
+  /** Where the leaving layer sits over the new one: centred or from the start (with room to be wider), or `fill`: the same width. */
+  align?: 'center' | 'start' | 'fill';
   style?: StyleProp<ViewStyle>;
 }) {
   const [shown, setShown] = useState<{ id: string; fresh: boolean }>({ id, fresh: false });
@@ -238,11 +254,11 @@ export function Swap({
   return (
     <View style={style}>
       {leaving.map((l) => (
-        <SwapLayer key={`out:${l.key}`} kind={kind} lift={lift} leaving fresh={false} align={align} onGone={() => drop(l.key)}>
+        <SwapLayer key={`out:${l.key}`} kind={kind} lift={lift} inDelay={inDelay} leaving fresh={false} align={align} onGone={() => drop(l.key)}>
           {l.node}
         </SwapLayer>
       ))}
-      <SwapLayer key={`in:${shown.id}`} kind={kind} lift={lift} leaving={false} fresh={shown.fresh} align={align} onGone={() => {}}>
+      <SwapLayer key={`in:${shown.id}`} kind={kind} lift={lift} inDelay={inDelay} leaving={false} fresh={shown.fresh} align={align} onGone={() => {}}>
         {children}
       </SwapLayer>
     </View>
@@ -252,6 +268,7 @@ export function Swap({
 function SwapLayer({
   kind,
   lift,
+  inDelay,
   leaving,
   fresh,
   align,
@@ -260,9 +277,10 @@ function SwapLayer({
 }: {
   kind: SwapKind;
   lift: number;
+  inDelay: number;
   leaving: boolean;
   fresh: boolean;
-  align: 'center' | 'start';
+  align: 'center' | 'start' | 'fill';
   onGone: () => void;
   children: ReactNode;
 }) {
@@ -284,8 +302,8 @@ function SwapLayer({
     if (fresh) {
       if (reduced) o.value = reducedFade(1);
       else if (kind === 'lift') {
-        o.value = withDelay(NUMBER_SWAP.inDelayMs, standard(1, NUMBER_SWAP.inMs));
-        y.value = withDelay(NUMBER_SWAP.inDelayMs, standard(0, NUMBER_SWAP.inMs));
+        o.value = withDelay(inDelay, standard(1, NUMBER_SWAP.inMs));
+        y.value = withDelay(inDelay, standard(0, NUMBER_SWAP.inMs));
       } else o.value = fade(1);
     }
     return undefined;
@@ -293,10 +311,13 @@ function SwapLayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const animated = useAnimatedStyle(() => ({ opacity: o.value, transform: [{ translateY: y.value }] }));
-  // The leaving layer lies over the new one, centred or from the start, with room to be wider than it.
-  const over: ViewStyle = leaving
-    ? { position: 'absolute', top: 0, bottom: 0, left: align === 'center' ? -48 : 0, right: -48, alignItems: align === 'center' ? 'center' : 'flex-start' }
-    : {};
+  // The leaving layer lies over the new one, centred or from the start, with room to be wider than it (or, `fill`, at
+  // the same width, so wrapped words wrap the same).
+  const over: ViewStyle = !leaving
+    ? {}
+    : align === 'fill'
+      ? { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 }
+      : { position: 'absolute', top: 0, bottom: 0, left: align === 'center' ? -48 : 0, right: -48, alignItems: align === 'center' ? 'center' : 'flex-start' };
   return (
     <Animated.View style={[over, animated]} {...(leaving ? HIDDEN : {})}>
       {children}
@@ -331,9 +352,9 @@ export function Breathe({ active, small, children, style }: { active: boolean; s
 /**
  * Drives a ring that spreads from something and fades, `periodMs` apart: the first 70% of each period it grows to
  * `scaleTo` while fading from `opacityFrom`, then it rests. Activity rings run while `active`; status rings play three
- * times, then rest. Reduce Motion: no ring.
+ * times, then rest. The first ring leaves `delay` ms after it starts. Reduce Motion: no ring.
  */
-export function useRing(active: boolean, kind: LoopKind, ring: { scaleTo: number; opacityFrom: number; periodMs: number; activeShare: number; curve: Curve }) {
+export function useRing(active: boolean, kind: LoopKind, ring: { scaleTo: number; opacityFrom: number; periodMs: number; activeShare: number; curve: Curve }, delay = 0) {
   const reduced = useReduceMotion();
   // 0: at the source, fully there; 1: spread out and gone.
   const p = useSharedValue(1);
@@ -347,9 +368,9 @@ export function useRing(active: boolean, kind: LoopKind, ring: { scaleTo: number
     }
     const grow = Math.round(periodMs * activeShare);
     const cycle = withSequence(withTiming(0, { duration: 0 }), withTiming(1, { duration: grow, easing: bezier(curve) }), withDelay(periodMs - grow, withTiming(1, { duration: 0 })));
-    p.value = withRepeat(cycle, repeats);
+    p.value = delay > 0 ? withDelay(delay, withRepeat(cycle, repeats)) : withRepeat(cycle, repeats);
     return () => cancelAnimation(p);
-  }, [active, kind, reduced, p, periodMs, activeShare, curve]);
+  }, [active, kind, reduced, p, periodMs, activeShare, curve, delay]);
   return useAnimatedStyle(() => ({ opacity: opacityFrom * (1 - p.value), transform: [{ scale: 1 + (scaleTo - 1) * p.value }] }));
 }
 
@@ -377,16 +398,32 @@ const CHECK_PATH = 'M4 12l5 5L20 6';
 const CHECK_LENGTH = 23;
 
 /**
- * The one success gesture: a check drawn with `strokeDashoffset` (320ms standard) `delay` ms after mount. Reduce
- * Motion: drawn already (the circle around it fades in).
+ * The one success gesture: a check drawn with `strokeDashoffset` (320ms standard) `delay` ms after mount. `drawn`: it
+ * is there already (a screen shown again, with nothing new to celebrate). Reduce Motion: drawn already (the circle
+ * around it fades in).
  */
-export function DrawnCheck({ size = 36, color, strokeWidth = 2.4, delay = 0, duration = 320 }: { size?: number; color: string; strokeWidth?: number; delay?: number; duration?: number }) {
+export function DrawnCheck({
+  size = 36,
+  color,
+  strokeWidth = 2.4,
+  delay = 0,
+  duration = 320,
+  drawn = false,
+}: {
+  size?: number;
+  color: string;
+  strokeWidth?: number;
+  delay?: number;
+  duration?: number;
+  drawn?: boolean;
+}) {
   const reduced = useReduceMotion();
   // Starts just past the line's start, so its round cap does not show as a dot before it draws.
   const hidden = CHECK_LENGTH + 2;
-  const offset = useSharedValue(reduced ? 0 : hidden);
+  const still = reduced || drawn;
+  const offset = useSharedValue(still ? 0 : hidden);
   useEffect(() => {
-    if (!reduced) offset.value = withDelay(delay, standard(0, duration));
+    if (!still) offset.value = withDelay(delay, standard(0, duration));
     // Once, on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
